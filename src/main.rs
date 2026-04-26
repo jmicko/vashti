@@ -79,7 +79,22 @@ fn router(state: AppState) -> Router {
             "/admin/users/{user_id}",
             patch(admin::handlers::update_user).delete(admin::handlers::delete_user),
         )
-        .route("/backends", get(backends::handlers::list_backends))
+        .route(
+            "/backends",
+            get(backends::handlers::list_backends).post(backends::handlers::create_backend),
+        )
+        .route(
+            "/backends/detect-localhost",
+            post(backends::handlers::detect_localhost),
+        )
+        .route(
+            "/backends/scan-local-network",
+            post(backends::handlers::scan_local_network),
+        )
+        .route(
+            "/backends/{backend_id}",
+            patch(backends::handlers::update_backend).delete(backends::handlers::delete_backend),
+        )
         .route("/models", get(backends::handlers::list_models))
         .fallback(api_not_found);
 

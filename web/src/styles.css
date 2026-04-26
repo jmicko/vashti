@@ -274,7 +274,111 @@ button:focus-visible {
 }
 
 .model-picker {
-  width: 180px;
+  position: relative;
+  width: 230px;
+}
+
+.model-picker-button {
+  width: 100%;
+  justify-content: flex-start;
+  overflow: hidden;
+  background: #010301;
+  color: var(--text);
+  box-shadow: none;
+}
+
+.model-picker-button span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 30;
+  width: min(440px, 86vw);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow:
+    0 0 24px rgba(113, 255, 47, 0.12),
+    0 18px 50px rgba(0, 0, 0, 0.6);
+  padding: 10px;
+}
+
+.model-search {
+  position: relative;
+  display: block;
+  margin-bottom: 10px;
+}
+
+.model-search svg {
+  position: absolute;
+  top: 50%;
+  left: 10px;
+  width: 16px;
+  height: 16px;
+  color: var(--muted);
+  transform: translateY(-50%);
+}
+
+.model-search input {
+  padding-left: 34px;
+}
+
+.model-options {
+  display: grid;
+  gap: 10px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.model-group {
+  display: grid;
+  gap: 4px;
+}
+
+.model-group > p,
+.model-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.model-option {
+  width: 100%;
+  min-height: 34px;
+  justify-content: space-between;
+  border-color: transparent;
+  background: transparent;
+  color: var(--text);
+  box-shadow: none;
+  padding: 0 10px;
+}
+
+.model-option:hover,
+.model-option-active {
+  background: var(--accent-muted);
+}
+
+.model-option span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-vision {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--accent);
+  font-size: 0.72rem;
+  padding: 2px 6px;
 }
 
 .primary-action {
@@ -385,6 +489,13 @@ button:focus-visible {
   margin-bottom: 20px;
 }
 
+.header-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .refresh-button {
   min-width: 112px;
 }
@@ -468,6 +579,60 @@ button:focus-visible {
 .badge-warning {
   border-color: rgba(255, 221, 87, 0.5);
   color: var(--warning);
+}
+
+.backend-create-form {
+  border-bottom: 1px solid var(--line-soft);
+  margin-bottom: 20px;
+  padding-bottom: 20px;
+}
+
+.backend-list {
+  display: grid;
+  gap: 12px;
+}
+
+.backend-row {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(7, 11, 7, 0.86);
+  display: grid;
+  gap: 16px;
+  padding: 16px;
+}
+
+.backend-main {
+  min-width: 0;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.backend-main p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.backend-error {
+  color: var(--error) !important;
+}
+
+.backend-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.backend-edit-form {
+  max-width: none;
+}
+
+.backend-edit-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
 }
 
 .confirm-backdrop {
@@ -557,7 +722,11 @@ button:focus-visible {
   }
 
   .model-picker {
-    width: 132px;
+    width: 160px;
+  }
+
+  .model-menu {
+    width: min(360px, calc(100vw - 24px));
   }
 
   .primary-action span {
@@ -585,7 +754,9 @@ button:focus-visible {
   }
 
   .section-header,
-  .user-main {
+  .user-main,
+  .backend-main,
+  .backend-edit-grid {
     display: grid;
   }
 }

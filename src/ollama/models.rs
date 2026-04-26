@@ -22,8 +22,7 @@ struct TagModel {
 #[derive(Debug, Deserialize)]
 struct ModelDetails {
     family: Option<String>,
-    #[serde(default)]
-    families: Vec<String>,
+    families: Option<Vec<String>>,
 }
 
 impl TagsResponse {
@@ -59,7 +58,7 @@ fn supports_images(name: &str, details: Option<&ModelDetails>) -> bool {
     details
         .family
         .iter()
-        .chain(details.families.iter())
+        .chain(details.families.as_deref().unwrap_or_default().iter())
         .map(|family| family.to_ascii_lowercase())
         .any(|family| family.contains("vision") || family.contains("clip"))
 }

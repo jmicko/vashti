@@ -712,7 +712,11 @@ Response:
 
 ### `POST /api/backends/scan-local-network`
 
-Optional later. Not required for first coding slice.
+Admin action.
+
+Scans the server's local IPv4 `/24` network for reachable Ollama servers on port `11434`.
+
+Response shape matches `POST /api/backends/detect-localhost`.
 
 ### `GET /api/models`
 
@@ -1250,7 +1254,8 @@ vashti/
 Notes:
 
 * backend and frontend live in one repo
-* frontend build output is embedded into Rust binary for release builds
+* `cargo build` runs the Vite production build when needed, then embeds `web/dist` into the Rust binary
+* `web/dist` is generated output and should not be tracked in git
 * exact module names can change slightly, but ownership boundaries should stay similar
 
 ---

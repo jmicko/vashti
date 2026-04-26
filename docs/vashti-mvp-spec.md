@@ -690,7 +690,7 @@ Proposed high-level route groups:
 * `PATCH /api/backends/:backend_id`
 * `DELETE /api/backends/:backend_id`
 * `POST /api/backends/detect-localhost`
-* `POST /api/backends/scan-local-network` (optional later or v1.1)
+* `POST /api/backends/scan-local-network`
 * `GET /api/models`
 * `GET /api/models/status`
 

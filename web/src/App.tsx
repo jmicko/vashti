@@ -5,8 +5,13 @@ import {
   Menu,
   MessageSquare,
   MessageSquarePlus,
+  Pencil,
+  Plus,
+  Power,
+  RefreshCw,
   Server,
   Save,
+  Search,
   Settings as SettingsIcon,
   Trash2,
   UserRound,
@@ -45,6 +50,43 @@ type RegisterResponse = {
 
 type AdminUsersResponse = {
   users: AdminUser[];
+};
+
+type Backend = {
+  id: string;
+  name: string;
+  base_url: string;
+  is_enabled: boolean;
+  last_health_status: string | null;
+  last_error: string | null;
+};
+
+type BackendsResponse = {
+  backends: Backend[];
+};
+
+type DetectLocalhostResponse = {
+  detected: Array<{
+    name: string;
+    base_url: string;
+  }>;
+};
+
+type ModelInfo = {
+  name: string;
+  supports_images: boolean;
+};
+
+type BackendModelGroup = {
+  backend: {
+    id: string;
+    name: string;
+  };
+  models: ModelInfo[];
+};
+
+type ModelsResponse = {
+  backends: BackendModelGroup[];
 };
 
 type AppSettings = {
@@ -108,6 +150,22 @@ function pathForRoute(route: AppRoute) {
 
 function routesEqual(left: AppRoute, right: AppRoute) {
   return pathForRoute(left) === pathForRoute(right);
+}
+
+function modelValue(backendId: string, modelName: string) {
+  return `${backendId}:${modelName}`;
+}
+
+function isLocalBackend(baseUrl: string) {
+  try {
+    const url = new URL(baseUrl);
+    return (
+      (url.hostname === "localhost" || url.hostname === "127.0.0.1") &&
+      url.port === "11434"
+    );
+  } catch {
+    return false;
+  }
 }
 
 export default function App() {
@@ -409,6 +467,10 @@ function AppShell({
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [pendingNavigation, setPendingNavigation] = useState<AppRoute | null>(null);
   const [isSavingPendingNavigation, setIsSavingPendingNavigation] = useState(false);
+  const [modelGroups, setModelGroups] = useState<BackendModelGroup[]>([]);
+  const [selectedModel, setSelectedModel] = useState("");
+  const [isLoadingModels, setIsLoadingModels] = useState(false);
+  const [modelError, setModelError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const isAdmin = user.role === "admin";
   const page = route.page;
@@ -422,6 +484,33 @@ function AppShell({
   const updateAppSettingsGuard = useCallback((guard: AppSettingsGuard | null) => {
     appSettingsGuardRef.current = guard;
   }, []);
+
+  const loadModels = useCallback(async () => {
+    setIsLoadingModels(true);
+    setModelError(null);
+
+    try {
+      const response = await requestJson<ModelsResponse>("/api/models");
+      setModelGroups(response.backends);
+      setSelectedModel((current) => {
+        const values = response.backends.flatMap((group) =>
+          group.models.map((model) => modelValue(group.backend.id, model.name))
+        );
+
+        return current && values.includes(current) ? current : values[0] ?? "";
+      });
+    } catch (loadError) {
+      setModelGroups([]);
+      setSelectedModel("");
+      setModelError(loadError instanceof Error ? loadError.message : "Failed to load models");
+    } finally {
+      setIsLoadingModels(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadModels();
+  }, [loadModels]);
 
   useEffect(() => {
     function handlePopState() {
@@ -555,9 +644,13 @@ function AppShell({
             >
               <Menu />
             </button>
-            <select className="model-picker" aria-label="Model" disabled>
-              <option>Model</option>
-            </select>
+            <ModelPicker
+              groups={modelGroups}
+              isLoading={isLoadingModels}
+              error={modelError}
+              value={selectedModel}
+              onChange={setSelectedModel}
+            />
           </div>
           <div className="topbar-right">
             <button type="button" className="primary-action" disabled>
@@ -608,6 +701,7 @@ function AppShell({
           <SettingsPage
             currentUser={user}
             activeSection={settingsSection}
+            onBackendsChanged={loadModels}
             onAppSettingsGuardChange={updateAppSettingsGuard}
             onSelectSection={(section) => openSettings(section)}
             isAdmin={isAdmin}
@@ -672,15 +766,162 @@ function ChatHome({ error }: { error: string | null }) {
   );
 }
 
+function ModelPicker({
+  groups,
+  isLoading,
+  error,
+  value,
+  onChange
+}: {
+  groups: BackendModelGroup[];
+  isLoading: boolean;
+  error: string | null;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const hasModels = groups.some((group) => group.models.length > 0);
+  const selected = groups
+    .flatMap((group) =>
+      group.models.map((model) => ({
+        backendId: group.backend.id,
+        backendName: group.backend.name,
+        model
+      }))
+    )
+    .find((option) => modelValue(option.backendId, option.model.name) === value);
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const filteredGroups = groups
+    .map((group) => ({
+      backend: group.backend,
+      models: group.models.filter((model) => {
+        if (!normalizedQuery) {
+          return true;
+        }
+
+        return (
+          model.name.toLocaleLowerCase().includes(normalizedQuery) ||
+          group.backend.name.toLocaleLowerCase().includes(normalizedQuery)
+        );
+      })
+    }))
+    .filter((group) => group.models.length > 0);
+
+  useEffect(() => {
+    if (isOpen) {
+      window.setTimeout(() => inputRef.current?.focus(), 0);
+    } else {
+      setQuery("");
+    }
+  }, [isOpen]);
+
+  useEffect(() => {
+    function handlePointerDown(event: MouseEvent) {
+      if (wrapRef.current && !wrapRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, []);
+
+  function buttonLabel() {
+    if (isLoading) {
+      return "Loading models...";
+    }
+
+    if (error) {
+      return "Models unavailable";
+    }
+
+    if (!hasModels) {
+      return "No models";
+    }
+
+    return selected ? selected.model.name : "Select model";
+  }
+
+  return (
+    <div className="model-picker" ref={wrapRef}>
+      <button
+        type="button"
+        className="model-picker-button"
+        disabled={isLoading || !hasModels}
+        title={error ?? selected?.backendName}
+        aria-expanded={isOpen}
+        onClick={() => setIsOpen((open) => !open)}
+      >
+        <span>{buttonLabel()}</span>
+      </button>
+      {isOpen && (
+        <div className="model-menu">
+          <label className="model-search">
+            <Search />
+            <input
+              ref={inputRef}
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  setIsOpen(false);
+                }
+              }}
+              placeholder="Search models"
+            />
+          </label>
+          <div className="model-options">
+            {filteredGroups.length === 0 ? (
+              <p className="model-empty">No matching models</p>
+            ) : (
+              filteredGroups.map((group) => (
+                <section key={group.backend.id} className="model-group">
+                  <p>{group.backend.name}</p>
+                  {group.models.map((model) => {
+                    const optionValue = modelValue(group.backend.id, model.name);
+                    return (
+                      <button
+                        type="button"
+                        key={optionValue}
+                        className={
+                          optionValue === value
+                            ? "model-option model-option-active"
+                            : "model-option"
+                        }
+                        onClick={() => {
+                          onChange(optionValue);
+                          setIsOpen(false);
+                        }}
+                      >
+                        <span>{model.name}</span>
+                        {model.supports_images && <span className="model-vision">vision</span>}
+                      </button>
+                    );
+                  })}
+                </section>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SettingsPage({
   currentUser,
   activeSection,
+  onBackendsChanged,
   onAppSettingsGuardChange,
   onSelectSection,
   isAdmin
 }: {
   currentUser: User;
   activeSection: SettingsSection;
+  onBackendsChanged: () => Promise<void>;
   onAppSettingsGuardChange: (guard: AppSettingsGuard | null) => void;
   onSelectSection: (section: SettingsSection) => void;
   isAdmin: boolean;
@@ -720,12 +961,8 @@ function SettingsPage({
       <section className="settings-content">
         {selectedSection === "profile" && <ProfileSettings user={currentUser} />}
         {selectedSection === "users" && isAdmin && <AdminUsersPanel currentUserId={currentUser.id} />}
-        {selectedSection === "backends" && (
-          <SettingsPlaceholder
-            eyebrow="Admin"
-            title="Backends"
-            text="Ollama backend management starts in the next slice."
-          />
+        {selectedSection === "backends" && isAdmin && (
+          <BackendsPanel onBackendsChanged={onBackendsChanged} />
         )}
         {selectedSection === "app" && <AppSettingsPanel onGuardChange={onAppSettingsGuardChange} />}
       </section>
@@ -1004,6 +1241,395 @@ function UserRow({
           <span>Delete</span>
         </button>
       </div>
+    </article>
+  );
+}
+
+function BackendsPanel({ onBackendsChanged }: { onBackendsChanged: () => Promise<void> }) {
+  const [backends, setBackends] = useState<Backend[]>([]);
+  const [hasLoaded, setHasLoaded] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
+  const [isDetecting, setIsDetecting] = useState(false);
+  const [isScanning, setIsScanning] = useState(false);
+  const [busyBackendId, setBusyBackendId] = useState<string | null>(null);
+  const [editingBackend, setEditingBackend] = useState<Backend | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Backend | null>(null);
+  const [newName, setNewName] = useState("");
+  const [newBaseUrl, setNewBaseUrl] = useState("");
+  const [status, setStatus] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadBackends = useCallback(async () => {
+    setIsRefreshing(true);
+    setError(null);
+
+    try {
+      const response = await requestJson<BackendsResponse>("/api/backends");
+      setBackends(response.backends);
+      setHasLoaded(true);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Failed to load backends");
+      setHasLoaded(true);
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadBackends();
+  }, [loadBackends]);
+
+  async function createBackend(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setIsCreating(true);
+    setError(null);
+    setStatus(null);
+
+    try {
+      await requestJson("/api/backends", {
+        method: "POST",
+        body: JSON.stringify({ name: newName, base_url: newBaseUrl })
+      });
+      setNewName("");
+      setNewBaseUrl("");
+      setStatus("Backend added.");
+      await loadBackends();
+      await onBackendsChanged();
+    } catch (createError) {
+      setError(createError instanceof Error ? createError.message : "Failed to add backend");
+    } finally {
+      setIsCreating(false);
+    }
+  }
+
+  async function updateBackend(
+    backendId: string,
+    body: Partial<Pick<Backend, "name" | "base_url" | "is_enabled">>
+  ) {
+    setBusyBackendId(backendId);
+    setError(null);
+    setStatus(null);
+
+    try {
+      await requestJson(`/api/backends/${backendId}`, {
+        method: "PATCH",
+        body: JSON.stringify(body)
+      });
+      setEditingBackend(null);
+      setStatus("Backend updated.");
+      await loadBackends();
+      await onBackendsChanged();
+    } catch (updateError) {
+      setError(updateError instanceof Error ? updateError.message : "Failed to update backend");
+    } finally {
+      setBusyBackendId(null);
+    }
+  }
+
+  async function deleteBackend(backendId: string) {
+    setBusyBackendId(backendId);
+    setError(null);
+    setStatus(null);
+
+    try {
+      await requestJson(`/api/backends/${backendId}`, { method: "DELETE" });
+      setDeleteTarget(null);
+      setStatus("Backend deleted.");
+      await loadBackends();
+      await onBackendsChanged();
+    } catch (deleteError) {
+      setDeleteTarget(null);
+      setError(deleteError instanceof Error ? deleteError.message : "Failed to delete backend");
+    } finally {
+      setBusyBackendId(null);
+    }
+  }
+
+  async function detectLocalhost() {
+    setIsDetecting(true);
+    setError(null);
+    setStatus(null);
+
+    try {
+      const response = await requestJson<DetectLocalhostResponse>("/api/backends/detect-localhost", {
+        method: "POST"
+      });
+      setStatus(
+        response.detected.length === 0
+          ? "No local Ollama backend found."
+          : `Detected ${response.detected.map((backend) => backend.name).join(", ")}.`
+      );
+      await loadBackends();
+      await onBackendsChanged();
+    } catch (detectError) {
+      setError(detectError instanceof Error ? detectError.message : "Localhost detection failed");
+    } finally {
+      setIsDetecting(false);
+    }
+  }
+
+  async function scanLocalNetwork() {
+    setIsScanning(true);
+    setError(null);
+    setStatus(null);
+
+    try {
+      const response = await requestJson<DetectLocalhostResponse>(
+        "/api/backends/scan-local-network",
+        {
+          method: "POST"
+        }
+      );
+      setStatus(
+        response.detected.length === 0
+          ? "No Ollama backends found on the local network."
+          : `Detected ${response.detected.map((backend) => backend.name).join(", ")}.`
+      );
+      await loadBackends();
+      await onBackendsChanged();
+    } catch (scanError) {
+      setError(scanError instanceof Error ? scanError.message : "Local network scan failed");
+    } finally {
+      setIsScanning(false);
+    }
+  }
+
+  const hasLocalBackend = backends.some((backend) => isLocalBackend(backend.base_url));
+
+  return (
+    <div className="settings-section">
+      <div className="section-header">
+        <div>
+          <p className="eyebrow">Admin</p>
+          <h1>Backends</h1>
+        </div>
+        <div className="header-actions">
+          <button
+            type="button"
+            className="secondary-button refresh-button"
+            onClick={() => void loadBackends()}
+            disabled={isRefreshing}
+          >
+            {isRefreshing ? <RetroLoader /> : <RefreshCw />}
+            <span>{isRefreshing ? "Loading" : "Refresh"}</span>
+          </button>
+          {!hasLocalBackend && (
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => void detectLocalhost()}
+              disabled={isDetecting}
+            >
+              {isDetecting ? <RetroLoader /> : <Search />}
+              <span>{isDetecting ? "Detecting" : "Detect Localhost"}</span>
+            </button>
+          )}
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => void scanLocalNetwork()}
+            disabled={isScanning}
+          >
+            {isScanning ? <RetroLoader /> : <Server />}
+            <span>{isScanning ? "Scanning" : "Scan Network"}</span>
+          </button>
+        </div>
+      </div>
+
+      {error && <p className="error">{error}</p>}
+      {status && <p className="status-message">{status}</p>}
+
+      <form className="settings-form backend-create-form" onSubmit={createBackend}>
+        <label>
+          <span>Name</span>
+          <input
+            required
+            value={newName}
+            onChange={(event) => setNewName(event.target.value)}
+            placeholder="hostname"
+          />
+        </label>
+        <label>
+          <span>Base URL</span>
+          <input
+            required
+            value={newBaseUrl}
+            onChange={(event) => setNewBaseUrl(event.target.value)}
+            placeholder="http://127.0.0.1:11434"
+          />
+        </label>
+        <button type="submit" disabled={isCreating}>
+          <Plus />
+          <span>{isCreating ? "Adding..." : "Add Backend"}</span>
+        </button>
+      </form>
+
+      {!hasLoaded && <p className="status-message">Loading backends...</p>}
+      {hasLoaded && backends.length === 0 && (
+        <p className="status-message">No Ollama backends configured.</p>
+      )}
+
+      <div className="backend-list">
+        {backends.map((backend) =>
+          editingBackend?.id === backend.id ? (
+            <BackendEditRow
+              key={backend.id}
+              backend={editingBackend}
+              isBusy={busyBackendId === backend.id}
+              onCancel={() => setEditingBackend(null)}
+              onSave={updateBackend}
+            />
+          ) : (
+            <BackendRow
+              key={backend.id}
+              backend={backend}
+              isBusy={busyBackendId === backend.id}
+              onDelete={setDeleteTarget}
+              onEdit={setEditingBackend}
+              onToggle={(nextEnabled) =>
+                void updateBackend(backend.id, { is_enabled: nextEnabled })
+              }
+            />
+          )
+        )}
+      </div>
+
+      {deleteTarget && (
+        <ConfirmDialog
+          title="Delete Backend"
+          message={`Delete ${deleteTarget.name}? This cannot be undone.`}
+          confirmLabel="Delete"
+          isBusy={busyBackendId === deleteTarget.id}
+          onCancel={() => setDeleteTarget(null)}
+          onConfirm={() => void deleteBackend(deleteTarget.id)}
+        />
+      )}
+    </div>
+  );
+}
+
+function BackendRow({
+  backend,
+  isBusy,
+  onDelete,
+  onEdit,
+  onToggle
+}: {
+  backend: Backend;
+  isBusy: boolean;
+  onDelete: (backend: Backend) => void;
+  onEdit: (backend: Backend) => void;
+  onToggle: (nextEnabled: boolean) => void;
+}) {
+  return (
+    <article className="backend-row">
+      <div className="backend-main">
+        <div>
+          <h2>{backend.name}</h2>
+          <p>{backend.base_url}</p>
+          {backend.last_error && <p className="backend-error">{backend.last_error}</p>}
+        </div>
+        <div className="badges">
+          <span className={backend.is_enabled ? "badge" : "badge badge-warning"}>
+            {backend.is_enabled ? "enabled" : "disabled"}
+          </span>
+          <span className={backend.last_health_status === "error" ? "badge badge-warning" : "badge"}>
+            {backend.last_health_status ?? "unknown"}
+          </span>
+        </div>
+      </div>
+      <div className="backend-actions">
+        <button
+          type="button"
+          className="secondary-button"
+          disabled={isBusy}
+          onClick={() => onToggle(!backend.is_enabled)}
+        >
+          <Power />
+          <span>{backend.is_enabled ? "Disable" : "Enable"}</span>
+        </button>
+        <button
+          type="button"
+          className="secondary-button"
+          disabled={isBusy}
+          onClick={() => onEdit(backend)}
+        >
+          <Pencil />
+          <span>Edit</span>
+        </button>
+        <button
+          type="button"
+          className="danger-button"
+          disabled={isBusy}
+          onClick={() => onDelete(backend)}
+        >
+          <Trash2 />
+          <span>Delete</span>
+        </button>
+      </div>
+    </article>
+  );
+}
+
+function BackendEditRow({
+  backend,
+  isBusy,
+  onCancel,
+  onSave
+}: {
+  backend: Backend;
+  isBusy: boolean;
+  onCancel: () => void;
+  onSave: (
+    backendId: string,
+    body: Partial<Pick<Backend, "name" | "base_url" | "is_enabled">>
+  ) => Promise<void>;
+}) {
+  const [name, setName] = useState(backend.name);
+  const [baseUrl, setBaseUrl] = useState(backend.base_url);
+  const [isEnabled, setIsEnabled] = useState(backend.is_enabled);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await onSave(backend.id, { name, base_url: baseUrl, is_enabled: isEnabled });
+  }
+
+  return (
+    <article className="backend-row">
+      <form className="backend-edit-form" onSubmit={submit}>
+        <div className="backend-edit-grid">
+          <label>
+            <span>Name</span>
+            <input required value={name} onChange={(event) => setName(event.target.value)} />
+          </label>
+          <label>
+            <span>Base URL</span>
+            <input
+              required
+              value={baseUrl}
+              onChange={(event) => setBaseUrl(event.target.value)}
+            />
+          </label>
+        </div>
+        <label className="checkbox-row">
+          <input
+            type="checkbox"
+            checked={isEnabled}
+            onChange={(event) => setIsEnabled(event.target.checked)}
+          />
+          <span>Enabled</span>
+        </label>
+        <div className="backend-actions">
+          <button type="button" className="secondary-button" disabled={isBusy} onClick={onCancel}>
+            Cancel
+          </button>
+          <button type="submit" disabled={isBusy}>
+            <Save />
+            <span>{isBusy ? "Saving..." : "Save Backend"}</span>
+          </button>
+        </div>
+      </form>
     </article>
   );
 }
