@@ -95,11 +95,16 @@ Important caveat:
 ### 5.1 Authentication and accounts
 
 * local account system
-* first account created is admin by default
+* unauthenticated users can create an account from the login screen
+* if no enabled admin account exists when a user account is created, that new account becomes an enabled admin
+* if an enabled admin already exists, self-created accounts are regular users and start disabled pending admin approval
+* admin can disable public signups
+* admin can set a public-signup limit; once that limit is reached, signups are disabled automatically
+* Vashti must not auto-generate an admin account or password on startup
 * login with username or email plus password
 * secure session cookie auth
 * admin can create users
-* optional invite-only signup flow later
+* optional invite-only signup flow later, but adminless recovery must remain possible
 
 ### 5.2 Chat features
 
@@ -158,7 +163,7 @@ Admin backend management direction:
 * default model
 * request timeout
 * upload size limit
-* signup/admin settings
+* signup/admin settings, including public signup enablement and limit
 
 ### 5.7 Admin basics
 
@@ -378,7 +383,7 @@ Bottom:
 
 * lightweight visual design
 * clean spacing
-* simple color palette
+* black/neon green visual identity anchored by the Vashti logo
 * no unnecessary transitions
 * mobile-friendly
 * feels app-like rather than document-like
@@ -491,11 +496,11 @@ Cons:
 * static asset serving
 * SQLite setup
 * migration system
-* config and first-run bootstrap
+* config and account creation
 
 ### Milestone 2: Auth and sessions
 
-* admin bootstrap flow
+* registration, login, and logout
 * login/logout
 * session handling
 * basic user model
@@ -663,9 +668,9 @@ Proposed high-level route groups:
 * `POST /api/auth/logout`
 * `GET /api/auth/session`
 
-#### Bootstrap/admin
+#### Account/admin
 
-* `POST /api/bootstrap/admin`
+* `POST /api/auth/register`
 * `GET /api/admin/users`
 * `POST /api/admin/users`
 * `PATCH /api/admin/users/:user_id`

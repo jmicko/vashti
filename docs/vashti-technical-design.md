@@ -8,7 +8,7 @@ It defines:
 
 * database tables and relationships
 * API routes and request/response shapes
-* startup/bootstrap flow
+* startup/account creation flow
 * authentication/session behavior
 * standard vs private-local chat behavior
 * frontend screens and their data dependencies
@@ -181,7 +181,9 @@ Purpose:
 Columns:
 
 * `id` INTEGER PRIMARY KEY CHECK (`id` = 1)
-* `allow_signup` INTEGER NOT NULL DEFAULT 0
+* `allow_signup` INTEGER NOT NULL DEFAULT 1
+* `signup_limit` INTEGER NOT NULL DEFAULT 25
+* `signup_count` INTEGER NOT NULL DEFAULT 0
 * `max_upload_bytes` INTEGER NOT NULL DEFAULT 10485760
 * `request_timeout_ms` INTEGER NOT NULL DEFAULT 120000
 * `created_at` INTEGER NOT NULL
@@ -191,6 +193,9 @@ Notes:
 
 * one row only
 * admin edits this through settings UI
+* `allow_signup` and `signup_limit` apply only when an enabled admin already exists
+* adminless account creation remains allowed so a system with no admins can recover
+* `signup_count` tracks successful public self-registrations after an admin exists; when it reaches `signup_limit`, the app sets `allow_signup = 0`
 
 ### 3.2.6 `chats`
 
@@ -323,19 +328,21 @@ Requirements:
 * never log passwords
 * password reset can be postponed or admin-only initially
 
-### 4.3 Bootstrap admin flow
+### 4.3 Account registration and admin recovery
 
-On first startup:
+Unauthenticated users should always see the normal login screen. That screen can include a create-account path, but there is no special first-run screen or `bootstrap_required` state.
 
-* backend checks whether any user exists
-* if no users exist, app is in `bootstrap_required` state
-* frontend routes unauthenticated users to bootstrap screen instead of login
-* first successful account creation becomes admin
+When a user account is created through self-registration:
 
-Once any user exists:
+* backend checks whether any enabled admin user exists
+* if no enabled admin exists, the new account becomes an enabled `admin`
+* if an enabled admin exists, the new account becomes a regular `user` with `is_disabled = 1`
+* if an enabled admin exists, self-registration is rejected when `allow_signup = 0`
+* if an enabled admin exists, each successful self-registration increments `signup_count`; once `signup_count >= signup_limit`, the app automatically sets `allow_signup = 0`
+* disabled self-registered users cannot log in until an admin enables them
+* this rule prevents permanent lockout if the only admin account is deleted or disabled
 
-* bootstrap route is disabled
-* normal login flow applies
+Startup must not create or auto-generate an admin account or password.
 
 ---
 
@@ -393,9 +400,12 @@ Recommended pattern:
 
 ## 6.2 Auth endpoints
 
-### `POST /api/bootstrap/admin`
+### `POST /api/auth/register`
 
-Allowed only when no users exist.
+Creates a user account from the login screen.
+
+If there is no enabled admin user, the created account is an enabled admin and the response sets a session cookie.
+If an enabled admin already exists, the created account is a disabled regular user and the response does not set a session cookie.
 
 Request:
 
@@ -411,16 +421,31 @@ Response:
 
 ```json
 {
+  "requires_approval": false,
   "user": {
     "id": "uuid",
     "username": "john",
     "email": "john@example.com",
-    "role": "admin"
+    "role": "admin",
+    "is_disabled": false
   }
 }
 ```
 
-Also sets session cookie.
+Pending approval response:
+
+```json
+{
+  "requires_approval": true,
+  "user": {
+    "id": "uuid",
+    "username": "jane",
+    "email": "jane@example.com",
+    "role": "user",
+    "is_disabled": true
+  }
+}
+```
 
 ### `POST /api/auth/login`
 
@@ -463,7 +488,7 @@ Response when logged in:
 ```json
 {
   "is_authenticated": true,
-  "bootstrap_required": false,
+  "can_create_account": true,
   "user": {
     "id": "uuid",
     "username": "john",
@@ -473,25 +498,17 @@ Response when logged in:
 }
 ```
 
-Response when not logged in but bootstrap required:
-
-```json
-{
-  "is_authenticated": false,
-  "bootstrap_required": true,
-  "user": null
-}
-```
-
 Response when not logged in:
 
 ```json
 {
   "is_authenticated": false,
-  "bootstrap_required": false,
+  "can_create_account": true,
   "user": null
 }
 ```
+
+`can_create_account` is true when no enabled admin exists, or when an enabled admin exists and public signup is currently enabled and under the configured signup limit. The frontend uses this to show or hide the create-account action on the login screen.
 
 ---
 
@@ -511,6 +528,7 @@ Response:
       "role": "admin",
       "is_disabled": false,
       "created_at": 1710000000,
+      "updated_at": 1710000000,
       "last_login_at": 1710001000
     }
   ]
@@ -538,6 +556,12 @@ Supports:
 * role change
 * optional password reset later
 
+Behavior:
+
+* requires an enabled admin session
+* enabling a pending self-registered user makes that account usable
+* admins cannot disable or demote their own account through this endpoint
+
 Example request:
 
 ```json
@@ -547,6 +571,12 @@ Example request:
 ```
 
 ### `DELETE /api/admin/users/:user_id`
+
+Behavior:
+
+* requires an enabled admin session
+* deletes the user row and cascades related sessions/settings
+* admins cannot delete their own account through this endpoint
 
 Response:
 
@@ -568,7 +598,9 @@ Response:
 
 ```json
 {
-  "allow_signup": false,
+  "allow_signup": true,
+  "signup_limit": 25,
+  "signup_count": 3,
   "max_upload_bytes": 10485760,
   "request_timeout_ms": 120000
 }
@@ -581,6 +613,7 @@ Request:
 ```json
 {
   "allow_signup": false,
+  "signup_limit": 25,
   "max_upload_bytes": 20971520,
   "request_timeout_ms": 180000
 }
@@ -1011,42 +1044,38 @@ Behavior:
 
 ## 7. Frontend Screen Design
 
-## 7.1 Bootstrap screen
+Visual direction:
 
-Shown when:
+* use the Vashti logo as the primary brand asset
+* keep the app theme anchored in black surfaces with neon green accents
+* preserve readability by using the neon treatment for brand, focus, and primary actions rather than every text element
 
-* `GET /api/auth/session` returns `bootstrap_required = true`
-
-Needs:
-
-* username
-* email optional if spec later allows optional email
-* password
-* submit button
-
-Calls:
-
-* `POST /api/bootstrap/admin`
-
-## 7.2 Login screen
+## 7.1 Login and account creation screen
 
 Shown when:
 
 * not authenticated
-* bootstrap not required
 
 Needs:
 
 * identifier field
 * password field
 * login button
+* create-account path with username, optional email, and password fields
 
 Calls:
 
 * `POST /api/auth/login`
+* `POST /api/auth/register`
 * `GET /api/auth/session`
 
-## 7.3 Main app shell
+Behavior:
+
+* login signs in existing enabled users
+* create account signs in the user only when the created account becomes admin
+* regular self-created users see a pending-approval state
+
+## 7.2 Main app shell
 
 Loads after auth.
 
@@ -1064,8 +1093,13 @@ Layout:
 * center chat view
 * header with sidebar toggle, model picker, new chat, overflow menu
 * bottom composer with upload and send
+* desktop keeps chat history visible in the left sidebar
+* mobile collapses chat history into the top-left menu
+* the top-right gear opens the settings/user menu, including logout
+* settings open as a full page in the main content area rather than a modal
+* client routes should preserve major app state across refreshes; settings use `/app/settings/:section`, and chat routes should use a stable chat URL once chats exist
 
-## 7.4 Standard chat view
+## 7.3 Standard chat view
 
 When a standard chat is opened:
 
@@ -1077,7 +1111,7 @@ On send:
 * call `POST /api/chats/:chat_id/generate`
 * append stream tokens into in-progress assistant message
 
-## 7.5 Private-local chat view
+## 7.4 Private-local chat view
 
 State source:
 
@@ -1094,7 +1128,7 @@ On send:
 * append assistant output locally
 * save resulting chat back to IndexedDB
 
-## 7.6 Settings/admin views
+## 7.5 Settings/admin views
 
 Sections:
 
@@ -1102,6 +1136,12 @@ Sections:
 * app settings (admin only)
 * users (admin only)
 * Ollama backends (admin only)
+
+Layout:
+
+* settings are a full app page with section navigation
+* admin user management lives inside settings
+* user lists should separate pending/disabled users from enabled users so approval movement is clear
 
 Backend management view needs:
 
@@ -1222,7 +1262,7 @@ The first real coding slice should aim for this outcome:
 1. Axum server starts
 2. SQLite connects
 3. migrations run
-4. session/bootstrap check works
+4. session/register/login check works
 5. embedded or placeholder frontend shell is served
 6. localhost Ollama detect endpoint works
 7. `GET /api/models` can return grouped model info from configured backends
@@ -1239,7 +1279,7 @@ Preferred sequence:
 
 1. scaffold backend modules and config
 2. add DB and migrations
-3. implement bootstrap/auth/session endpoints
+3. implement register/login/auth/session endpoints
 4. add backend management endpoints
 5. add Ollama client and model listing
 6. scaffold frontend shell
