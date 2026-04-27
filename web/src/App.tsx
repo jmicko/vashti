@@ -1,6 +1,18 @@
-import { FormEvent, ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import {
+  FormEvent,
+  ReactNode,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState
+} from "react";
+import {
+  ChevronLeft,
+  ChevronRight,
   Cog,
+  Copy,
   LogOut,
   Menu,
   MessageSquare,
@@ -12,7 +24,9 @@ import {
   Server,
   Save,
   Search,
+  SendHorizontal,
   Settings as SettingsIcon,
+  Square,
   Trash2,
   UserRound,
   Users,
@@ -89,6 +103,106 @@ type ModelsResponse = {
   backends: BackendModelGroup[];
 };
 
+type ChatSummary = {
+  id: string;
+  title: string;
+  default_backend_id: string;
+  backend_name: string;
+  default_model_name: string;
+  updated_at: number;
+  last_message_at: number;
+  message_count: number;
+};
+
+type ChatDetail = {
+  id: string;
+  title: string;
+  default_backend_id: string;
+  backend_name: string;
+  default_model_name: string;
+  active_root_message_id: string | null;
+  created_at: number;
+  updated_at: number;
+};
+
+type ChatResponse = {
+  chat: ChatDetail;
+};
+
+type ListChatsResponse = {
+  chats: ChatSummary[];
+};
+
+type ChatMessageRevision = {
+  id: string;
+  content_text: string;
+  thinking_text: string;
+  source: string;
+  created_at: number;
+};
+
+type ChatMessage = {
+  id: string;
+  parent_message_id: string | null;
+  active_child_message_id: string | null;
+  active_revision_id: string | null;
+  role: string;
+  status: string;
+  is_deleted: boolean;
+  backend_id: string | null;
+  model_name: string | null;
+  think_mode: string | null;
+  done_reason: string | null;
+  error_text: string | null;
+  started_at: number | null;
+  completed_at: number | null;
+  created_at: number;
+  updated_at: number;
+  active_revision: ChatMessageRevision | null;
+  revision_count: number;
+  attachments: unknown[];
+};
+
+type ListMessagesResponse = {
+  active_root_message_id: string | null;
+  messages: ChatMessage[];
+};
+
+type MessageResponse = {
+  message: ChatMessage;
+};
+
+type GenerateEvent =
+  | {
+      type: "message_start";
+      user_message: ChatMessage | null;
+      assistant_message: ChatMessage;
+    }
+  | {
+      type: "thinking_delta";
+      assistant_message_id: string;
+      delta: string;
+    }
+  | {
+      type: "content_delta";
+      assistant_message_id: string;
+      delta: string;
+    }
+  | {
+      type: "message_done";
+      assistant_message_id: string;
+      done_reason: string | null;
+    }
+  | {
+      type: "message_stopped";
+      assistant_message_id: string;
+    }
+  | {
+      type: "error";
+      assistant_message_id: string | null;
+      message: string;
+    };
+
 type AppSettings = {
   allow_signup: boolean;
   signup_limit: number;
@@ -116,14 +230,28 @@ type ApiError = {
 
 type Page = "chat" | "settings";
 type SettingsSection = "profile" | "users" | "app" | "backends";
-type AppRoute = { page: "chat" } | { page: "settings"; section: SettingsSection };
+type AppRoute = { page: "chat"; chatId?: string } | { page: "settings"; section: SettingsSection };
 type AppSettingsGuard = {
   isDirty: boolean;
   save: () => Promise<boolean>;
   discard: () => void;
 };
+type AutoScrollMode = "top" | "bottom" | "paused";
+type BranchScrollAnchor = {
+  messageId: string;
+  topOffset: number;
+};
+type BranchInfo = {
+  index: number;
+  total: number;
+  canPrevious: boolean;
+  canNext: boolean;
+  onPrevious: () => void;
+  onNext: () => void;
+};
 
 const settingsSections: SettingsSection[] = ["profile", "users", "backends", "app"];
+const rootSiblingGroupKey = "__root__";
 
 function isSettingsSection(value: string | undefined): value is SettingsSection {
   return settingsSections.includes(value as SettingsSection);
@@ -137,12 +265,23 @@ function routeFromLocation(): AppRoute {
     return { page: "settings", section: isSettingsSection(section) ? section : "profile" };
   }
 
+  if (path.startsWith("/app/chats/")) {
+    const chatId = path.split("/")[3];
+    if (chatId) {
+      return { page: "chat", chatId };
+    }
+  }
+
   return { page: "chat" };
 }
 
 function pathForRoute(route: AppRoute) {
   if (route.page === "settings") {
     return `/app/settings/${route.section}`;
+  }
+
+  if (route.chatId) {
+    return `/app/chats/${route.chatId}`;
   }
 
   return "/app";
@@ -154,6 +293,18 @@ function routesEqual(left: AppRoute, right: AppRoute) {
 
 function modelValue(backendId: string, modelName: string) {
   return `${backendId}:${modelName}`;
+}
+
+function modelParts(value: string) {
+  const separator = value.indexOf(":");
+  if (separator < 1) {
+    return null;
+  }
+
+  return {
+    backendId: value.slice(0, separator),
+    modelName: value.slice(separator + 1)
+  };
 }
 
 function isLocalBackend(baseUrl: string) {
@@ -471,11 +622,16 @@ function AppShell({
   const [selectedModel, setSelectedModel] = useState("");
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [modelError, setModelError] = useState<string | null>(null);
+  const [chats, setChats] = useState<ChatSummary[]>([]);
+  const [isLoadingChats, setIsLoadingChats] = useState(false);
+  const [isCreatingChat, setIsCreatingChat] = useState(false);
+  const [queuedPrompt, setQueuedPrompt] = useState<{ chatId: string; prompt: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const isAdmin = user.role === "admin";
   const page = route.page;
   const isSettingsPage = page === "settings";
   const settingsSection = route.page === "settings" ? route.section : "profile";
+  const currentChatId = route.page === "chat" ? route.chatId ?? null : null;
 
   useEffect(() => {
     routeRef.current = route;
@@ -511,6 +667,23 @@ function AppShell({
   useEffect(() => {
     void loadModels();
   }, [loadModels]);
+
+  const loadChats = useCallback(async () => {
+    setIsLoadingChats(true);
+
+    try {
+      const response = await requestJson<ListChatsResponse>("/api/chats");
+      setChats(response.chats);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Failed to load chats");
+    } finally {
+      setIsLoadingChats(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadChats();
+  }, [loadChats]);
 
   useEffect(() => {
     function handlePopState() {
@@ -568,8 +741,8 @@ function AppShell({
     navigate({ page: "settings", section });
   }
 
-  function openChat() {
-    navigate({ page: "chat" });
+  function openChat(chatId?: string) {
+    navigate(chatId ? { page: "chat", chatId } : { page: "chat" });
   }
 
   function activateSettingsControl() {
@@ -624,9 +797,50 @@ function AppShell({
     }
   }
 
+  async function createChatFromPrompt(prompt: string) {
+    const selected = modelParts(selectedModel);
+    if (!selected) {
+      setError("Select a model before starting a chat");
+      return;
+    }
+
+    setIsCreatingChat(true);
+    setError(null);
+
+    try {
+      const title = prompt.trim() || "New Chat";
+      const response = await requestJson<ChatResponse>("/api/chats", {
+        method: "POST",
+        body: JSON.stringify({
+          title: title.slice(0, 80),
+          default_backend_id: selected.backendId,
+          default_model_name: selected.modelName
+        })
+      });
+
+      if (prompt.trim()) {
+        setQueuedPrompt({ chatId: response.chat.id, prompt });
+      }
+
+      await loadChats();
+      openChat(response.chat.id);
+    } catch (createError) {
+      setError(createError instanceof Error ? createError.message : "Failed to create chat");
+    } finally {
+      setIsCreatingChat(false);
+    }
+  }
+
   return (
     <main className={isSidebarOpen ? "app-shell sidebar-open" : "app-shell"}>
-      <Sidebar currentPage={page} onClose={() => setIsSidebarOpen(false)} onOpenChat={openChat} />
+      <Sidebar
+        chats={chats}
+        currentChatId={currentChatId}
+        currentPage={page}
+        isLoading={isLoadingChats}
+        onClose={() => setIsSidebarOpen(false)}
+        onOpenChat={openChat}
+      />
       <button
         type="button"
         className="sidebar-backdrop"
@@ -653,9 +867,14 @@ function AppShell({
             />
           </div>
           <div className="topbar-right">
-            <button type="button" className="primary-action" disabled>
+            <button
+              type="button"
+              className="primary-action"
+              disabled={isCreatingChat || !selectedModel}
+              onClick={() => void createChatFromPrompt("")}
+            >
               <MessageSquarePlus />
-              <span>New Chat</span>
+              <span>{isCreatingChat ? "Creating..." : "New Chat"}</span>
             </button>
             <div className="settings-menu-wrap">
               <button
@@ -707,7 +926,24 @@ function AppShell({
             isAdmin={isAdmin}
           />
         ) : (
-          <ChatHome error={error} />
+          currentChatId ? (
+            <ChatView
+              chatId={currentChatId}
+              error={error}
+              queuedPrompt={queuedPrompt?.chatId === currentChatId ? queuedPrompt.prompt : null}
+              selectedModel={selectedModel}
+              onChatsChanged={loadChats}
+              onModelSelected={setSelectedModel}
+              onQueuedPromptConsumed={() => setQueuedPrompt(null)}
+            />
+          ) : (
+            <ChatHome
+              error={error}
+              isCreating={isCreatingChat}
+              selectedModel={selectedModel}
+              onCreateChat={createChatFromPrompt}
+            />
+          )
         )}
       </section>
       {pendingNavigation && (
@@ -723,13 +959,19 @@ function AppShell({
 }
 
 function Sidebar({
+  chats,
+  currentChatId,
   currentPage,
+  isLoading,
   onClose,
   onOpenChat
 }: {
+  chats: ChatSummary[];
+  currentChatId: string | null;
   currentPage: Page;
+  isLoading: boolean;
   onClose: () => void;
-  onOpenChat: () => void;
+  onOpenChat: (chatId?: string) => void;
 }) {
   return (
     <aside className="sidebar">
@@ -742,27 +984,1254 @@ function Sidebar({
         </div>
         <button
           type="button"
-          className={currentPage === "chat" ? "nav-button nav-button-active" : "nav-button"}
-          onClick={onOpenChat}
+          className={
+            currentPage === "chat" && !currentChatId
+              ? "nav-button nav-button-active"
+              : "nav-button"
+          }
+          onClick={() => onOpenChat()}
         >
           <MessageSquare />
           <span>Chats</span>
         </button>
         <div className="chat-history">
           <p className="eyebrow">Previous Chats</p>
-          <p>No chats yet</p>
+          {isLoading && chats.length === 0 ? (
+            <p>Loading chats...</p>
+          ) : chats.length === 0 ? (
+            <p>No chats yet</p>
+          ) : (
+            <div className="chat-link-list">
+              {chats.map((chat) => (
+                <button
+                  type="button"
+                  key={chat.id}
+                  className={
+                    currentChatId === chat.id ? "chat-link chat-link-active" : "chat-link"
+                  }
+                  onClick={() => onOpenChat(chat.id)}
+                >
+                  <span>{chat.title}</span>
+                  <small>{chat.default_model_name}</small>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </aside>
   );
 }
 
-function ChatHome({ error }: { error: string | null }) {
+function ChatHome({
+  error,
+  isCreating,
+  selectedModel,
+  onCreateChat
+}: {
+  error: string | null;
+  isCreating: boolean;
+  selectedModel: string;
+  onCreateChat: (prompt: string) => Promise<void>;
+}) {
   return (
-    <div className="empty-state">
-      <p>No chat selected</p>
+    <div className="chat-home">
+      <div className="chat-home-inner">
+        <BrandMark compact />
+        <StartChatComposer
+          isBusy={isCreating}
+          isDisabled={!selectedModel}
+          placeholder={selectedModel ? "Message Vashti" : "Select a model to start"}
+          onSubmit={onCreateChat}
+        />
+      </div>
       {error && <p className="error">{error}</p>}
     </div>
+  );
+}
+
+function ChatView({
+  chatId,
+  error,
+  queuedPrompt,
+  selectedModel,
+  onChatsChanged,
+  onModelSelected,
+  onQueuedPromptConsumed
+}: {
+  chatId: string;
+  error: string | null;
+  queuedPrompt: string | null;
+  selectedModel: string;
+  onChatsChanged: () => Promise<void>;
+  onModelSelected: (value: string) => void;
+  onQueuedPromptConsumed: () => void;
+}) {
+  const [chat, setChat] = useState<ChatDetail | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [generationError, setGenerationError] = useState<string | null>(null);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [activeAssistantId, setActiveAssistantId] = useState<string | null>(null);
+  const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
+  const [busyMessageId, setBusyMessageId] = useState<string | null>(null);
+  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ChatMessage | null>(null);
+  const messageListRef = useRef<HTMLElement | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const generationRunRef = useRef(0);
+  const autoScrollModeRef = useRef<AutoScrollMode>("top");
+  const userScrollIntentRef = useRef(false);
+  const userScrollIntentTimeoutRef = useRef<number | null>(null);
+  const scrollToBottomAfterLoadRef = useRef(false);
+  const branchScrollAnchorRef = useRef<BranchScrollAnchor | null>(null);
+  const thinkingStartedAtRef = useRef(new Map<string, number>());
+  const [thinkingDurations, setThinkingDurations] = useState<Record<string, number>>({});
+  const visibleMessages = useMemo(
+    () => activePathMessages(messages, chat?.active_root_message_id ?? null),
+    [chat?.active_root_message_id, messages]
+  );
+  const siblingGroups = useMemo(() => groupMessagesByParent(messages), [messages]);
+
+  const loadChat = useCallback(async () => {
+    scrollToBottomAfterLoadRef.current = true;
+    setIsLoading(true);
+    setLoadError(null);
+
+    try {
+      const [chatResponse, messageResponse] = await Promise.all([
+        requestJson<ChatResponse>(`/api/chats/${chatId}`),
+        requestJson<ListMessagesResponse>(`/api/chats/${chatId}/messages`)
+      ]);
+
+      setChat({
+        ...chatResponse.chat,
+        active_root_message_id: messageResponse.active_root_message_id
+      });
+      thinkingStartedAtRef.current.clear();
+      setThinkingDurations({});
+      setMessages(messageResponse.messages);
+      const latestModel = latestAssistantModelValue(
+        activePathMessages(messageResponse.messages, messageResponse.active_root_message_id)
+      );
+      onModelSelected(
+        latestModel ??
+          modelValue(chatResponse.chat.default_backend_id, chatResponse.chat.default_model_name)
+      );
+    } catch (chatError) {
+      setLoadError(chatError instanceof Error ? chatError.message : "Failed to load chat");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [chatId, onModelSelected]);
+
+  const streamAssistantResponse = useCallback(
+    async (path: string, body: unknown) => {
+      const runId = generationRunRef.current + 1;
+      generationRunRef.current = runId;
+      const controller = new AbortController();
+      abortRef.current = controller;
+      autoScrollModeRef.current = "top";
+      setIsGenerating(true);
+      setGenerationError(null);
+
+      try {
+        const response = await fetch(path, {
+          method: "POST",
+          credentials: "include",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+          signal: controller.signal
+        });
+
+        if (!response.ok) {
+          throw new Error(await responseErrorMessage(response));
+        }
+
+        if (!response.body) {
+          throw new Error("Generation stream was empty");
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) {
+            break;
+          }
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed) {
+              continue;
+            }
+            applyGenerateEvent(JSON.parse(trimmed) as GenerateEvent, runId);
+          }
+        }
+
+        buffer += decoder.decode();
+        const trailing = buffer.trim();
+        if (trailing) {
+          applyGenerateEvent(JSON.parse(trailing) as GenerateEvent, runId);
+        }
+
+        await onChatsChanged();
+      } catch (generateError) {
+        if (generateError instanceof DOMException && generateError.name === "AbortError") {
+          return;
+        }
+
+        setGenerationError(
+          generateError instanceof Error ? generateError.message : "Generation failed"
+        );
+      } finally {
+        if (generationRunRef.current === runId) {
+          setIsGenerating(false);
+          setActiveAssistantId(null);
+          abortRef.current = null;
+        }
+      }
+    },
+    [onChatsChanged]
+  );
+
+  const generate = useCallback(
+    async (prompt: string) => {
+      if (isGenerating) {
+        return;
+      }
+
+      const selected = modelParts(selectedModel);
+      await streamAssistantResponse(`/api/chats/${chatId}/generate`, {
+        user_message: { content_text: prompt },
+        backend_id: selected?.backendId ?? null,
+        model_name: selected?.modelName ?? null,
+        think_mode: null,
+        attachments: []
+      });
+    },
+    [chatId, isGenerating, selectedModel, streamAssistantResponse]
+  );
+
+  useEffect(() => {
+    void loadChat();
+  }, [loadChat]);
+
+  useEffect(() => {
+    const latestModel = latestAssistantModelValue(visibleMessages);
+    if (latestModel) {
+      onModelSelected(latestModel);
+    }
+  }, [onModelSelected, visibleMessages]);
+
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+      if (userScrollIntentTimeoutRef.current) {
+        window.clearTimeout(userScrollIntentTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!queuedPrompt || isLoading || !chat || isGenerating) {
+      return;
+    }
+
+    onQueuedPromptConsumed();
+    void generate(queuedPrompt);
+  }, [chat, generate, isGenerating, isLoading, onQueuedPromptConsumed, queuedPrompt]);
+
+  useEffect(() => {
+    if (!pendingPrompt || isGenerating || isLoading || !chat) {
+      return;
+    }
+
+    const prompt = pendingPrompt;
+    setPendingPrompt(null);
+    void generate(prompt);
+  }, [chat, generate, isGenerating, isLoading, pendingPrompt]);
+
+  useLayoutEffect(() => {
+    if (isLoading) {
+      return;
+    }
+
+    const list = messageListRef.current;
+    if (!list) {
+      return;
+    }
+
+    const messageList = list;
+    const finalMessageId = visibleMessages[visibleMessages.length - 1]?.id ?? null;
+    const finalMessage = finalMessageId
+      ? messageList.querySelector<HTMLElement>(`[data-message-id="${finalMessageId}"]`)
+      : null;
+
+    function updateMessageListBuffer() {
+      if (!finalMessage) {
+        messageList.style.setProperty("--message-list-buffer-height", "0px");
+        return;
+      }
+
+      const styles = window.getComputedStyle(messageList);
+      const topPadding = Number.parseFloat(styles.paddingTop) || 0;
+      const bottomPadding = Number.parseFloat(styles.paddingBottom) || 0;
+      const rowGap = Number.parseFloat(styles.rowGap || styles.gap) || 0;
+      const availableSpace =
+        messageList.clientHeight -
+        finalMessage.getBoundingClientRect().height -
+        topPadding -
+        bottomPadding -
+        rowGap;
+      const bufferHeight = Math.max(0, Math.floor(availableSpace));
+      messageList.style.setProperty("--message-list-buffer-height", `${bufferHeight}px`);
+    }
+
+    updateMessageListBuffer();
+
+    const resizeObserver =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(updateMessageListBuffer);
+    resizeObserver?.observe(messageList);
+    if (finalMessage) {
+      resizeObserver?.observe(finalMessage);
+    }
+    window.addEventListener("resize", updateMessageListBuffer);
+    window.visualViewport?.addEventListener("resize", updateMessageListBuffer);
+
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", updateMessageListBuffer);
+      window.visualViewport?.removeEventListener("resize", updateMessageListBuffer);
+    };
+  }, [chatId, isLoading, visibleMessages]);
+
+  useLayoutEffect(() => {
+    if (isLoading || !scrollToBottomAfterLoadRef.current) {
+      return;
+    }
+
+    const list = messageListRef.current;
+    if (!list) {
+      return;
+    }
+
+    const lastMessage = visibleMessages[visibleMessages.length - 1];
+    const lastMessageElement = lastMessage
+      ? list.querySelector<HTMLElement>(`[data-message-id="${lastMessage.id}"]`)
+      : null;
+    if (lastMessageElement) {
+      lastMessageElement.scrollIntoView({ block: "end" });
+    } else {
+      list.scrollTop = 0;
+    }
+    scrollToBottomAfterLoadRef.current = false;
+  }, [chatId, isLoading, visibleMessages]);
+
+  useLayoutEffect(() => {
+    const anchor = branchScrollAnchorRef.current;
+    if (!anchor || isLoading) {
+      return;
+    }
+
+    const list = messageListRef.current;
+    const messageElement = list?.querySelector<HTMLElement>(
+      `[data-message-id="${anchor.messageId}"]`
+    );
+    if (!list || !messageElement) {
+      branchScrollAnchorRef.current = null;
+      return;
+    }
+
+    const anchorElement =
+      messageElement.querySelector<HTMLElement>(".branch-switcher") ?? messageElement;
+    const nextTopOffset = anchorElement.getBoundingClientRect().top - list.getBoundingClientRect().top;
+    list.scrollTop += nextTopOffset - anchor.topOffset;
+    branchScrollAnchorRef.current = null;
+  }, [isLoading, visibleMessages]);
+
+  useLayoutEffect(() => {
+    if (!isGenerating || !activeAssistantId || autoScrollModeRef.current === "paused") {
+      return;
+    }
+
+    const list = messageListRef.current;
+    const activeMessage = list?.querySelector<HTMLElement>(
+      `[data-message-id="${activeAssistantId}"]`
+    );
+    if (!list || !activeMessage) {
+      return;
+    }
+
+    const listRect = list.getBoundingClientRect();
+    const messageRect = activeMessage.getBoundingClientRect();
+    const topOffset = messageRect.top - listRect.top;
+    const bottomOverflow = messageRect.bottom - listRect.bottom;
+
+    if (autoScrollModeRef.current === "bottom") {
+      activeMessage.scrollIntoView({ block: "end" });
+      return;
+    }
+
+    if (bottomOverflow <= 0 || topOffset <= 8) {
+      return;
+    }
+
+    list.scrollTop += Math.min(bottomOverflow + 16, topOffset - 8);
+  }, [activeAssistantId, isGenerating, visibleMessages]);
+
+  function noteUserScrollIntent() {
+    if (!isGenerating) {
+      return;
+    }
+
+    userScrollIntentRef.current = true;
+    if (userScrollIntentTimeoutRef.current) {
+      window.clearTimeout(userScrollIntentTimeoutRef.current);
+    }
+    userScrollIntentTimeoutRef.current = window.setTimeout(() => {
+      userScrollIntentRef.current = false;
+    }, 240);
+
+    window.requestAnimationFrame(updateAutoScrollModeFromScrollPosition);
+  }
+
+  function handleMessageListScroll() {
+    if (!isGenerating || !userScrollIntentRef.current) {
+      return;
+    }
+
+    updateAutoScrollModeFromScrollPosition();
+  }
+
+  function updateAutoScrollModeFromScrollPosition() {
+    const list = messageListRef.current;
+    if (!list) {
+      return;
+    }
+
+    const activeMessage = activeAssistantId
+      ? list.querySelector<HTMLElement>(`[data-message-id="${activeAssistantId}"]`)
+      : null;
+    if (!activeMessage) {
+      const atBottom = list.scrollHeight - list.scrollTop - list.clientHeight <= 12;
+      autoScrollModeRef.current = atBottom ? "bottom" : "paused";
+      return;
+    }
+
+    const listRect = list.getBoundingClientRect();
+    const messageRect = activeMessage.getBoundingClientRect();
+    const bottomOverflow = messageRect.bottom - listRect.bottom;
+    if (bottomOverflow > 12) {
+      autoScrollModeRef.current = "paused";
+      return;
+    }
+
+    const topOffset = messageRect.top - listRect.top;
+    autoScrollModeRef.current = topOffset <= 8 ? "bottom" : "top";
+  }
+
+  function clearThinkingDuration(messageId: string) {
+    thinkingStartedAtRef.current.delete(messageId);
+    setThinkingDurations((current) => {
+      if (!(messageId in current)) {
+        return current;
+      }
+
+      const next = { ...current };
+      delete next[messageId];
+      return next;
+    });
+  }
+
+  function markThinkingStarted(messageId: string) {
+    if (!thinkingStartedAtRef.current.has(messageId)) {
+      thinkingStartedAtRef.current.set(messageId, Date.now());
+    }
+  }
+
+  function finishThinkingDuration(messageId: string) {
+    const startedAt = thinkingStartedAtRef.current.get(messageId);
+    if (!startedAt) {
+      return;
+    }
+
+    thinkingStartedAtRef.current.delete(messageId);
+    const durationSeconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
+    setThinkingDurations((current) =>
+      current[messageId] ? current : { ...current, [messageId]: durationSeconds }
+    );
+  }
+
+  function applyGenerateEvent(event: GenerateEvent, runId: number) {
+    if (generationRunRef.current !== runId) {
+      return;
+    }
+
+    switch (event.type) {
+      case "message_start":
+        autoScrollModeRef.current = "top";
+        setActiveAssistantId(event.assistant_message.id);
+        clearThinkingDuration(event.assistant_message.id);
+        if (event.user_message && !event.user_message.parent_message_id) {
+          setChat((current) =>
+            current ? { ...current, active_root_message_id: event.user_message?.id ?? null } : current
+          );
+        }
+        setMessages((current) => {
+          const parentUpdates = new Map<string, string>();
+          if (event.user_message?.parent_message_id) {
+            parentUpdates.set(event.user_message.parent_message_id, event.user_message.id);
+          }
+          if (event.assistant_message.parent_message_id) {
+            parentUpdates.set(
+              event.assistant_message.parent_message_id,
+              event.assistant_message.id
+            );
+          }
+
+          const incomingIds = new Set(
+            [event.user_message?.id, event.assistant_message.id].filter(
+              (id): id is string => Boolean(id)
+            )
+          );
+          const now = Math.floor(Date.now() / 1000);
+          const existingMessages = current
+            .filter((message) => !incomingIds.has(message.id))
+            .map((message) => {
+              const activeChildId = parentUpdates.get(message.id);
+              return activeChildId
+                ? { ...message, active_child_message_id: activeChildId, updated_at: now }
+                : message;
+            });
+
+          return [
+            ...existingMessages,
+            ...(event.user_message ? [event.user_message] : []),
+            event.assistant_message
+          ];
+        });
+        break;
+      case "thinking_delta":
+        markThinkingStarted(event.assistant_message_id);
+        appendMessageText(event.assistant_message_id, "thinking_text", event.delta);
+        break;
+      case "content_delta":
+        finishThinkingDuration(event.assistant_message_id);
+        appendMessageText(event.assistant_message_id, "content_text", event.delta);
+        break;
+      case "message_done":
+        finishThinkingDuration(event.assistant_message_id);
+        updateMessageStatus(event.assistant_message_id, "complete", event.done_reason);
+        break;
+      case "message_stopped":
+        finishThinkingDuration(event.assistant_message_id);
+        updateMessageStatus(event.assistant_message_id, "stopped", "stopped");
+        break;
+      case "error":
+        setGenerationError(event.message);
+        if (event.assistant_message_id) {
+          finishThinkingDuration(event.assistant_message_id);
+          updateMessageStatus(event.assistant_message_id, "error", "error");
+        }
+        break;
+    }
+  }
+
+  function appendMessageText(
+    messageId: string,
+    field: "content_text" | "thinking_text",
+    delta: string
+  ) {
+    setMessages((current) =>
+      current.map((message) => {
+        if (message.id !== messageId) {
+          return message;
+        }
+
+        const activeRevision = message.active_revision ?? {
+          id: message.active_revision_id ?? `${message.id}-active`,
+          content_text: "",
+          thinking_text: "",
+          source: "original",
+          created_at: message.created_at
+        };
+
+        return {
+          ...message,
+          status: "streaming",
+          active_revision: {
+            ...activeRevision,
+            [field]: activeRevision[field] + delta
+          }
+        };
+      })
+    );
+  }
+
+  function updateMessageStatus(messageId: string, status: string, doneReason: string | null) {
+    setMessages((current) =>
+      current.map((message) =>
+        message.id === messageId
+          ? { ...message, status, done_reason: doneReason, completed_at: Math.floor(Date.now() / 1000) }
+          : message
+      )
+    );
+  }
+
+  async function stopGeneration() {
+    const assistantId = activeAssistantId;
+    generationRunRef.current += 1;
+    if (!assistantId) {
+      abortRef.current?.abort();
+      setIsGenerating(false);
+      setActiveAssistantId(null);
+      abortRef.current = null;
+      return;
+    }
+
+    try {
+      await requestJson(`/api/chats/${chatId}/messages/${assistantId}/stop`, { method: "POST" });
+      updateMessageStatus(assistantId, "stopped", "stopped");
+    } catch (stopError) {
+      setGenerationError(stopError instanceof Error ? stopError.message : "Failed to stop");
+    } finally {
+      abortRef.current?.abort();
+      setIsGenerating(false);
+      setActiveAssistantId(null);
+    }
+  }
+
+  async function submitPrompt(prompt: string) {
+    if (isGenerating) {
+      setPendingPrompt(prompt);
+      await stopGeneration();
+      return;
+    }
+
+    await generate(prompt);
+  }
+
+  function replaceMessage(nextMessage: ChatMessage) {
+    setMessages((current) =>
+      current.map((message) => (message.id === nextMessage.id ? nextMessage : message))
+    );
+  }
+
+  async function copyMessage(message: ChatMessage) {
+    const content = message.active_revision?.content_text ?? "";
+    if (!content || message.is_deleted) {
+      return;
+    }
+
+    await navigator.clipboard.writeText(content);
+    setCopiedMessageId(message.id);
+    window.setTimeout(() => {
+      setCopiedMessageId((current) => (current === message.id ? null : current));
+    }, 1200);
+  }
+
+  async function editMessage(message: ChatMessage, contentText: string) {
+    setBusyMessageId(message.id);
+    setGenerationError(null);
+
+    try {
+      const response = await requestJson<MessageResponse>(
+        `/api/chats/${chatId}/messages/${message.id}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ content_text: contentText })
+        }
+      );
+      replaceMessage(response.message);
+      await onChatsChanged();
+    } catch (editError) {
+      setGenerationError(editError instanceof Error ? editError.message : "Failed to edit message");
+      throw editError;
+    } finally {
+      setBusyMessageId(null);
+    }
+  }
+
+  async function branchMessage(message: ChatMessage, contentText: string) {
+    if (isGenerating || message.role !== "user") {
+      return;
+    }
+
+    const selected = modelParts(selectedModel);
+    await streamAssistantResponse(`/api/chats/${chatId}/messages/${message.id}/branch`, {
+      content_text: contentText,
+      backend_id: selected?.backendId ?? null,
+      model_name: selected?.modelName ?? null,
+      think_mode: null,
+      attachments: []
+    });
+  }
+
+  async function deleteMessage(message: ChatMessage) {
+    setBusyMessageId(message.id);
+    setGenerationError(null);
+
+    try {
+      const response = await requestJson<MessageResponse>(
+        `/api/chats/${chatId}/messages/${message.id}`,
+        { method: "DELETE" }
+      );
+      replaceMessage(response.message);
+      setDeleteTarget(null);
+      await onChatsChanged();
+    } catch (deleteError) {
+      setGenerationError(
+        deleteError instanceof Error ? deleteError.message : "Failed to delete message"
+      );
+    } finally {
+      setBusyMessageId(null);
+    }
+  }
+
+  async function regenerateMessage(message: ChatMessage) {
+    if (isGenerating || message.role !== "assistant") {
+      return;
+    }
+
+    const selected = modelParts(selectedModel);
+    await streamAssistantResponse(`/api/chats/${chatId}/messages/${message.id}/regenerate`, {
+      backend_id: selected?.backendId ?? message.backend_id,
+      model_name: selected?.modelName ?? message.model_name,
+      think_mode: null,
+      attachments: []
+    });
+  }
+
+  async function selectSibling(message: ChatMessage, siblingId: string) {
+    if (message.id === siblingId || isGenerating) {
+      return;
+    }
+
+    const list = messageListRef.current;
+    const messageElement = list?.querySelector<HTMLElement>(`[data-message-id="${message.id}"]`);
+    const anchorElement =
+      messageElement?.querySelector<HTMLElement>(".branch-switcher") ?? messageElement;
+    if (list && anchorElement) {
+      branchScrollAnchorRef.current = {
+        messageId: siblingId,
+        topOffset: anchorElement.getBoundingClientRect().top - list.getBoundingClientRect().top
+      };
+    }
+
+    setBusyMessageId(message.id);
+    setGenerationError(null);
+
+    try {
+      if (message.parent_message_id) {
+        const response = await requestJson<MessageResponse>(
+          `/api/chats/${chatId}/messages/${message.parent_message_id}/active-child`,
+          {
+            method: "PATCH",
+            body: JSON.stringify({ active_child_message_id: siblingId })
+          }
+        );
+        replaceMessage(response.message);
+      } else {
+        const response = await requestJson<ChatResponse>(`/api/chats/${chatId}/active-root`, {
+          method: "PATCH",
+          body: JSON.stringify({ active_root_message_id: siblingId })
+        });
+        setChat(response.chat);
+      }
+
+      const selectedSibling = messages.find((candidate) => candidate.id === siblingId);
+      if (selectedSibling?.role === "assistant" && selectedSibling.backend_id && selectedSibling.model_name) {
+        onModelSelected(modelValue(selectedSibling.backend_id, selectedSibling.model_name));
+      }
+    } catch (selectError) {
+      setGenerationError(
+        selectError instanceof Error ? selectError.message : "Failed to switch branch"
+      );
+    } finally {
+      setBusyMessageId(null);
+    }
+  }
+
+  function branchInfoFor(message: ChatMessage): BranchInfo | null {
+    const siblings = siblingGroups.get(parentGroupKey(message.parent_message_id)) ?? [];
+    if (siblings.length < 2) {
+      return null;
+    }
+
+    const index = siblings.findIndex((sibling) => sibling.id === message.id);
+    if (index < 0) {
+      return null;
+    }
+
+    const previousSibling = siblings[index - 1] ?? null;
+    const nextSibling = siblings[index + 1] ?? null;
+
+    return {
+      index,
+      total: siblings.length,
+      canPrevious: Boolean(previousSibling),
+      canNext: Boolean(nextSibling),
+      onPrevious: () => {
+        if (previousSibling) {
+          void selectSibling(message, previousSibling.id);
+        }
+      },
+      onNext: () => {
+        if (nextSibling) {
+          void selectSibling(message, nextSibling.id);
+        }
+      }
+    };
+  }
+
+  return (
+    <div className="chat-view">
+      {isLoading ? (
+        <div className="empty-state">
+          <RetroLoader />
+        </div>
+      ) : loadError ? (
+        <div className="empty-state">
+          <p className="error">{loadError}</p>
+        </div>
+      ) : chat ? (
+        <>
+          <header className="chat-titlebar">
+            <div>
+              <h1>{chat.title}</h1>
+              <p>
+                {chat.backend_name} / {chat.default_model_name}
+              </p>
+            </div>
+          </header>
+          <section
+            className={
+              visibleMessages.length > 0 ? "message-list message-list-buffered" : "message-list"
+            }
+            aria-label="Chat messages"
+            ref={messageListRef}
+            onScroll={handleMessageListScroll}
+            onTouchMove={noteUserScrollIntent}
+            onWheel={noteUserScrollIntent}
+          >
+            {visibleMessages.length === 0 ? (
+              <div className="message-list-empty">
+                <p>Ready for messages.</p>
+              </div>
+            ) : (
+              visibleMessages.map((message) => (
+                <MessageBubble
+                  key={message.id}
+                  message={message}
+                  branchInfo={branchInfoFor(message)}
+                  copied={copiedMessageId === message.id}
+                  isBusy={busyMessageId === message.id}
+                  isGenerating={isGenerating}
+                  thinkingDurationSeconds={thinkingDurations[message.id] ?? null}
+                  onCopy={copyMessage}
+                  onDelete={setDeleteTarget}
+                  onBranch={branchMessage}
+                  onEdit={editMessage}
+                  onRegenerate={regenerateMessage}
+                />
+              ))
+            )}
+          </section>
+          <div className="chat-composer-wrap">
+            <StartChatComposer
+              isBusy={isGenerating}
+              isDisabled={!selectedModel}
+              isGenerating={isGenerating}
+              placeholder={selectedModel ? "Message Vashti" : "Select a model to continue"}
+              onStop={stopGeneration}
+              onSubmit={submitPrompt}
+            />
+          </div>
+        </>
+      ) : null}
+      {(error || generationError) && (
+        <p className="error chat-view-error">{generationError ?? error}</p>
+      )}
+      {deleteTarget && (
+        <ConfirmDialog
+          title="Delete Message"
+          message="Delete this message? Its text and thinking content will be scrubbed, but the chat path will remain intact."
+          confirmLabel="Delete"
+          isBusy={busyMessageId === deleteTarget.id}
+          onCancel={() => setDeleteTarget(null)}
+          onConfirm={() => void deleteMessage(deleteTarget)}
+        />
+      )}
+    </div>
+  );
+}
+
+function MessageBubble({
+  message,
+  branchInfo,
+  copied,
+  isBusy,
+  isGenerating,
+  thinkingDurationSeconds,
+  onCopy,
+  onDelete,
+  onBranch,
+  onEdit,
+  onRegenerate
+}: {
+  message: ChatMessage;
+  branchInfo: BranchInfo | null;
+  copied: boolean;
+  isBusy: boolean;
+  isGenerating: boolean;
+  thinkingDurationSeconds: number | null;
+  onCopy: (message: ChatMessage) => Promise<void>;
+  onDelete: (message: ChatMessage) => void;
+  onBranch: (message: ChatMessage, contentText: string) => Promise<void>;
+  onEdit: (message: ChatMessage, contentText: string) => Promise<void>;
+  onRegenerate: (message: ChatMessage) => Promise<void>;
+}) {
+  const content = message.is_deleted
+    ? "Message deleted"
+    : message.active_revision?.content_text.trim() || "";
+  const thinking = message.active_revision?.thinking_text.trim();
+  const [isEditing, setIsEditing] = useState(false);
+  const [draft, setDraft] = useState(content);
+
+  useEffect(() => {
+    if (!isEditing) {
+      setDraft(content);
+    }
+  }, [content, isEditing]);
+
+  async function saveEdit() {
+    await onEdit(message, draft);
+    setIsEditing(false);
+  }
+
+  async function sendEdit() {
+    setIsEditing(false);
+    await onBranch(message, draft);
+  }
+
+  return (
+    <article
+      className={`message-bubble message-bubble-${message.role}`}
+      data-message-id={message.id}
+    >
+      <div className="message-header">
+        <p className="message-role">{messageLabel(message)}</p>
+        {branchInfo && (
+          <BranchSwitcher
+            branchInfo={branchInfo}
+            isBusy={isBusy}
+            isGenerating={isGenerating}
+          />
+        )}
+      </div>
+      {thinking && !message.is_deleted && (
+        <details className="message-thinking">
+          <summary>{thinkingSummary(message, thinkingDurationSeconds)}</summary>
+          <p>{thinking}</p>
+        </details>
+      )}
+      {isEditing ? (
+        <div className="message-edit">
+          <textarea value={draft} onChange={(event) => setDraft(event.target.value)} rows={5} />
+          <div className="message-actions">
+            <button type="button" className="secondary-button" disabled={isBusy} onClick={() => setIsEditing(false)}>
+              <X />
+              <span>Cancel</span>
+            </button>
+            <button type="button" disabled={isBusy || draft.trim() === ""} onClick={() => void saveEdit()}>
+              <Save />
+              <span>{isBusy ? "Saving..." : "Save"}</span>
+            </button>
+            {message.role === "user" && (
+              <button
+                type="button"
+                disabled={isBusy || isGenerating || draft.trim() === ""}
+                onClick={() => void sendEdit()}
+              >
+                <SendHorizontal />
+                <span>Send</span>
+              </button>
+            )}
+          </div>
+        </div>
+      ) : (
+        <p>{content || (message.status === "streaming" ? <RetroLoader /> : "No content")}</p>
+      )}
+      {!isEditing && (
+        <div className="message-actions">
+          {message.role === "assistant" && (
+            <button
+              type="button"
+              className="message-icon-button"
+              title="Regenerate"
+              aria-label="Regenerate"
+              disabled={isBusy || isGenerating || message.status === "streaming"}
+              onClick={() => void onRegenerate(message)}
+            >
+              <RefreshCw />
+            </button>
+          )}
+          <button
+            type="button"
+            className="message-icon-button"
+            title="Copy"
+            aria-label="Copy"
+            disabled={message.is_deleted || content === ""}
+            onClick={() => void onCopy(message)}
+          >
+            <Copy />
+            {copied && <span>Copied</span>}
+          </button>
+          <button
+            type="button"
+            className="message-icon-button"
+            title="Edit"
+            aria-label="Edit"
+            disabled={isBusy || message.is_deleted || message.status === "streaming"}
+            onClick={() => setIsEditing(true)}
+          >
+            <Pencil />
+          </button>
+          <button
+            type="button"
+            className="message-icon-button danger-button"
+            title="Delete"
+            aria-label="Delete"
+            disabled={isBusy || message.status === "streaming"}
+            onClick={() => onDelete(message)}
+          >
+            <Trash2 />
+          </button>
+        </div>
+      )}
+    </article>
+  );
+}
+
+function BranchSwitcher({
+  branchInfo,
+  isBusy,
+  isGenerating
+}: {
+  branchInfo: BranchInfo;
+  isBusy: boolean;
+  isGenerating: boolean;
+}) {
+  const hidePrevious = !branchInfo.canPrevious;
+  const hideNext = !branchInfo.canNext;
+
+  return (
+    <div className="branch-switcher" aria-label="Message branch selector">
+      <button
+        type="button"
+        className={
+          hidePrevious
+            ? "message-icon-button branch-arrow-hidden"
+            : "message-icon-button"
+        }
+        title={hidePrevious ? undefined : "Previous branch"}
+        aria-label="Previous branch"
+        aria-hidden={hidePrevious}
+        tabIndex={hidePrevious ? -1 : undefined}
+        disabled={isBusy || isGenerating || hidePrevious}
+        onClick={branchInfo.onPrevious}
+      >
+        <ChevronLeft />
+      </button>
+      <span className="branch-count">
+        {branchInfo.index + 1}/{branchInfo.total}
+      </span>
+      <button
+        type="button"
+        className={
+          hideNext ? "message-icon-button branch-arrow-hidden" : "message-icon-button"
+        }
+        title={hideNext ? undefined : "Next branch"}
+        aria-label="Next branch"
+        aria-hidden={hideNext}
+        tabIndex={hideNext ? -1 : undefined}
+        disabled={isBusy || isGenerating || hideNext}
+        onClick={branchInfo.onNext}
+      >
+        <ChevronRight />
+      </button>
+    </div>
+  );
+}
+
+function messageLabel(message: ChatMessage) {
+  if (message.role === "assistant") {
+    return message.model_name ?? "assistant";
+  }
+
+  return message.role;
+}
+
+function thinkingSummary(
+  message: ChatMessage,
+  thinkingDurationSeconds: number | null
+): ReactNode {
+  if (message.status === "streaming" && thinkingDurationSeconds === null) {
+    return <ThinkingLoader />;
+  }
+
+  const durationSeconds = thinkingDurationSeconds ?? estimatedThinkingDurationSeconds(message);
+  return `Thought for ${formatThoughtDuration(durationSeconds)}`;
+}
+
+function estimatedThinkingDurationSeconds(message: ChatMessage) {
+  const startedAt = message.started_at ?? message.created_at;
+  const endedAt = message.completed_at ?? message.updated_at;
+  return Math.max(1, endedAt - startedAt);
+}
+
+function formatThoughtDuration(seconds: number) {
+  const rounded = Math.max(1, Math.round(seconds));
+  if (rounded < 60) {
+    return `${rounded}s`;
+  }
+
+  const minutes = Math.floor(rounded / 60);
+  const remainingSeconds = rounded % 60;
+  return remainingSeconds === 0 ? `${minutes}m` : `${minutes}m ${remainingSeconds}s`;
+}
+
+function latestAssistantModelValue(messages: ChatMessage[]) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role === "assistant" && message.backend_id && message.model_name) {
+      return modelValue(message.backend_id, message.model_name);
+    }
+  }
+
+  return null;
+}
+
+function activePathMessages(messages: ChatMessage[], activeRootMessageId: string | null) {
+  const messagesById = new Map(messages.map((message) => [message.id, message]));
+  const rootMessages = messages
+    .filter((message) => !message.parent_message_id)
+    .sort(compareMessagesByCreatedAt);
+  const path: ChatMessage[] = [];
+  const seen = new Set<string>();
+  let currentId: string | null = activeRootMessageId ?? rootMessages[0]?.id ?? null;
+
+  while (currentId && !seen.has(currentId)) {
+    const message = messagesById.get(currentId);
+    if (!message) {
+      break;
+    }
+
+    path.push(message);
+    seen.add(currentId);
+    currentId = message.active_child_message_id;
+  }
+
+  return path;
+}
+
+function groupMessagesByParent(messages: ChatMessage[]) {
+  const groups = new Map<string, ChatMessage[]>();
+
+  for (const message of messages) {
+    const key = parentGroupKey(message.parent_message_id);
+    const siblings = groups.get(key) ?? [];
+    siblings.push(message);
+    groups.set(key, siblings);
+  }
+
+  for (const siblings of groups.values()) {
+    siblings.sort(compareMessagesByCreatedAt);
+  }
+
+  return groups;
+}
+
+function parentGroupKey(parentMessageId: string | null) {
+  return parentMessageId ?? rootSiblingGroupKey;
+}
+
+function compareMessagesByCreatedAt(left: ChatMessage, right: ChatMessage) {
+  return left.created_at - right.created_at || left.id.localeCompare(right.id);
+}
+
+function StartChatComposer({
+  isBusy,
+  isDisabled,
+  isGenerating = false,
+  placeholder,
+  onStop,
+  onSubmit
+}: {
+  isBusy: boolean;
+  isDisabled: boolean;
+  isGenerating?: boolean;
+  placeholder: string;
+  onStop?: () => void;
+  onSubmit: (prompt: string) => Promise<void>;
+}) {
+  const [prompt, setPrompt] = useState("");
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const canSubmit = prompt.trim().length > 0 && !isDisabled && (!isBusy || isGenerating);
+
+  useEffect(() => {
+    textareaRef.current?.focus();
+  }, [isGenerating]);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!canSubmit) {
+      return;
+    }
+
+    const submittedPrompt = prompt;
+    setPrompt("");
+    await onSubmit(submittedPrompt);
+    window.requestAnimationFrame(() => textareaRef.current?.focus());
+  }
+
+  return (
+    <form className="chat-composer" onSubmit={submit}>
+      <textarea
+        ref={textareaRef}
+        rows={3}
+        value={prompt}
+        disabled={isDisabled || (isBusy && !isGenerating)}
+        placeholder={placeholder}
+        onChange={(event) => setPrompt(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && !event.shiftKey) {
+            event.preventDefault();
+            event.currentTarget.form?.requestSubmit();
+          }
+        }}
+      />
+      <div className="composer-actions">
+        {isGenerating && (
+          <button type="button" aria-label="Stop generation" onClick={onStop}>
+            <Square />
+          </button>
+        )}
+        <button type="submit" aria-label="Send message" disabled={!canSubmit}>
+          {isBusy && !isGenerating ? <RetroLoader /> : <SendHorizontal />}
+        </button>
+      </div>
+    </form>
   );
 }
 
@@ -1792,6 +3261,21 @@ function RetroLoader() {
   return <span className="retro-loader">{frames[frame]}</span>;
 }
 
+function ThinkingLoader() {
+  const frames = ["Thinking", "Thinking.", "Thinking..", "Thinking..."];
+  const [frame, setFrame] = useState(0);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      setFrame((current) => (current + 1) % frames.length);
+    }, 140);
+
+    return () => window.clearInterval(interval);
+  }, [frames.length]);
+
+  return <span className="thinking-loader">{frames[frame]}</span>;
+}
+
 function ConfirmDialog({
   title,
   message,
@@ -1923,4 +3407,15 @@ async function requestJson<T = unknown>(path: string, options: RequestInit = {})
   }
 
   return response.json() as Promise<T>;
+}
+
+async function responseErrorMessage(response: Response) {
+  let message = `Request failed with ${response.status}`;
+  try {
+    const payload = (await response.json()) as ApiError;
+    message = payload.error?.message ?? message;
+  } catch {
+    // Keep the status-derived message when the body is not JSON.
+  }
+  return message;
 }

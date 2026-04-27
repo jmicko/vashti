@@ -1,9 +1,49 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug)]
 pub struct OllamaModel {
     pub name: String,
     pub supports_images: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct OllamaChatMessage {
+    pub role: String,
+    pub content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct OllamaChatRequest {
+    pub model: String,
+    pub messages: Vec<OllamaChatMessage>,
+    pub stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub think: Option<OllamaThink>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+pub enum OllamaThink {
+    Bool(bool),
+    Level(String),
+}
+
+#[derive(Debug, Deserialize)]
+pub struct OllamaChatChunk {
+    pub message: Option<OllamaChatChunkMessage>,
+    #[serde(default)]
+    pub done: bool,
+    pub done_reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct OllamaChatChunkMessage {
+    #[serde(default)]
+    pub content: String,
+    #[serde(default)]
+    pub thinking: String,
 }
 
 #[derive(Debug, Deserialize)]

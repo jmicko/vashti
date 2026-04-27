@@ -202,16 +202,18 @@ Notes:
 Purpose:
 
 * server-backed standard chats only
+* owns chat-level defaults and the active root message
 
 Columns:
 
 * `id` TEXT PRIMARY KEY
 * `user_id` TEXT NOT NULL REFERENCES `users`(`id`) ON DELETE CASCADE
-* `backend_id` TEXT NOT NULL REFERENCES `ollama_backends`(`id`) ON DELETE RESTRICT
-* `model_name` TEXT NOT NULL
+* `default_backend_id` TEXT NOT NULL REFERENCES `ollama_backends`(`id`) ON DELETE RESTRICT
+* `default_model_name` TEXT NOT NULL
 * `title` TEXT NOT NULL
 * `chat_mode` TEXT NOT NULL DEFAULT 'standard'
   Allowed values for MVP table usage: `standard`
+* `active_root_message_id` TEXT
 * `created_at` INTEGER NOT NULL
 * `updated_at` INTEGER NOT NULL
 * `last_message_at` INTEGER NOT NULL
@@ -221,45 +223,91 @@ Notes:
 
 * private-local chats are not stored here in MVP
 * `title` can be user-set or auto-generated later
+* `active_root_message_id` points at the selected first message in the current visible branch
+* this FK may be enforced after `chat_messages` exists, or left application-enforced to avoid circular migration friction
 
-### 3.2.7 `messages`
+### 3.2.7 `chat_messages`
 
 Purpose:
 
-* server-backed messages for standard chats
+* logical message nodes in a branchable message tree
+* stores tree position, current active revision, deletion state, and generation metadata
 
 Columns:
 
 * `id` TEXT PRIMARY KEY
 * `chat_id` TEXT NOT NULL REFERENCES `chats`(`id`) ON DELETE CASCADE
+* `parent_message_id` TEXT REFERENCES `chat_messages`(`id`) ON DELETE SET NULL
+* `active_child_message_id` TEXT REFERENCES `chat_messages`(`id`) ON DELETE SET NULL
+* `active_revision_id` TEXT
 * `role` TEXT NOT NULL
   Allowed values: `system`, `user`, `assistant`
-* `content_text` TEXT NOT NULL DEFAULT ''
 * `status` TEXT NOT NULL DEFAULT 'complete'
-  Allowed values: `complete`, `streaming`, `error`
+  Allowed values: `complete`, `streaming`, `stopped`, `error`
+* `is_deleted` INTEGER NOT NULL DEFAULT 0
+* `backend_id` TEXT REFERENCES `ollama_backends`(`id`) ON DELETE SET NULL
+* `model_name` TEXT
+* `think_mode` TEXT
+  Examples: `off`, `on`, `low`, `medium`, `high`
+* `done_reason` TEXT
+* `error_text` TEXT
+* `started_at` INTEGER
+* `completed_at` INTEGER
 * `created_at` INTEGER NOT NULL
 * `updated_at` INTEGER NOT NULL
-* `sequence_num` INTEGER NOT NULL
-* `error_text` TEXT
 
 Notes:
 
-* MVP stores plain text content for standard chats
-* if richer message parts are added later, this table can be extended or split
-* `sequence_num` helps with stable ordering independent of timestamps
+* this is a single-parent tree, not a multi-parent graph
+* branches are represented as sibling messages sharing the same `parent_message_id`
+* active branch traversal starts at `chats.active_root_message_id`, then follows each node's `active_child_message_id`
+* `active_revision_id` points to the visible text/thinking revision for the logical message
+* user message edit + save creates a new revision on the same logical message
+* user message edit + send creates a sibling message under the same parent, then generates a new assistant child
+* assistant regenerate creates a sibling assistant message under the same parent
+* deleted messages stay in the tree with `is_deleted = 1`; prompt construction skips deleted messages
+* when a message is deleted, revision content should be scrubbed so deleted text is not retained
+* generation metadata applies primarily to assistant messages, but nullable columns keep the table simple
 
-### 3.2.8 `attachments`
+### 3.2.8 `chat_message_revisions`
+
+Purpose:
+
+* immutable text snapshots for edits and regenerations
+* stores assistant thinking separately from final visible content
+
+Columns:
+
+* `id` TEXT PRIMARY KEY
+* `message_id` TEXT NOT NULL REFERENCES `chat_messages`(`id`) ON DELETE CASCADE
+* `content_text` TEXT NOT NULL DEFAULT ''
+* `thinking_text` TEXT NOT NULL DEFAULT ''
+* `source` TEXT NOT NULL
+  Allowed values: `original`, `edit`, `regeneration`
+* `created_at` INTEGER NOT NULL
+
+Notes:
+
+* copy-to-clipboard uses `content_text` only, not `thinking_text`
+* Ollama thinking-capable models may stream thinking separately from final content
+* saving an edit appends a revision and updates `chat_messages.active_revision_id`
+* revisions make prior edits available without duplicating child subtrees
+* deleting a message should blank `content_text` and `thinking_text` for its revisions
+
+### 3.2.9 `attachments`
 
 Purpose:
 
 * server-backed uploaded files for standard chats
+* attach files/images to message revisions for prompt-authoritative attachment state
 
 Columns:
 
 * `id` TEXT PRIMARY KEY
 * `user_id` TEXT NOT NULL REFERENCES `users`(`id`) ON DELETE CASCADE
 * `chat_id` TEXT REFERENCES `chats`(`id`) ON DELETE CASCADE
-* `message_id` TEXT REFERENCES `messages`(`id`) ON DELETE SET NULL
+* `message_id` TEXT REFERENCES `chat_messages`(`id`) ON DELETE SET NULL
+* `revision_id` TEXT REFERENCES `chat_message_revisions`(`id`) ON DELETE CASCADE
 * `storage_key` TEXT NOT NULL UNIQUE
 * `original_filename` TEXT NOT NULL
 * `mime_type` TEXT
@@ -272,8 +320,13 @@ Notes:
 
 * standard-chat attachments only in server DB
 * private-local attachments are not persisted server-side in MVP
+* attachments are intentionally deferred from the first text-chat slice
+* `revision_id` is the authoritative link for prompt content
+* `message_id` is retained for ownership checks, listing, and cleanup convenience
+* edit + save can replace text and attachments together by creating a new revision with its own attachment set
+* deleting a message should delete or detach attachment records for all of its revisions according to the later file-deletion policy
 
-### 3.2.9 `schema_migrations`
+### 3.2.10 `schema_migrations`
 
 If `sqlx` migration tracking is used directly, this table may be tool-managed instead of hand-managed.
 
@@ -291,9 +344,13 @@ Recommended indexes:
 * `sessions(expires_at)`
 * `ollama_backends(is_enabled)`
 * `chats(user_id, updated_at DESC)`
-* `messages(chat_id, sequence_num)` unique or indexed
+* `chat_messages(chat_id, created_at)`
+* `chat_messages(chat_id, parent_message_id)`
+* `chat_messages(active_revision_id)`
+* `chat_message_revisions(message_id, created_at)`
 * `attachments(chat_id)`
 * `attachments(message_id)`
+* `attachments(revision_id)`
 
 ---
 
@@ -786,9 +843,9 @@ Response:
     {
       "id": "c1",
       "title": "Roofing questions",
-      "backend_id": "b1",
+      "default_backend_id": "b1",
       "backend_name": "rtx-3060",
-      "model_name": "gpt-oss:20b",
+      "default_model_name": "gpt-oss:20b",
       "updated_at": 1710000000,
       "last_message_at": 1710000000,
       "message_count": 18
@@ -806,8 +863,8 @@ Request:
 ```json
 {
   "title": "New chat",
-  "backend_id": "b1",
-  "model_name": "gemma4"
+  "default_backend_id": "b1",
+  "default_model_name": "gemma4"
 }
 ```
 
@@ -818,8 +875,9 @@ Response:
   "chat": {
     "id": "c1",
     "title": "New chat",
-    "backend_id": "b1",
-    "model_name": "gemma4",
+    "default_backend_id": "b1",
+    "default_model_name": "gemma4",
+    "active_root_message_id": null,
     "created_at": 1710000000,
     "updated_at": 1710000000
   }
@@ -837,9 +895,10 @@ Response:
   "chat": {
     "id": "c1",
     "title": "Roofing questions",
-    "backend_id": "b1",
+    "default_backend_id": "b1",
     "backend_name": "rtx-3060",
-    "model_name": "gpt-oss:20b",
+    "default_model_name": "gpt-oss:20b",
+    "active_root_message_id": "m1",
     "created_at": 1710000000,
     "updated_at": 1710000500
   }
@@ -855,8 +914,8 @@ Request example:
 ```json
 {
   "title": "Better title",
-  "backend_id": "b2",
-  "model_name": "qwen3.5"
+  "default_backend_id": "b2",
+  "default_model_name": "qwen3.5"
 }
 ```
 
@@ -878,23 +937,51 @@ Response:
 
 ```json
 {
+  "active_root_message_id": "m1",
   "messages": [
     {
       "id": "m1",
+      "parent_message_id": null,
+      "active_child_message_id": "m2",
+      "active_revision_id": "r1",
       "role": "user",
-      "content_text": "How do I patch drywall?",
       "status": "complete",
-      "sequence_num": 1,
+      "is_deleted": false,
       "created_at": 1710000000,
+      "updated_at": 1710000000,
+      "active_revision": {
+        "id": "r1",
+        "content_text": "How do I patch drywall?",
+        "thinking_text": "",
+        "source": "original",
+        "created_at": 1710000000
+      },
+      "revision_count": 1,
       "attachments": []
     },
     {
       "id": "m2",
+      "parent_message_id": "m1",
+      "active_child_message_id": null,
+      "active_revision_id": "r2",
       "role": "assistant",
-      "content_text": "Start by...",
       "status": "complete",
-      "sequence_num": 2,
+      "is_deleted": false,
+      "backend_id": "b1",
+      "model_name": "gpt-oss:20b",
+      "think_mode": "medium",
+      "done_reason": "stop",
       "created_at": 1710000001,
+      "updated_at": 1710000018,
+      "completed_at": 1710000018,
+      "active_revision": {
+        "id": "r2",
+        "content_text": "Start by...",
+        "thinking_text": "I need to answer with steps...",
+        "source": "original",
+        "created_at": 1710000001
+      },
+      "revision_count": 1,
       "attachments": []
     }
   ]
@@ -909,6 +996,89 @@ Preferred MVP simplification:
 
 * create user message and start generation through one endpoint instead of splitting them unnecessarily
 
+### `PATCH /api/chats/:chat_id/messages/:message_id`
+
+Edits a message in place by appending a new revision and updating `active_revision_id`.
+
+Request:
+
+```json
+{
+  "content_text": "Updated message text"
+}
+```
+
+Response returns the updated message shape.
+
+### `POST /api/chats/:chat_id/messages/:message_id/branch`
+
+Creates a sibling branch from an edited user message and starts a new assistant generation.
+
+Request:
+
+```json
+{
+  "content_text": "Alternative user message",
+  "backend_id": "b1",
+  "model_name": "gemma4",
+  "think_mode": "medium"
+}
+```
+
+### `POST /api/chats/:chat_id/messages/:message_id/regenerate`
+
+Creates a sibling assistant message under the same parent and starts generation from the active prompt path.
+
+Request:
+
+```json
+{
+  "backend_id": "b1",
+  "model_name": "gemma4",
+  "think_mode": "medium"
+}
+```
+
+### `PATCH /api/chats/:chat_id/active-root`
+
+Sets the selected root message for branch navigation when the first user message has sibling branches.
+
+Request:
+
+```json
+{
+  "active_root_message_id": "m1b"
+}
+```
+
+### `PATCH /api/chats/:chat_id/messages/:message_id/active-child`
+
+Sets the selected child for branch navigation.
+
+Request:
+
+```json
+{
+  "active_child_message_id": "m3"
+}
+```
+
+### `PATCH /api/chats/:chat_id/messages/:message_id/active-revision`
+
+Sets the selected revision for edit navigation.
+
+Request:
+
+```json
+{
+  "active_revision_id": "r4"
+}
+```
+
+### `DELETE /api/chats/:chat_id/messages/:message_id`
+
+Soft-deletes a message, scrubs revision text, leaves the tree node in place, and skips the message during prompt construction.
+
 ---
 
 ## 6.7 Standard generation endpoint
@@ -921,7 +1091,8 @@ Purpose:
 * create placeholder assistant message
 * call Ollama backend
 * stream assistant output back to client
-* persist final assistant text when complete
+* persist assistant thinking and final content when complete
+* create branchable message nodes and revisions
 
 Request:
 
@@ -930,38 +1101,51 @@ Request:
   "user_message": {
     "content_text": "What kind of paint works on galvanized steel?"
   },
+  "backend_id": "b1",
+  "model_name": "gemma4",
+  "think_mode": "medium",
   "attachments": []
 }
 ```
 
 Streaming response direction:
 
-* use newline-delimited JSON or SSE-style events
+* use authenticated chunked HTTP with newline-delimited JSON
+* do not use WebSockets
+* prefer NDJSON over SSE for this app because generation is started by authenticated `POST`, browser `fetch` handles streamed response bodies cleanly, and the framing closely matches Ollama's native streaming API
 * keep format simple and documented
 
 Suggested event stream:
 
-```text
-event: message_start
-data: {"assistant_message_id":"m2"}
-
-event: token
-data: {"delta":"Use a ..."}
-
-event: token
-data: {"delta":"primer first"}
-
-event: message_done
-data: {"assistant_message_id":"m2"}
+```jsonl
+{"type":"message_start","user_message":{"id":"m1"},"assistant_message":{"id":"m2"}}
+{"type":"thinking_delta","assistant_message_id":"m2","delta":"We need to explain primer..."}
+{"type":"content_delta","assistant_message_id":"m2","delta":"Use a ..."}
+{"type":"content_delta","assistant_message_id":"m2","delta":"primer first"}
+{"type":"message_done","assistant_message_id":"m2","done_reason":"stop"}
 ```
 
 On backend side:
 
 * persist user message before generation begins
 * persist assistant placeholder with `status=streaming`
-* update assistant content as stream proceeds or write final content at end
+* update assistant revision thinking/content as stream proceeds or write final text at end
 * mark assistant message `complete` on success
+* mark assistant message `stopped` if the user stops generation
 * mark `error` on failure
+* prompt construction walks the active path and excludes deleted messages
+
+### `POST /api/chats/:chat_id/messages/:message_id/stop`
+
+Stops an in-flight assistant generation.
+
+Behavior:
+
+* no WebSocket is required
+* backend keeps an in-memory cancellation handle per active assistant message
+* stop marks the current assistant message `stopped`
+* already-streamed thinking/content remains persisted
+* the stopped assistant message is treated as a completed node for future branch navigation
 
 ---
 
@@ -971,12 +1155,21 @@ On backend side:
 
 Multipart upload.
 
+Request metadata:
+
+* `message_id`
+* `revision_id`
+
+`revision_id` determines which version of a message includes the attachment in prompts.
+
 Response:
 
 ```json
 {
   "attachment": {
     "id": "a1",
+    "message_id": "m1",
+    "revision_id": "r1",
     "original_filename": "photo.jpg",
     "mime_type": "image/jpeg",
     "size_bytes": 12345,
@@ -1186,12 +1379,24 @@ Suggested private message shape:
 {
   "id": "client-msg-uuid",
   "chat_id": "client-uuid",
+  "parent_message_id": null,
+  "active_child_message_id": null,
+  "active_revision_id": "client-revision-uuid",
   "role": "user",
-  "content_text": "hello",
-  "created_at": 1710000000,
-  "sequence_num": 1
+  "status": "complete",
+  "is_deleted": false,
+  "active_revision": {
+    "id": "client-revision-uuid",
+    "content_text": "hello",
+    "thinking_text": "",
+    "source": "original",
+    "created_at": 1710000000
+  },
+  "created_at": 1710000000
 }
 ```
+
+Private-local storage should mirror the standard message tree shape where practical, while remaining client-owned and IndexedDB-backed.
 
 ---
 

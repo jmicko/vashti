@@ -1,6 +1,8 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use sqlx::SqlitePool;
+use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 
 use crate::config::Config;
 
@@ -9,6 +11,7 @@ pub struct AppState {
     pub config: Arc<Config>,
     pub db: SqlitePool,
     pub http_client: reqwest::Client,
+    pub generation_cancellations: Arc<Mutex<HashMap<String, CancellationToken>>>,
 }
 
 impl AppState {
@@ -17,6 +20,7 @@ impl AppState {
             config: Arc::new(config),
             db,
             http_client,
+            generation_cancellations: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }

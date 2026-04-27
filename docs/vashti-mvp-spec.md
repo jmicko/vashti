@@ -508,10 +508,15 @@ Cons:
 ### Milestone 3: Standard chats
 
 * chat CRUD
-* message persistence
+* branchable message tree
+* message revisions for edits/regenerations
+* thinking/content separation for assistant messages
+* soft delete that scrubs message text but preserves tree continuity
 * Ollama integration
 * streaming responses
+* stop generation
 * model selection
+* no upload UI or attachment persistence yet; keep the data model compatible with later revision-level attachments
 
 ### Milestone 4: Frontend shell
 

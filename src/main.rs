@@ -44,7 +44,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     startup::bootstrap::ensure_app_settings(&db).await?;
 
     let http_client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(15))
+        .connect_timeout(Duration::from_secs(10))
         .build()?;
 
     startup::bootstrap::detect_localhost_ollama_if_empty(&db, &http_client).await?;
@@ -96,6 +96,48 @@ fn router(state: AppState) -> Router {
             patch(backends::handlers::update_backend).delete(backends::handlers::delete_backend),
         )
         .route("/models", get(backends::handlers::list_models))
+        .route(
+            "/chats",
+            get(chats::handlers::list_chats).post(chats::handlers::create_chat),
+        )
+        .route(
+            "/chats/{chat_id}",
+            get(chats::handlers::get_chat)
+                .patch(chats::handlers::update_chat)
+                .delete(chats::handlers::delete_chat),
+        )
+        .route(
+            "/chats/{chat_id}/active-root",
+            patch(chats::handlers::set_active_root),
+        )
+        .route(
+            "/chats/{chat_id}/messages",
+            get(chats::handlers::list_messages).post(chats::handlers::create_message),
+        )
+        .route(
+            "/chats/{chat_id}/messages/{message_id}/active-child",
+            patch(chats::handlers::set_active_child),
+        )
+        .route(
+            "/chats/{chat_id}/messages/{message_id}",
+            patch(chats::handlers::edit_message).delete(chats::handlers::delete_message),
+        )
+        .route(
+            "/chats/{chat_id}/messages/{message_id}/branch",
+            post(chats::handlers::branch_message),
+        )
+        .route(
+            "/chats/{chat_id}/messages/{message_id}/regenerate",
+            post(chats::handlers::regenerate_message),
+        )
+        .route(
+            "/chats/{chat_id}/generate",
+            post(chats::handlers::generate_chat),
+        )
+        .route(
+            "/chats/{chat_id}/messages/{message_id}/stop",
+            post(chats::handlers::stop_generation),
+        )
         .fallback(api_not_found);
 
     Router::new()
