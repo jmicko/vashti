@@ -856,7 +856,7 @@ Response:
 
 ### `POST /api/chats`
 
-Creates a standard chat.
+Creates a standard chat. New chats may use `New Chat` as a placeholder title until the first assistant response completes.
 
 Request:
 
@@ -907,7 +907,7 @@ Response:
 
 ### `PATCH /api/chats/:chat_id`
 
-Supports rename and model/backend changes.
+Supports rename and model/backend changes. Chat rename is exposed from each chat row's sidebar overflow menu.
 
 Request example:
 
@@ -921,6 +921,8 @@ Request example:
 
 ### `DELETE /api/chats/:chat_id`
 
+Deletes a chat after UI confirmation.
+
 Response:
 
 ```json
@@ -928,6 +930,18 @@ Response:
   "ok": true
 }
 ```
+
+### Auto-generated chat titles
+
+After the first user message and assistant response complete for a chat still titled `New Chat`, the backend asks the same Ollama model for a concise title.
+
+Rules:
+
+* use the first user message and first assistant response as title context
+* instruct the model to return only a short title, ideally 2 to 5 words
+* validate the returned title before saving it
+* if validation or generation fails, fall back to the first few words of the user's first message
+* emit a stream event so the frontend can update the title without a page refresh
 
 ### `GET /api/chats/:chat_id/messages`
 

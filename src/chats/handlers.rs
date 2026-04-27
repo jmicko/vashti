@@ -22,7 +22,7 @@ use crate::{
     error::ApiError,
     ollama::{
         self,
-        models::{OllamaChatChunk, OllamaChatRequest, OllamaThink},
+        models::{OllamaChatChunk, OllamaChatMessage, OllamaChatRequest, OllamaThink},
     },
 };
 
@@ -88,6 +88,11 @@ pub struct SetActiveRootRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct SetActiveRevisionRequest {
+    pub active_revision_id: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct GenerateChatRequest {
     pub user_message: GenerateUserMessageRequest,
     pub backend_id: Option<String>,
@@ -144,6 +149,10 @@ enum GenerateEvent {
     MessageDone {
         assistant_message_id: String,
         done_reason: Option<String>,
+    },
+    ChatTitle {
+        chat_id: String,
+        title: String,
     },
     MessageStopped {
         assistant_message_id: String,
@@ -283,6 +292,21 @@ pub async fn set_active_child(
     Ok(Json(MessageResponse { message }))
 }
 
+pub async fn set_active_revision(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Path((chat_id, message_id)): Path<(String, String)>,
+    Json(payload): Json<SetActiveRevisionRequest>,
+) -> Result<Json<MessageResponse>, ApiError> {
+    let user =
+        auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
+    let message =
+        service::select_active_revision(&state.db, &user.id, &chat_id, &message_id, payload)
+            .await?;
+
+    Ok(Json(MessageResponse { message }))
+}
+
 pub async fn set_active_root(
     State(state): State<AppState>,
     jar: CookieJar,
@@ -387,6 +411,9 @@ async fn stream_generation(
     cancellation: tokio_util::sync::CancellationToken,
 ) {
     let assistant_message_id = prepared.assistant_message.id.clone();
+    let title_backend_base_url = prepared.backend_base_url.clone();
+    let title_model_name = prepared.model_name.clone();
+    let title_prompt_messages = prepared.prompt_messages.clone();
     let mut content_text = String::new();
     let mut thinking_text = String::new();
     let mut done_reason = None;
@@ -576,11 +603,26 @@ async fn stream_generation(
     let _ = send_event(
         &tx,
         &GenerateEvent::MessageDone {
-            assistant_message_id,
+            assistant_message_id: assistant_message_id.clone(),
             done_reason,
         },
     )
     .await;
+
+    if let Some(title) = maybe_generate_chat_title(
+        &db,
+        &client,
+        &user_id,
+        &chat_id,
+        &title_backend_base_url,
+        &title_model_name,
+        &title_prompt_messages,
+        &content_text,
+    )
+    .await
+    {
+        let _ = send_event(&tx, &GenerateEvent::ChatTitle { chat_id, title }).await;
+    }
 }
 
 async fn start_generation_stream(
@@ -620,6 +662,148 @@ async fn start_generation_stream(
     headers.insert("x-accel-buffering", HeaderValue::from_static("no"));
 
     response
+}
+
+async fn maybe_generate_chat_title(
+    db: &sqlx::SqlitePool,
+    client: &reqwest::Client,
+    user_id: &str,
+    chat_id: &str,
+    backend_base_url: &str,
+    model_name: &str,
+    prompt_messages: &[OllamaChatMessage],
+    assistant_text: &str,
+) -> Option<String> {
+    let chat = service::get_chat(db, user_id, chat_id).await.ok()?;
+    if chat.title != "New Chat" || prompt_messages.len() != 1 {
+        return None;
+    }
+
+    let user_message = prompt_messages.first()?;
+    if user_message.role != "user" || user_message.content.trim().is_empty() {
+        return None;
+    }
+
+    let fallback = fallback_title_from_prompt(&user_message.content);
+    let generated_title = request_generated_title(
+        client,
+        backend_base_url,
+        model_name,
+        &user_message.content,
+        assistant_text,
+    )
+    .await
+    .and_then(|title| validated_title(&title))
+    .unwrap_or(fallback);
+
+    let updated = service::update_chat(
+        db,
+        user_id,
+        chat_id,
+        UpdateChatRequest {
+            title: Some(generated_title),
+            default_backend_id: None,
+            default_model_name: None,
+        },
+    )
+    .await
+    .ok()?;
+
+    Some(updated.title)
+}
+
+async fn request_generated_title(
+    client: &reqwest::Client,
+    backend_base_url: &str,
+    model_name: &str,
+    user_message: &str,
+    assistant_message: &str,
+) -> Option<String> {
+    let transcript = format!(
+        "User message:\n{}\n\nAssistant response:\n{}",
+        user_message.trim(),
+        assistant_message.trim()
+    );
+    let request = OllamaChatRequest {
+        model: model_name.to_string(),
+        stream: false,
+        think: Some(OllamaThink::Bool(false)),
+        messages: vec![
+            OllamaChatMessage {
+                role: "system".to_string(),
+                content: "Create a concise chat title. Return only the title, no preface, no quotes, no explanation. Use 2 to 5 words when possible. Emojis are allowed if useful.".to_string(),
+                thinking: None,
+            },
+            OllamaChatMessage {
+                role: "user".to_string(),
+                content: transcript,
+                thinking: None,
+            },
+        ],
+    };
+
+    let response = ollama::client::chat_once(client, backend_base_url, &request)
+        .await
+        .ok()?;
+    response.message.map(|message| message.content)
+}
+
+fn validated_title(raw_title: &str) -> Option<String> {
+    let mut title = raw_title
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .unwrap_or(raw_title)
+        .trim()
+        .trim_matches(['"', '\'', '`', '*', '#', ' '])
+        .to_string();
+
+    if let Some((_, after_colon)) = title.rsplit_once(':') {
+        title = after_colon.trim().to_string();
+    }
+
+    if let Some((before_sentence, _)) = title.split_once(['.', '?']) {
+        title = before_sentence.trim().to_string();
+    }
+
+    title = title
+        .trim()
+        .trim_matches(['"', '\'', '`', '*', '#', '.', ':', ';', ' '])
+        .to_string();
+
+    if title.is_empty()
+        || title.len() > 64
+        || title.split_whitespace().count() > 7
+        || looks_like_explanation(&title)
+    {
+        return None;
+    }
+
+    Some(title)
+}
+
+fn looks_like_explanation(title: &str) -> bool {
+    let lower = title.to_ascii_lowercase();
+    ["okay", "sure", "here", "title", "this chat"]
+        .iter()
+        .any(|prefix| lower.starts_with(prefix))
+}
+
+fn fallback_title_from_prompt(prompt: &str) -> String {
+    let title = prompt
+        .split_whitespace()
+        .take(5)
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim_matches(['"', '\'', '`', '*', '#', '.', ':', ';', ',', ' '])
+        .to_string();
+
+    if title.is_empty() {
+        "New Chat".to_string()
+    } else if title.len() > 64 {
+        title.chars().take(64).collect()
+    } else {
+        title
+    }
 }
 
 async fn handle_ollama_line(

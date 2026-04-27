@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::ollama::models::{OllamaChatRequest, OllamaModel, TagsResponse};
+use crate::ollama::models::{OllamaChatRequest, OllamaChatResponse, OllamaModel, TagsResponse};
 
 pub async fn is_reachable(
     client: &reqwest::Client,
@@ -42,4 +42,21 @@ pub async fn chat_stream(
         .send()
         .await?
         .error_for_status()
+}
+
+pub async fn chat_once(
+    client: &reqwest::Client,
+    base_url: &str,
+    request: &OllamaChatRequest,
+) -> Result<OllamaChatResponse, reqwest::Error> {
+    let url = format!("{}/api/chat", base_url.trim_end_matches('/'));
+    let response = client
+        .post(url)
+        .timeout(Duration::from_secs(45))
+        .json(request)
+        .send()
+        .await?
+        .error_for_status()?;
+
+    response.json::<OllamaChatResponse>().await
 }

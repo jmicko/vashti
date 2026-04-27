@@ -9,7 +9,7 @@ use crate::{
         handlers::{
             BranchMessageRequest, CreateChatRequest, CreateMessageRequest, EditMessageRequest,
             GenerateChatRequest, RegenerateMessageRequest, SetActiveChildRequest,
-            SetActiveRootRequest, UpdateChatRequest,
+            SetActiveRevisionRequest, SetActiveRootRequest, UpdateChatRequest,
         },
         models::{ChatDetail, ChatMessage, ChatMessageRevision, ChatSummary},
     },
@@ -302,7 +302,9 @@ pub async fn list_messages(
 
     let mut messages = Vec::with_capacity(rows.len());
     for row in rows {
-        messages.push(row_to_message(row)?);
+        let mut message = row_to_message(row)?;
+        hydrate_message_revisions(pool, &mut message).await?;
+        messages.push(message);
     }
 
     Ok((chat.active_root_message_id, messages))
@@ -1129,6 +1131,79 @@ pub async fn select_active_root(
     get_chat(pool, user_id, chat_id).await
 }
 
+pub async fn select_active_revision(
+    pool: &SqlitePool,
+    user_id: &str,
+    chat_id: &str,
+    message_id: &str,
+    payload: SetActiveRevisionRequest,
+) -> Result<ChatMessage, ApiError> {
+    ensure_message_owner(pool, user_id, chat_id, message_id).await?;
+    let active_revision_id = payload.active_revision_id.trim().to_string();
+    if active_revision_id.is_empty() {
+        return Err(ApiError::bad_request(
+            "invalid_revision",
+            "Active revision is required",
+        ));
+    }
+
+    let revision_exists: i64 = sqlx::query_scalar(
+        r#"
+        SELECT EXISTS(
+            SELECT 1
+            FROM chat_message_revisions
+            WHERE id = ?
+              AND message_id = ?
+        )
+        "#,
+    )
+    .bind(&active_revision_id)
+    .bind(message_id)
+    .fetch_one(pool)
+    .await?;
+
+    if revision_exists == 0 {
+        return Err(ApiError::bad_request(
+            "invalid_revision",
+            "Revision not found for this message",
+        ));
+    }
+
+    let now = unix_timestamp();
+    let mut tx = pool.begin().await?;
+    sqlx::query(
+        r#"
+        UPDATE chat_messages
+        SET active_revision_id = ?,
+            updated_at = ?
+        WHERE id = ?
+          AND chat_id = ?
+        "#,
+    )
+    .bind(&active_revision_id)
+    .bind(now)
+    .bind(message_id)
+    .bind(chat_id)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        r#"
+        UPDATE chats
+        SET updated_at = ?
+        WHERE id = ?
+          AND user_id = ?
+        "#,
+    )
+    .bind(now)
+    .bind(chat_id)
+    .bind(user_id)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+
+    get_message(pool, user_id, chat_id, message_id).await
+}
+
 pub async fn finish_generation(
     pool: &SqlitePool,
     assistant_message_id: &str,
@@ -1653,10 +1728,58 @@ fn row_to_message(row: sqlx::sqlite::SqliteRow) -> Result<ChatMessage, sqlx::Err
         completed_at: row.try_get("completed_at")?,
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
-        active_revision,
+        revisions: active_revision.iter().cloned().collect(),
         revision_count: row.try_get("revision_count")?,
+        active_revision,
         attachments: Vec::new(),
     })
+}
+
+async fn hydrate_message_revisions(
+    pool: &SqlitePool,
+    message: &mut ChatMessage,
+) -> Result<(), ApiError> {
+    let rows = sqlx::query(
+        r#"
+        SELECT id,
+               content_text,
+               thinking_text,
+               source,
+               created_at
+        FROM chat_message_revisions
+        WHERE message_id = ?
+        ORDER BY created_at ASC, id ASC
+        "#,
+    )
+    .bind(&message.id)
+    .fetch_all(pool)
+    .await?;
+
+    let revisions = rows
+        .into_iter()
+        .map(|row| {
+            Ok(ChatMessageRevision {
+                id: row.try_get("id")?,
+                content_text: row.try_get("content_text")?,
+                thinking_text: row.try_get("thinking_text")?,
+                source: row.try_get("source")?,
+                created_at: row.try_get("created_at")?,
+            })
+        })
+        .collect::<Result<Vec<_>, sqlx::Error>>()?;
+
+    if !revisions.is_empty() {
+        message.revision_count = revisions.len() as i64;
+        if let Some(active_revision_id) = &message.active_revision_id {
+            message.active_revision = revisions
+                .iter()
+                .find(|revision| revision.id == *active_revision_id)
+                .cloned();
+        }
+        message.revisions = revisions;
+    }
+
+    Ok(())
 }
 
 async fn get_message(
@@ -1714,5 +1837,8 @@ async fn get_message(
         ));
     };
 
-    row_to_message(row).map_err(ApiError::from)
+    let mut message = row_to_message(row)?;
+    hydrate_message_revisions(pool, &mut message).await?;
+
+    Ok(message)
 }

@@ -119,6 +119,10 @@ fn router(state: AppState) -> Router {
             patch(chats::handlers::set_active_child),
         )
         .route(
+            "/chats/{chat_id}/messages/{message_id}/active-revision",
+            patch(chats::handlers::set_active_revision),
+        )
+        .route(
             "/chats/{chat_id}/messages/{message_id}",
             patch(chats::handlers::edit_message).delete(chats::handlers::delete_message),
         )

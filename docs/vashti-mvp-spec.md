@@ -113,6 +113,7 @@ Important caveat:
 * list chats in sidebar
 * rename chat
 * delete chat
+* auto-generate a placeholder chat title after the first assistant response when possible
 * stream assistant responses
 * select model per chat
 * create a new chat quickly from the header

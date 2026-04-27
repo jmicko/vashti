@@ -43,11 +43,12 @@ pub struct ChatMessage {
     pub created_at: i64,
     pub updated_at: i64,
     pub active_revision: Option<ChatMessageRevision>,
+    pub revisions: Vec<ChatMessageRevision>,
     pub revision_count: i64,
     pub attachments: Vec<serde_json::Value>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct ChatMessageRevision {
     pub id: String,
     pub content_text: String,

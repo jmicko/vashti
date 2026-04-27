@@ -39,6 +39,11 @@ pub struct OllamaChatChunk {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct OllamaChatResponse {
+    pub message: Option<OllamaChatChunkMessage>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct OllamaChatChunkMessage {
     #[serde(default)]
     pub content: String,

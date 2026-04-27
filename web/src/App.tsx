@@ -1,5 +1,6 @@
 import {
   FormEvent,
+  PointerEvent as ReactPointerEvent,
   ReactNode,
   useCallback,
   useEffect,
@@ -17,6 +18,7 @@ import {
   Menu,
   MessageSquare,
   MessageSquarePlus,
+  MoreHorizontal,
   Pencil,
   Plus,
   Power,
@@ -159,6 +161,7 @@ type ChatMessage = {
   created_at: number;
   updated_at: number;
   active_revision: ChatMessageRevision | null;
+  revisions: ChatMessageRevision[];
   revision_count: number;
   attachments: unknown[];
 };
@@ -192,6 +195,11 @@ type GenerateEvent =
       type: "message_done";
       assistant_message_id: string;
       done_reason: string | null;
+    }
+  | {
+      type: "chat_title";
+      chat_id: string;
+      title: string;
     }
   | {
       type: "message_stopped";
@@ -241,7 +249,11 @@ type BranchScrollAnchor = {
   messageId: string;
   topOffset: number;
 };
-type BranchInfo = {
+type MessageVersion = {
+  message: ChatMessage;
+  revision: ChatMessageRevision;
+};
+type VersionInfo = {
   index: number;
   total: number;
   canPrevious: boolean;
@@ -625,6 +637,8 @@ function AppShell({
   const [chats, setChats] = useState<ChatSummary[]>([]);
   const [isLoadingChats, setIsLoadingChats] = useState(false);
   const [isCreatingChat, setIsCreatingChat] = useState(false);
+  const [chatDeleteTarget, setChatDeleteTarget] = useState<ChatSummary | null>(null);
+  const [isDeletingChat, setIsDeletingChat] = useState(false);
   const [queuedPrompt, setQueuedPrompt] = useState<{ chatId: string; prompt: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const isAdmin = user.role === "admin";
@@ -808,11 +822,10 @@ function AppShell({
     setError(null);
 
     try {
-      const title = prompt.trim() || "New Chat";
       const response = await requestJson<ChatResponse>("/api/chats", {
         method: "POST",
         body: JSON.stringify({
-          title: title.slice(0, 80),
+          title: "New Chat",
           default_backend_id: selected.backendId,
           default_model_name: selected.modelName
         })
@@ -831,15 +844,58 @@ function AppShell({
     }
   }
 
+  async function renameChat(chatId: string, title: string) {
+    setError(null);
+    try {
+      const response = await requestJson<ChatResponse>(`/api/chats/${chatId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ title })
+      });
+      setChats((current) =>
+        current.map((chat) =>
+          chat.id === chatId ? { ...chat, title: response.chat.title } : chat
+        )
+      );
+    } catch (renameError) {
+      setError(renameError instanceof Error ? renameError.message : "Failed to rename chat");
+      throw renameError;
+    }
+  }
+
+  async function deleteSelectedChat() {
+    const chat = chatDeleteTarget;
+    if (!chat) {
+      return;
+    }
+
+    setIsDeletingChat(true);
+    setError(null);
+    try {
+      await requestJson(`/api/chats/${chat.id}`, { method: "DELETE" });
+      setChats((current) => current.filter((item) => item.id !== chat.id));
+      setChatDeleteTarget(null);
+      if (currentChatId === chat.id) {
+        openChat();
+      }
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "Failed to delete chat");
+    } finally {
+      setIsDeletingChat(false);
+    }
+  }
+
   return (
     <main className={isSidebarOpen ? "app-shell sidebar-open" : "app-shell"}>
       <Sidebar
         chats={chats}
         currentChatId={currentChatId}
         currentPage={page}
+        isOpen={isSidebarOpen}
         isLoading={isLoadingChats}
         onClose={() => setIsSidebarOpen(false)}
+        onDeleteChat={setChatDeleteTarget}
         onOpenChat={openChat}
+        onRenameChat={renameChat}
       />
       <button
         type="button"
@@ -932,6 +988,7 @@ function AppShell({
               error={error}
               queuedPrompt={queuedPrompt?.chatId === currentChatId ? queuedPrompt.prompt : null}
               selectedModel={selectedModel}
+              externalTitle={chats.find((chat) => chat.id === currentChatId)?.title ?? null}
               onChatsChanged={loadChats}
               onModelSelected={setSelectedModel}
               onQueuedPromptConsumed={() => setQueuedPrompt(null)}
@@ -954,6 +1011,16 @@ function AppShell({
           onSave={() => void saveAndContinueNavigation()}
         />
       )}
+      {chatDeleteTarget && (
+        <ConfirmDialog
+          title="Delete Chat"
+          message={`Delete "${chatDeleteTarget.title}"? This will remove the chat and its messages.`}
+          confirmLabel="Delete"
+          isBusy={isDeletingChat}
+          onCancel={() => setChatDeleteTarget(null)}
+          onConfirm={() => void deleteSelectedChat()}
+        />
+      )}
     </main>
   );
 }
@@ -962,23 +1029,77 @@ function Sidebar({
   chats,
   currentChatId,
   currentPage,
+  isOpen,
   isLoading,
   onClose,
-  onOpenChat
+  onDeleteChat,
+  onOpenChat,
+  onRenameChat
 }: {
   chats: ChatSummary[];
   currentChatId: string | null;
   currentPage: Page;
+  isOpen: boolean;
   isLoading: boolean;
   onClose: () => void;
+  onDeleteChat: (chat: ChatSummary) => void;
   onOpenChat: (chatId?: string) => void;
+  onRenameChat: (chatId: string, title: string) => Promise<void>;
 }) {
+  const [openMenuChatId, setOpenMenuChatId] = useState<string | null>(null);
+  const [editingChatId, setEditingChatId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setOpenMenuChatId(null);
+    }
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!openMenuChatId) {
+      return;
+    }
+
+    function closeOnOutsidePointer(event: PointerEvent) {
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        target.closest(".chat-row-menu, .chat-menu-button")
+      ) {
+        return;
+      }
+
+      setOpenMenuChatId(null);
+    }
+
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setOpenMenuChatId(null);
+      }
+    }
+
+    window.addEventListener("pointerdown", closeOnOutsidePointer);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("pointerdown", closeOnOutsidePointer);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [openMenuChatId]);
+
   return (
     <aside className="sidebar">
       <div>
         <div className="sidebar-header">
           <BrandMark compact />
-          <button type="button" className="icon-button mobile-only" aria-label="Close sidebar" onClick={onClose}>
+          <button
+            type="button"
+            className="icon-button mobile-only"
+            aria-label="Close sidebar"
+            onClick={() => {
+              setOpenMenuChatId(null);
+              onClose();
+            }}
+          >
             <X />
           </button>
         </div>
@@ -989,7 +1110,10 @@ function Sidebar({
               ? "nav-button nav-button-active"
               : "nav-button"
           }
-          onClick={() => onOpenChat()}
+          onClick={() => {
+            setOpenMenuChatId(null);
+            onOpenChat();
+          }}
         >
           <MessageSquare />
           <span>Chats</span>
@@ -1003,23 +1127,216 @@ function Sidebar({
           ) : (
             <div className="chat-link-list">
               {chats.map((chat) => (
-                <button
-                  type="button"
+                <ChatListItem
                   key={chat.id}
-                  className={
-                    currentChatId === chat.id ? "chat-link chat-link-active" : "chat-link"
+                  chat={chat}
+                  isActive={currentChatId === chat.id}
+                  isEditing={editingChatId === chat.id}
+                  isMenuOpen={openMenuChatId === chat.id}
+                  onCancelEditing={() => setEditingChatId(null)}
+                  onCloseMenu={() => setOpenMenuChatId(null)}
+                  onDelete={() => {
+                    setOpenMenuChatId(null);
+                    onDeleteChat(chat);
+                  }}
+                  onOpen={() => {
+                    setOpenMenuChatId(null);
+                    onOpenChat(chat.id);
+                  }}
+                  onOpenMenu={() => setOpenMenuChatId(chat.id)}
+                  onRename={(title) => onRenameChat(chat.id, title)}
+                  onStartEditing={() => {
+                    setOpenMenuChatId(null);
+                    setEditingChatId(chat.id);
+                  }}
+                  onToggleMenu={() =>
+                    setOpenMenuChatId((current) => (current === chat.id ? null : chat.id))
                   }
-                  onClick={() => onOpenChat(chat.id)}
-                >
-                  <span>{chat.title}</span>
-                  <small>{chat.default_model_name}</small>
-                </button>
+                />
               ))}
             </div>
           )}
         </div>
       </div>
     </aside>
+  );
+}
+
+function ChatListItem({
+  chat,
+  isActive,
+  isEditing,
+  isMenuOpen,
+  onCancelEditing,
+  onCloseMenu,
+  onDelete,
+  onOpen,
+  onOpenMenu,
+  onRename,
+  onStartEditing,
+  onToggleMenu
+}: {
+  chat: ChatSummary;
+  isActive: boolean;
+  isEditing: boolean;
+  isMenuOpen: boolean;
+  onCancelEditing: () => void;
+  onCloseMenu: () => void;
+  onDelete: () => void;
+  onOpen: () => void;
+  onOpenMenu: () => void;
+  onRename: (title: string) => Promise<void>;
+  onStartEditing: () => void;
+  onToggleMenu: () => void;
+}) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const longPressTimerRef = useRef<number | null>(null);
+  const suppressClickRef = useRef(false);
+  const [draftTitle, setDraftTitle] = useState(chat.title);
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    if (isEditing) {
+      setDraftTitle(chat.title);
+      window.requestAnimationFrame(() => {
+        inputRef.current?.focus();
+        inputRef.current?.select();
+      });
+    }
+  }, [chat.title, isEditing]);
+
+  async function finishRename() {
+    const title = draftTitle.trim();
+    if (!title || title === chat.title) {
+      onCancelEditing();
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      await onRename(title);
+      onCancelEditing();
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  function cancelLongPress() {
+    if (longPressTimerRef.current) {
+      window.clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  }
+
+  function startLongPress(event: ReactPointerEvent<HTMLDivElement>) {
+    if (isEditing || event.pointerType === "mouse") {
+      return;
+    }
+
+    cancelLongPress();
+    suppressClickRef.current = false;
+    longPressTimerRef.current = window.setTimeout(() => {
+      suppressClickRef.current = true;
+      onOpenMenu();
+    }, 520);
+  }
+
+  async function copyTitle() {
+    await navigator.clipboard.writeText(chat.title);
+    onCloseMenu();
+  }
+
+  return (
+    <div
+      className={isActive ? "chat-link-row chat-link-row-active" : "chat-link-row"}
+      onContextMenu={(event) => {
+        if (!isEditing) {
+          event.preventDefault();
+          onOpenMenu();
+        }
+      }}
+      onPointerCancel={cancelLongPress}
+      onPointerDown={startLongPress}
+      onPointerLeave={cancelLongPress}
+      onPointerUp={cancelLongPress}
+    >
+      {isEditing ? (
+        <input
+          ref={inputRef}
+          className="chat-title-input"
+          disabled={isSaving}
+          value={draftTitle}
+          onBlur={() => void finishRename()}
+          onChange={(event) => setDraftTitle(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              event.currentTarget.blur();
+            }
+            if (event.key === "Escape") {
+              onCancelEditing();
+            }
+          }}
+        />
+      ) : (
+        <button
+          type="button"
+          className={isActive ? "chat-link chat-link-active" : "chat-link"}
+          onClick={(event) => {
+            if (suppressClickRef.current) {
+              event.preventDefault();
+              suppressClickRef.current = false;
+              return;
+            }
+            onOpen();
+          }}
+        >
+          <span>{chat.title}</span>
+          <small>{chat.default_model_name}</small>
+        </button>
+      )}
+      <button
+        type="button"
+        className="chat-menu-button"
+        aria-label={`Open menu for ${chat.title}`}
+        aria-expanded={isMenuOpen}
+        onPointerDown={(event) => event.stopPropagation()}
+        onClick={onToggleMenu}
+      >
+        <MoreHorizontal />
+      </button>
+      {isMenuOpen && (
+        <div className="chat-row-menu" onPointerDown={(event) => event.stopPropagation()}>
+          <button
+            type="button"
+            className="menu-item"
+            onClick={onStartEditing}
+          >
+            <Pencil />
+            <span>Rename</span>
+          </button>
+          <button
+            type="button"
+            className="menu-item"
+            onClick={() => void copyTitle()}
+          >
+            <Copy />
+            <span>Copy Title</span>
+          </button>
+          <button
+            type="button"
+            className="menu-item danger-button"
+            onClick={() => {
+              onCloseMenu();
+              onDelete();
+            }}
+          >
+            <Trash2 />
+            <span>Delete</span>
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1053,6 +1370,7 @@ function ChatHome({
 function ChatView({
   chatId,
   error,
+  externalTitle,
   queuedPrompt,
   selectedModel,
   onChatsChanged,
@@ -1061,6 +1379,7 @@ function ChatView({
 }: {
   chatId: string;
   error: string | null;
+  externalTitle: string | null;
   queuedPrompt: string | null;
   selectedModel: string;
   onChatsChanged: () => Promise<void>;
@@ -1225,6 +1544,16 @@ function ChatView({
   }, [loadChat]);
 
   useEffect(() => {
+    if (!externalTitle) {
+      return;
+    }
+
+    setChat((current) =>
+      current && current.title !== externalTitle ? { ...current, title: externalTitle } : current
+    );
+  }, [externalTitle]);
+
+  useEffect(() => {
     const latestModel = latestAssistantModelValue(visibleMessages);
     if (latestModel) {
       onModelSelected(latestModel);
@@ -1353,7 +1682,7 @@ function ChatView({
     }
 
     const anchorElement =
-      messageElement.querySelector<HTMLElement>(".branch-switcher") ?? messageElement;
+      messageElement.querySelector<HTMLElement>(".version-switcher") ?? messageElement;
     const nextTopOffset = anchorElement.getBoundingClientRect().top - list.getBoundingClientRect().top;
     list.scrollTop += nextTopOffset - anchor.topOffset;
     branchScrollAnchorRef.current = null;
@@ -1473,7 +1802,7 @@ function ChatView({
   }
 
   function applyGenerateEvent(event: GenerateEvent, runId: number) {
-    if (generationRunRef.current !== runId) {
+    if (generationRunRef.current !== runId && event.type !== "chat_title") {
       return;
     }
 
@@ -1532,6 +1861,16 @@ function ChatView({
       case "message_done":
         finishThinkingDuration(event.assistant_message_id);
         updateMessageStatus(event.assistant_message_id, "complete", event.done_reason);
+        if (generationRunRef.current === runId) {
+          setIsGenerating(false);
+          setActiveAssistantId(null);
+          abortRef.current = null;
+        }
+        break;
+      case "chat_title":
+        setChat((current) =>
+          current && current.id === event.chat_id ? { ...current, title: event.title } : current
+        );
         break;
       case "message_stopped":
         finishThinkingDuration(event.assistant_message_id);
@@ -1572,7 +1911,11 @@ function ChatView({
           active_revision: {
             ...activeRevision,
             [field]: activeRevision[field] + delta
-          }
+          },
+          revisions: updateRevisionList(message.revisions, {
+            ...activeRevision,
+            [field]: activeRevision[field] + delta
+          })
         };
       })
     );
@@ -1712,86 +2055,119 @@ function ChatView({
     });
   }
 
-  async function selectSibling(message: ChatMessage, siblingId: string) {
-    if (message.id === siblingId || isGenerating) {
+  async function selectVersion(currentMessage: ChatMessage, version: MessageVersion) {
+    const nextMessage = version.message;
+    const nextRevision = version.revision;
+    const isSameMessage = currentMessage.id === nextMessage.id;
+    const isSameRevision = nextMessage.active_revision_id === nextRevision.id;
+    if ((isSameMessage && isSameRevision) || isGenerating) {
       return;
     }
 
     const list = messageListRef.current;
-    const messageElement = list?.querySelector<HTMLElement>(`[data-message-id="${message.id}"]`);
+    const messageElement = list?.querySelector<HTMLElement>(
+      `[data-message-id="${currentMessage.id}"]`
+    );
     const anchorElement =
-      messageElement?.querySelector<HTMLElement>(".branch-switcher") ?? messageElement;
+      messageElement?.querySelector<HTMLElement>(".version-switcher") ?? messageElement;
     if (list && anchorElement) {
       branchScrollAnchorRef.current = {
-        messageId: siblingId,
+        messageId: nextMessage.id,
         topOffset: anchorElement.getBoundingClientRect().top - list.getBoundingClientRect().top
       };
     }
 
-    setBusyMessageId(message.id);
+    setBusyMessageId(currentMessage.id);
     setGenerationError(null);
 
     try {
-      if (message.parent_message_id) {
+      if (!isSameMessage) {
+        if (currentMessage.parent_message_id) {
+          const response = await requestJson<MessageResponse>(
+            `/api/chats/${chatId}/messages/${currentMessage.parent_message_id}/active-child`,
+            {
+              method: "PATCH",
+              body: JSON.stringify({ active_child_message_id: nextMessage.id })
+            }
+          );
+          replaceMessage(response.message);
+        } else {
+          const response = await requestJson<ChatResponse>(`/api/chats/${chatId}/active-root`, {
+            method: "PATCH",
+            body: JSON.stringify({ active_root_message_id: nextMessage.id })
+          });
+          setChat(response.chat);
+        }
+
+        if (nextMessage.role === "assistant" && nextMessage.backend_id && nextMessage.model_name) {
+          onModelSelected(modelValue(nextMessage.backend_id, nextMessage.model_name));
+        }
+      }
+
+      if (!isSameRevision) {
         const response = await requestJson<MessageResponse>(
-          `/api/chats/${chatId}/messages/${message.parent_message_id}/active-child`,
+          `/api/chats/${chatId}/messages/${nextMessage.id}/active-revision`,
           {
             method: "PATCH",
-            body: JSON.stringify({ active_child_message_id: siblingId })
+            body: JSON.stringify({ active_revision_id: nextRevision.id })
           }
         );
         replaceMessage(response.message);
-      } else {
-        const response = await requestJson<ChatResponse>(`/api/chats/${chatId}/active-root`, {
-          method: "PATCH",
-          body: JSON.stringify({ active_root_message_id: siblingId })
-        });
-        setChat(response.chat);
-      }
-
-      const selectedSibling = messages.find((candidate) => candidate.id === siblingId);
-      if (selectedSibling?.role === "assistant" && selectedSibling.backend_id && selectedSibling.model_name) {
-        onModelSelected(modelValue(selectedSibling.backend_id, selectedSibling.model_name));
       }
     } catch (selectError) {
       setGenerationError(
-        selectError instanceof Error ? selectError.message : "Failed to switch branch"
+        selectError instanceof Error ? selectError.message : "Failed to switch version"
       );
     } finally {
       setBusyMessageId(null);
     }
   }
 
-  function branchInfoFor(message: ChatMessage): BranchInfo | null {
-    const siblings = siblingGroups.get(parentGroupKey(message.parent_message_id)) ?? [];
-    if (siblings.length < 2) {
+  function versionInfoFor(message: ChatMessage): VersionInfo | null {
+    const versions = versionsForMessage(message);
+    if (versions.length < 2 || !message.active_revision_id) {
       return null;
     }
 
-    const index = siblings.findIndex((sibling) => sibling.id === message.id);
+    const index = versions.findIndex(
+      (version) =>
+        version.message.id === message.id && version.revision.id === message.active_revision_id
+    );
     if (index < 0) {
       return null;
     }
 
-    const previousSibling = siblings[index - 1] ?? null;
-    const nextSibling = siblings[index + 1] ?? null;
+    const previousVersion = versions[index - 1] ?? null;
+    const nextVersion = versions[index + 1] ?? null;
 
     return {
       index,
-      total: siblings.length,
-      canPrevious: Boolean(previousSibling),
-      canNext: Boolean(nextSibling),
+      total: versions.length,
+      canPrevious: Boolean(previousVersion),
+      canNext: Boolean(nextVersion),
       onPrevious: () => {
-        if (previousSibling) {
-          void selectSibling(message, previousSibling.id);
+        if (previousVersion) {
+          void selectVersion(message, previousVersion);
         }
       },
       onNext: () => {
-        if (nextSibling) {
-          void selectSibling(message, nextSibling.id);
+        if (nextVersion) {
+          void selectVersion(message, nextVersion);
         }
       }
     };
+  }
+
+  function versionsForMessage(message: ChatMessage) {
+    const siblings = siblingGroups.get(parentGroupKey(message.parent_message_id)) ?? [];
+    return siblings
+      .flatMap((sibling) =>
+        revisionsForMessage(sibling).map((revision) => ({
+          message: sibling,
+          revision
+        }))
+      )
+      .sort(compareVersionsByCreatedAt);
   }
 
   return (
@@ -1833,7 +2209,7 @@ function ChatView({
                 <MessageBubble
                   key={message.id}
                   message={message}
-                  branchInfo={branchInfoFor(message)}
+                  versionInfo={versionInfoFor(message)}
                   copied={copiedMessageId === message.id}
                   isBusy={busyMessageId === message.id}
                   isGenerating={isGenerating}
@@ -1878,7 +2254,7 @@ function ChatView({
 
 function MessageBubble({
   message,
-  branchInfo,
+  versionInfo,
   copied,
   isBusy,
   isGenerating,
@@ -1890,7 +2266,7 @@ function MessageBubble({
   onRegenerate
 }: {
   message: ChatMessage;
-  branchInfo: BranchInfo | null;
+  versionInfo: VersionInfo | null;
   copied: boolean;
   isBusy: boolean;
   isGenerating: boolean;
@@ -1931,9 +2307,9 @@ function MessageBubble({
     >
       <div className="message-header">
         <p className="message-role">{messageLabel(message)}</p>
-        {branchInfo && (
-          <BranchSwitcher
-            branchInfo={branchInfo}
+        {versionInfo && (
+          <VersionSwitcher
+            versionInfo={versionInfo}
             isBusy={isBusy}
             isGenerating={isGenerating}
           />
@@ -2023,50 +2399,50 @@ function MessageBubble({
   );
 }
 
-function BranchSwitcher({
-  branchInfo,
+function VersionSwitcher({
+  versionInfo,
   isBusy,
   isGenerating
 }: {
-  branchInfo: BranchInfo;
+  versionInfo: VersionInfo;
   isBusy: boolean;
   isGenerating: boolean;
 }) {
-  const hidePrevious = !branchInfo.canPrevious;
-  const hideNext = !branchInfo.canNext;
+  const hidePrevious = !versionInfo.canPrevious;
+  const hideNext = !versionInfo.canNext;
 
   return (
-    <div className="branch-switcher" aria-label="Message branch selector">
+    <div className="version-switcher" aria-label="Message version selector">
       <button
         type="button"
         className={
           hidePrevious
-            ? "message-icon-button branch-arrow-hidden"
+            ? "message-icon-button version-arrow-hidden"
             : "message-icon-button"
         }
-        title={hidePrevious ? undefined : "Previous branch"}
-        aria-label="Previous branch"
+        title={hidePrevious ? undefined : "Previous version"}
+        aria-label="Previous version"
         aria-hidden={hidePrevious}
         tabIndex={hidePrevious ? -1 : undefined}
         disabled={isBusy || isGenerating || hidePrevious}
-        onClick={branchInfo.onPrevious}
+        onClick={versionInfo.onPrevious}
       >
         <ChevronLeft />
       </button>
-      <span className="branch-count">
-        {branchInfo.index + 1}/{branchInfo.total}
+      <span className="version-count">
+        {versionInfo.index + 1}/{versionInfo.total}
       </span>
       <button
         type="button"
         className={
-          hideNext ? "message-icon-button branch-arrow-hidden" : "message-icon-button"
+          hideNext ? "message-icon-button version-arrow-hidden" : "message-icon-button"
         }
-        title={hideNext ? undefined : "Next branch"}
-        aria-label="Next branch"
+        title={hideNext ? undefined : "Next version"}
+        aria-label="Next version"
         aria-hidden={hideNext}
         tabIndex={hideNext ? -1 : undefined}
         disabled={isBusy || isGenerating || hideNext}
-        onClick={branchInfo.onNext}
+        onClick={versionInfo.onNext}
       >
         <ChevronRight />
       </button>
@@ -2122,6 +2498,31 @@ function latestAssistantModelValue(messages: ChatMessage[]) {
   return null;
 }
 
+function revisionsForMessage(message: ChatMessage) {
+  const revisions = message.revisions.length
+    ? message.revisions
+    : message.active_revision
+      ? [message.active_revision]
+      : [];
+
+  return [...revisions].sort(compareRevisionsByCreatedAt);
+}
+
+function updateRevisionList(
+  revisions: ChatMessageRevision[],
+  nextRevision: ChatMessageRevision
+) {
+  const nextRevisions = revisions.length ? [...revisions] : [];
+  const revisionIndex = nextRevisions.findIndex((revision) => revision.id === nextRevision.id);
+  if (revisionIndex >= 0) {
+    nextRevisions[revisionIndex] = nextRevision;
+  } else {
+    nextRevisions.push(nextRevision);
+  }
+
+  return nextRevisions.sort(compareRevisionsByCreatedAt);
+}
+
 function activePathMessages(messages: ChatMessage[], activeRootMessageId: string | null) {
   const messagesById = new Map(messages.map((message) => [message.id, message]));
   const rootMessages = messages
@@ -2168,6 +2569,18 @@ function parentGroupKey(parentMessageId: string | null) {
 
 function compareMessagesByCreatedAt(left: ChatMessage, right: ChatMessage) {
   return left.created_at - right.created_at || left.id.localeCompare(right.id);
+}
+
+function compareRevisionsByCreatedAt(left: ChatMessageRevision, right: ChatMessageRevision) {
+  return left.created_at - right.created_at || left.id.localeCompare(right.id);
+}
+
+function compareVersionsByCreatedAt(left: MessageVersion, right: MessageVersion) {
+  return (
+    left.revision.created_at - right.revision.created_at ||
+    left.message.created_at - right.message.created_at ||
+    left.revision.id.localeCompare(right.revision.id)
+  );
 }
 
 function StartChatComposer({
