@@ -992,7 +992,6 @@ function AppShell({
               error={error}
               queuedPrompt={queuedPrompt?.chatId === currentChatId ? queuedPrompt.prompt : null}
               selectedModel={selectedModel}
-              externalTitle={chats.find((chat) => chat.id === currentChatId)?.title ?? null}
               onChatsChanged={loadChats}
               onModelSelected={setSelectedModel}
               onQueuedPromptConsumed={() => setQueuedPrompt(null)}
@@ -1092,7 +1091,7 @@ function Sidebar({
 
   return (
     <aside className="sidebar">
-      <div>
+      <div className="sidebar-static">
         <div className="sidebar-header">
           <BrandMark compact />
           <button
@@ -1122,45 +1121,45 @@ function Sidebar({
           <MessageSquare />
           <span>Chats</span>
         </button>
-        <div className="chat-history">
-          <p className="eyebrow">Previous Chats</p>
-          {isLoading && chats.length === 0 ? (
-            <p>Loading chats...</p>
-          ) : chats.length === 0 ? (
-            <p>No chats yet</p>
-          ) : (
-            <div className="chat-link-list">
-              {chats.map((chat) => (
-                <ChatListItem
-                  key={chat.id}
-                  chat={chat}
-                  isActive={currentChatId === chat.id}
-                  isEditing={editingChatId === chat.id}
-                  isMenuOpen={openMenuChatId === chat.id}
-                  onCancelEditing={() => setEditingChatId(null)}
-                  onCloseMenu={() => setOpenMenuChatId(null)}
-                  onDelete={() => {
-                    setOpenMenuChatId(null);
-                    onDeleteChat(chat);
-                  }}
-                  onOpen={() => {
-                    setOpenMenuChatId(null);
-                    onOpenChat(chat.id);
-                  }}
-                  onOpenMenu={() => setOpenMenuChatId(chat.id)}
-                  onRename={(title) => onRenameChat(chat.id, title)}
-                  onStartEditing={() => {
-                    setOpenMenuChatId(null);
-                    setEditingChatId(chat.id);
-                  }}
-                  onToggleMenu={() =>
-                    setOpenMenuChatId((current) => (current === chat.id ? null : chat.id))
-                  }
-                />
-              ))}
-            </div>
-          )}
-        </div>
+      </div>
+      <div className="chat-history">
+        <p className="eyebrow">Previous Chats</p>
+        {isLoading && chats.length === 0 ? (
+          <p>Loading chats...</p>
+        ) : chats.length === 0 ? (
+          <p>No chats yet</p>
+        ) : (
+          <div className="chat-link-list">
+            {chats.map((chat) => (
+              <ChatListItem
+                key={chat.id}
+                chat={chat}
+                isActive={currentChatId === chat.id}
+                isEditing={editingChatId === chat.id}
+                isMenuOpen={openMenuChatId === chat.id}
+                onCancelEditing={() => setEditingChatId(null)}
+                onCloseMenu={() => setOpenMenuChatId(null)}
+                onDelete={() => {
+                  setOpenMenuChatId(null);
+                  onDeleteChat(chat);
+                }}
+                onOpen={() => {
+                  setOpenMenuChatId(null);
+                  onOpenChat(chat.id);
+                }}
+                onOpenMenu={() => setOpenMenuChatId(chat.id)}
+                onRename={(title) => onRenameChat(chat.id, title)}
+                onStartEditing={() => {
+                  setOpenMenuChatId(null);
+                  setEditingChatId(chat.id);
+                }}
+                onToggleMenu={() =>
+                  setOpenMenuChatId((current) => (current === chat.id ? null : chat.id))
+                }
+              />
+            ))}
+          </div>
+        )}
       </div>
     </aside>
   );
@@ -1374,7 +1373,6 @@ function ChatHome({
 function ChatView({
   chatId,
   error,
-  externalTitle,
   queuedPrompt,
   selectedModel,
   onChatsChanged,
@@ -1383,7 +1381,6 @@ function ChatView({
 }: {
   chatId: string;
   error: string | null;
-  externalTitle: string | null;
   queuedPrompt: string | null;
   selectedModel: string;
   onChatsChanged: () => Promise<void>;
@@ -1546,16 +1543,6 @@ function ChatView({
   useEffect(() => {
     void loadChat();
   }, [loadChat]);
-
-  useEffect(() => {
-    if (!externalTitle) {
-      return;
-    }
-
-    setChat((current) =>
-      current && current.title !== externalTitle ? { ...current, title: externalTitle } : current
-    );
-  }, [externalTitle]);
 
   useEffect(() => {
     const latestModel = latestAssistantModelValue(visibleMessages);
@@ -2186,14 +2173,6 @@ function ChatView({
         </div>
       ) : chat ? (
         <>
-          <header className="chat-titlebar">
-            <div>
-              <h1>{chat.title}</h1>
-              <p>
-                {chat.backend_name} / {chat.default_model_name}
-              </p>
-            </div>
-          </header>
           <section
             className={
               visibleMessages.length > 0 ? "message-list message-list-buffered" : "message-list"

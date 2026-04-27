@@ -130,7 +130,10 @@ button svg {
 
 .brand-logo-compact {
   width: 140px;
-  margin: 0 0 18px;
+  height: 60px;
+  object-fit: cover;
+  object-position: center;
+  margin: 0;
 }
 
 .eyebrow {
@@ -264,10 +267,16 @@ textarea {
 
 .sidebar {
   min-height: 0;
-  overflow-y: auto;
+  overflow: hidden;
   border-right: 1px solid var(--line);
   background: var(--panel);
-  padding: 20px;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.sidebar-static {
+  border-bottom: 1px solid var(--line-soft);
+  padding: 20px 20px 16px;
 }
 
 .sidebar-header {
@@ -280,12 +289,13 @@ textarea {
 .nav-button {
   width: 100%;
   justify-content: flex-start;
-  margin-bottom: 22px;
+  margin-top: 18px;
 }
 
 .chat-history {
-  border-top: 1px solid var(--line-soft);
-  padding-top: 16px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 20px 20px;
 }
 
 .chat-history p:last-child {
@@ -634,30 +644,7 @@ textarea {
 .chat-view {
   min-height: 0;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto auto;
-}
-
-.chat-titlebar {
-  border-bottom: 1px solid var(--line-soft);
-  padding: 22px 24px 18px;
-  text-align: left;
-}
-
-.chat-titlebar > div,
-.chat-titlebar h1 {
-  justify-self: start;
-  text-align: left;
-  width: 100%;
-}
-
-.chat-titlebar h1 {
-  margin-bottom: 8px;
-}
-
-.chat-titlebar p {
-  margin: 0;
-  color: var(--muted);
-  text-align: left;
+  grid-template-rows: minmax(0, 1fr) auto auto;
 }
 
 .message-list {
