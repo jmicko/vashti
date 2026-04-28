@@ -18,13 +18,22 @@ pub struct ListUsersResponse {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct CreateUserRequest {
+    pub username: String,
+    pub email: Option<String>,
+    pub password: String,
+    pub role: Option<String>,
+    pub is_disabled: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct UpdateUserRequest {
     pub role: Option<String>,
     pub is_disabled: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
-pub struct UpdateUserResponse {
+pub struct UserMutationResponse {
     pub user: AdminUserResponse,
 }
 
@@ -43,17 +52,28 @@ pub async fn list_users(
     Ok(Json(ListUsersResponse { users }))
 }
 
+pub async fn create_user(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Json(payload): Json<CreateUserRequest>,
+) -> Result<Json<UserMutationResponse>, ApiError> {
+    auth::service::require_admin(&state.db, &jar, &state.config.session_cookie_name).await?;
+    let user = service::create_user(&state.db, payload).await?;
+
+    Ok(Json(UserMutationResponse { user }))
+}
+
 pub async fn update_user(
     State(state): State<AppState>,
     jar: CookieJar,
     Path(user_id): Path<String>,
     Json(payload): Json<UpdateUserRequest>,
-) -> Result<Json<UpdateUserResponse>, ApiError> {
+) -> Result<Json<UserMutationResponse>, ApiError> {
     let admin =
         auth::service::require_admin(&state.db, &jar, &state.config.session_cookie_name).await?;
     let user = service::update_user(&state.db, &admin.id, &user_id, payload).await?;
 
-    Ok(Json(UpdateUserResponse { user }))
+    Ok(Json(UserMutationResponse { user }))
 }
 
 pub async fn delete_user(

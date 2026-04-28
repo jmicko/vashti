@@ -601,7 +601,25 @@ Request:
   "username": "friend",
   "email": "friend@example.com",
   "password": "secret",
-  "role": "user"
+  "role": "user",
+  "is_disabled": false
+}
+```
+
+Response:
+
+```json
+{
+  "user": {
+    "id": "uuid",
+    "username": "friend",
+    "email": "friend@example.com",
+    "role": "user",
+    "is_disabled": false,
+    "created_at": 1710000000,
+    "updated_at": 1710000000,
+    "last_login_at": null
+  }
 }
 ```
 
@@ -683,7 +701,8 @@ Response:
 ```json
 {
   "default_backend_id": "uuid",
-  "default_model_name": "gemma4"
+  "default_model_name": "gemma4",
+  "theme": "neon"
 }
 ```
 
@@ -694,9 +713,12 @@ Request:
 ```json
 {
   "default_backend_id": "uuid",
-  "default_model_name": "gemma4"
+  "default_model_name": "gemma4",
+  "theme": "neon"
 }
 ```
+
+Nullable fields may be sent as `null` to clear them.
 
 ---
 

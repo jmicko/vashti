@@ -433,6 +433,15 @@ pub async fn delete_session(pool: &SqlitePool, session_id: &str) -> Result<(), s
     Ok(())
 }
 
+pub async fn delete_expired_sessions(pool: &SqlitePool) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query("DELETE FROM sessions WHERE expires_at <= ?")
+        .bind(unix_timestamp())
+        .execute(pool)
+        .await?;
+
+    Ok(result.rows_affected())
+}
+
 pub fn session_cookie(config: &Config, session_id: &str) -> Cookie<'static> {
     Cookie::build((config.session_cookie_name.clone(), session_id.to_string()))
         .http_only(true)
@@ -453,7 +462,7 @@ pub fn expired_session_cookie(config: &Config) -> Cookie<'static> {
         .build()
 }
 
-fn hash_password(password: &str) -> Result<String, argon2::password_hash::Error> {
+pub(crate) fn hash_password(password: &str) -> Result<String, argon2::password_hash::Error> {
     let salt = SaltString::generate(&mut OsRng);
     let argon2 = Argon2::default();
     Ok(argon2
@@ -469,4 +478,283 @@ fn verify_password(
     Ok(Argon2::default()
         .verify_password(password.as_bytes(), &parsed_hash)
         .is_ok())
+}
+
+#[cfg(test)]
+mod tests {
+    use sqlx::{
+        Row, SqlitePool,
+        sqlite::{SqliteConnectOptions, SqlitePoolOptions},
+    };
+
+    use super::*;
+    use crate::{
+        admin::{handlers::CreateUserRequest, service as admin_service},
+        backends::service as backends_service,
+        chats::{
+            handlers::{CreateChatRequest, UpdateChatRequest},
+            service as chats_service,
+        },
+        settings::{
+            handlers::{UpdateAppSettingsRequest, UpdateUserSettingsRequest},
+            service as settings_service,
+        },
+        startup,
+    };
+
+    async fn test_pool() -> SqlitePool {
+        let options = SqliteConnectOptions::new()
+            .filename(":memory:")
+            .foreign_keys(true);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .expect("connect test database");
+
+        startup::migrations::run(&pool)
+            .await
+            .expect("run migrations");
+        startup::bootstrap::ensure_app_settings(&pool)
+            .await
+            .expect("ensure app settings");
+
+        pool
+    }
+
+    #[tokio::test]
+    async fn registration_rules_and_signup_limit_are_enforced() {
+        let pool = test_pool().await;
+
+        let admin = register_user(
+            &pool,
+            "admin".to_string(),
+            Some("admin@example.com".to_string()),
+            "secret".to_string(),
+        )
+        .await
+        .expect("register first admin");
+
+        assert!(!admin.requires_approval);
+        assert_eq!(admin.user.role, "admin");
+        assert!(!admin.user.is_disabled);
+
+        settings_service::update_app_settings(
+            &pool,
+            UpdateAppSettingsRequest {
+                allow_signup: Some(true),
+                signup_limit: Some(1),
+                max_upload_bytes: None,
+                request_timeout_ms: None,
+            },
+        )
+        .await
+        .expect("set signup limit");
+
+        let pending = register_user(
+            &pool,
+            "pending".to_string(),
+            Some("pending@example.com".to_string()),
+            "secret".to_string(),
+        )
+        .await
+        .expect("register pending user");
+
+        assert!(pending.requires_approval);
+        assert_eq!(pending.user.role, "user");
+        assert!(pending.user.is_disabled);
+        assert!(
+            authenticate_user(&pool, "pending".to_string(), "secret".to_string())
+                .await
+                .is_err()
+        );
+
+        let settings = settings_service::get_app_settings(&pool)
+            .await
+            .expect("load app settings");
+        assert_eq!(settings.signup_count, 1);
+        assert!(!settings.allow_signup);
+        assert!(!can_create_account(&pool).await.expect("check signup"));
+    }
+
+    #[tokio::test]
+    async fn admin_created_user_and_user_settings_work() {
+        let pool = test_pool().await;
+
+        register_user(&pool, "admin".to_string(), None, "secret".to_string())
+            .await
+            .expect("register first admin");
+
+        let backend = backends_service::create_backend(
+            &pool,
+            "local".to_string(),
+            "http://127.0.0.1:11434".to_string(),
+        )
+        .await
+        .expect("create backend");
+
+        let created = admin_service::create_user(
+            &pool,
+            CreateUserRequest {
+                username: "friend".to_string(),
+                email: Some("friend@example.com".to_string()),
+                password: "secret".to_string(),
+                role: Some("user".to_string()),
+                is_disabled: Some(false),
+            },
+        )
+        .await
+        .expect("admin creates user");
+
+        assert_eq!(created.username, "friend");
+        assert_eq!(created.role, "user");
+        assert!(!created.is_disabled);
+        assert!(
+            authenticate_user(&pool, "friend".to_string(), "secret".to_string())
+                .await
+                .is_ok()
+        );
+
+        let updated = settings_service::update_user_settings(
+            &pool,
+            &created.id,
+            UpdateUserSettingsRequest {
+                default_backend_id: Some(serde_json::Value::String(backend.id.clone())),
+                default_model_name: Some(serde_json::Value::String("gemma4:e2b".to_string())),
+                theme: Some(serde_json::Value::String("neon".to_string())),
+            },
+        )
+        .await
+        .expect("update user settings");
+
+        assert_eq!(
+            updated.default_backend_id.as_deref(),
+            Some(backend.id.as_str())
+        );
+        assert_eq!(updated.default_model_name.as_deref(), Some("gemma4:e2b"));
+        assert_eq!(updated.theme.as_deref(), Some("neon"));
+
+        let cleared = settings_service::update_user_settings(
+            &pool,
+            &created.id,
+            UpdateUserSettingsRequest {
+                default_backend_id: Some(serde_json::Value::Null),
+                default_model_name: Some(serde_json::Value::Null),
+                theme: None,
+            },
+        )
+        .await
+        .expect("clear user model defaults");
+
+        assert!(cleared.default_backend_id.is_none());
+        assert!(cleared.default_model_name.is_none());
+        assert_eq!(cleared.theme.as_deref(), Some("neon"));
+    }
+
+    #[tokio::test]
+    async fn expired_session_cleanup_deletes_only_expired_sessions() {
+        let pool = test_pool().await;
+        let admin = register_user(&pool, "admin".to_string(), None, "secret".to_string())
+            .await
+            .expect("register first admin");
+
+        let expired = create_session(&pool, &admin.user.id, -1, None, None)
+            .await
+            .expect("create expired session");
+        let active = create_session(&pool, &admin.user.id, 60, None, None)
+            .await
+            .expect("create active session");
+
+        let deleted = delete_expired_sessions(&pool)
+            .await
+            .expect("delete expired sessions");
+        assert_eq!(deleted, 1);
+
+        let remaining: Vec<String> = sqlx::query("SELECT id FROM sessions ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .expect("load remaining sessions")
+            .into_iter()
+            .map(|row| row.try_get("id").expect("id selected"))
+            .collect();
+
+        assert_eq!(remaining, vec![active.id]);
+        assert_ne!(remaining, vec![expired.id]);
+    }
+
+    #[tokio::test]
+    async fn chat_crud_is_scoped_to_owner() {
+        let pool = test_pool().await;
+        let admin = register_user(&pool, "admin".to_string(), None, "secret".to_string())
+            .await
+            .expect("register first admin");
+        let other = admin_service::create_user(
+            &pool,
+            CreateUserRequest {
+                username: "other".to_string(),
+                email: None,
+                password: "secret".to_string(),
+                role: Some("user".to_string()),
+                is_disabled: Some(false),
+            },
+        )
+        .await
+        .expect("create other user");
+        let backend = backends_service::create_backend(
+            &pool,
+            "local".to_string(),
+            "http://127.0.0.1:11434".to_string(),
+        )
+        .await
+        .expect("create backend");
+
+        let chat = chats_service::create_chat(
+            &pool,
+            &admin.user.id,
+            CreateChatRequest {
+                title: "New Chat".to_string(),
+                default_backend_id: backend.id,
+                default_model_name: "gemma4:e2b".to_string(),
+            },
+        )
+        .await
+        .expect("create chat");
+
+        assert_eq!(
+            chats_service::list_chats(&pool, &admin.user.id)
+                .await
+                .expect("list owner chats")
+                .len(),
+            1
+        );
+        assert!(
+            chats_service::get_chat(&pool, &other.id, &chat.id)
+                .await
+                .is_err()
+        );
+
+        let renamed = chats_service::update_chat(
+            &pool,
+            &admin.user.id,
+            &chat.id,
+            UpdateChatRequest {
+                title: Some("Renamed".to_string()),
+                default_backend_id: None,
+                default_model_name: None,
+            },
+        )
+        .await
+        .expect("rename chat");
+        assert_eq!(renamed.title, "Renamed");
+
+        chats_service::delete_chat(&pool, &admin.user.id, &chat.id)
+            .await
+            .expect("delete chat");
+        assert!(
+            chats_service::list_chats(&pool, &admin.user.id)
+                .await
+                .expect("list after delete")
+                .is_empty()
+        );
+    }
 }

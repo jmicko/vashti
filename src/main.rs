@@ -42,6 +42,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let db = db::connect(&config).await?;
     startup::migrations::run(&db).await?;
     startup::bootstrap::ensure_app_settings(&db).await?;
+    auth::service::delete_expired_sessions(&db).await?;
 
     let http_client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(10))
@@ -51,6 +52,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     let bind_addr = config.bind_addr;
     let state = AppState::new(config, db, http_client);
+    spawn_session_cleanup(state.db.clone());
     let app = router(state);
 
     let listener = tokio::net::TcpListener::bind(bind_addr).await?;
@@ -74,7 +76,15 @@ fn router(state: AppState) -> Router {
             get(settings::handlers::get_app_settings)
                 .patch(settings::handlers::update_app_settings),
         )
-        .route("/admin/users", get(admin::handlers::list_users))
+        .route(
+            "/user-settings",
+            get(settings::handlers::get_user_settings)
+                .patch(settings::handlers::update_user_settings),
+        )
+        .route(
+            "/admin/users",
+            get(admin::handlers::list_users).post(admin::handlers::create_user),
+        )
         .route(
             "/admin/users/{user_id}",
             patch(admin::handlers::update_user).delete(admin::handlers::delete_user),
@@ -156,6 +166,26 @@ fn router(state: AppState) -> Router {
 
 async fn api_not_found() -> ApiError {
     ApiError::not_found("not_found", "API route not found")
+}
+
+fn spawn_session_cleanup(db: sqlx::SqlitePool) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(60 * 60));
+
+        loop {
+            interval.tick().await;
+
+            match auth::service::delete_expired_sessions(&db).await {
+                Ok(deleted) if deleted > 0 => {
+                    tracing::debug!(deleted, "deleted expired sessions");
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::warn!(?error, "failed to delete expired sessions");
+                }
+            }
+        }
+    });
 }
 
 async fn shutdown_signal() {

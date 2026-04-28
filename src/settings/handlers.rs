@@ -12,12 +12,42 @@ pub struct UpdateAppSettingsRequest {
     pub request_timeout_ms: Option<i64>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct UpdateUserSettingsRequest {
+    pub default_backend_id: Option<serde_json::Value>,
+    pub default_model_name: Option<serde_json::Value>,
+    pub theme: Option<serde_json::Value>,
+}
+
 pub async fn get_app_settings(
     State(state): State<AppState>,
     jar: CookieJar,
 ) -> Result<Json<service::AppSettingsResponse>, ApiError> {
     auth::service::require_admin(&state.db, &jar, &state.config.session_cookie_name).await?;
     let settings = service::get_app_settings(&state.db).await?;
+
+    Ok(Json(settings))
+}
+
+pub async fn get_user_settings(
+    State(state): State<AppState>,
+    jar: CookieJar,
+) -> Result<Json<service::UserSettingsResponse>, ApiError> {
+    let user =
+        auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
+    let settings = service::get_user_settings(&state.db, &user.id).await?;
+
+    Ok(Json(settings))
+}
+
+pub async fn update_user_settings(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Json(payload): Json<UpdateUserSettingsRequest>,
+) -> Result<Json<service::UserSettingsResponse>, ApiError> {
+    let user =
+        auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
+    let settings = service::update_user_settings(&state.db, &user.id, payload).await?;
 
     Ok(Json(settings))
 }

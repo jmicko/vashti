@@ -1054,6 +1054,12 @@ textarea {
   gap: 18px;
 }
 
+.user-create-form {
+  border-bottom: 1px solid var(--line-soft);
+  margin-bottom: 20px;
+  padding-bottom: 20px;
+}
+
 .user-group {
   display: grid;
   gap: 12px;

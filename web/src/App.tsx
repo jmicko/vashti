@@ -72,6 +72,10 @@ type AdminUsersResponse = {
   users: AdminUser[];
 };
 
+type AdminUserMutationResponse = {
+  user: AdminUser;
+};
+
 type Backend = {
   id: string;
   name: string;
@@ -2954,9 +2958,15 @@ function AdminUsersPanel({ currentUserId }: { currentUserId: string }) {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [hasLoaded, setHasLoaded] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isCreatingUser, setIsCreatingUser] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busyUserId, setBusyUserId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AdminUser | null>(null);
+  const [newUsername, setNewUsername] = useState("");
+  const [newEmail, setNewEmail] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [newRole, setNewRole] = useState("user");
+  const [newDisabled, setNewDisabled] = useState(false);
 
   const loadUsers = useCallback(async () => {
     setIsRefreshing(true);
@@ -2977,6 +2987,35 @@ function AdminUsersPanel({ currentUserId }: { currentUserId: string }) {
   useEffect(() => {
     void loadUsers();
   }, [loadUsers]);
+
+  async function createUser(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setIsCreatingUser(true);
+    setError(null);
+
+    try {
+      await requestJson<AdminUserMutationResponse>("/api/admin/users", {
+        method: "POST",
+        body: JSON.stringify({
+          username: newUsername,
+          email: newEmail.trim() === "" ? null : newEmail,
+          password: newPassword,
+          role: newRole,
+          is_disabled: newDisabled
+        })
+      });
+      setNewUsername("");
+      setNewEmail("");
+      setNewPassword("");
+      setNewRole("user");
+      setNewDisabled(false);
+      await loadUsers();
+    } catch (createError) {
+      setError(createError instanceof Error ? createError.message : "Failed to create user");
+    } finally {
+      setIsCreatingUser(false);
+    }
+  }
 
   async function patchUser(userId: string, body: Partial<Pick<AdminUser, "role" | "is_disabled">>) {
     setBusyUserId(userId);
@@ -3033,6 +3072,57 @@ function AdminUsersPanel({ currentUserId }: { currentUserId: string }) {
 
       {!hasLoaded && <p className="status-message">Loading users...</p>}
       {error && <p className="error">{error}</p>}
+
+      <form className="settings-form user-create-form" onSubmit={createUser}>
+        <label>
+          <span>Username</span>
+          <input
+            required
+            value={newUsername}
+            onChange={(event) => setNewUsername(event.target.value)}
+          />
+        </label>
+        <label>
+          <span>Email</span>
+          <input
+            type="email"
+            value={newEmail}
+            onChange={(event) => setNewEmail(event.target.value)}
+          />
+        </label>
+        <label>
+          <span>Password</span>
+          <input
+            required
+            type="password"
+            value={newPassword}
+            onChange={(event) => setNewPassword(event.target.value)}
+          />
+        </label>
+        <label>
+          <span>Role</span>
+          <select value={newRole} onChange={(event) => setNewRole(event.target.value)}>
+            <option value="user">User</option>
+            <option value="admin">Admin</option>
+          </select>
+        </label>
+        <label className="checkbox-row">
+          <input
+            type="checkbox"
+            checked={newDisabled}
+            onChange={(event) => setNewDisabled(event.target.checked)}
+          />
+          <span>Create disabled</span>
+        </label>
+        <button
+          type="submit"
+          disabled={isCreatingUser || newUsername.trim() === "" || newPassword === ""}
+        >
+          <Plus />
+          <span>{isCreatingUser ? "Creating..." : "Create User"}</span>
+        </button>
+      </form>
+
       {hasLoaded && users.length === 0 && <p className="status-message">No users found.</p>}
 
       <div className="user-list">
