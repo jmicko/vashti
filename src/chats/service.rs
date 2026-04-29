@@ -535,8 +535,9 @@ pub async fn prepare_generation(
         now,
     )
     .await?;
-    uploads::service::claim_pending_attachments(
+    uploads::service::attach_referenced_attachments(
         &mut tx,
+        uploads_dir,
         user_id,
         chat_id,
         &user_message_id,
@@ -820,8 +821,9 @@ pub async fn prepare_branch_generation(
         now,
     )
     .await?;
-    uploads::service::claim_pending_attachments(
+    uploads::service::attach_referenced_attachments(
         &mut tx,
+        uploads_dir,
         user_id,
         chat_id,
         &user_message_id,
@@ -907,6 +909,7 @@ pub async fn prepare_branch_generation(
 
 pub async fn edit_message(
     pool: &SqlitePool,
+    uploads_dir: &Path,
     user_id: &str,
     chat_id: &str,
     message_id: &str,
@@ -922,6 +925,7 @@ pub async fn edit_message(
     }
 
     let now = unix_timestamp();
+    let attachment_ids = attachment_ids(&payload.attachments)?;
     let revision_id = Uuid::new_v4().to_string();
     let mut tx = pool.begin().await?;
 
@@ -933,6 +937,16 @@ pub async fn edit_message(
         "",
         "edit",
         now,
+    )
+    .await?;
+    uploads::service::attach_referenced_attachments(
+        &mut tx,
+        uploads_dir,
+        user_id,
+        chat_id,
+        message_id,
+        &revision_id,
+        &attachment_ids,
     )
     .await?;
     sqlx::query(

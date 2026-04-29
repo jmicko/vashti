@@ -1056,11 +1056,16 @@ Request:
 
 ```json
 {
-  "content_text": "Updated message text"
+  "content_text": "Updated message text",
+  "attachments": [
+    { "id": "attachment-id" }
+  ]
 }
 ```
 
 Response returns the updated message shape.
+
+Attachment IDs may reference newly uploaded pending attachments or attachments from the current revision. Existing attachment records/files should be copied to the new revision instead of moved, so older revisions keep their original attachment set.
 
 ### `POST /api/chats/:chat_id/messages/:message_id/branch`
 
@@ -1073,7 +1078,10 @@ Request:
   "content_text": "Alternative user message",
   "backend_id": "b1",
   "model_name": "gemma4",
-  "think_mode": "medium"
+  "think_mode": "medium",
+  "attachments": [
+    { "id": "attachment-id" }
+  ]
 }
 ```
 

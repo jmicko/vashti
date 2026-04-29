@@ -77,6 +77,8 @@ pub struct MessageResponse {
 #[derive(Debug, Deserialize)]
 pub struct EditMessageRequest {
     pub content_text: String,
+    #[serde(default)]
+    pub attachments: Vec<AttachmentReference>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -269,8 +271,15 @@ pub async fn edit_message(
 ) -> Result<Json<MessageResponse>, ApiError> {
     let user =
         auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
-    let message =
-        service::edit_message(&state.db, &user.id, &chat_id, &message_id, payload).await?;
+    let message = service::edit_message(
+        &state.db,
+        &state.config.uploads_dir(),
+        &user.id,
+        &chat_id,
+        &message_id,
+        payload,
+    )
+    .await?;
 
     Ok(Json(MessageResponse { message }))
 }

@@ -1367,6 +1367,14 @@ textarea {
   gap: 10px;
 }
 
+.message-edit-attach {
+  display: flex;
+}
+
+.message-edit-attach button {
+  min-height: 34px;
+}
+
 .message-edit textarea {
   min-height: 140px;
   resize: vertical;

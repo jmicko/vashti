@@ -197,6 +197,7 @@ type ComposerAttachment = AttachmentInfo & {
   status: "ready" | "uploaded" | "uploading" | "error";
   error?: string;
   file?: File;
+  isExisting?: boolean;
 };
 
 type ComposerSubmitPayload = {
@@ -1853,7 +1854,7 @@ function ChatView({
   );
   const siblingGroups = useMemo(() => groupMessagesByParent(messages), [messages]);
   const chatContainsImages = useMemo(
-    () => messages.some((message) => (message.attachments ?? []).some(isImageAttachment)),
+    () => messages.some((message) => activeMessageAttachments(message).some(isImageAttachment)),
     [messages]
   );
   const modelImageWarning =
@@ -2448,7 +2449,11 @@ function ChatView({
   }
 
   async function removeAttachment(attachment: ComposerAttachment) {
-    if (attachment.status !== "uploaded" || attachment.id.startsWith("pending-")) {
+    if (
+      attachment.isExisting ||
+      attachment.status !== "uploaded" ||
+      attachment.id.startsWith("pending-")
+    ) {
       return;
     }
 
@@ -2484,7 +2489,11 @@ function ChatView({
     }, 1200);
   }
 
-  async function editMessage(message: ChatMessage, contentText: string) {
+  async function editMessage(
+    message: ChatMessage,
+    contentText: string,
+    attachments: ComposerAttachment[] = []
+  ) {
     setBusyMessageId(message.id);
     setGenerationError(null);
 
@@ -2493,7 +2502,10 @@ function ChatView({
         `/api/chats/${chatId}/messages/${message.id}`,
         {
           method: "PATCH",
-          body: JSON.stringify({ content_text: contentText })
+          body: JSON.stringify({
+            content_text: contentText,
+            attachments: attachmentReferences(attachments)
+          })
         }
       );
       replaceMessage(response.message);
@@ -2506,7 +2518,11 @@ function ChatView({
     }
   }
 
-  async function branchMessage(message: ChatMessage, contentText: string) {
+  async function branchMessage(
+    message: ChatMessage,
+    contentText: string,
+    attachments: ComposerAttachment[] = []
+  ) {
     if (isGenerating || message.role !== "user") {
       return;
     }
@@ -2517,7 +2533,7 @@ function ChatView({
       backend_id: selected?.backendId ?? null,
       model_name: selected?.modelName ?? null,
       think_mode: null,
-      attachments: []
+      attachments: attachmentReferences(attachments)
     });
   }
 
@@ -2712,7 +2728,10 @@ function ChatView({
                   onBranch={branchMessage}
                   onEdit={editMessage}
                   onImageOpen={onImageOpen}
+                  onRemoveAttachment={removeAttachment}
+                  onUploadAttachment={uploadAttachment}
                   onRegenerate={regenerateMessage}
+                  selectedModelInfo={selectedModelInfo}
                 />
               ))
             )}
@@ -2803,7 +2822,7 @@ function PrivateChatView({
   );
   const siblingGroups = useMemo(() => groupMessagesByParent(messages), [messages]);
   const chatContainsImages = useMemo(
-    () => messages.some((message) => (message.attachments ?? []).some(isImageAttachment)),
+    () => messages.some((message) => activeMessageAttachments(message).some(isImageAttachment)),
     [messages]
   );
   const modelImageWarning =
@@ -3511,7 +3530,11 @@ function PrivateChatView({
     }, 1200);
   }
 
-  async function editMessage(message: ChatMessage, contentText: string) {
+  async function editMessage(
+    message: ChatMessage,
+    contentText: string,
+    attachments: ComposerAttachment[] = []
+  ) {
     setBusyMessageId(message.id);
     try {
       const now = unixTimestamp();
@@ -3524,12 +3547,14 @@ function PrivateChatView({
       };
       updateMessage(message.id, (current) => {
         const revisions = updateRevisionList(current.revisions, revision);
+        const nextAttachments = privateAttachmentsForMessage(current, attachments, revision.id);
         return {
           ...current,
           active_revision_id: revision.id,
           active_revision: revision,
           revisions,
           revision_count: revisions.length,
+          attachments: [...(current.attachments ?? []), ...nextAttachments],
           updated_at: now
         };
       });
@@ -3538,7 +3563,11 @@ function PrivateChatView({
     }
   }
 
-  async function branchMessage(message: ChatMessage, contentText: string) {
+  async function branchMessage(
+    message: ChatMessage,
+    contentText: string,
+    attachments: ComposerAttachment[] = []
+  ) {
     if (!chat || isGenerating || message.role !== "user") {
       return;
     }
@@ -3561,10 +3590,7 @@ function PrivateChatView({
         contentText,
         createdAt: now
       });
-      userMessage.attachments = clonePrivateAttachmentsForMessage(
-        userMessage,
-        message.attachments ?? []
-      );
+      userMessage.attachments = privateAttachmentsForMessage(userMessage, attachments);
       const assistantMessage = createPrivateMessage({
         chatId: chat.id,
         parentMessageId: userMessage.id,
@@ -3884,7 +3910,9 @@ function PrivateChatView({
                   onBranch={branchMessage}
                   onEdit={editMessage}
                   onImageOpen={onImageOpen}
+                  onUploadAttachment={preparePrivateAttachment}
                   onRegenerate={regenerateMessage}
+                  selectedModelInfo={selectedModelInfo}
                 />
               ))
             )}
@@ -3936,7 +3964,10 @@ function MessageBubble({
   onBranch,
   onEdit,
   onImageOpen,
-  onRegenerate
+  onRemoveAttachment,
+  onUploadAttachment,
+  onRegenerate,
+  selectedModelInfo
 }: {
   message: ChatMessage;
   versionInfo: VersionInfo | null;
@@ -3949,18 +3980,39 @@ function MessageBubble({
   thinkingDurationSeconds: number | null;
   onCopy: (message: ChatMessage) => Promise<void>;
   onDelete: (message: ChatMessage) => void;
-  onBranch: (message: ChatMessage, contentText: string) => Promise<void>;
-  onEdit: (message: ChatMessage, contentText: string) => Promise<void>;
+  onBranch: (
+    message: ChatMessage,
+    contentText: string,
+    attachments?: ComposerAttachment[]
+  ) => Promise<void>;
+  onEdit: (
+    message: ChatMessage,
+    contentText: string,
+    attachments?: ComposerAttachment[]
+  ) => Promise<void>;
   onImageOpen?: (attachment: AttachmentInfo) => void;
+  onRemoveAttachment?: (attachment: ComposerAttachment) => Promise<void>;
+  onUploadAttachment?: (file: File) => Promise<ComposerAttachment> | ComposerAttachment;
   onRegenerate: (message: ChatMessage) => Promise<void>;
+  selectedModelInfo?: ModelInfo | null;
 }) {
   const content = message.is_deleted
     ? "Message deleted"
     : message.active_revision?.content_text.trim() || "";
   const thinking = message.active_revision?.thinking_text.trim();
-  const attachments = message.attachments ?? [];
+  const attachments = activeMessageAttachments(message);
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState(content);
+  const [draftAttachments, setDraftAttachments] = useState<ComposerAttachment[]>([]);
+  const editFileInputRef = useRef<HTMLInputElement | null>(null);
+  const hasUnsupportedImageWarning =
+    selectedModelInfo !== undefined &&
+    selectedModelInfo !== null &&
+    !selectedModelInfo.supports_images &&
+    draftAttachments.some(isImageAttachment);
+  const hasUploadingAttachment = draftAttachments.some(
+    (attachment) => attachment.status === "uploading"
+  );
 
   useEffect(() => {
     if (!isEditing) {
@@ -3969,13 +4021,83 @@ function MessageBubble({
   }, [content, isEditing]);
 
   async function saveEdit() {
-    await onEdit(message, draft);
+    await onEdit(message, draft, submittableAttachments(draftAttachments));
     setIsEditing(false);
   }
 
   async function sendEdit() {
     setIsEditing(false);
-    await onBranch(message, draft);
+    await onBranch(message, draft, submittableAttachments(draftAttachments));
+  }
+
+  function startEditing() {
+    setDraft(content);
+    setDraftAttachments(attachments.map(composerAttachmentFromExisting));
+    setIsEditing(true);
+  }
+
+  async function cancelEdit() {
+    await cleanupDraftUploads(draftAttachments, onRemoveAttachment);
+    setIsEditing(false);
+  }
+
+  async function addEditFiles(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = "";
+    if (!onUploadAttachment || files.length === 0) {
+      return;
+    }
+
+    for (const file of files) {
+      const pendingId = newPendingAttachmentId();
+      const pendingAttachment = pendingComposerAttachment(pendingId, file);
+      setDraftAttachments((current) => [...current, pendingAttachment]);
+
+      try {
+        const attachment = await onUploadAttachment(file);
+        setDraftAttachments((current) =>
+          current.map((currentAttachment) =>
+            currentAttachment.id === pendingId ? attachment : currentAttachment
+          )
+        );
+      } catch (uploadError) {
+        setDraftAttachments((current) =>
+          current.map((currentAttachment) =>
+            currentAttachment.id === pendingId
+              ? {
+                  ...currentAttachment,
+                  status: "error",
+                  error: uploadError instanceof Error ? uploadError.message : "Upload failed"
+                }
+              : currentAttachment
+          )
+        );
+      }
+    }
+  }
+
+  async function removeDraftAttachment(attachment: ComposerAttachment) {
+    if (attachment.status === "uploaded" && !attachment.isExisting && onRemoveAttachment) {
+      try {
+        await onRemoveAttachment(attachment);
+      } catch (removeError) {
+        setDraftAttachments((current) =>
+          current.map((currentAttachment) =>
+            currentAttachment.id === attachment.id
+              ? {
+                  ...currentAttachment,
+                  error: removeError instanceof Error ? removeError.message : "Delete failed"
+                }
+              : currentAttachment
+          )
+        );
+        return;
+      }
+    }
+
+    setDraftAttachments((current) =>
+      current.filter((currentAttachment) => currentAttachment.id !== attachment.id)
+    );
   }
 
   return (
@@ -4004,20 +4126,54 @@ function MessageBubble({
       )}
       {isEditing ? (
         <div className="message-edit">
+          {hasUnsupportedImageWarning && (
+            <p className="composer-warning">Images may not be supported by this model.</p>
+          )}
+          {draftAttachments.length > 0 && (
+            <AttachmentChipList
+              attachments={draftAttachments}
+              onRemove={(attachment) => void removeDraftAttachment(attachment)}
+            />
+          )}
+          {onUploadAttachment && (
+            <div className="message-edit-attach">
+              <input
+                ref={editFileInputRef}
+                className="visually-hidden"
+                type="file"
+                multiple
+                accept={attachmentAcceptTypes}
+                onChange={addEditFiles}
+              />
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={isBusy}
+                onClick={() => editFileInputRef.current?.click()}
+              >
+                <Paperclip />
+                <span>Attach</span>
+              </button>
+            </div>
+          )}
           <textarea value={draft} onChange={(event) => setDraft(event.target.value)} rows={5} />
           <div className="message-actions">
-            <button type="button" className="secondary-button" disabled={isBusy} onClick={() => setIsEditing(false)}>
+            <button type="button" className="secondary-button" disabled={isBusy} onClick={() => void cancelEdit()}>
               <X />
               <span>Cancel</span>
             </button>
-            <button type="button" disabled={isBusy || draft.trim() === ""} onClick={() => void saveEdit()}>
+            <button
+              type="button"
+              disabled={isBusy || hasUploadingAttachment || draft.trim() === ""}
+              onClick={() => void saveEdit()}
+            >
               <Save />
               <span>{isBusy ? "Saving..." : "Save"}</span>
             </button>
             {message.role === "user" && canBranch && (
               <button
                 type="button"
-                disabled={isBusy || isGenerating || draft.trim() === ""}
+                disabled={isBusy || isGenerating || hasUploadingAttachment || draft.trim() === ""}
                 onClick={() => void sendEdit()}
               >
                 <SendHorizontal />
@@ -4062,7 +4218,7 @@ function MessageBubble({
             title="Edit"
             aria-label="Edit"
             disabled={isBusy || !canEdit || message.is_deleted || message.status === "streaming"}
-            onClick={() => setIsEditing(true)}
+            onClick={startEditing}
           >
             <Pencil />
           </button>
@@ -4296,7 +4452,7 @@ function privatePromptMessages(
     .filter((message) => message.id !== stopBeforeMessageId)
     .filter((message) => !message.is_deleted)
     .map((message) => {
-      const attachmentPayload = privateAttachmentPromptPayload(message.attachments ?? []);
+      const attachmentPayload = privateAttachmentPromptPayload(activeMessageAttachments(message));
       return {
         role: message.role,
         content_text: withPrivateAttachmentText(
@@ -4349,34 +4505,54 @@ function imageBase64FromDataUrl(dataUrl: string | undefined) {
   return commaIndex >= 0 ? dataUrl?.slice(commaIndex + 1) ?? "" : "";
 }
 
+function activeMessageAttachments(message: ChatMessage) {
+  const attachments = message.attachments ?? [];
+  if (!message.active_revision_id) {
+    return attachments;
+  }
+
+  return attachments.filter(
+    (attachment) =>
+      !attachment.revision_id || attachment.revision_id === message.active_revision_id
+  );
+}
+
+function composerAttachmentFromExisting(attachment: AttachmentInfo): ComposerAttachment {
+  return {
+    ...attachment,
+    status: "uploaded",
+    isExisting: true
+  };
+}
+
 function privateAttachmentsForMessage(
   message: PrivateChatMessage,
-  attachments: ComposerAttachment[]
+  attachments: ComposerAttachment[],
+  revisionId = message.active_revision_id
 ) {
   return attachments
     .filter((attachment) => attachment.status === "ready" || attachment.status === "uploaded")
-    .map((attachment) => privateAttachmentForMessage(message, attachment, attachment.id));
-}
-
-function clonePrivateAttachmentsForMessage(
-  message: PrivateChatMessage,
-  attachments: AttachmentInfo[]
-) {
-  return attachments.map((attachment) =>
-    privateAttachmentForMessage(message, attachment, privateId("private-attachment"))
-  );
+    .map((attachment) =>
+      privateAttachmentForMessage(
+        message,
+        attachment,
+        attachment.isExisting ? privateId("private-attachment") : attachment.id,
+        revisionId
+      )
+    );
 }
 
 function privateAttachmentForMessage(
   message: PrivateChatMessage,
   attachment: AttachmentInfo,
-  id: string
+  id: string,
+  revisionId: string | null
 ) {
   return {
     id,
     chat_id: message.chat_id,
     message_id: message.id,
-    revision_id: message.active_revision_id,
+    revision_id: revisionId,
     original_filename: attachment.original_filename,
     mime_type: attachment.mime_type,
     size_bytes: attachment.size_bytes,
@@ -4610,7 +4786,7 @@ function StartChatComposer({
   }
 
   async function removeAttachment(attachment: ComposerAttachment) {
-    if (attachment.status === "uploaded" && onRemoveAttachment) {
+    if (attachment.status === "uploaded" && !attachment.isExisting && onRemoveAttachment) {
       try {
         await onRemoveAttachment(attachment);
       } catch (removeError) {
@@ -5144,12 +5320,48 @@ function attachmentReferences(attachments: ComposerAttachment[]) {
     .map((attachment) => ({ id: attachment.id }));
 }
 
+function submittableAttachments(attachments: ComposerAttachment[]) {
+  return attachments.filter(
+    (attachment) => attachment.status === "ready" || attachment.status === "uploaded"
+  );
+}
+
 function isImageAttachment(attachment: Pick<AttachmentInfo, "attachment_kind" | "mime_type">) {
   return attachment.attachment_kind === "image" || attachment.mime_type.startsWith("image/");
 }
 
 function newPendingAttachmentId() {
   return `pending-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+function pendingComposerAttachment(id: string, file: File): ComposerAttachment {
+  return {
+    id,
+    chat_id: undefined,
+    message_id: null,
+    revision_id: null,
+    original_filename: file.name,
+    mime_type: file.type || "application/octet-stream",
+    size_bytes: file.size,
+    attachment_kind: file.type.startsWith("image/") ? "image" : "text",
+    status: "uploading",
+    file
+  };
+}
+
+async function cleanupDraftUploads(
+  attachments: ComposerAttachment[],
+  onRemoveAttachment: ((attachment: ComposerAttachment) => Promise<void>) | undefined
+) {
+  if (!onRemoveAttachment) {
+    return;
+  }
+
+  await Promise.allSettled(
+    attachments
+      .filter((attachment) => attachment.status === "uploaded" && !attachment.isExisting)
+      .map((attachment) => onRemoveAttachment(attachment))
+  );
 }
 
 function formatBytes(bytes: number) {

@@ -224,8 +224,9 @@ pub async fn delete_attachment(
     Ok(())
 }
 
-pub async fn claim_pending_attachments(
+pub async fn attach_referenced_attachments(
     tx: &mut Transaction<'_, sqlx::Sqlite>,
+    uploads_dir: &Path,
     user_id: &str,
     chat_id: &str,
     message_id: &str,
@@ -248,31 +249,116 @@ pub async fn claim_pending_attachments(
             ));
         }
 
-        let result = sqlx::query(
+        let row = sqlx::query(
             r#"
-            UPDATE attachments
-            SET message_id = ?,
-                revision_id = ?
+            SELECT message_id,
+                   revision_id,
+                   original_filename,
+                   storage_path,
+                   mime_type,
+                   size_bytes,
+                   attachment_kind
+            FROM attachments
             WHERE id = ?
               AND user_id = ?
               AND chat_id = ?
-              AND message_id IS NULL
-              AND revision_id IS NULL
             "#,
         )
-        .bind(message_id)
-        .bind(revision_id)
         .bind(attachment_id)
         .bind(user_id)
         .bind(chat_id)
-        .execute(&mut **tx)
-        .await?;
+        .fetch_optional(&mut **tx)
+        .await?
+        .ok_or_else(|| {
+            ApiError::bad_request("invalid_attachment", "Attachment is not available")
+        })?;
 
-        if result.rows_affected() == 0 {
-            return Err(ApiError::bad_request(
-                "invalid_attachment",
-                "Attachment is not available for this message",
-            ));
+        let existing_message_id: Option<String> = row.try_get("message_id")?;
+        let existing_revision_id: Option<String> = row.try_get("revision_id")?;
+        if existing_message_id.is_none() && existing_revision_id.is_none() {
+            let result = sqlx::query(
+                r#"
+                UPDATE attachments
+                SET message_id = ?,
+                    revision_id = ?
+                WHERE id = ?
+                  AND user_id = ?
+                  AND chat_id = ?
+                  AND message_id IS NULL
+                  AND revision_id IS NULL
+                "#,
+            )
+            .bind(message_id)
+            .bind(revision_id)
+            .bind(attachment_id)
+            .bind(user_id)
+            .bind(chat_id)
+            .execute(&mut **tx)
+            .await?;
+
+            if result.rows_affected() == 0 {
+                return Err(ApiError::bad_request(
+                    "invalid_attachment",
+                    "Attachment is not available for this message",
+                ));
+            }
+            continue;
+        }
+
+        let source_storage_path: String = row.try_get("storage_path")?;
+        let cloned_attachment_id = Uuid::new_v4().to_string();
+        let cloned_storage_path = format!("{chat_id}/{cloned_attachment_id}");
+        let source_path = uploads_dir.join(source_storage_path);
+        let cloned_path = uploads_dir.join(&cloned_storage_path);
+        if let Some(parent) = cloned_path.parent() {
+            fs::create_dir_all(parent).await.map_err(|error| {
+                tracing::error!(?error, "failed to create upload directory");
+                ApiError::internal("Failed to store upload")
+            })?;
+        }
+
+        fs::copy(&source_path, &cloned_path)
+            .await
+            .map_err(|error| {
+                tracing::error!(?error, attachment_id, "failed to clone attachment");
+                ApiError::internal("Failed to clone attachment")
+            })?;
+
+        let insert_result = sqlx::query(
+            r#"
+            INSERT INTO attachments (
+                id,
+                user_id,
+                chat_id,
+                message_id,
+                revision_id,
+                original_filename,
+                storage_path,
+                mime_type,
+                size_bytes,
+                attachment_kind,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&cloned_attachment_id)
+        .bind(user_id)
+        .bind(chat_id)
+        .bind(message_id)
+        .bind(revision_id)
+        .bind(row.try_get::<String, _>("original_filename")?)
+        .bind(&cloned_storage_path)
+        .bind(row.try_get::<String, _>("mime_type")?)
+        .bind(row.try_get::<i64, _>("size_bytes")?)
+        .bind(row.try_get::<String, _>("attachment_kind")?)
+        .bind(unix_timestamp())
+        .execute(&mut **tx)
+        .await;
+
+        if let Err(error) = insert_result {
+            let _ = fs::remove_file(&cloned_path).await;
+            return Err(ApiError::from(error));
         }
     }
 
