@@ -192,8 +192,9 @@ type AttachmentInfo = {
 };
 
 type ComposerAttachment = AttachmentInfo & {
-  status: "uploaded" | "uploading" | "error";
+  status: "ready" | "uploaded" | "uploading" | "error";
   error?: string;
+  file?: File;
 };
 
 type ComposerSubmitPayload = {
@@ -745,7 +746,10 @@ function AppShell({
     useState<PrivateChatSummary | null>(null);
   const [isDeletingChat, setIsDeletingChat] = useState(false);
   const [isDeletingPrivateChat, setIsDeletingPrivateChat] = useState(false);
-  const [queuedPrompt, setQueuedPrompt] = useState<{ chatId: string; prompt: string } | null>(null);
+  const [imageViewerAttachment, setImageViewerAttachmentState] = useState<AttachmentInfo | null>(null);
+  const [queuedPrompt, setQueuedPrompt] = useState<
+    ({ chatId: string } & ComposerSubmitPayload) | null
+  >(null);
   const [queuedPrivatePrompt, setQueuedPrivatePrompt] =
     useState<{ chatId: string; prompt: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -755,10 +759,16 @@ function AppShell({
   const settingsSection = route.page === "settings" ? route.section : "profile";
   const currentChatId = route.page === "chat" ? route.chatId ?? null : null;
   const currentPrivateChatId = route.page === "private-chat" ? route.chatId : null;
+  const imageViewerAttachmentRef = useRef<AttachmentInfo | null>(null);
 
   useEffect(() => {
     routeRef.current = route;
   }, [route]);
+
+  function setImageViewerAttachment(attachment: AttachmentInfo | null) {
+    imageViewerAttachmentRef.current = attachment;
+    setImageViewerAttachmentState(attachment);
+  }
 
   useEffect(() => {
     if (route.page === "private-chat") {
@@ -845,6 +855,11 @@ function AppShell({
 
   useEffect(() => {
     function handlePopState() {
+      if (imageViewerAttachmentRef.current) {
+        setImageViewerAttachment(null);
+        return;
+      }
+
       const nextRoute = routeFromLocation();
       const currentRoute = routeRef.current;
 
@@ -864,6 +879,30 @@ function AppShell({
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
   }, []);
+
+  function openImageViewer(attachment: AttachmentInfo) {
+    setImageViewerAttachment(attachment);
+    if (!window.history.state?.vashtiImageViewer) {
+      window.history.pushState(
+        {
+          ...(typeof window.history.state === "object" && window.history.state !== null
+            ? window.history.state
+            : {}),
+          vashtiImageViewer: true
+        },
+        "",
+        window.location.href
+      );
+    }
+  }
+
+  function closeImageViewer() {
+    const shouldStepBack = Boolean(window.history.state?.vashtiImageViewer);
+    setImageViewerAttachment(null);
+    if (shouldStepBack) {
+      window.history.back();
+    }
+  }
 
   function shouldGuardNavigation(currentRoute: AppRoute, nextRoute: AppRoute) {
     return (
@@ -959,7 +998,7 @@ function AppShell({
     }
   }
 
-  async function createChatFromPrompt(prompt: string) {
+  async function createChatFromPrompt(prompt: string, attachments: ComposerAttachment[] = []) {
     if (!prompt.trim()) {
       openChat();
       return;
@@ -985,7 +1024,8 @@ function AppShell({
       });
 
       if (prompt.trim()) {
-        setQueuedPrompt({ chatId: response.chat.id, prompt });
+        const uploadedAttachments = await uploadComposerAttachments(response.chat.id, attachments);
+        setQueuedPrompt({ chatId: response.chat.id, prompt, attachments: uploadedAttachments });
       }
 
       await loadChats();
@@ -1013,6 +1053,10 @@ function AppShell({
       backendName: backend.backend.name,
       modelName: selected.modelName
     };
+  }
+
+  function selectedModelInfo() {
+    return modelInfoForValue(modelGroups, selectedModel);
   }
 
   async function createPrivateChatFromPrompt(prompt: string) {
@@ -1254,8 +1298,13 @@ function AppShell({
               chatId={currentChatId}
               error={error}
               queuedPrompt={queuedPrompt?.chatId === currentChatId ? queuedPrompt.prompt : null}
+              queuedAttachments={
+                queuedPrompt?.chatId === currentChatId ? queuedPrompt.attachments : []
+              }
               selectedModel={selectedModel}
+              selectedModelInfo={selectedModelInfo()}
               onChatsChanged={loadChats}
+              onImageOpen={openImageViewer}
               onModelSelected={setSelectedModel}
               onQueuedPromptConsumed={() => setQueuedPrompt(null)}
             />
@@ -1266,6 +1315,7 @@ function AppShell({
               isCreatingPrivate={isCreatingPrivateChat}
               mode={newChatMode}
               selectedModel={selectedModel}
+              selectedModelInfo={selectedModelInfo()}
               onModeChange={setNewChatMode}
               onCreateChat={createChatFromPrompt}
               onCreatePrivateChat={createPrivateChatFromPrompt}
@@ -1300,6 +1350,9 @@ function AppShell({
           onCancel={() => setPrivateChatDeleteTarget(null)}
           onConfirm={() => void deleteSelectedPrivateChat()}
         />
+      )}
+      {imageViewerAttachment && (
+        <ImageViewer attachment={imageViewerAttachment} onClose={closeImageViewer} />
       )}
     </main>
   );
@@ -1672,6 +1725,7 @@ function ChatHome({
   isCreatingPrivate,
   mode,
   selectedModel,
+  selectedModelInfo,
   onModeChange,
   onCreateChat,
   onCreatePrivateChat
@@ -1681,8 +1735,9 @@ function ChatHome({
   isCreatingPrivate: boolean;
   mode: NewChatMode;
   selectedModel: string;
+  selectedModelInfo: ModelInfo | null;
   onModeChange: (mode: NewChatMode) => void;
-  onCreateChat: (prompt: string) => Promise<void>;
+  onCreateChat: (prompt: string, attachments?: ComposerAttachment[]) => Promise<void>;
   onCreatePrivateChat: (prompt: string) => Promise<void>;
 }) {
   const isPrivate = mode === "private";
@@ -1720,6 +1775,8 @@ function ChatHome({
                 : "Message Vashti"
               : "Select a model to start"
           }
+          selectedModelInfo={isPrivate ? null : selectedModelInfo}
+          onUploadAttachment={isPrivate ? undefined : prepareLocalAttachment}
           onSubmit={isPrivate ? onCreatePrivateChat : onCreateChat}
         />
         <p className={isPrivate ? "chat-mode-note private" : "chat-mode-note"}>
@@ -1740,16 +1797,22 @@ function ChatView({
   chatId,
   error,
   queuedPrompt,
+  queuedAttachments,
   selectedModel,
+  selectedModelInfo,
   onChatsChanged,
+  onImageOpen,
   onModelSelected,
   onQueuedPromptConsumed
 }: {
   chatId: string;
   error: string | null;
   queuedPrompt: string | null;
+  queuedAttachments: ComposerAttachment[];
   selectedModel: string;
+  selectedModelInfo: ModelInfo | null;
   onChatsChanged: () => Promise<void>;
+  onImageOpen: (attachment: AttachmentInfo) => void;
   onModelSelected: (value: string) => void;
   onQueuedPromptConsumed: () => void;
 }) {
@@ -1779,6 +1842,14 @@ function ChatView({
     [chat?.active_root_message_id, messages]
   );
   const siblingGroups = useMemo(() => groupMessagesByParent(messages), [messages]);
+  const chatContainsImages = useMemo(
+    () => messages.some((message) => (message.attachments ?? []).some(isImageAttachment)),
+    [messages]
+  );
+  const modelImageWarning =
+    selectedModelInfo && !selectedModelInfo.supports_images && chatContainsImages
+      ? "This chat includes images. Images may not be supported by this model."
+      : null;
 
   const loadChat = useCallback(async () => {
     scrollToBottomAfterLoadRef.current = true;
@@ -1975,8 +2046,16 @@ function ChatView({
     }
 
     onQueuedPromptConsumed();
-    void generate(queuedPrompt);
-  }, [chat, generate, isGenerating, isLoading, onQueuedPromptConsumed, queuedPrompt]);
+    void generate(queuedPrompt, queuedAttachments);
+  }, [
+    chat,
+    generate,
+    isGenerating,
+    isLoading,
+    onQueuedPromptConsumed,
+    queuedAttachments,
+    queuedPrompt
+  ]);
 
   useEffect(() => {
     if (!pendingPrompt || isGenerating || isLoading || !chat) {
@@ -2355,20 +2434,7 @@ function ChatView({
   }
 
   async function uploadAttachment(file: File) {
-    const formData = new FormData();
-    formData.append("file", file);
-
-    const response = await fetch(`/api/chats/${chatId}/attachments`, {
-      method: "POST",
-      credentials: "include",
-      body: formData
-    });
-
-    if (!response.ok) {
-      throw new Error(await responseErrorMessage(response));
-    }
-
-    return ((await response.json()) as AttachmentResponse).attachment;
+    return { ...(await uploadAttachmentToChat(chatId, file)), status: "uploaded" };
   }
 
   async function removeAttachment(attachment: ComposerAttachment) {
@@ -2635,6 +2701,7 @@ function ChatView({
                   onDelete={setDeleteTarget}
                   onBranch={branchMessage}
                   onEdit={editMessage}
+                  onImageOpen={onImageOpen}
                   onRegenerate={regenerateMessage}
                 />
               ))
@@ -2646,6 +2713,8 @@ function ChatView({
               isDisabled={!selectedModel}
               isGenerating={isGenerating}
               placeholder={selectedModel ? "Message Vashti" : "Select a model to continue"}
+              selectedModelInfo={selectedModelInfo}
+              warning={modelImageWarning}
               onStop={stopGeneration}
               onUploadAttachment={uploadAttachment}
               onRemoveAttachment={removeAttachment}
@@ -3833,6 +3902,7 @@ function MessageBubble({
   onDelete,
   onBranch,
   onEdit,
+  onImageOpen,
   onRegenerate
 }: {
   message: ChatMessage;
@@ -3848,6 +3918,7 @@ function MessageBubble({
   onDelete: (message: ChatMessage) => void;
   onBranch: (message: ChatMessage, contentText: string) => Promise<void>;
   onEdit: (message: ChatMessage, contentText: string) => Promise<void>;
+  onImageOpen?: (attachment: AttachmentInfo) => void;
   onRegenerate: (message: ChatMessage) => Promise<void>;
 }) {
   const content = message.is_deleted
@@ -3895,6 +3966,9 @@ function MessageBubble({
           <p>{thinking}</p>
         </details>
       )}
+      {!isEditing && !message.is_deleted && attachments.length > 0 && (
+        <MessageAttachments attachments={attachments} onImageOpen={onImageOpen} />
+      )}
       {isEditing ? (
         <div className="message-edit">
           <textarea value={draft} onChange={(event) => setDraft(event.target.value)} rows={5} />
@@ -3923,9 +3997,6 @@ function MessageBubble({
         <MarkdownContent content={content} />
       ) : (
         <p>{message.status === "streaming" ? <RetroLoader /> : "No content"}</p>
-      )}
-      {!isEditing && !message.is_deleted && attachments.length > 0 && (
-        <MessageAttachments attachments={attachments} />
       )}
       {!isEditing && (
         <div className="message-actions">
@@ -4162,6 +4233,16 @@ function latestAssistantModelValue(messages: ChatMessage[]) {
   return null;
 }
 
+function modelInfoForValue(groups: BackendModelGroup[], value: string) {
+  const selected = modelParts(value);
+  if (!selected) {
+    return null;
+  }
+
+  const group = groups.find((modelGroup) => modelGroup.backend.id === selected.backendId);
+  return group?.models.find((model) => model.name === selected.modelName) ?? null;
+}
+
 function streamingAssistantIdFromMessages(messages: ChatMessage[]) {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
@@ -4304,6 +4385,8 @@ function StartChatComposer({
   isDisabled,
   isGenerating = false,
   placeholder,
+  selectedModelInfo,
+  warning,
   onStop,
   onUploadAttachment,
   onRemoveAttachment,
@@ -4313,8 +4396,10 @@ function StartChatComposer({
   isDisabled: boolean;
   isGenerating?: boolean;
   placeholder: string;
+  selectedModelInfo?: ModelInfo | null;
+  warning?: string | null;
   onStop?: () => void;
-  onUploadAttachment?: (file: File) => Promise<AttachmentInfo>;
+  onUploadAttachment?: (file: File) => Promise<ComposerAttachment> | ComposerAttachment;
   onRemoveAttachment?: (attachment: ComposerAttachment) => Promise<void>;
   onSubmit: (prompt: string, attachments?: ComposerAttachment[]) => Promise<void>;
 }) {
@@ -4324,12 +4409,25 @@ function StartChatComposer({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const canAttach = Boolean(onUploadAttachment);
   const hasUploadingAttachment = attachments.some((attachment) => attachment.status === "uploading");
+  const hasUnsupportedImageWarning =
+    selectedModelInfo !== undefined &&
+    selectedModelInfo !== null &&
+    !selectedModelInfo.supports_images &&
+    attachments.some(isImageAttachment);
+  const visibleWarning =
+    warning ?? (hasUnsupportedImageWarning ? "Images may not be supported by this model." : null);
   const canSubmit =
     prompt.trim().length > 0 && !isDisabled && !hasUploadingAttachment && (!isBusy || isGenerating);
 
   useEffect(() => {
     textareaRef.current?.focus();
   }, [isGenerating]);
+
+  useEffect(() => {
+    if (!canAttach) {
+      setAttachments([]);
+    }
+  }, [canAttach]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -4339,7 +4437,7 @@ function StartChatComposer({
 
     const submittedPrompt = prompt;
     const submittedAttachments = attachments.filter(
-      (attachment) => attachment.status === "uploaded"
+      (attachment) => attachment.status === "ready" || attachment.status === "uploaded"
     );
     setPrompt("");
     setAttachments([]);
@@ -4365,7 +4463,8 @@ function StartChatComposer({
         mime_type: file.type || "application/octet-stream",
         size_bytes: file.size,
         attachment_kind: file.type.startsWith("image/") ? "image" : "text",
-        status: "uploading"
+        status: "uploading",
+        file
       };
 
       setAttachments((current) => [...current, pendingAttachment]);
@@ -4374,9 +4473,7 @@ function StartChatComposer({
         const attachment = await onUploadAttachment(file);
         setAttachments((current) =>
           current.map((currentAttachment) =>
-            currentAttachment.id === pendingId
-              ? { ...attachment, status: "uploaded" }
-              : currentAttachment
+            currentAttachment.id === pendingId ? attachment : currentAttachment
           )
         );
       } catch (uploadError) {
@@ -4420,30 +4517,20 @@ function StartChatComposer({
   }
 
   return (
-    <form className="chat-composer" onSubmit={submit}>
-      {attachments.length > 0 && (
-        <AttachmentChipList
-          attachments={attachments}
-          onRemove={(attachment) => void removeAttachment(attachment)}
-        />
-      )}
-      <textarea
-        ref={textareaRef}
-        rows={3}
-        value={prompt}
-        disabled={isDisabled || (isBusy && !isGenerating)}
-        placeholder={placeholder}
-        onChange={(event) => setPrompt(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" && !event.shiftKey) {
-            event.preventDefault();
-            event.currentTarget.form?.requestSubmit();
-          }
-        }}
-      />
-      <div className="composer-actions">
+    <>
+      {visibleWarning && <p className="composer-warning">{visibleWarning}</p>}
+      <form
+        className={canAttach ? "chat-composer" : "chat-composer chat-composer-no-attach"}
+        onSubmit={submit}
+      >
+        {attachments.length > 0 && (
+          <AttachmentChipList
+            attachments={attachments}
+            onRemove={(attachment) => void removeAttachment(attachment)}
+          />
+        )}
         {canAttach && (
-          <>
+          <div className="composer-attach">
             <input
               ref={fileInputRef}
               className="visually-hidden"
@@ -4461,18 +4548,34 @@ function StartChatComposer({
             >
               <Paperclip />
             </button>
-          </>
+          </div>
         )}
-        {isGenerating && (
-          <button type="button" aria-label="Stop generation" onClick={onStop}>
-            <Square />
+        <textarea
+          ref={textareaRef}
+          rows={3}
+          value={prompt}
+          disabled={isDisabled || (isBusy && !isGenerating)}
+          placeholder={placeholder}
+          onChange={(event) => setPrompt(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              event.currentTarget.form?.requestSubmit();
+            }
+          }}
+        />
+        <div className="composer-actions">
+          {isGenerating && (
+            <button type="button" aria-label="Stop generation" onClick={onStop}>
+              <Square />
+            </button>
+          )}
+          <button type="submit" aria-label="Send message" disabled={!canSubmit}>
+            {isBusy && !isGenerating ? <RetroLoader /> : <SendHorizontal />}
           </button>
-        )}
-        <button type="submit" aria-label="Send message" disabled={!canSubmit}>
-          {isBusy && !isGenerating ? <RetroLoader /> : <SendHorizontal />}
-        </button>
-      </div>
-    </form>
+        </div>
+      </form>
+    </>
   );
 }
 
@@ -4520,50 +4623,156 @@ function AttachmentChipList({
   return (
     <div className="composer-attachments" aria-label="Attached files">
       {attachments.map((attachment) => (
-        <div
+        <ComposerAttachmentItem
           key={attachment.id}
-          className={
-            attachment.status === "error" ? "attachment-chip attachment-chip-error" : "attachment-chip"
-          }
-          title={attachment.error ?? attachment.original_filename}
-        >
-          {attachmentIcon(attachment)}
-          <span>{attachment.original_filename}</span>
-          <small>{attachment.status === "uploading" ? <RetroLoader /> : formatBytes(attachment.size_bytes)}</small>
-          <button
-            type="button"
-            className="message-icon-button"
-            aria-label={`Remove ${attachment.original_filename}`}
-            onClick={() => onRemove(attachment)}
-          >
-            <X />
-          </button>
-        </div>
+          attachment={attachment}
+          onRemove={onRemove}
+        />
       ))}
     </div>
   );
 }
 
-function MessageAttachments({ attachments }: { attachments: AttachmentInfo[] }) {
+function ComposerAttachmentItem({
+  attachment,
+  onRemove
+}: {
+  attachment: ComposerAttachment;
+  onRemove: (attachment: ComposerAttachment) => void;
+}) {
+  const imageUrl = useAttachmentImageUrl(attachment);
+  const isImage = isImageAttachment(attachment);
+  const className = [
+    "attachment-preview",
+    attachment.status === "error" ? "attachment-chip-error" : ""
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  return (
+    <div className={className} title={attachment.error ?? attachment.original_filename}>
+      <div className={isImage ? "attachment-preview-image" : "attachment-preview-image attachment-preview-document"}>
+        {isImage && imageUrl ? (
+          <img src={imageUrl} alt="" />
+        ) : (
+          <>
+            {isImage ? <ImageIcon /> : <FileText />}
+            {!isImage && <span className="attachment-type-label">{attachmentTypeLabel(attachment)}</span>}
+          </>
+        )}
+      </div>
+      <span>{attachment.original_filename}</span>
+      <small>{attachment.status === "uploading" ? <RetroLoader /> : formatBytes(attachment.size_bytes)}</small>
+      <button
+        type="button"
+        className="message-icon-button"
+        aria-label={`Remove ${attachment.original_filename}`}
+        onClick={() => onRemove(attachment)}
+      >
+        <X />
+      </button>
+    </div>
+  );
+}
+
+function MessageAttachments({
+  attachments,
+  onImageOpen
+}: {
+  attachments: AttachmentInfo[];
+  onImageOpen?: (attachment: AttachmentInfo) => void;
+}) {
   if (attachments.length === 0) {
     return null;
   }
 
+  const imageAttachments = attachments.filter(isImageAttachment);
+  const fileAttachments = attachments.filter((attachment) => !isImageAttachment(attachment));
+
   return (
-    <div className="message-attachments" aria-label="Message attachments">
-      {attachments.map((attachment) => (
-        <a
-          key={attachment.id}
-          className="attachment-chip"
-          href={`/api/attachments/${attachment.id}`}
-          download={attachment.original_filename}
-          title={attachment.original_filename}
+    <>
+      <div className="message-attachments" aria-label="Message attachments">
+        {imageAttachments.length > 0 && (
+          <div className="message-image-list">
+            {imageAttachments.map((attachment) => (
+              <button
+                key={attachment.id}
+                type="button"
+                className="message-image-button"
+                aria-label={`Open ${attachment.original_filename}`}
+                onClick={() => onImageOpen?.(attachment)}
+              >
+                <img
+                  src={attachmentUrl(attachment.id)}
+                  alt={attachment.original_filename}
+                  loading="lazy"
+                />
+              </button>
+            ))}
+          </div>
+        )}
+        {fileAttachments.map((attachment) => (
+          <a
+            key={attachment.id}
+            className="attachment-chip"
+            href={attachmentUrl(attachment.id)}
+            download={attachment.original_filename}
+            title={attachment.original_filename}
+          >
+            {attachmentIcon(attachment)}
+            <span>{attachment.original_filename}</span>
+            <small>{formatBytes(attachment.size_bytes)}</small>
+          </a>
+        ))}
+      </div>
+    </>
+  );
+}
+
+function ImageViewer({
+  attachment,
+  onClose
+}: {
+  attachment: AttachmentInfo;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  function closeViewer() {
+    onClose();
+  }
+
+  return (
+    <div className="image-viewer-backdrop" role="presentation" onClick={closeViewer}>
+      <div className="image-viewer-top">
+        <button
+          type="button"
+          aria-label="Close image"
+          onClick={(event) => {
+            event.stopPropagation();
+            closeViewer();
+          }}
         >
-          {attachmentIcon(attachment)}
-          <span>{attachment.original_filename}</span>
-          <small>{formatBytes(attachment.size_bytes)}</small>
-        </a>
-      ))}
+          <X />
+        </button>
+      </div>
+      <div className="image-viewer-body">
+        <img
+          className="image-viewer-image"
+          src={attachmentUrl(attachment.id)}
+          alt={attachment.original_filename}
+          onClick={(event) => event.stopPropagation()}
+        />
+      </div>
     </div>
   );
 }
@@ -4576,10 +4785,115 @@ function attachmentIcon(attachment: Pick<AttachmentInfo, "attachment_kind" | "mi
   );
 }
 
+function attachmentTypeLabel(attachment: Pick<AttachmentInfo, "original_filename" | "mime_type">) {
+  const extension = attachment.original_filename.split(".").pop()?.trim();
+  if (extension && extension !== attachment.original_filename && extension.length <= 5) {
+    return extension.toLocaleUpperCase();
+  }
+
+  if (attachment.mime_type.includes("json")) {
+    return "JSON";
+  }
+  if (attachment.mime_type.includes("markdown")) {
+    return "MD";
+  }
+  if (attachment.mime_type.startsWith("text/")) {
+    return "TXT";
+  }
+
+  return "DOC";
+}
+
+function useAttachmentImageUrl(attachment: ComposerAttachment) {
+  const [url, setUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isImageAttachment(attachment)) {
+      setUrl(null);
+      return;
+    }
+
+    if (attachment.file) {
+      const objectUrl = URL.createObjectURL(attachment.file);
+      setUrl(objectUrl);
+      return () => URL.revokeObjectURL(objectUrl);
+    }
+
+    if (attachment.status === "uploaded" && !attachment.id.startsWith("pending-")) {
+      setUrl(attachmentUrl(attachment.id));
+      return;
+    }
+
+    setUrl(null);
+  }, [attachment]);
+
+  return url;
+}
+
+function attachmentUrl(attachmentId: string) {
+  return `/api/attachments/${attachmentId}`;
+}
+
+function prepareLocalAttachment(file: File): ComposerAttachment {
+  return {
+    id: newPendingAttachmentId(),
+    chat_id: undefined,
+    message_id: null,
+    revision_id: null,
+    original_filename: file.name,
+    mime_type: file.type || "application/octet-stream",
+    size_bytes: file.size,
+    attachment_kind: file.type.startsWith("image/") ? "image" : "text",
+    status: "ready",
+    file
+  };
+}
+
+async function uploadAttachmentToChat(chatId: string, file: File) {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const response = await fetch(`/api/chats/${chatId}/attachments`, {
+    method: "POST",
+    credentials: "include",
+    body: formData
+  });
+
+  if (!response.ok) {
+    throw new Error(await responseErrorMessage(response));
+  }
+
+  return ((await response.json()) as AttachmentResponse).attachment;
+}
+
+async function uploadComposerAttachments(chatId: string, attachments: ComposerAttachment[]) {
+  const uploadedAttachments: ComposerAttachment[] = [];
+
+  for (const attachment of attachments) {
+    if (attachment.status === "uploaded") {
+      uploadedAttachments.push(attachment);
+      continue;
+    }
+
+    if (attachment.status === "ready" && attachment.file) {
+      uploadedAttachments.push({
+        ...(await uploadAttachmentToChat(chatId, attachment.file)),
+        status: "uploaded"
+      });
+    }
+  }
+
+  return uploadedAttachments;
+}
+
 function attachmentReferences(attachments: ComposerAttachment[]) {
   return attachments
     .filter((attachment) => attachment.status === "uploaded")
     .map((attachment) => ({ id: attachment.id }));
+}
+
+function isImageAttachment(attachment: Pick<AttachmentInfo, "attachment_kind" | "mime_type">) {
+  return attachment.attachment_kind === "image" || attachment.mime_type.startsWith("image/");
 }
 
 function newPendingAttachmentId() {
