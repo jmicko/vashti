@@ -8,15 +8,15 @@ use axum::{
 use axum_extra::extract::CookieJar;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
-use std::convert::Infallible;
+use std::{collections::HashMap, convert::Infallible, sync::Arc};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
 use crate::{
-    app_state::AppState,
+    app_state::{AppState, GenerationProgress},
     auth,
     chats::{
-        models::{ChatDetail, ChatMessage, ChatSummary},
+        models::{ChatDetail, ChatMessage, ChatMessageRevision, ChatSummary},
         service,
     },
     error::ApiError,
@@ -25,6 +25,8 @@ use crate::{
         models::{OllamaChatChunk, OllamaChatMessage, OllamaChatRequest, OllamaThink},
     },
 };
+
+type GenerationProgressMap = Arc<tokio::sync::Mutex<HashMap<String, GenerationProgress>>>;
 
 #[derive(Debug, Serialize)]
 pub struct ListChatsResponse {
@@ -230,8 +232,10 @@ pub async fn list_messages(
 ) -> Result<Json<ListMessagesResponse>, ApiError> {
     let user =
         auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
-    let (active_root_message_id, messages) =
+    let (active_root_message_id, mut messages) =
         service::list_messages(&state.db, &user.id, &chat_id).await?;
+    let progress = state.generation_progress.lock().await;
+    overlay_generation_progress(&mut messages, &user.id, &chat_id, &progress);
 
     Ok(Json(ListMessagesResponse {
         active_root_message_id,
@@ -405,6 +409,7 @@ async fn stream_generation(
     tx: mpsc::Sender<Result<Bytes, Infallible>>,
     db: sqlx::SqlitePool,
     client: reqwest::Client,
+    progress: GenerationProgressMap,
     user_id: String,
     chat_id: String,
     prepared: service::PreparedGeneration,
@@ -417,6 +422,15 @@ async fn stream_generation(
     let mut content_text = String::new();
     let mut thinking_text = String::new();
     let mut done_reason = None;
+    set_generation_progress(
+        &progress,
+        &assistant_message_id,
+        &user_id,
+        &chat_id,
+        &content_text,
+        &thinking_text,
+    )
+    .await;
 
     if !send_event(
         &tx,
@@ -436,6 +450,7 @@ async fn stream_generation(
             &thinking_text,
         )
         .await;
+        clear_generation_progress(&progress, &assistant_message_id).await;
         return;
     }
 
@@ -462,11 +477,12 @@ async fn stream_generation(
                 let _ = send_event(
                     &tx,
                     &GenerateEvent::Error {
-                        assistant_message_id: Some(assistant_message_id),
+                        assistant_message_id: Some(assistant_message_id.clone()),
                         message,
                     },
                 )
                 .await;
+                clear_generation_progress(&progress, &assistant_message_id).await;
                 return;
             }
         };
@@ -489,10 +505,11 @@ async fn stream_generation(
                 let _ = send_event(
                     &tx,
                     &GenerateEvent::MessageStopped {
-                        assistant_message_id,
+                        assistant_message_id: assistant_message_id.clone(),
                     },
                 )
                 .await;
+                clear_generation_progress(&progress, &assistant_message_id).await;
                 return;
             }
             next = stream.next() => {
@@ -507,7 +524,10 @@ async fn stream_generation(
                             }
                             match handle_ollama_line(
                                 &tx,
+                                &progress,
                                 &assistant_message_id,
+                                &user_id,
+                                &chat_id,
                                 &line,
                                 &mut content_text,
                                 &mut thinking_text,
@@ -515,19 +535,7 @@ async fn stream_generation(
                             )
                             .await
                             {
-                                Ok(true) => {}
-                                Ok(false) => {
-                                    let _ = service::stop_generation(
-                                        &db,
-                                        &user_id,
-                                        &chat_id,
-                                        &assistant_message_id,
-                                        &content_text,
-                                        &thinking_text,
-                                    )
-                                    .await;
-                                    return;
-                                }
+                                Ok(()) => {}
                                 Err(message) => {
                                     let _ = service::fail_generation(
                                         &db,
@@ -537,6 +545,8 @@ async fn stream_generation(
                                         &message,
                                     )
                                     .await;
+                                    clear_generation_progress(&progress, &assistant_message_id)
+                                        .await;
                                     return;
                                 }
                             }
@@ -555,11 +565,12 @@ async fn stream_generation(
                         let _ = send_event(
                             &tx,
                             &GenerateEvent::Error {
-                                assistant_message_id: Some(assistant_message_id),
+                                assistant_message_id: Some(assistant_message_id.clone()),
                                 message,
                             },
                         )
                         .await;
+                        clear_generation_progress(&progress, &assistant_message_id).await;
                         return;
                     }
                     None => break,
@@ -572,7 +583,10 @@ async fn stream_generation(
     if !line.is_empty() {
         if let Err(message) = handle_ollama_line(
             &tx,
+            &progress,
             &assistant_message_id,
+            &user_id,
+            &chat_id,
             &line,
             &mut content_text,
             &mut thinking_text,
@@ -588,6 +602,7 @@ async fn stream_generation(
                 &message,
             )
             .await;
+            clear_generation_progress(&progress, &assistant_message_id).await;
             return;
         }
     }
@@ -608,6 +623,7 @@ async fn stream_generation(
         },
     )
     .await;
+    clear_generation_progress(&progress, &assistant_message_id).await;
 
     if let Some(title) = maybe_generate_chat_title(
         &db,
@@ -623,6 +639,80 @@ async fn stream_generation(
     {
         let _ = send_event(&tx, &GenerateEvent::ChatTitle { chat_id, title }).await;
     }
+}
+
+fn overlay_generation_progress(
+    messages: &mut [ChatMessage],
+    user_id: &str,
+    chat_id: &str,
+    progress: &HashMap<String, GenerationProgress>,
+) {
+    for message in messages {
+        let Some(progress) = progress.get(&message.id) else {
+            continue;
+        };
+
+        if progress.user_id != user_id || progress.chat_id != chat_id {
+            continue;
+        }
+
+        message.status = "streaming".to_string();
+        message.done_reason = None;
+        message.error_text = None;
+        message.completed_at = None;
+
+        let active_revision_id = message
+            .active_revision_id
+            .clone()
+            .unwrap_or_else(|| format!("{}-active", message.id));
+        let mut revision = message
+            .active_revision
+            .clone()
+            .unwrap_or_else(|| ChatMessageRevision {
+                id: active_revision_id.clone(),
+                content_text: String::new(),
+                thinking_text: String::new(),
+                source: "original".to_string(),
+                created_at: message.created_at,
+            });
+        revision.content_text = progress.content_text.clone();
+        revision.thinking_text = progress.thinking_text.clone();
+
+        message.active_revision = Some(revision.clone());
+        if let Some(existing) = message
+            .revisions
+            .iter_mut()
+            .find(|candidate| candidate.id == revision.id)
+        {
+            *existing = revision;
+        } else {
+            message.revisions.push(revision);
+            message.revision_count += 1;
+        }
+    }
+}
+
+async fn set_generation_progress(
+    progress: &GenerationProgressMap,
+    assistant_message_id: &str,
+    user_id: &str,
+    chat_id: &str,
+    content_text: &str,
+    thinking_text: &str,
+) {
+    progress.lock().await.insert(
+        assistant_message_id.to_string(),
+        GenerationProgress {
+            user_id: user_id.to_string(),
+            chat_id: chat_id.to_string(),
+            content_text: content_text.to_string(),
+            thinking_text: thinking_text.to_string(),
+        },
+    );
+}
+
+async fn clear_generation_progress(progress: &GenerationProgressMap, assistant_message_id: &str) {
+    progress.lock().await.remove(assistant_message_id);
 }
 
 async fn start_generation_stream(
@@ -644,9 +734,20 @@ async fn start_generation_stream(
     let db = state.db.clone();
     let client = state.http_client.clone();
     let cancellations = state.generation_cancellations.clone();
+    let progress = state.generation_progress.clone();
 
     tokio::spawn(async move {
-        stream_generation(tx, db, client, user_id, chat_id, prepared, cancellation).await;
+        stream_generation(
+            tx,
+            db,
+            client,
+            progress,
+            user_id,
+            chat_id,
+            prepared,
+            cancellation,
+        )
+        .await;
         cancellations.lock().await.remove(&assistant_message_id);
     });
 
@@ -808,12 +909,15 @@ fn fallback_title_from_prompt(prompt: &str) -> String {
 
 async fn handle_ollama_line(
     tx: &mpsc::Sender<Result<Bytes, Infallible>>,
+    progress: &GenerationProgressMap,
     assistant_message_id: &str,
+    user_id: &str,
+    chat_id: &str,
     line: &str,
     content_text: &mut String,
     thinking_text: &mut String,
     done_reason: &mut Option<String>,
-) -> Result<bool, String> {
+) -> Result<(), String> {
     let chunk = match serde_json::from_str::<OllamaChatChunk>(line) {
         Ok(chunk) => chunk,
         Err(error) => {
@@ -833,6 +937,15 @@ async fn handle_ollama_line(
     if let Some(message) = chunk.message {
         if !message.thinking.is_empty() {
             thinking_text.push_str(&message.thinking);
+            set_generation_progress(
+                progress,
+                assistant_message_id,
+                user_id,
+                chat_id,
+                content_text,
+                thinking_text,
+            )
+            .await;
             if !send_event(
                 tx,
                 &GenerateEvent::ThinkingDelta {
@@ -842,12 +955,21 @@ async fn handle_ollama_line(
             )
             .await
             {
-                return Ok(false);
+                return Ok(());
             }
         }
 
         if !message.content.is_empty() {
             content_text.push_str(&message.content);
+            set_generation_progress(
+                progress,
+                assistant_message_id,
+                user_id,
+                chat_id,
+                content_text,
+                thinking_text,
+            )
+            .await;
             if !send_event(
                 tx,
                 &GenerateEvent::ContentDelta {
@@ -857,7 +979,7 @@ async fn handle_ollama_line(
             )
             .await
             {
-                return Ok(false);
+                return Ok(());
             }
         }
     }
@@ -866,7 +988,7 @@ async fn handle_ollama_line(
         *done_reason = chunk.done_reason;
     }
 
-    Ok(true)
+    Ok(())
 }
 
 async fn send_event(tx: &mpsc::Sender<Result<Bytes, Infallible>>, event: &GenerateEvent) -> bool {
@@ -874,7 +996,8 @@ async fn send_event(tx: &mpsc::Sender<Result<Bytes, Infallible>>, event: &Genera
         return false;
     };
     payload.push(b'\n');
-    tx.send(Ok(Bytes::from(payload))).await.is_ok()
+    let _ = tx.send(Ok(Bytes::from(payload))).await;
+    true
 }
 
 fn think_from_mode(mode: &str) -> Option<OllamaThink> {

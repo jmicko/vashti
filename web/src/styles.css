@@ -353,6 +353,24 @@ textarea {
   user-select: none;
 }
 
+.chat-title-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.chat-title-line svg {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+.chat-title-line span {
+  min-width: 0;
+}
+
 .chat-link small {
   color: var(--muted);
   font-size: 0.76rem;
@@ -596,6 +614,49 @@ textarea {
   gap: 18px;
 }
 
+.new-chat-mode {
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: rgba(1, 3, 1, 0.86);
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 4px;
+}
+
+.new-chat-mode-option {
+  min-height: 38px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+  box-shadow: none;
+}
+
+.new-chat-mode-option.active {
+  border-color: rgba(113, 255, 47, 0.48);
+  background: var(--accent-muted);
+  color: var(--text);
+}
+
+.chat-mode-note {
+  max-width: 560px;
+  margin: -6px 0 0;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  text-align: center;
+  font-size: 0.88rem;
+}
+
+.chat-mode-note svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
 .chat-composer {
   width: min(760px, 100%);
   border: 1px solid var(--line);
@@ -645,6 +706,39 @@ textarea {
   min-height: 0;
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto auto;
+}
+
+.private-chat-view {
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+}
+
+.private-local-banner {
+  border-bottom: 1px solid var(--line-soft);
+  background: rgba(113, 255, 47, 0.05);
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 18px;
+  font-size: 0.84rem;
+  flex-wrap: wrap;
+}
+
+.private-local-banner svg {
+  width: 15px;
+  height: 15px;
+  color: var(--accent);
+}
+
+.private-local-banner small {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.stream-test-button {
+  min-height: 28px;
+  padding: 3px 9px;
+  font-size: 0.78rem;
 }
 
 .message-list {

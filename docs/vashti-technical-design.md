@@ -417,6 +417,12 @@ On startup, the server should:
 6. optionally attempt localhost Ollama detection if no backend exists
 7. start HTTP server
 
+Default bind behavior:
+
+* default to `0.0.0.0:8080` so the app can be reached from the local network
+* allow override with `VASHTI_BIND`, for example `VASHTI_BIND=127.0.0.1:8080` when running only behind a local reverse proxy
+* external exposure should still be handled deliberately through a reverse proxy, firewall rules, TLS, and normal account/session controls
+
 ### 5.2 Localhost Ollama detection
 
 If no `ollama_backends` rows exist:
@@ -1165,11 +1171,19 @@ On backend side:
 
 * persist user message before generation begins
 * persist assistant placeholder with `status=streaming`
-* update assistant revision thinking/content as stream proceeds or write final text at end
+* keep an in-memory snapshot of in-flight assistant thinking/content while streaming
+* overlay that in-memory snapshot onto `GET /api/chats/:chat_id/messages` so route changes can recover the whole partial response
+* write assistant revision thinking/content to SQLite when generation completes, stops, or errors
 * mark assistant message `complete` on success
 * mark assistant message `stopped` if the user stops generation
 * mark `error` on failure
 * prompt construction walks the active path and excludes deleted messages
+
+Notes:
+
+* do not write every streamed token to SQLite in MVP
+* do not require token sequence numbers for normal UI reconnects; reconnect reads the full accumulated snapshot, not a delta replay
+* a backend process crash during active generation can still lose the in-memory partial response; avoiding that would require periodic or append-only persistence and is not part of the lightweight MVP behavior
 
 ### `POST /api/chats/:chat_id/messages/:message_id/stop`
 
@@ -1180,7 +1194,7 @@ Behavior:
 * no WebSocket is required
 * backend keeps an in-memory cancellation handle per active assistant message
 * stop marks the current assistant message `stopped`
-* already-streamed thinking/content remains persisted
+* already-generated thinking/content is persisted when the stop is handled
 * the stopped assistant message is treated as a completed node for future branch navigation
 
 ---
@@ -1273,6 +1287,20 @@ Behavior:
 * no attachment persistence for private-local mode in MVP
 * response uses the same stream format as standard generation
 
+### Debug-only private stream test endpoint
+
+In debug builds, the backend may expose:
+
+* `POST /api/dev/private-stream-test`
+
+Purpose:
+
+* emit deterministic private-generation stream chunks without calling Ollama
+* stress-test frontend stream handling and IndexedDB persistence
+* verify that no thinking/content chunks are dropped, duplicated, reordered, or overwritten during fast local streaming
+
+This endpoint must remain debug-only and should not be exposed as a production API.
+
 ---
 
 ## 7. Frontend Screen Design
@@ -1328,6 +1356,10 @@ Layout:
 * bottom composer with upload and send
 * desktop keeps chat history visible in the left sidebar
 * mobile collapses chat history into the top-left menu
+* standard and private-local chats share one chat history list
+* private-local chats are marked with a lock icon rather than shown in a separate section
+* the New Chat button returns to the shared start composer and must not create an empty persisted chat
+* the start composer includes a persistent standard/private mode toggle; the mode should default to the last mode the user actively used
 * the top-right gear opens the settings/user menu, including logout
 * settings open as a full page in the main content area rather than a modal
 * client routes should preserve major app state across refreshes; settings use `/app/settings/:section`, and chat routes should use a stable chat URL once chats exist
@@ -1433,6 +1465,13 @@ Suggested private message shape:
 ```
 
 Private-local storage should mirror the standard message tree shape where practical, while remaining client-owned and IndexedDB-backed.
+
+Private-local chats should use the same branch and revision navigation model as standard chats:
+
+* edit + save appends a revision on the same local message
+* user edit + send creates a sibling branch and generates a new local assistant child
+* assistant regenerate creates a sibling assistant message under the same parent
+* the UI presents revisions and sibling branches as one chronological version list
 
 ---
 

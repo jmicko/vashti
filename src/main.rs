@@ -152,7 +152,15 @@ fn router(state: AppState) -> Router {
             "/chats/{chat_id}/messages/{message_id}/stop",
             post(chats::handlers::stop_generation),
         )
-        .fallback(api_not_found);
+        .route("/private/generate", post(private::handlers::generate));
+
+    #[cfg(debug_assertions)]
+    let api = api.route(
+        "/dev/private-stream-test",
+        post(private::handlers::generate_stream_test),
+    );
+
+    let api = api.fallback(api_not_found);
 
     Router::new()
         .nest("/api", api)

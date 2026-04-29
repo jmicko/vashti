@@ -19,6 +19,7 @@ import {
   Cog,
   Copy,
   LogOut,
+  Lock,
   Menu,
   MessageSquare,
   MessageSquarePlus,
@@ -38,6 +39,24 @@ import {
   Users,
   X
 } from "lucide-react";
+import {
+  createPrivateChat,
+  createPrivateMessage,
+  deletePrivateChat,
+  getPrivateChat,
+  listPrivateChats,
+  listPrivateMessages,
+  privateId,
+  renamePrivateChat,
+  savePrivateChat,
+  savePrivateMessage,
+  savePrivateMessages,
+  unixTimestamp,
+  type PrivateChatDetail,
+  type PrivateChatMessage,
+  type PrivateChatSummary,
+  type PrivateChatMessageRevision
+} from "./privateChatStore";
 
 type User = {
   id: string;
@@ -244,9 +263,13 @@ type ApiError = {
   };
 };
 
-type Page = "chat" | "settings";
+type Page = "chat" | "private-chat" | "settings";
 type SettingsSection = "profile" | "users" | "app" | "backends";
-type AppRoute = { page: "chat"; chatId?: string } | { page: "settings"; section: SettingsSection };
+type NewChatMode = "standard" | "private";
+type AppRoute =
+  | { page: "chat"; chatId?: string }
+  | { page: "private-chat"; chatId: string }
+  | { page: "settings"; section: SettingsSection };
 type AppSettingsGuard = {
   isDirty: boolean;
   save: () => Promise<boolean>;
@@ -272,9 +295,31 @@ type VersionInfo = {
 
 const settingsSections: SettingsSection[] = ["profile", "users", "backends", "app"];
 const rootSiblingGroupKey = "__root__";
+const newChatModeStorageKey = "vashti:new-chat-mode";
 
 function isSettingsSection(value: string | undefined): value is SettingsSection {
   return settingsSections.includes(value as SettingsSection);
+}
+
+function storedNewChatMode(): NewChatMode {
+  try {
+    return window.localStorage.getItem(newChatModeStorageKey) === "private"
+      ? "private"
+      : "standard";
+  } catch {
+    return "standard";
+  }
+}
+
+function privateStreamTestEnabled() {
+  try {
+    return (
+      new URLSearchParams(window.location.search).has("privateStreamTest") ||
+      window.localStorage.getItem("vashti:private-stream-test") === "1"
+    );
+  } catch {
+    return false;
+  }
 }
 
 function routeFromLocation(): AppRoute {
@@ -292,12 +337,23 @@ function routeFromLocation(): AppRoute {
     }
   }
 
+  if (path.startsWith("/app/private-chats/")) {
+    const chatId = path.split("/")[3];
+    if (chatId) {
+      return { page: "private-chat", chatId };
+    }
+  }
+
   return { page: "chat" };
 }
 
 function pathForRoute(route: AppRoute) {
   if (route.page === "settings") {
     return `/app/settings/${route.section}`;
+  }
+
+  if (route.page === "private-chat") {
+    return `/app/private-chats/${route.chatId}`;
   }
 
   if (route.chatId) {
@@ -643,25 +699,52 @@ function AppShell({
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [modelError, setModelError] = useState<string | null>(null);
   const [chats, setChats] = useState<ChatSummary[]>([]);
+  const [privateChats, setPrivateChats] = useState<PrivateChatSummary[]>([]);
   const [isLoadingChats, setIsLoadingChats] = useState(false);
+  const [isLoadingPrivateChats, setIsLoadingPrivateChats] = useState(false);
+  const [newChatMode, setNewChatModeState] = useState<NewChatMode>(() => storedNewChatMode());
   const [isCreatingChat, setIsCreatingChat] = useState(false);
+  const [isCreatingPrivateChat, setIsCreatingPrivateChat] = useState(false);
   const [chatDeleteTarget, setChatDeleteTarget] = useState<ChatSummary | null>(null);
+  const [privateChatDeleteTarget, setPrivateChatDeleteTarget] =
+    useState<PrivateChatSummary | null>(null);
   const [isDeletingChat, setIsDeletingChat] = useState(false);
+  const [isDeletingPrivateChat, setIsDeletingPrivateChat] = useState(false);
   const [queuedPrompt, setQueuedPrompt] = useState<{ chatId: string; prompt: string } | null>(null);
+  const [queuedPrivatePrompt, setQueuedPrivatePrompt] =
+    useState<{ chatId: string; prompt: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const isAdmin = user.role === "admin";
   const page = route.page;
   const isSettingsPage = page === "settings";
   const settingsSection = route.page === "settings" ? route.section : "profile";
   const currentChatId = route.page === "chat" ? route.chatId ?? null : null;
+  const currentPrivateChatId = route.page === "private-chat" ? route.chatId : null;
 
   useEffect(() => {
     routeRef.current = route;
   }, [route]);
 
+  useEffect(() => {
+    if (route.page === "private-chat") {
+      setNewChatMode("private");
+    } else if (route.page === "chat" && route.chatId) {
+      setNewChatMode("standard");
+    }
+  }, [route]);
+
   const updateAppSettingsGuard = useCallback((guard: AppSettingsGuard | null) => {
     appSettingsGuardRef.current = guard;
   }, []);
+
+  function setNewChatMode(mode: NewChatMode) {
+    setNewChatModeState(mode);
+    try {
+      window.localStorage.setItem(newChatModeStorageKey, mode);
+    } catch {
+      // The toggle still works for this session if browser storage is unavailable.
+    }
+  }
 
   const loadModels = useCallback(async () => {
     setIsLoadingModels(true);
@@ -706,6 +789,24 @@ function AppShell({
   useEffect(() => {
     void loadChats();
   }, [loadChats]);
+
+  const loadPrivateChats = useCallback(async () => {
+    setIsLoadingPrivateChats(true);
+
+    try {
+      setPrivateChats(await listPrivateChats());
+    } catch (loadError) {
+      setError(
+        loadError instanceof Error ? loadError.message : "Failed to load private chats"
+      );
+    } finally {
+      setIsLoadingPrivateChats(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadPrivateChats();
+  }, [loadPrivateChats]);
 
   useEffect(() => {
     function handlePopState() {
@@ -767,6 +868,10 @@ function AppShell({
     navigate(chatId ? { page: "chat", chatId } : { page: "chat" });
   }
 
+  function openPrivateChat(chatId: string) {
+    navigate({ page: "private-chat", chatId });
+  }
+
   function activateSettingsControl() {
     if (isSettingsPage) {
       openChat();
@@ -820,6 +925,11 @@ function AppShell({
   }
 
   async function createChatFromPrompt(prompt: string) {
+    if (!prompt.trim()) {
+      openChat();
+      return;
+    }
+
     const selected = modelParts(selectedModel);
     if (!selected) {
       setError("Select a model before starting a chat");
@@ -852,6 +962,62 @@ function AppShell({
     }
   }
 
+  function currentSelectedModel() {
+    const selected = modelParts(selectedModel);
+    if (!selected) {
+      return null;
+    }
+
+    const backend = modelGroups.find((group) => group.backend.id === selected.backendId);
+    if (!backend) {
+      return null;
+    }
+
+    return {
+      backendId: selected.backendId,
+      backendName: backend.backend.name,
+      modelName: selected.modelName
+    };
+  }
+
+  async function createPrivateChatFromPrompt(prompt: string) {
+    if (!prompt.trim()) {
+      openChat();
+      return;
+    }
+
+    const selected = currentSelectedModel();
+    if (!selected) {
+      setError("Select a model before starting a private chat");
+      return;
+    }
+
+    setIsCreatingPrivateChat(true);
+    setError(null);
+
+    try {
+      const chat = await createPrivateChat({
+        title: "Private Chat",
+        backendId: selected.backendId,
+        backendName: selected.backendName,
+        modelName: selected.modelName
+      });
+
+      if (prompt.trim()) {
+        setQueuedPrivatePrompt({ chatId: chat.id, prompt });
+      }
+
+      await loadPrivateChats();
+      openPrivateChat(chat.id);
+    } catch (createError) {
+      setError(
+        createError instanceof Error ? createError.message : "Failed to create private chat"
+      );
+    } finally {
+      setIsCreatingPrivateChat(false);
+    }
+  }
+
   async function renameChat(chatId: string, title: string) {
     setError(null);
     try {
@@ -866,6 +1032,21 @@ function AppShell({
       );
     } catch (renameError) {
       setError(renameError instanceof Error ? renameError.message : "Failed to rename chat");
+      throw renameError;
+    }
+  }
+
+  async function renameLocalPrivateChat(chatId: string, title: string) {
+    setError(null);
+    try {
+      const chat = await renamePrivateChat(chatId, title);
+      setPrivateChats((current) =>
+        current.map((item) => (item.id === chatId ? { ...item, title: chat.title } : item))
+      );
+    } catch (renameError) {
+      setError(
+        renameError instanceof Error ? renameError.message : "Failed to rename private chat"
+      );
       throw renameError;
     }
   }
@@ -892,18 +1073,48 @@ function AppShell({
     }
   }
 
+  async function deleteSelectedPrivateChat() {
+    const chat = privateChatDeleteTarget;
+    if (!chat) {
+      return;
+    }
+
+    setIsDeletingPrivateChat(true);
+    setError(null);
+    try {
+      await deletePrivateChat(chat.id);
+      setPrivateChats((current) => current.filter((item) => item.id !== chat.id));
+      setPrivateChatDeleteTarget(null);
+      if (currentPrivateChatId === chat.id) {
+        openChat();
+      }
+    } catch (deleteError) {
+      setError(
+        deleteError instanceof Error ? deleteError.message : "Failed to delete private chat"
+      );
+    } finally {
+      setIsDeletingPrivateChat(false);
+    }
+  }
+
   return (
     <main className={isSidebarOpen ? "app-shell sidebar-open" : "app-shell"}>
       <Sidebar
         chats={chats}
+        privateChats={privateChats}
         currentChatId={currentChatId}
+        currentPrivateChatId={currentPrivateChatId}
         currentPage={page}
         isOpen={isSidebarOpen}
         isLoading={isLoadingChats}
+        isLoadingPrivateChats={isLoadingPrivateChats}
         onClose={() => setIsSidebarOpen(false)}
         onDeleteChat={setChatDeleteTarget}
+        onDeletePrivateChat={setPrivateChatDeleteTarget}
         onOpenChat={openChat}
+        onOpenPrivateChat={openPrivateChat}
         onRenameChat={renameChat}
+        onRenamePrivateChat={renameLocalPrivateChat}
       />
       <button
         type="button"
@@ -934,11 +1145,10 @@ function AppShell({
             <button
               type="button"
               className="primary-action"
-              disabled={isCreatingChat || !selectedModel}
-              onClick={() => void createChatFromPrompt("")}
+              onClick={() => openChat()}
             >
               <MessageSquarePlus />
-              <span>{isCreatingChat ? "Creating..." : "New Chat"}</span>
+              <span>New Chat</span>
             </button>
             <div className="settings-menu-wrap">
               <button
@@ -989,6 +1199,20 @@ function AppShell({
             onSelectSection={(section) => openSettings(section)}
             isAdmin={isAdmin}
           />
+        ) : page === "private-chat" && currentPrivateChatId ? (
+          <PrivateChatView
+            chatId={currentPrivateChatId}
+            error={error}
+            queuedPrompt={
+              queuedPrivatePrompt?.chatId === currentPrivateChatId
+                ? queuedPrivatePrompt.prompt
+                : null
+            }
+            selectedModel={selectedModel}
+            onModelSelected={setSelectedModel}
+            onPrivateChatsChanged={loadPrivateChats}
+            onQueuedPromptConsumed={() => setQueuedPrivatePrompt(null)}
+          />
         ) : (
           currentChatId ? (
             <ChatView
@@ -1004,8 +1228,12 @@ function AppShell({
             <ChatHome
               error={error}
               isCreating={isCreatingChat}
+              isCreatingPrivate={isCreatingPrivateChat}
+              mode={newChatMode}
               selectedModel={selectedModel}
+              onModeChange={setNewChatMode}
               onCreateChat={createChatFromPrompt}
+              onCreatePrivateChat={createPrivateChatFromPrompt}
             />
           )
         )}
@@ -1028,30 +1256,52 @@ function AppShell({
           onConfirm={() => void deleteSelectedChat()}
         />
       )}
+      {privateChatDeleteTarget && (
+        <ConfirmDialog
+          title="Delete Private Chat"
+          message={`Delete "${privateChatDeleteTarget.title}" from this device? This cannot be recovered from the server.`}
+          confirmLabel="Delete"
+          isBusy={isDeletingPrivateChat}
+          onCancel={() => setPrivateChatDeleteTarget(null)}
+          onConfirm={() => void deleteSelectedPrivateChat()}
+        />
+      )}
     </main>
   );
 }
 
 function Sidebar({
   chats,
+  privateChats,
   currentChatId,
+  currentPrivateChatId,
   currentPage,
   isOpen,
   isLoading,
+  isLoadingPrivateChats,
   onClose,
   onDeleteChat,
+  onDeletePrivateChat,
   onOpenChat,
-  onRenameChat
+  onOpenPrivateChat,
+  onRenameChat,
+  onRenamePrivateChat
 }: {
   chats: ChatSummary[];
+  privateChats: PrivateChatSummary[];
   currentChatId: string | null;
+  currentPrivateChatId: string | null;
   currentPage: Page;
   isOpen: boolean;
   isLoading: boolean;
+  isLoadingPrivateChats: boolean;
   onClose: () => void;
   onDeleteChat: (chat: ChatSummary) => void;
+  onDeletePrivateChat: (chat: PrivateChatSummary) => void;
   onOpenChat: (chatId?: string) => void;
+  onOpenPrivateChat: (chatId: string) => void;
   onRenameChat: (chatId: string, title: string) => Promise<void>;
+  onRenamePrivateChat: (chatId: string, title: string) => Promise<void>;
 }) {
   const [openMenuChatId, setOpenMenuChatId] = useState<string | null>(null);
   const [editingChatId, setEditingChatId] = useState<string | null>(null);
@@ -1093,6 +1343,20 @@ function Sidebar({
     };
   }, [openMenuChatId]);
 
+  const combinedChats = useMemo(
+    () =>
+      [
+        ...chats.map((chat) => ({ chat, isPrivate: false })),
+        ...privateChats.map((chat) => ({ chat, isPrivate: true }))
+      ].sort(
+        (left, right) =>
+          right.chat.last_message_at - left.chat.last_message_at ||
+          left.chat.title.localeCompare(right.chat.title)
+      ),
+    [chats, privateChats]
+  );
+  const isLoadingAnyChats = isLoading || isLoadingPrivateChats;
+
   return (
     <aside className="sidebar">
       <div className="sidebar-static">
@@ -1128,31 +1392,46 @@ function Sidebar({
       </div>
       <div className="chat-history">
         <p className="eyebrow">Previous Chats</p>
-        {isLoading && chats.length === 0 ? (
+        {isLoadingAnyChats && combinedChats.length === 0 ? (
           <p>Loading chats...</p>
-        ) : chats.length === 0 ? (
+        ) : combinedChats.length === 0 ? (
           <p>No chats yet</p>
         ) : (
           <div className="chat-link-list">
-            {chats.map((chat) => (
+            {combinedChats.map(({ chat, isPrivate }) => (
               <ChatListItem
                 key={chat.id}
                 chat={chat}
-                isActive={currentChatId === chat.id}
+                isActive={
+                  isPrivate ? currentPrivateChatId === chat.id : currentChatId === chat.id
+                }
                 isEditing={editingChatId === chat.id}
                 isMenuOpen={openMenuChatId === chat.id}
+                isPrivate={isPrivate}
                 onCancelEditing={() => setEditingChatId(null)}
                 onCloseMenu={() => setOpenMenuChatId(null)}
                 onDelete={() => {
                   setOpenMenuChatId(null);
-                  onDeleteChat(chat);
+                  if (isPrivate) {
+                    onDeletePrivateChat(chat as PrivateChatSummary);
+                  } else {
+                    onDeleteChat(chat as ChatSummary);
+                  }
                 }}
                 onOpen={() => {
                   setOpenMenuChatId(null);
-                  onOpenChat(chat.id);
+                  if (isPrivate) {
+                    onOpenPrivateChat(chat.id);
+                  } else {
+                    onOpenChat(chat.id);
+                  }
                 }}
                 onOpenMenu={() => setOpenMenuChatId(chat.id)}
-                onRename={(title) => onRenameChat(chat.id, title)}
+                onRename={(title) =>
+                  isPrivate
+                    ? onRenamePrivateChat(chat.id, title)
+                    : onRenameChat(chat.id, title)
+                }
                 onStartEditing={() => {
                   setOpenMenuChatId(null);
                   setEditingChatId(chat.id);
@@ -1174,6 +1453,7 @@ function ChatListItem({
   isActive,
   isEditing,
   isMenuOpen,
+  isPrivate = false,
   onCancelEditing,
   onCloseMenu,
   onDelete,
@@ -1183,10 +1463,11 @@ function ChatListItem({
   onStartEditing,
   onToggleMenu
 }: {
-  chat: ChatSummary;
+  chat: ChatSummary | PrivateChatSummary;
   isActive: boolean;
   isEditing: boolean;
   isMenuOpen: boolean;
+  isPrivate?: boolean;
   onCancelEditing: () => void;
   onCloseMenu: () => void;
   onDelete: () => void;
@@ -1298,8 +1579,11 @@ function ChatListItem({
             onOpen();
           }}
         >
-          <span>{chat.title}</span>
-          <small>{chat.default_model_name}</small>
+          <span className="chat-title-line">
+            {isPrivate && <Lock />}
+            <span>{chat.title}</span>
+          </span>
+          <small>{isPrivate ? `Private · ${chat.default_model_name}` : chat.default_model_name}</small>
         </button>
       )}
       <button
@@ -1350,24 +1634,67 @@ function ChatListItem({
 function ChatHome({
   error,
   isCreating,
+  isCreatingPrivate,
+  mode,
   selectedModel,
-  onCreateChat
+  onModeChange,
+  onCreateChat,
+  onCreatePrivateChat
 }: {
   error: string | null;
   isCreating: boolean;
+  isCreatingPrivate: boolean;
+  mode: NewChatMode;
   selectedModel: string;
+  onModeChange: (mode: NewChatMode) => void;
   onCreateChat: (prompt: string) => Promise<void>;
+  onCreatePrivateChat: (prompt: string) => Promise<void>;
 }) {
+  const isPrivate = mode === "private";
+  const isCreatingSelectedMode = isPrivate ? isCreatingPrivate : isCreating;
+
   return (
     <div className="chat-home">
       <div className="chat-home-inner">
         <BrandMark compact />
+        <div className="new-chat-mode" aria-label="New chat mode">
+          <button
+            type="button"
+            className={!isPrivate ? "new-chat-mode-option active" : "new-chat-mode-option"}
+            onClick={() => onModeChange("standard")}
+          >
+            <MessageSquare />
+            <span>Standard</span>
+          </button>
+          <button
+            type="button"
+            className={isPrivate ? "new-chat-mode-option active" : "new-chat-mode-option"}
+            onClick={() => onModeChange("private")}
+          >
+            <Lock />
+            <span>Private</span>
+          </button>
+        </div>
         <StartChatComposer
-          isBusy={isCreating}
+          isBusy={isCreatingSelectedMode}
           isDisabled={!selectedModel}
-          placeholder={selectedModel ? "Message Vashti" : "Select a model to start"}
-          onSubmit={onCreateChat}
+          placeholder={
+            selectedModel
+              ? isPrivate
+                ? "Message private chat"
+                : "Message Vashti"
+              : "Select a model to start"
+          }
+          onSubmit={isPrivate ? onCreatePrivateChat : onCreateChat}
         />
+        <p className={isPrivate ? "chat-mode-note private" : "chat-mode-note"}>
+          {isPrivate ? <Lock /> : <MessageSquare />}
+          <span>
+            {isPrivate
+              ? "Private chats are stored only on this device and are not synced."
+              : "Standard chats are saved on the server and available when you sign in."}
+          </span>
+        </p>
       </div>
       {error && <p className="error">{error}</p>}
     </div>
@@ -1436,6 +1763,9 @@ function ChatView({
       thinkingStartedAtRef.current.clear();
       setThinkingDurations({});
       setMessages(messageResponse.messages);
+      const streamingAssistantId = streamingAssistantIdFromMessages(messageResponse.messages);
+      setActiveAssistantId(streamingAssistantId);
+      setIsGenerating(Boolean(streamingAssistantId));
       const latestModel = latestAssistantModelValue(
         activePathMessages(messageResponse.messages, messageResponse.active_root_message_id)
       );
@@ -1449,6 +1779,32 @@ function ChatView({
       setIsLoading(false);
     }
   }, [chatId, onModelSelected]);
+
+  const refreshStreamingMessages = useCallback(async () => {
+    try {
+      const messageResponse = await requestJson<ListMessagesResponse>(
+        `/api/chats/${chatId}/messages`
+      );
+      setChat((current) =>
+        current
+          ? { ...current, active_root_message_id: messageResponse.active_root_message_id }
+          : current
+      );
+      setMessages(messageResponse.messages);
+
+      const streamingAssistantId = streamingAssistantIdFromMessages(messageResponse.messages);
+      setActiveAssistantId(streamingAssistantId);
+      setIsGenerating(Boolean(streamingAssistantId));
+
+      if (!streamingAssistantId) {
+        await onChatsChanged();
+      }
+    } catch (refreshError) {
+      setGenerationError(
+        refreshError instanceof Error ? refreshError.message : "Failed to refresh generation"
+      );
+    }
+  }, [chatId, onChatsChanged]);
 
   const streamAssistantResponse = useCallback(
     async (path: string, body: unknown) => {
@@ -1557,12 +1913,26 @@ function ChatView({
 
   useEffect(() => {
     return () => {
-      abortRef.current?.abort();
       if (userScrollIntentTimeoutRef.current) {
         window.clearTimeout(userScrollIntentTimeoutRef.current);
       }
     };
   }, []);
+
+  useEffect(() => {
+    const hasStreamingMessage = messages.some(
+      (message) => message.role === "assistant" && message.status === "streaming"
+    );
+    if (!hasStreamingMessage || abortRef.current) {
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      void refreshStreamingMessages();
+    }, 1000);
+
+    return () => window.clearInterval(interval);
+  }, [messages, refreshStreamingMessages]);
 
   useEffect(() => {
     if (!queuedPrompt || isLoading || !chat || isGenerating) {
@@ -2239,12 +2609,1163 @@ function ChatView({
   );
 }
 
+function PrivateChatView({
+  chatId,
+  error,
+  queuedPrompt,
+  selectedModel,
+  onModelSelected,
+  onPrivateChatsChanged,
+  onQueuedPromptConsumed
+}: {
+  chatId: string;
+  error: string | null;
+  queuedPrompt: string | null;
+  selectedModel: string;
+  onModelSelected: (value: string) => void;
+  onPrivateChatsChanged: () => Promise<void>;
+  onQueuedPromptConsumed: () => void;
+}) {
+  const [chat, setChat] = useState<PrivateChatDetail | null>(null);
+  const [messages, setMessages] = useState<PrivateChatMessage[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [generationError, setGenerationError] = useState<string | null>(null);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [activeAssistantId, setActiveAssistantId] = useState<string | null>(null);
+  const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
+  const [busyMessageId, setBusyMessageId] = useState<string | null>(null);
+  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<PrivateChatMessage | null>(null);
+  const [streamTestStatus, setStreamTestStatus] = useState<string | null>(null);
+  const messageListRef = useRef<HTMLElement | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const generationRunRef = useRef(0);
+  const autoScrollModeRef = useRef<AutoScrollMode>("top");
+  const userScrollIntentRef = useRef(false);
+  const userScrollIntentTimeoutRef = useRef<number | null>(null);
+  const scrollToBottomAfterLoadRef = useRef(false);
+  const branchScrollAnchorRef = useRef<BranchScrollAnchor | null>(null);
+  const messagesRef = useRef<PrivateChatMessage[]>([]);
+  const privateSaveChainRef = useRef<Promise<void>>(Promise.resolve());
+  const thinkingStartedAtRef = useRef(new Map<string, number>());
+  const [thinkingDurations, setThinkingDurations] = useState<Record<string, number>>({});
+  const visibleMessages = useMemo(
+    () => activePathMessages(messages, chat?.active_root_message_id ?? null),
+    [chat?.active_root_message_id, messages]
+  );
+  const siblingGroups = useMemo(() => groupMessagesByParent(messages), [messages]);
+  const showStreamTest = privateStreamTestEnabled();
+
+  const loadPrivateChat = useCallback(async () => {
+    scrollToBottomAfterLoadRef.current = true;
+    setIsLoading(true);
+    setLoadError(null);
+
+    try {
+      const [nextChat, nextMessages] = await Promise.all([
+        getPrivateChat(chatId),
+        listPrivateMessages(chatId)
+      ]);
+      if (!nextChat) {
+        throw new Error("Private chat not found on this device");
+      }
+
+      setChat(nextChat);
+      thinkingStartedAtRef.current.clear();
+      setThinkingDurations({});
+      messagesRef.current = nextMessages;
+      setMessages(nextMessages);
+      const streamingAssistantId = streamingAssistantIdFromMessages(nextMessages);
+      setActiveAssistantId(streamingAssistantId);
+      setIsGenerating(Boolean(streamingAssistantId));
+      const latestModel = latestAssistantModelValue(
+        activePathMessages(nextMessages, nextChat.active_root_message_id)
+      );
+      onModelSelected(
+        latestModel ?? modelValue(nextChat.default_backend_id, nextChat.default_model_name)
+      );
+    } catch (chatError) {
+      setLoadError(
+        chatError instanceof Error ? chatError.message : "Failed to load private chat"
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  }, [chatId, onModelSelected]);
+
+  useEffect(() => {
+    void loadPrivateChat();
+  }, [loadPrivateChat]);
+
+  useEffect(() => {
+    return () => {
+      // Do not abort here. The stream continues writing into IndexedDB during app navigation.
+      if (userScrollIntentTimeoutRef.current) {
+        window.clearTimeout(userScrollIntentTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const hasStreamingMessage = messages.some(
+      (message) => message.role === "assistant" && message.status === "streaming"
+    );
+    if (!hasStreamingMessage || abortRef.current) {
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      void listPrivateMessages(chatId).then((nextMessages) => {
+        messagesRef.current = nextMessages;
+        setMessages(nextMessages);
+        const streamingAssistantId = streamingAssistantIdFromMessages(nextMessages);
+        setActiveAssistantId(streamingAssistantId);
+        setIsGenerating(Boolean(streamingAssistantId));
+      });
+    }, 1000);
+
+    return () => window.clearInterval(interval);
+  }, [chatId, messages]);
+
+  useLayoutEffect(() => {
+    if (isLoading) {
+      return;
+    }
+
+    const list = messageListRef.current;
+    if (!list) {
+      return;
+    }
+
+    const messageList = list;
+    const finalMessageId = visibleMessages[visibleMessages.length - 1]?.id ?? null;
+    const finalMessage = finalMessageId
+      ? messageList.querySelector<HTMLElement>(`[data-message-id="${finalMessageId}"]`)
+      : null;
+
+    function updateMessageListBuffer() {
+      if (!finalMessage) {
+        messageList.style.setProperty("--message-list-buffer-height", "0px");
+        return;
+      }
+
+      const styles = window.getComputedStyle(messageList);
+      const topPadding = Number.parseFloat(styles.paddingTop) || 0;
+      const bottomPadding = Number.parseFloat(styles.paddingBottom) || 0;
+      const rowGap = Number.parseFloat(styles.rowGap || styles.gap) || 0;
+      const availableSpace =
+        messageList.clientHeight -
+        finalMessage.getBoundingClientRect().height -
+        topPadding -
+        bottomPadding -
+        rowGap;
+      const bufferHeight = Math.max(0, Math.floor(availableSpace));
+      messageList.style.setProperty("--message-list-buffer-height", `${bufferHeight}px`);
+    }
+
+    updateMessageListBuffer();
+
+    const resizeObserver =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(updateMessageListBuffer);
+    resizeObserver?.observe(messageList);
+    if (finalMessage) {
+      resizeObserver?.observe(finalMessage);
+    }
+    window.addEventListener("resize", updateMessageListBuffer);
+    window.visualViewport?.addEventListener("resize", updateMessageListBuffer);
+
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", updateMessageListBuffer);
+      window.visualViewport?.removeEventListener("resize", updateMessageListBuffer);
+    };
+  }, [chatId, isLoading, visibleMessages]);
+
+  useLayoutEffect(() => {
+    if (isLoading || !scrollToBottomAfterLoadRef.current) {
+      return;
+    }
+
+    const list = messageListRef.current;
+    if (!list) {
+      return;
+    }
+
+    const lastMessage = visibleMessages[visibleMessages.length - 1];
+    const lastMessageElement = lastMessage
+      ? list.querySelector<HTMLElement>(`[data-message-id="${lastMessage.id}"]`)
+      : null;
+    if (lastMessageElement) {
+      lastMessageElement.scrollIntoView({ block: "end" });
+    } else {
+      list.scrollTop = 0;
+    }
+    scrollToBottomAfterLoadRef.current = false;
+  }, [chatId, isLoading, visibleMessages]);
+
+  useLayoutEffect(() => {
+    const anchor = branchScrollAnchorRef.current;
+    if (!anchor || isLoading) {
+      return;
+    }
+
+    const list = messageListRef.current;
+    const messageElement = list?.querySelector<HTMLElement>(
+      `[data-message-id="${anchor.messageId}"]`
+    );
+    if (!list || !messageElement) {
+      branchScrollAnchorRef.current = null;
+      return;
+    }
+
+    const anchorElement =
+      messageElement.querySelector<HTMLElement>(".version-switcher") ?? messageElement;
+    const nextTopOffset = anchorElement.getBoundingClientRect().top - list.getBoundingClientRect().top;
+    list.scrollTop += nextTopOffset - anchor.topOffset;
+    branchScrollAnchorRef.current = null;
+  }, [isLoading, visibleMessages]);
+
+  useLayoutEffect(() => {
+    if (!isGenerating || !activeAssistantId || autoScrollModeRef.current === "paused") {
+      return;
+    }
+
+    const list = messageListRef.current;
+    const activeMessage = list?.querySelector<HTMLElement>(
+      `[data-message-id="${activeAssistantId}"]`
+    );
+    if (!list || !activeMessage) {
+      return;
+    }
+
+    const listRect = list.getBoundingClientRect();
+    const messageRect = activeMessage.getBoundingClientRect();
+    const topOffset = messageRect.top - listRect.top;
+    const bottomOverflow = messageRect.bottom - listRect.bottom;
+
+    if (autoScrollModeRef.current === "bottom") {
+      activeMessage.scrollIntoView({ block: "end" });
+      return;
+    }
+
+    if (bottomOverflow <= 0 || topOffset <= 8) {
+      return;
+    }
+
+    list.scrollTop += Math.min(bottomOverflow + 16, topOffset - 8);
+  }, [activeAssistantId, isGenerating, visibleMessages]);
+
+  useEffect(() => {
+    if (!queuedPrompt || isLoading || !chat || isGenerating) {
+      return;
+    }
+
+    onQueuedPromptConsumed();
+    void submitPrompt(queuedPrompt);
+  }, [chat, isGenerating, isLoading, onQueuedPromptConsumed, queuedPrompt]);
+
+  useEffect(() => {
+    if (!pendingPrompt || isGenerating || isLoading || !chat) {
+      return;
+    }
+
+    const prompt = pendingPrompt;
+    setPendingPrompt(null);
+    void generate(prompt);
+  }, [chat, isGenerating, isLoading, pendingPrompt]);
+
+  function noteUserScrollIntent() {
+    if (!isGenerating) {
+      return;
+    }
+
+    userScrollIntentRef.current = true;
+    if (userScrollIntentTimeoutRef.current) {
+      window.clearTimeout(userScrollIntentTimeoutRef.current);
+    }
+    userScrollIntentTimeoutRef.current = window.setTimeout(() => {
+      userScrollIntentRef.current = false;
+    }, 240);
+
+    window.requestAnimationFrame(updateAutoScrollModeFromScrollPosition);
+  }
+
+  function handleMessageListScroll() {
+    if (!isGenerating || !userScrollIntentRef.current) {
+      return;
+    }
+
+    updateAutoScrollModeFromScrollPosition();
+  }
+
+  function updateAutoScrollModeFromScrollPosition() {
+    const list = messageListRef.current;
+    if (!list) {
+      return;
+    }
+
+    const activeMessage = activeAssistantId
+      ? list.querySelector<HTMLElement>(`[data-message-id="${activeAssistantId}"]`)
+      : null;
+    if (!activeMessage) {
+      const atBottom = list.scrollHeight - list.scrollTop - list.clientHeight <= 12;
+      autoScrollModeRef.current = atBottom ? "bottom" : "paused";
+      return;
+    }
+
+    const listRect = list.getBoundingClientRect();
+    const messageRect = activeMessage.getBoundingClientRect();
+    const bottomOverflow = messageRect.bottom - listRect.bottom;
+    if (bottomOverflow > 12) {
+      autoScrollModeRef.current = "paused";
+      return;
+    }
+
+    const topOffset = messageRect.top - listRect.top;
+    autoScrollModeRef.current = topOffset <= 8 ? "bottom" : "top";
+  }
+
+  function updateMessage(messageId: string, updater: (message: PrivateChatMessage) => PrivateChatMessage) {
+    let changedMessage: PrivateChatMessage | null = null;
+    const next = messagesRef.current.map((message) => {
+      if (message.id !== messageId) {
+        return message;
+      }
+
+      changedMessage = updater(message);
+      return changedMessage;
+    });
+
+    messagesRef.current = next;
+    if (changedMessage) {
+      queuePrivateMessageSave(changedMessage);
+    }
+    setMessages(next);
+  }
+
+  function replacePrivateMessages(nextMessages: PrivateChatMessage[]) {
+    messagesRef.current = nextMessages;
+    setMessages(nextMessages);
+  }
+
+  function queuePrivateMessageSave(message: PrivateChatMessage) {
+    privateSaveChainRef.current = privateSaveChainRef.current
+      .catch(() => undefined)
+      .then(() => savePrivateMessage(message))
+      .catch((saveError) => {
+        setGenerationError(
+          saveError instanceof Error ? saveError.message : "Failed to save private message"
+        );
+      });
+  }
+
+  async function updateChat(nextChat: PrivateChatDetail) {
+    setChat(nextChat);
+    await savePrivateChat(nextChat);
+    await onPrivateChatsChanged();
+  }
+
+  async function streamPrivateAssistantResponse(
+    assistantId: string,
+    body: unknown,
+    path = "/api/private/generate"
+  ) {
+    const runId = generationRunRef.current + 1;
+    generationRunRef.current = runId;
+    const controller = new AbortController();
+    abortRef.current = controller;
+    autoScrollModeRef.current = "top";
+    setIsGenerating(true);
+    setActiveAssistantId(assistantId);
+    setGenerationError(null);
+
+    try {
+      const response = await fetch(path, {
+        method: "POST",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+        signal: controller.signal
+      });
+
+      if (!response.ok) {
+        throw new Error(await responseErrorMessage(response));
+      }
+
+      if (!response.body) {
+        throw new Error("Generation stream was empty");
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) {
+          break;
+        }
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (trimmed) {
+            applyPrivateGenerateEvent(JSON.parse(trimmed) as GenerateEvent, runId);
+          }
+        }
+      }
+
+      buffer += decoder.decode();
+      const trailing = buffer.trim();
+      if (trailing) {
+        applyPrivateGenerateEvent(JSON.parse(trailing) as GenerateEvent, runId);
+      }
+
+      await privateSaveChainRef.current;
+      await onPrivateChatsChanged();
+    } catch (generateError) {
+      if (generateError instanceof DOMException && generateError.name === "AbortError") {
+        return;
+      }
+
+      const message = generateError instanceof Error ? generateError.message : "Generation failed";
+      setGenerationError(message);
+      updateMessage(assistantId, (current) => ({
+        ...current,
+        status: "error",
+        error_text: message,
+        completed_at: unixTimestamp(),
+        updated_at: unixTimestamp()
+      }));
+    } finally {
+      if (generationRunRef.current === runId) {
+        setIsGenerating(false);
+        setActiveAssistantId(null);
+        abortRef.current = null;
+      }
+    }
+  }
+
+  async function generate(prompt: string) {
+    if (!chat || isGenerating) {
+      return;
+    }
+
+    const selected = modelParts(selectedModel);
+    if (!selected) {
+      setGenerationError("Select a model before sending a private message");
+      return;
+    }
+
+    const now = unixTimestamp();
+    const pathMessages = activePathMessages(messages, chat.active_root_message_id);
+    const parent = pathMessages[pathMessages.length - 1] as PrivateChatMessage | undefined;
+    const userMessage = createPrivateMessage({
+      chatId: chat.id,
+      parentMessageId: parent?.id ?? null,
+      role: "user",
+      contentText: prompt,
+      createdAt: now
+    });
+    const assistantMessage = createPrivateMessage({
+      chatId: chat.id,
+      parentMessageId: userMessage.id,
+      role: "assistant",
+      contentText: "",
+      status: "streaming",
+      backendId: selected.backendId,
+      modelName: selected.modelName,
+      createdAt: now
+    });
+    userMessage.active_child_message_id = assistantMessage.id;
+
+    const nextMessages = [
+      ...messages.map((message) =>
+        parent && message.id === parent.id
+          ? { ...message, active_child_message_id: userMessage.id, updated_at: now }
+          : message
+      ),
+      userMessage,
+      assistantMessage
+    ];
+    const title =
+      chat.title === "Private Chat" && messages.length === 0
+        ? fallbackTitleFromPrompt(prompt, "Private Chat")
+        : chat.title;
+    const nextChat = {
+      ...chat,
+      title,
+      default_backend_id: selected.backendId,
+      default_model_name: selected.modelName,
+      active_root_message_id: chat.active_root_message_id ?? userMessage.id,
+      updated_at: now,
+      last_message_at: now
+    };
+
+    setChat(nextChat);
+    messagesRef.current = nextMessages;
+    setMessages(nextMessages);
+    await Promise.all([savePrivateChat(nextChat), savePrivateMessages(nextMessages)]);
+    await onPrivateChatsChanged();
+
+    await streamPrivateAssistantResponse(assistantMessage.id, {
+      assistant_message_id: assistantMessage.id,
+      backend_id: selected.backendId,
+      model_name: selected.modelName,
+      think_mode: null,
+      messages: privatePromptMessages(
+        nextMessages,
+        nextChat.active_root_message_id,
+        assistantMessage.id
+      ),
+      attachments: []
+    });
+  }
+
+  async function runPrivateStreamTest() {
+    if (!chat || isGenerating) {
+      return;
+    }
+
+    const contentTokens = 1600;
+    const thinkingTokens = 220;
+    const now = unixTimestamp();
+    const pathMessages = activePathMessages(messagesRef.current, chat.active_root_message_id);
+    const parent = pathMessages[pathMessages.length - 1] as PrivateChatMessage | undefined;
+    const userMessage = createPrivateMessage({
+      chatId: chat.id,
+      parentMessageId: parent?.id ?? null,
+      role: "user",
+      contentText: `Synthetic private stream test: ${thinkingTokens} thinking chunks, ${contentTokens} content chunks.`,
+      createdAt: now
+    });
+    const assistantMessage = createPrivateMessage({
+      chatId: chat.id,
+      parentMessageId: userMessage.id,
+      role: "assistant",
+      contentText: "",
+      status: "streaming",
+      modelName: "synthetic-stream-test",
+      createdAt: now
+    });
+    userMessage.active_child_message_id = assistantMessage.id;
+
+    const nextMessages = [
+      ...messagesRef.current.map((message) =>
+        parent && message.id === parent.id
+          ? { ...message, active_child_message_id: userMessage.id, updated_at: now }
+          : message
+      ),
+      userMessage,
+      assistantMessage
+    ];
+    const nextChat = {
+      ...chat,
+      title: chat.title === "Private Chat" ? "Private Stream Test" : chat.title,
+      active_root_message_id: chat.active_root_message_id ?? userMessage.id,
+      updated_at: now,
+      last_message_at: now
+    };
+
+    setStreamTestStatus("Running synthetic stream test...");
+    setChat(nextChat);
+    messagesRef.current = nextMessages;
+    setMessages(nextMessages);
+    await Promise.all([savePrivateChat(nextChat), savePrivateMessages(nextMessages)]);
+    await onPrivateChatsChanged();
+
+    await streamPrivateAssistantResponse(
+      assistantMessage.id,
+      {
+        assistant_message_id: assistantMessage.id,
+        content_tokens: contentTokens,
+        thinking_tokens: thinkingTokens,
+        delay_ms: 0
+      },
+      "/api/dev/private-stream-test"
+    );
+    await privateSaveChainRef.current;
+
+    const saved = messagesRef.current.find((message) => message.id === assistantMessage.id);
+    const content = saved?.active_revision?.content_text ?? "";
+    const thinking = saved?.active_revision?.thinking_text ?? "";
+    const expectedContent = syntheticStreamExpectedContent(contentTokens);
+    const expectedThinking = syntheticStreamExpectedThinking(thinkingTokens);
+    if (content === expectedContent && thinking === expectedThinking) {
+      setStreamTestStatus(
+        `Passed synthetic stream test: ${thinkingTokens + contentTokens} chunks preserved.`
+      );
+      return;
+    }
+
+    setStreamTestStatus(
+      `Failed synthetic stream test: content ${content.length}/${expectedContent.length}, thinking ${thinking.length}/${expectedThinking.length}.`
+    );
+  }
+
+  async function submitPrompt(prompt: string) {
+    if (isGenerating) {
+      setPendingPrompt(prompt);
+      await stopGeneration();
+      return;
+    }
+
+    await generate(prompt);
+  }
+
+  async function stopGeneration() {
+    const assistantId = activeAssistantId;
+    generationRunRef.current += 1;
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setIsGenerating(false);
+    setActiveAssistantId(null);
+
+    if (assistantId) {
+      updateMessage(assistantId, (current) => ({
+        ...current,
+        status: "stopped",
+        done_reason: "stopped",
+        completed_at: unixTimestamp(),
+        updated_at: unixTimestamp()
+      }));
+    }
+  }
+
+  function applyPrivateGenerateEvent(event: GenerateEvent, runId: number) {
+    if (generationRunRef.current !== runId) {
+      return;
+    }
+
+    switch (event.type) {
+      case "thinking_delta":
+        markThinkingStarted(event.assistant_message_id);
+        appendMessageText(event.assistant_message_id, "thinking_text", event.delta);
+        break;
+      case "content_delta":
+        finishThinkingDuration(event.assistant_message_id);
+        appendMessageText(event.assistant_message_id, "content_text", event.delta);
+        break;
+      case "message_done":
+        finishThinkingDuration(event.assistant_message_id);
+        updateMessage(event.assistant_message_id, (current) => ({
+          ...current,
+          status: "complete",
+          done_reason: event.done_reason,
+          completed_at: unixTimestamp(),
+          updated_at: unixTimestamp()
+        }));
+        setIsGenerating(false);
+        setActiveAssistantId(null);
+        abortRef.current = null;
+        break;
+      case "message_stopped":
+        updateMessage(event.assistant_message_id, (current) => ({
+          ...current,
+          status: "stopped",
+          done_reason: "stopped",
+          completed_at: unixTimestamp(),
+          updated_at: unixTimestamp()
+        }));
+        break;
+      case "error":
+        setGenerationError(event.message);
+        if (event.assistant_message_id) {
+          updateMessage(event.assistant_message_id, (current) => ({
+            ...current,
+            status: "error",
+            error_text: event.message,
+            completed_at: unixTimestamp(),
+            updated_at: unixTimestamp()
+          }));
+        }
+        break;
+      case "message_start":
+      case "chat_title":
+        break;
+    }
+  }
+
+  function appendMessageText(
+    messageId: string,
+    field: "content_text" | "thinking_text",
+    delta: string
+  ) {
+    updateMessage(messageId, (message) => {
+      const activeRevision = message.active_revision ?? {
+        id: message.active_revision_id ?? privateId("private-revision"),
+        content_text: "",
+        thinking_text: "",
+        source: "original",
+        created_at: message.created_at
+      };
+      const nextRevision = {
+        ...activeRevision,
+        [field]: activeRevision[field] + delta
+      };
+      const revisions = updateRevisionList(message.revisions, nextRevision);
+
+      return {
+        ...message,
+        status: "streaming",
+        active_revision_id: nextRevision.id,
+        active_revision: nextRevision,
+        revisions,
+        revision_count: revisions.length,
+        updated_at: unixTimestamp()
+      };
+    });
+  }
+
+  function markThinkingStarted(messageId: string) {
+    if (!thinkingStartedAtRef.current.has(messageId)) {
+      thinkingStartedAtRef.current.set(messageId, Date.now());
+    }
+  }
+
+  function finishThinkingDuration(messageId: string) {
+    const startedAt = thinkingStartedAtRef.current.get(messageId);
+    if (!startedAt) {
+      return;
+    }
+
+    thinkingStartedAtRef.current.delete(messageId);
+    const durationSeconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
+    setThinkingDurations((current) =>
+      current[messageId] ? current : { ...current, [messageId]: durationSeconds }
+    );
+  }
+
+  async function copyMessage(message: ChatMessage) {
+    const content = message.active_revision?.content_text ?? "";
+    if (!content || message.is_deleted) {
+      return;
+    }
+
+    await navigator.clipboard.writeText(content);
+    setCopiedMessageId(message.id);
+    window.setTimeout(() => {
+      setCopiedMessageId((current) => (current === message.id ? null : current));
+    }, 1200);
+  }
+
+  async function editMessage(message: ChatMessage, contentText: string) {
+    setBusyMessageId(message.id);
+    try {
+      const now = unixTimestamp();
+      const revision: PrivateChatMessageRevision = {
+        id: privateId("private-revision"),
+        content_text: contentText,
+        thinking_text: message.active_revision?.thinking_text ?? "",
+        source: "edit",
+        created_at: now
+      };
+      updateMessage(message.id, (current) => {
+        const revisions = updateRevisionList(current.revisions, revision);
+        return {
+          ...current,
+          active_revision_id: revision.id,
+          active_revision: revision,
+          revisions,
+          revision_count: revisions.length,
+          updated_at: now
+        };
+      });
+    } finally {
+      setBusyMessageId(null);
+    }
+  }
+
+  async function branchMessage(message: ChatMessage, contentText: string) {
+    if (!chat || isGenerating || message.role !== "user") {
+      return;
+    }
+
+    const selected = modelParts(selectedModel);
+    if (!selected) {
+      setGenerationError("Select a model before sending a private branch");
+      return;
+    }
+
+    setBusyMessageId(message.id);
+    setGenerationError(null);
+
+    try {
+      const now = unixTimestamp();
+      const userMessage = createPrivateMessage({
+        chatId: chat.id,
+        parentMessageId: message.parent_message_id,
+        role: "user",
+        contentText,
+        createdAt: now
+      });
+      const assistantMessage = createPrivateMessage({
+        chatId: chat.id,
+        parentMessageId: userMessage.id,
+        role: "assistant",
+        contentText: "",
+        status: "streaming",
+        backendId: selected.backendId,
+        modelName: selected.modelName,
+        createdAt: now
+      });
+      userMessage.active_child_message_id = assistantMessage.id;
+
+      const nextMessages = [
+        ...messagesRef.current.map((current) =>
+          message.parent_message_id && current.id === message.parent_message_id
+            ? { ...current, active_child_message_id: userMessage.id, updated_at: now }
+            : current
+        ),
+        userMessage,
+        assistantMessage
+      ];
+      const nextChat = {
+        ...chat,
+        default_backend_id: selected.backendId,
+        default_model_name: selected.modelName,
+        active_root_message_id: message.parent_message_id
+          ? chat.active_root_message_id
+          : userMessage.id,
+        updated_at: now,
+        last_message_at: now
+      };
+
+      setChat(nextChat);
+      replacePrivateMessages(nextMessages);
+      await privateSaveChainRef.current;
+      await Promise.all([savePrivateChat(nextChat), savePrivateMessages(nextMessages)]);
+      await onPrivateChatsChanged();
+
+      await streamPrivateAssistantResponse(assistantMessage.id, {
+        assistant_message_id: assistantMessage.id,
+        backend_id: selected.backendId,
+        model_name: selected.modelName,
+        think_mode: null,
+        messages: privatePromptMessages(
+          nextMessages,
+          nextChat.active_root_message_id,
+          assistantMessage.id
+        ),
+        attachments: []
+      });
+    } finally {
+      setBusyMessageId(null);
+    }
+  }
+
+  async function deleteMessage(message: ChatMessage) {
+    setBusyMessageId(message.id);
+    try {
+      const now = unixTimestamp();
+      updateMessage(message.id, (current) => ({
+        ...current,
+        is_deleted: true,
+        status: "complete",
+        active_revision: current.active_revision
+          ? { ...current.active_revision, content_text: "", thinking_text: "" }
+          : null,
+        revisions: current.revisions.map((revision) => ({
+          ...revision,
+          content_text: "",
+          thinking_text: ""
+        })),
+        updated_at: now
+      }));
+      setDeleteTarget(null);
+    } finally {
+      setBusyMessageId(null);
+    }
+  }
+
+  async function regenerateMessage(message: ChatMessage) {
+    if (!chat || isGenerating || message.role !== "assistant") {
+      return;
+    }
+
+    const selected = modelParts(selectedModel);
+    const backendId = selected?.backendId ?? message.backend_id;
+    const modelName = selected?.modelName ?? message.model_name;
+    if (!backendId || !modelName) {
+      setGenerationError("Select a model before regenerating this private response");
+      return;
+    }
+
+    setBusyMessageId(message.id);
+    setGenerationError(null);
+
+    try {
+      const now = unixTimestamp();
+      const assistantMessage = createPrivateMessage({
+        chatId: chat.id,
+        parentMessageId: message.parent_message_id,
+        role: "assistant",
+        contentText: "",
+        status: "streaming",
+        backendId,
+        modelName,
+        createdAt: now
+      });
+
+      const nextMessages = [
+        ...messagesRef.current.map((current) =>
+          message.parent_message_id && current.id === message.parent_message_id
+            ? { ...current, active_child_message_id: assistantMessage.id, updated_at: now }
+            : current
+        ),
+        assistantMessage
+      ];
+      const nextChat = {
+        ...chat,
+        default_backend_id: backendId,
+        default_model_name: modelName,
+        active_root_message_id: message.parent_message_id
+          ? chat.active_root_message_id
+          : assistantMessage.id,
+        updated_at: now,
+        last_message_at: now
+      };
+
+      setChat(nextChat);
+      replacePrivateMessages(nextMessages);
+      await privateSaveChainRef.current;
+      await Promise.all([savePrivateChat(nextChat), savePrivateMessages(nextMessages)]);
+      await onPrivateChatsChanged();
+
+      await streamPrivateAssistantResponse(assistantMessage.id, {
+        assistant_message_id: assistantMessage.id,
+        backend_id: backendId,
+        model_name: modelName,
+        think_mode: null,
+        messages: privatePromptMessages(
+          nextMessages,
+          nextChat.active_root_message_id,
+          assistantMessage.id
+        ),
+        attachments: []
+      });
+    } finally {
+      setBusyMessageId(null);
+    }
+  }
+
+  async function selectVersion(currentMessage: ChatMessage, version: MessageVersion) {
+    const nextMessage = version.message as PrivateChatMessage;
+    const nextRevision = version.revision as PrivateChatMessageRevision;
+    const isSameMessage = currentMessage.id === nextMessage.id;
+    const isSameRevision = nextMessage.active_revision_id === nextRevision.id;
+    if ((isSameMessage && isSameRevision) || isGenerating || !chat) {
+      return;
+    }
+
+    setBusyMessageId(currentMessage.id);
+    setGenerationError(null);
+
+    const list = messageListRef.current;
+    const messageElement = list?.querySelector<HTMLElement>(
+      `[data-message-id="${currentMessage.id}"]`
+    );
+    const anchorElement =
+      messageElement?.querySelector<HTMLElement>(".version-switcher") ?? messageElement;
+    if (list && anchorElement) {
+      branchScrollAnchorRef.current = {
+        messageId: nextMessage.id,
+        topOffset: anchorElement.getBoundingClientRect().top - list.getBoundingClientRect().top
+      };
+    }
+
+    try {
+      const now = unixTimestamp();
+      const nextMessages = messagesRef.current.map((message) => {
+        if (!isSameMessage) {
+          if (currentMessage.parent_message_id && message.id === currentMessage.parent_message_id) {
+            return { ...message, active_child_message_id: nextMessage.id, updated_at: now };
+          }
+        }
+
+        if (message.id === nextMessage.id && !isSameRevision) {
+          return {
+            ...message,
+            active_revision_id: nextRevision.id,
+            active_revision: nextRevision,
+            updated_at: now
+          };
+        }
+
+        return message;
+      });
+      const nextChat =
+        !isSameMessage && !currentMessage.parent_message_id
+          ? { ...chat, active_root_message_id: nextMessage.id, updated_at: now }
+          : chat;
+
+      setChat(nextChat);
+      replacePrivateMessages(nextMessages);
+      if (nextMessage.role === "assistant" && nextMessage.backend_id && nextMessage.model_name) {
+        onModelSelected(modelValue(nextMessage.backend_id, nextMessage.model_name));
+      }
+
+      await privateSaveChainRef.current;
+      await Promise.all([
+        nextChat === chat ? Promise.resolve() : savePrivateChat(nextChat),
+        savePrivateMessages(nextMessages)
+      ]);
+      await onPrivateChatsChanged();
+    } finally {
+      setBusyMessageId(null);
+    }
+  }
+
+  function versionInfoFor(message: ChatMessage): VersionInfo | null {
+    const versions = versionsForMessage(message);
+    if (versions.length < 2 || !message.active_revision_id) {
+      return null;
+    }
+
+    const index = versions.findIndex(
+      (version) =>
+        version.message.id === message.id && version.revision.id === message.active_revision_id
+    );
+    if (index < 0) {
+      return null;
+    }
+
+    const previousVersion = versions[index - 1] ?? null;
+    const nextVersion = versions[index + 1] ?? null;
+    return {
+      index,
+      total: versions.length,
+      canPrevious: Boolean(previousVersion),
+      canNext: Boolean(nextVersion),
+      onPrevious: () => {
+        if (previousVersion) {
+          void selectVersion(message, previousVersion);
+        }
+      },
+      onNext: () => {
+        if (nextVersion) {
+          void selectVersion(message, nextVersion);
+        }
+      }
+    };
+  }
+
+  function versionsForMessage(message: ChatMessage) {
+    const siblings = siblingGroups.get(parentGroupKey(message.parent_message_id)) ?? [];
+    return siblings
+      .flatMap((sibling) =>
+        revisionsForMessage(sibling).map((revision) => ({
+          message: sibling,
+          revision
+        }))
+      )
+      .sort(compareVersionsByCreatedAt);
+  }
+
+  return (
+    <div className="chat-view private-chat-view">
+      {isLoading ? (
+        <div className="empty-state">
+          <RetroLoader />
+        </div>
+      ) : loadError ? (
+        <div className="empty-state">
+          <p className="error">{loadError}</p>
+        </div>
+      ) : chat ? (
+        <>
+          <div className="private-local-banner">
+            <Lock />
+            <span>Stored only in this browser. Clearing browser data can delete this chat.</span>
+            {showStreamTest && (
+              <button
+                type="button"
+                className="stream-test-button"
+                disabled={isGenerating}
+                onClick={() => void runPrivateStreamTest()}
+              >
+                Run Stream Test
+              </button>
+            )}
+            {streamTestStatus && <small>{streamTestStatus}</small>}
+          </div>
+          <section
+            className={
+              visibleMessages.length > 0 ? "message-list message-list-buffered" : "message-list"
+            }
+            aria-label="Private chat messages"
+            ref={messageListRef}
+            onScroll={handleMessageListScroll}
+            onTouchMove={noteUserScrollIntent}
+            onWheel={noteUserScrollIntent}
+          >
+            {visibleMessages.length === 0 ? (
+              <div className="message-list-empty">
+                <p>Private chat ready.</p>
+              </div>
+            ) : (
+              visibleMessages.map((message) => (
+                <MessageBubble
+                  key={message.id}
+                  message={message}
+                  versionInfo={versionInfoFor(message)}
+                  copied={copiedMessageId === message.id}
+                  isBusy={busyMessageId === message.id}
+                  isGenerating={isGenerating}
+                  thinkingDurationSeconds={thinkingDurations[message.id] ?? null}
+                  onCopy={copyMessage}
+                  onDelete={(message) => setDeleteTarget(message as PrivateChatMessage)}
+                  onBranch={branchMessage}
+                  onEdit={editMessage}
+                  onRegenerate={regenerateMessage}
+                />
+              ))
+            )}
+          </section>
+          <div className="chat-composer-wrap">
+            <StartChatComposer
+              isBusy={isGenerating}
+              isDisabled={!selectedModel}
+              isGenerating={isGenerating}
+              placeholder={selectedModel ? "Message private chat" : "Select a model to continue"}
+              onStop={stopGeneration}
+              onSubmit={submitPrompt}
+            />
+          </div>
+        </>
+      ) : null}
+      {(error || generationError) && (
+        <p className="error chat-view-error">{generationError ?? error}</p>
+      )}
+      {deleteTarget && (
+        <ConfirmDialog
+          title="Delete Private Message"
+          message="Delete this local message? Its text and thinking content will be scrubbed from this browser."
+          confirmLabel="Delete"
+          isBusy={busyMessageId === deleteTarget.id}
+          onCancel={() => setDeleteTarget(null)}
+          onConfirm={() => void deleteMessage(deleteTarget)}
+        />
+      )}
+    </div>
+  );
+}
+
 function MessageBubble({
   message,
   versionInfo,
   copied,
   isBusy,
   isGenerating,
+  canBranch = true,
+  canRegenerate = true,
+  canEdit = true,
   thinkingDurationSeconds,
   onCopy,
   onDelete,
@@ -2257,6 +3778,9 @@ function MessageBubble({
   copied: boolean;
   isBusy: boolean;
   isGenerating: boolean;
+  canBranch?: boolean;
+  canRegenerate?: boolean;
+  canEdit?: boolean;
   thinkingDurationSeconds: number | null;
   onCopy: (message: ChatMessage) => Promise<void>;
   onDelete: (message: ChatMessage) => void;
@@ -2320,7 +3844,7 @@ function MessageBubble({
               <Save />
               <span>{isBusy ? "Saving..." : "Save"}</span>
             </button>
-            {message.role === "user" && (
+            {message.role === "user" && canBranch && (
               <button
                 type="button"
                 disabled={isBusy || isGenerating || draft.trim() === ""}
@@ -2339,7 +3863,7 @@ function MessageBubble({
       )}
       {!isEditing && (
         <div className="message-actions">
-          {message.role === "assistant" && (
+          {message.role === "assistant" && canRegenerate && (
             <button
               type="button"
               className="message-icon-button"
@@ -2367,7 +3891,7 @@ function MessageBubble({
             className="message-icon-button"
             title="Edit"
             aria-label="Edit"
-            disabled={isBusy || message.is_deleted || message.status === "streaming"}
+            disabled={isBusy || !canEdit || message.is_deleted || message.status === "streaming"}
             onClick={() => setIsEditing(true)}
           >
             <Pencil />
@@ -2570,6 +4094,58 @@ function latestAssistantModelValue(messages: ChatMessage[]) {
   }
 
   return null;
+}
+
+function streamingAssistantIdFromMessages(messages: ChatMessage[]) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role === "assistant" && message.status === "streaming") {
+      return message.id;
+    }
+  }
+
+  return null;
+}
+
+function privatePromptMessages(
+  messages: ChatMessage[],
+  activeRootMessageId: string | null,
+  stopBeforeMessageId: string
+) {
+  return activePathMessages(messages, activeRootMessageId)
+    .filter((message) => message.id !== stopBeforeMessageId)
+    .filter((message) => !message.is_deleted)
+    .map((message) => ({
+      role: message.role,
+      content_text: message.active_revision?.content_text ?? "",
+      thinking_text: message.active_revision?.thinking_text || null
+    }))
+    .filter((message) => message.content_text.trim() !== "");
+}
+
+function fallbackTitleFromPrompt(prompt: string, fallback: string) {
+  const title = prompt
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 5)
+    .join(" ")
+    .trim()
+    .replace(/^["'`*#.,:;\s]+|["'`*#.,:;\s]+$/g, "");
+
+  return title || fallback;
+}
+
+function syntheticStreamExpectedThinking(count: number) {
+  return Array.from({ length: count }, (_, index) => `think-${String(index + 1).padStart(5, "0")} `).join("");
+}
+
+function syntheticStreamExpectedContent(count: number) {
+  return Array.from({ length: count }, (_, index) => {
+    const token = index + 1;
+    return token % 17 === 0
+      ? `\nchunk-${String(token).padStart(5, "0")};`
+      : `tok-${String(token).padStart(5, "0")} `;
+  }).join("");
 }
 
 function revisionsForMessage(message: ChatMessage) {
