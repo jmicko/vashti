@@ -1299,17 +1299,19 @@ Request:
     },
     {
       "role": "user",
-      "content_text": "help me fix a door"
+      "content_text": "help me fix a door",
+      "images": []
     }
-  ],
-  "attachments": []
+  ]
 }
 ```
 
 Behavior:
 
 * no DB writes of prompt/response content
-* no attachment persistence for private-local mode in MVP
+* private-local attachments are persisted only in browser IndexedDB, never in server DB or upload storage
+* text attachments are appended to transient `content_text`
+* image attachments are sent as transient Ollama `images` entries on the relevant message
 * response uses the same stream format as standard generation
 
 ### Debug-only private stream test endpoint
@@ -1451,7 +1453,7 @@ Store objects like:
 
 * `private_chats`
 * `private_messages`
-* optional local attachment metadata
+* local attachment metadata and payloads embedded on private messages
 
 Suggested private chat shape:
 
@@ -1485,11 +1487,30 @@ Suggested private message shape:
     "source": "original",
     "created_at": 1710000000
   },
+  "attachments": [
+    {
+      "id": "client-attachment-uuid",
+      "message_id": "client-msg-uuid",
+      "revision_id": "client-revision-uuid",
+      "original_filename": "photo.png",
+      "mime_type": "image/png",
+      "size_bytes": 12345,
+      "attachment_kind": "image",
+      "data_url": "data:image/png;base64,..."
+    }
+  ],
   "created_at": 1710000000
 }
 ```
 
 Private-local storage should mirror the standard message tree shape where practical, while remaining client-owned and IndexedDB-backed.
+
+For MVP private-local attachments:
+
+* image payloads may be stored as data URLs in IndexedDB
+* text payloads may be stored as UTF-8 strings in IndexedDB
+* unsupported binary files should be rejected client-side
+* branch/send operations should preserve existing attachments unless the UI explicitly supports replacing them
 
 Private-local chats should use the same branch and revision navigation model as standard chats:
 

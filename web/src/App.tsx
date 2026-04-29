@@ -189,6 +189,8 @@ type AttachmentInfo = {
   size_bytes: number;
   attachment_kind: string;
   created_at?: number;
+  data_url?: string;
+  text_content?: string;
 };
 
 type ComposerAttachment = AttachmentInfo & {
@@ -750,8 +752,9 @@ function AppShell({
   const [queuedPrompt, setQueuedPrompt] = useState<
     ({ chatId: string } & ComposerSubmitPayload) | null
   >(null);
-  const [queuedPrivatePrompt, setQueuedPrivatePrompt] =
-    useState<{ chatId: string; prompt: string } | null>(null);
+  const [queuedPrivatePrompt, setQueuedPrivatePrompt] = useState<
+    ({ chatId: string } & ComposerSubmitPayload) | null
+  >(null);
   const [error, setError] = useState<string | null>(null);
   const isAdmin = user.role === "admin";
   const page = route.page;
@@ -1059,7 +1062,7 @@ function AppShell({
     return modelInfoForValue(modelGroups, selectedModel);
   }
 
-  async function createPrivateChatFromPrompt(prompt: string) {
+  async function createPrivateChatFromPrompt(prompt: string, attachments: ComposerAttachment[] = []) {
     if (!prompt.trim()) {
       openChat();
       return;
@@ -1083,7 +1086,7 @@ function AppShell({
       });
 
       if (prompt.trim()) {
-        setQueuedPrivatePrompt({ chatId: chat.id, prompt });
+        setQueuedPrivatePrompt({ chatId: chat.id, prompt, attachments });
       }
 
       await loadPrivateChats();
@@ -1287,7 +1290,14 @@ function AppShell({
                 ? queuedPrivatePrompt.prompt
                 : null
             }
+            queuedAttachments={
+              queuedPrivatePrompt?.chatId === currentPrivateChatId
+                ? queuedPrivatePrompt.attachments
+                : []
+            }
             selectedModel={selectedModel}
+            selectedModelInfo={selectedModelInfo()}
+            onImageOpen={openImageViewer}
             onModelSelected={setSelectedModel}
             onPrivateChatsChanged={loadPrivateChats}
             onQueuedPromptConsumed={() => setQueuedPrivatePrompt(null)}
@@ -1738,7 +1748,7 @@ function ChatHome({
   selectedModelInfo: ModelInfo | null;
   onModeChange: (mode: NewChatMode) => void;
   onCreateChat: (prompt: string, attachments?: ComposerAttachment[]) => Promise<void>;
-  onCreatePrivateChat: (prompt: string) => Promise<void>;
+  onCreatePrivateChat: (prompt: string, attachments?: ComposerAttachment[]) => Promise<void>;
 }) {
   const isPrivate = mode === "private";
   const isCreatingSelectedMode = isPrivate ? isCreatingPrivate : isCreating;
@@ -1775,8 +1785,8 @@ function ChatHome({
                 : "Message Vashti"
               : "Select a model to start"
           }
-          selectedModelInfo={isPrivate ? null : selectedModelInfo}
-          onUploadAttachment={isPrivate ? undefined : prepareLocalAttachment}
+          selectedModelInfo={selectedModelInfo}
+          onUploadAttachment={isPrivate ? preparePrivateAttachment : prepareLocalAttachment}
           onSubmit={isPrivate ? onCreatePrivateChat : onCreateChat}
         />
         <p className={isPrivate ? "chat-mode-note private" : "chat-mode-note"}>
@@ -2744,7 +2754,10 @@ function PrivateChatView({
   chatId,
   error,
   queuedPrompt,
+  queuedAttachments,
   selectedModel,
+  selectedModelInfo,
+  onImageOpen,
   onModelSelected,
   onPrivateChatsChanged,
   onQueuedPromptConsumed
@@ -2752,7 +2765,10 @@ function PrivateChatView({
   chatId: string;
   error: string | null;
   queuedPrompt: string | null;
+  queuedAttachments: ComposerAttachment[];
   selectedModel: string;
+  selectedModelInfo: ModelInfo | null;
+  onImageOpen: (attachment: AttachmentInfo) => void;
   onModelSelected: (value: string) => void;
   onPrivateChatsChanged: () => Promise<void>;
   onQueuedPromptConsumed: () => void;
@@ -2764,7 +2780,7 @@ function PrivateChatView({
   const [generationError, setGenerationError] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [activeAssistantId, setActiveAssistantId] = useState<string | null>(null);
-  const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
+  const [pendingPrompt, setPendingPrompt] = useState<ComposerSubmitPayload | null>(null);
   const [busyMessageId, setBusyMessageId] = useState<string | null>(null);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<PrivateChatMessage | null>(null);
@@ -2786,6 +2802,14 @@ function PrivateChatView({
     [chat?.active_root_message_id, messages]
   );
   const siblingGroups = useMemo(() => groupMessagesByParent(messages), [messages]);
+  const chatContainsImages = useMemo(
+    () => messages.some((message) => (message.attachments ?? []).some(isImageAttachment)),
+    [messages]
+  );
+  const modelImageWarning =
+    selectedModelInfo && !selectedModelInfo.supports_images && chatContainsImages
+      ? "This chat includes images. Images may not be supported by this model."
+      : null;
   const showStreamTest = privateStreamTestEnabled();
 
   const loadPrivateChat = useCallback(async () => {
@@ -2995,8 +3019,8 @@ function PrivateChatView({
     }
 
     onQueuedPromptConsumed();
-    void submitPrompt(queuedPrompt);
-  }, [chat, isGenerating, isLoading, onQueuedPromptConsumed, queuedPrompt]);
+    void submitPrompt(queuedPrompt, queuedAttachments);
+  }, [chat, isGenerating, isLoading, onQueuedPromptConsumed, queuedAttachments, queuedPrompt]);
 
   useEffect(() => {
     if (!pendingPrompt || isGenerating || isLoading || !chat) {
@@ -3005,7 +3029,7 @@ function PrivateChatView({
 
     const prompt = pendingPrompt;
     setPendingPrompt(null);
-    void generate(prompt);
+    void generate(prompt.prompt, prompt.attachments);
   }, [chat, isGenerating, isLoading, pendingPrompt]);
 
   function noteUserScrollIntent() {
@@ -3183,7 +3207,7 @@ function PrivateChatView({
     }
   }
 
-  async function generate(prompt: string) {
+  async function generate(prompt: string, attachments: ComposerAttachment[] = []) {
     if (!chat || isGenerating) {
       return;
     }
@@ -3204,6 +3228,7 @@ function PrivateChatView({
       contentText: prompt,
       createdAt: now
     });
+    userMessage.attachments = privateAttachmentsForMessage(userMessage, attachments);
     const assistantMessage = createPrivateMessage({
       chatId: chat.id,
       parentMessageId: userMessage.id,
@@ -3340,14 +3365,14 @@ function PrivateChatView({
     );
   }
 
-  async function submitPrompt(prompt: string) {
+  async function submitPrompt(prompt: string, attachments: ComposerAttachment[] = []) {
     if (isGenerating) {
-      setPendingPrompt(prompt);
+      setPendingPrompt({ prompt, attachments });
       await stopGeneration();
       return;
     }
 
-    await generate(prompt);
+    await generate(prompt, attachments);
   }
 
   async function stopGeneration() {
@@ -3536,6 +3561,10 @@ function PrivateChatView({
         contentText,
         createdAt: now
       });
+      userMessage.attachments = clonePrivateAttachmentsForMessage(
+        userMessage,
+        message.attachments ?? []
+      );
       const assistantMessage = createPrivateMessage({
         chatId: chat.id,
         parentMessageId: userMessage.id,
@@ -3854,6 +3883,7 @@ function PrivateChatView({
                   onDelete={(message) => setDeleteTarget(message as PrivateChatMessage)}
                   onBranch={branchMessage}
                   onEdit={editMessage}
+                  onImageOpen={onImageOpen}
                   onRegenerate={regenerateMessage}
                 />
               ))
@@ -3865,7 +3895,10 @@ function PrivateChatView({
               isDisabled={!selectedModel}
               isGenerating={isGenerating}
               placeholder={selectedModel ? "Message private chat" : "Select a model to continue"}
+              selectedModelInfo={selectedModelInfo}
+              warning={modelImageWarning}
               onStop={stopGeneration}
+              onUploadAttachment={preparePrivateAttachment}
               onSubmit={submitPrompt}
             />
           </div>
@@ -4262,12 +4295,96 @@ function privatePromptMessages(
   return activePathMessages(messages, activeRootMessageId)
     .filter((message) => message.id !== stopBeforeMessageId)
     .filter((message) => !message.is_deleted)
-    .map((message) => ({
-      role: message.role,
-      content_text: message.active_revision?.content_text ?? "",
-      thinking_text: message.active_revision?.thinking_text || null
-    }))
-    .filter((message) => message.content_text.trim() !== "");
+    .map((message) => {
+      const attachmentPayload = privateAttachmentPromptPayload(message.attachments ?? []);
+      return {
+        role: message.role,
+        content_text: withPrivateAttachmentText(
+          message.active_revision?.content_text ?? "",
+          attachmentPayload.text
+        ),
+        thinking_text: message.active_revision?.thinking_text || null,
+        images: attachmentPayload.images
+      };
+    })
+    .filter((message) => message.content_text.trim() !== "" || message.images.length > 0);
+}
+
+function privateAttachmentPromptPayload(attachments: AttachmentInfo[]) {
+  const textParts: string[] = [];
+  const images: string[] = [];
+
+  for (const attachment of attachments) {
+    if (isImageAttachment(attachment)) {
+      const imageBase64 = imageBase64FromDataUrl(attachment.data_url);
+      if (imageBase64) {
+        images.push(imageBase64);
+      }
+      continue;
+    }
+
+    if (attachment.text_content) {
+      textParts.push(
+        `Attachment: ${attachment.original_filename}\n\n${attachment.text_content}`
+      );
+    }
+  }
+
+  return {
+    text: textParts.join("\n\n---\n\n"),
+    images
+  };
+}
+
+function withPrivateAttachmentText(content: string, attachmentText: string) {
+  if (!attachmentText) {
+    return content;
+  }
+
+  return `${content.trim()}\n\n${attachmentText}`.trim();
+}
+
+function imageBase64FromDataUrl(dataUrl: string | undefined) {
+  const commaIndex = dataUrl?.indexOf(",") ?? -1;
+  return commaIndex >= 0 ? dataUrl?.slice(commaIndex + 1) ?? "" : "";
+}
+
+function privateAttachmentsForMessage(
+  message: PrivateChatMessage,
+  attachments: ComposerAttachment[]
+) {
+  return attachments
+    .filter((attachment) => attachment.status === "ready" || attachment.status === "uploaded")
+    .map((attachment) => privateAttachmentForMessage(message, attachment, attachment.id));
+}
+
+function clonePrivateAttachmentsForMessage(
+  message: PrivateChatMessage,
+  attachments: AttachmentInfo[]
+) {
+  return attachments.map((attachment) =>
+    privateAttachmentForMessage(message, attachment, privateId("private-attachment"))
+  );
+}
+
+function privateAttachmentForMessage(
+  message: PrivateChatMessage,
+  attachment: AttachmentInfo,
+  id: string
+) {
+  return {
+    id,
+    chat_id: message.chat_id,
+    message_id: message.id,
+    revision_id: message.active_revision_id,
+    original_filename: attachment.original_filename,
+    mime_type: attachment.mime_type,
+    size_bytes: attachment.size_bytes,
+    attachment_kind: attachment.attachment_kind,
+    created_at: attachment.created_at ?? unixTimestamp(),
+    data_url: attachment.data_url,
+    text_content: attachment.text_content
+  };
 }
 
 function fallbackTitleFromPrompt(prompt: string, fallback: string) {
@@ -4703,7 +4820,7 @@ function MessageAttachments({
                 onClick={() => onImageOpen?.(attachment)}
               >
                 <img
-                  src={attachmentUrl(attachment.id)}
+                  src={attachmentDisplayUrl(attachment)}
                   alt={attachment.original_filename}
                   loading="lazy"
                 />
@@ -4715,7 +4832,7 @@ function MessageAttachments({
           <a
             key={attachment.id}
             className="attachment-chip"
-            href={attachmentUrl(attachment.id)}
+            href={attachmentDownloadUrl(attachment)}
             download={attachment.original_filename}
             title={attachment.original_filename}
           >
@@ -4768,7 +4885,7 @@ function ImageViewer({
       <div className="image-viewer-body">
         <img
           className="image-viewer-image"
-          src={attachmentUrl(attachment.id)}
+          src={attachmentDisplayUrl(attachment)}
           alt={attachment.original_filename}
           onClick={(event) => event.stopPropagation()}
         />
@@ -4813,6 +4930,11 @@ function useAttachmentImageUrl(attachment: ComposerAttachment) {
       return;
     }
 
+    if (attachment.data_url) {
+      setUrl(attachment.data_url);
+      return;
+    }
+
     if (attachment.file) {
       const objectUrl = URL.createObjectURL(attachment.file);
       setUrl(objectUrl);
@@ -4834,6 +4956,24 @@ function attachmentUrl(attachmentId: string) {
   return `/api/attachments/${attachmentId}`;
 }
 
+function attachmentDisplayUrl(attachment: AttachmentInfo) {
+  return attachment.data_url ?? attachmentUrl(attachment.id);
+}
+
+function attachmentDownloadUrl(attachment: AttachmentInfo) {
+  if (attachment.data_url) {
+    return attachment.data_url;
+  }
+
+  if (attachment.text_content !== undefined) {
+    return `data:${attachment.mime_type || "text/plain"};charset=utf-8,${encodeURIComponent(
+      attachment.text_content
+    )}`;
+  }
+
+  return attachmentUrl(attachment.id);
+}
+
 function prepareLocalAttachment(file: File): ComposerAttachment {
   return {
     id: newPendingAttachmentId(),
@@ -4847,6 +4987,118 @@ function prepareLocalAttachment(file: File): ComposerAttachment {
     status: "ready",
     file
   };
+}
+
+async function preparePrivateAttachment(file: File): Promise<ComposerAttachment> {
+  const mimeType = file.type || mimeTypeFromFilename(file.name) || "application/octet-stream";
+  const isImage =
+    mimeType.startsWith("image/") &&
+    ["image/png", "image/jpeg", "image/gif", "image/webp"].includes(mimeType);
+  const baseAttachment = {
+    id: newPendingAttachmentId(),
+    chat_id: undefined,
+    message_id: null,
+    revision_id: null,
+    original_filename: file.name,
+    mime_type: mimeType,
+    size_bytes: file.size,
+    created_at: unixTimestamp(),
+    status: "ready" as const,
+    file
+  };
+
+  if (isImage) {
+    return {
+      ...baseAttachment,
+      attachment_kind: "image",
+      data_url: await readFileAsDataUrl(file)
+    };
+  }
+
+  return {
+    ...baseAttachment,
+    attachment_kind: "text",
+    text_content: await readFileAsUtf8(file)
+  };
+}
+
+function mimeTypeFromFilename(filename: string) {
+  const extension = filename.split(".").pop()?.toLocaleLowerCase();
+  switch (extension) {
+    case "md":
+    case "markdown":
+      return "text/markdown";
+    case "json":
+      return "application/json";
+    case "csv":
+      return "text/csv";
+    case "txt":
+    case "log":
+    case "toml":
+    case "yaml":
+    case "yml":
+    case "js":
+    case "jsx":
+    case "ts":
+    case "tsx":
+    case "css":
+    case "html":
+    case "rs":
+    case "py":
+    case "go":
+    case "java":
+    case "c":
+    case "cpp":
+    case "h":
+    case "hpp":
+    case "php":
+    case "rb":
+    case "sh":
+      return "text/plain";
+    case "png":
+      return "image/png";
+    case "jpg":
+    case "jpeg":
+      return "image/jpeg";
+    case "gif":
+      return "image/gif";
+    case "webp":
+      return "image/webp";
+    default:
+      return null;
+  }
+}
+
+function readFileAsDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error ?? new Error("Failed to read image"));
+    reader.onload = () => {
+      if (typeof reader.result !== "string") {
+        reject(new Error("Failed to read image"));
+        return;
+      }
+      resolve(reader.result);
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+async function readFileAsUtf8(file: File) {
+  try {
+    const decoder = new TextDecoder("utf-8", { fatal: true });
+    const text = decoder.decode(await file.arrayBuffer());
+    if (text.includes("\u0000")) {
+      throw new Error("Unsupported binary file");
+    }
+    return text;
+  } catch (error) {
+    throw new Error(
+      error instanceof Error && error.message === "Unsupported binary file"
+        ? "Only image files and UTF-8 text files are supported."
+        : "Only image files and UTF-8 text files are supported."
+    );
+  }
 }
 
 async function uploadAttachmentToChat(chatId: string, file: File) {

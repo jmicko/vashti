@@ -30,8 +30,6 @@ pub struct PrivateGenerateRequest {
     pub model_name: String,
     pub think_mode: Option<String>,
     pub messages: Vec<service::PrivateMessageInput>,
-    #[serde(default)]
-    pub attachments: Vec<serde_json::Value>,
 }
 
 #[cfg(debug_assertions)]
@@ -70,12 +68,6 @@ pub async fn generate(
     Json(payload): Json<PrivateGenerateRequest>,
 ) -> Result<Response, ApiError> {
     auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
-    if !payload.attachments.is_empty() {
-        return Err(ApiError::bad_request(
-            "attachments_not_supported",
-            "Private-local attachments are not implemented yet",
-        ));
-    }
 
     let assistant_message_id = validate_assistant_message_id(&payload.assistant_message_id)?;
     let backend = service::get_enabled_backend(&state.db, &payload.backend_id).await?;

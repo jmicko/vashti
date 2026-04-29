@@ -52,20 +52,34 @@ pub fn private_prompt_messages(
     let mut prompt_messages = Vec::new();
 
     for message in messages {
-        let role = validate_role(&message.role)?;
-        let content = message.content_text.trim();
-        if content.is_empty() {
+        let PrivateMessageInput {
+            role,
+            content_text,
+            thinking_text,
+            images,
+        } = message;
+        let role = validate_role(&role)?;
+        let content = content_text.trim();
+        let images: Vec<String> = images
+            .into_iter()
+            .map(|image| image.trim().to_string())
+            .filter(|image| !image.is_empty())
+            .collect();
+        if content.is_empty() && images.is_empty() {
             continue;
         }
 
         prompt_messages.push(OllamaChatMessage {
             role,
             content: content.to_string(),
-            thinking: message
-                .thinking_text
+            thinking: thinking_text
                 .map(|thinking| thinking.trim().to_string())
                 .filter(|thinking| !thinking.is_empty()),
-            images: None,
+            images: if images.is_empty() {
+                None
+            } else {
+                Some(images)
+            },
         });
     }
 
@@ -84,6 +98,8 @@ pub struct PrivateMessageInput {
     pub role: String,
     pub content_text: String,
     pub thinking_text: Option<String>,
+    #[serde(default)]
+    pub images: Vec<String>,
 }
 
 fn validate_role(role: &str) -> Result<String, ApiError> {

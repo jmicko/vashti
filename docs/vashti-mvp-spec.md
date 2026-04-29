@@ -584,7 +584,9 @@ Rationale:
 
 * attachments for **private local chats are local-only in MVP**
 * they should not be persisted on the server
-* if private-local attachment support is difficult in the first pass, image support may be narrowed before generic file support in that mode
+* image attachments may be stored in IndexedDB and sent transiently to Ollama as message `images`
+* UTF-8 text attachments may be stored in IndexedDB and appended transiently to prompt text
+* unsupported binary files should be rejected client-side
 
 ### 17.4 Streaming direction
 

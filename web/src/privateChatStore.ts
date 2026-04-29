@@ -46,6 +46,8 @@ export type PrivateChatAttachment = {
   size_bytes: number;
   attachment_kind: string;
   created_at?: number;
+  data_url?: string;
+  text_content?: string;
 };
 
 export type PrivateChatMessage = {
