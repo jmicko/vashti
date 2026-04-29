@@ -101,12 +101,17 @@ pub struct GenerateChatRequest {
     pub model_name: Option<String>,
     pub think_mode: Option<String>,
     #[serde(default)]
-    pub attachments: Vec<serde_json::Value>,
+    pub attachments: Vec<AttachmentReference>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct GenerateUserMessageRequest {
     pub content_text: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AttachmentReference {
+    pub id: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -120,7 +125,7 @@ pub struct RegenerateMessageRequest {
     pub model_name: Option<String>,
     pub think_mode: Option<String>,
     #[serde(default)]
-    pub attachments: Vec<serde_json::Value>,
+    pub attachments: Vec<AttachmentReference>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -130,7 +135,7 @@ pub struct BranchMessageRequest {
     pub model_name: Option<String>,
     pub think_mode: Option<String>,
     #[serde(default)]
-    pub attachments: Vec<serde_json::Value>,
+    pub attachments: Vec<AttachmentReference>,
 }
 
 #[derive(Debug, Serialize)]
@@ -332,14 +337,15 @@ pub async fn generate_chat(
 ) -> Result<Response, ApiError> {
     let user =
         auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
-    if !payload.attachments.is_empty() {
-        return Err(ApiError::bad_request(
-            "attachments_not_supported",
-            "Attachments are not implemented yet",
-        ));
-    }
 
-    let prepared = service::prepare_generation(&state.db, &user.id, &chat_id, payload).await?;
+    let prepared = service::prepare_generation(
+        &state.db,
+        &state.config.uploads_dir(),
+        &user.id,
+        &chat_id,
+        payload,
+    )
+    .await?;
     Ok(start_generation_stream(state, user.id, chat_id, prepared).await)
 }
 
@@ -351,16 +357,16 @@ pub async fn branch_message(
 ) -> Result<Response, ApiError> {
     let user =
         auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
-    if !payload.attachments.is_empty() {
-        return Err(ApiError::bad_request(
-            "attachments_not_supported",
-            "Attachments are not implemented yet",
-        ));
-    }
 
-    let prepared =
-        service::prepare_branch_generation(&state.db, &user.id, &chat_id, &message_id, payload)
-            .await?;
+    let prepared = service::prepare_branch_generation(
+        &state.db,
+        &state.config.uploads_dir(),
+        &user.id,
+        &chat_id,
+        &message_id,
+        payload,
+    )
+    .await?;
     Ok(start_generation_stream(state, user.id, chat_id, prepared).await)
 }
 
@@ -374,13 +380,20 @@ pub async fn regenerate_message(
         auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
     if !payload.attachments.is_empty() {
         return Err(ApiError::bad_request(
-            "attachments_not_supported",
-            "Attachments are not implemented yet",
+            "invalid_attachments",
+            "Attachments can only be added to user messages",
         ));
     }
 
-    let prepared =
-        service::prepare_regeneration(&state.db, &user.id, &chat_id, &message_id, payload).await?;
+    let prepared = service::prepare_regeneration(
+        &state.db,
+        &state.config.uploads_dir(),
+        &user.id,
+        &chat_id,
+        &message_id,
+        payload,
+    )
+    .await?;
     Ok(start_generation_stream(state, user.id, chat_id, prepared).await)
 }
 
@@ -834,11 +847,13 @@ async fn request_generated_title(
                 role: "system".to_string(),
                 content: "Create a concise chat title. Return only the title, no preface, no quotes, no explanation. Use 2 to 5 words when possible. Emojis are allowed if useful.".to_string(),
                 thinking: None,
+                images: None,
             },
             OllamaChatMessage {
                 role: "user".to_string(),
                 content: transcript,
                 thinking: None,
+                images: None,
             },
         ],
     };

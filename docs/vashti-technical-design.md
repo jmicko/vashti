@@ -300,20 +300,21 @@ Purpose:
 
 * server-backed uploaded files for standard chats
 * attach files/images to message revisions for prompt-authoritative attachment state
+* pending composer uploads may exist briefly with no message/revision until generation claims them
 
 Columns:
 
 * `id` TEXT PRIMARY KEY
 * `user_id` TEXT NOT NULL REFERENCES `users`(`id`) ON DELETE CASCADE
-* `chat_id` TEXT REFERENCES `chats`(`id`) ON DELETE CASCADE
+* `chat_id` TEXT NOT NULL REFERENCES `chats`(`id`) ON DELETE CASCADE
 * `message_id` TEXT REFERENCES `chat_messages`(`id`) ON DELETE SET NULL
 * `revision_id` TEXT REFERENCES `chat_message_revisions`(`id`) ON DELETE CASCADE
-* `storage_key` TEXT NOT NULL UNIQUE
+* `storage_path` TEXT NOT NULL UNIQUE
 * `original_filename` TEXT NOT NULL
-* `mime_type` TEXT
+* `mime_type` TEXT NOT NULL
 * `size_bytes` INTEGER NOT NULL
 * `attachment_kind` TEXT NOT NULL
-  Allowed values: `image`, `file`
+  Allowed values: `image`, `text`
 * `created_at` INTEGER NOT NULL
 
 Notes:
@@ -323,6 +324,9 @@ Notes:
 * attachments are intentionally deferred from the first text-chat slice
 * `revision_id` is the authoritative link for prompt content
 * `message_id` is retained for ownership checks, listing, and cleanup convenience
+* text attachments are accepted only when uploaded bytes decode as UTF-8 text without embedded NUL bytes
+* image attachments are stored and sent to Ollama as base64 `images` entries
+* PDFs are intentionally unsupported in the first attachment pass; text PDFs still require a parser, and image-heavy PDFs imply OCR/document-processing scope
 * edit + save can replace text and attachments together by creating a new revision with its own attachment set
 * deleting a message should delete or detach attachment records for all of its revisions according to the later file-deletion policy
 
@@ -807,6 +811,8 @@ Response shape matches `POST /api/backends/detect-localhost`.
 
 Returns models grouped by backend.
 
+Model capability support should prefer Ollama `POST /api/show` metadata when available. A model with a `capabilities` entry of `vision` should be treated as image-capable, and a `thinking` entry should be treated as thinking-capable. `/api/tags` details can still be used as a fallback heuristic for older Ollama responses.
+
 Response:
 
 ```json
@@ -820,11 +826,15 @@ Response:
       "models": [
         {
           "name": "gemma4",
-          "supports_images": true
+          "supports_images": true,
+          "supports_thinking": true,
+          "capabilities": ["completion", "vision", "audio", "tools", "thinking"]
         },
         {
           "name": "llama3:70b",
-          "supports_images": false
+          "supports_images": false,
+          "supports_thinking": false,
+          "capabilities": ["completion"]
         }
       ]
     }
@@ -1146,7 +1156,11 @@ Request:
   "backend_id": "b1",
   "model_name": "gemma4",
   "think_mode": "medium",
-  "attachments": []
+  "attachments": [
+    {
+      "id": "a1"
+    }
+  ]
 }
 ```
 
@@ -1171,6 +1185,7 @@ On backend side:
 
 * persist user message before generation begins
 * persist assistant placeholder with `status=streaming`
+* claim pending attachment IDs onto the new user-message revision before prompt construction
 * keep an in-memory snapshot of in-flight assistant thinking/content while streaming
 * overlay that in-memory snapshot onto `GET /api/chats/:chat_id/messages` so route changes can recover the whole partial response
 * write assistant revision thinking/content to SQLite when generation completes, stops, or errors
@@ -1178,6 +1193,7 @@ On backend side:
 * mark assistant message `stopped` if the user stops generation
 * mark `error` on failure
 * prompt construction walks the active path and excludes deleted messages
+* prompt construction appends UTF-8 text attachments to message content and passes image attachments through Ollama's `images` array
 
 Notes:
 
@@ -1207,10 +1223,19 @@ Multipart upload.
 
 Request metadata:
 
-* `message_id`
-* `revision_id`
+* `file`
+* optional `message_id`
+* optional `revision_id`
 
-`revision_id` determines which version of a message includes the attachment in prompts.
+If `message_id` and `revision_id` are omitted, the upload is a pending composer attachment. Generation can later claim it by attachment ID and bind it to the newly created user-message revision.
+
+If `message_id` and `revision_id` are present, both must be present and must belong to the chat owner. `revision_id` determines which version of a message includes the attachment in prompts.
+
+Supported files:
+
+* common images: `jpg`, `jpeg`, `png`, `gif`, `webp`
+* UTF-8 text files, including source-code files where bytes decode cleanly as text
+* unsupported binary files are rejected
 
 Response:
 

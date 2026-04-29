@@ -18,6 +18,7 @@ use std::{error::Error, time::Duration};
 use app_state::AppState;
 use axum::{
     Router,
+    extract::DefaultBodyLimit,
     routing::{get, patch, post},
 };
 use config::Config;
@@ -152,6 +153,14 @@ fn router(state: AppState) -> Router {
             "/chats/{chat_id}/messages/{message_id}/stop",
             post(chats::handlers::stop_generation),
         )
+        .route(
+            "/chats/{chat_id}/attachments",
+            post(uploads::handlers::upload_attachment),
+        )
+        .route(
+            "/attachments/{attachment_id}",
+            get(uploads::handlers::get_attachment).delete(uploads::handlers::delete_attachment),
+        )
         .route("/private/generate", post(private::handlers::generate));
 
     #[cfg(debug_assertions)]
@@ -169,6 +178,7 @@ fn router(state: AppState) -> Router {
         .route("/app/{*path}", get(frontend::serve_index))
         .fallback(frontend::serve_asset)
         .with_state(state)
+        .layer(DefaultBodyLimit::max(64 * 1024 * 1024))
         .layer(TraceLayer::new_for_http())
 }
 

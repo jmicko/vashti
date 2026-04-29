@@ -67,6 +67,8 @@ pub struct BackendSummaryResponse {
 pub struct ModelResponse {
     pub name: String,
     pub supports_images: bool,
+    pub supports_thinking: bool,
+    pub capabilities: Vec<String>,
 }
 
 pub async fn list_backends(
@@ -160,6 +162,8 @@ pub async fn list_models(
                     .map(|model| ModelResponse {
                         name: model.name,
                         supports_images: model.supports_images,
+                        supports_thinking: model.supports_thinking,
+                        capabilities: model.capabilities,
                     })
                     .collect()
             }

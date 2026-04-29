@@ -1,5 +1,7 @@
 use serde::Serialize;
 
+use crate::uploads::models::Attachment;
+
 #[derive(Debug, Serialize)]
 pub struct ChatSummary {
     pub id: String,
@@ -45,7 +47,7 @@ pub struct ChatMessage {
     pub active_revision: Option<ChatMessageRevision>,
     pub revisions: Vec<ChatMessageRevision>,
     pub revision_count: i64,
-    pub attachments: Vec<serde_json::Value>,
+    pub attachments: Vec<Attachment>,
 }
 
 #[derive(Clone, Debug, Serialize)]

@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, path::Path};
 
 use sqlx::{Row, SqlitePool};
 use uuid::Uuid;
@@ -7,14 +7,16 @@ use crate::{
     auth::service::unix_timestamp,
     chats::{
         handlers::{
-            BranchMessageRequest, CreateChatRequest, CreateMessageRequest, EditMessageRequest,
-            GenerateChatRequest, RegenerateMessageRequest, SetActiveChildRequest,
-            SetActiveRevisionRequest, SetActiveRootRequest, UpdateChatRequest,
+            AttachmentReference, BranchMessageRequest, CreateChatRequest, CreateMessageRequest,
+            EditMessageRequest, GenerateChatRequest, RegenerateMessageRequest,
+            SetActiveChildRequest, SetActiveRevisionRequest, SetActiveRootRequest,
+            UpdateChatRequest,
         },
         models::{ChatDetail, ChatMessage, ChatMessageRevision, ChatSummary},
     },
     error::ApiError,
     ollama::models::OllamaChatMessage,
+    uploads,
 };
 
 #[derive(Debug)]
@@ -304,6 +306,7 @@ pub async fn list_messages(
     for row in rows {
         let mut message = row_to_message(row)?;
         hydrate_message_revisions(pool, &mut message).await?;
+        hydrate_message_attachments(pool, user_id, chat_id, &mut message).await?;
         messages.push(message);
     }
 
@@ -458,6 +461,7 @@ pub async fn create_user_message(
 
 pub async fn prepare_generation(
     pool: &SqlitePool,
+    uploads_dir: &Path,
     user_id: &str,
     chat_id: &str,
     payload: GenerateChatRequest,
@@ -496,6 +500,7 @@ pub async fn prepare_generation(
     let parent_message_id =
         active_tail_message_id(pool, chat_id, chat.active_root_message_id).await?;
     let now = unix_timestamp();
+    let attachment_ids = attachment_ids(&payload.attachments)?;
     let user_message_id = Uuid::new_v4().to_string();
     let user_revision_id = Uuid::new_v4().to_string();
     let assistant_message_id = Uuid::new_v4().to_string();
@@ -528,6 +533,15 @@ pub async fn prepare_generation(
         "",
         "original",
         now,
+    )
+    .await?;
+    uploads::service::claim_pending_attachments(
+        &mut tx,
+        user_id,
+        chat_id,
+        &user_message_id,
+        &user_revision_id,
+        &attachment_ids,
     )
     .await?;
 
@@ -592,7 +606,7 @@ pub async fn prepare_generation(
     tx.commit().await?;
 
     let prompt_messages =
-        active_prompt_messages(pool, user_id, chat_id, &assistant_message_id).await?;
+        active_prompt_messages(pool, uploads_dir, user_id, chat_id, &assistant_message_id).await?;
     let user_message = get_message(pool, user_id, chat_id, &user_message_id).await?;
     let assistant_message = get_message(pool, user_id, chat_id, &assistant_message_id).await?;
 
@@ -608,6 +622,7 @@ pub async fn prepare_generation(
 
 pub async fn prepare_regeneration(
     pool: &SqlitePool,
+    uploads_dir: &Path,
     user_id: &str,
     chat_id: &str,
     message_id: &str,
@@ -703,7 +718,7 @@ pub async fn prepare_regeneration(
     tx.commit().await?;
 
     let prompt_messages =
-        active_prompt_messages(pool, user_id, chat_id, &assistant_message_id).await?;
+        active_prompt_messages(pool, uploads_dir, user_id, chat_id, &assistant_message_id).await?;
     let assistant_message = get_message(pool, user_id, chat_id, &assistant_message_id).await?;
 
     Ok(PreparedGeneration {
@@ -718,6 +733,7 @@ pub async fn prepare_regeneration(
 
 pub async fn prepare_branch_generation(
     pool: &SqlitePool,
+    uploads_dir: &Path,
     user_id: &str,
     chat_id: &str,
     message_id: &str,
@@ -769,6 +785,7 @@ pub async fn prepare_branch_generation(
     let backend = enabled_backend(pool, &backend_id).await?;
     let parent_message_id = target.parent_message_id.clone();
     let now = unix_timestamp();
+    let attachment_ids = attachment_ids(&payload.attachments)?;
     let user_message_id = Uuid::new_v4().to_string();
     let user_revision_id = Uuid::new_v4().to_string();
     let assistant_message_id = Uuid::new_v4().to_string();
@@ -801,6 +818,15 @@ pub async fn prepare_branch_generation(
         "",
         "edit",
         now,
+    )
+    .await?;
+    uploads::service::claim_pending_attachments(
+        &mut tx,
+        user_id,
+        chat_id,
+        &user_message_id,
+        &user_revision_id,
+        &attachment_ids,
     )
     .await?;
 
@@ -865,7 +891,7 @@ pub async fn prepare_branch_generation(
     tx.commit().await?;
 
     let prompt_messages =
-        active_prompt_messages(pool, user_id, chat_id, &assistant_message_id).await?;
+        active_prompt_messages(pool, uploads_dir, user_id, chat_id, &assistant_message_id).await?;
     let user_message = get_message(pool, user_id, chat_id, &user_message_id).await?;
     let assistant_message = get_message(pool, user_id, chat_id, &assistant_message_id).await?;
 
@@ -1367,6 +1393,27 @@ fn normalized_title(title: String) -> String {
     }
 }
 
+fn attachment_ids(attachments: &[AttachmentReference]) -> Result<Vec<String>, ApiError> {
+    let mut seen = HashSet::new();
+    let mut ids = Vec::new();
+
+    for attachment in attachments {
+        let id = attachment.id.trim();
+        if id.is_empty() {
+            return Err(ApiError::bad_request(
+                "invalid_attachment",
+                "Attachment id is required",
+            ));
+        }
+
+        if seen.insert(id.to_string()) {
+            ids.push(id.to_string());
+        }
+    }
+
+    Ok(ids)
+}
+
 fn normalized_think_mode(think_mode: Option<String>) -> Option<String> {
     let mode = think_mode?.trim().to_ascii_lowercase();
     match mode.as_str() {
@@ -1540,6 +1587,7 @@ async fn active_tail_message_id(
 
 async fn active_prompt_messages(
     pool: &SqlitePool,
+    uploads_dir: &Path,
     user_id: &str,
     chat_id: &str,
     stop_before_message_id: &str,
@@ -1559,6 +1607,7 @@ async fn active_prompt_messages(
             SELECT m.role,
                    m.is_deleted,
                    m.active_child_message_id,
+                   r.id AS revision_id,
                    r.content_text,
                    r.thinking_text
             FROM chat_messages m
@@ -1577,15 +1626,35 @@ async fn active_prompt_messages(
 
         let role: String = row.try_get("role")?;
         let is_deleted = row.try_get::<i64, _>("is_deleted")? != 0;
-        let content: Option<String> = row.try_get("content_text")?;
+        let revision_id: Option<String> = row.try_get("revision_id")?;
+        let mut content: String = row
+            .try_get::<Option<String>, _>("content_text")?
+            .unwrap_or_default();
         let thinking: Option<String> = row.try_get("thinking_text")?;
 
         if !is_deleted {
-            if let Some(content) = content.filter(|content| !content.trim().is_empty()) {
+            let mut images = Vec::new();
+            if let Some(revision_id) = &revision_id {
+                let (attachment_text, attachment_images) =
+                    uploads::service::prompt_attachment_payload(
+                        pool,
+                        uploads_dir,
+                        user_id,
+                        chat_id,
+                        &message_id,
+                        revision_id,
+                    )
+                    .await?;
+                content.push_str(&attachment_text);
+                images = attachment_images;
+            }
+
+            if !content.trim().is_empty() || !images.is_empty() {
                 messages.push(OllamaChatMessage {
                     role,
                     content,
                     thinking: thinking.filter(|thinking| !thinking.trim().is_empty()),
+                    images: (!images.is_empty()).then_some(images),
                 });
             }
         }
@@ -1782,6 +1851,29 @@ async fn hydrate_message_revisions(
     Ok(())
 }
 
+async fn hydrate_message_attachments(
+    pool: &SqlitePool,
+    user_id: &str,
+    chat_id: &str,
+    message: &mut ChatMessage,
+) -> Result<(), ApiError> {
+    let Some(active_revision_id) = &message.active_revision_id else {
+        message.attachments = Vec::new();
+        return Ok(());
+    };
+
+    message.attachments = uploads::service::list_revision_attachments(
+        pool,
+        user_id,
+        chat_id,
+        &message.id,
+        active_revision_id,
+    )
+    .await?;
+
+    Ok(())
+}
+
 async fn get_message(
     pool: &SqlitePool,
     user_id: &str,
@@ -1839,6 +1931,7 @@ async fn get_message(
 
     let mut message = row_to_message(row)?;
     hydrate_message_revisions(pool, &mut message).await?;
+    hydrate_message_attachments(pool, user_id, chat_id, &mut message).await?;
 
     Ok(message)
 }

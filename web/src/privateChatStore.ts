@@ -36,6 +36,18 @@ export type PrivateChatMessageRevision = {
   created_at: number;
 };
 
+export type PrivateChatAttachment = {
+  id: string;
+  chat_id?: string;
+  message_id: string | null;
+  revision_id: string | null;
+  original_filename: string;
+  mime_type: string;
+  size_bytes: number;
+  attachment_kind: string;
+  created_at?: number;
+};
+
 export type PrivateChatMessage = {
   id: string;
   chat_id: string;
@@ -57,7 +69,7 @@ export type PrivateChatMessage = {
   active_revision: PrivateChatMessageRevision | null;
   revisions: PrivateChatMessageRevision[];
   revision_count: number;
-  attachments: unknown[];
+  attachments: PrivateChatAttachment[];
 };
 
 export type CreatePrivateChatParams = {
@@ -258,7 +270,7 @@ export async function listPrivateMessages(chatId: string): Promise<PrivateChatMe
     tx.objectStore(MESSAGE_STORE).index("chat_id").getAll(chatId)
   );
   await transactionDone(tx);
-  return messages.sort(compareMessagesByCreatedAt);
+  return messages.map(normalizePrivateMessage).sort(compareMessagesByCreatedAt);
 }
 
 export async function savePrivateMessage(message: PrivateChatMessage): Promise<void> {
@@ -328,4 +340,11 @@ function transactionDone(transaction: IDBTransaction): Promise<void> {
 
 function compareMessagesByCreatedAt(left: PrivateChatMessage, right: PrivateChatMessage) {
   return left.created_at - right.created_at || left.id.localeCompare(right.id);
+}
+
+function normalizePrivateMessage(message: PrivateChatMessage): PrivateChatMessage {
+  return {
+    ...message,
+    attachments: message.attachments ?? []
+  };
 }

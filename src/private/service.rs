@@ -65,6 +65,7 @@ pub fn private_prompt_messages(
                 .thinking_text
                 .map(|thinking| thinking.trim().to_string())
                 .filter(|thinking| !thinking.is_empty()),
+            images: None,
         });
     }
 

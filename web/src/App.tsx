@@ -1,4 +1,5 @@
 import {
+  ChangeEvent,
   FormEvent,
   isValidElement,
   PointerEvent as ReactPointerEvent,
@@ -14,16 +15,20 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import {
+  Brain,
   ChevronLeft,
   ChevronRight,
   Cog,
   Copy,
+  FileText,
+  Image as ImageIcon,
   LogOut,
   Lock,
   Menu,
   MessageSquare,
   MessageSquarePlus,
   MoreHorizontal,
+  Paperclip,
   Pencil,
   Plus,
   Power,
@@ -36,6 +41,8 @@ import {
   Square,
   Trash2,
   UserRound,
+  Volume2,
+  Wrench,
   Users,
   X
 } from "lucide-react";
@@ -118,6 +125,8 @@ type DetectLocalhostResponse = {
 type ModelInfo = {
   name: string;
   supports_images: boolean;
+  supports_thinking?: boolean;
+  capabilities?: string[];
 };
 
 type BackendModelGroup = {
@@ -170,6 +179,28 @@ type ChatMessageRevision = {
   created_at: number;
 };
 
+type AttachmentInfo = {
+  id: string;
+  chat_id?: string;
+  message_id: string | null;
+  revision_id: string | null;
+  original_filename: string;
+  mime_type: string;
+  size_bytes: number;
+  attachment_kind: string;
+  created_at?: number;
+};
+
+type ComposerAttachment = AttachmentInfo & {
+  status: "uploaded" | "uploading" | "error";
+  error?: string;
+};
+
+type ComposerSubmitPayload = {
+  prompt: string;
+  attachments: ComposerAttachment[];
+};
+
 type ChatMessage = {
   id: string;
   parent_message_id: string | null;
@@ -190,7 +221,7 @@ type ChatMessage = {
   active_revision: ChatMessageRevision | null;
   revisions: ChatMessageRevision[];
   revision_count: number;
-  attachments: unknown[];
+  attachments: AttachmentInfo[];
 };
 
 type ListMessagesResponse = {
@@ -200,6 +231,10 @@ type ListMessagesResponse = {
 
 type MessageResponse = {
   message: ChatMessage;
+};
+
+type AttachmentResponse = {
+  attachment: AttachmentInfo;
 };
 
 type GenerateEvent =
@@ -1725,7 +1760,7 @@ function ChatView({
   const [generationError, setGenerationError] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [activeAssistantId, setActiveAssistantId] = useState<string | null>(null);
-  const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
+  const [pendingPrompt, setPendingPrompt] = useState<ComposerSubmitPayload | null>(null);
   const [busyMessageId, setBusyMessageId] = useState<string | null>(null);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ChatMessage | null>(null);
@@ -1883,7 +1918,7 @@ function ChatView({
   );
 
   const generate = useCallback(
-    async (prompt: string) => {
+    async (prompt: string, attachments: ComposerAttachment[] = []) => {
       if (isGenerating) {
         return;
       }
@@ -1894,7 +1929,7 @@ function ChatView({
         backend_id: selected?.backendId ?? null,
         model_name: selected?.modelName ?? null,
         think_mode: null,
-        attachments: []
+        attachments: attachmentReferences(attachments)
       });
     },
     [chatId, isGenerating, selectedModel, streamAssistantResponse]
@@ -1950,7 +1985,7 @@ function ChatView({
 
     const prompt = pendingPrompt;
     setPendingPrompt(null);
-    void generate(prompt);
+    void generate(prompt.prompt, prompt.attachments);
   }, [chat, generate, isGenerating, isLoading, pendingPrompt]);
 
   useLayoutEffect(() => {
@@ -2319,14 +2354,39 @@ function ChatView({
     }
   }
 
-  async function submitPrompt(prompt: string) {
+  async function uploadAttachment(file: File) {
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const response = await fetch(`/api/chats/${chatId}/attachments`, {
+      method: "POST",
+      credentials: "include",
+      body: formData
+    });
+
+    if (!response.ok) {
+      throw new Error(await responseErrorMessage(response));
+    }
+
+    return ((await response.json()) as AttachmentResponse).attachment;
+  }
+
+  async function removeAttachment(attachment: ComposerAttachment) {
+    if (attachment.status !== "uploaded" || attachment.id.startsWith("pending-")) {
+      return;
+    }
+
+    await requestJson(`/api/attachments/${attachment.id}`, { method: "DELETE" });
+  }
+
+  async function submitPrompt(prompt: string, attachments: ComposerAttachment[] = []) {
     if (isGenerating) {
-      setPendingPrompt(prompt);
+      setPendingPrompt({ prompt, attachments });
       await stopGeneration();
       return;
     }
 
-    await generate(prompt);
+    await generate(prompt, attachments);
   }
 
   function replaceMessage(nextMessage: ChatMessage) {
@@ -2587,6 +2647,8 @@ function ChatView({
               isGenerating={isGenerating}
               placeholder={selectedModel ? "Message Vashti" : "Select a model to continue"}
               onStop={stopGeneration}
+              onUploadAttachment={uploadAttachment}
+              onRemoveAttachment={removeAttachment}
               onSubmit={submitPrompt}
             />
           </div>
@@ -3792,6 +3854,7 @@ function MessageBubble({
     ? "Message deleted"
     : message.active_revision?.content_text.trim() || "";
   const thinking = message.active_revision?.thinking_text.trim();
+  const attachments = message.attachments ?? [];
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState(content);
 
@@ -3860,6 +3923,9 @@ function MessageBubble({
         <MarkdownContent content={content} />
       ) : (
         <p>{message.status === "streaming" ? <RetroLoader /> : "No content"}</p>
+      )}
+      {!isEditing && !message.is_deleted && attachments.length > 0 && (
+        <MessageAttachments attachments={attachments} />
       )}
       {!isEditing && (
         <div className="message-actions">
@@ -4239,6 +4305,8 @@ function StartChatComposer({
   isGenerating = false,
   placeholder,
   onStop,
+  onUploadAttachment,
+  onRemoveAttachment,
   onSubmit
 }: {
   isBusy: boolean;
@@ -4246,11 +4314,18 @@ function StartChatComposer({
   isGenerating?: boolean;
   placeholder: string;
   onStop?: () => void;
-  onSubmit: (prompt: string) => Promise<void>;
+  onUploadAttachment?: (file: File) => Promise<AttachmentInfo>;
+  onRemoveAttachment?: (attachment: ComposerAttachment) => Promise<void>;
+  onSubmit: (prompt: string, attachments?: ComposerAttachment[]) => Promise<void>;
 }) {
   const [prompt, setPrompt] = useState("");
+  const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const canSubmit = prompt.trim().length > 0 && !isDisabled && (!isBusy || isGenerating);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const canAttach = Boolean(onUploadAttachment);
+  const hasUploadingAttachment = attachments.some((attachment) => attachment.status === "uploading");
+  const canSubmit =
+    prompt.trim().length > 0 && !isDisabled && !hasUploadingAttachment && (!isBusy || isGenerating);
 
   useEffect(() => {
     textareaRef.current?.focus();
@@ -4263,13 +4338,95 @@ function StartChatComposer({
     }
 
     const submittedPrompt = prompt;
+    const submittedAttachments = attachments.filter(
+      (attachment) => attachment.status === "uploaded"
+    );
     setPrompt("");
-    await onSubmit(submittedPrompt);
+    setAttachments([]);
+    await onSubmit(submittedPrompt, submittedAttachments);
     window.requestAnimationFrame(() => textareaRef.current?.focus());
+  }
+
+  async function uploadFiles(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = "";
+    if (!onUploadAttachment || files.length === 0) {
+      return;
+    }
+
+    for (const file of files) {
+      const pendingId = newPendingAttachmentId();
+      const pendingAttachment: ComposerAttachment = {
+        id: pendingId,
+        chat_id: undefined,
+        message_id: null,
+        revision_id: null,
+        original_filename: file.name,
+        mime_type: file.type || "application/octet-stream",
+        size_bytes: file.size,
+        attachment_kind: file.type.startsWith("image/") ? "image" : "text",
+        status: "uploading"
+      };
+
+      setAttachments((current) => [...current, pendingAttachment]);
+
+      try {
+        const attachment = await onUploadAttachment(file);
+        setAttachments((current) =>
+          current.map((currentAttachment) =>
+            currentAttachment.id === pendingId
+              ? { ...attachment, status: "uploaded" }
+              : currentAttachment
+          )
+        );
+      } catch (uploadError) {
+        setAttachments((current) =>
+          current.map((currentAttachment) =>
+            currentAttachment.id === pendingId
+              ? {
+                  ...currentAttachment,
+                  status: "error",
+                  error: uploadError instanceof Error ? uploadError.message : "Upload failed"
+                }
+              : currentAttachment
+          )
+        );
+      }
+    }
+  }
+
+  async function removeAttachment(attachment: ComposerAttachment) {
+    if (attachment.status === "uploaded" && onRemoveAttachment) {
+      try {
+        await onRemoveAttachment(attachment);
+      } catch (removeError) {
+        setAttachments((current) =>
+          current.map((currentAttachment) =>
+            currentAttachment.id === attachment.id
+              ? {
+                  ...currentAttachment,
+                  error: removeError instanceof Error ? removeError.message : "Delete failed"
+                }
+              : currentAttachment
+          )
+        );
+        return;
+      }
+    }
+
+    setAttachments((current) =>
+      current.filter((currentAttachment) => currentAttachment.id !== attachment.id)
+    );
   }
 
   return (
     <form className="chat-composer" onSubmit={submit}>
+      {attachments.length > 0 && (
+        <AttachmentChipList
+          attachments={attachments}
+          onRemove={(attachment) => void removeAttachment(attachment)}
+        />
+      )}
       <textarea
         ref={textareaRef}
         rows={3}
@@ -4285,6 +4442,27 @@ function StartChatComposer({
         }}
       />
       <div className="composer-actions">
+        {canAttach && (
+          <>
+            <input
+              ref={fileInputRef}
+              className="visually-hidden"
+              type="file"
+              multiple
+              accept={attachmentAcceptTypes}
+              onChange={uploadFiles}
+            />
+            <button
+              type="button"
+              aria-label="Attach files"
+              title="Attach files"
+              disabled={isDisabled}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <Paperclip />
+            </button>
+          </>
+        )}
         {isGenerating && (
           <button type="button" aria-label="Stop generation" onClick={onStop}>
             <Square />
@@ -4296,6 +4474,130 @@ function StartChatComposer({
       </div>
     </form>
   );
+}
+
+const attachmentAcceptTypes = [
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+  "text/*",
+  ".txt",
+  ".md",
+  ".markdown",
+  ".json",
+  ".csv",
+  ".log",
+  ".toml",
+  ".yaml",
+  ".yml",
+  ".js",
+  ".jsx",
+  ".ts",
+  ".tsx",
+  ".css",
+  ".html",
+  ".rs",
+  ".py",
+  ".go",
+  ".java",
+  ".c",
+  ".cpp",
+  ".h",
+  ".hpp",
+  ".php",
+  ".rb",
+  ".sh"
+].join(",");
+
+function AttachmentChipList({
+  attachments,
+  onRemove
+}: {
+  attachments: ComposerAttachment[];
+  onRemove: (attachment: ComposerAttachment) => void;
+}) {
+  return (
+    <div className="composer-attachments" aria-label="Attached files">
+      {attachments.map((attachment) => (
+        <div
+          key={attachment.id}
+          className={
+            attachment.status === "error" ? "attachment-chip attachment-chip-error" : "attachment-chip"
+          }
+          title={attachment.error ?? attachment.original_filename}
+        >
+          {attachmentIcon(attachment)}
+          <span>{attachment.original_filename}</span>
+          <small>{attachment.status === "uploading" ? <RetroLoader /> : formatBytes(attachment.size_bytes)}</small>
+          <button
+            type="button"
+            className="message-icon-button"
+            aria-label={`Remove ${attachment.original_filename}`}
+            onClick={() => onRemove(attachment)}
+          >
+            <X />
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function MessageAttachments({ attachments }: { attachments: AttachmentInfo[] }) {
+  if (attachments.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="message-attachments" aria-label="Message attachments">
+      {attachments.map((attachment) => (
+        <a
+          key={attachment.id}
+          className="attachment-chip"
+          href={`/api/attachments/${attachment.id}`}
+          download={attachment.original_filename}
+          title={attachment.original_filename}
+        >
+          {attachmentIcon(attachment)}
+          <span>{attachment.original_filename}</span>
+          <small>{formatBytes(attachment.size_bytes)}</small>
+        </a>
+      ))}
+    </div>
+  );
+}
+
+function attachmentIcon(attachment: Pick<AttachmentInfo, "attachment_kind" | "mime_type">) {
+  return attachment.attachment_kind === "image" || attachment.mime_type.startsWith("image/") ? (
+    <ImageIcon />
+  ) : (
+    <FileText />
+  );
+}
+
+function attachmentReferences(attachments: ComposerAttachment[]) {
+  return attachments
+    .filter((attachment) => attachment.status === "uploaded")
+    .map((attachment) => ({ id: attachment.id }));
+}
+
+function newPendingAttachmentId() {
+  return `pending-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+
+  const kib = bytes / 1024;
+  if (kib < 1024) {
+    return `${kib.toFixed(kib < 10 ? 1 : 0)} KB`;
+  }
+
+  const mib = kib / 1024;
+  return `${mib.toFixed(mib < 10 ? 1 : 0)} MB`;
 }
 
 function ModelPicker({
@@ -4387,7 +4689,8 @@ function ModelPicker({
         aria-expanded={isOpen}
         onClick={() => setIsOpen((open) => !open)}
       >
-        <span>{buttonLabel()}</span>
+        <span className="model-name">{buttonLabel()}</span>
+        {selected && <ModelCapabilityBadges model={selected.model} />}
       </button>
       {isOpen && (
         <div className="model-menu">
@@ -4428,8 +4731,10 @@ function ModelPicker({
                           setIsOpen(false);
                         }}
                       >
-                        <span>{model.name}</span>
-                        {model.supports_images && <span className="model-vision">vision</span>}
+                        <span className="model-option-content">
+                          <span className="model-name">{model.name}</span>
+                          <ModelCapabilityBadges model={model} />
+                        </span>
                       </button>
                     );
                   })}
@@ -4441,6 +4746,81 @@ function ModelPicker({
       )}
     </div>
   );
+}
+
+function ModelCapabilityBadges({ model }: { model: ModelInfo }) {
+  const capabilities = modelCapabilityBadges(model);
+  if (capabilities.length === 0) {
+    return null;
+  }
+
+  return (
+    <span className="model-capabilities" aria-label={`Capabilities: ${capabilities.join(", ")}`}>
+      {capabilities.map((capability) => (
+        <span key={capability} className="model-capability" title={capability}>
+          {capabilityIcon(capability)}
+          <span className="model-capability-label">{capabilityLabel(capability)}</span>
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function modelCapabilityBadges(model: ModelInfo) {
+  const capabilities = new Set(
+    (model.capabilities ?? [])
+      .map((capability) => capability.trim().toLocaleLowerCase())
+      .filter(Boolean)
+  );
+
+  if (model.supports_images) {
+    capabilities.add("vision");
+  }
+  if (model.supports_thinking) {
+    capabilities.add("thinking");
+  }
+
+  capabilities.delete("completion");
+  return [...capabilities].sort((left, right) => capabilityOrder(left) - capabilityOrder(right));
+}
+
+function capabilityOrder(capability: string) {
+  const order = ["vision", "image", "thinking", "tools", "audio"];
+  const index = order.indexOf(capability);
+  return index === -1 ? order.length : index;
+}
+
+function capabilityIcon(capability: string) {
+  switch (capability) {
+    case "vision":
+    case "image":
+      return <ImageIcon />;
+    case "thinking":
+      return <Brain />;
+    case "tools":
+      return <Wrench />;
+    case "audio":
+      return <Volume2 />;
+    default:
+      return null;
+  }
+}
+
+function capabilityLabel(capability: string) {
+  switch (capability) {
+    case "vision":
+      return "vision";
+    case "image":
+      return "image";
+    case "thinking":
+      return "think";
+    case "tools":
+      return "tools";
+    case "audio":
+      return "audio";
+    default:
+      return capability;
+  }
 }
 
 function SettingsPage({
