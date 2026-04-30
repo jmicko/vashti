@@ -30,6 +30,7 @@ The Rust backend is responsible for:
 * authenticating users with cookie-based sessions
 * storing persistent app data in SQLite
 * managing standard chats and server-backed attachments
+* managing server-stored model personas and immutable persona versions
 * proxying generation requests to Ollama backends
 * streaming generation output back to the client
 * running DB migrations on startup
@@ -44,6 +45,7 @@ The frontend is responsible for:
 * chat list and chat view rendering
 * local UI state and optimistic interaction where appropriate
 * IndexedDB persistence for private-local chats
+* IndexedDB persistence for private-local model personas
 * upload selection UX
 * PWA installation and asset caching
 
@@ -63,6 +65,28 @@ There are two storage modes.
 * stored in IndexedDB
 * no server persistence of prompt/response content
 * server only receives transient content for live generation requests
+
+### 2.4 Model personas
+
+Vashti treats personas as reusable model profiles, not as separate provider types.
+
+A persona resolves to:
+
+* base Ollama backend
+* base Ollama model name
+* immutable persona version
+* system prompt
+* display name and optional avatar
+* future tool policy metadata
+
+Storage modes:
+
+* server personas are stored in SQLite and may be private-to-owner or public
+* private personas are stored only in IndexedDB and are usable only in private-local chats
+* standard chats may use base Ollama models or server personas, but never private personas
+* private-local chats should use local persona records; selecting a public server persona for private use should create or use a local copy so private use does not create server-side persona membership
+
+Generation uses the resolved base backend/model and prepends or includes the persona version's system prompt in the prompt sent to Ollama.
 
 ---
 
@@ -210,6 +234,8 @@ Columns:
 * `user_id` TEXT NOT NULL REFERENCES `users`(`id`) ON DELETE CASCADE
 * `default_backend_id` TEXT NOT NULL REFERENCES `ollama_backends`(`id`) ON DELETE RESTRICT
 * `default_model_name` TEXT NOT NULL
+* `persona_id` TEXT REFERENCES `personas`(`id`) ON DELETE SET NULL
+* `persona_version_id` TEXT REFERENCES `persona_versions`(`id`) ON DELETE SET NULL
 * `title` TEXT NOT NULL
 * `chat_mode` TEXT NOT NULL DEFAULT 'standard'
   Allowed values for MVP table usage: `standard`
@@ -224,6 +250,8 @@ Notes:
 * private-local chats are not stored here in MVP
 * `title` can be user-set or auto-generated later
 * `active_root_message_id` points at the selected first message in the current visible branch
+* `persona_version_id`, when present, binds the chat to an immutable server persona version
+* chats keep using the bound persona version until the user explicitly changes or updates it
 * this FK may be enforced after `chat_messages` exists, or left application-enforced to avoid circular migration friction
 
 ### 3.2.7 `chat_messages`
@@ -247,6 +275,9 @@ Columns:
 * `is_deleted` INTEGER NOT NULL DEFAULT 0
 * `backend_id` TEXT REFERENCES `ollama_backends`(`id`) ON DELETE SET NULL
 * `model_name` TEXT
+* `persona_id` TEXT REFERENCES `personas`(`id`) ON DELETE SET NULL
+* `persona_version_id` TEXT REFERENCES `persona_versions`(`id`) ON DELETE SET NULL
+* `persona_name_snapshot` TEXT
 * `think_mode` TEXT
   Examples: `off`, `on`, `low`, `medium`, `high`
 * `done_reason` TEXT
@@ -268,6 +299,7 @@ Notes:
 * deleted messages stay in the tree with `is_deleted = 1`; prompt construction skips deleted messages
 * when a message is deleted, revision content should be scrubbed so deleted text is not retained
 * generation metadata applies primarily to assistant messages, but nullable columns keep the table simple
+* assistant messages should store the resolved persona/model snapshot used at generation time so old chats remain understandable if a persona changes or is deleted
 
 ### 3.2.8 `chat_message_revisions`
 
@@ -330,7 +362,125 @@ Notes:
 * edit + save can replace text and attachments together by creating a new revision with its own attachment set
 * deleting a message should delete or detach attachment records for all of its revisions according to the later file-deletion policy
 
-### 3.2.10 `schema_migrations`
+### 3.2.10 `personas`
+
+Purpose:
+
+* server-stored custom model/persona identities
+* owner and visibility lifecycle
+* points to the current immutable version
+
+Columns:
+
+* `id` TEXT PRIMARY KEY
+* `owner_user_id` TEXT REFERENCES `users`(`id`) ON DELETE SET NULL
+* `current_version_id` TEXT
+* `visibility` TEXT NOT NULL DEFAULT 'private'
+  Allowed values: `private`, `public`
+* `lifecycle_state` TEXT NOT NULL DEFAULT 'active'
+  Allowed values: `active`, `disowned`, `deleted`
+* `created_at` INTEGER NOT NULL
+* `updated_at` INTEGER NOT NULL
+
+Notes:
+
+* a server persona with `visibility = private` is stored on the server but visible only to its owner
+* a public persona is visible to all users and can be used without admin approval
+* deleting a public persona with other members should disown it for the requesting user rather than breaking existing usage
+* if the creator disowns a public persona, existing versions remain usable for remaining members, but no new versions can be published until ownership transfer exists
+* when the last member disowns a public persona, the server may delete the persona and its versions
+* private-local personas are not stored in this table
+
+### 3.2.11 `persona_versions`
+
+Purpose:
+
+* immutable snapshots of persona behavior and display metadata
+* protects existing chats from later persona edits
+
+Columns:
+
+* `id` TEXT PRIMARY KEY
+* `persona_id` TEXT NOT NULL REFERENCES `personas`(`id`) ON DELETE CASCADE
+* `version_number` INTEGER NOT NULL
+* `display_name` TEXT NOT NULL
+* `avatar_attachment_id` TEXT REFERENCES `attachments`(`id`) ON DELETE SET NULL
+* `base_backend_id` TEXT NOT NULL REFERENCES `ollama_backends`(`id`) ON DELETE RESTRICT
+* `base_model_name` TEXT NOT NULL
+* `system_prompt` TEXT NOT NULL DEFAULT ''
+* `tool_policy_json` TEXT
+* `created_by_user_id` TEXT REFERENCES `users`(`id`) ON DELETE SET NULL
+* `created_at` INTEGER NOT NULL
+
+Notes:
+
+* edits create a new row and update `personas.current_version_id`
+* public persona prompts are visible to users who can use that persona
+* `tool_policy_json` is reserved for future tools and should be opaque to MVP generation
+* chat generation should use the version bound to the chat, not whatever version is currently latest
+* copying a persona copies only the selected version's current fields into a new persona/version 1
+
+### 3.2.12 `persona_members`
+
+Purpose:
+
+* tracks users who have adopted or used public personas
+* supports disown/delete lifecycle without breaking other users
+
+Columns:
+
+* `persona_id` TEXT NOT NULL REFERENCES `personas`(`id`) ON DELETE CASCADE
+* `user_id` TEXT NOT NULL REFERENCES `users`(`id`) ON DELETE CASCADE
+* `membership_role` TEXT NOT NULL DEFAULT 'member'
+  Allowed values for MVP: `creator`, `member`
+* `created_at` INTEGER NOT NULL
+* PRIMARY KEY (`persona_id`, `user_id`)
+
+Notes:
+
+* the creator is inserted as a member when the persona becomes public
+* a user is inserted as a member when they start a chat with a public persona
+* removing a public persona from the user's picker removes membership
+* deleting the final membership allows server cleanup
+
+### 3.2.13 Future model access and quota tables
+
+This is not required for the first persona slice, but the design should leave room for tag-based model/persona access control.
+
+Concepts:
+
+* tags are lightweight labels used for access rules and quotas
+* users may have explicit tags such as `cloud` or `power-user`
+* every user also has an implicit user tag, such as `user:dane`
+* implicit user tags allow per-user rules without a separate per-user policy UI
+* UI tag pickers should search existing tags and allow creating a new tag when no result matches
+* user tags should render with a user icon to distinguish them from general tags
+
+Likely future tables:
+
+* `tags`
+* `user_tags`
+* `model_access_rules`
+* `backend_access_rules`
+* `persona_quota_rules`
+
+Access rules may apply to:
+
+* entire Ollama backends
+* individual base model names
+* public persona usage
+* hosted persona count
+* public persona count
+* future tool access
+
+Quota rules:
+
+* admins can set global default hosted-persona and public-persona limits
+* admins can override limits by tag
+* `unlimited` should be representable, preferably with nullable limit columns
+* server-side checks must enforce quotas and access, even when frontend filtering is present
+
+### 3.2.14 `schema_migrations`
 
 If `sqlx` migration tracking is used directly, this table may be tool-managed instead of hand-managed.
 
@@ -355,6 +505,11 @@ Recommended indexes:
 * `attachments(chat_id)`
 * `attachments(message_id)`
 * `attachments(revision_id)`
+* `personas(owner_user_id)`
+* `personas(visibility, lifecycle_state)`
+* `persona_versions(persona_id, version_number)` unique
+* `persona_members(user_id)`
+* `persona_members(persona_id)`
 
 ---
 
@@ -862,7 +1017,140 @@ Response:
 
 ---
 
-## 6.6 Standard chat endpoints
+## 6.6 Persona endpoints
+
+Persona endpoints manage server-stored personas only. Private-local personas live in IndexedDB and are never returned by these endpoints.
+
+### `GET /api/personas`
+
+Returns personas visible to the current user.
+
+Visible personas include:
+
+* personas owned by the current user
+* public personas
+* public personas where the user has a membership row, even if later lifecycle rules hide them from global discovery
+
+Response:
+
+```json
+{
+  "personas": [
+    {
+      "id": "p1",
+      "owner_user_id": "u1",
+      "owner_username": "dane",
+      "visibility": "public",
+      "lifecycle_state": "active",
+      "current_version": {
+        "id": "pv1",
+        "version_number": 3,
+        "display_name": "Careful Researcher",
+        "avatar_attachment_id": null,
+        "base_backend_id": "b1",
+        "base_model_name": "gemma4",
+        "system_prompt": "You are careful, concise, and cite uncertainty.",
+        "created_at": 1710000000
+      },
+      "is_owner": false,
+      "is_member": true
+    }
+  ]
+}
+```
+
+### `POST /api/personas`
+
+Creates a server-stored persona and initial version.
+
+Request:
+
+```json
+{
+  "visibility": "private",
+  "display_name": "Careful Researcher",
+  "avatar_attachment_id": null,
+  "base_backend_id": "b1",
+  "base_model_name": "gemma4",
+  "system_prompt": "You are careful, concise, and cite uncertainty."
+}
+```
+
+Behavior:
+
+* creates `personas`
+* creates `persona_versions` version `1`
+* sets `personas.current_version_id`
+* if `visibility = public`, inserts creator into `persona_members`
+
+### `PATCH /api/personas/:persona_id`
+
+Edits persona visibility/lifecycle or creates a new immutable version.
+
+Request:
+
+```json
+{
+  "visibility": "public",
+  "display_name": "Careful Researcher",
+  "avatar_attachment_id": null,
+  "base_backend_id": "b1",
+  "base_model_name": "gemma4",
+  "system_prompt": "You are careful, concise, and cite uncertainty."
+}
+```
+
+Behavior:
+
+* creator/owner can publish new versions
+* changing behavior or display metadata creates a new `persona_versions` row
+* existing chats remain bound to their previous `persona_version_id`
+* moving from private server storage to public inserts creator membership
+* moving a public persona back to private is not allowed after another user has membership; the owner may disown instead
+
+### `POST /api/personas/:persona_id/copy`
+
+Creates a new persona owned by the current user from a selected visible version.
+
+Request:
+
+```json
+{
+  "persona_version_id": "pv1",
+  "visibility": "private"
+}
+```
+
+Behavior:
+
+* copies only the selected version's current fields
+* does not copy version history
+* creates a new persona with version `1`
+
+### `POST /api/personas/:persona_id/disown`
+
+Removes the persona from the current user's available public personas.
+
+Behavior:
+
+* removes the `persona_members` row for the current user
+* if this was the final member, the server may delete the persona and versions
+* if the creator disowns while other members remain, `owner_user_id` may become `NULL` and `lifecycle_state` may become `disowned`
+* existing chats using a bound version must continue to work
+
+### `GET /api/personas/:persona_id/versions`
+
+Returns visible immutable versions for a persona.
+
+Use cases:
+
+* show prompt/version history
+* update a chat to the latest version
+* copy an older version into a new persona
+
+---
+
+## 6.7 Standard chat endpoints
 
 ### `GET /api/chats`
 
@@ -884,6 +1172,7 @@ Response:
       "default_backend_id": "b1",
       "backend_name": "rtx-3060",
       "default_model_name": "gpt-oss:20b",
+      "persona_version_id": null,
       "updated_at": 1710000000,
       "last_message_at": 1710000000,
       "message_count": 18
@@ -902,7 +1191,8 @@ Request:
 {
   "title": "New chat",
   "default_backend_id": "b1",
-  "default_model_name": "gemma4"
+  "default_model_name": "gemma4",
+  "persona_version_id": null
 }
 ```
 
@@ -915,6 +1205,7 @@ Response:
     "title": "New chat",
     "default_backend_id": "b1",
     "default_model_name": "gemma4",
+    "persona_version_id": null,
     "active_root_message_id": null,
     "created_at": 1710000000,
     "updated_at": 1710000000
@@ -936,6 +1227,7 @@ Response:
     "default_backend_id": "b1",
     "backend_name": "rtx-3060",
     "default_model_name": "gpt-oss:20b",
+    "persona_version_id": "pv1",
     "active_root_message_id": "m1",
     "created_at": 1710000000,
     "updated_at": 1710000500
@@ -947,13 +1239,16 @@ Response:
 
 Supports rename and model/backend changes. Chat rename is exposed from each chat row's sidebar overflow menu.
 
+If `persona_version_id` is provided, the backend resolves backend/model from that persona version and binds the chat to it. Standard chats may only use server persona versions visible to the user.
+
 Request example:
 
 ```json
 {
   "title": "Better title",
   "default_backend_id": "b2",
-  "default_model_name": "qwen3.5"
+  "default_model_name": "qwen3.5",
+  "persona_version_id": null
 }
 ```
 
@@ -1021,6 +1316,9 @@ Response:
       "is_deleted": false,
       "backend_id": "b1",
       "model_name": "gpt-oss:20b",
+      "persona_id": "p1",
+      "persona_version_id": "pv1",
+      "persona_name_snapshot": "Careful Researcher",
       "think_mode": "medium",
       "done_reason": "stop",
       "created_at": 1710000001,
@@ -1078,6 +1376,7 @@ Request:
   "content_text": "Alternative user message",
   "backend_id": "b1",
   "model_name": "gemma4",
+  "persona_version_id": null,
   "think_mode": "medium",
   "attachments": [
     { "id": "attachment-id" }
@@ -1095,6 +1394,7 @@ Request:
 {
   "backend_id": "b1",
   "model_name": "gemma4",
+  "persona_version_id": null,
   "think_mode": "medium"
 }
 ```
@@ -1141,7 +1441,7 @@ Soft-deletes a message, scrubs revision text, leaves the tree node in place, and
 
 ---
 
-## 6.7 Standard generation endpoint
+## 6.8 Standard generation endpoint
 
 ### `POST /api/chats/:chat_id/generate`
 
@@ -1163,6 +1463,7 @@ Request:
   },
   "backend_id": "b1",
   "model_name": "gemma4",
+  "persona_version_id": null,
   "think_mode": "medium",
   "attachments": [
     {
@@ -1193,6 +1494,9 @@ On backend side:
 
 * persist user message before generation begins
 * persist assistant placeholder with `status=streaming`
+* if a persona version is selected, validate access and resolve its base backend/model before generation
+* when a persona version is used, include its system prompt in the prompt sent to Ollama
+* persona system prompt should be placed before user/assistant chat history, preferably as the first `system` role message
 * claim pending attachment IDs onto the new user-message revision before prompt construction
 * keep an in-memory snapshot of in-flight assistant thinking/content while streaming
 * overlay that in-memory snapshot onto `GET /api/chats/:chat_id/messages` so route changes can recover the whole partial response
@@ -1202,6 +1506,7 @@ On backend side:
 * mark `error` on failure
 * prompt construction walks the active path and excludes deleted messages
 * prompt construction appends UTF-8 text attachments to message content and passes image attachments through Ollama's `images` array
+* assistant messages should store the resolved model/persona snapshot used for display
 
 Notes:
 
@@ -1223,7 +1528,7 @@ Behavior:
 
 ---
 
-## 6.8 Standard attachment endpoints
+## 6.9 Standard attachment endpoints
 
 ### `POST /api/chats/:chat_id/attachments`
 
@@ -1279,13 +1584,14 @@ Response:
 
 ---
 
-## 6.9 Private-local generation endpoint
+## 6.10 Private-local generation endpoint
 
 ### `POST /api/private/generate`
 
 Purpose:
 
 * accept transient private-local history from the client
+* accept transient private-local persona system prompts from the client
 * forward to chosen Ollama backend
 * stream assistant output back
 * avoid persisting content to DB or file storage
@@ -1296,6 +1602,7 @@ Request:
 {
   "backend_id": "b1",
   "model_name": "gemma4",
+  "system_prompt": "You are careful, concise, and cite uncertainty.",
   "messages": [
     {
       "role": "user",
@@ -1317,6 +1624,8 @@ Request:
 Behavior:
 
 * no DB writes of prompt/response content
+* no DB writes of private persona content or metadata
+* private personas are resolved in the frontend from IndexedDB and sent only as transient prompt data
 * private-local attachments are persisted only in browser IndexedDB, never in server DB or upload storage
 * text attachments are appended to transient `content_text`
 * image attachments are sent as transient Ollama `images` entries on the relevant message
@@ -1380,6 +1689,7 @@ Startup fetches:
 * `GET /api/auth/session`
 * `GET /api/chats`
 * `GET /api/models`
+* `GET /api/personas`
 * `GET /api/user-settings`
 * optional `GET /api/models/status` later or lazily
 
@@ -1388,7 +1698,7 @@ Layout:
 * left sidebar for chat list
 * center chat view
 * header with sidebar toggle, model picker, new chat, overflow menu
-* bottom composer with upload and send
+* bottom composer with upload, conversation settings, and send
 * desktop keeps chat history visible in the left sidebar
 * mobile collapses chat history into the top-left menu
 * standard and private-local chats share one chat history list
@@ -1398,6 +1708,14 @@ Layout:
 * the top-right gear opens the settings/user menu, including logout
 * settings open as a full page in the main content area rather than a modal
 * client routes should preserve major app state across refreshes; settings use `/app/settings/:section`, and chat routes should use a stable chat URL once chats exist
+
+Model picker behavior:
+
+* base Ollama models remain grouped by backend
+* server personas appear near their underlying backend/model with a `Custom` tag
+* public personas may show owner attribution, such as `by dane`
+* private personas appear only while starting or viewing private-local chats and should use a lock icon
+* private personas must never appear as selectable options for standard chats
 
 ## 7.3 Standard chat view
 
@@ -1410,6 +1728,8 @@ On send:
 
 * call `POST /api/chats/:chat_id/generate`
 * append stream tokens into in-progress assistant message
+* if the chat is bound to a persona version, send that version ID and render the assistant label using the persona snapshot
+* the conversation settings menu should allow updating a persona-bound chat to a newer version or switching to a visible older version
 
 ## 7.4 Private-local chat view
 
@@ -1427,12 +1747,15 @@ On send:
 * call `POST /api/private/generate`
 * append assistant output locally
 * save resulting chat back to IndexedDB
+* if a private persona is selected, resolve its system prompt locally and send it transiently with the generation request
+* private persona metadata should remain local and should not be written to server-backed chat records
 
 ## 7.5 Settings/admin views
 
 Sections:
 
 * profile/basic preferences
+* personas / custom models
 * app settings (admin only)
 * users (admin only)
 * Ollama backends (admin only)
@@ -1442,6 +1765,17 @@ Layout:
 * settings are a full app page with section navigation
 * admin user management lives inside settings
 * user lists should separate pending/disabled users from enabled users so approval movement is clear
+
+Persona management view needs:
+
+* list own server personas
+* list private-local personas stored on this device
+* create/edit/delete or disown personas
+* visibility/storage mode selector: private-local, server private, server public
+* confirmation when moving a persona across the private/server boundary
+* prompt viewer for public personas
+* copy visible persona version into a new owned persona
+* show version history and current version
 
 Backend management view needs:
 
@@ -1461,6 +1795,8 @@ Store objects like:
 
 * `private_chats`
 * `private_messages`
+* `private_personas`
+* `private_persona_versions`
 * local attachment metadata and payloads embedded on private messages
 
 Suggested private chat shape:
@@ -1471,6 +1807,8 @@ Suggested private chat shape:
   "title": "Private chat",
   "backend_id": "b1",
   "model_name": "gemma4",
+  "private_persona_id": "client-persona-uuid",
+  "private_persona_version_id": "client-persona-version-uuid",
   "created_at": 1710000000,
   "updated_at": 1710000100
 }
@@ -1527,6 +1865,47 @@ Private-local chats should use the same branch and revision navigation model as 
 * assistant regenerate creates a sibling assistant message under the same parent
 * the UI presents revisions and sibling branches as one chronological version list
 
+## 8.2 IndexedDB for private personas
+
+Private persona storage should mirror server persona/version concepts without syncing to the server.
+
+Suggested private persona shape:
+
+```json
+{
+  "id": "client-persona-uuid",
+  "current_version_id": "client-persona-version-uuid",
+  "created_at": 1710000000,
+  "updated_at": 1710000100
+}
+```
+
+Suggested private persona version shape:
+
+```json
+{
+  "id": "client-persona-version-uuid",
+  "persona_id": "client-persona-uuid",
+  "version_number": 1,
+  "display_name": "Careful Researcher",
+  "avatar_data_url": null,
+  "base_backend_id": "b1",
+  "base_model_name": "gemma4",
+  "system_prompt": "You are careful, concise, and cite uncertainty.",
+  "tool_policy_json": null,
+  "created_at": 1710000000
+}
+```
+
+Rules:
+
+* private personas are selectable only for private-local chats
+* server personas used privately should be copied into local persona storage before generation
+* moving a private persona to the server creates a server persona and version from the current local version
+* moving a server persona to private storage creates a local copy from the selected server version and then follows server lifecycle rules for the original
+* either direction across the private/server boundary requires a confirmation dialog
+* private persona deletion removes only local IndexedDB records
+
 ---
 
 ## 9. Repo Layout Direction
@@ -1555,6 +1934,11 @@ vashti/
       handlers.rs
       service.rs
     chats/
+      mod.rs
+      handlers.rs
+      service.rs
+      models.rs
+    personas/
       mod.rs
       handlers.rs
       service.rs
@@ -1608,6 +1992,20 @@ The first real coding slice should aim for this outcome:
 
 This is a better first milestone than jumping straight into full chat UI.
 
+### 10.1 Persona implementation slices
+
+Recommended persona sequence:
+
+1. add server persona/persona-version/persona-member tables and service module
+2. add private IndexedDB persona stores and local CRUD helpers
+3. add settings UI for creating/editing own personas
+4. add persona options to the model picker, with private personas restricted to private-local chats
+5. resolve selected persona versions during generation and include system prompts
+6. bind chats/messages to immutable persona version snapshots
+7. add public sharing, prompt visibility, copy-persona, and disown lifecycle
+8. add conversation settings for updating or switching persona versions
+9. add tag-based access rules and persona quotas as a later admin-management slice
+
 ---
 
 ## 11. Codex Handoff Guidance
@@ -1625,7 +2023,9 @@ Preferred sequence:
 7. add standard chat CRUD
 8. add streaming generation
 9. add private-local IndexedDB mode
-10. add uploads and PWA polish
+10. add uploads
+11. add model personas
+12. add PWA polish
 
 Codex should be instructed to:
 

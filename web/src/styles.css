@@ -53,13 +53,16 @@
 body {
   margin: 0;
   min-width: 320px;
+  height: var(--app-height);
   min-height: var(--app-height);
   overflow: hidden;
+  overscroll-behavior: none;
 }
 
 html,
 body,
 #root {
+  width: 100%;
   height: var(--app-height);
   min-height: var(--app-height);
   overflow: hidden;
@@ -270,6 +273,7 @@ textarea {
 .app-shell {
   height: var(--app-height);
   min-height: 0;
+  overflow: hidden;
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
   background: #020402;
@@ -435,6 +439,7 @@ textarea {
 .main-pane {
   min-width: 0;
   min-height: 0;
+  overflow: hidden;
   display: grid;
   grid-template-rows: auto 1fr;
 }
@@ -580,6 +585,15 @@ textarea {
   width: 100%;
 }
 
+.model-subtitle {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
 .model-option-content .model-capabilities {
   justify-content: flex-start;
 }
@@ -609,9 +623,45 @@ textarea {
   text-transform: uppercase;
 }
 
+.model-capability-warning {
+  color: var(--warning);
+}
+
 .model-capability svg {
   width: 14px;
   height: 14px;
+}
+
+.model-capability-icon-only {
+  width: 28px;
+  min-width: 28px;
+  min-height: 26px;
+  justify-content: center;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+}
+
+.model-capabilities-icon-only {
+  position: relative;
+}
+
+.model-capability-popover {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 6px);
+  z-index: 4;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-strong);
+  color: var(--text);
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.45);
+  font-size: 0.74rem;
+  font-weight: 800;
+  line-height: 1;
+  padding: 6px 8px;
+  text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .model-picker-button .model-capability {
@@ -790,6 +840,23 @@ textarea {
   padding: 0;
 }
 
+.composer-model-capabilities {
+  grid-column: 2;
+  grid-row: 3;
+  min-width: 0;
+  align-self: end;
+  display: flex;
+  justify-content: flex-start;
+}
+
+.chat-composer-no-attach .composer-model-capabilities {
+  grid-column: 1;
+}
+
+.composer-model-capabilities .model-capabilities {
+  justify-content: flex-start;
+}
+
 .attachment-chip {
   min-width: 0;
   max-width: 100%;
@@ -955,12 +1022,39 @@ textarea {
 
 .chat-view {
   min-height: 0;
+  overflow: hidden;
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto auto;
 }
 
 .private-chat-view {
   grid-template-rows: auto minmax(0, 1fr) auto auto;
+  position: relative;
+}
+
+.private-chat-view > .empty-state {
+  grid-column: 1;
+  grid-row: 1 / -1;
+}
+
+.private-chat-view > .private-local-banner {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.private-chat-view > .message-list {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.private-chat-view > .chat-composer-wrap {
+  grid-column: 1;
+  grid-row: 3;
+}
+
+.private-chat-view > .chat-view-error {
+  grid-column: 1;
+  grid-row: 4;
 }
 
 .private-local-banner {
@@ -968,11 +1062,42 @@ textarea {
   background: rgba(113, 255, 47, 0.05);
   color: var(--muted);
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   padding: 9px 18px;
   font-size: 0.84rem;
-  flex-wrap: wrap;
+  line-height: 1.35;
+}
+
+.private-local-banner-collapsed {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 8;
+  justify-self: start;
+  border-right: 1px solid var(--line-soft);
+  border-bottom-right-radius: 8px;
+  padding: 4px 4px 5px 7px;
+}
+
+.private-local-toggle {
+  min-width: 26px;
+  min-height: 24px;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  box-shadow: none;
+  padding: 0;
+}
+
+.private-local-banner-collapsed .private-local-toggle {
+  min-width: 25px;
+  min-height: 28px;
+}
+
+.private-local-text {
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .private-local-banner svg {
@@ -1609,6 +1734,76 @@ textarea {
   gap: 16px;
 }
 
+.persona-form {
+  max-width: 680px;
+  border-bottom: 1px solid var(--line-soft);
+  margin-bottom: 20px;
+  padding-bottom: 20px;
+}
+
+.persona-form textarea {
+  min-height: 170px;
+  resize: vertical;
+}
+
+.persona-form-actions,
+.persona-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.persona-list {
+  display: grid;
+  gap: 12px;
+}
+
+.persona-row {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(7, 11, 7, 0.86);
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+
+.persona-main {
+  min-width: 0;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.persona-main p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.persona-prompt {
+  border-top: 1px solid var(--line-soft);
+  padding-top: 10px;
+}
+
+.persona-prompt summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.persona-prompt pre {
+  max-height: 240px;
+  overflow: auto;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: #010301;
+  color: var(--text);
+  margin: 10px 0 0;
+  padding: 12px;
+  white-space: pre-wrap;
+}
+
 .confirm-backdrop {
   position: fixed;
   inset: 0;
@@ -1732,6 +1927,7 @@ textarea {
 
   .section-header,
   .user-main,
+  .persona-main,
   .backend-main,
   .backend-edit-grid {
     display: grid;

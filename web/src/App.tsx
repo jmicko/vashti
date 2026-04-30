@@ -47,10 +47,13 @@ import {
   X
 } from "lucide-react";
 import {
+  createPrivatePersona,
   createPrivateChat,
   createPrivateMessage,
+  deletePrivatePersona,
   deletePrivateChat,
   getPrivateChat,
+  listPrivatePersonas,
   listPrivateChats,
   listPrivateMessages,
   privateId,
@@ -58,11 +61,13 @@ import {
   savePrivateChat,
   savePrivateMessage,
   savePrivateMessages,
+  updatePrivatePersona,
   unixTimestamp,
   type PrivateChatDetail,
   type PrivateChatMessage,
   type PrivateChatSummary,
-  type PrivateChatMessageRevision
+  type PrivateChatMessageRevision,
+  type PrivatePersona
 } from "./privateChatStore";
 
 type User = {
@@ -141,12 +146,50 @@ type ModelsResponse = {
   backends: BackendModelGroup[];
 };
 
+type PersonaVersion = {
+  id: string;
+  persona_id: string;
+  version_number: number;
+  display_name: string;
+  avatar_attachment_id: string | null;
+  base_backend_id: string;
+  base_model_name: string;
+  system_prompt: string;
+  tool_policy_json: string | null;
+  created_by_user_id: string | null;
+  created_at: number;
+};
+
+type Persona = {
+  id: string;
+  owner_user_id: string | null;
+  owner_username: string | null;
+  visibility: string;
+  lifecycle_state: string;
+  current_version: PersonaVersion;
+  is_owner: boolean;
+  is_member: boolean;
+  created_at: number;
+  updated_at: number;
+};
+
+type PersonasResponse = {
+  personas: Persona[];
+};
+
+type PersonaMutationResponse = {
+  persona: Persona;
+};
+
 type ChatSummary = {
   id: string;
   title: string;
   default_backend_id: string;
   backend_name: string;
   default_model_name: string;
+  persona_id?: string | null;
+  persona_version_id?: string | null;
+  persona_name?: string | null;
   updated_at: number;
   last_message_at: number;
   message_count: number;
@@ -158,6 +201,9 @@ type ChatDetail = {
   default_backend_id: string;
   backend_name: string;
   default_model_name: string;
+  persona_id?: string | null;
+  persona_version_id?: string | null;
+  persona_name?: string | null;
   active_root_message_id: string | null;
   created_at: number;
   updated_at: number;
@@ -215,6 +261,9 @@ type ChatMessage = {
   is_deleted: boolean;
   backend_id: string | null;
   model_name: string | null;
+  persona_id?: string | null;
+  persona_version_id?: string | null;
+  persona_name_snapshot?: string | null;
   think_mode: string | null;
   done_reason: string | null;
   error_text: string | null;
@@ -303,7 +352,7 @@ type ApiError = {
 };
 
 type Page = "chat" | "private-chat" | "settings";
-type SettingsSection = "profile" | "users" | "app" | "backends";
+type SettingsSection = "profile" | "personas" | "users" | "app" | "backends";
 type NewChatMode = "standard" | "private";
 type AppRoute =
   | { page: "chat"; chatId?: string }
@@ -332,7 +381,7 @@ type VersionInfo = {
   onNext: () => void;
 };
 
-const settingsSections: SettingsSection[] = ["profile", "users", "backends", "app"];
+const settingsSections: SettingsSection[] = ["profile", "personas", "users", "backends", "app"];
 const rootSiblingGroupKey = "__root__";
 const newChatModeStorageKey = "vashti:new-chat-mode";
 
@@ -410,7 +459,33 @@ function modelValue(backendId: string, modelName: string) {
   return `${backendId}:${modelName}`;
 }
 
+function personaModelValue(personaVersionId: string) {
+  return `persona:${personaVersionId}`;
+}
+
+function privatePersonaModelValue(personaVersionId: string) {
+  return `private-persona:${personaVersionId}`;
+}
+
+function personaVersionIdFromValue(value: string) {
+  return value.startsWith("persona:") ? value.slice("persona:".length) : null;
+}
+
+function privatePersonaVersionIdFromValue(value: string) {
+  return value.startsWith("private-persona:")
+    ? value.slice("private-persona:".length)
+    : null;
+}
+
+function isPrivatePersonaVersionId(value: string) {
+  return value.startsWith("private-persona-version-");
+}
+
 function modelParts(value: string) {
+  if (personaVersionIdFromValue(value) || privatePersonaVersionIdFromValue(value)) {
+    return null;
+  }
+
   const separator = value.indexOf(":");
   if (separator < 1) {
     return null;
@@ -734,6 +809,8 @@ function AppShell({
   const [pendingNavigation, setPendingNavigation] = useState<AppRoute | null>(null);
   const [isSavingPendingNavigation, setIsSavingPendingNavigation] = useState(false);
   const [modelGroups, setModelGroups] = useState<BackendModelGroup[]>([]);
+  const [personas, setPersonas] = useState<Persona[]>([]);
+  const [privatePersonas, setPrivatePersonas] = useState<PrivatePersona[]>([]);
   const [selectedModel, setSelectedModel] = useState("");
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [modelError, setModelError] = useState<string | null>(null);
@@ -763,11 +840,33 @@ function AppShell({
   const settingsSection = route.page === "settings" ? route.section : "profile";
   const currentChatId = route.page === "chat" ? route.chatId ?? null : null;
   const currentPrivateChatId = route.page === "private-chat" ? route.chatId : null;
+  const allowPrivatePersonaSelection =
+    page === "private-chat" || (page === "chat" && !currentChatId && newChatMode === "private");
   const imageViewerAttachmentRef = useRef<AttachmentInfo | null>(null);
 
   useEffect(() => {
     routeRef.current = route;
   }, [route]);
+
+  useEffect(() => {
+    function updateAppHeight() {
+      const nextHeight = window.visualViewport?.height ?? window.innerHeight;
+      document.documentElement.style.setProperty("--app-height", `${Math.round(nextHeight)}px`);
+    }
+
+    updateAppHeight();
+    window.addEventListener("resize", updateAppHeight);
+    window.addEventListener("orientationchange", updateAppHeight);
+    window.visualViewport?.addEventListener("resize", updateAppHeight);
+    window.visualViewport?.addEventListener("scroll", updateAppHeight);
+
+    return () => {
+      window.removeEventListener("resize", updateAppHeight);
+      window.removeEventListener("orientationchange", updateAppHeight);
+      window.visualViewport?.removeEventListener("resize", updateAppHeight);
+      window.visualViewport?.removeEventListener("scroll", updateAppHeight);
+    };
+  }, []);
 
   function setImageViewerAttachment(attachment: AttachmentInfo | null) {
     imageViewerAttachmentRef.current = attachment;
@@ -800,17 +899,30 @@ function AppShell({
     setModelError(null);
 
     try {
-      const response = await requestJson<ModelsResponse>("/api/models");
-      setModelGroups(response.backends);
+      const [modelsResponse, personasResponse] = await Promise.all([
+        requestJson<ModelsResponse>("/api/models"),
+        requestJson<PersonasResponse>("/api/personas")
+      ]);
+      setModelGroups(modelsResponse.backends);
+      setPersonas(personasResponse.personas);
       setSelectedModel((current) => {
-        const values = response.backends.flatMap((group) =>
-          group.models.map((model) => modelValue(group.backend.id, model.name))
-        );
+        const values = [
+          ...modelsResponse.backends.flatMap((group) =>
+            group.models.map((model) => modelValue(group.backend.id, model.name))
+          ),
+          ...personasResponse.personas.map((persona) =>
+            personaModelValue(persona.current_version.id)
+          )
+        ];
 
-        return current && values.includes(current) ? current : values[0] ?? "";
+        return current &&
+          (values.includes(current) || Boolean(privatePersonaVersionIdFromValue(current)))
+          ? current
+          : values[0] ?? "";
       });
     } catch (loadError) {
       setModelGroups([]);
+      setPersonas([]);
       setSelectedModel("");
       setModelError(loadError instanceof Error ? loadError.message : "Failed to load models");
     } finally {
@@ -821,6 +933,22 @@ function AppShell({
   useEffect(() => {
     void loadModels();
   }, [loadModels]);
+
+  const loadPrivatePersonas = useCallback(async () => {
+    try {
+      setPrivatePersonas(await listPrivatePersonas());
+    } catch (loadError) {
+      setError(
+        loadError instanceof Error
+          ? loadError.message
+          : "Failed to load private personas"
+      );
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadPrivatePersonas();
+  }, [loadPrivatePersonas]);
 
   const loadChats = useCallback(async () => {
     setIsLoadingChats(true);
@@ -1008,11 +1136,12 @@ function AppShell({
       return;
     }
 
-    const selected = modelParts(selectedModel);
+    const selected = selectedModelBaseParts(modelGroups, personas, [], selectedModel);
     if (!selected) {
       setError("Select a model before starting a chat");
       return;
     }
+    const selectedPersonaVersionId = personaVersionIdFromValue(selectedModel);
 
     setIsCreatingChat(true);
     setError(null);
@@ -1023,7 +1152,8 @@ function AppShell({
         body: JSON.stringify({
           title: "New Chat",
           default_backend_id: selected.backendId,
-          default_model_name: selected.modelName
+          default_model_name: selected.modelName,
+          persona_version_id: selectedPersonaVersionId
         })
       });
 
@@ -1042,6 +1172,19 @@ function AppShell({
   }
 
   function currentSelectedModel() {
+    const selectedPrivatePersona = privatePersonaForValue(privatePersonas, selectedModel);
+    if (selectedPrivatePersona) {
+      return {
+        backendId: selectedPrivatePersona.current_version.base_backend_id,
+        backendName: selectedPrivatePersona.current_version.base_backend_name,
+        modelName: selectedPrivatePersona.current_version.base_model_name
+      };
+    }
+
+    if (personaVersionIdFromValue(selectedModel)) {
+      return null;
+    }
+
     const selected = modelParts(selectedModel);
     if (!selected) {
       return null;
@@ -1060,7 +1203,7 @@ function AppShell({
   }
 
   function selectedModelInfo() {
-    return modelInfoForValue(modelGroups, selectedModel);
+    return modelInfoForValue(modelGroups, personas, privatePersonas, selectedModel);
   }
 
   async function createPrivateChatFromPrompt(prompt: string, attachments: ComposerAttachment[] = []) {
@@ -1069,7 +1212,13 @@ function AppShell({
       return;
     }
 
+    if (personaVersionIdFromValue(selectedModel)) {
+      setError("Copy this hosted persona to your device before using it in a private chat");
+      return;
+    }
+
     const selected = currentSelectedModel();
+    const selectedPrivatePersona = privatePersonaForValue(privatePersonas, selectedModel);
     if (!selected) {
       setError("Select a model before starting a private chat");
       return;
@@ -1083,7 +1232,10 @@ function AppShell({
         title: "Private Chat",
         backendId: selected.backendId,
         backendName: selected.backendName,
-        modelName: selected.modelName
+        modelName: selected.modelName,
+        personaId: selectedPrivatePersona?.id ?? null,
+        personaVersionId: selectedPrivatePersona?.current_version.id ?? null,
+        personaName: selectedPrivatePersona?.current_version.display_name ?? null
       });
 
       if (prompt.trim()) {
@@ -1218,6 +1370,8 @@ function AppShell({
             </button>
             <ModelPicker
               groups={modelGroups}
+              personas={allowPrivatePersonaSelection ? [] : personas}
+              privatePersonas={allowPrivatePersonaSelection ? privatePersonas : []}
               isLoading={isLoadingModels}
               error={modelError}
               value={selectedModel}
@@ -1278,6 +1432,8 @@ function AppShell({
             currentUser={user}
             activeSection={settingsSection}
             onBackendsChanged={loadModels}
+            onPersonasChanged={loadModels}
+            onPrivatePersonasChanged={loadPrivatePersonas}
             onAppSettingsGuardChange={updateAppSettingsGuard}
             onSelectSection={(section) => openSettings(section)}
             isAdmin={isAdmin}
@@ -1298,6 +1454,7 @@ function AppShell({
             }
             selectedModel={selectedModel}
             selectedModelInfo={selectedModelInfo()}
+            privatePersonas={privatePersonas}
             onImageOpen={openImageViewer}
             onModelSelected={setSelectedModel}
             onPrivateChatsChanged={loadPrivateChats}
@@ -1314,6 +1471,7 @@ function AppShell({
               }
               selectedModel={selectedModel}
               selectedModelInfo={selectedModelInfo()}
+              personas={personas}
               onChatsChanged={loadChats}
               onImageOpen={openImageViewer}
               onModelSelected={setSelectedModel}
@@ -1325,8 +1483,16 @@ function AppShell({
               isCreating={isCreatingChat}
               isCreatingPrivate={isCreatingPrivateChat}
               mode={newChatMode}
-              selectedModel={selectedModel}
-              selectedModelInfo={selectedModelInfo()}
+              selectedModel={
+                newChatMode === "private" && personaVersionIdFromValue(selectedModel)
+                  ? ""
+                  : selectedModel
+              }
+              selectedModelInfo={
+                newChatMode === "private" && personaVersionIdFromValue(selectedModel)
+                  ? null
+                  : selectedModelInfo()
+              }
               onModeChange={setNewChatMode}
               onCreateChat={createChatFromPrompt}
               onCreatePrivateChat={createPrivateChatFromPrompt}
@@ -1682,7 +1848,13 @@ function ChatListItem({
             {isPrivate && <Lock />}
             <span>{chat.title}</span>
           </span>
-          <small>{isPrivate ? `Private · ${chat.default_model_name}` : chat.default_model_name}</small>
+          <small>
+            {isPrivate
+              ? `Private · ${"persona_name" in chat && chat.persona_name ? chat.persona_name : chat.default_model_name}`
+              : "persona_name" in chat && chat.persona_name
+                ? `Custom · ${chat.persona_name}`
+                : chat.default_model_name}
+          </small>
         </button>
       )}
       <button
@@ -1811,6 +1983,7 @@ function ChatView({
   queuedAttachments,
   selectedModel,
   selectedModelInfo,
+  personas,
   onChatsChanged,
   onImageOpen,
   onModelSelected,
@@ -1822,6 +1995,7 @@ function ChatView({
   queuedAttachments: ComposerAttachment[];
   selectedModel: string;
   selectedModelInfo: ModelInfo | null;
+  personas: Persona[];
   onChatsChanged: () => Promise<void>;
   onImageOpen: (attachment: AttachmentInfo) => void;
   onModelSelected: (value: string) => void;
@@ -1888,6 +2062,9 @@ function ChatView({
       );
       onModelSelected(
         latestModel ??
+          (chatResponse.chat.persona_version_id
+            ? personaModelValue(chatResponse.chat.persona_version_id)
+            : null) ??
           modelValue(chatResponse.chat.default_backend_id, chatResponse.chat.default_model_name)
       );
     } catch (chatError) {
@@ -2005,16 +2182,19 @@ function ChatView({
         return;
       }
 
-      const selected = modelParts(selectedModel);
+      const selected =
+        selectedModelBaseParts([], personas, [], selectedModel) ?? modelParts(selectedModel);
+      const personaVersionId = personaVersionIdFromValue(selectedModel);
       await streamAssistantResponse(`/api/chats/${chatId}/generate`, {
         user_message: { content_text: prompt },
         backend_id: selected?.backendId ?? null,
         model_name: selected?.modelName ?? null,
+        persona_version_id: personaVersionId,
         think_mode: null,
         attachments: attachmentReferences(attachments)
       });
     },
-    [chatId, isGenerating, selectedModel, streamAssistantResponse]
+    [chatId, isGenerating, personas, selectedModel, streamAssistantResponse]
   );
 
   useEffect(() => {
@@ -2445,7 +2625,7 @@ function ChatView({
   }
 
   async function uploadAttachment(file: File) {
-    return { ...(await uploadAttachmentToChat(chatId, file)), status: "uploaded" };
+    return { ...(await uploadAttachmentToChat(chatId, file)), status: "uploaded" as const };
   }
 
   async function removeAttachment(attachment: ComposerAttachment) {
@@ -2527,11 +2707,14 @@ function ChatView({
       return;
     }
 
-    const selected = modelParts(selectedModel);
+    const selected =
+      selectedModelBaseParts([], personas, [], selectedModel) ?? modelParts(selectedModel);
+    const personaVersionId = personaVersionIdFromValue(selectedModel);
     await streamAssistantResponse(`/api/chats/${chatId}/messages/${message.id}/branch`, {
       content_text: contentText,
       backend_id: selected?.backendId ?? null,
       model_name: selected?.modelName ?? null,
+      persona_version_id: personaVersionId,
       think_mode: null,
       attachments: attachmentReferences(attachments)
     });
@@ -2563,10 +2746,13 @@ function ChatView({
       return;
     }
 
-    const selected = modelParts(selectedModel);
+    const selected =
+      selectedModelBaseParts([], personas, [], selectedModel) ?? modelParts(selectedModel);
+    const personaVersionId = personaVersionIdFromValue(selectedModel);
     await streamAssistantResponse(`/api/chats/${chatId}/messages/${message.id}/regenerate`, {
       backend_id: selected?.backendId ?? message.backend_id,
       model_name: selected?.modelName ?? message.model_name,
+      persona_version_id: personaVersionId,
       think_mode: null,
       attachments: []
     });
@@ -2616,8 +2802,12 @@ function ChatView({
           setChat(response.chat);
         }
 
-        if (nextMessage.role === "assistant" && nextMessage.backend_id && nextMessage.model_name) {
-          onModelSelected(modelValue(nextMessage.backend_id, nextMessage.model_name));
+        if (nextMessage.role === "assistant") {
+          if (nextMessage.persona_version_id) {
+            onModelSelected(personaModelValue(nextMessage.persona_version_id));
+          } else if (nextMessage.backend_id && nextMessage.model_name) {
+            onModelSelected(modelValue(nextMessage.backend_id, nextMessage.model_name));
+          }
         }
       }
 
@@ -2776,6 +2966,7 @@ function PrivateChatView({
   queuedAttachments,
   selectedModel,
   selectedModelInfo,
+  privatePersonas,
   onImageOpen,
   onModelSelected,
   onPrivateChatsChanged,
@@ -2787,6 +2978,7 @@ function PrivateChatView({
   queuedAttachments: ComposerAttachment[];
   selectedModel: string;
   selectedModelInfo: ModelInfo | null;
+  privatePersonas: PrivatePersona[];
   onImageOpen: (attachment: AttachmentInfo) => void;
   onModelSelected: (value: string) => void;
   onPrivateChatsChanged: () => Promise<void>;
@@ -2804,6 +2996,7 @@ function PrivateChatView({
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<PrivateChatMessage | null>(null);
   const [streamTestStatus, setStreamTestStatus] = useState<string | null>(null);
+  const [isPrivateBannerExpanded, setIsPrivateBannerExpanded] = useState(true);
   const messageListRef = useRef<HTMLElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const generationRunRef = useRef(0);
@@ -2814,6 +3007,7 @@ function PrivateChatView({
   const branchScrollAnchorRef = useRef<BranchScrollAnchor | null>(null);
   const messagesRef = useRef<PrivateChatMessage[]>([]);
   const privateSaveChainRef = useRef<Promise<void>>(Promise.resolve());
+  const privateBannerTimerRef = useRef<number | null>(null);
   const thinkingStartedAtRef = useRef(new Map<string, number>());
   const [thinkingDurations, setThinkingDurations] = useState<Record<string, number>>({});
   const visibleMessages = useMemo(
@@ -2830,6 +3024,7 @@ function PrivateChatView({
       ? "This chat includes images. Images may not be supported by this model."
       : null;
   const showStreamTest = privateStreamTestEnabled();
+  const hasChat = Boolean(chat);
 
   const loadPrivateChat = useCallback(async () => {
     scrollToBottomAfterLoadRef.current = true;
@@ -2856,9 +3051,12 @@ function PrivateChatView({
       const latestModel = latestAssistantModelValue(
         activePathMessages(nextMessages, nextChat.active_root_message_id)
       );
-      onModelSelected(
-        latestModel ?? modelValue(nextChat.default_backend_id, nextChat.default_model_name)
-      );
+      const defaultModel =
+        nextChat.persona_version_id &&
+        privatePersonaForVersionId(privatePersonas, nextChat.persona_version_id)
+          ? privatePersonaModelValue(nextChat.persona_version_id)
+          : modelValue(nextChat.default_backend_id, nextChat.default_model_name);
+      onModelSelected(latestModel ?? defaultModel);
     } catch (chatError) {
       setLoadError(
         chatError instanceof Error ? chatError.message : "Failed to load private chat"
@@ -2866,17 +3064,47 @@ function PrivateChatView({
     } finally {
       setIsLoading(false);
     }
-  }, [chatId, onModelSelected]);
+  }, [chatId, onModelSelected, privatePersonas]);
 
   useEffect(() => {
     void loadPrivateChat();
   }, [loadPrivateChat]);
 
   useEffect(() => {
+    setIsPrivateBannerExpanded(true);
+  }, [chatId]);
+
+  useEffect(() => {
+    if (privateBannerTimerRef.current) {
+      window.clearTimeout(privateBannerTimerRef.current);
+      privateBannerTimerRef.current = null;
+    }
+
+    if (!isPrivateBannerExpanded || !hasChat) {
+      return;
+    }
+
+    privateBannerTimerRef.current = window.setTimeout(() => {
+      setIsPrivateBannerExpanded(false);
+      privateBannerTimerRef.current = null;
+    }, 3000);
+
+    return () => {
+      if (privateBannerTimerRef.current) {
+        window.clearTimeout(privateBannerTimerRef.current);
+        privateBannerTimerRef.current = null;
+      }
+    };
+  }, [chatId, hasChat, isPrivateBannerExpanded]);
+
+  useEffect(() => {
     return () => {
       // Do not abort here. The stream continues writing into IndexedDB during app navigation.
       if (userScrollIntentTimeoutRef.current) {
         window.clearTimeout(userScrollIntentTimeoutRef.current);
+      }
+      if (privateBannerTimerRef.current) {
+        window.clearTimeout(privateBannerTimerRef.current);
       }
     };
   }, []);
@@ -3231,7 +3459,22 @@ function PrivateChatView({
       return;
     }
 
-    const selected = modelParts(selectedModel);
+    if (personaVersionIdFromValue(selectedModel)) {
+      setGenerationError("Copy this hosted persona to your device before using it in a private chat");
+      return;
+    }
+
+    const selectedPrivatePersona =
+      privatePersonaForValue(privatePersonas, selectedModel) ??
+      (messagesRef.current.length === 0 && chat.persona_version_id
+        ? privatePersonaForVersionId(privatePersonas, chat.persona_version_id)
+        : null);
+    const selected = selectedPrivatePersona
+      ? {
+          backendId: selectedPrivatePersona.current_version.base_backend_id,
+          modelName: selectedPrivatePersona.current_version.base_model_name
+        }
+      : modelParts(selectedModel);
     if (!selected) {
       setGenerationError("Select a model before sending a private message");
       return;
@@ -3256,6 +3499,9 @@ function PrivateChatView({
       status: "streaming",
       backendId: selected.backendId,
       modelName: selected.modelName,
+      personaId: selectedPrivatePersona?.id ?? null,
+      personaVersionId: selectedPrivatePersona?.current_version.id ?? null,
+      personaNameSnapshot: selectedPrivatePersona?.current_version.display_name ?? null,
       createdAt: now
     });
     userMessage.active_child_message_id = assistantMessage.id;
@@ -3278,6 +3524,9 @@ function PrivateChatView({
       title,
       default_backend_id: selected.backendId,
       default_model_name: selected.modelName,
+      persona_id: selectedPrivatePersona?.id ?? null,
+      persona_version_id: selectedPrivatePersona?.current_version.id ?? null,
+      persona_name: selectedPrivatePersona?.current_version.display_name ?? null,
       active_root_message_id: chat.active_root_message_id ?? userMessage.id,
       updated_at: now,
       last_message_at: now
@@ -3294,10 +3543,11 @@ function PrivateChatView({
       backend_id: selected.backendId,
       model_name: selected.modelName,
       think_mode: null,
-      messages: privatePromptMessages(
+      messages: privatePromptMessagesWithPersona(
         nextMessages,
         nextChat.active_root_message_id,
-        assistantMessage.id
+        assistantMessage.id,
+        selectedPrivatePersona
       ),
       attachments: []
     });
@@ -3572,7 +3822,18 @@ function PrivateChatView({
       return;
     }
 
-    const selected = modelParts(selectedModel);
+    if (personaVersionIdFromValue(selectedModel)) {
+      setGenerationError("Copy this hosted persona to your device before using it in a private chat");
+      return;
+    }
+
+    const selectedPrivatePersona = privatePersonaForValue(privatePersonas, selectedModel);
+    const selected = selectedPrivatePersona
+      ? {
+          backendId: selectedPrivatePersona.current_version.base_backend_id,
+          modelName: selectedPrivatePersona.current_version.base_model_name
+        }
+      : modelParts(selectedModel);
     if (!selected) {
       setGenerationError("Select a model before sending a private branch");
       return;
@@ -3599,6 +3860,9 @@ function PrivateChatView({
         status: "streaming",
         backendId: selected.backendId,
         modelName: selected.modelName,
+        personaId: selectedPrivatePersona?.id ?? null,
+        personaVersionId: selectedPrivatePersona?.current_version.id ?? null,
+        personaNameSnapshot: selectedPrivatePersona?.current_version.display_name ?? null,
         createdAt: now
       });
       userMessage.active_child_message_id = assistantMessage.id;
@@ -3616,6 +3880,9 @@ function PrivateChatView({
         ...chat,
         default_backend_id: selected.backendId,
         default_model_name: selected.modelName,
+        persona_id: selectedPrivatePersona?.id ?? null,
+        persona_version_id: selectedPrivatePersona?.current_version.id ?? null,
+        persona_name: selectedPrivatePersona?.current_version.display_name ?? null,
         active_root_message_id: message.parent_message_id
           ? chat.active_root_message_id
           : userMessage.id,
@@ -3634,10 +3901,11 @@ function PrivateChatView({
         backend_id: selected.backendId,
         model_name: selected.modelName,
         think_mode: null,
-        messages: privatePromptMessages(
+        messages: privatePromptMessagesWithPersona(
           nextMessages,
           nextChat.active_root_message_id,
-          assistantMessage.id
+          assistantMessage.id,
+          selectedPrivatePersona
         ),
         attachments: []
       });
@@ -3675,7 +3943,20 @@ function PrivateChatView({
       return;
     }
 
-    const selected = modelParts(selectedModel);
+    if (personaVersionIdFromValue(selectedModel)) {
+      setGenerationError("Copy this hosted persona to your device before using it in a private chat");
+      return;
+    }
+
+    const selectedPrivatePersona =
+      privatePersonaForValue(privatePersonas, selectedModel) ??
+      privatePersonaForVersionId(privatePersonas, message.persona_version_id);
+    const selected = selectedPrivatePersona
+      ? {
+          backendId: selectedPrivatePersona.current_version.base_backend_id,
+          modelName: selectedPrivatePersona.current_version.base_model_name
+        }
+      : modelParts(selectedModel);
     const backendId = selected?.backendId ?? message.backend_id;
     const modelName = selected?.modelName ?? message.model_name;
     if (!backendId || !modelName) {
@@ -3696,6 +3977,9 @@ function PrivateChatView({
         status: "streaming",
         backendId,
         modelName,
+        personaId: selectedPrivatePersona?.id ?? null,
+        personaVersionId: selectedPrivatePersona?.current_version.id ?? null,
+        personaNameSnapshot: selectedPrivatePersona?.current_version.display_name ?? null,
         createdAt: now
       });
 
@@ -3711,6 +3995,9 @@ function PrivateChatView({
         ...chat,
         default_backend_id: backendId,
         default_model_name: modelName,
+        persona_id: selectedPrivatePersona?.id ?? null,
+        persona_version_id: selectedPrivatePersona?.current_version.id ?? null,
+        persona_name: selectedPrivatePersona?.current_version.display_name ?? null,
         active_root_message_id: message.parent_message_id
           ? chat.active_root_message_id
           : assistantMessage.id,
@@ -3729,10 +4016,11 @@ function PrivateChatView({
         backend_id: backendId,
         model_name: modelName,
         think_mode: null,
-        messages: privatePromptMessages(
+        messages: privatePromptMessagesWithPersona(
           nextMessages,
           nextChat.active_root_message_id,
-          assistantMessage.id
+          assistantMessage.id,
+          selectedPrivatePersona
         ),
         attachments: []
       });
@@ -3866,20 +4154,44 @@ function PrivateChatView({
         </div>
       ) : chat ? (
         <>
-          <div className="private-local-banner">
-            <Lock />
-            <span>Stored only in this browser. Clearing browser data can delete this chat.</span>
-            {showStreamTest && (
-              <button
-                type="button"
-                className="stream-test-button"
-                disabled={isGenerating}
-                onClick={() => void runPrivateStreamTest()}
-              >
-                Run Stream Test
-              </button>
+          <div
+            className={
+              isPrivateBannerExpanded
+                ? "private-local-banner"
+                : "private-local-banner private-local-banner-collapsed"
+            }
+          >
+            <button
+              type="button"
+              className="private-local-toggle"
+              aria-label={
+                isPrivateBannerExpanded
+                  ? "Collapse private chat notice"
+                  : "Show private chat notice"
+              }
+              aria-expanded={isPrivateBannerExpanded}
+              onClick={() => setIsPrivateBannerExpanded((expanded) => !expanded)}
+            >
+              <Lock />
+            </button>
+            {isPrivateBannerExpanded && (
+              <>
+                <span className="private-local-text">
+                  Stored only in this browser. Clearing browser data can delete this chat.
+                </span>
+                {showStreamTest && (
+                  <button
+                    type="button"
+                    className="stream-test-button"
+                    disabled={isGenerating}
+                    onClick={() => void runPrivateStreamTest()}
+                  >
+                    Run Stream Test
+                  </button>
+                )}
+                {streamTestStatus && <small>{streamTestStatus}</small>}
+              </>
             )}
-            {streamTestStatus && <small>{streamTestStatus}</small>}
           </div>
           <section
             className={
@@ -4021,11 +4333,13 @@ function MessageBubble({
   }, [content, isEditing]);
 
   async function saveEdit() {
+    dismissMobileKeyboard();
     await onEdit(message, draft, submittableAttachments(draftAttachments));
     setIsEditing(false);
   }
 
   async function sendEdit() {
+    dismissMobileKeyboard();
     setIsEditing(false);
     await onBranch(message, draft, submittableAttachments(draftAttachments));
   }
@@ -4037,6 +4351,7 @@ function MessageBubble({
   }
 
   async function cancelEdit() {
+    dismissMobileKeyboard();
     await cleanupDraftUploads(draftAttachments, onRemoveAttachment);
     setIsEditing(false);
   }
@@ -4196,7 +4511,10 @@ function MessageBubble({
               title="Regenerate"
               aria-label="Regenerate"
               disabled={isBusy || isGenerating || message.status === "streaming"}
-              onClick={() => void onRegenerate(message)}
+              onClick={() => {
+                dismissMobileKeyboard();
+                void onRegenerate(message);
+              }}
             >
               <RefreshCw />
             </button>
@@ -4376,7 +4694,7 @@ function VersionSwitcher({
 
 function messageLabel(message: ChatMessage) {
   if (message.role === "assistant") {
-    return message.model_name ?? "assistant";
+    return message.persona_name_snapshot ?? message.model_name ?? "assistant";
   }
 
   return message.role;
@@ -4414,6 +4732,11 @@ function formatThoughtDuration(seconds: number) {
 function latestAssistantModelValue(messages: ChatMessage[]) {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
+    if (message.role === "assistant" && message.persona_version_id) {
+      return isPrivatePersonaVersionId(message.persona_version_id)
+        ? privatePersonaModelValue(message.persona_version_id)
+        : personaModelValue(message.persona_version_id);
+    }
     if (message.role === "assistant" && message.backend_id && message.model_name) {
       return modelValue(message.backend_id, message.model_name);
     }
@@ -4422,14 +4745,101 @@ function latestAssistantModelValue(messages: ChatMessage[]) {
   return null;
 }
 
-function modelInfoForValue(groups: BackendModelGroup[], value: string) {
+function personaForValue(personas: Persona[], value: string) {
+  const personaVersionId = personaVersionIdFromValue(value);
+  if (!personaVersionId) {
+    return null;
+  }
+
+  return personas.find((persona) => persona.current_version.id === personaVersionId) ?? null;
+}
+
+function privatePersonaForValue(personas: PrivatePersona[], value: string) {
+  const personaVersionId = privatePersonaVersionIdFromValue(value);
+  if (!personaVersionId) {
+    return null;
+  }
+
+  return privatePersonaForVersionId(personas, personaVersionId);
+}
+
+function privatePersonaForVersionId(
+  personas: PrivatePersona[],
+  personaVersionId: string | null | undefined
+) {
+  if (!personaVersionId) {
+    return null;
+  }
+
+  return personas.find((persona) => persona.current_version.id === personaVersionId) ?? null;
+}
+
+function selectedModelBaseParts(
+  groups: BackendModelGroup[],
+  personas: Persona[],
+  privatePersonas: PrivatePersona[],
+  value: string
+) {
+  const selectedPrivatePersona = privatePersonaForValue(privatePersonas, value);
+  if (selectedPrivatePersona) {
+    return {
+      backendId: selectedPrivatePersona.current_version.base_backend_id,
+      modelName: selectedPrivatePersona.current_version.base_model_name
+    };
+  }
+
+  const selectedPersona = personaForValue(personas, value);
+  if (selectedPersona) {
+    return {
+      backendId: selectedPersona.current_version.base_backend_id,
+      modelName: selectedPersona.current_version.base_model_name
+    };
+  }
+
   const selected = modelParts(value);
   if (!selected) {
     return null;
   }
 
-  const group = groups.find((modelGroup) => modelGroup.backend.id === selected.backendId);
-  return group?.models.find((model) => model.name === selected.modelName) ?? null;
+  const modelInfo = modelInfoForBase(groups, selected.backendId, selected.modelName);
+  return modelInfo ? selected : null;
+}
+
+function modelInfoForValue(
+  groups: BackendModelGroup[],
+  personas: Persona[],
+  privatePersonas: PrivatePersona[],
+  value: string
+) {
+  const selectedPrivatePersona = privatePersonaForValue(privatePersonas, value);
+  if (selectedPrivatePersona) {
+    return modelInfoForBase(
+      groups,
+      selectedPrivatePersona.current_version.base_backend_id,
+      selectedPrivatePersona.current_version.base_model_name
+    );
+  }
+
+  const selectedPersona = personaForValue(personas, value);
+  if (selectedPersona) {
+    return modelInfoForBase(
+      groups,
+      selectedPersona.current_version.base_backend_id,
+      selectedPersona.current_version.base_model_name
+    );
+  }
+
+  const selected = modelParts(value);
+  if (!selected) {
+    return null;
+  }
+
+  return modelInfoForBase(groups, selected.backendId, selected.modelName);
+}
+
+function modelInfoForBase(groups: BackendModelGroup[], backendId: string, modelName: string) {
+  const group = groups.find((modelGroup) => modelGroup.backend.id === backendId);
+  return group?.models.find((model) => model.name === modelName) ?? null;
 }
 
 function streamingAssistantIdFromMessages(messages: ChatMessage[]) {
@@ -4464,6 +4874,29 @@ function privatePromptMessages(
       };
     })
     .filter((message) => message.content_text.trim() !== "" || message.images.length > 0);
+}
+
+function privatePromptMessagesWithPersona(
+  messages: ChatMessage[],
+  activeRootMessageId: string | null,
+  stopBeforeMessageId: string,
+  persona: PrivatePersona | null
+) {
+  const promptMessages = privatePromptMessages(messages, activeRootMessageId, stopBeforeMessageId);
+  const systemPrompt = persona?.current_version.system_prompt.trim();
+  if (!systemPrompt) {
+    return promptMessages;
+  }
+
+  return [
+    {
+      role: "system",
+      content_text: systemPrompt,
+      thinking_text: null,
+      images: []
+    },
+    ...promptMessages
+  ];
 }
 
 function privateAttachmentPromptPayload(attachments: AttachmentInfo[]) {
@@ -4673,6 +5106,24 @@ function compareVersionsByCreatedAt(left: MessageVersion, right: MessageVersion)
   );
 }
 
+function usesTouchViewport() {
+  return (
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(pointer: coarse), (max-width: 720px)").matches
+  );
+}
+
+function dismissMobileKeyboard() {
+  if (!usesTouchViewport()) {
+    return;
+  }
+
+  const activeElement = document.activeElement;
+  if (activeElement instanceof HTMLElement) {
+    activeElement.blur();
+  }
+}
+
 function StartChatComposer({
   isBusy,
   isDisabled,
@@ -4683,7 +5134,8 @@ function StartChatComposer({
   onStop,
   onUploadAttachment,
   onRemoveAttachment,
-  onSubmit
+  onSubmit,
+  autoFocusOnReady = true
 }: {
   isBusy: boolean;
   isDisabled: boolean;
@@ -4695,6 +5147,7 @@ function StartChatComposer({
   onUploadAttachment?: (file: File) => Promise<ComposerAttachment> | ComposerAttachment;
   onRemoveAttachment?: (attachment: ComposerAttachment) => Promise<void>;
   onSubmit: (prompt: string, attachments?: ComposerAttachment[]) => Promise<void>;
+  autoFocusOnReady?: boolean;
 }) {
   const [prompt, setPrompt] = useState("");
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
@@ -4713,8 +5166,10 @@ function StartChatComposer({
     prompt.trim().length > 0 && !isDisabled && !hasUploadingAttachment && (!isBusy || isGenerating);
 
   useEffect(() => {
-    textareaRef.current?.focus();
-  }, [isGenerating]);
+    if (autoFocusOnReady && !isGenerating && !usesTouchViewport()) {
+      textareaRef.current?.focus();
+    }
+  }, [autoFocusOnReady, isGenerating]);
 
   useEffect(() => {
     if (!canAttach) {
@@ -4734,8 +5189,15 @@ function StartChatComposer({
     );
     setPrompt("");
     setAttachments([]);
+    const shouldRestoreFocus = !usesTouchViewport();
+    if (!shouldRestoreFocus) {
+      textareaRef.current?.blur();
+      dismissMobileKeyboard();
+    }
     await onSubmit(submittedPrompt, submittedAttachments);
-    window.requestAnimationFrame(() => textareaRef.current?.focus());
+    if (shouldRestoreFocus) {
+      window.requestAnimationFrame(() => textareaRef.current?.focus());
+    }
   }
 
   async function uploadFiles(event: ChangeEvent<HTMLInputElement>) {
@@ -4857,6 +5319,11 @@ function StartChatComposer({
             }
           }}
         />
+        {selectedModelInfo && (
+          <div className="composer-model-capabilities">
+            <CompactModelCapabilityBadges model={selectedModelInfo} />
+          </div>
+        )}
         <div className="composer-actions">
           {isGenerating && (
             <button type="button" aria-label="Stop generation" onClick={onStop}>
@@ -5306,7 +5773,7 @@ async function uploadComposerAttachments(chatId: string, attachments: ComposerAt
     if (attachment.status === "ready" && attachment.file) {
       uploadedAttachments.push({
         ...(await uploadAttachmentToChat(chatId, attachment.file)),
-        status: "uploaded"
+        status: "uploaded" as const
       });
     }
   }
@@ -5380,12 +5847,16 @@ function formatBytes(bytes: number) {
 
 function ModelPicker({
   groups,
+  personas,
+  privatePersonas,
   isLoading,
   error,
   value,
   onChange
 }: {
   groups: BackendModelGroup[];
+  personas: Persona[];
+  privatePersonas: PrivatePersona[];
   isLoading: boolean;
   error: string | null;
   value: string;
@@ -5395,7 +5866,10 @@ function ModelPicker({
   const [query, setQuery] = useState("");
   const wrapRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const hasModels = groups.some((group) => group.models.length > 0);
+  const hasModels =
+    groups.some((group) => group.models.length > 0) ||
+    personas.length > 0 ||
+    privatePersonas.length > 0;
   const selected = groups
     .flatMap((group) =>
       group.models.map((model) => ({
@@ -5405,6 +5879,8 @@ function ModelPicker({
       }))
     )
     .find((option) => modelValue(option.backendId, option.model.name) === value);
+  const selectedPersona = personaForValue(personas, value);
+  const selectedPrivatePersona = privatePersonaForValue(privatePersonas, value);
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const filteredGroups = groups
     .map((group) => ({
@@ -5418,9 +5894,41 @@ function ModelPicker({
           model.name.toLocaleLowerCase().includes(normalizedQuery) ||
           group.backend.name.toLocaleLowerCase().includes(normalizedQuery)
         );
+      }),
+      personas: personas.filter((persona) => {
+        if (persona.current_version.base_backend_id !== group.backend.id) {
+          return false;
+        }
+        if (!normalizedQuery) {
+          return true;
+        }
+
+        return (
+          persona.current_version.display_name.toLocaleLowerCase().includes(normalizedQuery) ||
+          persona.current_version.base_model_name.toLocaleLowerCase().includes(normalizedQuery) ||
+          group.backend.name.toLocaleLowerCase().includes(normalizedQuery) ||
+          (persona.owner_username ?? "").toLocaleLowerCase().includes(normalizedQuery)
+        );
+      }),
+      privatePersonas: privatePersonas.filter((persona) => {
+        if (persona.current_version.base_backend_id !== group.backend.id) {
+          return false;
+        }
+        if (!normalizedQuery) {
+          return true;
+        }
+
+        return (
+          persona.current_version.display_name.toLocaleLowerCase().includes(normalizedQuery) ||
+          persona.current_version.base_model_name.toLocaleLowerCase().includes(normalizedQuery) ||
+          group.backend.name.toLocaleLowerCase().includes(normalizedQuery)
+        );
       })
     }))
-    .filter((group) => group.models.length > 0);
+    .filter(
+      (group) =>
+        group.models.length > 0 || group.personas.length > 0 || group.privatePersonas.length > 0
+    );
 
   useEffect(() => {
     if (isOpen) {
@@ -5454,7 +5962,13 @@ function ModelPicker({
       return "No models";
     }
 
-    return selected ? selected.model.name : "Select model";
+    return selectedPrivatePersona
+      ? selectedPrivatePersona.current_version.display_name
+      : selectedPersona
+      ? selectedPersona.current_version.display_name
+      : selected
+        ? selected.model.name
+        : "Select model";
   }
 
   return (
@@ -5463,12 +5977,16 @@ function ModelPicker({
         type="button"
         className="model-picker-button"
         disabled={isLoading || !hasModels}
-        title={error ?? selected?.backendName}
+        title={
+          error ??
+          selectedPrivatePersona?.current_version.base_model_name ??
+          selectedPersona?.current_version.base_model_name ??
+          selected?.backendName
+        }
         aria-expanded={isOpen}
         onClick={() => setIsOpen((open) => !open)}
       >
         <span className="model-name">{buttonLabel()}</span>
-        {selected && <ModelCapabilityBadges model={selected.model} />}
       </button>
       {isOpen && (
         <div className="model-menu">
@@ -5493,6 +6011,98 @@ function ModelPicker({
               filteredGroups.map((group) => (
                 <section key={group.backend.id} className="model-group">
                   <p>{group.backend.name}</p>
+                  {group.privatePersonas.map((persona) => {
+                    const optionValue = privatePersonaModelValue(persona.current_version.id);
+                    const baseModel = modelInfoForBase(
+                      groups,
+                      persona.current_version.base_backend_id,
+                      persona.current_version.base_model_name
+                    );
+                    return (
+                      <button
+                        type="button"
+                        key={optionValue}
+                        className={
+                          optionValue === value
+                            ? "model-option model-option-active"
+                            : "model-option"
+                        }
+                        onClick={() => {
+                          onChange(optionValue);
+                          setIsOpen(false);
+                        }}
+                      >
+                        <span className="model-option-content">
+                          <span className="model-name">{persona.current_version.display_name}</span>
+                          <span className="model-subtitle">
+                            Device · {persona.current_version.base_model_name}
+                          </span>
+                          <span className="model-capabilities">
+                            <span className="model-capability" title="custom persona">
+                              <Brain />
+                              <span className="model-capability-label">custom</span>
+                            </span>
+                            <span className="model-capability model-capability-warning" title="device only">
+                              <Lock />
+                              <span className="model-capability-label">device</span>
+                            </span>
+                          </span>
+                          {baseModel && <ModelCapabilityBadges model={baseModel} />}
+                        </span>
+                      </button>
+                    );
+                  })}
+                  {group.personas.map((persona) => {
+                    const optionValue = personaModelValue(persona.current_version.id);
+                    const baseModel = modelInfoForBase(
+                      groups,
+                      persona.current_version.base_backend_id,
+                      persona.current_version.base_model_name
+                    );
+                    return (
+                      <button
+                        type="button"
+                        key={optionValue}
+                        className={
+                          optionValue === value
+                            ? "model-option model-option-active"
+                            : "model-option"
+                        }
+                        onClick={() => {
+                          onChange(optionValue);
+                          setIsOpen(false);
+                        }}
+                      >
+                        <span className="model-option-content">
+                          <span className="model-name">{persona.current_version.display_name}</span>
+                          <span className="model-subtitle">
+                            Custom · {persona.current_version.base_model_name}
+                            {persona.owner_username ? ` · by ${persona.owner_username}` : ""}
+                          </span>
+                          <span className="model-capabilities">
+                            <span className="model-capability" title="custom persona">
+                              <Brain />
+                              <span className="model-capability-label">custom</span>
+                            </span>
+                            <span
+                              className={
+                                persona.visibility === "public"
+                                  ? "model-capability"
+                                  : "model-capability model-capability-warning"
+                              }
+                              title={persona.visibility}
+                            >
+                              {persona.visibility === "public" ? <Users /> : <Lock />}
+                              <span className="model-capability-label">
+                                {persona.visibility}
+                              </span>
+                            </span>
+                          </span>
+                          {baseModel && <ModelCapabilityBadges model={baseModel} />}
+                        </span>
+                      </button>
+                    );
+                  })}
                   {group.models.map((model) => {
                     const optionValue = modelValue(group.backend.id, model.name);
                     return (
@@ -5540,6 +6150,41 @@ function ModelCapabilityBadges({ model }: { model: ModelInfo }) {
           <span className="model-capability-label">{capabilityLabel(capability)}</span>
         </span>
       ))}
+    </span>
+  );
+}
+
+function CompactModelCapabilityBadges({ model }: { model: ModelInfo }) {
+  const [activeCapability, setActiveCapability] = useState<string | null>(null);
+  const capabilities = modelCapabilityBadges(model);
+  if (capabilities.length === 0) {
+    return null;
+  }
+
+  return (
+    <span
+      className="model-capabilities model-capabilities-icon-only"
+      aria-label={`Capabilities: ${capabilities.join(", ")}`}
+      onMouseLeave={() => setActiveCapability(null)}
+    >
+      {capabilities.map((capability) => (
+        <button
+          key={capability}
+          type="button"
+          className="model-capability model-capability-icon-only"
+          title={capabilityLabel(capability)}
+          aria-label={capabilityLabel(capability)}
+          onBlur={() => window.setTimeout(() => setActiveCapability(null), 120)}
+          onClick={() =>
+            setActiveCapability((current) => (current === capability ? null : capability))
+          }
+        >
+          {capabilityIcon(capability)}
+        </button>
+      ))}
+      {activeCapability && (
+        <span className="model-capability-popover">{capabilityLabel(activeCapability)}</span>
+      )}
     </span>
   );
 }
@@ -5605,6 +6250,8 @@ function SettingsPage({
   currentUser,
   activeSection,
   onBackendsChanged,
+  onPersonasChanged,
+  onPrivatePersonasChanged,
   onAppSettingsGuardChange,
   onSelectSection,
   isAdmin
@@ -5612,6 +6259,8 @@ function SettingsPage({
   currentUser: User;
   activeSection: SettingsSection;
   onBackendsChanged: () => Promise<void>;
+  onPersonasChanged: () => Promise<void>;
+  onPrivatePersonasChanged: () => Promise<void>;
   onAppSettingsGuardChange: (guard: AppSettingsGuard | null) => void;
   onSelectSection: (section: SettingsSection) => void;
   isAdmin: boolean;
@@ -5623,6 +6272,7 @@ function SettingsPage({
     adminOnly?: boolean;
   }> = [
     { id: "profile", label: "Profile", icon: <UserRound /> },
+    { id: "personas", label: "Personas", icon: <Brain /> },
     { id: "users", label: "Users", icon: <Users />, adminOnly: true },
     { id: "backends", label: "Backends", icon: <Server />, adminOnly: true },
     { id: "app", label: "App", icon: <SettingsIcon />, adminOnly: true }
@@ -5650,6 +6300,12 @@ function SettingsPage({
       </nav>
       <section className="settings-content">
         {selectedSection === "profile" && <ProfileSettings user={currentUser} />}
+        {selectedSection === "personas" && (
+          <PersonasPanel
+            onPersonasChanged={onPersonasChanged}
+            onPrivatePersonasChanged={onPrivatePersonasChanged}
+          />
+        )}
         {selectedSection === "users" && isAdmin && <AdminUsersPanel currentUserId={currentUser.id} />}
         {selectedSection === "backends" && isAdmin && (
           <BackendsPanel onBackendsChanged={onBackendsChanged} />
@@ -5686,6 +6342,549 @@ function SettingsPlaceholder({
       <p className="status-message">{text}</p>
     </div>
   );
+}
+
+function PersonasPanel({
+  onPersonasChanged,
+  onPrivatePersonasChanged
+}: {
+  onPersonasChanged: () => Promise<void>;
+  onPrivatePersonasChanged: () => Promise<void>;
+}) {
+  const [personas, setPersonas] = useState<Persona[]>([]);
+  const [privatePersonas, setPrivatePersonas] = useState<PrivatePersona[]>([]);
+  const [modelGroups, setModelGroups] = useState<BackendModelGroup[]>([]);
+  const [hasLoaded, setHasLoaded] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [busyPersonaId, setBusyPersonaId] = useState<string | null>(null);
+  const [editingPersona, setEditingPersona] = useState<Persona | null>(null);
+  const [editingPrivatePersona, setEditingPrivatePersona] = useState<PrivatePersona | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Persona | null>(null);
+  const [deletePrivateTarget, setDeletePrivateTarget] = useState<PrivatePersona | null>(null);
+  const [displayName, setDisplayName] = useState("");
+  const [storageMode, setStorageMode] = useState("local");
+  const [selectedBaseModel, setSelectedBaseModel] = useState("");
+  const [systemPrompt, setSystemPrompt] = useState("");
+  const [status, setStatus] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadPersonas = useCallback(async () => {
+    setIsRefreshing(true);
+    setError(null);
+
+    try {
+      const [personaResponse, privatePersonaResponse, modelsResponse] = await Promise.all([
+        requestJson<PersonasResponse>("/api/personas"),
+        listPrivatePersonas(),
+        requestJson<ModelsResponse>("/api/models")
+      ]);
+      setPersonas(personaResponse.personas);
+      setPrivatePersonas(privatePersonaResponse);
+      setModelGroups(modelsResponse.backends);
+      setHasLoaded(true);
+      setSelectedBaseModel((current) => current || firstModelValue(modelsResponse.backends));
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Failed to load personas");
+      setHasLoaded(true);
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadPersonas();
+  }, [loadPersonas]);
+
+  function resetDraft() {
+    setEditingPersona(null);
+    setEditingPrivatePersona(null);
+    setDisplayName("");
+    setStorageMode("local");
+    setSystemPrompt("");
+    setSelectedBaseModel(firstModelValue(modelGroups));
+    setError(null);
+    setStatus(null);
+  }
+
+  function startEditingPersona(persona: Persona) {
+    const version = persona.current_version;
+    setEditingPersona(persona);
+    setEditingPrivatePersona(null);
+    setDisplayName(version.display_name);
+    setStorageMode(persona.visibility);
+    setSelectedBaseModel(modelValue(version.base_backend_id, version.base_model_name));
+    setSystemPrompt(version.system_prompt);
+    setError(null);
+    setStatus(null);
+  }
+
+  function startEditingPrivatePersona(persona: PrivatePersona) {
+    const version = persona.current_version;
+    setEditingPrivatePersona(persona);
+    setEditingPersona(null);
+    setDisplayName(version.display_name);
+    setStorageMode("local");
+    setSelectedBaseModel(modelValue(version.base_backend_id, version.base_model_name));
+    setSystemPrompt(version.system_prompt);
+    setError(null);
+    setStatus(null);
+  }
+
+  async function savePersona(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const selected = modelParts(selectedBaseModel);
+    if (!selected) {
+      setError("Select a base model for this persona");
+      return;
+    }
+
+    setIsSaving(true);
+    setError(null);
+    setStatus(null);
+
+    try {
+      const backendName = backendNameFor(modelGroups, selected.backendId);
+      if (storageMode === "local") {
+        const body = {
+          displayName,
+          baseBackendId: selected.backendId,
+          baseBackendName: backendName,
+          baseModelName: selected.modelName,
+          systemPrompt
+        };
+        if (editingPrivatePersona) {
+          await updatePrivatePersona(editingPrivatePersona.id, body);
+          setStatus("Private persona updated on this device.");
+        } else {
+          await createPrivatePersona(body);
+          setStatus("Private persona created on this device.");
+        }
+        resetDraft();
+        await loadPersonas();
+        await onPrivatePersonasChanged();
+        return;
+      }
+
+      const body = {
+        visibility: storageMode,
+        display_name: displayName,
+        avatar_attachment_id: null,
+        base_backend_id: selected.backendId,
+        base_model_name: selected.modelName,
+        system_prompt: systemPrompt,
+        tool_policy_json: null
+      };
+      if (editingPersona) {
+        await requestJson<PersonaMutationResponse>(`/api/personas/${editingPersona.id}`, {
+          method: "PATCH",
+          body: JSON.stringify(body)
+        });
+        setStatus("Persona updated.");
+      } else {
+        await requestJson<PersonaMutationResponse>("/api/personas", {
+          method: "POST",
+          body: JSON.stringify(body)
+        });
+        setStatus("Persona created.");
+      }
+      resetDraft();
+      await loadPersonas();
+      await onPersonasChanged();
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Failed to save persona");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function copyPersona(persona: Persona) {
+    setBusyPersonaId(persona.id);
+    setError(null);
+    setStatus(null);
+
+    try {
+      await requestJson<PersonaMutationResponse>(`/api/personas/${persona.id}/copy`, {
+        method: "POST",
+        body: JSON.stringify({
+          persona_version_id: persona.current_version.id,
+          visibility: "private"
+        })
+      });
+      setStatus("Persona copied to your private server personas.");
+      await loadPersonas();
+      await onPersonasChanged();
+    } catch (copyError) {
+      setError(copyError instanceof Error ? copyError.message : "Failed to copy persona");
+    } finally {
+      setBusyPersonaId(null);
+    }
+  }
+
+  async function copyPersonaToDevice(persona: Persona) {
+    const version = persona.current_version;
+    setBusyPersonaId(persona.id);
+    setError(null);
+    setStatus(null);
+
+    try {
+      await createPrivatePersona({
+        displayName: version.display_name,
+        baseBackendId: version.base_backend_id,
+        baseBackendName: backendNameFor(modelGroups, version.base_backend_id),
+        baseModelName: version.base_model_name,
+        systemPrompt: version.system_prompt,
+        sourcePersonaId: persona.id,
+        sourcePersonaVersionId: version.id
+      });
+      setStatus("Persona copied to this device for private chats.");
+      await loadPersonas();
+      await onPrivatePersonasChanged();
+    } catch (copyError) {
+      setError(copyError instanceof Error ? copyError.message : "Failed to copy persona to device");
+    } finally {
+      setBusyPersonaId(null);
+    }
+  }
+
+  async function disownPersona(persona: Persona) {
+    setBusyPersonaId(persona.id);
+    setError(null);
+    setStatus(null);
+
+    try {
+      await requestJson(`/api/personas/${persona.id}/disown`, { method: "POST" });
+      setDeleteTarget(null);
+      setStatus(persona.visibility === "public" ? "Persona removed." : "Persona deleted.");
+      if (editingPersona?.id === persona.id) {
+        resetDraft();
+      }
+      await loadPersonas();
+      await onPersonasChanged();
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "Failed to remove persona");
+      setDeleteTarget(null);
+    } finally {
+      setBusyPersonaId(null);
+    }
+  }
+
+  async function deletePrivatePersonaTarget(persona: PrivatePersona) {
+    setBusyPersonaId(persona.id);
+    setError(null);
+    setStatus(null);
+
+    try {
+      await deletePrivatePersona(persona.id);
+      setDeletePrivateTarget(null);
+      setStatus("Private persona deleted from this device.");
+      if (editingPrivatePersona?.id === persona.id) {
+        resetDraft();
+      }
+      await loadPersonas();
+      await onPrivatePersonasChanged();
+    } catch (deleteError) {
+      setError(
+        deleteError instanceof Error ? deleteError.message : "Failed to delete private persona"
+      );
+      setDeletePrivateTarget(null);
+    } finally {
+      setBusyPersonaId(null);
+    }
+  }
+
+  const canSave =
+    displayName.trim() !== "" &&
+    selectedBaseModel !== "" &&
+    !(editingPersona && storageMode === "local") &&
+    !(editingPrivatePersona && storageMode !== "local");
+
+  return (
+    <div className="settings-section">
+      <div className="section-header">
+        <div>
+          <p className="eyebrow">Custom Models</p>
+          <h1>Personas</h1>
+        </div>
+        <button
+          type="button"
+          className="secondary-button refresh-button"
+          onClick={() => void loadPersonas()}
+          disabled={isRefreshing}
+        >
+          {isRefreshing ? <RetroLoader /> : <RefreshCw />}
+          <span>{isRefreshing ? "Loading" : "Refresh"}</span>
+        </button>
+      </div>
+
+      {error && <p className="error">{error}</p>}
+      {status && <p className="status-message">{status}</p>}
+
+      <form className="settings-form persona-form" onSubmit={savePersona}>
+        <label>
+          <span>Name</span>
+          <input
+            required
+            maxLength={80}
+            value={displayName}
+            onChange={(event) => setDisplayName(event.target.value)}
+            placeholder="Careful Researcher"
+          />
+        </label>
+        <label>
+          <span>Storage</span>
+          <select value={storageMode} onChange={(event) => setStorageMode(event.target.value)}>
+            <option value="local">This device only</option>
+            <option value="private">Server private</option>
+            <option value="public">Server public</option>
+          </select>
+        </label>
+        <label>
+          <span>Base Model</span>
+          <select
+            required
+            value={selectedBaseModel}
+            onChange={(event) => setSelectedBaseModel(event.target.value)}
+          >
+            <option value="">Select a model</option>
+            {modelGroups.map((group) => (
+              <optgroup key={group.backend.id} label={group.backend.name}>
+                {group.models.map((model) => (
+                  <option
+                    key={modelValue(group.backend.id, model.name)}
+                    value={modelValue(group.backend.id, model.name)}
+                  >
+                    {model.name}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>System Prompt</span>
+          <textarea
+            rows={8}
+            value={systemPrompt}
+            onChange={(event) => setSystemPrompt(event.target.value)}
+            placeholder="Describe how this persona should behave."
+          />
+        </label>
+        <div className="persona-form-actions">
+          {(editingPersona || editingPrivatePersona) && (
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={isSaving}
+              onClick={resetDraft}
+            >
+              <X />
+              <span>Cancel</span>
+            </button>
+          )}
+          <button type="submit" disabled={isSaving || !canSave}>
+            {editingPersona ? <Save /> : <Plus />}
+            <span>
+              {isSaving
+                ? "Saving..."
+                : editingPersona || editingPrivatePersona
+                  ? "Save Persona"
+                  : "Create Persona"}
+            </span>
+          </button>
+        </div>
+        <p className="status-message">
+          Device personas can be used in private chats without storing their name or prompt on the server.
+          Server personas are available from signed-in standard chats.
+        </p>
+      </form>
+
+      {!hasLoaded && <p className="status-message">Loading personas...</p>}
+      {hasLoaded && personas.length === 0 && privatePersonas.length === 0 && (
+        <p className="status-message">No personas created yet.</p>
+      )}
+
+      <div className="persona-list">
+        {privatePersonas.map((persona) => (
+          <PrivatePersonaRow
+            key={persona.id}
+            persona={persona}
+            isBusy={busyPersonaId === persona.id}
+            onDelete={() => setDeletePrivateTarget(persona)}
+            onEdit={() => startEditingPrivatePersona(persona)}
+          />
+        ))}
+        {personas.map((persona) => (
+          <PersonaRow
+            key={persona.id}
+            persona={persona}
+            backendName={backendNameFor(modelGroups, persona.current_version.base_backend_id)}
+            isBusy={busyPersonaId === persona.id}
+            canEdit={persona.is_owner && persona.lifecycle_state === "active"}
+            onCopy={() => void copyPersona(persona)}
+            onCopyToDevice={() => void copyPersonaToDevice(persona)}
+            onDelete={() => setDeleteTarget(persona)}
+            onEdit={() => startEditingPersona(persona)}
+          />
+        ))}
+      </div>
+
+      {deleteTarget && (
+        <ConfirmDialog
+          title={deleteTarget.visibility === "public" ? "Remove Persona" : "Delete Persona"}
+          message={
+            deleteTarget.visibility === "public"
+              ? `Remove "${deleteTarget.current_version.display_name}" from your available personas? If other users have used it, their existing chats keep working.`
+              : `Delete "${deleteTarget.current_version.display_name}"? Existing chats keep their stored message labels, but this persona will disappear from your picker.`
+          }
+          confirmLabel={deleteTarget.visibility === "public" ? "Remove" : "Delete"}
+          isBusy={busyPersonaId === deleteTarget.id}
+          onCancel={() => setDeleteTarget(null)}
+          onConfirm={() => void disownPersona(deleteTarget)}
+        />
+      )}
+      {deletePrivateTarget && (
+        <ConfirmDialog
+          title="Delete Private Persona"
+          message={`Delete "${deletePrivateTarget.current_version.display_name}" from this device? Server chats and hosted personas are not affected.`}
+          confirmLabel="Delete"
+          isBusy={busyPersonaId === deletePrivateTarget.id}
+          onCancel={() => setDeletePrivateTarget(null)}
+          onConfirm={() => void deletePrivatePersonaTarget(deletePrivateTarget)}
+        />
+      )}
+    </div>
+  );
+}
+
+function PersonaRow({
+  persona,
+  backendName,
+  isBusy,
+  canEdit,
+  onCopy,
+  onCopyToDevice,
+  onDelete,
+  onEdit
+}: {
+  persona: Persona;
+  backendName: string;
+  isBusy: boolean;
+  canEdit: boolean;
+  onCopy: () => void;
+  onCopyToDevice: () => void;
+  onDelete: () => void;
+  onEdit: () => void;
+}) {
+  const version = persona.current_version;
+  return (
+    <article className="persona-row">
+      <div className="persona-main">
+        <div>
+          <h2>{version.display_name}</h2>
+          <p>
+            {backendName} / {version.base_model_name}
+          </p>
+          {persona.owner_username && <p>by {persona.owner_username}</p>}
+        </div>
+        <div className="badges">
+          <span className="badge">custom</span>
+          <span className={persona.visibility === "public" ? "badge" : "badge badge-warning"}>
+            {persona.visibility}
+          </span>
+          <span className="badge">v{version.version_number}</span>
+          {persona.is_owner && <span className="badge">yours</span>}
+        </div>
+      </div>
+      <details className="persona-prompt">
+        <summary>System prompt</summary>
+        <pre>{version.system_prompt || "No system prompt."}</pre>
+      </details>
+      <div className="persona-actions">
+        {canEdit && (
+          <button type="button" className="secondary-button" disabled={isBusy} onClick={onEdit}>
+            <Pencil />
+            <span>Edit</span>
+          </button>
+        )}
+        <button type="button" className="secondary-button" disabled={isBusy} onClick={onCopy}>
+          <Copy />
+          <span>Copy</span>
+        </button>
+        <button
+          type="button"
+          className="secondary-button"
+          disabled={isBusy}
+          onClick={onCopyToDevice}
+        >
+          <Lock />
+          <span>Device</span>
+        </button>
+        {(persona.is_owner || persona.is_member) && (
+          <button type="button" className="danger-button" disabled={isBusy} onClick={onDelete}>
+            <Trash2 />
+            <span>{persona.visibility === "public" ? "Remove" : "Delete"}</span>
+          </button>
+        )}
+      </div>
+    </article>
+  );
+}
+
+function PrivatePersonaRow({
+  persona,
+  isBusy,
+  onDelete,
+  onEdit
+}: {
+  persona: PrivatePersona;
+  isBusy: boolean;
+  onDelete: () => void;
+  onEdit: () => void;
+}) {
+  const version = persona.current_version;
+  return (
+    <article className="persona-row">
+      <div className="persona-main">
+        <div>
+          <h2>{version.display_name}</h2>
+          <p>
+            {version.base_backend_name} / {version.base_model_name}
+          </p>
+          <p>stored on this device</p>
+        </div>
+        <div className="badges">
+          <span className="badge">custom</span>
+          <span className="badge badge-warning">device</span>
+          <span className="badge">v{version.version_number}</span>
+        </div>
+      </div>
+      <details className="persona-prompt">
+        <summary>System prompt</summary>
+        <pre>{version.system_prompt || "No system prompt."}</pre>
+      </details>
+      <div className="persona-actions">
+        <button type="button" className="secondary-button" disabled={isBusy} onClick={onEdit}>
+          <Pencil />
+          <span>Edit</span>
+        </button>
+        <button type="button" className="danger-button" disabled={isBusy} onClick={onDelete}>
+          <Trash2 />
+          <span>Delete</span>
+        </button>
+      </div>
+    </article>
+  );
+}
+
+function firstModelValue(groups: BackendModelGroup[]) {
+  const firstGroup = groups.find((group) => group.models.length > 0);
+  const firstModel = firstGroup?.models[0];
+  return firstGroup && firstModel ? modelValue(firstGroup.backend.id, firstModel.name) : "";
+}
+
+function backendNameFor(groups: BackendModelGroup[], backendId: string) {
+  return groups.find((group) => group.backend.id === backendId)?.backend.name ?? backendId;
 }
 
 function AdminUsersPanel({ currentUserId }: { currentUserId: string }) {

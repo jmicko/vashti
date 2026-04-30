@@ -142,7 +142,46 @@ Admin backend management direction:
 * enable or disable individual backends
 * optional local-network scan can be triggered manually by an admin later
 
-### 5.4 Attachments
+### 5.4 Model personas
+
+Vashti should support user-created model personas, exposed in the UI as custom models.
+
+A persona is not a separate Ollama model. It is a reusable profile that resolves to:
+
+* an underlying Ollama backend
+* an underlying Ollama model name
+* an immutable persona version
+* a system prompt
+* display metadata such as name and optional avatar
+* future tool policy metadata
+
+Persona storage modes:
+
+* server personas are stored in SQLite
+* private personas are stored only in browser IndexedDB
+* public personas are server personas visible to other users
+
+Privacy and usage rules:
+
+* private personas may be used only in private-local chats
+* standard chats may use base Ollama models or server personas only
+* private-local chats may use base Ollama models or private-local personas
+* using a public server persona in private-local mode should copy the selected version to local storage before use, avoiding server-side membership or usage tracking as a side effect of a private chat
+* public personas do not require admin approval in MVP
+* users must be able to inspect the system prompt for public personas they can use
+* using a persona binds the chat to a specific immutable persona version
+* editing a persona creates a new version rather than mutating the version used by existing chats
+* deleting a persona must not break old chats
+
+Public persona lifecycle direction:
+
+* when a user uses a public persona, they become a member/user of that persona
+* deleting a public persona after others have used it should behave like disowning it
+* the persona can be deleted from the server only after the last member disowns it
+* the creator remains the only user who can publish new versions in MVP
+* users may copy a visible persona version into a new persona they own
+
+### 5.5 Attachments
 
 * upload images
 * upload files
@@ -150,7 +189,7 @@ Admin backend management direction:
 * image attachments should work with multimodal models when supported
 * generic file attachments may be stored and surfaced in UI without semantic retrieval
 
-### 5.5 PWA support
+### 5.6 PWA support
 
 * installable web app
 * manifest and icons
@@ -158,19 +197,22 @@ Admin backend management direction:
 * fast reload of app shell
 * responsive layout for mobile and desktop
 
-### 5.6 Settings
+### 5.7 Settings
 
 * default Ollama backend
 * default model
+* persona management
 * request timeout
 * upload size limit
 * signup/admin settings, including public signup enablement and limit
 
-### 5.7 Admin basics
+### 5.8 Admin basics
 
 * manage users
 
 * manage Ollama backends
+
+* manage model/backend availability later through tag-based access rules
 
 * disable or delete users
 
@@ -218,6 +260,25 @@ For private mode, the backend should aim to:
 Suggested product wording:
 
 > Private chats are stored only on this device and are not saved on the server. They are not synced between devices. If you clear your browser data or lose this device, these chats may be unrecoverable.
+
+### 6.5 Persona privacy
+
+Private personas are local-only data and follow the same privacy boundary as private-local chats.
+
+Rules:
+
+* private personas are stored only in browser storage on that device
+* private personas must not be selectable in standard server-backed chats
+* private-local chats should prefer local copies of server personas rather than directly using public persona membership flows
+* if a private persona is moved to server storage, the user must confirm that its name, prompt, avatar, and base model metadata will be uploaded
+* if a server persona is moved to private storage, the user must confirm that it will stop being available from other devices and may be removed from the server depending on lifecycle rules
+* public persona prompts are intentionally visible to users who can use them
+
+Rationale:
+
+* a private persona name or prompt may itself contain sensitive information
+* standard chats are server-backed, so attaching a private persona to them would weaken the privacy promise
+* prompt visibility helps users evaluate safety before using public personas, especially once tools exist
 
 ---
 
@@ -339,6 +400,9 @@ Initial entities likely needed:
 * chats
 * messages
 * attachments
+* personas
+* persona_versions
+* persona_members
 * user_settings
 * app_settings
 * schema_migrations
@@ -378,6 +442,7 @@ Bottom:
 
 * text input
 * upload/add button
+* conversation settings button for less-used per-chat settings such as persona version
 * send button
 
 ### 11.2 Design direction
@@ -534,7 +599,18 @@ Cons:
 * UI warning and mode handling
 * no server persistence for content
 
-### Milestone 6: Attachments and PWA
+### Milestone 6: Model personas and model management
+
+* create/edit/delete own personas
+* server-stored personas
+* private IndexedDB personas
+* immutable persona versions
+* persona selection in the model picker
+* private personas limited to private-local chats
+* public sharing, prompt visibility, copy-persona flow, and disown lifecycle
+* admin-facing access rules and quotas can follow in a later slice if needed
+
+### Milestone 7: Attachments and PWA
 
 * image uploads
 * file uploads
@@ -542,7 +618,7 @@ Cons:
 * manifest/icons
 * mobile installability
 
-### Milestone 7: Hardening
+### Milestone 8: Hardening
 
 * polish
 * logs and error handling
@@ -621,6 +697,19 @@ Rationale:
 * private-local chats remain **unsynced in MVP**
 * future sync can be explored later, potentially with WebSockets or another event channel
 * current design should avoid locking the project into assumptions that make future sync impossible
+
+### 17.8 Model persona direction
+
+* personas are custom model profiles layered on top of Ollama models
+* personas are versioned; edits create immutable new versions
+* chats bind to a specific persona version until the user explicitly updates or switches versions
+* private personas are local-only and can be used only in private-local chats
+* server personas may be private-to-owner or public
+* public personas do not require admin approval in MVP
+* users can inspect prompts for public personas they can use
+* public persona deletion should use disown/membership semantics once other users have used it
+* users can copy a visible persona version into a new persona they own
+* tag-based model/persona access and quotas are a later admin-management slice
 
 ## 18. Immediate Next Step
 

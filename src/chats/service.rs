@@ -16,6 +16,7 @@ use crate::{
     },
     error::ApiError,
     ollama::models::OllamaChatMessage,
+    personas::service::{self as persona_service, ResolvedPersonaVersion},
     uploads,
 };
 
@@ -38,6 +39,13 @@ struct EnabledBackend {
 struct MessageModel {
     backend_id: String,
     model_name: String,
+    persona_version_id: Option<String>,
+}
+
+struct ResolvedGenerationModel {
+    backend: EnabledBackend,
+    model_name: String,
+    persona: Option<ResolvedPersonaVersion>,
 }
 
 struct InsertMessage<'a> {
@@ -49,6 +57,9 @@ struct InsertMessage<'a> {
     status: &'a str,
     backend_id: Option<&'a str>,
     model_name: Option<&'a str>,
+    persona_id: Option<&'a str>,
+    persona_version_id: Option<&'a str>,
+    persona_name_snapshot: Option<&'a str>,
     think_mode: Option<&'a str>,
     started_at: Option<i64>,
     now: i64,
@@ -62,11 +73,15 @@ pub async fn list_chats(pool: &SqlitePool, user_id: &str) -> Result<Vec<ChatSumm
                c.default_backend_id,
                b.name AS backend_name,
                c.default_model_name,
+               c.persona_id,
+               c.persona_version_id,
+               pv.display_name AS persona_name,
                c.updated_at,
                c.last_message_at,
                COUNT(m.id) AS message_count
         FROM chats c
         JOIN ollama_backends b ON b.id = c.default_backend_id
+        LEFT JOIN persona_versions pv ON pv.id = c.persona_version_id
         LEFT JOIN chat_messages m ON m.chat_id = c.id
         WHERE c.user_id = ?
           AND c.archived_at IS NULL
@@ -86,6 +101,9 @@ pub async fn list_chats(pool: &SqlitePool, user_id: &str) -> Result<Vec<ChatSumm
                 default_backend_id: row.try_get("default_backend_id")?,
                 backend_name: row.try_get("backend_name")?,
                 default_model_name: row.try_get("default_model_name")?,
+                persona_id: row.try_get("persona_id")?,
+                persona_version_id: row.try_get("persona_version_id")?,
+                persona_name: row.try_get("persona_name")?,
                 updated_at: row.try_get("updated_at")?,
                 last_message_at: row.try_get("last_message_at")?,
                 message_count: row.try_get("message_count")?,
@@ -100,8 +118,21 @@ pub async fn create_chat(
     payload: CreateChatRequest,
 ) -> Result<ChatDetail, ApiError> {
     let title = normalized_title(payload.title);
-    let backend_id = payload.default_backend_id.trim().to_string();
-    let model_name = payload.default_model_name.trim().to_string();
+    let persona = match normalize_optional_string(payload.persona_version_id) {
+        Some(persona_version_id) => Some(
+            persona_service::resolve_persona_version_for_use(pool, user_id, &persona_version_id)
+                .await?,
+        ),
+        None => None,
+    };
+    let backend_id = persona
+        .as_ref()
+        .map(|persona| persona.base_backend_id.clone())
+        .unwrap_or_else(|| payload.default_backend_id.trim().to_string());
+    let model_name = persona
+        .as_ref()
+        .map(|persona| persona.base_model_name.clone())
+        .unwrap_or_else(|| payload.default_model_name.trim().to_string());
 
     if backend_id.is_empty() {
         return Err(ApiError::bad_request(
@@ -129,19 +160,27 @@ pub async fn create_chat(
             user_id,
             default_backend_id,
             default_model_name,
+            persona_id,
+            persona_version_id,
             title,
             chat_mode,
             created_at,
             updated_at,
             last_message_at
         )
-        VALUES (?, ?, ?, ?, ?, 'standard', ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'standard', ?, ?, ?)
         "#,
     )
     .bind(&chat_id)
     .bind(user_id)
-    .bind(backend_id)
-    .bind(model_name)
+    .bind(&backend_id)
+    .bind(&model_name)
+    .bind(persona.as_ref().map(|persona| persona.persona_id.as_str()))
+    .bind(
+        persona
+            .as_ref()
+            .map(|persona| persona.persona_version_id.as_str()),
+    )
     .bind(title)
     .bind(now)
     .bind(now)
@@ -164,11 +203,15 @@ pub async fn get_chat(
                c.default_backend_id,
                b.name AS backend_name,
                c.default_model_name,
+               c.persona_id,
+               c.persona_version_id,
+               pv.display_name AS persona_name,
                c.active_root_message_id,
                c.created_at,
                c.updated_at
         FROM chats c
         JOIN ollama_backends b ON b.id = c.default_backend_id
+        LEFT JOIN persona_versions pv ON pv.id = c.persona_version_id
         WHERE c.id = ?
           AND c.user_id = ?
           AND c.archived_at IS NULL
@@ -192,27 +235,54 @@ pub async fn update_chat(
     payload: UpdateChatRequest,
 ) -> Result<ChatDetail, ApiError> {
     let current = get_chat(pool, user_id, chat_id).await?;
+    let has_base_model_update =
+        payload.default_backend_id.is_some() || payload.default_model_name.is_some();
     let title = payload.title.map(normalized_title).unwrap_or(current.title);
-    let backend_id = match payload.default_backend_id {
-        Some(backend_id) => {
-            let backend_id = backend_id.trim().to_string();
-            ensure_enabled_backend(pool, &backend_id).await?;
-            backend_id
-        }
-        None => current.default_backend_id,
+    let persona = match normalize_optional_string(payload.persona_version_id) {
+        Some(persona_version_id) => Some(
+            persona_service::resolve_persona_version_for_use(pool, user_id, &persona_version_id)
+                .await?,
+        ),
+        None => None,
     };
-    let model_name = match payload.default_model_name {
-        Some(model_name) => {
-            let model_name = model_name.trim().to_string();
-            if model_name.is_empty() {
-                return Err(ApiError::bad_request(
-                    "invalid_model",
-                    "A model is required",
-                ));
+    let backend_id = if let Some(persona) = &persona {
+        persona.base_backend_id.clone()
+    } else {
+        match payload.default_backend_id {
+            Some(backend_id) => {
+                let backend_id = backend_id.trim().to_string();
+                ensure_enabled_backend(pool, &backend_id).await?;
+                backend_id
             }
-            model_name
+            None => current.default_backend_id,
         }
-        None => current.default_model_name,
+    };
+    let model_name = if let Some(persona) = &persona {
+        persona.base_model_name.clone()
+    } else {
+        match payload.default_model_name {
+            Some(model_name) => {
+                let model_name = model_name.trim().to_string();
+                if model_name.is_empty() {
+                    return Err(ApiError::bad_request(
+                        "invalid_model",
+                        "A model is required",
+                    ));
+                }
+                model_name
+            }
+            None => current.default_model_name,
+        }
+    };
+    let (persona_id, persona_version_id) = if let Some(persona) = &persona {
+        (
+            Some(persona.persona_id.clone()),
+            Some(persona.persona_version_id.clone()),
+        )
+    } else if has_base_model_update {
+        (None, None)
+    } else {
+        (current.persona_id, current.persona_version_id)
     };
 
     sqlx::query(
@@ -221,6 +291,8 @@ pub async fn update_chat(
         SET title = ?,
             default_backend_id = ?,
             default_model_name = ?,
+            persona_id = ?,
+            persona_version_id = ?,
             updated_at = ?
         WHERE id = ?
           AND user_id = ?
@@ -229,6 +301,8 @@ pub async fn update_chat(
     .bind(title)
     .bind(backend_id)
     .bind(model_name)
+    .bind(persona_id)
+    .bind(persona_version_id)
     .bind(unix_timestamp())
     .bind(chat_id)
     .bind(user_id)
@@ -275,6 +349,9 @@ pub async fn list_messages(
                m.is_deleted,
                m.backend_id,
                m.model_name,
+               m.persona_id,
+               m.persona_version_id,
+               m.persona_name_snapshot,
                m.think_mode,
                m.done_reason,
                m.error_text,
@@ -467,7 +544,15 @@ pub async fn prepare_generation(
     payload: GenerateChatRequest,
 ) -> Result<PreparedGeneration, ApiError> {
     let chat = get_chat(pool, user_id, chat_id).await?;
-    let content_text = payload.user_message.content_text.trim().to_string();
+    let GenerateChatRequest {
+        user_message,
+        backend_id,
+        model_name,
+        persona_version_id,
+        think_mode,
+        attachments,
+    } = payload;
+    let content_text = user_message.content_text.trim().to_string();
     if content_text.is_empty() {
         return Err(ApiError::bad_request(
             "invalid_message",
@@ -476,36 +561,28 @@ pub async fn prepare_generation(
     }
 
     let latest_model = latest_assistant_model(pool, user_id, chat_id).await?;
-    let backend_id = payload
-        .backend_id
-        .map(|backend_id| backend_id.trim().to_string())
-        .filter(|backend_id| !backend_id.is_empty())
-        .or_else(|| latest_model.as_ref().map(|model| model.backend_id.clone()))
-        .unwrap_or(chat.default_backend_id);
-    let model_name = payload
-        .model_name
-        .map(|model_name| model_name.trim().to_string())
-        .filter(|model_name| !model_name.is_empty())
-        .or_else(|| latest_model.as_ref().map(|model| model.model_name.clone()))
-        .unwrap_or(chat.default_model_name);
-
-    if model_name.is_empty() {
-        return Err(ApiError::bad_request(
-            "invalid_model",
-            "A model is required",
-        ));
-    }
-
-    let backend = enabled_backend(pool, &backend_id).await?;
+    let resolved = resolve_generation_model(
+        pool,
+        user_id,
+        &chat,
+        latest_model.as_ref(),
+        backend_id,
+        model_name,
+        persona_version_id,
+    )
+    .await?;
+    let backend = resolved.backend;
+    let model_name = resolved.model_name;
+    let persona = resolved.persona;
     let parent_message_id =
         active_tail_message_id(pool, chat_id, chat.active_root_message_id).await?;
     let now = unix_timestamp();
-    let attachment_ids = attachment_ids(&payload.attachments)?;
+    let attachment_ids = attachment_ids(&attachments)?;
     let user_message_id = Uuid::new_v4().to_string();
     let user_revision_id = Uuid::new_v4().to_string();
     let assistant_message_id = Uuid::new_v4().to_string();
     let assistant_revision_id = Uuid::new_v4().to_string();
-    let think_mode = normalized_think_mode(payload.think_mode);
+    let think_mode = normalized_think_mode(think_mode);
     let mut tx = pool.begin().await?;
 
     insert_message(
@@ -519,6 +596,9 @@ pub async fn prepare_generation(
             status: "complete",
             backend_id: None,
             model_name: None,
+            persona_id: None,
+            persona_version_id: None,
+            persona_name_snapshot: None,
             think_mode: None,
             started_at: None,
             now,
@@ -563,6 +643,13 @@ pub async fn prepare_generation(
             status: "streaming",
             backend_id: Some(&backend.id),
             model_name: Some(&model_name),
+            persona_id: persona.as_ref().map(|persona| persona.persona_id.as_str()),
+            persona_version_id: persona
+                .as_ref()
+                .map(|persona| persona.persona_version_id.as_str()),
+            persona_name_snapshot: persona
+                .as_ref()
+                .map(|persona| persona.display_name.as_str()),
             think_mode: think_mode.as_deref(),
             started_at: Some(now),
             now,
@@ -591,11 +678,23 @@ pub async fn prepare_generation(
     sqlx::query(
         r#"
         UPDATE chats
-        SET updated_at = ?,
+        SET default_backend_id = ?,
+            default_model_name = ?,
+            persona_id = ?,
+            persona_version_id = ?,
+            updated_at = ?,
             last_message_at = ?
         WHERE id = ?
           AND user_id = ?
         "#,
+    )
+    .bind(&backend.id)
+    .bind(&model_name)
+    .bind(persona.as_ref().map(|persona| persona.persona_id.as_str()))
+    .bind(
+        persona
+            .as_ref()
+            .map(|persona| persona.persona_version_id.as_str()),
     )
     .bind(now)
     .bind(now)
@@ -606,8 +705,9 @@ pub async fn prepare_generation(
 
     tx.commit().await?;
 
-    let prompt_messages =
+    let mut prompt_messages =
         active_prompt_messages(pool, uploads_dir, user_id, chat_id, &assistant_message_id).await?;
+    prepend_persona_system_prompt(&mut prompt_messages, persona.as_ref());
     let user_message = get_message(pool, user_id, chat_id, &user_message_id).await?;
     let assistant_message = get_message(pool, user_id, chat_id, &assistant_message_id).await?;
 
@@ -643,26 +743,43 @@ pub async fn prepare_regeneration(
             "Assistant message does not have a parent prompt",
         )
     })?;
+    let RegenerateMessageRequest {
+        backend_id,
+        model_name,
+        persona_version_id,
+        think_mode,
+        attachments: _,
+    } = payload;
+    let chat = get_chat(pool, user_id, chat_id).await?;
     let latest_model = latest_assistant_model(pool, user_id, chat_id).await?;
-    let backend_id = payload
-        .backend_id
-        .map(|backend_id| backend_id.trim().to_string())
-        .filter(|backend_id| !backend_id.is_empty())
-        .or_else(|| target.backend_id.clone())
-        .or_else(|| latest_model.as_ref().map(|model| model.backend_id.clone()))
-        .ok_or_else(|| ApiError::bad_request("invalid_backend", "A backend is required"))?;
-    let model_name = payload
-        .model_name
-        .map(|model_name| model_name.trim().to_string())
-        .filter(|model_name| !model_name.is_empty())
-        .or_else(|| target.model_name.clone())
-        .or_else(|| latest_model.as_ref().map(|model| model.model_name.clone()))
-        .ok_or_else(|| ApiError::bad_request("invalid_model", "A model is required"))?;
-    let backend = enabled_backend(pool, &backend_id).await?;
+    let fallback_model = MessageModel {
+        backend_id: target.backend_id.clone().unwrap_or_default(),
+        model_name: target.model_name.clone().unwrap_or_default(),
+        persona_version_id: target.persona_version_id.clone(),
+    };
+    let latest_model =
+        if fallback_model.backend_id.is_empty() || fallback_model.model_name.is_empty() {
+            latest_model.as_ref()
+        } else {
+            Some(&fallback_model)
+        };
+    let resolved = resolve_generation_model(
+        pool,
+        user_id,
+        &chat,
+        latest_model,
+        backend_id,
+        model_name,
+        persona_version_id,
+    )
+    .await?;
+    let backend = resolved.backend;
+    let model_name = resolved.model_name;
+    let persona = resolved.persona;
     let now = unix_timestamp();
     let assistant_message_id = Uuid::new_v4().to_string();
     let assistant_revision_id = Uuid::new_v4().to_string();
-    let think_mode = normalized_think_mode(payload.think_mode).or(target.think_mode);
+    let think_mode = normalized_think_mode(think_mode).or(target.think_mode);
     let mut tx = pool.begin().await?;
 
     insert_message(
@@ -676,6 +793,13 @@ pub async fn prepare_regeneration(
             status: "streaming",
             backend_id: Some(&backend.id),
             model_name: Some(&model_name),
+            persona_id: persona.as_ref().map(|persona| persona.persona_id.as_str()),
+            persona_version_id: persona
+                .as_ref()
+                .map(|persona| persona.persona_version_id.as_str()),
+            persona_name_snapshot: persona
+                .as_ref()
+                .map(|persona| persona.display_name.as_str()),
             think_mode: think_mode.as_deref(),
             started_at: Some(now),
             now,
@@ -703,11 +827,23 @@ pub async fn prepare_regeneration(
     sqlx::query(
         r#"
         UPDATE chats
-        SET updated_at = ?,
+        SET default_backend_id = ?,
+            default_model_name = ?,
+            persona_id = ?,
+            persona_version_id = ?,
+            updated_at = ?,
             last_message_at = ?
         WHERE id = ?
           AND user_id = ?
         "#,
+    )
+    .bind(&backend.id)
+    .bind(&model_name)
+    .bind(persona.as_ref().map(|persona| persona.persona_id.as_str()))
+    .bind(
+        persona
+            .as_ref()
+            .map(|persona| persona.persona_version_id.as_str()),
     )
     .bind(now)
     .bind(now)
@@ -718,8 +854,9 @@ pub async fn prepare_regeneration(
 
     tx.commit().await?;
 
-    let prompt_messages =
+    let mut prompt_messages =
         active_prompt_messages(pool, uploads_dir, user_id, chat_id, &assistant_message_id).await?;
+    prepend_persona_system_prompt(&mut prompt_messages, persona.as_ref());
     let assistant_message = get_message(pool, user_id, chat_id, &assistant_message_id).await?;
 
     Ok(PreparedGeneration {
@@ -763,35 +900,36 @@ pub async fn prepare_branch_generation(
         ));
     }
 
+    let BranchMessageRequest {
+        content_text: _,
+        backend_id,
+        model_name,
+        persona_version_id,
+        think_mode,
+        attachments,
+    } = payload;
     let latest_model = latest_assistant_model(pool, user_id, chat_id).await?;
-    let backend_id = payload
-        .backend_id
-        .map(|backend_id| backend_id.trim().to_string())
-        .filter(|backend_id| !backend_id.is_empty())
-        .or_else(|| latest_model.as_ref().map(|model| model.backend_id.clone()))
-        .unwrap_or(chat.default_backend_id);
-    let model_name = payload
-        .model_name
-        .map(|model_name| model_name.trim().to_string())
-        .filter(|model_name| !model_name.is_empty())
-        .or_else(|| latest_model.as_ref().map(|model| model.model_name.clone()))
-        .unwrap_or(chat.default_model_name);
-    if model_name.is_empty() {
-        return Err(ApiError::bad_request(
-            "invalid_model",
-            "A model is required",
-        ));
-    }
-
-    let backend = enabled_backend(pool, &backend_id).await?;
+    let resolved = resolve_generation_model(
+        pool,
+        user_id,
+        &chat,
+        latest_model.as_ref(),
+        backend_id,
+        model_name,
+        persona_version_id,
+    )
+    .await?;
+    let backend = resolved.backend;
+    let model_name = resolved.model_name;
+    let persona = resolved.persona;
     let parent_message_id = target.parent_message_id.clone();
     let now = unix_timestamp();
-    let attachment_ids = attachment_ids(&payload.attachments)?;
+    let attachment_ids = attachment_ids(&attachments)?;
     let user_message_id = Uuid::new_v4().to_string();
     let user_revision_id = Uuid::new_v4().to_string();
     let assistant_message_id = Uuid::new_v4().to_string();
     let assistant_revision_id = Uuid::new_v4().to_string();
-    let think_mode = normalized_think_mode(payload.think_mode);
+    let think_mode = normalized_think_mode(think_mode);
     let mut tx = pool.begin().await?;
 
     insert_message(
@@ -805,6 +943,9 @@ pub async fn prepare_branch_generation(
             status: "complete",
             backend_id: None,
             model_name: None,
+            persona_id: None,
+            persona_version_id: None,
+            persona_name_snapshot: None,
             think_mode: None,
             started_at: None,
             now,
@@ -849,6 +990,13 @@ pub async fn prepare_branch_generation(
             status: "streaming",
             backend_id: Some(&backend.id),
             model_name: Some(&model_name),
+            persona_id: persona.as_ref().map(|persona| persona.persona_id.as_str()),
+            persona_version_id: persona
+                .as_ref()
+                .map(|persona| persona.persona_version_id.as_str()),
+            persona_name_snapshot: persona
+                .as_ref()
+                .map(|persona| persona.display_name.as_str()),
             think_mode: think_mode.as_deref(),
             started_at: Some(now),
             now,
@@ -877,11 +1025,23 @@ pub async fn prepare_branch_generation(
     sqlx::query(
         r#"
         UPDATE chats
-        SET updated_at = ?,
+        SET default_backend_id = ?,
+            default_model_name = ?,
+            persona_id = ?,
+            persona_version_id = ?,
+            updated_at = ?,
             last_message_at = ?
         WHERE id = ?
           AND user_id = ?
         "#,
+    )
+    .bind(&backend.id)
+    .bind(&model_name)
+    .bind(persona.as_ref().map(|persona| persona.persona_id.as_str()))
+    .bind(
+        persona
+            .as_ref()
+            .map(|persona| persona.persona_version_id.as_str()),
     )
     .bind(now)
     .bind(now)
@@ -892,8 +1052,9 @@ pub async fn prepare_branch_generation(
 
     tx.commit().await?;
 
-    let prompt_messages =
+    let mut prompt_messages =
         active_prompt_messages(pool, uploads_dir, user_id, chat_id, &assistant_message_id).await?;
+    prepend_persona_system_prompt(&mut prompt_messages, persona.as_ref());
     let user_message = get_message(pool, user_id, chat_id, &user_message_id).await?;
     let assistant_message = get_message(pool, user_id, chat_id, &assistant_message_id).await?;
 
@@ -1371,7 +1532,9 @@ async fn latest_assistant_model(
 ) -> Result<Option<MessageModel>, ApiError> {
     let Some(row) = sqlx::query(
         r#"
-        SELECT m.backend_id, m.model_name
+        SELECT m.backend_id,
+               m.model_name,
+               m.persona_version_id
         FROM chat_messages m
         JOIN chats c ON c.id = m.chat_id
         WHERE m.chat_id = ?
@@ -1395,7 +1558,101 @@ async fn latest_assistant_model(
     Ok(Some(MessageModel {
         backend_id: row.try_get("backend_id")?,
         model_name: row.try_get("model_name")?,
+        persona_version_id: row.try_get("persona_version_id")?,
     }))
+}
+
+async fn resolve_generation_model(
+    pool: &SqlitePool,
+    user_id: &str,
+    chat: &ChatDetail,
+    latest_model: Option<&MessageModel>,
+    backend_id: Option<String>,
+    model_name: Option<String>,
+    persona_version_id: Option<String>,
+) -> Result<ResolvedGenerationModel, ApiError> {
+    let explicit_backend_id = normalize_optional_string(backend_id);
+    let explicit_model_name = normalize_optional_string(model_name);
+    let explicit_persona_version_id = normalize_optional_string(persona_version_id);
+
+    if let Some(persona_version_id) = explicit_persona_version_id {
+        return resolve_persona_generation_model(pool, user_id, &persona_version_id).await;
+    }
+
+    if explicit_backend_id.is_none() && explicit_model_name.is_none() {
+        if let Some(persona_version_id) = latest_model
+            .and_then(|model| model.persona_version_id.clone())
+            .or_else(|| chat.persona_version_id.clone())
+        {
+            return resolve_persona_generation_model(pool, user_id, &persona_version_id).await;
+        }
+    }
+
+    let backend_id = explicit_backend_id
+        .or_else(|| latest_model.map(|model| model.backend_id.clone()))
+        .unwrap_or_else(|| chat.default_backend_id.clone());
+    let model_name = explicit_model_name
+        .or_else(|| latest_model.map(|model| model.model_name.clone()))
+        .unwrap_or_else(|| chat.default_model_name.clone());
+
+    if model_name.is_empty() {
+        return Err(ApiError::bad_request(
+            "invalid_model",
+            "A model is required",
+        ));
+    }
+
+    Ok(ResolvedGenerationModel {
+        backend: enabled_backend(pool, &backend_id).await?,
+        model_name,
+        persona: None,
+    })
+}
+
+async fn resolve_persona_generation_model(
+    pool: &SqlitePool,
+    user_id: &str,
+    persona_version_id: &str,
+) -> Result<ResolvedGenerationModel, ApiError> {
+    let persona =
+        persona_service::resolve_persona_version_for_use(pool, user_id, persona_version_id).await?;
+    let backend = enabled_backend(pool, &persona.base_backend_id).await?;
+    let model_name = persona.base_model_name.clone();
+    if model_name.is_empty() {
+        return Err(ApiError::bad_request(
+            "invalid_model",
+            "Persona base model is required",
+        ));
+    }
+
+    Ok(ResolvedGenerationModel {
+        backend,
+        model_name,
+        persona: Some(persona),
+    })
+}
+
+fn prepend_persona_system_prompt(
+    messages: &mut Vec<OllamaChatMessage>,
+    persona: Option<&ResolvedPersonaVersion>,
+) {
+    let Some(persona) = persona else {
+        return;
+    };
+    let system_prompt = persona.system_prompt.trim();
+    if system_prompt.is_empty() {
+        return;
+    }
+
+    messages.insert(
+        0,
+        OllamaChatMessage {
+            role: "system".to_string(),
+            content: system_prompt.to_string(),
+            thinking: None,
+            images: None,
+        },
+    );
 }
 
 fn normalized_title(title: String) -> String {
@@ -1405,6 +1662,12 @@ fn normalized_title(title: String) -> String {
     } else {
         title.to_string()
     }
+}
+
+fn normalize_optional_string(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 fn attachment_ids(attachments: &[AttachmentReference]) -> Result<Vec<String>, ApiError> {
@@ -1452,12 +1715,15 @@ async fn insert_message(
             is_deleted,
             backend_id,
             model_name,
+            persona_id,
+            persona_version_id,
+            persona_name_snapshot,
             think_mode,
             started_at,
             created_at,
             updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
     )
     .bind(params.id)
@@ -1468,6 +1734,9 @@ async fn insert_message(
     .bind(params.status)
     .bind(params.backend_id)
     .bind(params.model_name)
+    .bind(params.persona_id)
+    .bind(params.persona_version_id)
+    .bind(params.persona_name_snapshot)
     .bind(params.think_mode)
     .bind(params.started_at)
     .bind(params.now)
@@ -1776,6 +2045,9 @@ fn row_to_chat_detail(row: sqlx::sqlite::SqliteRow) -> Result<ChatDetail, sqlx::
         default_backend_id: row.try_get("default_backend_id")?,
         backend_name: row.try_get("backend_name")?,
         default_model_name: row.try_get("default_model_name")?,
+        persona_id: row.try_get("persona_id")?,
+        persona_version_id: row.try_get("persona_version_id")?,
+        persona_name: row.try_get("persona_name")?,
         active_root_message_id: row.try_get("active_root_message_id")?,
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
@@ -1804,6 +2076,9 @@ fn row_to_message(row: sqlx::sqlite::SqliteRow) -> Result<ChatMessage, sqlx::Err
         is_deleted: row.try_get::<i64, _>("is_deleted")? != 0,
         backend_id: row.try_get("backend_id")?,
         model_name: row.try_get("model_name")?,
+        persona_id: row.try_get("persona_id")?,
+        persona_version_id: row.try_get("persona_version_id")?,
+        persona_name_snapshot: row.try_get("persona_name_snapshot")?,
         think_mode: row.try_get("think_mode")?,
         done_reason: row.try_get("done_reason")?,
         error_text: row.try_get("error_text")?,
@@ -1905,6 +2180,9 @@ async fn get_message(
                m.is_deleted,
                m.backend_id,
                m.model_name,
+               m.persona_id,
+               m.persona_version_id,
+               m.persona_name_snapshot,
                m.think_mode,
                m.done_reason,
                m.error_text,

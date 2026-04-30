@@ -715,6 +715,7 @@ mod tests {
                 title: "New Chat".to_string(),
                 default_backend_id: backend.id,
                 default_model_name: "gemma4:e2b".to_string(),
+                persona_version_id: None,
             },
         )
         .await
@@ -741,6 +742,7 @@ mod tests {
                 title: Some("Renamed".to_string()),
                 default_backend_id: None,
                 default_model_name: None,
+                persona_version_id: None,
             },
         )
         .await

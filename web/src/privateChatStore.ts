@@ -1,7 +1,9 @@
 const DB_NAME = "vashti-private-local";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const CHAT_STORE = "private_chats";
 const MESSAGE_STORE = "private_messages";
+const PERSONA_STORE = "private_personas";
+const PERSONA_VERSION_STORE = "private_persona_versions";
 
 export type PrivateChatSummary = {
   id: string;
@@ -9,6 +11,9 @@ export type PrivateChatSummary = {
   default_backend_id: string;
   backend_name: string;
   default_model_name: string;
+  persona_id?: string | null;
+  persona_version_id?: string | null;
+  persona_name?: string | null;
   active_root_message_id: string | null;
   created_at: number;
   updated_at: number;
@@ -22,6 +27,9 @@ export type PrivateChatDetail = {
   default_backend_id: string;
   backend_name: string;
   default_model_name: string;
+  persona_id?: string | null;
+  persona_version_id?: string | null;
+  persona_name?: string | null;
   active_root_message_id: string | null;
   created_at: number;
   updated_at: number;
@@ -61,6 +69,9 @@ export type PrivateChatMessage = {
   is_deleted: boolean;
   backend_id: string | null;
   model_name: string | null;
+  persona_id?: string | null;
+  persona_version_id?: string | null;
+  persona_name_snapshot?: string | null;
   think_mode: string | null;
   done_reason: string | null;
   error_text: string | null;
@@ -79,6 +90,9 @@ export type CreatePrivateChatParams = {
   backendId: string;
   backendName: string;
   modelName: string;
+  personaId?: string | null;
+  personaVersionId?: string | null;
+  personaName?: string | null;
 };
 
 export type CreatePrivateMessageParams = {
@@ -90,8 +104,47 @@ export type CreatePrivateMessageParams = {
   status?: string;
   backendId?: string | null;
   modelName?: string | null;
+  personaId?: string | null;
+  personaVersionId?: string | null;
+  personaNameSnapshot?: string | null;
   thinkMode?: string | null;
   createdAt?: number;
+};
+
+export type PrivatePersonaVersion = {
+  id: string;
+  persona_id: string;
+  version_number: number;
+  display_name: string;
+  avatar_attachment_id: string | null;
+  base_backend_id: string;
+  base_backend_name: string;
+  base_model_name: string;
+  system_prompt: string;
+  tool_policy_json: string | null;
+  source_persona_id?: string | null;
+  source_persona_version_id?: string | null;
+  created_at: number;
+};
+
+export type PrivatePersona = {
+  id: string;
+  current_version_id: string;
+  created_at: number;
+  updated_at: number;
+  current_version: PrivatePersonaVersion;
+};
+
+export type SavePrivatePersonaParams = {
+  displayName: string;
+  baseBackendId: string;
+  baseBackendName: string;
+  baseModelName: string;
+  systemPrompt: string;
+  avatarAttachmentId?: string | null;
+  toolPolicyJson?: string | null;
+  sourcePersonaId?: string | null;
+  sourcePersonaVersionId?: string | null;
 };
 
 let dbPromise: Promise<IDBDatabase> | null = null;
@@ -135,6 +188,9 @@ export function createPrivateMessage({
   status = "complete",
   backendId = null,
   modelName = null,
+  personaId = null,
+  personaVersionId = null,
+  personaNameSnapshot = null,
   thinkMode = null,
   createdAt = unixTimestamp()
 }: CreatePrivateMessageParams): PrivateChatMessage {
@@ -157,6 +213,9 @@ export function createPrivateMessage({
     is_deleted: false,
     backend_id: backendId,
     model_name: modelName,
+    persona_id: personaId,
+    persona_version_id: personaVersionId,
+    persona_name_snapshot: personaNameSnapshot,
     think_mode: thinkMode,
     done_reason: null,
     error_text: null,
@@ -194,7 +253,10 @@ export async function createPrivateChat({
   title,
   backendId,
   backendName,
-  modelName
+  modelName,
+  personaId = null,
+  personaVersionId = null,
+  personaName = null
 }: CreatePrivateChatParams): Promise<PrivateChatDetail> {
   const now = unixTimestamp();
   const chat: PrivateChatDetail = {
@@ -203,6 +265,9 @@ export async function createPrivateChat({
     default_backend_id: backendId,
     backend_name: backendName,
     default_model_name: modelName,
+    persona_id: personaId,
+    persona_version_id: personaVersionId,
+    persona_name: personaName,
     active_root_message_id: null,
     created_at: now,
     updated_at: now,
@@ -296,6 +361,152 @@ export async function savePrivateMessages(messages: PrivateChatMessage[]): Promi
   await transactionDone(tx);
 }
 
+export async function listPrivatePersonas(): Promise<PrivatePersona[]> {
+  const db = await openPrivateDb();
+  const [personas, versions] = await Promise.all([
+    getAll<Omit<PrivatePersona, "current_version">>(db, PERSONA_STORE),
+    getAll<PrivatePersonaVersion>(db, PERSONA_VERSION_STORE)
+  ]);
+  const versionsById = new Map(versions.map((version) => [version.id, version]));
+
+  return personas
+    .map((persona) => {
+      const currentVersion = versionsById.get(persona.current_version_id);
+      if (!currentVersion) {
+        return null;
+      }
+
+      return {
+        ...persona,
+        current_version: currentVersion
+      };
+    })
+    .filter((persona): persona is PrivatePersona => Boolean(persona))
+    .sort((left, right) =>
+      left.current_version.display_name.localeCompare(right.current_version.display_name)
+    );
+}
+
+export async function createPrivatePersona(
+  params: SavePrivatePersonaParams
+): Promise<PrivatePersona> {
+  const now = unixTimestamp();
+  const personaId = privateId("private-persona");
+  const versionId = privateId("private-persona-version");
+  const version = privatePersonaVersionFromParams({
+    params,
+    personaId,
+    versionId,
+    versionNumber: 1,
+    now
+  });
+  const persona = {
+    id: personaId,
+    current_version_id: versionId,
+    created_at: now,
+    updated_at: now
+  };
+
+  const db = await openPrivateDb();
+  const tx = db.transaction([PERSONA_STORE, PERSONA_VERSION_STORE], "readwrite");
+  tx.objectStore(PERSONA_STORE).put(persona);
+  tx.objectStore(PERSONA_VERSION_STORE).put(version);
+  await transactionDone(tx);
+
+  return {
+    ...persona,
+    current_version: version
+  };
+}
+
+export async function updatePrivatePersona(
+  personaId: string,
+  params: SavePrivatePersonaParams
+): Promise<PrivatePersona> {
+  const persona = await getPrivatePersona(personaId);
+  if (!persona) {
+    throw new Error("Private persona not found on this device");
+  }
+
+  const versions = await listPrivatePersonaVersions(personaId);
+  const nextVersionNumber =
+    versions.reduce((max, version) => Math.max(max, version.version_number), 0) + 1;
+  const now = unixTimestamp();
+  const versionId = privateId("private-persona-version");
+  const version = privatePersonaVersionFromParams({
+    params,
+    personaId,
+    versionId,
+    versionNumber: nextVersionNumber,
+    now
+  });
+  const updatedPersona = {
+    id: persona.id,
+    current_version_id: versionId,
+    created_at: persona.created_at,
+    updated_at: now
+  };
+
+  const db = await openPrivateDb();
+  const tx = db.transaction([PERSONA_STORE, PERSONA_VERSION_STORE], "readwrite");
+  tx.objectStore(PERSONA_STORE).put(updatedPersona);
+  tx.objectStore(PERSONA_VERSION_STORE).put(version);
+  await transactionDone(tx);
+
+  return {
+    ...updatedPersona,
+    current_version: version
+  };
+}
+
+export async function deletePrivatePersona(personaId: string): Promise<void> {
+  const db = await openPrivateDb();
+  const tx = db.transaction([PERSONA_STORE, PERSONA_VERSION_STORE], "readwrite");
+  tx.objectStore(PERSONA_STORE).delete(personaId);
+
+  const index = tx.objectStore(PERSONA_VERSION_STORE).index("persona_id");
+  const cursorRequest = index.openCursor(IDBKeyRange.only(personaId));
+  cursorRequest.onsuccess = () => {
+    const cursor = cursorRequest.result;
+    if (!cursor) {
+      return;
+    }
+
+    cursor.delete();
+    cursor.continue();
+  };
+
+  await transactionDone(tx);
+}
+
+export async function getPrivatePersona(personaId: string): Promise<PrivatePersona | null> {
+  const db = await openPrivateDb();
+  const tx = db.transaction([PERSONA_STORE, PERSONA_VERSION_STORE], "readonly");
+  const persona = await requestResult<Omit<PrivatePersona, "current_version"> | undefined>(
+    tx.objectStore(PERSONA_STORE).get(personaId)
+  );
+  if (!persona) {
+    await transactionDone(tx);
+    return null;
+  }
+
+  const version = await requestResult<PrivatePersonaVersion | undefined>(
+    tx.objectStore(PERSONA_VERSION_STORE).get(persona.current_version_id)
+  );
+  await transactionDone(tx);
+  return version ? { ...persona, current_version: version } : null;
+}
+
+async function listPrivatePersonaVersions(personaId: string): Promise<PrivatePersonaVersion[]> {
+  const db = await openPrivateDb();
+  const tx = db.transaction(PERSONA_VERSION_STORE, "readonly");
+  const versions = await requestResult<PrivatePersonaVersion[]>(
+    tx.objectStore(PERSONA_VERSION_STORE).index("persona_id").getAll(personaId)
+  );
+  await transactionDone(tx);
+  return versions.sort((left, right) => left.version_number - right.version_number);
+}
+
 async function openPrivateDb(): Promise<IDBDatabase> {
   if (!dbPromise) {
     dbPromise = new Promise((resolve, reject) => {
@@ -309,6 +520,15 @@ async function openPrivateDb(): Promise<IDBDatabase> {
         if (!db.objectStoreNames.contains(MESSAGE_STORE)) {
           const messageStore = db.createObjectStore(MESSAGE_STORE, { keyPath: "id" });
           messageStore.createIndex("chat_id", "chat_id", { unique: false });
+        }
+        if (!db.objectStoreNames.contains(PERSONA_STORE)) {
+          db.createObjectStore(PERSONA_STORE, { keyPath: "id" });
+        }
+        if (!db.objectStoreNames.contains(PERSONA_VERSION_STORE)) {
+          const personaVersionStore = db.createObjectStore(PERSONA_VERSION_STORE, {
+            keyPath: "id"
+          });
+          personaVersionStore.createIndex("persona_id", "persona_id", { unique: false });
         }
       };
       request.onsuccess = () => resolve(request.result);
@@ -348,5 +568,35 @@ function normalizePrivateMessage(message: PrivateChatMessage): PrivateChatMessag
   return {
     ...message,
     attachments: message.attachments ?? []
+  };
+}
+
+function privatePersonaVersionFromParams({
+  params,
+  personaId,
+  versionId,
+  versionNumber,
+  now
+}: {
+  params: SavePrivatePersonaParams;
+  personaId: string;
+  versionId: string;
+  versionNumber: number;
+  now: number;
+}): PrivatePersonaVersion {
+  return {
+    id: versionId,
+    persona_id: personaId,
+    version_number: versionNumber,
+    display_name: params.displayName.trim(),
+    avatar_attachment_id: params.avatarAttachmentId ?? null,
+    base_backend_id: params.baseBackendId,
+    base_backend_name: params.baseBackendName,
+    base_model_name: params.baseModelName,
+    system_prompt: params.systemPrompt.trim(),
+    tool_policy_json: params.toolPolicyJson ?? null,
+    source_persona_id: params.sourcePersonaId ?? null,
+    source_persona_version_id: params.sourcePersonaVersionId ?? null,
+    created_at: now
   };
 }

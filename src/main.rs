@@ -8,6 +8,7 @@ mod db;
 mod error;
 mod frontend;
 mod ollama;
+mod personas;
 mod private;
 mod settings;
 mod startup;
@@ -107,6 +108,26 @@ fn router(state: AppState) -> Router {
             patch(backends::handlers::update_backend).delete(backends::handlers::delete_backend),
         )
         .route("/models", get(backends::handlers::list_models))
+        .route(
+            "/personas",
+            get(personas::handlers::list_personas).post(personas::handlers::create_persona),
+        )
+        .route(
+            "/personas/{persona_id}",
+            patch(personas::handlers::update_persona),
+        )
+        .route(
+            "/personas/{persona_id}/copy",
+            post(personas::handlers::copy_persona),
+        )
+        .route(
+            "/personas/{persona_id}/disown",
+            post(personas::handlers::disown_persona),
+        )
+        .route(
+            "/personas/{persona_id}/versions",
+            get(personas::handlers::list_versions),
+        )
         .route(
             "/chats",
             get(chats::handlers::list_chats).post(chats::handlers::create_chat),

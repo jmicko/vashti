@@ -38,6 +38,7 @@ pub struct CreateChatRequest {
     pub title: String,
     pub default_backend_id: String,
     pub default_model_name: String,
+    pub persona_version_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -45,6 +46,7 @@ pub struct UpdateChatRequest {
     pub title: Option<String>,
     pub default_backend_id: Option<String>,
     pub default_model_name: Option<String>,
+    pub persona_version_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -101,6 +103,7 @@ pub struct GenerateChatRequest {
     pub user_message: GenerateUserMessageRequest,
     pub backend_id: Option<String>,
     pub model_name: Option<String>,
+    pub persona_version_id: Option<String>,
     pub think_mode: Option<String>,
     #[serde(default)]
     pub attachments: Vec<AttachmentReference>,
@@ -125,6 +128,7 @@ pub struct StopGenerationResponse {
 pub struct RegenerateMessageRequest {
     pub backend_id: Option<String>,
     pub model_name: Option<String>,
+    pub persona_version_id: Option<String>,
     pub think_mode: Option<String>,
     #[serde(default)]
     pub attachments: Vec<AttachmentReference>,
@@ -135,6 +139,7 @@ pub struct BranchMessageRequest {
     pub content_text: String,
     pub backend_id: Option<String>,
     pub model_name: Option<String>,
+    pub persona_version_id: Option<String>,
     pub think_mode: Option<String>,
     #[serde(default)]
     pub attachments: Vec<AttachmentReference>,
@@ -798,12 +803,20 @@ async fn maybe_generate_chat_title(
     assistant_text: &str,
 ) -> Option<String> {
     let chat = service::get_chat(db, user_id, chat_id).await.ok()?;
-    if chat.title != "New Chat" || prompt_messages.len() != 1 {
+    if chat.title != "New Chat" {
         return None;
     }
 
-    let user_message = prompt_messages.first()?;
-    if user_message.role != "user" || user_message.content.trim().is_empty() {
+    let user_messages: Vec<_> = prompt_messages
+        .iter()
+        .filter(|message| message.role == "user")
+        .collect();
+    if user_messages.len() != 1 {
+        return None;
+    }
+
+    let user_message = user_messages[0];
+    if user_message.content.trim().is_empty() {
         return None;
     }
 
@@ -827,6 +840,7 @@ async fn maybe_generate_chat_title(
             title: Some(generated_title),
             default_backend_id: None,
             default_model_name: None,
+            persona_version_id: None,
         },
     )
     .await
