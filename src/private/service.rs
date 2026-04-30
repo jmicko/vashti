@@ -166,3 +166,94 @@ fn validate_role(role: &str) -> Result<String, ApiError> {
 
     Ok(role.to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use base64::{Engine as _, engine::general_purpose};
+    use sqlx::{
+        SqlitePool,
+        sqlite::{SqliteConnectOptions, SqlitePoolOptions},
+    };
+    use uuid::Uuid;
+
+    use super::*;
+    use crate::startup;
+
+    async fn test_pool() -> SqlitePool {
+        let options = SqliteConnectOptions::new()
+            .filename(":memory:")
+            .foreign_keys(true);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .expect("connect test database");
+
+        startup::migrations::run(&pool)
+            .await
+            .expect("run migrations");
+        startup::bootstrap::ensure_app_settings(&pool)
+            .await
+            .expect("ensure app settings");
+
+        pool
+    }
+
+    async fn insert_test_user(pool: &SqlitePool, username: &str) -> String {
+        let id = Uuid::new_v4().to_string();
+        let now = auth::service::unix_timestamp();
+
+        sqlx::query(
+            r#"
+            INSERT INTO users (
+                id,
+                username,
+                password_hash,
+                role,
+                is_disabled,
+                created_at,
+                updated_at
+            )
+            VALUES (?, ?, ?, 'user', 0, ?, ?)
+            "#,
+        )
+        .bind(&id)
+        .bind(username)
+        .bind("unused")
+        .bind(now)
+        .bind(now)
+        .execute(pool)
+        .await
+        .expect("insert test user");
+
+        id
+    }
+
+    #[tokio::test]
+    async fn private_vault_keys_are_stable_and_user_scoped() {
+        let pool = test_pool().await;
+        let first_user_id = insert_test_user(&pool, "first-user").await;
+        let second_user_id = insert_test_user(&pool, "second-user").await;
+
+        let first_key = get_or_create_private_vault_key(&pool, &first_user_id)
+            .await
+            .expect("create first key");
+        let first_key_again = get_or_create_private_vault_key(&pool, &first_user_id)
+            .await
+            .expect("reload first key");
+        let second_key = get_or_create_private_vault_key(&pool, &second_user_id)
+            .await
+            .expect("create second key");
+
+        assert_eq!(first_key.user_id, first_user_id);
+        assert_eq!(first_key.key_material, first_key_again.key_material);
+        assert_ne!(first_key.key_material, second_key.key_material);
+        assert_eq!(
+            general_purpose::STANDARD
+                .decode(first_key.key_material)
+                .expect("decode first key")
+                .len(),
+            32
+        );
+    }
+}
