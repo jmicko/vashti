@@ -1,10 +1,63 @@
+use base64::{Engine as _, engine::general_purpose};
+use rand_core::{OsRng, RngCore};
 use sqlx::{Row, SqlitePool};
 
-use crate::{error::ApiError, ollama::models::OllamaChatMessage};
+use crate::{auth, error::ApiError, ollama::models::OllamaChatMessage};
 
 #[derive(Clone, Debug)]
 pub struct PrivateGenerationBackend {
     pub base_url: String,
+}
+
+#[derive(Debug)]
+pub struct PrivateVaultKey {
+    pub user_id: String,
+    pub key_material: String,
+}
+
+pub async fn get_or_create_private_vault_key(
+    pool: &SqlitePool,
+    user_id: &str,
+) -> Result<PrivateVaultKey, ApiError> {
+    if let Some(row) = sqlx::query(
+        r#"
+        SELECT key_material
+        FROM user_private_vault_keys
+        WHERE user_id = ?
+        "#,
+    )
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await?
+    {
+        return Ok(PrivateVaultKey {
+            user_id: user_id.to_string(),
+            key_material: row.try_get("key_material")?,
+        });
+    }
+
+    let mut key_bytes = [0_u8; 32];
+    OsRng.fill_bytes(&mut key_bytes);
+    let key_material = general_purpose::STANDARD.encode(key_bytes);
+    let now = auth::service::unix_timestamp();
+
+    sqlx::query(
+        r#"
+        INSERT INTO user_private_vault_keys (user_id, key_material, created_at, updated_at)
+        VALUES (?, ?, ?, ?)
+        "#,
+    )
+    .bind(user_id)
+    .bind(&key_material)
+    .bind(now)
+    .bind(now)
+    .execute(pool)
+    .await?;
+
+    Ok(PrivateVaultKey {
+        user_id: user_id.to_string(),
+        key_material,
+    })
 }
 
 pub async fn get_enabled_backend(

@@ -113,9 +113,13 @@ button svg {
 }
 
 .auth-page {
-  min-height: var(--app-height);
+  height: var(--app-height);
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  align-items: start;
   display: grid;
-  place-items: center;
+  justify-items: center;
   padding: 24px;
   padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
   background:
@@ -124,6 +128,7 @@ button svg {
 }
 
 .auth-panel {
+  align-self: center;
   width: min(420px, 100%);
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -132,6 +137,17 @@ button svg {
     0 0 32px rgba(113, 255, 47, 0.12),
     0 18px 60px rgba(0, 0, 0, 0.55);
   padding: 24px;
+}
+
+@media (max-height: 620px), (max-width: 720px) {
+  .auth-page {
+    align-items: start;
+    padding-top: 14px;
+  }
+
+  .auth-panel {
+    align-self: start;
+  }
 }
 
 .brand-logo {

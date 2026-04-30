@@ -182,6 +182,7 @@ fn router(state: AppState) -> Router {
             "/attachments/{attachment_id}",
             get(uploads::handlers::get_attachment).delete(uploads::handlers::delete_attachment),
         )
+        .route("/private/vault-key", get(private::handlers::vault_key))
         .route("/private/generate", post(private::handlers::generate));
 
     #[cfg(debug_assertions)]

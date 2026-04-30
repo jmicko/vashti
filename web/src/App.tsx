@@ -58,9 +58,11 @@ import {
   listPrivateMessages,
   privateId,
   renamePrivateChat,
+  resetPrivateStorageUser,
   savePrivateChat,
   savePrivateMessage,
   savePrivateMessages,
+  setPrivateStorageUser,
   updatePrivatePersona,
   unixTimestamp,
   type PrivateChatDetail,
@@ -800,6 +802,8 @@ function AppShell({
   user: User;
   onSessionChanged: () => Promise<void>;
 }) {
+  setPrivateStorageUser(user.id);
+
   const [route, setRoute] = useState<AppRoute>(() => routeFromLocation());
   const routeRef = useRef(route);
   const appSettingsGuardRef = useRef<AppSettingsGuard | null>(null);
@@ -1093,6 +1097,8 @@ function AppShell({
 
     try {
       await requestJson("/api/auth/logout", { method: "POST" });
+      resetPrivateStorageUser();
+      applyNavigation({ page: "chat" });
       await onSessionChanged();
     } catch (logoutError) {
       setIsLoggingOut(false);

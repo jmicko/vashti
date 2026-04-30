@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+use futures_util::{StreamExt, stream};
+
 use crate::ollama::models::{
     OllamaChatRequest, OllamaChatResponse, OllamaModel, ShowModelRequest, ShowModelResponse,
     TagsResponse,
@@ -30,14 +32,25 @@ pub async fn fetch_models(
     let response = client.get(url).send().await?.error_for_status()?;
     let response: TagsResponse = response.json().await?;
 
-    let mut models = response.into_models();
-    for model in &mut models {
-        if let Ok(capabilities) = model_capabilities(client, base_url, &model.name).await {
-            model.apply_capabilities(capabilities);
-        }
-    }
+    let base_url = base_url.to_string();
+    let mut models = stream::iter(response.into_models().into_iter().enumerate().map(
+        |(index, mut model)| {
+            let base_url = base_url.clone();
+            async move {
+                if let Ok(capabilities) = model_capabilities(client, &base_url, &model.name).await {
+                    model.apply_capabilities(capabilities);
+                }
 
-    Ok(models)
+                (index, model)
+            }
+        },
+    ))
+    .buffer_unordered(8)
+    .collect::<Vec<_>>()
+    .await;
+    models.sort_by_key(|(index, _)| *index);
+
+    Ok(models.into_iter().map(|(_, model)| model).collect())
 }
 
 pub async fn chat_stream(
@@ -79,7 +92,7 @@ async fn model_capabilities(
     let url = format!("{}/api/show", base_url.trim_end_matches('/'));
     let response = client
         .post(url)
-        .timeout(Duration::from_secs(5))
+        .timeout(Duration::from_millis(1800))
         .json(&ShowModelRequest { model: model_name })
         .send()
         .await?

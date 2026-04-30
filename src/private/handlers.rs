@@ -62,6 +62,26 @@ enum PrivateGenerateEvent {
     },
 }
 
+#[derive(Debug, Serialize)]
+pub struct PrivateVaultKeyResponse {
+    pub user_id: String,
+    pub key_material: String,
+}
+
+pub async fn vault_key(
+    State(state): State<AppState>,
+    jar: CookieJar,
+) -> Result<Json<PrivateVaultKeyResponse>, ApiError> {
+    let user =
+        auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
+    let key = service::get_or_create_private_vault_key(&state.db, &user.id).await?;
+
+    Ok(Json(PrivateVaultKeyResponse {
+        user_id: key.user_id,
+        key_material: key.key_material,
+    }))
+}
+
 pub async fn generate(
     State(state): State<AppState>,
     jar: CookieJar,

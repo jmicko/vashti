@@ -1,9 +1,33 @@
-const DB_NAME = "vashti-private-local";
+import { gcm as aesGcm } from "@noble/ciphers/aes.js";
+
+const LEGACY_DB_NAME = "vashti-private-local";
+const DB_NAME_PREFIX = "vashti-private-local";
 const DB_VERSION = 2;
 const CHAT_STORE = "private_chats";
 const MESSAGE_STORE = "private_messages";
 const PERSONA_STORE = "private_personas";
 const PERSONA_VERSION_STORE = "private_persona_versions";
+
+type PrivateVaultKeyResponse = {
+  user_id: string;
+  key_material: string;
+};
+
+type EncryptedPayload = {
+  v: 1;
+  iv: string;
+  data: string;
+};
+
+type PrivateStoreRecord = {
+  id: string;
+  chat_id?: string;
+  persona_id?: string;
+  created_at?: number;
+  updated_at?: number;
+  last_message_at?: number;
+  encrypted_payload?: EncryptedPayload;
+};
 
 export type PrivateChatSummary = {
   id: string;
@@ -147,7 +171,40 @@ export type SavePrivatePersonaParams = {
   sourcePersonaVersionId?: string | null;
 };
 
+let currentUserId: string | null = null;
 let dbPromise: Promise<IDBDatabase> | null = null;
+let vaultKeyPromise: Promise<PrivateVaultKeyResponse> | null = null;
+let vaultKeyBytesPromise: Promise<Uint8Array> | null = null;
+let webCryptoKeyPromise: Promise<CryptoKey> | null = null;
+let legacyMigrationPromise: Promise<void> | null = null;
+
+export function setPrivateStorageUser(userId: string) {
+  if (currentUserId === userId) {
+    return;
+  }
+
+  currentUserId = userId;
+  vaultKeyPromise = null;
+  vaultKeyBytesPromise = null;
+  webCryptoKeyPromise = null;
+  legacyMigrationPromise = null;
+  if (dbPromise) {
+    void dbPromise.then((db) => db.close()).catch(() => undefined);
+    dbPromise = null;
+  }
+}
+
+export function resetPrivateStorageUser() {
+  currentUserId = null;
+  vaultKeyPromise = null;
+  vaultKeyBytesPromise = null;
+  webCryptoKeyPromise = null;
+  legacyMigrationPromise = null;
+  if (dbPromise) {
+    void dbPromise.then((db) => db.close()).catch(() => undefined);
+    dbPromise = null;
+  }
+}
 
 export function unixTimestamp() {
   return Math.floor(Date.now() / 1000);
@@ -233,8 +290,8 @@ export function createPrivateMessage({
 export async function listPrivateChats(): Promise<PrivateChatSummary[]> {
   const db = await openPrivateDb();
   const [chats, messages] = await Promise.all([
-    getAll<PrivateChatDetail>(db, CHAT_STORE),
-    getAll<PrivateChatMessage>(db, MESSAGE_STORE)
+    getAllPrivateRecords<PrivateChatDetail>(db, CHAT_STORE),
+    getAllPrivateRecords<PrivateChatMessage>(db, MESSAGE_STORE)
   ]);
   const messageCounts = new Map<string, number>();
   for (const message of messages) {
@@ -281,17 +338,22 @@ export async function createPrivateChat({
 export async function getPrivateChat(chatId: string): Promise<PrivateChatDetail | null> {
   const db = await openPrivateDb();
   const tx = db.transaction(CHAT_STORE, "readonly");
-  const chat = await requestResult<PrivateChatDetail | undefined>(
+  const chat = await requestResult<PrivateStoreRecord | PrivateChatDetail | undefined>(
     tx.objectStore(CHAT_STORE).get(chatId)
   );
   await transactionDone(tx);
-  return chat ?? null;
+  return chat ? readPrivateRecord<PrivateChatDetail>(chat) : null;
 }
 
 export async function savePrivateChat(chat: PrivateChatDetail): Promise<void> {
   const db = await openPrivateDb();
+  const record = await privateStoreRecord(chat, {
+    created_at: chat.created_at,
+    updated_at: chat.updated_at,
+    last_message_at: chat.last_message_at
+  });
   const tx = db.transaction(CHAT_STORE, "readwrite");
-  tx.objectStore(CHAT_STORE).put(chat);
+  tx.objectStore(CHAT_STORE).put(record);
   await transactionDone(tx);
 }
 
@@ -333,17 +395,25 @@ export async function deletePrivateChat(chatId: string): Promise<void> {
 export async function listPrivateMessages(chatId: string): Promise<PrivateChatMessage[]> {
   const db = await openPrivateDb();
   const tx = db.transaction(MESSAGE_STORE, "readonly");
-  const messages = await requestResult<PrivateChatMessage[]>(
+  const records = await requestResult<Array<PrivateStoreRecord | PrivateChatMessage>>(
     tx.objectStore(MESSAGE_STORE).index("chat_id").getAll(chatId)
   );
   await transactionDone(tx);
+  const messages = await Promise.all(
+    records.map((record) => readPrivateRecord<PrivateChatMessage>(record))
+  );
   return messages.map(normalizePrivateMessage).sort(compareMessagesByCreatedAt);
 }
 
 export async function savePrivateMessage(message: PrivateChatMessage): Promise<void> {
   const db = await openPrivateDb();
+  const record = await privateStoreRecord(message, {
+    chat_id: message.chat_id,
+    created_at: message.created_at,
+    updated_at: message.updated_at
+  });
   const tx = db.transaction(MESSAGE_STORE, "readwrite");
-  tx.objectStore(MESSAGE_STORE).put(message);
+  tx.objectStore(MESSAGE_STORE).put(record);
   await transactionDone(tx);
 }
 
@@ -353,10 +423,19 @@ export async function savePrivateMessages(messages: PrivateChatMessage[]): Promi
   }
 
   const db = await openPrivateDb();
+  const records = await Promise.all(
+    messages.map((message) =>
+      privateStoreRecord(message, {
+        chat_id: message.chat_id,
+        created_at: message.created_at,
+        updated_at: message.updated_at
+      })
+    )
+  );
   const tx = db.transaction(MESSAGE_STORE, "readwrite");
   const store = tx.objectStore(MESSAGE_STORE);
-  for (const message of messages) {
-    store.put(message);
+  for (const record of records) {
+    store.put(record);
   }
   await transactionDone(tx);
 }
@@ -364,8 +443,8 @@ export async function savePrivateMessages(messages: PrivateChatMessage[]): Promi
 export async function listPrivatePersonas(): Promise<PrivatePersona[]> {
   const db = await openPrivateDb();
   const [personas, versions] = await Promise.all([
-    getAll<Omit<PrivatePersona, "current_version">>(db, PERSONA_STORE),
-    getAll<PrivatePersonaVersion>(db, PERSONA_VERSION_STORE)
+    getAllPrivateRecords<Omit<PrivatePersona, "current_version">>(db, PERSONA_STORE),
+    getAllPrivateRecords<PrivatePersonaVersion>(db, PERSONA_VERSION_STORE)
   ]);
   const versionsById = new Map(versions.map((version) => [version.id, version]));
 
@@ -408,9 +487,17 @@ export async function createPrivatePersona(
   };
 
   const db = await openPrivateDb();
+  const personaRecord = await privateStoreRecord(persona, {
+    created_at: persona.created_at,
+    updated_at: persona.updated_at
+  });
+  const versionRecord = await privateStoreRecord(version, {
+    persona_id: version.persona_id,
+    created_at: version.created_at
+  });
   const tx = db.transaction([PERSONA_STORE, PERSONA_VERSION_STORE], "readwrite");
-  tx.objectStore(PERSONA_STORE).put(persona);
-  tx.objectStore(PERSONA_VERSION_STORE).put(version);
+  tx.objectStore(PERSONA_STORE).put(personaRecord);
+  tx.objectStore(PERSONA_VERSION_STORE).put(versionRecord);
   await transactionDone(tx);
 
   return {
@@ -448,9 +535,17 @@ export async function updatePrivatePersona(
   };
 
   const db = await openPrivateDb();
+  const personaRecord = await privateStoreRecord(updatedPersona, {
+    created_at: updatedPersona.created_at,
+    updated_at: updatedPersona.updated_at
+  });
+  const versionRecord = await privateStoreRecord(version, {
+    persona_id: version.persona_id,
+    created_at: version.created_at
+  });
   const tx = db.transaction([PERSONA_STORE, PERSONA_VERSION_STORE], "readwrite");
-  tx.objectStore(PERSONA_STORE).put(updatedPersona);
-  tx.objectStore(PERSONA_VERSION_STORE).put(version);
+  tx.objectStore(PERSONA_STORE).put(personaRecord);
+  tx.objectStore(PERSONA_VERSION_STORE).put(versionRecord);
   await transactionDone(tx);
 
   return {
@@ -482,67 +577,380 @@ export async function deletePrivatePersona(personaId: string): Promise<void> {
 export async function getPrivatePersona(personaId: string): Promise<PrivatePersona | null> {
   const db = await openPrivateDb();
   const tx = db.transaction([PERSONA_STORE, PERSONA_VERSION_STORE], "readonly");
-  const persona = await requestResult<Omit<PrivatePersona, "current_version"> | undefined>(
+  const personaRecord = await requestResult<
+    PrivateStoreRecord | Omit<PrivatePersona, "current_version"> | undefined
+  >(
     tx.objectStore(PERSONA_STORE).get(personaId)
   );
-  if (!persona) {
+  if (!personaRecord) {
     await transactionDone(tx);
     return null;
   }
+  const persona = await readPrivateRecord<Omit<PrivatePersona, "current_version">>(personaRecord);
 
-  const version = await requestResult<PrivatePersonaVersion | undefined>(
+  const versionRecord = await requestResult<PrivateStoreRecord | PrivatePersonaVersion | undefined>(
     tx.objectStore(PERSONA_VERSION_STORE).get(persona.current_version_id)
   );
   await transactionDone(tx);
+  const version = versionRecord
+    ? await readPrivateRecord<PrivatePersonaVersion>(versionRecord)
+    : null;
   return version ? { ...persona, current_version: version } : null;
 }
 
 async function listPrivatePersonaVersions(personaId: string): Promise<PrivatePersonaVersion[]> {
   const db = await openPrivateDb();
   const tx = db.transaction(PERSONA_VERSION_STORE, "readonly");
-  const versions = await requestResult<PrivatePersonaVersion[]>(
+  const records = await requestResult<Array<PrivateStoreRecord | PrivatePersonaVersion>>(
     tx.objectStore(PERSONA_VERSION_STORE).index("persona_id").getAll(personaId)
   );
   await transactionDone(tx);
+  const versions = await Promise.all(
+    records.map((record) => readPrivateRecord<PrivatePersonaVersion>(record))
+  );
   return versions.sort((left, right) => left.version_number - right.version_number);
 }
 
 async function openPrivateDb(): Promise<IDBDatabase> {
   if (!dbPromise) {
     dbPromise = new Promise((resolve, reject) => {
-      const request = indexedDB.open(DB_NAME, DB_VERSION);
+      const request = indexedDB.open(privateDbName(), DB_VERSION);
       request.onerror = () => reject(request.error ?? new Error("Failed to open private storage"));
       request.onupgradeneeded = () => {
         const db = request.result;
-        if (!db.objectStoreNames.contains(CHAT_STORE)) {
-          db.createObjectStore(CHAT_STORE, { keyPath: "id" });
-        }
-        if (!db.objectStoreNames.contains(MESSAGE_STORE)) {
-          const messageStore = db.createObjectStore(MESSAGE_STORE, { keyPath: "id" });
-          messageStore.createIndex("chat_id", "chat_id", { unique: false });
-        }
-        if (!db.objectStoreNames.contains(PERSONA_STORE)) {
-          db.createObjectStore(PERSONA_STORE, { keyPath: "id" });
-        }
-        if (!db.objectStoreNames.contains(PERSONA_VERSION_STORE)) {
-          const personaVersionStore = db.createObjectStore(PERSONA_VERSION_STORE, {
-            keyPath: "id"
-          });
-          personaVersionStore.createIndex("persona_id", "persona_id", { unique: false });
-        }
+        ensurePrivateStores(db);
       };
       request.onsuccess = () => resolve(request.result);
     });
   }
 
-  return dbPromise;
+  const db = await dbPromise;
+  if (!legacyMigrationPromise) {
+    legacyMigrationPromise = migrateLegacyPrivateDb(db).catch(() => undefined);
+  }
+  await legacyMigrationPromise;
+  return db;
 }
 
-async function getAll<T>(db: IDBDatabase, storeName: string): Promise<T[]> {
+function privateDbName() {
+  if (!currentUserId) {
+    throw new Error("Private storage is not ready");
+  }
+
+  return `${DB_NAME_PREFIX}-${currentUserId}`;
+}
+
+function ensurePrivateStores(db: IDBDatabase) {
+  if (!db.objectStoreNames.contains(CHAT_STORE)) {
+    db.createObjectStore(CHAT_STORE, { keyPath: "id" });
+  }
+  if (!db.objectStoreNames.contains(MESSAGE_STORE)) {
+    const messageStore = db.createObjectStore(MESSAGE_STORE, { keyPath: "id" });
+    messageStore.createIndex("chat_id", "chat_id", { unique: false });
+  }
+  if (!db.objectStoreNames.contains(PERSONA_STORE)) {
+    db.createObjectStore(PERSONA_STORE, { keyPath: "id" });
+  }
+  if (!db.objectStoreNames.contains(PERSONA_VERSION_STORE)) {
+    const personaVersionStore = db.createObjectStore(PERSONA_VERSION_STORE, {
+      keyPath: "id"
+    });
+    personaVersionStore.createIndex("persona_id", "persona_id", { unique: false });
+  }
+}
+
+async function migrateLegacyPrivateDb(targetDb: IDBDatabase) {
+  if (privateDbName() === LEGACY_DB_NAME) {
+    return;
+  }
+
+  const targetChats = await getAllRaw(targetDb, CHAT_STORE);
+  const targetMessages = await getAllRaw(targetDb, MESSAGE_STORE);
+  const targetPersonas = await getAllRaw(targetDb, PERSONA_STORE);
+  const targetVersions = await getAllRaw(targetDb, PERSONA_VERSION_STORE);
+  if (
+    targetChats.length > 0 ||
+    targetMessages.length > 0 ||
+    targetPersonas.length > 0 ||
+    targetVersions.length > 0
+  ) {
+    return;
+  }
+
+  const legacyDb = await openDbByName(LEGACY_DB_NAME);
+  try {
+    const [chats, messages, personas, versions] = await Promise.all([
+      getAllRaw(legacyDb, CHAT_STORE),
+      getAllRaw(legacyDb, MESSAGE_STORE),
+      getAllRaw(legacyDb, PERSONA_STORE),
+      getAllRaw(legacyDb, PERSONA_VERSION_STORE)
+    ]);
+    if (
+      chats.length === 0 &&
+      messages.length === 0 &&
+      personas.length === 0 &&
+      versions.length === 0
+    ) {
+      return;
+    }
+
+    const chatRecords = await Promise.all(
+      chats.map(async (record) => {
+        const chat = await readPrivateRecord<PrivateChatDetail>(record);
+        return privateStoreRecord(chat, {
+          created_at: chat.created_at,
+          updated_at: chat.updated_at,
+          last_message_at: chat.last_message_at
+        });
+      })
+    );
+    const messageRecords = await Promise.all(
+      messages.map(async (record) => {
+        const message = await readPrivateRecord<PrivateChatMessage>(record);
+        return privateStoreRecord(message, {
+          chat_id: message.chat_id,
+          created_at: message.created_at,
+          updated_at: message.updated_at
+        });
+      })
+    );
+    const personaRecords = await Promise.all(
+      personas.map(async (record) => {
+        const persona = await readPrivateRecord<Omit<PrivatePersona, "current_version">>(record);
+        return privateStoreRecord(persona, {
+          created_at: persona.created_at,
+          updated_at: persona.updated_at
+        });
+      })
+    );
+    const versionRecords = await Promise.all(
+      versions.map(async (record) => {
+        const version = await readPrivateRecord<PrivatePersonaVersion>(record);
+        return privateStoreRecord(version, {
+          persona_id: version.persona_id,
+          created_at: version.created_at
+        });
+      })
+    );
+
+    const tx = targetDb.transaction(
+      [CHAT_STORE, MESSAGE_STORE, PERSONA_STORE, PERSONA_VERSION_STORE],
+      "readwrite"
+    );
+    for (const record of chatRecords) {
+      tx.objectStore(CHAT_STORE).put(record);
+    }
+    for (const record of messageRecords) {
+      tx.objectStore(MESSAGE_STORE).put(record);
+    }
+    for (const record of personaRecords) {
+      tx.objectStore(PERSONA_STORE).put(record);
+    }
+    for (const record of versionRecords) {
+      tx.objectStore(PERSONA_VERSION_STORE).put(record);
+    }
+    await transactionDone(tx);
+  } finally {
+    legacyDb.close();
+  }
+
+  await deleteDbByName(LEGACY_DB_NAME).catch(() => undefined);
+}
+
+function openDbByName(name: string): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(name, DB_VERSION);
+    request.onerror = () => reject(request.error ?? new Error("Failed to open private storage"));
+    request.onupgradeneeded = () => {
+      ensurePrivateStores(request.result);
+    };
+    request.onsuccess = () => resolve(request.result);
+  });
+}
+
+function deleteDbByName(name: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.deleteDatabase(name);
+    request.onerror = () => reject(request.error ?? new Error("Failed to delete private storage"));
+    request.onsuccess = () => resolve();
+    request.onblocked = () => resolve();
+  });
+}
+
+async function getAllPrivateRecords<T>(db: IDBDatabase, storeName: string): Promise<T[]> {
+  const records = await getAllRaw(db, storeName);
+  return Promise.all(records.map((record) => readPrivateRecord<T>(record)));
+}
+
+async function getAllRaw(db: IDBDatabase, storeName: string): Promise<Array<PrivateStoreRecord | any>> {
   const tx = db.transaction(storeName, "readonly");
-  const values = await requestResult<T[]>(tx.objectStore(storeName).getAll());
+  const values = await requestResult<Array<PrivateStoreRecord | any>>(tx.objectStore(storeName).getAll());
   await transactionDone(tx);
   return values;
+}
+
+async function privateStoreRecord<T extends { id: string }>(
+  value: T,
+  metadata: Omit<PrivateStoreRecord, "id" | "encrypted_payload"> = {}
+): Promise<PrivateStoreRecord> {
+  return {
+    id: value.id,
+    ...metadata,
+    encrypted_payload: await encryptJson(value)
+  };
+}
+
+async function readPrivateRecord<T>(record: PrivateStoreRecord | T): Promise<T> {
+  if (hasEncryptedPayload(record)) {
+    return decryptJson<T>(record.encrypted_payload);
+  }
+
+  return record as T;
+}
+
+function hasEncryptedPayload(record: unknown): record is PrivateStoreRecord & { encrypted_payload: EncryptedPayload } {
+  return (
+    typeof record === "object" &&
+    record !== null &&
+    "encrypted_payload" in record &&
+    typeof (record as PrivateStoreRecord).encrypted_payload?.data === "string"
+  );
+}
+
+async function encryptJson(value: unknown): Promise<EncryptedPayload> {
+  const iv = randomBytes(12);
+  const encoded = new TextEncoder().encode(JSON.stringify(value));
+  const encrypted = await encryptBytes(encoded, iv);
+
+  return {
+    v: 1,
+    iv: bytesToBase64(iv),
+    data: bytesToBase64(new Uint8Array(encrypted))
+  };
+}
+
+async function decryptJson<T>(payload: EncryptedPayload): Promise<T> {
+  const iv = base64ToBytes(payload.iv);
+  const encrypted = base64ToBytes(payload.data);
+  const decrypted = await decryptBytes(encrypted, iv);
+  return JSON.parse(new TextDecoder().decode(decrypted)) as T;
+}
+
+async function encryptBytes(plaintext: Uint8Array, iv: Uint8Array): Promise<Uint8Array> {
+  if (globalThis.crypto?.subtle) {
+    const key = await privateWebCryptoKey();
+    const encrypted = await globalThis.crypto.subtle.encrypt(
+      { name: "AES-GCM", iv: bufferSource(iv) },
+      key,
+      bufferSource(plaintext)
+    );
+    return new Uint8Array(encrypted);
+  }
+
+  const key = await privateVaultKeyBytes();
+  return aesGcm(key, iv).encrypt(plaintext);
+}
+
+async function decryptBytes(encrypted: Uint8Array, iv: Uint8Array): Promise<Uint8Array> {
+  if (globalThis.crypto?.subtle) {
+    const key = await privateWebCryptoKey();
+    const decrypted = await globalThis.crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: bufferSource(iv) },
+      key,
+      bufferSource(encrypted)
+    );
+    return new Uint8Array(decrypted);
+  }
+
+  const key = await privateVaultKeyBytes();
+  return aesGcm(key, iv).decrypt(encrypted);
+}
+
+async function privateWebCryptoKey(): Promise<CryptoKey> {
+  if (!webCryptoKeyPromise) {
+    webCryptoKeyPromise = privateVaultKeyBytes().then((keyBytes) =>
+      globalThis.crypto.subtle.importKey(
+        "raw",
+        bufferSource(keyBytes),
+        "AES-GCM",
+        false,
+        ["encrypt", "decrypt"]
+      )
+    );
+  }
+
+  return webCryptoKeyPromise;
+}
+
+async function privateVaultKeyBytes(): Promise<Uint8Array> {
+  if (!vaultKeyBytesPromise) {
+    vaultKeyBytesPromise = privateVaultKey().then((vaultKey) =>
+      base64ToBytes(vaultKey.key_material)
+    );
+  }
+
+  return vaultKeyBytesPromise;
+}
+
+async function privateVaultKey(): Promise<PrivateVaultKeyResponse> {
+  if (!vaultKeyPromise) {
+    vaultKeyPromise = fetch("/api/private/vault-key", { credentials: "include" }).then(
+      async (response) => {
+        if (!response.ok) {
+          throw new Error(await responseErrorMessage(response));
+        }
+
+        const vaultKey = (await response.json()) as PrivateVaultKeyResponse;
+        if (currentUserId && vaultKey.user_id !== currentUserId) {
+          throw new Error("Private storage user changed");
+        }
+
+        return vaultKey;
+      }
+    );
+  }
+
+  return vaultKeyPromise;
+}
+
+async function responseErrorMessage(response: Response) {
+  try {
+    const body = (await response.json()) as { error?: { message?: string } };
+    return body.error?.message ?? `Request failed with status ${response.status}`;
+  } catch {
+    return `Request failed with status ${response.status}`;
+  }
+}
+
+function bytesToBase64(bytes: Uint8Array) {
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+
+  return btoa(binary);
+}
+
+function randomBytes(length: number) {
+  if (!globalThis.crypto?.getRandomValues) {
+    throw new Error("Private chats are unavailable in this browser context.");
+  }
+
+  return globalThis.crypto.getRandomValues(new Uint8Array(length));
+}
+
+function bufferSource(bytes: Uint8Array): BufferSource {
+  return bytes as unknown as BufferSource;
+}
+
+function base64ToBytes(value: string) {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+
+  return bytes;
 }
 
 function requestResult<T>(request: IDBRequest<T>): Promise<T> {
