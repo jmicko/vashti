@@ -138,6 +138,7 @@ fn router(state: AppState) -> Router {
                 .patch(chats::handlers::update_chat)
                 .delete(chats::handlers::delete_chat),
         )
+        .route("/chats/{chat_id}/sync", get(chats::handlers::sync_chat))
         .route(
             "/chats/{chat_id}/active-root",
             patch(chats::handlers::set_active_root),

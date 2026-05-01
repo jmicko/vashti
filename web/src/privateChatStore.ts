@@ -2,11 +2,14 @@ import { gcm as aesGcm } from "@noble/ciphers/aes.js";
 
 const LEGACY_DB_NAME = "vashti-private-local";
 const DB_NAME_PREFIX = "vashti-private-local";
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const CHAT_STORE = "private_chats";
 const MESSAGE_STORE = "private_messages";
 const PERSONA_STORE = "private_personas";
 const PERSONA_VERSION_STORE = "private_persona_versions";
+const HOSTED_CHAT_CACHE_STORE = "hosted_chat_cache";
+const MODEL_CACHE_STORE = "model_cache";
+const MODEL_CACHE_ID = "model-picker";
 
 type PrivateVaultKeyResponse = {
   user_id: string;
@@ -169,6 +172,18 @@ export type SavePrivatePersonaParams = {
   toolPolicyJson?: string | null;
   sourcePersonaId?: string | null;
   sourcePersonaVersionId?: string | null;
+};
+
+export type CachedHostedChat<
+  TChat extends { id: string; updated_at: number },
+  TMessage
+> = {
+  id: string;
+  chat: TChat;
+  active_root_message_id: string | null;
+  messages: TMessage[];
+  updated_at: number;
+  cached_at: number;
 };
 
 let currentUserId: string | null = null;
@@ -440,6 +455,75 @@ export async function savePrivateMessages(messages: PrivateChatMessage[]): Promi
   await transactionDone(tx);
 }
 
+export async function getCachedHostedChat<
+  TChat extends { id: string; updated_at: number },
+  TMessage
+>(chatId: string): Promise<CachedHostedChat<TChat, TMessage> | null> {
+  const db = await openPrivateDb();
+  const tx = db.transaction(HOSTED_CHAT_CACHE_STORE, "readonly");
+  const record = await requestResult<
+    PrivateStoreRecord | CachedHostedChat<TChat, TMessage> | undefined
+  >(tx.objectStore(HOSTED_CHAT_CACHE_STORE).get(chatId));
+  await transactionDone(tx);
+  return record ? readPrivateRecord<CachedHostedChat<TChat, TMessage>>(record) : null;
+}
+
+export async function saveCachedHostedChat<
+  TChat extends { id: string; updated_at: number },
+  TMessage
+>({
+  chat,
+  active_root_message_id,
+  messages
+}: {
+  chat: TChat;
+  active_root_message_id: string | null;
+  messages: TMessage[];
+}): Promise<void> {
+  const cache: CachedHostedChat<TChat, TMessage> = {
+    id: chat.id,
+    chat,
+    active_root_message_id,
+    messages,
+    updated_at: chat.updated_at,
+    cached_at: unixTimestamp()
+  };
+  const db = await openPrivateDb();
+  const record = await privateStoreRecord(cache, {
+    updated_at: cache.updated_at
+  });
+  const tx = db.transaction(HOSTED_CHAT_CACHE_STORE, "readwrite");
+  tx.objectStore(HOSTED_CHAT_CACHE_STORE).put(record);
+  await transactionDone(tx);
+}
+
+export async function getCachedModelState<T>(): Promise<T | null> {
+  const db = await openPrivateDb();
+  const tx = db.transaction(MODEL_CACHE_STORE, "readonly");
+  const record = await requestResult<
+    PrivateStoreRecord | { id: string; state: T; cached_at: number } | undefined
+  >(tx.objectStore(MODEL_CACHE_STORE).get(MODEL_CACHE_ID));
+  await transactionDone(tx);
+  if (!record) {
+    return null;
+  }
+
+  const cache = await readPrivateRecord<{ id: string; state: T; cached_at: number }>(record);
+  return cache.state;
+}
+
+export async function saveCachedModelState<T>(state: T): Promise<void> {
+  const db = await openPrivateDb();
+  const record = await privateStoreRecord({
+    id: MODEL_CACHE_ID,
+    state,
+    cached_at: unixTimestamp()
+  });
+  const tx = db.transaction(MODEL_CACHE_STORE, "readwrite");
+  tx.objectStore(MODEL_CACHE_STORE).put(record);
+  await transactionDone(tx);
+}
+
 export async function listPrivatePersonas(): Promise<PrivatePersona[]> {
   const db = await openPrivateDb();
   const [personas, versions] = await Promise.all([
@@ -656,6 +740,12 @@ function ensurePrivateStores(db: IDBDatabase) {
       keyPath: "id"
     });
     personaVersionStore.createIndex("persona_id", "persona_id", { unique: false });
+  }
+  if (!db.objectStoreNames.contains(HOSTED_CHAT_CACHE_STORE)) {
+    db.createObjectStore(HOSTED_CHAT_CACHE_STORE, { keyPath: "id" });
+  }
+  if (!db.objectStoreNames.contains(MODEL_CACHE_STORE)) {
+    db.createObjectStore(MODEL_CACHE_STORE, { keyPath: "id" });
   }
 }
 

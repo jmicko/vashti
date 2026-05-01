@@ -52,6 +52,8 @@ import {
   createPrivateMessage,
   deletePrivatePersona,
   deletePrivateChat,
+  getCachedHostedChat,
+  getCachedModelState,
   getPrivateChat,
   listPrivatePersonas,
   listPrivateChats,
@@ -60,6 +62,8 @@ import {
   renamePrivateChat,
   resetPrivateStorageUser,
   savePrivateChat,
+  saveCachedHostedChat,
+  saveCachedModelState,
   savePrivateMessage,
   savePrivateMessages,
   setPrivateStorageUser,
@@ -179,6 +183,11 @@ type PersonasResponse = {
   personas: Persona[];
 };
 
+type ModelPickerCache = {
+  models: ModelsResponse;
+  personas: PersonasResponse;
+};
+
 type PersonaMutationResponse = {
   persona: Persona;
 };
@@ -241,6 +250,13 @@ type AttachmentInfo = {
   text_content?: string;
 };
 
+type ImageOpenHandler = (attachment: AttachmentInfo, attachments?: AttachmentInfo[]) => void;
+
+type ImageViewerState = {
+  attachments: AttachmentInfo[];
+  index: number;
+};
+
 type ComposerAttachment = AttachmentInfo & {
   status: "ready" | "uploaded" | "uploading" | "error";
   error?: string;
@@ -282,6 +298,13 @@ type ChatMessage = {
 type ListMessagesResponse = {
   active_root_message_id: string | null;
   messages: ChatMessage[];
+};
+
+type ChatSyncResponse = {
+  changed: boolean;
+  chat: ChatDetail;
+  active_root_message_id: string | null;
+  messages: ChatMessage[] | null;
 };
 
 type MessageResponse = {
@@ -830,7 +853,7 @@ function AppShell({
     useState<PrivateChatSummary | null>(null);
   const [isDeletingChat, setIsDeletingChat] = useState(false);
   const [isDeletingPrivateChat, setIsDeletingPrivateChat] = useState(false);
-  const [imageViewerAttachment, setImageViewerAttachmentState] = useState<AttachmentInfo | null>(null);
+  const [imageViewer, setImageViewerState] = useState<ImageViewerState | null>(null);
   const [queuedPrompt, setQueuedPrompt] = useState<
     ({ chatId: string } & ComposerSubmitPayload) | null
   >(null);
@@ -846,7 +869,7 @@ function AppShell({
   const currentPrivateChatId = route.page === "private-chat" ? route.chatId : null;
   const allowPrivatePersonaSelection =
     page === "private-chat" || (page === "chat" && !currentChatId && newChatMode === "private");
-  const imageViewerAttachmentRef = useRef<AttachmentInfo | null>(null);
+  const imageViewerRef = useRef<ImageViewerState | null>(null);
 
   useEffect(() => {
     routeRef.current = route;
@@ -872,9 +895,9 @@ function AppShell({
     };
   }, []);
 
-  function setImageViewerAttachment(attachment: AttachmentInfo | null) {
-    imageViewerAttachmentRef.current = attachment;
-    setImageViewerAttachmentState(attachment);
+  function setImageViewer(viewer: ImageViewerState | null) {
+    imageViewerRef.current = viewer;
+    setImageViewerState(viewer);
   }
 
   useEffect(() => {
@@ -898,15 +921,8 @@ function AppShell({
     }
   }
 
-  const loadModels = useCallback(async () => {
-    setIsLoadingModels(true);
-    setModelError(null);
-
-    try {
-      const [modelsResponse, personasResponse] = await Promise.all([
-        requestJson<ModelsResponse>("/api/models"),
-        requestJson<PersonasResponse>("/api/personas")
-      ]);
+  const applyModelPickerData = useCallback(
+    (modelsResponse: ModelsResponse, personasResponse: PersonasResponse) => {
       setModelGroups(modelsResponse.backends);
       setPersonas(personasResponse.personas);
       setSelectedModel((current) => {
@@ -924,15 +940,47 @@ function AppShell({
           ? current
           : values[0] ?? "";
       });
+    },
+    []
+  );
+
+  const loadModels = useCallback(async () => {
+    setIsLoadingModels(true);
+    setModelError(null);
+    let displayedCachedModels = false;
+
+    try {
+      const cached = await getCachedModelState<ModelPickerCache>();
+      if (cached) {
+        applyModelPickerData(cached.models, cached.personas);
+        displayedCachedModels = true;
+        setIsLoadingModels(false);
+      }
+    } catch {
+      // Model cache is an optimization. The live server fetch below remains authoritative.
+    }
+
+    try {
+      const [modelsResponse, personasResponse] = await Promise.all([
+        requestJson<ModelsResponse>("/api/models"),
+        requestJson<PersonasResponse>("/api/personas")
+      ]);
+      applyModelPickerData(modelsResponse, personasResponse);
+      await saveCachedModelState<ModelPickerCache>({
+        models: modelsResponse,
+        personas: personasResponse
+      }).catch(() => undefined);
     } catch (loadError) {
-      setModelGroups([]);
-      setPersonas([]);
-      setSelectedModel("");
+      if (!displayedCachedModels) {
+        setModelGroups([]);
+        setPersonas([]);
+        setSelectedModel("");
+      }
       setModelError(loadError instanceof Error ? loadError.message : "Failed to load models");
     } finally {
       setIsLoadingModels(false);
     }
-  }, []);
+  }, [applyModelPickerData]);
 
   useEffect(() => {
     void loadModels();
@@ -991,8 +1039,8 @@ function AppShell({
 
   useEffect(() => {
     function handlePopState() {
-      if (imageViewerAttachmentRef.current) {
-        setImageViewerAttachment(null);
+      if (imageViewerRef.current) {
+        setImageViewer(null);
         return;
       }
 
@@ -1016,8 +1064,14 @@ function AppShell({
     return () => window.removeEventListener("popstate", handlePopState);
   }, []);
 
-  function openImageViewer(attachment: AttachmentInfo) {
-    setImageViewerAttachment(attachment);
+  function openImageViewer(attachment: AttachmentInfo, attachments: AttachmentInfo[] = [attachment]) {
+    const imageAttachments = attachments.filter(isImageAttachment);
+    const viewerAttachments = imageAttachments.length > 0 ? imageAttachments : [attachment];
+    const index = Math.max(
+      0,
+      viewerAttachments.findIndex((viewerAttachment) => viewerAttachment.id === attachment.id)
+    );
+    setImageViewer({ attachments: viewerAttachments, index });
     if (!window.history.state?.vashtiImageViewer) {
       window.history.pushState(
         {
@@ -1034,10 +1088,22 @@ function AppShell({
 
   function closeImageViewer() {
     const shouldStepBack = Boolean(window.history.state?.vashtiImageViewer);
-    setImageViewerAttachment(null);
+    setImageViewer(null);
     if (shouldStepBack) {
       window.history.back();
     }
+  }
+
+  function setImageViewerIndex(index: number) {
+    const current = imageViewerRef.current;
+    if (!current) {
+      return;
+    }
+
+    setImageViewer({
+      ...current,
+      index: Math.min(Math.max(index, 0), current.attachments.length - 1)
+    });
   }
 
   function shouldGuardNavigation(currentRoute: AppRoute, nextRoute: AppRoute) {
@@ -1534,8 +1600,13 @@ function AppShell({
           onConfirm={() => void deleteSelectedPrivateChat()}
         />
       )}
-      {imageViewerAttachment && (
-        <ImageViewer attachment={imageViewerAttachment} onClose={closeImageViewer} />
+      {imageViewer && (
+        <ImageViewer
+          attachments={imageViewer.attachments}
+          index={imageViewer.index}
+          onClose={closeImageViewer}
+          onIndexChange={setImageViewerIndex}
+        />
       )}
     </main>
   );
@@ -2003,7 +2074,7 @@ function ChatView({
   selectedModelInfo: ModelInfo | null;
   personas: Persona[];
   onChatsChanged: () => Promise<void>;
-  onImageOpen: (attachment: AttachmentInfo) => void;
+  onImageOpen: ImageOpenHandler;
   onModelSelected: (value: string) => void;
   onQueuedPromptConsumed: () => void;
 }) {
@@ -2042,43 +2113,99 @@ function ChatView({
       ? "This chat includes images. Images may not be supported by this model."
       : null;
 
+  const applyLoadedChat = useCallback(
+    (nextChat: ChatDetail, activeRootMessageId: string | null, nextMessages: ChatMessage[]) => {
+      setChat({
+        ...nextChat,
+        active_root_message_id: activeRootMessageId
+      });
+      thinkingStartedAtRef.current.clear();
+      setThinkingDurations({});
+      setMessages(nextMessages);
+      const streamingAssistantId = streamingAssistantIdFromMessages(nextMessages);
+      setActiveAssistantId(streamingAssistantId);
+      setIsGenerating(Boolean(streamingAssistantId));
+      const latestModel = latestAssistantModelValue(
+        activePathMessages(nextMessages, activeRootMessageId)
+      );
+      onModelSelected(
+        latestModel ??
+          (nextChat.persona_version_id ? personaModelValue(nextChat.persona_version_id) : null) ??
+          modelValue(nextChat.default_backend_id, nextChat.default_model_name)
+      );
+    },
+    [onModelSelected]
+  );
+
   const loadChat = useCallback(async () => {
     scrollToBottomAfterLoadRef.current = true;
     setIsLoading(true);
     setLoadError(null);
+    let cachedChat: {
+      chat: ChatDetail;
+      active_root_message_id: string | null;
+      messages: ChatMessage[];
+      updated_at: number;
+    } | null = null;
+    let displayedCachedChat = false;
 
     try {
-      const [chatResponse, messageResponse] = await Promise.all([
-        requestJson<ChatResponse>(`/api/chats/${chatId}`),
-        requestJson<ListMessagesResponse>(`/api/chats/${chatId}/messages`)
-      ]);
+      cachedChat = await getCachedHostedChat<ChatDetail, ChatMessage>(chatId);
+      if (cachedChat) {
+        applyLoadedChat(
+          cachedChat.chat,
+          cachedChat.active_root_message_id,
+          cachedChat.messages
+        );
+        displayedCachedChat = true;
+        setIsLoading(false);
+      }
+    } catch {
+      // Hosted chat cache is best-effort. The server remains authoritative.
+    }
 
-      setChat({
-        ...chatResponse.chat,
-        active_root_message_id: messageResponse.active_root_message_id
-      });
-      thinkingStartedAtRef.current.clear();
-      setThinkingDurations({});
-      setMessages(messageResponse.messages);
-      const streamingAssistantId = streamingAssistantIdFromMessages(messageResponse.messages);
-      setActiveAssistantId(streamingAssistantId);
-      setIsGenerating(Boolean(streamingAssistantId));
-      const latestModel = latestAssistantModelValue(
-        activePathMessages(messageResponse.messages, messageResponse.active_root_message_id)
+    try {
+      const syncUrl =
+        cachedChat?.updated_at === undefined
+          ? `/api/chats/${chatId}/sync`
+          : `/api/chats/${chatId}/sync?known_updated_at=${cachedChat.updated_at}`;
+      const syncResponse = await requestJson<ChatSyncResponse>(syncUrl);
+      if (!syncResponse.changed && cachedChat) {
+        applyLoadedChat(
+          syncResponse.chat,
+          syncResponse.active_root_message_id,
+          cachedChat.messages
+        );
+        return;
+      }
+
+      const nextMessages = syncResponse.messages;
+      if (!nextMessages) {
+        throw new Error("Chat sync did not include messages");
+      }
+
+      scrollToBottomAfterLoadRef.current = true;
+      applyLoadedChat(
+        syncResponse.chat,
+        syncResponse.active_root_message_id,
+        nextMessages
       );
-      onModelSelected(
-        latestModel ??
-          (chatResponse.chat.persona_version_id
-            ? personaModelValue(chatResponse.chat.persona_version_id)
-            : null) ??
-          modelValue(chatResponse.chat.default_backend_id, chatResponse.chat.default_model_name)
-      );
+      await saveCachedHostedChat<ChatDetail, ChatMessage>({
+        chat: {
+          ...syncResponse.chat,
+          active_root_message_id: syncResponse.active_root_message_id
+        },
+        active_root_message_id: syncResponse.active_root_message_id,
+        messages: nextMessages
+      }).catch(() => undefined);
     } catch (chatError) {
-      setLoadError(chatError instanceof Error ? chatError.message : "Failed to load chat");
+      if (!displayedCachedChat) {
+        setLoadError(chatError instanceof Error ? chatError.message : "Failed to load chat");
+      }
     } finally {
       setIsLoading(false);
     }
-  }, [chatId, onModelSelected]);
+  }, [applyLoadedChat, chatId]);
 
   const refreshStreamingMessages = useCallback(async () => {
     try {
@@ -2097,6 +2224,17 @@ function ChatView({
       setIsGenerating(Boolean(streamingAssistantId));
 
       if (!streamingAssistantId) {
+        const chatResponse = await requestJson<ChatResponse>(`/api/chats/${chatId}`);
+        const nextChat = {
+          ...chatResponse.chat,
+          active_root_message_id: messageResponse.active_root_message_id
+        };
+        setChat(nextChat);
+        await saveCachedHostedChat<ChatDetail, ChatMessage>({
+          chat: nextChat,
+          active_root_message_id: messageResponse.active_root_message_id,
+          messages: messageResponse.messages
+        }).catch(() => undefined);
         await onChatsChanged();
       }
     } catch (refreshError) {
@@ -2105,6 +2243,18 @@ function ChatView({
       );
     }
   }, [chatId, onChatsChanged]);
+
+  useEffect(() => {
+    if (!chat || isLoading || isGenerating) {
+      return;
+    }
+
+    void saveCachedHostedChat<ChatDetail, ChatMessage>({
+      chat,
+      active_root_message_id: chat.active_root_message_id,
+      messages
+    }).catch(() => undefined);
+  }, [chat, isGenerating, isLoading, messages]);
 
   const streamAssistantResponse = useCallback(
     async (path: string, body: unknown) => {
@@ -2330,16 +2480,30 @@ function ChatView({
       return;
     }
 
+    const messageList = list;
     const lastMessage = visibleMessages[visibleMessages.length - 1];
     const lastMessageElement = lastMessage
-      ? list.querySelector<HTMLElement>(`[data-message-id="${lastMessage.id}"]`)
+      ? messageList.querySelector<HTMLElement>(`[data-message-id="${lastMessage.id}"]`)
       : null;
-    if (lastMessageElement) {
-      lastMessageElement.scrollIntoView({ block: "end" });
-    } else {
-      list.scrollTop = 0;
+    function scrollToLatestMessage() {
+      if (lastMessageElement) {
+        scrollMessageTopIntoListView(messageList, lastMessageElement);
+      } else {
+        messageList.scrollTop = 0;
+      }
     }
+
+    scrollToLatestMessage();
+    const frame = window.requestAnimationFrame(scrollToLatestMessage);
+    const settleTimeout = window.setTimeout(scrollToLatestMessage, 120);
+    const lateSettleTimeout = window.setTimeout(scrollToLatestMessage, 420);
     scrollToBottomAfterLoadRef.current = false;
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(settleTimeout);
+      window.clearTimeout(lateSettleTimeout);
+    };
   }, [chatId, isLoading, visibleMessages]);
 
   useLayoutEffect(() => {
@@ -2985,7 +3149,7 @@ function PrivateChatView({
   selectedModel: string;
   selectedModelInfo: ModelInfo | null;
   privatePersonas: PrivatePersona[];
-  onImageOpen: (attachment: AttachmentInfo) => void;
+  onImageOpen: ImageOpenHandler;
   onModelSelected: (value: string) => void;
   onPrivateChatsChanged: () => Promise<void>;
   onQueuedPromptConsumed: () => void;
@@ -3202,16 +3366,30 @@ function PrivateChatView({
       return;
     }
 
+    const messageList = list;
     const lastMessage = visibleMessages[visibleMessages.length - 1];
     const lastMessageElement = lastMessage
-      ? list.querySelector<HTMLElement>(`[data-message-id="${lastMessage.id}"]`)
+      ? messageList.querySelector<HTMLElement>(`[data-message-id="${lastMessage.id}"]`)
       : null;
-    if (lastMessageElement) {
-      lastMessageElement.scrollIntoView({ block: "end" });
-    } else {
-      list.scrollTop = 0;
+    function scrollToLatestMessage() {
+      if (lastMessageElement) {
+        scrollMessageTopIntoListView(messageList, lastMessageElement);
+      } else {
+        messageList.scrollTop = 0;
+      }
     }
+
+    scrollToLatestMessage();
+    const frame = window.requestAnimationFrame(scrollToLatestMessage);
+    const settleTimeout = window.setTimeout(scrollToLatestMessage, 120);
+    const lateSettleTimeout = window.setTimeout(scrollToLatestMessage, 420);
     scrollToBottomAfterLoadRef.current = false;
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(settleTimeout);
+      window.clearTimeout(lateSettleTimeout);
+    };
   }, [chatId, isLoading, visibleMessages]);
 
   useLayoutEffect(() => {
@@ -4308,7 +4486,7 @@ function MessageBubble({
     contentText: string,
     attachments?: ComposerAttachment[]
   ) => Promise<void>;
-  onImageOpen?: (attachment: AttachmentInfo) => void;
+  onImageOpen?: ImageOpenHandler;
   onRemoveAttachment?: (attachment: ComposerAttachment) => Promise<void>;
   onUploadAttachment?: (file: File) => Promise<ComposerAttachment> | ComposerAttachment;
   onRegenerate: (message: ChatMessage) => Promise<void>;
@@ -5112,6 +5290,14 @@ function compareVersionsByCreatedAt(left: MessageVersion, right: MessageVersion)
   );
 }
 
+function scrollMessageTopIntoListView(list: HTMLElement, messageElement: HTMLElement) {
+  const styles = window.getComputedStyle(list);
+  const topPadding = Number.parseFloat(styles.paddingTop) || 0;
+  const topOffset =
+    messageElement.getBoundingClientRect().top - list.getBoundingClientRect().top - topPadding;
+  list.scrollTop += topOffset;
+}
+
 function usesTouchViewport() {
   return (
     typeof window.matchMedia === "function" &&
@@ -5446,7 +5632,7 @@ function MessageAttachments({
   onImageOpen
 }: {
   attachments: AttachmentInfo[];
-  onImageOpen?: (attachment: AttachmentInfo) => void;
+  onImageOpen?: ImageOpenHandler;
 }) {
   if (attachments.length === 0) {
     return null;
@@ -5459,23 +5645,7 @@ function MessageAttachments({
     <>
       <div className="message-attachments" aria-label="Message attachments">
         {imageAttachments.length > 0 && (
-          <div className="message-image-list">
-            {imageAttachments.map((attachment) => (
-              <button
-                key={attachment.id}
-                type="button"
-                className="message-image-button"
-                aria-label={`Open ${attachment.original_filename}`}
-                onClick={() => onImageOpen?.(attachment)}
-              >
-                <img
-                  src={attachmentDisplayUrl(attachment)}
-                  alt={attachment.original_filename}
-                  loading="lazy"
-                />
-              </button>
-            ))}
-          </div>
+          <MessageImageCarousel attachments={imageAttachments} onImageOpen={onImageOpen} />
         )}
         {fileAttachments.map((attachment) => (
           <a
@@ -5495,31 +5665,237 @@ function MessageAttachments({
   );
 }
 
-function ImageViewer({
-  attachment,
-  onClose
+function MessageImageCarousel({
+  attachments,
+  onImageOpen
 }: {
-  attachment: AttachmentInfo;
-  onClose: () => void;
+  attachments: AttachmentInfo[];
+  onImageOpen?: ImageOpenHandler;
 }) {
+  const [carouselMetrics, setCarouselMetrics] = useState({
+    hasOverflow: false,
+    canPrevious: false,
+    canNext: false,
+    hiddenRightCount: 0
+  });
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const pointerStartXRef = useRef<number | null>(null);
+  const didSwipeRef = useRef(false);
+  const hasMultipleImages = attachments.length > 1;
+
+  const updateCarouselMetrics = useCallback(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) {
+      return;
+    }
+
+    const viewRight = viewport.scrollLeft + viewport.clientWidth;
+    const children = Array.from(viewport.children) as HTMLElement[];
+    const nextMetrics = {
+      hasOverflow: viewport.scrollWidth > viewport.clientWidth + 1,
+      canPrevious: viewport.scrollLeft > 1,
+      canNext: viewport.scrollWidth - viewRight > 1,
+      hiddenRightCount: children.filter(
+        (child) => child.offsetLeft + child.offsetWidth > viewRight + 1
+      ).length
+    };
+    setCarouselMetrics((current) =>
+      current.hasOverflow === nextMetrics.hasOverflow &&
+      current.canPrevious === nextMetrics.canPrevious &&
+      current.canNext === nextMetrics.canNext &&
+      current.hiddenRightCount === nextMetrics.hiddenRightCount
+        ? current
+        : nextMetrics
+    );
+  }, []);
+
+  useLayoutEffect(() => {
+    updateCarouselMetrics();
+
+    const viewport = viewportRef.current;
+    if (!viewport || typeof ResizeObserver === "undefined") {
+      return;
+    }
+
+    const resizeObserver = new ResizeObserver(updateCarouselMetrics);
+    resizeObserver.observe(viewport);
+    for (const child of Array.from(viewport.children)) {
+      resizeObserver.observe(child);
+    }
+
+    return () => resizeObserver.disconnect();
+  }, [attachments, updateCarouselMetrics]);
+
+  function showPrevious() {
+    const viewport = viewportRef.current;
+    if (!viewport) {
+      return;
+    }
+
+    const children = Array.from(viewport.children) as HTMLElement[];
+    const currentFirstIndex = children.findIndex(
+      (child) => child.offsetLeft + child.offsetWidth > viewport.scrollLeft + 1
+    );
+    const previous = children[Math.max((currentFirstIndex < 0 ? 0 : currentFirstIndex) - 1, 0)];
+    viewport.scrollTo({ left: previous?.offsetLeft ?? 0, behavior: "smooth" });
+  }
+
+  function showNext() {
+    const viewport = viewportRef.current;
+    if (!viewport) {
+      return;
+    }
+
+    const children = Array.from(viewport.children) as HTMLElement[];
+    const next = children.find((child) => child.offsetLeft > viewport.scrollLeft + 1);
+    viewport.scrollTo({
+      left: next?.offsetLeft ?? viewport.scrollWidth - viewport.clientWidth,
+      behavior: "smooth"
+    });
+  }
+
+  function handlePointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    pointerStartXRef.current = event.clientX;
+    didSwipeRef.current = false;
+  }
+
+  function handlePointerUp(event: ReactPointerEvent<HTMLDivElement>) {
+    const startX = pointerStartXRef.current;
+    pointerStartXRef.current = null;
+    if (startX === null || !hasMultipleImages || !carouselMetrics.hasOverflow) {
+      return;
+    }
+
+    const deltaX = event.clientX - startX;
+    if (Math.abs(deltaX) < 36) {
+      return;
+    }
+
+    didSwipeRef.current = true;
+    if (deltaX > 0) {
+      showPrevious();
+    } else {
+      showNext();
+    }
+  }
+
+  if (attachments.length === 0) {
+    return null;
+  }
+
+  return (
+    <div
+      className="message-image-carousel"
+      onPointerDown={handlePointerDown}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={() => {
+        pointerStartXRef.current = null;
+      }}
+    >
+      <div className="message-image-track" ref={viewportRef} onScroll={updateCarouselMetrics}>
+        {attachments.map((attachment) => (
+          <button
+            key={attachment.id}
+            type="button"
+            className="message-image-button"
+            aria-label={`Open ${attachment.original_filename}`}
+            onClick={() => {
+              if (didSwipeRef.current) {
+                didSwipeRef.current = false;
+                return;
+              }
+              onImageOpen?.(attachment, attachments);
+            }}
+          >
+            <img
+              src={attachmentDisplayUrl(attachment)}
+              alt={attachment.original_filename}
+              loading="lazy"
+              onLoad={updateCarouselMetrics}
+            />
+          </button>
+        ))}
+      </div>
+      {hasMultipleImages && carouselMetrics.hasOverflow && (
+        <>
+          {carouselMetrics.canPrevious && (
+            <button
+              type="button"
+              className="message-image-nav message-image-nav-previous"
+              aria-label="Previous image"
+              onClick={showPrevious}
+            >
+              <ChevronLeft />
+            </button>
+          )}
+          {carouselMetrics.canNext && (
+            <button
+              type="button"
+              className="message-image-nav message-image-nav-next"
+              aria-label="Next image"
+              onClick={showNext}
+            >
+              <ChevronRight />
+            </button>
+          )}
+          {carouselMetrics.hiddenRightCount > 0 && (
+            <span className="message-image-count" aria-label={`${attachments.length} images`}>
+              <ImageIcon />
+              {attachments.length}
+            </span>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function ImageViewer({
+  attachments,
+  index,
+  onClose,
+  onIndexChange
+}: {
+  attachments: AttachmentInfo[];
+  index: number;
+  onClose: () => void;
+  onIndexChange: (index: number) => void;
+}) {
+  const attachment = attachments[index] ?? attachments[0];
+  const canPrevious = index > 0;
+  const canNext = index < attachments.length - 1;
+
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
         onClose();
+      } else if (event.key === "ArrowLeft" && canPrevious) {
+        onIndexChange(index - 1);
+      } else if (event.key === "ArrowRight" && canNext) {
+        onIndexChange(index + 1);
       }
     }
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
+  }, [canNext, canPrevious, index, onClose, onIndexChange]);
 
   function closeViewer() {
     onClose();
   }
 
+  if (!attachment) {
+    return null;
+  }
+
   return (
     <div className="image-viewer-backdrop" role="presentation" onClick={closeViewer}>
       <div className="image-viewer-top">
+        {attachments.length > 1 && (
+          <span className="image-viewer-count">
+            {index + 1}/{attachments.length}
+          </span>
+        )}
         <button
           type="button"
           aria-label="Close image"
@@ -5538,6 +5914,32 @@ function ImageViewer({
           alt={attachment.original_filename}
           onClick={(event) => event.stopPropagation()}
         />
+        {canPrevious && (
+          <button
+            type="button"
+            className="image-viewer-nav image-viewer-nav-previous"
+            aria-label="Previous image"
+            onClick={(event) => {
+              event.stopPropagation();
+              onIndexChange(index - 1);
+            }}
+          >
+            <ChevronLeft />
+          </button>
+        )}
+        {canNext && (
+          <button
+            type="button"
+            className="image-viewer-nav image-viewer-nav-next"
+            aria-label="Next image"
+            onClick={(event) => {
+              event.stopPropagation();
+              onIndexChange(index + 1);
+            }}
+          >
+            <ChevronRight />
+          </button>
+        )}
       </div>
     </div>
   );

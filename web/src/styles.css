@@ -1187,17 +1187,44 @@ textarea {
   overflow-wrap: anywhere;
 }
 
-.message-image-list {
+.message-image-carousel {
+  position: relative;
+  flex: 1 1 100%;
   width: 100%;
-  display: grid;
-  gap: 10px;
+  height: 180px;
+  max-width: 100%;
+  min-height: 0;
+  display: flex;
+  justify-content: flex-end;
+  overflow: hidden;
+  touch-action: pan-y;
+}
+
+.message-image-track {
+  width: max-content;
+  max-width: 100%;
+  height: 100%;
+  min-width: 0;
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-behavior: smooth;
+  scrollbar-width: none;
+}
+
+.message-image-track::-webkit-scrollbar {
+  display: none;
 }
 
 .message-image-button {
-  width: fit-content;
-  max-width: 100%;
+  flex: 0 0 auto;
+  width: auto;
+  height: 100%;
   min-height: 0;
   border-color: var(--line-soft);
+  border-radius: 6px;
   background: transparent;
   box-shadow: none;
   padding: 0;
@@ -1211,12 +1238,59 @@ textarea {
 
 .message-image-button img {
   display: block;
-  max-width: min(100%, 560px);
-  max-height: min(58vh, 540px);
+  height: 100%;
   width: auto;
-  height: auto;
+  max-width: none;
   border-radius: 6px;
-  object-fit: contain;
+}
+
+.message-image-nav {
+  position: absolute;
+  top: 50%;
+  width: 34px;
+  min-width: 34px;
+  min-height: 34px;
+  border-color: var(--line);
+  background: rgba(7, 11, 7, 0.82);
+  color: var(--accent);
+  box-shadow: 0 0 14px rgba(0, 0, 0, 0.52);
+  padding: 0;
+  transform: translateY(-50%);
+}
+
+.message-image-nav:hover {
+  background: rgba(113, 255, 47, 0.16);
+}
+
+.message-image-nav-previous {
+  left: 8px;
+}
+
+.message-image-nav-next {
+  right: 8px;
+}
+
+.message-image-count {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  background: rgba(7, 11, 7, 0.82);
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 7px;
+}
+
+.message-image-count svg {
+  width: 13px;
+  height: 13px;
+  color: var(--accent);
 }
 
 .image-viewer-backdrop {
@@ -1238,7 +1312,9 @@ textarea {
   width: min(100%, 1200px);
   justify-self: center;
   display: flex;
+  align-items: center;
   justify-content: flex-end;
+  gap: 10px;
 }
 
 .image-viewer-top button {
@@ -1247,7 +1323,19 @@ textarea {
   padding: 0;
 }
 
+.image-viewer-count {
+  margin-right: auto;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  background: rgba(7, 11, 7, 0.82);
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  padding: 5px 8px;
+}
+
 .image-viewer-body {
+  position: relative;
   min-width: 0;
   min-height: 0;
   display: grid;
@@ -1259,6 +1347,32 @@ textarea {
   max-width: min(100%, 1200px);
   max-height: calc(var(--app-height) - 78px);
   object-fit: contain;
+}
+
+.image-viewer-nav {
+  position: absolute;
+  top: 50%;
+  width: 46px;
+  min-width: 46px;
+  min-height: 46px;
+  border-color: var(--line);
+  background: rgba(7, 11, 7, 0.82);
+  color: var(--accent);
+  box-shadow: 0 0 18px rgba(0, 0, 0, 0.56);
+  padding: 0;
+  transform: translateY(-50%);
+}
+
+.image-viewer-nav:hover {
+  background: rgba(113, 255, 47, 0.16);
+}
+
+.image-viewer-nav-previous {
+  left: 10px;
+}
+
+.image-viewer-nav-next {
+  right: 10px;
 }
 
 .message-markdown {
@@ -1919,6 +2033,10 @@ textarea {
 
   .primary-action span {
     display: none;
+  }
+
+  .message-image-carousel {
+    height: 132px;
   }
 
   .settings-page {

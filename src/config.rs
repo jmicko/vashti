@@ -32,7 +32,7 @@ impl Config {
         };
 
         let bind_addr = env::var("VASHTI_BIND")
-            .unwrap_or_else(|_| "0.0.0.0:8080".to_string())
+            .unwrap_or_else(|_| "0.0.0.0:7771".to_string())
             .parse()?;
 
         let cookie_secure = env::var("VASHTI_COOKIE_SECURE")

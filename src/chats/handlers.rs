@@ -1,7 +1,7 @@
 use axum::{
     Json,
     body::{Body, Bytes},
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{HeaderValue, StatusCode, header},
     response::Response,
 };
@@ -52,6 +52,19 @@ pub struct UpdateChatRequest {
 #[derive(Debug, Serialize)]
 pub struct ChatResponse {
     pub chat: ChatDetail,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SyncChatQuery {
+    pub known_updated_at: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SyncChatResponse {
+    pub changed: bool,
+    pub chat: ChatDetail,
+    pub active_root_message_id: Option<String>,
+    pub messages: Option<Vec<ChatMessage>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -210,6 +223,38 @@ pub async fn get_chat(
     let chat = service::get_chat(&state.db, &user.id, &chat_id).await?;
 
     Ok(Json(ChatResponse { chat }))
+}
+
+pub async fn sync_chat(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Path(chat_id): Path<String>,
+    Query(query): Query<SyncChatQuery>,
+) -> Result<Json<SyncChatResponse>, ApiError> {
+    let user =
+        auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
+    let chat = service::get_chat(&state.db, &user.id, &chat_id).await?;
+
+    if query.known_updated_at == Some(chat.updated_at) {
+        return Ok(Json(SyncChatResponse {
+            changed: false,
+            active_root_message_id: chat.active_root_message_id.clone(),
+            chat,
+            messages: None,
+        }));
+    }
+
+    let (active_root_message_id, mut messages) =
+        service::list_messages(&state.db, &user.id, &chat_id).await?;
+    let progress = state.generation_progress.lock().await;
+    overlay_generation_progress(&mut messages, &user.id, &chat_id, &progress);
+
+    Ok(Json(SyncChatResponse {
+        changed: true,
+        chat,
+        active_root_message_id,
+        messages: Some(messages),
+    }))
 }
 
 pub async fn update_chat(

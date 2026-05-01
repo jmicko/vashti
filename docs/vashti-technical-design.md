@@ -578,8 +578,8 @@ On startup, the server should:
 
 Default bind behavior:
 
-* default to `0.0.0.0:8080` so the app can be reached from the local network
-* allow override with `VASHTI_BIND`, for example `VASHTI_BIND=127.0.0.1:8080` when running only behind a local reverse proxy
+* default to `0.0.0.0:7771` so the app can be reached from the local network
+* allow override with `VASHTI_BIND`, for example `VASHTI_BIND=127.0.0.1:7771` when running only behind a local reverse proxy
 * external exposure should still be handled deliberately through a reverse proxy, firewall rules, TLS, and normal account/session controls
 
 ### 5.2 Localhost Ollama detection
