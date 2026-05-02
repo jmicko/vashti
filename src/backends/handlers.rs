@@ -71,6 +71,45 @@ pub struct ModelResponse {
     pub capabilities: Vec<String>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct AdminModelsResponse {
+    pub backends: Vec<AdminBackendModelsResponse>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AdminBackendModelsResponse {
+    pub backend: BackendSummaryResponse,
+    pub models: Vec<AdminModelResponse>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AdminModelResponse {
+    pub name: String,
+    pub supports_images: bool,
+    pub supports_thinking: bool,
+    pub capabilities: Vec<String>,
+    pub is_enabled: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateModelAvailabilityRequest {
+    pub backend_id: String,
+    pub model_name: String,
+    pub is_enabled: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BulkUpdateModelAvailabilityRequest {
+    pub backend_id: String,
+    pub model_names: Vec<String>,
+    pub is_enabled: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BulkModelAvailabilityResponse {
+    pub ok: bool,
+}
+
 pub async fn list_backends(
     State(state): State<AppState>,
     jar: CookieJar,
@@ -157,8 +196,11 @@ pub async fn list_models(
         {
             Ok(models) => {
                 service::record_backend_health(&state.db, &backend.id, "ok", None).await?;
+                let availability =
+                    service::model_availability_by_backend(&state.db, &backend.id).await?;
                 models
                     .into_iter()
+                    .filter(|model| availability.get(&model.name).copied().unwrap_or(true))
                     .map(|model| ModelResponse {
                         name: model.name,
                         supports_images: model.supports_images,
@@ -188,4 +230,87 @@ pub async fn list_models(
     Ok(Json(ModelsResponse {
         backends: response_backends,
     }))
+}
+
+pub async fn list_admin_models(
+    State(state): State<AppState>,
+    jar: CookieJar,
+) -> Result<Json<AdminModelsResponse>, ApiError> {
+    auth::service::require_admin(&state.db, &jar, &state.config.session_cookie_name).await?;
+
+    let mut response_backends = Vec::new();
+
+    for backend in service::list_enabled_backends(&state.db).await? {
+        let models = match ollama::client::fetch_models(&state.http_client, &backend.base_url).await
+        {
+            Ok(models) => {
+                service::record_backend_health(&state.db, &backend.id, "ok", None).await?;
+                let availability =
+                    service::model_availability_by_backend(&state.db, &backend.id).await?;
+                models
+                    .into_iter()
+                    .map(|model| AdminModelResponse {
+                        is_enabled: availability.get(&model.name).copied().unwrap_or(true),
+                        name: model.name,
+                        supports_images: model.supports_images,
+                        supports_thinking: model.supports_thinking,
+                        capabilities: model.capabilities,
+                    })
+                    .collect()
+            }
+            Err(error) => {
+                let message = error.to_string();
+                service::record_backend_health(&state.db, &backend.id, "error", Some(&message))
+                    .await?;
+                tracing::warn!(backend_id = %backend.id, base_url = %backend.base_url, error = %message, "failed to fetch Ollama models for admin model settings");
+                Vec::new()
+            }
+        };
+
+        response_backends.push(AdminBackendModelsResponse {
+            backend: BackendSummaryResponse {
+                id: backend.id,
+                name: backend.name,
+            },
+            models,
+        });
+    }
+
+    Ok(Json(AdminModelsResponse {
+        backends: response_backends,
+    }))
+}
+
+pub async fn update_model_availability(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Json(payload): Json<UpdateModelAvailabilityRequest>,
+) -> Result<Json<service::ModelAvailabilityResponse>, ApiError> {
+    auth::service::require_admin(&state.db, &jar, &state.config.session_cookie_name).await?;
+    let availability = service::set_model_availability(
+        &state.db,
+        &payload.backend_id,
+        &payload.model_name,
+        payload.is_enabled,
+    )
+    .await?;
+
+    Ok(Json(availability))
+}
+
+pub async fn update_backend_model_availability(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Json(payload): Json<BulkUpdateModelAvailabilityRequest>,
+) -> Result<Json<BulkModelAvailabilityResponse>, ApiError> {
+    auth::service::require_admin(&state.db, &jar, &state.config.session_cookie_name).await?;
+    service::set_model_availability_many(
+        &state.db,
+        &payload.backend_id,
+        &payload.model_names,
+        payload.is_enabled,
+    )
+    .await?;
+
+    Ok(Json(BulkModelAvailabilityResponse { ok: true }))
 }

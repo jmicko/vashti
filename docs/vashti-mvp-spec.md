@@ -205,12 +205,15 @@ Public persona lifecycle direction:
 * request timeout
 * upload size limit
 * signup/admin settings, including public signup enablement and limit
+* admin model availability
 
 ### 5.8 Admin basics
 
 * manage users
 
 * manage Ollama backends
+
+* manage global model availability with a simple on/off switch
 
 * manage model/backend availability later through tag-based access rules
 
@@ -608,7 +611,8 @@ Cons:
 * persona selection in the model picker
 * private personas limited to private-local chats
 * public sharing, prompt visibility, copy-persona flow, and disown lifecycle
-* admin-facing access rules and quotas can follow in a later slice if needed
+* basic admin model on/off controls
+* tag-based access rules and quotas can follow in a later slice if needed
 
 ### Milestone 7: Attachments and PWA
 
@@ -789,6 +793,9 @@ Proposed high-level route groups:
 * `POST /api/backends/detect-localhost`
 * `POST /api/backends/scan-local-network`
 * `GET /api/models`
+* `GET /api/admin/models`
+* `PATCH /api/admin/models`
+* `PATCH /api/admin/models/backend`
 * `GET /api/models/status`
 
 #### Standard chats

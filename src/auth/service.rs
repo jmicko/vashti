@@ -708,6 +708,27 @@ mod tests {
         .await
         .expect("create backend");
 
+        backends_service::set_model_availability(&pool, &backend.id, "gemma4:e2b", false)
+            .await
+            .expect("disable model");
+        assert!(
+            chats_service::create_chat(
+                &pool,
+                &admin.user.id,
+                CreateChatRequest {
+                    title: "Blocked Chat".to_string(),
+                    default_backend_id: backend.id.clone(),
+                    default_model_name: "gemma4:e2b".to_string(),
+                    persona_version_id: None,
+                },
+            )
+            .await
+            .is_err()
+        );
+        backends_service::set_model_availability(&pool, &backend.id, "gemma4:e2b", true)
+            .await
+            .expect("enable model");
+
         let chat = chats_service::create_chat(
             &pool,
             &admin.user.id,

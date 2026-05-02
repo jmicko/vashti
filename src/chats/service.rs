@@ -5,6 +5,7 @@ use uuid::Uuid;
 
 use crate::{
     auth::service::unix_timestamp,
+    backends::service as backends_service,
     chats::{
         handlers::{
             AttachmentReference, BranchMessageRequest, CreateChatRequest, CreateMessageRequest,
@@ -149,6 +150,7 @@ pub async fn create_chat(
     }
 
     ensure_enabled_backend(pool, &backend_id).await?;
+    backends_service::ensure_model_enabled(pool, &backend_id, &model_name).await?;
 
     let now = unix_timestamp();
     let chat_id = Uuid::new_v4().to_string();
@@ -284,6 +286,10 @@ pub async fn update_chat(
     } else {
         (current.persona_id, current.persona_version_id)
     };
+    if persona.is_some() || has_base_model_update {
+        ensure_enabled_backend(pool, &backend_id).await?;
+        backends_service::ensure_model_enabled(pool, &backend_id, &model_name).await?;
+    }
 
     sqlx::query(
         r#"
@@ -1602,8 +1608,11 @@ async fn resolve_generation_model(
         ));
     }
 
+    let backend = enabled_backend(pool, &backend_id).await?;
+    backends_service::ensure_model_enabled(pool, &backend.id, &model_name).await?;
+
     Ok(ResolvedGenerationModel {
-        backend: enabled_backend(pool, &backend_id).await?,
+        backend,
         model_name,
         persona: None,
     })
@@ -1624,6 +1633,7 @@ async fn resolve_persona_generation_model(
             "Persona base model is required",
         ));
     }
+    backends_service::ensure_model_enabled(pool, &backend.id, &model_name).await?;
 
     Ok(ResolvedGenerationModel {
         backend,

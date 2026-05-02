@@ -1864,6 +1864,84 @@ textarea {
   gap: 16px;
 }
 
+.model-access-list {
+  display: grid;
+  gap: 18px;
+}
+
+.model-access-group {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(7, 11, 7, 0.86);
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+
+.model-access-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.model-access-header p {
+  margin: 6px 0 0;
+  color: var(--muted);
+}
+
+.model-access-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.model-access-models {
+  display: grid;
+  gap: 8px;
+}
+
+.model-access-row {
+  border-top: 1px solid var(--line-soft);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding-top: 10px;
+}
+
+.model-access-main {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.model-access-main .model-name {
+  width: 100%;
+}
+
+.model-access-main .model-capabilities {
+  justify-content: flex-start;
+}
+
+.model-access-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.model-access-toggle input {
+  width: 22px;
+  min-height: 22px;
+  accent-color: var(--accent);
+}
+
 .persona-form {
   max-width: 680px;
   border-bottom: 1px solid var(--line-soft);
@@ -2063,7 +2141,17 @@ textarea {
   .user-main,
   .persona-main,
   .backend-main,
-  .backend-edit-grid {
+  .backend-edit-grid,
+  .model-access-header,
+  .model-access-row {
     display: grid;
+  }
+
+  .model-access-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .model-access-actions {
+    justify-content: flex-start;
   }
 }

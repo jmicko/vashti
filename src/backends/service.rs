@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     net::{IpAddr, Ipv4Addr, UdpSocket},
 };
 
@@ -31,6 +31,13 @@ pub struct BackendResponse {
 pub struct DetectedBackendResponse {
     pub name: String,
     pub base_url: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ModelAvailabilityResponse {
+    pub backend_id: String,
+    pub model_name: String,
+    pub is_enabled: bool,
 }
 
 #[derive(Debug)]
@@ -288,6 +295,150 @@ pub async fn list_enabled_backends(pool: &SqlitePool) -> Result<Vec<OllamaBacken
     Ok(backends)
 }
 
+pub async fn model_availability_by_backend(
+    pool: &SqlitePool,
+    backend_id: &str,
+) -> Result<HashMap<String, bool>, sqlx::Error> {
+    let rows = sqlx::query(
+        r#"
+        SELECT model_name, is_enabled
+        FROM model_availability
+        WHERE backend_id = ?
+        "#,
+    )
+    .bind(backend_id)
+    .fetch_all(pool)
+    .await?;
+
+    rows.into_iter()
+        .map(|row| {
+            Ok((
+                row.try_get("model_name")?,
+                row.try_get::<i64, _>("is_enabled")? != 0,
+            ))
+        })
+        .collect()
+}
+
+pub async fn set_model_availability(
+    pool: &SqlitePool,
+    backend_id: &str,
+    model_name: &str,
+    is_enabled: bool,
+) -> Result<ModelAvailabilityResponse, ApiError> {
+    ensure_backend_exists(pool, backend_id).await?;
+    let model_name = validate_model_name(model_name)?;
+    let now = unix_timestamp();
+
+    sqlx::query(
+        r#"
+        INSERT INTO model_availability (
+            backend_id,
+            model_name,
+            is_enabled,
+            created_at,
+            updated_at
+        )
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(backend_id, model_name)
+        DO UPDATE SET
+            is_enabled = excluded.is_enabled,
+            updated_at = excluded.updated_at
+        "#,
+    )
+    .bind(backend_id)
+    .bind(&model_name)
+    .bind(i64::from(is_enabled))
+    .bind(now)
+    .bind(now)
+    .execute(pool)
+    .await?;
+
+    Ok(ModelAvailabilityResponse {
+        backend_id: backend_id.to_string(),
+        model_name,
+        is_enabled,
+    })
+}
+
+pub async fn set_model_availability_many(
+    pool: &SqlitePool,
+    backend_id: &str,
+    model_names: &[String],
+    is_enabled: bool,
+) -> Result<(), ApiError> {
+    ensure_backend_exists(pool, backend_id).await?;
+    let model_names = model_names
+        .iter()
+        .map(|model_name| validate_model_name(model_name))
+        .collect::<Result<Vec<_>, _>>()?;
+    if model_names.is_empty() {
+        return Ok(());
+    }
+
+    let now = unix_timestamp();
+    let mut tx = pool.begin().await?;
+
+    for model_name in model_names {
+        sqlx::query(
+            r#"
+            INSERT INTO model_availability (
+                backend_id,
+                model_name,
+                is_enabled,
+                created_at,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(backend_id, model_name)
+            DO UPDATE SET
+                is_enabled = excluded.is_enabled,
+                updated_at = excluded.updated_at
+            "#,
+        )
+        .bind(backend_id)
+        .bind(model_name)
+        .bind(i64::from(is_enabled))
+        .bind(now)
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    tx.commit().await?;
+
+    Ok(())
+}
+
+pub async fn ensure_model_enabled(
+    pool: &SqlitePool,
+    backend_id: &str,
+    model_name: &str,
+) -> Result<(), ApiError> {
+    let model_name = validate_model_name(model_name)?;
+    let is_enabled = sqlx::query_scalar::<_, i64>(
+        r#"
+        SELECT is_enabled
+        FROM model_availability
+        WHERE backend_id = ?
+          AND model_name = ?
+        "#,
+    )
+    .bind(backend_id)
+    .bind(model_name)
+    .fetch_optional(pool)
+    .await?;
+
+    if is_enabled.unwrap_or(1) == 0 {
+        return Err(ApiError::forbidden(
+            "model_disabled",
+            "This model is disabled by the server admin",
+        ));
+    }
+
+    Ok(())
+}
+
 pub async fn insert_detected_localhost_backend(
     pool: &SqlitePool,
     base_url: &str,
@@ -526,6 +677,35 @@ fn validate_name(name: &str) -> Result<String, ApiError> {
     }
 
     Ok(name.to_string())
+}
+
+fn validate_model_name(model_name: &str) -> Result<String, ApiError> {
+    let model_name = model_name.trim();
+    if model_name.is_empty() {
+        return Err(ApiError::bad_request(
+            "invalid_model",
+            "Model name is required",
+        ));
+    }
+
+    Ok(model_name.to_string())
+}
+
+async fn ensure_backend_exists(pool: &SqlitePool, backend_id: &str) -> Result<(), ApiError> {
+    let exists: i64 =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM ollama_backends WHERE id = ?)")
+            .bind(backend_id)
+            .fetch_one(pool)
+            .await?;
+
+    if exists == 0 {
+        return Err(ApiError::not_found(
+            "backend_not_found",
+            "Backend not found",
+        ));
+    }
+
+    Ok(())
 }
 
 fn validate_base_url(base_url: &str) -> Result<String, ApiError> {

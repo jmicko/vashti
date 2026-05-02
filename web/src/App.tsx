@@ -140,6 +140,10 @@ type ModelInfo = {
   capabilities?: string[];
 };
 
+type AdminModelInfo = ModelInfo & {
+  is_enabled: boolean;
+};
+
 type BackendModelGroup = {
   backend: {
     id: string;
@@ -148,8 +152,20 @@ type BackendModelGroup = {
   models: ModelInfo[];
 };
 
+type AdminBackendModelGroup = {
+  backend: {
+    id: string;
+    name: string;
+  };
+  models: AdminModelInfo[];
+};
+
 type ModelsResponse = {
   backends: BackendModelGroup[];
+};
+
+type AdminModelsResponse = {
+  backends: AdminBackendModelGroup[];
 };
 
 type PersonaVersion = {
@@ -377,7 +393,7 @@ type ApiError = {
 };
 
 type Page = "chat" | "private-chat" | "settings";
-type SettingsSection = "profile" | "personas" | "users" | "app" | "backends";
+type SettingsSection = "profile" | "personas" | "users" | "models" | "app" | "backends";
 type NewChatMode = "standard" | "private";
 type AppRoute =
   | { page: "chat"; chatId?: string }
@@ -406,7 +422,14 @@ type VersionInfo = {
   onNext: () => void;
 };
 
-const settingsSections: SettingsSection[] = ["profile", "personas", "users", "backends", "app"];
+const settingsSections: SettingsSection[] = [
+  "profile",
+  "personas",
+  "users",
+  "backends",
+  "models",
+  "app"
+];
 const rootSiblingGroupKey = "__root__";
 const newChatModeStorageKey = "vashti:new-chat-mode";
 
@@ -482,6 +505,21 @@ function routesEqual(left: AppRoute, right: AppRoute) {
 
 function modelValue(backendId: string, modelName: string) {
   return `${backendId}:${modelName}`;
+}
+
+function enabledModelValueSet(groups: BackendModelGroup[]) {
+  return new Set(
+    groups.flatMap((group) => group.models.map((model) => modelValue(group.backend.id, model.name)))
+  );
+}
+
+function personaBaseModelValue(persona: {
+  current_version: { base_backend_id: string; base_model_name: string };
+}) {
+  return modelValue(
+    persona.current_version.base_backend_id,
+    persona.current_version.base_model_name
+  );
 }
 
 function personaModelValue(personaVersionId: string) {
@@ -923,16 +961,18 @@ function AppShell({
 
   const applyModelPickerData = useCallback(
     (modelsResponse: ModelsResponse, personasResponse: PersonasResponse) => {
+      const enabledValues = enabledModelValueSet(modelsResponse.backends);
+      const visiblePersonas = personasResponse.personas.filter((persona) =>
+        enabledValues.has(personaBaseModelValue(persona))
+      );
       setModelGroups(modelsResponse.backends);
-      setPersonas(personasResponse.personas);
+      setPersonas(visiblePersonas);
       setSelectedModel((current) => {
         const values = [
           ...modelsResponse.backends.flatMap((group) =>
             group.models.map((model) => modelValue(group.backend.id, model.name))
           ),
-          ...personasResponse.personas.map((persona) =>
-            personaModelValue(persona.current_version.id)
-          )
+          ...visiblePersonas.map((persona) => personaModelValue(persona.current_version.id))
         ];
 
         return current &&
@@ -6290,6 +6330,7 @@ function ModelPicker({
   const selectedPersona = personaForValue(personas, value);
   const selectedPrivatePersona = privatePersonaForValue(privatePersonas, value);
   const normalizedQuery = query.trim().toLocaleLowerCase();
+  const enabledValues = enabledModelValueSet(groups);
   const filteredGroups = groups
     .map((group) => ({
       backend: group.backend,
@@ -6304,6 +6345,9 @@ function ModelPicker({
         );
       }),
       personas: personas.filter((persona) => {
+        if (!enabledValues.has(personaBaseModelValue(persona))) {
+          return false;
+        }
         if (persona.current_version.base_backend_id !== group.backend.id) {
           return false;
         }
@@ -6319,6 +6363,9 @@ function ModelPicker({
         );
       }),
       privatePersonas: privatePersonas.filter((persona) => {
+        if (!enabledValues.has(personaBaseModelValue(persona))) {
+          return false;
+        }
         if (persona.current_version.base_backend_id !== group.backend.id) {
           return false;
         }
@@ -6683,6 +6730,7 @@ function SettingsPage({
     { id: "personas", label: "Personas", icon: <Brain /> },
     { id: "users", label: "Users", icon: <Users />, adminOnly: true },
     { id: "backends", label: "Backends", icon: <Server />, adminOnly: true },
+    { id: "models", label: "Models", icon: <Wrench />, adminOnly: true },
     { id: "app", label: "App", icon: <SettingsIcon />, adminOnly: true }
   ];
   const visibleSections = sections.filter((section) => !section.adminOnly || isAdmin);
@@ -6717,6 +6765,9 @@ function SettingsPage({
         {selectedSection === "users" && isAdmin && <AdminUsersPanel currentUserId={currentUser.id} />}
         {selectedSection === "backends" && isAdmin && (
           <BackendsPanel onBackendsChanged={onBackendsChanged} />
+        )}
+        {selectedSection === "models" && isAdmin && (
+          <ModelsAccessPanel onModelsChanged={onBackendsChanged} />
         )}
         {selectedSection === "app" && <AppSettingsPanel onGuardChange={onAppSettingsGuardChange} />}
       </section>
@@ -7625,6 +7676,210 @@ function UserRow({
         </button>
       </div>
     </article>
+  );
+}
+
+function ModelsAccessPanel({ onModelsChanged }: { onModelsChanged: () => Promise<void> }) {
+  const [groups, setGroups] = useState<AdminBackendModelGroup[]>([]);
+  const [hasLoaded, setHasLoaded] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [busyModelKey, setBusyModelKey] = useState<string | null>(null);
+  const [busyBackendId, setBusyBackendId] = useState<string | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadAdminModels = useCallback(async () => {
+    setIsRefreshing(true);
+    setError(null);
+
+    try {
+      const response = await requestJson<AdminModelsResponse>("/api/admin/models");
+      setGroups(response.backends);
+      setHasLoaded(true);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Failed to load models");
+      setHasLoaded(true);
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadAdminModels();
+  }, [loadAdminModels]);
+
+  async function toggleModel(backendId: string, modelName: string, isEnabled: boolean) {
+    const key = modelValue(backendId, modelName);
+    setBusyModelKey(key);
+    setError(null);
+    setStatus(null);
+
+    try {
+      await requestJson("/api/admin/models", {
+        method: "PATCH",
+        body: JSON.stringify({
+          backend_id: backendId,
+          model_name: modelName,
+          is_enabled: isEnabled
+        })
+      });
+      setGroups((current) =>
+        current.map((group) =>
+          group.backend.id === backendId
+            ? {
+                ...group,
+                models: group.models.map((model) =>
+                  model.name === modelName ? { ...model, is_enabled: isEnabled } : model
+                )
+              }
+            : group
+        )
+      );
+      setStatus(isEnabled ? "Model enabled." : "Model disabled.");
+      await onModelsChanged();
+    } catch (updateError) {
+      setError(updateError instanceof Error ? updateError.message : "Failed to update model");
+    } finally {
+      setBusyModelKey(null);
+    }
+  }
+
+  async function toggleBackend(group: AdminBackendModelGroup, isEnabled: boolean) {
+    setBusyBackendId(group.backend.id);
+    setError(null);
+    setStatus(null);
+
+    try {
+      await requestJson("/api/admin/models/backend", {
+        method: "PATCH",
+        body: JSON.stringify({
+          backend_id: group.backend.id,
+          model_names: group.models.map((model) => model.name),
+          is_enabled: isEnabled
+        })
+      });
+      setGroups((current) =>
+        current.map((currentGroup) =>
+          currentGroup.backend.id === group.backend.id
+            ? {
+                ...currentGroup,
+                models: currentGroup.models.map((model) => ({
+                  ...model,
+                  is_enabled: isEnabled
+                }))
+              }
+            : currentGroup
+        )
+      );
+      setStatus(isEnabled ? "Backend models enabled." : "Backend models disabled.");
+      await onModelsChanged();
+    } catch (updateError) {
+      setError(updateError instanceof Error ? updateError.message : "Failed to update models");
+    } finally {
+      setBusyBackendId(null);
+    }
+  }
+
+  return (
+    <div className="settings-section">
+      <div className="section-header">
+        <div>
+          <p className="eyebrow">Admin</p>
+          <h1>Models</h1>
+        </div>
+        <div className="header-actions">
+          <button
+            type="button"
+            className="secondary-button refresh-button"
+            onClick={() => void loadAdminModels()}
+            disabled={isRefreshing}
+          >
+            {isRefreshing ? <RetroLoader /> : <RefreshCw />}
+            <span>{isRefreshing ? "Loading" : "Refresh"}</span>
+          </button>
+        </div>
+      </div>
+
+      {error && <p className="error">{error}</p>}
+      {status && <p className="status-message">{status}</p>}
+      {!hasLoaded && <p className="status-message">Loading models...</p>}
+      {hasLoaded && groups.length === 0 && (
+        <p className="status-message">No enabled Ollama backends are configured.</p>
+      )}
+
+      <div className="model-access-list">
+        {groups.map((group) => {
+          const enabledCount = group.models.filter((model) => model.is_enabled).length;
+          const isBackendBusy = busyBackendId === group.backend.id;
+
+          return (
+            <section key={group.backend.id} className="model-access-group">
+              <div className="model-access-header">
+                <div>
+                  <h2>{group.backend.name}</h2>
+                  <p>
+                    {enabledCount} of {group.models.length} enabled
+                  </p>
+                </div>
+                <div className="model-access-actions">
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    disabled={isBackendBusy || group.models.length === 0}
+                    onClick={() => void toggleBackend(group, true)}
+                  >
+                    Enable All
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    disabled={isBackendBusy || group.models.length === 0}
+                    onClick={() => void toggleBackend(group, false)}
+                  >
+                    Disable All
+                  </button>
+                </div>
+              </div>
+
+              {group.models.length === 0 ? (
+                <p className="status-message">No models returned by this backend.</p>
+              ) : (
+                <div className="model-access-models">
+                  {group.models.map((model) => {
+                    const key = modelValue(group.backend.id, model.name);
+                    const isBusy = busyModelKey === key || isBackendBusy;
+
+                    return (
+                      <label key={key} className="model-access-row">
+                        <span className="model-access-main">
+                          <span className="model-name">{model.name}</span>
+                          <ModelCapabilityBadges model={model} />
+                        </span>
+                        <span className="model-access-toggle">
+                          <input
+                            type="checkbox"
+                            checked={model.is_enabled}
+                            disabled={isBusy}
+                            onChange={(event) =>
+                              void toggleModel(
+                                group.backend.id,
+                                model.name,
+                                event.target.checked
+                              )
+                            }
+                          />
+                          <span>{model.is_enabled ? "On" : "Off"}</span>
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 

@@ -14,7 +14,7 @@ use tokio_stream::wrappers::ReceiverStream;
 
 use crate::{
     app_state::AppState,
-    auth,
+    auth, backends,
     error::ApiError,
     ollama::{
         self,
@@ -92,6 +92,7 @@ pub async fn generate(
     let assistant_message_id = validate_assistant_message_id(&payload.assistant_message_id)?;
     let backend = service::get_enabled_backend(&state.db, &payload.backend_id).await?;
     let model_name = service::validate_model_name(&payload.model_name)?;
+    backends::service::ensure_model_enabled(&state.db, &payload.backend_id, &model_name).await?;
     let messages = service::private_prompt_messages(payload.messages)?;
 
     Ok(start_private_stream(

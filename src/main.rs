@@ -20,12 +20,13 @@ use app_state::AppState;
 use axum::{
     Router,
     extract::DefaultBodyLimit,
+    http::{HeaderName, HeaderValue, header},
     routing::{get, patch, post},
 };
 use config::Config;
 use error::ApiError;
 use tokio::signal;
-use tower_http::trace::TraceLayer;
+use tower_http::{set_header::SetResponseHeaderLayer, trace::TraceLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
@@ -108,6 +109,15 @@ fn router(state: AppState) -> Router {
             patch(backends::handlers::update_backend).delete(backends::handlers::delete_backend),
         )
         .route("/models", get(backends::handlers::list_models))
+        .route(
+            "/admin/models",
+            get(backends::handlers::list_admin_models)
+                .patch(backends::handlers::update_model_availability),
+        )
+        .route(
+            "/admin/models/backend",
+            patch(backends::handlers::update_backend_model_availability),
+        )
         .route(
             "/personas",
             get(personas::handlers::list_personas).post(personas::handlers::create_persona),
@@ -202,6 +212,28 @@ fn router(state: AppState) -> Router {
         .fallback(frontend::serve_asset)
         .with_state(state)
         .layer(DefaultBodyLimit::max(64 * 1024 * 1024))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            HeaderName::from_static("content-security-policy"),
+            HeaderValue::from_static(
+                "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+            ),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            HeaderName::from_static("permissions-policy"),
+            HeaderValue::from_static("camera=(), microphone=(), geolocation=()"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::REFERRER_POLICY,
+            HeaderValue::from_static("no-referrer"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::X_FRAME_OPTIONS,
+            HeaderValue::from_static("DENY"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::X_CONTENT_TYPE_OPTIONS,
+            HeaderValue::from_static("nosniff"),
+        ))
         .layer(TraceLayer::new_for_http())
 }
 

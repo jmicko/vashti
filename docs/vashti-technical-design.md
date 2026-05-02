@@ -443,7 +443,28 @@ Notes:
 * removing a public persona from the user's picker removes membership
 * deleting the final membership allows server cleanup
 
-### 3.2.13 Future model access and quota tables
+### 3.2.13 `model_availability`
+
+Global admin allowlist for base Ollama models returned by configured backends.
+
+Columns:
+
+* `backend_id` TEXT NOT NULL REFERENCES `ollama_backends`(`id`) ON DELETE CASCADE
+* `model_name` TEXT NOT NULL
+* `is_enabled` INTEGER NOT NULL DEFAULT 1
+* `created_at` INTEGER NOT NULL
+* `updated_at` INTEGER NOT NULL
+* PRIMARY KEY (`backend_id`, `model_name`)
+
+Notes:
+
+* missing rows are treated as enabled, so new installs and newly pulled models are available by default
+* admins can disable individual models or bulk enable/disable all currently returned models for a backend
+* `GET /api/models` returns only enabled models
+* generation endpoints must check this table server-side; frontend filtering is not sufficient
+* this is a simple global switch and does not replace the later tag-based access system
+
+### 3.2.14 Future model access and quota tables
 
 This is not required for the first persona slice, but the design should leave room for tag-based model/persona access control.
 
@@ -480,7 +501,7 @@ Quota rules:
 * `unlimited` should be representable, preferably with nullable limit columns
 * server-side checks must enforce quotas and access, even when frontend filtering is present
 
-### 3.2.14 `schema_migrations`
+### 3.2.15 `schema_migrations`
 
 If `sqlx` migration tracking is used directly, this table may be tool-managed instead of hand-managed.
 
@@ -964,7 +985,7 @@ Response shape matches `POST /api/backends/detect-localhost`.
 
 ### `GET /api/models`
 
-Returns models grouped by backend.
+Returns enabled models grouped by backend.
 
 Model capability support should prefer Ollama `POST /api/show` metadata when available. A model with a `capabilities` entry of `vision` should be treated as image-capable, and a `thinking` entry should be treated as thinking-capable. `/api/tags` details can still be used as a fallback heuristic for older Ollama responses.
 
@@ -994,6 +1015,62 @@ Response:
       ]
     }
   ]
+}
+```
+
+### `GET /api/admin/models`
+
+Admin-only. Returns all models currently returned by enabled Ollama backends, including disabled models, grouped by backend.
+
+Response:
+
+```json
+{
+  "backends": [
+    {
+      "backend": {
+        "id": "b1",
+        "name": "mac-mini"
+      },
+      "models": [
+        {
+          "name": "gemma4",
+          "supports_images": true,
+          "supports_thinking": true,
+          "capabilities": ["completion", "vision", "thinking"],
+          "is_enabled": true
+        }
+      ]
+    }
+  ]
+}
+```
+
+### `PATCH /api/admin/models`
+
+Admin-only. Enables or disables one model globally.
+
+Request:
+
+```json
+{
+  "backend_id": "b1",
+  "model_name": "gemma4",
+  "is_enabled": false
+}
+```
+
+### `PATCH /api/admin/models/backend`
+
+Admin-only. Bulk enables or disables the currently listed models for a backend.
+
+Request:
+
+```json
+{
+  "backend_id": "b1",
+  "model_names": ["gemma4", "llama3:70b"],
+  "is_enabled": false
 }
 ```
 
@@ -1759,6 +1836,7 @@ Sections:
 * app settings (admin only)
 * users (admin only)
 * Ollama backends (admin only)
+* model availability (admin only)
 
 Layout:
 
