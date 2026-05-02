@@ -6,6 +6,7 @@ use crate::{
     app_state::AppState,
     auth::service::{self, UserPublic},
     error::ApiError,
+    settings,
 };
 
 #[derive(Debug, Deserialize)]
@@ -89,7 +90,12 @@ pub async fn register(
     )
     .await?;
 
-    let cookie = service::session_cookie(&state.config, &session.id);
+    let settings = settings::service::get_app_settings(&state.db).await?;
+    let cookie = service::session_cookie(
+        &state.config,
+        &session.id,
+        settings.secure_session_cookies(),
+    );
 
     Ok((
         jar.add(cookie),
@@ -116,7 +122,12 @@ pub async fn login(
     )
     .await?;
 
-    let cookie = service::session_cookie(&state.config, &session.id);
+    let settings = settings::service::get_app_settings(&state.db).await?;
+    let cookie = service::session_cookie(
+        &state.config,
+        &session.id,
+        settings.secure_session_cookies(),
+    );
 
     Ok((jar.add(cookie), Json(LoginResponse { user })))
 }
@@ -129,8 +140,12 @@ pub async fn logout(
         service::delete_session(&state.db, cookie.value()).await?;
     }
 
+    let settings = settings::service::get_app_settings(&state.db).await?;
     Ok((
-        jar.remove(service::expired_session_cookie(&state.config)),
+        jar.remove(service::expired_session_cookie(
+            &state.config,
+            settings.secure_session_cookies(),
+        )),
         Json(LogoutResponse { ok: true }),
     ))
 }

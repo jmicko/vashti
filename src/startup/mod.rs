@@ -1,5 +1,6 @@
 pub mod bootstrap;
 pub mod migrations;
+pub mod network_recovery;
 
 use crate::config::Config;
 

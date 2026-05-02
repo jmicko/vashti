@@ -210,6 +210,11 @@ Columns:
 * `signup_count` INTEGER NOT NULL DEFAULT 0
 * `max_upload_bytes` INTEGER NOT NULL DEFAULT 10485760
 * `request_timeout_ms` INTEGER NOT NULL DEFAULT 120000
+* `network_mode` TEXT NOT NULL DEFAULT `lan_http`
+  Allowed values: `lan_http`, `public_https_proxy`
+* `public_base_url` TEXT
+* `trust_proxy_headers` INTEGER NOT NULL DEFAULT 0
+* `network_recovery_notice` TEXT
 * `created_at` INTEGER NOT NULL
 * `updated_at` INTEGER NOT NULL
 
@@ -220,6 +225,10 @@ Notes:
 * `allow_signup` and `signup_limit` apply only when an enabled admin already exists
 * adminless account creation remains allowed so a system with no admins can recover
 * `signup_count` tracks successful public self-registrations after an admin exists; when it reaches `signup_limit`, the app sets `allow_signup = 0`
+* `network_mode = lan_http` is the default easy LAN mode and leaves session cookies usable over plain HTTP
+* `network_mode = public_https_proxy` is for nginx, Caddy, Cloudflare Tunnel, or similar HTTPS reverse-proxy deployments and enables Secure session cookies
+* `trust_proxy_headers` is only meaningful in public reverse-proxy mode and must not be trusted when Vashti is directly exposed to arbitrary clients
+* `public_base_url` is used for future share links and reverse-proxy config generation; it does not prove HTTPS is working
 
 ### 3.2.6 `chats`
 
@@ -552,8 +561,20 @@ Cookie properties:
 
 * HttpOnly
 * SameSite=Lax by default
-* Secure when running over HTTPS
+* Secure when `network_mode = public_https_proxy`
 * Path=/
+
+Network modes:
+
+* `lan_http` is the default and supports local/LAN HTTP access such as `http://192.168.x.x:7771`
+* `public_https_proxy` is for deployments accessed through an HTTPS reverse proxy and should not be used when accessing Vashti directly over HTTP
+* admins should not be shown a raw Secure-cookie toggle; the UI should expose the higher-level network access mode instead
+
+Recovery:
+
+* on startup, if `recover_network.txt` exists in the working directory next to the running app, Vashti resets only DB-backed network settings to LAN defaults
+* recovery does not reset users, passwords, chats, uploads, model settings, or `VASHTI_BIND`
+* after recovery, Vashti renames the file to `recover_network_success.txt` or a timestamped variant and stores a notice for the admin UI
 
 ### 4.2 Password handling
 
@@ -863,7 +884,11 @@ Response:
   "signup_limit": 25,
   "signup_count": 3,
   "max_upload_bytes": 10485760,
-  "request_timeout_ms": 120000
+  "request_timeout_ms": 120000,
+  "network_mode": "lan_http",
+  "public_base_url": null,
+  "trust_proxy_headers": false,
+  "network_recovery_notice": null
 }
 ```
 
@@ -879,6 +904,34 @@ Request:
   "request_timeout_ms": 180000
 }
 ```
+
+### `PATCH /api/settings/network`
+
+Admin-only. Updates advanced network/cookie mode and requires the current admin password plus explicit risk acknowledgment.
+
+Request:
+
+```json
+{
+  "network_mode": "public_https_proxy",
+  "public_base_url": "https://chat.example.com",
+  "trust_proxy_headers": true,
+  "admin_password": "current-password",
+  "acknowledge_risk": true
+}
+```
+
+Behavior:
+
+* `lan_http` leaves session cookies usable over plain local/LAN HTTP
+* `public_https_proxy` sets future session cookies with the Secure flag
+* when network settings are saved, the current session cookie is re-issued with the updated cookie flags when possible
+* `public_base_url`, if provided, must be an HTTPS URL
+* `trust_proxy_headers` should only be enabled when Vashti is reachable by clients only through the trusted reverse proxy
+
+### `POST /api/settings/network-recovery-notice/dismiss`
+
+Admin-only. Clears the one-time network recovery notice after an admin has reviewed it.
 
 ### `GET /api/user-settings`
 
@@ -1837,12 +1890,15 @@ Sections:
 * users (admin only)
 * Ollama backends (admin only)
 * model availability (admin only)
+* advanced network access settings (admin only)
 
 Layout:
 
 * settings are a full app page with section navigation
 * admin user management lives inside settings
 * user lists should separate pending/disabled users from enabled users so approval movement is clear
+* advanced network settings require re-entering the admin password and acknowledging lockout risk before saving
+* network settings should include a Caddy/nginx reverse-proxy config generator
 
 Persona management view needs:
 

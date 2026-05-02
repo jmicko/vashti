@@ -1864,6 +1864,87 @@ textarea {
   gap: 16px;
 }
 
+.network-settings-panel {
+  border-top: 1px solid var(--line-soft);
+  display: grid;
+  gap: 18px;
+  margin-top: 24px;
+  padding-top: 24px;
+}
+
+.network-settings-box {
+  max-width: 720px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(7, 11, 7, 0.72);
+  display: grid;
+  gap: 18px;
+  padding: 16px;
+}
+
+.network-settings-box-locked {
+  border-color: rgba(156, 163, 175, 0.44);
+  background: rgba(19, 23, 19, 0.68);
+}
+
+.network-settings-form,
+.network-unlock-form,
+.proxy-config-panel {
+  max-width: 680px;
+}
+
+.network-settings-form input:disabled,
+.network-settings-form select:disabled {
+  border-color: rgba(156, 163, 175, 0.36);
+  background: rgba(44, 48, 44, 0.78);
+  color: #a5aca3;
+  opacity: 1;
+}
+
+.network-settings-form-locked {
+  border-top: 1px solid rgba(156, 163, 175, 0.28);
+  padding-top: 16px;
+}
+
+.network-settings-form-locked label > span,
+.network-settings-form-locked .status-message {
+  color: #a5aca3;
+}
+
+.network-settings-form-locked .checkbox-row input:disabled {
+  accent-color: #a5aca3;
+}
+
+.network-unlock-form {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(7, 11, 7, 0.88);
+  padding: 14px;
+}
+
+.network-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.proxy-config-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.proxy-config-output {
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #010301;
+  color: var(--text);
+  margin: 0;
+  padding: 14px;
+  white-space: pre-wrap;
+}
+
 .model-access-list {
   display: grid;
   gap: 18px;

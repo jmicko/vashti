@@ -13,6 +13,15 @@ pub struct UpdateAppSettingsRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct UpdateNetworkSettingsRequest {
+    pub network_mode: String,
+    pub public_base_url: Option<String>,
+    pub trust_proxy_headers: bool,
+    pub admin_password: String,
+    pub acknowledge_risk: bool,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct UpdateUserSettingsRequest {
     pub default_backend_id: Option<serde_json::Value>,
     pub default_model_name: Option<serde_json::Value>,
@@ -59,6 +68,40 @@ pub async fn update_app_settings(
 ) -> Result<Json<service::AppSettingsResponse>, ApiError> {
     auth::service::require_admin(&state.db, &jar, &state.config.session_cookie_name).await?;
     let settings = service::update_app_settings(&state.db, payload).await?;
+
+    Ok(Json(settings))
+}
+
+pub async fn update_network_settings(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Json(payload): Json<UpdateNetworkSettingsRequest>,
+) -> Result<impl axum::response::IntoResponse, ApiError> {
+    let user =
+        auth::service::require_admin(&state.db, &jar, &state.config.session_cookie_name).await?;
+    let settings = service::update_network_settings(&state.db, &user.id, payload).await?;
+
+    let current_session_id = jar
+        .get(&state.config.session_cookie_name)
+        .map(|cookie| cookie.value().to_string());
+    let jar = match current_session_id {
+        Some(session_id) => jar.add(auth::service::session_cookie(
+            &state.config,
+            &session_id,
+            settings.secure_session_cookies(),
+        )),
+        None => jar,
+    };
+
+    Ok((jar, Json(settings)))
+}
+
+pub async fn dismiss_network_recovery_notice(
+    State(state): State<AppState>,
+    jar: CookieJar,
+) -> Result<Json<service::AppSettingsResponse>, ApiError> {
+    auth::service::require_admin(&state.db, &jar, &state.config.session_cookie_name).await?;
+    let settings = service::dismiss_network_recovery_notice(&state.db).await?;
 
     Ok(Json(settings))
 }

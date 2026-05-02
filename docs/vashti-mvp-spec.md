@@ -206,6 +206,7 @@ Public persona lifecycle direction:
 * upload size limit
 * signup/admin settings, including public signup enablement and limit
 * admin model availability
+* advanced network access mode for LAN HTTP vs public HTTPS reverse-proxy deployment
 
 ### 5.8 Admin basics
 
@@ -214,6 +215,8 @@ Public persona lifecycle direction:
 * manage Ollama backends
 
 * manage global model availability with a simple on/off switch
+
+* configure public HTTPS reverse-proxy mode without exposing a raw Secure-cookie toggle
 
 * manage model/backend availability later through tag-based access rules
 
@@ -781,6 +784,8 @@ Proposed high-level route groups:
 
 * `GET /api/settings`
 * `PATCH /api/settings`
+* `PATCH /api/settings/network`
+* `POST /api/settings/network-recovery-notice/dismiss`
 * `GET /api/user-settings`
 * `PATCH /api/user-settings`
 

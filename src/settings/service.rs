@@ -2,9 +2,11 @@ use serde::Serialize;
 use sqlx::{Row, SqlitePool};
 
 use crate::{
-    auth::service::unix_timestamp,
+    auth::service::{self as auth_service, unix_timestamp},
     error::ApiError,
-    settings::handlers::{UpdateAppSettingsRequest, UpdateUserSettingsRequest},
+    settings::handlers::{
+        UpdateAppSettingsRequest, UpdateNetworkSettingsRequest, UpdateUserSettingsRequest,
+    },
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -14,6 +16,16 @@ pub struct AppSettingsResponse {
     pub signup_count: i64,
     pub max_upload_bytes: i64,
     pub request_timeout_ms: i64,
+    pub network_mode: String,
+    pub public_base_url: Option<String>,
+    pub trust_proxy_headers: bool,
+    pub network_recovery_notice: Option<String>,
+}
+
+impl AppSettingsResponse {
+    pub fn secure_session_cookies(&self) -> bool {
+        self.network_mode == "public_https_proxy"
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -26,7 +38,15 @@ pub struct UserSettingsResponse {
 pub async fn get_app_settings(pool: &SqlitePool) -> Result<AppSettingsResponse, sqlx::Error> {
     let row = sqlx::query(
         r#"
-        SELECT allow_signup, signup_limit, signup_count, max_upload_bytes, request_timeout_ms
+        SELECT allow_signup,
+               signup_limit,
+               signup_count,
+               max_upload_bytes,
+               request_timeout_ms,
+               network_mode,
+               public_base_url,
+               trust_proxy_headers,
+               network_recovery_notice
         FROM app_settings
         WHERE id = 1
         "#,
@@ -71,13 +91,120 @@ pub async fn update_app_settings(
             request_timeout_ms = COALESCE(?, request_timeout_ms),
             updated_at = ?
         WHERE id = 1
-        RETURNING allow_signup, signup_limit, signup_count, max_upload_bytes, request_timeout_ms
+        RETURNING allow_signup,
+                  signup_limit,
+                  signup_count,
+                  max_upload_bytes,
+                  request_timeout_ms,
+                  network_mode,
+                  public_base_url,
+                  trust_proxy_headers,
+                  network_recovery_notice
         "#,
     )
     .bind(payload.allow_signup.map(i64::from))
     .bind(payload.signup_limit)
     .bind(payload.max_upload_bytes)
     .bind(payload.request_timeout_ms)
+    .bind(unix_timestamp())
+    .fetch_one(pool)
+    .await?;
+
+    row_to_app_settings(row).map_err(ApiError::from)
+}
+
+pub async fn update_network_settings(
+    pool: &SqlitePool,
+    admin_user_id: &str,
+    payload: UpdateNetworkSettingsRequest,
+) -> Result<AppSettingsResponse, ApiError> {
+    if !payload.acknowledge_risk {
+        return Err(ApiError::bad_request(
+            "network_risk_not_acknowledged",
+            "Network setting changes require confirmation",
+        ));
+    }
+
+    if !auth_service::verify_user_password(pool, admin_user_id, &payload.admin_password).await? {
+        return Err(ApiError::invalid_credentials());
+    }
+
+    let network_mode = validate_network_mode(&payload.network_mode)?;
+    let public_base_url = normalize_public_base_url(payload.public_base_url)?;
+    let trust_proxy_headers = network_mode == "public_https_proxy" && payload.trust_proxy_headers;
+
+    let row = sqlx::query(
+        r#"
+        UPDATE app_settings
+        SET network_mode = ?,
+            public_base_url = ?,
+            trust_proxy_headers = ?,
+            updated_at = ?
+        WHERE id = 1
+        RETURNING allow_signup,
+                  signup_limit,
+                  signup_count,
+                  max_upload_bytes,
+                  request_timeout_ms,
+                  network_mode,
+                  public_base_url,
+                  trust_proxy_headers,
+                  network_recovery_notice
+        "#,
+    )
+    .bind(network_mode)
+    .bind(public_base_url)
+    .bind(i64::from(trust_proxy_headers))
+    .bind(unix_timestamp())
+    .fetch_one(pool)
+    .await?;
+
+    row_to_app_settings(row).map_err(ApiError::from)
+}
+
+pub async fn reset_network_settings_for_recovery(
+    pool: &SqlitePool,
+    notice: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        UPDATE app_settings
+        SET network_mode = 'lan_http',
+            public_base_url = NULL,
+            trust_proxy_headers = 0,
+            network_recovery_notice = ?,
+            updated_at = ?
+        WHERE id = 1
+        "#,
+    )
+    .bind(notice)
+    .bind(unix_timestamp())
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+pub async fn dismiss_network_recovery_notice(
+    pool: &SqlitePool,
+) -> Result<AppSettingsResponse, ApiError> {
+    let row = sqlx::query(
+        r#"
+        UPDATE app_settings
+        SET network_recovery_notice = NULL,
+            updated_at = ?
+        WHERE id = 1
+        RETURNING allow_signup,
+                  signup_limit,
+                  signup_count,
+                  max_upload_bytes,
+                  request_timeout_ms,
+                  network_mode,
+                  public_base_url,
+                  trust_proxy_headers,
+                  network_recovery_notice
+        "#,
+    )
     .bind(unix_timestamp())
     .fetch_one(pool)
     .await?;
@@ -162,7 +289,47 @@ fn row_to_app_settings(row: sqlx::sqlite::SqliteRow) -> Result<AppSettingsRespon
         signup_count: row.try_get("signup_count")?,
         max_upload_bytes: row.try_get("max_upload_bytes")?,
         request_timeout_ms: row.try_get("request_timeout_ms")?,
+        network_mode: row.try_get("network_mode")?,
+        public_base_url: row.try_get("public_base_url")?,
+        trust_proxy_headers: row.try_get::<i64, _>("trust_proxy_headers")? != 0,
+        network_recovery_notice: row.try_get("network_recovery_notice")?,
     })
+}
+
+fn validate_network_mode(network_mode: &str) -> Result<&'static str, ApiError> {
+    match network_mode {
+        "lan_http" => Ok("lan_http"),
+        "public_https_proxy" => Ok("public_https_proxy"),
+        _ => Err(ApiError::bad_request(
+            "invalid_network_mode",
+            "Network mode is invalid",
+        )),
+    }
+}
+
+fn normalize_public_base_url(public_base_url: Option<String>) -> Result<Option<String>, ApiError> {
+    let Some(public_base_url) = public_base_url else {
+        return Ok(None);
+    };
+    let public_base_url = public_base_url.trim().trim_end_matches('/').to_string();
+    if public_base_url.is_empty() {
+        return Ok(None);
+    }
+
+    let parsed = reqwest::Url::parse(&public_base_url).map_err(|_| {
+        ApiError::bad_request(
+            "invalid_public_base_url",
+            "Public base URL must be a valid HTTPS URL",
+        )
+    })?;
+    if parsed.scheme() != "https" || parsed.host_str().is_none() {
+        return Err(ApiError::bad_request(
+            "invalid_public_base_url",
+            "Public base URL must be a valid HTTPS URL",
+        ));
+    }
+
+    Ok(Some(public_base_url))
 }
 
 async fn ensure_user_settings(pool: &SqlitePool, user_id: &str) -> Result<(), sqlx::Error> {

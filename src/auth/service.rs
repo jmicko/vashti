@@ -308,6 +308,37 @@ pub async fn authenticate_user(
     })
 }
 
+pub async fn verify_user_password(
+    pool: &SqlitePool,
+    user_id: &str,
+    password: &str,
+) -> Result<bool, ApiError> {
+    if password.is_empty() {
+        return Ok(false);
+    }
+
+    let Some(row) = sqlx::query(
+        r#"
+        SELECT password_hash, is_disabled
+        FROM users
+        WHERE id = ?
+        "#,
+    )
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await?
+    else {
+        return Ok(false);
+    };
+
+    if row.try_get::<i64, _>("is_disabled")? != 0 {
+        return Ok(false);
+    }
+
+    let password_hash: String = row.try_get("password_hash")?;
+    verify_password(password, &password_hash).map_err(ApiError::from)
+}
+
 pub async fn create_session(
     pool: &SqlitePool,
     user_id: &str,
@@ -442,21 +473,21 @@ pub async fn delete_expired_sessions(pool: &SqlitePool) -> Result<u64, sqlx::Err
     Ok(result.rows_affected())
 }
 
-pub fn session_cookie(config: &Config, session_id: &str) -> Cookie<'static> {
+pub fn session_cookie(config: &Config, session_id: &str, secure: bool) -> Cookie<'static> {
     Cookie::build((config.session_cookie_name.clone(), session_id.to_string()))
         .http_only(true)
         .same_site(SameSite::Lax)
-        .secure(config.cookie_secure)
+        .secure(secure)
         .path("/")
         .max_age(Duration::seconds(config.session_ttl_seconds))
         .build()
 }
 
-pub fn expired_session_cookie(config: &Config) -> Cookie<'static> {
+pub fn expired_session_cookie(config: &Config, secure: bool) -> Cookie<'static> {
     Cookie::build((config.session_cookie_name.clone(), ""))
         .http_only(true)
         .same_site(SameSite::Lax)
-        .secure(config.cookie_secure)
+        .secure(secure)
         .path("/")
         .max_age(Duration::seconds(0))
         .build()

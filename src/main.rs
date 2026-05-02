@@ -45,6 +45,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let db = db::connect(&config).await?;
     startup::migrations::run(&db).await?;
     startup::bootstrap::ensure_app_settings(&db).await?;
+    startup::network_recovery::recover_network_if_requested(&db, &config).await?;
     auth::service::delete_expired_sessions(&db).await?;
 
     let http_client = reqwest::Client::builder()
@@ -78,6 +79,14 @@ fn router(state: AppState) -> Router {
             "/settings",
             get(settings::handlers::get_app_settings)
                 .patch(settings::handlers::update_app_settings),
+        )
+        .route(
+            "/settings/network",
+            patch(settings::handlers::update_network_settings),
+        )
+        .route(
+            "/settings/network-recovery-notice/dismiss",
+            post(settings::handlers::dismiss_network_recovery_notice),
         )
         .route(
             "/user-settings",
