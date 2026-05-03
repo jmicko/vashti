@@ -576,6 +576,13 @@ Recovery:
 * recovery does not reset users, passwords, chats, uploads, model settings, or `VASHTI_BIND`
 * after recovery, Vashti renames the file to `recover_network_success.txt` or a timestamped variant and stores a notice for the admin UI
 
+Request safety:
+
+* mutating API requests (`POST`, `PATCH`, `PUT`, `DELETE`) should reject browser requests whose `Origin` does not match Vashti's own origin or configured public HTTPS base URL
+* missing `Origin` is allowed for non-browser clients unless browser fetch metadata says the request is `cross-site`
+* trusted proxy headers may only affect request-origin reconstruction when `trust_proxy_headers` is enabled
+* login/register, uploads, and generation should have conservative in-memory rate limits to slow brute force attempts and accidental abuse
+
 ### 4.2 Password handling
 
 Use a modern password hashing function such as Argon2.

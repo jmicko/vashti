@@ -6,7 +6,7 @@ use crate::{
     app_state::AppState,
     auth::service::{self, UserPublic},
     error::ApiError,
-    settings,
+    rate_limit, settings,
 };
 
 #[derive(Debug, Deserialize)]
@@ -67,6 +67,13 @@ pub async fn register(
     headers: HeaderMap,
     Json(payload): Json<RegisterRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
+    let app_settings = settings::service::get_app_settings(&state.db).await?;
+    let client_key = rate_limit::client_key(&headers, app_settings.trust_proxy_headers);
+    state
+        .rate_limiter
+        .check(format!("auth:register:{}", client_key), 5, 60 * 60)
+        .await?;
+
     let registration =
         service::register_user(&state.db, payload.username, payload.email, payload.password)
             .await?;
@@ -90,11 +97,10 @@ pub async fn register(
     )
     .await?;
 
-    let settings = settings::service::get_app_settings(&state.db).await?;
     let cookie = service::session_cookie(
         &state.config,
         &session.id,
-        settings.secure_session_cookies(),
+        app_settings.secure_session_cookies(),
     );
 
     Ok((
@@ -112,6 +118,22 @@ pub async fn login(
     headers: HeaderMap,
     Json(payload): Json<LoginRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
+    let app_settings = settings::service::get_app_settings(&state.db).await?;
+    let client_key = rate_limit::client_key(&headers, app_settings.trust_proxy_headers);
+    let identifier_key = rate_limit::compact_key_part(&payload.identifier, 128);
+    state
+        .rate_limiter
+        .check(format!("auth:login-client:{}", client_key), 60, 5 * 60)
+        .await?;
+    state
+        .rate_limiter
+        .check(
+            format!("auth:login:{}:{}", client_key, identifier_key),
+            10,
+            5 * 60,
+        )
+        .await?;
+
     let user = service::authenticate_user(&state.db, payload.identifier, payload.password).await?;
     let session = service::create_session(
         &state.db,
@@ -122,11 +144,10 @@ pub async fn login(
     )
     .await?;
 
-    let settings = settings::service::get_app_settings(&state.db).await?;
     let cookie = service::session_cookie(
         &state.config,
         &session.id,
-        settings.secure_session_cookies(),
+        app_settings.secure_session_cookies(),
     );
 
     Ok((jar.add(cookie), Json(LoginResponse { user })))

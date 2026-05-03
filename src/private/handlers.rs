@@ -21,6 +21,7 @@ use crate::{
         models::{OllamaChatChunk, OllamaChatRequest, OllamaThink},
     },
     private::service,
+    rate_limit,
 };
 
 #[derive(Debug, Deserialize)]
@@ -87,7 +88,12 @@ pub async fn generate(
     jar: CookieJar,
     Json(payload): Json<PrivateGenerateRequest>,
 ) -> Result<Response, ApiError> {
-    auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
+    let user =
+        auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
+    state
+        .rate_limiter
+        .check(rate_limit::user_action_key("generate", &user.id), 60, 60)
+        .await?;
 
     let assistant_message_id = validate_assistant_message_id(&payload.assistant_message_id)?;
     let backend = service::get_enabled_backend(&state.db, &payload.backend_id).await?;
@@ -112,7 +118,16 @@ pub async fn generate_stream_test(
     jar: CookieJar,
     Json(payload): Json<PrivateStreamTestRequest>,
 ) -> Result<Response, ApiError> {
-    auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
+    let user =
+        auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
+    state
+        .rate_limiter
+        .check(
+            rate_limit::user_action_key("dev-stream-test", &user.id),
+            30,
+            60,
+        )
+        .await?;
     let assistant_message_id = validate_assistant_message_id(&payload.assistant_message_id)?;
     let content_tokens = payload.content_tokens.unwrap_or(1000).clamp(1, 10_000);
     let thinking_tokens = payload.thinking_tokens.unwrap_or(120).clamp(0, 10_000);

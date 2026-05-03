@@ -12,7 +12,7 @@ use crate::{
     app_state::AppState,
     auth,
     error::ApiError,
-    settings,
+    rate_limit, settings,
     uploads::{
         models::Attachment,
         service::{self, UploadInput},
@@ -45,6 +45,10 @@ pub async fn upload_attachment(
 ) -> Result<Json<AttachmentResponse>, ApiError> {
     let user =
         auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
+    state
+        .rate_limiter
+        .check(rate_limit::user_action_key("upload", &user.id), 60, 60)
+        .await?;
     let upload = parse_upload(&mut multipart).await?;
     let app_settings = settings::service::get_app_settings(&state.db).await?;
 

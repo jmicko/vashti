@@ -24,6 +24,7 @@ use crate::{
         self,
         models::{OllamaChatChunk, OllamaChatMessage, OllamaChatRequest, OllamaThink},
     },
+    rate_limit,
 };
 
 type GenerationProgressMap = Arc<tokio::sync::Mutex<HashMap<String, GenerationProgress>>>;
@@ -396,6 +397,10 @@ pub async fn generate_chat(
 ) -> Result<Response, ApiError> {
     let user =
         auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
+    state
+        .rate_limiter
+        .check(rate_limit::user_action_key("generate", &user.id), 60, 60)
+        .await?;
 
     let prepared = service::prepare_generation(
         &state.db,
@@ -416,6 +421,10 @@ pub async fn branch_message(
 ) -> Result<Response, ApiError> {
     let user =
         auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
+    state
+        .rate_limiter
+        .check(rate_limit::user_action_key("generate", &user.id), 60, 60)
+        .await?;
 
     let prepared = service::prepare_branch_generation(
         &state.db,
@@ -437,6 +446,10 @@ pub async fn regenerate_message(
 ) -> Result<Response, ApiError> {
     let user =
         auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
+    state
+        .rate_limiter
+        .check(rate_limit::user_action_key("generate", &user.id), 60, 60)
+        .await?;
     if !payload.attachments.is_empty() {
         return Err(ApiError::bad_request(
             "invalid_attachments",

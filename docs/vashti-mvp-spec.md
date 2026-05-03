@@ -772,6 +772,8 @@ Proposed high-level route groups:
 * `POST /api/auth/logout`
 * `GET /api/auth/session`
 
+Mutating API requests should enforce same-origin browser writes with an `Origin` check, while still allowing ordinary same-origin frontend calls and reasonable non-browser local clients. Login/register, uploads, and generation should be rate-limited in memory.
+
 #### Account/admin
 
 * `POST /api/auth/register`

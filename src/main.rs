@@ -10,6 +10,8 @@ mod frontend;
 mod ollama;
 mod personas;
 mod private;
+mod rate_limit;
+mod security;
 mod settings;
 mod startup;
 mod uploads;
@@ -211,7 +213,12 @@ fn router(state: AppState) -> Router {
         post(private::handlers::generate_stream_test),
     );
 
-    let api = api.fallback(api_not_found);
+    let api = api
+        .fallback(api_not_found)
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            security::origin_check,
+        ));
 
     Router::new()
         .nest("/api", api)
