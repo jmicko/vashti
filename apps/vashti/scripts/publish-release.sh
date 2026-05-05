@@ -7,18 +7,17 @@ cd "$repo_root"
 version="${VERSION:-v$(sed -n 's/^version = "\(.*\)"/\1/p' apps/vashti/Cargo.toml | head -n 1)}"
 target="${RELEASE_TARGET:-linux-x86_64}"
 artifact="${ARTIFACT:-apps/vashti/dist/release/$version/vashti-$target.tar.gz}"
-release_site_url="${VASHTI_RELEASE_SITE_URL:-https://vashti.chat}"
-token_file="${VASHTI_RELEASE_TOKEN_FILE:-apps/vashti/.secrets/release-token}"
+hub_url="${VASHTI_HUB_URL:-https://vashti.chat}"
+token_file="${VASHTI_HUB_TOKEN_FILE:-apps/vashti/.secrets/hub-token}"
 notes="${NOTES:-}"
 
-if [[ -z "${VASHTI_RELEASE_TOKEN:-}" ]]; then
+token="${VASHTI_HUB_TOKEN:-}"
+if [[ -z "$token" ]]; then
     if [[ ! -f "$token_file" ]]; then
-        echo "missing release token: set VASHTI_RELEASE_TOKEN or create $token_file" >&2
+        echo "missing hub token: set VASHTI_HUB_TOKEN or create $token_file" >&2
         exit 1
     fi
     token="$(tr -d '[:space:]' < "$token_file")"
-else
-    token="$VASHTI_RELEASE_TOKEN"
 fi
 
 if [[ ! -f "$artifact" ]]; then
@@ -33,7 +32,7 @@ curl -fsS \
     -F "target=$target" \
     -F "notes=$notes" \
     -F "artifact=@$artifact" \
-    "$release_site_url/api/releases"
+    "$hub_url/api/releases"
 
 echo
-echo "published $artifact to $release_site_url as $version / $target"
+echo "published $artifact to $hub_url as $version / $target"

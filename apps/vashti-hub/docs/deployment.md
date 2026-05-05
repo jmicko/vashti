@@ -2,7 +2,7 @@
 
 Vashti is not at `v1.0.0` yet. Until then, `v0.x.y` builds should be treated as prereleases.
 
-The deployment pipeline is owned by the Vashti operator. `vashti.chat` runs a small Rust release server that serves the public website, install script, release artifacts, checksums, and basic download stats.
+The deployment pipeline is owned by the Vashti operator. `vashti.chat` runs Vashti Hub, a small Rust server that serves the public website, install script, release artifacts, checksums, and basic download stats.
 
 ## Workspace Layout
 
@@ -16,7 +16,7 @@ apps/
     src/
     migrations/
     web/
-  vashti-release-site/
+  vashti-hub/
     Cargo.toml
     docs/
     packaging/
@@ -28,16 +28,16 @@ apps/
 
 The root `Cargo.toml` is a Cargo workspace manifest.
 
-## Release Site
+## Vashti Hub
 
-The release site binary is `vashti-release-site`.
+The hub binary is `vashti-hub`.
 
 Default settings:
 
 * bind: `127.0.0.1:7781`
-* dev data from workspace root: `apps/vashti-release-site/data`
-* packaged/prod data: `/var/lib/vashti-release-site` through `VASHTI_RELEASE_DATA_DIR`
-* database: `release-site.db`
+* dev data from workspace root: `apps/vashti-hub/data`
+* packaged/prod data: `/var/lib/vashti-hub` through `VASHTI_HUB_DATA_DIR`
+* database: `hub.db`
 * artifacts: `artifacts/`
 
 For production, run it behind nginx or Caddy. Example nginx location:
@@ -57,23 +57,23 @@ server {
 }
 ```
 
-On first startup, the release site creates an upload token and writes it to:
+On first startup, Vashti Hub creates an upload token and writes it to:
 
 ```txt
-/var/lib/vashti-release-site/upload-token.txt
+/var/lib/vashti-hub/upload-token.txt
 ```
 
 Store that token locally in:
 
 ```txt
-apps/vashti/.secrets/release-token
+apps/vashti/.secrets/hub-token
 ```
 
 Do not commit app `.secrets/` directories.
 
 ## Public Release Routes
 
-The release site serves:
+Vashti Hub serves:
 
 ```txt
 https://vashti.chat/
@@ -99,7 +99,7 @@ Before `v1.0.0`:
 * minor versions may include migrations and feature changes
 * downgrade support is not promised
 
-The release site does not invent versions. It validates uploaded `vMAJOR.MINOR.PATCH` labels and marks the highest uploaded version as `latest`.
+Vashti Hub does not invent versions. It validates uploaded `vMAJOR.MINOR.PATCH` labels and marks the highest uploaded version as `latest`.
 
 ## Build Vashti
 
@@ -119,7 +119,7 @@ apps/vashti/dist/release/v0.1.0/VERSION
 
 ## Publish a Release
 
-Upload the package to the release site:
+Upload the package to Vashti Hub:
 
 ```sh
 ./apps/vashti/scripts/publish-release.sh
@@ -128,33 +128,33 @@ Upload the package to the release site:
 Useful overrides:
 
 ```sh
-VASHTI_RELEASE_SITE_URL=https://staging.vashti.chat ./apps/vashti/scripts/publish-release.sh
-VASHTI_RELEASE_TOKEN=... ./apps/vashti/scripts/publish-release.sh
+VASHTI_HUB_URL=https://staging.vashti.chat ./apps/vashti/scripts/publish-release.sh
+VASHTI_HUB_TOKEN=... ./apps/vashti/scripts/publish-release.sh
 NOTES="Fix login flow" ./apps/vashti/scripts/publish-release.sh
 ```
 
-## Build the Release Site
+## Build Vashti Hub
 
-Package the release site binary for the VM:
+Package the hub binary for the VM:
 
 ```sh
-./apps/vashti-release-site/scripts/package-release-site.sh
+./apps/vashti-hub/scripts/package-hub.sh
 ```
 
 This writes:
 
 ```txt
-apps/vashti-release-site/dist/release-site/vashti-release-site
-apps/vashti-release-site/dist/release-site/vashti-release-site.service
+apps/vashti-hub/dist/hub/vashti-hub
+apps/vashti-hub/dist/hub/vashti-hub.service
 ```
 
 Install those on the VM:
 
 ```sh
-sudo install -m 0755 apps/vashti-release-site/dist/release-site/vashti-release-site /usr/local/bin/vashti-release-site
-sudo install -m 0644 apps/vashti-release-site/dist/release-site/vashti-release-site.service /etc/systemd/system/vashti-release-site.service
+sudo install -m 0755 apps/vashti-hub/dist/hub/vashti-hub /usr/local/bin/vashti-hub
+sudo install -m 0644 apps/vashti-hub/dist/hub/vashti-hub.service /etc/systemd/system/vashti-hub.service
 sudo systemctl daemon-reload
-sudo systemctl enable --now vashti-release-site
+sudo systemctl enable --now vashti-hub
 ```
 
 ## Install Script

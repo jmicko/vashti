@@ -1,0 +1,23 @@
+[Unit]
+Description=Vashti Hub
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vashti-hub
+Group=vashti-hub
+StateDirectory=vashti-hub
+WorkingDirectory=/var/lib/vashti-hub
+Environment=VASHTI_HUB_DATA_DIR=/var/lib/vashti-hub
+Environment=VASHTI_HUB_BIND=127.0.0.1:7781
+ExecStart=/usr/local/bin/vashti-hub
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/vashti-hub
+
+[Install]
+WantedBy=multi-user.target

@@ -2083,7 +2083,7 @@ vashti/
       src/
       migrations/
       web/
-    vashti-release-site/
+    vashti-hub/
       Cargo.toml
       docs/
       packaging/
@@ -2096,12 +2096,12 @@ vashti/
 Notes:
 
 * `apps/vashti` is the self-hosted chat app
-* `apps/vashti-release-site` is the release/download/admin site for `vashti.chat`
+* `apps/vashti-hub` is the release/download/admin site for `vashti.chat`
 * app-specific docs, packaging files, release scripts, and dev data live under the app that owns them
 * `cargo build -p vashti` runs the Vite production build when needed, then embeds `apps/vashti/web/dist` into the Rust binary
 * `apps/vashti/web/dist` is generated output and should not be tracked in git
-* local development data defaults to `apps/vashti/data` and `apps/vashti-release-site/data` when commands are run from the workspace root
-* release-site storage lives outside the repo in production, normally under `/var/lib/vashti-release-site`
+* local development data defaults to `apps/vashti/data` and `apps/vashti-hub/data` when commands are run from the workspace root
+* hub storage lives outside the repo in production, normally under `/var/lib/vashti-hub`
 
 ---
 
@@ -2119,7 +2119,7 @@ Versioning:
 Release artifacts:
 
 * `vashti.chat/releases` is the canonical binary source
-* `vashti.chat` is served by the `vashti-release-site` Rust app, not by static hosting
+* `vashti.chat` is served by the `vashti-hub` Rust app, not by static hosting
 * initial target is Linux x86_64
 * release assets should include a self-contained binary archive, `SHA256SUMS`, and `VERSION`
 * the release archive should include the Vashti binary, a systemd service example, and install notes
@@ -2130,9 +2130,9 @@ Install/update path:
 * the default packaged install should store data in `/var/lib/vashti`
 * packaged installs should use `WorkingDirectory=/var/lib/vashti` so `recover_network.txt` recovery lives there
 * before in-app self-update exists, updates are performed by rerunning the installer
-* publishing should upload artifacts to the release-site API using bearer-token auth
+* publishing should upload artifacts to the hub API using bearer-token auth
 
-Release site:
+Vashti Hub:
 
 * serves the public website and `install.sh`
 * accepts release artifact uploads through `POST /api/releases`

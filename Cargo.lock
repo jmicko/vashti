@@ -2373,7 +2373,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "vashti-release-site"
+name = "vashti-hub"
 version = "0.1.0"
 dependencies = [
  "axum",

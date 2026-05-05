@@ -51,7 +51,7 @@ struct Config {
 impl Config {
     fn from_env() -> Result<Self, AppError> {
         let app_root = env::current_dir().map_err(AppError::from)?;
-        let data_dir = env::var_os("VASHTI_RELEASE_DATA_DIR")
+        let data_dir = env::var_os("VASHTI_HUB_DATA_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|| default_data_dir(&app_root));
         let data_dir = if data_dir.is_absolute() {
@@ -60,18 +60,18 @@ impl Config {
             app_root.join(data_dir)
         };
 
-        let bind_addr = env::var("VASHTI_RELEASE_BIND")
+        let bind_addr = env::var("VASHTI_HUB_BIND")
             .unwrap_or_else(|_| "127.0.0.1:7781".to_string())
             .parse()
-            .map_err(|_| AppError::bad_request("invalid_bind", "VASHTI_RELEASE_BIND is invalid"))?;
-        let max_upload_bytes = env::var("VASHTI_RELEASE_MAX_UPLOAD_BYTES")
+            .map_err(|_| AppError::bad_request("invalid_bind", "VASHTI_HUB_BIND is invalid"))?;
+        let max_upload_bytes = env::var("VASHTI_HUB_MAX_UPLOAD_BYTES")
             .ok()
             .and_then(|value| value.parse().ok())
             .unwrap_or(512 * 1024 * 1024);
 
         Ok(Self {
             artifact_dir: data_dir.join("artifacts"),
-            database_path: data_dir.join("release-site.db"),
+            database_path: data_dir.join("hub.db"),
             data_dir,
             bind_addr,
             max_upload_bytes,
@@ -80,8 +80,8 @@ impl Config {
 }
 
 fn default_data_dir(app_root: &Path) -> PathBuf {
-    if app_root.join("apps/vashti-release-site").is_dir() {
-        PathBuf::from("apps/vashti-release-site/data")
+    if app_root.join("apps/vashti-hub").is_dir() {
+        PathBuf::from("apps/vashti-hub/data")
     } else {
         PathBuf::from("data")
     }
@@ -217,7 +217,7 @@ async fn main() -> Result<(), AppError> {
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "vashti_release_site=info,tower_http=info".into()),
+                .unwrap_or_else(|_| "vashti_hub=info,tower_http=info".into()),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
@@ -249,10 +249,7 @@ async fn main() -> Result<(), AppError> {
     let bind_addr = config.bind_addr;
     let state = AppState { config, db };
     let listener = tokio::net::TcpListener::bind(bind_addr).await?;
-    tracing::info!(
-        "release site listening on http://{}",
-        listener.local_addr()?
-    );
+    tracing::info!("vashti hub listening on http://{}", listener.local_addr()?);
 
     axum::serve(listener, router(state))
         .with_graceful_shutdown(shutdown_signal())
@@ -720,7 +717,7 @@ async fn ensure_upload_token(db: &SqlitePool, config: &Config) -> Result<(), App
     store_token(db, config, &token).await?;
     tracing::warn!(
         path = %config.data_dir.join("upload-token.txt").display(),
-        "generated initial release-site upload token"
+        "generated initial vashti hub upload token"
     );
     Ok(())
 }
