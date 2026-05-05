@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Vashti</title>
+    <meta name="description" content="A lightweight self-hosted chat UI for Ollama.">
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <a class="brand" href="/">Vashti</a>
+        <nav class="nav">
+          <a href="/admin">Admin</a>
+          <a href="/api/releases/latest">Latest</a>
+        </nav>
+      </header>
+
+      <section>
+        <h1>Run your own local-first chat UI.</h1>
+        <p class="lede">
+          Vashti is a lightweight self-hosted chat UI for one or more Ollama backends.
+          This release server hosts official builds directly from vashti.chat.
+        </p>
+        <div class="command">
+          <code>curl -fsSL https://vashti.chat/install.sh | sh</code>
+        </div>
+      </section>
+
+      <section class="grid">
+        <article class="card">
+          <h2>LAN first</h2>
+          <p>Install Vashti on a home server and open it from your local network.</p>
+        </article>
+        <article class="card">
+          <h2>HTTPS ready</h2>
+          <p>Use Caddy, nginx, or another reverse proxy when exposing it publicly.</p>
+        </article>
+        <article class="card">
+          <h2>Owned releases</h2>
+          <p>Downloads, checksums, and version metadata are served from this host.</p>
+        </article>
+      </section>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Vashti Release Admin</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <a class="brand" href="/">Vashti</a>
+        <nav class="nav">
+          <a href="/">Home</a>
+          <a href="/api/releases">API</a>
+        </nav>
+      </header>
+
+      <section class="card">
+        <h1>Release Admin</h1>
+        <p class="muted">
+          Upload release artifacts, rotate the upload token, and inspect basic download counts.
+        </p>
+
+        <form id="upload-form">
+          <label>
+            Admin token
+            <input id="token" name="token" type="password" autocomplete="off" required>
+          </label>
+          <label>
+            Version
+            <input name="version" placeholder="v0.1.0" required>
+          </label>
+          <label>
+            Target
+            <input name="target" value="linux-x86_64" required>
+          </label>
+          <label>
+            Artifact
+            <input name="artifact" type="file" required>
+          </label>
+          <label>
+            Notes
+            <textarea name="notes" rows="4"></textarea>
+          </label>
+          <button type="submit">Upload Release</button>
+        </form>
+
+        <p>
+          <button id="stats-button" type="button">Load Stats</button>
+          <button id="rotate-button" type="button">Rotate Token</button>
+        </p>
+
+        <pre id="output">Ready.</pre>
+      </section>
+    </main>
+
+    <script>
+      const tokenInput = document.querySelector("#token");
+      const output = document.querySelector("#output");
+      tokenInput.value = localStorage.getItem("vashtiReleaseToken") || "";
+      tokenInput.addEventListener("change", () => localStorage.setItem("vashtiReleaseToken", tokenInput.value));
+
+      function authHeaders() {
+        return { Authorization: `Bearer ${tokenInput.value}` };
+      }
+
+      function show(value) {
+        output.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+      }
+
+      document.querySelector("#upload-form").addEventListener("submit", async (event) => {
+        event.preventDefault();
+        localStorage.setItem("vashtiReleaseToken", tokenInput.value);
+        const form = new FormData(event.currentTarget);
+        form.delete("token");
+        const response = await fetch("/api/releases", {
+          method: "POST",
+          headers: authHeaders(),
+          body: form
+        });
+        show(await response.json());
+      });
+
+      document.querySelector("#stats-button").addEventListener("click", async () => {
+        const response = await fetch("/api/stats", { headers: authHeaders() });
+        show(await response.json());
+      });
+
+      document.querySelector("#rotate-button").addEventListener("click", async () => {
+        if (!confirm("Rotate the upload token? The old token will stop working.")) return;
+        const response = await fetch("/api/admin/token/rotate", {
+          method: "POST",
+          headers: authHeaders()
+        });
+        const body = await response.json();
+        if (body.token) {
+          tokenInput.value = body.token;
+          localStorage.setItem("vashtiReleaseToken", body.token);
+        }
+        show(body);
+      });
+    </script>
+  </body>
+</html>

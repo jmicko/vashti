@@ -234,6 +234,17 @@ Public persona lifecycle direction:
 
 * see basic storage/config health later if needed
 
+### 5.9 Release and deployment
+
+* `vashti.chat/releases` is the canonical source for binary downloads
+* `v0.x.y` builds are prereleases until Vashti is ready for `v1.0.0`
+* first release target is Linux x86_64
+* release archives include the embedded frontend binary, systemd service example, install notes, and checksums
+* `vashti.chat` is served by a small Rust release-site app with an upload API, install script route, admin page, and download stats
+* release uploads use bearer-token auth and server-computed checksums
+* the highest uploaded SemVer version becomes `latest`
+* in-app self-update is deferred until the install/release path is stable
+
 ---
 
 ## 6. Privacy Model
@@ -383,7 +394,7 @@ On first run, Vashti should create a data directory.
 Proposed structure:
 
 ```text
-data/
+apps/vashti/data/
   app.db
   uploads/
   tmp/
@@ -765,6 +776,7 @@ Proposed high-level route groups:
 * `GET /assets/*path` → embedded frontend assets
 * `GET /manifest.webmanifest` → PWA manifest
 * `GET /sw.js` → service worker
+* `GET /api/version` → running app name/version
 
 #### Auth/session
 

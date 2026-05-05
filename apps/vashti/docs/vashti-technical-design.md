@@ -669,7 +669,24 @@ Recommended pattern:
 
 ---
 
-## 6.2 Auth endpoints
+## 6.2 System endpoints
+
+### `GET /api/version`
+
+Returns the running app name and version from the Rust package metadata.
+
+Response:
+
+```json
+{
+  "name": "vashti",
+  "version": "0.1.0"
+}
+```
+
+---
+
+## 6.3 Auth endpoints
 
 ### `POST /api/auth/register`
 
@@ -783,7 +800,7 @@ Response when not logged in:
 
 ---
 
-## 6.3 Admin/user endpoints
+## 6.4 Admin/user endpoints
 
 ### `GET /api/admin/users`
 
@@ -877,7 +894,7 @@ Response:
 
 ---
 
-## 6.4 Settings endpoints
+## 6.5 Settings endpoints
 
 ### `GET /api/settings`
 
@@ -968,7 +985,7 @@ Nullable fields may be sent as `null` to clear them.
 
 ---
 
-## 6.5 Ollama backend endpoints
+## 6.6 Ollama backend endpoints
 
 ### `GET /api/backends`
 
@@ -1154,7 +1171,7 @@ Response:
 
 ---
 
-## 6.6 Persona endpoints
+## 6.7 Persona endpoints
 
 Persona endpoints manage server-stored personas only. Private-local personas live in IndexedDB and are never returned by these endpoints.
 
@@ -1287,7 +1304,7 @@ Use cases:
 
 ---
 
-## 6.7 Standard chat endpoints
+## 6.8 Standard chat endpoints
 
 ### `GET /api/chats`
 
@@ -1578,7 +1595,7 @@ Soft-deletes a message, scrubs revision text, leaves the tree node in place, and
 
 ---
 
-## 6.8 Standard generation endpoint
+## 6.9 Standard generation endpoint
 
 ### `POST /api/chats/:chat_id/generate`
 
@@ -1665,7 +1682,7 @@ Behavior:
 
 ---
 
-## 6.9 Standard attachment endpoints
+## 6.10 Standard attachment endpoints
 
 ### `POST /api/chats/:chat_id/attachments`
 
@@ -1721,7 +1738,7 @@ Response:
 
 ---
 
-## 6.10 Private-local generation endpoint
+## 6.11 Private-local generation endpoint
 
 ### `POST /api/private/generate`
 
@@ -2055,71 +2072,79 @@ Suggested repo shape:
 
 ```text
 vashti/
-  Cargo.toml
-  src/
-    main.rs
-    app_state.rs
-    config.rs
-    db.rs
-    error.rs
-    auth/
-      mod.rs
-      handlers.rs
-      service.rs
-      middleware.rs
-    admin/
-      mod.rs
-      handlers.rs
-    backends/
-      mod.rs
-      handlers.rs
-      service.rs
-    chats/
-      mod.rs
-      handlers.rs
-      service.rs
-      models.rs
-    personas/
-      mod.rs
-      handlers.rs
-      service.rs
-      models.rs
-    private/
-      mod.rs
-      handlers.rs
-      service.rs
-    uploads/
-      mod.rs
-      handlers.rs
-      service.rs
-    frontend/
-      mod.rs
-    ollama/
-      mod.rs
-      client.rs
-      models.rs
-    startup/
-      mod.rs
-      bootstrap.rs
-      migrations.rs
-  migrations/
-  web/
-    package.json
-    vite.config.ts
-    src/
-    public/
+  Cargo.toml              # workspace manifest
+  apps/
+    vashti/
+      Cargo.toml
+      build.rs
+      docs/
+      packaging/
+      scripts/
+      src/
+      migrations/
+      web/
+    vashti-release-site/
+      Cargo.toml
+      docs/
+      packaging/
+      scripts/
+      src/
+      migrations/
+      static/
 ```
 
 Notes:
 
-* backend and frontend live in one repo
-* `cargo build` runs the Vite production build when needed, then embeds `web/dist` into the Rust binary
-* `web/dist` is generated output and should not be tracked in git
-* exact module names can change slightly, but ownership boundaries should stay similar
+* `apps/vashti` is the self-hosted chat app
+* `apps/vashti-release-site` is the release/download/admin site for `vashti.chat`
+* app-specific docs, packaging files, release scripts, and dev data live under the app that owns them
+* `cargo build -p vashti` runs the Vite production build when needed, then embeds `apps/vashti/web/dist` into the Rust binary
+* `apps/vashti/web/dist` is generated output and should not be tracked in git
+* local development data defaults to `apps/vashti/data` and `apps/vashti-release-site/data` when commands are run from the workspace root
+* release-site storage lives outside the repo in production, normally under `/var/lib/vashti-release-site`
 
 ---
 
-## 10. First Implementation Slice
+## 10. Release and Deployment
+
+Vashti should support prerelease distribution before `v1.0.0`.
+
+Versioning:
+
+* use SemVer tags such as `v0.1.0`, `v0.1.1`, and eventually `v1.0.0`
+* `Cargo.toml` package version is the app version
+* `GET /api/version` returns the running app name and version
+* `v0.x.y` releases should be treated as prereleases
+
+Release artifacts:
+
+* `vashti.chat/releases` is the canonical binary source
+* `vashti.chat` is served by the `vashti-release-site` Rust app, not by static hosting
+* initial target is Linux x86_64
+* release assets should include a self-contained binary archive, `SHA256SUMS`, and `VERSION`
+* the release archive should include the Vashti binary, a systemd service example, and install notes
+
+Install/update path:
+
+* `install.sh` should detect OS/architecture, download the matching archive from `vashti.chat/releases`, verify checksums, install the binary, and configure systemd on Linux
+* the default packaged install should store data in `/var/lib/vashti`
+* packaged installs should use `WorkingDirectory=/var/lib/vashti` so `recover_network.txt` recovery lives there
+* before in-app self-update exists, updates are performed by rerunning the installer
+* publishing should upload artifacts to the release-site API using bearer-token auth
+
+Release site:
+
+* serves the public website and `install.sh`
+* accepts release artifact uploads through `POST /api/releases`
+* validates `vMAJOR.MINOR.PATCH` version labels supplied by the packaged app
+* computes checksums server-side
+* marks the highest uploaded SemVer version as `latest`
+* records basic download counts without storing raw IP addresses
+* exposes an admin page for uploads, token rotation, and stats
+
+---
+
+## 11. First Implementation Slice
 
 The first real coding slice should aim for this outcome:
 
@@ -2133,7 +2158,7 @@ The first real coding slice should aim for this outcome:
 
 This is a better first milestone than jumping straight into full chat UI.
 
-### 10.1 Persona implementation slices
+### 11.1 Persona implementation slices
 
 Recommended persona sequence:
 
@@ -2149,7 +2174,7 @@ Recommended persona sequence:
 
 ---
 
-## 11. Codex Handoff Guidance
+## 12. Codex Handoff Guidance
 
 When handing this to Codex, do not ask it to generate the whole app at once.
 

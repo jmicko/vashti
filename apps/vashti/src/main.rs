@@ -15,6 +15,7 @@ mod security;
 mod settings;
 mod startup;
 mod uploads;
+mod version;
 
 use std::{error::Error, time::Duration};
 
@@ -73,6 +74,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
 fn router(state: AppState) -> Router {
     let api = Router::new()
+        .route("/version", get(version::get_version))
         .route("/auth/session", get(auth::handlers::session))
         .route("/auth/register", post(auth::handlers::register))
         .route("/auth/login", post(auth::handlers::login))

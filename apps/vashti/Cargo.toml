@@ -1,0 +1,27 @@
+[package]
+name = "vashti"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+argon2 = "0.5"
+axum = { version = "0.8", features = ["multipart"] }
+axum-extra = { version = "0.10", features = ["cookie"] }
+base64 = "0.22"
+futures-util = "0.3"
+mime_guess = "2"
+rand_core = { version = "0.6", features = ["getrandom"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+rust-embed = "8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "sqlite", "migrate", "macros"] }
+thiserror = "2"
+time = "0.3"
+tokio = { version = "1", features = ["fs", "macros", "rt-multi-thread", "signal"] }
+tokio-stream = "0.1"
+tokio-util = "0.7"
+tower-http = { version = "0.6", features = ["set-header", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4"] }

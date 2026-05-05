@@ -1,4 +1,10 @@
 /target
 /data
-/web/node_modules
-/web/dist
+/data-release
+/dist
+/.secrets
+/apps/*/data
+/apps/*/dist
+/apps/*/.secrets
+/apps/vashti/web/node_modules
+/apps/vashti/web/dist

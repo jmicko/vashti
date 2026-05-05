@@ -1,0 +1,23 @@
+[Unit]
+Description=Vashti self-hosted Ollama chat
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vashti
+Group=vashti
+StateDirectory=vashti
+WorkingDirectory=/var/lib/vashti
+Environment=VASHTI_DATA_DIR=/var/lib/vashti
+Environment=VASHTI_BIND=0.0.0.0:7771
+ExecStart=/usr/local/bin/vashti
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/vashti
+
+[Install]
+WantedBy=multi-user.target

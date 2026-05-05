@@ -1,4 +1,8 @@
-use std::{env, net::SocketAddr, path::PathBuf};
+use std::{
+    env,
+    net::SocketAddr,
+    path::{Path, PathBuf},
+};
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -23,7 +27,7 @@ impl Config {
         let app_root = env::current_dir().map_err(ConfigError::CurrentDir)?;
         let data_dir = env::var_os("VASHTI_DATA_DIR")
             .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("data"));
+            .unwrap_or_else(|| default_data_dir(&app_root));
         let data_dir = if data_dir.is_absolute() {
             data_dir
         } else {
@@ -50,5 +54,13 @@ impl Config {
 
     pub fn tmp_dir(&self) -> PathBuf {
         self.data_dir.join("tmp")
+    }
+}
+
+fn default_data_dir(app_root: &Path) -> PathBuf {
+    if app_root.join("apps/vashti").is_dir() {
+        PathBuf::from("apps/vashti/data")
+    } else {
+        PathBuf::from("data")
     }
 }
