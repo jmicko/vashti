@@ -138,7 +138,8 @@ WantedBy=multi-user.target
 EOF_SERVICE
     $sudo_cmd install -m 0644 "$service_file" /etc/systemd/system/vashti.service
     $sudo_cmd systemctl daemon-reload
-    $sudo_cmd systemctl enable --now vashti
+    $sudo_cmd systemctl enable vashti
+    $sudo_cmd systemctl restart vashti
 
     echo "Vashti is running. Open http://SERVER_IP:${bind_addr##*:}"
 else

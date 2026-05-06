@@ -22,5 +22,6 @@ fi
 mkdir -p "$dist_dir"
 cp "$binary_path" "$dist_dir/vashti-hub"
 cp apps/vashti-hub/packaging/vashti-hub.service "$dist_dir/vashti-hub.service"
+cp apps/vashti-hub/packaging/install-hub.sh "$dist_dir/install-hub.sh"
 
 echo "created $dist_dir/vashti-hub"

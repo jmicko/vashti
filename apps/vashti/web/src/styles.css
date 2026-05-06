@@ -1677,6 +1677,37 @@ textarea {
   max-width: 420px;
 }
 
+.settings-meta {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(7, 11, 7, 0.54);
+}
+
+.settings-meta div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-meta dt,
+.settings-meta dd {
+  margin: 0;
+}
+
+.settings-meta dt {
+  color: var(--muted);
+}
+
+.settings-meta dd {
+  color: var(--accent);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
 .info-box {
   border: 1px solid rgba(255, 107, 107, 0.52);
   border-radius: 8px;

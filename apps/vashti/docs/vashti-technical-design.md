@@ -2130,7 +2130,7 @@ Install/update path:
 * the default packaged install should store data in `/var/lib/vashti`
 * packaged installs should use `WorkingDirectory=/var/lib/vashti` so `recover_network.txt` recovery lives there
 * before in-app self-update exists, updates are performed by rerunning the installer
-* publishing should upload artifacts to the hub API using bearer-token auth
+* publishing should upload artifacts to the hub API using short-lived one-time bearer keys created from the Hub admin page
 
 Vashti Hub:
 
@@ -2140,7 +2140,7 @@ Vashti Hub:
 * computes checksums server-side
 * marks the highest uploaded SemVer version as `latest`
 * records basic download counts without storing raw IP addresses
-* exposes an admin page for uploads, token rotation, and stats
+* exposes an admin page for one-time upload key creation and stats
 
 ---
 

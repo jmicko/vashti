@@ -60,7 +60,7 @@ server {
     server_name vashti.chat;
 
     location / {
-        proxy_pass http://127.0.0.1:7781;
+        proxy_pass http://10.8.0.2:7781;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -79,19 +79,9 @@ Hub creates an admin setup key and writes it to:
 The admin setup page shows the exact path and a `cat` command. Use that key to create the first
 admin password.
 
-After Hub is claimed, it creates an upload token and writes it to:
-
-```txt
-/var/lib/vashti-hub/upload-token.txt
-```
-
-Store that token locally in:
-
-```txt
-apps/vashti/.secrets/hub-token
-```
-
-Do not commit app `.secrets/` directories.
+After Hub is claimed, the admin page can create one-time upload keys. Upload keys work once, expire
+after 10 minutes, and are kept only in Hub memory. Generate one immediately before running the
+release publish script.
 
 If the admin password is forgotten, `/admin` can create a reset key at:
 
@@ -118,7 +108,7 @@ https://vashti.chat/releases/v0.1.0/SHA256SUMS
 https://vashti.chat/releases/v0.1.0/vashti-linux-x86_64.tar.gz
 ```
 
-The admin page can upload artifacts, rotate the upload token, and inspect basic download counts.
+The admin page can create one-time upload keys and inspect basic download counts.
 
 ## Versioning
 
@@ -156,11 +146,14 @@ Upload the package to Vashti Hub:
 ./apps/vashti/scripts/publish-release.sh
 ```
 
+The script asks for a one-time upload key. Create the key from the Hub admin page and paste it when
+prompted.
+
 Useful overrides:
 
 ```sh
 VASHTI_HUB_URL=https://staging.vashti.chat ./apps/vashti/scripts/publish-release.sh
-VASHTI_HUB_TOKEN=... ./apps/vashti/scripts/publish-release.sh
+VASHTI_HUB_UPLOAD_KEY=... ./apps/vashti/scripts/publish-release.sh
 NOTES="Fix login flow" ./apps/vashti/scripts/publish-release.sh
 ```
 
@@ -177,15 +170,42 @@ This writes:
 ```txt
 apps/vashti-hub/dist/hub/vashti-hub
 apps/vashti-hub/dist/hub/vashti-hub.service
+apps/vashti-hub/dist/hub/install-hub.sh
 ```
 
-Install those on the VM:
+Copy `apps/vashti-hub/dist/hub/` to the Hub VM, then run the installer from that directory.
+The installer is interactive when run from a terminal:
 
 ```sh
-sudo install -m 0755 apps/vashti-hub/dist/hub/vashti-hub /usr/local/bin/vashti-hub
-sudo install -m 0644 apps/vashti-hub/dist/hub/vashti-hub.service /etc/systemd/system/vashti-hub.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now vashti-hub
+sudo ./install-hub.sh
+```
+
+It asks where to install the binary, where to store Hub data, which detected network address to
+bind, whether to enable public HTTPS reverse proxy mode, and the maximum release upload size. For a
+WireGuard-only Hub listener, choose the WireGuard address, for example `10.8.0.2:7781`.
+
+The installer installs `/usr/local/bin/vashti-hub`, writes `/etc/systemd/system/vashti-hub.service`,
+creates/reuses the `vashti-hub` system user, prepares `/var/lib/vashti-hub`, and starts the service.
+
+Useful non-interactive installer overrides:
+
+```sh
+VASHTI_HUB_NO_PROMPT=1 sudo ./install-hub.sh
+VASHTI_HUB_BIND=127.0.0.1:7781 sudo ./install-hub.sh
+VASHTI_HUB_DATA_DIR=/srv/vashti-hub sudo ./install-hub.sh
+VASHTI_HUB_INSTALL_DIR=/opt/vashti/bin sudo ./install-hub.sh
+VASHTI_HUB_USER=vashti-hub sudo ./install-hub.sh
+VASHTI_HUB_NO_SYSTEMD=1 ./install-hub.sh
+```
+
+For scripted WireGuard/reverse-proxy installs:
+
+```sh
+sudo VASHTI_HUB_NO_PROMPT=1 \
+  VASHTI_HUB_BIND=10.8.0.2:7781 \
+  VASHTI_HUB_COOKIE_SECURE=true \
+  VASHTI_HUB_TRUST_PROXY_HEADERS=true \
+  ./install-hub.sh
 ```
 
 ## Install Script

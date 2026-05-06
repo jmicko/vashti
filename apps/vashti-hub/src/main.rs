@@ -50,12 +50,14 @@ const ADMIN_SESSION_COOKIE: &str = "vashti_hub_admin";
 const ADMIN_SETUP_KEY_FILE: &str = "admin-setup-key.txt";
 const ADMIN_RESET_KEY_FILE: &str = "admin-reset-key.txt";
 const ADMIN_SESSION_TTL_SECONDS: i64 = 60 * 60 * 12;
+const UPLOAD_KEY_TTL_SECONDS: i64 = 60 * 10;
 
 #[derive(Clone)]
 struct AppState {
     config: Config,
     db: SqlitePool,
     rate_limiter: Arc<RateLimiter>,
+    upload_keys: Arc<UploadKeyStore>,
 }
 
 #[derive(Clone)]
@@ -164,6 +166,34 @@ impl RateLimiter {
         }
 
         Ok(())
+    }
+}
+
+#[derive(Default)]
+struct UploadKeyStore {
+    keys: Mutex<HashMap<String, i64>>,
+}
+
+impl UploadKeyStore {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    async fn create(&self) -> UploadKey {
+        let token = generate_token();
+        let expires_at = unix_timestamp() + UPLOAD_KEY_TTL_SECONDS;
+        let mut keys = self.keys.lock().await;
+        keys.retain(|_, expiry| *expiry > unix_timestamp());
+        keys.insert(token_hash(&token), expires_at);
+        UploadKey { token, expires_at }
+    }
+
+    async fn consume(&self, token: &str) -> bool {
+        let now = unix_timestamp();
+        let mut keys = self.keys.lock().await;
+        keys.retain(|_, expiry| *expiry > now);
+        keys.remove(&token_hash(token))
+            .is_some_and(|expiry| expiry > now)
     }
 }
 
@@ -283,8 +313,15 @@ struct UploadResponse {
 }
 
 #[derive(Debug, Serialize)]
-struct TokenResponse {
+struct UploadKeyResponse {
     token: String,
+    expires_at: i64,
+    ttl_seconds: i64,
+}
+
+struct UploadKey {
+    token: String,
+    expires_at: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -376,15 +413,14 @@ async fn main() -> Result<(), AppError> {
 
     ensure_settings(&db).await?;
     ensure_admin_setup_key(&db, &config).await?;
-    if admin_exists(&db).await? {
-        ensure_upload_token(&db, &config).await?;
-    }
+    clear_legacy_upload_token(&db, &config).await?;
 
     let bind_addr = config.bind_addr;
     let state = AppState {
         config,
         db,
         rate_limiter: Arc::new(RateLimiter::new()),
+        upload_keys: Arc::new(UploadKeyStore::new()),
     };
     let listener = tokio::net::TcpListener::bind(bind_addr).await?;
     tracing::info!("vashti hub listening on http://{}", listener.local_addr()?);
@@ -410,6 +446,7 @@ fn router(state: AppState) -> Router {
         .route("/api/admin/setup", post(setup_admin))
         .route("/api/admin/login", post(login_admin))
         .route("/api/admin/logout", post(logout_admin))
+        .route("/api/admin/upload-key", post(create_upload_key))
         .route(
             "/api/admin/password-reset/request",
             post(request_password_reset),
@@ -421,7 +458,6 @@ fn router(state: AppState) -> Router {
         .route("/api/releases", get(list_releases).post(upload_release))
         .route("/api/releases/latest", get(latest_release))
         .route("/api/stats", get(stats))
-        .route("/api/admin/token/rotate", post(rotate_token))
         .route("/releases/latest/VERSION", get(latest_version_file))
         .route("/releases/latest/SHA256SUMS", get(latest_checksums))
         .route("/releases/latest/{filename}", get(download_latest))
@@ -523,7 +559,6 @@ async fn setup_admin(
 
     create_admin(&state.db, &payload.password).await?;
     clear_setup_key(&state.db, &state.config).await?;
-    ensure_upload_token(&state.db, &state.config).await?;
     let session_id = create_admin_session(&state.db).await?;
     let secure = should_secure_cookie(&state.config, &headers);
 
@@ -674,7 +709,8 @@ async fn stats(
     headers: HeaderMap,
     jar: CookieJar,
 ) -> Result<Json<StatsResponse>, AppError> {
-    require_admin(&state, &headers, &jar).await?;
+    require_same_origin(&headers)?;
+    require_admin_session(&state, &jar).await?;
     Ok(Json(StatsResponse {
         artifacts: load_artifacts_with_downloads(&state.db, None).await?,
     }))
@@ -683,11 +719,10 @@ async fn stats(
 async fn upload_release(
     State(state): State<AppState>,
     headers: HeaderMap,
-    jar: CookieJar,
     multipart: Multipart,
 ) -> Result<Json<UploadResponse>, AppError> {
-    require_same_origin(&headers)?;
-    require_admin(&state, &headers, &jar).await?;
+    require_claimed(&state.db).await?;
+    consume_upload_key(&state, &headers).await?;
     let upload = parse_upload(multipart).await?;
     let artifact_dir = state.config.artifact_dir.join(&upload.version);
     fs::create_dir_all(&artifact_dir).await?;
@@ -746,17 +781,20 @@ async fn upload_release(
     }))
 }
 
-async fn rotate_token(
+async fn create_upload_key(
     State(state): State<AppState>,
     headers: HeaderMap,
     jar: CookieJar,
-) -> Result<Json<TokenResponse>, AppError> {
+) -> Result<Json<UploadKeyResponse>, AppError> {
     require_same_origin(&headers)?;
-    require_admin(&state, &headers, &jar).await?;
-    let token = generate_token();
-    store_token(&state.db, &state.config, &token).await?;
+    require_admin_session(&state, &jar).await?;
+    let key = state.upload_keys.create().await;
 
-    Ok(Json(TokenResponse { token }))
+    Ok(Json(UploadKeyResponse {
+        token: key.token,
+        expires_at: key.expires_at,
+        ttl_seconds: UPLOAD_KEY_TTL_SECONDS,
+    }))
 }
 
 async fn latest_version_file(State(state): State<AppState>) -> Result<Response, AppError> {
@@ -1118,71 +1156,26 @@ async fn ensure_admin_setup_key(db: &SqlitePool, config: &Config) -> Result<(), 
     Ok(())
 }
 
-async fn ensure_upload_token(db: &SqlitePool, config: &Config) -> Result<(), AppError> {
-    let existing: Option<String> =
-        sqlx::query_scalar("SELECT upload_token_hash FROM release_settings WHERE id = 1")
-            .fetch_one(db)
-            .await?;
-    if existing.is_some() {
-        return Ok(());
-    }
-
-    let token = generate_token();
-    store_token(db, config, &token).await?;
-    tracing::warn!(
-        path = %config.data_dir.join("upload-token.txt").display(),
-        "generated initial vashti hub upload token"
-    );
-    Ok(())
-}
-
-async fn store_token(db: &SqlitePool, config: &Config, token: &str) -> Result<(), AppError> {
-    let token_path = config.data_dir.join("upload-token.txt");
-    fs::write(&token_path, format!("{}\n", token)).await?;
-    set_owner_only_permissions(&token_path)?;
-
-    sqlx::query(
-        r#"
-        UPDATE release_settings
-        SET upload_token_hash = ?, updated_at = ?
-        WHERE id = 1
-        "#,
-    )
-    .bind(token_hash(token))
-    .bind(unix_timestamp())
-    .execute(db)
-    .await?;
-
-    Ok(())
-}
-
-async fn require_admin(
-    state: &AppState,
-    headers: &HeaderMap,
-    jar: &CookieJar,
-) -> Result<(), AppError> {
+async fn require_admin_session(state: &AppState, jar: &CookieJar) -> Result<(), AppError> {
     require_claimed(&state.db).await?;
 
     if admin_from_session(&state.db, jar).await?.is_some() {
         return Ok(());
     }
 
+    Err(AppError::unauthorized())
+}
+
+async fn consume_upload_key(state: &AppState, headers: &HeaderMap) -> Result<(), AppError> {
     let Some(token) = bearer_token(headers) else {
         return Err(AppError::unauthorized());
     };
-    let Some(expected_hash): Option<String> =
-        sqlx::query_scalar("SELECT upload_token_hash FROM release_settings WHERE id = 1")
-            .fetch_one(&state.db)
-            .await?
-    else {
-        return Err(AppError::unauthorized());
-    };
-
-    if token_hash(token) != expected_hash {
-        return Err(AppError::unauthorized());
-    }
-
-    Ok(())
+    state
+        .upload_keys
+        .consume(token)
+        .await
+        .then_some(())
+        .ok_or_else(AppError::unauthorized)
 }
 
 async fn create_admin(db: &SqlitePool, password: &str) -> Result<(), AppError> {
@@ -1339,6 +1332,29 @@ async fn clear_reset_key(db: &SqlitePool, config: &Config) -> Result<(), AppErro
         SET reset_key_hash = NULL, reset_key_generated_at = NULL, updated_at = ?
         WHERE id = 1
         "#,
+    )
+    .bind(unix_timestamp())
+    .execute(db)
+    .await?;
+
+    Ok(())
+}
+
+async fn clear_legacy_upload_token(db: &SqlitePool, config: &Config) -> Result<(), AppError> {
+    let token_path = config.data_dir.join("upload-token.txt");
+    match fs::remove_file(&token_path).await {
+        Ok(()) => {
+            tracing::info!(
+                path = %token_path.display(),
+                "removed legacy persistent vashti hub upload token"
+            );
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+
+    sqlx::query(
+        "UPDATE release_settings SET upload_token_hash = NULL, updated_at = ? WHERE id = 1",
     )
     .bind(unix_timestamp())
     .execute(db)

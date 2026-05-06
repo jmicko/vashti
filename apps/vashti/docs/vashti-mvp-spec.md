@@ -241,7 +241,7 @@ Public persona lifecycle direction:
 * first release target is Linux x86_64
 * release archives include the embedded frontend binary, systemd service example, install notes, and checksums
 * `vashti.chat` is served by Vashti Hub, a small Rust app with an upload API, install script route, admin page, and download stats
-* release uploads use bearer-token auth and server-computed checksums
+* release uploads use short-lived one-time bearer keys created from the Hub admin page, plus server-computed checksums
 * the highest uploaded SemVer version becomes `latest`
 * in-app self-update is deferred until the install/release path is stable
 

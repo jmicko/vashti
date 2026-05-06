@@ -379,6 +379,11 @@ type AppSettings = {
   network_recovery_notice: string | null;
 };
 
+type VersionResponse = {
+  name: string;
+  version: string;
+};
+
 type LoadState =
   | { status: "loading" }
   | { status: "loaded"; session: SessionResponse }
@@ -8300,13 +8305,17 @@ function AppSettingsPanel({
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [networkError, setNetworkError] = useState<string | null>(null);
+  const [appVersion, setAppVersion] = useState<VersionResponse | null>(null);
 
   const loadSettings = useCallback(async () => {
     setIsLoading(true);
     setError(null);
 
     try {
-      const response = await requestJson<AppSettings>("/api/settings");
+      const [response, versionResponse] = await Promise.all([
+        requestJson<AppSettings>("/api/settings"),
+        requestJson<VersionResponse>("/api/version")
+      ]);
       setSettings(response);
       setAllowSignup(response.allow_signup);
       setSignupLimit(response.signup_limit);
@@ -8314,6 +8323,7 @@ function AppSettingsPanel({
       setPublicBaseUrl(response.public_base_url ?? "");
       setTrustProxyHeaders(response.trust_proxy_headers);
       setProxyDomain(domainFromPublicBaseUrl(response.public_base_url));
+      setAppVersion(versionResponse);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Failed to load settings");
     } finally {
@@ -8471,6 +8481,12 @@ function AppSettingsPanel({
       {!settings && isLoading && <p className="status-message">Loading settings...</p>}
       {settings && (
         <form className="settings-form" onSubmit={saveSettings}>
+          <dl className="settings-meta">
+            <div>
+              <dt>Version</dt>
+              <dd>{appVersion ? `v${appVersion.version}` : "Unknown"}</dd>
+            </div>
+          </dl>
           {isDirty && (
             <div className="info-box" role="status">
               <p className="eyebrow">Unsaved</p>
