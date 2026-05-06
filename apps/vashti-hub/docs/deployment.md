@@ -40,7 +40,19 @@ Default settings:
 * database: `hub.db`
 * artifacts: `artifacts/`
 
-For production, run it behind nginx or Caddy. Example nginx location:
+Hub-specific environment variables:
+
+* `VASHTI_HUB_BIND`: listen address, default `127.0.0.1:7781`
+* `VASHTI_HUB_DATA_DIR`: data directory, default `apps/vashti-hub/data` from the workspace root
+* `VASHTI_HUB_COOKIE_SECURE`: set to `true` when the browser reaches Hub through HTTPS
+* `VASHTI_HUB_TRUST_PROXY_HEADERS`: set to `true` only when Hub is reachable only through a trusted reverse proxy
+* `VASHTI_HUB_MAX_UPLOAD_BYTES`: maximum release artifact upload size
+
+For production, run it behind nginx or Caddy. If nginx reaches Hub over WireGuard, bind Hub to
+the WireGuard IP, for example `VASHTI_HUB_BIND=10.8.0.2:7781`, and firewall the host so the raw
+Hub port is not reachable from the public network.
+
+Example nginx location:
 
 ```nginx
 server {
@@ -57,7 +69,17 @@ server {
 }
 ```
 
-On first startup, Vashti Hub creates an upload token and writes it to:
+On first startup, Vashti Hub is unclaimed and does not serve release files yet. Open `/admin`.
+Hub creates an admin setup key and writes it to:
+
+```txt
+/var/lib/vashti-hub/admin-setup-key.txt
+```
+
+The admin setup page shows the exact path and a `cat` command. Use that key to create the first
+admin password.
+
+After Hub is claimed, it creates an upload token and writes it to:
 
 ```txt
 /var/lib/vashti-hub/upload-token.txt
@@ -70,6 +92,15 @@ apps/vashti/.secrets/hub-token
 ```
 
 Do not commit app `.secrets/` directories.
+
+If the admin password is forgotten, `/admin` can create a reset key at:
+
+```txt
+/var/lib/vashti-hub/admin-reset-key.txt
+```
+
+Creating a reset key does not disable the current admin password. The reset key plus a new password
+must be submitted before the password changes.
 
 ## Public Release Routes
 

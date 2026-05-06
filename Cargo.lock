@@ -2376,7 +2376,9 @@ dependencies = [
 name = "vashti-hub"
 version = "0.1.0"
 dependencies = [
+ "argon2",
  "axum",
+ "axum-extra",
  "base64",
  "hex",
  "rand_core 0.6.4",
@@ -2385,6 +2387,7 @@ dependencies = [
  "sha2",
  "sqlx",
  "thiserror",
+ "time",
  "tokio",
  "tower-http",
  "tracing",

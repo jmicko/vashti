@@ -1,27 +1,38 @@
 use std::{
+    collections::{HashMap, VecDeque},
     env,
     net::SocketAddr,
     path::{Path, PathBuf},
     str::FromStr,
+    sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use argon2::{
+    Argon2,
+    password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
+};
 use axum::{
     Json, Router,
     body::Body,
-    extract::{DefaultBodyLimit, Multipart, Path as AxumPath, State},
+    extract::{ConnectInfo, DefaultBodyLimit, Multipart, Path as AxumPath, State},
     http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
+use axum_extra::extract::{
+    CookieJar,
+    cookie::{Cookie, SameSite},
+};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use rand_core::{OsRng, RngCore};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::{
     Row, SqlitePool,
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
 };
+use tokio::sync::Mutex;
 use tokio::{fs, signal};
 use tower_http::{set_header::SetResponseHeaderLayer, trace::TraceLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -32,11 +43,19 @@ const ADMIN_HTML: &str = include_str!("../static/admin.html");
 const STYLES_CSS: &str = include_str!("../static/styles.css");
 const INSTALL_SH: &str = include_str!("../../vashti/packaging/install.sh");
 const AUTHORIZATION: HeaderName = HeaderName::from_static("authorization");
+const X_FORWARDED_FOR: HeaderName = HeaderName::from_static("x-forwarded-for");
+const X_REAL_IP: HeaderName = HeaderName::from_static("x-real-ip");
+const X_FORWARDED_PROTO: HeaderName = HeaderName::from_static("x-forwarded-proto");
+const ADMIN_SESSION_COOKIE: &str = "vashti_hub_admin";
+const ADMIN_SETUP_KEY_FILE: &str = "admin-setup-key.txt";
+const ADMIN_RESET_KEY_FILE: &str = "admin-reset-key.txt";
+const ADMIN_SESSION_TTL_SECONDS: i64 = 60 * 60 * 12;
 
 #[derive(Clone)]
 struct AppState {
     config: Config,
     db: SqlitePool,
+    rate_limiter: Arc<RateLimiter>,
 }
 
 #[derive(Clone)]
@@ -46,6 +65,8 @@ struct Config {
     database_path: PathBuf,
     bind_addr: SocketAddr,
     max_upload_bytes: usize,
+    trust_proxy_headers: bool,
+    secure_session_cookies: bool,
 }
 
 impl Config {
@@ -68,6 +89,8 @@ impl Config {
             .ok()
             .and_then(|value| value.parse().ok())
             .unwrap_or(512 * 1024 * 1024);
+        let trust_proxy_headers = env_flag("VASHTI_HUB_TRUST_PROXY_HEADERS", false);
+        let secure_session_cookies = env_flag("VASHTI_HUB_COOKIE_SECURE", false);
 
         Ok(Self {
             artifact_dir: data_dir.join("artifacts"),
@@ -75,8 +98,22 @@ impl Config {
             data_dir,
             bind_addr,
             max_upload_bytes,
+            trust_proxy_headers,
+            secure_session_cookies,
         })
     }
+}
+
+fn env_flag(name: &str, default: bool) -> bool {
+    env::var(name)
+        .ok()
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(default)
 }
 
 fn default_data_dir(app_root: &Path) -> PathBuf {
@@ -84,6 +121,49 @@ fn default_data_dir(app_root: &Path) -> PathBuf {
         PathBuf::from("apps/vashti-hub/data")
     } else {
         PathBuf::from("data")
+    }
+}
+
+#[derive(Default)]
+struct RateLimiter {
+    buckets: Mutex<HashMap<String, VecDeque<i64>>>,
+}
+
+impl RateLimiter {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    async fn check(
+        &self,
+        key: impl Into<String>,
+        limit: usize,
+        window_seconds: i64,
+    ) -> Result<(), AppError> {
+        let key = key.into();
+        let now = unix_timestamp();
+        let cutoff = now.saturating_sub(window_seconds);
+        let mut buckets = self.buckets.lock().await;
+        let bucket = buckets.entry(key).or_default();
+
+        while bucket.front().is_some_and(|timestamp| *timestamp <= cutoff) {
+            bucket.pop_front();
+        }
+
+        if bucket.len() >= limit {
+            return Err(AppError::too_many_requests(
+                "rate_limited",
+                "Too many requests. Try again later.",
+            ));
+        }
+
+        bucket.push_back(now);
+
+        if buckets.len() > 10_000 {
+            buckets.retain(|_, bucket| bucket.back().is_some_and(|timestamp| *timestamp > cutoff));
+        }
+
+        Ok(())
     }
 }
 
@@ -122,7 +202,7 @@ impl AppError {
         Self::new(
             StatusCode::UNAUTHORIZED,
             "unauthorized",
-            "A valid admin token is required",
+            "Admin authentication is required",
         )
     }
 
@@ -132,6 +212,18 @@ impl AppError {
 
     fn internal(message: impl Into<String>) -> Self {
         Self::new(StatusCode::INTERNAL_SERVER_ERROR, "internal_error", message)
+    }
+
+    fn conflict(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::new(StatusCode::CONFLICT, code, message)
+    }
+
+    fn forbidden(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::new(StatusCode::FORBIDDEN, code, message)
+    }
+
+    fn too_many_requests(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::new(StatusCode::TOO_MANY_REQUESTS, code, message)
     }
 }
 
@@ -196,8 +288,47 @@ struct TokenResponse {
 }
 
 #[derive(Debug, Serialize)]
+struct AdminStatusResponse {
+    claimed: bool,
+    setup_key_path: Option<String>,
+    setup_key_command: Option<String>,
+    reset_key_path: Option<String>,
+    reset_key_command: Option<String>,
+    authenticated: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct MessageResponse {
+    message: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ResetRequestResponse {
+    message: String,
+    reset_key_path: String,
+    reset_key_command: String,
+}
+
+#[derive(Debug, Serialize)]
 struct StatsResponse {
     artifacts: Vec<ArtifactResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SetupAdminRequest {
+    setup_key: String,
+    password: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct LoginRequest {
+    password: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ResetPasswordRequest {
+    reset_key: String,
+    password: String,
 }
 
 struct ParsedUpload {
@@ -244,17 +375,27 @@ async fn main() -> Result<(), AppError> {
         })?;
 
     ensure_settings(&db).await?;
-    ensure_upload_token(&db, &config).await?;
+    ensure_admin_setup_key(&db, &config).await?;
+    if admin_exists(&db).await? {
+        ensure_upload_token(&db, &config).await?;
+    }
 
     let bind_addr = config.bind_addr;
-    let state = AppState { config, db };
+    let state = AppState {
+        config,
+        db,
+        rate_limiter: Arc::new(RateLimiter::new()),
+    };
     let listener = tokio::net::TcpListener::bind(bind_addr).await?;
     tracing::info!("vashti hub listening on http://{}", listener.local_addr()?);
 
-    axum::serve(listener, router(state))
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .map_err(AppError::from)?;
+    axum::serve(
+        listener,
+        router(state).into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await
+    .map_err(AppError::from)?;
 
     Ok(())
 }
@@ -265,6 +406,18 @@ fn router(state: AppState) -> Router {
         .route("/admin", get(admin))
         .route("/styles.css", get(styles))
         .route("/install.sh", get(install_script))
+        .route("/api/admin/status", get(admin_status))
+        .route("/api/admin/setup", post(setup_admin))
+        .route("/api/admin/login", post(login_admin))
+        .route("/api/admin/logout", post(logout_admin))
+        .route(
+            "/api/admin/password-reset/request",
+            post(request_password_reset),
+        )
+        .route(
+            "/api/admin/password-reset/confirm",
+            post(confirm_password_reset),
+        )
         .route("/api/releases", get(list_releases).post(upload_release))
         .route("/api/releases/latest", get(latest_release))
         .route("/api/stats", get(stats))
@@ -284,8 +437,12 @@ fn router(state: AppState) -> Router {
         .layer(TraceLayer::new_for_http())
 }
 
-async fn index() -> impl IntoResponse {
-    html(INDEX_HTML)
+async fn index(State(state): State<AppState>) -> Result<impl IntoResponse, AppError> {
+    if admin_exists(&state.db).await? {
+        Ok(html(INDEX_HTML))
+    } else {
+        Ok(html(ADMIN_HTML))
+    }
 }
 
 async fn admin() -> impl IntoResponse {
@@ -299,8 +456,9 @@ async fn styles() -> impl IntoResponse {
     )
 }
 
-async fn install_script() -> impl IntoResponse {
-    (
+async fn install_script(State(state): State<AppState>) -> Result<impl IntoResponse, AppError> {
+    require_claimed(&state.db).await?;
+    Ok((
         [
             (header::CONTENT_TYPE, "text/x-shellscript; charset=utf-8"),
             (
@@ -309,16 +467,204 @@ async fn install_script() -> impl IntoResponse {
             ),
         ],
         INSTALL_SH,
-    )
+    ))
+}
+
+async fn admin_status(
+    State(state): State<AppState>,
+    jar: CookieJar,
+) -> Result<Json<AdminStatusResponse>, AppError> {
+    let claimed = admin_exists(&state.db).await?;
+    let authenticated = admin_from_session(&state.db, &jar).await?.is_some();
+    Ok(Json(AdminStatusResponse {
+        claimed,
+        setup_key_path: (!claimed).then(|| setup_key_path(&state.config).display().to_string()),
+        setup_key_command: (!claimed).then(|| cat_command(&setup_key_path(&state.config))),
+        reset_key_path: claimed.then(|| reset_key_path(&state.config).display().to_string()),
+        reset_key_command: claimed.then(|| cat_command(&reset_key_path(&state.config))),
+        authenticated,
+    }))
+}
+
+async fn setup_admin(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    ConnectInfo(remote_addr): ConnectInfo<SocketAddr>,
+    jar: CookieJar,
+    Json(payload): Json<SetupAdminRequest>,
+) -> Result<(CookieJar, Json<MessageResponse>), AppError> {
+    require_same_origin(&headers)?;
+    state
+        .rate_limiter
+        .check(
+            format!(
+                "setup:{}",
+                client_key(&headers, remote_addr, state.config.trust_proxy_headers)
+            ),
+            5,
+            300,
+        )
+        .await?;
+
+    if admin_exists(&state.db).await? {
+        return Err(AppError::conflict(
+            "admin_exists",
+            "The hub already has an admin account.",
+        ));
+    }
+
+    let expected_hash: Option<String> =
+        sqlx::query_scalar("SELECT admin_setup_key_hash FROM release_settings WHERE id = 1")
+            .fetch_one(&state.db)
+            .await?;
+    if expected_hash.as_deref() != Some(&token_hash(payload.setup_key.trim())) {
+        return Err(AppError::unauthorized());
+    }
+
+    create_admin(&state.db, &payload.password).await?;
+    clear_setup_key(&state.db, &state.config).await?;
+    ensure_upload_token(&state.db, &state.config).await?;
+    let session_id = create_admin_session(&state.db).await?;
+    let secure = should_secure_cookie(&state.config, &headers);
+
+    Ok((
+        jar.add(admin_session_cookie(&session_id, secure)),
+        Json(MessageResponse {
+            message: "Admin account created.".to_string(),
+        }),
+    ))
+}
+
+async fn login_admin(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    ConnectInfo(remote_addr): ConnectInfo<SocketAddr>,
+    jar: CookieJar,
+    Json(payload): Json<LoginRequest>,
+) -> Result<(CookieJar, Json<MessageResponse>), AppError> {
+    require_same_origin(&headers)?;
+    state
+        .rate_limiter
+        .check(
+            format!(
+                "login:{}",
+                client_key(&headers, remote_addr, state.config.trust_proxy_headers)
+            ),
+            3,
+            300,
+        )
+        .await?;
+
+    require_claimed(&state.db).await?;
+    if !verify_admin_password(&state.db, &payload.password).await? {
+        return Err(AppError::unauthorized());
+    }
+
+    let session_id = create_admin_session(&state.db).await?;
+    let secure = should_secure_cookie(&state.config, &headers);
+    Ok((
+        jar.add(admin_session_cookie(&session_id, secure)),
+        Json(MessageResponse {
+            message: "Logged in.".to_string(),
+        }),
+    ))
+}
+
+async fn logout_admin(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<(CookieJar, Json<MessageResponse>), AppError> {
+    require_same_origin(&headers)?;
+    if let Some(cookie) = jar.get(ADMIN_SESSION_COOKIE) {
+        delete_admin_session(&state.db, cookie.value()).await?;
+    }
+    let secure = should_secure_cookie(&state.config, &headers);
+    Ok((
+        jar.remove(expired_admin_session_cookie(secure)),
+        Json(MessageResponse {
+            message: "Logged out.".to_string(),
+        }),
+    ))
+}
+
+async fn request_password_reset(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    ConnectInfo(remote_addr): ConnectInfo<SocketAddr>,
+) -> Result<Json<ResetRequestResponse>, AppError> {
+    require_same_origin(&headers)?;
+    require_claimed(&state.db).await?;
+    state
+        .rate_limiter
+        .check("reset:global", 1, 60 * 60 * 24)
+        .await?;
+    state
+        .rate_limiter
+        .check(
+            format!(
+                "reset:{}",
+                client_key(&headers, remote_addr, state.config.trust_proxy_headers)
+            ),
+            1,
+            60 * 60 * 24,
+        )
+        .await?;
+
+    let key = generate_token();
+    store_reset_key(&state.db, &state.config, &key).await?;
+    let path = reset_key_path(&state.config);
+    Ok(Json(ResetRequestResponse {
+        message: "Password reset key generated on the server.".to_string(),
+        reset_key_path: path.display().to_string(),
+        reset_key_command: cat_command(&path),
+    }))
+}
+
+async fn confirm_password_reset(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    ConnectInfo(remote_addr): ConnectInfo<SocketAddr>,
+    Json(payload): Json<ResetPasswordRequest>,
+) -> Result<Json<MessageResponse>, AppError> {
+    require_same_origin(&headers)?;
+    require_claimed(&state.db).await?;
+    state
+        .rate_limiter
+        .check(
+            format!(
+                "reset-confirm:{}",
+                client_key(&headers, remote_addr, state.config.trust_proxy_headers)
+            ),
+            5,
+            300,
+        )
+        .await?;
+
+    let expected_hash: Option<String> =
+        sqlx::query_scalar("SELECT reset_key_hash FROM release_settings WHERE id = 1")
+            .fetch_one(&state.db)
+            .await?;
+    if expected_hash.as_deref() != Some(&token_hash(payload.reset_key.trim())) {
+        return Err(AppError::unauthorized());
+    }
+
+    update_admin_password(&state.db, &payload.password).await?;
+    clear_reset_key(&state.db, &state.config).await?;
+    Ok(Json(MessageResponse {
+        message: "Admin password updated.".to_string(),
+    }))
 }
 
 async fn list_releases(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<ReleaseResponse>>, AppError> {
+    require_claimed(&state.db).await?;
     Ok(Json(load_releases(&state.db).await?))
 }
 
 async fn latest_release(State(state): State<AppState>) -> Result<Json<ReleaseResponse>, AppError> {
+    require_claimed(&state.db).await?;
     let version = latest_version(&state.db).await?;
     Ok(Json(load_release(&state.db, &version).await?))
 }
@@ -326,8 +672,9 @@ async fn latest_release(State(state): State<AppState>) -> Result<Json<ReleaseRes
 async fn stats(
     State(state): State<AppState>,
     headers: HeaderMap,
+    jar: CookieJar,
 ) -> Result<Json<StatsResponse>, AppError> {
-    require_admin(&state.db, &headers).await?;
+    require_admin(&state, &headers, &jar).await?;
     Ok(Json(StatsResponse {
         artifacts: load_artifacts_with_downloads(&state.db, None).await?,
     }))
@@ -336,9 +683,11 @@ async fn stats(
 async fn upload_release(
     State(state): State<AppState>,
     headers: HeaderMap,
+    jar: CookieJar,
     multipart: Multipart,
 ) -> Result<Json<UploadResponse>, AppError> {
-    require_admin(&state.db, &headers).await?;
+    require_same_origin(&headers)?;
+    require_admin(&state, &headers, &jar).await?;
     let upload = parse_upload(multipart).await?;
     let artifact_dir = state.config.artifact_dir.join(&upload.version);
     fs::create_dir_all(&artifact_dir).await?;
@@ -400,8 +749,10 @@ async fn upload_release(
 async fn rotate_token(
     State(state): State<AppState>,
     headers: HeaderMap,
+    jar: CookieJar,
 ) -> Result<Json<TokenResponse>, AppError> {
-    require_admin(&state.db, &headers).await?;
+    require_same_origin(&headers)?;
+    require_admin(&state, &headers, &jar).await?;
     let token = generate_token();
     store_token(&state.db, &state.config, &token).await?;
 
@@ -409,14 +760,20 @@ async fn rotate_token(
 }
 
 async fn latest_version_file(State(state): State<AppState>) -> Result<Response, AppError> {
+    require_claimed(&state.db).await?;
     Ok(text_file("VERSION", latest_version(&state.db).await?))
 }
 
-async fn version_file(AxumPath(version): AxumPath<String>) -> Result<Response, AppError> {
+async fn version_file(
+    State(state): State<AppState>,
+    AxumPath(version): AxumPath<String>,
+) -> Result<Response, AppError> {
+    require_claimed(&state.db).await?;
     Ok(text_file("VERSION", normalize_version_label(&version)?.0))
 }
 
 async fn latest_checksums(State(state): State<AppState>) -> Result<Response, AppError> {
+    require_claimed(&state.db).await?;
     let version = latest_version(&state.db).await?;
     checksums_for_version(&state, &version).await
 }
@@ -425,6 +782,7 @@ async fn version_checksums(
     State(state): State<AppState>,
     AxumPath(version): AxumPath<String>,
 ) -> Result<Response, AppError> {
+    require_claimed(&state.db).await?;
     let version = normalize_version_label(&version)?.0;
     checksums_for_version(&state, &version).await
 }
@@ -434,6 +792,7 @@ async fn download_latest(
     headers: HeaderMap,
     AxumPath(filename): AxumPath<String>,
 ) -> Result<Response, AppError> {
+    require_claimed(&state.db).await?;
     let version = latest_version(&state.db).await?;
     download_artifact(&state, &headers, &version, &filename, "latest").await
 }
@@ -443,6 +802,7 @@ async fn download_version(
     headers: HeaderMap,
     AxumPath((version, filename)): AxumPath<(String, String)>,
 ) -> Result<Response, AppError> {
+    require_claimed(&state.db).await?;
     let version = normalize_version_label(&version)?.0;
     download_artifact(&state, &headers, &version, &filename, "version").await
 }
@@ -704,6 +1064,60 @@ async fn ensure_settings(db: &SqlitePool) -> Result<(), AppError> {
     Ok(())
 }
 
+async fn admin_exists(db: &SqlitePool) -> Result<bool, AppError> {
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM hub_admins")
+        .fetch_one(db)
+        .await?;
+    Ok(count > 0)
+}
+
+async fn require_claimed(db: &SqlitePool) -> Result<(), AppError> {
+    if admin_exists(db).await? {
+        Ok(())
+    } else {
+        Err(AppError::forbidden(
+            "hub_unclaimed",
+            "Vashti Hub must be claimed by an admin before releases are served.",
+        ))
+    }
+}
+
+async fn ensure_admin_setup_key(db: &SqlitePool, config: &Config) -> Result<(), AppError> {
+    if admin_exists(db).await? {
+        clear_setup_key(db, config).await?;
+        return Ok(());
+    }
+
+    let path = setup_key_path(config);
+    let key = match fs::read_to_string(&path).await {
+        Ok(existing) if !existing.trim().is_empty() => existing.trim().to_string(),
+        _ => {
+            let key = generate_token();
+            fs::write(&path, format!("{}\n", key)).await?;
+            set_owner_only_permissions(&path)?;
+            tracing::warn!(
+                path = %path.display(),
+                "generated initial vashti hub admin setup key"
+            );
+            key
+        }
+    };
+
+    sqlx::query(
+        r#"
+        UPDATE release_settings
+        SET admin_setup_key_hash = ?, updated_at = ?
+        WHERE id = 1
+        "#,
+    )
+    .bind(token_hash(&key))
+    .bind(unix_timestamp())
+    .execute(db)
+    .await?;
+
+    Ok(())
+}
+
 async fn ensure_upload_token(db: &SqlitePool, config: &Config) -> Result<(), AppError> {
     let existing: Option<String> =
         sqlx::query_scalar("SELECT upload_token_hash FROM release_settings WHERE id = 1")
@@ -742,13 +1156,23 @@ async fn store_token(db: &SqlitePool, config: &Config, token: &str) -> Result<()
     Ok(())
 }
 
-async fn require_admin(db: &SqlitePool, headers: &HeaderMap) -> Result<(), AppError> {
+async fn require_admin(
+    state: &AppState,
+    headers: &HeaderMap,
+    jar: &CookieJar,
+) -> Result<(), AppError> {
+    require_claimed(&state.db).await?;
+
+    if admin_from_session(&state.db, jar).await?.is_some() {
+        return Ok(());
+    }
+
     let Some(token) = bearer_token(headers) else {
         return Err(AppError::unauthorized());
     };
     let Some(expected_hash): Option<String> =
         sqlx::query_scalar("SELECT upload_token_hash FROM release_settings WHERE id = 1")
-            .fetch_one(db)
+            .fetch_one(&state.db)
             .await?
     else {
         return Err(AppError::unauthorized());
@@ -757,6 +1181,168 @@ async fn require_admin(db: &SqlitePool, headers: &HeaderMap) -> Result<(), AppEr
     if token_hash(token) != expected_hash {
         return Err(AppError::unauthorized());
     }
+
+    Ok(())
+}
+
+async fn create_admin(db: &SqlitePool, password: &str) -> Result<(), AppError> {
+    let password_hash = hash_password(password)?;
+    let now = unix_timestamp();
+    sqlx::query(
+        r#"
+        INSERT INTO hub_admins (id, password_hash, created_at, updated_at)
+        VALUES (1, ?, ?, ?)
+        "#,
+    )
+    .bind(password_hash)
+    .bind(now)
+    .bind(now)
+    .execute(db)
+    .await?;
+
+    Ok(())
+}
+
+async fn update_admin_password(db: &SqlitePool, password: &str) -> Result<(), AppError> {
+    let password_hash = hash_password(password)?;
+    sqlx::query("UPDATE hub_admins SET password_hash = ?, updated_at = ? WHERE id = 1")
+        .bind(password_hash)
+        .bind(unix_timestamp())
+        .execute(db)
+        .await?;
+
+    Ok(())
+}
+
+async fn verify_admin_password(db: &SqlitePool, password: &str) -> Result<bool, AppError> {
+    let Some(password_hash): Option<String> =
+        sqlx::query_scalar("SELECT password_hash FROM hub_admins WHERE id = 1")
+            .fetch_optional(db)
+            .await?
+    else {
+        return Ok(false);
+    };
+
+    verify_password(password, &password_hash)
+}
+
+async fn create_admin_session(db: &SqlitePool) -> Result<String, AppError> {
+    cleanup_expired_sessions(db).await?;
+    let now = unix_timestamp();
+    let session_id = generate_token();
+    sqlx::query(
+        r#"
+        INSERT INTO hub_admin_sessions (id, expires_at, created_at)
+        VALUES (?, ?, ?)
+        "#,
+    )
+    .bind(&session_id)
+    .bind(now + ADMIN_SESSION_TTL_SECONDS)
+    .bind(now)
+    .execute(db)
+    .await?;
+
+    Ok(session_id)
+}
+
+async fn admin_from_session(db: &SqlitePool, jar: &CookieJar) -> Result<Option<String>, AppError> {
+    let Some(cookie) = jar.get(ADMIN_SESSION_COOKIE) else {
+        return Ok(None);
+    };
+
+    let now = unix_timestamp();
+    let row = sqlx::query("SELECT id, expires_at FROM hub_admin_sessions WHERE id = ?")
+        .bind(cookie.value())
+        .fetch_optional(db)
+        .await?;
+
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let expires_at: i64 = row.try_get("expires_at")?;
+    if expires_at <= now {
+        delete_admin_session(db, cookie.value()).await?;
+        return Ok(None);
+    }
+
+    Ok(Some(row.try_get("id")?))
+}
+
+async fn delete_admin_session(db: &SqlitePool, session_id: &str) -> Result<(), AppError> {
+    sqlx::query("DELETE FROM hub_admin_sessions WHERE id = ?")
+        .bind(session_id)
+        .execute(db)
+        .await?;
+
+    Ok(())
+}
+
+async fn cleanup_expired_sessions(db: &SqlitePool) -> Result<(), AppError> {
+    sqlx::query("DELETE FROM hub_admin_sessions WHERE expires_at <= ?")
+        .bind(unix_timestamp())
+        .execute(db)
+        .await?;
+
+    Ok(())
+}
+
+async fn clear_setup_key(db: &SqlitePool, config: &Config) -> Result<(), AppError> {
+    let path = setup_key_path(config);
+    match fs::remove_file(&path).await {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+
+    sqlx::query(
+        "UPDATE release_settings SET admin_setup_key_hash = NULL, updated_at = ? WHERE id = 1",
+    )
+    .bind(unix_timestamp())
+    .execute(db)
+    .await?;
+
+    Ok(())
+}
+
+async fn store_reset_key(db: &SqlitePool, config: &Config, key: &str) -> Result<(), AppError> {
+    let path = reset_key_path(config);
+    fs::write(&path, format!("{}\n", key)).await?;
+    set_owner_only_permissions(&path)?;
+
+    sqlx::query(
+        r#"
+        UPDATE release_settings
+        SET reset_key_hash = ?, reset_key_generated_at = ?, updated_at = ?
+        WHERE id = 1
+        "#,
+    )
+    .bind(token_hash(key))
+    .bind(unix_timestamp())
+    .bind(unix_timestamp())
+    .execute(db)
+    .await?;
+
+    Ok(())
+}
+
+async fn clear_reset_key(db: &SqlitePool, config: &Config) -> Result<(), AppError> {
+    let path = reset_key_path(config);
+    match fs::remove_file(&path).await {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+
+    sqlx::query(
+        r#"
+        UPDATE release_settings
+        SET reset_key_hash = NULL, reset_key_generated_at = NULL, updated_at = ?
+        WHERE id = 1
+        "#,
+    )
+    .bind(unix_timestamp())
+    .execute(db)
+    .await?;
 
     Ok(())
 }
@@ -855,6 +1441,130 @@ fn bearer_token(headers: &HeaderMap) -> Option<&str> {
     value.strip_prefix("Bearer ").map(str::trim)
 }
 
+fn admin_session_cookie(session_id: &str, secure: bool) -> Cookie<'static> {
+    Cookie::build((ADMIN_SESSION_COOKIE, session_id.to_string()))
+        .path("/")
+        .http_only(true)
+        .secure(secure)
+        .same_site(SameSite::Lax)
+        .max_age(time::Duration::seconds(ADMIN_SESSION_TTL_SECONDS))
+        .build()
+}
+
+fn expired_admin_session_cookie(secure: bool) -> Cookie<'static> {
+    Cookie::build((ADMIN_SESSION_COOKIE, ""))
+        .path("/")
+        .http_only(true)
+        .secure(secure)
+        .same_site(SameSite::Lax)
+        .max_age(time::Duration::seconds(0))
+        .build()
+}
+
+fn setup_key_path(config: &Config) -> PathBuf {
+    config.data_dir.join(ADMIN_SETUP_KEY_FILE)
+}
+
+fn reset_key_path(config: &Config) -> PathBuf {
+    config.data_dir.join(ADMIN_RESET_KEY_FILE)
+}
+
+fn cat_command(path: &Path) -> String {
+    format!("cat {}", shell_quote_path(path))
+}
+
+fn shell_quote_path(path: &Path) -> String {
+    let value = path.to_string_lossy();
+    if value.chars().all(|character| {
+        character.is_ascii_alphanumeric() || matches!(character, '/' | '.' | '_' | '-')
+    }) {
+        value.to_string()
+    } else {
+        format!("'{}'", value.replace('\'', "'\\''"))
+    }
+}
+
+fn should_secure_cookie(config: &Config, headers: &HeaderMap) -> bool {
+    config.secure_session_cookies
+        || (config.trust_proxy_headers
+            && header_text(headers, &X_FORWARDED_PROTO)
+                .is_some_and(|value| value.eq_ignore_ascii_case("https")))
+}
+
+fn require_same_origin(headers: &HeaderMap) -> Result<(), AppError> {
+    let Some(host) = header_text(headers, &header::HOST).map(str::trim) else {
+        return Ok(());
+    };
+
+    if let Some(origin) = header_text(headers, &header::ORIGIN)
+        && !url_matches_host(origin, host)
+    {
+        return Err(AppError::forbidden(
+            "cross_origin_request",
+            "Cross-origin admin requests are not allowed.",
+        ));
+    }
+
+    if header_text(headers, &header::ORIGIN).is_none()
+        && let Some(referer) = header_text(headers, &header::REFERER)
+        && !url_matches_host(referer, host)
+    {
+        return Err(AppError::forbidden(
+            "cross_origin_request",
+            "Cross-origin admin requests are not allowed.",
+        ));
+    }
+
+    Ok(())
+}
+
+fn url_matches_host(value: &str, host: &str) -> bool {
+    let value = value.trim();
+    let Some(rest) = value
+        .strip_prefix("https://")
+        .or_else(|| value.strip_prefix("http://"))
+    else {
+        return false;
+    };
+
+    rest == host
+        || rest
+            .strip_prefix(host)
+            .is_some_and(|tail| tail.starts_with('/'))
+}
+
+fn client_key(headers: &HeaderMap, remote_addr: SocketAddr, trust_proxy_headers: bool) -> String {
+    if trust_proxy_headers {
+        if let Some(forwarded_for) = header_text(headers, &X_FORWARDED_FOR)
+            && let Some(first_ip) = forwarded_for.split(',').next().map(str::trim)
+            && !first_ip.is_empty()
+        {
+            return format!("ip:{}", compact_key_part(first_ip, 96));
+        }
+
+        if let Some(real_ip) = header_text(headers, &X_REAL_IP)
+            && !real_ip.trim().is_empty()
+        {
+            return format!("ip:{}", compact_key_part(real_ip.trim(), 96));
+        }
+    }
+
+    format!("ip:{}", remote_addr.ip())
+}
+
+fn compact_key_part(value: &str, max_chars: usize) -> String {
+    value
+        .trim()
+        .chars()
+        .take(max_chars)
+        .collect::<String>()
+        .to_ascii_lowercase()
+}
+
+fn header_text<'a>(headers: &'a HeaderMap, name: &HeaderName) -> Option<&'a str> {
+    headers.get(name).and_then(|value| value.to_str().ok())
+}
+
 fn normalize_version_label(value: &str) -> Result<(String, i64, i64, i64), AppError> {
     let trimmed = value.trim();
     let bare = trimmed.strip_prefix('v').unwrap_or(trimmed);
@@ -930,6 +1640,36 @@ fn safe_filename(value: &str) -> String {
     } else {
         filename
     }
+}
+
+fn hash_password(password: &str) -> Result<String, AppError> {
+    let password = password.trim();
+    if password.len() < 8 {
+        return Err(AppError::bad_request(
+            "invalid_password",
+            "Password must be at least 8 characters.",
+        ));
+    }
+
+    let salt = SaltString::generate(&mut OsRng);
+    Argon2::default()
+        .hash_password(password.as_bytes(), &salt)
+        .map(|hash| hash.to_string())
+        .map_err(|error| {
+            tracing::error!(?error, "password hashing failed");
+            AppError::internal("Password hashing failed")
+        })
+}
+
+fn verify_password(password: &str, password_hash: &str) -> Result<bool, AppError> {
+    let parsed_hash = PasswordHash::new(password_hash).map_err(|error| {
+        tracing::error!(?error, "stored password hash is invalid");
+        AppError::internal("Stored password hash is invalid")
+    })?;
+
+    Ok(Argon2::default()
+        .verify_password(password.as_bytes(), &parsed_hash)
+        .is_ok())
 }
 
 fn generate_token() -> String {

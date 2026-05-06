@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Vashti Release Admin</title>
+    <title>Vashti Hub Admin</title>
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
@@ -12,21 +12,87 @@
         <a class="brand" href="/">Vashti</a>
         <nav class="nav">
           <a href="/">Home</a>
-          <a href="/api/releases">API</a>
         </nav>
       </header>
 
-      <section class="card">
+      <section id="setup-panel" class="card hidden">
+        <h1>Claim Vashti Hub</h1>
+        <p class="muted">
+          Create the first admin account before publishing releases. The setup key is stored on the
+          server, so only someone with server access can claim this Hub.
+        </p>
+        <p class="muted">
+          Read the key from:
+          <code id="setup-key-path"></code>
+        </p>
+        <div class="command compact">
+          <code id="setup-key-command"></code>
+          <button type="button" data-copy="#setup-key-command">Copy</button>
+        </div>
+        <form id="setup-form">
+          <label>
+            Setup key
+            <input name="setup_key" autocomplete="one-time-code" required>
+          </label>
+          <label>
+            Admin password
+            <input name="password" type="password" autocomplete="new-password" minlength="8" required>
+          </label>
+          <button type="submit">Create Admin</button>
+        </form>
+      </section>
+
+      <section id="login-panel" class="card hidden">
+        <h1>Admin Login</h1>
+        <p class="muted">
+          Log in to upload releases, rotate the upload token, and inspect basic download counts.
+        </p>
+        <form id="login-form">
+          <label>
+            Admin password
+            <input name="password" type="password" autocomplete="current-password" required>
+          </label>
+          <button type="submit">Log In</button>
+        </form>
+
+        <details class="reset-box">
+          <summary>Forgot password</summary>
+          <p class="muted">
+            This creates a reset key file on the server. Your current password keeps working until a
+            valid reset key is submitted.
+          </p>
+          <button id="reset-request-button" type="button">Create Reset Key</button>
+          <div id="reset-details" class="hidden">
+            <p class="muted">
+              Read the reset key from:
+              <code id="reset-key-path"></code>
+            </p>
+            <div class="command compact">
+              <code id="reset-key-command"></code>
+              <button type="button" data-copy="#reset-key-command">Copy</button>
+            </div>
+            <form id="reset-form">
+              <label>
+                Reset key
+                <input name="reset_key" autocomplete="one-time-code" required>
+              </label>
+              <label>
+                New admin password
+                <input name="password" type="password" autocomplete="new-password" minlength="8" required>
+              </label>
+              <button type="submit">Update Password</button>
+            </form>
+          </div>
+        </details>
+      </section>
+
+      <section id="admin-panel" class="card hidden">
         <h1>Release Admin</h1>
         <p class="muted">
           Upload release artifacts, rotate the upload token, and inspect basic download counts.
         </p>
 
         <form id="upload-form">
-          <label>
-            Admin token
-            <input id="token" name="token" type="password" autocomplete="off" required>
-          </label>
           <label>
             Version
             <input name="version" placeholder="v0.1.0" required>
@@ -46,60 +112,192 @@
           <button type="submit">Upload Release</button>
         </form>
 
-        <p>
+        <p class="button-row">
           <button id="stats-button" type="button">Load Stats</button>
-          <button id="rotate-button" type="button">Rotate Token</button>
+          <button id="rotate-button" type="button">Rotate Upload Token</button>
+          <button id="logout-button" type="button">Log Out</button>
         </p>
 
         <pre id="output">Ready.</pre>
       </section>
+
+      <p id="message" class="status-line"></p>
     </main>
 
     <script>
-      const tokenInput = document.querySelector("#token");
+      const setupPanel = document.querySelector("#setup-panel");
+      const loginPanel = document.querySelector("#login-panel");
+      const adminPanel = document.querySelector("#admin-panel");
+      const message = document.querySelector("#message");
       const output = document.querySelector("#output");
-      tokenInput.value = localStorage.getItem("vashtiReleaseToken") || "";
-      tokenInput.addEventListener("change", () => localStorage.setItem("vashtiReleaseToken", tokenInput.value));
+      const resetDetails = document.querySelector("#reset-details");
 
-      function authHeaders() {
-        return { Authorization: `Bearer ${tokenInput.value}` };
+      function showPanel(panel) {
+        for (const element of [setupPanel, loginPanel, adminPanel]) {
+          element.classList.toggle("hidden", element !== panel);
+        }
+      }
+
+      function setMessage(value, danger = false) {
+        message.textContent = value || "";
+        message.classList.toggle("danger", danger);
       }
 
       function show(value) {
         output.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
       }
 
+      async function requestJson(url, options = {}) {
+        const response = await fetch(url, {
+          credentials: "same-origin",
+          headers: {
+            "Content-Type": "application/json",
+            ...(options.headers || {})
+          },
+          ...options
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(body?.error?.message || "Request failed");
+        }
+        return body;
+      }
+
+      async function loadStatus() {
+        setMessage("");
+        const status = await requestJson("/api/admin/status");
+
+        if (!status.claimed) {
+          document.querySelector("#setup-key-path").textContent = status.setup_key_path || "";
+          document.querySelector("#setup-key-command").textContent = status.setup_key_command || "";
+          showPanel(setupPanel);
+          return;
+        }
+
+        document.querySelector("#reset-key-path").textContent = status.reset_key_path || "";
+        document.querySelector("#reset-key-command").textContent = status.reset_key_command || "";
+        showPanel(status.authenticated ? adminPanel : loginPanel);
+      }
+
+      document.addEventListener("click", async (event) => {
+        const button = event.target.closest("[data-copy]");
+        if (!button) return;
+        const target = document.querySelector(button.dataset.copy);
+        const text = target?.textContent?.trim() || "";
+        if (!text) return;
+
+        if (navigator.clipboard) {
+          await navigator.clipboard.writeText(text);
+        } else {
+          const textarea = document.createElement("textarea");
+          textarea.value = text;
+          document.body.append(textarea);
+          textarea.select();
+          document.execCommand("copy");
+          textarea.remove();
+        }
+
+        button.textContent = "Copied";
+        setTimeout(() => {
+          button.textContent = "Copy";
+        }, 1800);
+      });
+
+      document.querySelector("#setup-form").addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const form = new FormData(event.currentTarget);
+        try {
+          const body = await requestJson("/api/admin/setup", {
+            method: "POST",
+            body: JSON.stringify(Object.fromEntries(form))
+          });
+          setMessage(body.message);
+          event.currentTarget.reset();
+          await loadStatus();
+        } catch (error) {
+          setMessage(error.message, true);
+        }
+      });
+
+      document.querySelector("#login-form").addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const form = new FormData(event.currentTarget);
+        try {
+          const body = await requestJson("/api/admin/login", {
+            method: "POST",
+            body: JSON.stringify(Object.fromEntries(form))
+          });
+          setMessage(body.message);
+          event.currentTarget.reset();
+          await loadStatus();
+        } catch (error) {
+          setMessage(error.message, true);
+        }
+      });
+
+      document.querySelector("#reset-request-button").addEventListener("click", async () => {
+        try {
+          const body = await requestJson("/api/admin/password-reset/request", { method: "POST" });
+          document.querySelector("#reset-key-path").textContent = body.reset_key_path;
+          document.querySelector("#reset-key-command").textContent = body.reset_key_command;
+          resetDetails.classList.remove("hidden");
+          setMessage(body.message);
+        } catch (error) {
+          setMessage(error.message, true);
+        }
+      });
+
+      document.querySelector("#reset-form").addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const form = new FormData(event.currentTarget);
+        try {
+          const body = await requestJson("/api/admin/password-reset/confirm", {
+            method: "POST",
+            body: JSON.stringify(Object.fromEntries(form))
+          });
+          setMessage(body.message);
+          event.currentTarget.reset();
+          resetDetails.classList.add("hidden");
+        } catch (error) {
+          setMessage(error.message, true);
+        }
+      });
+
       document.querySelector("#upload-form").addEventListener("submit", async (event) => {
         event.preventDefault();
-        localStorage.setItem("vashtiReleaseToken", tokenInput.value);
         const form = new FormData(event.currentTarget);
-        form.delete("token");
         const response = await fetch("/api/releases", {
           method: "POST",
-          headers: authHeaders(),
+          credentials: "same-origin",
           body: form
         });
         show(await response.json());
       });
 
       document.querySelector("#stats-button").addEventListener("click", async () => {
-        const response = await fetch("/api/stats", { headers: authHeaders() });
+        const response = await fetch("/api/stats", { credentials: "same-origin" });
         show(await response.json());
       });
 
       document.querySelector("#rotate-button").addEventListener("click", async () => {
-        if (!confirm("Rotate the upload token? The old token will stop working.")) return;
         const response = await fetch("/api/admin/token/rotate", {
           method: "POST",
-          headers: authHeaders()
+          credentials: "same-origin"
         });
-        const body = await response.json();
-        if (body.token) {
-          tokenInput.value = body.token;
-          localStorage.setItem("vashtiReleaseToken", body.token);
-        }
-        show(body);
+        show(await response.json());
       });
+
+      document.querySelector("#logout-button").addEventListener("click", async () => {
+        try {
+          const body = await requestJson("/api/admin/logout", { method: "POST" });
+          setMessage(body.message);
+          await loadStatus();
+        } catch (error) {
+          setMessage(error.message, true);
+        }
+      });
+
+      loadStatus().catch((error) => setMessage(error.message, true));
     </script>
   </body>
 </html>

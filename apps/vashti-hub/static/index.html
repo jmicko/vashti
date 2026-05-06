@@ -11,37 +11,49 @@
     <main class="shell">
       <header class="topbar">
         <a class="brand" href="/">Vashti</a>
-        <nav class="nav">
-          <a href="/admin">Admin</a>
-          <a href="/api/releases/latest">Latest</a>
-        </nav>
       </header>
 
       <section>
         <h1>Run your own local-first chat UI.</h1>
         <p class="lede">
-          Vashti is a lightweight self-hosted chat UI for one or more Ollama backends.
-          This release server hosts official builds directly from vashti.chat.
+          Vashti is a lightweight self-hosted chat UI for one or more Ollama backends. Install one
+          Rust binary with embedded frontend assets, no Docker stack or Python environment to manage.
         </p>
         <div class="command">
-          <code>curl -fsSL https://vashti.chat/install.sh | sh</code>
+          <code id="install-command">curl -fsSL https://vashti.chat/install.sh | sh</code>
+          <button type="button" id="copy-install">Copy</button>
         </div>
       </section>
 
-      <section class="grid">
-        <article class="card">
-          <h2>LAN first</h2>
-          <p>Install Vashti on a home server and open it from your local network.</p>
-        </article>
-        <article class="card">
-          <h2>HTTPS ready</h2>
-          <p>Use Caddy, nginx, or another reverse proxy when exposing it publicly.</p>
-        </article>
-        <article class="card">
-          <h2>Owned releases</h2>
-          <p>Downloads, checksums, and version metadata are served from this host.</p>
-        </article>
-      </section>
+      <footer class="footer">
+        <a href="https://github.com/jmicko/vashti">GitHub</a>
+        <a href="/admin">Admin</a>
+      </footer>
     </main>
+    <script>
+      const copyButton = document.getElementById("copy-install");
+      const installCommand = document.getElementById("install-command");
+
+      copyButton?.addEventListener("click", async () => {
+        const text = installCommand?.textContent?.trim() ?? "";
+        if (!text) return;
+
+        if (navigator.clipboard) {
+          await navigator.clipboard.writeText(text);
+        } else {
+          const textarea = document.createElement("textarea");
+          textarea.value = text;
+          document.body.append(textarea);
+          textarea.select();
+          document.execCommand("copy");
+          textarea.remove();
+        }
+
+        copyButton.textContent = "Copied";
+        setTimeout(() => {
+          copyButton.textContent = "Copy";
+        }, 1800);
+      });
+    </script>
   </body>
 </html>
