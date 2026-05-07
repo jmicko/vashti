@@ -18,7 +18,7 @@ use axum::{
     extract::{ConnectInfo, DefaultBodyLimit, Multipart, Path as AxumPath, State},
     http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{delete, get, post},
 };
 use axum_extra::extract::{
     CookieJar,
@@ -40,6 +40,7 @@ use uuid::Uuid;
 
 const INDEX_HTML: &str = include_str!("../static/index.html");
 const ADMIN_HTML: &str = include_str!("../static/admin.html");
+const RELEASES_HTML: &str = include_str!("../static/releases.html");
 const STYLES_CSS: &str = include_str!("../static/styles.css");
 const INSTALL_SH: &str = include_str!("../../vashti/packaging/install.sh");
 const AUTHORIZATION: HeaderName = HeaderName::from_static("authorization");
@@ -397,7 +398,8 @@ async fn main() -> Result<(), AppError> {
     let database_url = format!("sqlite://{}", config.database_path.display());
     let database_options = SqliteConnectOptions::from_str(&database_url)
         .map_err(AppError::from)?
-        .create_if_missing(true);
+        .create_if_missing(true)
+        .foreign_keys(true);
     let db = SqlitePoolOptions::new()
         .max_connections(5)
         .connect_with(database_options)
@@ -440,6 +442,7 @@ fn router(state: AppState) -> Router {
     Router::new()
         .route("/", get(index))
         .route("/admin", get(admin))
+        .route("/releases", get(releases_page))
         .route("/styles.css", get(styles))
         .route("/install.sh", get(install_script))
         .route("/api/admin/status", get(admin_status))
@@ -456,6 +459,7 @@ fn router(state: AppState) -> Router {
             post(confirm_password_reset),
         )
         .route("/api/releases", get(list_releases).post(upload_release))
+        .route("/api/releases/{version}", delete(delete_release))
         .route("/api/releases/latest", get(latest_release))
         .route("/api/stats", get(stats))
         .route("/releases/latest/VERSION", get(latest_version_file))
@@ -483,6 +487,10 @@ async fn index(State(state): State<AppState>) -> Result<impl IntoResponse, AppEr
 
 async fn admin() -> impl IntoResponse {
     html(ADMIN_HTML)
+}
+
+async fn releases_page() -> impl IntoResponse {
+    html(RELEASES_HTML)
 }
 
 async fn styles() -> impl IntoResponse {
@@ -702,6 +710,51 @@ async fn latest_release(State(state): State<AppState>) -> Result<Json<ReleaseRes
     require_claimed(&state.db).await?;
     let version = latest_version(&state.db).await?;
     Ok(Json(load_release(&state.db, &version).await?))
+}
+
+async fn delete_release(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    AxumPath(version): AxumPath<String>,
+) -> Result<Json<MessageResponse>, AppError> {
+    require_same_origin(&headers)?;
+    require_admin_session(&state, &jar).await?;
+    let version = normalize_version_label(&version)?.0;
+
+    let rows_deleted = sqlx::query("DELETE FROM releases WHERE version = ?")
+        .bind(&version)
+        .execute(&state.db)
+        .await?
+        .rows_affected();
+    if rows_deleted == 0 {
+        return Err(AppError::not_found(
+            "release_not_found",
+            "Release not found",
+        ));
+    }
+
+    sqlx::query("DELETE FROM download_events WHERE release_version = ?")
+        .bind(&version)
+        .execute(&state.db)
+        .await?;
+    sqlx::query("DELETE FROM release_artifacts WHERE release_version = ?")
+        .bind(&version)
+        .execute(&state.db)
+        .await?;
+
+    let artifact_dir = state.config.artifact_dir.join(&version);
+    match fs::remove_dir_all(&artifact_dir).await {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+
+    update_latest_version(&state.db).await?;
+
+    Ok(Json(MessageResponse {
+        message: format!("Deleted release {version}."),
+    }))
 }
 
 async fn stats(
@@ -1372,7 +1425,7 @@ async fn update_latest_version(db: &SqlitePool) -> Result<(), AppError> {
         LIMIT 1
         "#,
     )
-    .fetch_one(db)
+    .fetch_optional(db)
     .await?;
 
     sqlx::query("UPDATE release_settings SET latest_version = ?, updated_at = ? WHERE id = 1")

@@ -149,11 +149,16 @@ Upload the package to Vashti Hub:
 The script asks for a one-time upload key. Create the key from the Hub admin page and paste it when
 prompted.
 
+Release notes are sent with the upload. By default, `publish-release.sh` uses
+`apps/vashti/release-notes/vX.Y.Z.md` for the version being published, falling back to
+`apps/vashti/release-notes-latest.md`.
+
 Useful overrides:
 
 ```sh
 VASHTI_HUB_URL=https://staging.vashti.chat ./apps/vashti/scripts/publish-release.sh
 VASHTI_HUB_UPLOAD_KEY=... ./apps/vashti/scripts/publish-release.sh
+RELEASE_NOTES_FILE=notes.md ./apps/vashti/scripts/publish-release.sh
 NOTES="Fix login flow" ./apps/vashti/scripts/publish-release.sh
 ```
 

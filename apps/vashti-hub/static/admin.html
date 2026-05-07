@@ -112,8 +112,20 @@
 
         <p class="button-row">
           <button id="stats-button" type="button">Load Stats</button>
+          <button id="refresh-releases-button" type="button">Refresh Releases</button>
           <button id="logout-button" type="button">Log Out</button>
         </p>
+
+        <section class="admin-tool">
+          <h2>Release History</h2>
+          <p class="muted">
+            Uploaded versions stay available until deleted. The highest semantic version is served
+            as latest.
+          </p>
+          <div id="release-list" class="release-list">
+            <p class="muted">Loading releases...</p>
+          </div>
+        </section>
 
         <pre id="output">Ready.</pre>
       </section>
@@ -129,6 +141,7 @@
       const output = document.querySelector("#output");
       const resetDetails = document.querySelector("#reset-details");
       const uploadKeyDetails = document.querySelector("#upload-key-details");
+      const releaseList = document.querySelector("#release-list");
 
       function showPanel(panel) {
         for (const element of [setupPanel, loginPanel, adminPanel]) {
@@ -143,6 +156,80 @@
 
       function show(value) {
         output.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+      }
+
+      function formatBytes(value) {
+        const units = ["B", "KiB", "MiB", "GiB"];
+        let size = Number(value);
+        let unit = 0;
+        while (size >= 1024 && unit < units.length - 1) {
+          size /= 1024;
+          unit += 1;
+        }
+        return `${size.toFixed(unit === 0 ? 0 : 2)} ${units[unit]}`;
+      }
+
+      function formatDate(timestamp) {
+        return new Date(timestamp * 1000).toLocaleString();
+      }
+
+      async function loadReleases() {
+        const releases = await requestJson("/api/releases");
+        renderReleases(releases);
+      }
+
+      function renderReleases(releases) {
+        releaseList.textContent = "";
+        if (releases.length === 0) {
+          const empty = document.createElement("p");
+          empty.className = "muted";
+          empty.textContent = "No releases have been uploaded yet.";
+          releaseList.append(empty);
+          return;
+        }
+
+        for (const release of releases) {
+          const card = document.createElement("article");
+          card.className = "release-card";
+
+          const header = document.createElement("div");
+          header.className = "release-card-header";
+
+          const title = document.createElement("div");
+          const heading = document.createElement("h3");
+          heading.textContent = release.version;
+          const meta = document.createElement("p");
+          meta.className = "muted";
+          meta.textContent = `Uploaded ${formatDate(release.created_at)}`;
+          title.append(heading, meta);
+
+          const deleteButton = document.createElement("button");
+          deleteButton.type = "button";
+          deleteButton.className = "danger-button";
+          deleteButton.dataset.version = release.version;
+          deleteButton.textContent = "Delete";
+
+          header.append(title, deleteButton);
+          card.append(header);
+
+          if (release.notes) {
+            const notes = document.createElement("pre");
+            notes.className = "release-notes";
+            notes.textContent = release.notes;
+            card.append(notes);
+          }
+
+          const artifacts = document.createElement("div");
+          artifacts.className = "release-artifacts";
+          for (const artifact of release.artifacts) {
+            const link = document.createElement("a");
+            link.href = artifact.download_url;
+            link.textContent = `${artifact.target} · ${formatBytes(artifact.size_bytes)} · ${artifact.downloads} downloads`;
+            artifacts.append(link);
+          }
+          card.append(artifacts);
+          releaseList.append(card);
+        }
       }
 
       async function requestJson(url, options = {}) {
@@ -175,6 +262,9 @@
         document.querySelector("#reset-key-path").textContent = status.reset_key_path || "";
         document.querySelector("#reset-key-command").textContent = status.reset_key_command || "";
         showPanel(status.authenticated ? adminPanel : loginPanel);
+        if (status.authenticated) {
+          await loadReleases();
+        }
       }
 
       document.addEventListener("click", async (event) => {
@@ -283,6 +373,48 @@
       document.querySelector("#stats-button").addEventListener("click", async () => {
         const response = await fetch("/api/stats", { credentials: "same-origin" });
         show(await response.json());
+      });
+
+      document.querySelector("#refresh-releases-button").addEventListener("click", async () => {
+        try {
+          await loadReleases();
+          setMessage("Release history refreshed.");
+        } catch (error) {
+          setMessage(error.message, true);
+        }
+      });
+
+      releaseList.addEventListener("click", async (event) => {
+        const button = event.target.closest("[data-version]");
+        if (!button) return;
+        const version = button.dataset.version;
+        if (!version) return;
+
+        if (button.dataset.confirming !== "true") {
+          button.dataset.confirming = "true";
+          button.textContent = "Confirm delete";
+          setTimeout(() => {
+            if (button.dataset.confirming === "true") {
+              button.dataset.confirming = "false";
+              button.textContent = "Delete";
+            }
+          }, 3500);
+          return;
+        }
+
+        try {
+          button.disabled = true;
+          const body = await requestJson(`/api/releases/${encodeURIComponent(version)}`, {
+            method: "DELETE"
+          });
+          setMessage(body.message);
+          await loadReleases();
+        } catch (error) {
+          button.disabled = false;
+          button.dataset.confirming = "false";
+          button.textContent = "Delete";
+          setMessage(error.message, true);
+        }
       });
 
       document.querySelector("#logout-button").addEventListener("click", async () => {

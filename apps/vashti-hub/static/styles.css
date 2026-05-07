@@ -158,6 +158,62 @@ form {
   max-width: 100%;
 }
 
+.release-list {
+  display: grid;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.public-release-list {
+  margin-top: 2rem;
+}
+
+.release-card {
+  display: grid;
+  gap: 0.9rem;
+  padding: 1rem;
+  border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(1, 3, 1, 0.54);
+}
+
+.release-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.release-card h2,
+.release-card h3 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.release-card p {
+  margin: 0.35rem 0 0;
+}
+
+.release-notes {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.release-artifacts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.release-artifacts a {
+  color: var(--green);
+}
+
+.danger-button {
+  border-color: rgba(255, 90, 90, 0.72);
+  color: #180303;
+  background: var(--danger);
+}
+
 label {
   display: grid;
   gap: 0.35rem;

@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Vashti Releases</title>
+    <meta name="description" content="Vashti release history and notes.">
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <a class="brand" href="/">Vashti</a>
+        <nav class="nav">
+          <a href="/">Home</a>
+          <a href="https://github.com/jmicko/vashti">GitHub</a>
+        </nav>
+      </header>
+
+      <section>
+        <p class="eyebrow">Release History</p>
+        <h1>What changed.</h1>
+        <div id="release-list" class="release-list public-release-list">
+          <p class="muted">Loading releases...</p>
+        </div>
+      </section>
+
+      <footer class="footer">
+        <a href="/">Home</a>
+        <a href="/admin">Admin</a>
+      </footer>
+    </main>
+    <script>
+      const releaseList = document.querySelector("#release-list");
+
+      function formatBytes(value) {
+        const units = ["B", "KiB", "MiB", "GiB"];
+        let size = Number(value);
+        let unit = 0;
+        while (size >= 1024 && unit < units.length - 1) {
+          size /= 1024;
+          unit += 1;
+        }
+        return `${size.toFixed(unit === 0 ? 0 : 2)} ${units[unit]}`;
+      }
+
+      function formatDate(timestamp) {
+        return new Date(timestamp * 1000).toLocaleDateString();
+      }
+
+      function renderReleases(releases) {
+        releaseList.textContent = "";
+        if (releases.length === 0) {
+          const empty = document.createElement("p");
+          empty.className = "muted";
+          empty.textContent = "No releases have been uploaded yet.";
+          releaseList.append(empty);
+          return;
+        }
+
+        for (const release of releases) {
+          const card = document.createElement("article");
+          card.className = "release-card";
+
+          const header = document.createElement("div");
+          header.className = "release-card-header";
+
+          const title = document.createElement("div");
+          const heading = document.createElement("h2");
+          heading.textContent = release.version;
+          const meta = document.createElement("p");
+          meta.className = "muted";
+          meta.textContent = `Released ${formatDate(release.created_at)}`;
+          title.append(heading, meta);
+          header.append(title);
+          card.append(header);
+
+          const notes = document.createElement("pre");
+          notes.className = "release-notes";
+          notes.textContent = release.notes || "No release notes were provided.";
+          card.append(notes);
+
+          const artifacts = document.createElement("div");
+          artifacts.className = "release-artifacts";
+          for (const artifact of release.artifacts) {
+            const link = document.createElement("a");
+            link.href = artifact.download_url;
+            link.textContent = `${artifact.target} · ${formatBytes(artifact.size_bytes)}`;
+            artifacts.append(link);
+          }
+          card.append(artifacts);
+          releaseList.append(card);
+        }
+      }
+
+      fetch("/api/releases")
+        .then((response) => {
+          if (!response.ok) throw new Error("Failed to load releases");
+          return response.json();
+        })
+        .then(renderReleases)
+        .catch((error) => {
+          releaseList.innerHTML = "";
+          const message = document.createElement("p");
+          message.className = "danger";
+          message.textContent = error.message;
+          releaseList.append(message);
+        });
+    </script>
+  </body>
+</html>
