@@ -5,15 +5,26 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Vashti Releases</title>
     <meta name="description" content="Vashti release history and notes.">
+    <link rel="canonical" href="https://vashti.chat/releases">
+    <meta property="og:title" content="Vashti Releases">
+    <meta property="og:description" content="Release history, notes, and install commands for Vashti.">
+    <meta property="og:url" content="https://vashti.chat/releases">
+    <meta property="og:type" content="website">
+    <meta property="og:image" content="https://vashti.chat/favicon.png">
+    <meta name="twitter:card" content="summary">
+    <link rel="icon" type="image/png" href="/favicon.png">
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
     <main class="shell">
       <header class="topbar">
-        <a class="brand" href="/">Vashti</a>
+        <a class="brand" href="/" aria-label="Vashti home">
+          <img class="brand-image" src="/logo.png" alt="Vashti">
+        </a>
         <nav class="nav">
           <a href="/">Home</a>
-          <a href="https://github.com/jmicko/vashti">GitHub</a>
+          <a href="/getting-started">Getting Started</a>
+          <a href="/releases">Releases</a>
         </nav>
       </header>
 
@@ -26,7 +37,7 @@
       </section>
 
       <footer class="footer">
-        <a href="/">Home</a>
+        <a href="https://github.com/jmicko/vashti">GitHub</a>
         <a href="/admin">Admin</a>
       </footer>
     </main>
@@ -46,6 +57,20 @@
 
       function formatDate(timestamp) {
         return new Date(timestamp * 1000).toLocaleDateString();
+      }
+
+      function releaseSize(release) {
+        return release.artifacts.reduce(
+          (total, artifact) => total + Number(artifact.size_bytes || 0),
+          0
+        );
+      }
+
+      function installCommandFor(release) {
+        if (release.is_latest) {
+          return "curl -fsSL https://vashti.chat/install.sh | sh";
+        }
+        return `curl -fsSL https://vashti.chat/install.sh | VASHTI_VERSION=${release.version} sh`;
       }
 
       function renderReleases(releases) {
@@ -68,10 +93,22 @@
           const title = document.createElement("div");
           const heading = document.createElement("h2");
           heading.textContent = release.version;
+          const badges = document.createElement("p");
+          badges.className = "release-badges";
+          if (release.is_prerelease) {
+            const badge = document.createElement("span");
+            badge.textContent = "Prerelease";
+            badges.append(badge);
+          }
+          if (release.is_latest) {
+            const badge = document.createElement("span");
+            badge.textContent = "Latest";
+            badges.append(badge);
+          }
           const meta = document.createElement("p");
           meta.className = "muted";
-          meta.textContent = `Released ${formatDate(release.created_at)}`;
-          title.append(heading, meta);
+          meta.textContent = `Released ${formatDate(release.created_at)} · ${formatBytes(releaseSize(release))}`;
+          title.append(heading, badges, meta);
           header.append(title);
           card.append(header);
 
@@ -89,6 +126,34 @@
             artifacts.append(link);
           }
           card.append(artifacts);
+
+          const command = document.createElement("div");
+          command.className = "command compact";
+          const code = document.createElement("code");
+          code.textContent = installCommandFor(release);
+          const copy = document.createElement("button");
+          copy.type = "button";
+          copy.textContent = "Copy";
+          copy.addEventListener("click", async () => {
+            const text = code.textContent || "";
+            if (navigator.clipboard) {
+              await navigator.clipboard.writeText(text);
+            } else {
+              const textarea = document.createElement("textarea");
+              textarea.value = text;
+              document.body.append(textarea);
+              textarea.select();
+              document.execCommand("copy");
+              textarea.remove();
+            }
+            copy.textContent = "Copied";
+            setTimeout(() => {
+              copy.textContent = "Copy";
+            }, 1800);
+          });
+          command.append(code, copy);
+          card.append(command);
+
           releaseList.append(card);
         }
       }

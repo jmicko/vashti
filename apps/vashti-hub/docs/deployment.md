@@ -120,7 +120,8 @@ Before `v1.0.0`:
 * minor versions may include migrations and feature changes
 * downgrade support is not promised
 
-Vashti Hub does not invent versions. It validates uploaded `vMAJOR.MINOR.PATCH` labels and marks the highest uploaded version as `latest`.
+Vashti Hub does not invent versions. It validates uploaded `vMAJOR.MINOR.PATCH` labels, stages
+uploads as a single prerelease, and serves only the admin-promoted release as `latest`.
 
 ## Build Vashti
 
@@ -139,6 +140,8 @@ apps/vashti/dist/release/v0.1.0/VERSION
 ```
 
 ## Publish a Release
+
+See [release-process.md](release-process.md) for the full prerelease, testing, and promotion flow.
 
 Upload the package to Vashti Hub:
 

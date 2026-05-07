@@ -4,14 +4,20 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Vashti Hub Admin</title>
+    <meta name="robots" content="noindex, nofollow">
+    <link rel="icon" type="image/png" href="/favicon.png">
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
     <main class="shell">
       <header class="topbar">
-        <a class="brand" href="/">Vashti</a>
+        <a class="brand" href="/" aria-label="Vashti home">
+          <img class="brand-image" src="/logo.png" alt="Vashti">
+        </a>
         <nav class="nav">
           <a href="/">Home</a>
+          <a href="/getting-started">Getting Started</a>
+          <a href="/releases">Releases</a>
         </nav>
       </header>
 
@@ -89,9 +95,28 @@
       <section id="admin-panel" class="card hidden">
         <h1>Release Admin</h1>
         <p class="muted">
-          Create a one-time upload key, paste it into the release script, and inspect basic
-          download counts.
+          Create upload keys, track traffic, and promote a tested prerelease when it is ready.
         </p>
+
+        <section class="admin-dashboard" id="release-dashboard" aria-label="Release dashboard">
+          <article class="stat-card">
+            <span class="stat-label">Dashboard</span>
+            <strong class="stat-value">Loading...</strong>
+          </article>
+        </section>
+
+        <section class="admin-tool" id="traffic-section">
+          <div class="section-heading">
+            <div>
+              <h2>Traffic</h2>
+              <p class="muted">Admin sessions are excluded from page-hit counts.</p>
+            </div>
+            <button id="refresh-releases-button" type="button">Refresh</button>
+          </div>
+          <div id="traffic-list" class="traffic-list">
+            <p class="muted">Loading traffic...</p>
+          </div>
+        </section>
 
         <section class="admin-tool">
           <h2>Upload Key</h2>
@@ -111,26 +136,27 @@
         </section>
 
         <p class="button-row">
-          <button id="stats-button" type="button">Load Stats</button>
-          <button id="refresh-releases-button" type="button">Refresh Releases</button>
           <button id="logout-button" type="button">Log Out</button>
         </p>
 
         <section class="admin-tool">
           <h2>Release History</h2>
           <p class="muted">
-            Uploaded versions stay available until deleted. The highest semantic version is served
-            as latest.
+            Uploads are staged as the single prerelease. Promote a prerelease after testing to make
+            it the latest install.
           </p>
           <div id="release-list" class="release-list">
             <p class="muted">Loading releases...</p>
           </div>
         </section>
-
-        <pre id="output">Ready.</pre>
       </section>
 
       <p id="message" class="status-line"></p>
+
+      <footer class="footer">
+        <a href="https://github.com/jmicko/vashti">GitHub</a>
+        <a href="/admin">Admin</a>
+      </footer>
     </main>
 
     <script>
@@ -138,10 +164,11 @@
       const loginPanel = document.querySelector("#login-panel");
       const adminPanel = document.querySelector("#admin-panel");
       const message = document.querySelector("#message");
-      const output = document.querySelector("#output");
       const resetDetails = document.querySelector("#reset-details");
       const uploadKeyDetails = document.querySelector("#upload-key-details");
       const releaseList = document.querySelector("#release-list");
+      const releaseDashboard = document.querySelector("#release-dashboard");
+      const trafficList = document.querySelector("#traffic-list");
 
       function showPanel(panel) {
         for (const element of [setupPanel, loginPanel, adminPanel]) {
@@ -152,10 +179,6 @@
       function setMessage(value, danger = false) {
         message.textContent = value || "";
         message.classList.toggle("danger", danger);
-      }
-
-      function show(value) {
-        output.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
       }
 
       function formatBytes(value) {
@@ -173,9 +196,93 @@
         return new Date(timestamp * 1000).toLocaleString();
       }
 
+      function formatNumber(value) {
+        return Number(value || 0).toLocaleString();
+      }
+
+      function releaseSize(release) {
+        return release.artifacts.reduce(
+          (total, artifact) => total + Number(artifact.size_bytes || 0),
+          0
+        );
+      }
+
+      function installCommandFor(release) {
+        if (release.is_latest) {
+          return "curl -fsSL https://vashti.chat/install.sh | sh";
+        }
+        return `curl -fsSL https://vashti.chat/install.sh | VASHTI_VERSION=${release.version} sh`;
+      }
+
       async function loadReleases() {
-        const releases = await requestJson("/api/releases");
+        const [releases, stats] = await Promise.all([
+          requestJson("/api/releases"),
+          requestJson("/api/stats")
+        ]);
         renderReleases(releases);
+        renderDashboard(releases, stats);
+        renderTraffic(stats.page_hits || []);
+      }
+
+      function renderDashboard(releases, stats) {
+        const artifacts = stats.artifacts || [];
+        const totalDownloads = artifacts.reduce(
+          (total, artifact) => total + Number(artifact.downloads || 0),
+          0
+        );
+        const storedBytes = artifacts.reduce(
+          (total, artifact) => total + Number(artifact.size_bytes || 0),
+          0
+        );
+        const latest = releases.find((release) => release.is_latest);
+        const prerelease = releases.find((release) => release.is_prerelease);
+        const promotedCount = releases.filter((release) => !release.is_prerelease).length;
+
+        const cards = [
+          ["Page hits", formatNumber(stats.total_page_hits)],
+          ["Visitors", formatNumber(stats.unique_visitors)],
+          ["Downloads", formatNumber(totalDownloads)],
+          ["Releases", formatNumber(promotedCount)],
+          ["Stored size", formatBytes(storedBytes)],
+          ["Latest", latest?.version || "None"],
+          ["Prerelease", prerelease?.version || "None"],
+        ];
+
+        releaseDashboard.textContent = "";
+        for (const [label, value] of cards) {
+          const card = document.createElement("article");
+          card.className = "stat-card";
+          const labelElement = document.createElement("span");
+          labelElement.className = "stat-label";
+          labelElement.textContent = label;
+          const valueElement = document.createElement("strong");
+          valueElement.className = "stat-value";
+          valueElement.textContent = value;
+          card.append(labelElement, valueElement);
+          releaseDashboard.append(card);
+        }
+      }
+
+      function renderTraffic(pageHits) {
+        trafficList.textContent = "";
+        if (pageHits.length === 0) {
+          const empty = document.createElement("p");
+          empty.className = "muted";
+          empty.textContent = "No public page hits yet.";
+          trafficList.append(empty);
+          return;
+        }
+
+        for (const hit of pageHits) {
+          const row = document.createElement("div");
+          row.className = "traffic-row";
+          const path = document.createElement("span");
+          path.textContent = hit.path;
+          const counts = document.createElement("strong");
+          counts.textContent = `${formatNumber(hit.hits)} hits · ${formatNumber(hit.visitors)} visitors`;
+          row.append(path, counts);
+          trafficList.append(row);
+        }
       }
 
       function renderReleases(releases) {
@@ -198,18 +305,40 @@
           const title = document.createElement("div");
           const heading = document.createElement("h3");
           heading.textContent = release.version;
+          const badges = document.createElement("p");
+          badges.className = "release-badges";
+          if (release.is_prerelease) {
+            const badge = document.createElement("span");
+            badge.textContent = "Prerelease";
+            badges.append(badge);
+          }
+          if (release.is_latest) {
+            const badge = document.createElement("span");
+            badge.textContent = "Latest";
+            badges.append(badge);
+          }
           const meta = document.createElement("p");
           meta.className = "muted";
-          meta.textContent = `Uploaded ${formatDate(release.created_at)}`;
-          title.append(heading, meta);
+          meta.textContent = `Uploaded ${formatDate(release.created_at)} · ${formatBytes(releaseSize(release))}`;
+          title.append(heading, badges, meta);
 
+          const actions = document.createElement("div");
+          actions.className = "release-actions";
+          if (release.is_prerelease) {
+            const promoteButton = document.createElement("button");
+            promoteButton.type = "button";
+            promoteButton.dataset.promoteVersion = release.version;
+            promoteButton.textContent = "Promote to latest";
+            actions.append(promoteButton);
+          }
           const deleteButton = document.createElement("button");
           deleteButton.type = "button";
           deleteButton.className = "danger-button";
           deleteButton.dataset.version = release.version;
           deleteButton.textContent = "Delete";
+          actions.append(deleteButton);
 
-          header.append(title, deleteButton);
+          header.append(title, actions);
           card.append(header);
 
           if (release.notes) {
@@ -228,6 +357,18 @@
             artifacts.append(link);
           }
           card.append(artifacts);
+
+          const command = document.createElement("div");
+          command.className = "command compact";
+          const code = document.createElement("code");
+          code.textContent = installCommandFor(release);
+          const copy = document.createElement("button");
+          copy.type = "button";
+          copy.dataset.copyText = code.textContent;
+          copy.textContent = "Copy";
+          command.append(code, copy);
+          card.append(command);
+
           releaseList.append(card);
         }
       }
@@ -269,9 +410,10 @@
 
       document.addEventListener("click", async (event) => {
         const button = event.target.closest("[data-copy]");
-        if (!button) return;
-        const target = document.querySelector(button.dataset.copy);
-        const text = target?.textContent?.trim() || "";
+        const textButton = event.target.closest("[data-copy-text]");
+        if (!button && !textButton) return;
+        const target = button ? document.querySelector(button.dataset.copy) : null;
+        const text = textButton?.dataset.copyText || target?.textContent?.trim() || "";
         if (!text) return;
 
         if (navigator.clipboard) {
@@ -285,9 +427,10 @@
           textarea.remove();
         }
 
-        button.textContent = "Copied";
+        const copiedButton = button || textButton;
+        copiedButton.textContent = "Copied";
         setTimeout(() => {
-          button.textContent = "Copy";
+          copiedButton.textContent = "Copy";
         }, 1800);
       });
 
@@ -370,21 +513,49 @@
         }
       });
 
-      document.querySelector("#stats-button").addEventListener("click", async () => {
-        const response = await fetch("/api/stats", { credentials: "same-origin" });
-        show(await response.json());
-      });
-
       document.querySelector("#refresh-releases-button").addEventListener("click", async () => {
         try {
           await loadReleases();
-          setMessage("Release history refreshed.");
+          setMessage("Dashboard refreshed.");
         } catch (error) {
           setMessage(error.message, true);
         }
       });
 
       releaseList.addEventListener("click", async (event) => {
+        const promoteButton = event.target.closest("[data-promote-version]");
+        if (promoteButton) {
+          const version = promoteButton.dataset.promoteVersion;
+          if (!version) return;
+
+          if (promoteButton.dataset.confirming !== "true") {
+            promoteButton.dataset.confirming = "true";
+            promoteButton.textContent = "Confirm promote";
+            setTimeout(() => {
+              if (promoteButton.dataset.confirming === "true") {
+                promoteButton.dataset.confirming = "false";
+                promoteButton.textContent = "Promote to latest";
+              }
+            }, 3500);
+            return;
+          }
+
+          try {
+            promoteButton.disabled = true;
+            await requestJson(`/api/releases/${encodeURIComponent(version)}/promote`, {
+              method: "POST"
+            });
+            setMessage(`${version} promoted to latest.`);
+            await loadReleases();
+          } catch (error) {
+            promoteButton.disabled = false;
+            promoteButton.dataset.confirming = "false";
+            promoteButton.textContent = "Promote to latest";
+            setMessage(error.message, true);
+          }
+          return;
+        }
+
         const button = event.target.closest("[data-version]");
         if (!button) return;
         const version = button.dataset.version;

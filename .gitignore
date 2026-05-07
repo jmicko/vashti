@@ -3,6 +3,7 @@
 /data-release
 /dist
 /.secrets
+/.private
 /apps/*/data
 /apps/*/dist
 /apps/*/.secrets

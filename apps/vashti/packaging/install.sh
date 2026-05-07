@@ -19,6 +19,134 @@ lower() {
     printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
 }
 
+version_number() {
+    printf '%s' "$1" | sed 's/^v//'
+}
+
+compare_versions() {
+    left="$(version_number "$1")"
+    right="$(version_number "$2")"
+    left_major="$(printf '%s' "$left" | cut -d. -f1)"
+    left_minor="$(printf '%s' "$left" | cut -d. -f2)"
+    left_patch="$(printf '%s' "$left" | cut -d. -f3)"
+    right_major="$(printf '%s' "$right" | cut -d. -f1)"
+    right_minor="$(printf '%s' "$right" | cut -d. -f2)"
+    right_patch="$(printf '%s' "$right" | cut -d. -f3)"
+
+    for value in "$left_major" "$left_minor" "$left_patch" "$right_major" "$right_minor" "$right_patch"; do
+        case "$value" in
+            '' | *[!0-9]*)
+                echo "0"
+                return
+                ;;
+        esac
+    done
+
+    if [ "$left_major" -lt "$right_major" ]; then echo "-1"; return; fi
+    if [ "$left_major" -gt "$right_major" ]; then echo "1"; return; fi
+    if [ "$left_minor" -lt "$right_minor" ]; then echo "-1"; return; fi
+    if [ "$left_minor" -gt "$right_minor" ]; then echo "1"; return; fi
+    if [ "$left_patch" -lt "$right_patch" ]; then echo "-1"; return; fi
+    if [ "$left_patch" -gt "$right_patch" ]; then echo "1"; return; fi
+    echo "0"
+}
+
+bind_port() {
+    case "$1" in
+        *:*) printf '%s\n' "${1##*:}" ;;
+        *) printf '%s\n' "7771" ;;
+    esac
+}
+
+bind_host() {
+    case "$1" in
+        *:*) printf '%s\n' "${1%:*}" ;;
+        *) printf '%s\n' "$1" ;;
+    esac
+}
+
+network_label() {
+    interface="$1"
+    case "$interface" in
+        wg* | tun* | tap* | tailscale* | zt* | zerotier*)
+            printf '%s\n' "VPN"
+            ;;
+        eth* | en* | wl* | wlan* | wifi* | br* | bond*)
+            printf '%s\n' "same network"
+            ;;
+        *)
+            printf '%s\n' "network"
+            ;;
+    esac
+}
+
+detected_ipv4_addresses() {
+    if command -v ip >/dev/null 2>&1; then
+        ip -4 -o addr show scope global 2>/dev/null |
+            awk '{ split($4, parts, "/"); print parts[1] " " $2 }'
+        return
+    fi
+
+    if command -v hostname >/dev/null 2>&1; then
+        hostname -I 2>/dev/null | tr ' ' '\n' | awk '/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ { print $1 " network" }'
+    fi
+}
+
+print_access_urls() {
+    host="$(bind_host "$bind_addr")"
+    port="$(bind_port "$bind_addr")"
+
+    echo
+    echo "Vashti is running."
+    echo
+    echo "Try these URLs:"
+
+    case "$host" in
+        127.* | localhost)
+            echo "  On this machine: http://127.0.0.1:$port"
+            echo
+            echo "Vashti is bound to $host, so it is only reachable from this machine."
+            echo "Set VASHTI_BIND=0.0.0.0:$port before installing if you want LAN access."
+            return
+            ;;
+    esac
+
+    address_file="$tmp_dir/detected-addresses"
+    detected_ipv4_addresses > "$address_file" || true
+
+    if [ "$host" = "0.0.0.0" ] || [ "$host" = "::" ]; then
+        echo "  On this machine: http://127.0.0.1:$port"
+        detected_any=0
+        while IFS=' ' read -r ip_addr interface_name; do
+            [ -n "$ip_addr" ] || continue
+            [ "$ip_addr" = "127.0.0.1" ] && continue
+            detected_any=1
+            label="$(network_label "${interface_name:-network}")"
+            echo "  On the $label (${interface_name:-unknown}): http://$ip_addr:$port"
+        done < "$address_file"
+
+        if [ "$detected_any" = "0" ]; then
+            echo "  From another device: use this machine's IP address with port $port"
+        fi
+        return
+    fi
+
+    matched_interface=""
+    while IFS=' ' read -r ip_addr interface_name; do
+        if [ "$ip_addr" = "$host" ]; then
+            matched_interface="${interface_name:-unknown}"
+            break
+        fi
+    done < "$address_file"
+
+    if [ -n "$matched_interface" ]; then
+        label="$(network_label "$matched_interface")"
+        echo "  On the $label ($matched_interface): http://$host:$port"
+    else
+        echo "  Configured address: http://$host:$port"
+    fi
+}
+
 need_cmd curl
 need_cmd tar
 need_cmd sha256sum
@@ -64,6 +192,20 @@ if [ "$version" = "latest" ]; then
     fi
 else
     base_url="${release_base_url%/}/$version"
+fi
+
+installed_version=""
+if command -v "$install_dir/vashti" >/dev/null 2>&1; then
+    installed_version="$("$install_dir/vashti" --version 2>/dev/null | tr -d '[:space:]' || true)"
+fi
+if [ -n "$installed_version" ]; then
+    comparison="$(compare_versions "$version" "$installed_version")"
+    if [ "$comparison" = "-1" ] && [ "${VASHTI_ALLOW_DOWNGRADE:-0}" != "1" ]; then
+        echo "refusing to downgrade Vashti from v$(version_number "$installed_version") to $version" >&2
+        echo "downgrades can break SQLite data after migrations have run" >&2
+        echo "set VASHTI_ALLOW_DOWNGRADE=1 only if you have backed up or intentionally reset the data directory" >&2
+        exit 1
+    fi
 fi
 
 tmp_dir="$(mktemp -d)"
@@ -141,7 +283,7 @@ EOF_SERVICE
     $sudo_cmd systemctl enable vashti
     $sudo_cmd systemctl restart vashti
 
-    echo "Vashti is running. Open http://SERVER_IP:${bind_addr##*:}"
+    print_access_urls
 else
     echo "Systemd was not detected or was skipped."
     echo "Run Vashti manually with:"

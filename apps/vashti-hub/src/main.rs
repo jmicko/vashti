@@ -40,8 +40,14 @@ use uuid::Uuid;
 
 const INDEX_HTML: &str = include_str!("../static/index.html");
 const ADMIN_HTML: &str = include_str!("../static/admin.html");
+const GETTING_STARTED_HTML: &str = include_str!("../static/getting-started.html");
 const RELEASES_HTML: &str = include_str!("../static/releases.html");
 const STYLES_CSS: &str = include_str!("../static/styles.css");
+const ROBOTS_TXT: &str = include_str!("../static/robots.txt");
+const SITEMAP_XML: &str = include_str!("../static/sitemap.xml");
+const LLMS_TXT: &str = include_str!("../static/llms.txt");
+const FAVICON_PNG: &[u8] = include_bytes!("../static/favicon.png");
+const LOGO_PNG: &[u8] = include_bytes!("../static/logo.png");
 const INSTALL_SH: &str = include_str!("../../vashti/packaging/install.sh");
 const AUTHORIZATION: HeaderName = HeaderName::from_static("authorization");
 const X_FORWARDED_FOR: HeaderName = HeaderName::from_static("x-forwarded-for");
@@ -290,6 +296,9 @@ impl From<std::io::Error> for AppError {
 #[derive(Debug, Serialize)]
 struct ReleaseResponse {
     version: String,
+    release_status: String,
+    is_latest: bool,
+    is_prerelease: bool,
     notes: Option<String>,
     created_at: i64,
     artifacts: Vec<ArtifactResponse>,
@@ -350,6 +359,16 @@ struct ResetRequestResponse {
 #[derive(Debug, Serialize)]
 struct StatsResponse {
     artifacts: Vec<ArtifactResponse>,
+    page_hits: Vec<PageHitSummary>,
+    total_page_hits: i64,
+    unique_visitors: i64,
+}
+
+#[derive(Debug, Serialize)]
+struct PageHitSummary {
+    path: String,
+    hits: i64,
+    visitors: i64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -379,6 +398,11 @@ struct ParsedUpload {
     filename: String,
     content_type: String,
     bytes: Vec<u8>,
+}
+
+struct ReleasePointers {
+    latest_version: Option<String>,
+    prerelease_version: Option<String>,
 }
 
 #[tokio::main]
@@ -442,8 +466,14 @@ fn router(state: AppState) -> Router {
     Router::new()
         .route("/", get(index))
         .route("/admin", get(admin))
+        .route("/getting-started", get(getting_started))
         .route("/releases", get(releases_page))
         .route("/styles.css", get(styles))
+        .route("/favicon.png", get(favicon))
+        .route("/logo.png", get(logo))
+        .route("/robots.txt", get(robots_txt))
+        .route("/sitemap.xml", get(sitemap_xml))
+        .route("/llms.txt", get(llms_txt))
         .route("/install.sh", get(install_script))
         .route("/api/admin/status", get(admin_status))
         .route("/api/admin/setup", post(setup_admin))
@@ -460,6 +490,7 @@ fn router(state: AppState) -> Router {
         )
         .route("/api/releases", get(list_releases).post(upload_release))
         .route("/api/releases/{version}", delete(delete_release))
+        .route("/api/releases/{version}/promote", post(promote_release))
         .route("/api/releases/latest", get(latest_release))
         .route("/api/stats", get(stats))
         .route("/releases/latest/VERSION", get(latest_version_file))
@@ -477,8 +508,14 @@ fn router(state: AppState) -> Router {
         .layer(TraceLayer::new_for_http())
 }
 
-async fn index(State(state): State<AppState>) -> Result<impl IntoResponse, AppError> {
+async fn index(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    ConnectInfo(remote_addr): ConnectInfo<SocketAddr>,
+    jar: CookieJar,
+) -> Result<impl IntoResponse, AppError> {
     if admin_exists(&state.db).await? {
+        record_page_hit_best_effort(&state, &headers, remote_addr, &jar, "/").await;
         Ok(html(INDEX_HTML))
     } else {
         Ok(html(ADMIN_HTML))
@@ -489,7 +526,23 @@ async fn admin() -> impl IntoResponse {
     html(ADMIN_HTML)
 }
 
-async fn releases_page() -> impl IntoResponse {
+async fn getting_started(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    ConnectInfo(remote_addr): ConnectInfo<SocketAddr>,
+    jar: CookieJar,
+) -> impl IntoResponse {
+    record_page_hit_best_effort(&state, &headers, remote_addr, &jar, "/getting-started").await;
+    html(GETTING_STARTED_HTML)
+}
+
+async fn releases_page(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    ConnectInfo(remote_addr): ConnectInfo<SocketAddr>,
+    jar: CookieJar,
+) -> impl IntoResponse {
+    record_page_hit_best_effort(&state, &headers, remote_addr, &jar, "/releases").await;
     html(RELEASES_HTML)
 }
 
@@ -500,8 +553,55 @@ async fn styles() -> impl IntoResponse {
     )
 }
 
-async fn install_script(State(state): State<AppState>) -> Result<impl IntoResponse, AppError> {
+async fn favicon() -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "image/png"),
+            (header::CACHE_CONTROL, "public, max-age=604800"),
+        ],
+        FAVICON_PNG,
+    )
+}
+
+async fn logo() -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "image/png"),
+            (header::CACHE_CONTROL, "public, max-age=604800"),
+        ],
+        LOGO_PNG,
+    )
+}
+
+async fn robots_txt() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+        ROBOTS_TXT,
+    )
+}
+
+async fn sitemap_xml() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "application/xml; charset=utf-8")],
+        SITEMAP_XML,
+    )
+}
+
+async fn llms_txt() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+        LLMS_TXT,
+    )
+}
+
+async fn install_script(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    ConnectInfo(remote_addr): ConnectInfo<SocketAddr>,
+    jar: CookieJar,
+) -> Result<impl IntoResponse, AppError> {
     require_claimed(&state.db).await?;
+    record_page_hit_best_effort(&state, &headers, remote_addr, &jar, "/install.sh").await;
     Ok((
         [
             (header::CONTENT_TYPE, "text/x-shellscript; charset=utf-8"),
@@ -712,6 +812,54 @@ async fn latest_release(State(state): State<AppState>) -> Result<Json<ReleaseRes
     Ok(Json(load_release(&state.db, &version).await?))
 }
 
+async fn promote_release(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    AxumPath(version): AxumPath<String>,
+) -> Result<Json<UploadResponse>, AppError> {
+    require_same_origin(&headers)?;
+    require_admin_session(&state, &jar).await?;
+    let version = normalize_version_label(&version)?.0;
+
+    let rows_updated = sqlx::query(
+        r#"
+        UPDATE releases
+        SET release_status = 'released'
+        WHERE version = ?
+        "#,
+    )
+    .bind(&version)
+    .execute(&state.db)
+    .await?
+    .rows_affected();
+    if rows_updated == 0 {
+        return Err(AppError::not_found(
+            "release_not_found",
+            "Release not found",
+        ));
+    }
+
+    sqlx::query(
+        r#"
+        UPDATE release_settings
+        SET prerelease_version = CASE WHEN prerelease_version = ? THEN NULL ELSE prerelease_version END,
+            updated_at = ?
+        WHERE id = 1
+        "#,
+    )
+    .bind(&version)
+    .bind(unix_timestamp())
+    .execute(&state.db)
+    .await?;
+    update_latest_version(&state.db).await?;
+
+    Ok(Json(UploadResponse {
+        release: load_release(&state.db, &version).await?,
+        latest_version: latest_version_optional(&state.db).await?,
+    }))
+}
+
 async fn delete_release(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -742,6 +890,18 @@ async fn delete_release(
         .bind(&version)
         .execute(&state.db)
         .await?;
+    sqlx::query(
+        r#"
+        UPDATE release_settings
+        SET prerelease_version = CASE WHEN prerelease_version = ? THEN NULL ELSE prerelease_version END,
+            updated_at = ?
+        WHERE id = 1
+        "#,
+    )
+    .bind(&version)
+    .bind(unix_timestamp())
+    .execute(&state.db)
+    .await?;
 
     let artifact_dir = state.config.artifact_dir.join(&version);
     match fs::remove_dir_all(&artifact_dir).await {
@@ -764,8 +924,12 @@ async fn stats(
 ) -> Result<Json<StatsResponse>, AppError> {
     require_same_origin(&headers)?;
     require_admin_session(&state, &jar).await?;
+    let (total_page_hits, unique_visitors) = page_hit_totals(&state.db).await?;
     Ok(Json(StatsResponse {
         artifacts: load_artifacts_with_downloads(&state.db, None).await?,
+        page_hits: load_page_hit_summaries(&state.db).await?,
+        total_page_hits,
+        unique_visitors,
     }))
 }
 
@@ -777,6 +941,7 @@ async fn upload_release(
     require_claimed(&state.db).await?;
     consume_upload_key(&state, &headers).await?;
     let upload = parse_upload(multipart).await?;
+    clear_existing_prerelease(&state).await?;
     let artifact_dir = state.config.artifact_dir.join(&upload.version);
     fs::create_dir_all(&artifact_dir).await?;
     let storage_path = artifact_dir.join(&upload.filename);
@@ -786,9 +951,12 @@ async fn upload_release(
     let now = unix_timestamp();
     sqlx::query(
         r#"
-        INSERT INTO releases (version, version_major, version_minor, version_patch, notes, created_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(version) DO UPDATE SET notes = COALESCE(excluded.notes, releases.notes)
+        INSERT INTO releases (version, version_major, version_minor, version_patch, release_status, notes, created_at)
+        VALUES (?, ?, ?, ?, 'prerelease', ?, ?)
+        ON CONFLICT(version) DO UPDATE SET
+            release_status = 'prerelease',
+            notes = COALESCE(excluded.notes, releases.notes),
+            created_at = excluded.created_at
         "#,
     )
     .bind(&upload.version)
@@ -826,7 +994,17 @@ async fn upload_release(
     .execute(&state.db)
     .await?;
 
-    update_latest_version(&state.db).await?;
+    sqlx::query(
+        r#"
+        UPDATE release_settings
+        SET prerelease_version = ?, updated_at = ?
+        WHERE id = 1
+        "#,
+    )
+    .bind(&upload.version)
+    .bind(unix_timestamp())
+    .execute(&state.db)
+    .await?;
 
     Ok(Json(UploadResponse {
         release: load_release(&state.db, &upload.version).await?,
@@ -1037,23 +1215,74 @@ async fn parse_upload(mut multipart: Multipart) -> Result<ParsedUpload, AppError
     })
 }
 
+async fn clear_existing_prerelease(state: &AppState) -> Result<(), AppError> {
+    let current: Option<String> =
+        sqlx::query_scalar("SELECT prerelease_version FROM release_settings WHERE id = 1")
+            .fetch_one(&state.db)
+            .await?;
+    let Some(version) = current else {
+        return Ok(());
+    };
+
+    sqlx::query("DELETE FROM download_events WHERE release_version = ?")
+        .bind(&version)
+        .execute(&state.db)
+        .await?;
+    sqlx::query("DELETE FROM release_artifacts WHERE release_version = ?")
+        .bind(&version)
+        .execute(&state.db)
+        .await?;
+    sqlx::query("DELETE FROM releases WHERE version = ? AND release_status = 'prerelease'")
+        .bind(&version)
+        .execute(&state.db)
+        .await?;
+    sqlx::query(
+        r#"
+        UPDATE release_settings
+        SET prerelease_version = NULL, updated_at = ?
+        WHERE id = 1
+        "#,
+    )
+    .bind(unix_timestamp())
+    .execute(&state.db)
+    .await?;
+
+    let artifact_dir = state.config.artifact_dir.join(&version);
+    match fs::remove_dir_all(&artifact_dir).await {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+
+    Ok(())
+}
+
 async fn load_releases(db: &SqlitePool) -> Result<Vec<ReleaseResponse>, AppError> {
     let rows = sqlx::query(
         r#"
-        SELECT version, notes, created_at
+        SELECT version, release_status, notes, created_at
         FROM releases
-        ORDER BY version_major DESC, version_minor DESC, version_patch DESC
+        ORDER BY
+            CASE WHEN release_status = 'prerelease' THEN 0 ELSE 1 END,
+            version_major DESC,
+            version_minor DESC,
+            version_patch DESC
         "#,
     )
     .fetch_all(db)
     .await?;
 
+    let pointers = release_pointers(db).await?;
     let mut releases = Vec::with_capacity(rows.len());
     for row in rows {
         let version: String = row.try_get("version")?;
+        let release_status: String = row.try_get("release_status")?;
         releases.push(ReleaseResponse {
             artifacts: load_artifacts_with_downloads(db, Some(&version)).await?,
+            is_latest: pointers.latest_version.as_deref() == Some(version.as_str()),
+            is_prerelease: pointers.prerelease_version.as_deref() == Some(version.as_str()),
             version,
+            release_status,
             notes: row.try_get("notes")?,
             created_at: row.try_get("created_at")?,
         });
@@ -1063,15 +1292,22 @@ async fn load_releases(db: &SqlitePool) -> Result<Vec<ReleaseResponse>, AppError
 }
 
 async fn load_release(db: &SqlitePool, version: &str) -> Result<ReleaseResponse, AppError> {
-    let row = sqlx::query("SELECT version, notes, created_at FROM releases WHERE version = ?")
-        .bind(version)
-        .fetch_optional(db)
-        .await?
-        .ok_or_else(|| AppError::not_found("release_not_found", "Release not found"))?;
+    let row = sqlx::query(
+        "SELECT version, release_status, notes, created_at FROM releases WHERE version = ?",
+    )
+    .bind(version)
+    .fetch_optional(db)
+    .await?
+    .ok_or_else(|| AppError::not_found("release_not_found", "Release not found"))?;
+    let pointers = release_pointers(db).await?;
+    let version: String = row.try_get("version")?;
 
     Ok(ReleaseResponse {
-        artifacts: load_artifacts_with_downloads(db, Some(version)).await?,
-        version: row.try_get("version")?,
+        artifacts: load_artifacts_with_downloads(db, Some(&version)).await?,
+        is_latest: pointers.latest_version.as_deref() == Some(version.as_str()),
+        is_prerelease: pointers.prerelease_version.as_deref() == Some(version.as_str()),
+        version,
+        release_status: row.try_get("release_status")?,
         notes: row.try_get("notes")?,
         created_at: row.try_get("created_at")?,
     })
@@ -1421,6 +1657,7 @@ async fn update_latest_version(db: &SqlitePool) -> Result<(), AppError> {
         r#"
         SELECT version
         FROM releases
+        WHERE release_status = 'released'
         ORDER BY version_major DESC, version_minor DESC, version_patch DESC
         LIMIT 1
         "#,
@@ -1449,6 +1686,18 @@ async fn latest_version_optional(db: &SqlitePool) -> Result<Option<String>, AppE
             .fetch_one(db)
             .await?,
     )
+}
+
+async fn release_pointers(db: &SqlitePool) -> Result<ReleasePointers, AppError> {
+    let row =
+        sqlx::query("SELECT latest_version, prerelease_version FROM release_settings WHERE id = 1")
+            .fetch_one(db)
+            .await?;
+
+    Ok(ReleasePointers {
+        latest_version: row.try_get("latest_version")?,
+        prerelease_version: row.try_get("prerelease_version")?,
+    })
 }
 
 async fn record_download(
@@ -1482,6 +1731,95 @@ async fn record_download(
     .await?;
 
     Ok(())
+}
+
+async fn record_page_hit_best_effort(
+    state: &AppState,
+    headers: &HeaderMap,
+    remote_addr: SocketAddr,
+    jar: &CookieJar,
+    path: &str,
+) {
+    if matches!(admin_from_session(&state.db, jar).await, Ok(Some(_))) {
+        return;
+    }
+
+    if let Err(error) = record_page_hit(state, headers, remote_addr, path).await {
+        tracing::warn!(?error, path, "failed to record page hit");
+    }
+}
+
+async fn record_page_hit(
+    state: &AppState,
+    headers: &HeaderMap,
+    remote_addr: SocketAddr,
+    path: &str,
+) -> Result<(), AppError> {
+    let visitor_hash = token_hash(&client_key(
+        headers,
+        remote_addr,
+        state.config.trust_proxy_headers,
+    ));
+    let user_agent_hash = headers
+        .get(header::USER_AGENT)
+        .and_then(|value| value.to_str().ok())
+        .map(token_hash);
+
+    sqlx::query(
+        r#"
+        INSERT INTO page_hits
+            (id, path, visitor_hash, user_agent_hash, visited_at)
+        VALUES (?, ?, ?, ?, ?)
+        "#,
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(path)
+    .bind(visitor_hash)
+    .bind(user_agent_hash)
+    .bind(unix_timestamp())
+    .execute(&state.db)
+    .await?;
+
+    Ok(())
+}
+
+async fn load_page_hit_summaries(db: &SqlitePool) -> Result<Vec<PageHitSummary>, AppError> {
+    let rows = sqlx::query(
+        r#"
+        SELECT path,
+               COUNT(*) AS hits,
+               COUNT(DISTINCT visitor_hash) AS visitors
+        FROM page_hits
+        GROUP BY path
+        ORDER BY path
+        "#,
+    )
+    .fetch_all(db)
+    .await?;
+
+    rows.into_iter()
+        .map(|row| {
+            Ok(PageHitSummary {
+                path: row.try_get("path")?,
+                hits: row.try_get("hits")?,
+                visitors: row.try_get("visitors")?,
+            })
+        })
+        .collect()
+}
+
+async fn page_hit_totals(db: &SqlitePool) -> Result<(i64, i64), AppError> {
+    let row = sqlx::query(
+        r#"
+        SELECT COUNT(*) AS hits,
+               COUNT(DISTINCT visitor_hash) AS visitors
+        FROM page_hits
+        "#,
+    )
+    .fetch_one(db)
+    .await?;
+
+    Ok((row.try_get("hits")?, row.try_get("visitors")?))
 }
 
 fn html(body: &'static str) -> impl IntoResponse {

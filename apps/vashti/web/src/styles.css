@@ -160,7 +160,7 @@ button svg {
 .brand-logo-compact {
   width: 140px;
   height: 60px;
-  object-fit: cover;
+  object-fit: contain;
   object-position: center;
   margin: 0;
 }

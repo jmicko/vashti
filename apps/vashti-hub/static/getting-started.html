@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Getting Started with Vashti</title>
+    <meta name="description" content="Install Vashti, open it on your network, create the first admin account, connect Ollama, and start chatting.">
+    <link rel="canonical" href="https://vashti.chat/getting-started">
+    <meta property="og:title" content="Getting Started with Vashti">
+    <meta property="og:description" content="A short guide for installing Vashti and connecting it to Ollama.">
+    <meta property="og:url" content="https://vashti.chat/getting-started">
+    <meta property="og:type" content="article">
+    <meta property="og:image" content="https://vashti.chat/favicon.png">
+    <meta name="twitter:card" content="summary">
+    <link rel="icon" type="image/png" href="/favicon.png">
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="Vashti home">
+          <img class="brand-image" src="/logo.png" alt="Vashti">
+        </a>
+        <nav class="nav">
+          <a href="/">Home</a>
+          <a href="/getting-started">Getting Started</a>
+          <a href="/releases">Releases</a>
+        </nav>
+      </header>
+
+      <article class="doc-page">
+        <p class="eyebrow">Getting Started</p>
+        <h1>Install, connect Ollama, start chatting.</h1>
+        <p class="lede">
+          Vashti is a small self-hosted chat UI for Ollama. It runs as one Rust binary with the
+          frontend embedded, so setup is mostly installing the service and opening it in a browser.
+        </p>
+
+        <section class="doc-section">
+          <h2>1. Install Ollama</h2>
+          <p>
+            Vashti talks to Ollama backends, so install Ollama first if it is not already running.
+          </p>
+          <p>
+            Get Ollama from
+            <a href="https://ollama.com/download">ollama.com/download</a>.
+          </p>
+        </section>
+
+        <section class="doc-section">
+          <h2>2. Pull a model</h2>
+          <p>
+            Pull at least one model in Ollama before testing chat. For example:
+          </p>
+          <div class="command compact">
+            <code>ollama pull gemma4:e2b</code>
+            <button type="button" data-copy-text="ollama pull gemma4:e2b">Copy</button>
+          </div>
+        </section>
+
+        <section class="doc-section">
+          <h2>3. Install Vashti</h2>
+          <p>
+            Run the install command on the Linux machine that should host Vashti:
+          </p>
+          <div class="command compact">
+            <code>curl -fsSL https://vashti.chat/install.sh | sh</code>
+            <button type="button" data-copy-text="curl -fsSL https://vashti.chat/install.sh | sh">Copy</button>
+          </div>
+          <p>
+            The installer downloads the latest release, verifies the checksum, installs the binary,
+            creates a systemd service, and prints the browser URLs to try.
+          </p>
+        </section>
+
+        <section class="doc-section">
+          <h2>4. Open Vashti</h2>
+          <p>
+            After install, open one of the URLs printed by the installer. Use the localhost URL on
+            the server itself, or the network URL from another device on the same LAN or VPN.
+          </p>
+        </section>
+
+        <section class="doc-section">
+          <h2>5. Create the first account</h2>
+          <p>
+            The first account created becomes the admin account. After an admin exists, new accounts
+            start disabled until an admin approves them.
+          </p>
+        </section>
+
+        <section class="doc-section">
+          <h2>6. Connect models</h2>
+          <p>
+            Open Settings, check the Backends and Models sections, and confirm your Ollama models
+            are visible. If localhost detection does not find Ollama, add the backend URL manually.
+          </p>
+          <div class="command compact">
+            <code>http://127.0.0.1:11434</code>
+            <button type="button" data-copy-text="http://127.0.0.1:11434">Copy</button>
+          </div>
+        </section>
+
+        <section class="doc-section">
+          <h2>7. Update later</h2>
+          <p>
+            To update Vashti, run the same install command again. The installer replaces the binary
+            and restarts the service without deleting your data.
+          </p>
+        </section>
+      </article>
+
+      <footer class="footer">
+        <a href="https://github.com/jmicko/vashti">GitHub</a>
+        <a href="/admin">Admin</a>
+      </footer>
+    </main>
+    <script>
+      document.addEventListener("click", async (event) => {
+        const button = event.target.closest("[data-copy-text]");
+        if (!button) return;
+        const text = button.dataset.copyText || "";
+        if (!text) return;
+
+        if (navigator.clipboard) {
+          await navigator.clipboard.writeText(text);
+        } else {
+          const textarea = document.createElement("textarea");
+          textarea.value = text;
+          document.body.append(textarea);
+          textarea.select();
+          document.execCommand("copy");
+          textarea.remove();
+        }
+
+        button.textContent = "Copied";
+        setTimeout(() => {
+          button.textContent = "Copy";
+        }, 1800);
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,36 @@
+# Vashti
+
+> Vashti is a lightweight self-hosted chat UI for one or more Ollama backends. It installs as one Rust binary with embedded frontend assets, SQLite storage, server-side sessions, and a plain React interface.
+
+## Official Pages
+
+- Home: https://vashti.chat/
+- Getting started: https://vashti.chat/getting-started
+- Releases: https://vashti.chat/releases
+- GitHub repository: https://github.com/jmicko/vashti
+
+## Positioning
+
+Vashti is for people who want a small, boring, self-hosted Ollama chat UI without Docker, a Python environment, or a large application stack.
+
+## Install
+
+```sh
+curl -fsSL https://vashti.chat/install.sh | sh
+```
+
+## Key Facts
+
+- Backend: Rust, Axum, Tokio, SQLite, sqlx.
+- Frontend: React, Vite, plain CSS, embedded into the Rust binary for production.
+- Model backend: Ollama, including multiple configured Ollama backends.
+- Deployment target: self-hosted Linux service, usually on a local machine, LAN server, or private VM.
+- Current scope: lightweight chat UI, server-side hosted chats, private-local browser chats, attachments, personas, and release-managed binary installs.
+
+## Good User Queries To Match
+
+- lightweight Ollama web UI
+- simple self-hosted Ollama chat
+- Ollama UI without Docker
+- local AI chat UI for Ollama
+- small alternative to heavy Ollama web interfaces

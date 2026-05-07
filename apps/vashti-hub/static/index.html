@@ -3,14 +3,29 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Vashti</title>
-    <meta name="description" content="A lightweight self-hosted chat UI for Ollama.">
+    <title>Vashti - Lightweight Self-Hosted Ollama Chat UI</title>
+    <meta name="description" content="Vashti is a lightweight self-hosted chat UI for Ollama. Install one Rust binary with no Docker stack or Python environment to manage.">
+    <link rel="canonical" href="https://vashti.chat/">
+    <meta property="og:title" content="Vashti - Lightweight Self-Hosted Ollama Chat UI">
+    <meta property="og:description" content="A small self-hosted Ollama chat UI that installs as one Rust binary.">
+    <meta property="og:url" content="https://vashti.chat/">
+    <meta property="og:type" content="website">
+    <meta property="og:image" content="https://vashti.chat/favicon.png">
+    <meta name="twitter:card" content="summary">
+    <link rel="icon" type="image/png" href="/favicon.png">
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
     <main class="shell">
       <header class="topbar">
-        <a class="brand" href="/">Vashti</a>
+        <a class="brand" href="/" aria-label="Vashti home">
+          <img class="brand-image" src="/logo.png" alt="Vashti">
+        </a>
+        <nav class="nav">
+          <a href="/">Home</a>
+          <a href="/getting-started">Getting Started</a>
+          <a href="/releases">Releases</a>
+        </nav>
       </header>
 
       <section>
@@ -23,11 +38,13 @@
           <code id="install-command">curl -fsSL https://vashti.chat/install.sh | sh</code>
           <button type="button" id="copy-install">Copy</button>
         </div>
+        <p>
+          <a class="inline-cta" href="/getting-started">Read the getting-started guide</a>
+        </p>
       </section>
 
       <footer class="footer">
         <a href="https://github.com/jmicko/vashti">GitHub</a>
-        <a href="/releases">Releases</a>
         <a href="/admin">Admin</a>
       </footer>
     </main>

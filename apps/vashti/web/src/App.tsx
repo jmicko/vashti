@@ -2596,7 +2596,7 @@ function ChatView({
     const bottomOverflow = messageRect.bottom - listRect.bottom;
 
     if (autoScrollModeRef.current === "bottom") {
-      activeMessage.scrollIntoView({ block: "end" });
+      scrollMessageListToBottom(list);
       return;
     }
 
@@ -3482,7 +3482,7 @@ function PrivateChatView({
     const bottomOverflow = messageRect.bottom - listRect.bottom;
 
     if (autoScrollModeRef.current === "bottom") {
-      activeMessage.scrollIntoView({ block: "end" });
+      scrollMessageListToBottom(list);
       return;
     }
 
@@ -5345,6 +5345,10 @@ function scrollMessageTopIntoListView(list: HTMLElement, messageElement: HTMLEle
   const topOffset =
     messageElement.getBoundingClientRect().top - list.getBoundingClientRect().top - topPadding;
   list.scrollTop += topOffset;
+}
+
+function scrollMessageListToBottom(list: HTMLElement) {
+  list.scrollTop = Math.max(0, list.scrollHeight - list.clientHeight);
 }
 
 function usesTouchViewport() {
