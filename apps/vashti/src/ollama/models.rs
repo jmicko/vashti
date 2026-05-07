@@ -16,6 +16,10 @@ pub struct OllamaChatMessage {
     pub thinking: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub images: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<OllamaToolCall>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -25,6 +29,8 @@ pub struct OllamaChatRequest {
     pub stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub think: Option<OllamaThink>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<OllamaTool>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -53,6 +59,39 @@ pub struct OllamaChatChunkMessage {
     pub content: String,
     #[serde(default)]
     pub thinking: String,
+    #[serde(default)]
+    pub tool_calls: Vec<OllamaToolCall>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct OllamaToolCall {
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    pub function: OllamaToolCallFunction,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct OllamaToolCallFunction {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub index: Option<i64>,
+    pub name: String,
+    pub arguments: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct OllamaTool {
+    #[serde(rename = "type")]
+    pub kind: &'static str,
+    pub function: OllamaToolFunction,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct OllamaToolFunction {
+    pub name: &'static str,
+    pub description: &'static str,
+    pub parameters: serde_json::Value,
 }
 
 #[derive(Debug, Deserialize)]

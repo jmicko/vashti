@@ -210,6 +210,7 @@ async fn stream_private_generation(
         messages,
         stream: true,
         think: think_mode.as_deref().and_then(think_from_mode),
+        tools: None,
     };
 
     let response = match ollama::client::chat_stream(&client, &backend_base_url, &request).await {

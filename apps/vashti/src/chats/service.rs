@@ -1661,6 +1661,8 @@ fn prepend_persona_system_prompt(
             content: system_prompt.to_string(),
             thinking: None,
             images: None,
+            tool_name: None,
+            tool_calls: None,
         },
     );
 }
@@ -1948,6 +1950,8 @@ async fn active_prompt_messages(
                     content,
                     thinking: thinking.filter(|thinking| !thinking.trim().is_empty()),
                     images: (!images.is_empty()).then_some(images),
+                    tool_name: None,
+                    tool_calls: None,
                 });
             }
         }

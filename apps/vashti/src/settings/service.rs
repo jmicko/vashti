@@ -5,7 +5,8 @@ use crate::{
     auth::service::{self as auth_service, unix_timestamp},
     error::ApiError,
     settings::handlers::{
-        UpdateAppSettingsRequest, UpdateNetworkSettingsRequest, UpdateUserSettingsRequest,
+        UpdateAppSettingsRequest, UpdateNetworkSettingsRequest, UpdateToolSettingsRequest,
+        UpdateUserSettingsRequest,
     },
 };
 
@@ -35,6 +36,28 @@ pub struct UserSettingsResponse {
     pub theme: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct ToolSettingsResponse {
+    pub tools_enabled: bool,
+    pub ollama_web_search_enabled: bool,
+    pub ollama_web_fetch_enabled: bool,
+    pub ollama_api_key_configured: bool,
+    pub brave_search_enabled: bool,
+    pub brave_search_api_key_configured: bool,
+    pub direct_web_fetch_enabled: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct ToolSettingsPrivate {
+    pub tools_enabled: bool,
+    pub ollama_web_search_enabled: bool,
+    pub ollama_web_fetch_enabled: bool,
+    pub ollama_api_key: Option<String>,
+    pub brave_search_enabled: bool,
+    pub brave_search_api_key: Option<String>,
+    pub direct_web_fetch_enabled: bool,
+}
+
 pub async fn get_app_settings(pool: &SqlitePool) -> Result<AppSettingsResponse, sqlx::Error> {
     let row = sqlx::query(
         r#"
@@ -55,6 +78,86 @@ pub async fn get_app_settings(pool: &SqlitePool) -> Result<AppSettingsResponse, 
     .await?;
 
     row_to_app_settings(row)
+}
+
+pub async fn get_tool_settings(pool: &SqlitePool) -> Result<ToolSettingsResponse, sqlx::Error> {
+    let private = get_tool_settings_private(pool).await?;
+    Ok(private.to_response())
+}
+
+pub async fn get_tool_settings_private(
+    pool: &SqlitePool,
+) -> Result<ToolSettingsPrivate, sqlx::Error> {
+    let row = sqlx::query(
+        r#"
+        SELECT tools_enabled,
+               ollama_web_search_enabled,
+               ollama_web_fetch_enabled,
+               ollama_api_key,
+               brave_search_enabled,
+               brave_search_api_key,
+               direct_web_fetch_enabled
+        FROM app_settings
+        WHERE id = 1
+        "#,
+    )
+    .fetch_one(pool)
+    .await?;
+
+    row_to_tool_settings_private(row)
+}
+
+pub async fn update_tool_settings(
+    pool: &SqlitePool,
+    payload: UpdateToolSettingsRequest,
+) -> Result<ToolSettingsResponse, ApiError> {
+    let current = get_tool_settings_private(pool).await?;
+    let ollama_api_key = updated_secret(
+        current.ollama_api_key,
+        payload.ollama_api_key,
+        payload.clear_ollama_api_key,
+    );
+    let brave_search_api_key = updated_secret(
+        current.brave_search_api_key,
+        payload.brave_search_api_key,
+        payload.clear_brave_search_api_key,
+    );
+
+    let row = sqlx::query(
+        r#"
+        UPDATE app_settings
+        SET tools_enabled = COALESCE(?, tools_enabled),
+            ollama_web_search_enabled = COALESCE(?, ollama_web_search_enabled),
+            ollama_web_fetch_enabled = COALESCE(?, ollama_web_fetch_enabled),
+            ollama_api_key = ?,
+            brave_search_enabled = COALESCE(?, brave_search_enabled),
+            brave_search_api_key = ?,
+            direct_web_fetch_enabled = COALESCE(?, direct_web_fetch_enabled),
+            updated_at = ?
+        WHERE id = 1
+        RETURNING tools_enabled,
+                  ollama_web_search_enabled,
+                  ollama_web_fetch_enabled,
+                  ollama_api_key,
+                  brave_search_enabled,
+                  brave_search_api_key,
+                  direct_web_fetch_enabled
+        "#,
+    )
+    .bind(payload.tools_enabled.map(i64::from))
+    .bind(payload.ollama_web_search_enabled.map(i64::from))
+    .bind(payload.ollama_web_fetch_enabled.map(i64::from))
+    .bind(ollama_api_key)
+    .bind(payload.brave_search_enabled.map(i64::from))
+    .bind(brave_search_api_key)
+    .bind(payload.direct_web_fetch_enabled.map(i64::from))
+    .bind(unix_timestamp())
+    .fetch_one(pool)
+    .await?;
+
+    row_to_tool_settings_private(row)
+        .map(|settings| settings.to_response())
+        .map_err(ApiError::from)
 }
 
 pub async fn update_app_settings(
@@ -294,6 +397,56 @@ fn row_to_app_settings(row: sqlx::sqlite::SqliteRow) -> Result<AppSettingsRespon
         trust_proxy_headers: row.try_get::<i64, _>("trust_proxy_headers")? != 0,
         network_recovery_notice: row.try_get("network_recovery_notice")?,
     })
+}
+
+fn row_to_tool_settings_private(
+    row: sqlx::sqlite::SqliteRow,
+) -> Result<ToolSettingsPrivate, sqlx::Error> {
+    Ok(ToolSettingsPrivate {
+        tools_enabled: row.try_get::<i64, _>("tools_enabled")? != 0,
+        ollama_web_search_enabled: row.try_get::<i64, _>("ollama_web_search_enabled")? != 0,
+        ollama_web_fetch_enabled: row.try_get::<i64, _>("ollama_web_fetch_enabled")? != 0,
+        ollama_api_key: row.try_get("ollama_api_key")?,
+        brave_search_enabled: row.try_get::<i64, _>("brave_search_enabled")? != 0,
+        brave_search_api_key: row.try_get("brave_search_api_key")?,
+        direct_web_fetch_enabled: row.try_get::<i64, _>("direct_web_fetch_enabled")? != 0,
+    })
+}
+
+impl ToolSettingsPrivate {
+    pub fn to_response(&self) -> ToolSettingsResponse {
+        ToolSettingsResponse {
+            tools_enabled: self.tools_enabled,
+            ollama_web_search_enabled: self.ollama_web_search_enabled,
+            ollama_web_fetch_enabled: self.ollama_web_fetch_enabled,
+            ollama_api_key_configured: self.ollama_api_key.is_some(),
+            brave_search_enabled: self.brave_search_enabled,
+            brave_search_api_key_configured: self.brave_search_api_key.is_some(),
+            direct_web_fetch_enabled: self.direct_web_fetch_enabled,
+        }
+    }
+
+    pub fn has_ollama_key(&self) -> bool {
+        self.ollama_api_key.is_some()
+    }
+
+    pub fn has_brave_key(&self) -> bool {
+        self.brave_search_api_key.is_some()
+    }
+}
+
+fn updated_secret(
+    current: Option<String>,
+    next: Option<String>,
+    clear: Option<bool>,
+) -> Option<String> {
+    if clear.unwrap_or(false) {
+        return None;
+    }
+
+    next.map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .or(current)
 }
 
 fn validate_network_mode(network_mode: &str) -> Result<&'static str, ApiError> {

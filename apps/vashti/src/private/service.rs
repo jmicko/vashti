@@ -133,6 +133,8 @@ pub fn private_prompt_messages(
             } else {
                 Some(images)
             },
+            tool_name: None,
+            tool_calls: None,
         });
     }
 

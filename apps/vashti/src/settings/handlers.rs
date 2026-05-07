@@ -22,6 +22,19 @@ pub struct UpdateNetworkSettingsRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct UpdateToolSettingsRequest {
+    pub tools_enabled: Option<bool>,
+    pub ollama_web_search_enabled: Option<bool>,
+    pub ollama_web_fetch_enabled: Option<bool>,
+    pub ollama_api_key: Option<String>,
+    pub clear_ollama_api_key: Option<bool>,
+    pub brave_search_enabled: Option<bool>,
+    pub brave_search_api_key: Option<String>,
+    pub clear_brave_search_api_key: Option<bool>,
+    pub direct_web_fetch_enabled: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct UpdateUserSettingsRequest {
     pub default_backend_id: Option<serde_json::Value>,
     pub default_model_name: Option<serde_json::Value>,
@@ -94,6 +107,27 @@ pub async fn update_network_settings(
     };
 
     Ok((jar, Json(settings)))
+}
+
+pub async fn get_tool_settings(
+    State(state): State<AppState>,
+    jar: CookieJar,
+) -> Result<Json<service::ToolSettingsResponse>, ApiError> {
+    auth::service::require_admin(&state.db, &jar, &state.config.session_cookie_name).await?;
+    let settings = service::get_tool_settings(&state.db).await?;
+
+    Ok(Json(settings))
+}
+
+pub async fn update_tool_settings(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Json(payload): Json<UpdateToolSettingsRequest>,
+) -> Result<Json<service::ToolSettingsResponse>, ApiError> {
+    auth::service::require_admin(&state.db, &jar, &state.config.session_cookie_name).await?;
+    let settings = service::update_tool_settings(&state.db, payload).await?;
+
+    Ok(Json(settings))
 }
 
 pub async fn dismiss_network_recovery_notice(

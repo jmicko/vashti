@@ -16,6 +16,7 @@ import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import {
   Brain,
+  Bot,
   ChevronLeft,
   ChevronRight,
   Cog,
@@ -38,6 +39,8 @@ import {
   Search,
   SendHorizontal,
   Settings as SettingsIcon,
+  SlidersHorizontal,
+  Sparkles,
   Square,
   Trash2,
   UserRound,
@@ -379,6 +382,16 @@ type AppSettings = {
   network_recovery_notice: string | null;
 };
 
+type ToolSettings = {
+  tools_enabled: boolean;
+  ollama_web_search_enabled: boolean;
+  ollama_web_fetch_enabled: boolean;
+  ollama_api_key_configured: boolean;
+  brave_search_enabled: boolean;
+  brave_search_api_key_configured: boolean;
+  direct_web_fetch_enabled: boolean;
+};
+
 type VersionResponse = {
   name: string;
   version: string;
@@ -402,7 +415,14 @@ type ApiError = {
 };
 
 type Page = "chat" | "private-chat" | "settings";
-type SettingsSection = "profile" | "personas" | "users" | "models" | "app" | "backends";
+type SettingsSection =
+  | "profile"
+  | "personas"
+  | "users"
+  | "models"
+  | "tools"
+  | "app"
+  | "backends";
 type NewChatMode = "standard" | "private";
 type AppRoute =
   | { page: "chat"; chatId?: string }
@@ -437,6 +457,7 @@ const settingsSections: SettingsSection[] = [
   "users",
   "backends",
   "models",
+  "tools",
   "app"
 ];
 const rootSiblingGroupKey = "__root__";
@@ -1453,61 +1474,84 @@ function AppShell({
     }
   }
 
+  const shellClassName = [
+    "app-shell",
+    isSidebarOpen ? "sidebar-open" : "",
+    isSettingsPage ? "settings-shell" : ""
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   return (
-    <main className={isSidebarOpen ? "app-shell sidebar-open" : "app-shell"}>
-      <Sidebar
-        chats={chats}
-        privateChats={privateChats}
-        currentChatId={currentChatId}
-        currentPrivateChatId={currentPrivateChatId}
-        currentPage={page}
-        isOpen={isSidebarOpen}
-        isLoading={isLoadingChats}
-        isLoadingPrivateChats={isLoadingPrivateChats}
-        onClose={() => setIsSidebarOpen(false)}
-        onDeleteChat={setChatDeleteTarget}
-        onDeletePrivateChat={setPrivateChatDeleteTarget}
-        onOpenChat={openChat}
-        onOpenPrivateChat={openPrivateChat}
-        onRenameChat={renameChat}
-        onRenamePrivateChat={renameLocalPrivateChat}
-      />
-      <button
-        type="button"
-        className="sidebar-backdrop"
-        aria-label="Close sidebar"
-        onClick={() => setIsSidebarOpen(false)}
-      />
+    <main className={shellClassName}>
+      {!isSettingsPage && (
+        <>
+          <Sidebar
+            chats={chats}
+            privateChats={privateChats}
+            currentChatId={currentChatId}
+            currentPrivateChatId={currentPrivateChatId}
+            currentPage={page}
+            isOpen={isSidebarOpen}
+            isLoading={isLoadingChats}
+            isLoadingPrivateChats={isLoadingPrivateChats}
+            onClose={() => setIsSidebarOpen(false)}
+            onDeleteChat={setChatDeleteTarget}
+            onDeletePrivateChat={setPrivateChatDeleteTarget}
+            onOpenChat={openChat}
+            onOpenPrivateChat={openPrivateChat}
+            onRenameChat={renameChat}
+            onRenamePrivateChat={renameLocalPrivateChat}
+          />
+          <button
+            type="button"
+            className="sidebar-backdrop"
+            aria-label="Close sidebar"
+            onClick={() => setIsSidebarOpen(false)}
+          />
+        </>
+      )}
       <section className="main-pane">
         <header className="topbar">
           <div className="topbar-left">
-            <button
-              type="button"
-              className="icon-button mobile-only"
-              aria-label="Open sidebar"
-              onClick={() => setIsSidebarOpen(true)}
-            >
-              <Menu />
-            </button>
-            <ModelPicker
-              groups={modelGroups}
-              personas={allowPrivatePersonaSelection ? [] : personas}
-              privatePersonas={allowPrivatePersonaSelection ? privatePersonas : []}
-              isLoading={isLoadingModels}
-              error={modelError}
-              value={selectedModel}
-              onChange={setSelectedModel}
-            />
+            {isSettingsPage ? (
+              <div className="settings-topbar-title">
+                <SettingsIcon />
+                <span>Settings</span>
+              </div>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  className="icon-button mobile-only"
+                  aria-label="Open sidebar"
+                  onClick={() => setIsSidebarOpen(true)}
+                >
+                  <Menu />
+                </button>
+                <ModelPicker
+                  groups={modelGroups}
+                  personas={allowPrivatePersonaSelection ? [] : personas}
+                  privatePersonas={allowPrivatePersonaSelection ? privatePersonas : []}
+                  isLoading={isLoadingModels}
+                  error={modelError}
+                  value={selectedModel}
+                  onChange={setSelectedModel}
+                />
+              </>
+            )}
           </div>
           <div className="topbar-right">
-            <button
-              type="button"
-              className="primary-action"
-              onClick={() => openChat()}
-            >
-              <MessageSquarePlus />
-              <span>New Chat</span>
-            </button>
+            {!isSettingsPage && (
+              <button
+                type="button"
+                className="primary-action"
+                onClick={() => openChat()}
+              >
+                <MessageSquarePlus />
+                <span>New Chat</span>
+              </button>
+            )}
             <div className="settings-menu-wrap">
               <button
                 type="button"
@@ -6740,11 +6784,12 @@ function SettingsPage({
     adminOnly?: boolean;
   }> = [
     { id: "profile", label: "Profile", icon: <UserRound /> },
-    { id: "personas", label: "Personas", icon: <Brain /> },
+    { id: "personas", label: "Personas", icon: <Bot /> },
     { id: "users", label: "Users", icon: <Users />, adminOnly: true },
     { id: "backends", label: "Backends", icon: <Server />, adminOnly: true },
-    { id: "models", label: "Models", icon: <Wrench />, adminOnly: true },
-    { id: "app", label: "App", icon: <SettingsIcon />, adminOnly: true }
+    { id: "models", label: "Models", icon: <Sparkles />, adminOnly: true },
+    { id: "tools", label: "Tools", icon: <Wrench />, adminOnly: true },
+    { id: "app", label: "App", icon: <SlidersHorizontal />, adminOnly: true }
   ];
   const visibleSections = sections.filter((section) => !section.adminOnly || isAdmin);
   const selectedSection =
@@ -6782,6 +6827,7 @@ function SettingsPage({
         {selectedSection === "models" && isAdmin && (
           <ModelsAccessPanel onModelsChanged={onBackendsChanged} />
         )}
+        {selectedSection === "tools" && isAdmin && <ToolsSettingsPanel />}
         {selectedSection === "app" && <AppSettingsPanel onGuardChange={onAppSettingsGuardChange} />}
       </section>
     </div>
@@ -7863,27 +7909,21 @@ function ModelsAccessPanel({ onModelsChanged }: { onModelsChanged: () => Promise
                     const isBusy = busyModelKey === key || isBackendBusy;
 
                     return (
-                      <label key={key} className="model-access-row">
+                      <article key={key} className="model-access-row">
                         <span className="model-access-main">
                           <span className="model-name">{model.name}</span>
                           <ModelCapabilityBadges model={model} />
                         </span>
-                        <span className="model-access-toggle">
-                          <input
-                            type="checkbox"
-                            checked={model.is_enabled}
-                            disabled={isBusy}
-                            onChange={(event) =>
-                              void toggleModel(
-                                group.backend.id,
-                                model.name,
-                                event.target.checked
-                              )
-                            }
-                          />
-                          <span>{model.is_enabled ? "On" : "Off"}</span>
-                        </span>
-                      </label>
+                        <ToggleSwitch
+                          label={model.is_enabled ? "On" : "Off"}
+                          checked={model.is_enabled}
+                          disabled={isBusy}
+                          compact
+                          onChange={(checked) =>
+                            void toggleModel(group.backend.id, model.name, checked)
+                          }
+                        />
+                      </article>
                     );
                   })}
                 </div>
@@ -7893,6 +7933,409 @@ function ModelsAccessPanel({ onModelsChanged }: { onModelsChanged: () => Promise
         })}
       </div>
     </div>
+  );
+}
+
+function ToolsSettingsPanel() {
+  const [settings, setSettings] = useState<ToolSettings | null>(null);
+  const [toolsEnabled, setToolsEnabled] = useState(false);
+  const [ollamaSearchEnabled, setOllamaSearchEnabled] = useState(false);
+  const [ollamaFetchEnabled, setOllamaFetchEnabled] = useState(false);
+  const [ollamaApiKey, setOllamaApiKey] = useState("");
+  const [braveSearchEnabled, setBraveSearchEnabled] = useState(false);
+  const [braveApiKey, setBraveApiKey] = useState("");
+  const [directFetchEnabled, setDirectFetchEnabled] = useState(false);
+  const [clearKeyTarget, setClearKeyTarget] = useState<"ollama" | "brave" | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isClearingKey, setIsClearingKey] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const isDirty = Boolean(
+    settings &&
+      (toolsEnabled !== settings.tools_enabled ||
+        ollamaSearchEnabled !== settings.ollama_web_search_enabled ||
+        ollamaFetchEnabled !== settings.ollama_web_fetch_enabled ||
+        braveSearchEnabled !== settings.brave_search_enabled ||
+        directFetchEnabled !== settings.direct_web_fetch_enabled ||
+        ollamaApiKey.trim() ||
+        braveApiKey.trim())
+  );
+  const visibleStatus = isDirty ? null : status;
+  const showSaveBanner = isDirty || Boolean(visibleStatus);
+  const toolsEnabledChanged = Boolean(settings && toolsEnabled !== settings.tools_enabled);
+  const ollamaSearchChanged = Boolean(
+    settings && ollamaSearchEnabled !== settings.ollama_web_search_enabled
+  );
+  const ollamaFetchChanged = Boolean(
+    settings && ollamaFetchEnabled !== settings.ollama_web_fetch_enabled
+  );
+  const braveSearchChanged = Boolean(
+    settings && braveSearchEnabled !== settings.brave_search_enabled
+  );
+  const directFetchChanged = Boolean(
+    settings && directFetchEnabled !== settings.direct_web_fetch_enabled
+  );
+  const ollamaKeyChanged = Boolean(ollamaApiKey.trim());
+  const braveKeyChanged = Boolean(braveApiKey.trim());
+
+  function applyToolSettings(response: ToolSettings) {
+    setSettings(response);
+    setToolsEnabled(response.tools_enabled);
+    setOllamaSearchEnabled(response.ollama_web_search_enabled);
+    setOllamaFetchEnabled(response.ollama_web_fetch_enabled);
+    setOllamaApiKey("");
+    setBraveSearchEnabled(response.brave_search_enabled);
+    setBraveApiKey("");
+    setDirectFetchEnabled(response.direct_web_fetch_enabled);
+  }
+
+  const loadToolSettings = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const response = await requestJson<ToolSettings>("/api/settings/tools");
+      applyToolSettings(response);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Failed to load tool settings");
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadToolSettings();
+  }, [loadToolSettings]);
+
+  useEffect(() => {
+    if (!status) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => setStatus(null), 3000);
+    return () => window.clearTimeout(timeout);
+  }, [status]);
+
+  useEffect(() => {
+    if (isDirty && status) {
+      setStatus(null);
+    }
+  }, [isDirty, status]);
+
+  async function saveToolSettings(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setIsSaving(true);
+    setStatus(null);
+    setError(null);
+
+    const payload: Record<string, unknown> = {
+      tools_enabled: toolsEnabled,
+      ollama_web_search_enabled: ollamaSearchEnabled,
+      ollama_web_fetch_enabled: ollamaFetchEnabled,
+      clear_ollama_api_key: false,
+      brave_search_enabled: braveSearchEnabled,
+      clear_brave_search_api_key: false,
+      direct_web_fetch_enabled: directFetchEnabled
+    };
+    if (ollamaApiKey.trim()) {
+      payload.ollama_api_key = ollamaApiKey.trim();
+    }
+    if (braveApiKey.trim()) {
+      payload.brave_search_api_key = braveApiKey.trim();
+    }
+
+    try {
+      const response = await requestJson<ToolSettings>("/api/settings/tools", {
+        method: "PATCH",
+        body: JSON.stringify(payload)
+      });
+      applyToolSettings(response);
+      setStatus("Tool settings saved.");
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Failed to save tool settings");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  function revertToolSettings() {
+    if (!settings) {
+      return;
+    }
+    applyToolSettings(settings);
+    setStatus(null);
+    setError(null);
+  }
+
+  async function clearToolKey(target: "ollama" | "brave") {
+    setIsClearingKey(true);
+    setStatus(null);
+    setError(null);
+
+    try {
+      const response = await requestJson<ToolSettings>("/api/settings/tools", {
+        method: "PATCH",
+        body: JSON.stringify({
+          tools_enabled: toolsEnabled,
+          ollama_web_search_enabled: ollamaSearchEnabled,
+          ollama_web_fetch_enabled: ollamaFetchEnabled,
+          clear_ollama_api_key: target === "ollama",
+          brave_search_enabled: braveSearchEnabled,
+          clear_brave_search_api_key: target === "brave",
+          direct_web_fetch_enabled: directFetchEnabled
+        })
+      });
+      applyToolSettings(response);
+      setStatus(target === "ollama" ? "Ollama API key cleared." : "Brave Search API key cleared.");
+      setClearKeyTarget(null);
+    } catch (clearError) {
+      setError(clearError instanceof Error ? clearError.message : "Failed to clear API key");
+    } finally {
+      setIsClearingKey(false);
+    }
+  }
+
+  return (
+    <div className="settings-section tools-settings-section">
+      <div className="section-header">
+        <div>
+          <p className="eyebrow">Admin</p>
+          <h1>Tools</h1>
+        </div>
+      </div>
+
+      {error && <p className="error">{error}</p>}
+      {!settings && isLoading && <p className="status-message">Loading tool settings...</p>}
+
+      {settings && (
+        <form className="settings-form tools-settings-form" onSubmit={saveToolSettings}>
+          <div
+            className={
+              showSaveBanner
+                ? "sticky-save-slot"
+                : "sticky-save-slot sticky-save-slot-placeholder"
+            }
+          >
+            <div
+              className={
+                visibleStatus ? "sticky-save-bar sticky-save-bar-saved" : "sticky-save-bar"
+              }
+              aria-hidden={!showSaveBanner}
+            >
+              <div>
+                <strong>{visibleStatus ?? "Unsaved tool changes"}</strong>
+                <span>
+                  {visibleStatus
+                    ? "Saved changes are active for future generations."
+                    : "Save to apply these settings to future generations."}
+                </span>
+              </div>
+              {isDirty && (
+                <div className="sticky-save-actions">
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    disabled={isSaving}
+                    onClick={revertToolSettings}
+                  >
+                    Revert
+                  </button>
+                  <button type="submit" disabled={isSaving}>
+                    <Save />
+                    <span>{isSaving ? "Saving..." : "Save"}</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <section className="settings-subsection">
+            <ToggleSwitch
+              icon={<Wrench />}
+              label="Enable tools globally"
+              description="When enabled, Vashti only sends tool schemas to Ollama models whose capabilities include tools."
+              checked={toolsEnabled}
+              isChanged={toolsEnabledChanged}
+              onChange={setToolsEnabled}
+            />
+          </section>
+
+          <section className="settings-subsection">
+            <div>
+              <p className="eyebrow">Ollama</p>
+              <h2>Web Search and Fetch</h2>
+              <p className="status-message">
+                Uses Ollama's hosted web search and web fetch APIs. Requires an Ollama API key.
+              </p>
+            </div>
+            <label className={ollamaKeyChanged ? "setting-field setting-field-changed" : "setting-field"}>
+              <span>Ollama API key</span>
+              <input
+                type="password"
+                autoComplete="off"
+                value={ollamaApiKey}
+                onChange={(event) => setOllamaApiKey(event.target.value)}
+                placeholder={
+                  settings.ollama_api_key_configured ? "Configured; enter a new key to replace" : "Not configured"
+                }
+              />
+            </label>
+            {settings.ollama_api_key_configured && (
+              <button
+                type="button"
+                className="danger-button key-clear-button"
+                onClick={() => setClearKeyTarget("ollama")}
+              >
+                Clear Ollama API Key
+              </button>
+            )}
+            <ToggleSwitch
+              icon={<Search />}
+              label="Ollama web search"
+              description="Search the web through Ollama's hosted search API."
+              checked={ollamaSearchEnabled}
+              isChanged={ollamaSearchChanged}
+              onChange={setOllamaSearchEnabled}
+            />
+            <ToggleSwitch
+              icon={<FileText />}
+              label="Ollama web fetch"
+              description="Fetch public pages through Ollama's hosted fetch API."
+              checked={ollamaFetchEnabled}
+              isChanged={ollamaFetchChanged}
+              onChange={setOllamaFetchEnabled}
+            />
+          </section>
+
+          <section className="settings-subsection">
+            <div>
+              <p className="eyebrow">Brave</p>
+              <h2>Search API</h2>
+              <p className="status-message">
+                Uses Brave Search for result lists. Page fetching is handled separately.
+              </p>
+            </div>
+            <label className={braveKeyChanged ? "setting-field setting-field-changed" : "setting-field"}>
+              <span>Brave Search API key</span>
+              <input
+                type="password"
+                autoComplete="off"
+                value={braveApiKey}
+                onChange={(event) => setBraveApiKey(event.target.value)}
+                placeholder={
+                  settings.brave_search_api_key_configured
+                    ? "Configured; enter a new key to replace"
+                    : "Not configured"
+                }
+              />
+            </label>
+            {settings.brave_search_api_key_configured && (
+              <button
+                type="button"
+                className="danger-button key-clear-button"
+                onClick={() => setClearKeyTarget("brave")}
+              >
+                Clear Brave Search API Key
+              </button>
+            )}
+            <ToggleSwitch
+              icon={<Search />}
+              label="Brave web search"
+              description="Search with Brave Search and return compact result lists."
+              checked={braveSearchEnabled}
+              isChanged={braveSearchChanged}
+              onChange={setBraveSearchEnabled}
+            />
+          </section>
+
+          <section className="settings-subsection">
+            <div>
+              <p className="eyebrow">Fetch</p>
+              <h2>Direct Page Fetch</h2>
+              <p className="status-message">
+                Lets Vashti fetch public HTTP/HTTPS pages directly. Private and local network
+                addresses are blocked.
+              </p>
+            </div>
+            <ToggleSwitch
+              icon={<FileText />}
+              label="Direct page fetch"
+              description="Fetch public HTTP/HTTPS pages from the Vashti server."
+              checked={directFetchEnabled}
+              isChanged={directFetchChanged}
+              onChange={setDirectFetchEnabled}
+            />
+          </section>
+        </form>
+      )}
+
+      {clearKeyTarget && (
+        <ConfirmDialog
+          title="Clear API Key"
+          message={
+            clearKeyTarget === "ollama"
+              ? "Clear the stored Ollama API key? Ollama web search and fetch will stop working until a new key is saved."
+              : "Clear the stored Brave Search API key? Brave web search will stop working until a new key is saved."
+          }
+          confirmLabel="Clear Key"
+          isBusy={isClearingKey}
+          onCancel={() => setClearKeyTarget(null)}
+          onConfirm={() => void clearToolKey(clearKeyTarget)}
+        />
+      )}
+    </div>
+  );
+}
+
+function ToggleSwitch({
+  icon,
+  label,
+  description,
+  checked,
+  disabled = false,
+  compact = false,
+  isChanged = false,
+  onChange
+}: {
+  icon?: ReactNode;
+  label: string;
+  description?: string;
+  checked: boolean;
+  disabled?: boolean;
+  compact?: boolean;
+  isChanged?: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label
+      className={[
+        "toggle-row",
+        compact ? "toggle-row-compact" : "",
+        isChanged ? "toggle-row-changed" : ""
+      ]
+        .filter(Boolean)
+        .join(" ")}
+    >
+      <span className="toggle-copy">
+        {icon && <span className="tool-icon">{icon}</span>}
+        <span className="toggle-title">
+          <span>{label}</span>
+          {isChanged && <span className="changed-badge">Changed</span>}
+        </span>
+        {description && <small>{description}</small>}
+      </span>
+      <span className="switch-control">
+        <input
+          type="checkbox"
+          checked={checked}
+          disabled={disabled}
+          onChange={(event) => onChange(event.target.checked)}
+        />
+        <span className="switch-track" aria-hidden="true" />
+      </span>
+    </label>
   );
 }
 

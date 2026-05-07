@@ -88,6 +88,22 @@ Storage modes:
 
 Generation uses the resolved base backend/model and prepends or includes the persona version's system prompt in the prompt sent to Ollama.
 
+### 2.5 Tools
+
+Tools are optional backend capabilities that can be exposed to Ollama models through Ollama's function-calling API.
+
+MVP tool behavior:
+
+* tools are disabled by default
+* admins enable tools globally from settings
+* provider API keys are entered in the admin Tools settings page
+* API keys are write-only in the UI; API responses only report whether a key is configured
+* web search may use Brave Search or Ollama's hosted web search API
+* web fetch may use Ollama's hosted web fetch API or Vashti's guarded direct fetcher
+* tool schemas are sent only when the selected Ollama model reports the `tools` capability
+* tool calls and tool results are relayed through the server during generation; final chat content remains normal assistant output
+* direct page fetch must block localhost, private networks, link-local addresses, multicast addresses, and embedded URL credentials
+
 ---
 
 ## 3. Database Design
@@ -215,6 +231,13 @@ Columns:
 * `public_base_url` TEXT
 * `trust_proxy_headers` INTEGER NOT NULL DEFAULT 0
 * `network_recovery_notice` TEXT
+* `tools_enabled` INTEGER NOT NULL DEFAULT 0
+* `ollama_web_search_enabled` INTEGER NOT NULL DEFAULT 0
+* `ollama_web_fetch_enabled` INTEGER NOT NULL DEFAULT 0
+* `ollama_api_key` TEXT
+* `brave_search_enabled` INTEGER NOT NULL DEFAULT 0
+* `brave_search_api_key` TEXT
+* `direct_web_fetch_enabled` INTEGER NOT NULL DEFAULT 0
 * `created_at` INTEGER NOT NULL
 * `updated_at` INTEGER NOT NULL
 
@@ -229,6 +252,8 @@ Notes:
 * `network_mode = public_https_proxy` is for nginx, Caddy, Cloudflare Tunnel, or similar HTTPS reverse-proxy deployments and enables Secure session cookies
 * `trust_proxy_headers` is only meaningful in public reverse-proxy mode and must not be trusted when Vashti is directly exposed to arbitrary clients
 * `public_base_url` is used for future share links and reverse-proxy config generation; it does not prove HTTPS is working
+* tool provider API keys are stored in `app_settings` and should never be returned to the frontend after save
+* `direct_web_fetch_enabled` exposes no key, but still must be treated as a network-risk setting because it lets the server request public URLs
 
 ### 3.2.6 `chats`
 
@@ -956,6 +981,50 @@ Behavior:
 ### `POST /api/settings/network-recovery-notice/dismiss`
 
 Admin-only. Clears the one-time network recovery notice after an admin has reviewed it.
+
+### `GET /api/settings/tools`
+
+Admin-only. Returns tool provider settings without exposing stored API key values.
+
+Response:
+
+```json
+{
+  "tools_enabled": true,
+  "ollama_web_search_enabled": true,
+  "ollama_web_fetch_enabled": true,
+  "ollama_api_key_configured": true,
+  "brave_search_enabled": true,
+  "brave_search_api_key_configured": true,
+  "direct_web_fetch_enabled": false
+}
+```
+
+### `PATCH /api/settings/tools`
+
+Admin-only. Updates enabled tool providers and write-only provider API keys.
+
+Request:
+
+```json
+{
+  "tools_enabled": true,
+  "ollama_web_search_enabled": true,
+  "ollama_web_fetch_enabled": true,
+  "ollama_api_key": "new-or-replacement-key",
+  "clear_ollama_api_key": false,
+  "brave_search_enabled": true,
+  "brave_search_api_key": "new-or-replacement-key",
+  "clear_brave_search_api_key": false,
+  "direct_web_fetch_enabled": false
+}
+```
+
+Behavior:
+
+* omitted booleans leave existing values unchanged
+* blank API key fields leave existing keys unchanged unless the matching clear flag is true
+* response uses the same shape as `GET /api/settings/tools` and must not return key material
 
 ### `GET /api/user-settings`
 
@@ -1914,6 +1983,7 @@ Sections:
 * users (admin only)
 * Ollama backends (admin only)
 * model availability (admin only)
+* tools/search settings (admin only)
 * advanced network access settings (admin only)
 
 Layout:

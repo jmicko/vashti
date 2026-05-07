@@ -84,7 +84,7 @@ pub async fn chat_once(
     response.json::<OllamaChatResponse>().await
 }
 
-async fn model_capabilities(
+pub async fn model_capabilities(
     client: &reqwest::Client,
     base_url: &str,
     model_name: &str,
@@ -101,4 +101,19 @@ async fn model_capabilities(
         .await?;
 
     Ok(response.capabilities)
+}
+
+pub async fn model_supports_tools(
+    client: &reqwest::Client,
+    base_url: &str,
+    model_name: &str,
+) -> bool {
+    model_capabilities(client, base_url, model_name)
+        .await
+        .map(|capabilities| {
+            capabilities
+                .iter()
+                .any(|capability| capability.eq_ignore_ascii_case("tools"))
+        })
+        .unwrap_or(false)
 }

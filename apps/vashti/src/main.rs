@@ -14,6 +14,7 @@ mod rate_limit;
 mod security;
 mod settings;
 mod startup;
+mod tools;
 mod uploads;
 mod version;
 
@@ -92,6 +93,11 @@ fn router(state: AppState) -> Router {
         .route(
             "/settings/network",
             patch(settings::handlers::update_network_settings),
+        )
+        .route(
+            "/settings/tools",
+            get(settings::handlers::get_tool_settings)
+                .patch(settings::handlers::update_tool_settings),
         )
         .route(
             "/settings/network-recovery-notice/dismiss",

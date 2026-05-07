@@ -22,9 +22,11 @@ use crate::{
     error::ApiError,
     ollama::{
         self,
-        models::{OllamaChatChunk, OllamaChatMessage, OllamaChatRequest, OllamaThink},
+        models::{
+            OllamaChatChunk, OllamaChatMessage, OllamaChatRequest, OllamaThink, OllamaToolCall,
+        },
     },
-    rate_limit,
+    rate_limit, settings, tools,
 };
 
 type GenerationProgressMap = Arc<tokio::sync::Mutex<HashMap<String, GenerationProgress>>>;
@@ -539,15 +541,43 @@ async fn stream_generation(
         return;
     }
 
-    let request = OllamaChatRequest {
-        model: prepared.model_name,
-        messages: prepared.prompt_messages,
-        stream: true,
-        think: prepared.think_mode.as_deref().and_then(think_from_mode),
-    };
+    let tool_settings = settings::service::get_tool_settings_private(&db).await.ok();
+    let mut available_tools = tool_settings
+        .as_ref()
+        .map(tools::service::chat_tools)
+        .unwrap_or_default();
+    if !available_tools.is_empty()
+        && !ollama::client::model_supports_tools(
+            &client,
+            &prepared.backend_base_url,
+            &prepared.model_name,
+        )
+        .await
+    {
+        available_tools.clear();
+    }
+    let mut prompt_messages = prepared.prompt_messages;
+    let mut tool_rounds = 0;
 
-    let response =
-        match ollama::client::chat_stream(&client, &prepared.backend_base_url, &request).await {
+    loop {
+        let round_content_start = content_text.len();
+        let round_thinking_start = thinking_text.len();
+        let mut round_tool_calls = Vec::new();
+        let request = OllamaChatRequest {
+            model: prepared.model_name.clone(),
+            messages: prompt_messages.clone(),
+            stream: true,
+            think: prepared.think_mode.as_deref().and_then(think_from_mode),
+            tools: (!available_tools.is_empty()).then_some(available_tools.clone()),
+        };
+
+        let response = match ollama::client::chat_stream(
+            &client,
+            &prepared.backend_base_url,
+            &request,
+        )
+        .await
+        {
             Ok(response) => response,
             Err(error) => {
                 let message = format!("Ollama request failed: {error}");
@@ -572,124 +602,208 @@ async fn stream_generation(
             }
         };
 
-    let mut stream = response.bytes_stream();
-    let mut buffer = String::new();
+        let mut stream = response.bytes_stream();
+        let mut buffer = String::new();
 
-    loop {
-        tokio::select! {
-            _ = cancellation.cancelled() => {
-                let _ = service::stop_generation(
+        loop {
+            tokio::select! {
+                _ = cancellation.cancelled() => {
+                    let _ = service::stop_generation(
+                        &db,
+                        &user_id,
+                        &chat_id,
+                        &assistant_message_id,
+                        &content_text,
+                        &thinking_text,
+                    )
+                    .await;
+                    let _ = send_event(
+                        &tx,
+                        &GenerateEvent::MessageStopped {
+                            assistant_message_id: assistant_message_id.clone(),
+                        },
+                    )
+                    .await;
+                    clear_generation_progress(&progress, &assistant_message_id).await;
+                    return;
+                }
+                next = stream.next() => {
+                    match next {
+                        Some(Ok(bytes)) => {
+                            buffer.push_str(&String::from_utf8_lossy(&bytes));
+                            while let Some(line_end) = buffer.find('\n') {
+                                let line = buffer[..line_end].trim().to_string();
+                                buffer.drain(..=line_end);
+                                if line.is_empty() {
+                                    continue;
+                                }
+                                match handle_ollama_line(
+                                    &tx,
+                                    &progress,
+                                    &assistant_message_id,
+                                    &user_id,
+                                    &chat_id,
+                                    &line,
+                                    &mut content_text,
+                                    &mut thinking_text,
+                                    &mut done_reason,
+                                    &mut round_tool_calls,
+                                )
+                                .await
+                                {
+                                    Ok(()) => {}
+                                    Err(message) => {
+                                        let _ = service::fail_generation(
+                                            &db,
+                                            &assistant_message_id,
+                                            &content_text,
+                                            &thinking_text,
+                                            &message,
+                                        )
+                                        .await;
+                                        clear_generation_progress(&progress, &assistant_message_id)
+                                            .await;
+                                        return;
+                                    }
+                                }
+                            }
+                        }
+                        Some(Err(error)) => {
+                            let message = format!("Ollama stream failed: {error}");
+                            let _ = service::fail_generation(
+                                &db,
+                                &assistant_message_id,
+                                &content_text,
+                                &thinking_text,
+                                &message,
+                            )
+                            .await;
+                            let _ = send_event(
+                                &tx,
+                                &GenerateEvent::Error {
+                                    assistant_message_id: Some(assistant_message_id.clone()),
+                                    message,
+                                },
+                            )
+                            .await;
+                            clear_generation_progress(&progress, &assistant_message_id).await;
+                            return;
+                        }
+                        None => break,
+                    }
+                }
+            }
+        }
+
+        let line = buffer.trim().to_string();
+        if !line.is_empty() {
+            if let Err(message) = handle_ollama_line(
+                &tx,
+                &progress,
+                &assistant_message_id,
+                &user_id,
+                &chat_id,
+                &line,
+                &mut content_text,
+                &mut thinking_text,
+                &mut done_reason,
+                &mut round_tool_calls,
+            )
+            .await
+            {
+                let _ = service::fail_generation(
                     &db,
-                    &user_id,
-                    &chat_id,
                     &assistant_message_id,
                     &content_text,
                     &thinking_text,
-                )
-                .await;
-                let _ = send_event(
-                    &tx,
-                    &GenerateEvent::MessageStopped {
-                        assistant_message_id: assistant_message_id.clone(),
-                    },
+                    &message,
                 )
                 .await;
                 clear_generation_progress(&progress, &assistant_message_id).await;
                 return;
             }
-            next = stream.next() => {
-                match next {
-                    Some(Ok(bytes)) => {
-                        buffer.push_str(&String::from_utf8_lossy(&bytes));
-                        while let Some(line_end) = buffer.find('\n') {
-                            let line = buffer[..line_end].trim().to_string();
-                            buffer.drain(..=line_end);
-                            if line.is_empty() {
-                                continue;
-                            }
-                            match handle_ollama_line(
-                                &tx,
-                                &progress,
-                                &assistant_message_id,
-                                &user_id,
-                                &chat_id,
-                                &line,
-                                &mut content_text,
-                                &mut thinking_text,
-                                &mut done_reason,
-                            )
-                            .await
-                            {
-                                Ok(()) => {}
-                                Err(message) => {
-                                    let _ = service::fail_generation(
-                                        &db,
-                                        &assistant_message_id,
-                                        &content_text,
-                                        &thinking_text,
-                                        &message,
-                                    )
-                                    .await;
-                                    clear_generation_progress(&progress, &assistant_message_id)
-                                        .await;
-                                    return;
-                                }
-                            }
-                        }
-                    }
-                    Some(Err(error)) => {
-                        let message = format!("Ollama stream failed: {error}");
-                        let _ = service::fail_generation(
-                            &db,
-                            &assistant_message_id,
-                            &content_text,
-                            &thinking_text,
-                            &message,
-                        )
-                        .await;
-                        let _ = send_event(
-                            &tx,
-                            &GenerateEvent::Error {
-                                assistant_message_id: Some(assistant_message_id.clone()),
-                                message,
-                            },
-                        )
-                        .await;
-                        clear_generation_progress(&progress, &assistant_message_id).await;
-                        return;
-                    }
-                    None => break,
-                }
-            }
         }
-    }
 
-    let line = buffer.trim().to_string();
-    if !line.is_empty() {
-        if let Err(message) = handle_ollama_line(
-            &tx,
-            &progress,
-            &assistant_message_id,
-            &user_id,
-            &chat_id,
-            &line,
-            &mut content_text,
-            &mut thinking_text,
-            &mut done_reason,
-        )
-        .await
-        {
+        if round_tool_calls.is_empty() {
+            break;
+        }
+        if tool_rounds >= 3 {
+            let message = "Tool call limit reached before the model produced a final answer.";
             let _ = service::fail_generation(
                 &db,
                 &assistant_message_id,
                 &content_text,
                 &thinking_text,
-                &message,
+                message,
+            )
+            .await;
+            let _ = send_event(
+                &tx,
+                &GenerateEvent::Error {
+                    assistant_message_id: Some(assistant_message_id.clone()),
+                    message: message.to_string(),
+                },
             )
             .await;
             clear_generation_progress(&progress, &assistant_message_id).await;
             return;
         }
+        let Some(tool_settings) = tool_settings.as_ref() else {
+            break;
+        };
+
+        let round_content = content_text[round_content_start..].to_string();
+        let round_thinking = thinking_text[round_thinking_start..].to_string();
+        let prompt_tool_calls = round_tool_calls
+            .iter()
+            .cloned()
+            .map(|mut call| {
+                call.kind = Some("function".to_string());
+                call
+            })
+            .collect();
+
+        prompt_messages.push(OllamaChatMessage {
+            role: "assistant".to_string(),
+            content: round_content,
+            thinking: (!round_thinking.trim().is_empty()).then_some(round_thinking),
+            images: None,
+            tool_name: None,
+            tool_calls: Some(prompt_tool_calls),
+        });
+
+        for call in &round_tool_calls {
+            let log_line = tools::service::tool_log_line(call);
+            thinking_text.push_str(&log_line);
+            set_generation_progress(
+                &progress,
+                &assistant_message_id,
+                &user_id,
+                &chat_id,
+                &content_text,
+                &thinking_text,
+            )
+            .await;
+            let _ = send_event(
+                &tx,
+                &GenerateEvent::ThinkingDelta {
+                    assistant_message_id: assistant_message_id.clone(),
+                    delta: log_line,
+                },
+            )
+            .await;
+
+            let result = tools::service::execute_tool(&client, tool_settings, call).await;
+            prompt_messages.push(OllamaChatMessage {
+                role: "tool".to_string(),
+                content: result,
+                thinking: None,
+                images: None,
+                tool_name: Some(call.function.name.clone()),
+                tool_calls: None,
+            });
+        }
+        tool_rounds += 1;
     }
 
     let _ = service::finish_generation(
@@ -929,14 +1043,19 @@ async fn request_generated_title(
                 content: "Create a concise chat title. Return only the title, no preface, no quotes, no explanation. Use 2 to 5 words when possible. Emojis are allowed if useful.".to_string(),
                 thinking: None,
                 images: None,
+                tool_name: None,
+                tool_calls: None,
             },
             OllamaChatMessage {
                 role: "user".to_string(),
                 content: transcript,
                 thinking: None,
                 images: None,
+                tool_name: None,
+                tool_calls: None,
             },
         ],
+        tools: None,
     };
 
     let response = ollama::client::chat_once(client, backend_base_url, &request)
@@ -1013,6 +1132,7 @@ async fn handle_ollama_line(
     content_text: &mut String,
     thinking_text: &mut String,
     done_reason: &mut Option<String>,
+    tool_calls: &mut Vec<OllamaToolCall>,
 ) -> Result<(), String> {
     let chunk = match serde_json::from_str::<OllamaChatChunk>(line) {
         Ok(chunk) => chunk,
@@ -1031,6 +1151,10 @@ async fn handle_ollama_line(
     };
 
     if let Some(message) = chunk.message {
+        if !message.tool_calls.is_empty() {
+            tool_calls.extend(message.tool_calls);
+        }
+
         if !message.thinking.is_empty() {
             thinking_text.push_str(&message.thinking);
             set_generation_progress(
