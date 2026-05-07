@@ -10,11 +10,16 @@
   </head>
   <body>
     <main class="shell">
-      <header class="topbar">
+      <header class="topbar" data-topbar>
         <a class="brand" href="/" aria-label="Vashti home">
           <img class="brand-image" src="/logo.png" alt="Vashti">
         </a>
-        <nav class="nav">
+        <button class="nav-toggle" type="button" aria-expanded="false" aria-label="Open navigation menu" data-nav-toggle>
+          <span></span>
+          <span></span>
+          <span></span>
+        </button>
+        <nav class="nav" data-site-nav>
           <a href="/">Home</a>
           <a href="/getting-started">Getting Started</a>
           <a href="/releases">Releases</a>
@@ -159,6 +164,7 @@
       </footer>
     </main>
 
+    <script src="/nav.js"></script>
     <script>
       const setupPanel = document.querySelector("#setup-panel");
       const loginPanel = document.querySelector("#login-panel");

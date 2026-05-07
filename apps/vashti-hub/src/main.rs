@@ -43,6 +43,7 @@ const ADMIN_HTML: &str = include_str!("../static/admin.html");
 const GETTING_STARTED_HTML: &str = include_str!("../static/getting-started.html");
 const RELEASES_HTML: &str = include_str!("../static/releases.html");
 const STYLES_CSS: &str = include_str!("../static/styles.css");
+const NAV_JS: &str = include_str!("../static/nav.js");
 const ROBOTS_TXT: &str = include_str!("../static/robots.txt");
 const SITEMAP_XML: &str = include_str!("../static/sitemap.xml");
 const LLMS_TXT: &str = include_str!("../static/llms.txt");
@@ -469,6 +470,7 @@ fn router(state: AppState) -> Router {
         .route("/getting-started", get(getting_started))
         .route("/releases", get(releases_page))
         .route("/styles.css", get(styles))
+        .route("/nav.js", get(nav_js))
         .route("/favicon.png", get(favicon))
         .route("/logo.png", get(logo))
         .route("/robots.txt", get(robots_txt))
@@ -550,6 +552,16 @@ async fn styles() -> impl IntoResponse {
     (
         [(header::CONTENT_TYPE, "text/css; charset=utf-8")],
         STYLES_CSS,
+    )
+}
+
+async fn nav_js() -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "text/javascript; charset=utf-8"),
+            (header::CACHE_CONTROL, "public, max-age=604800"),
+        ],
+        NAV_JS,
     )
 }
 
