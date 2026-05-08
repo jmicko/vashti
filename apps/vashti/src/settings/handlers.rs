@@ -32,6 +32,9 @@ pub struct UpdateToolSettingsRequest {
     pub brave_search_api_key: Option<String>,
     pub clear_brave_search_api_key: Option<bool>,
     pub direct_web_fetch_enabled: Option<bool>,
+    pub tool_system_prompt: Option<String>,
+    pub web_search_tool_prompt: Option<String>,
+    pub web_fetch_tool_prompt: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -117,6 +120,16 @@ pub async fn get_tool_settings(
     let settings = service::get_tool_settings(&state.db).await?;
 
     Ok(Json(settings))
+}
+
+pub async fn get_available_tools(
+    State(state): State<AppState>,
+    jar: CookieJar,
+) -> Result<Json<service::AvailableToolsResponse>, ApiError> {
+    auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
+    let tools = service::get_available_tools(&state.db).await?;
+
+    Ok(Json(tools))
 }
 
 pub async fn update_tool_settings(

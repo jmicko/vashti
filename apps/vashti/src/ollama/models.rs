@@ -83,14 +83,14 @@ pub struct OllamaToolCallFunction {
 #[derive(Debug, Clone, Serialize)]
 pub struct OllamaTool {
     #[serde(rename = "type")]
-    pub kind: &'static str,
+    pub kind: String,
     pub function: OllamaToolFunction,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct OllamaToolFunction {
-    pub name: &'static str,
-    pub description: &'static str,
+    pub name: String,
+    pub description: String,
     pub parameters: serde_json::Value,
 }
 

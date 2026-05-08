@@ -13,11 +13,14 @@ use crate::{
             SetActiveChildRequest, SetActiveRevisionRequest, SetActiveRootRequest,
             UpdateChatRequest,
         },
-        models::{ChatDetail, ChatMessage, ChatMessageRevision, ChatSummary},
+        models::{
+            ChatDetail, ChatMessage, ChatMessageRevision, ChatSummary, ChatToolPreferences,
+        },
     },
     error::ApiError,
     ollama::models::OllamaChatMessage,
     personas::service::{self as persona_service, ResolvedPersonaVersion},
+    tools::service::ToolSelection,
     uploads,
 };
 
@@ -29,6 +32,7 @@ pub struct PreparedGeneration {
     pub prompt_messages: Vec<OllamaChatMessage>,
     pub user_message: Option<ChatMessage>,
     pub assistant_message: ChatMessage,
+    pub tool_selection: ToolSelection,
 }
 
 #[derive(Debug)]
@@ -64,6 +68,16 @@ struct InsertMessage<'a> {
     think_mode: Option<&'a str>,
     started_at: Option<i64>,
     now: i64,
+}
+
+impl From<ChatToolPreferences> for ToolSelection {
+    fn from(preferences: ChatToolPreferences) -> Self {
+        Self {
+            tool_use_enabled: preferences.tool_use_enabled,
+            web_search_enabled: preferences.web_search_enabled,
+            web_fetch_enabled: preferences.web_fetch_enabled,
+        }
+    }
 }
 
 pub async fn list_chats(pool: &SqlitePool, user_id: &str) -> Result<Vec<ChatSummary>, sqlx::Error> {
@@ -119,6 +133,7 @@ pub async fn create_chat(
     payload: CreateChatRequest,
 ) -> Result<ChatDetail, ApiError> {
     let title = normalized_title(payload.title);
+    let tool_preferences = payload.tool_preferences.unwrap_or_default();
     let persona = match normalize_optional_string(payload.persona_version_id) {
         Some(persona_version_id) => Some(
             persona_service::resolve_persona_version_for_use(pool, user_id, &persona_version_id)
@@ -164,13 +179,16 @@ pub async fn create_chat(
             default_model_name,
             persona_id,
             persona_version_id,
+            tool_use_enabled,
+            web_search_tool_enabled,
+            web_fetch_tool_enabled,
             title,
             chat_mode,
             created_at,
             updated_at,
             last_message_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'standard', ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'standard', ?, ?, ?)
         "#,
     )
     .bind(&chat_id)
@@ -183,6 +201,9 @@ pub async fn create_chat(
             .as_ref()
             .map(|persona| persona.persona_version_id.as_str()),
     )
+    .bind(i64::from(tool_preferences.tool_use_enabled))
+    .bind(i64::from(tool_preferences.web_search_enabled))
+    .bind(i64::from(tool_preferences.web_fetch_enabled))
     .bind(title)
     .bind(now)
     .bind(now)
@@ -208,6 +229,9 @@ pub async fn get_chat(
                c.persona_id,
                c.persona_version_id,
                pv.display_name AS persona_name,
+               c.tool_use_enabled,
+               c.web_search_tool_enabled,
+               c.web_fetch_tool_enabled,
                c.active_root_message_id,
                c.created_at,
                c.updated_at
@@ -237,6 +261,9 @@ pub async fn update_chat(
     payload: UpdateChatRequest,
 ) -> Result<ChatDetail, ApiError> {
     let current = get_chat(pool, user_id, chat_id).await?;
+    let tool_preferences = payload
+        .tool_preferences
+        .unwrap_or(current.tool_preferences);
     let has_base_model_update =
         payload.default_backend_id.is_some() || payload.default_model_name.is_some();
     let title = payload.title.map(normalized_title).unwrap_or(current.title);
@@ -299,6 +326,9 @@ pub async fn update_chat(
             default_model_name = ?,
             persona_id = ?,
             persona_version_id = ?,
+            tool_use_enabled = ?,
+            web_search_tool_enabled = ?,
+            web_fetch_tool_enabled = ?,
             updated_at = ?
         WHERE id = ?
           AND user_id = ?
@@ -309,6 +339,9 @@ pub async fn update_chat(
     .bind(model_name)
     .bind(persona_id)
     .bind(persona_version_id)
+    .bind(i64::from(tool_preferences.tool_use_enabled))
+    .bind(i64::from(tool_preferences.web_search_enabled))
+    .bind(i64::from(tool_preferences.web_fetch_enabled))
     .bind(unix_timestamp())
     .bind(chat_id)
     .bind(user_id)
@@ -556,8 +589,10 @@ pub async fn prepare_generation(
         model_name,
         persona_version_id,
         think_mode,
+        tool_preferences,
         attachments,
     } = payload;
+    let tool_preferences = tool_preferences.unwrap_or(chat.tool_preferences);
     let content_text = user_message.content_text.trim().to_string();
     if content_text.is_empty() {
         return Err(ApiError::bad_request(
@@ -724,6 +759,7 @@ pub async fn prepare_generation(
         prompt_messages,
         user_message: Some(user_message),
         assistant_message,
+        tool_selection: tool_preferences.into(),
     })
 }
 
@@ -754,9 +790,11 @@ pub async fn prepare_regeneration(
         model_name,
         persona_version_id,
         think_mode,
+        tool_preferences,
         attachments: _,
     } = payload;
     let chat = get_chat(pool, user_id, chat_id).await?;
+    let tool_preferences = tool_preferences.unwrap_or(chat.tool_preferences);
     let latest_model = latest_assistant_model(pool, user_id, chat_id).await?;
     let fallback_model = MessageModel {
         backend_id: target.backend_id.clone().unwrap_or_default(),
@@ -872,6 +910,7 @@ pub async fn prepare_regeneration(
         prompt_messages,
         user_message: None,
         assistant_message,
+        tool_selection: tool_preferences.into(),
     })
 }
 
@@ -912,8 +951,10 @@ pub async fn prepare_branch_generation(
         model_name,
         persona_version_id,
         think_mode,
+        tool_preferences,
         attachments,
     } = payload;
+    let tool_preferences = tool_preferences.unwrap_or(chat.tool_preferences);
     let latest_model = latest_assistant_model(pool, user_id, chat_id).await?;
     let resolved = resolve_generation_model(
         pool,
@@ -1071,6 +1112,7 @@ pub async fn prepare_branch_generation(
         prompt_messages,
         user_message: Some(user_message),
         assistant_message,
+        tool_selection: tool_preferences.into(),
     })
 }
 
@@ -2062,6 +2104,11 @@ fn row_to_chat_detail(row: sqlx::sqlite::SqliteRow) -> Result<ChatDetail, sqlx::
         persona_id: row.try_get("persona_id")?,
         persona_version_id: row.try_get("persona_version_id")?,
         persona_name: row.try_get("persona_name")?,
+        tool_preferences: ChatToolPreferences {
+            tool_use_enabled: row.try_get::<i64, _>("tool_use_enabled")? != 0,
+            web_search_enabled: row.try_get::<i64, _>("web_search_tool_enabled")? != 0,
+            web_fetch_enabled: row.try_get::<i64, _>("web_fetch_tool_enabled")? != 0,
+        },
         active_root_message_id: row.try_get("active_root_message_id")?,
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,

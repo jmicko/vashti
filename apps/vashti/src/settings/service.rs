@@ -10,6 +10,10 @@ use crate::{
     },
 };
 
+pub const DEFAULT_TOOL_SYSTEM_PROMPT: &str = "Tool behavior guidance:\n- Current date: {current_date} UTC.\n- Use web_search proactively when the user asks for current, recent, latest, news, prices, schedules, releases, versions, or anything likely to have changed.\n- Use web_fetch when the user provides a URL or when a search result needs more detail.\n- Treat tool results as current external data even when their dates are newer than your training cutoff.\n- Answer from the tool results and include source URLs when they are available.";
+pub const DEFAULT_WEB_SEARCH_TOOL_PROMPT: &str = "Search the web for current public information. Returns compact result titles, URLs, and snippets. Use this for current or time-sensitive questions, latest news, recent releases, prices, schedules, or facts that may have changed.";
+pub const DEFAULT_WEB_FETCH_TOOL_PROMPT: &str = "Fetch a public HTTP or HTTPS page by URL and return readable text plus discovered links. Use this after web_search when a result needs more detail, or when the user asks about a specific URL.";
+
 #[derive(Debug, Clone, Serialize)]
 pub struct AppSettingsResponse {
     pub allow_signup: bool,
@@ -45,6 +49,25 @@ pub struct ToolSettingsResponse {
     pub brave_search_enabled: bool,
     pub brave_search_api_key_configured: bool,
     pub direct_web_fetch_enabled: bool,
+    pub tool_system_prompt: String,
+    pub default_tool_system_prompt: &'static str,
+    pub web_search_tool_prompt: String,
+    pub default_web_search_tool_prompt: &'static str,
+    pub web_fetch_tool_prompt: String,
+    pub default_web_fetch_tool_prompt: &'static str,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AvailableToolsResponse {
+    pub tools_enabled: bool,
+    pub tools: Vec<AvailableToolResponse>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AvailableToolResponse {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub description: &'static str,
 }
 
 #[derive(Debug, Clone)]
@@ -56,6 +79,41 @@ pub struct ToolSettingsPrivate {
     pub brave_search_enabled: bool,
     pub brave_search_api_key: Option<String>,
     pub direct_web_fetch_enabled: bool,
+    pub tool_system_prompt: String,
+    pub web_search_tool_prompt: String,
+    pub web_fetch_tool_prompt: String,
+}
+
+pub async fn get_available_tools(pool: &SqlitePool) -> Result<AvailableToolsResponse, sqlx::Error> {
+    let settings = get_tool_settings_private(pool).await?;
+    let mut tools = Vec::new();
+
+    if settings.tools_enabled {
+        if (settings.brave_search_enabled && settings.has_brave_key())
+            || (settings.ollama_web_search_enabled && settings.has_ollama_key())
+        {
+            tools.push(AvailableToolResponse {
+                id: "web_search",
+                label: "Web search",
+                description: "Search the web and return compact result lists.",
+            });
+        }
+
+        if (settings.ollama_web_fetch_enabled && settings.has_ollama_key())
+            || settings.direct_web_fetch_enabled
+        {
+            tools.push(AvailableToolResponse {
+                id: "web_fetch",
+                label: "Web fetch",
+                description: "Fetch a public HTTP/HTTPS page for more detail.",
+            });
+        }
+    }
+
+    Ok(AvailableToolsResponse {
+        tools_enabled: settings.tools_enabled,
+        tools,
+    })
 }
 
 pub async fn get_app_settings(pool: &SqlitePool) -> Result<AppSettingsResponse, sqlx::Error> {
@@ -96,7 +154,10 @@ pub async fn get_tool_settings_private(
                ollama_api_key,
                brave_search_enabled,
                brave_search_api_key,
-               direct_web_fetch_enabled
+               direct_web_fetch_enabled,
+               tool_system_prompt,
+               web_search_tool_prompt,
+               web_fetch_tool_prompt
         FROM app_settings
         WHERE id = 1
         "#,
@@ -122,6 +183,21 @@ pub async fn update_tool_settings(
         payload.brave_search_api_key,
         payload.clear_brave_search_api_key,
     );
+    let tool_system_prompt = updated_prompt(
+        &current.tool_system_prompt,
+        payload.tool_system_prompt,
+        DEFAULT_TOOL_SYSTEM_PROMPT,
+    )?;
+    let web_search_tool_prompt = updated_prompt(
+        &current.web_search_tool_prompt,
+        payload.web_search_tool_prompt,
+        DEFAULT_WEB_SEARCH_TOOL_PROMPT,
+    )?;
+    let web_fetch_tool_prompt = updated_prompt(
+        &current.web_fetch_tool_prompt,
+        payload.web_fetch_tool_prompt,
+        DEFAULT_WEB_FETCH_TOOL_PROMPT,
+    )?;
 
     let row = sqlx::query(
         r#"
@@ -133,6 +209,9 @@ pub async fn update_tool_settings(
             brave_search_enabled = COALESCE(?, brave_search_enabled),
             brave_search_api_key = ?,
             direct_web_fetch_enabled = COALESCE(?, direct_web_fetch_enabled),
+            tool_system_prompt = ?,
+            web_search_tool_prompt = ?,
+            web_fetch_tool_prompt = ?,
             updated_at = ?
         WHERE id = 1
         RETURNING tools_enabled,
@@ -141,7 +220,10 @@ pub async fn update_tool_settings(
                   ollama_api_key,
                   brave_search_enabled,
                   brave_search_api_key,
-                  direct_web_fetch_enabled
+                  direct_web_fetch_enabled,
+                  tool_system_prompt,
+                  web_search_tool_prompt,
+                  web_fetch_tool_prompt
         "#,
     )
     .bind(payload.tools_enabled.map(i64::from))
@@ -151,6 +233,9 @@ pub async fn update_tool_settings(
     .bind(payload.brave_search_enabled.map(i64::from))
     .bind(brave_search_api_key)
     .bind(payload.direct_web_fetch_enabled.map(i64::from))
+    .bind(tool_system_prompt)
+    .bind(web_search_tool_prompt)
+    .bind(web_fetch_tool_prompt)
     .bind(unix_timestamp())
     .fetch_one(pool)
     .await?;
@@ -410,6 +495,18 @@ fn row_to_tool_settings_private(
         brave_search_enabled: row.try_get::<i64, _>("brave_search_enabled")? != 0,
         brave_search_api_key: row.try_get("brave_search_api_key")?,
         direct_web_fetch_enabled: row.try_get::<i64, _>("direct_web_fetch_enabled")? != 0,
+        tool_system_prompt: prompt_or_default(
+            row.try_get("tool_system_prompt")?,
+            DEFAULT_TOOL_SYSTEM_PROMPT,
+        ),
+        web_search_tool_prompt: prompt_or_default(
+            row.try_get("web_search_tool_prompt")?,
+            DEFAULT_WEB_SEARCH_TOOL_PROMPT,
+        ),
+        web_fetch_tool_prompt: prompt_or_default(
+            row.try_get("web_fetch_tool_prompt")?,
+            DEFAULT_WEB_FETCH_TOOL_PROMPT,
+        ),
     })
 }
 
@@ -423,6 +520,12 @@ impl ToolSettingsPrivate {
             brave_search_enabled: self.brave_search_enabled,
             brave_search_api_key_configured: self.brave_search_api_key.is_some(),
             direct_web_fetch_enabled: self.direct_web_fetch_enabled,
+            tool_system_prompt: self.tool_system_prompt.clone(),
+            default_tool_system_prompt: DEFAULT_TOOL_SYSTEM_PROMPT,
+            web_search_tool_prompt: self.web_search_tool_prompt.clone(),
+            default_web_search_tool_prompt: DEFAULT_WEB_SEARCH_TOOL_PROMPT,
+            web_fetch_tool_prompt: self.web_fetch_tool_prompt.clone(),
+            default_web_fetch_tool_prompt: DEFAULT_WEB_FETCH_TOOL_PROMPT,
         }
     }
 
@@ -432,6 +535,35 @@ impl ToolSettingsPrivate {
 
     pub fn has_brave_key(&self) -> bool {
         self.brave_search_api_key.is_some()
+    }
+}
+
+fn prompt_or_default(value: Option<String>, default: &'static str) -> String {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| default.to_string())
+}
+
+fn updated_prompt(
+    current: &str,
+    next: Option<String>,
+    default: &'static str,
+) -> Result<String, ApiError> {
+    let Some(next) = next else {
+        return Ok(current.to_string());
+    };
+    let next = next.trim().to_string();
+    if next.is_empty() {
+        return Err(ApiError::bad_request(
+            "invalid_tool_prompt",
+            "Tool prompts cannot be empty",
+        ));
+    }
+    if next == default {
+        Ok(default.to_string())
+    } else {
+        Ok(next)
     }
 }
 

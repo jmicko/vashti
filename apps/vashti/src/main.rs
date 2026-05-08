@@ -99,6 +99,7 @@ fn router(state: AppState) -> Router {
             get(settings::handlers::get_tool_settings)
                 .patch(settings::handlers::update_tool_settings),
         )
+        .route("/tools", get(settings::handlers::get_available_tools))
         .route(
             "/settings/network-recovery-notice/dismiss",
             post(settings::handlers::dismiss_network_recovery_notice),

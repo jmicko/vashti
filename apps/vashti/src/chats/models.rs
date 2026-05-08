@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::uploads::models::Attachment;
 
@@ -17,6 +17,23 @@ pub struct ChatSummary {
     pub message_count: i64,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+pub struct ChatToolPreferences {
+    pub tool_use_enabled: bool,
+    pub web_search_enabled: bool,
+    pub web_fetch_enabled: bool,
+}
+
+impl Default for ChatToolPreferences {
+    fn default() -> Self {
+        Self {
+            tool_use_enabled: true,
+            web_search_enabled: true,
+            web_fetch_enabled: true,
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct ChatDetail {
     pub id: String,
@@ -27,6 +44,7 @@ pub struct ChatDetail {
     pub persona_id: Option<String>,
     pub persona_version_id: Option<String>,
     pub persona_name: Option<String>,
+    pub tool_preferences: ChatToolPreferences,
     pub active_root_message_id: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,

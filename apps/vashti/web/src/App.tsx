@@ -225,6 +225,12 @@ type ChatSummary = {
   message_count: number;
 };
 
+type ChatToolPreferences = {
+  tool_use_enabled: boolean;
+  web_search_enabled: boolean;
+  web_fetch_enabled: boolean;
+};
+
 type ChatDetail = {
   id: string;
   title: string;
@@ -234,6 +240,7 @@ type ChatDetail = {
   persona_id?: string | null;
   persona_version_id?: string | null;
   persona_name?: string | null;
+  tool_preferences: ChatToolPreferences;
   active_root_message_id: string | null;
   created_at: number;
   updated_at: number;
@@ -286,6 +293,7 @@ type ComposerAttachment = AttachmentInfo & {
 type ComposerSubmitPayload = {
   prompt: string;
   attachments: ComposerAttachment[];
+  toolPreferences?: ChatToolPreferences;
 };
 
 type ChatMessage = {
@@ -328,6 +336,28 @@ type ChatSyncResponse = {
 
 type MessageResponse = {
   message: ChatMessage;
+};
+
+type ToolUsageRecord = {
+  name: string;
+  summary: string;
+  arguments: unknown;
+  result: string;
+};
+
+type ThinkingSegment =
+  | {
+      type: "text";
+      text: string;
+    }
+  | {
+      type: "tool";
+      usage: ToolUsageRecord;
+    };
+
+type ParsedThinkingText = {
+  thinkingText: string;
+  segments: ThinkingSegment[];
 };
 
 type AttachmentResponse = {
@@ -390,6 +420,23 @@ type ToolSettings = {
   brave_search_enabled: boolean;
   brave_search_api_key_configured: boolean;
   direct_web_fetch_enabled: boolean;
+  tool_system_prompt: string;
+  default_tool_system_prompt: string;
+  web_search_tool_prompt: string;
+  default_web_search_tool_prompt: string;
+  web_fetch_tool_prompt: string;
+  default_web_fetch_tool_prompt: string;
+};
+
+type AvailableTool = {
+  id: string;
+  label: string;
+  description: string;
+};
+
+type AvailableToolsResponse = {
+  tools_enabled: boolean;
+  tools: AvailableTool[];
 };
 
 type VersionResponse = {
@@ -462,6 +509,11 @@ const settingsSections: SettingsSection[] = [
 ];
 const rootSiblingGroupKey = "__root__";
 const newChatModeStorageKey = "vashti:new-chat-mode";
+const defaultToolPreferences: ChatToolPreferences = {
+  tool_use_enabled: true,
+  web_search_enabled: true,
+  web_fetch_enabled: true
+};
 
 function isSettingsSection(value: string | undefined): value is SettingsSection {
   return settingsSections.includes(value as SettingsSection);
@@ -475,6 +527,57 @@ function storedNewChatMode(): NewChatMode {
   } catch {
     return "standard";
   }
+}
+
+function modelSupportsToolUse(model: ModelInfo | null | undefined) {
+  if (!model) {
+    return false;
+  }
+
+  return modelCapabilityBadges(model).includes("tools");
+}
+
+function toolPreferenceEnabled(preferences: ChatToolPreferences, toolId: string) {
+  switch (toolId) {
+    case "web_search":
+      return preferences.web_search_enabled;
+    case "web_fetch":
+      return preferences.web_fetch_enabled;
+    default:
+      return true;
+  }
+}
+
+function updateToolPreference(
+  preferences: ChatToolPreferences,
+  toolId: string,
+  isEnabled: boolean
+): ChatToolPreferences {
+  switch (toolId) {
+    case "web_search":
+      return { ...preferences, web_search_enabled: isEnabled };
+    case "web_fetch":
+      return { ...preferences, web_fetch_enabled: isEnabled };
+    default:
+      return preferences;
+  }
+}
+
+function normalizeToolPreferences(
+  preferences: Partial<ChatToolPreferences> | null | undefined
+): ChatToolPreferences {
+  return {
+    tool_use_enabled: preferences?.tool_use_enabled ?? defaultToolPreferences.tool_use_enabled,
+    web_search_enabled: preferences?.web_search_enabled ?? defaultToolPreferences.web_search_enabled,
+    web_fetch_enabled: preferences?.web_fetch_enabled ?? defaultToolPreferences.web_fetch_enabled
+  };
+}
+
+function normalizeChatDetail(chat: ChatDetail): ChatDetail {
+  return {
+    ...chat,
+    tool_preferences: normalizeToolPreferences(chat.tool_preferences)
+  };
 }
 
 function privateStreamTestEnabled() {
@@ -906,6 +1009,7 @@ function AppShell({
   const [modelGroups, setModelGroups] = useState<BackendModelGroup[]>([]);
   const [personas, setPersonas] = useState<Persona[]>([]);
   const [privatePersonas, setPrivatePersonas] = useState<PrivatePersona[]>([]);
+  const [availableTools, setAvailableTools] = useState<AvailableTool[]>([]);
   const [selectedModel, setSelectedModel] = useState("");
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [modelError, setModelError] = useState<string | null>(null);
@@ -1071,6 +1175,19 @@ function AppShell({
   useEffect(() => {
     void loadPrivatePersonas();
   }, [loadPrivatePersonas]);
+
+  const loadAvailableTools = useCallback(async () => {
+    try {
+      const response = await requestJson<AvailableToolsResponse>("/api/tools");
+      setAvailableTools(response.tools_enabled ? response.tools : []);
+    } catch {
+      setAvailableTools([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadAvailableTools();
+  }, [loadAvailableTools]);
 
   const loadChats = useCallback(async () => {
     setIsLoadingChats(true);
@@ -1272,7 +1389,11 @@ function AppShell({
     }
   }
 
-  async function createChatFromPrompt(prompt: string, attachments: ComposerAttachment[] = []) {
+  async function createChatFromPrompt(
+    prompt: string,
+    attachments: ComposerAttachment[] = [],
+    toolPreferences: ChatToolPreferences = defaultToolPreferences
+  ) {
     if (!prompt.trim()) {
       openChat();
       return;
@@ -1295,7 +1416,8 @@ function AppShell({
           title: "New Chat",
           default_backend_id: selected.backendId,
           default_model_name: selected.modelName,
-          persona_version_id: selectedPersonaVersionId
+          persona_version_id: selectedPersonaVersionId,
+          tool_preferences: toolPreferences
         })
       });
 
@@ -1597,6 +1719,7 @@ function AppShell({
             currentUser={user}
             activeSection={settingsSection}
             onBackendsChanged={loadModels}
+            onToolsChanged={loadAvailableTools}
             onPersonasChanged={loadModels}
             onPrivatePersonasChanged={loadPrivatePersonas}
             onAppSettingsGuardChange={updateAppSettingsGuard}
@@ -1636,6 +1759,7 @@ function AppShell({
               }
               selectedModel={selectedModel}
               selectedModelInfo={selectedModelInfo()}
+              availableTools={availableTools}
               personas={personas}
               onChatsChanged={loadChats}
               onImageOpen={openImageViewer}
@@ -1658,6 +1782,7 @@ function AppShell({
                   ? null
                   : selectedModelInfo()
               }
+              availableTools={newChatMode === "standard" ? availableTools : []}
               onModeChange={setNewChatMode}
               onCreateChat={createChatFromPrompt}
               onCreatePrivateChat={createPrivateChatFromPrompt}
@@ -2079,6 +2204,7 @@ function ChatHome({
   mode,
   selectedModel,
   selectedModelInfo,
+  availableTools,
   onModeChange,
   onCreateChat,
   onCreatePrivateChat
@@ -2089,12 +2215,19 @@ function ChatHome({
   mode: NewChatMode;
   selectedModel: string;
   selectedModelInfo: ModelInfo | null;
+  availableTools: AvailableTool[];
   onModeChange: (mode: NewChatMode) => void;
-  onCreateChat: (prompt: string, attachments?: ComposerAttachment[]) => Promise<void>;
+  onCreateChat: (
+    prompt: string,
+    attachments?: ComposerAttachment[],
+    toolPreferences?: ChatToolPreferences
+  ) => Promise<void>;
   onCreatePrivateChat: (prompt: string, attachments?: ComposerAttachment[]) => Promise<void>;
 }) {
   const isPrivate = mode === "private";
   const isCreatingSelectedMode = isPrivate ? isCreatingPrivate : isCreating;
+  const [toolPreferences, setToolPreferences] =
+    useState<ChatToolPreferences>(defaultToolPreferences);
 
   return (
     <div className="chat-home">
@@ -2129,6 +2262,9 @@ function ChatHome({
               : "Select a model to start"
           }
           selectedModelInfo={selectedModelInfo}
+          availableTools={isPrivate ? [] : availableTools}
+          toolPreferences={toolPreferences}
+          onToolPreferencesChange={setToolPreferences}
           onUploadAttachment={isPrivate ? preparePrivateAttachment : prepareLocalAttachment}
           onSubmit={isPrivate ? onCreatePrivateChat : onCreateChat}
         />
@@ -2153,6 +2289,7 @@ function ChatView({
   queuedAttachments,
   selectedModel,
   selectedModelInfo,
+  availableTools,
   personas,
   onChatsChanged,
   onImageOpen,
@@ -2165,6 +2302,7 @@ function ChatView({
   queuedAttachments: ComposerAttachment[];
   selectedModel: string;
   selectedModelInfo: ModelInfo | null;
+  availableTools: AvailableTool[];
   personas: Persona[];
   onChatsChanged: () => Promise<void>;
   onImageOpen: ImageOpenHandler;
@@ -2208,8 +2346,9 @@ function ChatView({
 
   const applyLoadedChat = useCallback(
     (nextChat: ChatDetail, activeRootMessageId: string | null, nextMessages: ChatMessage[]) => {
+      const normalizedChat = normalizeChatDetail(nextChat);
       setChat({
-        ...nextChat,
+        ...normalizedChat,
         active_root_message_id: activeRootMessageId
       });
       thinkingStartedAtRef.current.clear();
@@ -2223,8 +2362,10 @@ function ChatView({
       );
       onModelSelected(
         latestModel ??
-          (nextChat.persona_version_id ? personaModelValue(nextChat.persona_version_id) : null) ??
-          modelValue(nextChat.default_backend_id, nextChat.default_model_name)
+          (normalizedChat.persona_version_id
+            ? personaModelValue(normalizedChat.persona_version_id)
+            : null) ??
+          modelValue(normalizedChat.default_backend_id, normalizedChat.default_model_name)
       );
     },
     [onModelSelected]
@@ -2319,7 +2460,7 @@ function ChatView({
       if (!streamingAssistantId) {
         const chatResponse = await requestJson<ChatResponse>(`/api/chats/${chatId}`);
         const nextChat = {
-          ...chatResponse.chat,
+          ...normalizeChatDetail(chatResponse.chat),
           active_root_message_id: messageResponse.active_root_message_id
         };
         setChat(nextChat);
@@ -2440,10 +2581,11 @@ function ChatView({
         model_name: selected?.modelName ?? null,
         persona_version_id: personaVersionId,
         think_mode: null,
+        tool_preferences: chat?.tool_preferences ?? defaultToolPreferences,
         attachments: attachmentReferences(attachments)
       });
     },
-    [chatId, isGenerating, personas, selectedModel, streamAssistantResponse]
+    [chat?.tool_preferences, chatId, isGenerating, personas, selectedModel, streamAssistantResponse]
   );
 
   useEffect(() => {
@@ -2887,6 +3029,25 @@ function ChatView({
     }
   }
 
+  async function updateChatToolPreferences(nextPreferences: ChatToolPreferences) {
+    setChat((current) =>
+      current ? { ...current, tool_preferences: nextPreferences } : current
+    );
+
+    try {
+      const response = await requestJson<ChatResponse>(`/api/chats/${chatId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ tool_preferences: nextPreferences })
+      });
+      setChat(normalizeChatDetail(response.chat));
+    } catch (updateError) {
+      setGenerationError(
+        updateError instanceof Error ? updateError.message : "Failed to update tool settings"
+      );
+      void loadChat();
+    }
+  }
+
   async function uploadAttachment(file: File) {
     return { ...(await uploadAttachmentToChat(chatId, file)), status: "uploaded" as const };
   }
@@ -2979,6 +3140,7 @@ function ChatView({
       model_name: selected?.modelName ?? null,
       persona_version_id: personaVersionId,
       think_mode: null,
+      tool_preferences: chat?.tool_preferences ?? defaultToolPreferences,
       attachments: attachmentReferences(attachments)
     });
   }
@@ -3017,6 +3179,7 @@ function ChatView({
       model_name: selected?.modelName ?? message.model_name,
       persona_version_id: personaVersionId,
       think_mode: null,
+      tool_preferences: chat?.tool_preferences ?? defaultToolPreferences,
       attachments: []
     });
   }
@@ -3196,7 +3359,12 @@ function ChatView({
               isGenerating={isGenerating}
               placeholder={selectedModel ? "Message Vashti" : "Select a model to continue"}
               selectedModelInfo={selectedModelInfo}
+              availableTools={availableTools}
+              toolPreferences={chat.tool_preferences}
               warning={modelImageWarning}
+              onToolPreferencesChange={(nextPreferences) =>
+                void updateChatToolPreferences(nextPreferences)
+              }
               onStop={stopGeneration}
               onUploadAttachment={uploadAttachment}
               onRemoveAttachment={removeAttachment}
@@ -4588,7 +4756,12 @@ function MessageBubble({
   const content = message.is_deleted
     ? "Message deleted"
     : message.active_revision?.content_text.trim() || "";
-  const thinking = message.active_revision?.thinking_text.trim();
+  const parsedThinking = useMemo(
+    () => parseThinkingText(message.active_revision?.thinking_text ?? ""),
+    [message.active_revision?.thinking_text]
+  );
+  const thinking = parsedThinking.thinkingText.trim();
+  const hasThinkingDetail = thinking || parsedThinking.segments.some((segment) => segment.type === "tool");
   const attachments = activeMessageAttachments(message);
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState(content);
@@ -4707,10 +4880,10 @@ function MessageBubble({
           />
         )}
       </div>
-      {thinking && !message.is_deleted && (
+      {hasThinkingDetail && !message.is_deleted && (
         <details className="message-thinking">
           <summary>{thinkingSummary(message, thinkingDurationSeconds)}</summary>
-          <p>{thinking}</p>
+          <ThinkingContent segments={parsedThinking.segments} />
         </details>
       )}
       {!isEditing && !message.is_deleted && attachments.length > 0 && (
@@ -4831,6 +5004,120 @@ function MessageBubble({
       )}
     </article>
   );
+}
+
+function parseThinkingText(rawThinkingText: string): ParsedThinkingText {
+  const segments: ThinkingSegment[] = [];
+  const markerPattern = /<VASHTI_TOOL_USAGE>([\s\S]*?)<\/VASHTI_TOOL_USAGE>/g;
+  let visibleThinkingText = "";
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = markerPattern.exec(rawThinkingText)) !== null) {
+    const textBefore = rawThinkingText.slice(cursor, match.index);
+    pushThinkingTextSegment(segments, textBefore);
+    visibleThinkingText += textBefore;
+
+    const usage = parseToolUsageRecord(match[1]);
+    if (usage) {
+      segments.push({ type: "tool", usage });
+    }
+    visibleThinkingText += "\n";
+    cursor = match.index + match[0].length;
+  }
+
+  const textAfter = rawThinkingText.slice(cursor);
+  pushThinkingTextSegment(segments, textAfter);
+  visibleThinkingText += textAfter;
+
+  return {
+    thinkingText: visibleThinkingText.replace(/\n{3,}/g, "\n\n").trim(),
+    segments
+  };
+}
+
+function pushThinkingTextSegment(segments: ThinkingSegment[], text: string) {
+  const normalizedText = text.replace(/\n{3,}/g, "\n\n").trim();
+  if (normalizedText) {
+    segments.push({ type: "text", text: normalizedText });
+  }
+}
+
+function parseToolUsageRecord(jsonText: string): ToolUsageRecord | null {
+  try {
+    const parsed = JSON.parse(jsonText) as Partial<ToolUsageRecord>;
+    if (
+      typeof parsed.name === "string" &&
+      typeof parsed.summary === "string" &&
+      typeof parsed.result === "string"
+    ) {
+      return {
+        name: parsed.name,
+        summary: parsed.summary,
+        arguments: parsed.arguments ?? {},
+        result: parsed.result
+      };
+    }
+  } catch {
+    // Keep malformed tool metadata out of the visible thinking text.
+  }
+
+  return null;
+}
+
+function ThinkingContent({ segments }: { segments: ThinkingSegment[] }) {
+  return (
+    <div className="message-thinking-content">
+      {segments.map((segment, index) => (
+        segment.type === "text" ? (
+          <p key={`text-${index}`}>{segment.text}</p>
+        ) : (
+          <ToolUsageCard key={`tool-${index}`} usage={segment.usage} />
+        )
+      ))}
+    </div>
+  );
+}
+
+function ToolUsageCard({ usage }: { usage: ToolUsageRecord }) {
+  return (
+    <details className="message-tool-card">
+      <summary>
+        {toolIcon(usage.name)}
+        <span>{usage.summary}</span>
+      </summary>
+      <div className="message-tool-details">
+        <label>
+          <span>Arguments</span>
+          <pre>{formatToolValue(usage.arguments)}</pre>
+        </label>
+        <label>
+          <span>Result</span>
+          <pre>{formatToolResult(usage.result)}</pre>
+        </label>
+      </div>
+    </details>
+  );
+}
+
+function toolIcon(toolName: string) {
+  return toolName === "web_search" ? <Search /> : <FileText />;
+}
+
+function formatToolValue(value: unknown) {
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function formatToolResult(result: string) {
+  try {
+    return JSON.stringify(JSON.parse(result), null, 2);
+  } catch {
+    return result;
+  }
 }
 
 const markdownComponents = {
@@ -5419,7 +5706,10 @@ function StartChatComposer({
   isGenerating = false,
   placeholder,
   selectedModelInfo,
+  availableTools = [],
+  toolPreferences,
   warning,
+  onToolPreferencesChange,
   onStop,
   onUploadAttachment,
   onRemoveAttachment,
@@ -5431,18 +5721,37 @@ function StartChatComposer({
   isGenerating?: boolean;
   placeholder: string;
   selectedModelInfo?: ModelInfo | null;
+  availableTools?: AvailableTool[];
+  toolPreferences?: ChatToolPreferences;
   warning?: string | null;
+  onToolPreferencesChange?: (preferences: ChatToolPreferences) => void | Promise<void>;
   onStop?: () => void;
   onUploadAttachment?: (file: File) => Promise<ComposerAttachment> | ComposerAttachment;
   onRemoveAttachment?: (attachment: ComposerAttachment) => Promise<void>;
-  onSubmit: (prompt: string, attachments?: ComposerAttachment[]) => Promise<void>;
+  onSubmit: (
+    prompt: string,
+    attachments?: ComposerAttachment[],
+    toolPreferences?: ChatToolPreferences
+  ) => Promise<void>;
   autoFocusOnReady?: boolean;
 }) {
   const [prompt, setPrompt] = useState("");
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
+  const [isToolMenuOpen, setIsToolMenuOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const toolMenuRef = useRef<HTMLDivElement | null>(null);
   const canAttach = Boolean(onUploadAttachment);
+  const currentToolPreferences = toolPreferences ?? defaultToolPreferences;
+  const canUseTools =
+    Boolean(onToolPreferencesChange) &&
+    availableTools.length > 0 &&
+    modelSupportsToolUse(selectedModelInfo);
+  const enabledToolCount = availableTools.filter((tool) =>
+    toolPreferenceEnabled(currentToolPreferences, tool.id)
+  ).length;
+  const showPartialToolBadge =
+    currentToolPreferences.tool_use_enabled && enabledToolCount < availableTools.length;
   const hasUploadingAttachment = attachments.some((attachment) => attachment.status === "uploading");
   const hasUnsupportedImageWarning =
     selectedModelInfo !== undefined &&
@@ -5466,6 +5775,36 @@ function StartChatComposer({
     }
   }, [canAttach]);
 
+  useEffect(() => {
+    if (!canUseTools) {
+      setIsToolMenuOpen(false);
+    }
+  }, [canUseTools]);
+
+  useEffect(() => {
+    if (!isToolMenuOpen) {
+      return;
+    }
+
+    function closeOnOutsidePointer(event: MouseEvent | TouchEvent) {
+      const target = event.target;
+      if (target instanceof Node && !toolMenuRef.current?.contains(target)) {
+        setIsToolMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", closeOnOutsidePointer);
+    document.addEventListener("touchstart", closeOnOutsidePointer);
+    return () => {
+      document.removeEventListener("mousedown", closeOnOutsidePointer);
+      document.removeEventListener("touchstart", closeOnOutsidePointer);
+    };
+  }, [isToolMenuOpen]);
+
+  function updateTools(nextPreferences: ChatToolPreferences) {
+    void onToolPreferencesChange?.(nextPreferences);
+  }
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!canSubmit) {
@@ -5483,7 +5822,7 @@ function StartChatComposer({
       textareaRef.current?.blur();
       dismissMobileKeyboard();
     }
-    await onSubmit(submittedPrompt, submittedAttachments);
+    await onSubmit(submittedPrompt, submittedAttachments, currentToolPreferences);
     if (shouldRestoreFocus) {
       window.requestAnimationFrame(() => textareaRef.current?.focus());
     }
@@ -5594,6 +5933,74 @@ function StartChatComposer({
             </button>
           </div>
         )}
+        {canUseTools && (
+          <div className="composer-tools" ref={toolMenuRef}>
+            <button
+              type="button"
+              aria-label="Tool settings"
+              title="Tool settings"
+              className={
+                currentToolPreferences.tool_use_enabled
+                  ? "composer-tool-button active"
+                  : "composer-tool-button composer-tool-button-off"
+              }
+              disabled={isDisabled}
+              onClick={() => setIsToolMenuOpen((open) => !open)}
+            >
+              <Wrench />
+              {!currentToolPreferences.tool_use_enabled && (
+                <span className="tool-off-indicator" aria-hidden="true">
+                  <X />
+                </span>
+              )}
+              {showPartialToolBadge && (
+                <span className="tool-count-indicator" aria-hidden="true">
+                  {enabledToolCount}/{availableTools.length}
+                </span>
+              )}
+            </button>
+            {isToolMenuOpen && (
+              <div className="composer-tool-menu">
+                <ToggleSwitch
+                  label="Tool use"
+                  description="Allow this chat to use enabled tools."
+                  checked={currentToolPreferences.tool_use_enabled}
+                  compact
+                  onChange={(checked) =>
+                    updateTools({
+                      ...currentToolPreferences,
+                      tool_use_enabled: checked
+                    })
+                  }
+                />
+                <div
+                  className={
+                    currentToolPreferences.tool_use_enabled
+                      ? "composer-tool-list"
+                      : "composer-tool-list disabled"
+                  }
+                >
+                  {availableTools.map((tool) => (
+                    <ToggleSwitch
+                      key={tool.id}
+                      icon={tool.id === "web_search" ? <Search /> : <FileText />}
+                      label={tool.label}
+                      description={tool.description}
+                      checked={toolPreferenceEnabled(currentToolPreferences, tool.id)}
+                      disabled={!currentToolPreferences.tool_use_enabled}
+                      compact
+                      onChange={(checked) =>
+                        updateTools(
+                          updateToolPreference(currentToolPreferences, tool.id, checked)
+                        )
+                      }
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
         <textarea
           ref={textareaRef}
           rows={3}
@@ -5610,7 +6017,7 @@ function StartChatComposer({
         />
         {selectedModelInfo && (
           <div className="composer-model-capabilities">
-            <CompactModelCapabilityBadges model={selectedModelInfo} />
+            <CompactModelCapabilityBadges model={selectedModelInfo} hideTools={canUseTools} />
           </div>
         )}
         <div className="composer-actions">
@@ -6666,9 +7073,17 @@ function ModelCapabilityBadges({ model }: { model: ModelInfo }) {
   );
 }
 
-function CompactModelCapabilityBadges({ model }: { model: ModelInfo }) {
+function CompactModelCapabilityBadges({
+  model,
+  hideTools = false
+}: {
+  model: ModelInfo;
+  hideTools?: boolean;
+}) {
   const [activeCapability, setActiveCapability] = useState<string | null>(null);
-  const capabilities = modelCapabilityBadges(model);
+  const capabilities = modelCapabilityBadges(model).filter(
+    (capability) => !(hideTools && capability === "tools")
+  );
   if (capabilities.length === 0) {
     return null;
   }
@@ -6762,6 +7177,7 @@ function SettingsPage({
   currentUser,
   activeSection,
   onBackendsChanged,
+  onToolsChanged,
   onPersonasChanged,
   onPrivatePersonasChanged,
   onAppSettingsGuardChange,
@@ -6771,6 +7187,7 @@ function SettingsPage({
   currentUser: User;
   activeSection: SettingsSection;
   onBackendsChanged: () => Promise<void>;
+  onToolsChanged: () => Promise<void>;
   onPersonasChanged: () => Promise<void>;
   onPrivatePersonasChanged: () => Promise<void>;
   onAppSettingsGuardChange: (guard: AppSettingsGuard | null) => void;
@@ -6827,7 +7244,9 @@ function SettingsPage({
         {selectedSection === "models" && isAdmin && (
           <ModelsAccessPanel onModelsChanged={onBackendsChanged} />
         )}
-        {selectedSection === "tools" && isAdmin && <ToolsSettingsPanel />}
+        {selectedSection === "tools" && isAdmin && (
+          <ToolsSettingsPanel onToolsChanged={onToolsChanged} />
+        )}
         {selectedSection === "app" && <AppSettingsPanel onGuardChange={onAppSettingsGuardChange} />}
       </section>
     </div>
@@ -7936,7 +8355,7 @@ function ModelsAccessPanel({ onModelsChanged }: { onModelsChanged: () => Promise
   );
 }
 
-function ToolsSettingsPanel() {
+function ToolsSettingsPanel({ onToolsChanged }: { onToolsChanged: () => Promise<void> }) {
   const [settings, setSettings] = useState<ToolSettings | null>(null);
   const [toolsEnabled, setToolsEnabled] = useState(false);
   const [ollamaSearchEnabled, setOllamaSearchEnabled] = useState(false);
@@ -7945,6 +8364,9 @@ function ToolsSettingsPanel() {
   const [braveSearchEnabled, setBraveSearchEnabled] = useState(false);
   const [braveApiKey, setBraveApiKey] = useState("");
   const [directFetchEnabled, setDirectFetchEnabled] = useState(false);
+  const [toolSystemPrompt, setToolSystemPrompt] = useState("");
+  const [webSearchToolPrompt, setWebSearchToolPrompt] = useState("");
+  const [webFetchToolPrompt, setWebFetchToolPrompt] = useState("");
   const [clearKeyTarget, setClearKeyTarget] = useState<"ollama" | "brave" | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -7960,7 +8382,10 @@ function ToolsSettingsPanel() {
         braveSearchEnabled !== settings.brave_search_enabled ||
         directFetchEnabled !== settings.direct_web_fetch_enabled ||
         ollamaApiKey.trim() ||
-        braveApiKey.trim())
+        braveApiKey.trim() ||
+        toolSystemPrompt !== settings.tool_system_prompt ||
+        webSearchToolPrompt !== settings.web_search_tool_prompt ||
+        webFetchToolPrompt !== settings.web_fetch_tool_prompt)
   );
   const visibleStatus = isDirty ? null : status;
   const showSaveBanner = isDirty || Boolean(visibleStatus);
@@ -7979,6 +8404,15 @@ function ToolsSettingsPanel() {
   );
   const ollamaKeyChanged = Boolean(ollamaApiKey.trim());
   const braveKeyChanged = Boolean(braveApiKey.trim());
+  const toolSystemPromptChanged = Boolean(
+    settings && toolSystemPrompt !== settings.tool_system_prompt
+  );
+  const webSearchToolPromptChanged = Boolean(
+    settings && webSearchToolPrompt !== settings.web_search_tool_prompt
+  );
+  const webFetchToolPromptChanged = Boolean(
+    settings && webFetchToolPrompt !== settings.web_fetch_tool_prompt
+  );
 
   function applyToolSettings(response: ToolSettings) {
     setSettings(response);
@@ -7989,6 +8423,9 @@ function ToolsSettingsPanel() {
     setBraveSearchEnabled(response.brave_search_enabled);
     setBraveApiKey("");
     setDirectFetchEnabled(response.direct_web_fetch_enabled);
+    setToolSystemPrompt(response.tool_system_prompt);
+    setWebSearchToolPrompt(response.web_search_tool_prompt);
+    setWebFetchToolPrompt(response.web_fetch_tool_prompt);
   }
 
   const loadToolSettings = useCallback(async () => {
@@ -8037,7 +8474,10 @@ function ToolsSettingsPanel() {
       clear_ollama_api_key: false,
       brave_search_enabled: braveSearchEnabled,
       clear_brave_search_api_key: false,
-      direct_web_fetch_enabled: directFetchEnabled
+      direct_web_fetch_enabled: directFetchEnabled,
+      tool_system_prompt: toolSystemPrompt,
+      web_search_tool_prompt: webSearchToolPrompt,
+      web_fetch_tool_prompt: webFetchToolPrompt
     };
     if (ollamaApiKey.trim()) {
       payload.ollama_api_key = ollamaApiKey.trim();
@@ -8052,6 +8492,7 @@ function ToolsSettingsPanel() {
         body: JSON.stringify(payload)
       });
       applyToolSettings(response);
+      await onToolsChanged();
       setStatus("Tool settings saved.");
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Failed to save tool settings");
@@ -8084,10 +8525,14 @@ function ToolsSettingsPanel() {
           clear_ollama_api_key: target === "ollama",
           brave_search_enabled: braveSearchEnabled,
           clear_brave_search_api_key: target === "brave",
-          direct_web_fetch_enabled: directFetchEnabled
+          direct_web_fetch_enabled: directFetchEnabled,
+          tool_system_prompt: toolSystemPrompt,
+          web_search_tool_prompt: webSearchToolPrompt,
+          web_fetch_tool_prompt: webFetchToolPrompt
         })
       });
       applyToolSettings(response);
+      await onToolsChanged();
       setStatus(target === "ollama" ? "Ollama API key cleared." : "Brave Search API key cleared.");
       setClearKeyTarget(null);
     } catch (clearError) {
@@ -8160,6 +8605,28 @@ function ToolsSettingsPanel() {
               isChanged={toolsEnabledChanged}
               onChange={setToolsEnabled}
             />
+            <details className="tool-details">
+              <summary>Tool instructions</summary>
+              <label
+                className={
+                  toolSystemPromptChanged ? "setting-field setting-field-changed" : "setting-field"
+                }
+              >
+                <span>Tool system prompt</span>
+                <textarea
+                  value={toolSystemPrompt}
+                  onChange={(event) => setToolSystemPrompt(event.target.value)}
+                />
+              </label>
+              <button
+                type="button"
+                className="secondary-button prompt-reset-button"
+                disabled={!settings || toolSystemPrompt === settings.default_tool_system_prompt}
+                onClick={() => setToolSystemPrompt(settings.default_tool_system_prompt)}
+              >
+                Reset to Default
+              </button>
+            </details>
           </section>
 
           <section className="settings-subsection">
@@ -8170,27 +8637,6 @@ function ToolsSettingsPanel() {
                 Uses Ollama's hosted web search and web fetch APIs. Requires an Ollama API key.
               </p>
             </div>
-            <label className={ollamaKeyChanged ? "setting-field setting-field-changed" : "setting-field"}>
-              <span>Ollama API key</span>
-              <input
-                type="password"
-                autoComplete="off"
-                value={ollamaApiKey}
-                onChange={(event) => setOllamaApiKey(event.target.value)}
-                placeholder={
-                  settings.ollama_api_key_configured ? "Configured; enter a new key to replace" : "Not configured"
-                }
-              />
-            </label>
-            {settings.ollama_api_key_configured && (
-              <button
-                type="button"
-                className="danger-button key-clear-button"
-                onClick={() => setClearKeyTarget("ollama")}
-              >
-                Clear Ollama API Key
-              </button>
-            )}
             <ToggleSwitch
               icon={<Search />}
               label="Ollama web search"
@@ -8207,6 +8653,50 @@ function ToolsSettingsPanel() {
               isChanged={ollamaFetchChanged}
               onChange={setOllamaFetchEnabled}
             />
+            <details className="tool-details">
+              <summary>API key and tool prompts</summary>
+              <label
+                className={
+                  ollamaKeyChanged ? "setting-field setting-field-changed" : "setting-field"
+                }
+              >
+                <span>Ollama API key</span>
+                <input
+                  type="password"
+                  autoComplete="off"
+                  value={ollamaApiKey}
+                  onChange={(event) => setOllamaApiKey(event.target.value)}
+                  placeholder={
+                    settings.ollama_api_key_configured
+                      ? "Configured; enter a new key to replace"
+                      : "Not configured"
+                  }
+                />
+              </label>
+              {settings.ollama_api_key_configured && (
+                <button
+                  type="button"
+                  className="danger-button key-clear-button"
+                  onClick={() => setClearKeyTarget("ollama")}
+                >
+                  Clear Ollama API Key
+                </button>
+              )}
+              <ToolPromptEditor
+                label="web_search tool prompt"
+                value={webSearchToolPrompt}
+                defaultValue={settings.default_web_search_tool_prompt}
+                isChanged={webSearchToolPromptChanged}
+                onChange={setWebSearchToolPrompt}
+              />
+              <ToolPromptEditor
+                label="web_fetch tool prompt"
+                value={webFetchToolPrompt}
+                defaultValue={settings.default_web_fetch_tool_prompt}
+                isChanged={webFetchToolPromptChanged}
+                onChange={setWebFetchToolPrompt}
+              />
+            </details>
           </section>
 
           <section className="settings-subsection">
@@ -8217,29 +8707,6 @@ function ToolsSettingsPanel() {
                 Uses Brave Search for result lists. Page fetching is handled separately.
               </p>
             </div>
-            <label className={braveKeyChanged ? "setting-field setting-field-changed" : "setting-field"}>
-              <span>Brave Search API key</span>
-              <input
-                type="password"
-                autoComplete="off"
-                value={braveApiKey}
-                onChange={(event) => setBraveApiKey(event.target.value)}
-                placeholder={
-                  settings.brave_search_api_key_configured
-                    ? "Configured; enter a new key to replace"
-                    : "Not configured"
-                }
-              />
-            </label>
-            {settings.brave_search_api_key_configured && (
-              <button
-                type="button"
-                className="danger-button key-clear-button"
-                onClick={() => setClearKeyTarget("brave")}
-              >
-                Clear Brave Search API Key
-              </button>
-            )}
             <ToggleSwitch
               icon={<Search />}
               label="Brave web search"
@@ -8248,6 +8715,41 @@ function ToolsSettingsPanel() {
               isChanged={braveSearchChanged}
               onChange={setBraveSearchEnabled}
             />
+            <details className="tool-details">
+              <summary>API key and tool prompt</summary>
+              <label
+                className={braveKeyChanged ? "setting-field setting-field-changed" : "setting-field"}
+              >
+                <span>Brave Search API key</span>
+                <input
+                  type="password"
+                  autoComplete="off"
+                  value={braveApiKey}
+                  onChange={(event) => setBraveApiKey(event.target.value)}
+                  placeholder={
+                    settings.brave_search_api_key_configured
+                      ? "Configured; enter a new key to replace"
+                      : "Not configured"
+                  }
+                />
+              </label>
+              {settings.brave_search_api_key_configured && (
+                <button
+                  type="button"
+                  className="danger-button key-clear-button"
+                  onClick={() => setClearKeyTarget("brave")}
+                >
+                  Clear Brave Search API Key
+                </button>
+              )}
+              <ToolPromptEditor
+                label="web_search tool prompt"
+                value={webSearchToolPrompt}
+                defaultValue={settings.default_web_search_tool_prompt}
+                isChanged={webSearchToolPromptChanged}
+                onChange={setWebSearchToolPrompt}
+              />
+            </details>
           </section>
 
           <section className="settings-subsection">
@@ -8267,6 +8769,16 @@ function ToolsSettingsPanel() {
               isChanged={directFetchChanged}
               onChange={setDirectFetchEnabled}
             />
+            <details className="tool-details">
+              <summary>Tool prompt</summary>
+              <ToolPromptEditor
+                label="web_fetch tool prompt"
+                value={webFetchToolPrompt}
+                defaultValue={settings.default_web_fetch_tool_prompt}
+                isChanged={webFetchToolPromptChanged}
+                onChange={setWebFetchToolPrompt}
+              />
+            </details>
           </section>
         </form>
       )}
@@ -8285,6 +8797,37 @@ function ToolsSettingsPanel() {
           onConfirm={() => void clearToolKey(clearKeyTarget)}
         />
       )}
+    </div>
+  );
+}
+
+function ToolPromptEditor({
+  label,
+  value,
+  defaultValue,
+  isChanged,
+  onChange
+}: {
+  label: string;
+  value: string;
+  defaultValue: string;
+  isChanged: boolean;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="tool-prompt-editor">
+      <label className={isChanged ? "setting-field setting-field-changed" : "setting-field"}>
+        <span>{label}</span>
+        <textarea value={value} onChange={(event) => onChange(event.target.value)} />
+      </label>
+      <button
+        type="button"
+        className="secondary-button prompt-reset-button"
+        disabled={value === defaultValue}
+        onClick={() => onChange(defaultValue)}
+      >
+        Reset to Default
+      </button>
     </div>
   );
 }

@@ -1,7 +1,7 @@
 use std::{net::IpAddr, time::Duration};
 
 use futures_util::StreamExt;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::{
@@ -13,20 +13,41 @@ const MAX_SEARCH_RESULTS: u64 = 10;
 const MAX_FETCH_BYTES: usize = 512 * 1024;
 const MAX_TOOL_RESULT_CHARS: usize = 24_000;
 
-pub fn chat_tools(settings: &ToolSettingsPrivate) -> Vec<OllamaTool> {
+#[derive(Clone, Copy, Debug)]
+pub struct ToolSelection {
+    pub tool_use_enabled: bool,
+    pub web_search_enabled: bool,
+    pub web_fetch_enabled: bool,
+}
+
+impl Default for ToolSelection {
+    fn default() -> Self {
+        Self {
+            tool_use_enabled: true,
+            web_search_enabled: true,
+            web_fetch_enabled: true,
+        }
+    }
+}
+
+pub fn chat_tools(settings: &ToolSettingsPrivate, selection: ToolSelection) -> Vec<OllamaTool> {
     if !settings.tools_enabled {
+        return Vec::new();
+    }
+    if !selection.tool_use_enabled {
         return Vec::new();
     }
 
     let mut tools = Vec::new();
-    if (settings.brave_search_enabled && settings.has_brave_key())
-        || (settings.ollama_web_search_enabled && settings.has_ollama_key())
+    if selection.web_search_enabled
+        && ((settings.brave_search_enabled && settings.has_brave_key())
+            || (settings.ollama_web_search_enabled && settings.has_ollama_key()))
     {
         tools.push(OllamaTool {
-            kind: "function",
+            kind: "function".to_string(),
             function: OllamaToolFunction {
-                name: "web_search",
-                description: "Search the web for current public information. Returns a compact list of result titles, URLs, and snippets.",
+                name: "web_search".to_string(),
+                description: render_prompt(&settings.web_search_tool_prompt),
                 parameters: json!({
                     "type": "object",
                     "required": ["query"],
@@ -45,14 +66,15 @@ pub fn chat_tools(settings: &ToolSettingsPrivate) -> Vec<OllamaTool> {
         });
     }
 
-    if (settings.ollama_web_fetch_enabled && settings.has_ollama_key())
-        || settings.direct_web_fetch_enabled
+    if selection.web_fetch_enabled
+        && ((settings.ollama_web_fetch_enabled && settings.has_ollama_key())
+            || settings.direct_web_fetch_enabled)
     {
         tools.push(OllamaTool {
-            kind: "function",
+            kind: "function".to_string(),
             function: OllamaToolFunction {
-                name: "web_fetch",
-                description: "Fetch a public web page by URL and return its title, main text, and discovered links. Use this after web_search when a result needs more detail.",
+                name: "web_fetch".to_string(),
+                description: render_prompt(&settings.web_fetch_tool_prompt),
                 parameters: json!({
                     "type": "object",
                     "required": ["url"],
@@ -70,14 +92,63 @@ pub fn chat_tools(settings: &ToolSettingsPrivate) -> Vec<OllamaTool> {
     tools
 }
 
+pub fn tool_system_prompt(settings: &ToolSettingsPrivate, tools: &[OllamaTool]) -> String {
+    let available_names = tools
+        .iter()
+        .map(|tool| tool.function.name.as_str())
+        .collect::<Vec<_>>();
+    let available = if available_names.is_empty() {
+        "none".to_string()
+    } else {
+        available_names.join(", ")
+    };
+    let disabled = ["web_search", "web_fetch"]
+        .into_iter()
+        .filter(|tool_name| !available_names.contains(tool_name))
+        .collect::<Vec<_>>();
+    let disabled = if disabled.is_empty() {
+        "none".to_string()
+    } else {
+        disabled.join(", ")
+    };
+
+    format!(
+        "{}\n\nAvailable tools in this chat: {available}.\nDisabled tools in this chat: {disabled}.\nOnly call tools listed as available in this chat. Do not call disabled or unavailable tools.",
+        render_prompt(&settings.tool_system_prompt)
+    )
+}
+
+fn render_prompt(prompt: &str) -> String {
+    prompt.replace("{current_date}", &current_date_utc())
+}
+
+fn current_date_utc() -> String {
+    let now = time::OffsetDateTime::now_utc();
+    format!(
+        "{:04}-{:02}-{:02}",
+        now.year(),
+        u8::from(now.month()),
+        now.day()
+    )
+}
+
 pub async fn execute_tool(
     client: &reqwest::Client,
     settings: &ToolSettingsPrivate,
+    selection: ToolSelection,
     call: &OllamaToolCall,
 ) -> String {
     let result = match call.function.name.as_str() {
-        "web_search" => web_search(client, settings, &call.function.arguments).await,
-        "web_fetch" => web_fetch(client, settings, &call.function.arguments).await,
+        "web_search" if selection.tool_use_enabled && selection.web_search_enabled => {
+            web_search(client, settings, &call.function.arguments).await
+        }
+        "web_fetch" if selection.tool_use_enabled && selection.web_fetch_enabled => {
+            web_fetch(client, settings, &call.function.arguments).await
+        }
+        "web_search" | "web_fetch" => Err(format!(
+            "{} is disabled for this chat.",
+            call.function.name
+        )),
         name => Err(format!("Unknown tool: {name}")),
     };
 
@@ -88,24 +159,47 @@ pub async fn execute_tool(
     }
 }
 
-pub fn tool_log_line(call: &OllamaToolCall) -> String {
+pub fn tool_summary(call: &OllamaToolCall) -> String {
     match call.function.name.as_str() {
         "web_search" => call
             .function
             .arguments
             .get("query")
             .and_then(|value| value.as_str())
-            .map(|query| format!("\n\nTool: web_search(\"{}\")\n", truncate_chars(query, 160)))
-            .unwrap_or_else(|| "\n\nTool: web_search\n".to_string()),
+            .map(|query| format!("Searched \"{}\"", truncate_chars(query, 96)))
+            .unwrap_or_else(|| "Searched the web".to_string()),
         "web_fetch" => call
             .function
             .arguments
             .get("url")
             .and_then(|value| value.as_str())
-            .map(|url| format!("\n\nTool: web_fetch(\"{}\")\n", truncate_chars(url, 180)))
-            .unwrap_or_else(|| "\n\nTool: web_fetch\n".to_string()),
-        name => format!("\n\nTool: {name}\n"),
+            .map(|url| format!("Fetched \"{}\"", truncate_chars(url, 120)))
+            .unwrap_or_else(|| "Fetched a page".to_string()),
+        name => format!("Used {name}"),
     }
+}
+
+pub fn tool_usage_block(call: &OllamaToolCall, result: &str) -> String {
+    let usage = ToolUsageRecord {
+        name: call.function.name.clone(),
+        summary: tool_summary(call),
+        arguments: call.function.arguments.clone(),
+        result: result.to_string(),
+    };
+    let json = serde_json::to_string(&usage).unwrap_or_else(|_| {
+        "{\"name\":\"tool\",\"summary\":\"Used a tool\",\"arguments\":{},\"result\":\"\"}"
+            .to_string()
+    });
+
+    format!("\n\n<VASHTI_TOOL_USAGE>{json}</VASHTI_TOOL_USAGE>\n\n")
+}
+
+#[derive(Serialize)]
+struct ToolUsageRecord {
+    name: String,
+    summary: String,
+    arguments: serde_json::Value,
+    result: String,
 }
 
 async fn web_search(

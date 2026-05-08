@@ -812,7 +812,7 @@ textarea {
     0 0 28px rgba(113, 255, 47, 0.11),
     0 18px 50px rgba(0, 0, 0, 0.46);
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
   grid-template-rows: auto auto auto;
   gap: 10px;
   padding: 10px;
@@ -867,14 +867,96 @@ textarea {
   display: flex;
 }
 
-.composer-attach button {
+.composer-attach button,
+.composer-tools > button {
   width: 44px;
   min-width: 44px;
   padding: 0;
 }
 
-.composer-model-capabilities {
+.composer-tools {
   grid-column: 2;
+  grid-row: 3;
+  align-self: end;
+  position: relative;
+  display: flex;
+}
+
+.composer-tool-button {
+  position: relative;
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent);
+}
+
+.composer-tool-button > svg {
+  color: #061006;
+}
+
+.composer-tool-button:hover,
+.composer-tool-button.active {
+  border-color: var(--accent);
+  background: var(--accent);
+  box-shadow: 0 0 18px rgba(113, 255, 47, 0.24);
+}
+
+.tool-off-indicator,
+.tool-count-indicator {
+  position: absolute;
+  right: -4px;
+  top: -4px;
+  min-width: 18px;
+  height: 18px;
+  border: 1px solid var(--error);
+  border-radius: 999px;
+  background: #070b07;
+  color: var(--error);
+  display: grid;
+  place-items: center;
+  padding: 0 3px;
+  font-size: 0.58rem;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.tool-off-indicator svg {
+  width: 11px;
+  height: 11px;
+}
+
+.tool-count-indicator {
+  border-color: #3fa7ff;
+  color: #98d7ff;
+}
+
+.composer-tool-menu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  z-index: 20;
+  width: min(330px, calc(100vw - 36px));
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-strong);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.58);
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+}
+
+.composer-tool-list {
+  border-top: 1px solid var(--line-soft);
+  display: grid;
+  gap: 8px;
+  padding-top: 8px;
+}
+
+.composer-tool-list.disabled {
+  opacity: 0.48;
+}
+
+.composer-model-capabilities {
+  grid-column: 3;
   grid-row: 3;
   min-width: 0;
   align-self: end;
@@ -1027,7 +1109,7 @@ textarea {
 }
 
 .composer-actions {
-  grid-column: 3;
+  grid-column: 4;
   grid-row: 3;
   align-self: end;
   display: flex;
@@ -1571,8 +1653,71 @@ textarea {
   font-weight: 700;
 }
 
-.message-thinking p {
+.message-thinking-content {
+  display: grid;
+  gap: 8px;
   margin-top: 8px;
+}
+
+.message-thinking-content p {
+  margin: 0;
+}
+
+.message-tool-card {
+  border: 1px solid rgba(63, 167, 255, 0.32);
+  border-radius: 6px;
+  background: rgba(13, 23, 32, 0.72);
+  color: var(--muted);
+  overflow: hidden;
+}
+
+.message-tool-card summary {
+  min-height: 38px;
+  color: #98d7ff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 800;
+  padding: 8px 10px;
+}
+
+.message-tool-card summary svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+
+.message-tool-details {
+  border-top: 1px solid rgba(63, 167, 255, 0.22);
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+}
+
+.message-tool-details label {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.message-tool-details label > span {
+  color: #98d7ff;
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.message-tool-details pre {
+  max-height: 260px;
+  margin: 0;
+  border: 1px solid rgba(63, 167, 255, 0.18);
+  border-radius: 5px;
+  background: rgba(1, 3, 1, 0.72);
+  color: var(--text);
+  overflow: auto;
+  padding: 8px;
+  white-space: pre-wrap;
 }
 
 .thinking-loader {
@@ -1801,6 +1946,38 @@ textarea {
 
 .settings-subsection .eyebrow {
   margin-bottom: 6px;
+}
+
+.tool-details {
+  border-top: 1px solid var(--line-soft);
+  display: grid;
+  gap: 12px;
+  padding-top: 12px;
+}
+
+.tool-details summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-weight: 800;
+}
+
+.tool-details[open] summary {
+  margin-bottom: 4px;
+}
+
+.tool-prompt-editor {
+  display: grid;
+  gap: 8px;
+}
+
+.tool-prompt-editor textarea,
+.tool-details textarea {
+  min-height: 150px;
+  resize: vertical;
+}
+
+.prompt-reset-button {
+  justify-self: start;
 }
 
 .setting-field {

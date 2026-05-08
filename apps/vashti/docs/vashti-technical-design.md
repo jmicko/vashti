@@ -98,6 +98,9 @@ MVP tool behavior:
 * admins enable tools globally from settings
 * provider API keys are entered in the admin Tools settings page
 * API keys are write-only in the UI; API responses only report whether a key is configured
+* admins can view and edit the prompt text sent to Ollama for tool behavior and individual tool schemas
+* editable prompts should have reset-to-default controls in the UI
+* the default tool behavior prompt includes the current UTC date so models do not treat fresh search results as future-dated information
 * web search may use Brave Search or Ollama's hosted web search API
 * web fetch may use Ollama's hosted web fetch API or Vashti's guarded direct fetcher
 * tool schemas are sent only when the selected Ollama model reports the `tools` capability
@@ -238,6 +241,9 @@ Columns:
 * `brave_search_enabled` INTEGER NOT NULL DEFAULT 0
 * `brave_search_api_key` TEXT
 * `direct_web_fetch_enabled` INTEGER NOT NULL DEFAULT 0
+* `tool_system_prompt` TEXT
+* `web_search_tool_prompt` TEXT
+* `web_fetch_tool_prompt` TEXT
 * `created_at` INTEGER NOT NULL
 * `updated_at` INTEGER NOT NULL
 
@@ -254,6 +260,8 @@ Notes:
 * `public_base_url` is used for future share links and reverse-proxy config generation; it does not prove HTTPS is working
 * tool provider API keys are stored in `app_settings` and should never be returned to the frontend after save
 * `direct_web_fetch_enabled` exposes no key, but still must be treated as a network-risk setting because it lets the server request public URLs
+* null or blank tool prompt fields fall back to the built-in defaults
+* `{current_date}` inside tool prompts is replaced by the server's current UTC date before sending prompts to Ollama
 
 ### 3.2.6 `chats`
 
@@ -996,7 +1004,13 @@ Response:
   "ollama_api_key_configured": true,
   "brave_search_enabled": true,
   "brave_search_api_key_configured": true,
-  "direct_web_fetch_enabled": false
+  "direct_web_fetch_enabled": false,
+  "tool_system_prompt": "Tool behavior guidance...",
+  "default_tool_system_prompt": "Tool behavior guidance...",
+  "web_search_tool_prompt": "Search the web...",
+  "default_web_search_tool_prompt": "Search the web...",
+  "web_fetch_tool_prompt": "Fetch a public HTTP or HTTPS page...",
+  "default_web_fetch_tool_prompt": "Fetch a public HTTP or HTTPS page..."
 }
 ```
 
@@ -1016,7 +1030,10 @@ Request:
   "brave_search_enabled": true,
   "brave_search_api_key": "new-or-replacement-key",
   "clear_brave_search_api_key": false,
-  "direct_web_fetch_enabled": false
+  "direct_web_fetch_enabled": false,
+  "tool_system_prompt": "Tool behavior guidance...",
+  "web_search_tool_prompt": "Search the web...",
+  "web_fetch_tool_prompt": "Fetch a public HTTP or HTTPS page..."
 }
 ```
 
@@ -1024,6 +1041,8 @@ Behavior:
 
 * omitted booleans leave existing values unchanged
 * blank API key fields leave existing keys unchanged unless the matching clear flag is true
+* prompt fields are editable admin settings; the UI may reset them by submitting the default prompt text
+* prompt fields may use `{current_date}` to inject the current UTC date during generation
 * response uses the same shape as `GET /api/settings/tools` and must not return key material
 
 ### `GET /api/user-settings`

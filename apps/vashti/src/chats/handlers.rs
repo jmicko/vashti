@@ -8,7 +8,11 @@ use axum::{
 use axum_extra::extract::CookieJar;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, convert::Infallible, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    convert::Infallible,
+    sync::Arc,
+};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
@@ -16,7 +20,7 @@ use crate::{
     app_state::{AppState, GenerationProgress},
     auth,
     chats::{
-        models::{ChatDetail, ChatMessage, ChatMessageRevision, ChatSummary},
+        models::{ChatDetail, ChatMessage, ChatMessageRevision, ChatSummary, ChatToolPreferences},
         service,
     },
     error::ApiError,
@@ -42,6 +46,7 @@ pub struct CreateChatRequest {
     pub default_backend_id: String,
     pub default_model_name: String,
     pub persona_version_id: Option<String>,
+    pub tool_preferences: Option<ChatToolPreferences>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -50,6 +55,7 @@ pub struct UpdateChatRequest {
     pub default_backend_id: Option<String>,
     pub default_model_name: Option<String>,
     pub persona_version_id: Option<String>,
+    pub tool_preferences: Option<ChatToolPreferences>,
 }
 
 #[derive(Debug, Serialize)]
@@ -121,6 +127,7 @@ pub struct GenerateChatRequest {
     pub model_name: Option<String>,
     pub persona_version_id: Option<String>,
     pub think_mode: Option<String>,
+    pub tool_preferences: Option<ChatToolPreferences>,
     #[serde(default)]
     pub attachments: Vec<AttachmentReference>,
 }
@@ -146,6 +153,7 @@ pub struct RegenerateMessageRequest {
     pub model_name: Option<String>,
     pub persona_version_id: Option<String>,
     pub think_mode: Option<String>,
+    pub tool_preferences: Option<ChatToolPreferences>,
     #[serde(default)]
     pub attachments: Vec<AttachmentReference>,
 }
@@ -157,6 +165,7 @@ pub struct BranchMessageRequest {
     pub model_name: Option<String>,
     pub persona_version_id: Option<String>,
     pub think_mode: Option<String>,
+    pub tool_preferences: Option<ChatToolPreferences>,
     #[serde(default)]
     pub attachments: Vec<AttachmentReference>,
 }
@@ -544,7 +553,7 @@ async fn stream_generation(
     let tool_settings = settings::service::get_tool_settings_private(&db).await.ok();
     let mut available_tools = tool_settings
         .as_ref()
-        .map(tools::service::chat_tools)
+        .map(|settings| tools::service::chat_tools(settings, prepared.tool_selection))
         .unwrap_or_default();
     if !available_tools.is_empty()
         && !ollama::client::model_supports_tools(
@@ -557,7 +566,26 @@ async fn stream_generation(
         available_tools.clear();
     }
     let mut prompt_messages = prepared.prompt_messages;
+    if !available_tools.is_empty() {
+        if let Some(tool_settings) = tool_settings.as_ref() {
+            prompt_messages.insert(
+                0,
+                OllamaChatMessage {
+                    role: "system".to_string(),
+                    content: tools::service::tool_system_prompt(tool_settings, &available_tools),
+                    thinking: None,
+                    images: None,
+                    tool_name: None,
+                    tool_calls: None,
+                },
+            );
+        }
+    }
     let mut tool_rounds = 0;
+    let available_tool_names = available_tools
+        .iter()
+        .map(|tool| tool.function.name.clone())
+        .collect::<HashSet<_>>();
 
     loop {
         let round_content_start = content_text.len();
@@ -773,27 +801,41 @@ async fn stream_generation(
         });
 
         for call in &round_tool_calls {
-            let log_line = tools::service::tool_log_line(call);
-            thinking_text.push_str(&log_line);
-            set_generation_progress(
-                &progress,
-                &assistant_message_id,
-                &user_id,
-                &chat_id,
-                &content_text,
-                &thinking_text,
-            )
-            .await;
-            let _ = send_event(
-                &tx,
-                &GenerateEvent::ThinkingDelta {
-                    assistant_message_id: assistant_message_id.clone(),
-                    delta: log_line,
-                },
-            )
-            .await;
-
-            let result = tools::service::execute_tool(&client, tool_settings, call).await;
+            let result = if available_tool_names.contains(&call.function.name) {
+                tools::service::execute_tool(
+                    &client,
+                    tool_settings,
+                    prepared.tool_selection,
+                    call,
+                )
+                .await
+            } else {
+                serde_json::json!({
+                    "error": format!("{} is not available in this chat.", call.function.name)
+                })
+                .to_string()
+            };
+            if available_tool_names.contains(&call.function.name) {
+                let usage_block = tools::service::tool_usage_block(call, &result);
+                thinking_text.push_str(&usage_block);
+                set_generation_progress(
+                    &progress,
+                    &assistant_message_id,
+                    &user_id,
+                    &chat_id,
+                    &content_text,
+                    &thinking_text,
+                )
+                .await;
+                let _ = send_event(
+                    &tx,
+                    &GenerateEvent::ThinkingDelta {
+                        assistant_message_id: assistant_message_id.clone(),
+                        delta: usage_block,
+                    },
+                )
+                .await;
+            }
             prompt_messages.push(OllamaChatMessage {
                 role: "tool".to_string(),
                 content: result,
@@ -1013,6 +1055,7 @@ async fn maybe_generate_chat_title(
             default_backend_id: None,
             default_model_name: None,
             persona_version_id: None,
+            tool_preferences: None,
         },
     )
     .await

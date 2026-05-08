@@ -751,6 +751,7 @@ mod tests {
                     default_backend_id: backend.id.clone(),
                     default_model_name: "gemma4:e2b".to_string(),
                     persona_version_id: None,
+                    tool_preferences: None,
                 },
             )
             .await
@@ -768,6 +769,7 @@ mod tests {
                 default_backend_id: backend.id,
                 default_model_name: "gemma4:e2b".to_string(),
                 persona_version_id: None,
+                tool_preferences: None,
             },
         )
         .await
@@ -795,6 +797,7 @@ mod tests {
                 default_backend_id: None,
                 default_model_name: None,
                 persona_version_id: None,
+                tool_preferences: None,
             },
         )
         .await
