@@ -6,6 +6,7 @@ import {
   ReactNode,
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -95,6 +96,13 @@ type AdminUser = User & {
   created_at: number;
   updated_at: number;
   last_login_at: number | null;
+  permission_tags: PermissionTag[];
+};
+
+type PermissionTag = {
+  id: string;
+  label: string;
+  kind: string;
 };
 
 type SessionResponse = {
@@ -110,6 +118,7 @@ type RegisterResponse = {
 
 type AdminUsersResponse = {
   users: AdminUser[];
+  available_tags: PermissionTag[];
 };
 
 type AdminUserMutationResponse = {
@@ -145,6 +154,7 @@ type ModelInfo = {
 
 type AdminModelInfo = ModelInfo & {
   is_enabled: boolean;
+  permission_tags: PermissionTag[];
 };
 
 type BackendModelGroup = {
@@ -169,6 +179,8 @@ type ModelsResponse = {
 
 type AdminModelsResponse = {
   backends: AdminBackendModelGroup[];
+  available_tags: PermissionTag[];
+  default_permission_tags: PermissionTag[];
 };
 
 type PersonaVersion = {
@@ -427,6 +439,14 @@ type ToolSettings = {
   default_web_search_tool_prompt: string;
   web_fetch_tool_prompt: string;
   default_web_fetch_tool_prompt: string;
+  available_tags: PermissionTag[];
+  default_tool_permission_tags: PermissionTag[];
+  tool_permissions: ToolPermission[];
+};
+
+type ToolPermission = {
+  tool_id: string;
+  permission_tags: PermissionTag[];
 };
 
 type AvailableTool = {
@@ -7825,8 +7845,107 @@ function backendNameFor(groups: BackendModelGroup[], backendId: string) {
   return groups.find((group) => group.backend.id === backendId)?.backend.name ?? backendId;
 }
 
+function permissionTagPayload(tags: PermissionTag[]) {
+  return tags.map((tag) => tag.id);
+}
+
+function permissionTagFromInput(value: string, availableTags: PermissionTag[]): PermissionTag | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const existing = availableTags.find(
+    (tag) =>
+      tag.id.toLowerCase() === trimmed.toLowerCase() ||
+      tag.label.toLowerCase() === trimmed.toLowerCase()
+  );
+  return existing ?? { id: trimmed, label: trimmed, kind: "group" };
+}
+
+function PermissionTagEditor({
+  label,
+  tags,
+  availableTags,
+  onChange,
+  disabled = false,
+  suggestionsKind
+}: {
+  label: string;
+  tags: PermissionTag[];
+  availableTags: PermissionTag[];
+  onChange: (tags: PermissionTag[]) => void;
+  disabled?: boolean;
+  suggestionsKind?: string;
+}) {
+  const [value, setValue] = useState("");
+  const datalistId = useId();
+  const suggestions = suggestionsKind
+    ? availableTags.filter((tag) => tag.kind === suggestionsKind)
+    : availableTags;
+
+  function addTag() {
+    const tag = permissionTagFromInput(value, suggestions);
+    if (!tag || tags.some((existing) => existing.id === tag.id)) {
+      setValue("");
+      return;
+    }
+    onChange([...tags, tag]);
+    setValue("");
+  }
+
+  return (
+    <div className="permission-tag-editor">
+      <span>{label}</span>
+      <div className="permission-tags">
+        {tags.length === 0 ? (
+          <span className="permission-tag-empty">No tags</span>
+        ) : (
+          tags.map((tag) => (
+            <button
+              type="button"
+              key={tag.id}
+              className={`permission-tag permission-tag-${tag.kind}`}
+              disabled={disabled}
+              onClick={() => onChange(tags.filter((existing) => existing.id !== tag.id))}
+              title="Remove tag"
+            >
+              <span>{tag.label}</span>
+              <X />
+            </button>
+          ))
+        )}
+      </div>
+      <div className="permission-tag-add">
+        <input
+          value={value}
+          disabled={disabled}
+          list={datalistId}
+          placeholder="Add tag"
+          onChange={(event) => setValue(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              addTag();
+            }
+          }}
+        />
+        <datalist id={datalistId}>
+          {suggestions.map((tag) => (
+            <option key={tag.id} value={tag.label} />
+          ))}
+        </datalist>
+        <button type="button" className="secondary-button" disabled={disabled} onClick={addTag}>
+          <Plus />
+          <span>Add</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function AdminUsersPanel({ currentUserId }: { currentUserId: string }) {
   const [users, setUsers] = useState<AdminUser[]>([]);
+  const [availableTags, setAvailableTags] = useState<PermissionTag[]>([]);
   const [hasLoaded, setHasLoaded] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isCreatingUser, setIsCreatingUser] = useState(false);
@@ -7846,6 +7965,7 @@ function AdminUsersPanel({ currentUserId }: { currentUserId: string }) {
     try {
       const response = await requestJson<AdminUsersResponse>("/api/admin/users");
       setUsers(response.users);
+      setAvailableTags(response.available_tags);
       setHasLoaded(true);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Failed to load users");
@@ -7888,7 +8008,10 @@ function AdminUsersPanel({ currentUserId }: { currentUserId: string }) {
     }
   }
 
-  async function patchUser(userId: string, body: Partial<Pick<AdminUser, "role" | "is_disabled">>) {
+  async function patchUser(
+    userId: string,
+    body: Partial<Pick<AdminUser, "role" | "is_disabled">> & { permission_tags?: string[] }
+  ) {
     setBusyUserId(userId);
     setError(null);
 
@@ -8005,6 +8128,7 @@ function AdminUsersPanel({ currentUserId }: { currentUserId: string }) {
           busyUserId={busyUserId}
           onPatchUser={patchUser}
           onDeleteUser={setDeleteTarget}
+          availableTags={availableTags}
         />
         <div className="user-divider" />
         <UserGroup
@@ -8015,6 +8139,7 @@ function AdminUsersPanel({ currentUserId }: { currentUserId: string }) {
           busyUserId={busyUserId}
           onPatchUser={patchUser}
           onDeleteUser={setDeleteTarget}
+          availableTags={availableTags}
         />
       </div>
       {deleteTarget && (
@@ -8038,7 +8163,8 @@ function UserGroup({
   currentUserId,
   busyUserId,
   onPatchUser,
-  onDeleteUser
+  onDeleteUser,
+  availableTags
 }: {
   title: string;
   users: AdminUser[];
@@ -8047,9 +8173,10 @@ function UserGroup({
   busyUserId: string | null;
   onPatchUser: (
     userId: string,
-    body: Partial<Pick<AdminUser, "role" | "is_disabled">>
+    body: Partial<Pick<AdminUser, "role" | "is_disabled">> & { permission_tags?: string[] }
   ) => Promise<void>;
   onDeleteUser: (user: AdminUser) => void;
+  availableTags: PermissionTag[];
 }) {
   return (
     <section className="user-group">
@@ -8068,6 +8195,7 @@ function UserGroup({
             isBusy={busyUserId === listedUser.id}
             onPatchUser={onPatchUser}
             onDeleteUser={onDeleteUser}
+            availableTags={availableTags}
           />
         ))
       )}
@@ -8080,16 +8208,18 @@ function UserRow({
   isSelf,
   isBusy,
   onPatchUser,
-  onDeleteUser
+  onDeleteUser,
+  availableTags
 }: {
   user: AdminUser;
   isSelf: boolean;
   isBusy: boolean;
   onPatchUser: (
     userId: string,
-    body: Partial<Pick<AdminUser, "role" | "is_disabled">>
+    body: Partial<Pick<AdminUser, "role" | "is_disabled">> & { permission_tags?: string[] }
   ) => Promise<void>;
   onDeleteUser: (user: AdminUser) => void;
+  availableTags: PermissionTag[];
 }) {
   return (
     <article className="user-row">
@@ -8106,6 +8236,16 @@ function UserRow({
           {isSelf && <span className="badge">you</span>}
         </div>
       </div>
+      <PermissionTagEditor
+        label="Group tags"
+        tags={user.permission_tags}
+        availableTags={availableTags}
+        suggestionsKind="group"
+        disabled={isBusy}
+        onChange={(tags) =>
+          void onPatchUser(user.id, { permission_tags: permissionTagPayload(tags) })
+        }
+      />
       <div className="user-actions">
         {user.is_disabled ? (
           <button
@@ -8160,10 +8300,13 @@ function UserRow({
 
 function ModelsAccessPanel({ onModelsChanged }: { onModelsChanged: () => Promise<void> }) {
   const [groups, setGroups] = useState<AdminBackendModelGroup[]>([]);
+  const [availableTags, setAvailableTags] = useState<PermissionTag[]>([]);
+  const [defaultTags, setDefaultTags] = useState<PermissionTag[]>([]);
   const [hasLoaded, setHasLoaded] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [busyModelKey, setBusyModelKey] = useState<string | null>(null);
   const [busyBackendId, setBusyBackendId] = useState<string | null>(null);
+  const [isSavingDefaults, setIsSavingDefaults] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -8174,6 +8317,8 @@ function ModelsAccessPanel({ onModelsChanged }: { onModelsChanged: () => Promise
     try {
       const response = await requestJson<AdminModelsResponse>("/api/admin/models");
       setGroups(response.backends);
+      setAvailableTags(response.available_tags);
+      setDefaultTags(response.default_permission_tags);
       setHasLoaded(true);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Failed to load models");
@@ -8259,6 +8404,76 @@ function ModelsAccessPanel({ onModelsChanged }: { onModelsChanged: () => Promise
     }
   }
 
+  async function updateModelTags(backendId: string, modelName: string, tags: PermissionTag[]) {
+    const key = modelValue(backendId, modelName);
+    setBusyModelKey(key);
+    setError(null);
+    setStatus(null);
+
+    try {
+      const response = await requestJson<{ permission_tags: PermissionTag[] }>(
+        "/api/admin/models/tags",
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            backend_id: backendId,
+            model_name: modelName,
+            permission_tags: permissionTagPayload(tags)
+          })
+        }
+      );
+      setGroups((current) =>
+        current.map((group) =>
+          group.backend.id === backendId
+            ? {
+                ...group,
+                models: group.models.map((model) =>
+                  model.name === modelName
+                    ? { ...model, permission_tags: response.permission_tags }
+                    : model
+                )
+              }
+            : group
+        )
+      );
+      setStatus("Model tags saved.");
+      await onModelsChanged();
+    } catch (updateError) {
+      setError(updateError instanceof Error ? updateError.message : "Failed to update model tags");
+    } finally {
+      setBusyModelKey(null);
+    }
+  }
+
+  async function saveDefaultModelTags(applyToExisting: boolean) {
+    setIsSavingDefaults(true);
+    setError(null);
+    setStatus(null);
+
+    try {
+      const response = await requestJson<{ default_permission_tags: PermissionTag[] }>(
+        "/api/admin/models/default-tags",
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            permission_tags: permissionTagPayload(defaultTags),
+            apply_to_existing: applyToExisting
+          })
+        }
+      );
+      setDefaultTags(response.default_permission_tags);
+      setStatus(applyToExisting ? "Default tags applied to all models." : "Default tags saved.");
+      await loadAdminModels();
+      await onModelsChanged();
+    } catch (updateError) {
+      setError(
+        updateError instanceof Error ? updateError.message : "Failed to update default model tags"
+      );
+    } finally {
+      setIsSavingDefaults(false);
+    }
+  }
+
   return (
     <div className="settings-section">
       <div className="section-header">
@@ -8285,6 +8500,42 @@ function ModelsAccessPanel({ onModelsChanged }: { onModelsChanged: () => Promise
       {hasLoaded && groups.length === 0 && (
         <p className="status-message">No enabled Ollama backends are configured.</p>
       )}
+
+      <section className="settings-subsection permission-defaults">
+        <div>
+          <p className="eyebrow">Defaults</p>
+          <h2>Default Model Tags</h2>
+          <p className="status-message">
+            New models get these tags the first time Vashti sees them. Empty means no one can use
+            new models until tags are added.
+          </p>
+        </div>
+        <PermissionTagEditor
+          label="Default tags"
+          tags={defaultTags}
+          availableTags={availableTags}
+          disabled={isSavingDefaults}
+          onChange={setDefaultTags}
+        />
+        <div className="model-access-actions">
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={isSavingDefaults}
+            onClick={() => void saveDefaultModelTags(false)}
+          >
+            Save Defaults
+          </button>
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={isSavingDefaults}
+            onClick={() => void saveDefaultModelTags(true)}
+          >
+            Apply to Existing Models
+          </button>
+        </div>
+      </section>
 
       <div className="model-access-list">
         {groups.map((group) => {
@@ -8333,6 +8584,15 @@ function ModelsAccessPanel({ onModelsChanged }: { onModelsChanged: () => Promise
                         <span className="model-access-main">
                           <span className="model-name">{model.name}</span>
                           <ModelCapabilityBadges model={model} />
+                          <PermissionTagEditor
+                            label="Allowed tags"
+                            tags={model.permission_tags}
+                            availableTags={availableTags}
+                            disabled={isBusy}
+                            onChange={(tags) =>
+                              void updateModelTags(group.backend.id, model.name, tags)
+                            }
+                          />
                         </span>
                         <ToggleSwitch
                           label={model.is_enabled ? "On" : "Off"}
@@ -8368,6 +8628,9 @@ function ToolsSettingsPanel({ onToolsChanged }: { onToolsChanged: () => Promise<
   const [toolSystemPrompt, setToolSystemPrompt] = useState("");
   const [webSearchToolPrompt, setWebSearchToolPrompt] = useState("");
   const [webFetchToolPrompt, setWebFetchToolPrompt] = useState("");
+  const [availableTags, setAvailableTags] = useState<PermissionTag[]>([]);
+  const [defaultToolTags, setDefaultToolTags] = useState<PermissionTag[]>([]);
+  const [toolPermissionTags, setToolPermissionTags] = useState<Record<string, PermissionTag[]>>({});
   const [clearKeyTarget, setClearKeyTarget] = useState<"ollama" | "brave" | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -8386,7 +8649,25 @@ function ToolsSettingsPanel({ onToolsChanged }: { onToolsChanged: () => Promise<
         braveApiKey.trim() ||
         toolSystemPrompt !== settings.tool_system_prompt ||
         webSearchToolPrompt !== settings.web_search_tool_prompt ||
-        webFetchToolPrompt !== settings.web_fetch_tool_prompt)
+        webFetchToolPrompt !== settings.web_fetch_tool_prompt ||
+        JSON.stringify(permissionTagPayload(defaultToolTags)) !==
+          JSON.stringify(permissionTagPayload(settings.default_tool_permission_tags)) ||
+        JSON.stringify(
+          Object.fromEntries(
+            Object.entries(toolPermissionTags).map(([toolId, tags]) => [
+              toolId,
+              permissionTagPayload(tags)
+            ])
+          )
+        ) !==
+          JSON.stringify(
+            Object.fromEntries(
+              settings.tool_permissions.map((tool) => [
+                tool.tool_id,
+                permissionTagPayload(tool.permission_tags)
+              ])
+            )
+          ))
   );
   const visibleStatus = isDirty ? null : status;
   const showSaveBanner = isDirty || Boolean(visibleStatus);
@@ -8427,6 +8708,13 @@ function ToolsSettingsPanel({ onToolsChanged }: { onToolsChanged: () => Promise<
     setToolSystemPrompt(response.tool_system_prompt);
     setWebSearchToolPrompt(response.web_search_tool_prompt);
     setWebFetchToolPrompt(response.web_fetch_tool_prompt);
+    setAvailableTags(response.available_tags);
+    setDefaultToolTags(response.default_tool_permission_tags);
+    setToolPermissionTags(
+      Object.fromEntries(
+        response.tool_permissions.map((tool) => [tool.tool_id, tool.permission_tags])
+      )
+    );
   }
 
   const loadToolSettings = useCallback(async () => {
@@ -8478,7 +8766,12 @@ function ToolsSettingsPanel({ onToolsChanged }: { onToolsChanged: () => Promise<
       direct_web_fetch_enabled: directFetchEnabled,
       tool_system_prompt: toolSystemPrompt,
       web_search_tool_prompt: webSearchToolPrompt,
-      web_fetch_tool_prompt: webFetchToolPrompt
+      web_fetch_tool_prompt: webFetchToolPrompt,
+      default_tool_permission_tags: permissionTagPayload(defaultToolTags),
+      tool_permissions: Object.entries(toolPermissionTags).map(([toolId, tags]) => ({
+        tool_id: toolId,
+        permission_tags: permissionTagPayload(tags)
+      }))
     };
     if (ollamaApiKey.trim()) {
       payload.ollama_api_key = ollamaApiKey.trim();
@@ -8529,7 +8822,12 @@ function ToolsSettingsPanel({ onToolsChanged }: { onToolsChanged: () => Promise<
           direct_web_fetch_enabled: directFetchEnabled,
           tool_system_prompt: toolSystemPrompt,
           web_search_tool_prompt: webSearchToolPrompt,
-          web_fetch_tool_prompt: webFetchToolPrompt
+          web_fetch_tool_prompt: webFetchToolPrompt,
+          default_tool_permission_tags: permissionTagPayload(defaultToolTags),
+          tool_permissions: Object.entries(toolPermissionTags).map(([toolId, tags]) => ({
+            tool_id: toolId,
+            permission_tags: permissionTagPayload(tags)
+          }))
         })
       });
       applyToolSettings(response);
@@ -8606,6 +8904,12 @@ function ToolsSettingsPanel({ onToolsChanged }: { onToolsChanged: () => Promise<
               isChanged={toolsEnabledChanged}
               onChange={setToolsEnabled}
             />
+            <PermissionTagEditor
+              label="Default tool tags"
+              tags={defaultToolTags}
+              availableTags={availableTags}
+              onChange={setDefaultToolTags}
+            />
             <details className="tool-details">
               <summary>Tool instructions</summary>
               <label
@@ -8646,6 +8950,17 @@ function ToolsSettingsPanel({ onToolsChanged }: { onToolsChanged: () => Promise<
               isChanged={ollamaSearchChanged}
               onChange={setOllamaSearchEnabled}
             />
+            <PermissionTagEditor
+              label="Allowed tags"
+              tags={toolPermissionTags.ollama_web_search ?? []}
+              availableTags={availableTags}
+              onChange={(tags) =>
+                setToolPermissionTags((current) => ({
+                  ...current,
+                  ollama_web_search: tags
+                }))
+              }
+            />
             <ToggleSwitch
               icon={<FileText />}
               label="Ollama web fetch"
@@ -8653,6 +8968,17 @@ function ToolsSettingsPanel({ onToolsChanged }: { onToolsChanged: () => Promise<
               checked={ollamaFetchEnabled}
               isChanged={ollamaFetchChanged}
               onChange={setOllamaFetchEnabled}
+            />
+            <PermissionTagEditor
+              label="Allowed tags"
+              tags={toolPermissionTags.ollama_web_fetch ?? []}
+              availableTags={availableTags}
+              onChange={(tags) =>
+                setToolPermissionTags((current) => ({
+                  ...current,
+                  ollama_web_fetch: tags
+                }))
+              }
             />
             <details className="tool-details">
               <summary>API key and tool prompts</summary>
@@ -8716,6 +9042,17 @@ function ToolsSettingsPanel({ onToolsChanged }: { onToolsChanged: () => Promise<
               isChanged={braveSearchChanged}
               onChange={setBraveSearchEnabled}
             />
+            <PermissionTagEditor
+              label="Allowed tags"
+              tags={toolPermissionTags.brave_web_search ?? []}
+              availableTags={availableTags}
+              onChange={(tags) =>
+                setToolPermissionTags((current) => ({
+                  ...current,
+                  brave_web_search: tags
+                }))
+              }
+            />
             <details className="tool-details">
               <summary>API key and tool prompt</summary>
               <label
@@ -8769,6 +9106,17 @@ function ToolsSettingsPanel({ onToolsChanged }: { onToolsChanged: () => Promise<
               checked={directFetchEnabled}
               isChanged={directFetchChanged}
               onChange={setDirectFetchEnabled}
+            />
+            <PermissionTagEditor
+              label="Allowed tags"
+              tags={toolPermissionTags.direct_web_fetch ?? []}
+              availableTags={availableTags}
+              onChange={(tags) =>
+                setToolPermissionTags((current) => ({
+                  ...current,
+                  direct_web_fetch: tags
+                }))
+              }
             />
             <details className="tool-details">
               <summary>Tool prompt</summary>

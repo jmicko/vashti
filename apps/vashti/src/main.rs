@@ -8,6 +8,7 @@ mod db;
 mod error;
 mod frontend;
 mod ollama;
+mod permissions;
 mod personas;
 mod private;
 mod rate_limit;
@@ -138,6 +139,14 @@ fn router(state: AppState) -> Router {
             "/admin/models",
             get(backends::handlers::list_admin_models)
                 .patch(backends::handlers::update_model_availability),
+        )
+        .route(
+            "/admin/models/tags",
+            patch(backends::handlers::update_model_tags),
+        )
+        .route(
+            "/admin/models/default-tags",
+            patch(backends::handlers::update_default_model_tags),
         )
         .route(
             "/admin/models/backend",

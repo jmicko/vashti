@@ -30,7 +30,7 @@ use crate::{
             OllamaChatChunk, OllamaChatMessage, OllamaChatRequest, OllamaThink, OllamaToolCall,
         },
     },
-    rate_limit, settings, tools,
+    permissions, rate_limit, settings, tools,
 };
 
 type GenerationProgressMap = Arc<tokio::sync::Mutex<HashMap<String, GenerationProgress>>>;
@@ -555,6 +555,22 @@ async fn stream_generation(
         .as_ref()
         .map(|settings| tools::service::chat_tools(settings, prepared.tool_selection))
         .unwrap_or_default();
+    if !available_tools.is_empty() {
+        let _ = permissions::service::ensure_tool_records(&db).await;
+        match (
+            permissions::service::effective_user_tag_ids(&db, &user_id).await,
+            permissions::service::tool_tags_by_tool(&db).await,
+        ) {
+            (Ok(user_tags), Ok(tool_tags)) => {
+                available_tools.retain(|tool| {
+                    tool_tags.get(&tool.function.name).is_some_and(|tags| {
+                        permissions::service::has_matching_tag(&user_tags, tags)
+                    })
+                });
+            }
+            _ => available_tools.clear(),
+        }
+    }
     if !available_tools.is_empty()
         && !ollama::client::model_supports_tools(
             &client,

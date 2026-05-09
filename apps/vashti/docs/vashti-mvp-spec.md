@@ -727,7 +727,7 @@ Rationale:
 * users can inspect prompts for public personas they can use
 * public persona deletion should use disown/membership semantics once other users have used it
 * users can copy a visible persona version into a new persona they own
-* tag-based model/persona access and quotas are a later admin-management slice
+* tag-based base-model and tool access is part of admin management; persona access and quotas should plug into the same tag system later
 
 ## 18. Immediate Next Step
 
@@ -815,6 +815,8 @@ Mutating API requests should enforce same-origin browser writes with an `Origin`
 * `GET /api/admin/models`
 * `PATCH /api/admin/models`
 * `PATCH /api/admin/models/backend`
+* `PATCH /api/admin/models/tags`
+* `PATCH /api/admin/models/default-tags`
 * `GET /api/models/status`
 
 #### Standard chats

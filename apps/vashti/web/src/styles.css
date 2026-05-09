@@ -2309,6 +2309,79 @@ textarea {
   color: var(--warning);
 }
 
+.permission-tag-editor {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.permission-tag-editor > span {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.permission-tags {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.permission-tag,
+.permission-tag-empty {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  min-height: 30px;
+  padding: 4px 8px;
+  font-size: 0.82rem;
+}
+
+.permission-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(7, 11, 7, 0.9);
+  color: var(--accent);
+}
+
+.permission-tag svg {
+  width: 14px;
+  height: 14px;
+}
+
+.permission-tag-system {
+  border-color: rgba(83, 255, 26, 0.42);
+}
+
+.permission-tag-user {
+  border-color: rgba(69, 160, 255, 0.55);
+  color: #8ec8ff;
+}
+
+.permission-tag-group {
+  border-color: rgba(255, 255, 255, 0.18);
+  color: var(--text);
+}
+
+.permission-tag-empty {
+  color: var(--muted);
+}
+
+.permission-tag-add {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.permission-tag-add input {
+  min-width: 0;
+  flex: 1 1 180px;
+}
+
 .backend-create-form {
   border-bottom: 1px solid var(--line-soft);
   margin-bottom: 20px;

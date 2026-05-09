@@ -8,7 +8,9 @@ use sqlx::{Row, SqlitePool};
 use tokio::task::JoinSet;
 use uuid::Uuid;
 
-use crate::{auth::service::unix_timestamp, error::ApiError, ollama};
+use crate::{
+    auth::service::unix_timestamp, error::ApiError, ollama, permissions::service as permissions,
+};
 
 #[derive(Debug, Clone)]
 pub struct OllamaBackend {
@@ -328,6 +330,7 @@ pub async fn set_model_availability(
 ) -> Result<ModelAvailabilityResponse, ApiError> {
     ensure_backend_exists(pool, backend_id).await?;
     let model_name = validate_model_name(model_name)?;
+    permissions::ensure_model_record(pool, backend_id, &model_name).await?;
     let now = unix_timestamp();
 
     sqlx::query(
@@ -375,6 +378,9 @@ pub async fn set_model_availability_many(
     if model_names.is_empty() {
         return Ok(());
     }
+    for model_name in &model_names {
+        permissions::ensure_model_record(pool, backend_id, model_name).await?;
+    }
 
     let now = unix_timestamp();
     let mut tx = pool.begin().await?;
@@ -410,6 +416,30 @@ pub async fn set_model_availability_many(
     Ok(())
 }
 
+pub async fn ensure_model_record(
+    pool: &SqlitePool,
+    backend_id: &str,
+    model_name: &str,
+) -> Result<(), ApiError> {
+    ensure_backend_exists(pool, backend_id).await?;
+    let model_name = validate_model_name(model_name)?;
+    permissions::ensure_model_record(pool, backend_id, &model_name).await?;
+    Ok(())
+}
+
+pub async fn ensure_model_records(
+    pool: &SqlitePool,
+    backend_id: &str,
+    model_names: &[String],
+) -> Result<(), ApiError> {
+    ensure_backend_exists(pool, backend_id).await?;
+    for model_name in model_names {
+        let model_name = validate_model_name(model_name)?;
+        permissions::ensure_model_record(pool, backend_id, &model_name).await?;
+    }
+    Ok(())
+}
+
 pub async fn ensure_model_enabled(
     pool: &SqlitePool,
     backend_id: &str,
@@ -433,6 +463,28 @@ pub async fn ensure_model_enabled(
         return Err(ApiError::forbidden(
             "model_disabled",
             "This model is disabled by the server admin",
+        ));
+    }
+
+    Ok(())
+}
+
+pub async fn ensure_model_enabled_for_user(
+    pool: &SqlitePool,
+    user_id: &str,
+    backend_id: &str,
+    model_name: &str,
+) -> Result<(), ApiError> {
+    ensure_model_enabled(pool, backend_id, model_name).await?;
+    let model_name = validate_model_name(model_name)?;
+    permissions::ensure_model_record(pool, backend_id, &model_name).await?;
+    let user_tags = permissions::effective_user_tag_ids(pool, user_id).await?;
+    let model_tags = permissions::model_tags(pool, backend_id, &model_name).await?;
+
+    if !permissions::has_matching_tag(&user_tags, &model_tags) {
+        return Err(ApiError::forbidden(
+            "model_not_allowed",
+            "This model is not available to your account",
         ));
     }
 

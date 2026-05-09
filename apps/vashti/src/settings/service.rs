@@ -1,9 +1,12 @@
+use std::collections::{HashMap, HashSet};
+
 use serde::Serialize;
 use sqlx::{Row, SqlitePool};
 
 use crate::{
     auth::service::{self as auth_service, unix_timestamp},
     error::ApiError,
+    permissions::service::{self as permissions, PermissionTagResponse},
     settings::handlers::{
         UpdateAppSettingsRequest, UpdateNetworkSettingsRequest, UpdateToolSettingsRequest,
         UpdateUserSettingsRequest,
@@ -55,6 +58,9 @@ pub struct ToolSettingsResponse {
     pub default_web_search_tool_prompt: &'static str,
     pub web_fetch_tool_prompt: String,
     pub default_web_fetch_tool_prompt: &'static str,
+    pub available_tags: Vec<PermissionTagResponse>,
+    pub default_tool_permission_tags: Vec<PermissionTagResponse>,
+    pub tool_permissions: Vec<ToolPermissionResponse>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -68,6 +74,12 @@ pub struct AvailableToolResponse {
     pub id: &'static str,
     pub label: &'static str,
     pub description: &'static str,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ToolPermissionResponse {
+    pub tool_id: &'static str,
+    pub permission_tags: Vec<PermissionTagResponse>,
 }
 
 #[derive(Debug, Clone)]
@@ -84,12 +96,25 @@ pub struct ToolSettingsPrivate {
     pub web_fetch_tool_prompt: String,
 }
 
-pub async fn get_available_tools(pool: &SqlitePool) -> Result<AvailableToolsResponse, sqlx::Error> {
+pub async fn get_available_tools(
+    pool: &SqlitePool,
+    user_id: &str,
+) -> Result<AvailableToolsResponse, sqlx::Error> {
+    permissions::ensure_tool_records(pool).await?;
     let settings = get_tool_settings_private(pool).await?;
+    let user_tags = permissions::effective_user_tag_ids(pool, user_id).await?;
+    let tool_tags = permissions::tool_tags_by_tool(pool).await?;
     let mut tools = Vec::new();
 
     if settings.tools_enabled {
-        if settings.brave_search_enabled && settings.has_brave_key() {
+        if settings.brave_search_enabled
+            && settings.has_brave_key()
+            && tool_allowed(
+                crate::tools::service::TOOL_BRAVE_WEB_SEARCH,
+                &user_tags,
+                &tool_tags,
+            )
+        {
             tools.push(AvailableToolResponse {
                 id: "brave_web_search",
                 label: "Brave web search",
@@ -97,7 +122,14 @@ pub async fn get_available_tools(pool: &SqlitePool) -> Result<AvailableToolsResp
             });
         }
 
-        if settings.ollama_web_search_enabled && settings.has_ollama_key() {
+        if settings.ollama_web_search_enabled
+            && settings.has_ollama_key()
+            && tool_allowed(
+                crate::tools::service::TOOL_OLLAMA_WEB_SEARCH,
+                &user_tags,
+                &tool_tags,
+            )
+        {
             tools.push(AvailableToolResponse {
                 id: "ollama_web_search",
                 label: "Ollama web search",
@@ -105,7 +137,14 @@ pub async fn get_available_tools(pool: &SqlitePool) -> Result<AvailableToolsResp
             });
         }
 
-        if settings.ollama_web_fetch_enabled && settings.has_ollama_key() {
+        if settings.ollama_web_fetch_enabled
+            && settings.has_ollama_key()
+            && tool_allowed(
+                crate::tools::service::TOOL_OLLAMA_WEB_FETCH,
+                &user_tags,
+                &tool_tags,
+            )
+        {
             tools.push(AvailableToolResponse {
                 id: "ollama_web_fetch",
                 label: "Ollama web fetch",
@@ -113,7 +152,13 @@ pub async fn get_available_tools(pool: &SqlitePool) -> Result<AvailableToolsResp
             });
         }
 
-        if settings.direct_web_fetch_enabled {
+        if settings.direct_web_fetch_enabled
+            && tool_allowed(
+                crate::tools::service::TOOL_DIRECT_WEB_FETCH,
+                &user_tags,
+                &tool_tags,
+            )
+        {
             tools.push(AvailableToolResponse {
                 id: "direct_web_fetch",
                 label: "Direct page fetch",
@@ -150,9 +195,20 @@ pub async fn get_app_settings(pool: &SqlitePool) -> Result<AppSettingsResponse, 
     row_to_app_settings(row)
 }
 
+fn tool_allowed(
+    tool_id: &str,
+    user_tags: &HashSet<String>,
+    tool_tags: &HashMap<String, Vec<String>>,
+) -> bool {
+    tool_tags
+        .get(tool_id)
+        .is_some_and(|tags| permissions::has_matching_tag(user_tags, tags))
+}
+
 pub async fn get_tool_settings(pool: &SqlitePool) -> Result<ToolSettingsResponse, sqlx::Error> {
+    permissions::ensure_tool_records(pool).await?;
     let private = get_tool_settings_private(pool).await?;
-    Ok(private.to_response())
+    private.to_response(pool).await
 }
 
 pub async fn get_tool_settings_private(
@@ -252,9 +308,17 @@ pub async fn update_tool_settings(
     .fetch_one(pool)
     .await?;
 
-    row_to_tool_settings_private(row)
-        .map(|settings| settings.to_response())
-        .map_err(ApiError::from)
+    if let Some(tags) = payload.default_tool_permission_tags {
+        permissions::update_default_tool_tags(pool, tags).await?;
+    }
+    if let Some(tool_permissions) = payload.tool_permissions {
+        for update in tool_permissions {
+            permissions::replace_tool_tags(pool, &update.tool_id, update.permission_tags).await?;
+        }
+    }
+
+    let settings = row_to_tool_settings_private(row).map_err(ApiError::from)?;
+    settings.to_response(pool).await.map_err(ApiError::from)
 }
 
 pub async fn update_app_settings(
@@ -523,8 +587,25 @@ fn row_to_tool_settings_private(
 }
 
 impl ToolSettingsPrivate {
-    pub fn to_response(&self) -> ToolSettingsResponse {
-        ToolSettingsResponse {
+    pub async fn to_response(
+        &self,
+        pool: &SqlitePool,
+    ) -> Result<ToolSettingsResponse, sqlx::Error> {
+        let available_tags = permissions::known_tags(pool).await?;
+        let default_tag_ids = permissions::default_tool_tag_ids(pool).await?;
+        let default_tool_permission_tags =
+            permissions::tag_responses(pool, &default_tag_ids).await?;
+        let tags_by_tool = permissions::tool_tags_by_tool(pool).await?;
+        let mut tool_permissions = Vec::new();
+        for tool_id in permissions::tool_ids() {
+            let tags = tags_by_tool.get(tool_id).cloned().unwrap_or_default();
+            tool_permissions.push(ToolPermissionResponse {
+                tool_id,
+                permission_tags: permissions::tag_responses(pool, &tags).await?,
+            });
+        }
+
+        Ok(ToolSettingsResponse {
             tools_enabled: self.tools_enabled,
             ollama_web_search_enabled: self.ollama_web_search_enabled,
             ollama_web_fetch_enabled: self.ollama_web_fetch_enabled,
@@ -538,7 +619,10 @@ impl ToolSettingsPrivate {
             default_web_search_tool_prompt: DEFAULT_WEB_SEARCH_TOOL_PROMPT,
             web_fetch_tool_prompt: self.web_fetch_tool_prompt.clone(),
             default_web_fetch_tool_prompt: DEFAULT_WEB_FETCH_TOOL_PROMPT,
-        }
+            available_tags,
+            default_tool_permission_tags,
+            tool_permissions,
+        })
     }
 
     pub fn has_ollama_key(&self) -> bool {

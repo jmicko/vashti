@@ -11,6 +11,7 @@ use crate::{
     backends::service::{self, BackendResponse},
     error::ApiError,
     ollama,
+    permissions::service::{self as permissions, PermissionTagResponse},
 };
 
 #[derive(Debug, Serialize)]
@@ -74,6 +75,8 @@ pub struct ModelResponse {
 #[derive(Debug, Serialize)]
 pub struct AdminModelsResponse {
     pub backends: Vec<AdminBackendModelsResponse>,
+    pub available_tags: Vec<PermissionTagResponse>,
+    pub default_permission_tags: Vec<PermissionTagResponse>,
 }
 
 #[derive(Debug, Serialize)]
@@ -89,6 +92,7 @@ pub struct AdminModelResponse {
     pub supports_thinking: bool,
     pub capabilities: Vec<String>,
     pub is_enabled: bool,
+    pub permission_tags: Vec<PermissionTagResponse>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -108,6 +112,29 @@ pub struct BulkUpdateModelAvailabilityRequest {
 #[derive(Debug, Serialize)]
 pub struct BulkModelAvailabilityResponse {
     pub ok: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateModelTagsRequest {
+    pub backend_id: String,
+    pub model_name: String,
+    pub permission_tags: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UpdateModelTagsResponse {
+    pub permission_tags: Vec<PermissionTagResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateDefaultModelTagsRequest {
+    pub permission_tags: Vec<String>,
+    pub apply_to_existing: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UpdateDefaultModelTagsResponse {
+    pub default_permission_tags: Vec<PermissionTagResponse>,
 }
 
 pub async fn list_backends(
@@ -187,7 +214,9 @@ pub async fn list_models(
     State(state): State<AppState>,
     jar: CookieJar,
 ) -> Result<Json<ModelsResponse>, ApiError> {
-    auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
+    let user =
+        auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
+    let user_tags = permissions::effective_user_tag_ids(&state.db, &user.id).await?;
 
     let mut response_backends = Vec::new();
 
@@ -198,9 +227,24 @@ pub async fn list_models(
                 service::record_backend_health(&state.db, &backend.id, "ok", None).await?;
                 let availability =
                     service::model_availability_by_backend(&state.db, &backend.id).await?;
+                service::ensure_model_records(
+                    &state.db,
+                    &backend.id,
+                    &models
+                        .iter()
+                        .map(|model| model.name.clone())
+                        .collect::<Vec<_>>(),
+                )
+                .await?;
+                let model_tags = permissions::model_tags_by_backend(&state.db, &backend.id).await?;
                 models
                     .into_iter()
                     .filter(|model| availability.get(&model.name).copied().unwrap_or(true))
+                    .filter(|model| {
+                        model_tags
+                            .get(&model.name)
+                            .is_some_and(|tags| permissions::has_matching_tag(&user_tags, tags))
+                    })
                     .map(|model| ModelResponse {
                         name: model.name,
                         supports_images: model.supports_images,
@@ -238,6 +282,9 @@ pub async fn list_admin_models(
 ) -> Result<Json<AdminModelsResponse>, ApiError> {
     auth::service::require_admin(&state.db, &jar, &state.config.session_cookie_name).await?;
 
+    let available_tags = permissions::known_tags(&state.db).await?;
+    let default_tag_ids = permissions::default_model_tag_ids(&state.db).await?;
+    let default_permission_tags = permissions::tag_responses(&state.db, &default_tag_ids).await?;
     let mut response_backends = Vec::new();
 
     for backend in service::list_enabled_backends(&state.db).await? {
@@ -247,16 +294,32 @@ pub async fn list_admin_models(
                 service::record_backend_health(&state.db, &backend.id, "ok", None).await?;
                 let availability =
                     service::model_availability_by_backend(&state.db, &backend.id).await?;
-                models
-                    .into_iter()
-                    .map(|model| AdminModelResponse {
+                service::ensure_model_records(
+                    &state.db,
+                    &backend.id,
+                    &models
+                        .iter()
+                        .map(|model| model.name.clone())
+                        .collect::<Vec<_>>(),
+                )
+                .await?;
+                let model_tags = permissions::model_tags_by_backend(&state.db, &backend.id).await?;
+                let mut responses = Vec::new();
+                for model in models {
+                    let permission_tags = match model_tags.get(&model.name) {
+                        Some(tags) => permissions::tag_responses(&state.db, tags).await?,
+                        None => Vec::new(),
+                    };
+                    responses.push(AdminModelResponse {
+                        permission_tags,
                         is_enabled: availability.get(&model.name).copied().unwrap_or(true),
                         name: model.name,
                         supports_images: model.supports_images,
                         supports_thinking: model.supports_thinking,
                         capabilities: model.capabilities,
-                    })
-                    .collect()
+                    });
+                }
+                responses
             }
             Err(error) => {
                 let message = error.to_string();
@@ -278,6 +341,8 @@ pub async fn list_admin_models(
 
     Ok(Json(AdminModelsResponse {
         backends: response_backends,
+        available_tags,
+        default_permission_tags,
     }))
 }
 
@@ -313,4 +378,42 @@ pub async fn update_backend_model_availability(
     .await?;
 
     Ok(Json(BulkModelAvailabilityResponse { ok: true }))
+}
+
+pub async fn update_model_tags(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Json(payload): Json<UpdateModelTagsRequest>,
+) -> Result<Json<UpdateModelTagsResponse>, ApiError> {
+    auth::service::require_admin(&state.db, &jar, &state.config.session_cookie_name).await?;
+    service::ensure_model_record(&state.db, &payload.backend_id, &payload.model_name).await?;
+    let tags = permissions::replace_model_tags(
+        &state.db,
+        &payload.backend_id,
+        &payload.model_name,
+        payload.permission_tags,
+    )
+    .await?;
+    let permission_tags = permissions::tag_responses(&state.db, &tags).await?;
+
+    Ok(Json(UpdateModelTagsResponse { permission_tags }))
+}
+
+pub async fn update_default_model_tags(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Json(payload): Json<UpdateDefaultModelTagsRequest>,
+) -> Result<Json<UpdateDefaultModelTagsResponse>, ApiError> {
+    auth::service::require_admin(&state.db, &jar, &state.config.session_cookie_name).await?;
+    let tags = permissions::update_default_model_tags(
+        &state.db,
+        payload.permission_tags,
+        payload.apply_to_existing.unwrap_or(false),
+    )
+    .await?;
+    let default_permission_tags = permissions::tag_responses(&state.db, &tags).await?;
+
+    Ok(Json(UpdateDefaultModelTagsResponse {
+        default_permission_tags,
+    }))
 }

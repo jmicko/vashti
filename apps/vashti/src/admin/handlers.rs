@@ -10,11 +10,13 @@ use crate::{
     app_state::AppState,
     auth,
     error::ApiError,
+    permissions::service::PermissionTagResponse,
 };
 
 #[derive(Debug, Serialize)]
 pub struct ListUsersResponse {
     pub users: Vec<AdminUserResponse>,
+    pub available_tags: Vec<PermissionTagResponse>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -30,6 +32,7 @@ pub struct CreateUserRequest {
 pub struct UpdateUserRequest {
     pub role: Option<String>,
     pub is_disabled: Option<bool>,
+    pub permission_tags: Option<Vec<String>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -48,8 +51,12 @@ pub async fn list_users(
 ) -> Result<Json<ListUsersResponse>, ApiError> {
     auth::service::require_admin(&state.db, &jar, &state.config.session_cookie_name).await?;
     let users = service::list_users(&state.db).await?;
+    let available_tags = crate::permissions::service::known_tags(&state.db).await?;
 
-    Ok(Json(ListUsersResponse { users }))
+    Ok(Json(ListUsersResponse {
+        users,
+        available_tags,
+    }))
 }
 
 pub async fn create_user(

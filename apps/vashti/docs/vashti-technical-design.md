@@ -487,7 +487,7 @@ Notes:
 
 ### 3.2.13 `model_availability`
 
-Global admin allowlist for base Ollama models returned by configured backends.
+Global admin on/off switch for base Ollama models returned by configured backends.
 
 Columns:
 
@@ -500,32 +500,61 @@ Columns:
 
 Notes:
 
-* missing rows are treated as enabled, so new installs and newly pulled models are available by default
+* model rows are created when Vashti first sees a model from an Ollama backend
+* newly discovered models receive the current default model permission tags
 * admins can disable individual models or bulk enable/disable all currently returned models for a backend
-* `GET /api/models` returns only enabled models
+* `GET /api/models` returns only enabled models whose permission tags intersect the current user's effective tags
 * generation endpoints must check this table server-side; frontend filtering is not sufficient
-* this is a simple global switch and does not replace the later tag-based access system
+* disabled models are unavailable to everyone, including admins, until re-enabled; admins may still edit their tags while disabled
 
-### 3.2.14 Future model access and quota tables
+### 3.2.14 Permission tags
 
-This is not required for the first persona slice, but the design should leave room for tag-based model/persona access control.
+Permission tags are lightweight labels used to grant access to models, tools, and later personas/quotas without a separate group-management system.
 
-Concepts:
+Effective user tags:
 
-* tags are lightweight labels used for access rules and quotas
-* users may have explicit tags such as `cloud` or `power-user`
-* every user also has an implicit user tag, such as `user:dane`
-* implicit user tags allow per-user rules without a separate per-user policy UI
+* every enabled user has `system:everyone`
+* every enabled admin also has `system:admin`
+* every enabled user has an implicit stable user tag, `user:<user_id>`, displayed as `@username`
+* admins may add explicit group tags to users, such as `group:power-users`, displayed as `power-users`
+
+Resource access rule:
+
+```text
+resource is enabled
+AND resource permission tag list is non-empty
+AND resource tags intersect current user's effective tags
+```
+
+An empty resource tag list means nobody can use it. Use `everyone` for broad access.
+
+Tag UI behavior:
+
 * UI tag pickers should search existing tags and allow creating a new tag when no result matches
-* user tags should render with a user icon to distinguish them from general tags
+* user tags should display as `@username` but store the stable `user:<user_id>` ID
+* unused group tags disappear from suggestions when they are no longer applied anywhere
+* default model/tool tags are applied to newly discovered models/tools, but individual resources may be customized afterward
 
-Likely future tables:
+Tables:
 
-* `tags`
-* `user_tags`
-* `model_access_rules`
-* `backend_access_rules`
-* `persona_quota_rules`
+* `user_permission_tags`
+  * `user_id` TEXT NOT NULL REFERENCES `users`(`id`) ON DELETE CASCADE
+  * `tag_id` TEXT NOT NULL
+  * explicit user group tags only; implicit system/user tags are computed
+* `model_permission_tags`
+  * `backend_id` TEXT NOT NULL
+  * `model_name` TEXT NOT NULL
+  * `tag_id` TEXT NOT NULL
+  * references `model_availability` and controls base model access
+* `tool_permission_state`
+  * `tool_id` TEXT PRIMARY KEY
+  * records that a tool has been initialized for default-tag application
+* `tool_permission_tags`
+  * `tool_id` TEXT NOT NULL REFERENCES `tool_permission_state`(`tool_id`) ON DELETE CASCADE
+  * `tag_id` TEXT NOT NULL
+  * controls tool access
+* `app_settings.default_model_permission_tags_json`
+* `app_settings.default_tool_permission_tags_json`
 
 Access rules may apply to:
 
@@ -534,7 +563,12 @@ Access rules may apply to:
 * public persona usage
 * hosted persona count
 * public persona count
-* future tool access
+* tool access
+
+Persona access must perform a double check:
+
+* user must have access to the persona/custom model
+* user must also have access to the persona's underlying base model
 
 Quota rules:
 
