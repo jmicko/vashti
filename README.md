@@ -4,6 +4,8 @@ Vashti is a lightweight self-hosted chat UI for Ollama. It is built to be simple
 
 The goal is a smaller, simpler alternative for people who want a chat interface for Ollama without Docker stacks, Python environments, or a large platform to manage.
 
+Check it out at [https://www.vashti.chat](https://www.vashti.chat)
+
 ## Status
 
 Vashti is pre-release software. It is usable for testing, but the schema and release flow are still moving.
