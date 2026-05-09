@@ -227,8 +227,9 @@ type ChatSummary = {
 
 type ChatToolPreferences = {
   tool_use_enabled: boolean;
-  web_search_enabled: boolean;
-  web_fetch_enabled: boolean;
+  tools: Record<string, boolean>;
+  web_search_enabled?: boolean;
+  web_fetch_enabled?: boolean;
 };
 
 type ChatDetail = {
@@ -511,8 +512,7 @@ const rootSiblingGroupKey = "__root__";
 const newChatModeStorageKey = "vashti:new-chat-mode";
 const defaultToolPreferences: ChatToolPreferences = {
   tool_use_enabled: true,
-  web_search_enabled: true,
-  web_fetch_enabled: true
+  tools: {}
 };
 
 function isSettingsSection(value: string | undefined): value is SettingsSection {
@@ -538,14 +538,7 @@ function modelSupportsToolUse(model: ModelInfo | null | undefined) {
 }
 
 function toolPreferenceEnabled(preferences: ChatToolPreferences, toolId: string) {
-  switch (toolId) {
-    case "web_search":
-      return preferences.web_search_enabled;
-    case "web_fetch":
-      return preferences.web_fetch_enabled;
-    default:
-      return true;
-  }
+  return preferences.tools?.[toolId] ?? true;
 }
 
 function updateToolPreference(
@@ -553,23 +546,31 @@ function updateToolPreference(
   toolId: string,
   isEnabled: boolean
 ): ChatToolPreferences {
-  switch (toolId) {
-    case "web_search":
-      return { ...preferences, web_search_enabled: isEnabled };
-    case "web_fetch":
-      return { ...preferences, web_fetch_enabled: isEnabled };
-    default:
-      return preferences;
-  }
+  return {
+    tool_use_enabled: preferences.tool_use_enabled,
+    tools: {
+      ...(preferences.tools ?? {}),
+      [toolId]: isEnabled
+    }
+  };
 }
 
 function normalizeToolPreferences(
   preferences: Partial<ChatToolPreferences> | null | undefined
 ): ChatToolPreferences {
+  const tools = { ...(preferences?.tools ?? {}) };
+  if (preferences?.web_search_enabled !== undefined) {
+    tools.brave_web_search = preferences.web_search_enabled;
+    tools.ollama_web_search = preferences.web_search_enabled;
+  }
+  if (preferences?.web_fetch_enabled !== undefined) {
+    tools.ollama_web_fetch = preferences.web_fetch_enabled;
+    tools.direct_web_fetch = preferences.web_fetch_enabled;
+  }
+
   return {
     tool_use_enabled: preferences?.tool_use_enabled ?? defaultToolPreferences.tool_use_enabled,
-    web_search_enabled: preferences?.web_search_enabled ?? defaultToolPreferences.web_search_enabled,
-    web_fetch_enabled: preferences?.web_fetch_enabled ?? defaultToolPreferences.web_fetch_enabled
+    tools
   };
 }
 
@@ -5101,7 +5102,7 @@ function ToolUsageCard({ usage }: { usage: ToolUsageRecord }) {
 }
 
 function toolIcon(toolName: string) {
-  return toolName === "web_search" ? <Search /> : <FileText />;
+  return toolName.includes("search") ? <Search /> : <FileText />;
 }
 
 function formatToolValue(value: unknown) {
@@ -5983,7 +5984,7 @@ function StartChatComposer({
                   {availableTools.map((tool) => (
                     <ToggleSwitch
                       key={tool.id}
-                      icon={tool.id === "web_search" ? <Search /> : <FileText />}
+                      icon={toolIcon(tool.id)}
                       label={tool.label}
                       description={tool.description}
                       checked={toolPreferenceEnabled(currentToolPreferences, tool.id)}

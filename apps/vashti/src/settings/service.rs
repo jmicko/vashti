@@ -10,9 +10,9 @@ use crate::{
     },
 };
 
-pub const DEFAULT_TOOL_SYSTEM_PROMPT: &str = "Tool behavior guidance:\n- Current date: {current_date} UTC.\n- Use web_search proactively when the user asks for current, recent, latest, news, prices, schedules, releases, versions, or anything likely to have changed.\n- Use web_fetch when the user provides a URL or when a search result needs more detail.\n- Treat tool results as current external data even when their dates are newer than your training cutoff.\n- Answer from the tool results and include source URLs when they are available.";
+pub const DEFAULT_TOOL_SYSTEM_PROMPT: &str = "Tool behavior guidance:\n- Current date: {current_date} UTC.\n- Use an available web search tool proactively when the user asks for current, recent, latest, news, prices, schedules, releases, versions, or anything likely to have changed.\n- Use an available web fetch tool when the user provides a URL or when a search result needs more detail.\n- Treat tool results as current external data even when their dates are newer than your training cutoff.\n- Answer from the tool results and include source URLs when they are available.\n- Only call tools by the exact names listed as available in this chat.";
 pub const DEFAULT_WEB_SEARCH_TOOL_PROMPT: &str = "Search the web for current public information. Returns compact result titles, URLs, and snippets. Use this for current or time-sensitive questions, latest news, recent releases, prices, schedules, or facts that may have changed.";
-pub const DEFAULT_WEB_FETCH_TOOL_PROMPT: &str = "Fetch a public HTTP or HTTPS page by URL and return readable text plus discovered links. Use this after web_search when a result needs more detail, or when the user asks about a specific URL.";
+pub const DEFAULT_WEB_FETCH_TOOL_PROMPT: &str = "Fetch a public HTTP or HTTPS page by URL and return readable text plus discovered links. Use this after web search when a result needs more detail, or when the user asks about a specific URL.";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AppSettingsResponse {
@@ -89,23 +89,35 @@ pub async fn get_available_tools(pool: &SqlitePool) -> Result<AvailableToolsResp
     let mut tools = Vec::new();
 
     if settings.tools_enabled {
-        if (settings.brave_search_enabled && settings.has_brave_key())
-            || (settings.ollama_web_search_enabled && settings.has_ollama_key())
-        {
+        if settings.brave_search_enabled && settings.has_brave_key() {
             tools.push(AvailableToolResponse {
-                id: "web_search",
-                label: "Web search",
-                description: "Search the web and return compact result lists.",
+                id: "brave_web_search",
+                label: "Brave web search",
+                description: "Search the web with Brave Search.",
             });
         }
 
-        if (settings.ollama_web_fetch_enabled && settings.has_ollama_key())
-            || settings.direct_web_fetch_enabled
-        {
+        if settings.ollama_web_search_enabled && settings.has_ollama_key() {
             tools.push(AvailableToolResponse {
-                id: "web_fetch",
-                label: "Web fetch",
-                description: "Fetch a public HTTP/HTTPS page for more detail.",
+                id: "ollama_web_search",
+                label: "Ollama web search",
+                description: "Search the web through Ollama's hosted search API.",
+            });
+        }
+
+        if settings.ollama_web_fetch_enabled && settings.has_ollama_key() {
+            tools.push(AvailableToolResponse {
+                id: "ollama_web_fetch",
+                label: "Ollama web fetch",
+                description: "Fetch pages through Ollama's hosted fetch API.",
+            });
+        }
+
+        if settings.direct_web_fetch_enabled {
+            tools.push(AvailableToolResponse {
+                id: "direct_web_fetch",
+                label: "Direct page fetch",
+                description: "Fetch public HTTP/HTTPS pages from the Vashti server.",
             });
         }
     }

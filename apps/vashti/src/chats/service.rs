@@ -13,14 +13,12 @@ use crate::{
             SetActiveChildRequest, SetActiveRevisionRequest, SetActiveRootRequest,
             UpdateChatRequest,
         },
-        models::{
-            ChatDetail, ChatMessage, ChatMessageRevision, ChatSummary, ChatToolPreferences,
-        },
+        models::{ChatDetail, ChatMessage, ChatMessageRevision, ChatSummary, ChatToolPreferences},
     },
     error::ApiError,
     ollama::models::OllamaChatMessage,
     personas::service::{self as persona_service, ResolvedPersonaVersion},
-    tools::service::ToolSelection,
+    tools::service::{self as tools_service, ToolSelection},
     uploads,
 };
 
@@ -74,8 +72,14 @@ impl From<ChatToolPreferences> for ToolSelection {
     fn from(preferences: ChatToolPreferences) -> Self {
         Self {
             tool_use_enabled: preferences.tool_use_enabled,
-            web_search_enabled: preferences.web_search_enabled,
-            web_fetch_enabled: preferences.web_fetch_enabled,
+            brave_web_search_enabled: preferences
+                .tool_enabled(tools_service::TOOL_BRAVE_WEB_SEARCH),
+            ollama_web_search_enabled: preferences
+                .tool_enabled(tools_service::TOOL_OLLAMA_WEB_SEARCH),
+            ollama_web_fetch_enabled: preferences
+                .tool_enabled(tools_service::TOOL_OLLAMA_WEB_FETCH),
+            direct_web_fetch_enabled: preferences
+                .tool_enabled(tools_service::TOOL_DIRECT_WEB_FETCH),
         }
     }
 }
@@ -169,6 +173,7 @@ pub async fn create_chat(
 
     let now = unix_timestamp();
     let chat_id = Uuid::new_v4().to_string();
+    let tool_preferences_json = serialize_tool_preferences(&tool_preferences)?;
 
     sqlx::query(
         r#"
@@ -182,13 +187,14 @@ pub async fn create_chat(
             tool_use_enabled,
             web_search_tool_enabled,
             web_fetch_tool_enabled,
+            tool_preferences_json,
             title,
             chat_mode,
             created_at,
             updated_at,
             last_message_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'standard', ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'standard', ?, ?, ?)
         "#,
     )
     .bind(&chat_id)
@@ -202,8 +208,9 @@ pub async fn create_chat(
             .map(|persona| persona.persona_version_id.as_str()),
     )
     .bind(i64::from(tool_preferences.tool_use_enabled))
-    .bind(i64::from(tool_preferences.web_search_enabled))
-    .bind(i64::from(tool_preferences.web_fetch_enabled))
+    .bind(i64::from(legacy_web_search_enabled(&tool_preferences)))
+    .bind(i64::from(legacy_web_fetch_enabled(&tool_preferences)))
+    .bind(tool_preferences_json)
     .bind(title)
     .bind(now)
     .bind(now)
@@ -232,6 +239,7 @@ pub async fn get_chat(
                c.tool_use_enabled,
                c.web_search_tool_enabled,
                c.web_fetch_tool_enabled,
+               c.tool_preferences_json,
                c.active_root_message_id,
                c.created_at,
                c.updated_at
@@ -261,9 +269,7 @@ pub async fn update_chat(
     payload: UpdateChatRequest,
 ) -> Result<ChatDetail, ApiError> {
     let current = get_chat(pool, user_id, chat_id).await?;
-    let tool_preferences = payload
-        .tool_preferences
-        .unwrap_or(current.tool_preferences);
+    let tool_preferences = payload.tool_preferences.unwrap_or(current.tool_preferences);
     let has_base_model_update =
         payload.default_backend_id.is_some() || payload.default_model_name.is_some();
     let title = payload.title.map(normalized_title).unwrap_or(current.title);
@@ -317,6 +323,7 @@ pub async fn update_chat(
         ensure_enabled_backend(pool, &backend_id).await?;
         backends_service::ensure_model_enabled(pool, &backend_id, &model_name).await?;
     }
+    let tool_preferences_json = serialize_tool_preferences(&tool_preferences)?;
 
     sqlx::query(
         r#"
@@ -329,6 +336,7 @@ pub async fn update_chat(
             tool_use_enabled = ?,
             web_search_tool_enabled = ?,
             web_fetch_tool_enabled = ?,
+            tool_preferences_json = ?,
             updated_at = ?
         WHERE id = ?
           AND user_id = ?
@@ -340,8 +348,9 @@ pub async fn update_chat(
     .bind(persona_id)
     .bind(persona_version_id)
     .bind(i64::from(tool_preferences.tool_use_enabled))
-    .bind(i64::from(tool_preferences.web_search_enabled))
-    .bind(i64::from(tool_preferences.web_fetch_enabled))
+    .bind(i64::from(legacy_web_search_enabled(&tool_preferences)))
+    .bind(i64::from(legacy_web_fetch_enabled(&tool_preferences)))
+    .bind(tool_preferences_json)
     .bind(unix_timestamp())
     .bind(chat_id)
     .bind(user_id)
@@ -592,7 +601,7 @@ pub async fn prepare_generation(
         tool_preferences,
         attachments,
     } = payload;
-    let tool_preferences = tool_preferences.unwrap_or(chat.tool_preferences);
+    let tool_preferences = tool_preferences.unwrap_or_else(|| chat.tool_preferences.clone());
     let content_text = user_message.content_text.trim().to_string();
     if content_text.is_empty() {
         return Err(ApiError::bad_request(
@@ -794,7 +803,7 @@ pub async fn prepare_regeneration(
         attachments: _,
     } = payload;
     let chat = get_chat(pool, user_id, chat_id).await?;
-    let tool_preferences = tool_preferences.unwrap_or(chat.tool_preferences);
+    let tool_preferences = tool_preferences.unwrap_or_else(|| chat.tool_preferences.clone());
     let latest_model = latest_assistant_model(pool, user_id, chat_id).await?;
     let fallback_model = MessageModel {
         backend_id: target.backend_id.clone().unwrap_or_default(),
@@ -954,7 +963,7 @@ pub async fn prepare_branch_generation(
         tool_preferences,
         attachments,
     } = payload;
-    let tool_preferences = tool_preferences.unwrap_or(chat.tool_preferences);
+    let tool_preferences = tool_preferences.unwrap_or_else(|| chat.tool_preferences.clone());
     let latest_model = latest_assistant_model(pool, user_id, chat_id).await?;
     let resolved = resolve_generation_model(
         pool,
@@ -2095,6 +2104,7 @@ async fn ensure_message_owner(
 }
 
 fn row_to_chat_detail(row: sqlx::sqlite::SqliteRow) -> Result<ChatDetail, sqlx::Error> {
+    let tool_preferences = row_to_tool_preferences(&row)?;
     Ok(ChatDetail {
         id: row.try_get("id")?,
         title: row.try_get("title")?,
@@ -2104,15 +2114,61 @@ fn row_to_chat_detail(row: sqlx::sqlite::SqliteRow) -> Result<ChatDetail, sqlx::
         persona_id: row.try_get("persona_id")?,
         persona_version_id: row.try_get("persona_version_id")?,
         persona_name: row.try_get("persona_name")?,
-        tool_preferences: ChatToolPreferences {
-            tool_use_enabled: row.try_get::<i64, _>("tool_use_enabled")? != 0,
-            web_search_enabled: row.try_get::<i64, _>("web_search_tool_enabled")? != 0,
-            web_fetch_enabled: row.try_get::<i64, _>("web_fetch_tool_enabled")? != 0,
-        },
+        tool_preferences,
         active_root_message_id: row.try_get("active_root_message_id")?,
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
     })
+}
+
+fn serialize_tool_preferences(preferences: &ChatToolPreferences) -> Result<String, ApiError> {
+    serde_json::to_string(preferences)
+        .map_err(|_| ApiError::internal("Failed to serialize chat tool preferences"))
+}
+
+fn row_to_tool_preferences(
+    row: &sqlx::sqlite::SqliteRow,
+) -> Result<ChatToolPreferences, sqlx::Error> {
+    if let Some(json) = row.try_get::<Option<String>, _>("tool_preferences_json")? {
+        if let Ok(preferences) = serde_json::from_str::<ChatToolPreferences>(&json) {
+            return Ok(preferences);
+        }
+    }
+
+    let mut preferences = ChatToolPreferences {
+        tool_use_enabled: row.try_get::<i64, _>("tool_use_enabled")? != 0,
+        ..ChatToolPreferences::default()
+    };
+    let search_enabled = row.try_get::<i64, _>("web_search_tool_enabled")? != 0;
+    let fetch_enabled = row.try_get::<i64, _>("web_fetch_tool_enabled")? != 0;
+    preferences.tools.insert(
+        tools_service::TOOL_BRAVE_WEB_SEARCH.to_string(),
+        search_enabled,
+    );
+    preferences.tools.insert(
+        tools_service::TOOL_OLLAMA_WEB_SEARCH.to_string(),
+        search_enabled,
+    );
+    preferences.tools.insert(
+        tools_service::TOOL_OLLAMA_WEB_FETCH.to_string(),
+        fetch_enabled,
+    );
+    preferences.tools.insert(
+        tools_service::TOOL_DIRECT_WEB_FETCH.to_string(),
+        fetch_enabled,
+    );
+
+    Ok(preferences)
+}
+
+fn legacy_web_search_enabled(preferences: &ChatToolPreferences) -> bool {
+    preferences.tool_enabled(tools_service::TOOL_BRAVE_WEB_SEARCH)
+        || preferences.tool_enabled(tools_service::TOOL_OLLAMA_WEB_SEARCH)
+}
+
+fn legacy_web_fetch_enabled(preferences: &ChatToolPreferences) -> bool {
+    preferences.tool_enabled(tools_service::TOOL_OLLAMA_WEB_FETCH)
+        || preferences.tool_enabled(tools_service::TOOL_DIRECT_WEB_FETCH)
 }
 
 fn row_to_message(row: sqlx::sqlite::SqliteRow) -> Result<ChatMessage, sqlx::Error> {

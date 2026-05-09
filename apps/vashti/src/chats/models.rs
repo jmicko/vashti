@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 use crate::uploads::models::Attachment;
 
@@ -17,20 +18,25 @@ pub struct ChatSummary {
     pub message_count: i64,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ChatToolPreferences {
     pub tool_use_enabled: bool,
-    pub web_search_enabled: bool,
-    pub web_fetch_enabled: bool,
+    #[serde(default)]
+    pub tools: HashMap<String, bool>,
 }
 
 impl Default for ChatToolPreferences {
     fn default() -> Self {
         Self {
             tool_use_enabled: true,
-            web_search_enabled: true,
-            web_fetch_enabled: true,
+            tools: HashMap::new(),
         }
+    }
+}
+
+impl ChatToolPreferences {
+    pub fn tool_enabled(&self, tool_id: &str) -> bool {
+        self.tools.get(tool_id).copied().unwrap_or(true)
     }
 }
 

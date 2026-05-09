@@ -12,20 +12,28 @@ use crate::{
 const MAX_SEARCH_RESULTS: u64 = 10;
 const MAX_FETCH_BYTES: usize = 512 * 1024;
 const MAX_TOOL_RESULT_CHARS: usize = 24_000;
+pub const TOOL_BRAVE_WEB_SEARCH: &str = "brave_web_search";
+pub const TOOL_OLLAMA_WEB_SEARCH: &str = "ollama_web_search";
+pub const TOOL_OLLAMA_WEB_FETCH: &str = "ollama_web_fetch";
+pub const TOOL_DIRECT_WEB_FETCH: &str = "direct_web_fetch";
 
 #[derive(Clone, Copy, Debug)]
 pub struct ToolSelection {
     pub tool_use_enabled: bool,
-    pub web_search_enabled: bool,
-    pub web_fetch_enabled: bool,
+    pub brave_web_search_enabled: bool,
+    pub ollama_web_search_enabled: bool,
+    pub ollama_web_fetch_enabled: bool,
+    pub direct_web_fetch_enabled: bool,
 }
 
 impl Default for ToolSelection {
     fn default() -> Self {
         Self {
             tool_use_enabled: true,
-            web_search_enabled: true,
-            web_fetch_enabled: true,
+            brave_web_search_enabled: true,
+            ollama_web_search_enabled: true,
+            ollama_web_fetch_enabled: true,
+            direct_web_fetch_enabled: true,
         }
     }
 }
@@ -39,54 +47,43 @@ pub fn chat_tools(settings: &ToolSettingsPrivate, selection: ToolSelection) -> V
     }
 
     let mut tools = Vec::new();
-    if selection.web_search_enabled
-        && ((settings.brave_search_enabled && settings.has_brave_key())
-            || (settings.ollama_web_search_enabled && settings.has_ollama_key()))
+    if selection.brave_web_search_enabled
+        && settings.brave_search_enabled
+        && settings.has_brave_key()
     {
-        tools.push(OllamaTool {
-            kind: "function".to_string(),
-            function: OllamaToolFunction {
-                name: "web_search".to_string(),
-                description: render_prompt(&settings.web_search_tool_prompt),
-                parameters: json!({
-                    "type": "object",
-                    "required": ["query"],
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "The search query."
-                        },
-                        "max_results": {
-                            "type": "integer",
-                            "description": "Maximum number of search results to return. Defaults to 5 and cannot exceed 10."
-                        }
-                    }
-                }),
-            },
-        });
+        tools.push(web_search_tool(
+            TOOL_BRAVE_WEB_SEARCH,
+            "Search the web using Vashti's Brave Search integration.",
+            &settings.web_search_tool_prompt,
+        ));
+    }
+    if selection.ollama_web_search_enabled
+        && settings.ollama_web_search_enabled
+        && settings.has_ollama_key()
+    {
+        tools.push(web_search_tool(
+            TOOL_OLLAMA_WEB_SEARCH,
+            "Search the web using Ollama's hosted search API.",
+            &settings.web_search_tool_prompt,
+        ));
     }
 
-    if selection.web_fetch_enabled
-        && ((settings.ollama_web_fetch_enabled && settings.has_ollama_key())
-            || settings.direct_web_fetch_enabled)
+    if selection.ollama_web_fetch_enabled
+        && settings.ollama_web_fetch_enabled
+        && settings.has_ollama_key()
     {
-        tools.push(OllamaTool {
-            kind: "function".to_string(),
-            function: OllamaToolFunction {
-                name: "web_fetch".to_string(),
-                description: render_prompt(&settings.web_fetch_tool_prompt),
-                parameters: json!({
-                    "type": "object",
-                    "required": ["url"],
-                    "properties": {
-                        "url": {
-                            "type": "string",
-                            "description": "The HTTP or HTTPS URL to fetch."
-                        }
-                    }
-                }),
-            },
-        });
+        tools.push(web_fetch_tool(
+            TOOL_OLLAMA_WEB_FETCH,
+            "Fetch a public page using Ollama's hosted fetch API.",
+            &settings.web_fetch_tool_prompt,
+        ));
+    }
+    if selection.direct_web_fetch_enabled && settings.direct_web_fetch_enabled {
+        tools.push(web_fetch_tool(
+            TOOL_DIRECT_WEB_FETCH,
+            "Fetch a public page directly from Vashti.",
+            &settings.web_fetch_tool_prompt,
+        ));
     }
 
     tools
@@ -102,10 +99,15 @@ pub fn tool_system_prompt(settings: &ToolSettingsPrivate, tools: &[OllamaTool]) 
     } else {
         available_names.join(", ")
     };
-    let disabled = ["web_search", "web_fetch"]
-        .into_iter()
-        .filter(|tool_name| !available_names.contains(tool_name))
-        .collect::<Vec<_>>();
+    let disabled = [
+        TOOL_BRAVE_WEB_SEARCH,
+        TOOL_OLLAMA_WEB_SEARCH,
+        TOOL_OLLAMA_WEB_FETCH,
+        TOOL_DIRECT_WEB_FETCH,
+    ]
+    .into_iter()
+    .filter(|tool_name| !available_names.contains(tool_name))
+    .collect::<Vec<_>>();
     let disabled = if disabled.is_empty() {
         "none".to_string()
     } else {
@@ -120,6 +122,50 @@ pub fn tool_system_prompt(settings: &ToolSettingsPrivate, tools: &[OllamaTool]) 
 
 fn render_prompt(prompt: &str) -> String {
     prompt.replace("{current_date}", &current_date_utc())
+}
+
+fn web_search_tool(name: &str, provider_description: &str, prompt: &str) -> OllamaTool {
+    OllamaTool {
+        kind: "function".to_string(),
+        function: OllamaToolFunction {
+            name: name.to_string(),
+            description: format!("{provider_description} {}", render_prompt(prompt)),
+            parameters: json!({
+                "type": "object",
+                "required": ["query"],
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search query."
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Maximum number of search results to return. Defaults to 5 and cannot exceed 10."
+                    }
+                }
+            }),
+        },
+    }
+}
+
+fn web_fetch_tool(name: &str, provider_description: &str, prompt: &str) -> OllamaTool {
+    OllamaTool {
+        kind: "function".to_string(),
+        function: OllamaToolFunction {
+            name: name.to_string(),
+            description: format!("{provider_description} {}", render_prompt(prompt)),
+            parameters: json!({
+                "type": "object",
+                "required": ["url"],
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "The HTTP or HTTPS URL to fetch."
+                    }
+                }
+            }),
+        },
+    }
 }
 
 fn current_date_utc() -> String {
@@ -139,16 +185,71 @@ pub async fn execute_tool(
     call: &OllamaToolCall,
 ) -> String {
     let result = match call.function.name.as_str() {
-        "web_search" if selection.tool_use_enabled && selection.web_search_enabled => {
-            web_search(client, settings, &call.function.arguments).await
+        TOOL_BRAVE_WEB_SEARCH
+            if selection.tool_use_enabled
+                && selection.brave_web_search_enabled
+                && settings.brave_search_enabled
+                && settings.has_brave_key() =>
+        {
+            match (
+                search_arguments(&call.function.arguments),
+                settings.brave_search_api_key.as_deref(),
+            ) {
+                (Ok((query, max_results)), Some(api_key)) => {
+                    brave_web_search(client, api_key, &query, max_results).await
+                }
+                (Err(error), _) => Err(error),
+                (_, None) => Err("Brave Search API key is not configured.".to_string()),
+            }
         }
-        "web_fetch" if selection.tool_use_enabled && selection.web_fetch_enabled => {
-            web_fetch(client, settings, &call.function.arguments).await
+        TOOL_OLLAMA_WEB_SEARCH
+            if selection.tool_use_enabled
+                && selection.ollama_web_search_enabled
+                && settings.ollama_web_search_enabled
+                && settings.has_ollama_key() =>
+        {
+            match (
+                search_arguments(&call.function.arguments),
+                settings.ollama_api_key.as_deref(),
+            ) {
+                (Ok((query, max_results)), Some(api_key)) => {
+                    ollama_web_search(client, api_key, &query, max_results).await
+                }
+                (Err(error), _) => Err(error),
+                (_, None) => Err("Ollama API key is not configured.".to_string()),
+            }
         }
-        "web_search" | "web_fetch" => Err(format!(
-            "{} is disabled for this chat.",
-            call.function.name
-        )),
+        TOOL_OLLAMA_WEB_FETCH
+            if selection.tool_use_enabled
+                && selection.ollama_web_fetch_enabled
+                && settings.ollama_web_fetch_enabled
+                && settings.has_ollama_key() =>
+        {
+            match (
+                required_string(&call.function.arguments, "url"),
+                settings.ollama_api_key.as_deref(),
+            ) {
+                (Ok(url), Some(api_key)) => ollama_web_fetch(client, api_key, &url).await,
+                (Err(error), _) => Err(error),
+                (_, None) => Err("Ollama API key is not configured.".to_string()),
+            }
+        }
+        TOOL_DIRECT_WEB_FETCH
+            if selection.tool_use_enabled
+                && selection.direct_web_fetch_enabled
+                && settings.direct_web_fetch_enabled =>
+        {
+            match required_string(&call.function.arguments, "url") {
+                Ok(url) => direct_web_fetch(&url).await,
+                Err(error) => Err(error),
+            }
+        }
+        TOOL_BRAVE_WEB_SEARCH
+        | TOOL_OLLAMA_WEB_SEARCH
+        | TOOL_OLLAMA_WEB_FETCH
+        | TOOL_DIRECT_WEB_FETCH => {
+            Err(format!("{} is disabled for this chat.", call.function.name))
+        }
         name => Err(format!("Unknown tool: {name}")),
     };
 
@@ -161,14 +262,14 @@ pub async fn execute_tool(
 
 pub fn tool_summary(call: &OllamaToolCall) -> String {
     match call.function.name.as_str() {
-        "web_search" => call
+        TOOL_BRAVE_WEB_SEARCH | TOOL_OLLAMA_WEB_SEARCH => call
             .function
             .arguments
             .get("query")
             .and_then(|value| value.as_str())
             .map(|query| format!("Searched \"{}\"", truncate_chars(query, 96)))
             .unwrap_or_else(|| "Searched the web".to_string()),
-        "web_fetch" => call
+        TOOL_OLLAMA_WEB_FETCH | TOOL_DIRECT_WEB_FETCH => call
             .function
             .arguments
             .get("url")
@@ -202,11 +303,7 @@ struct ToolUsageRecord {
     result: String,
 }
 
-async fn web_search(
-    client: &reqwest::Client,
-    settings: &ToolSettingsPrivate,
-    arguments: &serde_json::Value,
-) -> Result<String, String> {
+fn search_arguments(arguments: &serde_json::Value) -> Result<(String, u64), String> {
     let query = required_string(arguments, "query")?;
     let max_results = arguments
         .get("max_results")
@@ -214,39 +311,7 @@ async fn web_search(
         .unwrap_or(5)
         .clamp(1, MAX_SEARCH_RESULTS);
 
-    if settings.brave_search_enabled {
-        if let Some(api_key) = settings.brave_search_api_key.as_deref() {
-            return brave_web_search(client, api_key, &query, max_results).await;
-        }
-    }
-
-    if settings.ollama_web_search_enabled {
-        if let Some(api_key) = settings.ollama_api_key.as_deref() {
-            return ollama_web_search(client, api_key, &query, max_results).await;
-        }
-    }
-
-    Err("No enabled web search provider has an API key configured.".to_string())
-}
-
-async fn web_fetch(
-    client: &reqwest::Client,
-    settings: &ToolSettingsPrivate,
-    arguments: &serde_json::Value,
-) -> Result<String, String> {
-    let url = required_string(arguments, "url")?;
-
-    if settings.ollama_web_fetch_enabled {
-        if let Some(api_key) = settings.ollama_api_key.as_deref() {
-            return ollama_web_fetch(client, api_key, &url).await;
-        }
-    }
-
-    if settings.direct_web_fetch_enabled {
-        return direct_web_fetch(&url).await;
-    }
-
-    Err("No enabled web fetch provider is configured.".to_string())
+    Ok((query, max_results))
 }
 
 async fn ollama_web_search(

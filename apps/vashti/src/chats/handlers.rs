@@ -802,13 +802,8 @@ async fn stream_generation(
 
         for call in &round_tool_calls {
             let result = if available_tool_names.contains(&call.function.name) {
-                tools::service::execute_tool(
-                    &client,
-                    tool_settings,
-                    prepared.tool_selection,
-                    call,
-                )
-                .await
+                tools::service::execute_tool(&client, tool_settings, prepared.tool_selection, call)
+                    .await
             } else {
                 serde_json::json!({
                     "error": format!("{} is not available in this chat.", call.function.name)
