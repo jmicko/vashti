@@ -10,7 +10,8 @@ use crate::{
     auth,
     backends::service::{self, BackendResponse},
     error::ApiError,
-    ollama,
+    model_cache::ModelCacheSnapshot,
+    ollama::models::OllamaModel,
     permissions::service::{self as permissions, PermissionTagResponse},
 };
 
@@ -50,6 +51,8 @@ pub struct DetectLocalhostResponse {
 #[derive(Debug, Serialize)]
 pub struct ModelsResponse {
     pub backends: Vec<BackendModelsResponse>,
+    pub is_refreshing: bool,
+    pub cache_updated_at: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -77,6 +80,8 @@ pub struct AdminModelsResponse {
     pub backends: Vec<AdminBackendModelsResponse>,
     pub available_tags: Vec<PermissionTagResponse>,
     pub default_permission_tags: Vec<PermissionTagResponse>,
+    pub is_refreshing: bool,
+    pub cache_updated_at: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -216,51 +221,59 @@ pub async fn list_models(
 ) -> Result<Json<ModelsResponse>, ApiError> {
     let user =
         auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
-    let user_tags = permissions::effective_user_tag_ids(&state.db, &user.id).await?;
+    let snapshot = state.model_cache.snapshot().await;
 
+    Ok(Json(models_response(&state, &user.id, snapshot).await?))
+}
+
+pub async fn list_admin_models(
+    State(state): State<AppState>,
+    jar: CookieJar,
+) -> Result<Json<AdminModelsResponse>, ApiError> {
+    auth::service::require_admin(&state.db, &jar, &state.config.session_cookie_name).await?;
+    let snapshot = state.model_cache.snapshot().await;
+
+    Ok(Json(admin_models_response(&state, snapshot).await?))
+}
+
+pub async fn refresh_admin_models(
+    State(state): State<AppState>,
+    jar: CookieJar,
+) -> Result<Json<AdminModelsResponse>, ApiError> {
+    auth::service::require_admin(&state.db, &jar, &state.config.session_cookie_name).await?;
+    let snapshot = state
+        .model_cache
+        .refresh_all(&state.db, &state.http_client)
+        .await?;
+
+    Ok(Json(admin_models_response(&state, snapshot).await?))
+}
+
+async fn models_response(
+    state: &AppState,
+    user_id: &str,
+    snapshot: ModelCacheSnapshot,
+) -> Result<ModelsResponse, ApiError> {
+    let user_tags = permissions::effective_user_tag_ids(&state.db, user_id).await?;
     let mut response_backends = Vec::new();
 
     for backend in service::list_enabled_backends(&state.db).await? {
-        let models = match ollama::client::fetch_models(&state.http_client, &backend.base_url).await
-        {
-            Ok(models) => {
-                service::record_backend_health(&state.db, &backend.id, "ok", None).await?;
-                let availability =
-                    service::model_availability_by_backend(&state.db, &backend.id).await?;
-                service::ensure_model_records(
-                    &state.db,
-                    &backend.id,
-                    &models
-                        .iter()
-                        .map(|model| model.name.clone())
-                        .collect::<Vec<_>>(),
-                )
-                .await?;
-                let model_tags = permissions::model_tags_by_backend(&state.db, &backend.id).await?;
-                models
-                    .into_iter()
-                    .filter(|model| availability.get(&model.name).copied().unwrap_or(true))
-                    .filter(|model| {
-                        model_tags
-                            .get(&model.name)
-                            .is_some_and(|tags| permissions::has_matching_tag(&user_tags, tags))
-                    })
-                    .map(|model| ModelResponse {
-                        name: model.name,
-                        supports_images: model.supports_images,
-                        supports_thinking: model.supports_thinking,
-                        capabilities: model.capabilities,
-                    })
-                    .collect()
-            }
-            Err(error) => {
-                let message = error.to_string();
-                service::record_backend_health(&state.db, &backend.id, "error", Some(&message))
-                    .await?;
-                tracing::warn!(backend_id = %backend.id, base_url = %backend.base_url, error = %message, "failed to fetch Ollama models");
-                Vec::new()
-            }
-        };
+        let availability = service::model_availability_by_backend(&state.db, &backend.id).await?;
+        let model_tags = permissions::model_tags_by_backend(&state.db, &backend.id).await?;
+        let models = snapshot
+            .backends
+            .get(&backend.id)
+            .map(|cached| cached.models.clone())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|model| availability.get(&model.name).copied().unwrap_or(true))
+            .filter(|model| {
+                model_tags
+                    .get(&model.name)
+                    .is_some_and(|tags| permissions::has_matching_tag(&user_tags, tags))
+            })
+            .map(model_response)
+            .collect();
 
         response_backends.push(BackendModelsResponse {
             backend: BackendSummaryResponse {
@@ -271,64 +284,46 @@ pub async fn list_models(
         });
     }
 
-    Ok(Json(ModelsResponse {
+    Ok(ModelsResponse {
         backends: response_backends,
-    }))
+        is_refreshing: snapshot.is_refreshing,
+        cache_updated_at: snapshot.updated_at,
+    })
 }
 
-pub async fn list_admin_models(
-    State(state): State<AppState>,
-    jar: CookieJar,
-) -> Result<Json<AdminModelsResponse>, ApiError> {
-    auth::service::require_admin(&state.db, &jar, &state.config.session_cookie_name).await?;
-
+async fn admin_models_response(
+    state: &AppState,
+    snapshot: ModelCacheSnapshot,
+) -> Result<AdminModelsResponse, ApiError> {
     let available_tags = permissions::known_tags(&state.db).await?;
     let default_tag_ids = permissions::default_model_tag_ids(&state.db).await?;
     let default_permission_tags = permissions::tag_responses(&state.db, &default_tag_ids).await?;
     let mut response_backends = Vec::new();
 
     for backend in service::list_enabled_backends(&state.db).await? {
-        let models = match ollama::client::fetch_models(&state.http_client, &backend.base_url).await
+        let availability = service::model_availability_by_backend(&state.db, &backend.id).await?;
+        let model_tags = permissions::model_tags_by_backend(&state.db, &backend.id).await?;
+        let mut models = Vec::new();
+
+        for model in snapshot
+            .backends
+            .get(&backend.id)
+            .map(|cached| cached.models.clone())
+            .unwrap_or_default()
         {
-            Ok(models) => {
-                service::record_backend_health(&state.db, &backend.id, "ok", None).await?;
-                let availability =
-                    service::model_availability_by_backend(&state.db, &backend.id).await?;
-                service::ensure_model_records(
-                    &state.db,
-                    &backend.id,
-                    &models
-                        .iter()
-                        .map(|model| model.name.clone())
-                        .collect::<Vec<_>>(),
-                )
-                .await?;
-                let model_tags = permissions::model_tags_by_backend(&state.db, &backend.id).await?;
-                let mut responses = Vec::new();
-                for model in models {
-                    let permission_tags = match model_tags.get(&model.name) {
-                        Some(tags) => permissions::tag_responses(&state.db, tags).await?,
-                        None => Vec::new(),
-                    };
-                    responses.push(AdminModelResponse {
-                        permission_tags,
-                        is_enabled: availability.get(&model.name).copied().unwrap_or(true),
-                        name: model.name,
-                        supports_images: model.supports_images,
-                        supports_thinking: model.supports_thinking,
-                        capabilities: model.capabilities,
-                    });
-                }
-                responses
-            }
-            Err(error) => {
-                let message = error.to_string();
-                service::record_backend_health(&state.db, &backend.id, "error", Some(&message))
-                    .await?;
-                tracing::warn!(backend_id = %backend.id, base_url = %backend.base_url, error = %message, "failed to fetch Ollama models for admin model settings");
-                Vec::new()
-            }
-        };
+            let permission_tags = match model_tags.get(&model.name) {
+                Some(tags) => permissions::tag_responses(&state.db, tags).await?,
+                None => Vec::new(),
+            };
+            models.push(AdminModelResponse {
+                permission_tags,
+                is_enabled: availability.get(&model.name).copied().unwrap_or(true),
+                name: model.name,
+                supports_images: model.supports_images,
+                supports_thinking: model.supports_thinking,
+                capabilities: model.capabilities,
+            });
+        }
 
         response_backends.push(AdminBackendModelsResponse {
             backend: BackendSummaryResponse {
@@ -339,11 +334,22 @@ pub async fn list_admin_models(
         });
     }
 
-    Ok(Json(AdminModelsResponse {
+    Ok(AdminModelsResponse {
         backends: response_backends,
         available_tags,
         default_permission_tags,
-    }))
+        is_refreshing: snapshot.is_refreshing,
+        cache_updated_at: snapshot.updated_at,
+    })
+}
+
+fn model_response(model: OllamaModel) -> ModelResponse {
+    ModelResponse {
+        name: model.name,
+        supports_images: model.supports_images,
+        supports_thinking: model.supports_thinking,
+        capabilities: model.capabilities,
+    }
 }
 
 pub async fn update_model_availability(

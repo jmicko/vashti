@@ -2222,6 +2222,14 @@ textarea {
   min-width: 112px;
 }
 
+.refresh-button:disabled {
+  background: #262a26;
+  border-color: #5a6258;
+  color: #c7d0c1;
+  box-shadow: none;
+  opacity: 1;
+}
+
 .retro-loader {
   display: inline-block;
   min-width: 7ch;

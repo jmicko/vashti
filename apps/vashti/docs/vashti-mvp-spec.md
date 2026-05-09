@@ -813,6 +813,7 @@ Mutating API requests should enforce same-origin browser writes with an `Origin`
 * `POST /api/backends/scan-local-network`
 * `GET /api/models`
 * `GET /api/admin/models`
+* `POST /api/admin/models/refresh`
 * `PATCH /api/admin/models`
 * `PATCH /api/admin/models/backend`
 * `PATCH /api/admin/models/tags`

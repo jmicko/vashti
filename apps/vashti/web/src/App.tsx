@@ -175,12 +175,16 @@ type AdminBackendModelGroup = {
 
 type ModelsResponse = {
   backends: BackendModelGroup[];
+  is_refreshing?: boolean;
+  cache_updated_at?: number | null;
 };
 
 type AdminModelsResponse = {
   backends: AdminBackendModelGroup[];
   available_tags: PermissionTag[];
   default_permission_tags: PermissionTag[];
+  is_refreshing: boolean;
+  cache_updated_at: number | null;
 };
 
 type PersonaVersion = {
@@ -8310,27 +8314,50 @@ function ModelsAccessPanel({ onModelsChanged }: { onModelsChanged: () => Promise
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const applyAdminModelsResponse = useCallback((response: AdminModelsResponse) => {
+    setGroups(response.backends);
+    setAvailableTags(response.available_tags);
+    setDefaultTags(response.default_permission_tags);
+    setHasLoaded(true);
+  }, []);
+
   const loadAdminModels = useCallback(async () => {
-    setIsRefreshing(true);
     setError(null);
 
     try {
       const response = await requestJson<AdminModelsResponse>("/api/admin/models");
-      setGroups(response.backends);
-      setAvailableTags(response.available_tags);
-      setDefaultTags(response.default_permission_tags);
-      setHasLoaded(true);
+      applyAdminModelsResponse(response);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Failed to load models");
+      setHasLoaded(true);
+    }
+  }, [applyAdminModelsResponse]);
+
+  const refreshAdminModels = useCallback(async () => {
+    setIsRefreshing(true);
+    setError(null);
+
+    try {
+      const response = await requestJson<AdminModelsResponse>("/api/admin/models/refresh", {
+        method: "POST"
+      });
+      applyAdminModelsResponse(response);
+      await onModelsChanged();
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Failed to refresh models");
       setHasLoaded(true);
     } finally {
       setIsRefreshing(false);
     }
-  }, []);
+  }, [applyAdminModelsResponse, onModelsChanged]);
 
   useEffect(() => {
-    void loadAdminModels();
-  }, [loadAdminModels]);
+    void (async () => {
+      setIsRefreshing(true);
+      await loadAdminModels();
+      await refreshAdminModels();
+    })();
+  }, [loadAdminModels, refreshAdminModels]);
 
   async function toggleModel(backendId: string, modelName: string, isEnabled: boolean) {
     const key = modelValue(backendId, modelName);
@@ -8485,11 +8512,17 @@ function ModelsAccessPanel({ onModelsChanged }: { onModelsChanged: () => Promise
           <button
             type="button"
             className="secondary-button refresh-button"
-            onClick={() => void loadAdminModels()}
+            onClick={() => void refreshAdminModels()}
             disabled={isRefreshing}
           >
-            {isRefreshing ? <RetroLoader /> : <RefreshCw />}
-            <span>{isRefreshing ? "Loading" : "Refresh"}</span>
+            {isRefreshing ? (
+              <RetroLoader />
+            ) : (
+              <>
+                <RefreshCw />
+                <span>Refresh</span>
+              </>
+            )}
           </button>
         </div>
       </div>
@@ -8497,7 +8530,10 @@ function ModelsAccessPanel({ onModelsChanged }: { onModelsChanged: () => Promise
       {error && <p className="error">{error}</p>}
       {status && <p className="status-message">{status}</p>}
       {!hasLoaded && <p className="status-message">Loading models...</p>}
-      {hasLoaded && groups.length === 0 && (
+      {hasLoaded && groups.length === 0 && isRefreshing && (
+        <p className="status-message">Checking Ollama for models...</p>
+      )}
+      {hasLoaded && groups.length === 0 && !isRefreshing && (
         <p className="status-message">No enabled Ollama backends are configured.</p>
       )}
 

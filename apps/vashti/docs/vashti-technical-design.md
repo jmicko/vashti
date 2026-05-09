@@ -1186,12 +1186,16 @@ Response shape matches `POST /api/backends/detect-localhost`.
 
 Returns enabled models grouped by backend.
 
+Model listings are served from Vashti's in-memory Ollama model cache. Vashti refreshes that cache at startup, refreshes it periodically, and lets admins request an immediate hard refresh. Ollama remains the source of truth; the cache only keeps the UI responsive while capability metadata is being refreshed.
+
 Model capability support should prefer Ollama `POST /api/show` metadata when available. A model with a `capabilities` entry of `vision` should be treated as image-capable, and a `thinking` entry should be treated as thinking-capable. `/api/tags` details can still be used as a fallback heuristic for older Ollama responses.
 
 Response:
 
 ```json
 {
+  "is_refreshing": false,
+  "cache_updated_at": 1778101847,
   "backends": [
     {
       "backend": {
@@ -1219,12 +1223,28 @@ Response:
 
 ### `GET /api/admin/models`
 
-Admin-only. Returns all models currently returned by enabled Ollama backends, including disabled models, grouped by backend.
+Admin-only. Returns all cached models currently returned by enabled Ollama backends, including disabled models, grouped by backend.
 
 Response:
 
 ```json
 {
+  "is_refreshing": false,
+  "cache_updated_at": 1778101847,
+  "available_tags": [
+    {
+      "id": "system:everyone",
+      "label": "everyone",
+      "kind": "system"
+    }
+  ],
+  "default_permission_tags": [
+    {
+      "id": "system:everyone",
+      "label": "everyone",
+      "kind": "system"
+    }
+  ],
   "backends": [
     {
       "backend": {
@@ -1244,6 +1264,10 @@ Response:
   ]
 }
 ```
+
+### `POST /api/admin/models/refresh`
+
+Admin-only. Performs a hard refresh of the in-memory model cache by querying all enabled Ollama backends and refreshing model capability metadata. The response shape matches `GET /api/admin/models`.
 
 ### `PATCH /api/admin/models`
 
