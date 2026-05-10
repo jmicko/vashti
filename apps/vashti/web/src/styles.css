@@ -1824,6 +1824,11 @@ textarea {
   border-color: transparent;
 }
 
+.settings-nav-divider {
+  border-top: 1px solid var(--line);
+  margin: 6px 0;
+}
+
 .settings-content {
   --settings-content-x: 24px;
   min-width: 0;
@@ -2282,6 +2287,12 @@ textarea {
   padding: 16px;
 }
 
+.user-row-self {
+  border-color: rgba(69, 160, 255, 0.65);
+  background: rgba(8, 19, 30, 0.9);
+  box-shadow: 0 0 0 1px rgba(69, 160, 255, 0.12), 0 0 24px rgba(69, 160, 255, 0.1);
+}
+
 .user-main {
   min-width: 0;
   display: flex;
@@ -2317,6 +2328,11 @@ textarea {
   color: var(--warning);
 }
 
+.badge-self {
+  border-color: rgba(69, 160, 255, 0.68);
+  color: #8ec8ff;
+}
+
 .permission-tag-editor {
   display: grid;
   gap: 8px;
@@ -2328,6 +2344,14 @@ textarea {
   font-size: 0.82rem;
   font-weight: 800;
   text-transform: uppercase;
+}
+
+.permission-tag-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
 }
 
 .permission-tags {
@@ -2379,15 +2403,53 @@ textarea {
 }
 
 .permission-tag-add {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(1, 3, 1, 0.92);
   min-width: 0;
 }
 
 .permission-tag-add input {
   min-width: 0;
-  flex: 1 1 180px;
+  width: 8ch;
+  min-height: 28px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 2px 7px 2px 10px;
+}
+
+.permission-tag-add input:focus {
+  outline: none;
+}
+
+.permission-tag-add:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-muted);
+}
+
+.permission-tag-add button {
+  width: 30px;
+  min-height: 28px;
+  border: 0;
+  border-left: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--accent);
+  padding: 0;
+}
+
+.permission-tag-add button:hover {
+  background: var(--accent-muted);
+}
+
+.permission-tag-add button svg {
+  width: 15px;
+  height: 15px;
 }
 
 .backend-create-form {
@@ -2432,6 +2494,85 @@ textarea {
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.backend-model-group {
+  overflow: hidden;
+  padding: 0;
+}
+
+.backend-model-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 16px;
+  cursor: pointer;
+  list-style: none;
+  padding: 16px;
+}
+
+.backend-model-summary::-webkit-details-marker {
+  display: none;
+}
+
+.backend-model-toggle {
+  min-height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  white-space: nowrap;
+}
+
+.backend-model-toggle svg {
+  width: 16px;
+  height: 16px;
+  transition: transform 160ms ease;
+}
+
+.backend-model-toggle-hide {
+  display: none;
+}
+
+.backend-model-group[open] .backend-model-toggle svg {
+  transform: rotate(180deg);
+}
+
+.backend-model-group[open] .backend-model-toggle-show {
+  display: none;
+}
+
+.backend-model-group[open] .backend-model-toggle-hide {
+  display: inline;
+}
+
+.backend-model-panel {
+  border-top: 1px solid var(--line-soft);
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+
+.backend-model-bulk-actions {
+  justify-content: flex-start;
+}
+
+.backend-model-defaults {
+  margin-bottom: 16px;
+}
+
+.permission-defaults-row {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.permission-defaults-row .permission-tag-editor {
+  flex: 0 1 auto;
 }
 
 .backend-edit-form {
@@ -2544,11 +2685,20 @@ textarea {
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
+  list-style-position: outside;
+}
+
+.model-access-group > summary.model-access-header {
+  cursor: pointer;
 }
 
 .model-access-header p {
   margin: 6px 0 0;
   color: var(--muted);
+}
+
+.model-access-header::marker {
+  color: var(--accent);
 }
 
 .model-access-actions {
@@ -2778,6 +2928,14 @@ textarea {
     padding: 12px;
   }
 
+  .settings-nav-divider {
+    align-self: stretch;
+    border-top: 0;
+    border-left: 1px solid var(--line);
+    margin: 4px 2px;
+    min-height: 28px;
+  }
+
   .settings-content {
     --settings-content-x: 14px;
     padding: 0 14px 18px;
@@ -2795,6 +2953,7 @@ textarea {
   .user-main,
   .persona-main,
   .backend-main,
+  .backend-model-summary,
   .backend-edit-grid,
   .model-access-header,
   .model-access-row {
@@ -2802,6 +2961,10 @@ textarea {
   }
 
   .model-access-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .backend-model-summary {
     grid-template-columns: minmax(0, 1fr);
   }
 

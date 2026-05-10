@@ -3,6 +3,7 @@ use uuid::Uuid;
 
 use crate::{
     auth::service::unix_timestamp,
+    backends::service as backends_service,
     error::ApiError,
     personas::{
         handlers::{CopyPersonaRequest, CreatePersonaRequest, UpdatePersonaRequest},
@@ -88,6 +89,13 @@ pub async fn create_persona(
     let display_name = validate_display_name(&payload.display_name)?;
     let base_backend_id = validate_base_backend(pool, &payload.base_backend_id).await?;
     let base_model_name = validate_base_model_name(&payload.base_model_name)?;
+    backends_service::ensure_model_enabled_for_user(
+        pool,
+        user_id,
+        &base_backend_id,
+        &base_model_name,
+    )
+    .await?;
     let system_prompt = validate_system_prompt(&payload.system_prompt)?;
     let tool_policy_json = validate_tool_policy(payload.tool_policy_json)?;
     let avatar_attachment_id = normalize_optional(payload.avatar_attachment_id);
@@ -184,6 +192,13 @@ pub async fn update_persona(
         Some(model_name) => validate_base_model_name(&model_name)?,
         None => current_version.base_model_name.clone(),
     };
+    backends_service::ensure_model_enabled_for_user(
+        pool,
+        user_id,
+        &base_backend_id,
+        &base_model_name,
+    )
+    .await?;
     let system_prompt = match payload.system_prompt {
         Some(system_prompt) => validate_system_prompt(&system_prompt)?,
         None => current_version.system_prompt.clone(),
@@ -1032,6 +1047,11 @@ mod tests {
             .await
             .expect("register other")
             .user;
+        sqlx::query("UPDATE users SET is_disabled = 0 WHERE id = ?")
+            .bind(&other.id)
+            .execute(&pool)
+            .await
+            .expect("enable other user");
         let backend_id = create_test_backend(&pool).await;
         let persona = create_persona(
             &pool,

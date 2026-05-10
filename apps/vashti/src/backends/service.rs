@@ -42,6 +42,13 @@ pub struct ModelAvailabilityResponse {
     pub is_enabled: bool,
 }
 
+#[derive(Debug, Serialize)]
+pub struct UserModelPreferenceResponse {
+    pub backend_id: String,
+    pub model_name: String,
+    pub is_visible: bool,
+}
+
 #[derive(Debug)]
 pub struct UpdateBackendParams {
     pub name: Option<String>,
@@ -322,6 +329,34 @@ pub async fn model_availability_by_backend(
         .collect()
 }
 
+pub async fn user_model_preferences_by_backend(
+    pool: &SqlitePool,
+    user_id: &str,
+    backend_id: &str,
+) -> Result<HashMap<String, bool>, sqlx::Error> {
+    let rows = sqlx::query(
+        r#"
+        SELECT model_name, is_visible
+        FROM user_model_preferences
+        WHERE user_id = ?
+          AND backend_id = ?
+        "#,
+    )
+    .bind(user_id)
+    .bind(backend_id)
+    .fetch_all(pool)
+    .await?;
+
+    rows.into_iter()
+        .map(|row| {
+            Ok((
+                row.try_get("model_name")?,
+                row.try_get::<i64, _>("is_visible")? != 0,
+            ))
+        })
+        .collect()
+}
+
 pub async fn set_model_availability(
     pool: &SqlitePool,
     backend_id: &str,
@@ -414,6 +449,50 @@ pub async fn set_model_availability_many(
     tx.commit().await?;
 
     Ok(())
+}
+
+pub async fn set_user_model_visibility(
+    pool: &SqlitePool,
+    user_id: &str,
+    backend_id: &str,
+    model_name: &str,
+    is_visible: bool,
+) -> Result<UserModelPreferenceResponse, ApiError> {
+    ensure_model_enabled_for_user(pool, user_id, backend_id, model_name).await?;
+    let model_name = validate_model_name(model_name)?;
+    let now = unix_timestamp();
+
+    sqlx::query(
+        r#"
+        INSERT INTO user_model_preferences (
+            user_id,
+            backend_id,
+            model_name,
+            is_visible,
+            created_at,
+            updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id, backend_id, model_name)
+        DO UPDATE SET
+            is_visible = excluded.is_visible,
+            updated_at = excluded.updated_at
+        "#,
+    )
+    .bind(user_id)
+    .bind(backend_id)
+    .bind(&model_name)
+    .bind(i64::from(is_visible))
+    .bind(now)
+    .bind(now)
+    .execute(pool)
+    .await?;
+
+    Ok(UserModelPreferenceResponse {
+        backend_id: backend_id.to_string(),
+        model_name,
+        is_visible,
+    })
 }
 
 pub async fn ensure_model_record(

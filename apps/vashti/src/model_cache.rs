@@ -128,8 +128,7 @@ async fn refresh_backend_models(
             }
             Err(error) => {
                 let message = error.to_string();
-                backends::record_backend_health(pool, &backend.id, "error", Some(&message))
-                    .await?;
+                backends::record_backend_health(pool, &backend.id, "error", Some(&message)).await?;
                 tracing::warn!(backend_id = %backend.id, base_url = %backend.base_url, error = %message, "failed to refresh Ollama model cache");
                 let mut cached = existing.get(&backend.id).cloned().unwrap_or_default();
                 cached.last_error = Some(message);

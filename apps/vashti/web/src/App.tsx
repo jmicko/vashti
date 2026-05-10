@@ -1,5 +1,6 @@
 import {
   ChangeEvent,
+  Fragment,
   FormEvent,
   isValidElement,
   PointerEvent as ReactPointerEvent,
@@ -18,6 +19,7 @@ import remarkGfm from "remark-gfm";
 import {
   Brain,
   Bot,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Cog,
@@ -157,6 +159,10 @@ type AdminModelInfo = ModelInfo & {
   permission_tags: PermissionTag[];
 };
 
+type UserModelInfo = ModelInfo & {
+  is_visible: boolean;
+};
+
 type BackendModelGroup = {
   backend: {
     id: string;
@@ -173,10 +179,24 @@ type AdminBackendModelGroup = {
   models: AdminModelInfo[];
 };
 
+type UserBackendModelGroup = {
+  backend: {
+    id: string;
+    name: string;
+  };
+  models: UserModelInfo[];
+};
+
 type ModelsResponse = {
   backends: BackendModelGroup[];
   is_refreshing?: boolean;
   cache_updated_at?: number | null;
+};
+
+type UserModelsResponse = {
+  backends: UserBackendModelGroup[];
+  is_refreshing: boolean;
+  cache_updated_at: number | null;
 };
 
 type AdminModelsResponse = {
@@ -7224,14 +7244,15 @@ function SettingsPage({
     label: string;
     icon: ReactNode;
     adminOnly?: boolean;
+    group: "personal" | "admin";
   }> = [
-    { id: "profile", label: "Profile", icon: <UserRound /> },
-    { id: "personas", label: "Personas", icon: <Bot /> },
-    { id: "users", label: "Users", icon: <Users />, adminOnly: true },
-    { id: "backends", label: "Backends", icon: <Server />, adminOnly: true },
-    { id: "models", label: "Models", icon: <Sparkles />, adminOnly: true },
-    { id: "tools", label: "Tools", icon: <Wrench />, adminOnly: true },
-    { id: "app", label: "App", icon: <SlidersHorizontal />, adminOnly: true }
+    { id: "profile", label: "Profile", icon: <UserRound />, group: "personal" },
+    { id: "personas", label: "Personas", icon: <Bot />, group: "personal" },
+    { id: "models", label: "Models", icon: <Sparkles />, group: "personal" },
+    { id: "users", label: "Users", icon: <Users />, adminOnly: true, group: "admin" },
+    { id: "backends", label: "Backends", icon: <Server />, adminOnly: true, group: "admin" },
+    { id: "tools", label: "Tools", icon: <Wrench />, adminOnly: true, group: "admin" },
+    { id: "app", label: "App", icon: <SlidersHorizontal />, adminOnly: true, group: "admin" }
   ];
   const visibleSections = sections.filter((section) => !section.adminOnly || isAdmin);
   const selectedSection =
@@ -7240,18 +7261,24 @@ function SettingsPage({
   return (
     <div className="settings-page">
       <nav className="settings-nav" aria-label="Settings sections">
-        {visibleSections.map((section) => (
-          <button
-            type="button"
-            key={section.id}
-            className={
-              selectedSection === section.id ? "settings-tab settings-tab-active" : "settings-tab"
-            }
-            onClick={() => onSelectSection(section.id)}
-          >
-            {section.icon}
-            <span>{section.label}</span>
-          </button>
+        {visibleSections.map((section, index) => (
+          <Fragment key={section.id}>
+            {section.group === "admin" && visibleSections[index - 1]?.group !== "admin" && (
+              <div className="settings-nav-divider" />
+            )}
+            <button
+              type="button"
+              className={
+                selectedSection === section.id
+                  ? "settings-tab settings-tab-active"
+                  : "settings-tab"
+              }
+              onClick={() => onSelectSection(section.id)}
+            >
+              {section.icon}
+              <span>{section.label}</span>
+            </button>
+          </Fragment>
         ))}
       </nav>
       <section className="settings-content">
@@ -7266,9 +7293,7 @@ function SettingsPage({
         {selectedSection === "backends" && isAdmin && (
           <BackendsPanel onBackendsChanged={onBackendsChanged} />
         )}
-        {selectedSection === "models" && isAdmin && (
-          <ModelsAccessPanel onModelsChanged={onBackendsChanged} />
-        )}
+        {selectedSection === "models" && <UserModelsPanel onModelsChanged={onBackendsChanged} />}
         {selectedSection === "tools" && isAdmin && (
           <ToolsSettingsPanel onToolsChanged={onToolsChanged} />
         )}
@@ -7900,48 +7925,49 @@ function PermissionTagEditor({
   return (
     <div className="permission-tag-editor">
       <span>{label}</span>
-      <div className="permission-tags">
-        {tags.length === 0 ? (
-          <span className="permission-tag-empty">No tags</span>
-        ) : (
-          tags.map((tag) => (
-            <button
-              type="button"
-              key={tag.id}
-              className={`permission-tag permission-tag-${tag.kind}`}
-              disabled={disabled}
-              onClick={() => onChange(tags.filter((existing) => existing.id !== tag.id))}
-              title="Remove tag"
-            >
-              <span>{tag.label}</span>
-              <X />
-            </button>
-          ))
-        )}
-      </div>
-      <div className="permission-tag-add">
-        <input
-          value={value}
-          disabled={disabled}
-          list={datalistId}
-          placeholder="Add tag"
-          onChange={(event) => setValue(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") {
-              event.preventDefault();
-              addTag();
-            }
-          }}
-        />
-        <datalist id={datalistId}>
-          {suggestions.map((tag) => (
-            <option key={tag.id} value={tag.label} />
-          ))}
-        </datalist>
-        <button type="button" className="secondary-button" disabled={disabled} onClick={addTag}>
-          <Plus />
-          <span>Add</span>
-        </button>
+      <div className="permission-tag-row">
+        <div className="permission-tags">
+          {tags.length === 0 ? (
+            <span className="permission-tag-empty">No tags</span>
+          ) : (
+            tags.map((tag) => (
+              <button
+                type="button"
+                key={tag.id}
+                className={`permission-tag permission-tag-${tag.kind}`}
+                disabled={disabled}
+                onClick={() => onChange(tags.filter((existing) => existing.id !== tag.id))}
+                title="Remove tag"
+              >
+                <span>{tag.label}</span>
+                <X />
+              </button>
+            ))
+          )}
+        </div>
+        <div className="permission-tag-add">
+          <input
+            value={value}
+            disabled={disabled}
+            list={datalistId}
+            placeholder="tag"
+            onChange={(event) => setValue(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                addTag();
+              }
+            }}
+          />
+          <datalist id={datalistId}>
+            {suggestions.map((tag) => (
+              <option key={tag.id} value={tag.label} />
+            ))}
+          </datalist>
+          <button type="button" className="secondary-button" disabled={disabled} onClick={addTag}>
+            <Plus />
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -8049,7 +8075,10 @@ function AdminUsersPanel({ currentUserId }: { currentUserId: string }) {
   }
 
   const pendingUsers = users.filter((listedUser) => listedUser.is_disabled);
-  const approvedUsers = users.filter((listedUser) => !listedUser.is_disabled);
+  const currentUser = users.find((listedUser) => listedUser.id === currentUserId) ?? null;
+  const approvedUsers = users.filter(
+    (listedUser) => !listedUser.is_disabled && listedUser.id !== currentUserId
+  );
 
   return (
     <div className="settings-section">
@@ -8135,6 +8164,24 @@ function AdminUsersPanel({ currentUserId }: { currentUserId: string }) {
           availableTags={availableTags}
         />
         <div className="user-divider" />
+        {currentUser && (
+          <>
+            <section className="user-group user-self-group">
+              <div className="user-group-header">
+                <h2>Signed In</h2>
+              </div>
+              <UserRow
+                user={currentUser}
+                isSelf
+                isBusy={busyUserId === currentUser.id}
+                onPatchUser={patchUser}
+                onDeleteUser={setDeleteTarget}
+                availableTags={availableTags}
+              />
+            </section>
+            <div className="user-divider" />
+          </>
+        )}
         <UserGroup
           title="Approved Users"
           users={approvedUsers}
@@ -8226,7 +8273,7 @@ function UserRow({
   availableTags: PermissionTag[];
 }) {
   return (
-    <article className="user-row">
+    <article className={isSelf ? "user-row user-row-self" : "user-row"}>
       <div className="user-main">
         <div>
           <h2>{user.username}</h2>
@@ -8237,7 +8284,7 @@ function UserRow({
           <span className={user.is_disabled ? "badge badge-warning" : "badge"}>
             {user.is_disabled ? "pending" : "enabled"}
           </span>
-          {isSelf && <span className="badge">you</span>}
+          {isSelf && <span className="badge badge-self">you</span>}
         </div>
       </div>
       <PermissionTagEditor
@@ -8250,66 +8297,272 @@ function UserRow({
           void onPatchUser(user.id, { permission_tags: permissionTagPayload(tags) })
         }
       />
-      <div className="user-actions">
-        {user.is_disabled ? (
+      {!isSelf && (
+        <div className="user-actions">
+          {user.is_disabled ? (
+            <button
+              type="button"
+              disabled={isBusy}
+              onClick={() => void onPatchUser(user.id, { is_disabled: false })}
+            >
+              Approve
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={isBusy}
+              onClick={() => void onPatchUser(user.id, { is_disabled: true })}
+            >
+              Disable
+            </button>
+          )}
+          {user.role === "admin" ? (
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={isBusy}
+              onClick={() => void onPatchUser(user.id, { role: "user" })}
+            >
+              Make User
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={isBusy}
+              onClick={() => void onPatchUser(user.id, { role: "admin" })}
+            >
+              Make Admin
+            </button>
+          )}
           <button
             type="button"
+            className="danger-button"
             disabled={isBusy}
-            onClick={() => void onPatchUser(user.id, { is_disabled: false })}
+            onClick={() => onDeleteUser(user)}
           >
-            Approve
+            <Trash2 />
+            <span>Delete</span>
           </button>
-        ) : (
-          <button
-            type="button"
-            className="secondary-button"
-            disabled={isBusy || isSelf}
-            onClick={() => void onPatchUser(user.id, { is_disabled: true })}
-          >
-            Disable
-          </button>
-        )}
-        {user.role === "admin" ? (
-          <button
-            type="button"
-            className="secondary-button"
-            disabled={isBusy || isSelf}
-            onClick={() => void onPatchUser(user.id, { role: "user" })}
-          >
-            Make User
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="secondary-button"
-            disabled={isBusy}
-            onClick={() => void onPatchUser(user.id, { role: "admin" })}
-          >
-            Make Admin
-          </button>
-        )}
-        <button
-          type="button"
-          className="danger-button"
-          disabled={isBusy || isSelf}
-          onClick={() => onDeleteUser(user)}
-        >
-          <Trash2 />
-          <span>Delete</span>
-        </button>
-      </div>
+        </div>
+      )}
     </article>
   );
 }
 
-function ModelsAccessPanel({ onModelsChanged }: { onModelsChanged: () => Promise<void> }) {
+function UserModelsPanel({ onModelsChanged }: { onModelsChanged: () => Promise<void> }) {
+  const [groups, setGroups] = useState<UserBackendModelGroup[]>([]);
+  const [hasLoaded, setHasLoaded] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [busyModelKey, setBusyModelKey] = useState<string | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const applyUserModelsResponse = useCallback((response: UserModelsResponse) => {
+    setGroups(response.backends);
+    setHasLoaded(true);
+  }, []);
+
+  const loadUserModels = useCallback(async () => {
+    setError(null);
+
+    try {
+      const response = await requestJson<UserModelsResponse>("/api/user-models");
+      applyUserModelsResponse(response);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Failed to load models");
+      setHasLoaded(true);
+    }
+  }, [applyUserModelsResponse]);
+
+  const refreshUserModels = useCallback(async () => {
+    setIsRefreshing(true);
+    setError(null);
+
+    try {
+      const response = await requestJson<UserModelsResponse>("/api/user-models/refresh", {
+        method: "POST"
+      });
+      applyUserModelsResponse(response);
+      await onModelsChanged();
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Failed to refresh models");
+      setHasLoaded(true);
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [applyUserModelsResponse, onModelsChanged]);
+
+  useEffect(() => {
+    void (async () => {
+      setIsRefreshing(true);
+      await loadUserModels();
+      await refreshUserModels();
+    })();
+  }, [loadUserModels, refreshUserModels]);
+
+  async function toggleUserModel(backendId: string, modelName: string, isVisible: boolean) {
+    const key = modelValue(backendId, modelName);
+    setBusyModelKey(key);
+    setError(null);
+    setStatus(null);
+
+    try {
+      await requestJson("/api/user-models", {
+        method: "PATCH",
+        body: JSON.stringify({
+          backend_id: backendId,
+          model_name: modelName,
+          is_visible: isVisible
+        })
+      });
+      setGroups((current) =>
+        current.map((group) =>
+          group.backend.id === backendId
+            ? {
+                ...group,
+                models: group.models.map((model) =>
+                  model.name === modelName ? { ...model, is_visible: isVisible } : model
+                )
+              }
+            : group
+        )
+      );
+      setStatus(isVisible ? "Model shown in picker." : "Model hidden from picker.");
+      await onModelsChanged();
+    } catch (updateError) {
+      setError(updateError instanceof Error ? updateError.message : "Failed to update model");
+    } finally {
+      setBusyModelKey(null);
+    }
+  }
+
+  return (
+    <div className="settings-section">
+      <div className="section-header">
+        <div>
+          <p className="eyebrow">Personal</p>
+          <h1>Models</h1>
+        </div>
+        <button
+          type="button"
+          className="secondary-button refresh-button"
+          onClick={() => void refreshUserModels()}
+          disabled={isRefreshing}
+        >
+          {isRefreshing ? (
+            <RetroLoader />
+          ) : (
+            <>
+              <RefreshCw />
+              <span>Refresh</span>
+            </>
+          )}
+        </button>
+      </div>
+
+      {error && <p className="error">{error}</p>}
+      {status && <p className="status-message">{status}</p>}
+      {!hasLoaded && <p className="status-message">Loading models...</p>}
+      {hasLoaded && groups.length === 0 && isRefreshing && (
+        <p className="status-message">Checking Ollama for models...</p>
+      )}
+      {hasLoaded && groups.length === 0 && !isRefreshing && (
+        <p className="status-message">No models are currently available to your account.</p>
+      )}
+
+      <p className="status-message">
+        These switches control which models appear in your picker. Admin model and tag permissions
+        still decide which models your account can access.
+      </p>
+
+      <div className="model-access-list">
+        {groups.map((group) => {
+          const visibleCount = group.models.filter((model) => model.is_visible).length;
+
+          return (
+            <section key={group.backend.id} className="model-access-group">
+              <div className="model-access-header">
+                <div>
+                  <h2>{group.backend.name}</h2>
+                  <p>
+                    {visibleCount} of {group.models.length} shown
+                  </p>
+                </div>
+              </div>
+
+              {group.models.length === 0 ? (
+                <p className="status-message">No available models on this backend.</p>
+              ) : (
+                <div className="model-access-models">
+                  {group.models.map((model) => {
+                    const key = modelValue(group.backend.id, model.name);
+                    const isBusy = busyModelKey === key;
+
+                    return (
+                      <article key={key} className="model-access-row">
+                        <span className="model-access-main">
+                          <span className="model-name">{model.name}</span>
+                          <ModelCapabilityBadges model={model} />
+                        </span>
+                        <ToggleSwitch
+                          label={model.is_visible ? "Shown" : "Hidden"}
+                          checked={model.is_visible}
+                          disabled={isBusy}
+                          compact
+                          onChange={(checked) =>
+                            void toggleUserModel(group.backend.id, model.name, checked)
+                          }
+                        />
+                      </article>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function AdminModelsAccessPanel({
+  backends,
+  editingBackend,
+  backendBusyId,
+  onCancelBackendEdit,
+  onDeleteBackend,
+  onEditBackend,
+  onSaveBackend,
+  onToggleBackend,
+  modelRefreshRequest,
+  onModelRefreshStateChange,
+  onModelsChanged
+}: {
+  backends: Backend[];
+  editingBackend: Backend | null;
+  backendBusyId: string | null;
+  onCancelBackendEdit: () => void;
+  onDeleteBackend: (backend: Backend) => void;
+  onEditBackend: (backend: Backend) => void;
+  onSaveBackend: (
+    backendId: string,
+    body: Partial<Pick<Backend, "name" | "base_url" | "is_enabled">>
+  ) => Promise<void>;
+  onToggleBackend: (backendId: string, nextEnabled: boolean) => void;
+  modelRefreshRequest: number;
+  onModelRefreshStateChange: (isRefreshing: boolean) => void;
+  onModelsChanged: () => Promise<void>;
+}) {
   const [groups, setGroups] = useState<AdminBackendModelGroup[]>([]);
   const [availableTags, setAvailableTags] = useState<PermissionTag[]>([]);
   const [defaultTags, setDefaultTags] = useState<PermissionTag[]>([]);
   const [hasLoaded, setHasLoaded] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [busyModelKey, setBusyModelKey] = useState<string | null>(null);
-  const [busyBackendId, setBusyBackendId] = useState<string | null>(null);
+  const [busyModelsBackendId, setBusyModelsBackendId] = useState<string | null>(null);
   const [isSavingDefaults, setIsSavingDefaults] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -8359,6 +8612,16 @@ function ModelsAccessPanel({ onModelsChanged }: { onModelsChanged: () => Promise
     })();
   }, [loadAdminModels, refreshAdminModels]);
 
+  useEffect(() => {
+    onModelRefreshStateChange(isRefreshing);
+  }, [isRefreshing, onModelRefreshStateChange]);
+
+  useEffect(() => {
+    if (modelRefreshRequest > 0) {
+      void refreshAdminModels();
+    }
+  }, [modelRefreshRequest, refreshAdminModels]);
+
   async function toggleModel(backendId: string, modelName: string, isEnabled: boolean) {
     const key = modelValue(backendId, modelName);
     setBusyModelKey(key);
@@ -8396,7 +8659,7 @@ function ModelsAccessPanel({ onModelsChanged }: { onModelsChanged: () => Promise
   }
 
   async function toggleBackend(group: AdminBackendModelGroup, isEnabled: boolean) {
-    setBusyBackendId(group.backend.id);
+    setBusyModelsBackendId(group.backend.id);
     setError(null);
     setStatus(null);
 
@@ -8427,7 +8690,7 @@ function ModelsAccessPanel({ onModelsChanged }: { onModelsChanged: () => Promise
     } catch (updateError) {
       setError(updateError instanceof Error ? updateError.message : "Failed to update models");
     } finally {
-      setBusyBackendId(null);
+      setBusyModelsBackendId(null);
     }
   }
 
@@ -8502,42 +8765,12 @@ function ModelsAccessPanel({ onModelsChanged }: { onModelsChanged: () => Promise
   }
 
   return (
-    <div className="settings-section">
-      <div className="section-header">
-        <div>
-          <p className="eyebrow">Admin</p>
-          <h1>Models</h1>
-        </div>
-        <div className="header-actions">
-          <button
-            type="button"
-            className="secondary-button refresh-button"
-            onClick={() => void refreshAdminModels()}
-            disabled={isRefreshing}
-          >
-            {isRefreshing ? (
-              <RetroLoader />
-            ) : (
-              <>
-                <RefreshCw />
-                <span>Refresh</span>
-              </>
-            )}
-          </button>
-        </div>
-      </div>
-
+    <>
       {error && <p className="error">{error}</p>}
       {status && <p className="status-message">{status}</p>}
       {!hasLoaded && <p className="status-message">Loading models...</p>}
-      {hasLoaded && groups.length === 0 && isRefreshing && (
-        <p className="status-message">Checking Ollama for models...</p>
-      )}
-      {hasLoaded && groups.length === 0 && !isRefreshing && (
-        <p className="status-message">No enabled Ollama backends are configured.</p>
-      )}
 
-      <section className="settings-subsection permission-defaults">
+      <section className="settings-subsection permission-defaults backend-model-defaults">
         <div>
           <p className="eyebrow">Defaults</p>
           <h2>Default Model Tags</h2>
@@ -8546,109 +8779,196 @@ function ModelsAccessPanel({ onModelsChanged }: { onModelsChanged: () => Promise
             new models until tags are added.
           </p>
         </div>
-        <PermissionTagEditor
-          label="Default tags"
-          tags={defaultTags}
-          availableTags={availableTags}
-          disabled={isSavingDefaults}
-          onChange={setDefaultTags}
-        />
-        <div className="model-access-actions">
-          <button
-            type="button"
-            className="secondary-button"
+        <div className="permission-defaults-row">
+          <PermissionTagEditor
+            label="Default tags"
+            tags={defaultTags}
+            availableTags={availableTags}
             disabled={isSavingDefaults}
-            onClick={() => void saveDefaultModelTags(false)}
-          >
-            Save Defaults
-          </button>
-          <button
-            type="button"
-            className="secondary-button"
-            disabled={isSavingDefaults}
-            onClick={() => void saveDefaultModelTags(true)}
-          >
-            Apply to Existing Models
-          </button>
+            onChange={setDefaultTags}
+          />
+          <div className="model-access-actions">
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={isSavingDefaults}
+              onClick={() => void saveDefaultModelTags(false)}
+            >
+              Save
+            </button>
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={isSavingDefaults}
+              onClick={() => void saveDefaultModelTags(true)}
+            >
+              Apply
+            </button>
+          </div>
         </div>
       </section>
 
-      <div className="model-access-list">
-        {groups.map((group) => {
-          const enabledCount = group.models.filter((model) => model.is_enabled).length;
-          const isBackendBusy = busyBackendId === group.backend.id;
+      <div className="backend-list">
+        {backends.map((backend) => {
+          if (editingBackend?.id === backend.id) {
+            return (
+              <BackendEditRow
+                key={backend.id}
+                backend={editingBackend}
+                isBusy={backendBusyId === backend.id}
+                onCancel={onCancelBackendEdit}
+                onSave={onSaveBackend}
+              />
+            );
+          }
+
+          const group = groups.find((candidate) => candidate.backend.id === backend.id);
+          const models = group?.models ?? [];
+          const enabledCount = models.filter((model) => model.is_enabled).length;
+          const isModelsBackendBusy = busyModelsBackendId === backend.id;
+          const isBackendBusy = backendBusyId === backend.id;
 
           return (
-            <section key={group.backend.id} className="model-access-group">
-              <div className="model-access-header">
-                <div>
-                  <h2>{group.backend.name}</h2>
-                  <p>
-                    {enabledCount} of {group.models.length} enabled
-                  </p>
+            <details key={backend.id} className="backend-row backend-model-group">
+              <summary className="backend-model-summary">
+                <div className="backend-main">
+                  <div>
+                    <h2>{backend.name}</h2>
+                    <p>{backend.base_url}</p>
+                    {backend.last_error && <p className="backend-error">{backend.last_error}</p>}
+                  </div>
+                  <div className="badges">
+                    <span className={backend.is_enabled ? "badge" : "badge badge-warning"}>
+                      {backend.is_enabled ? "enabled" : "disabled"}
+                    </span>
+                    <span
+                      className={
+                        backend.last_health_status === "error" ? "badge badge-warning" : "badge"
+                      }
+                    >
+                      {backend.last_health_status ?? "unknown"}
+                    </span>
+                    {backend.is_enabled && (
+                      <span className="badge">
+                        {enabledCount} / {models.length} models
+                      </span>
+                    )}
+                  </div>
                 </div>
-                <div className="model-access-actions">
+                <div className="backend-actions">
+                  <span className="backend-model-toggle">
+                    <ChevronDown />
+                    <span className="backend-model-toggle-show">Show models</span>
+                    <span className="backend-model-toggle-hide">Hide models</span>
+                  </span>
                   <button
                     type="button"
                     className="secondary-button"
-                    disabled={isBackendBusy || group.models.length === 0}
-                    onClick={() => void toggleBackend(group, true)}
+                    disabled={isBackendBusy}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      onToggleBackend(backend.id, !backend.is_enabled);
+                    }}
                   >
-                    Enable All
+                    <Power />
+                    <span>{backend.is_enabled ? "Disable" : "Enable"}</span>
                   </button>
                   <button
                     type="button"
                     className="secondary-button"
-                    disabled={isBackendBusy || group.models.length === 0}
-                    onClick={() => void toggleBackend(group, false)}
+                    disabled={isBackendBusy}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      onEditBackend(backend);
+                    }}
                   >
-                    Disable All
+                    <Pencil />
+                    <span>Edit</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="danger-button"
+                    disabled={isBackendBusy}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      onDeleteBackend(backend);
+                    }}
+                  >
+                    <Trash2 />
+                    <span>Delete</span>
                   </button>
                 </div>
+              </summary>
+
+              <div className="backend-model-panel">
+                {!backend.is_enabled ? (
+                  <p className="status-message">Enable this backend to manage its models.</p>
+                ) : !group && isRefreshing ? (
+                  <p className="status-message">Checking Ollama for models...</p>
+                ) : !group ? (
+                  <p className="status-message">No model data loaded for this backend yet.</p>
+                ) : models.length === 0 ? (
+                  <p className="status-message">No models returned by this backend.</p>
+                ) : (
+                  <>
+                    <div className="model-access-actions backend-model-bulk-actions">
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        disabled={isModelsBackendBusy || models.length === 0}
+                        onClick={() => void toggleBackend(group, true)}
+                      >
+                        Enable All
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        disabled={isModelsBackendBusy || models.length === 0}
+                        onClick={() => void toggleBackend(group, false)}
+                      >
+                        Disable All
+                      </button>
+                    </div>
+                    <div className="model-access-models">
+                      {models.map((model) => {
+                        const key = modelValue(backend.id, model.name);
+                        const isBusy = busyModelKey === key || isModelsBackendBusy;
+
+                        return (
+                          <article key={key} className="model-access-row">
+                            <span className="model-access-main">
+                              <span className="model-name">{model.name}</span>
+                              <ModelCapabilityBadges model={model} />
+                              <PermissionTagEditor
+                                label="Tags"
+                                tags={model.permission_tags}
+                                availableTags={availableTags}
+                                disabled={isBusy}
+                                onChange={(tags) => void updateModelTags(backend.id, model.name, tags)}
+                              />
+                            </span>
+                            <ToggleSwitch
+                              label={model.is_enabled ? "On" : "Off"}
+                              checked={model.is_enabled}
+                              disabled={isBusy}
+                              compact
+                              onChange={(checked) => void toggleModel(backend.id, model.name, checked)}
+                            />
+                          </article>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
               </div>
-
-              {group.models.length === 0 ? (
-                <p className="status-message">No models returned by this backend.</p>
-              ) : (
-                <div className="model-access-models">
-                  {group.models.map((model) => {
-                    const key = modelValue(group.backend.id, model.name);
-                    const isBusy = busyModelKey === key || isBackendBusy;
-
-                    return (
-                      <article key={key} className="model-access-row">
-                        <span className="model-access-main">
-                          <span className="model-name">{model.name}</span>
-                          <ModelCapabilityBadges model={model} />
-                          <PermissionTagEditor
-                            label="Allowed tags"
-                            tags={model.permission_tags}
-                            availableTags={availableTags}
-                            disabled={isBusy}
-                            onChange={(tags) =>
-                              void updateModelTags(group.backend.id, model.name, tags)
-                            }
-                          />
-                        </span>
-                        <ToggleSwitch
-                          label={model.is_enabled ? "On" : "Off"}
-                          checked={model.is_enabled}
-                          disabled={isBusy}
-                          compact
-                          onChange={(checked) =>
-                            void toggleModel(group.backend.id, model.name, checked)
-                          }
-                        />
-                      </article>
-                    );
-                  })}
-                </div>
-              )}
-            </section>
+            </details>
           );
         })}
       </div>
-    </div>
+    </>
   );
 }
 
@@ -8987,7 +9307,7 @@ function ToolsSettingsPanel({ onToolsChanged }: { onToolsChanged: () => Promise<
               onChange={setOllamaSearchEnabled}
             />
             <PermissionTagEditor
-              label="Allowed tags"
+              label="Tags"
               tags={toolPermissionTags.ollama_web_search ?? []}
               availableTags={availableTags}
               onChange={(tags) =>
@@ -9006,7 +9326,7 @@ function ToolsSettingsPanel({ onToolsChanged }: { onToolsChanged: () => Promise<
               onChange={setOllamaFetchEnabled}
             />
             <PermissionTagEditor
-              label="Allowed tags"
+              label="Tags"
               tags={toolPermissionTags.ollama_web_fetch ?? []}
               availableTags={availableTags}
               onChange={(tags) =>
@@ -9079,7 +9399,7 @@ function ToolsSettingsPanel({ onToolsChanged }: { onToolsChanged: () => Promise<
               onChange={setBraveSearchEnabled}
             />
             <PermissionTagEditor
-              label="Allowed tags"
+              label="Tags"
               tags={toolPermissionTags.brave_web_search ?? []}
               availableTags={availableTags}
               onChange={(tags) =>
@@ -9144,7 +9464,7 @@ function ToolsSettingsPanel({ onToolsChanged }: { onToolsChanged: () => Promise<
               onChange={setDirectFetchEnabled}
             />
             <PermissionTagEditor
-              label="Allowed tags"
+              label="Tags"
               tags={toolPermissionTags.direct_web_fetch ?? []}
               availableTags={availableTags}
               onChange={(tags) =>
@@ -9271,6 +9591,7 @@ function BackendsPanel({ onBackendsChanged }: { onBackendsChanged: () => Promise
   const [backends, setBackends] = useState<Backend[]>([]);
   const [hasLoaded, setHasLoaded] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isRefreshingModels, setIsRefreshingModels] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [isDetecting, setIsDetecting] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
@@ -9279,6 +9600,7 @@ function BackendsPanel({ onBackendsChanged }: { onBackendsChanged: () => Promise
   const [deleteTarget, setDeleteTarget] = useState<Backend | null>(null);
   const [newName, setNewName] = useState("");
   const [newBaseUrl, setNewBaseUrl] = useState("");
+  const [modelRefreshRequest, setModelRefreshRequest] = useState(0);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -9292,6 +9614,9 @@ function BackendsPanel({ onBackendsChanged }: { onBackendsChanged: () => Promise
       setHasLoaded(true);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Failed to load backends");
+      setBackends([]);
+      setEditingBackend(null);
+      setDeleteTarget(null);
       setHasLoaded(true);
     } finally {
       setIsRefreshing(false);
@@ -9420,7 +9745,8 @@ function BackendsPanel({ onBackendsChanged }: { onBackendsChanged: () => Promise
   const hasLocalBackend = backends.some((backend) => isLocalBackend(backend.base_url));
 
   return (
-    <div className="settings-section">
+    <>
+      <div className="settings-section">
       <div className="section-header">
         <div>
           <p className="eyebrow">Admin</p>
@@ -9434,7 +9760,16 @@ function BackendsPanel({ onBackendsChanged }: { onBackendsChanged: () => Promise
             disabled={isRefreshing}
           >
             {isRefreshing ? <RetroLoader /> : <RefreshCw />}
-            <span>{isRefreshing ? "Loading" : "Refresh"}</span>
+            <span>{isRefreshing ? "Loading" : "Refresh Backends"}</span>
+          </button>
+          <button
+            type="button"
+            className="secondary-button refresh-button"
+            onClick={() => setModelRefreshRequest((current) => current + 1)}
+            disabled={isRefreshingModels}
+          >
+            {isRefreshingModels ? <RetroLoader /> : <RefreshCw />}
+            <span>{isRefreshingModels ? "Checking" : "Refresh Models"}</span>
           </button>
           {!hasLocalBackend && (
             <button
@@ -9492,30 +9827,21 @@ function BackendsPanel({ onBackendsChanged }: { onBackendsChanged: () => Promise
         <p className="status-message">No Ollama backends configured.</p>
       )}
 
-      <div className="backend-list">
-        {backends.map((backend) =>
-          editingBackend?.id === backend.id ? (
-            <BackendEditRow
-              key={backend.id}
-              backend={editingBackend}
-              isBusy={busyBackendId === backend.id}
-              onCancel={() => setEditingBackend(null)}
-              onSave={updateBackend}
-            />
-          ) : (
-            <BackendRow
-              key={backend.id}
-              backend={backend}
-              isBusy={busyBackendId === backend.id}
-              onDelete={setDeleteTarget}
-              onEdit={setEditingBackend}
-              onToggle={(nextEnabled) =>
-                void updateBackend(backend.id, { is_enabled: nextEnabled })
-              }
-            />
-          )
-        )}
-      </div>
+      <AdminModelsAccessPanel
+        backends={backends}
+        editingBackend={editingBackend}
+        backendBusyId={busyBackendId}
+        onCancelBackendEdit={() => setEditingBackend(null)}
+        onDeleteBackend={setDeleteTarget}
+        onEditBackend={setEditingBackend}
+        onSaveBackend={updateBackend}
+        onToggleBackend={(backendId, nextEnabled) =>
+          void updateBackend(backendId, { is_enabled: nextEnabled })
+        }
+        modelRefreshRequest={modelRefreshRequest}
+        onModelRefreshStateChange={setIsRefreshingModels}
+        onModelsChanged={onBackendsChanged}
+      />
 
       {deleteTarget && (
         <ConfirmDialog
@@ -9527,70 +9853,8 @@ function BackendsPanel({ onBackendsChanged }: { onBackendsChanged: () => Promise
           onConfirm={() => void deleteBackend(deleteTarget.id)}
         />
       )}
-    </div>
-  );
-}
-
-function BackendRow({
-  backend,
-  isBusy,
-  onDelete,
-  onEdit,
-  onToggle
-}: {
-  backend: Backend;
-  isBusy: boolean;
-  onDelete: (backend: Backend) => void;
-  onEdit: (backend: Backend) => void;
-  onToggle: (nextEnabled: boolean) => void;
-}) {
-  return (
-    <article className="backend-row">
-      <div className="backend-main">
-        <div>
-          <h2>{backend.name}</h2>
-          <p>{backend.base_url}</p>
-          {backend.last_error && <p className="backend-error">{backend.last_error}</p>}
-        </div>
-        <div className="badges">
-          <span className={backend.is_enabled ? "badge" : "badge badge-warning"}>
-            {backend.is_enabled ? "enabled" : "disabled"}
-          </span>
-          <span className={backend.last_health_status === "error" ? "badge badge-warning" : "badge"}>
-            {backend.last_health_status ?? "unknown"}
-          </span>
-        </div>
       </div>
-      <div className="backend-actions">
-        <button
-          type="button"
-          className="secondary-button"
-          disabled={isBusy}
-          onClick={() => onToggle(!backend.is_enabled)}
-        >
-          <Power />
-          <span>{backend.is_enabled ? "Disable" : "Enable"}</span>
-        </button>
-        <button
-          type="button"
-          className="secondary-button"
-          disabled={isBusy}
-          onClick={() => onEdit(backend)}
-        >
-          <Pencil />
-          <span>Edit</span>
-        </button>
-        <button
-          type="button"
-          className="danger-button"
-          disabled={isBusy}
-          onClick={() => onDelete(backend)}
-        >
-          <Trash2 />
-          <span>Delete</span>
-        </button>
-      </div>
-    </article>
+    </>
   );
 }
 

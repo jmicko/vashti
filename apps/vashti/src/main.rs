@@ -138,6 +138,15 @@ fn router(state: AppState) -> Router {
         )
         .route("/models", get(backends::handlers::list_models))
         .route(
+            "/user-models",
+            get(backends::handlers::list_user_models)
+                .patch(backends::handlers::update_user_model_visibility),
+        )
+        .route(
+            "/user-models/refresh",
+            post(backends::handlers::refresh_user_models),
+        )
+        .route(
             "/admin/models",
             get(backends::handlers::list_admin_models)
                 .patch(backends::handlers::update_model_availability),

@@ -25,7 +25,7 @@ To update to the latest version, just run the same command again. The installer 
 For a specific version:
 
 ```sh
-curl -fsSL https://vashti.chat/install.sh | VASHTI_VERSION=v0.1.5 sh
+curl -fsSL https://vashti.chat/install.sh | VASHTI_VERSION=v0.1.6 sh
 ```
 
 All releases are available at [https://vashti.chat/releases](https://vashti.chat/releases).

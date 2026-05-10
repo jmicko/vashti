@@ -752,6 +752,24 @@ mod tests {
         backends_service::ensure_model_enabled_for_user(&pool, &user.id, &backend.id, "gemma4:e2b")
             .await
             .expect("matching tag permits model");
+
+        backends_service::set_user_model_visibility(
+            &pool,
+            &user.id,
+            &backend.id,
+            "gemma4:e2b",
+            false,
+        )
+        .await
+        .expect("hide model from picker");
+        backends_service::ensure_model_enabled_for_user(&pool, &user.id, &backend.id, "gemma4:e2b")
+            .await
+            .expect("personal picker visibility does not change server permission");
+        let preferences =
+            backends_service::user_model_preferences_by_backend(&pool, &user.id, &backend.id)
+                .await
+                .expect("load user model preferences");
+        assert_eq!(preferences.get("gemma4:e2b"), Some(&false));
     }
 
     #[tokio::test]
