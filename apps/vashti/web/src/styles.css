@@ -1647,6 +1647,11 @@ textarea {
   padding: 8px;
 }
 
+.message-stream-content {
+  display: grid;
+  gap: 10px;
+}
+
 .message-thinking summary {
   color: var(--accent);
   cursor: pointer;

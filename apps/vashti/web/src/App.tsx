@@ -392,6 +392,20 @@ type ThinkingSegment =
       usage: ToolUsageRecord;
     };
 
+type MessageStreamSegment =
+  | {
+      type: "thinking";
+      text: string;
+    }
+  | {
+      type: "content";
+      text: string;
+    }
+  | {
+      type: "tool";
+      usage: ToolUsageRecord;
+    };
+
 type ParsedThinkingText = {
   thinkingText: string;
   segments: ThinkingSegment[];
@@ -2365,6 +2379,7 @@ function ChatView({
   const [busyMessageId, setBusyMessageId] = useState<string | null>(null);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ChatMessage | null>(null);
+  const [streamSegments, setStreamSegments] = useState<Record<string, MessageStreamSegment[]>>({});
   const messageListRef = useRef<HTMLElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const generationRunRef = useRef(0);
@@ -2398,6 +2413,7 @@ function ChatView({
       });
       thinkingStartedAtRef.current.clear();
       setThinkingDurations({});
+      setStreamSegments({});
       setMessages(nextMessages);
       const streamingAssistantId = streamingAssistantIdFromMessages(nextMessages);
       setActiveAssistantId(streamingAssistantId);
@@ -2931,6 +2947,7 @@ function ChatView({
         autoScrollModeRef.current = "top";
         setActiveAssistantId(event.assistant_message.id);
         clearThinkingDuration(event.assistant_message.id);
+        setStreamSegments((current) => ({ ...current, [event.assistant_message.id]: [] }));
         if (event.user_message && !event.user_message.parent_message_id) {
           setChat((current) =>
             current ? { ...current, active_root_message_id: event.user_message?.id ?? null } : current
@@ -2972,10 +2989,12 @@ function ChatView({
         break;
       case "thinking_delta":
         markThinkingStarted(event.assistant_message_id);
+        appendStreamSegments(event.assistant_message_id, splitThinkingDelta(event.delta));
         appendMessageText(event.assistant_message_id, "thinking_text", event.delta);
         break;
       case "content_delta":
         finishThinkingDuration(event.assistant_message_id);
+        appendStreamSegments(event.assistant_message_id, [{ type: "content", text: event.delta }]);
         appendMessageText(event.assistant_message_id, "content_text", event.delta);
         break;
       case "message_done":
@@ -3039,6 +3058,17 @@ function ChatView({
         };
       })
     );
+  }
+
+  function appendStreamSegments(messageId: string, segments: MessageStreamSegment[]) {
+    if (segments.length === 0) {
+      return;
+    }
+
+    setStreamSegments((current) => ({
+      ...current,
+      [messageId]: mergeMessageStreamSegments(current[messageId] ?? [], segments)
+    }));
   }
 
   function updateMessageStatus(messageId: string, status: string, doneReason: string | null) {
@@ -3383,6 +3413,7 @@ function ChatView({
                   copied={copiedMessageId === message.id}
                   isBusy={busyMessageId === message.id}
                   isGenerating={isGenerating}
+                  streamSegments={streamSegments[message.id]}
                   thinkingDurationSeconds={thinkingDurations[message.id] ?? null}
                   onCopy={copyMessage}
                   onDelete={setDeleteTarget}
@@ -3471,6 +3502,7 @@ function PrivateChatView({
   const [busyMessageId, setBusyMessageId] = useState<string | null>(null);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<PrivateChatMessage | null>(null);
+  const [streamSegments, setStreamSegments] = useState<Record<string, MessageStreamSegment[]>>({});
   const [streamTestStatus, setStreamTestStatus] = useState<string | null>(null);
   const [isPrivateBannerExpanded, setIsPrivateBannerExpanded] = useState(true);
   const messageListRef = useRef<HTMLElement | null>(null);
@@ -3485,6 +3517,7 @@ function PrivateChatView({
   const privateSaveChainRef = useRef<Promise<void>>(Promise.resolve());
   const privateBannerTimerRef = useRef<number | null>(null);
   const thinkingStartedAtRef = useRef(new Map<string, number>());
+  const thinkingContentCursorRef = useRef(new Map<string, number>());
   const [thinkingDurations, setThinkingDurations] = useState<Record<string, number>>({});
   const visibleMessages = useMemo(
     () => activePathMessages(messages, chat?.active_root_message_id ?? null),
@@ -3518,7 +3551,9 @@ function PrivateChatView({
 
       setChat(nextChat);
       thinkingStartedAtRef.current.clear();
+      thinkingContentCursorRef.current.clear();
       setThinkingDurations({});
+      setStreamSegments({});
       messagesRef.current = nextMessages;
       setMessages(nextMessages);
       const streamingAssistantId = streamingAssistantIdFromMessages(nextMessages);
@@ -3549,6 +3584,13 @@ function PrivateChatView({
   useEffect(() => {
     setIsPrivateBannerExpanded(true);
   }, [chatId]);
+
+  useEffect(() => {
+    const latestModel = latestAssistantModelValue(visibleMessages);
+    if (latestModel) {
+      onModelSelected(latestModel);
+    }
+  }, [onModelSelected, visibleMessages]);
 
   useEffect(() => {
     if (privateBannerTimerRef.current) {
@@ -3873,6 +3915,8 @@ function PrivateChatView({
     setIsGenerating(true);
     setActiveAssistantId(assistantId);
     setGenerationError(null);
+    setStreamSegments((current) => ({ ...current, [assistantId]: [] }));
+    thinkingContentCursorRef.current.set(assistantId, 0);
 
     try {
       const response = await fetch(path, {
@@ -4160,11 +4204,19 @@ function PrivateChatView({
 
     switch (event.type) {
       case "thinking_delta":
-        markThinkingStarted(event.assistant_message_id);
-        appendMessageText(event.assistant_message_id, "thinking_text", event.delta);
+        {
+          const orderedDelta = orderedPrivateThinkingDelta(
+            event.assistant_message_id,
+            event.delta
+          );
+          markThinkingStarted(event.assistant_message_id);
+          appendStreamSegments(event.assistant_message_id, splitThinkingDelta(orderedDelta));
+          appendMessageText(event.assistant_message_id, "thinking_text", orderedDelta);
+        }
         break;
       case "content_delta":
         finishThinkingDuration(event.assistant_message_id);
+        appendStreamSegments(event.assistant_message_id, [{ type: "content", text: event.delta }]);
         appendMessageText(event.assistant_message_id, "content_text", event.delta);
         break;
       case "message_done":
@@ -4236,6 +4288,31 @@ function PrivateChatView({
         updated_at: unixTimestamp()
       };
     });
+  }
+
+  function orderedPrivateThinkingDelta(messageId: string, delta: string) {
+    const message = messagesRef.current.find((current) => current.id === messageId);
+    const contentText = message?.active_revision?.content_text ?? "";
+    const contentCursor = Array.from(contentText).length;
+    const previousCursor = thinkingContentCursorRef.current.get(messageId) ?? 0;
+
+    if (contentCursor === previousCursor) {
+      return delta;
+    }
+
+    thinkingContentCursorRef.current.set(messageId, contentCursor);
+    return `<VASHTI_CONTENT_CURSOR>${contentCursor}</VASHTI_CONTENT_CURSOR>${delta}`;
+  }
+
+  function appendStreamSegments(messageId: string, segments: MessageStreamSegment[]) {
+    if (segments.length === 0) {
+      return;
+    }
+
+    setStreamSegments((current) => ({
+      ...current,
+      [messageId]: mergeMessageStreamSegments(current[messageId] ?? [], segments)
+    }));
   }
 
   function markThinkingStarted(messageId: string) {
@@ -4571,8 +4648,9 @@ function PrivateChatView({
 
       setChat(nextChat);
       replacePrivateMessages(nextMessages);
-      if (nextMessage.role === "assistant" && nextMessage.backend_id && nextMessage.model_name) {
-        onModelSelected(modelValue(nextMessage.backend_id, nextMessage.model_name));
+      const nextModelValue = messageModelValue(nextMessage);
+      if (nextMessage.role === "assistant" && nextModelValue) {
+        onModelSelected(nextModelValue);
       }
 
       await privateSaveChainRef.current;
@@ -4706,6 +4784,7 @@ function PrivateChatView({
                   copied={copiedMessageId === message.id}
                   isBusy={busyMessageId === message.id}
                   isGenerating={isGenerating}
+                  streamSegments={streamSegments[message.id]}
                   thinkingDurationSeconds={thinkingDurations[message.id] ?? null}
                   onCopy={copyMessage}
                   onDelete={(message) => setDeleteTarget(message as PrivateChatMessage)}
@@ -4760,6 +4839,7 @@ function MessageBubble({
   canBranch = true,
   canRegenerate = true,
   canEdit = true,
+  streamSegments,
   thinkingDurationSeconds,
   onCopy,
   onDelete,
@@ -4779,6 +4859,7 @@ function MessageBubble({
   canBranch?: boolean;
   canRegenerate?: boolean;
   canEdit?: boolean;
+  streamSegments?: MessageStreamSegment[];
   thinkingDurationSeconds: number | null;
   onCopy: (message: ChatMessage) => Promise<void>;
   onDelete: (message: ChatMessage) => void;
@@ -4805,8 +4886,18 @@ function MessageBubble({
     () => parseThinkingText(message.active_revision?.thinking_text ?? ""),
     [message.active_revision?.thinking_text]
   );
+  const storedOrderedSegments = useMemo(
+    () =>
+      messageDisplaySegmentsFromRevision(
+        message.active_revision?.content_text ?? "",
+        message.active_revision?.thinking_text ?? ""
+      ),
+    [message.active_revision?.content_text, message.active_revision?.thinking_text]
+  );
   const thinking = parsedThinking.thinkingText.trim();
   const hasThinkingDetail = thinking || parsedThinking.segments.some((segment) => segment.type === "tool");
+  const orderedSegments = streamSegments?.length ? streamSegments : storedOrderedSegments;
+  const hasOrderedSegments = orderedSegments.length > 0;
   const attachments = activeMessageAttachments(message);
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState(content);
@@ -4925,7 +5016,7 @@ function MessageBubble({
           />
         )}
       </div>
-      {hasThinkingDetail && !message.is_deleted && (
+      {!hasOrderedSegments && hasThinkingDetail && !message.is_deleted && (
         <details className="message-thinking">
           <summary>{thinkingSummary(message, thinkingDurationSeconds)}</summary>
           <ThinkingContent segments={parsedThinking.segments} />
@@ -4992,6 +5083,12 @@ function MessageBubble({
             )}
           </div>
         </div>
+      ) : hasOrderedSegments ? (
+        <MessageStreamContent
+          message={message}
+          segments={orderedSegments}
+          thinkingDurationSeconds={thinkingDurationSeconds}
+        />
       ) : content ? (
         <MarkdownContent content={content} />
       ) : (
@@ -5053,7 +5150,8 @@ function MessageBubble({
 
 function parseThinkingText(rawThinkingText: string): ParsedThinkingText {
   const segments: ThinkingSegment[] = [];
-  const markerPattern = /<VASHTI_TOOL_USAGE>([\s\S]*?)<\/VASHTI_TOOL_USAGE>/g;
+  const markerPattern =
+    /<VASHTI_(TOOL_USAGE|CONTENT_CURSOR)>([\s\S]*?)<\/VASHTI_(?:TOOL_USAGE|CONTENT_CURSOR)>/g;
   let visibleThinkingText = "";
   let cursor = 0;
   let match: RegExpExecArray | null;
@@ -5063,11 +5161,13 @@ function parseThinkingText(rawThinkingText: string): ParsedThinkingText {
     pushThinkingTextSegment(segments, textBefore);
     visibleThinkingText += textBefore;
 
-    const usage = parseToolUsageRecord(match[1]);
-    if (usage) {
-      segments.push({ type: "tool", usage });
+    if (match[1] === "TOOL_USAGE") {
+      const usage = parseToolUsageRecord(match[2]);
+      if (usage) {
+        segments.push({ type: "tool", usage });
+      }
+      visibleThinkingText += "\n";
     }
-    visibleThinkingText += "\n";
     cursor = match.index + match[0].length;
   }
 
@@ -5079,6 +5179,131 @@ function parseThinkingText(rawThinkingText: string): ParsedThinkingText {
     thinkingText: visibleThinkingText.replace(/\n{3,}/g, "\n\n").trim(),
     segments
   };
+}
+
+function splitThinkingDelta(delta: string): MessageStreamSegment[] {
+  const segments: MessageStreamSegment[] = [];
+  const markerPattern =
+    /<VASHTI_(TOOL_USAGE|CONTENT_CURSOR)>([\s\S]*?)<\/VASHTI_(?:TOOL_USAGE|CONTENT_CURSOR)>/g;
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = markerPattern.exec(delta)) !== null) {
+    const textBefore = delta.slice(cursor, match.index);
+    if (textBefore) {
+      segments.push({ type: "thinking", text: textBefore });
+    }
+
+    if (match[1] === "TOOL_USAGE") {
+      const usage = parseToolUsageRecord(match[2]);
+      if (usage) {
+        segments.push({ type: "tool", usage });
+      }
+    }
+    cursor = match.index + match[0].length;
+  }
+
+  const textAfter = delta.slice(cursor);
+  if (textAfter) {
+    segments.push({ type: "thinking", text: textAfter });
+  }
+
+  return segments;
+}
+
+function messageDisplaySegmentsFromRevision(
+  contentText: string,
+  thinkingText: string
+): MessageStreamSegment[] {
+  if (!thinkingText.includes("<VASHTI_CONTENT_CURSOR>")) {
+    return [];
+  }
+
+  const contentCodePoints = Array.from(contentText);
+  const segments: MessageStreamSegment[] = [];
+  const markerPattern =
+    /<VASHTI_(TOOL_USAGE|CONTENT_CURSOR)>([\s\S]*?)<\/VASHTI_(?:TOOL_USAGE|CONTENT_CURSOR)>/g;
+  let thinkingCursor = 0;
+  let contentCursor = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = markerPattern.exec(thinkingText)) !== null) {
+    const thinkingBefore = thinkingText.slice(thinkingCursor, match.index);
+    if (thinkingBefore) {
+      segments.push({ type: "thinking", text: thinkingBefore });
+    }
+
+    if (match[1] === "CONTENT_CURSOR") {
+      const nextContentCursor = clampContentCursor(
+        Number.parseInt(match[2], 10),
+        contentCodePoints.length
+      );
+      appendContentSlice(segments, contentCodePoints, contentCursor, nextContentCursor);
+      contentCursor = nextContentCursor;
+    } else {
+      const usage = parseToolUsageRecord(match[2]);
+      if (usage) {
+        segments.push({ type: "tool", usage });
+      }
+    }
+
+    thinkingCursor = match.index + match[0].length;
+  }
+
+  const remainingThinking = thinkingText.slice(thinkingCursor);
+  if (remainingThinking) {
+    segments.push({ type: "thinking", text: remainingThinking });
+  }
+  appendContentSlice(segments, contentCodePoints, contentCursor, contentCodePoints.length);
+
+  return mergeMessageStreamSegments([], segments);
+}
+
+function clampContentCursor(value: number, max: number) {
+  if (!Number.isFinite(value)) {
+    return max;
+  }
+
+  return Math.max(0, Math.min(max, value));
+}
+
+function appendContentSlice(
+  segments: MessageStreamSegment[],
+  contentCodePoints: string[],
+  start: number,
+  end: number
+) {
+  if (end <= start) {
+    return;
+  }
+
+  segments.push({
+    type: "content",
+    text: contentCodePoints.slice(start, end).join("")
+  });
+}
+
+function mergeMessageStreamSegments(
+  current: MessageStreamSegment[],
+  incoming: MessageStreamSegment[]
+) {
+  const next = [...current];
+
+  for (const segment of incoming) {
+    const last = next[next.length - 1];
+    if (last?.type === "thinking" && segment.type === "thinking") {
+      next[next.length - 1] = { ...last, text: last.text + segment.text };
+      continue;
+    }
+    if (last?.type === "content" && segment.type === "content") {
+      next[next.length - 1] = { ...last, text: last.text + segment.text };
+      continue;
+    }
+
+    next.push(segment);
+  }
+
+  return next;
 }
 
 function pushThinkingTextSegment(segments: ThinkingSegment[], text: string) {
@@ -5108,6 +5333,50 @@ function parseToolUsageRecord(jsonText: string): ToolUsageRecord | null {
   }
 
   return null;
+}
+
+function MessageStreamContent({
+  message,
+  segments,
+  thinkingDurationSeconds
+}: {
+  message: ChatMessage;
+  segments: MessageStreamSegment[];
+  thinkingDurationSeconds: number | null;
+}) {
+  const visibleSegments = segments.filter(
+    (segment) => segment.type === "tool" || segment.text.trim() !== ""
+  );
+
+  if (visibleSegments.length === 0) {
+    return <p>{message.status === "streaming" ? <RetroLoader /> : "No content"}</p>;
+  }
+
+  return (
+    <div className="message-stream-content">
+      {visibleSegments.map((segment, index) => {
+        if (segment.type === "content") {
+          return <MarkdownContent key={`content-${index}`} content={segment.text} />;
+        }
+
+        if (segment.type === "tool") {
+          return <ToolUsageCard key={`tool-${index}`} usage={segment.usage} />;
+        }
+
+        const segmentThinkingDuration =
+          message.status === "streaming" && index === visibleSegments.length - 1
+            ? null
+            : thinkingDurationSeconds;
+
+        return (
+          <details key={`thinking-${index}`} className="message-thinking">
+            <summary>{thinkingSummary(message, segmentThinkingDuration)}</summary>
+            <ThinkingContent segments={[{ type: "text", text: segment.text.trim() }]} />
+          </details>
+        );
+      })}
+    </div>
+  );
 }
 
 function ThinkingContent({ segments }: { segments: ThinkingSegment[] }) {
@@ -5340,15 +5609,28 @@ function formatThoughtDuration(seconds: number) {
 
 function latestAssistantModelValue(messages: ChatMessage[]) {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (message.role === "assistant" && message.persona_version_id) {
-      return isPrivatePersonaVersionId(message.persona_version_id)
-        ? privatePersonaModelValue(message.persona_version_id)
-        : personaModelValue(message.persona_version_id);
+    const value = messageModelValue(messages[index]);
+    if (value) {
+      return value;
     }
-    if (message.role === "assistant" && message.backend_id && message.model_name) {
-      return modelValue(message.backend_id, message.model_name);
-    }
+  }
+
+  return null;
+}
+
+function messageModelValue(message: ChatMessage) {
+  if (message.role !== "assistant") {
+    return null;
+  }
+
+  if (message.persona_version_id) {
+    return isPrivatePersonaVersionId(message.persona_version_id)
+      ? privatePersonaModelValue(message.persona_version_id)
+      : personaModelValue(message.persona_version_id);
+  }
+
+  if (message.backend_id && message.model_name) {
+    return modelValue(message.backend_id, message.model_name);
   }
 
   return null;
