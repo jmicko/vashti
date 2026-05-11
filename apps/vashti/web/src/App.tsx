@@ -157,6 +157,7 @@ type ModelInfo = {
 type AdminModelInfo = ModelInfo & {
   is_enabled: boolean;
   permission_tags: PermissionTag[];
+  default_permission_tags: PermissionTag[];
 };
 
 type UserModelInfo = ModelInfo & {
@@ -8160,6 +8161,19 @@ function permissionTagPayload(tags: PermissionTag[]) {
   return tags.map((tag) => tag.id);
 }
 
+function mergePermissionTags(...tagGroups: PermissionTag[][]) {
+  const merged = new Map<string, PermissionTag>();
+  for (const tags of tagGroups) {
+    for (const tag of tags) {
+      if (!merged.has(tag.id)) {
+        merged.set(tag.id, tag);
+      }
+    }
+  }
+
+  return Array.from(merged.values());
+}
+
 function permissionTagFromInput(value: string, availableTags: PermissionTag[]): PermissionTag | null {
   const trimmed = value.trim();
   if (!trimmed) {
@@ -8249,6 +8263,64 @@ function PermissionTagEditor({
           <button type="button" className="secondary-button" disabled={disabled} onClick={addTag}>
             <Plus />
           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DefaultPermissionTagControls({
+  label,
+  defaultTags,
+  activeTags,
+  disabled = false,
+  onChange
+}: {
+  label: string;
+  defaultTags: PermissionTag[];
+  activeTags: PermissionTag[];
+  disabled?: boolean;
+  onChange: (tags: PermissionTag[]) => void;
+}) {
+  const activeTagIds = new Set(activeTags.map((tag) => tag.id));
+  const visibleDefaultTags = mergePermissionTags(defaultTags, activeTags);
+
+  function toggleTag(tag: PermissionTag) {
+    if (activeTagIds.has(tag.id)) {
+      onChange(activeTags.filter((activeTag) => activeTag.id !== tag.id));
+      return;
+    }
+
+    onChange([...activeTags, tag]);
+  }
+
+  return (
+    <div className="permission-tag-editor">
+      <span>{label}</span>
+      <div className="permission-tag-row">
+        <div className="permission-tags permission-tags-defaults">
+          {visibleDefaultTags.length === 0 ? (
+            <span className="permission-tag-empty">No defaults</span>
+          ) : (
+            visibleDefaultTags.map((tag) => {
+              const isActive = activeTagIds.has(tag.id);
+              return (
+                <button
+                  type="button"
+                  key={tag.id}
+                  className={`permission-tag permission-tag-${tag.kind} ${
+                    isActive ? "permission-tag-default-active" : "permission-tag-default-removed"
+                  }`}
+                  disabled={disabled}
+                  onClick={() => toggleTag(tag)}
+                  title={isActive ? "Remove this default from this model" : "Restore this default"}
+                >
+                  <span>{tag.label}</span>
+                  {isActive ? <span className="permission-tag-source">default</span> : <X />}
+                </button>
+              );
+            })
+          )}
         </div>
       </div>
     </div>
@@ -8983,7 +9055,10 @@ function AdminModelsAccessPanel({
     setStatus(null);
 
     try {
-      const response = await requestJson<{ permission_tags: PermissionTag[] }>(
+      const response = await requestJson<{
+        permission_tags: PermissionTag[];
+        default_permission_tags: PermissionTag[];
+      }>(
         "/api/admin/models/tags",
         {
           method: "PATCH",
@@ -9001,7 +9076,11 @@ function AdminModelsAccessPanel({
                 ...group,
                 models: group.models.map((model) =>
                   model.name === modelName
-                    ? { ...model, permission_tags: response.permission_tags }
+                    ? {
+                        ...model,
+                        permission_tags: response.permission_tags,
+                        default_permission_tags: response.default_permission_tags
+                      }
                     : model
                 )
               }
@@ -9012,6 +9091,57 @@ function AdminModelsAccessPanel({
       await onModelsChanged();
     } catch (updateError) {
       setError(updateError instanceof Error ? updateError.message : "Failed to update model tags");
+    } finally {
+      setBusyModelKey(null);
+    }
+  }
+
+  async function updateModelDefaultTags(
+    backendId: string,
+    modelName: string,
+    tags: PermissionTag[]
+  ) {
+    const key = modelValue(backendId, modelName);
+    setBusyModelKey(key);
+    setError(null);
+    setStatus(null);
+
+    try {
+      const response = await requestJson<{
+        permission_tags: PermissionTag[];
+        default_permission_tags: PermissionTag[];
+      }>("/api/admin/models/tags", {
+        method: "PATCH",
+        body: JSON.stringify({
+          backend_id: backendId,
+          model_name: modelName,
+          default_permission_tags: permissionTagPayload(tags)
+        })
+      });
+      setGroups((current) =>
+        current.map((group) =>
+          group.backend.id === backendId
+            ? {
+                ...group,
+                models: group.models.map((model) =>
+                  model.name === modelName
+                    ? {
+                        ...model,
+                        permission_tags: response.permission_tags,
+                        default_permission_tags: response.default_permission_tags
+                      }
+                    : model
+                )
+              }
+            : group
+        )
+      );
+      setStatus("Model default tags saved.");
+      await onModelsChanged();
+    } catch (updateError) {
+      setError(
+        updateError instanceof Error ? updateError.message : "Failed to update model default tags"
+      );
     } finally {
       setBusyModelKey(null);
     }
@@ -9058,7 +9188,8 @@ function AdminModelsAccessPanel({
           <h2>Default Model Tags</h2>
           <p className="status-message">
             New models get these tags the first time Vashti sees them. Empty means no one can use
-            new models until tags are added.
+            new models until tags are added. Apply updates only the default-tag layer on existing
+            models and keeps admin tags intact.
           </p>
         </div>
         <div className="permission-defaults-row">
@@ -9224,8 +9355,17 @@ function AdminModelsAccessPanel({
                             <span className="model-access-main">
                               <span className="model-name">{model.name}</span>
                               <ModelCapabilityBadges model={model} />
+                              <DefaultPermissionTagControls
+                                label="Default tags"
+                                defaultTags={defaultTags}
+                                activeTags={model.default_permission_tags}
+                                disabled={isBusy}
+                                onChange={(tags) =>
+                                  void updateModelDefaultTags(backend.id, model.name, tags)
+                                }
+                              />
                               <PermissionTagEditor
-                                label="Tags"
+                                label="Admin tags"
                                 tags={model.permission_tags}
                                 availableTags={availableTags}
                                 disabled={isBusy}

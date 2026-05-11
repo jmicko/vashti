@@ -555,6 +555,9 @@ Tag UI behavior:
 * user tags should display as `@username` but store the stable `user:<user_id>` ID
 * unused group tags disappear from suggestions when they are no longer applied anywhere
 * default model/tool tags are applied to newly discovered models/tools, but individual resources may be customized afterward
+* model default tags and admin-set model tags are separate layers
+* removing a default tag from an individual model should leave the tag visible in a muted/removed state so the admin can restore it easily
+* applying default model tags to existing models only replaces the default-tag layer; manually added model tags remain intact
 
 Tables:
 
@@ -566,7 +569,12 @@ Tables:
   * `backend_id` TEXT NOT NULL
   * `model_name` TEXT NOT NULL
   * `tag_id` TEXT NOT NULL
-  * references `model_availability` and controls base model access
+  * references `model_availability` and stores manually added model access tags
+* `model_default_permission_tags`
+  * `backend_id` TEXT NOT NULL
+  * `model_name` TEXT NOT NULL
+  * `tag_id` TEXT NOT NULL
+  * references `model_availability` and stores the default-tag layer applied to each model
 * `tool_permission_state`
   * `tool_id` TEXT PRIMARY KEY
   * records that a tool has been initialized for default-tag application

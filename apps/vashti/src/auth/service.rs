@@ -723,7 +723,10 @@ mod tests {
             vec!["power-users".to_string()],
         )
         .await
-        .expect("restrict model");
+        .expect("add manual model tag");
+        permissions_service::replace_model_default_tags(&pool, &backend.id, "gemma4:e2b", vec![])
+            .await
+            .expect("remove default model tags");
 
         assert!(
             backends_service::ensure_model_enabled_for_user(

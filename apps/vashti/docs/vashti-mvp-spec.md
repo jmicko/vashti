@@ -708,6 +708,7 @@ Rationale:
 * each backend has a human-readable name and base URL
 * users select models from a server-grouped model picker
 * users can hide accessible models from their own picker without changing server permissions
+* admin model defaults and admin-added model tags are separate; applying defaults updates only the default layer and preserves manual tags
 * admin can enable or disable configured backends
 * localhost detection on first run is desirable
 * local-network discovery should be an explicit admin action rather than a background behavior

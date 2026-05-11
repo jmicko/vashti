@@ -78,6 +78,7 @@ pub async fn known_tags(pool: &SqlitePool) -> Result<Vec<PermissionTagResponse>,
     for query in [
         "SELECT tag_id FROM user_permission_tags",
         "SELECT tag_id FROM model_permission_tags",
+        "SELECT tag_id FROM model_default_permission_tags",
         "SELECT tag_id FROM tool_permission_tags",
     ] {
         let rows = sqlx::query(query).fetch_all(pool).await?;
@@ -270,7 +271,7 @@ pub async fn ensure_model_record(
 
     if result.rows_affected() > 0 {
         let defaults = default_model_tag_ids(pool).await?;
-        replace_model_tags(pool, backend_id, model_name, defaults)
+        replace_normalized_model_default_tags(pool, backend_id, model_name, &defaults)
             .await
             .map_err(api_error_to_sqlx)?;
     }
@@ -314,9 +315,14 @@ pub async fn model_tags_by_backend(
         SELECT model_name, tag_id
         FROM model_permission_tags
         WHERE backend_id = ?
+        UNION
+        SELECT model_name, tag_id
+        FROM model_default_permission_tags
+        WHERE backend_id = ?
         ORDER BY model_name ASC, tag_id ASC
         "#,
     )
+    .bind(backend_id)
     .bind(backend_id)
     .fetch_all(pool)
     .await?;
@@ -331,6 +337,20 @@ pub async fn model_tags_by_backend(
     Ok(tags)
 }
 
+pub async fn manual_model_tags_by_backend(
+    pool: &SqlitePool,
+    backend_id: &str,
+) -> Result<HashMap<String, Vec<String>>, sqlx::Error> {
+    model_tags_by_backend_from_table(pool, backend_id, "model_permission_tags").await
+}
+
+pub async fn default_model_tags_by_backend(
+    pool: &SqlitePool,
+    backend_id: &str,
+) -> Result<HashMap<String, Vec<String>>, sqlx::Error> {
+    model_tags_by_backend_from_table(pool, backend_id, "model_default_permission_tags").await
+}
+
 pub async fn model_tags(
     pool: &SqlitePool,
     backend_id: &str,
@@ -342,9 +362,16 @@ pub async fn model_tags(
         FROM model_permission_tags
         WHERE backend_id = ?
           AND model_name = ?
+        UNION
+        SELECT tag_id
+        FROM model_default_permission_tags
+        WHERE backend_id = ?
+          AND model_name = ?
         ORDER BY tag_id ASC
         "#,
     )
+    .bind(backend_id)
+    .bind(model_name)
     .bind(backend_id)
     .bind(model_name)
     .fetch_all(pool)
@@ -392,6 +419,59 @@ pub async fn replace_model_tags(
 
     tx.commit().await?;
     Ok(tags)
+}
+
+async fn model_tags_by_backend_from_table(
+    pool: &SqlitePool,
+    backend_id: &str,
+    table_name: &str,
+) -> Result<HashMap<String, Vec<String>>, sqlx::Error> {
+    let rows = sqlx::query(&format!(
+        r#"
+        SELECT model_name, tag_id
+        FROM {table_name}
+        WHERE backend_id = ?
+        ORDER BY model_name ASC, tag_id ASC
+        "#
+    ))
+    .bind(backend_id)
+    .fetch_all(pool)
+    .await?;
+
+    let mut tags = HashMap::<String, Vec<String>>::new();
+    for row in rows {
+        tags.entry(row.try_get("model_name")?)
+            .or_default()
+            .push(row.try_get("tag_id")?);
+    }
+
+    Ok(tags)
+}
+
+pub async fn replace_model_default_tags(
+    pool: &SqlitePool,
+    backend_id: &str,
+    model_name: &str,
+    values: Vec<String>,
+) -> Result<Vec<String>, ApiError> {
+    let tags = normalize_tag_ids(pool, values).await?;
+    replace_normalized_model_default_tags(pool, backend_id, model_name, &tags).await?;
+    Ok(tags)
+}
+
+async fn replace_normalized_model_default_tags(
+    pool: &SqlitePool,
+    backend_id: &str,
+    model_name: &str,
+    tags: &[String],
+) -> Result<(), ApiError> {
+    let now = unix_timestamp();
+    let mut tx = pool.begin().await?;
+
+    replace_model_default_tags_in_tx(&mut tx, backend_id, model_name, tags, now).await?;
+
+    tx.commit().await?;
+    Ok(())
 }
 
 pub async fn tool_tags_by_tool(
@@ -493,7 +573,7 @@ async fn update_default_tags(
     .await?;
 
     if apply_to_existing {
-        sqlx::query("DELETE FROM model_permission_tags")
+        sqlx::query("DELETE FROM model_default_permission_tags")
             .execute(&mut *tx)
             .await?;
         let rows = sqlx::query("SELECT backend_id, model_name FROM model_availability")
@@ -502,24 +582,48 @@ async fn update_default_tags(
         for row in rows {
             let backend_id: String = row.try_get("backend_id")?;
             let model_name: String = row.try_get("model_name")?;
-            for tag in tags {
-                sqlx::query(
-                    r#"
-                    INSERT INTO model_permission_tags (backend_id, model_name, tag_id, created_at)
-                    VALUES (?, ?, ?, ?)
-                    "#,
-                )
-                .bind(&backend_id)
-                .bind(&model_name)
-                .bind(tag)
-                .bind(now)
-                .execute(&mut *tx)
-                .await?;
-            }
+            replace_model_default_tags_in_tx(&mut tx, &backend_id, &model_name, tags, now).await?;
         }
     }
 
     tx.commit().await?;
+    Ok(())
+}
+
+async fn replace_model_default_tags_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    backend_id: &str,
+    model_name: &str,
+    tags: &[String],
+    now: i64,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        DELETE FROM model_default_permission_tags
+        WHERE backend_id = ?
+          AND model_name = ?
+        "#,
+    )
+    .bind(backend_id)
+    .bind(model_name)
+    .execute(&mut **tx)
+    .await?;
+
+    for tag in tags {
+        sqlx::query(
+            r#"
+            INSERT INTO model_default_permission_tags (backend_id, model_name, tag_id, created_at)
+            VALUES (?, ?, ?, ?)
+            "#,
+        )
+        .bind(backend_id)
+        .bind(model_name)
+        .bind(tag)
+        .bind(now)
+        .execute(&mut **tx)
+        .await?;
+    }
+
     Ok(())
 }
 

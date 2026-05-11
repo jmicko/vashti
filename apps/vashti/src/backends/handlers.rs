@@ -120,6 +120,7 @@ pub struct AdminModelResponse {
     pub capabilities: Vec<String>,
     pub is_enabled: bool,
     pub permission_tags: Vec<PermissionTagResponse>,
+    pub default_permission_tags: Vec<PermissionTagResponse>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -145,12 +146,14 @@ pub struct BulkModelAvailabilityResponse {
 pub struct UpdateModelTagsRequest {
     pub backend_id: String,
     pub model_name: String,
-    pub permission_tags: Vec<String>,
+    pub permission_tags: Option<Vec<String>>,
+    pub default_permission_tags: Option<Vec<String>>,
 }
 
 #[derive(Debug, Serialize)]
 pub struct UpdateModelTagsResponse {
     pub permission_tags: Vec<PermissionTagResponse>,
+    pub default_permission_tags: Vec<PermissionTagResponse>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -413,7 +416,10 @@ async fn admin_models_response(
 
     for backend in service::list_enabled_backends(&state.db).await? {
         let availability = service::model_availability_by_backend(&state.db, &backend.id).await?;
-        let model_tags = permissions::model_tags_by_backend(&state.db, &backend.id).await?;
+        let manual_model_tags =
+            permissions::manual_model_tags_by_backend(&state.db, &backend.id).await?;
+        let default_model_tags =
+            permissions::default_model_tags_by_backend(&state.db, &backend.id).await?;
         let mut models = Vec::new();
 
         for model in snapshot
@@ -422,12 +428,17 @@ async fn admin_models_response(
             .map(|cached| cached.models.clone())
             .unwrap_or_default()
         {
-            let permission_tags = match model_tags.get(&model.name) {
+            let permission_tags = match manual_model_tags.get(&model.name) {
+                Some(tags) => permissions::tag_responses(&state.db, tags).await?,
+                None => Vec::new(),
+            };
+            let default_permission_tags = match default_model_tags.get(&model.name) {
                 Some(tags) => permissions::tag_responses(&state.db, tags).await?,
                 None => Vec::new(),
             };
             models.push(AdminModelResponse {
                 permission_tags,
+                default_permission_tags,
                 is_enabled: availability.get(&model.name).copied().unwrap_or(true),
                 name: model.name,
                 supports_images: model.supports_images,
@@ -523,16 +534,57 @@ pub async fn update_model_tags(
 ) -> Result<Json<UpdateModelTagsResponse>, ApiError> {
     auth::service::require_admin(&state.db, &jar, &state.config.session_cookie_name).await?;
     service::ensure_model_record(&state.db, &payload.backend_id, &payload.model_name).await?;
-    let tags = permissions::replace_model_tags(
+    if payload.permission_tags.is_none() && payload.default_permission_tags.is_none() {
+        return Err(ApiError::bad_request(
+            "empty_model_tag_update",
+            "No model tags were provided",
+        ));
+    }
+
+    if let Some(tags) = payload.permission_tags {
+        permissions::replace_model_tags(
+            &state.db,
+            &payload.backend_id,
+            &payload.model_name,
+            tags,
+        )
+        .await?;
+    }
+    if let Some(tags) = payload.default_permission_tags {
+        permissions::replace_model_default_tags(
+            &state.db,
+            &payload.backend_id,
+            &payload.model_name,
+            tags,
+        )
+        .await?;
+    }
+
+    let manual_tags =
+        permissions::manual_model_tags_by_backend(&state.db, &payload.backend_id).await?;
+    let default_tags =
+        permissions::default_model_tags_by_backend(&state.db, &payload.backend_id).await?;
+    let permission_tags = permissions::tag_responses(
         &state.db,
-        &payload.backend_id,
-        &payload.model_name,
-        payload.permission_tags,
+        manual_tags
+            .get(&payload.model_name)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]),
     )
     .await?;
-    let permission_tags = permissions::tag_responses(&state.db, &tags).await?;
+    let default_permission_tags = permissions::tag_responses(
+        &state.db,
+        default_tags
+            .get(&payload.model_name)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]),
+    )
+    .await?;
 
-    Ok(Json(UpdateModelTagsResponse { permission_tags }))
+    Ok(Json(UpdateModelTagsResponse {
+        permission_tags,
+        default_permission_tags,
+    }))
 }
 
 pub async fn update_default_model_tags(
