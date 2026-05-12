@@ -1877,7 +1877,7 @@ textarea {
   top: 0;
   z-index: 12;
   min-height: 54px;
-  margin: 0 0 4px;
+  margin: 0 calc(-1 * var(--settings-content-x)) 4px;
 }
 
 .sticky-save-slot-placeholder {
@@ -1897,7 +1897,6 @@ textarea {
   background: rgba(26, 7, 7, 0.96);
   box-shadow: 0 14px 36px rgba(0, 0, 0, 0.38);
   min-height: 54px;
-  margin: 0 calc(-1 * var(--settings-content-x));
   padding: 7px var(--settings-content-x);
 }
 
@@ -2379,14 +2378,44 @@ textarea {
 .permission-tag {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 0;
+  overflow: hidden;
+  padding: 0;
   background: rgba(7, 11, 7, 0.9);
   color: var(--accent);
 }
 
-.permission-tag svg {
-  width: 14px;
-  height: 14px;
+.permission-tag-label,
+.permission-tag-action {
+  min-height: 28px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  padding: 4px 8px;
+}
+
+.permission-tag-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.permission-tag-action {
+  width: 30px;
+  border-left: 1px solid var(--line);
+  padding: 0;
+}
+
+.permission-tag-action:hover {
+  background: var(--accent-muted);
+}
+
+.permission-tag svg,
+.permission-tag-action svg {
+  width: 15px;
+  height: 15px;
 }
 
 .permission-tag-system {
@@ -2407,6 +2436,9 @@ textarea {
   border-color: rgba(150, 159, 150, 0.28);
   background: rgba(28, 31, 28, 0.72);
   color: rgba(191, 199, 191, 0.62);
+}
+
+.permission-tag-default-removed .permission-tag-label > span:first-child {
   text-decoration: line-through;
 }
 
@@ -2418,6 +2450,23 @@ textarea {
   padding-left: 6px;
   text-decoration: none;
   text-transform: uppercase;
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .permission-tag-action {
+    width: 0;
+    border-left: 0;
+    opacity: 0;
+    pointer-events: none;
+    transition: width 140ms ease, opacity 140ms ease;
+  }
+
+  .permission-tag-armed .permission-tag-action {
+    width: 30px;
+    border-left: 1px solid var(--line);
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
 
 .permission-tag-empty {
@@ -2496,15 +2545,22 @@ textarea {
 
 .backend-main {
   min-width: 0;
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
+  display: grid;
+  gap: 10px;
+}
+
+.backend-main > div:first-child {
+  min-width: 0;
 }
 
 .backend-main p {
   margin: 6px 0 0;
   color: var(--muted);
   overflow-wrap: anywhere;
+}
+
+.backend-main .badges {
+  justify-content: flex-start;
 }
 
 .backend-error {
@@ -2514,6 +2570,7 @@ textarea {
 .backend-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   flex-wrap: wrap;
   gap: 8px;
 }
@@ -2595,6 +2652,39 @@ textarea {
 
 .permission-defaults-row .permission-tag-editor {
   flex: 0 1 auto;
+}
+
+.default-apply-mode {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  overflow: hidden;
+  background: rgba(1, 3, 1, 0.72);
+  width: fit-content;
+}
+
+.default-apply-mode button {
+  min-height: 30px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text);
+  padding: 4px 12px;
+}
+
+.default-apply-mode button + button {
+  border-left: 1px solid var(--line);
+}
+
+.default-apply-mode button:hover {
+  background: var(--accent-muted);
+}
+
+.default-apply-mode .segmented-option-active {
+  background: var(--accent);
+  color: #061006;
 }
 
 .backend-edit-form {
@@ -2766,9 +2856,19 @@ textarea {
   padding-bottom: 20px;
 }
 
+.persona-editor-form {
+  border-bottom: 0;
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+
 .persona-form textarea {
   min-height: 170px;
   resize: vertical;
+}
+
+.persona-editor-form textarea {
+  min-height: 260px;
 }
 
 .persona-form-actions,

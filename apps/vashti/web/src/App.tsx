@@ -180,6 +180,13 @@ type AdminBackendModelGroup = {
   models: AdminModelInfo[];
 };
 
+type AdminModelTagPatchPayload = {
+  backend_id: string;
+  model_name: string;
+  permission_tags?: string[];
+  default_permission_tags?: string[];
+};
+
 type UserBackendModelGroup = {
   backend: {
     id: string;
@@ -7614,6 +7621,46 @@ function SettingsPlaceholder({
   );
 }
 
+function SettingsSaveBanner({
+  isDirty,
+  status,
+  dirtyTitle,
+  dirtyDescription,
+  savedDescription,
+  children
+}: {
+  isDirty: boolean;
+  status: string | null;
+  dirtyTitle: string;
+  dirtyDescription: string;
+  savedDescription: string;
+  children: ReactNode;
+}) {
+  const visibleStatus = isDirty ? null : status;
+  const isVisible = isDirty || Boolean(visibleStatus);
+
+  return (
+    <div
+      className={isVisible ? "sticky-save-slot" : "sticky-save-slot sticky-save-slot-placeholder"}
+    >
+      <div
+        className={
+          visibleStatus
+            ? "sticky-save-bar settings-content-wide sticky-save-bar-saved"
+            : "sticky-save-bar settings-content-wide"
+        }
+        aria-hidden={!isVisible}
+      >
+        <div>
+          <strong>{visibleStatus ?? dirtyTitle}</strong>
+          <span>{visibleStatus ? savedDescription : dirtyDescription}</span>
+        </div>
+        {isDirty && <div className="sticky-save-actions">{children}</div>}
+      </div>
+    </div>
+  );
+}
+
 function PersonasPanel({
   onPersonasChanged,
   onPrivatePersonasChanged
@@ -7628,6 +7675,7 @@ function PersonasPanel({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [busyPersonaId, setBusyPersonaId] = useState<string | null>(null);
+  const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [editingPersona, setEditingPersona] = useState<Persona | null>(null);
   const [editingPrivatePersona, setEditingPrivatePersona] = useState<PrivatePersona | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Persona | null>(null);
@@ -7667,6 +7715,7 @@ function PersonasPanel({
   }, [loadPersonas]);
 
   function resetDraft() {
+    setIsEditorOpen(false);
     setEditingPersona(null);
     setEditingPrivatePersona(null);
     setDisplayName("");
@@ -7677,8 +7726,21 @@ function PersonasPanel({
     setStatus(null);
   }
 
+  function startCreatingPersona() {
+    setEditingPersona(null);
+    setEditingPrivatePersona(null);
+    setDisplayName("");
+    setStorageMode("local");
+    setSelectedBaseModel(firstModelValue(modelGroups));
+    setSystemPrompt("");
+    setError(null);
+    setStatus(null);
+    setIsEditorOpen(true);
+  }
+
   function startEditingPersona(persona: Persona) {
     const version = persona.current_version;
+    setIsEditorOpen(true);
     setEditingPersona(persona);
     setEditingPrivatePersona(null);
     setDisplayName(version.display_name);
@@ -7691,6 +7753,7 @@ function PersonasPanel({
 
   function startEditingPrivatePersona(persona: PrivatePersona) {
     const version = persona.current_version;
+    setIsEditorOpen(true);
     setEditingPrivatePersona(persona);
     setEditingPersona(null);
     setDisplayName(version.display_name);
@@ -7869,79 +7932,102 @@ function PersonasPanel({
     !(editingPersona && storageMode === "local") &&
     !(editingPrivatePersona && storageMode !== "local");
 
+  const editorTitle =
+    editingPersona || editingPrivatePersona ? "Edit Persona" : "Create Persona";
+
   return (
     <div className="settings-section">
       <div className="section-header">
         <div>
           <p className="eyebrow">Custom Models</p>
-          <h1>Personas</h1>
+          <h1>{isEditorOpen ? editorTitle : "Personas"}</h1>
         </div>
-        <button
-          type="button"
-          className="secondary-button refresh-button"
-          onClick={() => void loadPersonas()}
-          disabled={isRefreshing}
-        >
-          {isRefreshing ? <RetroLoader /> : <RefreshCw />}
-          <span>{isRefreshing ? "Loading" : "Refresh"}</span>
-        </button>
+        <div className="header-actions">
+          {isEditorOpen ? (
+            <button
+              type="button"
+              className="secondary-button refresh-button"
+              disabled={isSaving}
+              onClick={resetDraft}
+            >
+              <X />
+              <span>Cancel</span>
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="secondary-button refresh-button"
+                onClick={() => void loadPersonas()}
+                disabled={isRefreshing}
+              >
+                {isRefreshing ? <RetroLoader /> : <RefreshCw />}
+                <span>{isRefreshing ? "Loading" : "Refresh"}</span>
+              </button>
+              <button type="button" onClick={startCreatingPersona}>
+                <Plus />
+                <span>Create</span>
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       {error && <p className="error">{error}</p>}
       {status && <p className="status-message">{status}</p>}
 
-      <form className="settings-form persona-form" onSubmit={savePersona}>
-        <label>
-          <span>Name</span>
-          <input
-            required
-            maxLength={80}
-            value={displayName}
-            onChange={(event) => setDisplayName(event.target.value)}
-            placeholder="Careful Researcher"
-          />
-        </label>
-        <label>
-          <span>Storage</span>
-          <select value={storageMode} onChange={(event) => setStorageMode(event.target.value)}>
-            <option value="local">This device only</option>
-            <option value="private">Server private</option>
-            <option value="public">Server public</option>
-          </select>
-        </label>
-        <label>
-          <span>Base Model</span>
-          <select
-            required
-            value={selectedBaseModel}
-            onChange={(event) => setSelectedBaseModel(event.target.value)}
-          >
-            <option value="">Select a model</option>
-            {modelGroups.map((group) => (
-              <optgroup key={group.backend.id} label={group.backend.name}>
-                {group.models.map((model) => (
-                  <option
-                    key={modelValue(group.backend.id, model.name)}
-                    value={modelValue(group.backend.id, model.name)}
-                  >
-                    {model.name}
-                  </option>
-                ))}
-              </optgroup>
-            ))}
-          </select>
-        </label>
-        <label>
-          <span>System Prompt</span>
-          <textarea
-            rows={8}
-            value={systemPrompt}
-            onChange={(event) => setSystemPrompt(event.target.value)}
-            placeholder="Describe how this persona should behave."
-          />
-        </label>
-        <div className="persona-form-actions">
-          {(editingPersona || editingPrivatePersona) && (
+      {isEditorOpen ? (
+        <form className="settings-form persona-form persona-editor-form" onSubmit={savePersona}>
+          <label>
+            <span>Name</span>
+            <input
+              required
+              maxLength={80}
+              value={displayName}
+              onChange={(event) => setDisplayName(event.target.value)}
+              placeholder="Careful Researcher"
+            />
+          </label>
+          <label>
+            <span>Storage</span>
+            <select value={storageMode} onChange={(event) => setStorageMode(event.target.value)}>
+              <option value="local">This device only</option>
+              <option value="private">Server private</option>
+              <option value="public">Server public</option>
+            </select>
+          </label>
+          <label>
+            <span>Base Model</span>
+            <select
+              required
+              value={selectedBaseModel}
+              onChange={(event) => setSelectedBaseModel(event.target.value)}
+            >
+              <option value="">Select a model</option>
+              {modelGroups.map((group) => (
+                <optgroup key={group.backend.id} label={group.backend.name}>
+                  {group.models.map((model) => (
+                    <option
+                      key={modelValue(group.backend.id, model.name)}
+                      value={modelValue(group.backend.id, model.name)}
+                    >
+                      {model.name}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>System Prompt</span>
+            <textarea
+              rows={10}
+              value={systemPrompt}
+              onChange={(event) => setSystemPrompt(event.target.value)}
+              placeholder="Describe how this persona should behave."
+            />
+          </label>
+          <div className="persona-form-actions">
             <button
               type="button"
               className="secondary-button"
@@ -7951,53 +8037,55 @@ function PersonasPanel({
               <X />
               <span>Cancel</span>
             </button>
+            <button type="submit" disabled={isSaving || !canSave}>
+              {editingPersona || editingPrivatePersona ? <Save /> : <Plus />}
+              <span>
+                {isSaving
+                  ? "Saving..."
+                  : editingPersona || editingPrivatePersona
+                    ? "Save Persona"
+                    : "Create Persona"}
+              </span>
+            </button>
+          </div>
+          <p className="status-message">
+            Device personas can be used in private chats without storing their name or prompt on the
+            server. Server personas are available from signed-in standard chats.
+          </p>
+        </form>
+      ) : (
+        <>
+          {!hasLoaded && <p className="status-message">Loading personas...</p>}
+          {hasLoaded && personas.length === 0 && privatePersonas.length === 0 && (
+            <p className="status-message">No personas created yet.</p>
           )}
-          <button type="submit" disabled={isSaving || !canSave}>
-            {editingPersona ? <Save /> : <Plus />}
-            <span>
-              {isSaving
-                ? "Saving..."
-                : editingPersona || editingPrivatePersona
-                  ? "Save Persona"
-                  : "Create Persona"}
-            </span>
-          </button>
-        </div>
-        <p className="status-message">
-          Device personas can be used in private chats without storing their name or prompt on the server.
-          Server personas are available from signed-in standard chats.
-        </p>
-      </form>
 
-      {!hasLoaded && <p className="status-message">Loading personas...</p>}
-      {hasLoaded && personas.length === 0 && privatePersonas.length === 0 && (
-        <p className="status-message">No personas created yet.</p>
+          <div className="persona-list">
+            {privatePersonas.map((persona) => (
+              <PrivatePersonaRow
+                key={persona.id}
+                persona={persona}
+                isBusy={busyPersonaId === persona.id}
+                onDelete={() => setDeletePrivateTarget(persona)}
+                onEdit={() => startEditingPrivatePersona(persona)}
+              />
+            ))}
+            {personas.map((persona) => (
+              <PersonaRow
+                key={persona.id}
+                persona={persona}
+                backendName={backendNameFor(modelGroups, persona.current_version.base_backend_id)}
+                isBusy={busyPersonaId === persona.id}
+                canEdit={persona.is_owner && persona.lifecycle_state === "active"}
+                onCopy={() => void copyPersona(persona)}
+                onCopyToDevice={() => void copyPersonaToDevice(persona)}
+                onDelete={() => setDeleteTarget(persona)}
+                onEdit={() => startEditingPersona(persona)}
+              />
+            ))}
+          </div>
+        </>
       )}
-
-      <div className="persona-list">
-        {privatePersonas.map((persona) => (
-          <PrivatePersonaRow
-            key={persona.id}
-            persona={persona}
-            isBusy={busyPersonaId === persona.id}
-            onDelete={() => setDeletePrivateTarget(persona)}
-            onEdit={() => startEditingPrivatePersona(persona)}
-          />
-        ))}
-        {personas.map((persona) => (
-          <PersonaRow
-            key={persona.id}
-            persona={persona}
-            backendName={backendNameFor(modelGroups, persona.current_version.base_backend_id)}
-            isBusy={busyPersonaId === persona.id}
-            canEdit={persona.is_owner && persona.lifecycle_state === "active"}
-            onCopy={() => void copyPersona(persona)}
-            onCopyToDevice={() => void copyPersonaToDevice(persona)}
-            onDelete={() => setDeleteTarget(persona)}
-            onEdit={() => startEditingPersona(persona)}
-          />
-        ))}
-      </div>
 
       {deleteTarget && (
         <ConfirmDialog
@@ -8161,6 +8249,20 @@ function permissionTagPayload(tags: PermissionTag[]) {
   return tags.map((tag) => tag.id);
 }
 
+function sortedPermissionTagPayload(tags: PermissionTag[]) {
+  return permissionTagPayload(tags).slice().sort();
+}
+
+function permissionTagSetsEqual(left: PermissionTag[], right: PermissionTag[]) {
+  const leftIds = sortedPermissionTagPayload(left);
+  const rightIds = sortedPermissionTagPayload(right);
+  if (leftIds.length !== rightIds.length) {
+    return false;
+  }
+
+  return leftIds.every((id, index) => id === rightIds[index]);
+}
+
 function mergePermissionTags(...tagGroups: PermissionTag[][]) {
   const merged = new Map<string, PermissionTag>();
   for (const tags of tagGroups) {
@@ -8193,20 +8295,46 @@ function PermissionTagEditor({
   availableTags,
   onChange,
   disabled = false,
-  suggestionsKind
+  suggestionsKind,
+  showEmpty = true
 }: {
-  label: string;
+  label?: string;
   tags: PermissionTag[];
   availableTags: PermissionTag[];
   onChange: (tags: PermissionTag[]) => void;
   disabled?: boolean;
   suggestionsKind?: string;
+  showEmpty?: boolean;
 }) {
   const [value, setValue] = useState("");
+  const [armedTagId, setArmedTagId] = useState<string | null>(null);
+  const editorRef = useRef<HTMLDivElement | null>(null);
   const datalistId = useId();
   const suggestions = suggestionsKind
     ? availableTags.filter((tag) => tag.kind === suggestionsKind)
     : availableTags;
+
+  useEffect(() => {
+    if (!armedTagId) {
+      return;
+    }
+
+    function disarmOnOutsideClick(event: MouseEvent | TouchEvent) {
+      const target = event.target;
+      if (target instanceof Node && editorRef.current?.contains(target)) {
+        return;
+      }
+
+      setArmedTagId(null);
+    }
+
+    document.addEventListener("mousedown", disarmOnOutsideClick);
+    document.addEventListener("touchstart", disarmOnOutsideClick);
+    return () => {
+      document.removeEventListener("mousedown", disarmOnOutsideClick);
+      document.removeEventListener("touchstart", disarmOnOutsideClick);
+    };
+  }, [armedTagId]);
 
   function addTag() {
     const tag = permissionTagFromInput(value, suggestions);
@@ -8219,25 +8347,22 @@ function PermissionTagEditor({
   }
 
   return (
-    <div className="permission-tag-editor">
-      <span>{label}</span>
+    <div className="permission-tag-editor" ref={editorRef}>
+      {label && <span>{label}</span>}
       <div className="permission-tag-row">
         <div className="permission-tags">
-          {tags.length === 0 ? (
+          {tags.length === 0 && showEmpty ? (
             <span className="permission-tag-empty">No tags</span>
           ) : (
             tags.map((tag) => (
-              <button
-                type="button"
+              <PermissionTagChip
                 key={tag.id}
-                className={`permission-tag permission-tag-${tag.kind}`}
+                tag={tag}
                 disabled={disabled}
-                onClick={() => onChange(tags.filter((existing) => existing.id !== tag.id))}
-                title="Remove tag"
-              >
-                <span>{tag.label}</span>
-                <X />
-              </button>
+                isArmed={armedTagId === tag.id}
+                onArm={() => setArmedTagId(tag.id)}
+                onAction={() => onChange(tags.filter((existing) => existing.id !== tag.id))}
+              />
             ))
           )}
         </div>
@@ -8276,14 +8401,38 @@ function DefaultPermissionTagControls({
   disabled = false,
   onChange
 }: {
-  label: string;
+  label?: string;
   defaultTags: PermissionTag[];
   activeTags: PermissionTag[];
   disabled?: boolean;
   onChange: (tags: PermissionTag[]) => void;
 }) {
+  const [armedTagId, setArmedTagId] = useState<string | null>(null);
+  const editorRef = useRef<HTMLDivElement | null>(null);
   const activeTagIds = new Set(activeTags.map((tag) => tag.id));
   const visibleDefaultTags = mergePermissionTags(defaultTags, activeTags);
+
+  useEffect(() => {
+    if (!armedTagId) {
+      return;
+    }
+
+    function disarmOnOutsideClick(event: MouseEvent | TouchEvent) {
+      const target = event.target;
+      if (target instanceof Node && editorRef.current?.contains(target)) {
+        return;
+      }
+
+      setArmedTagId(null);
+    }
+
+    document.addEventListener("mousedown", disarmOnOutsideClick);
+    document.addEventListener("touchstart", disarmOnOutsideClick);
+    return () => {
+      document.removeEventListener("mousedown", disarmOnOutsideClick);
+      document.removeEventListener("touchstart", disarmOnOutsideClick);
+    };
+  }, [armedTagId]);
 
   function toggleTag(tag: PermissionTag) {
     if (activeTagIds.has(tag.id)) {
@@ -8295,8 +8444,8 @@ function DefaultPermissionTagControls({
   }
 
   return (
-    <div className="permission-tag-editor">
-      <span>{label}</span>
+    <div className="permission-tag-editor" ref={editorRef}>
+      {label && <span>{label}</span>}
       <div className="permission-tag-row">
         <div className="permission-tags permission-tags-defaults">
           {visibleDefaultTags.length === 0 ? (
@@ -8305,19 +8454,20 @@ function DefaultPermissionTagControls({
             visibleDefaultTags.map((tag) => {
               const isActive = activeTagIds.has(tag.id);
               return (
-                <button
-                  type="button"
+                <PermissionTagChip
                   key={tag.id}
-                  className={`permission-tag permission-tag-${tag.kind} ${
-                    isActive ? "permission-tag-default-active" : "permission-tag-default-removed"
-                  }`}
+                  tag={tag}
                   disabled={disabled}
-                  onClick={() => toggleTag(tag)}
-                  title={isActive ? "Remove this default from this model" : "Restore this default"}
-                >
-                  <span>{tag.label}</span>
-                  {isActive ? <span className="permission-tag-source">default</span> : <X />}
-                </button>
+                  isArmed={armedTagId === tag.id}
+                  isRemoved={!isActive}
+                  sourceLabel="default"
+                  actionIcon={isActive ? "remove" : "restore"}
+                  actionTitle={
+                    isActive ? "Remove this default from this model" : "Restore this default"
+                  }
+                  onArm={() => setArmedTagId(tag.id)}
+                  onAction={() => toggleTag(tag)}
+                />
               );
             })
           )}
@@ -8325,6 +8475,143 @@ function DefaultPermissionTagControls({
       </div>
     </div>
   );
+}
+
+function PermissionTagChip({
+  tag,
+  disabled = false,
+  isArmed = false,
+  isRemoved = false,
+  sourceLabel,
+  actionIcon = "remove",
+  actionTitle = "Remove tag",
+  onArm,
+  onAction
+}: {
+  tag: PermissionTag;
+  disabled?: boolean;
+  isArmed?: boolean;
+  isRemoved?: boolean;
+  sourceLabel?: string;
+  actionIcon?: "remove" | "restore";
+  actionTitle?: string;
+  onArm: () => void;
+  onAction: () => void;
+}) {
+  return (
+    <span
+      className={`permission-tag permission-tag-${tag.kind} ${
+        isRemoved ? "permission-tag-default-removed" : ""
+      } ${isArmed ? "permission-tag-armed" : ""}`}
+    >
+      <button
+        type="button"
+        className="permission-tag-label"
+        disabled={disabled}
+        onClick={onArm}
+      >
+        <span>{tag.label}</span>
+        {sourceLabel && <span className="permission-tag-source">{sourceLabel}</span>}
+      </button>
+      <button
+        type="button"
+        className="permission-tag-action"
+        disabled={disabled}
+        title={actionTitle}
+        aria-label={actionTitle}
+        onClick={onAction}
+      >
+        {actionIcon === "restore" ? <Plus /> : <X />}
+      </button>
+    </span>
+  );
+}
+
+function updateAdminModelTagsInGroups(
+  groups: AdminBackendModelGroup[],
+  backendId: string,
+  modelName: string,
+  patch: Partial<Pick<AdminModelInfo, "permission_tags" | "default_permission_tags">>
+) {
+  return groups.map((group) =>
+    group.backend.id === backendId
+      ? {
+          ...group,
+          models: group.models.map((model) =>
+            model.name === modelName ? { ...model, ...patch } : model
+          )
+        }
+      : group
+  );
+}
+
+function modelTagSnapshot(groups: AdminBackendModelGroup[]) {
+  return groups
+    .flatMap((group) =>
+      group.models.map((model) => ({
+        key: `${group.backend.id}\u0000${model.name}`,
+        permissionTags: sortedPermissionTagPayload(model.permission_tags),
+        defaultPermissionTags: sortedPermissionTagPayload(model.default_permission_tags)
+      }))
+    )
+    .sort((left, right) => left.key.localeCompare(right.key));
+}
+
+function adminModelGroupTagsEqual(
+  leftGroups: AdminBackendModelGroup[],
+  rightGroups: AdminBackendModelGroup[]
+) {
+  const left = modelTagSnapshot(leftGroups);
+  const right = modelTagSnapshot(rightGroups);
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function collectChangedAdminModelTagPatches(
+  groups: AdminBackendModelGroup[],
+  savedGroups: AdminBackendModelGroup[],
+  includeDefaultTags: boolean
+) {
+  const savedModels = new Map<string, AdminModelInfo>();
+  for (const group of savedGroups) {
+    for (const model of group.models) {
+      savedModels.set(`${group.backend.id}\u0000${model.name}`, model);
+    }
+  }
+
+  const patches: AdminModelTagPatchPayload[] = [];
+  for (const group of groups) {
+    for (const model of group.models) {
+      const savedModel = savedModels.get(`${group.backend.id}\u0000${model.name}`);
+      if (!savedModel) {
+        continue;
+      }
+
+      const patch: AdminModelTagPatchPayload = {
+        backend_id: group.backend.id,
+        model_name: model.name
+      };
+      let hasChanges = false;
+
+      if (!permissionTagSetsEqual(model.permission_tags, savedModel.permission_tags)) {
+        patch.permission_tags = permissionTagPayload(model.permission_tags);
+        hasChanges = true;
+      }
+
+      if (
+        includeDefaultTags &&
+        !permissionTagSetsEqual(model.default_permission_tags, savedModel.default_permission_tags)
+      ) {
+        patch.default_permission_tags = permissionTagPayload(model.default_permission_tags);
+        hasChanges = true;
+      }
+
+      if (hasChanges) {
+        patches.push(patch);
+      }
+    }
+  }
+
+  return patches;
 }
 
 function AdminUsersPanel({ currentUserId }: { currentUserId: string }) {
@@ -8911,22 +9198,33 @@ function AdminModelsAccessPanel({
   onModelsChanged: () => Promise<void>;
 }) {
   const [groups, setGroups] = useState<AdminBackendModelGroup[]>([]);
+  const [savedGroups, setSavedGroups] = useState<AdminBackendModelGroup[]>([]);
   const [availableTags, setAvailableTags] = useState<PermissionTag[]>([]);
   const [defaultTags, setDefaultTags] = useState<PermissionTag[]>([]);
+  const [savedDefaultTags, setSavedDefaultTags] = useState<PermissionTag[]>([]);
   const [hasLoaded, setHasLoaded] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [busyModelKey, setBusyModelKey] = useState<string | null>(null);
   const [busyModelsBackendId, setBusyModelsBackendId] = useState<string | null>(null);
-  const [isSavingDefaults, setIsSavingDefaults] = useState(false);
+  const [isSavingModelTags, setIsSavingModelTags] = useState(false);
+  const [defaultTagApplyMode, setDefaultTagApplyMode] = useState<"new" | "all">("new");
+  const [saveStatus, setSaveStatus] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const applyAdminModelsResponse = useCallback((response: AdminModelsResponse) => {
     setGroups(response.backends);
+    setSavedGroups(response.backends);
     setAvailableTags(response.available_tags);
     setDefaultTags(response.default_permission_tags);
+    setSavedDefaultTags(response.default_permission_tags);
     setHasLoaded(true);
   }, []);
+
+  const hasUnsavedModelTagChanges =
+    defaultTagApplyMode !== "new" ||
+    !permissionTagSetsEqual(defaultTags, savedDefaultTags) ||
+    !adminModelGroupTagsEqual(groups, savedGroups);
 
   const loadAdminModels = useCallback(async () => {
     setError(null);
@@ -8975,6 +9273,21 @@ function AdminModelsAccessPanel({
       void refreshAdminModels();
     }
   }, [modelRefreshRequest, refreshAdminModels]);
+
+  useEffect(() => {
+    if (!saveStatus) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => setSaveStatus(null), 3000);
+    return () => window.clearTimeout(timeout);
+  }, [saveStatus]);
+
+  useEffect(() => {
+    if (hasUnsavedModelTagChanges && saveStatus) {
+      setSaveStatus(null);
+    }
+  }, [hasUnsavedModelTagChanges, saveStatus]);
 
   async function toggleModel(backendId: string, modelName: string, isEnabled: boolean) {
     const key = modelValue(backendId, modelName);
@@ -9048,132 +9361,88 @@ function AdminModelsAccessPanel({
     }
   }
 
-  async function updateModelTags(backendId: string, modelName: string, tags: PermissionTag[]) {
-    const key = modelValue(backendId, modelName);
-    setBusyModelKey(key);
+  function updateModelTags(backendId: string, modelName: string, tags: PermissionTag[]) {
     setError(null);
     setStatus(null);
-
-    try {
-      const response = await requestJson<{
-        permission_tags: PermissionTag[];
-        default_permission_tags: PermissionTag[];
-      }>(
-        "/api/admin/models/tags",
-        {
-          method: "PATCH",
-          body: JSON.stringify({
-            backend_id: backendId,
-            model_name: modelName,
-            permission_tags: permissionTagPayload(tags)
-          })
-        }
-      );
-      setGroups((current) =>
-        current.map((group) =>
-          group.backend.id === backendId
-            ? {
-                ...group,
-                models: group.models.map((model) =>
-                  model.name === modelName
-                    ? {
-                        ...model,
-                        permission_tags: response.permission_tags,
-                        default_permission_tags: response.default_permission_tags
-                      }
-                    : model
-                )
-              }
-            : group
-        )
-      );
-      setStatus("Model tags saved.");
-      await onModelsChanged();
-    } catch (updateError) {
-      setError(updateError instanceof Error ? updateError.message : "Failed to update model tags");
-    } finally {
-      setBusyModelKey(null);
-    }
+    setSaveStatus(null);
+    setGroups((current) =>
+      updateAdminModelTagsInGroups(current, backendId, modelName, { permission_tags: tags })
+    );
   }
 
-  async function updateModelDefaultTags(
+  function updateModelDefaultTags(
     backendId: string,
     modelName: string,
     tags: PermissionTag[]
   ) {
-    const key = modelValue(backendId, modelName);
-    setBusyModelKey(key);
     setError(null);
     setStatus(null);
+    setSaveStatus(null);
+    setGroups((current) =>
+      updateAdminModelTagsInGroups(current, backendId, modelName, {
+        default_permission_tags: tags
+      })
+    );
+  }
+
+  async function saveModelTagChanges() {
+    setIsSavingModelTags(true);
+    setError(null);
+    setStatus(null);
+    setSaveStatus(null);
 
     try {
-      const response = await requestJson<{
-        permission_tags: PermissionTag[];
-        default_permission_tags: PermissionTag[];
-      }>("/api/admin/models/tags", {
-        method: "PATCH",
-        body: JSON.stringify({
-          backend_id: backendId,
-          model_name: modelName,
-          default_permission_tags: permissionTagPayload(tags)
-        })
-      });
-      setGroups((current) =>
-        current.map((group) =>
-          group.backend.id === backendId
-            ? {
-                ...group,
-                models: group.models.map((model) =>
-                  model.name === modelName
-                    ? {
-                        ...model,
-                        permission_tags: response.permission_tags,
-                        default_permission_tags: response.default_permission_tags
-                      }
-                    : model
-                )
-              }
-            : group
-        )
+      const applyToExisting = defaultTagApplyMode === "all";
+      const defaultTagsChanged = !permissionTagSetsEqual(defaultTags, savedDefaultTags);
+      const modelTagPatches = collectChangedAdminModelTagPatches(
+        groups,
+        savedGroups,
+        !applyToExisting
       );
-      setStatus("Model default tags saved.");
+
+      if (defaultTagsChanged || applyToExisting) {
+        await requestJson<{ default_permission_tags: PermissionTag[] }>(
+          "/api/admin/models/default-tags",
+          {
+            method: "PATCH",
+            body: JSON.stringify({
+              permission_tags: permissionTagPayload(defaultTags),
+              apply_to_existing: applyToExisting
+            })
+          }
+        );
+      }
+
+      for (const patch of modelTagPatches) {
+        await requestJson<{
+          permission_tags: PermissionTag[];
+          default_permission_tags: PermissionTag[];
+        }>("/api/admin/models/tags", {
+          method: "PATCH",
+          body: JSON.stringify(patch)
+        });
+      }
+
+      await loadAdminModels();
       await onModelsChanged();
+      setDefaultTagApplyMode("new");
+      setSaveStatus("Model tag settings saved.");
     } catch (updateError) {
       setError(
-        updateError instanceof Error ? updateError.message : "Failed to update model default tags"
+        updateError instanceof Error ? updateError.message : "Failed to update model tag settings"
       );
     } finally {
-      setBusyModelKey(null);
+      setIsSavingModelTags(false);
     }
   }
 
-  async function saveDefaultModelTags(applyToExisting: boolean) {
-    setIsSavingDefaults(true);
+  function revertModelTagChanges() {
+    setDefaultTags(savedDefaultTags);
+    setGroups(savedGroups);
+    setDefaultTagApplyMode("new");
+    setSaveStatus(null);
     setError(null);
     setStatus(null);
-
-    try {
-      const response = await requestJson<{ default_permission_tags: PermissionTag[] }>(
-        "/api/admin/models/default-tags",
-        {
-          method: "PATCH",
-          body: JSON.stringify({
-            permission_tags: permissionTagPayload(defaultTags),
-            apply_to_existing: applyToExisting
-          })
-        }
-      );
-      setDefaultTags(response.default_permission_tags);
-      setStatus(applyToExisting ? "Default tags applied to all models." : "Default tags saved.");
-      await loadAdminModels();
-      await onModelsChanged();
-    } catch (updateError) {
-      setError(
-        updateError instanceof Error ? updateError.message : "Failed to update default model tags"
-      );
-    } finally {
-      setIsSavingDefaults(false);
-    }
   }
 
   return (
@@ -9182,14 +9451,39 @@ function AdminModelsAccessPanel({
       {status && <p className="status-message">{status}</p>}
       {!hasLoaded && <p className="status-message">Loading models...</p>}
 
+      <SettingsSaveBanner
+        isDirty={hasUnsavedModelTagChanges}
+        status={saveStatus}
+        dirtyTitle="Unsaved model tag changes"
+        dirtyDescription="Save tag edits, or apply current defaults to existing models."
+        savedDescription="Saved changes are active for future generations."
+      >
+        <button
+          type="button"
+          className="secondary-button"
+          disabled={isSavingModelTags}
+          onClick={revertModelTagChanges}
+        >
+          Revert
+        </button>
+        <button
+          type="button"
+          disabled={isSavingModelTags}
+          onClick={() => void saveModelTagChanges()}
+        >
+          <Save />
+          <span>{isSavingModelTags ? "Saving..." : "Save"}</span>
+        </button>
+      </SettingsSaveBanner>
+
       <section className="settings-subsection permission-defaults backend-model-defaults">
         <div>
           <p className="eyebrow">Defaults</p>
           <h2>Default Model Tags</h2>
           <p className="status-message">
             New models get these tags the first time Vashti sees them. Empty means no one can use
-            new models until tags are added. Apply updates only the default-tag layer on existing
-            models and keeps admin tags intact.
+            new models until tags are added. Existing model changes update only the default-tag layer
+            and keep admin tags intact.
           </p>
         </div>
         <div className="permission-defaults-row">
@@ -9197,25 +9491,35 @@ function AdminModelsAccessPanel({
             label="Default tags"
             tags={defaultTags}
             availableTags={availableTags}
-            disabled={isSavingDefaults}
-            onChange={setDefaultTags}
+            disabled={isSavingModelTags}
+            onChange={(tags) => {
+              setDefaultTags(tags);
+              setStatus(null);
+              setSaveStatus(null);
+            }}
           />
-          <div className="model-access-actions">
+          <div className="default-apply-mode">
             <button
               type="button"
-              className="secondary-button"
-              disabled={isSavingDefaults}
-              onClick={() => void saveDefaultModelTags(false)}
+              className={defaultTagApplyMode === "new" ? "segmented-option-active" : ""}
+              onClick={() => {
+                setDefaultTagApplyMode("new");
+                setStatus(null);
+                setSaveStatus(null);
+              }}
             >
-              Save
+              New models only
             </button>
             <button
               type="button"
-              className="secondary-button"
-              disabled={isSavingDefaults}
-              onClick={() => void saveDefaultModelTags(true)}
+              className={defaultTagApplyMode === "all" ? "segmented-option-active" : ""}
+              onClick={() => {
+                setDefaultTagApplyMode("all");
+                setStatus(null);
+                setSaveStatus(null);
+              }}
             >
-              Apply
+              Existing models too
             </button>
           </div>
         </div>
@@ -9269,11 +9573,6 @@ function AdminModelsAccessPanel({
                   </div>
                 </div>
                 <div className="backend-actions">
-                  <span className="backend-model-toggle">
-                    <ChevronDown />
-                    <span className="backend-model-toggle-show">Show models</span>
-                    <span className="backend-model-toggle-hide">Hide models</span>
-                  </span>
                   <button
                     type="button"
                     className="secondary-button"
@@ -9313,6 +9612,11 @@ function AdminModelsAccessPanel({
                     <Trash2 />
                     <span>Delete</span>
                   </button>
+                  <span className="backend-model-toggle">
+                    <ChevronDown />
+                    <span className="backend-model-toggle-show">Models</span>
+                    <span className="backend-model-toggle-hide">Models</span>
+                  </span>
                 </div>
               </summary>
 
@@ -9356,20 +9660,19 @@ function AdminModelsAccessPanel({
                               <span className="model-name">{model.name}</span>
                               <ModelCapabilityBadges model={model} />
                               <DefaultPermissionTagControls
-                                label="Default tags"
-                                defaultTags={defaultTags}
+                                defaultTags={savedDefaultTags}
                                 activeTags={model.default_permission_tags}
-                                disabled={isBusy}
+                                disabled={isBusy || isSavingModelTags}
                                 onChange={(tags) =>
-                                  void updateModelDefaultTags(backend.id, model.name, tags)
+                                  updateModelDefaultTags(backend.id, model.name, tags)
                                 }
                               />
                               <PermissionTagEditor
-                                label="Admin tags"
                                 tags={model.permission_tags}
                                 availableTags={availableTags}
-                                disabled={isBusy}
-                                onChange={(tags) => void updateModelTags(backend.id, model.name, tags)}
+                                disabled={isBusy || isSavingModelTags}
+                                showEmpty={false}
+                                onChange={(tags) => updateModelTags(backend.id, model.name, tags)}
                               />
                             </span>
                             <ToggleSwitch
@@ -9447,8 +9750,6 @@ function ToolsSettingsPanel({ onToolsChanged }: { onToolsChanged: () => Promise<
             )
           ))
   );
-  const visibleStatus = isDirty ? null : status;
-  const showSaveBanner = isDirty || Boolean(visibleStatus);
   const toolsEnabledChanged = Boolean(settings && toolsEnabled !== settings.tools_enabled);
   const ollamaSearchChanged = Boolean(
     settings && ollamaSearchEnabled !== settings.ollama_web_search_enabled
@@ -9633,45 +9934,26 @@ function ToolsSettingsPanel({ onToolsChanged }: { onToolsChanged: () => Promise<
 
       {settings && (
         <form className="settings-form tools-settings-form" onSubmit={saveToolSettings}>
-          <div
-            className={
-              showSaveBanner
-                ? "sticky-save-slot"
-                : "sticky-save-slot sticky-save-slot-placeholder"
-            }
+          <SettingsSaveBanner
+            isDirty={isDirty}
+            status={status}
+            dirtyTitle="Unsaved tool changes"
+            dirtyDescription="Save to apply these settings to future generations."
+            savedDescription="Saved changes are active for future generations."
           >
-            <div
-              className={
-                visibleStatus ? "sticky-save-bar sticky-save-bar-saved" : "sticky-save-bar"
-              }
-              aria-hidden={!showSaveBanner}
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={isSaving}
+              onClick={revertToolSettings}
             >
-              <div>
-                <strong>{visibleStatus ?? "Unsaved tool changes"}</strong>
-                <span>
-                  {visibleStatus
-                    ? "Saved changes are active for future generations."
-                    : "Save to apply these settings to future generations."}
-                </span>
-              </div>
-              {isDirty && (
-                <div className="sticky-save-actions">
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    disabled={isSaving}
-                    onClick={revertToolSettings}
-                  >
-                    Revert
-                  </button>
-                  <button type="submit" disabled={isSaving}>
-                    <Save />
-                    <span>{isSaving ? "Saving..." : "Save"}</span>
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
+              Revert
+            </button>
+            <button type="submit" disabled={isSaving}>
+              <Save />
+              <span>{isSaving ? "Saving..." : "Save"}</span>
+            </button>
+          </SettingsSaveBanner>
 
           <section className="settings-subsection">
             <ToggleSwitch
@@ -10364,12 +10646,14 @@ function AppSettingsPanel({
   const [proxyCopied, setProxyCopied] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [networkError, setNetworkError] = useState<string | null>(null);
   const [appVersion, setAppVersion] = useState<VersionResponse | null>(null);
 
   const loadSettings = useCallback(async () => {
     setIsLoading(true);
+    setSaveStatus(null);
     setError(null);
 
     try {
@@ -10402,6 +10686,7 @@ function AppSettingsPanel({
 
   const saveSettingsDraft = useCallback(async () => {
     setIsSaving(true);
+    setSaveStatus(null);
     setError(null);
 
     try {
@@ -10415,6 +10700,7 @@ function AppSettingsPanel({
       setSettings(response);
       setAllowSignup(response.allow_signup);
       setSignupLimit(response.signup_limit);
+      setSaveStatus("App settings saved.");
       return true;
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Failed to save settings");
@@ -10431,6 +10717,7 @@ function AppSettingsPanel({
 
     setAllowSignup(settings.allow_signup);
     setSignupLimit(settings.signup_limit);
+    setSaveStatus(null);
     setError(null);
   }, [settings]);
 
@@ -10443,6 +10730,21 @@ function AppSettingsPanel({
   }, [discardSettingsDraft, isDirty, onGuardChange, saveSettingsDraft]);
 
   useEffect(() => () => onGuardChange(null), [onGuardChange]);
+
+  useEffect(() => {
+    if (!saveStatus) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => setSaveStatus(null), 3000);
+    return () => window.clearTimeout(timeout);
+  }, [saveStatus]);
+
+  useEffect(() => {
+    if (isDirty && saveStatus) {
+      setSaveStatus(null);
+    }
+  }, [isDirty, saveStatus]);
 
   async function saveSettings(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -10541,45 +10843,70 @@ function AppSettingsPanel({
       {error && <p className="error">{error}</p>}
       {!settings && isLoading && <p className="status-message">Loading settings...</p>}
       {settings && (
-        <form className="settings-form" onSubmit={saveSettings}>
-          <dl className="settings-meta">
-            <div>
-              <dt>Version</dt>
-              <dd>{appVersion ? `v${appVersion.version}` : "Unknown"}</dd>
-            </div>
-          </dl>
-          {isDirty && (
-            <div className="info-box" role="status">
-              <p className="eyebrow">Unsaved</p>
-              <p>You have unsaved app settings.</p>
-            </div>
-          )}
-          <label className="checkbox-row">
-            <input
-              type="checkbox"
-              checked={allowSignup}
-              onChange={(event) => setAllowSignup(event.target.checked)}
-            />
-            <span>Allow public account creation</span>
-          </label>
-          <label>
-            <span>Signup limit</span>
-            <input
-              min="0"
-              type="number"
-              value={signupLimit}
-              onChange={(event) => setSignupLimit(Number(event.target.value))}
-            />
-          </label>
-          <p className="status-message">
-            {settings.signup_count} public account signup
-            {settings.signup_count === 1 ? "" : "s"} used.
-          </p>
-          <button type="submit" disabled={isSaving}>
-            <Save />
-            <span>{isSaving ? "Saving..." : "Save Settings"}</span>
-          </button>
-        </form>
+        <>
+          <SettingsSaveBanner
+            isDirty={isDirty}
+            status={saveStatus}
+            dirtyTitle="Unsaved app changes"
+            dirtyDescription="Save to apply these app settings."
+            savedDescription="Saved changes are active."
+          >
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={isSaving}
+              onClick={discardSettingsDraft}
+            >
+              Revert
+            </button>
+            <button type="submit" disabled={isSaving}>
+              <Save />
+              <span>{isSaving ? "Saving..." : "Save"}</span>
+            </button>
+          </SettingsSaveBanner>
+
+          <form className="settings-form" onSubmit={saveSettings}>
+            <dl className="settings-meta">
+              <div>
+                <dt>Version</dt>
+                <dd>{appVersion ? `v${appVersion.version}` : "Unknown"}</dd>
+              </div>
+            </dl>
+            <label
+              className={
+                settings.allow_signup !== allowSignup
+                  ? "checkbox-row setting-field setting-field-changed"
+                  : "checkbox-row setting-field"
+              }
+            >
+              <input
+                type="checkbox"
+                checked={allowSignup}
+                onChange={(event) => setAllowSignup(event.target.checked)}
+              />
+              <span>Allow public account creation</span>
+            </label>
+            <label
+              className={
+                settings.signup_limit !== signupLimit
+                  ? "setting-field setting-field-changed"
+                  : "setting-field"
+              }
+            >
+              <span>Signup limit</span>
+              <input
+                min="0"
+                type="number"
+                value={signupLimit}
+                onChange={(event) => setSignupLimit(Number(event.target.value))}
+              />
+            </label>
+            <p className="status-message">
+              {settings.signup_count} public account signup
+              {settings.signup_count === 1 ? "" : "s"} used.
+            </p>
+          </form>
+        </>
       )}
       {settings && (
         <section className="network-settings-panel">
