@@ -35,6 +35,14 @@ pub struct UpdateToolSettingsRequest {
     pub tool_system_prompt: Option<String>,
     pub web_search_tool_prompt: Option<String>,
     pub web_fetch_tool_prompt: Option<String>,
+    pub default_tool_permission_tags: Option<Vec<String>>,
+    pub tool_permissions: Option<Vec<UpdateToolPermissionRequest>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateToolPermissionRequest {
+    pub tool_id: String,
+    pub permission_tags: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -126,8 +134,9 @@ pub async fn get_available_tools(
     State(state): State<AppState>,
     jar: CookieJar,
 ) -> Result<Json<service::AvailableToolsResponse>, ApiError> {
-    auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
-    let tools = service::get_available_tools(&state.db).await?;
+    let user =
+        auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
+    let tools = service::get_available_tools(&state.db, &user.id).await?;
 
     Ok(Json(tools))
 }

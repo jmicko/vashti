@@ -30,7 +30,7 @@ use crate::{
             OllamaChatChunk, OllamaChatMessage, OllamaChatRequest, OllamaThink, OllamaToolCall,
         },
     },
-    rate_limit, settings, tools,
+    permissions, rate_limit, settings, tools,
 };
 
 type GenerationProgressMap = Arc<tokio::sync::Mutex<HashMap<String, GenerationProgress>>>;
@@ -517,6 +517,7 @@ async fn stream_generation(
     let title_prompt_messages = prepared.prompt_messages.clone();
     let mut content_text = String::new();
     let mut thinking_text = String::new();
+    let mut thinking_content_cursor = 0usize;
     let mut done_reason = None;
     set_generation_progress(
         &progress,
@@ -555,6 +556,22 @@ async fn stream_generation(
         .as_ref()
         .map(|settings| tools::service::chat_tools(settings, prepared.tool_selection))
         .unwrap_or_default();
+    if !available_tools.is_empty() {
+        let _ = permissions::service::ensure_tool_records(&db).await;
+        match (
+            permissions::service::effective_user_tag_ids(&db, &user_id).await,
+            permissions::service::tool_tags_by_tool(&db).await,
+        ) {
+            (Ok(user_tags), Ok(tool_tags)) => {
+                available_tools.retain(|tool| {
+                    tool_tags.get(&tool.function.name).is_some_and(|tags| {
+                        permissions::service::has_matching_tag(&user_tags, tags)
+                    })
+                });
+            }
+            _ => available_tools.clear(),
+        }
+    }
     if !available_tools.is_empty()
         && !ollama::client::model_supports_tools(
             &client,
@@ -581,7 +598,6 @@ async fn stream_generation(
             );
         }
     }
-    let mut tool_rounds = 0;
     let available_tool_names = available_tools
         .iter()
         .map(|tool| tool.function.name.clone())
@@ -674,6 +690,7 @@ async fn stream_generation(
                                     &line,
                                     &mut content_text,
                                     &mut thinking_text,
+                                    &mut thinking_content_cursor,
                                     &mut done_reason,
                                     &mut round_tool_calls,
                                 )
@@ -734,6 +751,7 @@ async fn stream_generation(
                 &line,
                 &mut content_text,
                 &mut thinking_text,
+                &mut thinking_content_cursor,
                 &mut done_reason,
                 &mut round_tool_calls,
             )
@@ -754,27 +772,6 @@ async fn stream_generation(
 
         if round_tool_calls.is_empty() {
             break;
-        }
-        if tool_rounds >= 3 {
-            let message = "Tool call limit reached before the model produced a final answer.";
-            let _ = service::fail_generation(
-                &db,
-                &assistant_message_id,
-                &content_text,
-                &thinking_text,
-                message,
-            )
-            .await;
-            let _ = send_event(
-                &tx,
-                &GenerateEvent::Error {
-                    assistant_message_id: Some(assistant_message_id.clone()),
-                    message: message.to_string(),
-                },
-            )
-            .await;
-            clear_generation_progress(&progress, &assistant_message_id).await;
-            return;
         }
         let Some(tool_settings) = tool_settings.as_ref() else {
             break;
@@ -812,7 +809,12 @@ async fn stream_generation(
             };
             if available_tool_names.contains(&call.function.name) {
                 let usage_block = tools::service::tool_usage_block(call, &result);
-                thinking_text.push_str(&usage_block);
+                let usage_delta = append_ordered_thinking_delta(
+                    &mut thinking_text,
+                    &content_text,
+                    &mut thinking_content_cursor,
+                    &usage_block,
+                );
                 set_generation_progress(
                     &progress,
                     &assistant_message_id,
@@ -826,7 +828,7 @@ async fn stream_generation(
                     &tx,
                     &GenerateEvent::ThinkingDelta {
                         assistant_message_id: assistant_message_id.clone(),
-                        delta: usage_block,
+                        delta: usage_delta,
                     },
                 )
                 .await;
@@ -840,7 +842,6 @@ async fn stream_generation(
                 tool_calls: None,
             });
         }
-        tool_rounds += 1;
     }
 
     let _ = service::finish_generation(
@@ -1169,6 +1170,7 @@ async fn handle_ollama_line(
     line: &str,
     content_text: &mut String,
     thinking_text: &mut String,
+    thinking_content_cursor: &mut usize,
     done_reason: &mut Option<String>,
     tool_calls: &mut Vec<OllamaToolCall>,
 ) -> Result<(), String> {
@@ -1194,7 +1196,12 @@ async fn handle_ollama_line(
         }
 
         if !message.thinking.is_empty() {
-            thinking_text.push_str(&message.thinking);
+            let thinking_delta = append_ordered_thinking_delta(
+                thinking_text,
+                content_text,
+                thinking_content_cursor,
+                &message.thinking,
+            );
             set_generation_progress(
                 progress,
                 assistant_message_id,
@@ -1208,7 +1215,7 @@ async fn handle_ollama_line(
                 tx,
                 &GenerateEvent::ThinkingDelta {
                     assistant_message_id: assistant_message_id.to_string(),
-                    delta: message.thinking,
+                    delta: thinking_delta,
                 },
             )
             .await
@@ -1247,6 +1254,27 @@ async fn handle_ollama_line(
     }
 
     Ok(())
+}
+
+fn append_ordered_thinking_delta(
+    thinking_text: &mut String,
+    content_text: &str,
+    thinking_content_cursor: &mut usize,
+    delta: &str,
+) -> String {
+    let content_cursor = content_text.chars().count();
+    let mut stored_delta = String::new();
+
+    if content_cursor != *thinking_content_cursor {
+        stored_delta.push_str("<VASHTI_CONTENT_CURSOR>");
+        stored_delta.push_str(&content_cursor.to_string());
+        stored_delta.push_str("</VASHTI_CONTENT_CURSOR>");
+        *thinking_content_cursor = content_cursor;
+    }
+
+    stored_delta.push_str(delta);
+    thinking_text.push_str(&stored_delta);
+    stored_delta
 }
 
 async fn send_event(tx: &mpsc::Sender<Result<Bytes, Infallible>>, event: &GenerateEvent) -> bool {

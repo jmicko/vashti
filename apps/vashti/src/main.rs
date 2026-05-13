@@ -7,7 +7,9 @@ mod config;
 mod db;
 mod error;
 mod frontend;
+mod model_cache;
 mod ollama;
+mod permissions;
 mod personas;
 mod private;
 mod rate_limit;
@@ -66,6 +68,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let bind_addr = config.bind_addr;
     let state = AppState::new(config, db, http_client);
     spawn_session_cleanup(state.db.clone());
+    spawn_model_cache_refresh(state.clone());
     let app = router(state);
 
     let listener = tokio::net::TcpListener::bind(bind_addr).await?;
@@ -135,9 +138,30 @@ fn router(state: AppState) -> Router {
         )
         .route("/models", get(backends::handlers::list_models))
         .route(
+            "/user-models",
+            get(backends::handlers::list_user_models)
+                .patch(backends::handlers::update_user_model_visibility),
+        )
+        .route(
+            "/user-models/refresh",
+            post(backends::handlers::refresh_user_models),
+        )
+        .route(
             "/admin/models",
             get(backends::handlers::list_admin_models)
                 .patch(backends::handlers::update_model_availability),
+        )
+        .route(
+            "/admin/models/refresh",
+            post(backends::handlers::refresh_admin_models),
+        )
+        .route(
+            "/admin/models/tags",
+            patch(backends::handlers::update_model_tags),
+        )
+        .route(
+            "/admin/models/default-tags",
+            patch(backends::handlers::update_default_model_tags),
         )
         .route(
             "/admin/models/backend",
@@ -287,6 +311,36 @@ fn spawn_session_cleanup(db: sqlx::SqlitePool) {
                     tracing::warn!(?error, "failed to delete expired sessions");
                 }
             }
+        }
+    });
+}
+
+fn spawn_model_cache_refresh(state: AppState) {
+    tokio::spawn(async move {
+        loop {
+            match state
+                .model_cache
+                .refresh_all(&state.db, &state.http_client)
+                .await
+            {
+                Ok(snapshot) => {
+                    let model_count: usize = snapshot
+                        .backends
+                        .values()
+                        .map(|backend| backend.models.len())
+                        .sum();
+                    tracing::debug!(
+                        backend_count = snapshot.backends.len(),
+                        model_count,
+                        "refreshed Ollama model cache"
+                    );
+                }
+                Err(error) => {
+                    tracing::warn!(?error, "failed to refresh Ollama model cache");
+                }
+            }
+
+            tokio::time::sleep(Duration::from_secs(5 * 60)).await;
         }
     });
 }

@@ -10,7 +10,9 @@ use crate::{
     auth,
     backends::service::{self, BackendResponse},
     error::ApiError,
-    ollama,
+    model_cache::ModelCacheSnapshot,
+    ollama::models::OllamaModel,
+    permissions::service::{self as permissions, PermissionTagResponse},
 };
 
 #[derive(Debug, Serialize)]
@@ -49,6 +51,8 @@ pub struct DetectLocalhostResponse {
 #[derive(Debug, Serialize)]
 pub struct ModelsResponse {
     pub backends: Vec<BackendModelsResponse>,
+    pub is_refreshing: bool,
+    pub cache_updated_at: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -74,6 +78,32 @@ pub struct ModelResponse {
 #[derive(Debug, Serialize)]
 pub struct AdminModelsResponse {
     pub backends: Vec<AdminBackendModelsResponse>,
+    pub available_tags: Vec<PermissionTagResponse>,
+    pub default_permission_tags: Vec<PermissionTagResponse>,
+    pub is_refreshing: bool,
+    pub cache_updated_at: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UserModelsResponse {
+    pub backends: Vec<UserBackendModelsResponse>,
+    pub is_refreshing: bool,
+    pub cache_updated_at: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UserBackendModelsResponse {
+    pub backend: BackendSummaryResponse,
+    pub models: Vec<UserModelResponse>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UserModelResponse {
+    pub name: String,
+    pub supports_images: bool,
+    pub supports_thinking: bool,
+    pub capabilities: Vec<String>,
+    pub is_visible: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -89,6 +119,8 @@ pub struct AdminModelResponse {
     pub supports_thinking: bool,
     pub capabilities: Vec<String>,
     pub is_enabled: bool,
+    pub permission_tags: Vec<PermissionTagResponse>,
+    pub default_permission_tags: Vec<PermissionTagResponse>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -110,11 +142,43 @@ pub struct BulkModelAvailabilityResponse {
     pub ok: bool,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct UpdateModelTagsRequest {
+    pub backend_id: String,
+    pub model_name: String,
+    pub permission_tags: Option<Vec<String>>,
+    pub default_permission_tags: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UpdateModelTagsResponse {
+    pub permission_tags: Vec<PermissionTagResponse>,
+    pub default_permission_tags: Vec<PermissionTagResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateDefaultModelTagsRequest {
+    pub permission_tags: Vec<String>,
+    pub apply_to_existing: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UpdateDefaultModelTagsResponse {
+    pub default_permission_tags: Vec<PermissionTagResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateUserModelVisibilityRequest {
+    pub backend_id: String,
+    pub model_name: String,
+    pub is_visible: bool,
+}
+
 pub async fn list_backends(
     State(state): State<AppState>,
     jar: CookieJar,
 ) -> Result<Json<BackendsResponse>, ApiError> {
-    auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
+    auth::service::require_admin(&state.db, &jar, &state.config.session_cookie_name).await?;
     let backends = service::list_backends(&state.db).await?;
 
     Ok(Json(BackendsResponse { backends }))
@@ -187,36 +251,93 @@ pub async fn list_models(
     State(state): State<AppState>,
     jar: CookieJar,
 ) -> Result<Json<ModelsResponse>, ApiError> {
-    auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
+    let user =
+        auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
+    let snapshot = state.model_cache.snapshot().await;
 
+    Ok(Json(models_response(&state, &user.id, snapshot).await?))
+}
+
+pub async fn list_admin_models(
+    State(state): State<AppState>,
+    jar: CookieJar,
+) -> Result<Json<AdminModelsResponse>, ApiError> {
+    auth::service::require_admin(&state.db, &jar, &state.config.session_cookie_name).await?;
+    let snapshot = state.model_cache.snapshot().await;
+
+    Ok(Json(admin_models_response(&state, snapshot).await?))
+}
+
+pub async fn list_user_models(
+    State(state): State<AppState>,
+    jar: CookieJar,
+) -> Result<Json<UserModelsResponse>, ApiError> {
+    let user =
+        auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
+    let snapshot = state.model_cache.snapshot().await;
+
+    Ok(Json(
+        user_models_response(&state, &user.id, snapshot).await?,
+    ))
+}
+
+pub async fn refresh_user_models(
+    State(state): State<AppState>,
+    jar: CookieJar,
+) -> Result<Json<UserModelsResponse>, ApiError> {
+    let user =
+        auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
+    let snapshot = state
+        .model_cache
+        .refresh_all(&state.db, &state.http_client)
+        .await?;
+
+    Ok(Json(
+        user_models_response(&state, &user.id, snapshot).await?,
+    ))
+}
+
+pub async fn refresh_admin_models(
+    State(state): State<AppState>,
+    jar: CookieJar,
+) -> Result<Json<AdminModelsResponse>, ApiError> {
+    auth::service::require_admin(&state.db, &jar, &state.config.session_cookie_name).await?;
+    let snapshot = state
+        .model_cache
+        .refresh_all(&state.db, &state.http_client)
+        .await?;
+
+    Ok(Json(admin_models_response(&state, snapshot).await?))
+}
+
+async fn models_response(
+    state: &AppState,
+    user_id: &str,
+    snapshot: ModelCacheSnapshot,
+) -> Result<ModelsResponse, ApiError> {
+    let user_tags = permissions::effective_user_tag_ids(&state.db, user_id).await?;
     let mut response_backends = Vec::new();
 
     for backend in service::list_enabled_backends(&state.db).await? {
-        let models = match ollama::client::fetch_models(&state.http_client, &backend.base_url).await
-        {
-            Ok(models) => {
-                service::record_backend_health(&state.db, &backend.id, "ok", None).await?;
-                let availability =
-                    service::model_availability_by_backend(&state.db, &backend.id).await?;
-                models
-                    .into_iter()
-                    .filter(|model| availability.get(&model.name).copied().unwrap_or(true))
-                    .map(|model| ModelResponse {
-                        name: model.name,
-                        supports_images: model.supports_images,
-                        supports_thinking: model.supports_thinking,
-                        capabilities: model.capabilities,
-                    })
-                    .collect()
-            }
-            Err(error) => {
-                let message = error.to_string();
-                service::record_backend_health(&state.db, &backend.id, "error", Some(&message))
-                    .await?;
-                tracing::warn!(backend_id = %backend.id, base_url = %backend.base_url, error = %message, "failed to fetch Ollama models");
-                Vec::new()
-            }
-        };
+        let availability = service::model_availability_by_backend(&state.db, &backend.id).await?;
+        let preferences =
+            service::user_model_preferences_by_backend(&state.db, user_id, &backend.id).await?;
+        let model_tags = permissions::model_tags_by_backend(&state.db, &backend.id).await?;
+        let models = snapshot
+            .backends
+            .get(&backend.id)
+            .map(|cached| cached.models.clone())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|model| availability.get(&model.name).copied().unwrap_or(true))
+            .filter(|model| {
+                model_tags
+                    .get(&model.name)
+                    .is_some_and(|tags| permissions::has_matching_tag(&user_tags, tags))
+            })
+            .filter(|model| preferences.get(&model.name).copied().unwrap_or(true))
+            .map(model_response)
+            .collect();
 
         response_backends.push(BackendModelsResponse {
             backend: BackendSummaryResponse {
@@ -227,45 +348,104 @@ pub async fn list_models(
         });
     }
 
-    Ok(Json(ModelsResponse {
+    Ok(ModelsResponse {
         backends: response_backends,
-    }))
+        is_refreshing: snapshot.is_refreshing,
+        cache_updated_at: snapshot.updated_at,
+    })
 }
 
-pub async fn list_admin_models(
-    State(state): State<AppState>,
-    jar: CookieJar,
-) -> Result<Json<AdminModelsResponse>, ApiError> {
-    auth::service::require_admin(&state.db, &jar, &state.config.session_cookie_name).await?;
-
+async fn user_models_response(
+    state: &AppState,
+    user_id: &str,
+    snapshot: ModelCacheSnapshot,
+) -> Result<UserModelsResponse, ApiError> {
+    let user_tags = permissions::effective_user_tag_ids(&state.db, user_id).await?;
     let mut response_backends = Vec::new();
 
     for backend in service::list_enabled_backends(&state.db).await? {
-        let models = match ollama::client::fetch_models(&state.http_client, &backend.base_url).await
+        let availability = service::model_availability_by_backend(&state.db, &backend.id).await?;
+        let preferences =
+            service::user_model_preferences_by_backend(&state.db, user_id, &backend.id).await?;
+        let model_tags = permissions::model_tags_by_backend(&state.db, &backend.id).await?;
+        let models = snapshot
+            .backends
+            .get(&backend.id)
+            .map(|cached| cached.models.clone())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|model| availability.get(&model.name).copied().unwrap_or(true))
+            .filter(|model| {
+                model_tags
+                    .get(&model.name)
+                    .is_some_and(|tags| permissions::has_matching_tag(&user_tags, tags))
+            })
+            .map(|model| UserModelResponse {
+                is_visible: preferences.get(&model.name).copied().unwrap_or(true),
+                name: model.name,
+                supports_images: model.supports_images,
+                supports_thinking: model.supports_thinking,
+                capabilities: model.capabilities,
+            })
+            .collect();
+
+        response_backends.push(UserBackendModelsResponse {
+            backend: BackendSummaryResponse {
+                id: backend.id,
+                name: backend.name,
+            },
+            models,
+        });
+    }
+
+    Ok(UserModelsResponse {
+        backends: response_backends,
+        is_refreshing: snapshot.is_refreshing,
+        cache_updated_at: snapshot.updated_at,
+    })
+}
+
+async fn admin_models_response(
+    state: &AppState,
+    snapshot: ModelCacheSnapshot,
+) -> Result<AdminModelsResponse, ApiError> {
+    let available_tags = permissions::known_tags(&state.db).await?;
+    let default_tag_ids = permissions::default_model_tag_ids(&state.db).await?;
+    let default_permission_tags = permissions::tag_responses(&state.db, &default_tag_ids).await?;
+    let mut response_backends = Vec::new();
+
+    for backend in service::list_enabled_backends(&state.db).await? {
+        let availability = service::model_availability_by_backend(&state.db, &backend.id).await?;
+        let manual_model_tags =
+            permissions::manual_model_tags_by_backend(&state.db, &backend.id).await?;
+        let default_model_tags =
+            permissions::default_model_tags_by_backend(&state.db, &backend.id).await?;
+        let mut models = Vec::new();
+
+        for model in snapshot
+            .backends
+            .get(&backend.id)
+            .map(|cached| cached.models.clone())
+            .unwrap_or_default()
         {
-            Ok(models) => {
-                service::record_backend_health(&state.db, &backend.id, "ok", None).await?;
-                let availability =
-                    service::model_availability_by_backend(&state.db, &backend.id).await?;
-                models
-                    .into_iter()
-                    .map(|model| AdminModelResponse {
-                        is_enabled: availability.get(&model.name).copied().unwrap_or(true),
-                        name: model.name,
-                        supports_images: model.supports_images,
-                        supports_thinking: model.supports_thinking,
-                        capabilities: model.capabilities,
-                    })
-                    .collect()
-            }
-            Err(error) => {
-                let message = error.to_string();
-                service::record_backend_health(&state.db, &backend.id, "error", Some(&message))
-                    .await?;
-                tracing::warn!(backend_id = %backend.id, base_url = %backend.base_url, error = %message, "failed to fetch Ollama models for admin model settings");
-                Vec::new()
-            }
-        };
+            let permission_tags = match manual_model_tags.get(&model.name) {
+                Some(tags) => permissions::tag_responses(&state.db, tags).await?,
+                None => Vec::new(),
+            };
+            let default_permission_tags = match default_model_tags.get(&model.name) {
+                Some(tags) => permissions::tag_responses(&state.db, tags).await?,
+                None => Vec::new(),
+            };
+            models.push(AdminModelResponse {
+                permission_tags,
+                default_permission_tags,
+                is_enabled: availability.get(&model.name).copied().unwrap_or(true),
+                name: model.name,
+                supports_images: model.supports_images,
+                supports_thinking: model.supports_thinking,
+                capabilities: model.capabilities,
+            });
+        }
 
         response_backends.push(AdminBackendModelsResponse {
             backend: BackendSummaryResponse {
@@ -276,9 +456,22 @@ pub async fn list_admin_models(
         });
     }
 
-    Ok(Json(AdminModelsResponse {
+    Ok(AdminModelsResponse {
         backends: response_backends,
-    }))
+        available_tags,
+        default_permission_tags,
+        is_refreshing: snapshot.is_refreshing,
+        cache_updated_at: snapshot.updated_at,
+    })
+}
+
+fn model_response(model: OllamaModel) -> ModelResponse {
+    ModelResponse {
+        name: model.name,
+        supports_images: model.supports_images,
+        supports_thinking: model.supports_thinking,
+        capabilities: model.capabilities,
+    }
 }
 
 pub async fn update_model_availability(
@@ -298,6 +491,25 @@ pub async fn update_model_availability(
     Ok(Json(availability))
 }
 
+pub async fn update_user_model_visibility(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Json(payload): Json<UpdateUserModelVisibilityRequest>,
+) -> Result<Json<service::UserModelPreferenceResponse>, ApiError> {
+    let user =
+        auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
+    let preference = service::set_user_model_visibility(
+        &state.db,
+        &user.id,
+        &payload.backend_id,
+        &payload.model_name,
+        payload.is_visible,
+    )
+    .await?;
+
+    Ok(Json(preference))
+}
+
 pub async fn update_backend_model_availability(
     State(state): State<AppState>,
     jar: CookieJar,
@@ -313,4 +525,83 @@ pub async fn update_backend_model_availability(
     .await?;
 
     Ok(Json(BulkModelAvailabilityResponse { ok: true }))
+}
+
+pub async fn update_model_tags(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Json(payload): Json<UpdateModelTagsRequest>,
+) -> Result<Json<UpdateModelTagsResponse>, ApiError> {
+    auth::service::require_admin(&state.db, &jar, &state.config.session_cookie_name).await?;
+    service::ensure_model_record(&state.db, &payload.backend_id, &payload.model_name).await?;
+    if payload.permission_tags.is_none() && payload.default_permission_tags.is_none() {
+        return Err(ApiError::bad_request(
+            "empty_model_tag_update",
+            "No model tags were provided",
+        ));
+    }
+
+    if let Some(tags) = payload.permission_tags {
+        permissions::replace_model_tags(
+            &state.db,
+            &payload.backend_id,
+            &payload.model_name,
+            tags,
+        )
+        .await?;
+    }
+    if let Some(tags) = payload.default_permission_tags {
+        permissions::replace_model_default_tags(
+            &state.db,
+            &payload.backend_id,
+            &payload.model_name,
+            tags,
+        )
+        .await?;
+    }
+
+    let manual_tags =
+        permissions::manual_model_tags_by_backend(&state.db, &payload.backend_id).await?;
+    let default_tags =
+        permissions::default_model_tags_by_backend(&state.db, &payload.backend_id).await?;
+    let permission_tags = permissions::tag_responses(
+        &state.db,
+        manual_tags
+            .get(&payload.model_name)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]),
+    )
+    .await?;
+    let default_permission_tags = permissions::tag_responses(
+        &state.db,
+        default_tags
+            .get(&payload.model_name)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]),
+    )
+    .await?;
+
+    Ok(Json(UpdateModelTagsResponse {
+        permission_tags,
+        default_permission_tags,
+    }))
+}
+
+pub async fn update_default_model_tags(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Json(payload): Json<UpdateDefaultModelTagsRequest>,
+) -> Result<Json<UpdateDefaultModelTagsResponse>, ApiError> {
+    auth::service::require_admin(&state.db, &jar, &state.config.session_cookie_name).await?;
+    let tags = permissions::update_default_model_tags(
+        &state.db,
+        payload.permission_tags,
+        payload.apply_to_existing.unwrap_or(false),
+    )
+    .await?;
+    let default_permission_tags = permissions::tag_responses(&state.db, &tags).await?;
+
+    Ok(Json(UpdateDefaultModelTagsResponse {
+        default_permission_tags,
+    }))
 }

@@ -487,7 +487,7 @@ Notes:
 
 ### 3.2.13 `model_availability`
 
-Global admin allowlist for base Ollama models returned by configured backends.
+Global admin on/off switch for base Ollama models returned by configured backends.
 
 Columns:
 
@@ -500,41 +500,104 @@ Columns:
 
 Notes:
 
-* missing rows are treated as enabled, so new installs and newly pulled models are available by default
+* model rows are created when Vashti first sees a model from an Ollama backend
+* newly discovered models receive the current default model permission tags
 * admins can disable individual models or bulk enable/disable all currently returned models for a backend
-* `GET /api/models` returns only enabled models
+* `GET /api/models` returns only enabled models whose permission tags intersect the current user's effective tags and are visible in that user's picker preferences
 * generation endpoints must check this table server-side; frontend filtering is not sufficient
-* this is a simple global switch and does not replace the later tag-based access system
+* disabled models are unavailable to everyone, including admins, until re-enabled; admins may still edit their tags while disabled
 
-### 3.2.14 Future model access and quota tables
+### 3.2.14 `user_model_preferences`
 
-This is not required for the first persona slice, but the design should leave room for tag-based model/persona access control.
+Per-user visibility preferences for the model picker.
 
-Concepts:
+Columns:
 
-* tags are lightweight labels used for access rules and quotas
-* users may have explicit tags such as `cloud` or `power-user`
-* every user also has an implicit user tag, such as `user:dane`
-* implicit user tags allow per-user rules without a separate per-user policy UI
+* `user_id` TEXT NOT NULL REFERENCES `users`(`id`) ON DELETE CASCADE
+* `backend_id` TEXT NOT NULL
+* `model_name` TEXT NOT NULL
+* `is_visible` INTEGER NOT NULL DEFAULT 1
+* `created_at` INTEGER NOT NULL
+* `updated_at` INTEGER NOT NULL
+* PRIMARY KEY (`user_id`, `backend_id`, `model_name`)
+* FOREIGN KEY (`backend_id`, `model_name`) REFERENCES `model_availability`(`backend_id`, `model_name`) ON DELETE CASCADE
+
+Notes:
+
+* missing rows mean visible by default
+* users may only set visibility for models they can access through global availability and permission tags
+* this table controls picker clutter only; generation endpoints still enforce global availability and permission tags
+
+### 3.2.15 Permission tags
+
+Permission tags are lightweight labels used to grant access to models, tools, and later quotas without a separate group-management system.
+
+Effective user tags:
+
+* every enabled user has `system:everyone`
+* every enabled admin also has `system:admin`
+* every enabled user has an implicit stable user tag, `user:<user_id>`, displayed as `@username`
+* admins may add explicit group tags to users, such as `group:power-users`, displayed as `power-users`
+
+Resource access rule:
+
+```text
+resource is enabled
+AND resource permission tag list is non-empty
+AND resource tags intersect current user's effective tags
+```
+
+An empty resource tag list means nobody can use it. Use `everyone` for broad access.
+
+Tag UI behavior:
+
 * UI tag pickers should search existing tags and allow creating a new tag when no result matches
-* user tags should render with a user icon to distinguish them from general tags
+* user tags should display as `@username` but store the stable `user:<user_id>` ID
+* unused group tags disappear from suggestions when they are no longer applied anywhere
+* default model/tool tags are applied to newly discovered models/tools, but individual resources may be customized afterward
+* model default tags and admin-set model tags are separate layers
+* removing a default tag from an individual model should leave the tag visible in a muted/removed state so the admin can restore it easily
+* applying default model tags to existing models only replaces the default-tag layer; manually added model tags remain intact
 
-Likely future tables:
+Tables:
 
-* `tags`
-* `user_tags`
-* `model_access_rules`
-* `backend_access_rules`
-* `persona_quota_rules`
+* `user_permission_tags`
+  * `user_id` TEXT NOT NULL REFERENCES `users`(`id`) ON DELETE CASCADE
+  * `tag_id` TEXT NOT NULL
+  * explicit user group tags only; implicit system/user tags are computed
+* `model_permission_tags`
+  * `backend_id` TEXT NOT NULL
+  * `model_name` TEXT NOT NULL
+  * `tag_id` TEXT NOT NULL
+  * references `model_availability` and stores manually added model access tags
+* `model_default_permission_tags`
+  * `backend_id` TEXT NOT NULL
+  * `model_name` TEXT NOT NULL
+  * `tag_id` TEXT NOT NULL
+  * references `model_availability` and stores the default-tag layer applied to each model
+* `tool_permission_state`
+  * `tool_id` TEXT PRIMARY KEY
+  * records that a tool has been initialized for default-tag application
+* `tool_permission_tags`
+  * `tool_id` TEXT NOT NULL REFERENCES `tool_permission_state`(`tool_id`) ON DELETE CASCADE
+  * `tag_id` TEXT NOT NULL
+  * controls tool access
+* `app_settings.default_model_permission_tags_json`
+* `app_settings.default_tool_permission_tags_json`
 
 Access rules may apply to:
 
 * entire Ollama backends
 * individual base model names
-* public persona usage
 * hosted persona count
 * public persona count
-* future tool access
+* tool access
+
+Persona access must perform a double check:
+
+* user must have access to the persona/custom model through ownership, public visibility, or existing public membership
+* user must also have access to the persona's underlying base model
+* server-private personas remain owner-only
 
 Quota rules:
 
@@ -1152,12 +1215,16 @@ Response shape matches `POST /api/backends/detect-localhost`.
 
 Returns enabled models grouped by backend.
 
+Model listings are served from Vashti's in-memory Ollama model cache. Vashti refreshes that cache at startup, refreshes it periodically, and lets admins request an immediate hard refresh. Ollama remains the source of truth; the cache only keeps the UI responsive while capability metadata is being refreshed.
+
 Model capability support should prefer Ollama `POST /api/show` metadata when available. A model with a `capabilities` entry of `vision` should be treated as image-capable, and a `thinking` entry should be treated as thinking-capable. `/api/tags` details can still be used as a fallback heuristic for older Ollama responses.
 
 Response:
 
 ```json
 {
+  "is_refreshing": false,
+  "cache_updated_at": 1778101847,
   "backends": [
     {
       "backend": {
@@ -1185,12 +1252,28 @@ Response:
 
 ### `GET /api/admin/models`
 
-Admin-only. Returns all models currently returned by enabled Ollama backends, including disabled models, grouped by backend.
+Admin-only. Returns all cached models currently returned by enabled Ollama backends, including disabled models, grouped by backend.
 
 Response:
 
 ```json
 {
+  "is_refreshing": false,
+  "cache_updated_at": 1778101847,
+  "available_tags": [
+    {
+      "id": "system:everyone",
+      "label": "everyone",
+      "kind": "system"
+    }
+  ],
+  "default_permission_tags": [
+    {
+      "id": "system:everyone",
+      "label": "everyone",
+      "kind": "system"
+    }
+  ],
   "backends": [
     {
       "backend": {
@@ -1210,6 +1293,10 @@ Response:
   ]
 }
 ```
+
+### `POST /api/admin/models/refresh`
+
+Admin-only. Performs a hard refresh of the in-memory model cache by querying all enabled Ollama backends and refreshing model capability metadata. The response shape matches `GET /api/admin/models`.
 
 ### `PATCH /api/admin/models`
 
@@ -1998,20 +2085,23 @@ Sections:
 
 * profile/basic preferences
 * personas / custom models
+* personal model picker visibility
 * app settings (admin only)
 * users (admin only)
 * Ollama backends (admin only)
-* model availability (admin only)
+* global model availability and model permission tags (admin only, shown with backend settings)
 * tools/search settings (admin only)
 * advanced network access settings (admin only)
 
 Layout:
 
 * settings are a full app page with section navigation
+* personal settings appear before admin settings
 * admin user management lives inside settings
 * user lists should separate pending/disabled users from enabled users so approval movement is clear
 * advanced network settings require re-entering the admin password and acknowledging lockout risk before saving
 * network settings should include a Caddy/nginx reverse-proxy config generator
+* all users can manage personal model picker visibility for models already available to their account
 
 Persona management view needs:
 
@@ -2031,6 +2121,8 @@ Backend management view needs:
 * edit backend form
 * enable/disable toggle
 * localhost detect action
+* expandable global model controls grouped by backend
+* per-model global enable/disable switches and permission tags
 
 ---
 

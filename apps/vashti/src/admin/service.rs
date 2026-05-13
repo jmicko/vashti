@@ -6,6 +6,7 @@ use crate::{
     admin::handlers::{CreateUserRequest, UpdateUserRequest},
     auth::service::{hash_password, unix_timestamp},
     error::ApiError,
+    permissions::service::{self as permissions, PermissionTagResponse},
 };
 
 #[derive(Debug, Serialize)]
@@ -18,6 +19,7 @@ pub struct AdminUserResponse {
     pub created_at: i64,
     pub updated_at: i64,
     pub last_login_at: Option<i64>,
+    pub permission_tags: Vec<PermissionTagResponse>,
 }
 
 pub async fn list_users(pool: &SqlitePool) -> Result<Vec<AdminUserResponse>, sqlx::Error> {
@@ -31,7 +33,12 @@ pub async fn list_users(pool: &SqlitePool) -> Result<Vec<AdminUserResponse>, sql
     .fetch_all(pool)
     .await?;
 
-    rows.into_iter().map(row_to_admin_user).collect()
+    let mut users = Vec::new();
+    for row in rows {
+        users.push(row_to_admin_user(pool, row).await?);
+    }
+
+    Ok(users)
 }
 
 pub async fn create_user(
@@ -126,7 +133,7 @@ pub async fn create_user(
 
     tx.commit().await?;
 
-    row_to_admin_user(row).map_err(ApiError::from)
+    row_to_admin_user(pool, row).await.map_err(ApiError::from)
 }
 
 pub async fn update_user(
@@ -135,7 +142,8 @@ pub async fn update_user(
     user_id: &str,
     payload: UpdateUserRequest,
 ) -> Result<AdminUserResponse, ApiError> {
-    if payload.role.is_none() && payload.is_disabled.is_none() {
+    if payload.role.is_none() && payload.is_disabled.is_none() && payload.permission_tags.is_none()
+    {
         return Err(ApiError::bad_request(
             "empty_update",
             "No user changes were provided",
@@ -165,6 +173,7 @@ pub async fn update_user(
 
     let now = unix_timestamp();
     let is_disabled = payload.is_disabled.map(i64::from);
+    let permission_tags = payload.permission_tags;
 
     let row = sqlx::query(
         r#"
@@ -184,7 +193,11 @@ pub async fn update_user(
     .await?
     .ok_or_else(|| ApiError::not_found("user_not_found", "User not found"))?;
 
-    row_to_admin_user(row).map_err(ApiError::from)
+    if let Some(tags) = permission_tags {
+        permissions::replace_user_group_tags(pool, user_id, tags).await?;
+    }
+
+    row_to_admin_user(pool, row).await.map_err(ApiError::from)
 }
 
 pub async fn delete_user(
@@ -222,9 +235,16 @@ fn normalize_role(role: String) -> Result<String, ApiError> {
     }
 }
 
-fn row_to_admin_user(row: sqlx::sqlite::SqliteRow) -> Result<AdminUserResponse, sqlx::Error> {
+async fn row_to_admin_user(
+    pool: &SqlitePool,
+    row: sqlx::sqlite::SqliteRow,
+) -> Result<AdminUserResponse, sqlx::Error> {
+    let id: String = row.try_get("id")?;
+    let tag_ids = permissions::user_group_tags(pool, &id).await?;
+    let permission_tags = permissions::tag_responses(pool, &tag_ids).await?;
+
     Ok(AdminUserResponse {
-        id: row.try_get("id")?,
+        id,
         username: row.try_get("username")?,
         email: row.try_get("email")?,
         role: row.try_get("role")?,
@@ -232,5 +252,6 @@ fn row_to_admin_user(row: sqlx::sqlite::SqliteRow) -> Result<AdminUserResponse, 
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
         last_login_at: row.try_get("last_login_at")?,
+        permission_tags,
     })
 }

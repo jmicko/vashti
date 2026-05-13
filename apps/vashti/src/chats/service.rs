@@ -169,7 +169,8 @@ pub async fn create_chat(
     }
 
     ensure_enabled_backend(pool, &backend_id).await?;
-    backends_service::ensure_model_enabled(pool, &backend_id, &model_name).await?;
+    backends_service::ensure_model_enabled_for_user(pool, user_id, &backend_id, &model_name)
+        .await?;
 
     let now = unix_timestamp();
     let chat_id = Uuid::new_v4().to_string();
@@ -321,7 +322,8 @@ pub async fn update_chat(
     };
     if persona.is_some() || has_base_model_update {
         ensure_enabled_backend(pool, &backend_id).await?;
-        backends_service::ensure_model_enabled(pool, &backend_id, &model_name).await?;
+        backends_service::ensure_model_enabled_for_user(pool, user_id, &backend_id, &model_name)
+            .await?;
     }
     let tool_preferences_json = serialize_tool_preferences(&tool_preferences)?;
 
@@ -1660,7 +1662,8 @@ async fn resolve_generation_model(
     }
 
     let backend = enabled_backend(pool, &backend_id).await?;
-    backends_service::ensure_model_enabled(pool, &backend.id, &model_name).await?;
+    backends_service::ensure_model_enabled_for_user(pool, user_id, &backend.id, &model_name)
+        .await?;
 
     Ok(ResolvedGenerationModel {
         backend,
@@ -1684,7 +1687,8 @@ async fn resolve_persona_generation_model(
             "Persona base model is required",
         ));
     }
-    backends_service::ensure_model_enabled(pool, &backend.id, &model_name).await?;
+    backends_service::ensure_model_enabled_for_user(pool, user_id, &backend.id, &model_name)
+        .await?;
 
     Ok(ResolvedGenerationModel {
         backend,

@@ -520,12 +520,16 @@ mod tests {
 
     use super::*;
     use crate::{
-        admin::{handlers::CreateUserRequest, service as admin_service},
+        admin::{
+            handlers::{CreateUserRequest, UpdateUserRequest},
+            service as admin_service,
+        },
         backends::service as backends_service,
         chats::{
             handlers::{CreateChatRequest, UpdateChatRequest},
             service as chats_service,
         },
+        permissions::service as permissions_service,
         settings::{
             handlers::{UpdateAppSettingsRequest, UpdateUserSettingsRequest},
             service as settings_service,
@@ -680,6 +684,95 @@ mod tests {
         assert!(cleared.default_backend_id.is_none());
         assert!(cleared.default_model_name.is_none());
         assert_eq!(cleared.theme.as_deref(), Some("neon"));
+    }
+
+    #[tokio::test]
+    async fn model_permission_tags_gate_model_access() {
+        let pool = test_pool().await;
+        let admin = register_user(&pool, "admin".to_string(), None, "secret".to_string())
+            .await
+            .expect("register first admin");
+        let backend = backends_service::create_backend(
+            &pool,
+            "local".to_string(),
+            "http://127.0.0.1:11434".to_string(),
+        )
+        .await
+        .expect("create backend");
+        let user = admin_service::create_user(
+            &pool,
+            CreateUserRequest {
+                username: "friend".to_string(),
+                email: None,
+                password: "secret".to_string(),
+                role: Some("user".to_string()),
+                is_disabled: Some(false),
+            },
+        )
+        .await
+        .expect("create user");
+
+        backends_service::ensure_model_enabled_for_user(&pool, &user.id, &backend.id, "gemma4:e2b")
+            .await
+            .expect("default everyone tag permits model");
+
+        permissions_service::replace_model_tags(
+            &pool,
+            &backend.id,
+            "gemma4:e2b",
+            vec!["power-users".to_string()],
+        )
+        .await
+        .expect("add manual model tag");
+        permissions_service::replace_model_default_tags(&pool, &backend.id, "gemma4:e2b", vec![])
+            .await
+            .expect("remove default model tags");
+
+        assert!(
+            backends_service::ensure_model_enabled_for_user(
+                &pool,
+                &user.id,
+                &backend.id,
+                "gemma4:e2b",
+            )
+            .await
+            .is_err()
+        );
+
+        admin_service::update_user(
+            &pool,
+            &admin.user.id,
+            &user.id,
+            UpdateUserRequest {
+                role: None,
+                is_disabled: None,
+                permission_tags: Some(vec!["power-users".to_string()]),
+            },
+        )
+        .await
+        .expect("add user tag");
+
+        backends_service::ensure_model_enabled_for_user(&pool, &user.id, &backend.id, "gemma4:e2b")
+            .await
+            .expect("matching tag permits model");
+
+        backends_service::set_user_model_visibility(
+            &pool,
+            &user.id,
+            &backend.id,
+            "gemma4:e2b",
+            false,
+        )
+        .await
+        .expect("hide model from picker");
+        backends_service::ensure_model_enabled_for_user(&pool, &user.id, &backend.id, "gemma4:e2b")
+            .await
+            .expect("personal picker visibility does not change server permission");
+        let preferences =
+            backends_service::user_model_preferences_by_backend(&pool, &user.id, &backend.id)
+                .await
+                .expect("load user model preferences");
+        assert_eq!(preferences.get("gemma4:e2b"), Some(&false));
     }
 
     #[tokio::test]

@@ -205,7 +205,8 @@ Public persona lifecycle direction:
 * request timeout
 * upload size limit
 * signup/admin settings, including public signup enablement and limit
-* admin model availability
+* personal model picker visibility
+* admin global model availability
 * advanced network access mode for LAN HTTP vs public HTTPS reverse-proxy deployment
 
 ### 5.8 Admin basics
@@ -214,11 +215,11 @@ Public persona lifecycle direction:
 
 * manage Ollama backends
 
-* manage global model availability with a simple on/off switch
+* manage global model availability with a simple on/off switch and tag-based access rules
 
 * configure public HTTPS reverse-proxy mode without exposing a raw Secure-cookie toggle
 
-* manage model/backend availability later through tag-based access rules
+* allow users to hide accessible models from their own model picker
 
 * disable or delete users
 
@@ -706,6 +707,8 @@ Rationale:
 * backends are all Ollama servers; this is not a generic multi-provider abstraction
 * each backend has a human-readable name and base URL
 * users select models from a server-grouped model picker
+* users can hide accessible models from their own picker without changing server permissions
+* admin model defaults and admin-added model tags are separate; applying defaults updates only the default layer and preserves manual tags
 * admin can enable or disable configured backends
 * localhost detection on first run is desirable
 * local-network discovery should be an explicit admin action rather than a background behavior
@@ -727,7 +730,8 @@ Rationale:
 * users can inspect prompts for public personas they can use
 * public persona deletion should use disown/membership semantics once other users have used it
 * users can copy a visible persona version into a new persona they own
-* tag-based model/persona access and quotas are a later admin-management slice
+* tag-based base-model and tool access is part of admin management; persona quotas can follow in a later slice if needed
+* a user must have access to a persona's underlying base model before they can use that persona
 
 ## 18. Immediate Next Step
 
@@ -812,9 +816,15 @@ Mutating API requests should enforce same-origin browser writes with an `Origin`
 * `POST /api/backends/detect-localhost`
 * `POST /api/backends/scan-local-network`
 * `GET /api/models`
+* `GET /api/user-models`
+* `POST /api/user-models/refresh`
+* `PATCH /api/user-models`
 * `GET /api/admin/models`
+* `POST /api/admin/models/refresh`
 * `PATCH /api/admin/models`
 * `PATCH /api/admin/models/backend`
+* `PATCH /api/admin/models/tags`
+* `PATCH /api/admin/models/default-tags`
 * `GET /api/models/status`
 
 #### Standard chats
