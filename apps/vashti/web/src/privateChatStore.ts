@@ -1,4 +1,5 @@
 import { gcm as aesGcm } from "@noble/ciphers/aes.js";
+import type { MessageStats } from "./types";
 
 const LEGACY_DB_NAME = "vashti-private-local";
 const DB_NAME_PREFIX = "vashti-private-local";
@@ -102,6 +103,7 @@ export type PrivateChatMessage = {
   think_mode: string | null;
   done_reason: string | null;
   error_text: string | null;
+  stats?: MessageStats | null;
   started_at: number | null;
   completed_at: number | null;
   created_at: number;
@@ -291,6 +293,7 @@ export function createPrivateMessage({
     think_mode: thinkMode,
     done_reason: null,
     error_text: null,
+    stats: null,
     started_at: status === "streaming" ? createdAt : null,
     completed_at: status === "streaming" ? null : createdAt,
     created_at: createdAt,
@@ -1065,6 +1068,7 @@ function compareMessagesByCreatedAt(left: PrivateChatMessage, right: PrivateChat
 function normalizePrivateMessage(message: PrivateChatMessage): PrivateChatMessage {
   return {
     ...message,
+    stats: message.stats ?? null,
     attachments: message.attachments ?? []
   };
 }

@@ -255,6 +255,18 @@ export type ComposerSubmitPayload = {
   prompt: string;
   attachments: ComposerAttachment[];
   toolPreferences?: ChatToolPreferences;
+  thinkMode?: ThinkingMode;
+};
+
+export type ThinkingMode = "auto" | "false" | "low" | "medium" | "high";
+
+export type MessageStats = {
+  total_duration?: number | null;
+  load_duration?: number | null;
+  prompt_eval_count?: number | null;
+  prompt_eval_duration?: number | null;
+  eval_count?: number | null;
+  eval_duration?: number | null;
 };
 
 export type ChatMessage = {
@@ -273,6 +285,7 @@ export type ChatMessage = {
   think_mode: string | null;
   done_reason: string | null;
   error_text: string | null;
+  stats?: MessageStats | null;
   started_at: number | null;
   completed_at: number | null;
   created_at: number;
@@ -359,6 +372,7 @@ export type GenerateEvent =
       type: "message_done";
       assistant_message_id: string;
       done_reason: string | null;
+      stats?: MessageStats | null;
     }
   | {
       type: "chat_title";

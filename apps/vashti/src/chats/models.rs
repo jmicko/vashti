@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::ollama::models::OllamaUsageStats;
 use crate::uploads::models::Attachment;
 
 #[derive(Debug, Serialize)]
@@ -73,6 +74,7 @@ pub struct ChatMessage {
     pub think_mode: Option<String>,
     pub done_reason: Option<String>,
     pub error_text: Option<String>,
+    pub stats: Option<OllamaUsageStats>,
     pub started_at: Option<i64>,
     pub completed_at: Option<i64>,
     pub created_at: i64,

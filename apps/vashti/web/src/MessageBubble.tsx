@@ -9,6 +9,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Copy,
+  Info,
   Paperclip,
   Pencil,
   RefreshCw,
@@ -40,6 +41,7 @@ import type {
   ChatMessage,
   ComposerAttachment,
   ImageOpenHandler,
+  MessageStats,
   MessageStreamSegment,
   ModelInfo,
   VersionInfo
@@ -117,6 +119,7 @@ export function MessageBubble({
   const hasOrderedSegments = orderedSegments.length > 0;
   const attachments = activeMessageAttachments(message);
   const [isEditing, setIsEditing] = useState(false);
+  const [showStats, setShowStats] = useState(false);
   const [draft, setDraft] = useState(content);
   const [draftAttachments, setDraftAttachments] = useState<ComposerAttachment[]>([]);
   const editFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -317,57 +320,138 @@ export function MessageBubble({
         <p>{message.status === "streaming" ? <RetroLoader /> : "No content"}</p>
       )}
       {!isEditing && (
-        <div className="message-actions">
-          {message.role === "assistant" && canRegenerate && (
+        <>
+          <div className="message-actions">
+            {message.role === "assistant" && canRegenerate && (
+              <button
+                type="button"
+                className="message-icon-button"
+                title="Regenerate"
+                aria-label="Regenerate"
+                disabled={isBusy || isGenerating || message.status === "streaming"}
+                onClick={() => {
+                  dismissMobileKeyboard();
+                  void onRegenerate(message);
+                }}
+              >
+                <RefreshCw />
+              </button>
+            )}
             <button
               type="button"
               className="message-icon-button"
-              title="Regenerate"
-              aria-label="Regenerate"
-              disabled={isBusy || isGenerating || message.status === "streaming"}
-              onClick={() => {
-                dismissMobileKeyboard();
-                void onRegenerate(message);
-              }}
+              title="Copy"
+              aria-label="Copy"
+              disabled={message.is_deleted || content === ""}
+              onClick={() => void onCopy(message)}
             >
-              <RefreshCw />
+              <Copy />
+              {copied && <span>Copied</span>}
             </button>
+            <button
+              type="button"
+              className="message-icon-button"
+              title="Edit"
+              aria-label="Edit"
+              disabled={isBusy || !canEdit || message.is_deleted || message.status === "streaming"}
+              onClick={startEditing}
+            >
+              <Pencil />
+            </button>
+            <button
+              type="button"
+              className="message-icon-button danger-button"
+              title="Delete"
+              aria-label="Delete"
+              disabled={isBusy || message.status === "streaming"}
+              onClick={() => onDelete(message)}
+            >
+              <Trash2 />
+            </button>
+            {message.role === "assistant" && (
+              <button
+                type="button"
+                className={
+                  message.stats
+                    ? "message-icon-button message-stats-button"
+                    : "message-icon-button message-stats-button missing"
+                }
+                title={message.stats ? "Message stats" : "No stats received"}
+                aria-label={message.stats ? "Message stats" : "No stats received"}
+                aria-expanded={showStats}
+                disabled={isGenerating || message.status === "streaming"}
+                onClick={() => setShowStats((open) => !open)}
+              >
+                <Info />
+              </button>
+            )}
+          </div>
+          {message.role === "assistant" && showStats && (
+            <MessageStatsPanel stats={message.stats ?? null} />
           )}
-          <button
-            type="button"
-            className="message-icon-button"
-            title="Copy"
-            aria-label="Copy"
-            disabled={message.is_deleted || content === ""}
-            onClick={() => void onCopy(message)}
-          >
-            <Copy />
-            {copied && <span>Copied</span>}
-          </button>
-          <button
-            type="button"
-            className="message-icon-button"
-            title="Edit"
-            aria-label="Edit"
-            disabled={isBusy || !canEdit || message.is_deleted || message.status === "streaming"}
-            onClick={startEditing}
-          >
-            <Pencil />
-          </button>
-          <button
-            type="button"
-            className="message-icon-button danger-button"
-            title="Delete"
-            aria-label="Delete"
-            disabled={isBusy || message.status === "streaming"}
-            onClick={() => onDelete(message)}
-          >
-            <Trash2 />
-          </button>
-        </div>
+        </>
       )}
     </article>
   );
+}
+
+function MessageStatsPanel({ stats }: { stats: MessageStats | null }) {
+  if (!stats) {
+    return <div className="message-stats-panel muted">No stats received for this message.</div>;
+  }
+
+  const tokensPerSecond =
+    stats.eval_count && stats.eval_duration
+      ? stats.eval_count / (stats.eval_duration / 1_000_000_000)
+      : null;
+
+  return (
+    <div className="message-stats-panel">
+      <StatItem label="Speed" value={tokensPerSecond ? `${tokensPerSecond.toFixed(1)} tok/s` : "n/a"} />
+      <StatItem label="Output" value={formatCount(stats.eval_count, "token")} />
+      <StatItem label="Context" value={formatCount(stats.prompt_eval_count, "token")} />
+      <StatItem label="Total" value={formatNanoseconds(stats.total_duration)} />
+      <StatItem label="Load" value={formatNanoseconds(stats.load_duration)} />
+      <StatItem label="Prompt eval" value={formatNanoseconds(stats.prompt_eval_duration)} />
+      <StatItem label="Eval" value={formatNanoseconds(stats.eval_duration)} />
+    </div>
+  );
+}
+
+function StatItem({ label, value }: { label: string; value: string }) {
+  return (
+    <span>
+      <strong>{label}</strong>
+      {value}
+    </span>
+  );
+}
+
+function formatCount(value: number | null | undefined, unit: string) {
+  if (value === null || value === undefined) {
+    return "n/a";
+  }
+
+  return `${value.toLocaleString()} ${unit}${value === 1 ? "" : "s"}`;
+}
+
+function formatNanoseconds(value: number | null | undefined) {
+  if (value === null || value === undefined) {
+    return "n/a";
+  }
+
+  if (value < 1_000_000) {
+    return `${Math.round(value / 1_000).toLocaleString()} us`;
+  }
+
+  const seconds = value / 1_000_000_000;
+  if (seconds < 60) {
+    return `${seconds.toFixed(seconds < 10 ? 2 : 1)}s`;
+  }
+
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = Math.round(seconds % 60);
+  return `${minutes}m ${remainingSeconds}s`;
 }
 
 function VersionSwitcher({

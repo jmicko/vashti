@@ -7,6 +7,7 @@ import {
   activePathMessages,
   fallbackTitleFromPrompt,
   groupMessagesByParent,
+  latestAssistantThinkingMode,
   latestAssistantModelValue,
   mergeStreamSegmentsByMessage,
   privateAttachmentsForMessage,
@@ -57,14 +58,14 @@ import type {
   ImageOpenHandler,
   MessageStreamSegment,
   MessageVersion,
-  ModelInfo
+  ModelInfo,
+  ThinkingMode
 } from "./types";
 
 export function PrivateChatView({
   chatId,
   error,
   queuedPrompt,
-  queuedAttachments,
   selectedModel,
   selectedModelInfo,
   privatePersonas,
@@ -75,8 +76,7 @@ export function PrivateChatView({
 }: {
   chatId: string;
   error: string | null;
-  queuedPrompt: string | null;
-  queuedAttachments: ComposerAttachment[];
+  queuedPrompt: ({ chatId: string } & ComposerSubmitPayload) | null;
   selectedModel: string;
   selectedModelInfo: ModelInfo | null;
   privatePersonas: PrivatePersona[];
@@ -93,6 +93,7 @@ export function PrivateChatView({
   const [isGenerating, setIsGenerating] = useState(false);
   const [activeAssistantId, setActiveAssistantId] = useState<string | null>(null);
   const [pendingPrompt, setPendingPrompt] = useState<ComposerSubmitPayload | null>(null);
+  const [thinkingMode, setThinkingMode] = useState<ThinkingMode>("auto");
   const [busyMessageId, setBusyMessageId] = useState<string | null>(null);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<PrivateChatMessage | null>(null);
@@ -184,6 +185,7 @@ export function PrivateChatView({
     if (latestModel) {
       onModelSelected(latestModel);
     }
+    setThinkingMode(latestAssistantThinkingMode(visibleMessages));
   }, [onModelSelected, visibleMessages]);
 
   useEffect(() => {
@@ -392,8 +394,13 @@ export function PrivateChatView({
     }
 
     onQueuedPromptConsumed();
-    void submitPrompt(queuedPrompt, queuedAttachments);
-  }, [chat, isGenerating, isLoading, onQueuedPromptConsumed, queuedAttachments, queuedPrompt]);
+    void submitPrompt(
+      queuedPrompt.prompt,
+      queuedPrompt.attachments,
+      undefined,
+      queuedPrompt.thinkMode
+    );
+  }, [chat, isGenerating, isLoading, onQueuedPromptConsumed, queuedPrompt]);
 
   useEffect(() => {
     if (!pendingPrompt || isGenerating || isLoading || !chat) {
@@ -402,7 +409,7 @@ export function PrivateChatView({
 
     const prompt = pendingPrompt;
     setPendingPrompt(null);
-    void generate(prompt.prompt, prompt.attachments);
+    void generate(prompt.prompt, prompt.attachments, prompt.thinkMode);
   }, [chat, isGenerating, isLoading, pendingPrompt]);
 
   function noteUserScrollIntent() {
@@ -538,7 +545,11 @@ export function PrivateChatView({
     }
   }
 
-  async function generate(prompt: string, attachments: ComposerAttachment[] = []) {
+  async function generate(
+    prompt: string,
+    attachments: ComposerAttachment[] = [],
+    thinkMode: ThinkingMode = "auto"
+  ) {
     if (!chat || isGenerating) {
       return;
     }
@@ -586,6 +597,7 @@ export function PrivateChatView({
       personaId: selectedPrivatePersona?.id ?? null,
       personaVersionId: selectedPrivatePersona?.current_version.id ?? null,
       personaNameSnapshot: selectedPrivatePersona?.current_version.display_name ?? null,
+      thinkMode: thinkModeToPayload(thinkMode),
       createdAt: now
     });
     userMessage.active_child_message_id = assistantMessage.id;
@@ -626,7 +638,7 @@ export function PrivateChatView({
       assistant_message_id: assistantMessage.id,
       backend_id: selected.backendId,
       model_name: selected.modelName,
-      think_mode: null,
+      think_mode: thinkModeToPayload(thinkMode),
       messages: privatePromptMessagesWithPersona(
         nextMessages,
         nextChat.active_root_message_id,
@@ -718,14 +730,19 @@ export function PrivateChatView({
     );
   }
 
-  async function submitPrompt(prompt: string, attachments: ComposerAttachment[] = []) {
+  async function submitPrompt(
+    prompt: string,
+    attachments: ComposerAttachment[] = [],
+    _toolPreferences?: unknown,
+    thinkMode: ThinkingMode = "auto"
+  ) {
     if (isGenerating) {
-      setPendingPrompt({ prompt, attachments });
+      setPendingPrompt({ prompt, attachments, thinkMode });
       await stopGeneration();
       return;
     }
 
-    await generate(prompt, attachments);
+    await generate(prompt, attachments, thinkMode);
   }
 
   async function stopGeneration() {
@@ -775,6 +792,7 @@ export function PrivateChatView({
           ...current,
           status: "complete",
           done_reason: event.done_reason,
+          stats: event.stats ?? null,
           completed_at: unixTimestamp(),
           updated_at: unixTimestamp()
         }));
@@ -973,6 +991,7 @@ export function PrivateChatView({
         personaId: selectedPrivatePersona?.id ?? null,
         personaVersionId: selectedPrivatePersona?.current_version.id ?? null,
         personaNameSnapshot: selectedPrivatePersona?.current_version.display_name ?? null,
+        thinkMode: thinkModeToPayload(thinkingMode),
         createdAt: now
       });
       userMessage.active_child_message_id = assistantMessage.id;
@@ -1010,7 +1029,7 @@ export function PrivateChatView({
         assistant_message_id: assistantMessage.id,
         backend_id: selected.backendId,
         model_name: selected.modelName,
-        think_mode: null,
+        think_mode: thinkModeToPayload(thinkingMode),
         messages: privatePromptMessagesWithPersona(
           nextMessages,
           nextChat.active_root_message_id,
@@ -1090,6 +1109,7 @@ export function PrivateChatView({
         personaId: selectedPrivatePersona?.id ?? null,
         personaVersionId: selectedPrivatePersona?.current_version.id ?? null,
         personaNameSnapshot: selectedPrivatePersona?.current_version.display_name ?? null,
+        thinkMode: thinkModeToPayload(thinkingMode),
         createdAt: now
       });
 
@@ -1125,7 +1145,7 @@ export function PrivateChatView({
         assistant_message_id: assistantMessage.id,
         backend_id: backendId,
         model_name: modelName,
-        think_mode: null,
+        think_mode: thinkModeToPayload(thinkingMode),
         messages: privatePromptMessagesWithPersona(
           nextMessages,
           nextChat.active_root_message_id,
@@ -1308,7 +1328,9 @@ export function PrivateChatView({
               isGenerating={isGenerating}
               placeholder={selectedModel ? "Message private chat" : "Select a model to continue"}
               selectedModelInfo={selectedModelInfo}
+              thinkingMode={thinkingMode}
               warning={modelImageWarning}
+              onThinkingModeChange={setThinkingMode}
               onStop={stopGeneration}
               onUploadAttachment={preparePrivateAttachment}
               onSubmit={submitPrompt}
@@ -1331,4 +1353,8 @@ export function PrivateChatView({
       )}
     </div>
   );
+}
+
+function thinkModeToPayload(mode: ThinkingMode) {
+  return mode === "auto" ? null : mode;
 }

@@ -28,6 +28,7 @@ use crate::{
         self,
         models::{
             OllamaChatChunk, OllamaChatMessage, OllamaChatRequest, OllamaThink, OllamaToolCall,
+            OllamaUsageStats,
         },
     },
     permissions, rate_limit, settings, tools,
@@ -188,6 +189,7 @@ enum GenerateEvent {
     MessageDone {
         assistant_message_id: String,
         done_reason: Option<String>,
+        stats: Option<OllamaUsageStats>,
     },
     ChatTitle {
         chat_id: String,
@@ -519,6 +521,7 @@ async fn stream_generation(
     let mut thinking_text = String::new();
     let mut thinking_content_cursor = 0usize;
     let mut done_reason = None;
+    let mut usage_stats: Option<OllamaUsageStats> = None;
     set_generation_progress(
         &progress,
         &assistant_message_id,
@@ -692,6 +695,7 @@ async fn stream_generation(
                                     &mut thinking_text,
                                     &mut thinking_content_cursor,
                                     &mut done_reason,
+                                    &mut usage_stats,
                                     &mut round_tool_calls,
                                 )
                                 .await
@@ -753,6 +757,7 @@ async fn stream_generation(
                 &mut thinking_text,
                 &mut thinking_content_cursor,
                 &mut done_reason,
+                &mut usage_stats,
                 &mut round_tool_calls,
             )
             .await
@@ -850,6 +855,7 @@ async fn stream_generation(
         &content_text,
         &thinking_text,
         done_reason.as_deref(),
+        usage_stats.as_ref(),
     )
     .await;
     let _ = send_event(
@@ -857,6 +863,7 @@ async fn stream_generation(
         &GenerateEvent::MessageDone {
             assistant_message_id: assistant_message_id.clone(),
             done_reason,
+            stats: usage_stats,
         },
     )
     .await;
@@ -1172,6 +1179,7 @@ async fn handle_ollama_line(
     thinking_text: &mut String,
     thinking_content_cursor: &mut usize,
     done_reason: &mut Option<String>,
+    usage_stats: &mut Option<OllamaUsageStats>,
     tool_calls: &mut Vec<OllamaToolCall>,
 ) -> Result<(), String> {
     let chunk = match serde_json::from_str::<OllamaChatChunk>(line) {
@@ -1189,6 +1197,13 @@ async fn handle_ollama_line(
             return Err(message);
         }
     };
+
+    if let Some(chunk_stats) = chunk.usage_stats() {
+        match usage_stats {
+            Some(stats) => stats.add_assign(chunk_stats),
+            None => *usage_stats = Some(chunk_stats),
+        }
+    }
 
     if let Some(message) = chunk.message {
         if !message.tool_calls.is_empty() {

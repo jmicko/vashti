@@ -81,6 +81,7 @@ import type {
   Persona,
   PersonasResponse,
   SettingsSection,
+  ThinkingMode,
   User
 } from "./types";
 
@@ -483,7 +484,8 @@ export function AppShell({
   async function createChatFromPrompt(
     prompt: string,
     attachments: ComposerAttachment[] = [],
-    toolPreferences: ChatToolPreferences = defaultToolPreferences
+    toolPreferences: ChatToolPreferences = defaultToolPreferences,
+    thinkMode: ThinkingMode = "auto"
   ) {
     if (!prompt.trim()) {
       openChat();
@@ -514,7 +516,13 @@ export function AppShell({
 
       if (prompt.trim()) {
         const uploadedAttachments = await uploadComposerAttachments(response.chat.id, attachments);
-        setQueuedPrompt({ chatId: response.chat.id, prompt, attachments: uploadedAttachments });
+        setQueuedPrompt({
+          chatId: response.chat.id,
+          prompt,
+          attachments: uploadedAttachments,
+          toolPreferences,
+          thinkMode
+        });
       }
 
       await loadChats();
@@ -561,7 +569,12 @@ export function AppShell({
     return modelInfoForValue(modelGroups, personas, privatePersonas, selectedModel);
   }
 
-  async function createPrivateChatFromPrompt(prompt: string, attachments: ComposerAttachment[] = []) {
+  async function createPrivateChatFromPrompt(
+    prompt: string,
+    attachments: ComposerAttachment[] = [],
+    _toolPreferences: ChatToolPreferences = defaultToolPreferences,
+    thinkMode: ThinkingMode = "auto"
+  ) {
     if (!prompt.trim()) {
       openChat();
       return;
@@ -594,7 +607,7 @@ export function AppShell({
       });
 
       if (prompt.trim()) {
-        setQueuedPrivatePrompt({ chatId: chat.id, prompt, attachments });
+        setQueuedPrivatePrompt({ chatId: chat.id, prompt, attachments, thinkMode });
       }
 
       await loadPrivateChats();
@@ -822,14 +835,7 @@ export function AppShell({
             chatId={currentPrivateChatId}
             error={error}
             queuedPrompt={
-              queuedPrivatePrompt?.chatId === currentPrivateChatId
-                ? queuedPrivatePrompt.prompt
-                : null
-            }
-            queuedAttachments={
-              queuedPrivatePrompt?.chatId === currentPrivateChatId
-                ? queuedPrivatePrompt.attachments
-                : []
+              queuedPrivatePrompt?.chatId === currentPrivateChatId ? queuedPrivatePrompt : null
             }
             selectedModel={selectedModel}
             selectedModelInfo={selectedModelInfo()}
@@ -844,10 +850,7 @@ export function AppShell({
             <ChatView
               chatId={currentChatId}
               error={error}
-              queuedPrompt={queuedPrompt?.chatId === currentChatId ? queuedPrompt.prompt : null}
-              queuedAttachments={
-                queuedPrompt?.chatId === currentChatId ? queuedPrompt.attachments : []
-              }
+              queuedPrompt={queuedPrompt?.chatId === currentChatId ? queuedPrompt : null}
               selectedModel={selectedModel}
               selectedModelInfo={selectedModelInfo()}
               availableTools={availableTools}
