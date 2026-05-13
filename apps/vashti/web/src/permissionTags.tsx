@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Plus, X } from "lucide-react";
 import type { PermissionTag } from "./types";
 
@@ -28,6 +28,23 @@ function permissionTagFromInput(value: string, availableTags: PermissionTag[]): 
   return existing ?? { id: trimmed, label: trimmed, kind: "group" };
 }
 
+function isCoarseTouch() {
+  if (typeof window === "undefined" || typeof window.matchMedia === "undefined") {
+    return false;
+  }
+
+  return window.matchMedia("(hover: none) and (pointer: coarse)").matches;
+}
+
+function isInsidePermissionTag(target: EventTarget | null, tagId: string) {
+  if (!(target instanceof Element)) {
+    return false;
+  }
+
+  const tagElement = target.closest<HTMLElement>("[data-permission-tag-id]");
+  return tagElement?.dataset.permissionTagId === tagId;
+}
+
 export function PermissionTagEditor({
   label,
   tags,
@@ -46,47 +63,100 @@ export function PermissionTagEditor({
   showEmpty?: boolean;
 }) {
   const [value, setValue] = useState("");
+  const [isSuggestionsOpen, setIsSuggestionsOpen] = useState(false);
+  const [isInputFocused, setIsInputFocused] = useState(false);
+  const [highlightedSuggestionIndex, setHighlightedSuggestionIndex] = useState(0);
   const [armedTagId, setArmedTagId] = useState<string | null>(null);
-  const editorRef = useRef<HTMLDivElement | null>(null);
-  const datalistId = useId();
-  const suggestions = suggestionsKind
-    ? availableTags.filter((tag) => tag.kind === suggestionsKind)
-    : availableTags;
+  const tagAddRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const inputId = useId();
+  const suggestionListId = useId();
+  const suggestions = useMemo(
+    () =>
+      suggestionsKind
+        ? mergePermissionTags(availableTags.filter((tag) => tag.kind === suggestionsKind))
+        : mergePermissionTags(availableTags),
+    [availableTags, suggestionsKind]
+  );
+  const availableSuggestions = useMemo(() => {
+    const existingIds = new Set(tags.map((tag) => tag.id));
+    const query = value.trim().toLowerCase();
+    return suggestions
+      .filter((tag) => !existingIds.has(tag.id))
+      .filter((tag) => {
+        if (!query) {
+          return true;
+        }
+
+        return (
+          tag.id.toLowerCase().includes(query) ||
+          tag.label.toLowerCase().includes(query)
+        );
+      })
+      .slice(0, 8);
+  }, [suggestions, tags, value]);
+  const shouldShowSuggestions =
+    !disabled && isInputFocused && isSuggestionsOpen && availableSuggestions.length > 0;
+  const activeSuggestion =
+    shouldShowSuggestions ? availableSuggestions[highlightedSuggestionIndex] ?? null : null;
 
   useEffect(() => {
-    if (!armedTagId) {
+    setHighlightedSuggestionIndex((current) =>
+      Math.min(Math.max(0, current), Math.max(0, availableSuggestions.length - 1))
+    );
+  }, [availableSuggestions.length]);
+
+  useEffect(() => {
+    if (!armedTagId && !isSuggestionsOpen) {
       return;
     }
 
-    function disarmOnOutsideClick(event: MouseEvent | TouchEvent) {
+    function handleOutsideInteraction(event: MouseEvent | TouchEvent) {
       const target = event.target;
-      if (target instanceof Node && editorRef.current?.contains(target)) {
-        return;
+      const isInsideTagAdd = target instanceof Node && tagAddRef.current?.contains(target);
+
+      if (armedTagId && !isInsidePermissionTag(target, armedTagId)) {
+        setArmedTagId(null);
       }
 
-      setArmedTagId(null);
+      if (isSuggestionsOpen && !isInsideTagAdd) {
+        if (event.type === "touchstart" && isCoarseTouch()) {
+          setIsSuggestionsOpen(true);
+          return;
+        }
+
+        setIsSuggestionsOpen(false);
+        if (event.type === "mousedown") {
+          inputRef.current?.blur();
+          setIsInputFocused(false);
+        }
+      }
     }
 
-    document.addEventListener("mousedown", disarmOnOutsideClick);
-    document.addEventListener("touchstart", disarmOnOutsideClick);
+    document.addEventListener("mousedown", handleOutsideInteraction);
+    document.addEventListener("touchstart", handleOutsideInteraction);
     return () => {
-      document.removeEventListener("mousedown", disarmOnOutsideClick);
-      document.removeEventListener("touchstart", disarmOnOutsideClick);
+      document.removeEventListener("mousedown", handleOutsideInteraction);
+      document.removeEventListener("touchstart", handleOutsideInteraction);
     };
-  }, [armedTagId]);
+  }, [armedTagId, isSuggestionsOpen]);
 
-  function addTag() {
-    const tag = permissionTagFromInput(value, suggestions);
+  function addTag(selectedTag?: PermissionTag) {
+    const tag = selectedTag ?? permissionTagFromInput(value, suggestions);
     if (!tag || tags.some((existing) => existing.id === tag.id)) {
       setValue("");
+      setIsSuggestionsOpen(isInputFocused);
       return;
     }
     onChange([...tags, tag]);
     setValue("");
+    setIsSuggestionsOpen(true);
+    setHighlightedSuggestionIndex(0);
+    window.requestAnimationFrame(() => inputRef.current?.focus());
   }
 
   return (
-    <div className="permission-tag-editor" ref={editorRef}>
+    <div className="permission-tag-editor">
       {label && <span>{label}</span>}
       <div className="permission-tag-row">
         <div className="permission-tags">
@@ -105,28 +175,103 @@ export function PermissionTagEditor({
             ))
           )}
         </div>
-        <div className="permission-tag-add">
+        <div className="permission-tag-add" ref={tagAddRef}>
           <input
+            ref={inputRef}
+            id={inputId}
+            type="search"
+            name="vashti-permission-tag-search"
             value={value}
             disabled={disabled}
-            list={datalistId}
             placeholder="tag"
-            onChange={(event) => setValue(event.target.value)}
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="none"
+            spellCheck={false}
+            enterKeyHint="done"
+            role="combobox"
+            aria-autocomplete="list"
+            aria-controls={suggestionListId}
+            aria-expanded={shouldShowSuggestions}
+            aria-activedescendant={
+              activeSuggestion ? `${suggestionListId}-${activeSuggestion.id}` : undefined
+            }
+            style={{ width: `${Math.max(6, value.length + 2)}ch` }}
+            onChange={(event) => {
+              setValue(event.target.value);
+              setIsSuggestionsOpen(true);
+              setHighlightedSuggestionIndex(0);
+            }}
+            onFocus={() => {
+              setIsInputFocused(true);
+              setIsSuggestionsOpen(true);
+              setHighlightedSuggestionIndex(0);
+            }}
+            onBlur={() => setIsInputFocused(false)}
+            onPointerDown={() => setIsSuggestionsOpen(true)}
             onKeyDown={(event) => {
+              if (event.key === "ArrowDown") {
+                event.preventDefault();
+                setIsSuggestionsOpen(true);
+                setHighlightedSuggestionIndex((current) =>
+                  availableSuggestions.length === 0
+                    ? 0
+                    : (current + 1) % availableSuggestions.length
+                );
+                return;
+              }
+              if (event.key === "ArrowUp") {
+                event.preventDefault();
+                setIsSuggestionsOpen(true);
+                setHighlightedSuggestionIndex((current) =>
+                  availableSuggestions.length === 0
+                    ? 0
+                    : (current - 1 + availableSuggestions.length) % availableSuggestions.length
+                );
+                return;
+              }
               if (event.key === "Enter") {
                 event.preventDefault();
-                addTag();
+                event.stopPropagation();
+                addTag(activeSuggestion ?? undefined);
+              }
+              if (event.key === "Escape") {
+                setIsSuggestionsOpen(false);
               }
             }}
           />
-          <datalist id={datalistId}>
-            {suggestions.map((tag) => (
-              <option key={tag.id} value={tag.label} />
-            ))}
-          </datalist>
-          <button type="button" className="secondary-button" disabled={disabled} onClick={addTag}>
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={disabled}
+            onClick={() => addTag()}
+          >
             <Plus />
           </button>
+          {shouldShowSuggestions && (
+            <div id={suggestionListId} className="permission-tag-suggestions" role="listbox">
+              {availableSuggestions.map((tag, index) => (
+                <button
+                  key={tag.id}
+                  id={`${suggestionListId}-${tag.id}`}
+                  type="button"
+                  role="option"
+                  aria-selected={index === highlightedSuggestionIndex}
+                  className={`permission-tag-suggestion permission-tag-suggestion-${tag.kind} ${
+                    index === highlightedSuggestionIndex
+                      ? "permission-tag-suggestion-active"
+                      : ""
+                  }`}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onMouseEnter={() => setHighlightedSuggestionIndex(index)}
+                  onClick={() => addTag(tag)}
+                >
+                  <span>{tag.label}</span>
+                  <small>{tag.kind}</small>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -147,7 +292,6 @@ export function DefaultPermissionTagControls({
   onChange: (tags: PermissionTag[]) => void;
 }) {
   const [armedTagId, setArmedTagId] = useState<string | null>(null);
-  const editorRef = useRef<HTMLDivElement | null>(null);
   const activeTagIds = new Set(activeTags.map((tag) => tag.id));
   const visibleDefaultTags = mergePermissionTags(defaultTags, activeTags);
 
@@ -156,13 +300,11 @@ export function DefaultPermissionTagControls({
       return;
     }
 
+    const activeArmedTagId = armedTagId;
     function disarmOnOutsideClick(event: MouseEvent | TouchEvent) {
-      const target = event.target;
-      if (target instanceof Node && editorRef.current?.contains(target)) {
-        return;
+      if (!isInsidePermissionTag(event.target, activeArmedTagId)) {
+        setArmedTagId(null);
       }
-
-      setArmedTagId(null);
     }
 
     document.addEventListener("mousedown", disarmOnOutsideClick);
@@ -183,7 +325,7 @@ export function DefaultPermissionTagControls({
   }
 
   return (
-    <div className="permission-tag-editor" ref={editorRef}>
+    <div className="permission-tag-editor">
       {label && <span>{label}</span>}
       <div className="permission-tag-row">
         <div className="permission-tags permission-tags-defaults">
@@ -239,6 +381,7 @@ function PermissionTagChip({
 }) {
   return (
     <span
+      data-permission-tag-id={tag.id}
       className={`permission-tag permission-tag-${tag.kind} ${
         isRemoved ? "permission-tag-default-removed" : ""
       } ${isArmed ? "permission-tag-armed" : ""}`}
