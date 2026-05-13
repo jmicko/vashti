@@ -1,14 +1,52 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { requestJson, responseErrorMessage } from "./api";
+import { requestJson } from "./api";
 import { attachmentReferences, isImageAttachment, uploadAttachmentToChat } from "./attachments";
-import { activeMessageAttachments, activePathMessages, compareVersionsByCreatedAt, groupMessagesByParent, latestAssistantModelValue, mergeMessageStreamSegments, parentGroupKey, revisionsForMessage, scrollMessageListToBottom, scrollMessageTopIntoListView, splitThinkingDelta, streamingAssistantIdFromMessages, updateRevisionList } from "./chatMessages";
+import {
+  activeMessageAttachments,
+  activePathMessages,
+  groupMessagesByParent,
+  latestAssistantModelValue,
+  mergeStreamSegmentsByMessage,
+  scrollMessageListToBottom,
+  scrollMessageTopIntoListView,
+  splitThinkingDelta,
+  streamingAssistantIdFromMessages,
+  updateRevisionList,
+  versionInfoForMessage
+} from "./chatMessages";
 import { ConfirmDialog, RetroLoader } from "./common";
 import { StartChatComposer } from "./Composer";
+import { readGenerateEventStream } from "./generationStream";
 import { MessageBubble } from "./MessageBubble";
 import { defaultToolPreferences, normalizeChatDetail } from "./toolPreferences";
 import { getCachedHostedChat, saveCachedHostedChat } from "./privateChatStore";
-import { modelParts, modelValue, personaModelValue, personaVersionIdFromValue, selectedModelBaseParts } from "./modelSelection";
-import type { AutoScrollMode, AvailableTool, BranchScrollAnchor, ChatDetail, ChatMessage, ChatResponse, ChatSyncResponse, ChatToolPreferences, ComposerAttachment, ComposerSubmitPayload, GenerateEvent, ImageOpenHandler, ListMessagesResponse, MessageResponse, MessageStreamSegment, MessageVersion, ModelInfo, Persona, VersionInfo } from "./types";
+import {
+  modelParts,
+  modelValue,
+  personaModelValue,
+  personaVersionIdFromValue,
+  selectedModelBaseParts
+} from "./modelSelection";
+import type {
+  AutoScrollMode,
+  AvailableTool,
+  BranchScrollAnchor,
+  ChatDetail,
+  ChatMessage,
+  ChatResponse,
+  ChatSyncResponse,
+  ChatToolPreferences,
+  ComposerAttachment,
+  ComposerSubmitPayload,
+  GenerateEvent,
+  ImageOpenHandler,
+  ListMessagesResponse,
+  MessageResponse,
+  MessageStreamSegment,
+  MessageVersion,
+  ModelInfo,
+  Persona
+} from "./types";
 
 export function ChatView({
   chatId,
@@ -231,51 +269,12 @@ export function ChatView({
       setGenerationError(null);
 
       try {
-        const response = await fetch(path, {
-          method: "POST",
-          credentials: "include",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(body),
-          signal: controller.signal
+        await readGenerateEventStream({
+          path,
+          body,
+          signal: controller.signal,
+          onEvent: (event) => applyGenerateEvent(event, runId)
         });
-
-        if (!response.ok) {
-          throw new Error(await responseErrorMessage(response));
-        }
-
-        if (!response.body) {
-          throw new Error("Generation stream was empty");
-        }
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done) {
-            break;
-          }
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n");
-          buffer = lines.pop() ?? "";
-
-          for (const line of lines) {
-            const trimmed = line.trim();
-            if (!trimmed) {
-              continue;
-            }
-            applyGenerateEvent(JSON.parse(trimmed) as GenerateEvent, runId);
-          }
-        }
-
-        buffer += decoder.decode();
-        const trailing = buffer.trim();
-        if (trailing) {
-          applyGenerateEvent(JSON.parse(trailing) as GenerateEvent, runId);
-        }
-
         await onChatsChanged();
       } catch (generateError) {
         if (generateError instanceof DOMException && generateError.name === "AbortError") {
@@ -730,14 +729,7 @@ export function ChatView({
   }
 
   function appendStreamSegments(messageId: string, segments: MessageStreamSegment[]) {
-    if (segments.length === 0) {
-      return;
-    }
-
-    setStreamSegments((current) => ({
-      ...current,
-      [messageId]: mergeMessageStreamSegments(current[messageId] ?? [], segments)
-    }));
+    setStreamSegments((current) => mergeStreamSegmentsByMessage(current, messageId, segments));
   }
 
   function updateMessageStatus(messageId: string, status: string, doneReason: string | null) {
@@ -1000,53 +992,6 @@ export function ChatView({
     }
   }
 
-  function versionInfoFor(message: ChatMessage): VersionInfo | null {
-    const versions = versionsForMessage(message);
-    if (versions.length < 2 || !message.active_revision_id) {
-      return null;
-    }
-
-    const index = versions.findIndex(
-      (version) =>
-        version.message.id === message.id && version.revision.id === message.active_revision_id
-    );
-    if (index < 0) {
-      return null;
-    }
-
-    const previousVersion = versions[index - 1] ?? null;
-    const nextVersion = versions[index + 1] ?? null;
-
-    return {
-      index,
-      total: versions.length,
-      canPrevious: Boolean(previousVersion),
-      canNext: Boolean(nextVersion),
-      onPrevious: () => {
-        if (previousVersion) {
-          void selectVersion(message, previousVersion);
-        }
-      },
-      onNext: () => {
-        if (nextVersion) {
-          void selectVersion(message, nextVersion);
-        }
-      }
-    };
-  }
-
-  function versionsForMessage(message: ChatMessage) {
-    const siblings = siblingGroups.get(parentGroupKey(message.parent_message_id)) ?? [];
-    return siblings
-      .flatMap((sibling) =>
-        revisionsForMessage(sibling).map((revision) => ({
-          message: sibling,
-          revision
-        }))
-      )
-      .sort(compareVersionsByCreatedAt);
-  }
-
   return (
     <div className="chat-view">
       {isLoading ? (
@@ -1078,7 +1023,13 @@ export function ChatView({
                 <MessageBubble
                   key={message.id}
                   message={message}
-                  versionInfo={versionInfoFor(message)}
+                  versionInfo={versionInfoForMessage(
+                    message,
+                    siblingGroups,
+                    (targetMessage, version) => {
+                      void selectVersion(targetMessage, version);
+                    }
+                  )}
                   copied={copiedMessageId === message.id}
                   isBusy={busyMessageId === message.id}
                   isGenerating={isGenerating}

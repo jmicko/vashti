@@ -1,15 +1,64 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Lock } from "lucide-react";
-import { responseErrorMessage } from "./api";
 import { isImageAttachment, preparePrivateAttachment } from "./attachments";
 import { privateStreamTestEnabled } from "./browserFlags";
-import { activeMessageAttachments, activePathMessages, compareVersionsByCreatedAt, fallbackTitleFromPrompt, groupMessagesByParent, latestAssistantModelValue, mergeMessageStreamSegments, parentGroupKey, privateAttachmentsForMessage, privatePromptMessagesWithPersona, revisionsForMessage, scrollMessageListToBottom, scrollMessageTopIntoListView, splitThinkingDelta, streamingAssistantIdFromMessages, syntheticStreamExpectedContent, syntheticStreamExpectedThinking, updateRevisionList } from "./chatMessages";
+import {
+  activeMessageAttachments,
+  activePathMessages,
+  fallbackTitleFromPrompt,
+  groupMessagesByParent,
+  latestAssistantModelValue,
+  mergeStreamSegmentsByMessage,
+  privateAttachmentsForMessage,
+  privatePromptMessagesWithPersona,
+  scrollMessageListToBottom,
+  scrollMessageTopIntoListView,
+  splitThinkingDelta,
+  streamingAssistantIdFromMessages,
+  syntheticStreamExpectedContent,
+  syntheticStreamExpectedThinking,
+  updateRevisionList,
+  versionInfoForMessage
+} from "./chatMessages";
 import { ConfirmDialog, RetroLoader } from "./common";
 import { StartChatComposer } from "./Composer";
+import { readGenerateEventStream } from "./generationStream";
 import { MessageBubble } from "./MessageBubble";
-import { createPrivateMessage, getPrivateChat, listPrivateMessages, privateId, savePrivateChat, savePrivateMessage, savePrivateMessages, unixTimestamp, type PrivateChatDetail, type PrivateChatMessage, type PrivateChatMessageRevision, type PrivatePersona } from "./privateChatStore";
-import { messageModelValue, modelParts, modelValue, personaVersionIdFromValue, privatePersonaForValue, privatePersonaForVersionId, privatePersonaModelValue } from "./modelSelection";
-import type { AutoScrollMode, BranchScrollAnchor, ChatMessage, ComposerAttachment, ComposerSubmitPayload, GenerateEvent, ImageOpenHandler, MessageStreamSegment, MessageVersion, ModelInfo, VersionInfo } from "./types";
+import {
+  createPrivateMessage,
+  getPrivateChat,
+  listPrivateMessages,
+  privateId,
+  savePrivateChat,
+  savePrivateMessage,
+  savePrivateMessages,
+  unixTimestamp,
+  type PrivateChatDetail,
+  type PrivateChatMessage,
+  type PrivateChatMessageRevision,
+  type PrivatePersona
+} from "./privateChatStore";
+import {
+  messageModelValue,
+  modelParts,
+  modelValue,
+  personaVersionIdFromValue,
+  privatePersonaForValue,
+  privatePersonaForVersionId,
+  privatePersonaModelValue
+} from "./modelSelection";
+import type {
+  AutoScrollMode,
+  BranchScrollAnchor,
+  ChatMessage,
+  ComposerAttachment,
+  ComposerSubmitPayload,
+  GenerateEvent,
+  ImageOpenHandler,
+  MessageStreamSegment,
+  MessageVersion,
+  ModelInfo
+} from "./types";
 
 export function PrivateChatView({
   chatId,
@@ -458,50 +507,12 @@ export function PrivateChatView({
     thinkingContentCursorRef.current.set(assistantId, 0);
 
     try {
-      const response = await fetch(path, {
-        method: "POST",
-        credentials: "include",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-        signal: controller.signal
+      await readGenerateEventStream({
+        path,
+        body,
+        signal: controller.signal,
+        onEvent: (event) => applyPrivateGenerateEvent(event, runId)
       });
-
-      if (!response.ok) {
-        throw new Error(await responseErrorMessage(response));
-      }
-
-      if (!response.body) {
-        throw new Error("Generation stream was empty");
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) {
-          break;
-        }
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (trimmed) {
-            applyPrivateGenerateEvent(JSON.parse(trimmed) as GenerateEvent, runId);
-          }
-        }
-      }
-
-      buffer += decoder.decode();
-      const trailing = buffer.trim();
-      if (trailing) {
-        applyPrivateGenerateEvent(JSON.parse(trailing) as GenerateEvent, runId);
-      }
-
       await privateSaveChainRef.current;
       await onPrivateChatsChanged();
     } catch (generateError) {
@@ -844,14 +855,7 @@ export function PrivateChatView({
   }
 
   function appendStreamSegments(messageId: string, segments: MessageStreamSegment[]) {
-    if (segments.length === 0) {
-      return;
-    }
-
-    setStreamSegments((current) => ({
-      ...current,
-      [messageId]: mergeMessageStreamSegments(current[messageId] ?? [], segments)
-    }));
+    setStreamSegments((current) => mergeStreamSegmentsByMessage(current, messageId, segments));
   }
 
   function markThinkingStarted(messageId: string) {
@@ -1203,52 +1207,6 @@ export function PrivateChatView({
     }
   }
 
-  function versionInfoFor(message: ChatMessage): VersionInfo | null {
-    const versions = versionsForMessage(message);
-    if (versions.length < 2 || !message.active_revision_id) {
-      return null;
-    }
-
-    const index = versions.findIndex(
-      (version) =>
-        version.message.id === message.id && version.revision.id === message.active_revision_id
-    );
-    if (index < 0) {
-      return null;
-    }
-
-    const previousVersion = versions[index - 1] ?? null;
-    const nextVersion = versions[index + 1] ?? null;
-    return {
-      index,
-      total: versions.length,
-      canPrevious: Boolean(previousVersion),
-      canNext: Boolean(nextVersion),
-      onPrevious: () => {
-        if (previousVersion) {
-          void selectVersion(message, previousVersion);
-        }
-      },
-      onNext: () => {
-        if (nextVersion) {
-          void selectVersion(message, nextVersion);
-        }
-      }
-    };
-  }
-
-  function versionsForMessage(message: ChatMessage) {
-    const siblings = siblingGroups.get(parentGroupKey(message.parent_message_id)) ?? [];
-    return siblings
-      .flatMap((sibling) =>
-        revisionsForMessage(sibling).map((revision) => ({
-          message: sibling,
-          revision
-        }))
-      )
-      .sort(compareVersionsByCreatedAt);
-  }
-
   return (
     <div className="chat-view private-chat-view">
       {isLoading ? (
@@ -1319,7 +1277,13 @@ export function PrivateChatView({
                 <MessageBubble
                   key={message.id}
                   message={message}
-                  versionInfo={versionInfoFor(message)}
+                  versionInfo={versionInfoForMessage(
+                    message,
+                    siblingGroups,
+                    (targetMessage, version) => {
+                      void selectVersion(targetMessage, version);
+                    }
+                  )}
                   copied={copiedMessageId === message.id}
                   isBusy={busyMessageId === message.id}
                   isGenerating={isGenerating}

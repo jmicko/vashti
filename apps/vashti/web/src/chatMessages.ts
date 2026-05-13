@@ -10,7 +10,8 @@ import type {
   MessageVersion,
   ParsedThinkingText,
   ThinkingSegment,
-  ToolUsageRecord
+  ToolUsageRecord,
+  VersionInfo
 } from "./types";
 
 const rootSiblingGroupKey = "__root__";
@@ -171,6 +172,21 @@ export function mergeMessageStreamSegments(
   }
 
   return next;
+}
+
+export function mergeStreamSegmentsByMessage(
+  current: Record<string, MessageStreamSegment[]>,
+  messageId: string,
+  segments: MessageStreamSegment[]
+) {
+  if (segments.length === 0) {
+    return current;
+  }
+
+  return {
+    ...current,
+    [messageId]: mergeMessageStreamSegments(current[messageId] ?? [], segments)
+  };
 }
 
 function pushThinkingTextSegment(segments: ThinkingSegment[], text: string) {
@@ -475,6 +491,60 @@ export function compareVersionsByCreatedAt(left: MessageVersion, right: MessageV
     left.message.created_at - right.message.created_at ||
     left.revision.id.localeCompare(right.revision.id)
   );
+}
+
+export function versionsForMessage(
+  message: ChatMessage,
+  siblingGroups: Map<string, ChatMessage[]>
+) {
+  const siblings = siblingGroups.get(parentGroupKey(message.parent_message_id)) ?? [];
+  return siblings
+    .flatMap((sibling) =>
+      revisionsForMessage(sibling).map((revision) => ({
+        message: sibling,
+        revision
+      }))
+    )
+    .sort(compareVersionsByCreatedAt);
+}
+
+export function versionInfoForMessage(
+  message: ChatMessage,
+  siblingGroups: Map<string, ChatMessage[]>,
+  selectVersion: (message: ChatMessage, version: MessageVersion) => void
+): VersionInfo | null {
+  const versions = versionsForMessage(message, siblingGroups);
+  if (versions.length < 2 || !message.active_revision_id) {
+    return null;
+  }
+
+  const index = versions.findIndex(
+    (version) =>
+      version.message.id === message.id && version.revision.id === message.active_revision_id
+  );
+  if (index < 0) {
+    return null;
+  }
+
+  const previousVersion = versions[index - 1] ?? null;
+  const nextVersion = versions[index + 1] ?? null;
+
+  return {
+    index,
+    total: versions.length,
+    canPrevious: Boolean(previousVersion),
+    canNext: Boolean(nextVersion),
+    onPrevious: () => {
+      if (previousVersion) {
+        selectVersion(message, previousVersion);
+      }
+    },
+    onNext: () => {
+      if (nextVersion) {
+        selectVersion(message, nextVersion);
+      }
+    }
+  };
 }
 
 export function scrollMessageTopIntoListView(list: HTMLElement, messageElement: HTMLElement) {
