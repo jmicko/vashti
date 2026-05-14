@@ -140,7 +140,7 @@ fn router(state: AppState) -> Router {
         .route(
             "/user-models",
             get(backends::handlers::list_user_models)
-                .patch(backends::handlers::update_user_model_visibility),
+                .patch(backends::handlers::update_user_model_preference),
         )
         .route(
             "/user-models/refresh",

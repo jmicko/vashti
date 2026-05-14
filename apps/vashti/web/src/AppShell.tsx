@@ -200,11 +200,23 @@ export function AppShell({
           ),
           ...visiblePersonas.map((persona) => personaModelValue(persona.current_version.id))
         ];
+        const defaultModel =
+          modelsResponse.backends
+            .flatMap((group) =>
+              group.models.map((model) => ({
+                backendId: group.backend.id,
+                model
+              }))
+            )
+            .find((option) => option.model.is_default) ?? null;
+        const defaultValue = defaultModel
+          ? modelValue(defaultModel.backendId, defaultModel.model.name)
+          : "";
 
         return current &&
           (values.includes(current) || Boolean(privatePersonaVersionIdFromValue(current)))
           ? current
-          : values[0] ?? "";
+          : defaultValue;
       });
     },
     []

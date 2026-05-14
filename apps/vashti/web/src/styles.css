@@ -563,6 +563,7 @@ textarea {
   gap: 10px;
   max-height: 320px;
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .model-group {
@@ -572,11 +573,24 @@ textarea {
 
 .model-group > p,
 .model-empty {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: linear-gradient(180deg, var(--panel) 0%, rgba(7, 11, 7, 0.96) 100%);
+  padding: 3px 0;
   margin: 0;
   color: var(--muted);
   font-size: 0.78rem;
   font-weight: 700;
   text-transform: uppercase;
+}
+
+.model-group > p svg {
+  width: 13px;
+  height: 13px;
 }
 
 .model-option {
@@ -616,6 +630,30 @@ textarea {
 
 .model-option-content .model-name {
   width: 100%;
+}
+
+.model-option-title-row {
+  min-width: 0;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.model-option-title-row .model-name {
+  flex: 1 1 auto;
+}
+
+.model-option-star {
+  flex: 0 0 auto;
+  color: var(--accent);
+  display: inline-flex;
+}
+
+.model-option-star svg {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
 }
 
 .model-subtitle {
@@ -3117,10 +3155,16 @@ textarea {
 .model-access-row {
   border-top: 1px solid var(--line-soft);
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 14px;
+  gap: 10px;
   padding-top: 10px;
+}
+
+.model-access-row-pending {
+  background: rgba(69, 160, 255, 0.08);
+  margin: 0 -8px;
+  padding: 10px 8px 0;
 }
 
 .model-access-main {
@@ -3135,6 +3179,108 @@ textarea {
 
 .model-access-main .model-capabilities {
   justify-content: flex-start;
+}
+
+.model-preference-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.model-pref-button {
+  min-height: 34px;
+  border-color: var(--line);
+  background: transparent;
+  color: var(--text);
+  box-shadow: none;
+  padding: 4px 10px;
+}
+
+.model-pref-button:hover {
+  background: var(--accent-muted);
+}
+
+.model-pref-button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.model-pref-button-active {
+  background: var(--accent-muted);
+  color: var(--accent);
+}
+
+.model-pref-button-active svg {
+  fill: currentColor;
+}
+
+.model-favorite-button {
+  width: 38px;
+  min-width: 38px;
+  padding: 0;
+}
+
+.model-row-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.model-undo-button {
+  min-height: 34px;
+  color: #8ec8ff;
+  border-color: rgba(69, 160, 255, 0.72);
+  background: rgba(8, 20, 39, 0.96);
+  padding: 4px 10px;
+}
+
+.model-undo-remove-button {
+  min-width: max-content;
+}
+
+.model-undo-button:hover {
+  background: rgba(22, 54, 94, 0.96);
+}
+
+.model-undo-count {
+  min-width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: rgba(69, 160, 255, 0.22);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.72rem;
+  line-height: 1;
+}
+
+.default-model-panel {
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 420px);
+  align-items: end;
+  margin-bottom: 18px;
+}
+
+.default-model-panel .status-message {
+  margin: 6px 0 0;
+}
+
+.default-model-picker {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.default-model-picker .model-picker {
+  width: min(420px, 100%);
+}
+
+.model-access-favorites {
+  background:
+    linear-gradient(180deg, rgba(113, 255, 47, 0.07), rgba(7, 11, 7, 0.86)),
+    rgba(7, 11, 7, 0.86);
 }
 
 .persona-form {
@@ -3371,7 +3517,15 @@ textarea {
   }
 
   .model-access-row {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .default-model-panel {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .default-model-picker {
+    justify-content: flex-start;
   }
 
   .backend-model-summary {

@@ -73,6 +73,8 @@ pub struct ModelResponse {
     pub supports_images: bool,
     pub supports_thinking: bool,
     pub capabilities: Vec<String>,
+    pub is_favorite: bool,
+    pub is_default: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -104,6 +106,8 @@ pub struct UserModelResponse {
     pub supports_thinking: bool,
     pub capabilities: Vec<String>,
     pub is_visible: bool,
+    pub is_favorite: bool,
+    pub is_default: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -168,10 +172,12 @@ pub struct UpdateDefaultModelTagsResponse {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct UpdateUserModelVisibilityRequest {
+pub struct UpdateUserModelPreferenceRequest {
     pub backend_id: String,
     pub model_name: String,
-    pub is_visible: bool,
+    pub is_visible: Option<bool>,
+    pub is_favorite: Option<bool>,
+    pub is_default: Option<bool>,
 }
 
 pub async fn list_backends(
@@ -335,8 +341,16 @@ async fn models_response(
                     .get(&model.name)
                     .is_some_and(|tags| permissions::has_matching_tag(&user_tags, tags))
             })
-            .filter(|model| preferences.get(&model.name).copied().unwrap_or(true))
-            .map(model_response)
+            .filter(|model| {
+                preferences
+                    .get(&model.name)
+                    .map(|preference| preference.is_visible)
+                    .unwrap_or(true)
+            })
+            .map(|model| {
+                let preference = preferences.get(&model.name).copied();
+                model_response(model, preference)
+            })
             .collect();
 
         response_backends.push(BackendModelsResponse {
@@ -381,7 +395,18 @@ async fn user_models_response(
                     .is_some_and(|tags| permissions::has_matching_tag(&user_tags, tags))
             })
             .map(|model| UserModelResponse {
-                is_visible: preferences.get(&model.name).copied().unwrap_or(true),
+                is_visible: preferences
+                    .get(&model.name)
+                    .map(|preference| preference.is_visible)
+                    .unwrap_or(true),
+                is_favorite: preferences
+                    .get(&model.name)
+                    .map(|preference| preference.is_favorite)
+                    .unwrap_or(false),
+                is_default: preferences
+                    .get(&model.name)
+                    .map(|preference| preference.is_default)
+                    .unwrap_or(false),
                 name: model.name,
                 supports_images: model.supports_images,
                 supports_thinking: model.supports_thinking,
@@ -465,12 +490,21 @@ async fn admin_models_response(
     })
 }
 
-fn model_response(model: OllamaModel) -> ModelResponse {
+fn model_response(
+    model: OllamaModel,
+    preference: Option<service::UserModelPreference>,
+) -> ModelResponse {
     ModelResponse {
         name: model.name,
         supports_images: model.supports_images,
         supports_thinking: model.supports_thinking,
         capabilities: model.capabilities,
+        is_favorite: preference
+            .map(|preference| preference.is_favorite)
+            .unwrap_or(false),
+        is_default: preference
+            .map(|preference| preference.is_default)
+            .unwrap_or(false),
     }
 }
 
@@ -491,19 +525,23 @@ pub async fn update_model_availability(
     Ok(Json(availability))
 }
 
-pub async fn update_user_model_visibility(
+pub async fn update_user_model_preference(
     State(state): State<AppState>,
     jar: CookieJar,
-    Json(payload): Json<UpdateUserModelVisibilityRequest>,
+    Json(payload): Json<UpdateUserModelPreferenceRequest>,
 ) -> Result<Json<service::UserModelPreferenceResponse>, ApiError> {
     let user =
         auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
-    let preference = service::set_user_model_visibility(
+    let preference = service::update_user_model_preference(
         &state.db,
         &user.id,
         &payload.backend_id,
         &payload.model_name,
-        payload.is_visible,
+        service::UpdateUserModelPreferenceParams {
+            is_visible: payload.is_visible,
+            is_favorite: payload.is_favorite,
+            is_default: payload.is_default,
+        },
     )
     .await?;
 
@@ -542,13 +580,8 @@ pub async fn update_model_tags(
     }
 
     if let Some(tags) = payload.permission_tags {
-        permissions::replace_model_tags(
-            &state.db,
-            &payload.backend_id,
-            &payload.model_name,
-            tags,
-        )
-        .await?;
+        permissions::replace_model_tags(&state.db, &payload.backend_id, &payload.model_name, tags)
+            .await?;
     }
     if let Some(tags) = payload.default_permission_tags {
         permissions::replace_model_default_tags(

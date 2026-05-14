@@ -68,7 +68,6 @@ export function BackendsPanel({ onBackendsChanged }: { onBackendsChanged: () => 
       });
       setNewName("");
       setNewBaseUrl("");
-      setStatus("Backend added.");
       await loadBackends();
       await onBackendsChanged();
     } catch (createError) {
@@ -92,7 +91,6 @@ export function BackendsPanel({ onBackendsChanged }: { onBackendsChanged: () => 
         body: JSON.stringify(body)
       });
       setEditingBackend(null);
-      setStatus("Backend updated.");
       await loadBackends();
       await onBackendsChanged();
     } catch (updateError) {
@@ -110,7 +108,6 @@ export function BackendsPanel({ onBackendsChanged }: { onBackendsChanged: () => 
     try {
       await requestJson(`/api/backends/${backendId}`, { method: "DELETE" });
       setDeleteTarget(null);
-      setStatus("Backend deleted.");
       await loadBackends();
       await onBackendsChanged();
     } catch (deleteError) {
@@ -130,11 +127,7 @@ export function BackendsPanel({ onBackendsChanged }: { onBackendsChanged: () => 
       const response = await requestJson<DetectLocalhostResponse>("/api/backends/detect-localhost", {
         method: "POST"
       });
-      setStatus(
-        response.detected.length === 0
-          ? "No local Ollama backend found."
-          : `Detected ${response.detected.map((backend) => backend.name).join(", ")}.`
-      );
+      setStatus(response.detected.length === 0 ? "No local Ollama backend found." : null);
       await loadBackends();
       await onBackendsChanged();
     } catch (detectError) {
@@ -159,7 +152,7 @@ export function BackendsPanel({ onBackendsChanged }: { onBackendsChanged: () => 
       setStatus(
         response.detected.length === 0
           ? "No Ollama backends found on the local network."
-          : `Detected ${response.detected.map((backend) => backend.name).join(", ")}.`
+          : null
       );
       await loadBackends();
       await onBackendsChanged();

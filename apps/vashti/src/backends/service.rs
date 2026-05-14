@@ -47,6 +47,21 @@ pub struct UserModelPreferenceResponse {
     pub backend_id: String,
     pub model_name: String,
     pub is_visible: bool,
+    pub is_favorite: bool,
+    pub is_default: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct UserModelPreference {
+    pub is_visible: bool,
+    pub is_favorite: bool,
+    pub is_default: bool,
+}
+
+pub struct UpdateUserModelPreferenceParams {
+    pub is_visible: Option<bool>,
+    pub is_favorite: Option<bool>,
+    pub is_default: Option<bool>,
 }
 
 #[derive(Debug)]
@@ -333,10 +348,10 @@ pub async fn user_model_preferences_by_backend(
     pool: &SqlitePool,
     user_id: &str,
     backend_id: &str,
-) -> Result<HashMap<String, bool>, sqlx::Error> {
+) -> Result<HashMap<String, UserModelPreference>, sqlx::Error> {
     let rows = sqlx::query(
         r#"
-        SELECT model_name, is_visible
+        SELECT model_name, is_visible, is_favorite, is_default
         FROM user_model_preferences
         WHERE user_id = ?
           AND backend_id = ?
@@ -351,7 +366,11 @@ pub async fn user_model_preferences_by_backend(
         .map(|row| {
             Ok((
                 row.try_get("model_name")?,
-                row.try_get::<i64, _>("is_visible")? != 0,
+                UserModelPreference {
+                    is_visible: row.try_get::<i64, _>("is_visible")? != 0,
+                    is_favorite: row.try_get::<i64, _>("is_favorite")? != 0,
+                    is_default: row.try_get::<i64, _>("is_default")? != 0,
+                },
             ))
         })
         .collect()
@@ -451,16 +470,17 @@ pub async fn set_model_availability_many(
     Ok(())
 }
 
-pub async fn set_user_model_visibility(
+pub async fn update_user_model_preference(
     pool: &SqlitePool,
     user_id: &str,
     backend_id: &str,
     model_name: &str,
-    is_visible: bool,
+    params: UpdateUserModelPreferenceParams,
 ) -> Result<UserModelPreferenceResponse, ApiError> {
     ensure_model_enabled_for_user(pool, user_id, backend_id, model_name).await?;
     let model_name = validate_model_name(model_name)?;
     let now = unix_timestamp();
+    let mut tx = pool.begin().await?;
 
     sqlx::query(
         r#"
@@ -468,30 +488,128 @@ pub async fn set_user_model_visibility(
             user_id,
             backend_id,
             model_name,
-            is_visible,
             created_at,
             updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?)
         ON CONFLICT(user_id, backend_id, model_name)
-        DO UPDATE SET
-            is_visible = excluded.is_visible,
-            updated_at = excluded.updated_at
+        DO NOTHING
         "#,
     )
     .bind(user_id)
     .bind(backend_id)
     .bind(&model_name)
-    .bind(i64::from(is_visible))
     .bind(now)
     .bind(now)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+
+    if params.is_default == Some(true) {
+        sqlx::query(
+            r#"
+            UPDATE user_model_preferences
+            SET is_default = 0,
+                updated_at = ?
+            WHERE user_id = ?
+              AND is_default = 1
+            "#,
+        )
+        .bind(now)
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    if let Some(is_visible) = params.is_visible {
+        sqlx::query(
+            r#"
+            UPDATE user_model_preferences
+            SET is_visible = ?,
+                is_default = CASE WHEN ? = 0 THEN 0 ELSE is_default END,
+                updated_at = ?
+            WHERE user_id = ?
+              AND backend_id = ?
+              AND model_name = ?
+            "#,
+        )
+        .bind(i64::from(is_visible))
+        .bind(i64::from(is_visible))
+        .bind(now)
+        .bind(user_id)
+        .bind(backend_id)
+        .bind(&model_name)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    if let Some(is_favorite) = params.is_favorite {
+        sqlx::query(
+            r#"
+            UPDATE user_model_preferences
+            SET is_favorite = ?,
+                updated_at = ?
+            WHERE user_id = ?
+              AND backend_id = ?
+              AND model_name = ?
+            "#,
+        )
+        .bind(i64::from(is_favorite))
+        .bind(now)
+        .bind(user_id)
+        .bind(backend_id)
+        .bind(&model_name)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    if let Some(is_default) = params.is_default {
+        sqlx::query(
+            r#"
+            UPDATE user_model_preferences
+            SET is_default = ?,
+                is_visible = CASE WHEN ? = 1 THEN 1 ELSE is_visible END,
+                updated_at = ?
+            WHERE user_id = ?
+              AND backend_id = ?
+              AND model_name = ?
+            "#,
+        )
+        .bind(i64::from(is_default))
+        .bind(i64::from(is_default))
+        .bind(now)
+        .bind(user_id)
+        .bind(backend_id)
+        .bind(&model_name)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    let Some(row) = sqlx::query(
+        r#"
+        SELECT is_visible, is_favorite, is_default
+        FROM user_model_preferences
+        WHERE user_id = ?
+          AND backend_id = ?
+          AND model_name = ?
+        "#,
+    )
+    .bind(user_id)
+    .bind(backend_id)
+    .bind(&model_name)
+    .fetch_optional(&mut *tx)
+    .await?
+    else {
+        return Err(ApiError::internal("Preference was not saved"));
+    };
+
+    tx.commit().await?;
 
     Ok(UserModelPreferenceResponse {
         backend_id: backend_id.to_string(),
         model_name,
-        is_visible,
+        is_visible: row.try_get::<i64, _>("is_visible")? != 0,
+        is_favorite: row.try_get::<i64, _>("is_favorite")? != 0,
+        is_default: row.try_get::<i64, _>("is_default")? != 0,
     })
 }
 

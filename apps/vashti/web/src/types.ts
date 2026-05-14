@@ -68,6 +68,8 @@ export type ModelInfo = {
   supports_images: boolean;
   supports_thinking?: boolean;
   capabilities?: string[];
+  is_favorite?: boolean;
+  is_default?: boolean;
 };
 
 export type AdminModelInfo = ModelInfo & {
@@ -78,6 +80,8 @@ export type AdminModelInfo = ModelInfo & {
 
 export type UserModelInfo = ModelInfo & {
   is_visible: boolean;
+  is_favorite: boolean;
+  is_default: boolean;
 };
 
 export type BackendModelGroup = {

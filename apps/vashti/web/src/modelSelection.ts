@@ -1,6 +1,11 @@
 import type { BackendModelGroup, ChatMessage, Persona } from "./types";
 import type { PrivatePersona } from "./privateChatStore";
 
+export function compactModelName(name: string) {
+  const huggingFaceMatch = /^hf\.co\/[^/]+\/(.+)$/i.exec(name);
+  return huggingFaceMatch?.[1] ?? name;
+}
+
 export function modelValue(backendId: string, modelName: string) {
   return `${backendId}:${modelName}`;
 }
