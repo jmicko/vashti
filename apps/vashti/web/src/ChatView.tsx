@@ -678,6 +678,7 @@ export function ChatView({
           event.done_reason,
           event.stats ?? null
         );
+        clearStreamSegments(event.assistant_message_id);
         if (generationRunRef.current === runId) {
           setIsGenerating(false);
           setActiveAssistantId(null);
@@ -692,12 +693,14 @@ export function ChatView({
       case "message_stopped":
         finishThinkingDuration(event.assistant_message_id);
         updateMessageStatus(event.assistant_message_id, "stopped", "stopped");
+        clearStreamSegments(event.assistant_message_id);
         break;
       case "error":
         setGenerationError(event.message);
         if (event.assistant_message_id) {
           finishThinkingDuration(event.assistant_message_id);
           updateMessageStatus(event.assistant_message_id, "error", "error");
+          clearStreamSegments(event.assistant_message_id);
         }
         break;
     }
@@ -740,6 +743,17 @@ export function ChatView({
 
   function appendStreamSegments(messageId: string, segments: MessageStreamSegment[]) {
     setStreamSegments((current) => mergeStreamSegmentsByMessage(current, messageId, segments));
+  }
+
+  function clearStreamSegments(messageId: string) {
+    setStreamSegments((current) => {
+      if (!current[messageId]) {
+        return current;
+      }
+      const next = { ...current };
+      delete next[messageId];
+      return next;
+    });
   }
 
   function updateMessageStatus(
@@ -875,6 +889,7 @@ export function ChatView({
         }
       );
       replaceMessage(response.message);
+      clearStreamSegments(message.id);
       await onChatsChanged();
     } catch (editError) {
       setGenerationError(editError instanceof Error ? editError.message : "Failed to edit message");

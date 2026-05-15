@@ -115,7 +115,8 @@ export function MessageBubble({
   const thinking = parsedThinking.thinkingText.trim();
   const hasThinkingDetail =
     thinking || parsedThinking.segments.some((segment) => segment.type === "tool");
-  const orderedSegments = streamSegments?.length ? streamSegments : storedOrderedSegments;
+  const shouldUseStreamSegments = message.status === "streaming" && Boolean(streamSegments?.length);
+  const orderedSegments = shouldUseStreamSegments ? streamSegments ?? [] : storedOrderedSegments;
   const hasOrderedSegments = orderedSegments.length > 0;
   const attachments = activeMessageAttachments(message);
   const [isEditing, setIsEditing] = useState(false);

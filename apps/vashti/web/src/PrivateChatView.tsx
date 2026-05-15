@@ -536,6 +536,7 @@ export function PrivateChatView({
         completed_at: unixTimestamp(),
         updated_at: unixTimestamp()
       }));
+      clearStreamSegments(assistantId);
     } finally {
       if (generationRunRef.current === runId) {
         setIsGenerating(false);
@@ -761,6 +762,7 @@ export function PrivateChatView({
         completed_at: unixTimestamp(),
         updated_at: unixTimestamp()
       }));
+      clearStreamSegments(assistantId);
     }
   }
 
@@ -796,6 +798,7 @@ export function PrivateChatView({
           completed_at: unixTimestamp(),
           updated_at: unixTimestamp()
         }));
+        clearStreamSegments(event.assistant_message_id);
         setIsGenerating(false);
         setActiveAssistantId(null);
         abortRef.current = null;
@@ -808,6 +811,7 @@ export function PrivateChatView({
           completed_at: unixTimestamp(),
           updated_at: unixTimestamp()
         }));
+        clearStreamSegments(event.assistant_message_id);
         break;
       case "error":
         setGenerationError(event.message);
@@ -819,6 +823,7 @@ export function PrivateChatView({
             completed_at: unixTimestamp(),
             updated_at: unixTimestamp()
           }));
+          clearStreamSegments(event.assistant_message_id);
         }
         break;
       case "message_start":
@@ -874,6 +879,17 @@ export function PrivateChatView({
 
   function appendStreamSegments(messageId: string, segments: MessageStreamSegment[]) {
     setStreamSegments((current) => mergeStreamSegmentsByMessage(current, messageId, segments));
+  }
+
+  function clearStreamSegments(messageId: string) {
+    setStreamSegments((current) => {
+      if (!current[messageId]) {
+        return current;
+      }
+      const next = { ...current };
+      delete next[messageId];
+      return next;
+    });
   }
 
   function markThinkingStarted(messageId: string) {
@@ -936,6 +952,7 @@ export function PrivateChatView({
           updated_at: now
         };
       });
+      clearStreamSegments(message.id);
     } finally {
       setBusyMessageId(null);
     }
