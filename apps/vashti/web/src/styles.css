@@ -287,6 +287,11 @@ textarea {
 }
 
 .app-shell {
+  /* position: fixed;
+  top: 0;
+  right: 0;
+  left: 0;
+  width: 100%; */
   height: var(--app-height);
   min-height: 0;
   overflow: hidden;
@@ -3501,8 +3506,23 @@ textarea {
     padding-top: 18px;
   }
 
+  .settings-form textarea,
+  .tool-prompt-editor textarea,
+  .tool-details textarea {
+    min-height: 130px;
+  }
+
   .tools-settings-section {
     padding-top: 0;
+  }
+
+  .persona-form textarea,
+  .persona-editor-form textarea {
+    min-height: 150px;
+  }
+
+  .message-edit textarea {
+    min-height: 118px;
   }
 
   .section-header,
