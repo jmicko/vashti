@@ -287,11 +287,6 @@ textarea {
 }
 
 .app-shell {
-  /* position: fixed;
-  top: 0;
-  right: 0;
-  left: 0;
-  width: 100%; */
   height: var(--app-height);
   min-height: 0;
   overflow: hidden;
@@ -1452,7 +1447,7 @@ textarea {
 .message-list {
   min-height: 0;
   overflow-y: auto;
-  overflow-anchor: none;
+  overflow-anchor: auto;
   display: grid;
   align-content: start;
   gap: 18px;
