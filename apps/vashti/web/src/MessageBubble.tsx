@@ -222,21 +222,26 @@ export function MessageBubble({
     );
   }
 
+  const showMessageLabel = message.role !== "user";
+  const showMessageHeader = showMessageLabel || Boolean(versionInfo);
+
   return (
     <article
       className={`message-bubble message-bubble-${message.role}`}
       data-message-id={message.id}
     >
-      <div className="message-header">
-        <p className="message-role">{messageLabel(message)}</p>
-        {versionInfo && (
-          <VersionSwitcher
-            versionInfo={versionInfo}
-            isBusy={isBusy}
-            isGenerating={isGenerating}
-          />
-        )}
-      </div>
+      {showMessageHeader && (
+        <div className={showMessageLabel ? "message-header" : "message-header message-header-end"}>
+          {showMessageLabel && <p className="message-role">{messageLabel(message)}</p>}
+          {versionInfo && (
+            <VersionSwitcher
+              versionInfo={versionInfo}
+              isBusy={isBusy}
+              isGenerating={isGenerating}
+            />
+          )}
+        </div>
+      )}
       {!hasOrderedSegments && hasThinkingDetail && !message.is_deleted && (
         <details className="message-thinking">
           <summary>{thinkingSummary(message, thinkingDurationSeconds)}</summary>
