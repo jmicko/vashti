@@ -36,6 +36,12 @@
   --code-text-rgb: 215, 255, 203;
   --shadow-rgb: 0, 0, 0;
   --white-rgb: 255, 255, 255;
+  --theme-swatch-vashti-bg: #020402;
+  --theme-swatch-vashti-accent: #71ff2f;
+  --theme-swatch-vashti-panel: #070b07;
+  --theme-swatch-light-bg: #f4f8f0;
+  --theme-swatch-light-accent: #1c8416;
+  --theme-swatch-light-panel: #ffffff;
 
   color: var(--text);
   background: var(--app-bg);
@@ -70,6 +76,45 @@
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
     sans-serif;
+}
+
+:root[data-theme="light"] {
+  --app-bg-rgb: 244, 248, 240;
+  --surface-rgb: 255, 255, 255;
+  --panel-rgb: 248, 252, 246;
+  --panel-strong-rgb: 235, 245, 231;
+  --text-rgb: 18, 30, 19;
+  --muted-rgb: 82, 104, 80;
+  --accent-rgb: 28, 132, 22;
+  --accent-strong-rgb: 16, 102, 18;
+  --control-text-rgb: 255, 255, 255;
+  --error-rgb: 190, 45, 45;
+  --error-text-rgb: 98, 16, 16;
+  --error-text-muted-rgb: 126, 31, 31;
+  --error-panel-rgb: 255, 237, 237;
+  --warning-rgb: 146, 103, 0;
+  --info-rgb: 0, 101, 183;
+  --info-strong-rgb: 0, 91, 166;
+  --info-text-rgb: 0, 93, 166;
+  --info-text-strong-rgb: 7, 59, 112;
+  --info-text-muted-rgb: 21, 101, 176;
+  --info-panel-rgb: 230, 243, 255;
+  --info-panel-muted-rgb: 230, 243, 255;
+  --info-panel-hover-rgb: 205, 230, 255;
+  --info-tool-panel-rgb: 236, 247, 255;
+  --success-rgb: 28, 132, 22;
+  --neutral-rgb: 123, 132, 121;
+  --neutral-muted-rgb: 126, 136, 124;
+  --neutral-text-rgb: 92, 101, 91;
+  --neutral-text-faded-rgb: 112, 121, 111;
+  --disabled-bg-rgb: 226, 233, 223;
+  --disabled-line-rgb: 171, 183, 166;
+  --disabled-text-rgb: 82, 96, 78;
+  --disabled-panel-rgb: 226, 233, 223;
+  --locked-panel-rgb: 235, 239, 233;
+  --disabled-field-rgb: 230, 236, 228;
+  --code-text-rgb: 17, 62, 19;
+  --shadow-rgb: 29, 42, 29;
 }
 
 @supports (height: 100dvh) {
@@ -2169,6 +2214,10 @@ textarea {
   max-width: 420px;
 }
 
+.profile-settings-form {
+  max-width: 760px;
+}
+
 .tools-settings-form {
   max-width: none;
 }
@@ -2265,6 +2314,74 @@ textarea {
 
 .settings-subsection h2 {
   margin: 0;
+}
+
+.theme-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.theme-option {
+  min-height: 78px;
+  justify-content: flex-start;
+  border-color: var(--line-soft);
+  background: rgba(var(--surface-rgb), 0.72);
+  color: var(--text);
+  box-shadow: none;
+  padding: 10px;
+  text-align: left;
+}
+
+.theme-option:hover,
+.theme-option-active {
+  border-color: var(--accent);
+  background: var(--accent-muted);
+}
+
+.theme-option > span:last-child {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.theme-option strong,
+.theme-option small {
+  display: block;
+}
+
+.theme-option small {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.theme-swatch {
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  flex: 0 0 auto;
+}
+
+.theme-swatch-vashti {
+  background:
+    linear-gradient(
+      135deg,
+      var(--theme-swatch-vashti-bg) 0 48%,
+      var(--theme-swatch-vashti-accent) 48% 58%,
+      var(--theme-swatch-vashti-panel) 58% 100%
+    );
+}
+
+.theme-swatch-light {
+  background:
+    linear-gradient(
+      135deg,
+      var(--theme-swatch-light-bg) 0 48%,
+      var(--theme-swatch-light-accent) 48% 58%,
+      var(--theme-swatch-light-panel) 58% 100%
+    );
 }
 
 .settings-subsection .eyebrow {

@@ -48,6 +48,7 @@ import {
 import {
   defaultToolPreferences,
 } from "./toolPreferences";
+import { applyTheme, normalizeTheme, storeAndApplyTheme, storedTheme } from "./theme";
 import {
   createPrivateChat,
   deletePrivateChat,
@@ -82,15 +83,18 @@ import type {
   PersonasResponse,
   SettingsSection,
   ThinkingMode,
-  User
+  User,
+  UserSettings
 } from "./types";
 
 export function AppShell({
   user,
-  onSessionChanged
+  onSessionChanged,
+  onUserChanged
 }: {
   user: User;
   onSessionChanged: () => Promise<void>;
+  onUserChanged: (user: User) => void;
 }) {
   setPrivateStorageUser(user.id);
 
@@ -243,6 +247,21 @@ export function AppShell({
   useEffect(() => {
     void loadModels();
   }, [loadModels]);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const settings = await requestJson<UserSettings>("/api/user-settings");
+        if (settings.theme) {
+          storeAndApplyTheme(normalizeTheme(settings.theme));
+        } else {
+          applyTheme(storedTheme());
+        }
+      } catch {
+        applyTheme(storedTheme());
+      }
+    })();
+  }, [user.id]);
 
   const loadPrivatePersonas = useCallback(async () => {
     try {
@@ -820,6 +839,7 @@ export function AppShell({
             onPrivatePersonasChanged={loadPrivatePersonas}
             onAppSettingsGuardChange={updateAppSettingsGuard}
             onSelectSection={(section) => openSettings(section)}
+            onUserChanged={onUserChanged}
             isAdmin={isAdmin}
           />
         ) : page === "private-chat" && currentPrivateChatId ? (

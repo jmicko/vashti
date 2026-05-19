@@ -1,6 +1,7 @@
 export type User = {
   id: string;
   username: string;
+  display_name: string | null;
   email: string | null;
   role: string;
 };
@@ -403,6 +404,12 @@ export type AppSettings = {
   public_base_url: string | null;
   trust_proxy_headers: boolean;
   network_recovery_notice: string | null;
+};
+
+export type UserSettings = {
+  default_backend_id: string | null;
+  default_model_name: string | null;
+  theme: string | null;
 };
 
 export type ToolSettings = {

@@ -87,6 +87,7 @@ fn router(state: AppState) -> Router {
         .route("/auth/session", get(auth::handlers::session))
         .route("/auth/register", post(auth::handlers::register))
         .route("/auth/login", post(auth::handlers::login))
+        .route("/auth/profile", patch(auth::handlers::update_profile))
         .route("/auth/logout", post(auth::handlers::logout))
         .route(
             "/settings",

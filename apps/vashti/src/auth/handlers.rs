@@ -45,6 +45,12 @@ pub struct LogoutResponse {
     pub ok: bool,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct UpdateProfileRequest {
+    pub display_name: Option<serde_json::Value>,
+    pub email: Option<serde_json::Value>,
+}
+
 pub async fn session(
     State(state): State<AppState>,
     jar: CookieJar,
@@ -151,6 +157,18 @@ pub async fn login(
     );
 
     Ok((jar.add(cookie), Json(LoginResponse { user })))
+}
+
+pub async fn update_profile(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Json(payload): Json<UpdateProfileRequest>,
+) -> Result<Json<LoginResponse>, ApiError> {
+    let current = service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
+    let user = service::update_profile(&state.db, &current.id, payload.display_name, payload.email)
+        .await?;
+
+    Ok(Json(LoginResponse { user }))
 }
 
 pub async fn logout(

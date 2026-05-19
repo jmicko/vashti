@@ -518,7 +518,7 @@ pub async fn update_user_settings(
         normalize_optional_string_update(payload.default_backend_id, current.default_backend_id)?;
     let default_model_name =
         normalize_optional_string_update(payload.default_model_name, current.default_model_name)?;
-    let theme = normalize_optional_string_update(payload.theme, current.theme)?;
+    let theme = normalize_theme_update(payload.theme, current.theme)?;
 
     if let Some(backend_id) = &default_backend_id {
         ensure_enabled_backend(pool, backend_id).await?;
@@ -775,6 +775,37 @@ fn normalize_optional_string_update(
             "User setting value must be a string or null",
         )),
         None => Ok(current),
+    }
+}
+
+fn normalize_theme_update(
+    update: Option<serde_json::Value>,
+    current: Option<String>,
+) -> Result<Option<String>, ApiError> {
+    let Some(update) = update else {
+        return Ok(current);
+    };
+
+    match update {
+        serde_json::Value::String(value) => {
+            let value = value.trim();
+            if value.is_empty() {
+                return Ok(None);
+            }
+
+            match value {
+                "vashti" | "light" => Ok(Some(value.to_string())),
+                _ => Err(ApiError::bad_request(
+                    "invalid_theme",
+                    "Theme is not available",
+                )),
+            }
+        }
+        serde_json::Value::Null => Ok(None),
+        _ => Err(ApiError::bad_request(
+            "invalid_theme",
+            "Theme must be text or null",
+        )),
     }
 }
 
