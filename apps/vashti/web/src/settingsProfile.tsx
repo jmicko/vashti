@@ -1,8 +1,8 @@
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Save, X } from "lucide-react";
 import { requestJson } from "./api";
 import { RetroLoader } from "./common";
-import { SettingsSaveBanner } from "./settingsControls";
+import { SettingsPanel, SettingsSaveBanner } from "./settingsControls";
 import {
   THEME_OPTIONS,
   applyTheme,
@@ -30,6 +30,16 @@ export function ProfileSettings({
   const [isSaving, setIsSaving] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const themeRef = useRef(theme);
+  const savedThemeRef = useRef(savedTheme);
+  const statusTimerRef = useRef<number | null>(null);
+
+  function clearStatusTimer() {
+    if (statusTimerRef.current !== null) {
+      window.clearTimeout(statusTimerRef.current);
+      statusTimerRef.current = null;
+    }
+  }
 
   const loadProfileSettings = useCallback(async () => {
     setError(null);
@@ -37,6 +47,8 @@ export function ProfileSettings({
     try {
       const settings = await requestJson<UserSettings>("/api/user-settings");
       const nextTheme = normalizeTheme(settings.theme ?? storedTheme());
+      themeRef.current = nextTheme;
+      savedThemeRef.current = nextTheme;
       setSavedDisplayName(user.display_name ?? "");
       setSavedEmail(user.email ?? "");
       setSavedTheme(nextTheme);
@@ -55,18 +67,32 @@ export function ProfileSettings({
     void loadProfileSettings();
   }, [loadProfileSettings]);
 
+  useEffect(
+    () => () => {
+      clearStatusTimer();
+      if (themeRef.current !== savedThemeRef.current) {
+        applyTheme(savedThemeRef.current);
+      }
+    },
+    []
+  );
+
   const isDirty =
     displayName.trim() !== savedDisplayName ||
     email.trim() !== savedEmail ||
     theme !== savedTheme;
 
   function updateTheme(nextTheme: ThemeId) {
+    clearStatusTimer();
+    themeRef.current = nextTheme;
     setTheme(nextTheme);
     applyTheme(nextTheme);
     setStatus(null);
   }
 
   function revertProfileSettings() {
+    clearStatusTimer();
+    themeRef.current = savedTheme;
     setDisplayName(savedDisplayName);
     setEmail(savedEmail);
     setTheme(savedTheme);
@@ -80,6 +106,7 @@ export function ProfileSettings({
     setIsSaving(true);
     setError(null);
     setStatus(null);
+    clearStatusTimer();
 
     try {
       if (displayName.trim() !== savedDisplayName || email.trim() !== savedEmail) {
@@ -102,6 +129,8 @@ export function ProfileSettings({
 
       const nextDisplayName = displayName.trim();
       const nextEmail = email.trim();
+      themeRef.current = theme;
+      savedThemeRef.current = theme;
       setSavedDisplayName(nextDisplayName);
       setSavedEmail(nextEmail);
       setSavedTheme(theme);
@@ -109,7 +138,10 @@ export function ProfileSettings({
       setEmail(nextEmail);
       storeAndApplyTheme(theme);
       setStatus("Profile settings saved.");
-      window.setTimeout(() => setStatus(null), 3000);
+      statusTimerRef.current = window.setTimeout(() => {
+        setStatus(null);
+        statusTimerRef.current = null;
+      }, 3000);
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Failed to save profile");
     } finally {
@@ -118,18 +150,14 @@ export function ProfileSettings({
   }
 
   return (
-    <div className="settings-section profile-settings-section">
-      <div className="section-header">
-        <div>
-          <p className="eyebrow">Account</p>
-          <h1>Profile</h1>
-        </div>
-      </div>
-
+    <SettingsPanel eyebrow="Account" title="Profile" className="profile-settings-section">
       {!hasLoaded && <p className="status-message">Loading profile...</p>}
       {error && <p className="error">{error}</p>}
 
-      <form className="settings-form profile-settings-form" onSubmit={saveProfileSettings}>
+      <form
+        className="settings-form settings-form-with-banner profile-settings-form"
+        onSubmit={saveProfileSettings}
+      >
         <SettingsSaveBanner
           isDirty={isDirty}
           status={status}
@@ -215,6 +243,6 @@ export function ProfileSettings({
           </div>
         </section>
       </form>
-    </div>
+    </SettingsPanel>
   );
 }

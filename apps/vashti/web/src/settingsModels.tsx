@@ -21,7 +21,7 @@ import { ModelPicker } from "./ModelPicker";
 import { ModelCapabilityBadges } from "./modelCapabilities";
 import { compactModelName, modelValue } from "./modelSelection";
 import { DefaultPermissionTagControls, PermissionTagEditor } from "./permissionTags";
-import { SettingsSaveBanner, ToggleSwitch } from "./settingsControls";
+import { SettingsPanel, SettingsSaveBanner, ToggleSwitch } from "./settingsControls";
 import {
   adminModelGroupTagsEqual,
   collectChangedAdminModelTagPatches,
@@ -427,12 +427,11 @@ export function UserModelsPanel({ onModelsChanged }: { onModelsChanged: () => Pr
   }
 
   return (
-    <div className="settings-section">
-      <div className="section-header">
-        <div>
-          <p className="eyebrow">Personal</p>
-          <h1>Models</h1>
-        </div>
+    <SettingsPanel
+      eyebrow="Personal"
+      title="Models"
+      width="wide"
+      actions={
         <button
           type="button"
           className="secondary-button refresh-button"
@@ -448,7 +447,8 @@ export function UserModelsPanel({ onModelsChanged }: { onModelsChanged: () => Pr
             </>
           )}
         </button>
-      </div>
+      }
+    >
 
       {error && <p className="error">{error}</p>}
       {!hasLoaded && <p className="status-message">Loading models...</p>}
@@ -532,7 +532,7 @@ export function UserModelsPanel({ onModelsChanged }: { onModelsChanged: () => Pr
           );
         })}
       </div>
-    </div>
+    </SettingsPanel>
   );
 }
 

@@ -2202,8 +2202,41 @@ textarea {
 }
 
 .settings-section {
+  --settings-card-width: 420px;
   min-width: 0;
   padding-top: 24px;
+}
+
+.settings-section-compact {
+  --settings-card-width: 420px;
+}
+
+.settings-section-standard {
+  --settings-card-width: 760px;
+}
+
+.settings-section-wide {
+  --settings-card-width: 70rem;
+}
+
+.settings-section > .section-header,
+.settings-section > .status-message,
+.settings-section > .error,
+.settings-section > .settings-subsection,
+.settings-section > .model-access-list,
+.settings-section > .backend-list,
+.settings-section > .user-list,
+.settings-section > .persona-list,
+.settings-section > .network-settings-panel {
+  width: 100%;
+  max-width: var(--settings-card-width);
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.settings-section > .status-message,
+.settings-section > .error {
+  display: block;
 }
 
 .tools-settings-section {
@@ -2211,28 +2244,63 @@ textarea {
 }
 
 .settings-form {
-  max-width: 420px;
+  width: 100%;
+  max-width: var(--settings-card-width);
+  margin-inline: auto;
 }
 
-.profile-settings-form {
-  max-width: 760px;
+.profile-settings-form .settings-subsection,
+.tools-settings-form .settings-subsection,
+.settings-form-with-banner .settings-subsection {
+  width: 100%;
+  max-width: var(--settings-card-width);
+  margin-inline: auto;
 }
 
-.tools-settings-form {
+.profile-settings-form,
+.tools-settings-form,
+.settings-form-with-banner {
   max-width: none;
 }
 
-.tools-settings-section .section-header {
-  margin-bottom: 0;
-  padding: 14px 0 12px;
+.settings-create-card {
+  display: grid;
+  gap: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(var(--panel-rgb), 0.7);
+  box-shadow: 0 14px 34px rgba(var(--shadow-rgb), 0.2);
+  margin-bottom: 20px;
+  padding: 16px;
 }
 
-.tools-settings-section .section-header h1 {
-  margin-bottom: 0;
+.settings-create-card-header {
+  display: grid;
+  gap: 4px;
 }
 
-.tools-settings-form .settings-subsection {
-  max-width: 680px;
+.settings-create-card-header h2 {
+  color: var(--text);
+  font-size: 1.1rem;
+}
+
+.settings-create-card-header p:last-child {
+  color: var(--muted);
+  margin: 0;
+}
+
+.settings-create-card-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.settings-create-card-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .sticky-save-slot {
@@ -2249,10 +2317,6 @@ textarea {
 }
 
 .sticky-save-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
   border: 1px solid rgba(var(--error-rgb), 0.58);
   border-right: 0;
   border-left: 0;
@@ -2263,9 +2327,21 @@ textarea {
   padding: 7px var(--settings-content-x);
 }
 
-.sticky-save-bar > div:not(.sticky-save-actions) {
+.sticky-save-bar-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  width: 100%;
+  max-width: var(--settings-card-width);
+  min-height: 38px;
+  margin-inline: auto;
+}
+
+.sticky-save-copy {
   display: grid;
   gap: 2px;
+  min-width: 0;
 }
 
 .sticky-save-bar .sticky-save-actions {
@@ -2683,12 +2759,6 @@ textarea {
   gap: 18px;
 }
 
-.user-create-form {
-  border-bottom: 1px solid var(--line-soft);
-  margin-bottom: 20px;
-  padding-bottom: 20px;
-}
-
 .user-group {
   display: grid;
   gap: 12px;
@@ -3027,12 +3097,6 @@ textarea {
 
 .permission-tag-suggestion-group {
   color: var(--text);
-}
-
-.backend-create-form {
-  border-bottom: 1px solid var(--line-soft);
-  margin-bottom: 20px;
-  padding-bottom: 20px;
 }
 
 .backend-list {
@@ -3704,6 +3768,7 @@ textarea {
   .user-main,
   .persona-main,
   .backend-main,
+  .settings-create-card-grid,
   .backend-model-summary,
   .backend-edit-grid,
   .model-access-header,

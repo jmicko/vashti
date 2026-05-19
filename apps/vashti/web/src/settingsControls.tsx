@@ -1,6 +1,43 @@
 import { type ReactNode, useEffect } from "react";
 import { RetroLoader } from "./common";
 
+export function SettingsPanel({
+  eyebrow,
+  title,
+  actions,
+  className,
+  width = "standard",
+  children
+}: {
+  eyebrow: string;
+  title: string;
+  actions?: ReactNode;
+  className?: string;
+  width?: "compact" | "standard" | "wide";
+  children: ReactNode;
+}) {
+  return (
+    <div
+      className={[
+        "settings-section",
+        `settings-section-${width}`,
+        className ?? ""
+      ]
+        .filter(Boolean)
+        .join(" ")}
+    >
+      <div className="section-header">
+        <div>
+          <p className="eyebrow">{eyebrow}</p>
+          <h1>{title}</h1>
+        </div>
+        {actions}
+      </div>
+      {children}
+    </div>
+  );
+}
+
 export function SettingsPlaceholder({
   eyebrow,
   title,
@@ -11,11 +48,9 @@ export function SettingsPlaceholder({
   text: string;
 }) {
   return (
-    <div className="settings-section">
-      <p className="eyebrow">{eyebrow}</p>
-      <h1>{title}</h1>
+    <SettingsPanel eyebrow={eyebrow} title={title}>
       <p className="status-message">{text}</p>
-    </div>
+    </SettingsPanel>
   );
 }
 
@@ -49,11 +84,13 @@ export function SettingsSaveBanner({
         }
         aria-hidden={!isVisible}
       >
-        <div>
-          <strong>{visibleStatus ?? dirtyTitle}</strong>
-          <span>{visibleStatus ? savedDescription : dirtyDescription}</span>
+        <div className="sticky-save-bar-inner">
+          <div className="sticky-save-copy">
+            <strong>{visibleStatus ?? dirtyTitle}</strong>
+            <span>{visibleStatus ? savedDescription : dirtyDescription}</span>
+          </div>
+          {isDirty && <div className="sticky-save-actions">{children}</div>}
         </div>
-        {isDirty && <div className="sticky-save-actions">{children}</div>}
       </div>
     </div>
   );
