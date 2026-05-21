@@ -13,6 +13,7 @@ use crate::{
 pub struct AdminUserResponse {
     pub id: String,
     pub username: String,
+    pub display_name: Option<String>,
     pub email: Option<String>,
     pub role: String,
     pub is_disabled: bool,
@@ -25,7 +26,7 @@ pub struct AdminUserResponse {
 pub async fn list_users(pool: &SqlitePool) -> Result<Vec<AdminUserResponse>, sqlx::Error> {
     let rows = sqlx::query(
         r#"
-        SELECT id, username, email, role, is_disabled, created_at, updated_at, last_login_at
+        SELECT id, username, display_name, email, role, is_disabled, created_at, updated_at, last_login_at
         FROM users
         ORDER BY is_disabled DESC, created_at ASC
         "#,
@@ -90,7 +91,7 @@ pub async fn create_user(
             updated_at
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        RETURNING id, username, email, role, is_disabled, created_at, updated_at, last_login_at
+        RETURNING id, username, display_name, email, role, is_disabled, created_at, updated_at, last_login_at
         "#,
     )
     .bind(&user_id)
@@ -182,7 +183,7 @@ pub async fn update_user(
             is_disabled = COALESCE(?, is_disabled),
             updated_at = ?
         WHERE id = ?
-        RETURNING id, username, email, role, is_disabled, created_at, updated_at, last_login_at
+        RETURNING id, username, display_name, email, role, is_disabled, created_at, updated_at, last_login_at
         "#,
     )
     .bind(role)
@@ -246,6 +247,7 @@ async fn row_to_admin_user(
     Ok(AdminUserResponse {
         id,
         username: row.try_get("username")?,
+        display_name: row.try_get("display_name")?,
         email: row.try_get("email")?,
         role: row.try_get("role")?,
         is_disabled: row.try_get::<i64, _>("is_disabled")? != 0,

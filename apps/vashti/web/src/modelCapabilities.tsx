@@ -27,14 +27,18 @@ export function ModelCapabilityBadges({ model }: { model: ModelCapabilityInfo })
 
 export function CompactModelCapabilityBadges({
   model,
-  hideTools = false
+  hideTools = false,
+  hideThinking = false
 }: {
   model: ModelCapabilityInfo;
   hideTools?: boolean;
+  hideThinking?: boolean;
 }) {
   const [activeCapability, setActiveCapability] = useState<string | null>(null);
   const capabilities = modelCapabilityBadges(model).filter(
-    (capability) => !(hideTools && capability === "tools")
+    (capability) =>
+      !(hideTools && capability === "tools") &&
+      !(hideThinking && capability === "thinking")
   );
   if (capabilities.length === 0) {
     return null;

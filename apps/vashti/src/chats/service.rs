@@ -16,7 +16,7 @@ use crate::{
         models::{ChatDetail, ChatMessage, ChatMessageRevision, ChatSummary, ChatToolPreferences},
     },
     error::ApiError,
-    ollama::models::OllamaChatMessage,
+    ollama::models::{OllamaChatMessage, OllamaUsageStats},
     personas::service::{self as persona_service, ResolvedPersonaVersion},
     tools::service::{self as tools_service, ToolSelection},
     uploads,
@@ -405,6 +405,7 @@ pub async fn list_messages(
                m.think_mode,
                m.done_reason,
                m.error_text,
+               m.stats_json,
                m.started_at,
                m.completed_at,
                m.created_at,
@@ -1470,6 +1471,7 @@ pub async fn finish_generation(
     content_text: &str,
     thinking_text: &str,
     done_reason: Option<&str>,
+    stats: Option<&OllamaUsageStats>,
 ) -> Result<(), ApiError> {
     update_generation_message(
         pool,
@@ -1479,6 +1481,7 @@ pub async fn finish_generation(
         "complete",
         done_reason,
         None,
+        stats,
     )
     .await
 }
@@ -1499,6 +1502,7 @@ pub async fn stop_generation(
         thinking_text,
         "stopped",
         Some("stopped"),
+        None,
         None,
     )
     .await
@@ -1549,6 +1553,7 @@ pub async fn fail_generation(
         "error",
         Some("error"),
         Some(error_text),
+        None,
     )
     .await
 }
@@ -2025,8 +2030,12 @@ async fn update_generation_message(
     status: &str,
     done_reason: Option<&str>,
     error_text: Option<&str>,
+    stats: Option<&OllamaUsageStats>,
 ) -> Result<(), ApiError> {
     let now = unix_timestamp();
+    let stats_json = stats
+        .and_then(|stats| serde_json::to_string(stats).ok())
+        .filter(|stats| !stats.is_empty());
     let mut tx = pool.begin().await?;
 
     sqlx::query(
@@ -2053,6 +2062,7 @@ async fn update_generation_message(
         SET status = ?,
             done_reason = ?,
             error_text = ?,
+            stats_json = ?,
             completed_at = ?,
             updated_at = ?
         WHERE id = ?
@@ -2061,6 +2071,7 @@ async fn update_generation_message(
     .bind(status)
     .bind(done_reason)
     .bind(error_text)
+    .bind(stats_json)
     .bind(now)
     .bind(now)
     .bind(assistant_message_id)
@@ -2187,6 +2198,11 @@ fn row_to_message(row: sqlx::sqlite::SqliteRow) -> Result<ChatMessage, sqlx::Err
         None => None,
     };
 
+    let stats_json: Option<String> = row.try_get("stats_json")?;
+    let stats = stats_json
+        .as_deref()
+        .and_then(|stats| serde_json::from_str::<OllamaUsageStats>(stats).ok());
+
     Ok(ChatMessage {
         id: row.try_get("id")?,
         parent_message_id: row.try_get("parent_message_id")?,
@@ -2203,6 +2219,7 @@ fn row_to_message(row: sqlx::sqlite::SqliteRow) -> Result<ChatMessage, sqlx::Err
         think_mode: row.try_get("think_mode")?,
         done_reason: row.try_get("done_reason")?,
         error_text: row.try_get("error_text")?,
+        stats,
         started_at: row.try_get("started_at")?,
         completed_at: row.try_get("completed_at")?,
         created_at: row.try_get("created_at")?,
@@ -2307,6 +2324,7 @@ async fn get_message(
                m.think_mode,
                m.done_reason,
                m.error_text,
+               m.stats_json,
                m.started_at,
                m.completed_at,
                m.created_at,

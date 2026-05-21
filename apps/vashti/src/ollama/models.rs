@@ -46,11 +46,27 @@ pub struct OllamaChatChunk {
     #[serde(default)]
     pub done: bool,
     pub done_reason: Option<String>,
+    pub total_duration: Option<i64>,
+    pub load_duration: Option<i64>,
+    pub prompt_eval_count: Option<i64>,
+    pub prompt_eval_duration: Option<i64>,
+    pub eval_count: Option<i64>,
+    pub eval_duration: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct OllamaChatResponse {
     pub message: Option<OllamaChatChunkMessage>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct OllamaUsageStats {
+    pub total_duration: Option<i64>,
+    pub load_duration: Option<i64>,
+    pub prompt_eval_count: Option<i64>,
+    pub prompt_eval_duration: Option<i64>,
+    pub eval_count: Option<i64>,
+    pub eval_duration: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -142,6 +158,50 @@ impl TagsResponse {
                 })
             })
             .collect()
+    }
+}
+
+impl OllamaChatChunk {
+    pub fn usage_stats(&self) -> Option<OllamaUsageStats> {
+        let stats = OllamaUsageStats {
+            total_duration: self.total_duration,
+            load_duration: self.load_duration,
+            prompt_eval_count: self.prompt_eval_count,
+            prompt_eval_duration: self.prompt_eval_duration,
+            eval_count: self.eval_count,
+            eval_duration: self.eval_duration,
+        };
+
+        stats.has_any().then_some(stats)
+    }
+}
+
+impl OllamaUsageStats {
+    pub fn has_any(&self) -> bool {
+        self.total_duration.is_some()
+            || self.load_duration.is_some()
+            || self.prompt_eval_count.is_some()
+            || self.prompt_eval_duration.is_some()
+            || self.eval_count.is_some()
+            || self.eval_duration.is_some()
+    }
+
+    pub fn add_assign(&mut self, other: OllamaUsageStats) {
+        self.total_duration = sum_optional(self.total_duration, other.total_duration);
+        self.load_duration = sum_optional(self.load_duration, other.load_duration);
+        self.prompt_eval_count = sum_optional(self.prompt_eval_count, other.prompt_eval_count);
+        self.prompt_eval_duration =
+            sum_optional(self.prompt_eval_duration, other.prompt_eval_duration);
+        self.eval_count = sum_optional(self.eval_count, other.eval_count);
+        self.eval_duration = sum_optional(self.eval_duration, other.eval_duration);
+    }
+}
+
+fn sum_optional(left: Option<i64>, right: Option<i64>) -> Option<i64> {
+    match (left, right) {
+        (Some(left), Some(right)) => Some(left + right),
+        (Some(value), None) | (None, Some(value)) => Some(value),
+        (None, None) => None,
     }
 }
 

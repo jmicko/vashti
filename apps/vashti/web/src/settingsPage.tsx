@@ -8,11 +8,11 @@ import {
   Users,
   Wrench
 } from "lucide-react";
-import { SettingsPlaceholder } from "./settingsControls";
 import { AppSettingsPanel } from "./settingsApp";
 import { BackendsPanel } from "./settingsBackends";
 import { UserModelsPanel } from "./settingsModels";
 import { PersonasPanel } from "./settingsPersonas";
+import { ProfileSettings } from "./settingsProfile";
 import { ToolsSettingsPanel } from "./settingsTools";
 import { AdminUsersPanel } from "./settingsUsers";
 import type { AppSettingsGuard, SettingsSection, User } from "./types";
@@ -26,6 +26,7 @@ export function SettingsPage({
   onPrivatePersonasChanged,
   onAppSettingsGuardChange,
   onSelectSection,
+  onUserChanged,
   isAdmin
 }: {
   currentUser: User;
@@ -36,6 +37,7 @@ export function SettingsPage({
   onPrivatePersonasChanged: () => Promise<void>;
   onAppSettingsGuardChange: (guard: AppSettingsGuard | null) => void;
   onSelectSection: (section: SettingsSection) => void;
+  onUserChanged: (user: User) => void;
   isAdmin: boolean;
 }) {
   const sections: Array<{
@@ -81,7 +83,9 @@ export function SettingsPage({
         ))}
       </nav>
       <section className="settings-content">
-        {selectedSection === "profile" && <ProfileSettings user={currentUser} />}
+        {selectedSection === "profile" && (
+          <ProfileSettings user={currentUser} onUserChanged={onUserChanged} />
+        )}
         {selectedSection === "personas" && (
           <PersonasPanel
             onPersonasChanged={onPersonasChanged}
@@ -99,15 +103,5 @@ export function SettingsPage({
         {selectedSection === "app" && <AppSettingsPanel onGuardChange={onAppSettingsGuardChange} />}
       </section>
     </div>
-  );
-}
-
-function ProfileSettings({ user }: { user: User }) {
-  return (
-    <SettingsPlaceholder
-      eyebrow="Account"
-      title="Profile"
-      text={`${user.username} is signed in as ${user.role}.`}
-    />
   );
 }

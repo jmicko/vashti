@@ -5,6 +5,7 @@ import {
   activeMessageAttachments,
   activePathMessages,
   groupMessagesByParent,
+  latestAssistantThinkingMode,
   latestAssistantModelValue,
   mergeStreamSegmentsByMessage,
   scrollMessageListToBottom,
@@ -45,14 +46,14 @@ import type {
   MessageStreamSegment,
   MessageVersion,
   ModelInfo,
-  Persona
+  Persona,
+  ThinkingMode
 } from "./types";
 
 export function ChatView({
   chatId,
   error,
   queuedPrompt,
-  queuedAttachments,
   selectedModel,
   selectedModelInfo,
   availableTools,
@@ -64,8 +65,7 @@ export function ChatView({
 }: {
   chatId: string;
   error: string | null;
-  queuedPrompt: string | null;
-  queuedAttachments: ComposerAttachment[];
+  queuedPrompt: ({ chatId: string } & ComposerSubmitPayload) | null;
   selectedModel: string;
   selectedModelInfo: ModelInfo | null;
   availableTools: AvailableTool[];
@@ -83,6 +83,7 @@ export function ChatView({
   const [isGenerating, setIsGenerating] = useState(false);
   const [activeAssistantId, setActiveAssistantId] = useState<string | null>(null);
   const [pendingPrompt, setPendingPrompt] = useState<ComposerSubmitPayload | null>(null);
+  const [thinkingMode, setThinkingMode] = useState<ThinkingMode>("auto");
   const [busyMessageId, setBusyMessageId] = useState<string | null>(null);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ChatMessage | null>(null);
@@ -296,7 +297,11 @@ export function ChatView({
   );
 
   const generate = useCallback(
-    async (prompt: string, attachments: ComposerAttachment[] = []) => {
+    async (
+      prompt: string,
+      attachments: ComposerAttachment[] = [],
+      thinkMode: ThinkingMode = "auto"
+    ) => {
       if (isGenerating) {
         return;
       }
@@ -309,7 +314,7 @@ export function ChatView({
         backend_id: selected?.backendId ?? null,
         model_name: selected?.modelName ?? null,
         persona_version_id: personaVersionId,
-        think_mode: null,
+        think_mode: thinkModeToPayload(thinkMode),
         tool_preferences: chat?.tool_preferences ?? defaultToolPreferences,
         attachments: attachmentReferences(attachments)
       });
@@ -326,6 +331,7 @@ export function ChatView({
     if (latestModel) {
       onModelSelected(latestModel);
     }
+    setThinkingMode(latestAssistantThinkingMode(visibleMessages));
   }, [onModelSelected, visibleMessages]);
 
   useEffect(() => {
@@ -357,14 +363,13 @@ export function ChatView({
     }
 
     onQueuedPromptConsumed();
-    void generate(queuedPrompt, queuedAttachments);
+    void generate(queuedPrompt.prompt, queuedPrompt.attachments, queuedPrompt.thinkMode);
   }, [
     chat,
     generate,
     isGenerating,
     isLoading,
     onQueuedPromptConsumed,
-    queuedAttachments,
     queuedPrompt
   ]);
 
@@ -375,7 +380,7 @@ export function ChatView({
 
     const prompt = pendingPrompt;
     setPendingPrompt(null);
-    void generate(prompt.prompt, prompt.attachments);
+    void generate(prompt.prompt, prompt.attachments, prompt.thinkMode);
   }, [chat, generate, isGenerating, isLoading, pendingPrompt]);
 
   useLayoutEffect(() => {
@@ -667,7 +672,13 @@ export function ChatView({
         break;
       case "message_done":
         finishThinkingDuration(event.assistant_message_id);
-        updateMessageStatus(event.assistant_message_id, "complete", event.done_reason);
+        updateMessageStatus(
+          event.assistant_message_id,
+          "complete",
+          event.done_reason,
+          event.stats ?? null
+        );
+        clearStreamSegments(event.assistant_message_id);
         if (generationRunRef.current === runId) {
           setIsGenerating(false);
           setActiveAssistantId(null);
@@ -682,12 +693,14 @@ export function ChatView({
       case "message_stopped":
         finishThinkingDuration(event.assistant_message_id);
         updateMessageStatus(event.assistant_message_id, "stopped", "stopped");
+        clearStreamSegments(event.assistant_message_id);
         break;
       case "error":
         setGenerationError(event.message);
         if (event.assistant_message_id) {
           finishThinkingDuration(event.assistant_message_id);
           updateMessageStatus(event.assistant_message_id, "error", "error");
+          clearStreamSegments(event.assistant_message_id);
         }
         break;
     }
@@ -732,11 +745,33 @@ export function ChatView({
     setStreamSegments((current) => mergeStreamSegmentsByMessage(current, messageId, segments));
   }
 
-  function updateMessageStatus(messageId: string, status: string, doneReason: string | null) {
+  function clearStreamSegments(messageId: string) {
+    setStreamSegments((current) => {
+      if (!current[messageId]) {
+        return current;
+      }
+      const next = { ...current };
+      delete next[messageId];
+      return next;
+    });
+  }
+
+  function updateMessageStatus(
+    messageId: string,
+    status: string,
+    doneReason: string | null,
+    stats?: ChatMessage["stats"]
+  ) {
     setMessages((current) =>
       current.map((message) =>
         message.id === messageId
-          ? { ...message, status, done_reason: doneReason, completed_at: Math.floor(Date.now() / 1000) }
+          ? {
+              ...message,
+              status,
+              done_reason: doneReason,
+              stats: stats === undefined ? message.stats : stats,
+              completed_at: Math.floor(Date.now() / 1000)
+            }
           : message
       )
     );
@@ -800,14 +835,19 @@ export function ChatView({
     await requestJson(`/api/attachments/${attachment.id}`, { method: "DELETE" });
   }
 
-  async function submitPrompt(prompt: string, attachments: ComposerAttachment[] = []) {
+  async function submitPrompt(
+    prompt: string,
+    attachments: ComposerAttachment[] = [],
+    _toolPreferences?: ChatToolPreferences,
+    thinkMode: ThinkingMode = "auto"
+  ) {
     if (isGenerating) {
-      setPendingPrompt({ prompt, attachments });
+      setPendingPrompt({ prompt, attachments, thinkMode });
       await stopGeneration();
       return;
     }
 
-    await generate(prompt, attachments);
+    await generate(prompt, attachments, thinkMode);
   }
 
   function replaceMessage(nextMessage: ChatMessage) {
@@ -849,6 +889,7 @@ export function ChatView({
         }
       );
       replaceMessage(response.message);
+      clearStreamSegments(message.id);
       await onChatsChanged();
     } catch (editError) {
       setGenerationError(editError instanceof Error ? editError.message : "Failed to edit message");
@@ -875,7 +916,7 @@ export function ChatView({
       backend_id: selected?.backendId ?? null,
       model_name: selected?.modelName ?? null,
       persona_version_id: personaVersionId,
-      think_mode: null,
+      think_mode: thinkModeToPayload(thinkingMode),
       tool_preferences: chat?.tool_preferences ?? defaultToolPreferences,
       attachments: attachmentReferences(attachments)
     });
@@ -914,7 +955,7 @@ export function ChatView({
       backend_id: selected?.backendId ?? message.backend_id,
       model_name: selected?.modelName ?? message.model_name,
       persona_version_id: personaVersionId,
-      think_mode: null,
+      think_mode: thinkModeToPayload(thinkingMode),
       tool_preferences: chat?.tool_preferences ?? defaultToolPreferences,
       attachments: []
     });
@@ -1057,10 +1098,12 @@ export function ChatView({
               selectedModelInfo={selectedModelInfo}
               availableTools={availableTools}
               toolPreferences={chat.tool_preferences}
+              thinkingMode={thinkingMode}
               warning={modelImageWarning}
               onToolPreferencesChange={(nextPreferences) =>
                 void updateChatToolPreferences(nextPreferences)
               }
+              onThinkingModeChange={setThinkingMode}
               onStop={stopGeneration}
               onUploadAttachment={uploadAttachment}
               onRemoveAttachment={removeAttachment}
@@ -1084,4 +1127,8 @@ export function ChatView({
       )}
     </div>
   );
+}
+
+function thinkModeToPayload(mode: ThinkingMode) {
+  return mode === "auto" ? null : mode;
 }

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { Brain, Lock, Search, Users } from "lucide-react";
+import { Brain, Lock, Search, Star, Users } from "lucide-react";
 import { ModelCapabilityBadges } from "./modelCapabilities";
 import {
+  compactModelName,
   enabledModelValueSet,
   modelInfoForBase,
   modelValue,
@@ -12,7 +13,7 @@ import {
   privatePersonaModelValue
 } from "./modelSelection";
 import type { PrivatePersona } from "./privateChatStore";
-import type { BackendModelGroup, Persona } from "./types";
+import type { BackendModelGroup, ModelInfo, Persona } from "./types";
 
 export function ModelPicker({
   groups,
@@ -52,6 +53,26 @@ export function ModelPicker({
   const selectedPrivatePersona = privatePersonaForValue(privatePersonas, value);
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const enabledValues = enabledModelValueSet(groups);
+  const favoriteModels = groups
+    .flatMap((group) =>
+      group.models
+        .filter((model) => model.is_favorite)
+        .map((model) => ({
+          backend: group.backend,
+          model
+        }))
+    )
+    .filter((option) => {
+      if (!normalizedQuery) {
+        return true;
+      }
+
+      return (
+        option.model.name.toLocaleLowerCase().includes(normalizedQuery) ||
+        compactModelName(option.model.name).toLocaleLowerCase().includes(normalizedQuery) ||
+        option.backend.name.toLocaleLowerCase().includes(normalizedQuery)
+      );
+    });
   const filteredGroups = groups
     .map((group) => ({
       backend: group.backend,
@@ -62,6 +83,7 @@ export function ModelPicker({
 
         return (
           model.name.toLocaleLowerCase().includes(normalizedQuery) ||
+          compactModelName(model.name).toLocaleLowerCase().includes(normalizedQuery) ||
           group.backend.name.toLocaleLowerCase().includes(normalizedQuery)
         );
       }),
@@ -79,6 +101,9 @@ export function ModelPicker({
         return (
           persona.current_version.display_name.toLocaleLowerCase().includes(normalizedQuery) ||
           persona.current_version.base_model_name.toLocaleLowerCase().includes(normalizedQuery) ||
+          compactModelName(persona.current_version.base_model_name)
+            .toLocaleLowerCase()
+            .includes(normalizedQuery) ||
           group.backend.name.toLocaleLowerCase().includes(normalizedQuery) ||
           (persona.owner_username ?? "").toLocaleLowerCase().includes(normalizedQuery)
         );
@@ -97,6 +122,9 @@ export function ModelPicker({
         return (
           persona.current_version.display_name.toLocaleLowerCase().includes(normalizedQuery) ||
           persona.current_version.base_model_name.toLocaleLowerCase().includes(normalizedQuery) ||
+          compactModelName(persona.current_version.base_model_name)
+            .toLocaleLowerCase()
+            .includes(normalizedQuery) ||
           group.backend.name.toLocaleLowerCase().includes(normalizedQuery)
         );
       })
@@ -143,8 +171,42 @@ export function ModelPicker({
       : selectedPersona
         ? selectedPersona.current_version.display_name
         : selected
-          ? selected.model.name
+          ? compactModelName(selected.model.name)
           : "Select model";
+  }
+
+  function renderModelOption(
+    backendId: string,
+    backendName: string,
+    model: ModelInfo,
+    keyPrefix = "model"
+  ) {
+    const optionValue = modelValue(backendId, model.name);
+    return (
+      <button
+        type="button"
+        key={`${keyPrefix}:${optionValue}`}
+        className={optionValue === value ? "model-option model-option-active" : "model-option"}
+        title={model.name}
+        onClick={() => {
+          onChange(optionValue);
+          setIsOpen(false);
+        }}
+      >
+        <span className="model-option-content">
+          <span className="model-option-title-row">
+            <span className="model-name">{compactModelName(model.name)}</span>
+            {model.is_favorite && (
+              <span className="model-option-star" title="Favorite">
+                <Star />
+              </span>
+            )}
+          </span>
+          {keyPrefix === "favorite" && <span className="model-subtitle">{backendName}</span>}
+          <ModelCapabilityBadges model={model} />
+        </span>
+      </button>
+    );
   }
 
   return (
@@ -157,6 +219,7 @@ export function ModelPicker({
           error ??
           selectedPrivatePersona?.current_version.base_model_name ??
           selectedPersona?.current_version.base_model_name ??
+          selected?.model.name ??
           selected?.backendName
         }
         aria-expanded={isOpen}
@@ -181,12 +244,29 @@ export function ModelPicker({
             />
           </label>
           <div className="model-options">
-            {filteredGroups.length === 0 ? (
+            {filteredGroups.length === 0 && favoriteModels.length === 0 ? (
               <p className="model-empty">No matching models</p>
             ) : (
-              filteredGroups.map((group) => (
-                <section key={group.backend.id} className="model-group">
-                  <p>{group.backend.name}</p>
+              <>
+                {favoriteModels.length > 0 && (
+                  <section className="model-group model-group-favorites">
+                    <p>
+                      <Star />
+                      <span>Favorites</span>
+                    </p>
+                    {favoriteModels.map((option) =>
+                      renderModelOption(
+                        option.backend.id,
+                        option.backend.name,
+                        option.model,
+                        "favorite"
+                      )
+                    )}
+                  </section>
+                )}
+                {filteredGroups.map((group) => (
+                  <section key={group.backend.id} className="model-group">
+                    <p>{group.backend.name}</p>
                   {group.privatePersonas.map((persona) => {
                     const optionValue = privatePersonaModelValue(persona.current_version.id);
                     const baseModel = modelInfoForBase(
@@ -211,7 +291,7 @@ export function ModelPicker({
                         <span className="model-option-content">
                           <span className="model-name">{persona.current_version.display_name}</span>
                           <span className="model-subtitle">
-                            Device · {persona.current_version.base_model_name}
+                            Device · {compactModelName(persona.current_version.base_model_name)}
                           </span>
                           <span className="model-capabilities">
                             <span className="model-capability" title="custom persona">
@@ -252,7 +332,7 @@ export function ModelPicker({
                         <span className="model-option-content">
                           <span className="model-name">{persona.current_version.display_name}</span>
                           <span className="model-subtitle">
-                            Custom · {persona.current_version.base_model_name}
+                            Custom · {compactModelName(persona.current_version.base_model_name)}
                             {persona.owner_username ? ` · by ${persona.owner_username}` : ""}
                           </span>
                           <span className="model-capabilities">
@@ -279,31 +359,12 @@ export function ModelPicker({
                       </button>
                     );
                   })}
-                  {group.models.map((model) => {
-                    const optionValue = modelValue(group.backend.id, model.name);
-                    return (
-                      <button
-                        type="button"
-                        key={optionValue}
-                        className={
-                          optionValue === value
-                            ? "model-option model-option-active"
-                            : "model-option"
-                        }
-                        onClick={() => {
-                          onChange(optionValue);
-                          setIsOpen(false);
-                        }}
-                      >
-                        <span className="model-option-content">
-                          <span className="model-name">{model.name}</span>
-                          <ModelCapabilityBadges model={model} />
-                        </span>
-                      </button>
-                    );
-                  })}
-                </section>
-              ))
+                    {group.models.map((model) =>
+                      renderModelOption(group.backend.id, group.backend.name, model)
+                    )}
+                  </section>
+                ))}
+              </>
             )}
           </div>
         </div>

@@ -9,7 +9,8 @@ import type {
   ChatToolPreferences,
   ComposerAttachment,
   ModelInfo,
-  NewChatMode
+  NewChatMode,
+  ThinkingMode
 } from "./types";
 
 export function ChatHome({
@@ -35,14 +36,21 @@ export function ChatHome({
   onCreateChat: (
     prompt: string,
     attachments?: ComposerAttachment[],
-    toolPreferences?: ChatToolPreferences
+    toolPreferences?: ChatToolPreferences,
+    thinkMode?: ThinkingMode
   ) => Promise<void>;
-  onCreatePrivateChat: (prompt: string, attachments?: ComposerAttachment[]) => Promise<void>;
+  onCreatePrivateChat: (
+    prompt: string,
+    attachments?: ComposerAttachment[],
+    toolPreferences?: ChatToolPreferences,
+    thinkMode?: ThinkingMode
+  ) => Promise<void>;
 }) {
   const isPrivate = mode === "private";
   const isCreatingSelectedMode = isPrivate ? isCreatingPrivate : isCreating;
   const [toolPreferences, setToolPreferences] =
     useState<ChatToolPreferences>(defaultToolPreferences);
+  const [thinkingMode, setThinkingMode] = useState<ThinkingMode>("auto");
 
   return (
     <div className="chat-home">
@@ -79,7 +87,9 @@ export function ChatHome({
           selectedModelInfo={selectedModelInfo}
           availableTools={isPrivate ? [] : availableTools}
           toolPreferences={toolPreferences}
+          thinkingMode={thinkingMode}
           onToolPreferencesChange={setToolPreferences}
+          onThinkingModeChange={setThinkingMode}
           onUploadAttachment={isPrivate ? preparePrivateAttachment : prepareLocalAttachment}
           onSubmit={isPrivate ? onCreatePrivateChat : onCreateChat}
         />

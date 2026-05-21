@@ -87,6 +87,7 @@ fn router(state: AppState) -> Router {
         .route("/auth/session", get(auth::handlers::session))
         .route("/auth/register", post(auth::handlers::register))
         .route("/auth/login", post(auth::handlers::login))
+        .route("/auth/profile", patch(auth::handlers::update_profile))
         .route("/auth/logout", post(auth::handlers::logout))
         .route(
             "/settings",
@@ -140,7 +141,7 @@ fn router(state: AppState) -> Router {
         .route(
             "/user-models",
             get(backends::handlers::list_user_models)
-                .patch(backends::handlers::update_user_model_visibility),
+                .patch(backends::handlers::update_user_model_preference),
         )
         .route(
             "/user-models/refresh",

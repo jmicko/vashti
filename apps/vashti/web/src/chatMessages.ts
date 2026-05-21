@@ -10,6 +10,7 @@ import type {
   MessageVersion,
   ParsedThinkingText,
   ThinkingSegment,
+  ThinkingMode,
   ToolUsageRecord,
   VersionInfo
 } from "./types";
@@ -227,6 +228,31 @@ export function latestAssistantModelValue(messages: ChatMessage[]) {
   }
 
   return null;
+}
+
+export function latestAssistantThinkingMode(messages: ChatMessage[]): ThinkingMode {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role !== "assistant") {
+      continue;
+    }
+
+    return thinkingModeFromMessage(message.think_mode);
+  }
+
+  return "auto";
+}
+
+function thinkingModeFromMessage(mode: string | null): ThinkingMode {
+  switch (mode) {
+    case "false":
+    case "low":
+    case "medium":
+    case "high":
+      return mode;
+    default:
+      return "auto";
+  }
 }
 
 export function streamingAssistantIdFromMessages(messages: ChatMessage[]) {

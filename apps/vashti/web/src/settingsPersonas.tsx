@@ -24,6 +24,7 @@ import {
   updatePrivatePersona,
   type PrivatePersona
 } from "./privateChatStore";
+import { SettingsPanel } from "./settingsControls";
 import { backendNameFor, firstModelValue } from "./settingsModelHelpers";
 import type {
   BackendModelGroup,
@@ -308,12 +309,10 @@ export function PersonasPanel({
     editingPersona || editingPrivatePersona ? "Edit Persona" : "Create Persona";
 
   return (
-    <div className="settings-section">
-      <div className="section-header">
-        <div>
-          <p className="eyebrow">Custom Models</p>
-          <h1>{isEditorOpen ? editorTitle : "Personas"}</h1>
-        </div>
+    <SettingsPanel
+      eyebrow="Custom Models"
+      title={isEditorOpen ? editorTitle : "Personas"}
+      actions={
         <div className="header-actions">
           {isEditorOpen ? (
             <button
@@ -343,7 +342,8 @@ export function PersonasPanel({
             </>
           )}
         </div>
-      </div>
+      }
+    >
 
       {error && <p className="error">{error}</p>}
       {status && <p className="status-message">{status}</p>}
@@ -483,7 +483,7 @@ export function PersonasPanel({
           onConfirm={() => void deletePrivatePersonaTarget(deletePrivateTarget)}
         />
       )}
-    </div>
+    </SettingsPanel>
   );
 }
 

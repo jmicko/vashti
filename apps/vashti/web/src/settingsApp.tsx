@@ -7,7 +7,7 @@ import {
 import { Copy, Lock, Save } from "lucide-react";
 import { requestJson } from "./api";
 import { ConfirmDialog, RetroLoader } from "./common";
-import { SettingsSaveBanner } from "./settingsControls";
+import { SettingsPanel, SettingsSaveBanner } from "./settingsControls";
 import type {
   AppSettings,
   AppSettingsGuard,
@@ -214,12 +214,10 @@ export function AppSettingsPanel({
   }
 
   return (
-    <div className="settings-section">
-      <div className="section-header">
-        <div>
-          <p className="eyebrow">Admin</p>
-          <h1>App Settings</h1>
-        </div>
+    <SettingsPanel
+      eyebrow="Admin"
+      title="App Settings"
+      actions={
         <button
           type="button"
           className="secondary-button refresh-button"
@@ -228,7 +226,8 @@ export function AppSettingsPanel({
         >
           {isLoading ? <RetroLoader /> : "Refresh"}
         </button>
-      </div>
+      }
+    >
 
       {error && <p className="error">{error}</p>}
       {!settings && isLoading && <p className="status-message">Loading settings...</p>}
@@ -249,7 +248,7 @@ export function AppSettingsPanel({
             >
               Revert
             </button>
-            <button type="submit" disabled={isSaving}>
+            <button type="button" disabled={isSaving} onClick={() => void saveSettingsDraft()}>
               <Save />
               <span>{isSaving ? "Saving..." : "Save"}</span>
             </button>
@@ -488,7 +487,7 @@ export function AppSettingsPanel({
           onConfirm={() => void saveNetworkSettings()}
         />
       )}
-    </div>
+    </SettingsPanel>
   );
 }
 

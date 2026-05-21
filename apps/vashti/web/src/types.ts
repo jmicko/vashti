@@ -1,6 +1,7 @@
 export type User = {
   id: string;
   username: string;
+  display_name: string | null;
   email: string | null;
   role: string;
 };
@@ -68,6 +69,8 @@ export type ModelInfo = {
   supports_images: boolean;
   supports_thinking?: boolean;
   capabilities?: string[];
+  is_favorite?: boolean;
+  is_default?: boolean;
 };
 
 export type AdminModelInfo = ModelInfo & {
@@ -78,6 +81,8 @@ export type AdminModelInfo = ModelInfo & {
 
 export type UserModelInfo = ModelInfo & {
   is_visible: boolean;
+  is_favorite: boolean;
+  is_default: boolean;
 };
 
 export type BackendModelGroup = {
@@ -255,6 +260,18 @@ export type ComposerSubmitPayload = {
   prompt: string;
   attachments: ComposerAttachment[];
   toolPreferences?: ChatToolPreferences;
+  thinkMode?: ThinkingMode;
+};
+
+export type ThinkingMode = "auto" | "false" | "low" | "medium" | "high";
+
+export type MessageStats = {
+  total_duration?: number | null;
+  load_duration?: number | null;
+  prompt_eval_count?: number | null;
+  prompt_eval_duration?: number | null;
+  eval_count?: number | null;
+  eval_duration?: number | null;
 };
 
 export type ChatMessage = {
@@ -273,6 +290,7 @@ export type ChatMessage = {
   think_mode: string | null;
   done_reason: string | null;
   error_text: string | null;
+  stats?: MessageStats | null;
   started_at: number | null;
   completed_at: number | null;
   created_at: number;
@@ -359,6 +377,7 @@ export type GenerateEvent =
       type: "message_done";
       assistant_message_id: string;
       done_reason: string | null;
+      stats?: MessageStats | null;
     }
   | {
       type: "chat_title";
@@ -385,6 +404,12 @@ export type AppSettings = {
   public_base_url: string | null;
   trust_proxy_headers: boolean;
   network_recovery_notice: string | null;
+};
+
+export type UserSettings = {
+  default_backend_id: string | null;
+  default_model_name: string | null;
+  theme: string | null;
 };
 
 export type ToolSettings = {

@@ -4,11 +4,12 @@ import {
   useEffect,
   useState
 } from "react";
-import { Plus, RefreshCw, Search, Server } from "lucide-react";
+import { Plus, RefreshCw, Search, Server, X } from "lucide-react";
 import { requestJson } from "./api";
 import { isLocalBackend } from "./modelSelection";
 import { ConfirmDialog, RetroLoader } from "./common";
 import { AdminModelsAccessPanel } from "./settingsModels";
+import { SettingsPanel } from "./settingsControls";
 import type {
   Backend,
   BackendsResponse,
@@ -26,6 +27,7 @@ export function BackendsPanel({ onBackendsChanged }: { onBackendsChanged: () => 
   const [busyBackendId, setBusyBackendId] = useState<string | null>(null);
   const [editingBackend, setEditingBackend] = useState<Backend | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Backend | null>(null);
+  const [showCreateBackend, setShowCreateBackend] = useState(false);
   const [newName, setNewName] = useState("");
   const [newBaseUrl, setNewBaseUrl] = useState("");
   const [modelRefreshRequest, setModelRefreshRequest] = useState(0);
@@ -55,6 +57,17 @@ export function BackendsPanel({ onBackendsChanged }: { onBackendsChanged: () => 
     void loadBackends();
   }, [loadBackends]);
 
+  function resetCreateBackendDraft() {
+    setNewName("");
+    setNewBaseUrl("");
+  }
+
+  function cancelCreateBackend() {
+    resetCreateBackendDraft();
+    setShowCreateBackend(false);
+    setError(null);
+  }
+
   async function createBackend(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setIsCreating(true);
@@ -66,9 +79,8 @@ export function BackendsPanel({ onBackendsChanged }: { onBackendsChanged: () => 
         method: "POST",
         body: JSON.stringify({ name: newName, base_url: newBaseUrl })
       });
-      setNewName("");
-      setNewBaseUrl("");
-      setStatus("Backend added.");
+      resetCreateBackendDraft();
+      setShowCreateBackend(false);
       await loadBackends();
       await onBackendsChanged();
     } catch (createError) {
@@ -92,7 +104,6 @@ export function BackendsPanel({ onBackendsChanged }: { onBackendsChanged: () => 
         body: JSON.stringify(body)
       });
       setEditingBackend(null);
-      setStatus("Backend updated.");
       await loadBackends();
       await onBackendsChanged();
     } catch (updateError) {
@@ -110,7 +121,6 @@ export function BackendsPanel({ onBackendsChanged }: { onBackendsChanged: () => 
     try {
       await requestJson(`/api/backends/${backendId}`, { method: "DELETE" });
       setDeleteTarget(null);
-      setStatus("Backend deleted.");
       await loadBackends();
       await onBackendsChanged();
     } catch (deleteError) {
@@ -130,11 +140,7 @@ export function BackendsPanel({ onBackendsChanged }: { onBackendsChanged: () => 
       const response = await requestJson<DetectLocalhostResponse>("/api/backends/detect-localhost", {
         method: "POST"
       });
-      setStatus(
-        response.detected.length === 0
-          ? "No local Ollama backend found."
-          : `Detected ${response.detected.map((backend) => backend.name).join(", ")}.`
-      );
+      setStatus(response.detected.length === 0 ? "No local Ollama backend found." : null);
       await loadBackends();
       await onBackendsChanged();
     } catch (detectError) {
@@ -159,7 +165,7 @@ export function BackendsPanel({ onBackendsChanged }: { onBackendsChanged: () => 
       setStatus(
         response.detected.length === 0
           ? "No Ollama backends found on the local network."
-          : `Detected ${response.detected.map((backend) => backend.name).join(", ")}.`
+          : null
       );
       await loadBackends();
       await onBackendsChanged();
@@ -173,13 +179,22 @@ export function BackendsPanel({ onBackendsChanged }: { onBackendsChanged: () => 
   const hasLocalBackend = backends.some((backend) => isLocalBackend(backend.base_url));
 
   return (
-    <div className="settings-section">
-      <div className="section-header">
-        <div>
-          <p className="eyebrow">Admin</p>
-          <h1>Backends</h1>
-        </div>
+    <SettingsPanel
+      eyebrow="Admin"
+      title="Backends"
+      className="backends-settings-section"
+      width="wide"
+      actions={
         <div className="header-actions">
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => setShowCreateBackend(true)}
+            disabled={showCreateBackend}
+          >
+            <Plus />
+            <span>Add Backend</span>
+          </button>
           <button
             type="button"
             className="secondary-button refresh-button"
@@ -219,35 +234,59 @@ export function BackendsPanel({ onBackendsChanged }: { onBackendsChanged: () => 
             <span>{isScanning ? "Scanning" : "Scan Network"}</span>
           </button>
         </div>
-      </div>
+      }
+    >
 
       {error && <p className="error">{error}</p>}
       {status && <p className="status-message">{status}</p>}
 
-      <form className="settings-form backend-create-form" onSubmit={createBackend}>
-        <label>
-          <span>Name</span>
-          <input
-            required
-            value={newName}
-            onChange={(event) => setNewName(event.target.value)}
-            placeholder="hostname"
-          />
-        </label>
-        <label>
-          <span>Base URL</span>
-          <input
-            required
-            value={newBaseUrl}
-            onChange={(event) => setNewBaseUrl(event.target.value)}
-            placeholder="http://127.0.0.1:11434"
-          />
-        </label>
-        <button type="submit" disabled={isCreating}>
-          <Plus />
-          <span>{isCreating ? "Adding..." : "Add Backend"}</span>
-        </button>
-      </form>
+      {showCreateBackend && (
+        <form
+          className="settings-form settings-create-card backend-create-form"
+          onSubmit={createBackend}
+        >
+          <div className="settings-create-card-header">
+            <p className="eyebrow">Ollama Backend</p>
+            <h2>Add Backend</h2>
+            <p>Add another Ollama-compatible endpoint for model discovery and chat requests.</p>
+          </div>
+          <div className="settings-create-card-grid">
+            <label>
+              <span>Name</span>
+              <input
+                required
+                value={newName}
+                onChange={(event) => setNewName(event.target.value)}
+                placeholder="hostname"
+              />
+            </label>
+            <label>
+              <span>Base URL</span>
+              <input
+                required
+                value={newBaseUrl}
+                onChange={(event) => setNewBaseUrl(event.target.value)}
+                placeholder="http://127.0.0.1:11434"
+              />
+            </label>
+          </div>
+          <div className="settings-create-card-actions">
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={cancelCreateBackend}
+              disabled={isCreating}
+            >
+              <X />
+              <span>Cancel</span>
+            </button>
+            <button type="submit" disabled={isCreating}>
+              <Plus />
+              <span>{isCreating ? "Adding..." : "Add Backend"}</span>
+            </button>
+          </div>
+        </form>
+      )}
 
       {!hasLoaded && <p className="status-message">Loading backends...</p>}
       {hasLoaded && backends.length === 0 && (
@@ -280,6 +319,6 @@ export function BackendsPanel({ onBackendsChanged }: { onBackendsChanged: () => 
           onConfirm={() => void deleteBackend(deleteTarget.id)}
         />
       )}
-    </div>
+    </SettingsPanel>
   );
 }

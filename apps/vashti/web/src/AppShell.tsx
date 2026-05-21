@@ -48,6 +48,7 @@ import {
 import {
   defaultToolPreferences,
 } from "./toolPreferences";
+import { applyTheme, normalizeTheme, storeAndApplyTheme, storedTheme } from "./theme";
 import {
   createPrivateChat,
   deletePrivateChat,
@@ -81,21 +82,26 @@ import type {
   Persona,
   PersonasResponse,
   SettingsSection,
-  User
+  ThinkingMode,
+  User,
+  UserSettings
 } from "./types";
 
 export function AppShell({
   user,
-  onSessionChanged
+  onSessionChanged,
+  onUserChanged
 }: {
   user: User;
   onSessionChanged: () => Promise<void>;
+  onUserChanged: (user: User) => void;
 }) {
   setPrivateStorageUser(user.id);
 
   const [route, setRoute] = useState<AppRoute>(() => routeFromLocation());
   const routeRef = useRef(route);
   const appSettingsGuardRef = useRef<AppSettingsGuard | null>(null);
+  const settingsMenuRef = useRef<HTMLDivElement>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isSettingsMenuOpen, setIsSettingsMenuOpen] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
@@ -143,24 +149,32 @@ export function AppShell({
   }, [route]);
 
   useEffect(() => {
-    function updateAppHeight() {
-      const nextHeight = window.visualViewport?.height ?? window.innerHeight;
-      document.documentElement.style.setProperty("--app-height", `${Math.round(nextHeight)}px`);
+    if (!isSettingsMenuOpen) {
+      return;
     }
 
-    updateAppHeight();
-    window.addEventListener("resize", updateAppHeight);
-    window.addEventListener("orientationchange", updateAppHeight);
-    window.visualViewport?.addEventListener("resize", updateAppHeight);
-    window.visualViewport?.addEventListener("scroll", updateAppHeight);
+    function closeSettingsMenuOnOutsidePointer(event: PointerEvent) {
+      const target = event.target;
+      if (target instanceof Node && settingsMenuRef.current?.contains(target)) {
+        return;
+      }
 
+      setIsSettingsMenuOpen(false);
+    }
+
+    function closeSettingsMenuOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsSettingsMenuOpen(false);
+      }
+    }
+
+    window.addEventListener("pointerdown", closeSettingsMenuOnOutsidePointer);
+    window.addEventListener("keydown", closeSettingsMenuOnEscape);
     return () => {
-      window.removeEventListener("resize", updateAppHeight);
-      window.removeEventListener("orientationchange", updateAppHeight);
-      window.visualViewport?.removeEventListener("resize", updateAppHeight);
-      window.visualViewport?.removeEventListener("scroll", updateAppHeight);
+      window.removeEventListener("pointerdown", closeSettingsMenuOnOutsidePointer);
+      window.removeEventListener("keydown", closeSettingsMenuOnEscape);
     };
-  }, []);
+  }, [isSettingsMenuOpen]);
 
   function setImageViewer(viewer: ImageViewerState | null) {
     imageViewerRef.current = viewer;
@@ -199,11 +213,23 @@ export function AppShell({
           ),
           ...visiblePersonas.map((persona) => personaModelValue(persona.current_version.id))
         ];
+        const defaultModel =
+          modelsResponse.backends
+            .flatMap((group) =>
+              group.models.map((model) => ({
+                backendId: group.backend.id,
+                model
+              }))
+            )
+            .find((option) => option.model.is_default) ?? null;
+        const defaultValue = defaultModel
+          ? modelValue(defaultModel.backendId, defaultModel.model.name)
+          : "";
 
         return current &&
           (values.includes(current) || Boolean(privatePersonaVersionIdFromValue(current)))
           ? current
-          : values[0] ?? "";
+          : defaultValue;
       });
     },
     []
@@ -250,6 +276,21 @@ export function AppShell({
   useEffect(() => {
     void loadModels();
   }, [loadModels]);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const settings = await requestJson<UserSettings>("/api/user-settings");
+        if (settings.theme) {
+          storeAndApplyTheme(normalizeTheme(settings.theme));
+        } else {
+          applyTheme(storedTheme());
+        }
+      } catch {
+        applyTheme(storedTheme());
+      }
+    })();
+  }, [user.id]);
 
   const loadPrivatePersonas = useCallback(async () => {
     try {
@@ -483,7 +524,8 @@ export function AppShell({
   async function createChatFromPrompt(
     prompt: string,
     attachments: ComposerAttachment[] = [],
-    toolPreferences: ChatToolPreferences = defaultToolPreferences
+    toolPreferences: ChatToolPreferences = defaultToolPreferences,
+    thinkMode: ThinkingMode = "auto"
   ) {
     if (!prompt.trim()) {
       openChat();
@@ -514,7 +556,13 @@ export function AppShell({
 
       if (prompt.trim()) {
         const uploadedAttachments = await uploadComposerAttachments(response.chat.id, attachments);
-        setQueuedPrompt({ chatId: response.chat.id, prompt, attachments: uploadedAttachments });
+        setQueuedPrompt({
+          chatId: response.chat.id,
+          prompt,
+          attachments: uploadedAttachments,
+          toolPreferences,
+          thinkMode
+        });
       }
 
       await loadChats();
@@ -561,7 +609,12 @@ export function AppShell({
     return modelInfoForValue(modelGroups, personas, privatePersonas, selectedModel);
   }
 
-  async function createPrivateChatFromPrompt(prompt: string, attachments: ComposerAttachment[] = []) {
+  async function createPrivateChatFromPrompt(
+    prompt: string,
+    attachments: ComposerAttachment[] = [],
+    _toolPreferences: ChatToolPreferences = defaultToolPreferences,
+    thinkMode: ThinkingMode = "auto"
+  ) {
     if (!prompt.trim()) {
       openChat();
       return;
@@ -594,7 +647,7 @@ export function AppShell({
       });
 
       if (prompt.trim()) {
-        setQueuedPrivatePrompt({ chatId: chat.id, prompt, attachments });
+        setQueuedPrivatePrompt({ chatId: chat.id, prompt, attachments, thinkMode });
       }
 
       await loadPrivateChats();
@@ -765,7 +818,7 @@ export function AppShell({
                 <span>New Chat</span>
               </button>
             )}
-            <div className="settings-menu-wrap">
+            <div className="settings-menu-wrap" ref={settingsMenuRef}>
               <button
                 type="button"
                 className="icon-button"
@@ -815,6 +868,7 @@ export function AppShell({
             onPrivatePersonasChanged={loadPrivatePersonas}
             onAppSettingsGuardChange={updateAppSettingsGuard}
             onSelectSection={(section) => openSettings(section)}
+            onUserChanged={onUserChanged}
             isAdmin={isAdmin}
           />
         ) : page === "private-chat" && currentPrivateChatId ? (
@@ -822,14 +876,7 @@ export function AppShell({
             chatId={currentPrivateChatId}
             error={error}
             queuedPrompt={
-              queuedPrivatePrompt?.chatId === currentPrivateChatId
-                ? queuedPrivatePrompt.prompt
-                : null
-            }
-            queuedAttachments={
-              queuedPrivatePrompt?.chatId === currentPrivateChatId
-                ? queuedPrivatePrompt.attachments
-                : []
+              queuedPrivatePrompt?.chatId === currentPrivateChatId ? queuedPrivatePrompt : null
             }
             selectedModel={selectedModel}
             selectedModelInfo={selectedModelInfo()}
@@ -844,10 +891,7 @@ export function AppShell({
             <ChatView
               chatId={currentChatId}
               error={error}
-              queuedPrompt={queuedPrompt?.chatId === currentChatId ? queuedPrompt.prompt : null}
-              queuedAttachments={
-                queuedPrompt?.chatId === currentChatId ? queuedPrompt.attachments : []
-              }
+              queuedPrompt={queuedPrompt?.chatId === currentChatId ? queuedPrompt : null}
               selectedModel={selectedModel}
               selectedModelInfo={selectedModelInfo()}
               availableTools={availableTools}

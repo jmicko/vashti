@@ -17,6 +17,7 @@ use crate::{config::Config, error::ApiError};
 pub struct UserPublic {
     pub id: String,
     pub username: String,
+    pub display_name: Option<String>,
     pub email: Option<String>,
     pub role: String,
 }
@@ -25,6 +26,7 @@ pub struct UserPublic {
 pub struct RegisteredUser {
     pub id: String,
     pub username: String,
+    pub display_name: Option<String>,
     pub email: Option<String>,
     pub role: String,
     pub is_disabled: bool,
@@ -80,6 +82,7 @@ pub async fn register_user(
     let mut user = RegisteredUser {
         id: Uuid::new_v4().to_string(),
         username,
+        display_name: None,
         email,
         role: "user".to_string(),
         is_disabled: true,
@@ -274,7 +277,7 @@ pub async fn authenticate_user(
 
     let Some(row) = sqlx::query(
         r#"
-        SELECT id, username, email, role, password_hash, is_disabled
+        SELECT id, username, display_name, email, role, password_hash, is_disabled
         FROM users
         WHERE username = ? OR email = ?
         LIMIT 1
@@ -303,6 +306,91 @@ pub async fn authenticate_user(
     Ok(UserPublic {
         id: row.try_get("id")?,
         username: row.try_get("username")?,
+        display_name: row.try_get("display_name")?,
+        email: row.try_get("email")?,
+        role: row.try_get("role")?,
+    })
+}
+
+pub async fn update_profile(
+    pool: &SqlitePool,
+    user_id: &str,
+    display_name_update: Option<serde_json::Value>,
+    email_update: Option<serde_json::Value>,
+) -> Result<UserPublic, ApiError> {
+    if display_name_update.is_none() && email_update.is_none() {
+        return Err(ApiError::bad_request(
+            "empty_update",
+            "No profile changes were provided",
+        ));
+    }
+
+    let Some(current) = sqlx::query(
+        r#"
+        SELECT display_name, email
+        FROM users
+        WHERE id = ?
+        "#,
+    )
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await?
+    else {
+        return Err(ApiError::not_found("user_not_found", "User not found"));
+    };
+
+    let display_name = normalize_optional_profile_value(
+        display_name_update,
+        current.try_get("display_name")?,
+        "invalid_display_name",
+        "Display name must be text or blank",
+        80,
+    )?;
+    let email = normalize_optional_profile_value(
+        email_update,
+        current.try_get("email")?,
+        "invalid_email",
+        "Email must be text or blank",
+        254,
+    )?;
+    let now = unix_timestamp();
+
+    let updated = sqlx::query(
+        r#"
+        UPDATE users
+        SET display_name = ?,
+            email = ?,
+            updated_at = ?
+        WHERE id = ?
+        RETURNING id, username, display_name, email, role
+        "#,
+    )
+    .bind(display_name)
+    .bind(email)
+    .bind(now)
+    .bind(user_id)
+    .fetch_one(pool)
+    .await;
+
+    let row = match updated {
+        Ok(row) => row,
+        Err(error) => {
+            if let sqlx::Error::Database(database_error) = &error {
+                if database_error.is_unique_violation() {
+                    return Err(ApiError::conflict(
+                        "profile_conflict",
+                        "That email is already in use",
+                    ));
+                }
+            }
+            return Err(error.into());
+        }
+    };
+
+    Ok(UserPublic {
+        id: row.try_get("id")?,
+        username: row.try_get("username")?,
+        display_name: row.try_get("display_name")?,
         email: row.try_get("email")?,
         role: row.try_get("role")?,
     })
@@ -337,6 +425,32 @@ pub async fn verify_user_password(
 
     let password_hash: String = row.try_get("password_hash")?;
     verify_password(password, &password_hash).map_err(ApiError::from)
+}
+
+fn normalize_optional_profile_value(
+    update: Option<serde_json::Value>,
+    current: Option<String>,
+    code: &'static str,
+    message: &'static str,
+    max_len: usize,
+) -> Result<Option<String>, ApiError> {
+    match update {
+        Some(serde_json::Value::String(value)) => {
+            let value = value.trim();
+            if value.len() > max_len {
+                return Err(ApiError::bad_request(code, message));
+            }
+
+            if value.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(value.to_string()))
+            }
+        }
+        Some(serde_json::Value::Null) => Ok(None),
+        Some(_) => Err(ApiError::bad_request(code, message)),
+        None => Ok(current),
+    }
 }
 
 pub async fn create_session(
@@ -399,7 +513,7 @@ pub async fn current_user_from_cookie(
     let now = unix_timestamp();
     let user = sqlx::query(
         r#"
-        SELECT u.id, u.username, u.email, u.role
+        SELECT u.id, u.username, u.display_name, u.email, u.role
         FROM sessions s
         JOIN users u ON u.id = s.user_id
         WHERE s.id = ?
@@ -414,6 +528,7 @@ pub async fn current_user_from_cookie(
     .map(|row| UserPublic {
         id: row.try_get("id").expect("id selected"),
         username: row.try_get("username").expect("username selected"),
+        display_name: row.try_get("display_name").expect("display_name selected"),
         email: row.try_get("email").expect("email selected"),
         role: row.try_get("role").expect("role selected"),
     });
@@ -656,7 +771,7 @@ mod tests {
             UpdateUserSettingsRequest {
                 default_backend_id: Some(serde_json::Value::String(backend.id.clone())),
                 default_model_name: Some(serde_json::Value::String("gemma4:e2b".to_string())),
-                theme: Some(serde_json::Value::String("neon".to_string())),
+                theme: Some(serde_json::Value::String("light".to_string())),
             },
         )
         .await
@@ -667,7 +782,7 @@ mod tests {
             Some(backend.id.as_str())
         );
         assert_eq!(updated.default_model_name.as_deref(), Some("gemma4:e2b"));
-        assert_eq!(updated.theme.as_deref(), Some("neon"));
+        assert_eq!(updated.theme.as_deref(), Some("light"));
 
         let cleared = settings_service::update_user_settings(
             &pool,
@@ -683,7 +798,7 @@ mod tests {
 
         assert!(cleared.default_backend_id.is_none());
         assert!(cleared.default_model_name.is_none());
-        assert_eq!(cleared.theme.as_deref(), Some("neon"));
+        assert_eq!(cleared.theme.as_deref(), Some("light"));
     }
 
     #[tokio::test]
@@ -756,12 +871,16 @@ mod tests {
             .await
             .expect("matching tag permits model");
 
-        backends_service::set_user_model_visibility(
+        backends_service::update_user_model_preference(
             &pool,
             &user.id,
             &backend.id,
             "gemma4:e2b",
-            false,
+            backends_service::UpdateUserModelPreferenceParams {
+                is_visible: Some(false),
+                is_favorite: None,
+                is_default: None,
+            },
         )
         .await
         .expect("hide model from picker");
@@ -772,7 +891,12 @@ mod tests {
             backends_service::user_model_preferences_by_backend(&pool, &user.id, &backend.id)
                 .await
                 .expect("load user model preferences");
-        assert_eq!(preferences.get("gemma4:e2b"), Some(&false));
+        assert_eq!(
+            preferences
+                .get("gemma4:e2b")
+                .map(|preference| preference.is_visible),
+            Some(false)
+        );
     }
 
     #[tokio::test]

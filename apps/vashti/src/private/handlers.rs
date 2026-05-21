@@ -18,7 +18,7 @@ use crate::{
     error::ApiError,
     ollama::{
         self,
-        models::{OllamaChatChunk, OllamaChatRequest, OllamaThink},
+        models::{OllamaChatChunk, OllamaChatRequest, OllamaThink, OllamaUsageStats},
     },
     private::service,
     rate_limit,
@@ -56,6 +56,7 @@ enum PrivateGenerateEvent {
     MessageDone {
         assistant_message_id: String,
         done_reason: Option<String>,
+        stats: Option<OllamaUsageStats>,
     },
     Error {
         assistant_message_id: Option<String>,
@@ -237,6 +238,7 @@ async fn stream_private_generation(
     let mut stream = response.bytes_stream();
     let mut buffer = String::new();
     let mut done_reason = None;
+    let mut usage_stats: Option<OllamaUsageStats> = None;
 
     while let Some(next) = stream.next().await {
         let bytes = match next {
@@ -262,7 +264,15 @@ async fn stream_private_generation(
                 continue;
             }
 
-            match handle_ollama_line(&tx, &assistant_message_id, &line, &mut done_reason).await {
+            match handle_ollama_line(
+                &tx,
+                &assistant_message_id,
+                &line,
+                &mut done_reason,
+                &mut usage_stats,
+            )
+            .await
+            {
                 Ok(true) => {}
                 Ok(false) => return,
                 Err(message) => {
@@ -282,7 +292,15 @@ async fn stream_private_generation(
 
     let line = buffer.trim().to_string();
     if !line.is_empty() {
-        match handle_ollama_line(&tx, &assistant_message_id, &line, &mut done_reason).await {
+        match handle_ollama_line(
+            &tx,
+            &assistant_message_id,
+            &line,
+            &mut done_reason,
+            &mut usage_stats,
+        )
+        .await
+        {
             Ok(true) => {}
             Ok(false) => return,
             Err(message) => {
@@ -304,6 +322,7 @@ async fn stream_private_generation(
         &PrivateGenerateEvent::MessageDone {
             assistant_message_id,
             done_reason,
+            stats: usage_stats,
         },
     )
     .await;
@@ -314,9 +333,17 @@ async fn handle_ollama_line(
     assistant_message_id: &str,
     line: &str,
     done_reason: &mut Option<String>,
+    usage_stats: &mut Option<OllamaUsageStats>,
 ) -> Result<bool, String> {
     let chunk = serde_json::from_str::<OllamaChatChunk>(line)
         .map_err(|error| format!("Invalid Ollama stream chunk: {error}"))?;
+
+    if let Some(chunk_stats) = chunk.usage_stats() {
+        match usage_stats {
+            Some(stats) => stats.add_assign(chunk_stats),
+            None => *usage_stats = Some(chunk_stats),
+        }
+    }
 
     if let Some(message) = chunk.message {
         if !message.thinking.is_empty()
@@ -396,6 +423,7 @@ async fn stream_synthetic_private_generation(
         &PrivateGenerateEvent::MessageDone {
             assistant_message_id,
             done_reason: Some("synthetic_test".to_string()),
+            stats: None,
         },
     )
     .await;

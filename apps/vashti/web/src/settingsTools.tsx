@@ -8,7 +8,12 @@ import { FileText, Save, Search, Wrench } from "lucide-react";
 import { requestJson } from "./api";
 import { ConfirmDialog } from "./common";
 import { PermissionTagEditor } from "./permissionTags";
-import { SettingsSaveBanner, ToggleSwitch, ToolPromptEditor } from "./settingsControls";
+import {
+  SettingsPanel,
+  SettingsSaveBanner,
+  ToggleSwitch,
+  ToolPromptEditor
+} from "./settingsControls";
 import { permissionTagPayload } from "./settingsModelHelpers";
 import type { PermissionTag, ToolSettings } from "./types";
 
@@ -236,19 +241,15 @@ export function ToolsSettingsPanel({ onToolsChanged }: { onToolsChanged: () => P
   }
 
   return (
-    <div className="settings-section tools-settings-section">
-      <div className="section-header">
-        <div>
-          <p className="eyebrow">Admin</p>
-          <h1>Tools</h1>
-        </div>
-      </div>
-
+    <SettingsPanel eyebrow="Admin" title="Tools" className="tools-settings-section">
       {error && <p className="error">{error}</p>}
       {!settings && isLoading && <p className="status-message">Loading tool settings...</p>}
 
       {settings && (
-        <form className="settings-form tools-settings-form" onSubmit={saveToolSettings}>
+        <form
+          className="settings-form settings-form-with-banner tools-settings-form"
+          onSubmit={saveToolSettings}
+        >
           <SettingsSaveBanner
             isDirty={isDirty}
             status={status}
@@ -521,6 +522,6 @@ export function ToolsSettingsPanel({ onToolsChanged }: { onToolsChanged: () => P
           onConfirm={() => void clearToolKey(clearKeyTarget)}
         />
       )}
-    </div>
+    </SettingsPanel>
   );
 }

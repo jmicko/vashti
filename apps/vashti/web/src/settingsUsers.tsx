@@ -4,10 +4,11 @@ import {
   useEffect,
   useState
 } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, X } from "lucide-react";
 import { requestJson } from "./api";
 import { ConfirmDialog, RetroLoader } from "./common";
 import { PermissionTagEditor } from "./permissionTags";
+import { SettingsPanel } from "./settingsControls";
 import { permissionTagPayload } from "./settingsModelHelpers";
 import type {
   AdminUser,
@@ -25,11 +26,26 @@ export function AdminUsersPanel({ currentUserId }: { currentUserId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [busyUserId, setBusyUserId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AdminUser | null>(null);
+  const [showCreateUser, setShowCreateUser] = useState(false);
   const [newUsername, setNewUsername] = useState("");
   const [newEmail, setNewEmail] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [newRole, setNewRole] = useState("user");
   const [newDisabled, setNewDisabled] = useState(false);
+
+  function resetCreateUserDraft() {
+    setNewUsername("");
+    setNewEmail("");
+    setNewPassword("");
+    setNewRole("user");
+    setNewDisabled(false);
+  }
+
+  function cancelCreateUser() {
+    resetCreateUserDraft();
+    setShowCreateUser(false);
+    setError(null);
+  }
 
   const loadUsers = useCallback(async () => {
     setIsRefreshing(true);
@@ -68,11 +84,8 @@ export function AdminUsersPanel({ currentUserId }: { currentUserId: string }) {
           is_disabled: newDisabled
         })
       });
-      setNewUsername("");
-      setNewEmail("");
-      setNewPassword("");
-      setNewRole("user");
-      setNewDisabled(false);
+      resetCreateUserDraft();
+      setShowCreateUser(false);
       await loadUsers();
     } catch (createError) {
       setError(createError instanceof Error ? createError.message : "Failed to create user");
@@ -124,74 +137,108 @@ export function AdminUsersPanel({ currentUserId }: { currentUserId: string }) {
   );
 
   return (
-    <div className="settings-section">
-      <div className="section-header">
-        <div>
-          <p className="eyebrow">Admin</p>
-          <h1>Users</h1>
+    <SettingsPanel
+      eyebrow="Admin"
+      title="Users"
+      width="wide"
+      actions={
+        <div className="header-actions">
+          <button
+            type="button"
+            className="secondary-button refresh-button"
+            onClick={() => void loadUsers()}
+            disabled={isRefreshing}
+          >
+            {isRefreshing ? <RetroLoader /> : "Refresh"}
+          </button>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => setShowCreateUser(true)}
+            disabled={showCreateUser}
+          >
+            <Plus />
+            <span>Create User</span>
+          </button>
         </div>
-        <button
-          type="button"
-          className="secondary-button refresh-button"
-          onClick={() => void loadUsers()}
-          disabled={isRefreshing}
-        >
-          {isRefreshing ? <RetroLoader /> : "Refresh"}
-        </button>
-      </div>
+      }
+    >
 
       {!hasLoaded && <p className="status-message">Loading users...</p>}
       {error && <p className="error">{error}</p>}
 
-      <form className="settings-form user-create-form" onSubmit={createUser}>
-        <label>
-          <span>Username</span>
-          <input
-            required
-            value={newUsername}
-            onChange={(event) => setNewUsername(event.target.value)}
-          />
-        </label>
-        <label>
-          <span>Email</span>
-          <input
-            type="email"
-            value={newEmail}
-            onChange={(event) => setNewEmail(event.target.value)}
-          />
-        </label>
-        <label>
-          <span>Password</span>
-          <input
-            required
-            type="password"
-            value={newPassword}
-            onChange={(event) => setNewPassword(event.target.value)}
-          />
-        </label>
-        <label>
-          <span>Role</span>
-          <select value={newRole} onChange={(event) => setNewRole(event.target.value)}>
-            <option value="user">User</option>
-            <option value="admin">Admin</option>
-          </select>
-        </label>
-        <label className="checkbox-row">
-          <input
-            type="checkbox"
-            checked={newDisabled}
-            onChange={(event) => setNewDisabled(event.target.checked)}
-          />
-          <span>Create disabled</span>
-        </label>
-        <button
-          type="submit"
-          disabled={isCreatingUser || newUsername.trim() === "" || newPassword === ""}
-        >
-          <Plus />
-          <span>{isCreatingUser ? "Creating..." : "Create User"}</span>
-        </button>
-      </form>
+      {showCreateUser && (
+        <form className="settings-form settings-create-card user-create-form" onSubmit={createUser}>
+          <div className="settings-create-card-header">
+            <p className="eyebrow">Manual Creation</p>
+            <h2>Create User</h2>
+            <p>
+              Creates an account immediately. Invite links can replace this flow later so admins
+              never handle user passwords.
+            </p>
+          </div>
+          <div className="settings-create-card-grid">
+            <label>
+              <span>Username</span>
+              <input
+                required
+                value={newUsername}
+                onChange={(event) => setNewUsername(event.target.value)}
+              />
+            </label>
+            <label>
+              <span>Email</span>
+              <input
+                type="email"
+                value={newEmail}
+                onChange={(event) => setNewEmail(event.target.value)}
+              />
+            </label>
+            <label>
+              <span>Password</span>
+              <input
+                required
+                type="password"
+                value={newPassword}
+                onChange={(event) => setNewPassword(event.target.value)}
+              />
+            </label>
+            <label>
+              <span>Role</span>
+              <select value={newRole} onChange={(event) => setNewRole(event.target.value)}>
+                <option value="user">User</option>
+                <option value="admin">Admin</option>
+              </select>
+            </label>
+          </div>
+          <label className="checkbox-row">
+            <input
+              type="checkbox"
+              checked={newDisabled}
+              onChange={(event) => setNewDisabled(event.target.checked)}
+            />
+            <span>Create disabled</span>
+          </label>
+          <div className="settings-create-card-actions">
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={cancelCreateUser}
+              disabled={isCreatingUser}
+            >
+              <X />
+              <span>Cancel</span>
+            </button>
+            <button
+              type="submit"
+              disabled={isCreatingUser || newUsername.trim() === "" || newPassword === ""}
+            >
+              <Plus />
+              <span>{isCreatingUser ? "Creating..." : "Create User"}</span>
+            </button>
+          </div>
+        </form>
+      )}
 
       {hasLoaded && users.length === 0 && <p className="status-message">No users found.</p>}
 
@@ -246,7 +293,7 @@ export function AdminUsersPanel({ currentUserId }: { currentUserId: string }) {
           onConfirm={() => void deleteUser(deleteTarget.id)}
         />
       )}
-    </div>
+    </SettingsPanel>
   );
 }
 

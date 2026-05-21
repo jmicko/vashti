@@ -1,5 +1,5 @@
 import { ChangeEvent, FormEvent, useEffect, useRef, useState } from "react";
-import { Paperclip, SendHorizontal, Square, Wrench, X } from "lucide-react";
+import { Brain, Paperclip, SendHorizontal, Square, Wrench, X } from "lucide-react";
 import {
   AttachmentChipList,
   attachmentAcceptTypes,
@@ -17,7 +17,13 @@ import {
   toolPreferenceEnabled,
   updateToolPreference
 } from "./toolPreferences";
-import type { AvailableTool, ChatToolPreferences, ComposerAttachment, ModelInfo } from "./types";
+import type {
+  AvailableTool,
+  ChatToolPreferences,
+  ComposerAttachment,
+  ModelInfo,
+  ThinkingMode
+} from "./types";
 import { dismissMobileKeyboard, usesTouchViewport } from "./viewport";
 
 export function StartChatComposer({
@@ -28,8 +34,10 @@ export function StartChatComposer({
   selectedModelInfo,
   availableTools = [],
   toolPreferences,
+  thinkingMode = "auto",
   warning,
   onToolPreferencesChange,
+  onThinkingModeChange,
   onStop,
   onUploadAttachment,
   onRemoveAttachment,
@@ -43,30 +51,38 @@ export function StartChatComposer({
   selectedModelInfo?: ModelInfo | null;
   availableTools?: AvailableTool[];
   toolPreferences?: ChatToolPreferences;
+  thinkingMode?: ThinkingMode;
   warning?: string | null;
   onToolPreferencesChange?: (preferences: ChatToolPreferences) => void | Promise<void>;
+  onThinkingModeChange?: (mode: ThinkingMode) => void;
   onStop?: () => void;
   onUploadAttachment?: (file: File) => Promise<ComposerAttachment> | ComposerAttachment;
   onRemoveAttachment?: (attachment: ComposerAttachment) => Promise<void>;
   onSubmit: (
     prompt: string,
     attachments?: ComposerAttachment[],
-    toolPreferences?: ChatToolPreferences
+    toolPreferences?: ChatToolPreferences,
+    thinkMode?: ThinkingMode
   ) => Promise<void>;
   autoFocusOnReady?: boolean;
 }) {
   const [prompt, setPrompt] = useState("");
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [isToolMenuOpen, setIsToolMenuOpen] = useState(false);
+  const [isThinkingMenuOpen, setIsThinkingMenuOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const toolMenuRef = useRef<HTMLDivElement | null>(null);
+  const thinkingMenuRef = useRef<HTMLDivElement | null>(null);
   const canAttach = Boolean(onUploadAttachment);
   const currentToolPreferences = toolPreferences ?? defaultToolPreferences;
   const canUseTools =
     Boolean(onToolPreferencesChange) &&
     availableTools.length > 0 &&
     modelSupportsToolUse(selectedModelInfo);
+  const canControlThinking = Boolean(onThinkingModeChange && selectedModelInfo?.supports_thinking);
+  const thinkingOptions = thinkingModeOptionsForModel(selectedModelInfo);
+  const activeThinkingMode = normalizedThinkingModeForModel(thinkingMode, selectedModelInfo);
   const enabledToolCount = availableTools.filter((tool) =>
     toolPreferenceEnabled(currentToolPreferences, tool.id)
   ).length;
@@ -82,6 +98,15 @@ export function StartChatComposer({
     warning ?? (hasUnsupportedImageWarning ? "Images may not be supported by this model." : null);
   const canSubmit =
     prompt.trim().length > 0 && !isDisabled && !hasUploadingAttachment && (!isBusy || isGenerating);
+  const thinkingModeLabel = thinkingModeOptionLabel(activeThinkingMode);
+  const composerClassName = [
+    "chat-composer",
+    !canAttach ? "chat-composer-no-attach" : "",
+    !canUseTools ? "chat-composer-no-tools" : "",
+    !canControlThinking ? "chat-composer-no-thinking" : ""
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   useEffect(() => {
     if (autoFocusOnReady && !isGenerating && !usesTouchViewport()) {
@@ -102,14 +127,17 @@ export function StartChatComposer({
   }, [canUseTools]);
 
   useEffect(() => {
-    if (!isToolMenuOpen) {
+    if (!isToolMenuOpen && !isThinkingMenuOpen) {
       return;
     }
 
     function closeOnOutsidePointer(event: MouseEvent | TouchEvent) {
       const target = event.target;
-      if (target instanceof Node && !toolMenuRef.current?.contains(target)) {
+      const inToolMenu = target instanceof Node && toolMenuRef.current?.contains(target);
+      const inThinkingMenu = target instanceof Node && thinkingMenuRef.current?.contains(target);
+      if (!inToolMenu && !inThinkingMenu) {
         setIsToolMenuOpen(false);
+        setIsThinkingMenuOpen(false);
       }
     }
 
@@ -119,7 +147,7 @@ export function StartChatComposer({
       document.removeEventListener("mousedown", closeOnOutsidePointer);
       document.removeEventListener("touchstart", closeOnOutsidePointer);
     };
-  }, [isToolMenuOpen]);
+  }, [isToolMenuOpen, isThinkingMenuOpen]);
 
   function updateTools(nextPreferences: ChatToolPreferences) {
     void onToolPreferencesChange?.(nextPreferences);
@@ -142,7 +170,12 @@ export function StartChatComposer({
       textareaRef.current?.blur();
       dismissMobileKeyboard();
     }
-    await onSubmit(submittedPrompt, submittedAttachments, currentToolPreferences);
+    await onSubmit(
+      submittedPrompt,
+      submittedAttachments,
+      currentToolPreferences,
+      activeThinkingMode
+    );
     if (shouldRestoreFocus) {
       window.requestAnimationFrame(() => textareaRef.current?.focus());
     }
@@ -210,10 +243,7 @@ export function StartChatComposer({
   return (
     <>
       {visibleWarning && <p className="composer-warning">{visibleWarning}</p>}
-      <form
-        className={canAttach ? "chat-composer" : "chat-composer chat-composer-no-attach"}
-        onSubmit={submit}
-      >
+      <form className={composerClassName} onSubmit={submit}>
         {attachments.length > 0 && (
           <AttachmentChipList
             attachments={attachments}
@@ -253,7 +283,10 @@ export function StartChatComposer({
                   : "composer-tool-button composer-tool-button-off"
               }
               disabled={isDisabled}
-              onClick={() => setIsToolMenuOpen((open) => !open)}
+              onClick={() => {
+                setIsThinkingMenuOpen(false);
+                setIsToolMenuOpen((open) => !open);
+              }}
             >
               <Wrench />
               {!currentToolPreferences.tool_use_enabled && (
@@ -309,6 +342,59 @@ export function StartChatComposer({
             )}
           </div>
         )}
+        {canControlThinking && (
+          <div className="composer-thinking" ref={thinkingMenuRef}>
+            <button
+              type="button"
+              aria-label={`Thinking effort: ${thinkingModeLabel}`}
+              title={`Thinking effort: ${thinkingModeLabel}`}
+              className={`composer-thinking-button active thinking-mode-${activeThinkingMode}`}
+              disabled={isDisabled}
+              onClick={() => {
+                setIsToolMenuOpen(false);
+                setIsThinkingMenuOpen((open) => !open);
+              }}
+            >
+              <Brain />
+              {activeThinkingMode === "false" ? (
+                <span className="thinking-off-indicator" aria-hidden="true">
+                  <X />
+                </span>
+              ) : activeThinkingMode === "auto" ? (
+                <span className="thinking-auto-indicator" aria-hidden="true">
+                  A
+                </span>
+              ) : (
+                <span className={`thinking-effort-indicator ${activeThinkingMode}`} aria-hidden="true">
+                  <span />
+                  <span />
+                  <span />
+                </span>
+              )}
+            </button>
+            {isThinkingMenuOpen && (
+              <div className="composer-thinking-menu">
+                {thinkingOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    className={
+                      activeThinkingMode === option.value
+                        ? "composer-thinking-option active"
+                        : "composer-thinking-option"
+                    }
+                    onClick={() => {
+                      onThinkingModeChange?.(option.value);
+                      setIsThinkingMenuOpen(false);
+                    }}
+                  >
+                    <span>{option.label}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         <textarea
           ref={textareaRef}
           rows={3}
@@ -325,7 +411,11 @@ export function StartChatComposer({
         />
         {selectedModelInfo && (
           <div className="composer-model-capabilities">
-            <CompactModelCapabilityBadges model={selectedModelInfo} hideTools={canUseTools} />
+            <CompactModelCapabilityBadges
+              model={selectedModelInfo}
+              hideTools={canUseTools}
+              hideThinking={canControlThinking}
+            />
           </div>
         )}
         <div className="composer-actions">
@@ -341,4 +431,33 @@ export function StartChatComposer({
       </form>
     </>
   );
+}
+
+const thinkingModeOptions: Array<{ value: ThinkingMode; label: string }> = [
+  { value: "auto", label: "Auto" },
+  { value: "false", label: "Off" },
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" }
+];
+
+function thinkingModeOptionsForModel(model?: ModelInfo | null) {
+  if (!model || supportsThinkOff(model)) {
+    return thinkingModeOptions;
+  }
+
+  return thinkingModeOptions.filter((option) => option.value !== "false");
+}
+
+function normalizedThinkingModeForModel(mode: ThinkingMode, model?: ModelInfo | null) {
+  const options = thinkingModeOptionsForModel(model);
+  return options.some((option) => option.value === mode) ? mode : "auto";
+}
+
+function thinkingModeOptionLabel(mode: ThinkingMode) {
+  return thinkingModeOptions.find((option) => option.value === mode)?.label ?? "Auto";
+}
+
+function supportsThinkOff(model: ModelInfo) {
+  return !model.name.toLocaleLowerCase().includes("gpt-oss");
 }

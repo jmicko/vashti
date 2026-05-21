@@ -2,6 +2,8 @@ import {
   FormEvent,
   useCallback,
   useEffect,
+  useLayoutEffect,
+  useRef,
   useState
 } from "react";
 import {
@@ -10,14 +12,16 @@ import {
   Power,
   RefreshCw,
   Save,
+  Star,
   Trash2
 } from "lucide-react";
 import { requestJson } from "./api";
 import { RetroLoader } from "./common";
+import { ModelPicker } from "./ModelPicker";
 import { ModelCapabilityBadges } from "./modelCapabilities";
-import { modelValue } from "./modelSelection";
+import { compactModelName, modelValue } from "./modelSelection";
 import { DefaultPermissionTagControls, PermissionTagEditor } from "./permissionTags";
-import { SettingsSaveBanner, ToggleSwitch } from "./settingsControls";
+import { SettingsPanel, SettingsSaveBanner, ToggleSwitch } from "./settingsControls";
 import {
   adminModelGroupTagsEqual,
   collectChangedAdminModelTagPatches,
@@ -34,13 +38,68 @@ import type {
   UserModelsResponse
 } from "./types";
 
+type UserModelPreferencePatch = {
+  is_visible?: boolean;
+  is_favorite?: boolean;
+  is_default?: boolean;
+};
+
+type UserModelPreferenceAction = "visible" | "favorite" | "default";
+type PendingFavoriteRemovalTimers = {
+  timeout: number;
+  interval: number;
+};
+
+function preferenceActionForPatch(patch: UserModelPreferencePatch): UserModelPreferenceAction {
+  if (patch.is_favorite !== undefined) {
+    return "favorite";
+  }
+  if (patch.is_visible !== undefined) {
+    return "visible";
+  }
+  return "default";
+}
+
 export function UserModelsPanel({ onModelsChanged }: { onModelsChanged: () => Promise<void> }) {
   const [groups, setGroups] = useState<UserBackendModelGroup[]>([]);
   const [hasLoaded, setHasLoaded] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [busyModelKey, setBusyModelKey] = useState<string | null>(null);
-  const [status, setStatus] = useState<string | null>(null);
+  const [busyPreference, setBusyPreference] = useState<{
+    key: string;
+    action: UserModelPreferenceAction;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const primaryModelRowRefs = useRef(new Map<string, HTMLElement>());
+  const pendingFavoriteAnchorRef = useRef<{
+    value: string;
+    top: number;
+    scrollParent: HTMLElement | null;
+  } | null>(null);
+  const pendingFavoriteRemovalTimersRef = useRef(
+    new Map<string, PendingFavoriteRemovalTimers>()
+  );
+  const [pendingFavoriteRemovals, setPendingFavoriteRemovals] = useState<Record<string, number>>(
+    {}
+  );
+  const modelOptions = groups.flatMap((group) =>
+    group.models.map((model) => ({
+      backendId: group.backend.id,
+      backendName: group.backend.name,
+      model,
+      value: modelValue(group.backend.id, model.name)
+    }))
+  );
+  const visibleModelOptions = modelOptions.filter((option) => option.model.is_visible);
+  const favoriteModelOptions = modelOptions.filter((option) => option.model.is_favorite);
+  const defaultModelOption =
+    modelOptions.find((option) => option.model.is_default) ?? null;
+  const defaultModelValue = defaultModelOption?.value ?? "";
+  const visibleModelGroups = groups
+    .map((group) => ({
+      backend: group.backend,
+      models: group.models.filter((model) => model.is_visible)
+    }))
+    .filter((group) => group.models.length > 0);
 
   const applyUserModelsResponse = useCallback((response: UserModelsResponse) => {
     setGroups(response.backends);
@@ -85,49 +144,294 @@ export function UserModelsPanel({ onModelsChanged }: { onModelsChanged: () => Pr
     })();
   }, [loadUserModels, refreshUserModels]);
 
-  async function toggleUserModel(backendId: string, modelName: string, isVisible: boolean) {
+  useLayoutEffect(() => {
+    const pendingAnchor = pendingFavoriteAnchorRef.current;
+    if (!pendingAnchor) {
+      return;
+    }
+
+    const element = primaryModelRowRefs.current.get(pendingAnchor.value);
+    pendingFavoriteAnchorRef.current = null;
+    if (!element) {
+      return;
+    }
+
+    const delta = element.getBoundingClientRect().top - pendingAnchor.top;
+    if (Math.abs(delta) < 0.5) {
+      return;
+    }
+
+    if (pendingAnchor.scrollParent) {
+      pendingAnchor.scrollParent.scrollTop += delta;
+    } else {
+      window.scrollBy(0, delta);
+    }
+  }, [groups]);
+
+  useEffect(
+    () => () => {
+      for (const timers of pendingFavoriteRemovalTimersRef.current.values()) {
+        window.clearTimeout(timers.timeout);
+        window.clearInterval(timers.interval);
+      }
+      pendingFavoriteRemovalTimersRef.current.clear();
+    },
+    []
+  );
+
+  async function updateUserModelPreference(
+    backendId: string,
+    modelName: string,
+    patch: UserModelPreferencePatch
+  ) {
     const key = modelValue(backendId, modelName);
-    setBusyModelKey(key);
+    const action = preferenceActionForPatch(patch);
+    setBusyPreference({ key, action });
     setError(null);
-    setStatus(null);
 
     try {
-      await requestJson("/api/user-models", {
+      const response = await requestJson<{
+        backend_id: string;
+        model_name: string;
+        is_visible: boolean;
+        is_favorite: boolean;
+        is_default: boolean;
+      }>("/api/user-models", {
         method: "PATCH",
         body: JSON.stringify({
           backend_id: backendId,
           model_name: modelName,
-          is_visible: isVisible
+          ...patch
         })
       });
       setGroups((current) =>
         current.map((group) =>
-          group.backend.id === backendId
+          group.backend.id === response.backend_id
             ? {
                 ...group,
                 models: group.models.map((model) =>
-                  model.name === modelName ? { ...model, is_visible: isVisible } : model
+                  model.name === response.model_name
+                    ? {
+                        ...model,
+                        is_visible: response.is_visible,
+                        is_favorite: response.is_favorite,
+                        is_default: response.is_default
+                      }
+                    : {
+                        ...model,
+                        is_default: response.is_default ? false : model.is_default
+                      }
                 )
               }
-            : group
+            : {
+                ...group,
+                models: group.models.map((model) => ({
+                  ...model,
+                  is_default: response.is_default ? false : model.is_default
+                }))
+              }
         )
       );
-      setStatus(isVisible ? "Model shown in picker." : "Model hidden from picker.");
       await onModelsChanged();
     } catch (updateError) {
       setError(updateError instanceof Error ? updateError.message : "Failed to update model");
     } finally {
-      setBusyModelKey(null);
+      setBusyPreference((current) =>
+        current?.key === key && current.action === action ? null : current
+      );
     }
   }
 
-  return (
-    <div className="settings-section">
-      <div className="section-header">
-        <div>
-          <p className="eyebrow">Personal</p>
-          <h1>Models</h1>
+  async function selectDefaultModel(nextValue: string) {
+    if (nextValue === defaultModelValue) {
+      return;
+    }
+
+    if (!nextValue) {
+      if (defaultModelOption) {
+        await updateUserModelPreference(
+          defaultModelOption.backendId,
+          defaultModelOption.model.name,
+          { is_default: false }
+        );
+      }
+      return;
+    }
+
+    const selected = modelOptions.find((option) => option.value === nextValue);
+    if (!selected) {
+      return;
+    }
+
+    await updateUserModelPreference(selected.backendId, selected.model.name, {
+      is_default: true
+    });
+  }
+
+  function anchorPrimaryModelRow(value: string) {
+    const element = primaryModelRowRefs.current.get(value);
+    if (!element) {
+      pendingFavoriteAnchorRef.current = null;
+      return;
+    }
+
+    pendingFavoriteAnchorRef.current = {
+      value,
+      top: element.getBoundingClientRect().top,
+      scrollParent: element.closest<HTMLElement>(".settings-content")
+    };
+  }
+
+  function clearPendingFavoriteRemoval(value: string) {
+    const timers = pendingFavoriteRemovalTimersRef.current.get(value);
+    if (timers) {
+      window.clearTimeout(timers.timeout);
+      window.clearInterval(timers.interval);
+      pendingFavoriteRemovalTimersRef.current.delete(value);
+    }
+    setPendingFavoriteRemovals((current) => {
+      const next = { ...current };
+      delete next[value];
+      return next;
+    });
+  }
+
+  function scheduleFavoriteRemoval(option: (typeof modelOptions)[number]) {
+    clearPendingFavoriteRemoval(option.value);
+    setPendingFavoriteRemovals((current) => ({ ...current, [option.value]: 5 }));
+
+    const interval = window.setInterval(() => {
+      setPendingFavoriteRemovals((current) => {
+        if (current[option.value] === undefined) {
+          return current;
+        }
+        return {
+          ...current,
+          [option.value]: Math.max(1, current[option.value] - 1)
+        };
+      });
+    }, 1000);
+
+    const timeout = window.setTimeout(() => {
+      window.clearInterval(interval);
+      pendingFavoriteRemovalTimersRef.current.delete(option.value);
+      setPendingFavoriteRemovals((current) => {
+        const next = { ...current };
+        delete next[option.value];
+        return next;
+      });
+      void updateUserModelPreference(option.backendId, option.model.name, {
+        is_favorite: false
+      });
+    }, 5000);
+
+    pendingFavoriteRemovalTimersRef.current.set(option.value, { timeout, interval });
+  }
+
+  function renderModelRow(
+    option: (typeof modelOptions)[number],
+    {
+      keyPrefix = "model",
+      showBackend = false
+    }: {
+      keyPrefix?: string;
+      showBackend?: boolean;
+    } = {}
+  ) {
+    const key = `${keyPrefix}:${option.value}`;
+    const isFavoriteBusy =
+      busyPreference?.key === option.value && busyPreference.action === "favorite";
+    const isVisibilityBusy =
+      busyPreference?.key === option.value && busyPreference.action === "visible";
+    const pendingFavoriteRemovalSeconds = pendingFavoriteRemovals[option.value];
+    const isFavoriteRemovalPending = pendingFavoriteRemovalSeconds !== undefined;
+    const { model } = option;
+
+    return (
+      <article
+        key={key}
+        className={
+          isFavoriteRemovalPending
+            ? "model-access-row model-access-row-pending"
+            : "model-access-row"
+        }
+        ref={
+          keyPrefix === "model"
+            ? (node) => {
+                if (node) {
+                  primaryModelRowRefs.current.set(option.value, node);
+                } else {
+                  primaryModelRowRefs.current.delete(option.value);
+                }
+              }
+            : undefined
+        }
+      >
+        {isFavoriteRemovalPending ? (
+          <button
+            type="button"
+            className="secondary-button model-undo-button model-undo-remove-button"
+            onClick={() => clearPendingFavoriteRemoval(option.value)}
+          >
+            <span>Undo Remove</span>
+            <span className="model-undo-count">{pendingFavoriteRemovalSeconds}</span>
+          </button>
+        ) : (
+          <button
+            type="button"
+            className={
+              model.is_favorite
+                ? "model-pref-button model-favorite-button model-pref-button-active"
+                : "model-pref-button model-favorite-button"
+            }
+            title={model.is_favorite ? "Remove from favorites" : "Add to favorites"}
+            disabled={isFavoriteBusy}
+            onClick={() => {
+              if (keyPrefix === "favorite" && model.is_favorite) {
+                scheduleFavoriteRemoval(option);
+                return;
+              }
+              if (keyPrefix === "model") {
+                anchorPrimaryModelRow(option.value);
+              }
+              void updateUserModelPreference(option.backendId, model.name, {
+                is_favorite: !model.is_favorite
+              });
+            }}
+          >
+            <Star />
+          </button>
+        )}
+        <span className="model-access-main">
+          <span className="model-name" title={model.name}>
+            {compactModelName(model.name)}
+          </span>
+          {showBackend && <span className="model-subtitle">{option.backendName}</span>}
+          <ModelCapabilityBadges model={model} />
+        </span>
+        <div className="model-row-actions">
+          <ToggleSwitch
+            label={model.is_visible ? "Shown" : "Hidden"}
+            checked={model.is_visible}
+            disabled={isVisibilityBusy}
+            compact
+            onChange={(checked) =>
+              void updateUserModelPreference(option.backendId, model.name, {
+                is_visible: checked
+              })
+            }
+          />
         </div>
+      </article>
+    );
+  }
+
+  return (
+    <SettingsPanel
+      eyebrow="Personal"
+      title="Models"
+      width="wide"
+      actions={
         <button
           type="button"
           className="secondary-button refresh-button"
@@ -143,10 +447,10 @@ export function UserModelsPanel({ onModelsChanged }: { onModelsChanged: () => Pr
             </>
           )}
         </button>
-      </div>
+      }
+    >
 
       {error && <p className="error">{error}</p>}
-      {status && <p className="status-message">{status}</p>}
       {!hasLoaded && <p className="status-message">Loading models...</p>}
       {hasLoaded && groups.length === 0 && isRefreshing && (
         <p className="status-message">Checking Ollama for models...</p>
@@ -160,7 +464,42 @@ export function UserModelsPanel({ onModelsChanged }: { onModelsChanged: () => Pr
         still decide which models your account can access.
       </p>
 
+      <section className="settings-subsection default-model-panel">
+        <div>
+          <h2>Default Model</h2>
+          <p className="status-message">
+            Used after refresh, or when starting a chat from the home screen.
+          </p>
+        </div>
+        <div className="default-model-picker">
+          <ModelPicker
+            groups={visibleModelGroups}
+            personas={[]}
+            privatePersonas={[]}
+            isLoading={!hasLoaded}
+            error={visibleModelOptions.length === 0 ? "No visible models" : null}
+            value={defaultModelValue}
+            onChange={(nextValue) => void selectDefaultModel(nextValue)}
+          />
+        </div>
+      </section>
+
       <div className="model-access-list">
+        {favoriteModelOptions.length > 0 && (
+          <section className="model-access-group model-access-favorites">
+            <div className="model-access-header">
+              <div>
+                <h2>Favorites</h2>
+                <p>{favoriteModelOptions.length} favorite models</p>
+              </div>
+            </div>
+            <div className="model-access-models">
+              {favoriteModelOptions.map((option) =>
+                renderModelRow(option, { keyPrefix: "favorite", showBackend: true })
+              )}
+            </div>
+          </section>
+        )}
         {groups.map((group) => {
           const visibleCount = group.models.filter((model) => model.is_visible).length;
 
@@ -179,35 +518,21 @@ export function UserModelsPanel({ onModelsChanged }: { onModelsChanged: () => Pr
                 <p className="status-message">No available models on this backend.</p>
               ) : (
                 <div className="model-access-models">
-                  {group.models.map((model) => {
-                    const key = modelValue(group.backend.id, model.name);
-                    const isBusy = busyModelKey === key;
-
-                    return (
-                      <article key={key} className="model-access-row">
-                        <span className="model-access-main">
-                          <span className="model-name">{model.name}</span>
-                          <ModelCapabilityBadges model={model} />
-                        </span>
-                        <ToggleSwitch
-                          label={model.is_visible ? "Shown" : "Hidden"}
-                          checked={model.is_visible}
-                          disabled={isBusy}
-                          compact
-                          onChange={(checked) =>
-                            void toggleUserModel(group.backend.id, model.name, checked)
-                          }
-                        />
-                      </article>
-                    );
-                  })}
+                  {group.models.map((model) =>
+                    renderModelRow({
+                      backendId: group.backend.id,
+                      backendName: group.backend.name,
+                      model,
+                      value: modelValue(group.backend.id, model.name)
+                    })
+                  )}
                 </div>
               )}
             </section>
           );
         })}
       </div>
-    </div>
+    </SettingsPanel>
   );
 }
 
@@ -251,7 +576,6 @@ export function AdminModelsAccessPanel({
   const [isSavingModelTags, setIsSavingModelTags] = useState(false);
   const [defaultTagApplyMode, setDefaultTagApplyMode] = useState<"new" | "all">("new");
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
-  const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const applyAdminModelsResponse = useCallback((response: AdminModelsResponse) => {
@@ -335,7 +659,6 @@ export function AdminModelsAccessPanel({
     const key = modelValue(backendId, modelName);
     setBusyModelKey(key);
     setError(null);
-    setStatus(null);
 
     try {
       await requestJson("/api/admin/models", {
@@ -358,7 +681,6 @@ export function AdminModelsAccessPanel({
             : group
         )
       );
-      setStatus(isEnabled ? "Model enabled." : "Model disabled.");
       await onModelsChanged();
     } catch (updateError) {
       setError(updateError instanceof Error ? updateError.message : "Failed to update model");
@@ -370,7 +692,6 @@ export function AdminModelsAccessPanel({
   async function toggleBackend(group: AdminBackendModelGroup, isEnabled: boolean) {
     setBusyModelsBackendId(group.backend.id);
     setError(null);
-    setStatus(null);
 
     try {
       await requestJson("/api/admin/models/backend", {
@@ -394,7 +715,6 @@ export function AdminModelsAccessPanel({
             : currentGroup
         )
       );
-      setStatus(isEnabled ? "Backend models enabled." : "Backend models disabled.");
       await onModelsChanged();
     } catch (updateError) {
       setError(updateError instanceof Error ? updateError.message : "Failed to update models");
@@ -405,7 +725,6 @@ export function AdminModelsAccessPanel({
 
   function updateModelTags(backendId: string, modelName: string, tags: PermissionTag[]) {
     setError(null);
-    setStatus(null);
     setSaveStatus(null);
     setGroups((current) =>
       updateAdminModelTagsInGroups(current, backendId, modelName, { permission_tags: tags })
@@ -418,7 +737,6 @@ export function AdminModelsAccessPanel({
     tags: PermissionTag[]
   ) {
     setError(null);
-    setStatus(null);
     setSaveStatus(null);
     setGroups((current) =>
       updateAdminModelTagsInGroups(current, backendId, modelName, {
@@ -430,7 +748,6 @@ export function AdminModelsAccessPanel({
   async function saveModelTagChanges() {
     setIsSavingModelTags(true);
     setError(null);
-    setStatus(null);
     setSaveStatus(null);
 
     try {
@@ -484,13 +801,11 @@ export function AdminModelsAccessPanel({
     setDefaultTagApplyMode("new");
     setSaveStatus(null);
     setError(null);
-    setStatus(null);
   }
 
   return (
     <>
       {error && <p className="error">{error}</p>}
-      {status && <p className="status-message">{status}</p>}
       {!hasLoaded && <p className="status-message">Loading models...</p>}
 
       <SettingsSaveBanner
@@ -536,7 +851,6 @@ export function AdminModelsAccessPanel({
             disabled={isSavingModelTags}
             onChange={(tags) => {
               setDefaultTags(tags);
-              setStatus(null);
               setSaveStatus(null);
             }}
           />
@@ -546,7 +860,6 @@ export function AdminModelsAccessPanel({
               className={defaultTagApplyMode === "new" ? "segmented-option-active" : ""}
               onClick={() => {
                 setDefaultTagApplyMode("new");
-                setStatus(null);
                 setSaveStatus(null);
               }}
             >
@@ -557,7 +870,6 @@ export function AdminModelsAccessPanel({
               className={defaultTagApplyMode === "all" ? "segmented-option-active" : ""}
               onClick={() => {
                 setDefaultTagApplyMode("all");
-                setStatus(null);
                 setSaveStatus(null);
               }}
             >
@@ -699,7 +1011,9 @@ export function AdminModelsAccessPanel({
                         return (
                           <article key={key} className="model-access-row">
                             <span className="model-access-main">
-                              <span className="model-name">{model.name}</span>
+                              <span className="model-name" title={model.name}>
+                                {compactModelName(model.name)}
+                              </span>
                               <ModelCapabilityBadges model={model} />
                               <DefaultPermissionTagControls
                                 defaultTags={savedDefaultTags}

@@ -3,7 +3,7 @@ import { requestJson } from "./api";
 import { AppShell } from "./AppShell";
 import { AuthScreen } from "./auth";
 import { BrandMark } from "./common";
-import type { LoadState, SessionResponse } from "./types";
+import type { LoadState, SessionResponse, User } from "./types";
 
 export default function App() {
   const [state, setState] = useState<LoadState>({ status: "loading" });
@@ -24,6 +24,20 @@ export default function App() {
   useEffect(() => {
     void loadSession();
   }, [loadSession]);
+
+  function updateSessionUser(user: User) {
+    setState((current) =>
+      current.status === "loaded" && current.session.user
+        ? {
+            status: "loaded",
+            session: {
+              ...current.session,
+              user
+            }
+          }
+        : current
+    );
+  }
 
   if (state.status === "loading") {
     return (
@@ -60,5 +74,11 @@ export default function App() {
     );
   }
 
-  return <AppShell user={state.session.user} onSessionChanged={loadSession} />;
+  return (
+    <AppShell
+      user={state.session.user}
+      onSessionChanged={loadSession}
+      onUserChanged={updateSessionUser}
+    />
+  );
 }
