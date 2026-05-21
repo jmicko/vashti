@@ -794,7 +794,7 @@ fn normalize_theme_update(
             }
 
             match value {
-                "vashti" | "light" => Ok(Some(value.to_string())),
+                "system" | "vashti" | "light" => Ok(Some(value.to_string())),
                 _ => Err(ApiError::bad_request(
                     "invalid_theme",
                     "Theme is not available",

@@ -2433,10 +2433,13 @@ textarea {
 }
 
 .theme-swatch {
+  position: relative;
+  overflow: hidden;
   width: 34px;
   height: 34px;
   border: 1px solid var(--line);
   border-radius: 999px;
+  background-clip: padding-box;
   flex: 0 0 auto;
 }
 
@@ -2447,6 +2450,50 @@ textarea {
       var(--theme-swatch-vashti-bg) 0 48%,
       var(--theme-swatch-vashti-accent) 48% 58%,
       var(--theme-swatch-vashti-panel) 58% 100%
+    );
+}
+
+.theme-swatch-system {
+  background: rgba(var(--surface-rgb), 0.92);
+}
+
+.theme-swatch-system::before,
+.theme-swatch-system::after {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  content: "";
+}
+
+.theme-swatch-system::before {
+  background:
+    linear-gradient(
+      45deg,
+      var(--theme-swatch-light-bg) 0 50%,
+      var(--theme-swatch-vashti-bg) 50% 100%
+    );
+}
+
+.theme-swatch-system::after {
+  background:
+    linear-gradient(
+      45deg,
+      var(--theme-swatch-light-accent) 0 50%,
+      var(--theme-swatch-vashti-accent) 50% 100%
+    );
+  -webkit-mask-image:
+    linear-gradient(
+      135deg,
+      transparent 0 45%,
+      black 45% 55%,
+      transparent 55% 100%
+    );
+  mask-image:
+    linear-gradient(
+      135deg,
+      transparent 0 45%,
+      black 45% 55%,
+      transparent 55% 100%
     );
 }
 
