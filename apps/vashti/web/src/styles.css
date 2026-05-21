@@ -2788,8 +2788,10 @@ textarea {
   border-radius: 8px;
   background: rgba(var(--panel-rgb), 0.86);
   display: grid;
-  gap: 16px;
-  padding: 16px;
+  grid-template-columns: minmax(16rem, 0.8fr) minmax(16rem, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 16px;
 }
 
 .user-row-self {
@@ -2801,8 +2803,9 @@ textarea {
 .user-main {
   min-width: 0;
   display: flex;
+  align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: 12px;
 }
 
 .user-main p {
@@ -2816,6 +2819,11 @@ textarea {
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.user-actions {
+  justify-self: end;
+  justify-content: flex-end;
 }
 
 .badge {
@@ -3765,6 +3773,7 @@ textarea {
   }
 
   .section-header,
+  .user-row,
   .user-main,
   .persona-main,
   .backend-main,
@@ -3778,6 +3787,16 @@ textarea {
 
   .model-access-row {
     grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .user-row {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 16px;
+  }
+
+  .user-actions {
+    justify-self: start;
+    justify-content: flex-start;
   }
 
   .default-model-panel {

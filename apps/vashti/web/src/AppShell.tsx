@@ -101,6 +101,7 @@ export function AppShell({
   const [route, setRoute] = useState<AppRoute>(() => routeFromLocation());
   const routeRef = useRef(route);
   const appSettingsGuardRef = useRef<AppSettingsGuard | null>(null);
+  const settingsMenuRef = useRef<HTMLDivElement>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isSettingsMenuOpen, setIsSettingsMenuOpen] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
@@ -146,6 +147,34 @@ export function AppShell({
   useEffect(() => {
     routeRef.current = route;
   }, [route]);
+
+  useEffect(() => {
+    if (!isSettingsMenuOpen) {
+      return;
+    }
+
+    function closeSettingsMenuOnOutsidePointer(event: PointerEvent) {
+      const target = event.target;
+      if (target instanceof Node && settingsMenuRef.current?.contains(target)) {
+        return;
+      }
+
+      setIsSettingsMenuOpen(false);
+    }
+
+    function closeSettingsMenuOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsSettingsMenuOpen(false);
+      }
+    }
+
+    window.addEventListener("pointerdown", closeSettingsMenuOnOutsidePointer);
+    window.addEventListener("keydown", closeSettingsMenuOnEscape);
+    return () => {
+      window.removeEventListener("pointerdown", closeSettingsMenuOnOutsidePointer);
+      window.removeEventListener("keydown", closeSettingsMenuOnEscape);
+    };
+  }, [isSettingsMenuOpen]);
 
   function setImageViewer(viewer: ImageViewerState | null) {
     imageViewerRef.current = viewer;
@@ -789,7 +818,7 @@ export function AppShell({
                 <span>New Chat</span>
               </button>
             )}
-            <div className="settings-menu-wrap">
+            <div className="settings-menu-wrap" ref={settingsMenuRef}>
               <button
                 type="button"
                 className="icon-button"
