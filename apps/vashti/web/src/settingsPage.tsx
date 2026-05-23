@@ -1,6 +1,5 @@
 import { Fragment, ReactNode } from "react";
 import {
-  Bot,
   Server,
   SlidersHorizontal,
   Sparkles,
@@ -11,7 +10,6 @@ import {
 import { AppSettingsPanel } from "./settingsApp";
 import { BackendsPanel } from "./settingsBackends";
 import { UserModelsPanel } from "./settingsModels";
-import { PersonasPanel } from "./settingsPersonas";
 import { ProfileSettings } from "./settingsProfile";
 import { ToolsSettingsPanel } from "./settingsTools";
 import { AdminUsersPanel } from "./settingsUsers";
@@ -48,7 +46,6 @@ export function SettingsPage({
     group: "personal" | "admin";
   }> = [
     { id: "profile", label: "Profile", icon: <UserRound />, group: "personal" },
-    { id: "personas", label: "Personas", icon: <Bot />, group: "personal" },
     { id: "models", label: "Models", icon: <Sparkles />, group: "personal" },
     { id: "users", label: "Users", icon: <Users />, adminOnly: true, group: "admin" },
     { id: "backends", label: "Backends", icon: <Server />, adminOnly: true, group: "admin" },
@@ -86,17 +83,17 @@ export function SettingsPage({
         {selectedSection === "profile" && (
           <ProfileSettings user={currentUser} onUserChanged={onUserChanged} />
         )}
-        {selectedSection === "personas" && (
-          <PersonasPanel
-            onPersonasChanged={onPersonasChanged}
-            onPrivatePersonasChanged={onPrivatePersonasChanged}
-          />
-        )}
         {selectedSection === "users" && isAdmin && <AdminUsersPanel currentUserId={currentUser.id} />}
         {selectedSection === "backends" && isAdmin && (
           <BackendsPanel onBackendsChanged={onBackendsChanged} />
         )}
-        {selectedSection === "models" && <UserModelsPanel onModelsChanged={onBackendsChanged} />}
+        {selectedSection === "models" && (
+          <UserModelsPanel
+            onModelsChanged={onBackendsChanged}
+            onPersonasChanged={onPersonasChanged}
+            onPrivatePersonasChanged={onPrivatePersonasChanged}
+          />
+        )}
         {selectedSection === "tools" && isAdmin && (
           <ToolsSettingsPanel onToolsChanged={onToolsChanged} />
         )}

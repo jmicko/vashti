@@ -465,7 +465,6 @@ export type FormState = {
 export type Page = "chat" | "private-chat" | "settings";
 export type SettingsSection =
   | "profile"
-  | "personas"
   | "users"
   | "models"
   | "tools"

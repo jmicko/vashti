@@ -3582,6 +3582,12 @@ textarea {
     rgba(var(--panel-rgb), 0.86);
 }
 
+.custom-models-section {
+  background:
+    linear-gradient(180deg, rgba(var(--accent-rgb), 0.045), rgba(var(--panel-rgb), 0.86)),
+    rgba(var(--panel-rgb), 0.86);
+}
+
 .persona-form {
   max-width: 680px;
   border-bottom: 1px solid var(--line-soft);

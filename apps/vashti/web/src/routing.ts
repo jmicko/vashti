@@ -2,7 +2,6 @@ import type { AppRoute, NewChatMode, SettingsSection } from "./types";
 
 const settingsSections: SettingsSection[] = [
   "profile",
-  "personas",
   "users",
   "backends",
   "models",
@@ -39,6 +38,9 @@ export function routeFromLocation(): AppRoute {
 
   if (path.startsWith("/app/settings")) {
     const section = path.split("/")[3];
+    if (section === "personas") {
+      return { page: "settings", section: "models" };
+    }
     return { page: "settings", section: isSettingsSection(section) ? section : "profile" };
   }
 

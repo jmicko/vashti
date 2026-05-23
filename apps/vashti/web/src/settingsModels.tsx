@@ -21,6 +21,7 @@ import { ModelPicker } from "./ModelPicker";
 import { ModelCapabilityBadges } from "./modelCapabilities";
 import { compactModelName, modelValue } from "./modelSelection";
 import { DefaultPermissionTagControls, PermissionTagEditor } from "./permissionTags";
+import { CustomModelsSection } from "./settingsPersonas";
 import { SettingsPanel, SettingsSaveBanner, ToggleSwitch } from "./settingsControls";
 import {
   adminModelGroupTagsEqual,
@@ -60,7 +61,15 @@ function preferenceActionForPatch(patch: UserModelPreferencePatch): UserModelPre
   return "default";
 }
 
-export function UserModelsPanel({ onModelsChanged }: { onModelsChanged: () => Promise<void> }) {
+export function UserModelsPanel({
+  onModelsChanged,
+  onPersonasChanged,
+  onPrivatePersonasChanged
+}: {
+  onModelsChanged: () => Promise<void>;
+  onPersonasChanged: () => Promise<void>;
+  onPrivatePersonasChanged: () => Promise<void>;
+}) {
   const [groups, setGroups] = useState<UserBackendModelGroup[]>([]);
   const [hasLoaded, setHasLoaded] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -500,6 +509,10 @@ export function UserModelsPanel({ onModelsChanged }: { onModelsChanged: () => Pr
             </div>
           </section>
         )}
+        <CustomModelsSection
+          onPersonasChanged={onPersonasChanged}
+          onPrivatePersonasChanged={onPrivatePersonasChanged}
+        />
         {groups.map((group) => {
           const visibleCount = group.models.filter((model) => model.is_visible).length;
 

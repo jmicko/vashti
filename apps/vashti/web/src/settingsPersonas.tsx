@@ -24,7 +24,6 @@ import {
   updatePrivatePersona,
   type PrivatePersona
 } from "./privateChatStore";
-import { SettingsPanel } from "./settingsControls";
 import { backendNameFor, firstModelValue } from "./settingsModelHelpers";
 import type {
   BackendModelGroup,
@@ -34,7 +33,7 @@ import type {
   PersonasResponse
 } from "./types";
 
-export function PersonasPanel({
+export function CustomModelsSection({
   onPersonasChanged,
   onPrivatePersonasChanged
 }: {
@@ -76,7 +75,7 @@ export function PersonasPanel({
       setHasLoaded(true);
       setSelectedBaseModel((current) => current || firstModelValue(modelsResponse.backends));
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Failed to load personas");
+      setError(loadError instanceof Error ? loadError.message : "Failed to load custom models");
       setHasLoaded(true);
     } finally {
       setIsRefreshing(false);
@@ -161,10 +160,10 @@ export function PersonasPanel({
         };
         if (editingPrivatePersona) {
           await updatePrivatePersona(editingPrivatePersona.id, body);
-          setStatus("Private persona updated on this device.");
+          setStatus("Device custom model updated.");
         } else {
           await createPrivatePersona(body);
-          setStatus("Private persona created on this device.");
+          setStatus("Device custom model created.");
         }
         resetDraft();
         await loadPersonas();
@@ -186,19 +185,19 @@ export function PersonasPanel({
           method: "PATCH",
           body: JSON.stringify(body)
         });
-        setStatus("Persona updated.");
+        setStatus("Custom model updated.");
       } else {
         await requestJson<PersonaMutationResponse>("/api/personas", {
           method: "POST",
           body: JSON.stringify(body)
         });
-        setStatus("Persona created.");
+        setStatus("Custom model created.");
       }
       resetDraft();
       await loadPersonas();
       await onPersonasChanged();
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Failed to save persona");
+      setError(saveError instanceof Error ? saveError.message : "Failed to save custom model");
     } finally {
       setIsSaving(false);
     }
@@ -217,7 +216,7 @@ export function PersonasPanel({
           visibility: "private"
         })
       });
-      setStatus("Persona copied to your private server personas.");
+      setStatus("Custom model copied to your private server models.");
       await loadPersonas();
       await onPersonasChanged();
     } catch (copyError) {
@@ -243,7 +242,7 @@ export function PersonasPanel({
         sourcePersonaId: persona.id,
         sourcePersonaVersionId: version.id
       });
-      setStatus("Persona copied to this device for private chats.");
+      setStatus("Custom model copied to this device for private chats.");
       await loadPersonas();
       await onPrivatePersonasChanged();
     } catch (copyError) {
@@ -261,14 +260,14 @@ export function PersonasPanel({
     try {
       await requestJson(`/api/personas/${persona.id}/disown`, { method: "POST" });
       setDeleteTarget(null);
-      setStatus(persona.visibility === "public" ? "Persona removed." : "Persona deleted.");
+      setStatus(persona.visibility === "public" ? "Custom model removed." : "Custom model deleted.");
       if (editingPersona?.id === persona.id) {
         resetDraft();
       }
       await loadPersonas();
       await onPersonasChanged();
     } catch (deleteError) {
-      setError(deleteError instanceof Error ? deleteError.message : "Failed to remove persona");
+      setError(deleteError instanceof Error ? deleteError.message : "Failed to remove custom model");
       setDeleteTarget(null);
     } finally {
       setBusyPersonaId(null);
@@ -283,7 +282,7 @@ export function PersonasPanel({
     try {
       await deletePrivatePersona(persona.id);
       setDeletePrivateTarget(null);
-      setStatus("Private persona deleted from this device.");
+      setStatus("Device custom model deleted.");
       if (editingPrivatePersona?.id === persona.id) {
         resetDraft();
       }
@@ -291,7 +290,7 @@ export function PersonasPanel({
       await onPrivatePersonasChanged();
     } catch (deleteError) {
       setError(
-        deleteError instanceof Error ? deleteError.message : "Failed to delete private persona"
+        deleteError instanceof Error ? deleteError.message : "Failed to delete device custom model"
       );
       setDeletePrivateTarget(null);
     } finally {
@@ -306,14 +305,22 @@ export function PersonasPanel({
     !(editingPrivatePersona && storageMode !== "local");
 
   const editorTitle =
-    editingPersona || editingPrivatePersona ? "Edit Persona" : "Create Persona";
+    editingPersona || editingPrivatePersona ? "Edit Custom Model" : "Create Custom Model";
 
   return (
-    <SettingsPanel
-      eyebrow="Custom Models"
-      title={isEditorOpen ? editorTitle : "Personas"}
-      actions={
-        <div className="header-actions">
+    <section className="model-access-group custom-models-section">
+      <div className="model-access-header">
+        <div>
+          <h2>Custom Models</h2>
+          <p>
+            {isEditorOpen
+              ? editorTitle
+              : `${privatePersonas.length + personas.length} custom model${
+                  privatePersonas.length + personas.length === 1 ? "" : "s"
+                }`}
+          </p>
+        </div>
+        <div className="model-access-actions">
           {isEditorOpen ? (
             <button
               type="button"
@@ -337,19 +344,19 @@ export function PersonasPanel({
               </button>
               <button type="button" onClick={startCreatingPersona}>
                 <Plus />
-                <span>Create</span>
+                <span>New</span>
               </button>
             </>
           )}
         </div>
-      }
-    >
+      </div>
 
       {error && <p className="error">{error}</p>}
       {status && <p className="status-message">{status}</p>}
 
       {isEditorOpen ? (
         <form className="settings-form persona-form persona-editor-form" onSubmit={savePersona}>
+          <h3>{editorTitle}</h3>
           <label>
             <span>Name</span>
             <input
@@ -396,7 +403,7 @@ export function PersonasPanel({
               rows={10}
               value={systemPrompt}
               onChange={(event) => setSystemPrompt(event.target.value)}
-              placeholder="Describe how this persona should behave."
+              placeholder="Describe how this custom model should behave."
             />
           </label>
           <div className="persona-form-actions">
@@ -415,21 +422,21 @@ export function PersonasPanel({
                 {isSaving
                   ? "Saving..."
                   : editingPersona || editingPrivatePersona
-                    ? "Save Persona"
-                    : "Create Persona"}
+                    ? "Save Custom Model"
+                    : "Create Custom Model"}
               </span>
             </button>
           </div>
           <p className="status-message">
-            Device personas can be used in private chats without storing their name or prompt on the
-            server. Server personas are available from signed-in standard chats.
+            Device custom models can be used in private chats without storing their name or prompt
+            on the server. Server custom models are available from signed-in standard chats.
           </p>
         </form>
       ) : (
         <>
-          {!hasLoaded && <p className="status-message">Loading personas...</p>}
+          {!hasLoaded && <p className="status-message">Loading custom models...</p>}
           {hasLoaded && personas.length === 0 && privatePersonas.length === 0 && (
-            <p className="status-message">No personas created yet.</p>
+            <p className="status-message">No custom models created yet.</p>
           )}
 
           <div className="persona-list">
@@ -461,11 +468,13 @@ export function PersonasPanel({
 
       {deleteTarget && (
         <ConfirmDialog
-          title={deleteTarget.visibility === "public" ? "Remove Persona" : "Delete Persona"}
+          title={
+            deleteTarget.visibility === "public" ? "Remove Custom Model" : "Delete Custom Model"
+          }
           message={
             deleteTarget.visibility === "public"
-              ? `Remove "${deleteTarget.current_version.display_name}" from your available personas? If other users have used it, their existing chats keep working.`
-              : `Delete "${deleteTarget.current_version.display_name}"? Existing chats keep their stored message labels, but this persona will disappear from your picker.`
+              ? `Remove "${deleteTarget.current_version.display_name}" from your available custom models? If other users have used it, their existing chats keep working.`
+              : `Delete "${deleteTarget.current_version.display_name}"? Existing chats keep their stored message labels, but this custom model will disappear from your picker.`
           }
           confirmLabel={deleteTarget.visibility === "public" ? "Remove" : "Delete"}
           isBusy={busyPersonaId === deleteTarget.id}
@@ -475,15 +484,15 @@ export function PersonasPanel({
       )}
       {deletePrivateTarget && (
         <ConfirmDialog
-          title="Delete Private Persona"
-          message={`Delete "${deletePrivateTarget.current_version.display_name}" from this device? Server chats and hosted personas are not affected.`}
+          title="Delete Device Custom Model"
+          message={`Delete "${deletePrivateTarget.current_version.display_name}" from this device? Server chats and hosted custom models are not affected.`}
           confirmLabel="Delete"
           isBusy={busyPersonaId === deletePrivateTarget.id}
           onCancel={() => setDeletePrivateTarget(null)}
           onConfirm={() => void deletePrivatePersonaTarget(deletePrivateTarget)}
         />
       )}
-    </SettingsPanel>
+    </section>
   );
 }
 
