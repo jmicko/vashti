@@ -563,6 +563,8 @@ textarea {
 }
 
 .topbar {
+  position: relative;
+  z-index: 50;
   min-height: 64px;
   border-bottom: 1px solid var(--line);
   background: var(--panel-strong);
@@ -634,6 +636,104 @@ textarea {
     0 0 24px rgba(var(--accent-rgb), 0.12),
     0 18px 50px rgba(var(--shadow-rgb), 0.6);
   padding: 10px;
+}
+
+.model-settings-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.model-settings-button {
+  position: relative;
+}
+
+.model-settings-button-dirty::after {
+  content: "";
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 7px;
+  height: 7px;
+  border: 1px solid var(--panel-strong);
+  border-radius: 999px;
+  background: var(--warning);
+}
+
+.model-settings-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: -290px;
+  z-index: 31;
+  width: min(430px, 88vw);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow:
+    0 0 24px rgba(var(--accent-rgb), 0.12),
+    0 18px 50px rgba(var(--shadow-rgb), 0.6);
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.model-settings-menu-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.model-settings-menu-header h2 {
+  font-size: 1.02rem;
+  margin: 0;
+}
+
+.model-settings-menu-header p,
+.model-settings-meta,
+.model-settings-note {
+  color: var(--muted);
+  margin: 4px 0 0;
+}
+
+.model-settings-meta span {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.model-settings-field {
+  display: grid;
+  gap: 6px;
+}
+
+.model-settings-field > span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.model-settings-prompt {
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: rgba(var(--surface-rgb), 0.7);
+  padding: 10px;
+}
+
+.model-settings-prompt summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-weight: 800;
+}
+
+.model-settings-prompt pre {
+  max-height: 220px;
+  overflow: auto;
+  border-top: 1px solid var(--line-soft);
+  color: var(--text);
+  font-family: inherit;
+  margin: 10px 0 0;
+  padding-top: 10px;
+  white-space: pre-wrap;
 }
 
 .model-search {
@@ -3763,6 +3863,16 @@ textarea {
 
   .model-menu {
     width: min(360px, calc(100vw - 24px));
+  }
+
+  .model-settings-menu {
+    position: fixed;
+    top: 72px;
+    right: 12px;
+    left: 12px;
+    width: auto;
+    max-height: calc(var(--app-height) - 88px);
+    overflow-y: auto;
   }
 
   .primary-action span {

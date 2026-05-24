@@ -47,6 +47,7 @@ import type {
   MessageVersion,
   ModelInfo,
   Persona,
+  PersonaVersion,
   ThinkingMode
 } from "./types";
 
@@ -58,6 +59,7 @@ export function ChatView({
   selectedModelInfo,
   availableTools,
   personas,
+  personaVersions,
   onChatsChanged,
   onImageOpen,
   onModelSelected,
@@ -70,6 +72,7 @@ export function ChatView({
   selectedModelInfo: ModelInfo | null;
   availableTools: AvailableTool[];
   personas: Persona[];
+  personaVersions: PersonaVersion[];
   onChatsChanged: () => Promise<void>;
   onImageOpen: ImageOpenHandler;
   onModelSelected: (value: string) => void;
@@ -307,7 +310,8 @@ export function ChatView({
       }
 
       const selected =
-        selectedModelBaseParts([], personas, [], selectedModel) ?? modelParts(selectedModel);
+        selectedModelBaseParts([], personas, [], selectedModel, personaVersions) ??
+        modelParts(selectedModel);
       const personaVersionId = personaVersionIdFromValue(selectedModel);
       await streamAssistantResponse(`/api/chats/${chatId}/generate`, {
         user_message: { content_text: prompt },
@@ -319,7 +323,15 @@ export function ChatView({
         attachments: attachmentReferences(attachments)
       });
     },
-    [chat?.tool_preferences, chatId, isGenerating, personas, selectedModel, streamAssistantResponse]
+    [
+      chat?.tool_preferences,
+      chatId,
+      isGenerating,
+      personas,
+      personaVersions,
+      selectedModel,
+      streamAssistantResponse
+    ]
   );
 
   useEffect(() => {
@@ -909,7 +921,8 @@ export function ChatView({
     }
 
     const selected =
-      selectedModelBaseParts([], personas, [], selectedModel) ?? modelParts(selectedModel);
+      selectedModelBaseParts([], personas, [], selectedModel, personaVersions) ??
+      modelParts(selectedModel);
     const personaVersionId = personaVersionIdFromValue(selectedModel);
     await streamAssistantResponse(`/api/chats/${chatId}/messages/${message.id}/branch`, {
       content_text: contentText,
@@ -949,7 +962,8 @@ export function ChatView({
     }
 
     const selected =
-      selectedModelBaseParts([], personas, [], selectedModel) ?? modelParts(selectedModel);
+      selectedModelBaseParts([], personas, [], selectedModel, personaVersions) ??
+      modelParts(selectedModel);
     const personaVersionId = personaVersionIdFromValue(selectedModel);
     await streamAssistantResponse(`/api/chats/${chatId}/messages/${message.id}/regenerate`, {
       backend_id: selected?.backendId ?? message.backend_id,

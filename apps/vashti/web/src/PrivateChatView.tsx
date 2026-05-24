@@ -37,16 +37,18 @@ import {
   type PrivateChatDetail,
   type PrivateChatMessage,
   type PrivateChatMessageRevision,
-  type PrivatePersona
+  type PrivatePersona,
+  type PrivatePersonaVersion
 } from "./privateChatStore";
 import {
   messageModelValue,
   modelParts,
   modelValue,
   personaVersionIdFromValue,
-  privatePersonaForValue,
   privatePersonaForVersionId,
-  privatePersonaModelValue
+  privatePersonaModelValue,
+  privatePersonaWithVersionForId,
+  privatePersonaWithVersionForValue
 } from "./modelSelection";
 import type {
   AutoScrollMode,
@@ -69,6 +71,7 @@ export function PrivateChatView({
   selectedModel,
   selectedModelInfo,
   privatePersonas,
+  privatePersonaVersions,
   onImageOpen,
   onModelSelected,
   onPrivateChatsChanged,
@@ -80,6 +83,7 @@ export function PrivateChatView({
   selectedModel: string;
   selectedModelInfo: ModelInfo | null;
   privatePersonas: PrivatePersona[];
+  privatePersonaVersions: PrivatePersonaVersion[];
   onImageOpen: ImageOpenHandler;
   onModelSelected: (value: string) => void;
   onPrivateChatsChanged: () => Promise<void>;
@@ -159,7 +163,12 @@ export function PrivateChatView({
       );
       const defaultModel =
         nextChat.persona_version_id &&
-        privatePersonaForVersionId(privatePersonas, nextChat.persona_version_id)
+        (privatePersonaForVersionId(privatePersonas, nextChat.persona_version_id) ||
+          privatePersonaWithVersionForId(
+            privatePersonas,
+            privatePersonaVersions,
+            nextChat.persona_version_id
+          ))
           ? privatePersonaModelValue(nextChat.persona_version_id)
           : modelValue(nextChat.default_backend_id, nextChat.default_model_name);
       onModelSelected(latestModel ?? defaultModel);
@@ -170,7 +179,7 @@ export function PrivateChatView({
     } finally {
       setIsLoading(false);
     }
-  }, [chatId, onModelSelected, privatePersonas]);
+  }, [chatId, onModelSelected, privatePersonas, privatePersonaVersions]);
 
   useEffect(() => {
     void loadPrivateChat();
@@ -561,9 +570,13 @@ export function PrivateChatView({
     }
 
     const selectedPrivatePersona =
-      privatePersonaForValue(privatePersonas, selectedModel) ??
+      privatePersonaWithVersionForValue(privatePersonas, privatePersonaVersions, selectedModel) ??
       (messagesRef.current.length === 0 && chat.persona_version_id
-        ? privatePersonaForVersionId(privatePersonas, chat.persona_version_id)
+        ? privatePersonaWithVersionForId(
+            privatePersonas,
+            privatePersonaVersions,
+            chat.persona_version_id
+          )
         : null);
     const selected = selectedPrivatePersona
       ? {
@@ -972,7 +985,11 @@ export function PrivateChatView({
       return;
     }
 
-    const selectedPrivatePersona = privatePersonaForValue(privatePersonas, selectedModel);
+    const selectedPrivatePersona = privatePersonaWithVersionForValue(
+      privatePersonas,
+      privatePersonaVersions,
+      selectedModel
+    );
     const selected = selectedPrivatePersona
       ? {
           backendId: selectedPrivatePersona.current_version.base_backend_id,
@@ -1095,8 +1112,12 @@ export function PrivateChatView({
     }
 
     const selectedPrivatePersona =
-      privatePersonaForValue(privatePersonas, selectedModel) ??
-      privatePersonaForVersionId(privatePersonas, message.persona_version_id);
+      privatePersonaWithVersionForValue(privatePersonas, privatePersonaVersions, selectedModel) ??
+      privatePersonaWithVersionForId(
+        privatePersonas,
+        privatePersonaVersions,
+        message.persona_version_id
+      );
     const selected = selectedPrivatePersona
       ? {
           backendId: selectedPrivatePersona.current_version.base_backend_id,

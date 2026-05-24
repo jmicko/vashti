@@ -8,17 +8,21 @@ import {
   modelValue,
   personaBaseModelValue,
   personaForValue,
+  personaVersionForValue,
   personaModelValue,
   privatePersonaForValue,
+  privatePersonaVersionForValue,
   privatePersonaModelValue
 } from "./modelSelection";
-import type { PrivatePersona } from "./privateChatStore";
-import type { BackendModelGroup, ModelInfo, Persona } from "./types";
+import type { PrivatePersona, PrivatePersonaVersion } from "./privateChatStore";
+import type { BackendModelGroup, ModelInfo, Persona, PersonaVersion } from "./types";
 
 export function ModelPicker({
   groups,
   personas,
   privatePersonas,
+  personaVersions = [],
+  privatePersonaVersions = [],
   isLoading,
   error,
   value,
@@ -27,6 +31,8 @@ export function ModelPicker({
   groups: BackendModelGroup[];
   personas: Persona[];
   privatePersonas: PrivatePersona[];
+  personaVersions?: PersonaVersion[];
+  privatePersonaVersions?: PrivatePersonaVersion[];
   isLoading: boolean;
   error: string | null;
   value: string;
@@ -51,6 +57,12 @@ export function ModelPicker({
     .find((option) => modelValue(option.backendId, option.model.name) === value);
   const selectedPersona = personaForValue(personas, value);
   const selectedPrivatePersona = privatePersonaForValue(privatePersonas, value);
+  const selectedPersonaVersion = personaVersionForValue(personas, personaVersions, value);
+  const selectedPrivatePersonaVersion = privatePersonaVersionForValue(
+    privatePersonas,
+    privatePersonaVersions,
+    value
+  );
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const enabledValues = enabledModelValueSet(groups);
   const favoriteModels = groups
@@ -168,8 +180,12 @@ export function ModelPicker({
 
     return selectedPrivatePersona
       ? selectedPrivatePersona.current_version.display_name
+      : selectedPrivatePersonaVersion
+        ? selectedPrivatePersonaVersion.display_name
       : selectedPersona
         ? selectedPersona.current_version.display_name
+        : selectedPersonaVersion
+          ? selectedPersonaVersion.display_name
         : selected
           ? compactModelName(selected.model.name)
           : "Select model";
@@ -218,7 +234,9 @@ export function ModelPicker({
         title={
           error ??
           selectedPrivatePersona?.current_version.base_model_name ??
+          selectedPrivatePersonaVersion?.base_model_name ??
           selectedPersona?.current_version.base_model_name ??
+          selectedPersonaVersion?.base_model_name ??
           selected?.model.name ??
           selected?.backendName
         }
@@ -267,98 +285,105 @@ export function ModelPicker({
                 {filteredGroups.map((group) => (
                   <section key={group.backend.id} className="model-group">
                     <p>{group.backend.name}</p>
-                  {group.privatePersonas.map((persona) => {
-                    const optionValue = privatePersonaModelValue(persona.current_version.id);
-                    const baseModel = modelInfoForBase(
-                      groups,
-                      persona.current_version.base_backend_id,
-                      persona.current_version.base_model_name
-                    );
-                    return (
-                      <button
-                        type="button"
-                        key={optionValue}
-                        className={
-                          optionValue === value
-                            ? "model-option model-option-active"
-                            : "model-option"
-                        }
-                        onClick={() => {
-                          onChange(optionValue);
-                          setIsOpen(false);
-                        }}
-                      >
-                        <span className="model-option-content">
-                          <span className="model-name">{persona.current_version.display_name}</span>
-                          <span className="model-subtitle">
-                            Device · {compactModelName(persona.current_version.base_model_name)}
-                          </span>
-                          <span className="model-capabilities">
-                            <span className="model-capability" title="custom persona">
-                              <Brain />
-                              <span className="model-capability-label">custom</span>
+                    {group.privatePersonas.map((persona) => {
+                      const optionValue = privatePersonaModelValue(persona.current_version.id);
+                      const baseModel = modelInfoForBase(
+                        groups,
+                        persona.current_version.base_backend_id,
+                        persona.current_version.base_model_name
+                      );
+                      return (
+                        <button
+                          type="button"
+                          key={optionValue}
+                          className={
+                            optionValue === value
+                              ? "model-option model-option-active"
+                              : "model-option"
+                          }
+                          onClick={() => {
+                            onChange(optionValue);
+                            setIsOpen(false);
+                          }}
+                        >
+                          <span className="model-option-content">
+                            <span className="model-name">
+                              {persona.current_version.display_name}
                             </span>
-                            <span className="model-capability model-capability-warning" title="device only">
-                              <Lock />
-                              <span className="model-capability-label">device</span>
+                            <span className="model-subtitle">
+                              Device · {compactModelName(persona.current_version.base_model_name)}
                             </span>
-                          </span>
-                          {baseModel && <ModelCapabilityBadges model={baseModel} />}
-                        </span>
-                      </button>
-                    );
-                  })}
-                  {group.personas.map((persona) => {
-                    const optionValue = personaModelValue(persona.current_version.id);
-                    const baseModel = modelInfoForBase(
-                      groups,
-                      persona.current_version.base_backend_id,
-                      persona.current_version.base_model_name
-                    );
-                    return (
-                      <button
-                        type="button"
-                        key={optionValue}
-                        className={
-                          optionValue === value
-                            ? "model-option model-option-active"
-                            : "model-option"
-                        }
-                        onClick={() => {
-                          onChange(optionValue);
-                          setIsOpen(false);
-                        }}
-                      >
-                        <span className="model-option-content">
-                          <span className="model-name">{persona.current_version.display_name}</span>
-                          <span className="model-subtitle">
-                            Custom · {compactModelName(persona.current_version.base_model_name)}
-                            {persona.owner_username ? ` · by ${persona.owner_username}` : ""}
-                          </span>
-                          <span className="model-capabilities">
-                            <span className="model-capability" title="custom persona">
-                              <Brain />
-                              <span className="model-capability-label">custom</span>
-                            </span>
-                            <span
-                              className={
-                                persona.visibility === "public"
-                                  ? "model-capability"
-                                  : "model-capability model-capability-warning"
-                              }
-                              title={persona.visibility}
-                            >
-                              {persona.visibility === "public" ? <Users /> : <Lock />}
-                              <span className="model-capability-label">
-                                {persona.visibility}
+                            <span className="model-capabilities">
+                              <span className="model-capability" title="custom persona">
+                                <Brain />
+                                <span className="model-capability-label">custom</span>
+                              </span>
+                              <span
+                                className="model-capability model-capability-warning"
+                                title="device only"
+                              >
+                                <Lock />
+                                <span className="model-capability-label">device</span>
                               </span>
                             </span>
+                            {baseModel && <ModelCapabilityBadges model={baseModel} />}
                           </span>
-                          {baseModel && <ModelCapabilityBadges model={baseModel} />}
-                        </span>
-                      </button>
-                    );
-                  })}
+                        </button>
+                      );
+                    })}
+                    {group.personas.map((persona) => {
+                      const optionValue = personaModelValue(persona.current_version.id);
+                      const baseModel = modelInfoForBase(
+                        groups,
+                        persona.current_version.base_backend_id,
+                        persona.current_version.base_model_name
+                      );
+                      return (
+                        <button
+                          type="button"
+                          key={optionValue}
+                          className={
+                            optionValue === value
+                              ? "model-option model-option-active"
+                              : "model-option"
+                          }
+                          onClick={() => {
+                            onChange(optionValue);
+                            setIsOpen(false);
+                          }}
+                        >
+                          <span className="model-option-content">
+                            <span className="model-name">
+                              {persona.current_version.display_name}
+                            </span>
+                            <span className="model-subtitle">
+                              Custom · {compactModelName(persona.current_version.base_model_name)}
+                              {persona.owner_username ? ` · by ${persona.owner_username}` : ""}
+                            </span>
+                            <span className="model-capabilities">
+                              <span className="model-capability" title="custom persona">
+                                <Brain />
+                                <span className="model-capability-label">custom</span>
+                              </span>
+                              <span
+                                className={
+                                  persona.visibility === "public"
+                                    ? "model-capability"
+                                    : "model-capability model-capability-warning"
+                                }
+                                title={persona.visibility}
+                              >
+                                {persona.visibility === "public" ? <Users /> : <Lock />}
+                                <span className="model-capability-label">
+                                  {persona.visibility}
+                                </span>
+                              </span>
+                            </span>
+                            {baseModel && <ModelCapabilityBadges model={baseModel} />}
+                          </span>
+                        </button>
+                      );
+                    })}
                     {group.models.map((model) =>
                       renderModelOption(group.backend.id, group.backend.name, model)
                     )}

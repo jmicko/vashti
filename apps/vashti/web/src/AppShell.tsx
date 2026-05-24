@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState
 } from "react";
@@ -21,6 +22,7 @@ import {
 import { ChatHome } from "./ChatHome";
 import { ConfirmDialog } from "./common";
 import { ModelPicker } from "./ModelPicker";
+import { ModelSettingsMenu } from "./ModelSettingsMenu";
 import {
   enabledModelValueSet,
   modelInfoForValue,
@@ -29,8 +31,9 @@ import {
   personaBaseModelValue,
   personaModelValue,
   personaVersionIdFromValue,
-  privatePersonaForValue,
+  privatePersonaVersionForValue,
   privatePersonaVersionIdFromValue,
+  privatePersonaWithVersionForValue,
   selectedModelBaseParts
 } from "./modelSelection";
 import { Sidebar } from "./Sidebar";
@@ -60,7 +63,8 @@ import {
   saveCachedModelState,
   setPrivateStorageUser,
   type PrivateChatSummary,
-  type PrivatePersona
+  type PrivatePersona,
+  type PrivatePersonaVersion
 } from "./privateChatStore";
 import type {
   AppRoute,
@@ -80,6 +84,7 @@ import type {
   ModelsResponse,
   NewChatMode,
   Persona,
+  PersonaVersion,
   PersonasResponse,
   SettingsSection,
   ThinkingMode,
@@ -110,6 +115,15 @@ export function AppShell({
   const [modelGroups, setModelGroups] = useState<BackendModelGroup[]>([]);
   const [personas, setPersonas] = useState<Persona[]>([]);
   const [privatePersonas, setPrivatePersonas] = useState<PrivatePersona[]>([]);
+  const [personaVersions, setPersonaVersions] = useState<Record<string, PersonaVersion>>({});
+  const [privatePersonaVersions, setPrivatePersonaVersions] = useState<
+    Record<string, PrivatePersonaVersion>
+  >({});
+  const knownPersonaVersions = useMemo(() => Object.values(personaVersions), [personaVersions]);
+  const knownPrivatePersonaVersions = useMemo(
+    () => Object.values(privatePersonaVersions),
+    [privatePersonaVersions]
+  );
   const [availableTools, setAvailableTools] = useState<AvailableTool[]>([]);
   const [selectedModel, setSelectedModel] = useState("");
   const [isLoadingModels, setIsLoadingModels] = useState(false);
@@ -206,6 +220,7 @@ export function AppShell({
       );
       setModelGroups(modelsResponse.backends);
       setPersonas(visiblePersonas);
+      rememberPersonaVersions(visiblePersonas.map((persona) => persona.current_version));
       setSelectedModel((current) => {
         const values = [
           ...modelsResponse.backends.flatMap((group) =>
@@ -294,7 +309,11 @@ export function AppShell({
 
   const loadPrivatePersonas = useCallback(async () => {
     try {
-      setPrivatePersonas(await listPrivatePersonas());
+      const nextPrivatePersonas = await listPrivatePersonas();
+      setPrivatePersonas(nextPrivatePersonas);
+      rememberPrivatePersonaVersions(
+        nextPrivatePersonas.map((persona) => persona.current_version)
+      );
     } catch (loadError) {
       setError(
         loadError instanceof Error
@@ -303,6 +322,34 @@ export function AppShell({
       );
     }
   }, []);
+
+  function rememberPersonaVersions(versions: PersonaVersion[]) {
+    if (versions.length === 0) {
+      return;
+    }
+
+    setPersonaVersions((current) => {
+      const next = { ...current };
+      for (const version of versions) {
+        next[version.id] = version;
+      }
+      return next;
+    });
+  }
+
+  function rememberPrivatePersonaVersions(versions: PrivatePersonaVersion[]) {
+    if (versions.length === 0) {
+      return;
+    }
+
+    setPrivatePersonaVersions((current) => {
+      const next = { ...current };
+      for (const version of versions) {
+        next[version.id] = version;
+      }
+      return next;
+    });
+  }
 
   useEffect(() => {
     void loadPrivatePersonas();
@@ -532,7 +579,13 @@ export function AppShell({
       return;
     }
 
-    const selected = selectedModelBaseParts(modelGroups, personas, [], selectedModel);
+    const selected = selectedModelBaseParts(
+      modelGroups,
+      personas,
+      [],
+      selectedModel,
+      knownPersonaVersions
+    );
     if (!selected) {
       setError("Select a model before starting a chat");
       return;
@@ -575,12 +628,16 @@ export function AppShell({
   }
 
   function currentSelectedModel() {
-    const selectedPrivatePersona = privatePersonaForValue(privatePersonas, selectedModel);
-    if (selectedPrivatePersona) {
+    const selectedPrivatePersonaVersion = privatePersonaVersionForValue(
+      privatePersonas,
+      knownPrivatePersonaVersions,
+      selectedModel
+    );
+    if (selectedPrivatePersonaVersion) {
       return {
-        backendId: selectedPrivatePersona.current_version.base_backend_id,
-        backendName: selectedPrivatePersona.current_version.base_backend_name,
-        modelName: selectedPrivatePersona.current_version.base_model_name
+        backendId: selectedPrivatePersonaVersion.base_backend_id,
+        backendName: selectedPrivatePersonaVersion.base_backend_name,
+        modelName: selectedPrivatePersonaVersion.base_model_name
       };
     }
 
@@ -606,7 +663,14 @@ export function AppShell({
   }
 
   function selectedModelInfo() {
-    return modelInfoForValue(modelGroups, personas, privatePersonas, selectedModel);
+    return modelInfoForValue(
+      modelGroups,
+      personas,
+      privatePersonas,
+      selectedModel,
+      knownPersonaVersions,
+      knownPrivatePersonaVersions
+    );
   }
 
   async function createPrivateChatFromPrompt(
@@ -626,7 +690,11 @@ export function AppShell({
     }
 
     const selected = currentSelectedModel();
-    const selectedPrivatePersona = privatePersonaForValue(privatePersonas, selectedModel);
+    const selectedPrivatePersona = privatePersonaWithVersionForValue(
+      privatePersonas,
+      knownPrivatePersonaVersions,
+      selectedModel
+    );
     if (!selected) {
       setError("Select a model before starting a private chat");
       return;
@@ -799,10 +867,25 @@ export function AppShell({
                   groups={modelGroups}
                   personas={allowPrivatePersonaSelection ? [] : personas}
                   privatePersonas={allowPrivatePersonaSelection ? privatePersonas : []}
+                  personaVersions={knownPersonaVersions}
+                  privatePersonaVersions={knownPrivatePersonaVersions}
                   isLoading={isLoadingModels}
                   error={modelError}
                   value={selectedModel}
                   onChange={setSelectedModel}
+                />
+                <ModelSettingsMenu
+                  groups={modelGroups}
+                  personas={allowPrivatePersonaSelection ? [] : personas}
+                  privatePersonas={allowPrivatePersonaSelection ? privatePersonas : []}
+                  personaVersions={knownPersonaVersions}
+                  privatePersonaVersions={knownPrivatePersonaVersions}
+                  selectedModel={selectedModel}
+                  selectedModelInfo={selectedModelInfo()}
+                  disabled={!selectedModel || isLoadingModels}
+                  onModelSelected={setSelectedModel}
+                  onPersonaVersionsLoaded={rememberPersonaVersions}
+                  onPrivatePersonaVersionsLoaded={rememberPrivatePersonaVersions}
                 />
               </>
             )}
@@ -881,6 +964,7 @@ export function AppShell({
             selectedModel={selectedModel}
             selectedModelInfo={selectedModelInfo()}
             privatePersonas={privatePersonas}
+            privatePersonaVersions={knownPrivatePersonaVersions}
             onImageOpen={openImageViewer}
             onModelSelected={setSelectedModel}
             onPrivateChatsChanged={loadPrivateChats}
@@ -896,6 +980,7 @@ export function AppShell({
               selectedModelInfo={selectedModelInfo()}
               availableTools={availableTools}
               personas={personas}
+              personaVersions={knownPersonaVersions}
               onChatsChanged={loadChats}
               onImageOpen={openImageViewer}
               onModelSelected={setSelectedModel}

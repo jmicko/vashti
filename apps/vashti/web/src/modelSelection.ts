@@ -1,5 +1,5 @@
-import type { BackendModelGroup, ChatMessage, Persona } from "./types";
-import type { PrivatePersona } from "./privateChatStore";
+import type { BackendModelGroup, ChatMessage, Persona, PersonaVersion } from "./types";
+import type { PrivatePersona, PrivatePersonaVersion } from "./privateChatStore";
 
 export function compactModelName(name: string) {
   const huggingFaceMatch = /^hf\.co\/[^/]+\/(.+)$/i.exec(name);
@@ -102,6 +102,30 @@ export function personaForValue(personas: Persona[], value: string) {
   return personas.find((persona) => persona.current_version.id === personaVersionId) ?? null;
 }
 
+export function personaVersionForId(
+  personas: Persona[],
+  personaVersions: PersonaVersion[],
+  personaVersionId: string | null | undefined
+) {
+  if (!personaVersionId) {
+    return null;
+  }
+
+  return (
+    personas.find((persona) => persona.current_version.id === personaVersionId)?.current_version ??
+    personaVersions.find((version) => version.id === personaVersionId) ??
+    null
+  );
+}
+
+export function personaVersionForValue(
+  personas: Persona[],
+  personaVersions: PersonaVersion[],
+  value: string
+) {
+  return personaVersionForId(personas, personaVersions, personaVersionIdFromValue(value));
+}
+
 export function privatePersonaForValue(personas: PrivatePersona[], value: string) {
   const personaVersionId = privatePersonaVersionIdFromValue(value);
   if (!personaVersionId) {
@@ -109,6 +133,60 @@ export function privatePersonaForValue(personas: PrivatePersona[], value: string
   }
 
   return privatePersonaForVersionId(personas, personaVersionId);
+}
+
+export function privatePersonaVersionForId(
+  personas: PrivatePersona[],
+  personaVersions: PrivatePersonaVersion[],
+  personaVersionId: string | null | undefined
+) {
+  if (!personaVersionId) {
+    return null;
+  }
+
+  return (
+    personas.find((persona) => persona.current_version.id === personaVersionId)?.current_version ??
+    personaVersions.find((version) => version.id === personaVersionId) ??
+    null
+  );
+}
+
+export function privatePersonaVersionForValue(
+  personas: PrivatePersona[],
+  personaVersions: PrivatePersonaVersion[],
+  value: string
+) {
+  return privatePersonaVersionForId(
+    personas,
+    personaVersions,
+    privatePersonaVersionIdFromValue(value)
+  );
+}
+
+export function privatePersonaWithVersionForId(
+  personas: PrivatePersona[],
+  personaVersions: PrivatePersonaVersion[],
+  personaVersionId: string | null | undefined
+): PrivatePersona | null {
+  const version = privatePersonaVersionForId(personas, personaVersions, personaVersionId);
+  if (!version) {
+    return null;
+  }
+
+  const persona = personas.find((candidate) => candidate.id === version.persona_id);
+  return persona ? { ...persona, current_version: version } : null;
+}
+
+export function privatePersonaWithVersionForValue(
+  personas: PrivatePersona[],
+  personaVersions: PrivatePersonaVersion[],
+  value: string
+) {
+  return privatePersonaWithVersionForId(
+    personas,
+    personaVersions,
+    privatePersonaVersionIdFromValue(value)
+  );
 }
 
 export function privatePersonaForVersionId(
@@ -126,21 +204,27 @@ export function selectedModelBaseParts(
   groups: BackendModelGroup[],
   personas: Persona[],
   privatePersonas: PrivatePersona[],
-  value: string
+  value: string,
+  personaVersions: PersonaVersion[] = [],
+  privatePersonaVersions: PrivatePersonaVersion[] = []
 ) {
-  const selectedPrivatePersona = privatePersonaForValue(privatePersonas, value);
-  if (selectedPrivatePersona) {
+  const selectedPrivatePersonaVersion = privatePersonaVersionForValue(
+    privatePersonas,
+    privatePersonaVersions,
+    value
+  );
+  if (selectedPrivatePersonaVersion) {
     return {
-      backendId: selectedPrivatePersona.current_version.base_backend_id,
-      modelName: selectedPrivatePersona.current_version.base_model_name
+      backendId: selectedPrivatePersonaVersion.base_backend_id,
+      modelName: selectedPrivatePersonaVersion.base_model_name
     };
   }
 
-  const selectedPersona = personaForValue(personas, value);
-  if (selectedPersona) {
+  const selectedPersonaVersion = personaVersionForValue(personas, personaVersions, value);
+  if (selectedPersonaVersion) {
     return {
-      backendId: selectedPersona.current_version.base_backend_id,
-      modelName: selectedPersona.current_version.base_model_name
+      backendId: selectedPersonaVersion.base_backend_id,
+      modelName: selectedPersonaVersion.base_model_name
     };
   }
 
@@ -157,23 +241,29 @@ export function modelInfoForValue(
   groups: BackendModelGroup[],
   personas: Persona[],
   privatePersonas: PrivatePersona[],
-  value: string
+  value: string,
+  personaVersions: PersonaVersion[] = [],
+  privatePersonaVersions: PrivatePersonaVersion[] = []
 ) {
-  const selectedPrivatePersona = privatePersonaForValue(privatePersonas, value);
-  if (selectedPrivatePersona) {
+  const selectedPrivatePersonaVersion = privatePersonaVersionForValue(
+    privatePersonas,
+    privatePersonaVersions,
+    value
+  );
+  if (selectedPrivatePersonaVersion) {
     return modelInfoForBase(
       groups,
-      selectedPrivatePersona.current_version.base_backend_id,
-      selectedPrivatePersona.current_version.base_model_name
+      selectedPrivatePersonaVersion.base_backend_id,
+      selectedPrivatePersonaVersion.base_model_name
     );
   }
 
-  const selectedPersona = personaForValue(personas, value);
-  if (selectedPersona) {
+  const selectedPersonaVersion = personaVersionForValue(personas, personaVersions, value);
+  if (selectedPersonaVersion) {
     return modelInfoForBase(
       groups,
-      selectedPersona.current_version.base_backend_id,
-      selectedPersona.current_version.base_model_name
+      selectedPersonaVersion.base_backend_id,
+      selectedPersonaVersion.base_model_name
     );
   }
 

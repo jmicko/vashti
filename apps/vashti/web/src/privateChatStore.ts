@@ -685,7 +685,9 @@ export async function getPrivatePersona(personaId: string): Promise<PrivatePerso
   return version ? { ...persona, current_version: version } : null;
 }
 
-async function listPrivatePersonaVersions(personaId: string): Promise<PrivatePersonaVersion[]> {
+export async function listPrivatePersonaVersions(
+  personaId: string
+): Promise<PrivatePersonaVersion[]> {
   const db = await openPrivateDb();
   const tx = db.transaction(PERSONA_VERSION_STORE, "readonly");
   const records = await requestResult<Array<PrivateStoreRecord | PrivatePersonaVersion>>(
