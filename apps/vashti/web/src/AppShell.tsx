@@ -56,12 +56,15 @@ import {
   createPrivateChat,
   deletePrivateChat,
   getCachedModelState,
+  getPrivateChat,
   listPrivatePersonas,
   listPrivateChats,
   renamePrivateChat,
   resetPrivateStorageUser,
   saveCachedModelState,
+  savePrivateChat,
   setPrivateStorageUser,
+  unixTimestamp,
   type PrivateChatSummary,
   type PrivatePersona,
   type PrivatePersonaVersion
@@ -147,6 +150,7 @@ export function AppShell({
   const [queuedPrivatePrompt, setQueuedPrivatePrompt] = useState<
     ({ chatId: string } & ComposerSubmitPayload) | null
   >(null);
+  const [chatSystemPromptOverride, setChatSystemPromptOverride] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const isAdmin = user.role === "admin";
   const page = route.page;
@@ -201,6 +205,7 @@ export function AppShell({
     } else if (route.page === "chat" && route.chatId) {
       setNewChatMode("standard");
     }
+    setChatSystemPromptOverride(null);
   }, [route]);
 
   const updateAppSettingsGuard = useCallback((guard: AppSettingsGuard | null) => {
@@ -673,6 +678,40 @@ export function AppShell({
     );
   }
 
+  async function saveChatSystemPromptOverride(value: string | null) {
+    if (currentChatId) {
+      const response = await requestJson<ChatResponse>(`/api/chats/${currentChatId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ system_prompt_override: value })
+      });
+      setChatSystemPromptOverride(response.chat.system_prompt_override ?? null);
+      return;
+    }
+
+    if (currentPrivateChatId) {
+      const chat = await getPrivateChat(currentPrivateChatId);
+      if (!chat) {
+        throw new Error("Private chat not found on this device");
+      }
+
+      const nextChat = {
+        ...chat,
+        system_prompt_override: value,
+        updated_at: unixTimestamp()
+      };
+      await savePrivateChat(nextChat);
+      setChatSystemPromptOverride(value);
+      await loadPrivateChats();
+      return;
+    }
+
+    throw new Error("Open a chat before saving conversation settings");
+  }
+
+  const handleChatSettingsLoaded = useCallback((override: string | null | undefined) => {
+    setChatSystemPromptOverride(override ?? null);
+  }, []);
+
   async function createPrivateChatFromPrompt(
     prompt: string,
     attachments: ComposerAttachment[] = [],
@@ -882,10 +921,13 @@ export function AppShell({
                   privatePersonaVersions={knownPrivatePersonaVersions}
                   selectedModel={selectedModel}
                   selectedModelInfo={selectedModelInfo()}
+                  systemPromptOverride={chatSystemPromptOverride}
+                  canSaveConversationSettings={Boolean(currentChatId || currentPrivateChatId)}
                   disabled={!selectedModel || isLoadingModels}
                   onModelSelected={setSelectedModel}
                   onPersonaVersionsLoaded={rememberPersonaVersions}
                   onPrivatePersonaVersionsLoaded={rememberPrivatePersonaVersions}
+                  onSystemPromptOverrideSave={saveChatSystemPromptOverride}
                 />
               </>
             )}
@@ -965,7 +1007,9 @@ export function AppShell({
             selectedModelInfo={selectedModelInfo()}
             privatePersonas={privatePersonas}
             privatePersonaVersions={knownPrivatePersonaVersions}
+            systemPromptOverride={chatSystemPromptOverride}
             onImageOpen={openImageViewer}
+            onChatSettingsLoaded={handleChatSettingsLoaded}
             onModelSelected={setSelectedModel}
             onPrivateChatsChanged={loadPrivateChats}
             onQueuedPromptConsumed={() => setQueuedPrivatePrompt(null)}
@@ -981,6 +1025,7 @@ export function AppShell({
               availableTools={availableTools}
               personas={personas}
               personaVersions={knownPersonaVersions}
+              onChatSettingsLoaded={handleChatSettingsLoaded}
               onChatsChanged={loadChats}
               onImageOpen={openImageViewer}
               onModelSelected={setSelectedModel}

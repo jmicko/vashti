@@ -72,6 +72,8 @@ export function PrivateChatView({
   selectedModelInfo,
   privatePersonas,
   privatePersonaVersions,
+  systemPromptOverride,
+  onChatSettingsLoaded,
   onImageOpen,
   onModelSelected,
   onPrivateChatsChanged,
@@ -84,6 +86,8 @@ export function PrivateChatView({
   selectedModelInfo: ModelInfo | null;
   privatePersonas: PrivatePersona[];
   privatePersonaVersions: PrivatePersonaVersion[];
+  systemPromptOverride: string | null;
+  onChatSettingsLoaded: (override: string | null | undefined) => void;
   onImageOpen: ImageOpenHandler;
   onModelSelected: (value: string) => void;
   onPrivateChatsChanged: () => Promise<void>;
@@ -149,6 +153,7 @@ export function PrivateChatView({
       }
 
       setChat(nextChat);
+      onChatSettingsLoaded(nextChat.system_prompt_override);
       thinkingStartedAtRef.current.clear();
       thinkingContentCursorRef.current.clear();
       setThinkingDurations({});
@@ -179,7 +184,13 @@ export function PrivateChatView({
     } finally {
       setIsLoading(false);
     }
-  }, [chatId, onModelSelected, privatePersonas, privatePersonaVersions]);
+  }, [
+    chatId,
+    onChatSettingsLoaded,
+    onModelSelected,
+    privatePersonas,
+    privatePersonaVersions
+  ]);
 
   useEffect(() => {
     void loadPrivateChat();
@@ -657,7 +668,8 @@ export function PrivateChatView({
         nextMessages,
         nextChat.active_root_message_id,
         assistantMessage.id,
-        selectedPrivatePersona
+        selectedPrivatePersona,
+        systemPromptOverride
       ),
       attachments: []
     });
@@ -1068,7 +1080,8 @@ export function PrivateChatView({
           nextMessages,
           nextChat.active_root_message_id,
           assistantMessage.id,
-          selectedPrivatePersona
+          selectedPrivatePersona,
+          systemPromptOverride
         ),
         attachments: []
       });
@@ -1188,7 +1201,8 @@ export function PrivateChatView({
           nextMessages,
           nextChat.active_root_message_id,
           assistantMessage.id,
-          selectedPrivatePersona
+          selectedPrivatePersona,
+          systemPromptOverride
         ),
         attachments: []
       });

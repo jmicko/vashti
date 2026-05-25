@@ -175,6 +175,7 @@ pub async fn create_chat(
     let now = unix_timestamp();
     let chat_id = Uuid::new_v4().to_string();
     let tool_preferences_json = serialize_tool_preferences(&tool_preferences)?;
+    let system_prompt_override = payload.system_prompt_override.map(normalized_system_prompt);
 
     sqlx::query(
         r#"
@@ -185,6 +186,7 @@ pub async fn create_chat(
             default_model_name,
             persona_id,
             persona_version_id,
+            system_prompt_override,
             tool_use_enabled,
             web_search_tool_enabled,
             web_fetch_tool_enabled,
@@ -195,7 +197,7 @@ pub async fn create_chat(
             updated_at,
             last_message_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'standard', ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'standard', ?, ?, ?)
         "#,
     )
     .bind(&chat_id)
@@ -208,6 +210,7 @@ pub async fn create_chat(
             .as_ref()
             .map(|persona| persona.persona_version_id.as_str()),
     )
+    .bind(system_prompt_override)
     .bind(i64::from(tool_preferences.tool_use_enabled))
     .bind(i64::from(legacy_web_search_enabled(&tool_preferences)))
     .bind(i64::from(legacy_web_fetch_enabled(&tool_preferences)))
@@ -237,6 +240,7 @@ pub async fn get_chat(
                c.persona_id,
                c.persona_version_id,
                pv.display_name AS persona_name,
+               c.system_prompt_override,
                c.tool_use_enabled,
                c.web_search_tool_enabled,
                c.web_fetch_tool_enabled,
@@ -271,6 +275,10 @@ pub async fn update_chat(
 ) -> Result<ChatDetail, ApiError> {
     let current = get_chat(pool, user_id, chat_id).await?;
     let tool_preferences = payload.tool_preferences.unwrap_or(current.tool_preferences);
+    let system_prompt_override = payload
+        .system_prompt_override
+        .map(|value| value.map(normalized_system_prompt))
+        .unwrap_or(current.system_prompt_override);
     let has_base_model_update =
         payload.default_backend_id.is_some() || payload.default_model_name.is_some();
     let title = payload.title.map(normalized_title).unwrap_or(current.title);
@@ -339,6 +347,7 @@ pub async fn update_chat(
             web_search_tool_enabled = ?,
             web_fetch_tool_enabled = ?,
             tool_preferences_json = ?,
+            system_prompt_override = ?,
             updated_at = ?
         WHERE id = ?
           AND user_id = ?
@@ -353,6 +362,7 @@ pub async fn update_chat(
     .bind(i64::from(legacy_web_search_enabled(&tool_preferences)))
     .bind(i64::from(legacy_web_fetch_enabled(&tool_preferences)))
     .bind(tool_preferences_json)
+    .bind(system_prompt_override)
     .bind(unix_timestamp())
     .bind(chat_id)
     .bind(user_id)
@@ -760,7 +770,11 @@ pub async fn prepare_generation(
 
     let mut prompt_messages =
         active_prompt_messages(pool, uploads_dir, user_id, chat_id, &assistant_message_id).await?;
-    prepend_persona_system_prompt(&mut prompt_messages, persona.as_ref());
+    prepend_system_prompt(
+        &mut prompt_messages,
+        chat.system_prompt_override.as_deref(),
+        persona.as_ref(),
+    );
     let user_message = get_message(pool, user_id, chat_id, &user_message_id).await?;
     let assistant_message = get_message(pool, user_id, chat_id, &assistant_message_id).await?;
 
@@ -912,7 +926,11 @@ pub async fn prepare_regeneration(
 
     let mut prompt_messages =
         active_prompt_messages(pool, uploads_dir, user_id, chat_id, &assistant_message_id).await?;
-    prepend_persona_system_prompt(&mut prompt_messages, persona.as_ref());
+    prepend_system_prompt(
+        &mut prompt_messages,
+        chat.system_prompt_override.as_deref(),
+        persona.as_ref(),
+    );
     let assistant_message = get_message(pool, user_id, chat_id, &assistant_message_id).await?;
 
     Ok(PreparedGeneration {
@@ -1113,7 +1131,11 @@ pub async fn prepare_branch_generation(
 
     let mut prompt_messages =
         active_prompt_messages(pool, uploads_dir, user_id, chat_id, &assistant_message_id).await?;
-    prepend_persona_system_prompt(&mut prompt_messages, persona.as_ref());
+    prepend_system_prompt(
+        &mut prompt_messages,
+        chat.system_prompt_override.as_deref(),
+        persona.as_ref(),
+    );
     let user_message = get_message(pool, user_id, chat_id, &user_message_id).await?;
     let assistant_message = get_message(pool, user_id, chat_id, &assistant_message_id).await?;
 
@@ -1702,14 +1724,15 @@ async fn resolve_persona_generation_model(
     })
 }
 
-fn prepend_persona_system_prompt(
+fn prepend_system_prompt(
     messages: &mut Vec<OllamaChatMessage>,
+    system_prompt_override: Option<&str>,
     persona: Option<&ResolvedPersonaVersion>,
 ) {
-    let Some(persona) = persona else {
-        return;
-    };
-    let system_prompt = persona.system_prompt.trim();
+    let system_prompt = system_prompt_override
+        .or_else(|| persona.map(|persona| persona.system_prompt.as_str()))
+        .unwrap_or("")
+        .trim();
     if system_prompt.is_empty() {
         return;
     }
@@ -1734,6 +1757,10 @@ fn normalized_title(title: String) -> String {
     } else {
         title.to_string()
     }
+}
+
+fn normalized_system_prompt(value: String) -> String {
+    value.trim().to_string()
 }
 
 fn normalize_optional_string(value: Option<String>) -> Option<String> {
@@ -2129,6 +2156,7 @@ fn row_to_chat_detail(row: sqlx::sqlite::SqliteRow) -> Result<ChatDetail, sqlx::
         persona_id: row.try_get("persona_id")?,
         persona_version_id: row.try_get("persona_version_id")?,
         persona_name: row.try_get("persona_name")?,
+        system_prompt_override: row.try_get("system_prompt_override")?,
         tool_preferences,
         active_root_message_id: row.try_get("active_root_message_id")?,
         created_at: row.try_get("created_at")?,

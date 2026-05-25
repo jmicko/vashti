@@ -720,20 +720,36 @@ textarea {
 }
 
 .model-settings-prompt summary {
+  align-items: center;
   cursor: pointer;
   color: var(--accent);
+  display: flex;
   font-weight: 800;
+  gap: 10px;
+  justify-content: space-between;
 }
 
-.model-settings-prompt pre {
-  max-height: 220px;
-  overflow: auto;
-  border-top: 1px solid var(--line-soft);
-  color: var(--text);
-  font-family: inherit;
-  margin: 10px 0 0;
-  padding-top: 10px;
-  white-space: pre-wrap;
+.model-settings-prompt summary span {
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.68rem;
+  padding: 2px 7px;
+  text-transform: uppercase;
+}
+
+.model-settings-prompt textarea {
+  margin-top: 10px;
+  min-height: 150px;
+  resize: vertical;
+  width: 100%;
+}
+
+.model-settings-prompt-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 10px;
 }
 
 .model-search {

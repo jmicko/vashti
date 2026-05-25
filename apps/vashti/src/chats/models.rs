@@ -51,6 +51,7 @@ pub struct ChatDetail {
     pub persona_id: Option<String>,
     pub persona_version_id: Option<String>,
     pub persona_name: Option<String>,
+    pub system_prompt_override: Option<String>,
     pub tool_preferences: ChatToolPreferences,
     pub active_root_message_id: Option<String>,
     pub created_at: i64,

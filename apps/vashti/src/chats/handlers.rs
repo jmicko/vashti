@@ -47,6 +47,7 @@ pub struct CreateChatRequest {
     pub default_backend_id: String,
     pub default_model_name: String,
     pub persona_version_id: Option<String>,
+    pub system_prompt_override: Option<String>,
     pub tool_preferences: Option<ChatToolPreferences>,
 }
 
@@ -56,6 +57,7 @@ pub struct UpdateChatRequest {
     pub default_backend_id: Option<String>,
     pub default_model_name: Option<String>,
     pub persona_version_id: Option<String>,
+    pub system_prompt_override: Option<Option<String>>,
     pub tool_preferences: Option<ChatToolPreferences>,
 }
 
@@ -1059,6 +1061,7 @@ async fn maybe_generate_chat_title(
             default_model_name: None,
             persona_version_id: None,
             tool_preferences: None,
+            system_prompt_override: None,
         },
     )
     .await

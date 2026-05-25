@@ -206,6 +206,7 @@ export type ChatDetail = {
   persona_id?: string | null;
   persona_version_id?: string | null;
   persona_name?: string | null;
+  system_prompt_override?: string | null;
   tool_preferences: ChatToolPreferences;
   active_root_message_id: string | null;
   created_at: number;

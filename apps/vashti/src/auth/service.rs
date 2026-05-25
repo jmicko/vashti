@@ -969,6 +969,7 @@ mod tests {
                     default_model_name: "gemma4:e2b".to_string(),
                     persona_version_id: None,
                     tool_preferences: None,
+                    system_prompt_override: None,
                 },
             )
             .await
@@ -987,6 +988,7 @@ mod tests {
                 default_model_name: "gemma4:e2b".to_string(),
                 persona_version_id: None,
                 tool_preferences: None,
+                system_prompt_override: None,
             },
         )
         .await
@@ -1015,6 +1017,7 @@ mod tests {
                 default_model_name: None,
                 persona_version_id: None,
                 tool_preferences: None,
+                system_prompt_override: None,
             },
         )
         .await

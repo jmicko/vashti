@@ -293,10 +293,14 @@ export function privatePromptMessagesWithPersona(
   messages: ChatMessage[],
   activeRootMessageId: string | null,
   stopBeforeMessageId: string,
-  persona: PrivatePersona | null
+  persona: PrivatePersona | null,
+  systemPromptOverride?: string | null
 ) {
   const promptMessages = privatePromptMessages(messages, activeRootMessageId, stopBeforeMessageId);
-  const systemPrompt = persona?.current_version.system_prompt.trim();
+  const systemPrompt =
+    systemPromptOverride === undefined || systemPromptOverride === null
+      ? persona?.current_version.system_prompt.trim()
+      : systemPromptOverride.trim();
   if (!systemPrompt) {
     return promptMessages;
   }

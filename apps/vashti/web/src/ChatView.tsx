@@ -61,6 +61,7 @@ export function ChatView({
   personas,
   personaVersions,
   onChatsChanged,
+  onChatSettingsLoaded,
   onImageOpen,
   onModelSelected,
   onQueuedPromptConsumed
@@ -74,6 +75,7 @@ export function ChatView({
   personas: Persona[];
   personaVersions: PersonaVersion[];
   onChatsChanged: () => Promise<void>;
+  onChatSettingsLoaded: (override: string | null | undefined) => void;
   onImageOpen: ImageOpenHandler;
   onModelSelected: (value: string) => void;
   onQueuedPromptConsumed: () => void;
@@ -122,6 +124,7 @@ export function ChatView({
         ...normalizedChat,
         active_root_message_id: activeRootMessageId
       });
+      onChatSettingsLoaded(normalizedChat.system_prompt_override);
       thinkingStartedAtRef.current.clear();
       setThinkingDurations({});
       setStreamSegments({});
@@ -140,7 +143,7 @@ export function ChatView({
           modelValue(normalizedChat.default_backend_id, normalizedChat.default_model_name)
       );
     },
-    [onModelSelected]
+    [onChatSettingsLoaded, onModelSelected]
   );
 
   const loadChat = useCallback(async () => {
@@ -236,6 +239,7 @@ export function ChatView({
           active_root_message_id: messageResponse.active_root_message_id
         };
         setChat(nextChat);
+        onChatSettingsLoaded(nextChat.system_prompt_override);
         await saveCachedHostedChat<ChatDetail, ChatMessage>({
           chat: nextChat,
           active_root_message_id: messageResponse.active_root_message_id,
@@ -248,7 +252,7 @@ export function ChatView({
         refreshError instanceof Error ? refreshError.message : "Failed to refresh generation"
       );
     }
-  }, [chatId, onChatsChanged]);
+  }, [chatId, onChatSettingsLoaded, onChatsChanged]);
 
   useEffect(() => {
     if (!chat || isLoading || isGenerating) {

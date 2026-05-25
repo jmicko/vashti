@@ -42,6 +42,7 @@ export type PrivateChatSummary = {
   persona_id?: string | null;
   persona_version_id?: string | null;
   persona_name?: string | null;
+  system_prompt_override?: string | null;
   active_root_message_id: string | null;
   created_at: number;
   updated_at: number;
@@ -58,6 +59,7 @@ export type PrivateChatDetail = {
   persona_id?: string | null;
   persona_version_id?: string | null;
   persona_name?: string | null;
+  system_prompt_override?: string | null;
   active_root_message_id: string | null;
   created_at: number;
   updated_at: number;
@@ -122,6 +124,7 @@ export type CreatePrivateChatParams = {
   personaId?: string | null;
   personaVersionId?: string | null;
   personaName?: string | null;
+  systemPromptOverride?: string | null;
 };
 
 export type CreatePrivateMessageParams = {
@@ -331,7 +334,8 @@ export async function createPrivateChat({
   modelName,
   personaId = null,
   personaVersionId = null,
-  personaName = null
+  personaName = null,
+  systemPromptOverride = null
 }: CreatePrivateChatParams): Promise<PrivateChatDetail> {
   const now = unixTimestamp();
   const chat: PrivateChatDetail = {
@@ -343,6 +347,7 @@ export async function createPrivateChat({
     persona_id: personaId,
     persona_version_id: personaVersionId,
     persona_name: personaName,
+    system_prompt_override: systemPromptOverride,
     active_root_message_id: null,
     created_at: now,
     updated_at: now,

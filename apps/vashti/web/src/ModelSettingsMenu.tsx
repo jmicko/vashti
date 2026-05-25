@@ -30,10 +30,13 @@ export function ModelSettingsMenu({
   privatePersonaVersions,
   selectedModel,
   selectedModelInfo,
+  systemPromptOverride,
+  canSaveConversationSettings,
   disabled,
   onModelSelected,
   onPersonaVersionsLoaded,
-  onPrivatePersonaVersionsLoaded
+  onPrivatePersonaVersionsLoaded,
+  onSystemPromptOverrideSave
 }: {
   groups: BackendModelGroup[];
   personas: Persona[];
@@ -42,13 +45,18 @@ export function ModelSettingsMenu({
   privatePersonaVersions: PrivatePersonaVersion[];
   selectedModel: string;
   selectedModelInfo: ModelInfo | null;
+  systemPromptOverride?: string | null;
+  canSaveConversationSettings?: boolean;
   disabled: boolean;
   onModelSelected: (value: string) => void;
   onPersonaVersionsLoaded: (versions: PersonaVersion[]) => void;
   onPrivatePersonaVersionsLoaded: (versions: PrivatePersonaVersion[]) => void;
+  onSystemPromptOverrideSave?: (value: string | null) => Promise<void>;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [loadingVersions, setLoadingVersions] = useState(false);
+  const [savingPromptOverride, setSavingPromptOverride] = useState(false);
+  const [draftSystemPrompt, setDraftSystemPrompt] = useState("");
   const [error, setError] = useState<string | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const loadedHostedPersonaIdsRef = useRef(new Set<string>());
@@ -123,7 +131,15 @@ export function ModelSettingsMenu({
       : selectedBaseOption
         ? `${selectedBaseOption.backendName} / ${compactModelName(selectedBaseOption.model.name)}`
         : "Select a model to view settings";
-  const systemPrompt = selectedHostedVersion?.system_prompt ?? selectedPrivateVersion?.system_prompt;
+  const defaultSystemPrompt =
+    selectedHostedVersion?.system_prompt ?? selectedPrivateVersion?.system_prompt ?? "";
+  const effectiveSystemPrompt =
+    systemPromptOverride === undefined || systemPromptOverride === null
+      ? defaultSystemPrompt
+      : systemPromptOverride;
+  const isSystemPromptCustomized =
+    systemPromptOverride !== undefined && systemPromptOverride !== null;
+  const systemPromptChanged = draftSystemPrompt !== effectiveSystemPrompt;
   const baseModelName =
     selectedHostedVersion?.base_model_name ??
     selectedPrivateVersion?.base_model_name ??
@@ -155,6 +171,10 @@ export function ModelSettingsMenu({
       void loadPrivateVersions(selectedPrivateVersion.persona_id);
     }
   }, [isOpen, selectedHostedVersion?.persona_id, selectedPrivateVersion?.persona_id]);
+
+  useEffect(() => {
+    setDraftSystemPrompt(effectiveSystemPrompt);
+  }, [effectiveSystemPrompt, selectedModel]);
 
   async function loadHostedVersions(personaId: string) {
     if (loadedHostedPersonaIdsRef.current.has(personaId)) {
@@ -204,6 +224,22 @@ export function ModelSettingsMenu({
 
     if (selectedPrivatePersona) {
       onModelSelected(privatePersonaModelValue(selectedPrivatePersona.current_version.id));
+    }
+  }
+
+  async function saveSystemPromptOverride(value: string | null) {
+    if (!onSystemPromptOverrideSave) {
+      return;
+    }
+
+    setSavingPromptOverride(true);
+    setError(null);
+    try {
+      await onSystemPromptOverrideSave(value);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Failed to save system prompt");
+    } finally {
+      setSavingPromptOverride(false);
     }
   }
 
@@ -273,12 +309,8 @@ export function ModelSettingsMenu({
                   ))}
                 </select>
               </label>
-              <details className="model-settings-prompt">
-                <summary>System prompt</summary>
-                <pre>{systemPrompt?.trim() || "No system prompt."}</pre>
-              </details>
               <p className="model-settings-note">
-                Editing per-chat prompts and inference options will live here next.
+                Version changes apply to new messages in this conversation.
               </p>
             </>
           ) : (
@@ -286,6 +318,55 @@ export function ModelSettingsMenu({
               Inference settings like context length and temperature will live here.
             </p>
           )}
+
+          <details className="model-settings-prompt">
+            <summary>
+              System prompt
+              {isSystemPromptCustomized && <span>customized</span>}
+            </summary>
+            <textarea
+              value={draftSystemPrompt}
+              onChange={(event) => setDraftSystemPrompt(event.target.value)}
+              placeholder={
+                defaultSystemPrompt
+                  ? "Use the default system prompt, or edit it for this chat."
+                  : "Add a system prompt for this chat."
+              }
+              disabled={!canSaveConversationSettings || savingPromptOverride}
+            />
+            <div className="model-settings-prompt-actions">
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={
+                  !canSaveConversationSettings ||
+                  savingPromptOverride ||
+                  (!isSystemPromptCustomized && !systemPromptChanged)
+                }
+                onClick={() => {
+                  setDraftSystemPrompt(defaultSystemPrompt);
+                  void saveSystemPromptOverride(null);
+                }}
+              >
+                <RotateCcw />
+                <span>Reset</span>
+              </button>
+              <button
+                type="button"
+                disabled={
+                  !canSaveConversationSettings || savingPromptOverride || !systemPromptChanged
+                }
+                onClick={() => void saveSystemPromptOverride(draftSystemPrompt)}
+              >
+                Save Prompt
+              </button>
+            </div>
+            {!canSaveConversationSettings && (
+              <p className="model-settings-note">
+                Start or open a chat to save conversation-specific prompts.
+              </p>
+            )}
+          </details>
 
           {loadingVersions && <p className="status-message">Loading versions...</p>}
           {error && <p className="error">{error}</p>}
