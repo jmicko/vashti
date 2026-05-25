@@ -140,6 +140,7 @@ export function ModelSettingsMenu({
   const isSystemPromptCustomized =
     systemPromptOverride !== undefined && systemPromptOverride !== null;
   const systemPromptChanged = draftSystemPrompt !== effectiveSystemPrompt;
+  const hasConversationSettings = isUsingNonDefaultVersion || isSystemPromptCustomized;
   const baseModelName =
     selectedHostedVersion?.base_model_name ??
     selectedPrivateVersion?.base_model_name ??
@@ -248,7 +249,7 @@ export function ModelSettingsMenu({
       <button
         type="button"
         className={
-          isUsingNonDefaultVersion
+          hasConversationSettings
             ? "icon-button model-settings-button model-settings-button-dirty"
             : "icon-button model-settings-button"
         }
