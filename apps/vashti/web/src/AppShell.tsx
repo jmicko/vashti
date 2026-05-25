@@ -23,6 +23,7 @@ import { ChatHome } from "./ChatHome";
 import { ConfirmDialog } from "./common";
 import { ModelPicker } from "./ModelPicker";
 import { ModelSettingsMenu } from "./ModelSettingsMenu";
+import { storeCustomModelDraft, type CustomModelDraft } from "./customModelDraft";
 import {
   enabledModelValueSet,
   modelInfoForValue,
@@ -712,6 +713,11 @@ export function AppShell({
     setChatSystemPromptOverride(override ?? null);
   }, []);
 
+  function createCustomModelFromSettings(draft: CustomModelDraft) {
+    storeCustomModelDraft(draft);
+    openSettings("models");
+  }
+
   async function createPrivateChatFromPrompt(
     prompt: string,
     attachments: ComposerAttachment[] = [],
@@ -925,6 +931,7 @@ export function AppShell({
                   canSaveConversationSettings={Boolean(currentChatId || currentPrivateChatId)}
                   disabled={!selectedModel || isLoadingModels}
                   onModelSelected={setSelectedModel}
+                  onCreateCustomModelFromSettings={createCustomModelFromSettings}
                   onPersonaVersionsLoaded={rememberPersonaVersions}
                   onPrivatePersonaVersionsLoaded={rememberPrivatePersonaVersions}
                   onSystemPromptOverrideSave={saveChatSystemPromptOverride}

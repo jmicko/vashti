@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { requestJson } from "./api";
 import { ConfirmDialog, RetroLoader } from "./common";
+import { takeCustomModelDraft, type CustomModelDraft } from "./customModelDraft";
 import { modelParts, modelValue } from "./modelSelection";
 import {
   createPrivatePersona,
@@ -98,17 +99,32 @@ export function CustomModelsSection({
     setStatus(null);
   }
 
-  function startCreatingPersona() {
+  function startCreatingPersona(draft?: CustomModelDraft) {
     setEditingPersona(null);
     setEditingPrivatePersona(null);
-    setDisplayName("");
-    setStorageMode("local");
-    setSelectedBaseModel(firstModelValue(modelGroups));
-    setSystemPrompt("");
+    setDisplayName(draft?.displayName ?? "");
+    setStorageMode(draft?.storageMode ?? "local");
+    setSelectedBaseModel(
+      draft?.baseModelValue && modelParts(draft.baseModelValue)
+        ? draft.baseModelValue
+        : firstModelValue(modelGroups)
+    );
+    setSystemPrompt(draft?.systemPrompt ?? "");
     setError(null);
     setStatus(null);
     setIsEditorOpen(true);
   }
+
+  useEffect(() => {
+    if (!hasLoaded) {
+      return;
+    }
+
+    const draft = takeCustomModelDraft();
+    if (draft) {
+      startCreatingPersona(draft);
+    }
+  }, [hasLoaded, modelGroups]);
 
   function startEditingPersona(persona: Persona) {
     const version = persona.current_version;
@@ -342,7 +358,7 @@ export function CustomModelsSection({
                 {isRefreshing ? <RetroLoader /> : <RefreshCw />}
                 <span>{isRefreshing ? "Loading" : "Refresh"}</span>
               </button>
-              <button type="button" onClick={startCreatingPersona}>
+              <button type="button" onClick={() => startCreatingPersona()}>
                 <Plus />
                 <span>New</span>
               </button>

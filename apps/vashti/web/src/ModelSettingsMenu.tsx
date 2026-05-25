@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { RotateCcw, SlidersHorizontal } from "lucide-react";
+import { Plus, RotateCcw, SlidersHorizontal } from "lucide-react";
 import { requestJson } from "./api";
+import type { CustomModelDraft } from "./customModelDraft";
 import { ModelCapabilityBadges } from "./modelCapabilities";
 import {
   compactModelName,
@@ -34,6 +35,7 @@ export function ModelSettingsMenu({
   canSaveConversationSettings,
   disabled,
   onModelSelected,
+  onCreateCustomModelFromSettings,
   onPersonaVersionsLoaded,
   onPrivatePersonaVersionsLoaded,
   onSystemPromptOverrideSave
@@ -49,6 +51,7 @@ export function ModelSettingsMenu({
   canSaveConversationSettings?: boolean;
   disabled: boolean;
   onModelSelected: (value: string) => void;
+  onCreateCustomModelFromSettings?: (draft: CustomModelDraft) => void;
   onPersonaVersionsLoaded: (versions: PersonaVersion[]) => void;
   onPrivatePersonaVersionsLoaded: (versions: PrivatePersonaVersion[]) => void;
   onSystemPromptOverrideSave?: (value: string | null) => Promise<void>;
@@ -146,6 +149,13 @@ export function ModelSettingsMenu({
     selectedPrivateVersion?.base_model_name ??
     selectedBaseOption?.model.name ??
     null;
+  const baseModelDraftValue = selectedHostedVersion
+    ? modelValue(selectedHostedVersion.base_backend_id, selectedHostedVersion.base_model_name)
+    : selectedPrivateVersion
+      ? modelValue(selectedPrivateVersion.base_backend_id, selectedPrivateVersion.base_model_name)
+      : selectedBaseOption
+        ? modelValue(selectedBaseOption.backendId, selectedBaseOption.model.name)
+        : null;
 
   useEffect(() => {
     function handlePointerDown(event: MouseEvent) {
@@ -242,6 +252,20 @@ export function ModelSettingsMenu({
     } finally {
       setSavingPromptOverride(false);
     }
+  }
+
+  function createCustomModelFromSettings() {
+    if (!baseModelDraftValue || !onCreateCustomModelFromSettings) {
+      return;
+    }
+
+    onCreateCustomModelFromSettings({
+      displayName: isCustomModel ? `${title} copy` : compactModelName(baseModelName ?? title),
+      baseModelValue: baseModelDraftValue,
+      systemPrompt: draftSystemPrompt,
+      storageMode: selectedPrivateVersion ? "local" : "private"
+    });
+    setIsOpen(false);
   }
 
   return (
@@ -371,6 +395,17 @@ export function ModelSettingsMenu({
 
           {loadingVersions && <p className="status-message">Loading versions...</p>}
           {error && <p className="error">{error}</p>}
+
+          {baseModelDraftValue && onCreateCustomModelFromSettings && (
+            <button
+              type="button"
+              className="secondary-button model-settings-wide-action"
+              onClick={createCustomModelFromSettings}
+            >
+              <Plus />
+              <span>New custom model from settings</span>
+            </button>
+          )}
         </div>
       )}
     </div>

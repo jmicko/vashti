@@ -752,6 +752,11 @@ textarea {
   margin-top: 10px;
 }
 
+.model-settings-wide-action {
+  justify-content: center;
+  width: 100%;
+}
+
 .model-search {
   position: relative;
   display: block;
