@@ -609,7 +609,8 @@ export function AppShell({
           default_backend_id: selected.backendId,
           default_model_name: selected.modelName,
           persona_version_id: selectedPersonaVersionId,
-          tool_preferences: toolPreferences
+          tool_preferences: toolPreferences,
+          system_prompt_override: chatSystemPromptOverride
         })
       });
 
@@ -706,7 +707,12 @@ export function AppShell({
       return;
     }
 
-    throw new Error("Open a chat before saving conversation settings");
+    if (routeRef.current.page === "chat" && !routeRef.current.chatId) {
+      setChatSystemPromptOverride(value);
+      return;
+    }
+
+    throw new Error("Open or start a chat before saving conversation settings");
   }
 
   const handleChatSettingsLoaded = useCallback((override: string | null | undefined) => {
@@ -756,11 +762,18 @@ export function AppShell({
         modelName: selected.modelName,
         personaId: selectedPrivatePersona?.id ?? null,
         personaVersionId: selectedPrivatePersona?.current_version.id ?? null,
-        personaName: selectedPrivatePersona?.current_version.display_name ?? null
+        personaName: selectedPrivatePersona?.current_version.display_name ?? null,
+        systemPromptOverride: chatSystemPromptOverride
       });
 
       if (prompt.trim()) {
-        setQueuedPrivatePrompt({ chatId: chat.id, prompt, attachments, thinkMode });
+        setQueuedPrivatePrompt({
+          chatId: chat.id,
+          prompt,
+          attachments,
+          thinkMode,
+          systemPromptOverride: chatSystemPromptOverride
+        });
       }
 
       await loadPrivateChats();
@@ -928,7 +941,7 @@ export function AppShell({
                   selectedModel={selectedModel}
                   selectedModelInfo={selectedModelInfo()}
                   systemPromptOverride={chatSystemPromptOverride}
-                  canSaveConversationSettings={Boolean(currentChatId || currentPrivateChatId)}
+                  canSaveConversationSettings={page === "chat" || Boolean(currentPrivateChatId)}
                   disabled={!selectedModel || isLoadingModels}
                   onModelSelected={setSelectedModel}
                   onCreateCustomModelFromSettings={createCustomModelFromSettings}

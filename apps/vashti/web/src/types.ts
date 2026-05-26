@@ -262,6 +262,7 @@ export type ComposerSubmitPayload = {
   attachments: ComposerAttachment[];
   toolPreferences?: ChatToolPreferences;
   thinkMode?: ThinkingMode;
+  systemPromptOverride?: string | null;
 };
 
 export type ThinkingMode = "auto" | "false" | "low" | "medium" | "high";

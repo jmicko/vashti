@@ -418,9 +418,12 @@ export function PrivateChatView({
       queuedPrompt.prompt,
       queuedPrompt.attachments,
       undefined,
-      queuedPrompt.thinkMode
+      queuedPrompt.thinkMode,
+      queuedPrompt.systemPromptOverride !== undefined
+        ? queuedPrompt.systemPromptOverride
+        : systemPromptOverride
     );
-  }, [chat, isGenerating, isLoading, onQueuedPromptConsumed, queuedPrompt]);
+  }, [chat, isGenerating, isLoading, onQueuedPromptConsumed, queuedPrompt, systemPromptOverride]);
 
   useEffect(() => {
     if (!pendingPrompt || isGenerating || isLoading || !chat) {
@@ -429,8 +432,15 @@ export function PrivateChatView({
 
     const prompt = pendingPrompt;
     setPendingPrompt(null);
-    void generate(prompt.prompt, prompt.attachments, prompt.thinkMode);
-  }, [chat, isGenerating, isLoading, pendingPrompt]);
+    void generate(
+      prompt.prompt,
+      prompt.attachments,
+      prompt.thinkMode,
+      prompt.systemPromptOverride !== undefined
+        ? prompt.systemPromptOverride
+        : systemPromptOverride
+    );
+  }, [chat, isGenerating, isLoading, pendingPrompt, systemPromptOverride]);
 
   function noteUserScrollIntent() {
     if (!isGenerating) {
@@ -569,7 +579,8 @@ export function PrivateChatView({
   async function generate(
     prompt: string,
     attachments: ComposerAttachment[] = [],
-    thinkMode: ThinkingMode = "auto"
+    thinkMode: ThinkingMode = "auto",
+    promptSystemPromptOverride: string | null = systemPromptOverride
   ) {
     if (!chat || isGenerating) {
       return;
@@ -669,7 +680,7 @@ export function PrivateChatView({
         nextChat.active_root_message_id,
         assistantMessage.id,
         selectedPrivatePersona,
-        systemPromptOverride
+        promptSystemPromptOverride
       ),
       attachments: []
     });
@@ -760,15 +771,21 @@ export function PrivateChatView({
     prompt: string,
     attachments: ComposerAttachment[] = [],
     _toolPreferences?: unknown,
-    thinkMode: ThinkingMode = "auto"
+    thinkMode: ThinkingMode = "auto",
+    promptSystemPromptOverride: string | null = systemPromptOverride
   ) {
     if (isGenerating) {
-      setPendingPrompt({ prompt, attachments, thinkMode });
+      setPendingPrompt({
+        prompt,
+        attachments,
+        thinkMode,
+        systemPromptOverride: promptSystemPromptOverride
+      });
       await stopGeneration();
       return;
     }
 
-    await generate(prompt, attachments, thinkMode);
+    await generate(prompt, attachments, thinkMode, promptSystemPromptOverride);
   }
 
   async function stopGeneration() {
