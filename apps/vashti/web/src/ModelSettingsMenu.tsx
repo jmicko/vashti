@@ -2,6 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Plus, RotateCcw, SlidersHorizontal } from "lucide-react";
 import { requestJson } from "./api";
 import type { CustomModelDraft } from "./customModelDraft";
+import {
+  hasInferenceSettings,
+  inferenceSettingsEqual,
+  normalizeInferenceSettings
+} from "./inferenceSettings";
 import { ModelCapabilityBadges } from "./modelCapabilities";
 import {
   compactModelName,
@@ -17,11 +22,21 @@ import {
   type PrivatePersona,
   type PrivatePersonaVersion
 } from "./privateChatStore";
-import type { BackendModelGroup, ModelInfo, Persona, PersonaVersion } from "./types";
+import type {
+  BackendModelGroup,
+  ChatInferenceSettings,
+  ModelInfo,
+  Persona,
+  PersonaVersion
+} from "./types";
 
 type PersonaVersionsResponse = {
   versions: PersonaVersion[];
 };
+
+type InferenceInputKey = keyof ChatInferenceSettings;
+
+type InferenceInputValues = Record<InferenceInputKey, string>;
 
 export function ModelSettingsMenu({
   groups,
@@ -32,13 +47,15 @@ export function ModelSettingsMenu({
   selectedModel,
   selectedModelInfo,
   systemPromptOverride,
+  inferenceSettings,
   canSaveConversationSettings,
   disabled,
   onModelSelected,
   onCreateCustomModelFromSettings,
   onPersonaVersionsLoaded,
   onPrivatePersonaVersionsLoaded,
-  onSystemPromptOverrideSave
+  onSystemPromptOverrideSave,
+  onInferenceSettingsSave
 }: {
   groups: BackendModelGroup[];
   personas: Persona[];
@@ -48,6 +65,7 @@ export function ModelSettingsMenu({
   selectedModel: string;
   selectedModelInfo: ModelInfo | null;
   systemPromptOverride?: string | null;
+  inferenceSettings?: ChatInferenceSettings;
   canSaveConversationSettings?: boolean;
   disabled: boolean;
   onModelSelected: (value: string) => void;
@@ -55,11 +73,16 @@ export function ModelSettingsMenu({
   onPersonaVersionsLoaded: (versions: PersonaVersion[]) => void;
   onPrivatePersonaVersionsLoaded: (versions: PrivatePersonaVersion[]) => void;
   onSystemPromptOverrideSave?: (value: string | null) => Promise<void>;
+  onInferenceSettingsSave?: (value: ChatInferenceSettings) => Promise<void>;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [loadingVersions, setLoadingVersions] = useState(false);
   const [savingPromptOverride, setSavingPromptOverride] = useState(false);
+  const [savingInferenceSettings, setSavingInferenceSettings] = useState(false);
   const [draftSystemPrompt, setDraftSystemPrompt] = useState("");
+  const [draftInferenceInputs, setDraftInferenceInputs] = useState<InferenceInputValues>(() =>
+    inferenceSettingsToInputs({})
+  );
   const [error, setError] = useState<string | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const loadedHostedPersonaIdsRef = useRef(new Set<string>());
@@ -143,7 +166,18 @@ export function ModelSettingsMenu({
   const isSystemPromptCustomized =
     systemPromptOverride !== undefined && systemPromptOverride !== null;
   const systemPromptChanged = draftSystemPrompt !== effectiveSystemPrompt;
-  const hasConversationSettings = isUsingNonDefaultVersion || isSystemPromptCustomized;
+  const effectiveInferenceSettings = normalizeInferenceSettings(inferenceSettings);
+  const draftInferenceSettings = useMemo(
+    () => inferenceInputsToSettings(draftInferenceInputs),
+    [draftInferenceInputs]
+  );
+  const inferenceSettingsChanged = !inferenceSettingsEqual(
+    draftInferenceSettings,
+    effectiveInferenceSettings
+  );
+  const isInferenceCustomized = hasInferenceSettings(effectiveInferenceSettings);
+  const hasConversationSettings =
+    isUsingNonDefaultVersion || isSystemPromptCustomized || isInferenceCustomized;
   const baseModelName =
     selectedHostedVersion?.base_model_name ??
     selectedPrivateVersion?.base_model_name ??
@@ -186,6 +220,18 @@ export function ModelSettingsMenu({
   useEffect(() => {
     setDraftSystemPrompt(effectiveSystemPrompt);
   }, [effectiveSystemPrompt, selectedModel]);
+
+  useEffect(() => {
+    setDraftInferenceInputs(inferenceSettingsToInputs(effectiveInferenceSettings));
+  }, [
+    effectiveInferenceSettings.temperature,
+    effectiveInferenceSettings.top_p,
+    effectiveInferenceSettings.repeat_penalty,
+    effectiveInferenceSettings.num_ctx,
+    effectiveInferenceSettings.num_predict,
+    effectiveInferenceSettings.seed,
+    selectedModel
+  ]);
 
   async function loadHostedVersions(personaId: string) {
     if (loadedHostedPersonaIdsRef.current.has(personaId)) {
@@ -252,6 +298,28 @@ export function ModelSettingsMenu({
     } finally {
       setSavingPromptOverride(false);
     }
+  }
+
+  async function saveInferenceSettings(value: ChatInferenceSettings) {
+    if (!onInferenceSettingsSave) {
+      return;
+    }
+
+    const normalized = normalizeInferenceSettings(value);
+    setSavingInferenceSettings(true);
+    setError(null);
+    try {
+      await onInferenceSettingsSave(normalized);
+      setDraftInferenceInputs(inferenceSettingsToInputs(normalized));
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Failed to save inference settings");
+    } finally {
+      setSavingInferenceSettings(false);
+    }
+  }
+
+  function updateDraftInferenceSetting(key: InferenceInputKey, value: string) {
+    setDraftInferenceInputs((current) => ({ ...current, [key]: value }));
   }
 
   function createCustomModelFromSettings() {
@@ -338,11 +406,141 @@ export function ModelSettingsMenu({
                 Version changes apply to new messages in this conversation.
               </p>
             </>
-          ) : (
-            <p className="model-settings-note">
-              Inference settings like context length and temperature will live here.
-            </p>
-          )}
+          ) : null}
+
+          <details className="model-settings-prompt model-settings-inference">
+            <summary>
+              Inference
+              {isInferenceCustomized && <span>customized</span>}
+            </summary>
+            <div className="model-settings-inference-grid">
+              <label className="model-settings-number-field">
+                <span>Temperature</span>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  step="0.1"
+                  min="0"
+                  max="2"
+                  placeholder="Default"
+                  value={draftInferenceInputs.temperature}
+                  disabled={!canSaveConversationSettings || savingInferenceSettings}
+                  onChange={(event) =>
+                    updateDraftInferenceSetting("temperature", event.target.value)
+                  }
+                />
+              </label>
+              <label className="model-settings-number-field">
+                <span>Context</span>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  step="1"
+                  min="512"
+                  placeholder="Default"
+                  value={draftInferenceInputs.num_ctx}
+                  disabled={!canSaveConversationSettings || savingInferenceSettings}
+                  onChange={(event) =>
+                    updateDraftInferenceSetting("num_ctx", event.target.value)
+                  }
+                />
+              </label>
+              <label className="model-settings-number-field">
+                <span>Top P</span>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  step="0.05"
+                  min="0.01"
+                  max="1"
+                  placeholder="Default"
+                  value={draftInferenceInputs.top_p}
+                  disabled={!canSaveConversationSettings || savingInferenceSettings}
+                  onChange={(event) => updateDraftInferenceSetting("top_p", event.target.value)}
+                />
+              </label>
+              <label className="model-settings-number-field">
+                <span>Repeat penalty</span>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  step="0.05"
+                  min="0.5"
+                  max="2"
+                  placeholder="Default"
+                  value={draftInferenceInputs.repeat_penalty}
+                  disabled={!canSaveConversationSettings || savingInferenceSettings}
+                  onChange={(event) =>
+                    updateDraftInferenceSetting("repeat_penalty", event.target.value)
+                  }
+                />
+              </label>
+              <label className="model-settings-number-field">
+                <span>Max output</span>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  step="1"
+                  min="1"
+                  placeholder="Default"
+                  value={draftInferenceInputs.num_predict}
+                  disabled={!canSaveConversationSettings || savingInferenceSettings}
+                  onChange={(event) =>
+                    updateDraftInferenceSetting("num_predict", event.target.value)
+                  }
+                />
+              </label>
+              <label className="model-settings-number-field">
+                <span>Seed</span>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  step="1"
+                  placeholder="Default"
+                  value={draftInferenceInputs.seed}
+                  disabled={!canSaveConversationSettings || savingInferenceSettings}
+                  onChange={(event) =>
+                    updateDraftInferenceSetting("seed", event.target.value)
+                  }
+                />
+              </label>
+            </div>
+            <p className="model-settings-note">Blank fields use the model/backend default.</p>
+            <div className="model-settings-prompt-actions">
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={
+                  !canSaveConversationSettings ||
+                  savingInferenceSettings ||
+                  (!isInferenceCustomized && !inferenceSettingsChanged)
+                }
+                onClick={() => {
+                  setDraftInferenceInputs(inferenceSettingsToInputs({}));
+                  void saveInferenceSettings({});
+                }}
+              >
+                <RotateCcw />
+                <span>Reset</span>
+              </button>
+              <button
+                type="button"
+                disabled={
+                  !canSaveConversationSettings ||
+                  savingInferenceSettings ||
+                  !inferenceSettingsChanged
+                }
+                onClick={() => void saveInferenceSettings(draftInferenceSettings)}
+              >
+                Save Inference
+              </button>
+            </div>
+            {!canSaveConversationSettings && (
+              <p className="model-settings-note">
+                Start or open a chat to save conversation-specific inference settings.
+              </p>
+            )}
+          </details>
 
           <details className="model-settings-prompt">
             <summary>
@@ -422,4 +620,45 @@ function uniquePrivatePersonaVersions(versions: PrivatePersonaVersion[]) {
   return [...new Map(versions.map((version) => [version.id, version])).values()].sort(
     (left, right) => right.version_number - left.version_number
   );
+}
+
+function inferenceSettingsToInputs(settings: ChatInferenceSettings): InferenceInputValues {
+  return {
+    temperature: inferenceInputValue(settings.temperature),
+    top_p: inferenceInputValue(settings.top_p),
+    repeat_penalty: inferenceInputValue(settings.repeat_penalty),
+    num_ctx: inferenceInputValue(settings.num_ctx),
+    num_predict: inferenceInputValue(settings.num_predict),
+    seed: inferenceInputValue(settings.seed)
+  };
+}
+
+function inferenceInputsToSettings(inputs: InferenceInputValues): ChatInferenceSettings {
+  return normalizeInferenceSettings({
+    temperature: parsedInferenceNumber(inputs.temperature),
+    top_p: parsedInferenceNumber(inputs.top_p),
+    repeat_penalty: parsedInferenceNumber(inputs.repeat_penalty),
+    num_ctx: parsedInferenceInteger(inputs.num_ctx),
+    num_predict: parsedInferenceInteger(inputs.num_predict),
+    seed: parsedInferenceInteger(inputs.seed)
+  });
+}
+
+function inferenceInputValue(value: number | null | undefined) {
+  return value === null || value === undefined ? "" : String(value);
+}
+
+function parsedInferenceNumber(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function parsedInferenceInteger(value: string) {
+  const parsed = parsedInferenceNumber(value);
+  return parsed === undefined ? undefined : Math.trunc(parsed);
 }

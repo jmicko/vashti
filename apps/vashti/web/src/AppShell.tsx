@@ -78,6 +78,7 @@ import type {
   AvailableToolsResponse,
   BackendModelGroup,
   ChatResponse,
+  ChatInferenceSettings,
   ChatSummary,
   ChatToolPreferences,
   ComposerAttachment,
@@ -152,6 +153,7 @@ export function AppShell({
     ({ chatId: string } & ComposerSubmitPayload) | null
   >(null);
   const [chatSystemPromptOverride, setChatSystemPromptOverride] = useState<string | null>(null);
+  const [chatInferenceSettings, setChatInferenceSettings] = useState<ChatInferenceSettings>({});
   const [error, setError] = useState<string | null>(null);
   const isAdmin = user.role === "admin";
   const page = route.page;
@@ -207,6 +209,7 @@ export function AppShell({
       setNewChatMode("standard");
     }
     setChatSystemPromptOverride(null);
+    setChatInferenceSettings({});
   }, [route]);
 
   const updateAppSettingsGuard = useCallback((guard: AppSettingsGuard | null) => {
@@ -610,7 +613,8 @@ export function AppShell({
           default_model_name: selected.modelName,
           persona_version_id: selectedPersonaVersionId,
           tool_preferences: toolPreferences,
-          system_prompt_override: chatSystemPromptOverride
+          system_prompt_override: chatSystemPromptOverride,
+          inference_settings: chatInferenceSettings
         })
       });
 
@@ -621,7 +625,8 @@ export function AppShell({
           prompt,
           attachments: uploadedAttachments,
           toolPreferences,
-          thinkMode
+          thinkMode,
+          inferenceSettings: chatInferenceSettings
         });
       }
 
@@ -715,8 +720,47 @@ export function AppShell({
     throw new Error("Open or start a chat before saving conversation settings");
   }
 
-  const handleChatSettingsLoaded = useCallback((override: string | null | undefined) => {
+  async function saveChatInferenceSettings(value: ChatInferenceSettings) {
+    if (currentChatId) {
+      const response = await requestJson<ChatResponse>(`/api/chats/${currentChatId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ inference_settings: value })
+      });
+      setChatInferenceSettings(response.chat.inference_settings ?? {});
+      return;
+    }
+
+    if (currentPrivateChatId) {
+      const chat = await getPrivateChat(currentPrivateChatId);
+      if (!chat) {
+        throw new Error("Private chat not found on this device");
+      }
+
+      const nextChat = {
+        ...chat,
+        inference_settings: value,
+        updated_at: unixTimestamp()
+      };
+      await savePrivateChat(nextChat);
+      setChatInferenceSettings(value);
+      await loadPrivateChats();
+      return;
+    }
+
+    if (routeRef.current.page === "chat" && !routeRef.current.chatId) {
+      setChatInferenceSettings(value);
+      return;
+    }
+
+    throw new Error("Open or start a chat before saving conversation settings");
+  }
+
+  const handleChatSettingsLoaded = useCallback((
+    override: string | null | undefined,
+    inferenceSettings?: ChatInferenceSettings
+  ) => {
     setChatSystemPromptOverride(override ?? null);
+    setChatInferenceSettings(inferenceSettings ?? {});
   }, []);
 
   function createCustomModelFromSettings(draft: CustomModelDraft) {
@@ -763,7 +807,8 @@ export function AppShell({
         personaId: selectedPrivatePersona?.id ?? null,
         personaVersionId: selectedPrivatePersona?.current_version.id ?? null,
         personaName: selectedPrivatePersona?.current_version.display_name ?? null,
-        systemPromptOverride: chatSystemPromptOverride
+        systemPromptOverride: chatSystemPromptOverride,
+        inferenceSettings: chatInferenceSettings
       });
 
       if (prompt.trim()) {
@@ -772,7 +817,8 @@ export function AppShell({
           prompt,
           attachments,
           thinkMode,
-          systemPromptOverride: chatSystemPromptOverride
+          systemPromptOverride: chatSystemPromptOverride,
+          inferenceSettings: chatInferenceSettings
         });
       }
 
@@ -941,6 +987,7 @@ export function AppShell({
                   selectedModel={selectedModel}
                   selectedModelInfo={selectedModelInfo()}
                   systemPromptOverride={chatSystemPromptOverride}
+                  inferenceSettings={chatInferenceSettings}
                   canSaveConversationSettings={page === "chat" || Boolean(currentPrivateChatId)}
                   disabled={!selectedModel || isLoadingModels}
                   onModelSelected={setSelectedModel}
@@ -948,6 +995,7 @@ export function AppShell({
                   onPersonaVersionsLoaded={rememberPersonaVersions}
                   onPrivatePersonaVersionsLoaded={rememberPrivatePersonaVersions}
                   onSystemPromptOverrideSave={saveChatSystemPromptOverride}
+                  onInferenceSettingsSave={saveChatInferenceSettings}
                 />
               </>
             )}
@@ -1028,6 +1076,7 @@ export function AppShell({
             privatePersonas={privatePersonas}
             privatePersonaVersions={knownPrivatePersonaVersions}
             systemPromptOverride={chatSystemPromptOverride}
+            inferenceSettings={chatInferenceSettings}
             onImageOpen={openImageViewer}
             onChatSettingsLoaded={handleChatSettingsLoaded}
             onModelSelected={setSelectedModel}
@@ -1042,6 +1091,7 @@ export function AppShell({
               queuedPrompt={queuedPrompt?.chatId === currentChatId ? queuedPrompt : null}
               selectedModel={selectedModel}
               selectedModelInfo={selectedModelInfo()}
+              inferenceSettings={chatInferenceSettings}
               availableTools={availableTools}
               personas={personas}
               personaVersions={knownPersonaVersions}

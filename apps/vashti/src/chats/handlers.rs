@@ -20,7 +20,10 @@ use crate::{
     app_state::{AppState, GenerationProgress},
     auth,
     chats::{
-        models::{ChatDetail, ChatMessage, ChatMessageRevision, ChatSummary, ChatToolPreferences},
+        models::{
+            ChatDetail, ChatInferenceSettings, ChatMessage, ChatMessageRevision, ChatSummary,
+            ChatToolPreferences,
+        },
         service,
     },
     error::ApiError,
@@ -48,6 +51,7 @@ pub struct CreateChatRequest {
     pub default_model_name: String,
     pub persona_version_id: Option<String>,
     pub system_prompt_override: Option<String>,
+    pub inference_settings: Option<ChatInferenceSettings>,
     pub tool_preferences: Option<ChatToolPreferences>,
 }
 
@@ -58,6 +62,7 @@ pub struct UpdateChatRequest {
     pub default_model_name: Option<String>,
     pub persona_version_id: Option<String>,
     pub system_prompt_override: Option<Option<String>>,
+    pub inference_settings: Option<ChatInferenceSettings>,
     pub tool_preferences: Option<ChatToolPreferences>,
 }
 
@@ -130,6 +135,7 @@ pub struct GenerateChatRequest {
     pub model_name: Option<String>,
     pub persona_version_id: Option<String>,
     pub think_mode: Option<String>,
+    pub inference_settings: Option<ChatInferenceSettings>,
     pub tool_preferences: Option<ChatToolPreferences>,
     #[serde(default)]
     pub attachments: Vec<AttachmentReference>,
@@ -156,6 +162,7 @@ pub struct RegenerateMessageRequest {
     pub model_name: Option<String>,
     pub persona_version_id: Option<String>,
     pub think_mode: Option<String>,
+    pub inference_settings: Option<ChatInferenceSettings>,
     pub tool_preferences: Option<ChatToolPreferences>,
     #[serde(default)]
     pub attachments: Vec<AttachmentReference>,
@@ -168,6 +175,7 @@ pub struct BranchMessageRequest {
     pub model_name: Option<String>,
     pub persona_version_id: Option<String>,
     pub think_mode: Option<String>,
+    pub inference_settings: Option<ChatInferenceSettings>,
     pub tool_preferences: Option<ChatToolPreferences>,
     #[serde(default)]
     pub attachments: Vec<AttachmentReference>,
@@ -616,6 +624,7 @@ async fn stream_generation(
             model: prepared.model_name.clone(),
             messages: prompt_messages.clone(),
             stream: true,
+            options: prepared.inference_options.clone(),
             think: prepared.think_mode.as_deref().and_then(think_from_mode),
             tools: (!available_tools.is_empty()).then_some(available_tools.clone()),
         };
@@ -1062,6 +1071,7 @@ async fn maybe_generate_chat_title(
             persona_version_id: None,
             tool_preferences: None,
             system_prompt_override: None,
+            inference_settings: None,
         },
     )
     .await
@@ -1085,6 +1095,7 @@ async fn request_generated_title(
     let request = OllamaChatRequest {
         model: model_name.to_string(),
         stream: false,
+        options: None,
         think: Some(OllamaThink::Bool(false)),
         messages: vec![
             OllamaChatMessage {

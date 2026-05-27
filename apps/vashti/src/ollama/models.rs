@@ -28,9 +28,38 @@ pub struct OllamaChatRequest {
     pub messages: Vec<OllamaChatMessage>,
     pub stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub options: Option<OllamaChatOptions>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub think: Option<OllamaThink>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<OllamaTool>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct OllamaChatOptions {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repeat_penalty: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub num_ctx: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub num_predict: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seed: Option<i64>,
+}
+
+impl OllamaChatOptions {
+    pub fn has_any(&self) -> bool {
+        self.temperature.is_some()
+            || self.top_p.is_some()
+            || self.repeat_penalty.is_some()
+            || self.num_ctx.is_some()
+            || self.num_predict.is_some()
+            || self.seed.is_some()
+    }
 }
 
 #[derive(Debug, Serialize)]

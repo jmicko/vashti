@@ -1,4 +1,5 @@
 import { modelCapabilityBadges } from "./modelCapabilities";
+import { normalizeInferenceSettings } from "./inferenceSettings";
 import type { ChatDetail, ChatToolPreferences, ModelInfo } from "./types";
 
 export const defaultToolPreferences: ChatToolPreferences = {
@@ -54,6 +55,7 @@ export function normalizeToolPreferences(
 export function normalizeChatDetail(chat: ChatDetail): ChatDetail {
   return {
     ...chat,
-    tool_preferences: normalizeToolPreferences(chat.tool_preferences)
+    tool_preferences: normalizeToolPreferences(chat.tool_preferences),
+    inference_settings: normalizeInferenceSettings(chat.inference_settings)
   };
 }

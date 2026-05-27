@@ -26,6 +26,22 @@ pub struct ChatToolPreferences {
     pub tools: HashMap<String, bool>,
 }
 
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct ChatInferenceSettings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repeat_penalty: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub num_ctx: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub num_predict: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<i64>,
+}
+
 impl Default for ChatToolPreferences {
     fn default() -> Self {
         Self {
@@ -53,6 +69,7 @@ pub struct ChatDetail {
     pub persona_name: Option<String>,
     pub system_prompt_override: Option<String>,
     pub tool_preferences: ChatToolPreferences,
+    pub inference_settings: ChatInferenceSettings,
     pub active_root_message_id: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,

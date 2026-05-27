@@ -13,10 +13,13 @@ use crate::{
             SetActiveChildRequest, SetActiveRevisionRequest, SetActiveRootRequest,
             UpdateChatRequest,
         },
-        models::{ChatDetail, ChatMessage, ChatMessageRevision, ChatSummary, ChatToolPreferences},
+        models::{
+            ChatDetail, ChatInferenceSettings, ChatMessage, ChatMessageRevision, ChatSummary,
+            ChatToolPreferences,
+        },
     },
     error::ApiError,
-    ollama::models::{OllamaChatMessage, OllamaUsageStats},
+    ollama::models::{OllamaChatMessage, OllamaChatOptions, OllamaUsageStats},
     personas::service::{self as persona_service, ResolvedPersonaVersion},
     tools::service::{self as tools_service, ToolSelection},
     uploads,
@@ -27,6 +30,7 @@ pub struct PreparedGeneration {
     pub backend_base_url: String,
     pub model_name: String,
     pub think_mode: Option<String>,
+    pub inference_options: Option<OllamaChatOptions>,
     pub prompt_messages: Vec<OllamaChatMessage>,
     pub user_message: Option<ChatMessage>,
     pub assistant_message: ChatMessage,
@@ -175,6 +179,9 @@ pub async fn create_chat(
     let now = unix_timestamp();
     let chat_id = Uuid::new_v4().to_string();
     let tool_preferences_json = serialize_tool_preferences(&tool_preferences)?;
+    let inference_settings =
+        normalized_inference_settings(payload.inference_settings.unwrap_or_default());
+    let inference_settings_json = serialize_inference_settings(&inference_settings)?;
     let system_prompt_override = payload.system_prompt_override.map(normalized_system_prompt);
 
     sqlx::query(
@@ -191,13 +198,14 @@ pub async fn create_chat(
             web_search_tool_enabled,
             web_fetch_tool_enabled,
             tool_preferences_json,
+            inference_settings_json,
             title,
             chat_mode,
             created_at,
             updated_at,
             last_message_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'standard', ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'standard', ?, ?, ?)
         "#,
     )
     .bind(&chat_id)
@@ -215,6 +223,7 @@ pub async fn create_chat(
     .bind(i64::from(legacy_web_search_enabled(&tool_preferences)))
     .bind(i64::from(legacy_web_fetch_enabled(&tool_preferences)))
     .bind(tool_preferences_json)
+    .bind(inference_settings_json)
     .bind(title)
     .bind(now)
     .bind(now)
@@ -245,6 +254,7 @@ pub async fn get_chat(
                c.web_search_tool_enabled,
                c.web_fetch_tool_enabled,
                c.tool_preferences_json,
+               c.inference_settings_json,
                c.active_root_message_id,
                c.created_at,
                c.updated_at
@@ -275,6 +285,10 @@ pub async fn update_chat(
 ) -> Result<ChatDetail, ApiError> {
     let current = get_chat(pool, user_id, chat_id).await?;
     let tool_preferences = payload.tool_preferences.unwrap_or(current.tool_preferences);
+    let inference_settings = payload
+        .inference_settings
+        .map(normalized_inference_settings)
+        .unwrap_or(current.inference_settings);
     let system_prompt_override = payload
         .system_prompt_override
         .map(|value| value.map(normalized_system_prompt))
@@ -334,6 +348,7 @@ pub async fn update_chat(
             .await?;
     }
     let tool_preferences_json = serialize_tool_preferences(&tool_preferences)?;
+    let inference_settings_json = serialize_inference_settings(&inference_settings)?;
 
     sqlx::query(
         r#"
@@ -347,6 +362,7 @@ pub async fn update_chat(
             web_search_tool_enabled = ?,
             web_fetch_tool_enabled = ?,
             tool_preferences_json = ?,
+            inference_settings_json = ?,
             system_prompt_override = ?,
             updated_at = ?
         WHERE id = ?
@@ -362,6 +378,7 @@ pub async fn update_chat(
     .bind(i64::from(legacy_web_search_enabled(&tool_preferences)))
     .bind(i64::from(legacy_web_fetch_enabled(&tool_preferences)))
     .bind(tool_preferences_json)
+    .bind(inference_settings_json)
     .bind(system_prompt_override)
     .bind(unix_timestamp())
     .bind(chat_id)
@@ -611,10 +628,14 @@ pub async fn prepare_generation(
         model_name,
         persona_version_id,
         think_mode,
+        inference_settings,
         tool_preferences,
         attachments,
     } = payload;
     let tool_preferences = tool_preferences.unwrap_or_else(|| chat.tool_preferences.clone());
+    let inference_settings = inference_settings
+        .map(normalized_inference_settings)
+        .unwrap_or_else(|| chat.inference_settings.clone());
     let content_text = user_message.content_text.trim().to_string();
     if content_text.is_empty() {
         return Err(ApiError::bad_request(
@@ -782,6 +803,7 @@ pub async fn prepare_generation(
         backend_base_url: backend.base_url,
         model_name,
         think_mode,
+        inference_options: inference_settings_to_options(&inference_settings),
         prompt_messages,
         user_message: Some(user_message),
         assistant_message,
@@ -816,11 +838,15 @@ pub async fn prepare_regeneration(
         model_name,
         persona_version_id,
         think_mode,
+        inference_settings,
         tool_preferences,
         attachments: _,
     } = payload;
     let chat = get_chat(pool, user_id, chat_id).await?;
     let tool_preferences = tool_preferences.unwrap_or_else(|| chat.tool_preferences.clone());
+    let inference_settings = inference_settings
+        .map(normalized_inference_settings)
+        .unwrap_or_else(|| chat.inference_settings.clone());
     let latest_model = latest_assistant_model(pool, user_id, chat_id).await?;
     let fallback_model = MessageModel {
         backend_id: target.backend_id.clone().unwrap_or_default(),
@@ -937,6 +963,7 @@ pub async fn prepare_regeneration(
         backend_base_url: backend.base_url,
         model_name,
         think_mode,
+        inference_options: inference_settings_to_options(&inference_settings),
         prompt_messages,
         user_message: None,
         assistant_message,
@@ -981,10 +1008,14 @@ pub async fn prepare_branch_generation(
         model_name,
         persona_version_id,
         think_mode,
+        inference_settings,
         tool_preferences,
         attachments,
     } = payload;
     let tool_preferences = tool_preferences.unwrap_or_else(|| chat.tool_preferences.clone());
+    let inference_settings = inference_settings
+        .map(normalized_inference_settings)
+        .unwrap_or_else(|| chat.inference_settings.clone());
     let latest_model = latest_assistant_model(pool, user_id, chat_id).await?;
     let resolved = resolve_generation_model(
         pool,
@@ -1143,6 +1174,7 @@ pub async fn prepare_branch_generation(
         backend_base_url: backend.base_url,
         model_name,
         think_mode,
+        inference_options: inference_settings_to_options(&inference_settings),
         prompt_messages,
         user_message: Some(user_message),
         assistant_message,
@@ -2147,6 +2179,7 @@ async fn ensure_message_owner(
 
 fn row_to_chat_detail(row: sqlx::sqlite::SqliteRow) -> Result<ChatDetail, sqlx::Error> {
     let tool_preferences = row_to_tool_preferences(&row)?;
+    let inference_settings = row_to_inference_settings(&row)?;
     Ok(ChatDetail {
         id: row.try_get("id")?,
         title: row.try_get("title")?,
@@ -2158,6 +2191,7 @@ fn row_to_chat_detail(row: sqlx::sqlite::SqliteRow) -> Result<ChatDetail, sqlx::
         persona_name: row.try_get("persona_name")?,
         system_prompt_override: row.try_get("system_prompt_override")?,
         tool_preferences,
+        inference_settings,
         active_root_message_id: row.try_get("active_root_message_id")?,
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
@@ -2167,6 +2201,23 @@ fn row_to_chat_detail(row: sqlx::sqlite::SqliteRow) -> Result<ChatDetail, sqlx::
 fn serialize_tool_preferences(preferences: &ChatToolPreferences) -> Result<String, ApiError> {
     serde_json::to_string(preferences)
         .map_err(|_| ApiError::internal("Failed to serialize chat tool preferences"))
+}
+
+fn serialize_inference_settings(settings: &ChatInferenceSettings) -> Result<String, ApiError> {
+    serde_json::to_string(settings)
+        .map_err(|_| ApiError::internal("Failed to serialize chat inference settings"))
+}
+
+fn row_to_inference_settings(
+    row: &sqlx::sqlite::SqliteRow,
+) -> Result<ChatInferenceSettings, sqlx::Error> {
+    if let Some(json) = row.try_get::<Option<String>, _>("inference_settings_json")? {
+        if let Ok(settings) = serde_json::from_str::<ChatInferenceSettings>(&json) {
+            return Ok(normalized_inference_settings(settings));
+        }
+    }
+
+    Ok(ChatInferenceSettings::default())
 }
 
 fn row_to_tool_preferences(
@@ -2202,6 +2253,38 @@ fn row_to_tool_preferences(
     );
 
     Ok(preferences)
+}
+
+fn normalized_inference_settings(settings: ChatInferenceSettings) -> ChatInferenceSettings {
+    ChatInferenceSettings {
+        temperature: settings
+            .temperature
+            .and_then(|value| clamp_f64(value, 0.0, 2.0)),
+        top_p: settings.top_p.and_then(|value| clamp_f64(value, 0.01, 1.0)),
+        repeat_penalty: settings
+            .repeat_penalty
+            .and_then(|value| clamp_f64(value, 0.5, 2.0)),
+        num_ctx: settings.num_ctx.map(|value| value.clamp(512, 262_144)),
+        num_predict: settings.num_predict.map(|value| value.clamp(1, 131_072)),
+        seed: settings.seed,
+    }
+}
+
+fn inference_settings_to_options(settings: &ChatInferenceSettings) -> Option<OllamaChatOptions> {
+    let options = OllamaChatOptions {
+        temperature: settings.temperature,
+        top_p: settings.top_p,
+        repeat_penalty: settings.repeat_penalty,
+        num_ctx: settings.num_ctx,
+        num_predict: settings.num_predict,
+        seed: settings.seed,
+    };
+
+    options.has_any().then_some(options)
+}
+
+fn clamp_f64(value: f64, min: f64, max: f64) -> Option<f64> {
+    value.is_finite().then_some(value.clamp(min, max))
 }
 
 fn legacy_web_search_enabled(preferences: &ChatToolPreferences) -> bool {

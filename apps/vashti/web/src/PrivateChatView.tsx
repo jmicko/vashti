@@ -54,6 +54,7 @@ import type {
   AutoScrollMode,
   BranchScrollAnchor,
   ChatMessage,
+  ChatInferenceSettings,
   ComposerAttachment,
   ComposerSubmitPayload,
   GenerateEvent,
@@ -73,6 +74,7 @@ export function PrivateChatView({
   privatePersonas,
   privatePersonaVersions,
   systemPromptOverride,
+  inferenceSettings,
   onChatSettingsLoaded,
   onImageOpen,
   onModelSelected,
@@ -87,7 +89,11 @@ export function PrivateChatView({
   privatePersonas: PrivatePersona[];
   privatePersonaVersions: PrivatePersonaVersion[];
   systemPromptOverride: string | null;
-  onChatSettingsLoaded: (override: string | null | undefined) => void;
+  inferenceSettings: ChatInferenceSettings;
+  onChatSettingsLoaded: (
+    override: string | null | undefined,
+    inferenceSettings?: ChatInferenceSettings
+  ) => void;
   onImageOpen: ImageOpenHandler;
   onModelSelected: (value: string) => void;
   onPrivateChatsChanged: () => Promise<void>;
@@ -153,7 +159,7 @@ export function PrivateChatView({
       }
 
       setChat(nextChat);
-      onChatSettingsLoaded(nextChat.system_prompt_override);
+      onChatSettingsLoaded(nextChat.system_prompt_override, nextChat.inference_settings ?? {});
       thinkingStartedAtRef.current.clear();
       thinkingContentCursorRef.current.clear();
       setThinkingDurations({});
@@ -421,9 +427,20 @@ export function PrivateChatView({
       queuedPrompt.thinkMode,
       queuedPrompt.systemPromptOverride !== undefined
         ? queuedPrompt.systemPromptOverride
-        : systemPromptOverride
+        : systemPromptOverride,
+      queuedPrompt.inferenceSettings !== undefined
+        ? queuedPrompt.inferenceSettings
+        : inferenceSettings
     );
-  }, [chat, isGenerating, isLoading, onQueuedPromptConsumed, queuedPrompt, systemPromptOverride]);
+  }, [
+    chat,
+    inferenceSettings,
+    isGenerating,
+    isLoading,
+    onQueuedPromptConsumed,
+    queuedPrompt,
+    systemPromptOverride
+  ]);
 
   useEffect(() => {
     if (!pendingPrompt || isGenerating || isLoading || !chat) {
@@ -438,9 +455,10 @@ export function PrivateChatView({
       prompt.thinkMode,
       prompt.systemPromptOverride !== undefined
         ? prompt.systemPromptOverride
-        : systemPromptOverride
+        : systemPromptOverride,
+      prompt.inferenceSettings !== undefined ? prompt.inferenceSettings : inferenceSettings
     );
-  }, [chat, isGenerating, isLoading, pendingPrompt, systemPromptOverride]);
+  }, [chat, inferenceSettings, isGenerating, isLoading, pendingPrompt, systemPromptOverride]);
 
   function noteUserScrollIntent() {
     if (!isGenerating) {
@@ -580,7 +598,8 @@ export function PrivateChatView({
     prompt: string,
     attachments: ComposerAttachment[] = [],
     thinkMode: ThinkingMode = "auto",
-    promptSystemPromptOverride: string | null = systemPromptOverride
+    promptSystemPromptOverride: string | null = systemPromptOverride,
+    promptInferenceSettings: ChatInferenceSettings = inferenceSettings
   ) {
     if (!chat || isGenerating) {
       return;
@@ -659,6 +678,7 @@ export function PrivateChatView({
       persona_id: selectedPrivatePersona?.id ?? null,
       persona_version_id: selectedPrivatePersona?.current_version.id ?? null,
       persona_name: selectedPrivatePersona?.current_version.display_name ?? null,
+      inference_settings: promptInferenceSettings,
       active_root_message_id: chat.active_root_message_id ?? userMessage.id,
       updated_at: now,
       last_message_at: now
@@ -675,6 +695,7 @@ export function PrivateChatView({
       backend_id: selected.backendId,
       model_name: selected.modelName,
       think_mode: thinkModeToPayload(thinkMode),
+      inference_settings: promptInferenceSettings,
       messages: privatePromptMessagesWithPersona(
         nextMessages,
         nextChat.active_root_message_id,
@@ -772,20 +793,28 @@ export function PrivateChatView({
     attachments: ComposerAttachment[] = [],
     _toolPreferences?: unknown,
     thinkMode: ThinkingMode = "auto",
-    promptSystemPromptOverride: string | null = systemPromptOverride
+    promptSystemPromptOverride: string | null = systemPromptOverride,
+    promptInferenceSettings: ChatInferenceSettings = inferenceSettings
   ) {
     if (isGenerating) {
       setPendingPrompt({
         prompt,
         attachments,
         thinkMode,
-        systemPromptOverride: promptSystemPromptOverride
+        systemPromptOverride: promptSystemPromptOverride,
+        inferenceSettings: promptInferenceSettings
       });
       await stopGeneration();
       return;
     }
 
-    await generate(prompt, attachments, thinkMode, promptSystemPromptOverride);
+    await generate(
+      prompt,
+      attachments,
+      thinkMode,
+      promptSystemPromptOverride,
+      promptInferenceSettings
+    );
   }
 
   async function stopGeneration() {
@@ -1075,6 +1104,7 @@ export function PrivateChatView({
         persona_id: selectedPrivatePersona?.id ?? null,
         persona_version_id: selectedPrivatePersona?.current_version.id ?? null,
         persona_name: selectedPrivatePersona?.current_version.display_name ?? null,
+        inference_settings: inferenceSettings,
         active_root_message_id: message.parent_message_id
           ? chat.active_root_message_id
           : userMessage.id,
@@ -1093,6 +1123,7 @@ export function PrivateChatView({
         backend_id: selected.backendId,
         model_name: selected.modelName,
         think_mode: thinkModeToPayload(thinkingMode),
+        inference_settings: inferenceSettings,
         messages: privatePromptMessagesWithPersona(
           nextMessages,
           nextChat.active_root_message_id,
@@ -1196,6 +1227,7 @@ export function PrivateChatView({
         persona_id: selectedPrivatePersona?.id ?? null,
         persona_version_id: selectedPrivatePersona?.current_version.id ?? null,
         persona_name: selectedPrivatePersona?.current_version.display_name ?? null,
+        inference_settings: inferenceSettings,
         active_root_message_id: message.parent_message_id
           ? chat.active_root_message_id
           : assistantMessage.id,
@@ -1214,6 +1246,7 @@ export function PrivateChatView({
         backend_id: backendId,
         model_name: modelName,
         think_mode: thinkModeToPayload(thinkingMode),
+        inference_settings: inferenceSettings,
         messages: privatePromptMessagesWithPersona(
           nextMessages,
           nextChat.active_root_message_id,

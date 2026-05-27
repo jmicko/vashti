@@ -1,5 +1,5 @@
 import { gcm as aesGcm } from "@noble/ciphers/aes.js";
-import type { MessageStats } from "./types";
+import type { ChatInferenceSettings, MessageStats } from "./types";
 
 const LEGACY_DB_NAME = "vashti-private-local";
 const DB_NAME_PREFIX = "vashti-private-local";
@@ -43,6 +43,7 @@ export type PrivateChatSummary = {
   persona_version_id?: string | null;
   persona_name?: string | null;
   system_prompt_override?: string | null;
+  inference_settings?: ChatInferenceSettings;
   active_root_message_id: string | null;
   created_at: number;
   updated_at: number;
@@ -60,6 +61,7 @@ export type PrivateChatDetail = {
   persona_version_id?: string | null;
   persona_name?: string | null;
   system_prompt_override?: string | null;
+  inference_settings?: ChatInferenceSettings;
   active_root_message_id: string | null;
   created_at: number;
   updated_at: number;
@@ -125,6 +127,7 @@ export type CreatePrivateChatParams = {
   personaVersionId?: string | null;
   personaName?: string | null;
   systemPromptOverride?: string | null;
+  inferenceSettings?: ChatInferenceSettings;
 };
 
 export type CreatePrivateMessageParams = {
@@ -335,7 +338,8 @@ export async function createPrivateChat({
   personaId = null,
   personaVersionId = null,
   personaName = null,
-  systemPromptOverride = null
+  systemPromptOverride = null,
+  inferenceSettings = {}
 }: CreatePrivateChatParams): Promise<PrivateChatDetail> {
   const now = unixTimestamp();
   const chat: PrivateChatDetail = {
@@ -348,6 +352,7 @@ export async function createPrivateChat({
     persona_version_id: personaVersionId,
     persona_name: personaName,
     system_prompt_override: systemPromptOverride,
+    inference_settings: inferenceSettings,
     active_root_message_id: null,
     created_at: now,
     updated_at: now,

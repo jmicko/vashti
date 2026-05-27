@@ -33,6 +33,7 @@ import type {
   AvailableTool,
   BranchScrollAnchor,
   ChatDetail,
+  ChatInferenceSettings,
   ChatMessage,
   ChatResponse,
   ChatSyncResponse,
@@ -57,6 +58,7 @@ export function ChatView({
   queuedPrompt,
   selectedModel,
   selectedModelInfo,
+  inferenceSettings,
   availableTools,
   personas,
   personaVersions,
@@ -71,11 +73,15 @@ export function ChatView({
   queuedPrompt: ({ chatId: string } & ComposerSubmitPayload) | null;
   selectedModel: string;
   selectedModelInfo: ModelInfo | null;
+  inferenceSettings: ChatInferenceSettings;
   availableTools: AvailableTool[];
   personas: Persona[];
   personaVersions: PersonaVersion[];
   onChatsChanged: () => Promise<void>;
-  onChatSettingsLoaded: (override: string | null | undefined) => void;
+  onChatSettingsLoaded: (
+    override: string | null | undefined,
+    inferenceSettings?: ChatInferenceSettings
+  ) => void;
   onImageOpen: ImageOpenHandler;
   onModelSelected: (value: string) => void;
   onQueuedPromptConsumed: () => void;
@@ -124,7 +130,10 @@ export function ChatView({
         ...normalizedChat,
         active_root_message_id: activeRootMessageId
       });
-      onChatSettingsLoaded(normalizedChat.system_prompt_override);
+      onChatSettingsLoaded(
+        normalizedChat.system_prompt_override,
+        normalizedChat.inference_settings
+      );
       thinkingStartedAtRef.current.clear();
       setThinkingDurations({});
       setStreamSegments({});
@@ -307,7 +316,8 @@ export function ChatView({
     async (
       prompt: string,
       attachments: ComposerAttachment[] = [],
-      thinkMode: ThinkingMode = "auto"
+      thinkMode: ThinkingMode = "auto",
+      promptInferenceSettings: ChatInferenceSettings = inferenceSettings
     ) => {
       if (isGenerating) {
         return;
@@ -323,12 +333,14 @@ export function ChatView({
         model_name: selected?.modelName ?? null,
         persona_version_id: personaVersionId,
         think_mode: thinkModeToPayload(thinkMode),
+        inference_settings: promptInferenceSettings,
         tool_preferences: chat?.tool_preferences ?? defaultToolPreferences,
         attachments: attachmentReferences(attachments)
       });
     },
     [
       chat?.tool_preferences,
+      inferenceSettings,
       chatId,
       isGenerating,
       personas,
@@ -379,14 +391,22 @@ export function ChatView({
     }
 
     onQueuedPromptConsumed();
-    void generate(queuedPrompt.prompt, queuedPrompt.attachments, queuedPrompt.thinkMode);
+    void generate(
+      queuedPrompt.prompt,
+      queuedPrompt.attachments,
+      queuedPrompt.thinkMode,
+      queuedPrompt.inferenceSettings !== undefined
+        ? queuedPrompt.inferenceSettings
+        : inferenceSettings
+    );
   }, [
     chat,
     generate,
     isGenerating,
     isLoading,
     onQueuedPromptConsumed,
-    queuedPrompt
+    queuedPrompt,
+    inferenceSettings
   ]);
 
   useEffect(() => {
@@ -396,8 +416,13 @@ export function ChatView({
 
     const prompt = pendingPrompt;
     setPendingPrompt(null);
-    void generate(prompt.prompt, prompt.attachments, prompt.thinkMode);
-  }, [chat, generate, isGenerating, isLoading, pendingPrompt]);
+    void generate(
+      prompt.prompt,
+      prompt.attachments,
+      prompt.thinkMode,
+      prompt.inferenceSettings !== undefined ? prompt.inferenceSettings : inferenceSettings
+    );
+  }, [chat, generate, inferenceSettings, isGenerating, isLoading, pendingPrompt]);
 
   useLayoutEffect(() => {
     if (isLoading) {
@@ -858,12 +883,12 @@ export function ChatView({
     thinkMode: ThinkingMode = "auto"
   ) {
     if (isGenerating) {
-      setPendingPrompt({ prompt, attachments, thinkMode });
+      setPendingPrompt({ prompt, attachments, thinkMode, inferenceSettings });
       await stopGeneration();
       return;
     }
 
-    await generate(prompt, attachments, thinkMode);
+    await generate(prompt, attachments, thinkMode, inferenceSettings);
   }
 
   function replaceMessage(nextMessage: ChatMessage) {
@@ -934,6 +959,7 @@ export function ChatView({
       model_name: selected?.modelName ?? null,
       persona_version_id: personaVersionId,
       think_mode: thinkModeToPayload(thinkingMode),
+      inference_settings: inferenceSettings,
       tool_preferences: chat?.tool_preferences ?? defaultToolPreferences,
       attachments: attachmentReferences(attachments)
     });
@@ -974,6 +1000,7 @@ export function ChatView({
       model_name: selected?.modelName ?? message.model_name,
       persona_version_id: personaVersionId,
       think_mode: thinkModeToPayload(thinkingMode),
+      inference_settings: inferenceSettings,
       tool_preferences: chat?.tool_preferences ?? defaultToolPreferences,
       attachments: []
     });

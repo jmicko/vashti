@@ -15,10 +15,13 @@ use tokio_stream::wrappers::ReceiverStream;
 use crate::{
     app_state::AppState,
     auth, backends,
+    chats::models::ChatInferenceSettings,
     error::ApiError,
     ollama::{
         self,
-        models::{OllamaChatChunk, OllamaChatRequest, OllamaThink, OllamaUsageStats},
+        models::{
+            OllamaChatChunk, OllamaChatOptions, OllamaChatRequest, OllamaThink, OllamaUsageStats,
+        },
     },
     private::service,
     rate_limit,
@@ -30,6 +33,7 @@ pub struct PrivateGenerateRequest {
     pub backend_id: String,
     pub model_name: String,
     pub think_mode: Option<String>,
+    pub inference_settings: Option<ChatInferenceSettings>,
     pub messages: Vec<service::PrivateMessageInput>,
 }
 
@@ -114,6 +118,9 @@ pub async fn generate(
         model_name,
         assistant_message_id,
         payload.think_mode,
+        inference_settings_to_options(&normalized_inference_settings(
+            payload.inference_settings.unwrap_or_default(),
+        )),
         messages,
     )
     .await)
@@ -172,6 +179,7 @@ async fn start_private_stream(
     model_name: String,
     assistant_message_id: String,
     think_mode: Option<String>,
+    inference_options: Option<OllamaChatOptions>,
     messages: Vec<ollama::models::OllamaChatMessage>,
 ) -> Response {
     let (tx, rx) = mpsc::channel::<Result<Bytes, Infallible>>(32);
@@ -184,6 +192,7 @@ async fn start_private_stream(
             model_name,
             assistant_message_id,
             think_mode,
+            inference_options,
             messages,
         )
         .await;
@@ -210,12 +219,14 @@ async fn stream_private_generation(
     model_name: String,
     assistant_message_id: String,
     think_mode: Option<String>,
+    inference_options: Option<OllamaChatOptions>,
     messages: Vec<ollama::models::OllamaChatMessage>,
 ) {
     let request = OllamaChatRequest {
         model: model_name,
         messages,
         stream: true,
+        options: inference_options,
         think: think_mode.as_deref().and_then(think_from_mode),
         tools: None,
     };
@@ -480,4 +491,36 @@ fn think_from_mode(mode: &str) -> Option<OllamaThink> {
         "low" | "medium" | "high" => Some(OllamaThink::Level(mode.to_string())),
         _ => None,
     }
+}
+
+fn normalized_inference_settings(settings: ChatInferenceSettings) -> ChatInferenceSettings {
+    ChatInferenceSettings {
+        temperature: settings
+            .temperature
+            .and_then(|value| clamp_f64(value, 0.0, 2.0)),
+        top_p: settings.top_p.and_then(|value| clamp_f64(value, 0.01, 1.0)),
+        repeat_penalty: settings
+            .repeat_penalty
+            .and_then(|value| clamp_f64(value, 0.5, 2.0)),
+        num_ctx: settings.num_ctx.map(|value| value.clamp(512, 262_144)),
+        num_predict: settings.num_predict.map(|value| value.clamp(1, 131_072)),
+        seed: settings.seed,
+    }
+}
+
+fn inference_settings_to_options(settings: &ChatInferenceSettings) -> Option<OllamaChatOptions> {
+    let options = OllamaChatOptions {
+        temperature: settings.temperature,
+        top_p: settings.top_p,
+        repeat_penalty: settings.repeat_penalty,
+        num_ctx: settings.num_ctx,
+        num_predict: settings.num_predict,
+        seed: settings.seed,
+    };
+
+    options.has_any().then_some(options)
+}
+
+fn clamp_f64(value: f64, min: f64, max: f64) -> Option<f64> {
+    value.is_finite().then_some(value.clamp(min, max))
 }

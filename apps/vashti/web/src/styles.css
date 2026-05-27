@@ -752,6 +752,29 @@ textarea {
   margin-top: 10px;
 }
 
+.model-settings-inference-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 10px;
+}
+
+.model-settings-number-field {
+  display: grid;
+  gap: 5px;
+}
+
+.model-settings-number-field span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.model-settings-number-field input {
+  min-width: 0;
+}
+
 .model-settings-wide-action {
   justify-content: center;
   width: 100%;

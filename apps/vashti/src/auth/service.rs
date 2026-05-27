@@ -970,6 +970,7 @@ mod tests {
                     persona_version_id: None,
                     tool_preferences: None,
                     system_prompt_override: None,
+                    inference_settings: None,
                 },
             )
             .await
@@ -989,6 +990,7 @@ mod tests {
                 persona_version_id: None,
                 tool_preferences: None,
                 system_prompt_override: None,
+                inference_settings: None,
             },
         )
         .await
@@ -1018,6 +1020,7 @@ mod tests {
                 persona_version_id: None,
                 tool_preferences: None,
                 system_prompt_override: None,
+                inference_settings: None,
             },
         )
         .await

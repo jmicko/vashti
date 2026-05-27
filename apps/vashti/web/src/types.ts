@@ -197,6 +197,15 @@ export type ChatToolPreferences = {
   web_fetch_enabled?: boolean;
 };
 
+export type ChatInferenceSettings = {
+  temperature?: number | null;
+  top_p?: number | null;
+  repeat_penalty?: number | null;
+  num_ctx?: number | null;
+  num_predict?: number | null;
+  seed?: number | null;
+};
+
 export type ChatDetail = {
   id: string;
   title: string;
@@ -208,6 +217,7 @@ export type ChatDetail = {
   persona_name?: string | null;
   system_prompt_override?: string | null;
   tool_preferences: ChatToolPreferences;
+  inference_settings: ChatInferenceSettings;
   active_root_message_id: string | null;
   created_at: number;
   updated_at: number;
@@ -263,6 +273,7 @@ export type ComposerSubmitPayload = {
   toolPreferences?: ChatToolPreferences;
   thinkMode?: ThinkingMode;
   systemPromptOverride?: string | null;
+  inferenceSettings?: ChatInferenceSettings;
 };
 
 export type ThinkingMode = "auto" | "false" | "low" | "medium" | "high";
