@@ -665,6 +665,9 @@ textarea {
   left: -290px;
   z-index: 31;
   width: min(430px, 88vw);
+  max-height: calc(var(--app-height) - 118px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel);
@@ -773,6 +776,24 @@ textarea {
 
 .model-settings-number-field input {
   min-width: 0;
+}
+
+.model-settings-input-reset {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  gap: 6px;
+}
+
+.model-settings-field-reset {
+  align-self: stretch;
+  border-radius: 8px;
+  min-height: 0;
+  padding: 0;
+  width: 34px;
+}
+
+.model-settings-field-reset svg {
+  width: 15px;
 }
 
 .model-settings-wide-action {

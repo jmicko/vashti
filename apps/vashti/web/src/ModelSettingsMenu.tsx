@@ -322,6 +322,46 @@ export function ModelSettingsMenu({
     setDraftInferenceInputs((current) => ({ ...current, [key]: value }));
   }
 
+  function renderInferenceField(
+    key: InferenceInputKey,
+    label: string,
+    options: {
+      inputMode: "decimal" | "numeric";
+      step?: string;
+      min?: string;
+      max?: string;
+    }
+  ) {
+    const value = draftInferenceInputs[key];
+    return (
+      <div className="model-settings-number-field">
+        <span>{label}</span>
+        <div className="model-settings-input-reset">
+          <input
+            type="number"
+            inputMode={options.inputMode}
+            step={options.step}
+            min={options.min}
+            max={options.max}
+            placeholder="Default"
+            value={value}
+            disabled={!canSaveConversationSettings || savingInferenceSettings}
+            onChange={(event) => updateDraftInferenceSetting(key, event.target.value)}
+          />
+          <button
+            type="button"
+            className="icon-button model-settings-field-reset"
+            aria-label={`Reset ${label} to default`}
+            disabled={!canSaveConversationSettings || savingInferenceSettings || !value}
+            onClick={() => updateDraftInferenceSetting(key, "")}
+          >
+            <RotateCcw />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   function createCustomModelFromSettings() {
     if (!baseModelDraftValue || !onCreateCustomModelFromSettings) {
       return;
@@ -414,96 +454,38 @@ export function ModelSettingsMenu({
               {isInferenceCustomized && <span>customized</span>}
             </summary>
             <div className="model-settings-inference-grid">
-              <label className="model-settings-number-field">
-                <span>Temperature</span>
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  step="0.1"
-                  min="0"
-                  max="2"
-                  placeholder="Default"
-                  value={draftInferenceInputs.temperature}
-                  disabled={!canSaveConversationSettings || savingInferenceSettings}
-                  onChange={(event) =>
-                    updateDraftInferenceSetting("temperature", event.target.value)
-                  }
-                />
-              </label>
-              <label className="model-settings-number-field">
-                <span>Context</span>
-                <input
-                  type="number"
-                  inputMode="numeric"
-                  step="1"
-                  min="512"
-                  placeholder="Default"
-                  value={draftInferenceInputs.num_ctx}
-                  disabled={!canSaveConversationSettings || savingInferenceSettings}
-                  onChange={(event) =>
-                    updateDraftInferenceSetting("num_ctx", event.target.value)
-                  }
-                />
-              </label>
-              <label className="model-settings-number-field">
-                <span>Top P</span>
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  step="0.05"
-                  min="0.01"
-                  max="1"
-                  placeholder="Default"
-                  value={draftInferenceInputs.top_p}
-                  disabled={!canSaveConversationSettings || savingInferenceSettings}
-                  onChange={(event) => updateDraftInferenceSetting("top_p", event.target.value)}
-                />
-              </label>
-              <label className="model-settings-number-field">
-                <span>Repeat penalty</span>
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  step="0.05"
-                  min="0.5"
-                  max="2"
-                  placeholder="Default"
-                  value={draftInferenceInputs.repeat_penalty}
-                  disabled={!canSaveConversationSettings || savingInferenceSettings}
-                  onChange={(event) =>
-                    updateDraftInferenceSetting("repeat_penalty", event.target.value)
-                  }
-                />
-              </label>
-              <label className="model-settings-number-field">
-                <span>Max output</span>
-                <input
-                  type="number"
-                  inputMode="numeric"
-                  step="1"
-                  min="1"
-                  placeholder="Default"
-                  value={draftInferenceInputs.num_predict}
-                  disabled={!canSaveConversationSettings || savingInferenceSettings}
-                  onChange={(event) =>
-                    updateDraftInferenceSetting("num_predict", event.target.value)
-                  }
-                />
-              </label>
-              <label className="model-settings-number-field">
-                <span>Seed</span>
-                <input
-                  type="number"
-                  inputMode="numeric"
-                  step="1"
-                  placeholder="Default"
-                  value={draftInferenceInputs.seed}
-                  disabled={!canSaveConversationSettings || savingInferenceSettings}
-                  onChange={(event) =>
-                    updateDraftInferenceSetting("seed", event.target.value)
-                  }
-                />
-              </label>
+              {renderInferenceField("temperature", "Temperature", {
+                inputMode: "decimal",
+                step: "0.1",
+                min: "0",
+                max: "2"
+              })}
+              {renderInferenceField("num_ctx", "Context", {
+                inputMode: "numeric",
+                step: "1",
+                min: "512"
+              })}
+              {renderInferenceField("top_p", "Top P", {
+                inputMode: "decimal",
+                step: "0.05",
+                min: "0.01",
+                max: "1"
+              })}
+              {renderInferenceField("repeat_penalty", "Repeat penalty", {
+                inputMode: "decimal",
+                step: "0.05",
+                min: "0.5",
+                max: "2"
+              })}
+              {renderInferenceField("num_predict", "Max output", {
+                inputMode: "numeric",
+                step: "1",
+                min: "1"
+              })}
+              {renderInferenceField("seed", "Seed", {
+                inputMode: "numeric",
+                step: "1"
+              })}
             </div>
             <p className="model-settings-note">Blank fields use the model/backend default.</p>
             <div className="model-settings-prompt-actions">
