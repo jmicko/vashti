@@ -1,5 +1,22 @@
-import { ChangeEvent, FormEvent, useEffect, useRef, useState } from "react";
-import { Brain, Paperclip, SendHorizontal, Square, Wrench, X } from "lucide-react";
+import {
+  type CSSProperties,
+  type ChangeEvent,
+  type FormEvent,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState
+} from "react";
+import {
+  Brain,
+  ChevronDown,
+  ChevronUp,
+  Paperclip,
+  SendHorizontal,
+  Square,
+  Wrench,
+  X
+} from "lucide-react";
 import {
   AttachmentChipList,
   attachmentAcceptTypes,
@@ -70,6 +87,14 @@ export function StartChatComposer({
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [isToolMenuOpen, setIsToolMenuOpen] = useState(false);
   const [isThinkingMenuOpen, setIsThinkingMenuOpen] = useState(false);
+  const [isTextInputFocused, setIsTextInputFocused] = useState(false);
+  const [isComposerExpanded, setIsComposerExpanded] = useState(false);
+  const [expandedComposerFrame, setExpandedComposerFrame] = useState<{
+    left: number;
+    right: number;
+    bottom: number;
+  } | null>(null);
+  const formRef = useRef<HTMLFormElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const toolMenuRef = useRef<HTMLDivElement | null>(null);
@@ -101,18 +126,52 @@ export function StartChatComposer({
   const thinkingModeLabel = thinkingModeOptionLabel(activeThinkingMode);
   const composerClassName = [
     "chat-composer",
+    isTextInputFocused ? "chat-composer-focused" : "",
+    isComposerExpanded ? "chat-composer-expanded" : "",
     !canAttach ? "chat-composer-no-attach" : "",
     !canUseTools ? "chat-composer-no-tools" : "",
     !canControlThinking ? "chat-composer-no-thinking" : ""
   ]
     .filter(Boolean)
     .join(" ");
+  const composerStyle =
+    isComposerExpanded && expandedComposerFrame
+      ? ({
+          "--composer-expanded-left": `${expandedComposerFrame.left}px`,
+          "--composer-expanded-right": `${expandedComposerFrame.right}px`,
+          "--composer-expanded-bottom": `${expandedComposerFrame.bottom}px`
+        } as CSSProperties)
+      : undefined;
 
   useEffect(() => {
     if (autoFocusOnReady && !isGenerating && !usesTouchViewport()) {
       textareaRef.current?.focus();
     }
   }, [autoFocusOnReady, isGenerating]);
+
+  useLayoutEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) {
+      return;
+    }
+
+    if (isComposerExpanded) {
+      textarea.style.height = "100%";
+      textarea.style.overflowY = "auto";
+      return;
+    }
+
+    textarea.style.height = "auto";
+    const styles = window.getComputedStyle(textarea);
+    const lineHeight = Number.parseFloat(styles.lineHeight) || 20;
+    const padding =
+      (Number.parseFloat(styles.paddingTop) || 0) + (Number.parseFloat(styles.paddingBottom) || 0);
+    const minHeight = Math.ceil(lineHeight + padding);
+    const maxHeight = Math.ceil(lineHeight * 4 + padding);
+    const nextHeight = Math.min(Math.max(textarea.scrollHeight, minHeight), maxHeight);
+    textarea.style.height = `${nextHeight}px`;
+    textarea.style.overflowY = textarea.scrollHeight > maxHeight ? "auto" : "hidden";
+  }, [prompt, isComposerExpanded]);
 
   useEffect(() => {
     if (!canAttach) {
@@ -165,6 +224,8 @@ export function StartChatComposer({
     );
     setPrompt("");
     setAttachments([]);
+    setIsComposerExpanded(false);
+    setExpandedComposerFrame(null);
     const shouldRestoreFocus = !usesTouchViewport();
     if (!shouldRestoreFocus) {
       textareaRef.current?.blur();
@@ -243,7 +304,35 @@ export function StartChatComposer({
   return (
     <>
       {visibleWarning && <p className="composer-warning">{visibleWarning}</p>}
-      <form className={composerClassName} onSubmit={submit}>
+      <form ref={formRef} className={composerClassName} style={composerStyle} onSubmit={submit}>
+        {(isTextInputFocused || isComposerExpanded) && (
+          <button
+            type="button"
+            className="composer-expand-button"
+            aria-label={isComposerExpanded ? "Collapse message input" : "Expand message input"}
+            title={isComposerExpanded ? "Collapse message input" : "Expand message input"}
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={() => {
+              if (isComposerExpanded) {
+                setIsComposerExpanded(false);
+                setExpandedComposerFrame(null);
+              } else {
+                const formRect = formRef.current?.getBoundingClientRect();
+                if (formRect) {
+                  setExpandedComposerFrame({
+                    left: Math.max(0, formRect.left),
+                    right: Math.max(0, window.innerWidth - formRect.right),
+                    bottom: Math.max(0, window.innerHeight - formRect.bottom)
+                  });
+                }
+                setIsComposerExpanded(true);
+              }
+              window.requestAnimationFrame(() => textareaRef.current?.focus());
+            }}
+          >
+            {isComposerExpanded ? <ChevronDown /> : <ChevronUp />}
+          </button>
+        )}
         {attachments.length > 0 && (
           <AttachmentChipList
             attachments={attachments}
@@ -397,13 +486,15 @@ export function StartChatComposer({
         )}
         <textarea
           ref={textareaRef}
-          rows={3}
+          rows={1}
           value={prompt}
           disabled={isDisabled || (isBusy && !isGenerating)}
           placeholder={placeholder}
           onChange={(event) => setPrompt(event.target.value)}
+          onFocus={() => setIsTextInputFocused(true)}
+          onBlur={() => setIsTextInputFocused(false)}
           onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
+            if (event.key === "Enter" && !event.shiftKey && !usesTouchViewport()) {
               event.preventDefault();
               event.currentTarget.form?.requestSubmit();
             }

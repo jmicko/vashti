@@ -1105,6 +1105,7 @@ textarea {
 }
 
 .chat-composer {
+  position: relative;
   width: min(var(--chat-content-width), 100%);
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -1144,9 +1145,12 @@ textarea {
 .chat-composer textarea {
   grid-column: 1 / -1;
   grid-row: 2;
-  min-height: 74px;
+  min-height: 40px;
+  line-height: 1.35;
+  max-height: calc(5.4em + 16px);
   border-color: transparent;
   background: transparent;
+  overflow-y: hidden;
   resize: none;
 }
 
@@ -1156,6 +1160,57 @@ textarea {
 
 .chat-composer textarea:focus {
   outline: 0;
+}
+
+.composer-expand-button {
+  position: absolute;
+  top: -25px;
+  left: 50%;
+  z-index: 2;
+  min-width: 30px;
+  min-height: 24px;
+  width: 30px;
+  height: 24px;
+  border-color: var(--line-soft);
+  border-radius: 999px;
+  background: var(--panel-strong);
+  color: var(--accent);
+  padding: 0;
+  transform: translateX(-50%);
+  box-shadow: 0 0 18px rgba(var(--accent-rgb), 0.16);
+}
+
+.composer-expand-button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.chat-composer-expanded {
+  position: fixed;
+  top: calc(34px + env(safe-area-inset-top, 0px));
+  right: var(--composer-expanded-right, 18px);
+  bottom: var(--composer-expanded-bottom, calc(18px + env(safe-area-inset-bottom, 0px)));
+  left: var(--composer-expanded-left, 18px);
+  z-index: 65;
+  width: auto;
+  height: auto;
+  max-height: none;
+  border-radius: 8px;
+  padding: 42px 10px 10px;
+  background: rgba(var(--panel-rgb), 0.96);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.chat-composer-expanded .composer-expand-button {
+  top: -25px;
+}
+
+.chat-composer-expanded textarea {
+  min-height: 0;
+  max-height: none;
+  border-color: transparent;
+  background: transparent;
+  overflow-y: auto;
 }
 
 .composer-attachments,
