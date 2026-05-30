@@ -3,7 +3,8 @@ import {
   useEffect,
   useMemo,
   useRef,
-  useState
+  useState,
+  type SyntheticEvent
 } from "react";
 import {
   ChevronLeft,
@@ -120,6 +121,7 @@ export function MessageBubble({
   const hasOrderedSegments = orderedSegments.length > 0;
   const attachments = activeMessageAttachments(message);
   const [isEditing, setIsEditing] = useState(false);
+  const [isThinkingOpen, setIsThinkingOpen] = useState(false);
   const [showStats, setShowStats] = useState(false);
   const [draft, setDraft] = useState(content);
   const [draftAttachments, setDraftAttachments] = useState<ComposerAttachment[]>([]);
@@ -138,6 +140,10 @@ export function MessageBubble({
       setDraft(content);
     }
   }, [content, isEditing]);
+
+  function handleThinkingToggle(event: SyntheticEvent<HTMLDetailsElement>) {
+    setIsThinkingOpen(event.currentTarget.open);
+  }
 
   async function saveEdit() {
     dismissMobileKeyboard();
@@ -243,7 +249,11 @@ export function MessageBubble({
         </div>
       )}
       {!hasOrderedSegments && hasThinkingDetail && !message.is_deleted && (
-        <details className="message-thinking">
+        <details
+          className="message-thinking"
+          open={isThinkingOpen}
+          onToggle={handleThinkingToggle}
+        >
           <summary>{thinkingSummary(message, thinkingDurationSeconds)}</summary>
           <ThinkingContent segments={parsedThinking.segments} />
         </details>
@@ -319,6 +329,8 @@ export function MessageBubble({
           message={message}
           segments={orderedSegments}
           thinkingDurationSeconds={thinkingDurationSeconds}
+          isThinkingOpen={isThinkingOpen}
+          onThinkingToggle={handleThinkingToggle}
         />
       ) : content ? (
         <MarkdownContent content={content} />

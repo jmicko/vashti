@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ReactNode, SyntheticEvent } from "react";
 import { RetroLoader, ThinkingLoader } from "./common";
 import { MarkdownContent } from "./MarkdownContent";
 import { toolIcon } from "./toolUi";
@@ -7,11 +7,15 @@ import type { ChatMessage, MessageStreamSegment, ThinkingSegment, ToolUsageRecor
 export function MessageStreamContent({
   message,
   segments,
-  thinkingDurationSeconds
+  thinkingDurationSeconds,
+  isThinkingOpen,
+  onThinkingToggle
 }: {
   message: ChatMessage;
   segments: MessageStreamSegment[];
   thinkingDurationSeconds: number | null;
+  isThinkingOpen: boolean;
+  onThinkingToggle: (event: SyntheticEvent<HTMLDetailsElement>) => void;
 }) {
   const visibleSegments = segments.filter(
     (segment) => segment.type === "tool" || segment.text.trim() !== ""
@@ -38,7 +42,12 @@ export function MessageStreamContent({
             : thinkingDurationSeconds;
 
         return (
-          <details key={`thinking-${index}`} className="message-thinking">
+          <details
+            key={`thinking-${index}`}
+            className="message-thinking"
+            open={isThinkingOpen}
+            onToggle={onThinkingToggle}
+          >
             <summary>{thinkingSummary(message, segmentThinkingDuration)}</summary>
             <ThinkingContent segments={[{ type: "text", text: segment.text.trim() }]} />
           </details>
