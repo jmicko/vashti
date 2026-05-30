@@ -64,6 +64,7 @@ export function ChatView({
   personaVersions,
   onChatsChanged,
   onChatSettingsLoaded,
+  onConversationSettingsSave,
   onImageOpen,
   onModelSelected,
   onQueuedPromptConsumed
@@ -82,6 +83,7 @@ export function ChatView({
     override: string | null | undefined,
     inferenceSettings?: ChatInferenceSettings
   ) => void;
+  onConversationSettingsSave: () => Promise<void>;
   onImageOpen: ImageOpenHandler;
   onModelSelected: (value: string) => void;
   onQueuedPromptConsumed: () => void;
@@ -248,7 +250,7 @@ export function ChatView({
           active_root_message_id: messageResponse.active_root_message_id
         };
         setChat(nextChat);
-        onChatSettingsLoaded(nextChat.system_prompt_override);
+        onChatSettingsLoaded(nextChat.system_prompt_override, nextChat.inference_settings);
         await saveCachedHostedChat<ChatDetail, ChatMessage>({
           chat: nextChat,
           active_root_message_id: messageResponse.active_root_message_id,
@@ -312,6 +314,20 @@ export function ChatView({
     [onChatsChanged]
   );
 
+  const persistConversationSettingsForGeneration = useCallback(async () => {
+    try {
+      await onConversationSettingsSave();
+      return true;
+    } catch (settingsError) {
+      setGenerationError(
+        settingsError instanceof Error
+          ? settingsError.message
+          : "Failed to save conversation settings"
+      );
+      return false;
+    }
+  }, [onConversationSettingsSave]);
+
   const generate = useCallback(
     async (
       prompt: string,
@@ -320,6 +336,10 @@ export function ChatView({
       promptInferenceSettings: ChatInferenceSettings = inferenceSettings
     ) => {
       if (isGenerating) {
+        return;
+      }
+
+      if (!(await persistConversationSettingsForGeneration())) {
         return;
       }
 
@@ -343,6 +363,7 @@ export function ChatView({
       inferenceSettings,
       chatId,
       isGenerating,
+      persistConversationSettingsForGeneration,
       personas,
       personaVersions,
       selectedModel,
@@ -953,6 +974,9 @@ export function ChatView({
       selectedModelBaseParts([], personas, [], selectedModel, personaVersions) ??
       modelParts(selectedModel);
     const personaVersionId = personaVersionIdFromValue(selectedModel);
+    if (!(await persistConversationSettingsForGeneration())) {
+      return;
+    }
     await streamAssistantResponse(`/api/chats/${chatId}/messages/${message.id}/branch`, {
       content_text: contentText,
       backend_id: selected?.backendId ?? null,
@@ -995,6 +1019,9 @@ export function ChatView({
       selectedModelBaseParts([], personas, [], selectedModel, personaVersions) ??
       modelParts(selectedModel);
     const personaVersionId = personaVersionIdFromValue(selectedModel);
+    if (!(await persistConversationSettingsForGeneration())) {
+      return;
+    }
     await streamAssistantResponse(`/api/chats/${chatId}/messages/${message.id}/regenerate`, {
       backend_id: selected?.backendId ?? message.backend_id,
       model_name: selected?.modelName ?? message.model_name,

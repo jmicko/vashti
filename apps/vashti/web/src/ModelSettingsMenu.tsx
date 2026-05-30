@@ -54,8 +54,8 @@ export function ModelSettingsMenu({
   onCreateCustomModelFromSettings,
   onPersonaVersionsLoaded,
   onPrivatePersonaVersionsLoaded,
-  onSystemPromptOverrideSave,
-  onInferenceSettingsSave
+  onSystemPromptOverrideChange,
+  onInferenceSettingsChange
 }: {
   groups: BackendModelGroup[];
   personas: Persona[];
@@ -72,13 +72,11 @@ export function ModelSettingsMenu({
   onCreateCustomModelFromSettings?: (draft: CustomModelDraft) => void;
   onPersonaVersionsLoaded: (versions: PersonaVersion[]) => void;
   onPrivatePersonaVersionsLoaded: (versions: PrivatePersonaVersion[]) => void;
-  onSystemPromptOverrideSave?: (value: string | null) => Promise<void>;
-  onInferenceSettingsSave?: (value: ChatInferenceSettings) => Promise<void>;
+  onSystemPromptOverrideChange?: (value: string | null) => void;
+  onInferenceSettingsChange?: (value: ChatInferenceSettings) => void;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [loadingVersions, setLoadingVersions] = useState(false);
-  const [savingPromptOverride, setSavingPromptOverride] = useState(false);
-  const [savingInferenceSettings, setSavingInferenceSettings] = useState(false);
   const [draftSystemPrompt, setDraftSystemPrompt] = useState("");
   const [draftInferenceInputs, setDraftInferenceInputs] = useState<InferenceInputValues>(() =>
     inferenceSettingsToInputs({})
@@ -165,7 +163,6 @@ export function ModelSettingsMenu({
       : systemPromptOverride;
   const isSystemPromptCustomized =
     systemPromptOverride !== undefined && systemPromptOverride !== null;
-  const systemPromptChanged = draftSystemPrompt !== effectiveSystemPrompt;
   const effectiveInferenceSettings = normalizeInferenceSettings(inferenceSettings);
   const draftInferenceSettings = useMemo(
     () => inferenceInputsToSettings(draftInferenceInputs),
@@ -284,42 +281,26 @@ export function ModelSettingsMenu({
     }
   }
 
-  async function saveSystemPromptOverride(value: string | null) {
-    if (!onSystemPromptOverrideSave) {
-      return;
-    }
-
-    setSavingPromptOverride(true);
-    setError(null);
-    try {
-      await onSystemPromptOverrideSave(value);
-    } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Failed to save system prompt");
-    } finally {
-      setSavingPromptOverride(false);
-    }
-  }
-
-  async function saveInferenceSettings(value: ChatInferenceSettings) {
-    if (!onInferenceSettingsSave) {
-      return;
-    }
-
-    const normalized = normalizeInferenceSettings(value);
-    setSavingInferenceSettings(true);
-    setError(null);
-    try {
-      await onInferenceSettingsSave(normalized);
-      setDraftInferenceInputs(inferenceSettingsToInputs(normalized));
-    } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Failed to save inference settings");
-    } finally {
-      setSavingInferenceSettings(false);
-    }
-  }
-
   function updateDraftInferenceSetting(key: InferenceInputKey, value: string) {
-    setDraftInferenceInputs((current) => ({ ...current, [key]: value }));
+    const nextInputs = { ...draftInferenceInputs, [key]: value };
+    setDraftInferenceInputs(nextInputs);
+    onInferenceSettingsChange?.(inferenceInputsToSettings(nextInputs));
+  }
+
+  function resetInferenceSettings() {
+    const nextInputs = inferenceSettingsToInputs({});
+    setDraftInferenceInputs(nextInputs);
+    onInferenceSettingsChange?.({});
+  }
+
+  function updateSystemPromptOverride(value: string) {
+    setDraftSystemPrompt(value);
+    onSystemPromptOverrideChange?.(value === defaultSystemPrompt ? null : value);
+  }
+
+  function resetSystemPromptOverride() {
+    setDraftSystemPrompt(defaultSystemPrompt);
+    onSystemPromptOverrideChange?.(null);
   }
 
   function renderInferenceField(
@@ -345,14 +326,14 @@ export function ModelSettingsMenu({
             max={options.max}
             placeholder="Default"
             value={value}
-            disabled={!canSaveConversationSettings || savingInferenceSettings}
+            disabled={!canSaveConversationSettings}
             onChange={(event) => updateDraftInferenceSetting(key, event.target.value)}
           />
           <button
             type="button"
             className="icon-button model-settings-field-reset"
             aria-label={`Reset ${label} to default`}
-            disabled={!canSaveConversationSettings || savingInferenceSettings || !value}
+            disabled={!canSaveConversationSettings || !value}
             onClick={() => updateDraftInferenceSetting(key, "")}
           >
             <RotateCcw />
@@ -494,32 +475,17 @@ export function ModelSettingsMenu({
                 className="secondary-button"
                 disabled={
                   !canSaveConversationSettings ||
-                  savingInferenceSettings ||
                   (!isInferenceCustomized && !inferenceSettingsChanged)
                 }
-                onClick={() => {
-                  setDraftInferenceInputs(inferenceSettingsToInputs({}));
-                  void saveInferenceSettings({});
-                }}
+                onClick={resetInferenceSettings}
               >
                 <RotateCcw />
                 <span>Reset</span>
               </button>
-              <button
-                type="button"
-                disabled={
-                  !canSaveConversationSettings ||
-                  savingInferenceSettings ||
-                  !inferenceSettingsChanged
-                }
-                onClick={() => void saveInferenceSettings(draftInferenceSettings)}
-              >
-                Save Inference
-              </button>
             </div>
             {!canSaveConversationSettings && (
               <p className="model-settings-note">
-                Start or open a chat to save conversation-specific inference settings.
+                Start or open a chat to change conversation-specific inference settings.
               </p>
             )}
           </details>
@@ -531,13 +497,13 @@ export function ModelSettingsMenu({
             </summary>
             <textarea
               value={draftSystemPrompt}
-              onChange={(event) => setDraftSystemPrompt(event.target.value)}
+              onChange={(event) => updateSystemPromptOverride(event.target.value)}
               placeholder={
                 defaultSystemPrompt
                   ? "Use the default system prompt, or edit it for this chat."
                   : "Add a system prompt for this chat."
               }
-              disabled={!canSaveConversationSettings || savingPromptOverride}
+              disabled={!canSaveConversationSettings}
             />
             <div className="model-settings-prompt-actions">
               <button
@@ -545,30 +511,17 @@ export function ModelSettingsMenu({
                 className="secondary-button"
                 disabled={
                   !canSaveConversationSettings ||
-                  savingPromptOverride ||
-                  (!isSystemPromptCustomized && !systemPromptChanged)
+                  !isSystemPromptCustomized
                 }
-                onClick={() => {
-                  setDraftSystemPrompt(defaultSystemPrompt);
-                  void saveSystemPromptOverride(null);
-                }}
+                onClick={resetSystemPromptOverride}
               >
                 <RotateCcw />
                 <span>Reset</span>
               </button>
-              <button
-                type="button"
-                disabled={
-                  !canSaveConversationSettings || savingPromptOverride || !systemPromptChanged
-                }
-                onClick={() => void saveSystemPromptOverride(draftSystemPrompt)}
-              >
-                Save Prompt
-              </button>
             </div>
             {!canSaveConversationSettings && (
               <p className="model-settings-note">
-                Start or open a chat to save conversation-specific prompts.
+                Start or open a chat to change conversation-specific prompts.
               </p>
             )}
           </details>

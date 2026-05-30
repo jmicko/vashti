@@ -161,8 +161,12 @@ export function AppShell({
   const settingsSection = route.page === "settings" ? route.section : "profile";
   const currentChatId = route.page === "chat" ? route.chatId ?? null : null;
   const currentPrivateChatId = route.page === "private-chat" ? route.chatId : null;
+  const isNewChatDraft = page === "chat" && !currentChatId;
   const allowPrivatePersonaSelection =
     page === "private-chat" || (page === "chat" && !currentChatId && newChatMode === "private");
+  const isHostedPersonaUnavailableForPrivateDraft =
+    isNewChatDraft && newChatMode === "private" && Boolean(personaVersionIdFromValue(selectedModel));
+  const activeSelectedModel = isHostedPersonaUnavailableForPrivateDraft ? "" : selectedModel;
   const imageViewerRef = useRef<ImageViewerState | null>(null);
 
   useEffect(() => {
@@ -685,47 +689,16 @@ export function AppShell({
     );
   }
 
-  async function saveChatSystemPromptOverride(value: string | null) {
+  async function persistChatConversationSettings() {
     if (currentChatId) {
       const response = await requestJson<ChatResponse>(`/api/chats/${currentChatId}`, {
         method: "PATCH",
-        body: JSON.stringify({ system_prompt_override: value })
+        body: JSON.stringify({
+          system_prompt_override: chatSystemPromptOverride,
+          inference_settings: chatInferenceSettings
+        })
       });
       setChatSystemPromptOverride(response.chat.system_prompt_override ?? null);
-      return;
-    }
-
-    if (currentPrivateChatId) {
-      const chat = await getPrivateChat(currentPrivateChatId);
-      if (!chat) {
-        throw new Error("Private chat not found on this device");
-      }
-
-      const nextChat = {
-        ...chat,
-        system_prompt_override: value,
-        updated_at: unixTimestamp()
-      };
-      await savePrivateChat(nextChat);
-      setChatSystemPromptOverride(value);
-      await loadPrivateChats();
-      return;
-    }
-
-    if (routeRef.current.page === "chat" && !routeRef.current.chatId) {
-      setChatSystemPromptOverride(value);
-      return;
-    }
-
-    throw new Error("Open or start a chat before saving conversation settings");
-  }
-
-  async function saveChatInferenceSettings(value: ChatInferenceSettings) {
-    if (currentChatId) {
-      const response = await requestJson<ChatResponse>(`/api/chats/${currentChatId}`, {
-        method: "PATCH",
-        body: JSON.stringify({ inference_settings: value })
-      });
       setChatInferenceSettings(response.chat.inference_settings ?? {});
       return;
     }
@@ -738,21 +711,16 @@ export function AppShell({
 
       const nextChat = {
         ...chat,
-        inference_settings: value,
+        system_prompt_override: chatSystemPromptOverride,
+        inference_settings: chatInferenceSettings,
         updated_at: unixTimestamp()
       };
       await savePrivateChat(nextChat);
-      setChatInferenceSettings(value);
+      setChatSystemPromptOverride(chatSystemPromptOverride);
+      setChatInferenceSettings(chatInferenceSettings);
       await loadPrivateChats();
       return;
     }
-
-    if (routeRef.current.page === "chat" && !routeRef.current.chatId) {
-      setChatInferenceSettings(value);
-      return;
-    }
-
-    throw new Error("Open or start a chat before saving conversation settings");
   }
 
   const handleChatSettingsLoaded = useCallback((
@@ -975,7 +943,7 @@ export function AppShell({
                   privatePersonaVersions={knownPrivatePersonaVersions}
                   isLoading={isLoadingModels}
                   error={modelError}
-                  value={selectedModel}
+                  value={activeSelectedModel}
                   onChange={setSelectedModel}
                 />
                 <ModelSettingsMenu
@@ -984,18 +952,18 @@ export function AppShell({
                   privatePersonas={allowPrivatePersonaSelection ? privatePersonas : []}
                   personaVersions={knownPersonaVersions}
                   privatePersonaVersions={knownPrivatePersonaVersions}
-                  selectedModel={selectedModel}
-                  selectedModelInfo={selectedModelInfo()}
+                  selectedModel={activeSelectedModel}
+                  selectedModelInfo={activeSelectedModel ? selectedModelInfo() : null}
                   systemPromptOverride={chatSystemPromptOverride}
                   inferenceSettings={chatInferenceSettings}
                   canSaveConversationSettings={page === "chat" || Boolean(currentPrivateChatId)}
-                  disabled={!selectedModel || isLoadingModels}
+                  disabled={!activeSelectedModel || isLoadingModels}
                   onModelSelected={setSelectedModel}
                   onCreateCustomModelFromSettings={createCustomModelFromSettings}
                   onPersonaVersionsLoaded={rememberPersonaVersions}
                   onPrivatePersonaVersionsLoaded={rememberPrivatePersonaVersions}
-                  onSystemPromptOverrideSave={saveChatSystemPromptOverride}
-                  onInferenceSettingsSave={saveChatInferenceSettings}
+                  onSystemPromptOverrideChange={setChatSystemPromptOverride}
+                  onInferenceSettingsChange={setChatInferenceSettings}
                 />
               </>
             )}
@@ -1080,6 +1048,7 @@ export function AppShell({
             onImageOpen={openImageViewer}
             onChatSettingsLoaded={handleChatSettingsLoaded}
             onModelSelected={setSelectedModel}
+            onConversationSettingsSave={persistChatConversationSettings}
             onPrivateChatsChanged={loadPrivateChats}
             onQueuedPromptConsumed={() => setQueuedPrivatePrompt(null)}
           />
@@ -1097,6 +1066,7 @@ export function AppShell({
               personaVersions={knownPersonaVersions}
               onChatSettingsLoaded={handleChatSettingsLoaded}
               onChatsChanged={loadChats}
+              onConversationSettingsSave={persistChatConversationSettings}
               onImageOpen={openImageViewer}
               onModelSelected={setSelectedModel}
               onQueuedPromptConsumed={() => setQueuedPrompt(null)}
@@ -1108,15 +1078,9 @@ export function AppShell({
               isCreatingPrivate={isCreatingPrivateChat}
               mode={newChatMode}
               selectedModel={
-                newChatMode === "private" && personaVersionIdFromValue(selectedModel)
-                  ? ""
-                  : selectedModel
+                activeSelectedModel
               }
-              selectedModelInfo={
-                newChatMode === "private" && personaVersionIdFromValue(selectedModel)
-                  ? null
-                  : selectedModelInfo()
-              }
+              selectedModelInfo={activeSelectedModel ? selectedModelInfo() : null}
               availableTools={newChatMode === "standard" ? availableTools : []}
               onModeChange={setNewChatMode}
               onCreateChat={createChatFromPrompt}

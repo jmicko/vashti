@@ -76,6 +76,7 @@ export function PrivateChatView({
   systemPromptOverride,
   inferenceSettings,
   onChatSettingsLoaded,
+  onConversationSettingsSave,
   onImageOpen,
   onModelSelected,
   onPrivateChatsChanged,
@@ -94,6 +95,7 @@ export function PrivateChatView({
     override: string | null | undefined,
     inferenceSettings?: ChatInferenceSettings
   ) => void;
+  onConversationSettingsSave: () => Promise<void>;
   onImageOpen: ImageOpenHandler;
   onModelSelected: (value: string) => void;
   onPrivateChatsChanged: () => Promise<void>;
@@ -594,6 +596,20 @@ export function PrivateChatView({
     }
   }
 
+  async function persistConversationSettingsForGeneration() {
+    try {
+      await onConversationSettingsSave();
+      return true;
+    } catch (settingsError) {
+      setGenerationError(
+        settingsError instanceof Error
+          ? settingsError.message
+          : "Failed to save conversation settings"
+      );
+      return false;
+    }
+  }
+
   async function generate(
     prompt: string,
     attachments: ComposerAttachment[] = [],
@@ -602,6 +618,10 @@ export function PrivateChatView({
     promptInferenceSettings: ChatInferenceSettings = inferenceSettings
   ) {
     if (!chat || isGenerating) {
+      return;
+    }
+
+    if (!(await persistConversationSettingsForGeneration())) {
       return;
     }
 
@@ -678,6 +698,7 @@ export function PrivateChatView({
       persona_id: selectedPrivatePersona?.id ?? null,
       persona_version_id: selectedPrivatePersona?.current_version.id ?? null,
       persona_name: selectedPrivatePersona?.current_version.display_name ?? null,
+      system_prompt_override: promptSystemPromptOverride,
       inference_settings: promptInferenceSettings,
       active_root_message_id: chat.active_root_message_id ?? userMessage.id,
       updated_at: now,
@@ -1063,6 +1084,10 @@ export function PrivateChatView({
     setGenerationError(null);
 
     try {
+      if (!(await persistConversationSettingsForGeneration())) {
+        return;
+      }
+
       const now = unixTimestamp();
       const userMessage = createPrivateMessage({
         chatId: chat.id,
@@ -1104,6 +1129,7 @@ export function PrivateChatView({
         persona_id: selectedPrivatePersona?.id ?? null,
         persona_version_id: selectedPrivatePersona?.current_version.id ?? null,
         persona_name: selectedPrivatePersona?.current_version.display_name ?? null,
+        system_prompt_override: systemPromptOverride,
         inference_settings: inferenceSettings,
         active_root_message_id: message.parent_message_id
           ? chat.active_root_message_id
@@ -1196,6 +1222,10 @@ export function PrivateChatView({
     setGenerationError(null);
 
     try {
+      if (!(await persistConversationSettingsForGeneration())) {
+        return;
+      }
+
       const now = unixTimestamp();
       const assistantMessage = createPrivateMessage({
         chatId: chat.id,
@@ -1227,6 +1257,7 @@ export function PrivateChatView({
         persona_id: selectedPrivatePersona?.id ?? null,
         persona_version_id: selectedPrivatePersona?.current_version.id ?? null,
         persona_name: selectedPrivatePersona?.current_version.display_name ?? null,
+        system_prompt_override: systemPromptOverride,
         inference_settings: inferenceSettings,
         active_root_message_id: message.parent_message_id
           ? chat.active_root_message_id
