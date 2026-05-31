@@ -643,8 +643,13 @@ textarea {
   flex: 0 0 auto;
 }
 
+.model-settings-wrap-open {
+  z-index: 70;
+}
+
 .model-settings-button {
   position: relative;
+  z-index: 72;
 }
 
 .model-settings-button-dirty::after {
@@ -659,11 +664,21 @@ textarea {
   background: var(--warning);
 }
 
+.model-settings-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background:
+    radial-gradient(circle at top right, rgba(var(--accent-rgb), 0.07), transparent 36rem),
+    rgba(var(--shadow-rgb), 0.48);
+  backdrop-filter: blur(1px);
+}
+
 .model-settings-menu {
   position: absolute;
   top: calc(100% + 8px);
   left: -290px;
-  z-index: 31;
+  z-index: 72;
   width: min(430px, 88vw);
   max-height: calc(var(--app-height) - 118px);
   overflow-y: auto;
@@ -758,13 +773,15 @@ textarea {
 .model-settings-inference-grid {
   display: grid;
   gap: 10px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   margin-top: 10px;
 }
 
 .model-settings-number-field {
+  align-items: center;
   display: grid;
-  gap: 5px;
+  gap: 10px;
+  grid-template-columns: minmax(7rem, 0.5fr) minmax(0, 1fr);
 }
 
 .model-settings-number-field span {
@@ -794,6 +811,14 @@ textarea {
 
 .model-settings-field-reset svg {
   width: 15px;
+}
+
+@media (max-width: 560px) {
+  .model-settings-number-field {
+    align-items: stretch;
+    gap: 5px;
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .model-settings-wide-action {

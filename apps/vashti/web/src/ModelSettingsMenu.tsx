@@ -358,7 +358,10 @@ export function ModelSettingsMenu({
   }
 
   return (
-    <div className="model-settings-wrap" ref={wrapRef}>
+    <div
+      className={isOpen ? "model-settings-wrap model-settings-wrap-open" : "model-settings-wrap"}
+      ref={wrapRef}
+    >
       <button
         type="button"
         className={
@@ -374,172 +377,184 @@ export function ModelSettingsMenu({
         <SlidersHorizontal />
       </button>
       {isOpen && (
-        <div className="model-settings-menu">
-          <div className="model-settings-menu-header">
-            <div>
-              <h2>{title}</h2>
-              <p>{subtitle}</p>
+        <>
+          <div
+            className="model-settings-backdrop"
+            aria-hidden="true"
+            onPointerDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            }}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              setIsOpen(false);
+            }}
+          />
+          <div className="model-settings-menu">
+            <div className="model-settings-menu-header">
+              <div>
+                <h2>{title}</h2>
+                <p>{subtitle}</p>
+              </div>
+              {isUsingNonDefaultVersion && (
+                <button type="button" className="secondary-button" onClick={resetVersion}>
+                  <RotateCcw />
+                  <span>Reset</span>
+                </button>
+              )}
             </div>
-            {isUsingNonDefaultVersion && (
-              <button type="button" className="secondary-button" onClick={resetVersion}>
-                <RotateCcw />
-                <span>Reset</span>
+
+            {selectedModelInfo && <ModelCapabilityBadges model={selectedModelInfo} />}
+            {baseModelName && (
+              <p className="model-settings-meta">
+                Base model: <span>{compactModelName(baseModelName)}</span>
+              </p>
+            )}
+
+            {isCustomModel ? (
+              <>
+                <label className="model-settings-field">
+                  <span>Version</span>
+                  <select
+                    value={selectedHostedVersion?.id ?? selectedPrivateVersion?.id ?? ""}
+                    disabled={loadingVersions}
+                    onChange={(event) => {
+                      if (selectedHostedVersion) {
+                        onModelSelected(personaModelValue(event.target.value));
+                      } else {
+                        onModelSelected(privatePersonaModelValue(event.target.value));
+                      }
+                    }}
+                  >
+                    {(selectedHostedVersion ? hostedVersions : privateVersions).map((version) => (
+                      <option key={version.id} value={version.id}>
+                        v{version.version_number}
+                        {version.id === selectedHostedPersona?.current_version.id ||
+                        version.id === selectedPrivatePersona?.current_version.id
+                          ? " current"
+                          : ""}
+                        {" · "}
+                        {version.display_name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <p className="model-settings-note">
+                  Version changes apply to new messages in this conversation.
+                </p>
+              </>
+            ) : null}
+
+            <details className="model-settings-prompt">
+              <summary>
+                System prompt
+                {isSystemPromptCustomized && <span>customized</span>}
+              </summary>
+              <textarea
+                value={draftSystemPrompt}
+                onChange={(event) => updateSystemPromptOverride(event.target.value)}
+                placeholder={
+                  defaultSystemPrompt
+                    ? "Use the default system prompt, or edit it for this chat."
+                    : "Add a system prompt for this chat."
+                }
+                disabled={!canSaveConversationSettings}
+              />
+              <div className="model-settings-prompt-actions">
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={!canSaveConversationSettings || !isSystemPromptCustomized}
+                  onClick={resetSystemPromptOverride}
+                >
+                  <RotateCcw />
+                  <span>Reset</span>
+                </button>
+              </div>
+              {!canSaveConversationSettings && (
+                <p className="model-settings-note">
+                  Start or open a chat to change conversation-specific prompts.
+                </p>
+              )}
+            </details>
+
+            <details className="model-settings-prompt model-settings-inference">
+              <summary>
+                Inference
+                {isInferenceCustomized && <span>customized</span>}
+              </summary>
+              <div className="model-settings-inference-grid">
+                {renderInferenceField("temperature", "Temperature", {
+                  inputMode: "decimal",
+                  step: "0.1",
+                  min: "0",
+                  max: "2"
+                })}
+                {renderInferenceField("num_ctx", "Context", {
+                  inputMode: "numeric",
+                  step: "1",
+                  min: "512"
+                })}
+                {renderInferenceField("top_p", "Top P", {
+                  inputMode: "decimal",
+                  step: "0.05",
+                  min: "0.01",
+                  max: "1"
+                })}
+                {renderInferenceField("repeat_penalty", "Repeat penalty", {
+                  inputMode: "decimal",
+                  step: "0.05",
+                  min: "0.5",
+                  max: "2"
+                })}
+                {renderInferenceField("num_predict", "Max output", {
+                  inputMode: "numeric",
+                  step: "1",
+                  min: "1"
+                })}
+                {renderInferenceField("seed", "Seed", {
+                  inputMode: "numeric",
+                  step: "1"
+                })}
+              </div>
+              <p className="model-settings-note">Blank fields use the model/backend default.</p>
+              <div className="model-settings-prompt-actions">
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={
+                    !canSaveConversationSettings ||
+                    (!isInferenceCustomized && !inferenceSettingsChanged)
+                  }
+                  onClick={resetInferenceSettings}
+                >
+                  <RotateCcw />
+                  <span>Reset</span>
+                </button>
+              </div>
+              {!canSaveConversationSettings && (
+                <p className="model-settings-note">
+                  Start or open a chat to change conversation-specific inference settings.
+                </p>
+              )}
+            </details>
+
+            {loadingVersions && <p className="status-message">Loading versions...</p>}
+            {error && <p className="error">{error}</p>}
+
+            {baseModelDraftValue && onCreateCustomModelFromSettings && (
+              <button
+                type="button"
+                className="secondary-button model-settings-wide-action"
+                onClick={createCustomModelFromSettings}
+              >
+                <Plus />
+                <span>New custom model from settings</span>
               </button>
             )}
           </div>
-
-          {selectedModelInfo && <ModelCapabilityBadges model={selectedModelInfo} />}
-          {baseModelName && (
-            <p className="model-settings-meta">
-              Base model: <span>{compactModelName(baseModelName)}</span>
-            </p>
-          )}
-
-          {isCustomModel ? (
-            <>
-              <label className="model-settings-field">
-                <span>Version</span>
-                <select
-                  value={selectedHostedVersion?.id ?? selectedPrivateVersion?.id ?? ""}
-                  disabled={loadingVersions}
-                  onChange={(event) => {
-                    if (selectedHostedVersion) {
-                      onModelSelected(personaModelValue(event.target.value));
-                    } else {
-                      onModelSelected(privatePersonaModelValue(event.target.value));
-                    }
-                  }}
-                >
-                  {(selectedHostedVersion ? hostedVersions : privateVersions).map((version) => (
-                    <option key={version.id} value={version.id}>
-                      v{version.version_number}
-                      {version.id === selectedHostedPersona?.current_version.id ||
-                      version.id === selectedPrivatePersona?.current_version.id
-                        ? " current"
-                        : ""}
-                      {" · "}
-                      {version.display_name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <p className="model-settings-note">
-                Version changes apply to new messages in this conversation.
-              </p>
-            </>
-          ) : null}
-
-          <details className="model-settings-prompt model-settings-inference">
-            <summary>
-              Inference
-              {isInferenceCustomized && <span>customized</span>}
-            </summary>
-            <div className="model-settings-inference-grid">
-              {renderInferenceField("temperature", "Temperature", {
-                inputMode: "decimal",
-                step: "0.1",
-                min: "0",
-                max: "2"
-              })}
-              {renderInferenceField("num_ctx", "Context", {
-                inputMode: "numeric",
-                step: "1",
-                min: "512"
-              })}
-              {renderInferenceField("top_p", "Top P", {
-                inputMode: "decimal",
-                step: "0.05",
-                min: "0.01",
-                max: "1"
-              })}
-              {renderInferenceField("repeat_penalty", "Repeat penalty", {
-                inputMode: "decimal",
-                step: "0.05",
-                min: "0.5",
-                max: "2"
-              })}
-              {renderInferenceField("num_predict", "Max output", {
-                inputMode: "numeric",
-                step: "1",
-                min: "1"
-              })}
-              {renderInferenceField("seed", "Seed", {
-                inputMode: "numeric",
-                step: "1"
-              })}
-            </div>
-            <p className="model-settings-note">Blank fields use the model/backend default.</p>
-            <div className="model-settings-prompt-actions">
-              <button
-                type="button"
-                className="secondary-button"
-                disabled={
-                  !canSaveConversationSettings ||
-                  (!isInferenceCustomized && !inferenceSettingsChanged)
-                }
-                onClick={resetInferenceSettings}
-              >
-                <RotateCcw />
-                <span>Reset</span>
-              </button>
-            </div>
-            {!canSaveConversationSettings && (
-              <p className="model-settings-note">
-                Start or open a chat to change conversation-specific inference settings.
-              </p>
-            )}
-          </details>
-
-          <details className="model-settings-prompt">
-            <summary>
-              System prompt
-              {isSystemPromptCustomized && <span>customized</span>}
-            </summary>
-            <textarea
-              value={draftSystemPrompt}
-              onChange={(event) => updateSystemPromptOverride(event.target.value)}
-              placeholder={
-                defaultSystemPrompt
-                  ? "Use the default system prompt, or edit it for this chat."
-                  : "Add a system prompt for this chat."
-              }
-              disabled={!canSaveConversationSettings}
-            />
-            <div className="model-settings-prompt-actions">
-              <button
-                type="button"
-                className="secondary-button"
-                disabled={
-                  !canSaveConversationSettings ||
-                  !isSystemPromptCustomized
-                }
-                onClick={resetSystemPromptOverride}
-              >
-                <RotateCcw />
-                <span>Reset</span>
-              </button>
-            </div>
-            {!canSaveConversationSettings && (
-              <p className="model-settings-note">
-                Start or open a chat to change conversation-specific prompts.
-              </p>
-            )}
-          </details>
-
-          {loadingVersions && <p className="status-message">Loading versions...</p>}
-          {error && <p className="error">{error}</p>}
-
-          {baseModelDraftValue && onCreateCustomModelFromSettings && (
-            <button
-              type="button"
-              className="secondary-button model-settings-wide-action"
-              onClick={createCustomModelFromSettings}
-            >
-              <Plus />
-              <span>New custom model from settings</span>
-            </button>
-          )}
-        </div>
+        </>
       )}
     </div>
   );
