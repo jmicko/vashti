@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Plus, RotateCcw, SlidersHorizontal } from "lucide-react";
+import { ChevronDown, Plus, RotateCcw, SlidersHorizontal } from "lucide-react";
 import { requestJson } from "./api";
 import type { CustomModelDraft } from "./customModelDraft";
 import {
@@ -76,6 +76,7 @@ export function ModelSettingsMenu({
   onInferenceSettingsChange?: (value: ChatInferenceSettings) => void;
 }) {
   const [isOpen, setIsOpen] = useState(false);
+  const [isVersionMenuOpen, setIsVersionMenuOpen] = useState(false);
   const [loadingVersions, setLoadingVersions] = useState(false);
   const [draftSystemPrompt, setDraftSystemPrompt] = useState("");
   const [draftInferenceInputs, setDraftInferenceInputs] = useState<InferenceInputValues>(() =>
@@ -187,6 +188,12 @@ export function ModelSettingsMenu({
       : selectedBaseOption
         ? modelValue(selectedBaseOption.backendId, selectedBaseOption.model.name)
         : null;
+  const selectedVersionId = selectedHostedVersion?.id ?? selectedPrivateVersion?.id ?? "";
+  const displayedVersions = selectedHostedVersion ? hostedVersions : privateVersions;
+  const selectedVersionLabel =
+    (selectedHostedVersion ?? selectedPrivateVersion)
+      ? versionOptionLabel(selectedHostedVersion ?? selectedPrivateVersion)
+      : "Select version";
 
   useEffect(() => {
     function handlePointerDown(event: MouseEvent) {
@@ -281,6 +288,15 @@ export function ModelSettingsMenu({
     }
   }
 
+  function selectVersion(versionId: string) {
+    if (selectedHostedVersion) {
+      onModelSelected(personaModelValue(versionId));
+    } else {
+      onModelSelected(privatePersonaModelValue(versionId));
+    }
+    setIsVersionMenuOpen(false);
+  }
+
   function updateDraftInferenceSetting(key: InferenceInputKey, value: string) {
     const nextInputs = { ...draftInferenceInputs, [key]: value };
     setDraftInferenceInputs(nextInputs);
@@ -357,6 +373,13 @@ export function ModelSettingsMenu({
     setIsOpen(false);
   }
 
+  function isCurrentVersion(version: PersonaVersion | PrivatePersonaVersion) {
+    return (
+      version.id === selectedHostedPersona?.current_version.id ||
+      version.id === selectedPrivatePersona?.current_version.id
+    );
+  }
+
   return (
     <div
       className={isOpen ? "model-settings-wrap model-settings-wrap-open" : "model-settings-wrap"}
@@ -414,32 +437,49 @@ export function ModelSettingsMenu({
 
             {isCustomModel ? (
               <>
-                <label className="model-settings-field">
+                <div className="model-settings-field">
                   <span>Version</span>
-                  <select
-                    value={selectedHostedVersion?.id ?? selectedPrivateVersion?.id ?? ""}
-                    disabled={loadingVersions}
-                    onChange={(event) => {
-                      if (selectedHostedVersion) {
-                        onModelSelected(personaModelValue(event.target.value));
-                      } else {
-                        onModelSelected(privatePersonaModelValue(event.target.value));
-                      }
-                    }}
-                  >
-                    {(selectedHostedVersion ? hostedVersions : privateVersions).map((version) => (
-                      <option key={version.id} value={version.id}>
-                        v{version.version_number}
-                        {version.id === selectedHostedPersona?.current_version.id ||
-                        version.id === selectedPrivatePersona?.current_version.id
-                          ? " current"
-                          : ""}
-                        {" · "}
-                        {version.display_name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                  <div className="model-settings-version-picker">
+                    <button
+                      type="button"
+                      className="model-settings-version-button"
+                      aria-expanded={isVersionMenuOpen}
+                      disabled={loadingVersions || displayedVersions.length === 0}
+                      onClick={() => setIsVersionMenuOpen((open) => !open)}
+                    >
+                      <span>{selectedVersionLabel}</span>
+                      <ChevronDown />
+                    </button>
+                    {isVersionMenuOpen && (
+                      <div className="model-settings-version-menu">
+                        {displayedVersions.map((version) => (
+                          <button
+                            type="button"
+                            key={version.id}
+                            className={
+                              version.id === selectedVersionId
+                                ? "model-settings-version-option model-option-active"
+                                : "model-settings-version-option"
+                            }
+                            onClick={() => selectVersion(version.id)}
+                          >
+                            <span className="model-option-content">
+                              <span className="model-option-title-row">
+                                <span className="model-name">{versionOptionLabel(version)}</span>
+                                {isCurrentVersion(version) && (
+                                  <span className="model-settings-version-current">Current</span>
+                                )}
+                              </span>
+                              <span className="model-subtitle">
+                                Created {formatVersionTimestamp(version.created_at)}
+                              </span>
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
                 <p className="model-settings-note">
                   Version changes apply to new messages in this conversation.
                 </p>
@@ -570,6 +610,18 @@ function uniquePrivatePersonaVersions(versions: PrivatePersonaVersion[]) {
   return [...new Map(versions.map((version) => [version.id, version])).values()].sort(
     (left, right) => right.version_number - left.version_number
   );
+}
+
+function versionOptionLabel(version: PersonaVersion | PrivatePersonaVersion) {
+  return `v${version.version_number} · ${version.display_name}`;
+}
+
+function formatVersionTimestamp(timestamp: number) {
+  return new Date(timestamp * 1000).toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric"
+  });
 }
 
 function inferenceSettingsToInputs(settings: ChatInferenceSettings): InferenceInputValues {

@@ -730,6 +730,78 @@ textarea {
   text-transform: uppercase;
 }
 
+.model-settings-version-picker {
+  position: relative;
+}
+
+.model-settings-version-button {
+  width: 100%;
+  justify-content: space-between;
+  gap: 8px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: none;
+}
+
+.model-settings-version-button span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-settings-version-button svg {
+  flex: 0 0 auto;
+}
+
+.model-settings-version-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  left: 0;
+  z-index: 3;
+  max-height: 220px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow:
+    0 0 24px rgba(var(--accent-rgb), 0.12),
+    0 18px 50px rgba(var(--shadow-rgb), 0.6);
+  padding: 6px;
+}
+
+.model-settings-version-option {
+  width: 100%;
+  min-height: 38px;
+  justify-content: flex-start;
+  align-items: stretch;
+  text-align: left;
+  border-color: transparent;
+  background: transparent;
+  color: var(--text);
+  box-shadow: none;
+  padding: 8px 10px;
+}
+
+.model-settings-version-option:hover,
+.model-settings-version-option:focus-visible {
+  background: var(--accent-muted);
+}
+
+.model-settings-version-current {
+  flex: 0 0 auto;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  color: var(--accent);
+  font-size: 0.64rem;
+  font-weight: 800;
+  line-height: 1;
+  padding: 3px 6px;
+  text-transform: uppercase;
+}
+
 .model-settings-prompt {
   border: 1px solid var(--line-soft);
   border-radius: 8px;
