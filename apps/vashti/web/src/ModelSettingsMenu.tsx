@@ -84,6 +84,7 @@ export function ModelSettingsMenu({
   );
   const [error, setError] = useState<string | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const versionPickerRef = useRef<HTMLDivElement>(null);
   const loadedHostedPersonaIdsRef = useRef(new Set<string>());
   const loadedPrivatePersonaIdsRef = useRef(new Set<string>());
 
@@ -197,14 +198,28 @@ export function ModelSettingsMenu({
 
   useEffect(() => {
     function handlePointerDown(event: MouseEvent) {
-      if (wrapRef.current && !wrapRef.current.contains(event.target as Node)) {
+      const target = event.target as Node;
+
+      if (wrapRef.current && !wrapRef.current.contains(target)) {
         setIsOpen(false);
+        setIsVersionMenuOpen(false);
+        return;
+      }
+
+      if (versionPickerRef.current && !versionPickerRef.current.contains(target)) {
+        setIsVersionMenuOpen(false);
       }
     }
 
     document.addEventListener("mousedown", handlePointerDown);
     return () => document.removeEventListener("mousedown", handlePointerDown);
   }, []);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setIsVersionMenuOpen(false);
+    }
+  }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -411,6 +426,7 @@ export function ModelSettingsMenu({
             onClick={(event) => {
               event.preventDefault();
               event.stopPropagation();
+              setIsVersionMenuOpen(false);
               setIsOpen(false);
             }}
           />
@@ -439,7 +455,7 @@ export function ModelSettingsMenu({
               <>
                 <div className="model-settings-field">
                   <span>Version</span>
-                  <div className="model-settings-version-picker">
+                  <div className="model-settings-version-picker" ref={versionPickerRef}>
                     <button
                       type="button"
                       className="model-settings-version-button"
