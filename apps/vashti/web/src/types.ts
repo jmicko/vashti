@@ -199,10 +199,17 @@ export type ChatToolPreferences = {
 
 export type ChatInferenceSettings = {
   temperature?: number | null;
+  top_k?: number | null;
   top_p?: number | null;
+  min_p?: number | null;
   repeat_penalty?: number | null;
+  repeat_last_n?: number | null;
+  presence_penalty?: number | null;
+  frequency_penalty?: number | null;
   num_ctx?: number | null;
   num_predict?: number | null;
+  num_gpu?: number | null;
+  num_thread?: number | null;
   seed?: number | null;
 };
 

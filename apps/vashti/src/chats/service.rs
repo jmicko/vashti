@@ -2260,12 +2260,23 @@ fn normalized_inference_settings(settings: ChatInferenceSettings) -> ChatInferen
         temperature: settings
             .temperature
             .and_then(|value| clamp_f64(value, 0.0, 2.0)),
+        top_k: settings.top_k.map(|value| value.clamp(1, 1_000)),
         top_p: settings.top_p.and_then(|value| clamp_f64(value, 0.01, 1.0)),
+        min_p: settings.min_p.and_then(|value| clamp_f64(value, 0.0, 1.0)),
         repeat_penalty: settings
             .repeat_penalty
             .and_then(|value| clamp_f64(value, 0.5, 2.0)),
+        repeat_last_n: settings.repeat_last_n.map(|value| value.clamp(-1, 262_144)),
+        presence_penalty: settings
+            .presence_penalty
+            .and_then(|value| clamp_f64(value, -2.0, 2.0)),
+        frequency_penalty: settings
+            .frequency_penalty
+            .and_then(|value| clamp_f64(value, -2.0, 2.0)),
         num_ctx: settings.num_ctx.map(|value| value.clamp(512, 262_144)),
         num_predict: settings.num_predict.map(|value| value.clamp(1, 131_072)),
+        num_gpu: settings.num_gpu.map(|value| value.clamp(0, 10_000)),
+        num_thread: settings.num_thread.map(|value| value.clamp(1, 1_024)),
         seed: settings.seed,
     }
 }
@@ -2273,10 +2284,17 @@ fn normalized_inference_settings(settings: ChatInferenceSettings) -> ChatInferen
 fn inference_settings_to_options(settings: &ChatInferenceSettings) -> Option<OllamaChatOptions> {
     let options = OllamaChatOptions {
         temperature: settings.temperature,
+        top_k: settings.top_k,
         top_p: settings.top_p,
+        min_p: settings.min_p,
         repeat_penalty: settings.repeat_penalty,
+        repeat_last_n: settings.repeat_last_n,
+        presence_penalty: settings.presence_penalty,
+        frequency_penalty: settings.frequency_penalty,
         num_ctx: settings.num_ctx,
         num_predict: settings.num_predict,
+        num_gpu: settings.num_gpu,
+        num_thread: settings.num_thread,
         seed: settings.seed,
     };
 

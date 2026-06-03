@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, Plus, RotateCcw, SlidersHorizontal } from "lucide-react";
+import { ChevronDown, Info, Plus, RotateCcw, SlidersHorizontal } from "lucide-react";
 import { requestJson } from "./api";
 import type { CustomModelDraft } from "./customModelDraft";
 import {
@@ -37,6 +37,128 @@ type PersonaVersionsResponse = {
 type InferenceInputKey = keyof ChatInferenceSettings;
 
 type InferenceInputValues = Record<InferenceInputKey, string>;
+
+type InferenceFieldDefinition = {
+  key: InferenceInputKey;
+  label: string;
+  help: string;
+  inputMode: "decimal" | "numeric";
+  step?: string;
+  min?: string;
+  max?: string;
+};
+
+const inferenceFieldDefinitions: InferenceFieldDefinition[] = [
+  {
+    key: "temperature",
+    label: "Temperature",
+    help: "Controls randomness. Lower values are steadier; higher values are more creative.",
+    inputMode: "decimal",
+    step: "0.1",
+    min: "0",
+    max: "2"
+  },
+  {
+    key: "num_ctx",
+    label: "Context",
+    help: "Sets how many tokens the model can use as context. Higher values use more memory.",
+    inputMode: "numeric",
+    step: "1",
+    min: "512"
+  },
+  {
+    key: "num_predict",
+    label: "Max output",
+    help: "Limits how many tokens the model can generate for the response.",
+    inputMode: "numeric",
+    step: "1",
+    min: "1"
+  },
+  {
+    key: "top_k",
+    label: "Top K",
+    help: "Limits each token choice to the top K likely tokens. Lower values are more conservative.",
+    inputMode: "numeric",
+    step: "1",
+    min: "1"
+  },
+  {
+    key: "top_p",
+    label: "Top P",
+    help: "Keeps the smallest set of likely tokens whose probability adds up to this value.",
+    inputMode: "decimal",
+    step: "0.05",
+    min: "0.01",
+    max: "1"
+  },
+  {
+    key: "min_p",
+    label: "Min P",
+    help: "Filters out tokens below a probability floor relative to the most likely token.",
+    inputMode: "decimal",
+    step: "0.01",
+    min: "0",
+    max: "1"
+  },
+  {
+    key: "repeat_penalty",
+    label: "Repeat penalty",
+    help: "Penalizes repeated tokens. Higher values reduce repetition more strongly.",
+    inputMode: "decimal",
+    step: "0.05",
+    min: "0.5",
+    max: "2"
+  },
+  {
+    key: "repeat_last_n",
+    label: "Repeat window",
+    help: "Sets how far back the repeat penalty looks. Use -1 to use the context window.",
+    inputMode: "numeric",
+    step: "1",
+    min: "-1"
+  },
+  {
+    key: "presence_penalty",
+    label: "Presence penalty",
+    help: "Penalizes tokens that have appeared at all, encouraging new topics or wording.",
+    inputMode: "decimal",
+    step: "0.05",
+    min: "-2",
+    max: "2"
+  },
+  {
+    key: "frequency_penalty",
+    label: "Frequency penalty",
+    help: "Penalizes tokens more as they repeat more often.",
+    inputMode: "decimal",
+    step: "0.05",
+    min: "-2",
+    max: "2"
+  },
+  {
+    key: "num_gpu",
+    label: "GPU layers",
+    help: "Controls how many model layers Ollama tries to offload to GPU. Use 0 for CPU only, or leave blank for Ollama's default.",
+    inputMode: "numeric",
+    step: "1",
+    min: "0"
+  },
+  {
+    key: "num_thread",
+    label: "CPU threads",
+    help: "Controls how many CPU threads Ollama uses for inference.",
+    inputMode: "numeric",
+    step: "1",
+    min: "1"
+  },
+  {
+    key: "seed",
+    label: "Seed",
+    help: "Sets the random seed. Reusing the same seed can make similar prompts more reproducible.",
+    inputMode: "numeric",
+    step: "1"
+  }
+];
 
 export function ModelSettingsMenu({
   groups,
@@ -244,10 +366,17 @@ export function ModelSettingsMenu({
     setDraftInferenceInputs(inferenceSettingsToInputs(effectiveInferenceSettings));
   }, [
     effectiveInferenceSettings.temperature,
+    effectiveInferenceSettings.top_k,
     effectiveInferenceSettings.top_p,
+    effectiveInferenceSettings.min_p,
     effectiveInferenceSettings.repeat_penalty,
+    effectiveInferenceSettings.repeat_last_n,
+    effectiveInferenceSettings.presence_penalty,
+    effectiveInferenceSettings.frequency_penalty,
     effectiveInferenceSettings.num_ctx,
     effectiveInferenceSettings.num_predict,
+    effectiveInferenceSettings.num_gpu,
+    effectiveInferenceSettings.num_thread,
     effectiveInferenceSettings.seed,
     selectedModel
   ]);
@@ -334,38 +463,37 @@ export function ModelSettingsMenu({
     onSystemPromptOverrideChange?.(null);
   }
 
-  function renderInferenceField(
-    key: InferenceInputKey,
-    label: string,
-    options: {
-      inputMode: "decimal" | "numeric";
-      step?: string;
-      min?: string;
-      max?: string;
-    }
-  ) {
-    const value = draftInferenceInputs[key];
+  function renderInferenceField(field: InferenceFieldDefinition) {
+    const value = draftInferenceInputs[field.key];
     return (
-      <div className="model-settings-number-field">
-        <span>{label}</span>
+      <div className="model-settings-number-field" key={field.key}>
+        <span className="model-settings-number-label">{field.label}</span>
         <div className="model-settings-input-reset">
+          <button
+            type="button"
+            className="model-settings-help"
+            aria-label={`${field.label} help`}
+          >
+            <Info />
+            <span className="model-settings-help-popover">{field.help}</span>
+          </button>
           <input
             type="number"
-            inputMode={options.inputMode}
-            step={options.step}
-            min={options.min}
-            max={options.max}
+            inputMode={field.inputMode}
+            step={field.step}
+            min={field.min}
+            max={field.max}
             placeholder="Default"
             value={value}
             disabled={!canSaveConversationSettings}
-            onChange={(event) => updateDraftInferenceSetting(key, event.target.value)}
+            onChange={(event) => updateDraftInferenceSetting(field.key, event.target.value)}
           />
           <button
             type="button"
             className="icon-button model-settings-field-reset"
-            aria-label={`Reset ${label} to default`}
+            aria-label={`Reset ${field.label} to default`}
             disabled={!canSaveConversationSettings || !value}
-            onClick={() => updateDraftInferenceSetting(key, "")}
+            onClick={() => updateDraftInferenceSetting(field.key, "")}
           >
             <RotateCcw />
           </button>
@@ -541,38 +669,7 @@ export function ModelSettingsMenu({
                 {isInferenceCustomized && <span>customized</span>}
               </summary>
               <div className="model-settings-inference-grid">
-                {renderInferenceField("temperature", "Temperature", {
-                  inputMode: "decimal",
-                  step: "0.1",
-                  min: "0",
-                  max: "2"
-                })}
-                {renderInferenceField("num_ctx", "Context", {
-                  inputMode: "numeric",
-                  step: "1",
-                  min: "512"
-                })}
-                {renderInferenceField("top_p", "Top P", {
-                  inputMode: "decimal",
-                  step: "0.05",
-                  min: "0.01",
-                  max: "1"
-                })}
-                {renderInferenceField("repeat_penalty", "Repeat penalty", {
-                  inputMode: "decimal",
-                  step: "0.05",
-                  min: "0.5",
-                  max: "2"
-                })}
-                {renderInferenceField("num_predict", "Max output", {
-                  inputMode: "numeric",
-                  step: "1",
-                  min: "1"
-                })}
-                {renderInferenceField("seed", "Seed", {
-                  inputMode: "numeric",
-                  step: "1"
-                })}
+                {inferenceFieldDefinitions.map((field) => renderInferenceField(field))}
               </div>
               <p className="model-settings-note">Blank fields use the model/backend default.</p>
               <div className="model-settings-prompt-actions">
@@ -643,10 +740,17 @@ function formatVersionTimestamp(timestamp: number) {
 function inferenceSettingsToInputs(settings: ChatInferenceSettings): InferenceInputValues {
   return {
     temperature: inferenceInputValue(settings.temperature),
+    top_k: inferenceInputValue(settings.top_k),
     top_p: inferenceInputValue(settings.top_p),
+    min_p: inferenceInputValue(settings.min_p),
     repeat_penalty: inferenceInputValue(settings.repeat_penalty),
+    repeat_last_n: inferenceInputValue(settings.repeat_last_n),
+    presence_penalty: inferenceInputValue(settings.presence_penalty),
+    frequency_penalty: inferenceInputValue(settings.frequency_penalty),
     num_ctx: inferenceInputValue(settings.num_ctx),
     num_predict: inferenceInputValue(settings.num_predict),
+    num_gpu: inferenceInputValue(settings.num_gpu),
+    num_thread: inferenceInputValue(settings.num_thread),
     seed: inferenceInputValue(settings.seed)
   };
 }
@@ -654,10 +758,17 @@ function inferenceSettingsToInputs(settings: ChatInferenceSettings): InferenceIn
 function inferenceInputsToSettings(inputs: InferenceInputValues): ChatInferenceSettings {
   return normalizeInferenceSettings({
     temperature: parsedInferenceNumber(inputs.temperature),
+    top_k: parsedInferenceInteger(inputs.top_k),
     top_p: parsedInferenceNumber(inputs.top_p),
+    min_p: parsedInferenceNumber(inputs.min_p),
     repeat_penalty: parsedInferenceNumber(inputs.repeat_penalty),
+    repeat_last_n: parsedInferenceInteger(inputs.repeat_last_n),
+    presence_penalty: parsedInferenceNumber(inputs.presence_penalty),
+    frequency_penalty: parsedInferenceNumber(inputs.frequency_penalty),
     num_ctx: parsedInferenceInteger(inputs.num_ctx),
     num_predict: parsedInferenceInteger(inputs.num_predict),
+    num_gpu: parsedInferenceInteger(inputs.num_gpu),
+    num_thread: parsedInferenceInteger(inputs.num_thread),
     seed: parsedInferenceInteger(inputs.seed)
   });
 }

@@ -31,13 +31,27 @@ pub struct ChatInferenceSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_k: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub top_p: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_p: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repeat_penalty: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repeat_last_n: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub presence_penalty: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frequency_penalty: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub num_ctx: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub num_predict: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub num_gpu: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub num_thread: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seed: Option<i64>,
 }

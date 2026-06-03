@@ -40,13 +40,27 @@ pub struct OllamaChatOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_k: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub top_p: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_p: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub repeat_penalty: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repeat_last_n: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub presence_penalty: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frequency_penalty: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub num_ctx: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub num_predict: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub num_gpu: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub num_thread: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub seed: Option<i64>,
 }
@@ -54,10 +68,17 @@ pub struct OllamaChatOptions {
 impl OllamaChatOptions {
     pub fn has_any(&self) -> bool {
         self.temperature.is_some()
+            || self.top_k.is_some()
             || self.top_p.is_some()
+            || self.min_p.is_some()
             || self.repeat_penalty.is_some()
+            || self.repeat_last_n.is_some()
+            || self.presence_penalty.is_some()
+            || self.frequency_penalty.is_some()
             || self.num_ctx.is_some()
             || self.num_predict.is_some()
+            || self.num_gpu.is_some()
+            || self.num_thread.is_some()
             || self.seed.is_some()
     }
 }
