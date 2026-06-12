@@ -39,7 +39,10 @@ pub struct PersonaDisownResponse {
 pub struct CreatePersonaRequest {
     pub visibility: String,
     pub display_name: String,
-    pub avatar_attachment_id: Option<String>,
+    pub avatar_asset_id: Option<String>,
+    pub avatar_crop_x: Option<f64>,
+    pub avatar_crop_y: Option<f64>,
+    pub avatar_crop_size: Option<f64>,
     pub base_backend_id: String,
     pub base_model_name: String,
     pub system_prompt: String,
@@ -50,7 +53,11 @@ pub struct CreatePersonaRequest {
 pub struct UpdatePersonaRequest {
     pub visibility: Option<String>,
     pub display_name: Option<String>,
-    pub avatar_attachment_id: Option<String>,
+    pub avatar_asset_id: Option<String>,
+    pub avatar_asset_changed: Option<bool>,
+    pub avatar_crop_x: Option<f64>,
+    pub avatar_crop_y: Option<f64>,
+    pub avatar_crop_size: Option<f64>,
     pub base_backend_id: Option<String>,
     pub base_model_name: Option<String>,
     pub system_prompt: Option<String>,
@@ -107,7 +114,14 @@ pub async fn copy_persona(
 ) -> Result<Json<PersonaMutationResponse>, ApiError> {
     let user =
         auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
-    let persona = service::copy_persona(&state.db, &user.id, &persona_id, payload).await?;
+    let persona = service::copy_persona(
+        &state.db,
+        &state.config.persona_avatars_dir(),
+        &user.id,
+        &persona_id,
+        payload,
+    )
+    .await?;
 
     Ok(Json(PersonaMutationResponse { persona }))
 }

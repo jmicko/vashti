@@ -446,7 +446,10 @@ Columns:
 * `persona_id` TEXT NOT NULL REFERENCES `personas`(`id`) ON DELETE CASCADE
 * `version_number` INTEGER NOT NULL
 * `display_name` TEXT NOT NULL
-* `avatar_attachment_id` TEXT REFERENCES `attachments`(`id`) ON DELETE SET NULL
+* `avatar_asset_id` TEXT REFERENCES `persona_avatar_assets`(`id`) ON DELETE SET NULL
+* `avatar_crop_x` REAL NOT NULL DEFAULT 50
+* `avatar_crop_y` REAL NOT NULL DEFAULT 50
+* `avatar_crop_size` REAL NOT NULL DEFAULT 100
 * `base_backend_id` TEXT NOT NULL REFERENCES `ollama_backends`(`id`) ON DELETE RESTRICT
 * `base_model_name` TEXT NOT NULL
 * `system_prompt` TEXT NOT NULL DEFAULT ''
@@ -456,13 +459,38 @@ Columns:
 
 Notes:
 
-* edits create a new row and update `personas.current_version_id`
+* behavioral edits and image replacement create a new row and update `personas.current_version_id`
+* crop-only edits update the current version's presentation rectangle without recompressing the original or creating a new version
 * public persona prompts are visible to users who can use that persona
 * `tool_policy_json` is reserved for future tools and should be opaque to MVP generation
 * chat generation should use the version bound to the chat, not whatever version is currently latest
 * copying a persona copies only the selected version's current fields into a new persona/version 1
+* copied personas receive their own avatar asset owned by the copying user
 
-### 3.2.12 `persona_members`
+### 3.2.12 `persona_avatar_assets`
+
+Purpose:
+
+* stores metadata for immutable original custom-model profile image files
+* keeps image bytes outside SQLite and separate from chat attachments/messages
+
+Columns:
+
+* `id` TEXT PRIMARY KEY
+* `owner_user_id` TEXT NOT NULL REFERENCES `users`(`id`) ON DELETE CASCADE
+* `original_filename` TEXT NOT NULL
+* `storage_path` TEXT NOT NULL UNIQUE
+* `mime_type` TEXT NOT NULL
+  Allowed values: `image/jpeg`, `image/png`, `image/gif`
+* `size_bytes` INTEGER NOT NULL
+* `created_at` INTEGER NOT NULL
+
+JPEG, PNG, and GIF bytes live unchanged under
+`data/persona-avatars/<owner-user-id>/<asset-id>`. Other browser-readable
+formats are converted once to lossless PNG before upload.
+Vashti does not convert the original to WebP or repeatedly recompress it.
+
+### 3.2.13 `persona_members`
 
 Purpose:
 
@@ -1375,7 +1403,10 @@ Response:
         "id": "pv1",
         "version_number": 3,
         "display_name": "Careful Researcher",
-        "avatar_attachment_id": null,
+        "avatar_asset_id": "pa1",
+        "avatar_crop_x": 50,
+        "avatar_crop_y": 40,
+        "avatar_crop_size": 75,
         "base_backend_id": "b1",
         "base_model_name": "gemma4",
         "system_prompt": "You are careful, concise, and cite uncertainty.",
@@ -1398,7 +1429,10 @@ Request:
 {
   "visibility": "private",
   "display_name": "Careful Researcher",
-  "avatar_attachment_id": null,
+  "avatar_asset_id": "pa1",
+  "avatar_crop_x": 50,
+  "avatar_crop_y": 40,
+  "avatar_crop_size": 75,
   "base_backend_id": "b1",
   "base_model_name": "gemma4",
   "system_prompt": "You are careful, concise, and cite uncertainty."
@@ -1422,7 +1456,11 @@ Request:
 {
   "visibility": "public",
   "display_name": "Careful Researcher",
-  "avatar_attachment_id": null,
+  "avatar_asset_id": "pa2",
+  "avatar_asset_changed": true,
+  "avatar_crop_x": 45,
+  "avatar_crop_y": 55,
+  "avatar_crop_size": 80,
   "base_backend_id": "b1",
   "base_model_name": "gemma4",
   "system_prompt": "You are careful, concise, and cite uncertainty."

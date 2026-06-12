@@ -3,11 +3,12 @@ import type { ChatInferenceSettings, MessageStats } from "./types";
 
 const LEGACY_DB_NAME = "vashti-private-local";
 const DB_NAME_PREFIX = "vashti-private-local";
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 const CHAT_STORE = "private_chats";
 const MESSAGE_STORE = "private_messages";
 const PERSONA_STORE = "private_personas";
 const PERSONA_VERSION_STORE = "private_persona_versions";
+const PERSONA_AVATAR_STORE = "private_persona_avatars";
 const HOSTED_CHAT_CACHE_STORE = "hosted_chat_cache";
 const MODEL_CACHE_STORE = "model_cache";
 const MODEL_CACHE_ID = "model-picker";
@@ -151,7 +152,10 @@ export type PrivatePersonaVersion = {
   persona_id: string;
   version_number: number;
   display_name: string;
-  avatar_attachment_id: string | null;
+  avatar_asset_id: string | null;
+  avatar_crop_x: number;
+  avatar_crop_y: number;
+  avatar_crop_size: number;
   base_backend_id: string;
   base_backend_name: string;
   base_model_name: string;
@@ -176,10 +180,22 @@ export type SavePrivatePersonaParams = {
   baseBackendName: string;
   baseModelName: string;
   systemPrompt: string;
-  avatarAttachmentId?: string | null;
+  avatarAssetId?: string | null;
+  avatarCropX?: number;
+  avatarCropY?: number;
+  avatarCropSize?: number;
   toolPolicyJson?: string | null;
   sourcePersonaId?: string | null;
   sourcePersonaVersionId?: string | null;
+};
+
+export type PrivatePersonaAvatarAsset = {
+  id: string;
+  original_filename: string;
+  mime_type: string;
+  size_bytes: number;
+  data_url: string;
+  created_at: number;
 };
 
 export type CachedHostedChat<
@@ -613,9 +629,55 @@ export async function updatePrivatePersona(
   }
 
   const versions = await listPrivatePersonaVersions(personaId);
+  const currentVersion = persona.current_version;
+  const nextAvatarAssetId = params.avatarAssetId ?? null;
+  const nextAvatarCropX = normalizeAvatarCrop(params.avatarCropX);
+  const nextAvatarCropY = normalizeAvatarCrop(params.avatarCropY);
+  const nextAvatarCropSize = normalizeAvatarCropSize(params.avatarCropSize);
+  const hasVersionChange =
+    params.displayName.trim() !== currentVersion.display_name ||
+    params.baseBackendId !== currentVersion.base_backend_id ||
+    params.baseBackendName !== currentVersion.base_backend_name ||
+    params.baseModelName !== currentVersion.base_model_name ||
+    params.systemPrompt.trim() !== currentVersion.system_prompt ||
+    (params.toolPolicyJson ?? null) !== currentVersion.tool_policy_json ||
+    (params.sourcePersonaId ?? null) !== (currentVersion.source_persona_id ?? null) ||
+    (params.sourcePersonaVersionId ?? null) !==
+      (currentVersion.source_persona_version_id ?? null) ||
+    nextAvatarAssetId !== (currentVersion.avatar_asset_id ?? null);
+  const now = unixTimestamp();
+
+  if (!hasVersionChange) {
+    const updatedVersion = {
+      ...currentVersion,
+      avatar_crop_x: nextAvatarCropX,
+      avatar_crop_y: nextAvatarCropY,
+      avatar_crop_size: nextAvatarCropSize
+    };
+    const updatedPersona = {
+      id: persona.id,
+      current_version_id: persona.current_version_id,
+      created_at: persona.created_at,
+      updated_at: now
+    };
+    const db = await openPrivateDb();
+    const personaRecord = await privateStoreRecord(updatedPersona, {
+      created_at: updatedPersona.created_at,
+      updated_at: updatedPersona.updated_at
+    });
+    const versionRecord = await privateStoreRecord(updatedVersion, {
+      persona_id: updatedVersion.persona_id,
+      created_at: updatedVersion.created_at
+    });
+    const tx = db.transaction([PERSONA_STORE, PERSONA_VERSION_STORE], "readwrite");
+    tx.objectStore(PERSONA_STORE).put(personaRecord);
+    tx.objectStore(PERSONA_VERSION_STORE).put(versionRecord);
+    await transactionDone(tx);
+    return { ...updatedPersona, current_version: updatedVersion };
+  }
+
   const nextVersionNumber =
     versions.reduce((max, version) => Math.max(max, version.version_number), 0) + 1;
-  const now = unixTimestamp();
   const versionId = privateId("private-persona-version");
   const version = privatePersonaVersionFromParams({
     params,
@@ -668,6 +730,56 @@ export async function deletePrivatePersona(personaId: string): Promise<void> {
     cursor.continue();
   };
 
+  await transactionDone(tx);
+}
+
+export async function savePrivatePersonaAvatar(
+  file: File
+): Promise<PrivatePersonaAvatarAsset> {
+  if (!["image/jpeg", "image/png", "image/gif"].includes(file.type)) {
+    throw new Error("Profile images must be JPEG, PNG, or GIF files");
+  }
+
+  const asset: PrivatePersonaAvatarAsset = {
+    id: privateId("private-persona-avatar"),
+    original_filename: file.name || "profile-image",
+    mime_type: file.type,
+    size_bytes: file.size,
+    data_url: await readFileAsDataUrl(file),
+    created_at: unixTimestamp()
+  };
+  const db = await openPrivateDb();
+  const record = await privateStoreRecord(asset, { created_at: asset.created_at });
+  const tx = db.transaction(PERSONA_AVATAR_STORE, "readwrite");
+  tx.objectStore(PERSONA_AVATAR_STORE).put(record);
+  await transactionDone(tx);
+  return asset;
+}
+
+export async function getPrivatePersonaAvatar(
+  assetId: string
+): Promise<PrivatePersonaAvatarAsset | null> {
+  const db = await openPrivateDb();
+  const tx = db.transaction(PERSONA_AVATAR_STORE, "readonly");
+  const record = await requestResult<PrivateStoreRecord | PrivatePersonaAvatarAsset | undefined>(
+    tx.objectStore(PERSONA_AVATAR_STORE).get(assetId)
+  );
+  await transactionDone(tx);
+  return record ? readPrivateRecord<PrivatePersonaAvatarAsset>(record) : null;
+}
+
+export async function deleteUnusedPrivatePersonaAvatar(assetId: string): Promise<void> {
+  const versions = await getAllPrivateRecords<PrivatePersonaVersion>(
+    await openPrivateDb(),
+    PERSONA_VERSION_STORE
+  );
+  if (versions.some((version) => version.avatar_asset_id === assetId)) {
+    return;
+  }
+
+  const db = await openPrivateDb();
+  const tx = db.transaction(PERSONA_AVATAR_STORE, "readwrite");
+  tx.objectStore(PERSONA_AVATAR_STORE).delete(assetId);
   await transactionDone(tx);
 }
 
@@ -755,6 +867,9 @@ function ensurePrivateStores(db: IDBDatabase) {
       keyPath: "id"
     });
     personaVersionStore.createIndex("persona_id", "persona_id", { unique: false });
+  }
+  if (!db.objectStoreNames.contains(PERSONA_AVATAR_STORE)) {
+    db.createObjectStore(PERSONA_AVATAR_STORE, { keyPath: "id" });
   }
   if (!db.objectStoreNames.contains(HOSTED_CHAT_CACHE_STORE)) {
     db.createObjectStore(HOSTED_CHAT_CACHE_STORE, { keyPath: "id" });
@@ -1103,7 +1218,10 @@ function privatePersonaVersionFromParams({
     persona_id: personaId,
     version_number: versionNumber,
     display_name: params.displayName.trim(),
-    avatar_attachment_id: params.avatarAttachmentId ?? null,
+    avatar_asset_id: params.avatarAssetId ?? null,
+    avatar_crop_x: normalizeAvatarCrop(params.avatarCropX),
+    avatar_crop_y: normalizeAvatarCrop(params.avatarCropY),
+    avatar_crop_size: normalizeAvatarCropSize(params.avatarCropSize),
     base_backend_id: params.baseBackendId,
     base_backend_name: params.baseBackendName,
     base_model_name: params.baseModelName,
@@ -1113,4 +1231,33 @@ function privatePersonaVersionFromParams({
     source_persona_version_id: params.sourcePersonaVersionId ?? null,
     created_at: now
   };
+}
+
+function normalizeAvatarCrop(value: number | undefined) {
+  if (value === undefined || !Number.isFinite(value)) {
+    return 50;
+  }
+  return Math.min(100, Math.max(0, value));
+}
+
+function normalizeAvatarCropSize(value: number | undefined) {
+  if (value === undefined || !Number.isFinite(value)) {
+    return 100;
+  }
+  return Math.min(100, Math.max(10, value));
+}
+
+function readFileAsDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error ?? new Error("Failed to read profile image"));
+    reader.onload = () => {
+      if (typeof reader.result !== "string") {
+        reject(new Error("Failed to read profile image"));
+        return;
+      }
+      resolve(reader.result);
+    };
+    reader.readAsDataURL(file);
+  });
 }

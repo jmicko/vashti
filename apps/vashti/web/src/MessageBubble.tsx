@@ -38,6 +38,7 @@ import {
 import { RetroLoader } from "./common";
 import { MarkdownContent } from "./MarkdownContent";
 import { MessageStreamContent, ThinkingContent, thinkingSummary } from "./messageContent";
+import { ModelAvatar } from "./ModelAvatar";
 import type {
   ChatMessage,
   ComposerAttachment,
@@ -68,7 +69,8 @@ export function MessageBubble({
   onRemoveAttachment,
   onUploadAttachment,
   onRegenerate,
-  selectedModelInfo
+  selectedModelInfo,
+  personaAvatar
 }: {
   message: ChatMessage;
   versionInfo: VersionInfo | null;
@@ -97,6 +99,14 @@ export function MessageBubble({
   onUploadAttachment?: (file: File) => Promise<ComposerAttachment> | ComposerAttachment;
   onRegenerate: (message: ChatMessage) => Promise<void>;
   selectedModelInfo?: ModelInfo | null;
+  personaAvatar?: {
+    displayName: string;
+    assetId?: string | null;
+    privateAssetId?: string | null;
+    cropX?: number;
+    cropY?: number;
+    cropSize?: number;
+  } | null;
 }) {
   const content = message.is_deleted
     ? "Message deleted"
@@ -238,7 +248,22 @@ export function MessageBubble({
     >
       {showMessageHeader && (
         <div className={showMessageLabel ? "message-header" : "message-header message-header-end"}>
-          {showMessageLabel && <p className="message-role">{messageLabel(message)}</p>}
+          {showMessageLabel && (
+            <div className="message-role-wrap">
+              {personaAvatar && (
+                <ModelAvatar
+                  displayName={personaAvatar.displayName}
+                  assetId={personaAvatar.assetId}
+                  privateAssetId={personaAvatar.privateAssetId}
+                  cropX={personaAvatar.cropX}
+                  cropY={personaAvatar.cropY}
+                  cropSize={personaAvatar.cropSize}
+                  className="model-avatar-message"
+                />
+              )}
+              <p className="message-role">{messageLabel(message)}</p>
+            </div>
+          )}
           {versionInfo && (
             <VersionSwitcher
               versionInfo={versionInfo}

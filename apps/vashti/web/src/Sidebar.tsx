@@ -15,8 +15,12 @@ import {
   X
 } from "lucide-react";
 import { BrandMark } from "./common";
-import type { PrivateChatSummary } from "./privateChatStore";
-import type { ChatSummary, Page } from "./types";
+import { ModelAvatar } from "./ModelAvatar";
+import type {
+  PrivateChatSummary,
+  PrivatePersonaVersion
+} from "./privateChatStore";
+import type { ChatSummary, Page, PersonaVersion } from "./types";
 
 export function Sidebar({
   chats,
@@ -27,6 +31,8 @@ export function Sidebar({
   isOpen,
   isLoading,
   isLoadingPrivateChats,
+  personaVersions,
+  privatePersonaVersions,
   onClose,
   onDeleteChat,
   onDeletePrivateChat,
@@ -43,6 +49,8 @@ export function Sidebar({
   isOpen: boolean;
   isLoading: boolean;
   isLoadingPrivateChats: boolean;
+  personaVersions: PersonaVersion[];
+  privatePersonaVersions: PrivatePersonaVersion[];
   onClose: () => void;
   onDeleteChat: (chat: ChatSummary) => void;
   onDeletePrivateChat: (chat: PrivateChatSummary) => void;
@@ -146,10 +154,28 @@ export function Sidebar({
           <p>No chats yet</p>
         ) : (
           <div className="chat-link-list">
-            {combinedChats.map(({ chat, isPrivate }) => (
-              <ChatListItem
+            {combinedChats.map(({ chat, isPrivate }) => {
+              const version = chat.persona_version_id
+                ? (isPrivate ? privatePersonaVersions : personaVersions).find(
+                    (candidate) => candidate.id === chat.persona_version_id
+                  )
+                : null;
+              return (
+                <ChatListItem
                 key={chat.id}
                 chat={chat}
+                avatar={
+                  version
+                    ? {
+                        displayName: version.display_name,
+                        assetId: isPrivate ? null : version.avatar_asset_id,
+                        privateAssetId: isPrivate ? version.avatar_asset_id : null,
+                        cropX: version.avatar_crop_x,
+                        cropY: version.avatar_crop_y,
+                        cropSize: version.avatar_crop_size
+                      }
+                    : null
+                }
                 isActive={
                   isPrivate ? currentPrivateChatId === chat.id : currentChatId === chat.id
                 }
@@ -187,8 +213,9 @@ export function Sidebar({
                 onToggleMenu={() =>
                   setOpenMenuChatId((current) => (current === chat.id ? null : chat.id))
                 }
-              />
-            ))}
+                />
+              );
+            })}
           </div>
         )}
       </div>
@@ -198,6 +225,7 @@ export function Sidebar({
 
 function ChatListItem({
   chat,
+  avatar,
   isActive,
   isEditing,
   isMenuOpen,
@@ -212,6 +240,14 @@ function ChatListItem({
   onToggleMenu
 }: {
   chat: ChatSummary | PrivateChatSummary;
+  avatar: {
+    displayName: string;
+    assetId: string | null;
+    privateAssetId: string | null;
+    cropX: number;
+    cropY: number;
+    cropSize: number;
+  } | null;
   isActive: boolean;
   isEditing: boolean;
   isMenuOpen: boolean;
@@ -327,6 +363,18 @@ function ChatListItem({
             onOpen();
           }}
         >
+          {avatar && (
+            <ModelAvatar
+              displayName={avatar.displayName}
+              assetId={avatar.assetId}
+              privateAssetId={avatar.privateAssetId}
+              cropX={avatar.cropX}
+              cropY={avatar.cropY}
+              cropSize={avatar.cropSize}
+              className="model-avatar-chat-list"
+            />
+          )}
+          <span className="chat-link-copy">
           <span className="chat-title-line">
             {isPrivate && <Lock />}
             <span>{chat.title}</span>
@@ -338,6 +386,7 @@ function ChatListItem({
                 ? `Custom · ${chat.persona_name}`
                 : chat.default_model_name}
           </small>
+          </span>
         </button>
       )}
       <button

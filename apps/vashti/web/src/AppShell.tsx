@@ -901,6 +901,8 @@ export function AppShell({
             isOpen={isSidebarOpen}
             isLoading={isLoadingChats}
             isLoadingPrivateChats={isLoadingPrivateChats}
+            personaVersions={knownPersonaVersions}
+            privatePersonaVersions={knownPrivatePersonaVersions}
             onClose={() => setIsSidebarOpen(false)}
             onDeleteChat={setChatDeleteTarget}
             onDeletePrivateChat={setPrivateChatDeleteTarget}

@@ -465,10 +465,24 @@ textarea {
   color: var(--text);
   box-shadow: none;
   display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
   justify-items: start;
   gap: 3px;
   padding: 8px 10px;
   justify-content: left;
+}
+
+.chat-link-copy {
+  min-width: 0;
+  display: grid;
+  justify-items: start;
+  gap: 3px;
+}
+
+.model-avatar-chat-list {
+  width: 1.8rem;
+  height: 1.8rem;
 }
 
 .chat-link:hover,
@@ -613,6 +627,43 @@ textarea {
   background: var(--surface);
   color: var(--text);
   box-shadow: none;
+}
+
+.model-avatar {
+  position: relative;
+  flex: 0 0 auto;
+  width: 2rem;
+  height: 2rem;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--surface);
+  display: inline-grid;
+  place-items: center;
+  color: var(--accent);
+  font-size: 0.78rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.model-avatar img {
+  display: block;
+  user-select: none;
+}
+
+.model-avatar-fallback {
+  background: var(--accent-muted);
+}
+
+.model-avatar-picker-selected {
+  width: 1.6rem;
+  height: 1.6rem;
+}
+
+.model-avatar-picker-option {
+  width: 2.1rem;
+  height: 2.1rem;
+  align-self: flex-start;
 }
 
 .model-picker-button .model-name {
@@ -851,7 +902,8 @@ textarea {
 .model-settings-inference-grid {
   display: grid;
   gap: 10px;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
   margin-top: 10px;
 }
 
@@ -2343,6 +2395,18 @@ textarea {
 
 .message-header-end {
   justify-content: flex-end;
+}
+
+.message-role-wrap {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.model-avatar-message {
+  width: 1.75rem;
+  height: 1.75rem;
 }
 
 .message-role {
@@ -4002,6 +4066,164 @@ textarea {
   min-height: 260px;
 }
 
+.persona-avatar-field {
+  display: grid;
+  grid-template-columns: minmax(18rem, 1.35fr) minmax(13rem, 0.65fr);
+  gap: 18px;
+  align-items: start;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: rgba(var(--panel-rgb), 0.62);
+  padding: 14px;
+}
+
+.persona-avatar-crop-stage {
+  position: relative;
+  width: 100%;
+  height: clamp(18rem, 38vw, 27rem);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background:
+    linear-gradient(45deg, var(--surface) 25%, transparent 25%) 0 0 / 1rem 1rem,
+    linear-gradient(-45deg, var(--surface) 25%, transparent 25%) 0 0 / 1rem 1rem,
+    linear-gradient(45deg, transparent 75%, var(--surface) 75%) 0 0 / 1rem 1rem,
+    linear-gradient(-45deg, transparent 75%, var(--surface) 75%) 0 0 / 1rem 1rem,
+    var(--panel);
+  contain: layout paint;
+}
+
+.persona-avatar-crop-source {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+  filter: brightness(0.32) saturate(0.7);
+  user-select: none;
+  pointer-events: none;
+}
+
+[data-theme="light"] .persona-avatar-crop-source {
+  filter: brightness(0.58) saturate(0.65);
+}
+
+.persona-avatar-circle-preview {
+  position: absolute;
+  overflow: hidden;
+  border: 1px solid rgba(var(--accent-rgb), 0.75);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(var(--panel-rgb), 0.72);
+  pointer-events: none;
+}
+
+.persona-avatar-circle-preview img {
+  position: absolute;
+  max-width: none;
+  display: block;
+  user-select: none;
+  pointer-events: none;
+}
+
+.persona-avatar-crop-selection {
+  position: absolute;
+  z-index: 2;
+  border: 2px solid var(--accent);
+  box-shadow:
+    0 0 0 1px rgba(var(--panel-rgb), 0.92),
+    0 0 18px rgba(var(--accent-rgb), 0.2);
+  cursor: move;
+  touch-action: none;
+}
+
+.persona-avatar-crop-handle {
+  position: absolute;
+  width: 2.5rem;
+  height: 2.5rem;
+  touch-action: none;
+}
+
+.persona-avatar-crop-handle::after {
+  position: absolute;
+  inset: 0.68rem;
+  border: 2px solid var(--panel);
+  border-radius: 3px;
+  background: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+  content: "";
+}
+
+.persona-avatar-crop-handle-north-west {
+  top: -1.25rem;
+  left: -1.25rem;
+  cursor: nwse-resize;
+}
+
+.persona-avatar-crop-handle-north-east {
+  top: -1.25rem;
+  right: -1.25rem;
+  cursor: nesw-resize;
+}
+
+.persona-avatar-crop-handle-south-west {
+  bottom: -1.25rem;
+  left: -1.25rem;
+  cursor: nesw-resize;
+}
+
+.persona-avatar-crop-handle-south-east {
+  right: -1.25rem;
+  bottom: -1.25rem;
+  cursor: nwse-resize;
+}
+
+.persona-avatar-empty {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 8px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.persona-avatar-empty span {
+  width: 5rem;
+  height: 5rem;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--accent-muted);
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+  font-size: 2rem;
+  font-weight: 800;
+}
+
+.persona-avatar-empty p {
+  max-width: 15rem;
+  margin: 0;
+}
+
+.persona-avatar-controls {
+  min-width: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.persona-avatar-controls > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.persona-avatar-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .persona-form-actions,
 .persona-actions {
   display: flex;
@@ -4027,8 +4249,19 @@ textarea {
 .persona-main {
   min-width: 0;
   display: flex;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
+}
+
+.model-avatar-persona-row {
+  width: 3rem;
+  height: 3rem;
+}
+
+.persona-main-copy {
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .persona-main p {
@@ -4238,6 +4471,14 @@ textarea {
   .model-access-header,
   .model-access-row {
     display: grid;
+  }
+
+  .persona-avatar-field {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .persona-avatar-crop-stage {
+    height: clamp(17rem, 76vw, 24rem);
   }
 
   .model-access-row {

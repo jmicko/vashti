@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use sqlx::{Row, SqlitePool, Transaction};
 use uuid::Uuid;
 
@@ -5,6 +7,7 @@ use crate::{
     auth::service::unix_timestamp,
     backends::service as backends_service,
     error::ApiError,
+    persona_avatars,
     personas::{
         handlers::{CopyPersonaRequest, CreatePersonaRequest, UpdatePersonaRequest},
         models::{PersonaResponse, PersonaVersionResponse},
@@ -46,7 +49,10 @@ pub async fn list_personas(
                v.persona_id AS version_persona_id,
                v.version_number,
                v.display_name,
-               v.avatar_attachment_id,
+               v.avatar_asset_id,
+               v.avatar_crop_x,
+               v.avatar_crop_y,
+               v.avatar_crop_size,
                v.base_backend_id,
                v.base_model_name,
                v.system_prompt,
@@ -98,7 +104,12 @@ pub async fn create_persona(
     .await?;
     let system_prompt = validate_system_prompt(&payload.system_prompt)?;
     let tool_policy_json = validate_tool_policy(payload.tool_policy_json)?;
-    let avatar_attachment_id = normalize_optional(payload.avatar_attachment_id);
+    let avatar_asset_id = normalize_optional(payload.avatar_asset_id);
+    persona_avatars::service::ensure_asset_assignable(pool, user_id, avatar_asset_id.as_deref())
+        .await?;
+    let avatar_crop_x = validate_crop(payload.avatar_crop_x.unwrap_or(50.0))?;
+    let avatar_crop_y = validate_crop(payload.avatar_crop_y.unwrap_or(50.0))?;
+    let avatar_crop_size = validate_crop_size(payload.avatar_crop_size.unwrap_or(100.0))?;
     let now = unix_timestamp();
     let persona_id = Uuid::new_v4().to_string();
     let version_id = Uuid::new_v4().to_string();
@@ -131,7 +142,10 @@ pub async fn create_persona(
             persona_id: &persona_id,
             version_number: 1,
             display_name: &display_name,
-            avatar_attachment_id: avatar_attachment_id.as_deref(),
+            avatar_asset_id: avatar_asset_id.as_deref(),
+            avatar_crop_x,
+            avatar_crop_y,
+            avatar_crop_size,
             base_backend_id: &base_backend_id,
             base_model_name: &base_model_name,
             system_prompt: &system_prompt,
@@ -179,11 +193,25 @@ pub async fn update_persona(
         Some(display_name) => validate_display_name(&display_name)?,
         None => current_version.display_name.clone(),
     };
-    let avatar_attachment_id = payload
-        .avatar_attachment_id
-        .map(Some)
-        .unwrap_or(current_version.avatar_attachment_id.clone())
-        .and_then(|value| normalize_optional(Some(value)));
+    let avatar_asset_id = if payload.avatar_asset_changed.unwrap_or(false) {
+        normalize_optional(payload.avatar_asset_id)
+    } else {
+        current_version.avatar_asset_id.clone()
+    };
+    persona_avatars::service::ensure_asset_assignable(pool, user_id, avatar_asset_id.as_deref())
+        .await?;
+    let avatar_crop_x = match payload.avatar_crop_x {
+        Some(value) => validate_crop(value)?,
+        None => current_version.avatar_crop_x,
+    };
+    let avatar_crop_y = match payload.avatar_crop_y {
+        Some(value) => validate_crop(value)?,
+        None => current_version.avatar_crop_y,
+    };
+    let avatar_crop_size = match payload.avatar_crop_size {
+        Some(value) => validate_crop_size(value)?,
+        None => current_version.avatar_crop_size,
+    };
     let base_backend_id = match payload.base_backend_id {
         Some(backend_id) => validate_base_backend(pool, &backend_id).await?,
         None => current_version.base_backend_id.clone(),
@@ -219,7 +247,7 @@ pub async fn update_persona(
     }
 
     let has_version_change = display_name != current_version.display_name
-        || avatar_attachment_id != current_version.avatar_attachment_id
+        || avatar_asset_id != current_version.avatar_asset_id
         || base_backend_id != current_version.base_backend_id
         || base_model_name != current_version.base_model_name
         || system_prompt != current_version.system_prompt
@@ -237,7 +265,10 @@ pub async fn update_persona(
                 persona_id,
                 version_number,
                 display_name: &display_name,
-                avatar_attachment_id: avatar_attachment_id.as_deref(),
+                avatar_asset_id: avatar_asset_id.as_deref(),
+                avatar_crop_x,
+                avatar_crop_y,
+                avatar_crop_size,
                 base_backend_id: &base_backend_id,
                 base_model_name: &base_model_name,
                 system_prompt: &system_prompt,
@@ -248,6 +279,25 @@ pub async fn update_persona(
         )
         .await?;
         set_current_version(&mut tx, persona_id, &version_id, now).await?;
+    } else if avatar_crop_x != current_version.avatar_crop_x
+        || avatar_crop_y != current_version.avatar_crop_y
+        || avatar_crop_size != current_version.avatar_crop_size
+    {
+        sqlx::query(
+            r#"
+            UPDATE persona_versions
+            SET avatar_crop_x = ?,
+                avatar_crop_y = ?,
+                avatar_crop_size = ?
+            WHERE id = ?
+            "#,
+        )
+        .bind(avatar_crop_x)
+        .bind(avatar_crop_y)
+        .bind(avatar_crop_size)
+        .bind(&current.current_version_id)
+        .execute(&mut *tx)
+        .await?;
     }
 
     sqlx::query(
@@ -281,6 +331,7 @@ pub async fn update_persona(
 
 pub async fn copy_persona(
     pool: &SqlitePool,
+    avatars_dir: &Path,
     user_id: &str,
     persona_id: &str,
     payload: CopyPersonaRequest,
@@ -295,20 +346,41 @@ pub async fn copy_persona(
         ));
     }
 
-    create_persona(
+    let copied_avatar_asset_id = match source.avatar_asset_id.as_deref() {
+        Some(asset_id) => Some(
+            persona_avatars::service::clone_asset_for_owner(pool, avatars_dir, asset_id, user_id)
+                .await?
+                .id,
+        ),
+        None => None,
+    };
+    let result = create_persona(
         pool,
         user_id,
         CreatePersonaRequest {
             visibility,
             display_name: source.display_name,
-            avatar_attachment_id: source.avatar_attachment_id,
+            avatar_asset_id: copied_avatar_asset_id.clone(),
+            avatar_crop_x: Some(source.avatar_crop_x),
+            avatar_crop_y: Some(source.avatar_crop_y),
+            avatar_crop_size: Some(source.avatar_crop_size),
             base_backend_id: source.base_backend_id,
             base_model_name: source.base_model_name,
             system_prompt: source.system_prompt,
             tool_policy_json: source.tool_policy_json,
         },
     )
-    .await
+    .await;
+
+    if result.is_err()
+        && let Some(asset_id) = copied_avatar_asset_id
+    {
+        let _ =
+            persona_avatars::service::delete_unused_asset(pool, avatars_dir, user_id, &asset_id)
+                .await;
+    }
+
+    result
 }
 
 pub async fn disown_persona(
@@ -375,7 +447,10 @@ pub async fn list_versions(
                persona_id,
                version_number,
                display_name,
-               avatar_attachment_id,
+               avatar_asset_id,
+               avatar_crop_x,
+               avatar_crop_y,
+               avatar_crop_size,
                base_backend_id,
                base_model_name,
                system_prompt,
@@ -490,7 +565,10 @@ struct InsertPersonaVersion<'a> {
     persona_id: &'a str,
     version_number: i64,
     display_name: &'a str,
-    avatar_attachment_id: Option<&'a str>,
+    avatar_asset_id: Option<&'a str>,
+    avatar_crop_x: f64,
+    avatar_crop_y: f64,
+    avatar_crop_size: f64,
     base_backend_id: &'a str,
     base_model_name: &'a str,
     system_prompt: &'a str,
@@ -510,7 +588,10 @@ async fn insert_persona_version(
             persona_id,
             version_number,
             display_name,
-            avatar_attachment_id,
+            avatar_asset_id,
+            avatar_crop_x,
+            avatar_crop_y,
+            avatar_crop_size,
             base_backend_id,
             base_model_name,
             system_prompt,
@@ -518,14 +599,17 @@ async fn insert_persona_version(
             created_by_user_id,
             created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
     )
     .bind(params.version_id)
     .bind(params.persona_id)
     .bind(params.version_number)
     .bind(params.display_name)
-    .bind(params.avatar_attachment_id)
+    .bind(params.avatar_asset_id)
+    .bind(params.avatar_crop_x)
+    .bind(params.avatar_crop_y)
+    .bind(params.avatar_crop_size)
     .bind(params.base_backend_id)
     .bind(params.base_model_name)
     .bind(params.system_prompt)
@@ -621,7 +705,10 @@ async fn get_visible_persona(
                v.persona_id AS version_persona_id,
                v.version_number,
                v.display_name,
-               v.avatar_attachment_id,
+               v.avatar_asset_id,
+               v.avatar_crop_x,
+               v.avatar_crop_y,
+               v.avatar_crop_size,
                v.base_backend_id,
                v.base_model_name,
                v.system_prompt,
@@ -742,7 +829,10 @@ async fn get_version(
                persona_id,
                version_number,
                display_name,
-               avatar_attachment_id,
+               avatar_asset_id,
+               avatar_crop_x,
+               avatar_crop_y,
+               avatar_crop_size,
                base_backend_id,
                base_model_name,
                system_prompt,
@@ -891,6 +981,28 @@ fn normalize_optional(value: Option<String>) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+fn validate_crop(value: f64) -> Result<f64, ApiError> {
+    if !value.is_finite() || !(0.0..=100.0).contains(&value) {
+        return Err(ApiError::bad_request(
+            "invalid_avatar_crop",
+            "Profile image crop position must be between 0 and 100",
+        ));
+    }
+
+    Ok(value)
+}
+
+fn validate_crop_size(value: f64) -> Result<f64, ApiError> {
+    if !value.is_finite() || !(10.0..=100.0).contains(&value) {
+        return Err(ApiError::bad_request(
+            "invalid_avatar_crop_size",
+            "Profile image crop size must be between 10 and 100",
+        ));
+    }
+
+    Ok(value)
+}
+
 fn row_to_persona(row: sqlx::sqlite::SqliteRow) -> Result<PersonaResponse, sqlx::Error> {
     Ok(PersonaResponse {
         id: row.try_get("id")?,
@@ -903,7 +1015,10 @@ fn row_to_persona(row: sqlx::sqlite::SqliteRow) -> Result<PersonaResponse, sqlx:
             persona_id: row.try_get("version_persona_id")?,
             version_number: row.try_get("version_number")?,
             display_name: row.try_get("display_name")?,
-            avatar_attachment_id: row.try_get("avatar_attachment_id")?,
+            avatar_asset_id: row.try_get("avatar_asset_id")?,
+            avatar_crop_x: row.try_get("avatar_crop_x")?,
+            avatar_crop_y: row.try_get("avatar_crop_y")?,
+            avatar_crop_size: row.try_get("avatar_crop_size")?,
             base_backend_id: row.try_get("base_backend_id")?,
             base_model_name: row.try_get("base_model_name")?,
             system_prompt: row.try_get("system_prompt")?,
@@ -924,7 +1039,10 @@ fn row_to_version(row: sqlx::sqlite::SqliteRow) -> Result<PersonaVersionResponse
         persona_id: row.try_get("persona_id")?,
         version_number: row.try_get("version_number")?,
         display_name: row.try_get("display_name")?,
-        avatar_attachment_id: row.try_get("avatar_attachment_id")?,
+        avatar_asset_id: row.try_get("avatar_asset_id")?,
+        avatar_crop_x: row.try_get("avatar_crop_x")?,
+        avatar_crop_y: row.try_get("avatar_crop_y")?,
+        avatar_crop_size: row.try_get("avatar_crop_size")?,
         base_backend_id: row.try_get("base_backend_id")?,
         base_model_name: row.try_get("base_model_name")?,
         system_prompt: row.try_get("system_prompt")?,
@@ -990,7 +1108,10 @@ mod tests {
             CreatePersonaRequest {
                 visibility: "private".to_string(),
                 display_name: "Careful Researcher".to_string(),
-                avatar_attachment_id: None,
+                avatar_asset_id: None,
+                avatar_crop_x: None,
+                avatar_crop_y: None,
+                avatar_crop_size: None,
                 base_backend_id: backend_id.clone(),
                 base_model_name: "gemma4:e2b".to_string(),
                 system_prompt: "Answer carefully.".to_string(),
@@ -1010,7 +1131,11 @@ mod tests {
             UpdatePersonaRequest {
                 visibility: Some("public".to_string()),
                 display_name: Some("Careful Researcher".to_string()),
-                avatar_attachment_id: None,
+                avatar_asset_id: None,
+                avatar_asset_changed: None,
+                avatar_crop_x: None,
+                avatar_crop_y: None,
+                avatar_crop_size: None,
                 base_backend_id: Some(backend_id),
                 base_model_name: Some("gemma4:e2b".to_string()),
                 system_prompt: Some("Answer carefully and cite uncertainty.".to_string()),
@@ -1039,6 +1164,8 @@ mod tests {
     #[tokio::test]
     async fn visible_public_personas_can_be_copied_to_private_personas() {
         let pool = test_pool().await;
+        let avatars_dir =
+            std::env::temp_dir().join(format!("vashti-persona-copy-{}", Uuid::new_v4()));
         let owner = register_user(&pool, "owner".to_string(), None, "secret".to_string())
             .await
             .expect("register owner")
@@ -1053,13 +1180,28 @@ mod tests {
             .await
             .expect("enable other user");
         let backend_id = create_test_backend(&pool).await;
+        let source_avatar = persona_avatars::service::create_asset(
+            &pool,
+            &avatars_dir,
+            &owner.id,
+            persona_avatars::service::AvatarUploadInput {
+                original_filename: "original.png".to_string(),
+                bytes: b"\x89PNG\r\n\x1a\noriginal-avatar".to_vec(),
+            },
+            i64::MAX,
+        )
+        .await
+        .expect("create source avatar");
         let persona = create_persona(
             &pool,
             &owner.id,
             CreatePersonaRequest {
                 visibility: "public".to_string(),
                 display_name: "Shared Helper".to_string(),
-                avatar_attachment_id: None,
+                avatar_asset_id: Some(source_avatar.id.clone()),
+                avatar_crop_x: Some(35.0),
+                avatar_crop_y: Some(65.0),
+                avatar_crop_size: Some(70.0),
                 base_backend_id: backend_id,
                 base_model_name: "gemma4:e2b".to_string(),
                 system_prompt: "Be helpful.".to_string(),
@@ -1071,6 +1213,7 @@ mod tests {
 
         let copied = copy_persona(
             &pool,
+            &avatars_dir,
             &other.id,
             &persona.id,
             CopyPersonaRequest {
@@ -1087,5 +1230,152 @@ mod tests {
         assert_eq!(copied.current_version.version_number, 1);
         assert_eq!(copied.current_version.display_name, "Shared Helper");
         assert_eq!(copied.current_version.system_prompt, "Be helpful.");
+        assert_eq!(copied.current_version.avatar_crop_x, 35.0);
+        assert_eq!(copied.current_version.avatar_crop_y, 65.0);
+        assert_eq!(copied.current_version.avatar_crop_size, 70.0);
+        assert_ne!(
+            copied.current_version.avatar_asset_id,
+            persona.current_version.avatar_asset_id
+        );
+        let copied_asset_id = copied
+            .current_version
+            .avatar_asset_id
+            .as_deref()
+            .expect("copied avatar id");
+        let copied_asset_owner: String =
+            sqlx::query_scalar("SELECT owner_user_id FROM persona_avatar_assets WHERE id = ?")
+                .bind(copied_asset_id)
+                .fetch_one(&pool)
+                .await
+                .expect("copied avatar owner");
+        assert_eq!(copied_asset_owner, other.id);
+        let (_, copied_bytes) = persona_avatars::service::get_asset_file(
+            &pool,
+            &avatars_dir,
+            &other.id,
+            copied_asset_id,
+        )
+        .await
+        .expect("read copied avatar");
+        assert_eq!(copied_bytes, b"\x89PNG\r\n\x1a\noriginal-avatar");
+        tokio::fs::remove_dir_all(&avatars_dir)
+            .await
+            .expect("remove avatar test directory");
+    }
+
+    #[tokio::test]
+    async fn avatar_replacement_versions_but_recropping_does_not() {
+        let pool = test_pool().await;
+        let user = register_user(
+            &pool,
+            "avatar-owner".to_string(),
+            None,
+            "secret".to_string(),
+        )
+        .await
+        .expect("register user")
+        .user;
+        let backend_id = create_test_backend(&pool).await;
+        let asset_id = Uuid::new_v4().to_string();
+        sqlx::query(
+            r#"
+            INSERT INTO persona_avatar_assets (
+                id,
+                owner_user_id,
+                original_filename,
+                storage_path,
+                mime_type,
+                size_bytes,
+                created_at
+            )
+            VALUES (?, ?, 'avatar.png', ?, 'image/png', 8, ?)
+            "#,
+        )
+        .bind(&asset_id)
+        .bind(&user.id)
+        .bind(format!("{}/{}", user.id, asset_id))
+        .bind(unix_timestamp())
+        .execute(&pool)
+        .await
+        .expect("insert avatar asset");
+
+        let persona = create_persona(
+            &pool,
+            &user.id,
+            CreatePersonaRequest {
+                visibility: "private".to_string(),
+                display_name: "Avatar Helper".to_string(),
+                avatar_asset_id: None,
+                avatar_crop_x: None,
+                avatar_crop_y: None,
+                avatar_crop_size: None,
+                base_backend_id: backend_id.clone(),
+                base_model_name: "gemma4:e2b".to_string(),
+                system_prompt: "Be helpful.".to_string(),
+                tool_policy_json: None,
+            },
+        )
+        .await
+        .expect("create persona");
+
+        let with_avatar = update_persona(
+            &pool,
+            &user.id,
+            &persona.id,
+            UpdatePersonaRequest {
+                visibility: None,
+                display_name: None,
+                avatar_asset_id: Some(asset_id.clone()),
+                avatar_asset_changed: Some(true),
+                avatar_crop_x: Some(40.0),
+                avatar_crop_y: Some(60.0),
+                avatar_crop_size: Some(80.0),
+                base_backend_id: None,
+                base_model_name: None,
+                system_prompt: None,
+                tool_policy_json: None,
+            },
+        )
+        .await
+        .expect("assign avatar");
+        assert_eq!(with_avatar.current_version.version_number, 2);
+        assert_eq!(
+            with_avatar.current_version.avatar_asset_id.as_deref(),
+            Some(asset_id.as_str())
+        );
+
+        let recropped = update_persona(
+            &pool,
+            &user.id,
+            &persona.id,
+            UpdatePersonaRequest {
+                visibility: None,
+                display_name: None,
+                avatar_asset_id: None,
+                avatar_asset_changed: Some(false),
+                avatar_crop_x: Some(25.0),
+                avatar_crop_y: Some(75.0),
+                avatar_crop_size: Some(45.0),
+                base_backend_id: None,
+                base_model_name: None,
+                system_prompt: None,
+                tool_policy_json: None,
+            },
+        )
+        .await
+        .expect("recrop avatar");
+
+        assert_eq!(recropped.current_version.id, with_avatar.current_version.id);
+        assert_eq!(recropped.current_version.version_number, 2);
+        assert_eq!(recropped.current_version.avatar_crop_x, 25.0);
+        assert_eq!(recropped.current_version.avatar_crop_y, 75.0);
+        assert_eq!(recropped.current_version.avatar_crop_size, 45.0);
+        assert_eq!(
+            list_versions(&pool, &user.id, &persona.id)
+                .await
+                .expect("list versions")
+                .len(),
+            2
+        );
     }
 }

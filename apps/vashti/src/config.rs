@@ -52,6 +52,10 @@ impl Config {
         self.data_dir.join("uploads")
     }
 
+    pub fn persona_avatars_dir(&self) -> PathBuf {
+        self.data_dir.join("persona-avatars")
+    }
+
     pub fn tmp_dir(&self) -> PathBuf {
         self.data_dir.join("tmp")
     }

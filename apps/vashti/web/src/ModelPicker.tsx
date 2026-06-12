@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Brain, Lock, Search, Star, Users } from "lucide-react";
 import { ModelCapabilityBadges } from "./modelCapabilities";
+import { ModelAvatar } from "./ModelAvatar";
 import {
   compactModelName,
   enabledModelValueSet,
@@ -243,6 +244,43 @@ export function ModelPicker({
         aria-expanded={isOpen}
         onClick={() => setIsOpen((open) => !open)}
       >
+        {selectedPrivatePersonaVersion ? (
+          <ModelAvatar
+            displayName={selectedPrivatePersonaVersion.display_name}
+            privateAssetId={selectedPrivatePersonaVersion.avatar_asset_id}
+            cropX={selectedPrivatePersonaVersion.avatar_crop_x}
+            cropY={selectedPrivatePersonaVersion.avatar_crop_y}
+            cropSize={selectedPrivatePersonaVersion.avatar_crop_size}
+            className="model-avatar-picker-selected"
+          />
+        ) : selectedPrivatePersona ? (
+          <ModelAvatar
+            displayName={selectedPrivatePersona.current_version.display_name}
+            privateAssetId={selectedPrivatePersona.current_version.avatar_asset_id}
+            cropX={selectedPrivatePersona.current_version.avatar_crop_x}
+            cropY={selectedPrivatePersona.current_version.avatar_crop_y}
+            cropSize={selectedPrivatePersona.current_version.avatar_crop_size}
+            className="model-avatar-picker-selected"
+          />
+        ) : selectedPersonaVersion ? (
+          <ModelAvatar
+            displayName={selectedPersonaVersion.display_name}
+            assetId={selectedPersonaVersion.avatar_asset_id}
+            cropX={selectedPersonaVersion.avatar_crop_x}
+            cropY={selectedPersonaVersion.avatar_crop_y}
+            cropSize={selectedPersonaVersion.avatar_crop_size}
+            className="model-avatar-picker-selected"
+          />
+        ) : selectedPersona ? (
+          <ModelAvatar
+            displayName={selectedPersona.current_version.display_name}
+            assetId={selectedPersona.current_version.avatar_asset_id}
+            cropX={selectedPersona.current_version.avatar_crop_x}
+            cropY={selectedPersona.current_version.avatar_crop_y}
+            cropSize={selectedPersona.current_version.avatar_crop_size}
+            className="model-avatar-picker-selected"
+          />
+        ) : null}
         <span className="model-name">{buttonLabel()}</span>
       </button>
       {isOpen && (
@@ -306,6 +344,14 @@ export function ModelPicker({
                             setIsOpen(false);
                           }}
                         >
+                          <ModelAvatar
+                            displayName={persona.current_version.display_name}
+                            privateAssetId={persona.current_version.avatar_asset_id}
+                            cropX={persona.current_version.avatar_crop_x}
+                            cropY={persona.current_version.avatar_crop_y}
+                            cropSize={persona.current_version.avatar_crop_size}
+                            className="model-avatar-picker-option"
+                          />
                           <span className="model-option-content">
                             <span className="model-name">
                               {persona.current_version.display_name}
@@ -352,6 +398,14 @@ export function ModelPicker({
                             setIsOpen(false);
                           }}
                         >
+                          <ModelAvatar
+                            displayName={persona.current_version.display_name}
+                            assetId={persona.current_version.avatar_asset_id}
+                            cropX={persona.current_version.avatar_crop_x}
+                            cropY={persona.current_version.avatar_crop_y}
+                            cropSize={persona.current_version.avatar_crop_size}
+                            className="model-avatar-picker-option"
+                          />
                           <span className="model-option-content">
                             <span className="model-name">
                               {persona.current_version.display_name}

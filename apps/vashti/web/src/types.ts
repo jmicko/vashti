@@ -141,7 +141,10 @@ export type PersonaVersion = {
   persona_id: string;
   version_number: number;
   display_name: string;
-  avatar_attachment_id: string | null;
+  avatar_asset_id: string | null;
+  avatar_crop_x: number;
+  avatar_crop_y: number;
+  avatar_crop_size: number;
   base_backend_id: string;
   base_model_name: string;
   system_prompt: string;

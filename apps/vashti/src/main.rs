@@ -10,6 +10,7 @@ mod frontend;
 mod model_cache;
 mod ollama;
 mod permissions;
+mod persona_avatars;
 mod personas;
 mod private;
 mod rate_limit;
@@ -187,6 +188,15 @@ fn router(state: AppState) -> Router {
         .route(
             "/personas/{persona_id}/versions",
             get(personas::handlers::list_versions),
+        )
+        .route(
+            "/persona-avatars",
+            post(persona_avatars::handlers::upload_avatar),
+        )
+        .route(
+            "/persona-avatars/{asset_id}",
+            get(persona_avatars::handlers::get_avatar)
+                .delete(persona_avatars::handlers::delete_avatar),
         )
         .route(
             "/chats",

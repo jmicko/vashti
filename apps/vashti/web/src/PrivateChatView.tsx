@@ -1450,6 +1450,10 @@ export function PrivateChatView({
                   onUploadAttachment={preparePrivateAttachment}
                   onRegenerate={regenerateMessage}
                   selectedModelInfo={selectedModelInfo}
+                  personaAvatar={privatePersonaAvatarForMessage(
+                    message,
+                    privatePersonaVersions
+                  )}
                 />
               ))
             )}
@@ -1486,6 +1490,27 @@ export function PrivateChatView({
       )}
     </div>
   );
+}
+
+function privatePersonaAvatarForMessage(
+  message: PrivateChatMessage,
+  versions: PrivatePersonaVersion[]
+) {
+  if (!message.persona_version_id) {
+    return null;
+  }
+  const version = versions.find((candidate) => candidate.id === message.persona_version_id);
+  if (!version) {
+    return null;
+  }
+
+  return {
+    displayName: version.display_name,
+    privateAssetId: version.avatar_asset_id,
+    cropX: version.avatar_crop_x,
+    cropY: version.avatar_crop_y,
+    cropSize: version.avatar_crop_size
+  };
 }
 
 function thinkModeToPayload(mode: ThinkingMode) {

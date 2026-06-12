@@ -17,18 +17,16 @@ Store the exact uploaded file as an immutable avatar asset:
 * Bytes live in `data/persona-avatars/<owner-user-id>/<asset-id>`.
 * SQLite stores the asset ID, owner, filename, MIME type, size, and storage
   path.
-* `persona_versions` references the asset ID and stores crop coordinates.
+* `persona_versions` references the asset ID and stores the crop center and
+  square crop size.
 * Messages continue to reference `persona_version_id`; they do not copy image
   data or avatar metadata.
 
-The original upload is the source of truth. Vashti does not convert it to WebP,
-resize it, or repeatedly recompress it. Rendering uses `object-fit: cover` and
-saved `object-position` coordinates. A future thumbnail pipeline can always
-derive new files from the unchanged original.
-
-Accepted formats for the first implementation are JPEG and PNG. Animated
-formats and WebP are deliberately excluded until there is a clear product need
-and consistent rendering policy.
+JPEG, PNG, and GIF uploads are stored byte-for-byte as the source of truth.
+Other image formats that the browser can decode are rasterized once to
+lossless PNG before upload. Vashti does not use WebP, resize saved originals,
+or repeatedly recompress images. A future thumbnail pipeline can always derive
+new files from the preserved JPEG/PNG/GIF or normalized PNG source.
 
 ### Device custom models
 
@@ -60,7 +58,7 @@ changed.
 
 Hosted assets use dedicated endpoints:
 
-* `POST /api/persona-avatars` uploads one original JPEG or PNG.
+* `POST /api/persona-avatars` uploads one normalized JPEG, PNG, or GIF.
 * `GET /api/persona-avatars/{asset_id}` serves an authorized asset.
 * `DELETE /api/persona-avatars/{asset_id}` removes an unused asset owned by the
   current user.
@@ -71,6 +69,7 @@ requests carry:
 * `avatar_asset_id`
 * `avatar_crop_x`
 * `avatar_crop_y`
+* `avatar_crop_size`
 
 The server validates that an assigned asset belongs to the custom-model owner.
 Readers may fetch an asset only when they can access a custom-model version
@@ -84,13 +83,15 @@ assets left by interrupted browser sessions.
 
 The custom-model editor provides:
 
-* a square preview;
+* the complete source image, dimmed outside the final circular preview;
 * choose/replace and remove controls;
-* horizontal and vertical crop-position controls;
+* a draggable square crop with four touch-friendly resize handles;
+* drag-to-pan behavior when the crop is smaller than the image;
 * a reset-crop control.
 
-The browser previews the original with CSS. No canvas export or client-side
-recompression is required.
+The browser previews the saved source with CSS. Canvas is used only to
+normalize otherwise unsupported image formats to PNG before storage; changing
+the crop never rewrites image bytes.
 
 Saving behavior:
 
@@ -111,7 +112,7 @@ existing encrypted local store.
 ## Non-goals
 
 * Built-in Ollama model images.
-* Image editing beyond crop position.
+* Image editing beyond square crop position and size.
 * Generated thumbnails or multiple resolutions.
 * A public CDN or unauthenticated avatar URLs.
 * Storing binary image data in SQLite.

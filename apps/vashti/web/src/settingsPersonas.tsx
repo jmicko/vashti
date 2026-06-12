@@ -14,14 +14,19 @@ import {
   Trash2,
   X
 } from "lucide-react";
-import { requestJson } from "./api";
+import { requestJson, responseErrorMessage } from "./api";
 import { ConfirmDialog, RetroLoader } from "./common";
 import { takeCustomModelDraft, type CustomModelDraft } from "./customModelDraft";
+import { ModelAvatar } from "./ModelAvatar";
 import { modelParts, modelValue } from "./modelSelection";
+import { PersonaAvatarField } from "./PersonaAvatarField";
 import {
   createPrivatePersona,
+  deleteUnusedPrivatePersonaAvatar,
   deletePrivatePersona,
+  getPrivatePersonaAvatar,
   listPrivatePersonas,
+  savePrivatePersonaAvatar,
   updatePrivatePersona,
   type PrivatePersona
 } from "./privateChatStore";
@@ -57,6 +62,11 @@ export function CustomModelsSection({
   const [storageMode, setStorageMode] = useState("local");
   const [selectedBaseModel, setSelectedBaseModel] = useState("");
   const [systemPrompt, setSystemPrompt] = useState("");
+  const [avatarAssetId, setAvatarAssetId] = useState<string | null>(null);
+  const [avatarFile, setAvatarFile] = useState<File | null>(null);
+  const [avatarCropX, setAvatarCropX] = useState(50);
+  const [avatarCropY, setAvatarCropY] = useState(50);
+  const [avatarCropSize, setAvatarCropSize] = useState(100);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -94,6 +104,11 @@ export function CustomModelsSection({
     setDisplayName("");
     setStorageMode("local");
     setSystemPrompt("");
+    setAvatarAssetId(null);
+    setAvatarFile(null);
+    setAvatarCropX(50);
+    setAvatarCropY(50);
+    setAvatarCropSize(100);
     setSelectedBaseModel(firstModelValue(modelGroups));
     setError(null);
     setStatus(null);
@@ -110,6 +125,11 @@ export function CustomModelsSection({
         : firstModelValue(modelGroups)
     );
     setSystemPrompt(draft?.systemPrompt ?? "");
+    setAvatarAssetId(null);
+    setAvatarFile(null);
+    setAvatarCropX(50);
+    setAvatarCropY(50);
+    setAvatarCropSize(100);
     setError(null);
     setStatus(null);
     setIsEditorOpen(true);
@@ -135,6 +155,11 @@ export function CustomModelsSection({
     setStorageMode(persona.visibility);
     setSelectedBaseModel(modelValue(version.base_backend_id, version.base_model_name));
     setSystemPrompt(version.system_prompt);
+    setAvatarAssetId(version.avatar_asset_id ?? null);
+    setAvatarFile(null);
+    setAvatarCropX(version.avatar_crop_x ?? 50);
+    setAvatarCropY(version.avatar_crop_y ?? 50);
+    setAvatarCropSize(version.avatar_crop_size ?? 100);
     setError(null);
     setStatus(null);
   }
@@ -148,6 +173,11 @@ export function CustomModelsSection({
     setStorageMode("local");
     setSelectedBaseModel(modelValue(version.base_backend_id, version.base_model_name));
     setSystemPrompt(version.system_prompt);
+    setAvatarAssetId(version.avatar_asset_id ?? null);
+    setAvatarFile(null);
+    setAvatarCropX(version.avatar_crop_x ?? 50);
+    setAvatarCropY(version.avatar_crop_y ?? 50);
+    setAvatarCropSize(version.avatar_crop_size ?? 100);
     setError(null);
     setStatus(null);
   }
@@ -164,15 +194,40 @@ export function CustomModelsSection({
     setError(null);
     setStatus(null);
 
+    let uploadedAssetId: string | null = null;
     try {
       const backendName = backendNameFor(modelGroups, selected.backendId);
+      let nextAvatarAssetId = avatarAssetId;
+      let avatarUploadFile = avatarFile;
+      if (!avatarUploadFile && avatarAssetId && storageMode === "local" && editingPersona) {
+        avatarUploadFile = await hostedPersonaAvatarFile(avatarAssetId);
+      }
+      if (!avatarUploadFile && avatarAssetId && storageMode !== "local" && editingPrivatePersona) {
+        avatarUploadFile = await privatePersonaAvatarFile(avatarAssetId);
+      }
+      if (avatarUploadFile) {
+        if (storageMode === "local") {
+          const asset = await savePrivatePersonaAvatar(avatarUploadFile);
+          nextAvatarAssetId = asset.id;
+          uploadedAssetId = asset.id;
+        } else {
+          const asset = await uploadHostedPersonaAvatar(avatarUploadFile);
+          nextAvatarAssetId = asset.id;
+          uploadedAssetId = asset.id;
+        }
+      }
+
       if (storageMode === "local") {
         const body = {
           displayName,
           baseBackendId: selected.backendId,
           baseBackendName: backendName,
           baseModelName: selected.modelName,
-          systemPrompt
+          systemPrompt,
+          avatarAssetId: nextAvatarAssetId,
+          avatarCropX,
+          avatarCropY,
+          avatarCropSize
         };
         if (editingPrivatePersona) {
           await updatePrivatePersona(editingPrivatePersona.id, body);
@@ -190,7 +245,13 @@ export function CustomModelsSection({
       const body = {
         visibility: storageMode,
         display_name: displayName,
-        avatar_attachment_id: null,
+        avatar_asset_id: nextAvatarAssetId,
+        avatar_asset_changed: editingPersona
+          ? nextAvatarAssetId !== (editingPersona.current_version.avatar_asset_id ?? null)
+          : undefined,
+        avatar_crop_x: avatarCropX,
+        avatar_crop_y: avatarCropY,
+        avatar_crop_size: avatarCropSize,
         base_backend_id: selected.backendId,
         base_model_name: selected.modelName,
         system_prompt: systemPrompt,
@@ -213,6 +274,13 @@ export function CustomModelsSection({
       await loadPersonas();
       await onPersonasChanged();
     } catch (saveError) {
+      if (uploadedAssetId) {
+        if (storageMode === "local") {
+          await deleteUnusedPrivatePersonaAvatar(uploadedAssetId).catch(() => undefined);
+        } else {
+          await deleteHostedPersonaAvatar(uploadedAssetId).catch(() => undefined);
+        }
+      }
       setError(saveError instanceof Error ? saveError.message : "Failed to save custom model");
     } finally {
       setIsSaving(false);
@@ -248,13 +316,32 @@ export function CustomModelsSection({
     setError(null);
     setStatus(null);
 
+    let uploadedAvatarAssetId: string | null = null;
     try {
+      let avatarAssetId: string | null = null;
+      if (version.avatar_asset_id) {
+        const response = await fetch(
+          `/api/persona-avatars/${encodeURIComponent(version.avatar_asset_id)}`,
+          { credentials: "include" }
+        );
+        if (!response.ok) {
+          throw new Error(await responseErrorMessage(response));
+        }
+        const blob = await response.blob();
+        const file = new File([blob], "profile-image", { type: blob.type });
+        avatarAssetId = (await savePrivatePersonaAvatar(file)).id;
+        uploadedAvatarAssetId = avatarAssetId;
+      }
       await createPrivatePersona({
         displayName: version.display_name,
         baseBackendId: version.base_backend_id,
         baseBackendName: backendNameFor(modelGroups, version.base_backend_id),
         baseModelName: version.base_model_name,
         systemPrompt: version.system_prompt,
+        avatarAssetId,
+        avatarCropX: version.avatar_crop_x,
+        avatarCropY: version.avatar_crop_y,
+        avatarCropSize: version.avatar_crop_size,
         sourcePersonaId: persona.id,
         sourcePersonaVersionId: version.id
       });
@@ -262,6 +349,9 @@ export function CustomModelsSection({
       await loadPersonas();
       await onPrivatePersonasChanged();
     } catch (copyError) {
+      if (uploadedAvatarAssetId) {
+        await deleteUnusedPrivatePersonaAvatar(uploadedAvatarAssetId).catch(() => undefined);
+      }
       setError(copyError instanceof Error ? copyError.message : "Failed to copy persona to device");
     } finally {
       setBusyPersonaId(null);
@@ -413,6 +503,34 @@ export function CustomModelsSection({
               ))}
             </select>
           </label>
+          <PersonaAvatarField
+            displayName={displayName}
+            assetId={storageMode === "local" ? null : avatarAssetId}
+            privateAssetId={storageMode === "local" ? avatarAssetId : null}
+            previewFile={avatarFile}
+            cropX={avatarCropX}
+            cropY={avatarCropY}
+            cropSize={avatarCropSize}
+            onFileChange={(file) => {
+              setError(null);
+              setAvatarFile(file);
+              setAvatarCropX(50);
+              setAvatarCropY(50);
+              setAvatarCropSize(100);
+            }}
+            onRemove={() => {
+              setAvatarAssetId(null);
+              setAvatarFile(null);
+              setAvatarCropX(50);
+              setAvatarCropY(50);
+              setAvatarCropSize(100);
+            }}
+            onCropChange={(cropX, cropY, cropSize) => {
+              setAvatarCropX(cropX);
+              setAvatarCropY(cropY);
+              setAvatarCropSize(cropSize);
+            }}
+          />
           <label>
             <span>System Prompt</span>
             <textarea
@@ -535,7 +653,15 @@ function PersonaRow({
   return (
     <article className="persona-row">
       <div className="persona-main">
-        <div>
+        <ModelAvatar
+          displayName={version.display_name}
+          assetId={version.avatar_asset_id}
+          cropX={version.avatar_crop_x}
+          cropY={version.avatar_crop_y}
+          cropSize={version.avatar_crop_size}
+          className="model-avatar-persona-row"
+        />
+        <div className="persona-main-copy">
           <h2>{version.display_name}</h2>
           <p>
             {backendName} / {version.base_model_name}
@@ -601,7 +727,15 @@ function PrivatePersonaRow({
   return (
     <article className="persona-row">
       <div className="persona-main">
-        <div>
+        <ModelAvatar
+          displayName={version.display_name}
+          privateAssetId={version.avatar_asset_id}
+          cropX={version.avatar_crop_x}
+          cropY={version.avatar_crop_y}
+          cropSize={version.avatar_crop_size}
+          className="model-avatar-persona-row"
+        />
+        <div className="persona-main-copy">
           <h2>{version.display_name}</h2>
           <p>
             {version.base_backend_name} / {version.base_model_name}
@@ -630,4 +764,71 @@ function PrivatePersonaRow({
       </div>
     </article>
   );
+}
+
+type HostedPersonaAvatarAsset = {
+  id: string;
+  original_filename: string;
+  mime_type: string;
+  size_bytes: number;
+  created_at: number;
+};
+
+async function uploadHostedPersonaAvatar(file: File) {
+  const formData = new FormData();
+  formData.append("file", file);
+  const response = await fetch("/api/persona-avatars", {
+    method: "POST",
+    credentials: "include",
+    body: formData
+  });
+  if (!response.ok) {
+    throw new Error(await responseErrorMessage(response));
+  }
+
+  return ((await response.json()) as { asset: HostedPersonaAvatarAsset }).asset;
+}
+
+async function deleteHostedPersonaAvatar(assetId: string) {
+  const response = await fetch(`/api/persona-avatars/${encodeURIComponent(assetId)}`, {
+    method: "DELETE",
+    credentials: "include"
+  });
+  if (!response.ok) {
+    throw new Error(await responseErrorMessage(response));
+  }
+}
+
+async function hostedPersonaAvatarFile(assetId: string) {
+  const response = await fetch(`/api/persona-avatars/${encodeURIComponent(assetId)}`, {
+    credentials: "include"
+  });
+  if (!response.ok) {
+    throw new Error(await responseErrorMessage(response));
+  }
+  const blob = await response.blob();
+  return new File([blob], "profile-image", { type: blob.type });
+}
+
+async function privatePersonaAvatarFile(assetId: string) {
+  const asset = await getPrivatePersonaAvatar(assetId);
+  if (!asset) {
+    throw new Error("Profile image is not available on this device");
+  }
+  return new File([dataUrlBytes(asset.data_url)], asset.original_filename, {
+    type: asset.mime_type
+  });
+}
+
+function dataUrlBytes(dataUrl: string) {
+  const separator = dataUrl.indexOf(",");
+  if (separator < 0) {
+    throw new Error("Stored profile image is invalid");
+  }
+  const binary = atob(dataUrl.slice(separator + 1));
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
 }

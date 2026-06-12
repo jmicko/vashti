@@ -1157,6 +1157,7 @@ export function ChatView({
                   onUploadAttachment={uploadAttachment}
                   onRegenerate={regenerateMessage}
                   selectedModelInfo={selectedModelInfo}
+                  personaAvatar={hostedPersonaAvatarForMessage(message, personaVersions)}
                 />
               ))
             )}
@@ -1199,6 +1200,27 @@ export function ChatView({
       )}
     </div>
   );
+}
+
+function hostedPersonaAvatarForMessage(
+  message: ChatMessage,
+  versions: PersonaVersion[]
+) {
+  if (!message.persona_version_id) {
+    return null;
+  }
+  const version = versions.find((candidate) => candidate.id === message.persona_version_id);
+  if (!version) {
+    return null;
+  }
+
+  return {
+    displayName: version.display_name,
+    assetId: version.avatar_asset_id,
+    cropX: version.avatar_crop_x,
+    cropY: version.avatar_crop_y,
+    cropSize: version.avatar_crop_size
+  };
 }
 
 function thinkModeToPayload(mode: ThinkingMode) {
