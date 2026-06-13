@@ -149,6 +149,10 @@ fn router(state: AppState) -> Router {
             post(backends::handlers::refresh_user_models),
         )
         .route(
+            "/user-models/avatar",
+            patch(backends::handlers::update_user_model_avatar),
+        )
+        .route(
             "/admin/models",
             get(backends::handlers::list_admin_models)
                 .patch(backends::handlers::update_model_availability),
@@ -156,6 +160,10 @@ fn router(state: AppState) -> Router {
         .route(
             "/admin/models/refresh",
             post(backends::handlers::refresh_admin_models),
+        )
+        .route(
+            "/admin/models/avatar",
+            patch(backends::handlers::update_admin_model_avatar),
         )
         .route(
             "/admin/models/tags",

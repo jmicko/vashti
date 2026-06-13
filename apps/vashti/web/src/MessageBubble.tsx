@@ -70,7 +70,7 @@ export function MessageBubble({
   onUploadAttachment,
   onRegenerate,
   selectedModelInfo,
-  personaAvatar
+  modelAvatar
 }: {
   message: ChatMessage;
   versionInfo: VersionInfo | null;
@@ -99,7 +99,7 @@ export function MessageBubble({
   onUploadAttachment?: (file: File) => Promise<ComposerAttachment> | ComposerAttachment;
   onRegenerate: (message: ChatMessage) => Promise<void>;
   selectedModelInfo?: ModelInfo | null;
-  personaAvatar?: {
+  modelAvatar?: {
     displayName: string;
     assetId?: string | null;
     privateAssetId?: string | null;
@@ -250,14 +250,14 @@ export function MessageBubble({
         <div className={showMessageLabel ? "message-header" : "message-header message-header-end"}>
           {showMessageLabel && (
             <div className="message-role-wrap">
-              {personaAvatar && (
+              {modelAvatar && (
                 <ModelAvatar
-                  displayName={personaAvatar.displayName}
-                  assetId={personaAvatar.assetId}
-                  privateAssetId={personaAvatar.privateAssetId}
-                  cropX={personaAvatar.cropX}
-                  cropY={personaAvatar.cropY}
-                  cropSize={personaAvatar.cropSize}
+                  displayName={modelAvatar.displayName}
+                  assetId={modelAvatar.assetId}
+                  privateAssetId={modelAvatar.privateAssetId}
+                  cropX={modelAvatar.cropX}
+                  cropY={modelAvatar.cropY}
+                  cropSize={modelAvatar.cropSize}
                   className="model-avatar-message"
                 />
               )}

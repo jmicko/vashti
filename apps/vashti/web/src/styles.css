@@ -3977,6 +3977,55 @@ textarea {
   padding: 0;
 }
 
+.model-access-leading {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.model-avatar-edit-button {
+  position: relative;
+  width: 2.5rem;
+  min-width: 2.5rem;
+  min-height: 2.5rem;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+}
+
+.model-avatar-edit-button:hover {
+  background: transparent;
+}
+
+.model-avatar-edit-button .model-avatar {
+  width: 2.5rem;
+  height: 2.5rem;
+  transition: border-color 120ms ease, filter 120ms ease;
+}
+
+.model-avatar-edit-button:hover .model-avatar,
+.model-avatar-edit-button:focus-visible .model-avatar {
+  border-color: var(--accent);
+  filter: brightness(0.72);
+}
+
+.model-avatar-edit-button > svg {
+  position: absolute;
+  right: -0.15rem;
+  bottom: -0.15rem;
+  width: 1rem;
+  height: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--accent);
+  padding: 0.15rem;
+  box-sizing: content-box;
+  pointer-events: none;
+}
+
 .model-row-actions {
   display: inline-flex;
   align-items: center;
@@ -4319,6 +4368,55 @@ textarea {
   color: var(--muted);
 }
 
+.model-avatar-editor-backdrop {
+  overflow-y: auto;
+}
+
+.model-avatar-editor-dialog {
+  width: min(58rem, 100%);
+  max-height: calc(var(--app-height) - 2rem);
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow:
+    0 0 30px rgba(var(--accent-rgb), 0.16),
+    0 18px 60px rgba(var(--shadow-rgb), 0.7);
+  padding: 1.25rem;
+}
+
+.model-avatar-editor-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.model-avatar-editor-header h2 {
+  margin: 0.2rem 0 0;
+}
+
+.model-avatar-inherited {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: var(--surface);
+  margin-bottom: 1rem;
+  padding: 0.75rem;
+}
+
+.model-avatar-inherited p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.model-avatar-editor-dialog .dialog-actions {
+  margin-top: 1rem;
+}
+
 .dialog-actions {
   display: flex;
   justify-content: flex-end;
@@ -4479,6 +4577,11 @@ textarea {
 
   .persona-avatar-crop-stage {
     height: clamp(17rem, 76vw, 24rem);
+  }
+
+  .model-avatar-editor-dialog {
+    max-height: calc(var(--app-height) - 1rem);
+    padding: 0.85rem;
   }
 
   .model-access-row {

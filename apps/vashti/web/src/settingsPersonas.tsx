@@ -15,6 +15,11 @@ import {
   X
 } from "lucide-react";
 import { requestJson, responseErrorMessage } from "./api";
+import {
+  deleteHostedAvatar as deleteHostedPersonaAvatar,
+  hostedAvatarFile as hostedPersonaAvatarFile,
+  uploadHostedAvatar as uploadHostedPersonaAvatar
+} from "./avatarAssets";
 import { ConfirmDialog, RetroLoader } from "./common";
 import { takeCustomModelDraft, type CustomModelDraft } from "./customModelDraft";
 import { ModelAvatar } from "./ModelAvatar";
@@ -764,50 +769,6 @@ function PrivatePersonaRow({
       </div>
     </article>
   );
-}
-
-type HostedPersonaAvatarAsset = {
-  id: string;
-  original_filename: string;
-  mime_type: string;
-  size_bytes: number;
-  created_at: number;
-};
-
-async function uploadHostedPersonaAvatar(file: File) {
-  const formData = new FormData();
-  formData.append("file", file);
-  const response = await fetch("/api/persona-avatars", {
-    method: "POST",
-    credentials: "include",
-    body: formData
-  });
-  if (!response.ok) {
-    throw new Error(await responseErrorMessage(response));
-  }
-
-  return ((await response.json()) as { asset: HostedPersonaAvatarAsset }).asset;
-}
-
-async function deleteHostedPersonaAvatar(assetId: string) {
-  const response = await fetch(`/api/persona-avatars/${encodeURIComponent(assetId)}`, {
-    method: "DELETE",
-    credentials: "include"
-  });
-  if (!response.ok) {
-    throw new Error(await responseErrorMessage(response));
-  }
-}
-
-async function hostedPersonaAvatarFile(assetId: string) {
-  const response = await fetch(`/api/persona-avatars/${encodeURIComponent(assetId)}`, {
-    credentials: "include"
-  });
-  if (!response.ok) {
-    throw new Error(await responseErrorMessage(response));
-  }
-  const blob = await response.blob();
-  return new File([blob], "profile-image", { type: blob.type });
 }
 
 async function privatePersonaAvatarFile(assetId: string) {

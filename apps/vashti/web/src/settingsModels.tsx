@@ -16,7 +16,13 @@ import {
   Trash2
 } from "lucide-react";
 import { requestJson } from "./api";
+import { deleteHostedAvatar, uploadHostedAvatar } from "./avatarAssets";
 import { RetroLoader } from "./common";
+import { ModelAvatar } from "./ModelAvatar";
+import {
+  ModelAvatarEditorDialog,
+  type ModelAvatarEdit
+} from "./ModelAvatarEditorDialog";
 import { ModelPicker } from "./ModelPicker";
 import { ModelCapabilityBadges } from "./modelCapabilities";
 import { compactModelName, modelValue } from "./modelSelection";
@@ -35,6 +41,8 @@ import type {
   AdminModelsResponse,
   Backend,
   PermissionTag,
+  AdminModelInfo,
+  UserModelInfo,
   UserBackendModelGroup,
   UserModelsResponse
 } from "./types";
@@ -49,6 +57,42 @@ type UserModelPreferenceAction = "visible" | "favorite" | "default";
 type PendingFavoriteRemovalTimers = {
   timeout: number;
   interval: number;
+};
+
+type UserAvatarTarget = {
+  backendId: string;
+  model: UserModelInfo;
+};
+
+type AdminAvatarTarget = {
+  backendId: string;
+  model: AdminModelInfo;
+};
+
+type UserModelAvatarResponse = {
+  backend_id: string;
+  model_name: string;
+  avatar_asset_id: string | null;
+  avatar_crop_x: number;
+  avatar_crop_y: number;
+  avatar_crop_size: number;
+  personal_avatar_asset_id: string | null;
+  personal_avatar_crop_x: number;
+  personal_avatar_crop_y: number;
+  personal_avatar_crop_size: number;
+  default_avatar_asset_id: string | null;
+  default_avatar_crop_x: number;
+  default_avatar_crop_y: number;
+  default_avatar_crop_size: number;
+};
+
+type AdminModelAvatarResponse = {
+  backend_id: string;
+  model_name: string;
+  avatar_asset_id: string | null;
+  avatar_crop_x: number;
+  avatar_crop_y: number;
+  avatar_crop_size: number;
 };
 
 function preferenceActionForPatch(patch: UserModelPreferencePatch): UserModelPreferenceAction {
@@ -78,6 +122,9 @@ export function UserModelsPanel({
     action: UserModelPreferenceAction;
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [avatarTarget, setAvatarTarget] = useState<UserAvatarTarget | null>(null);
+  const [isSavingAvatar, setIsSavingAvatar] = useState(false);
+  const [avatarError, setAvatarError] = useState<string | null>(null);
   const primaryModelRowRefs = useRef(new Map<string, HTMLElement>());
   const pendingFavoriteAnchorRef = useRef<{
     value: string;
@@ -277,6 +324,59 @@ export function UserModelsPanel({
     });
   }
 
+  async function saveUserModelAvatar(edit: ModelAvatarEdit) {
+    if (!avatarTarget) {
+      return;
+    }
+    setIsSavingAvatar(true);
+    setAvatarError(null);
+    const oldAssetId = avatarTarget.model.personal_avatar_asset_id;
+    let uploadedAssetId: string | null = null;
+
+    try {
+      if (edit.file) {
+        uploadedAssetId = (await uploadHostedAvatar(edit.file)).id;
+      }
+      const response = await requestJson<UserModelAvatarResponse>("/api/user-models/avatar", {
+        method: "PATCH",
+        body: JSON.stringify({
+          backend_id: avatarTarget.backendId,
+          model_name: avatarTarget.model.name,
+          avatar_asset_id: uploadedAssetId ?? edit.assetId,
+          avatar_crop_x: edit.cropX,
+          avatar_crop_y: edit.cropY,
+          avatar_crop_size: edit.cropSize
+        })
+      });
+      setGroups((current) =>
+        current.map((group) =>
+          group.backend.id === response.backend_id
+            ? {
+                ...group,
+                models: group.models.map((model) =>
+                  model.name === response.model_name ? { ...model, ...response } : model
+                )
+              }
+            : group
+        )
+      );
+      await onModelsChanged().catch(() => undefined);
+      setAvatarTarget(null);
+      if (oldAssetId && oldAssetId !== response.personal_avatar_asset_id) {
+        await deleteHostedAvatar(oldAssetId).catch(() => undefined);
+      }
+    } catch (saveError) {
+      if (uploadedAssetId) {
+        await deleteHostedAvatar(uploadedAssetId).catch(() => undefined);
+      }
+      setAvatarError(
+        saveError instanceof Error ? saveError.message : "Failed to save profile image"
+      );
+    } finally {
+      setIsSavingAvatar(false);
+    }
+  }
+
   function anchorPrimaryModelRow(value: string) {
     const element = primaryModelRowRefs.current.get(value);
     if (!element) {
@@ -376,41 +476,62 @@ export function UserModelsPanel({
             : undefined
         }
       >
-        {isFavoriteRemovalPending ? (
+        <div className="model-access-leading">
+          {isFavoriteRemovalPending ? (
+            <button
+              type="button"
+              className="secondary-button model-undo-button model-undo-remove-button"
+              onClick={() => clearPendingFavoriteRemoval(option.value)}
+            >
+              <span>Undo Remove</span>
+              <span className="model-undo-count">{pendingFavoriteRemovalSeconds}</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              className={
+                model.is_favorite
+                  ? "model-pref-button model-favorite-button model-pref-button-active"
+                  : "model-pref-button model-favorite-button"
+              }
+              title={model.is_favorite ? "Remove from favorites" : "Add to favorites"}
+              disabled={isFavoriteBusy}
+              onClick={() => {
+                if (keyPrefix === "favorite" && model.is_favorite) {
+                  scheduleFavoriteRemoval(option);
+                  return;
+                }
+                if (keyPrefix === "model") {
+                  anchorPrimaryModelRow(option.value);
+                }
+                void updateUserModelPreference(option.backendId, model.name, {
+                  is_favorite: !model.is_favorite
+                });
+              }}
+            >
+              <Star />
+            </button>
+          )}
           <button
             type="button"
-            className="secondary-button model-undo-button model-undo-remove-button"
-            onClick={() => clearPendingFavoriteRemoval(option.value)}
-          >
-            <span>Undo Remove</span>
-            <span className="model-undo-count">{pendingFavoriteRemovalSeconds}</span>
-          </button>
-        ) : (
-          <button
-            type="button"
-            className={
-              model.is_favorite
-                ? "model-pref-button model-favorite-button model-pref-button-active"
-                : "model-pref-button model-favorite-button"
-            }
-            title={model.is_favorite ? "Remove from favorites" : "Add to favorites"}
-            disabled={isFavoriteBusy}
+            className="model-avatar-edit-button"
+            title="Change personal profile image"
+            aria-label={`Change profile image for ${compactModelName(model.name)}`}
             onClick={() => {
-              if (keyPrefix === "favorite" && model.is_favorite) {
-                scheduleFavoriteRemoval(option);
-                return;
-              }
-              if (keyPrefix === "model") {
-                anchorPrimaryModelRow(option.value);
-              }
-              void updateUserModelPreference(option.backendId, model.name, {
-                is_favorite: !model.is_favorite
-              });
+              setAvatarError(null);
+              setAvatarTarget(option);
             }}
           >
-            <Star />
+            <ModelAvatar
+              displayName={compactModelName(model.name)}
+              assetId={model.avatar_asset_id}
+              cropX={model.avatar_crop_x}
+              cropY={model.avatar_crop_y}
+              cropSize={model.avatar_crop_size}
+            />
+            <Pencil />
           </button>
-        )}
+        </div>
         <span className="model-access-main">
           <span className="model-name" title={model.name}>
             {compactModelName(model.name)}
@@ -545,6 +666,33 @@ export function UserModelsPanel({
           );
         })}
       </div>
+      {avatarTarget && (
+        <ModelAvatarEditorDialog
+          displayName={compactModelName(avatarTarget.model.name)}
+          title={`Personal image for ${compactModelName(avatarTarget.model.name)}`}
+          assetId={avatarTarget.model.personal_avatar_asset_id}
+          cropX={avatarTarget.model.personal_avatar_crop_x}
+          cropY={avatarTarget.model.personal_avatar_crop_y}
+          cropSize={avatarTarget.model.personal_avatar_crop_size}
+          inheritedAvatar={
+            avatarTarget.model.default_avatar_asset_id
+              ? {
+                  assetId: avatarTarget.model.default_avatar_asset_id,
+                  cropX: avatarTarget.model.default_avatar_crop_x,
+                  cropY: avatarTarget.model.default_avatar_crop_y,
+                  cropSize: avatarTarget.model.default_avatar_crop_size
+                }
+              : null
+          }
+          isBusy={isSavingAvatar}
+          error={avatarError}
+          onCancel={() => {
+            setAvatarTarget(null);
+            setAvatarError(null);
+          }}
+          onSave={(edit) => void saveUserModelAvatar(edit)}
+        />
+      )}
     </SettingsPanel>
   );
 }
@@ -590,6 +738,9 @@ export function AdminModelsAccessPanel({
   const [defaultTagApplyMode, setDefaultTagApplyMode] = useState<"new" | "all">("new");
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [avatarTarget, setAvatarTarget] = useState<AdminAvatarTarget | null>(null);
+  const [isSavingAvatar, setIsSavingAvatar] = useState(false);
+  const [avatarError, setAvatarError] = useState<string | null>(null);
 
   const applyAdminModelsResponse = useCallback((response: AdminModelsResponse) => {
     setGroups(response.backends);
@@ -733,6 +884,74 @@ export function AdminModelsAccessPanel({
       setError(updateError instanceof Error ? updateError.message : "Failed to update models");
     } finally {
       setBusyModelsBackendId(null);
+    }
+  }
+
+  async function saveAdminModelAvatar(edit: ModelAvatarEdit) {
+    if (!avatarTarget) {
+      return;
+    }
+    setIsSavingAvatar(true);
+    setAvatarError(null);
+    const oldAssetId = avatarTarget.model.avatar_asset_id;
+    let uploadedAssetId: string | null = null;
+
+    try {
+      if (edit.file) {
+        uploadedAssetId = (await uploadHostedAvatar(edit.file)).id;
+      }
+      const response = await requestJson<AdminModelAvatarResponse>(
+        "/api/admin/models/avatar",
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            backend_id: avatarTarget.backendId,
+            model_name: avatarTarget.model.name,
+            avatar_asset_id: uploadedAssetId ?? edit.assetId,
+            avatar_crop_x: edit.cropX,
+            avatar_crop_y: edit.cropY,
+            avatar_crop_size: edit.cropSize
+          })
+        }
+      );
+      setGroups((current) =>
+        current.map((group) =>
+          group.backend.id === response.backend_id
+            ? {
+                ...group,
+                models: group.models.map((model) =>
+                  model.name === response.model_name ? { ...model, ...response } : model
+                )
+              }
+            : group
+        )
+      );
+      setSavedGroups((current) =>
+        current.map((group) =>
+          group.backend.id === response.backend_id
+            ? {
+                ...group,
+                models: group.models.map((model) =>
+                  model.name === response.model_name ? { ...model, ...response } : model
+                )
+              }
+            : group
+        )
+      );
+      await onModelsChanged().catch(() => undefined);
+      setAvatarTarget(null);
+      if (oldAssetId && oldAssetId !== response.avatar_asset_id) {
+        await deleteHostedAvatar(oldAssetId).catch(() => undefined);
+      }
+    } catch (saveError) {
+      if (uploadedAssetId) {
+        await deleteHostedAvatar(uploadedAssetId).catch(() => undefined);
+      }
+      setAvatarError(
+        saveError instanceof Error ? saveError.message : "Failed to save profile image"
+      );
+    } finally {
+      setIsSavingAvatar(false);
     }
   }
 
@@ -1023,6 +1242,28 @@ export function AdminModelsAccessPanel({
 
                         return (
                           <article key={key} className="model-access-row">
+                            <button
+                              type="button"
+                              className="model-avatar-edit-button"
+                              title="Change server default profile image"
+                              aria-label={`Change server default profile image for ${compactModelName(model.name)}`}
+                              onClick={() => {
+                                setAvatarError(null);
+                                setAvatarTarget({
+                                  backendId: backend.id,
+                                  model
+                                });
+                              }}
+                            >
+                              <ModelAvatar
+                                displayName={compactModelName(model.name)}
+                                assetId={model.avatar_asset_id}
+                                cropX={model.avatar_crop_x}
+                                cropY={model.avatar_crop_y}
+                                cropSize={model.avatar_crop_size}
+                              />
+                              <Pencil />
+                            </button>
                             <span className="model-access-main">
                               <span className="model-name" title={model.name}>
                                 {compactModelName(model.name)}
@@ -1062,6 +1303,23 @@ export function AdminModelsAccessPanel({
           );
         })}
       </div>
+      {avatarTarget && (
+        <ModelAvatarEditorDialog
+          displayName={compactModelName(avatarTarget.model.name)}
+          title={`Server default for ${compactModelName(avatarTarget.model.name)}`}
+          assetId={avatarTarget.model.avatar_asset_id}
+          cropX={avatarTarget.model.avatar_crop_x}
+          cropY={avatarTarget.model.avatar_crop_y}
+          cropSize={avatarTarget.model.avatar_crop_size}
+          isBusy={isSavingAvatar}
+          error={avatarError}
+          onCancel={() => {
+            setAvatarTarget(null);
+            setAvatarError(null);
+          }}
+          onSave={(edit) => void saveAdminModelAvatar(edit)}
+        />
+      )}
     </>
   );
 }

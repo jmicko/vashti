@@ -46,6 +46,7 @@ import type {
   MessageResponse,
   MessageStreamSegment,
   MessageVersion,
+  BackendModelGroup,
   ModelInfo,
   Persona,
   PersonaVersion,
@@ -58,6 +59,7 @@ export function ChatView({
   queuedPrompt,
   selectedModel,
   selectedModelInfo,
+  modelGroups,
   inferenceSettings,
   availableTools,
   personas,
@@ -74,6 +76,7 @@ export function ChatView({
   queuedPrompt: ({ chatId: string } & ComposerSubmitPayload) | null;
   selectedModel: string;
   selectedModelInfo: ModelInfo | null;
+  modelGroups: BackendModelGroup[];
   inferenceSettings: ChatInferenceSettings;
   availableTools: AvailableTool[];
   personas: Persona[];
@@ -1157,7 +1160,11 @@ export function ChatView({
                   onUploadAttachment={uploadAttachment}
                   onRegenerate={regenerateMessage}
                   selectedModelInfo={selectedModelInfo}
-                  personaAvatar={hostedPersonaAvatarForMessage(message, personaVersions)}
+                  modelAvatar={hostedModelAvatarForMessage(
+                    message,
+                    personaVersions,
+                    modelGroups
+                  )}
                 />
               ))
             )}
@@ -1202,25 +1209,38 @@ export function ChatView({
   );
 }
 
-function hostedPersonaAvatarForMessage(
+function hostedModelAvatarForMessage(
   message: ChatMessage,
-  versions: PersonaVersion[]
+  versions: PersonaVersion[],
+  modelGroups: BackendModelGroup[]
 ) {
-  if (!message.persona_version_id) {
+  if (message.persona_version_id) {
+    const version = versions.find((candidate) => candidate.id === message.persona_version_id);
+    if (version) {
+      return {
+        displayName: version.display_name,
+        assetId: version.avatar_asset_id,
+        cropX: version.avatar_crop_x,
+        cropY: version.avatar_crop_y,
+        cropSize: version.avatar_crop_size
+      };
+    }
+  }
+  if (!message.backend_id || !message.model_name) {
     return null;
   }
-  const version = versions.find((candidate) => candidate.id === message.persona_version_id);
-  if (!version) {
-    return null;
-  }
-
-  return {
-    displayName: version.display_name,
-    assetId: version.avatar_asset_id,
-    cropX: version.avatar_crop_x,
-    cropY: version.avatar_crop_y,
-    cropSize: version.avatar_crop_size
-  };
+  const model = modelGroups
+    .find((group) => group.backend.id === message.backend_id)
+    ?.models.find((candidate) => candidate.name === message.model_name);
+  return model
+    ? {
+        displayName: model.name,
+        assetId: model.avatar_asset_id,
+        cropX: model.avatar_crop_x,
+        cropY: model.avatar_crop_y,
+        cropSize: model.avatar_crop_size
+      }
+    : null;
 }
 
 function thinkModeToPayload(mode: ThinkingMode) {

@@ -71,6 +71,10 @@ export type ModelInfo = {
   capabilities?: string[];
   is_favorite?: boolean;
   is_default?: boolean;
+  avatar_asset_id: string | null;
+  avatar_crop_x: number;
+  avatar_crop_y: number;
+  avatar_crop_size: number;
 };
 
 export type AdminModelInfo = ModelInfo & {
@@ -83,6 +87,14 @@ export type UserModelInfo = ModelInfo & {
   is_visible: boolean;
   is_favorite: boolean;
   is_default: boolean;
+  personal_avatar_asset_id: string | null;
+  personal_avatar_crop_x: number;
+  personal_avatar_crop_y: number;
+  personal_avatar_crop_size: number;
+  default_avatar_asset_id: string | null;
+  default_avatar_crop_x: number;
+  default_avatar_crop_y: number;
+  default_avatar_crop_size: number;
 };
 
 export type BackendModelGroup = {

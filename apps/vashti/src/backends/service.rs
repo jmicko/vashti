@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 use crate::{
     auth::service::unix_timestamp, error::ApiError, ollama, permissions::service as permissions,
+    persona_avatars,
 };
 
 #[derive(Debug, Clone)]
@@ -49,13 +50,33 @@ pub struct UserModelPreferenceResponse {
     pub is_visible: bool,
     pub is_favorite: bool,
     pub is_default: bool,
+    pub avatar_asset_id: Option<String>,
+    pub avatar_crop_x: f64,
+    pub avatar_crop_y: f64,
+    pub avatar_crop_size: f64,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct UserModelPreference {
     pub is_visible: bool,
     pub is_favorite: bool,
     pub is_default: bool,
+    pub avatar: ModelAvatarReference,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ModelAvatarReference {
+    pub avatar_asset_id: Option<String>,
+    pub avatar_crop_x: f64,
+    pub avatar_crop_y: f64,
+    pub avatar_crop_size: f64,
+}
+
+pub struct UpdateModelAvatarParams {
+    pub avatar_asset_id: Option<String>,
+    pub avatar_crop_x: f64,
+    pub avatar_crop_y: f64,
+    pub avatar_crop_size: f64,
 }
 
 pub struct UpdateUserModelPreferenceParams {
@@ -344,6 +365,40 @@ pub async fn model_availability_by_backend(
         .collect()
 }
 
+pub async fn model_avatar_defaults_by_backend(
+    pool: &SqlitePool,
+    backend_id: &str,
+) -> Result<HashMap<String, ModelAvatarReference>, sqlx::Error> {
+    let rows = sqlx::query(
+        r#"
+        SELECT model_name,
+               avatar_asset_id,
+               avatar_crop_x,
+               avatar_crop_y,
+               avatar_crop_size
+        FROM model_availability
+        WHERE backend_id = ?
+        "#,
+    )
+    .bind(backend_id)
+    .fetch_all(pool)
+    .await?;
+
+    rows.into_iter()
+        .map(|row| {
+            Ok((
+                row.try_get("model_name")?,
+                ModelAvatarReference {
+                    avatar_asset_id: row.try_get("avatar_asset_id")?,
+                    avatar_crop_x: row.try_get("avatar_crop_x")?,
+                    avatar_crop_y: row.try_get("avatar_crop_y")?,
+                    avatar_crop_size: row.try_get("avatar_crop_size")?,
+                },
+            ))
+        })
+        .collect()
+}
+
 pub async fn user_model_preferences_by_backend(
     pool: &SqlitePool,
     user_id: &str,
@@ -351,7 +406,14 @@ pub async fn user_model_preferences_by_backend(
 ) -> Result<HashMap<String, UserModelPreference>, sqlx::Error> {
     let rows = sqlx::query(
         r#"
-        SELECT model_name, is_visible, is_favorite, is_default
+        SELECT model_name,
+               is_visible,
+               is_favorite,
+               is_default,
+               avatar_asset_id,
+               avatar_crop_x,
+               avatar_crop_y,
+               avatar_crop_size
         FROM user_model_preferences
         WHERE user_id = ?
           AND backend_id = ?
@@ -370,10 +432,127 @@ pub async fn user_model_preferences_by_backend(
                     is_visible: row.try_get::<i64, _>("is_visible")? != 0,
                     is_favorite: row.try_get::<i64, _>("is_favorite")? != 0,
                     is_default: row.try_get::<i64, _>("is_default")? != 0,
+                    avatar: ModelAvatarReference {
+                        avatar_asset_id: row.try_get("avatar_asset_id")?,
+                        avatar_crop_x: row.try_get("avatar_crop_x")?,
+                        avatar_crop_y: row.try_get("avatar_crop_y")?,
+                        avatar_crop_size: row.try_get("avatar_crop_size")?,
+                    },
                 },
             ))
         })
         .collect()
+}
+
+pub async fn set_default_model_avatar(
+    pool: &SqlitePool,
+    user_id: &str,
+    backend_id: &str,
+    model_name: &str,
+    params: UpdateModelAvatarParams,
+) -> Result<ModelAvatarReference, ApiError> {
+    ensure_backend_exists(pool, backend_id).await?;
+    let model_name = validate_model_name(model_name)?;
+    permissions::ensure_model_record(pool, backend_id, &model_name).await?;
+    persona_avatars::service::ensure_asset_assignable(
+        pool,
+        user_id,
+        params.avatar_asset_id.as_deref(),
+    )
+    .await?;
+    let avatar = validate_model_avatar(params)?;
+    let now = unix_timestamp();
+
+    sqlx::query(
+        r#"
+        INSERT INTO model_availability (
+            backend_id,
+            model_name,
+            avatar_asset_id,
+            avatar_crop_x,
+            avatar_crop_y,
+            avatar_crop_size,
+            created_at,
+            updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(backend_id, model_name)
+        DO UPDATE SET
+            avatar_asset_id = excluded.avatar_asset_id,
+            avatar_crop_x = excluded.avatar_crop_x,
+            avatar_crop_y = excluded.avatar_crop_y,
+            avatar_crop_size = excluded.avatar_crop_size,
+            updated_at = excluded.updated_at
+        "#,
+    )
+    .bind(backend_id)
+    .bind(&model_name)
+    .bind(&avatar.avatar_asset_id)
+    .bind(avatar.avatar_crop_x)
+    .bind(avatar.avatar_crop_y)
+    .bind(avatar.avatar_crop_size)
+    .bind(now)
+    .bind(now)
+    .execute(pool)
+    .await?;
+
+    Ok(avatar)
+}
+
+pub async fn set_user_model_avatar(
+    pool: &SqlitePool,
+    user_id: &str,
+    backend_id: &str,
+    model_name: &str,
+    params: UpdateModelAvatarParams,
+) -> Result<ModelAvatarReference, ApiError> {
+    ensure_model_enabled_for_user(pool, user_id, backend_id, model_name).await?;
+    let model_name = validate_model_name(model_name)?;
+    persona_avatars::service::ensure_asset_assignable(
+        pool,
+        user_id,
+        params.avatar_asset_id.as_deref(),
+    )
+    .await?;
+    let avatar = validate_model_avatar(params)?;
+    let now = unix_timestamp();
+
+    sqlx::query(
+        r#"
+        INSERT INTO user_model_preferences (
+            user_id,
+            backend_id,
+            model_name,
+            avatar_asset_id,
+            avatar_crop_x,
+            avatar_crop_y,
+            avatar_crop_size,
+            created_at,
+            updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id, backend_id, model_name)
+        DO UPDATE SET
+            avatar_asset_id = excluded.avatar_asset_id,
+            avatar_crop_x = excluded.avatar_crop_x,
+            avatar_crop_y = excluded.avatar_crop_y,
+            avatar_crop_size = excluded.avatar_crop_size,
+            updated_at = excluded.updated_at
+        "#,
+    )
+    .bind(user_id)
+    .bind(backend_id)
+    .bind(&model_name)
+    .bind(&avatar.avatar_asset_id)
+    .bind(avatar.avatar_crop_x)
+    .bind(avatar.avatar_crop_y)
+    .bind(avatar.avatar_crop_size)
+    .bind(now)
+    .bind(now)
+    .execute(pool)
+    .await?;
+
+    Ok(avatar)
 }
 
 pub async fn set_model_availability(
@@ -586,7 +765,13 @@ pub async fn update_user_model_preference(
 
     let Some(row) = sqlx::query(
         r#"
-        SELECT is_visible, is_favorite, is_default
+        SELECT is_visible,
+               is_favorite,
+               is_default,
+               avatar_asset_id,
+               avatar_crop_x,
+               avatar_crop_y,
+               avatar_crop_size
         FROM user_model_preferences
         WHERE user_id = ?
           AND backend_id = ?
@@ -610,6 +795,35 @@ pub async fn update_user_model_preference(
         is_visible: row.try_get::<i64, _>("is_visible")? != 0,
         is_favorite: row.try_get::<i64, _>("is_favorite")? != 0,
         is_default: row.try_get::<i64, _>("is_default")? != 0,
+        avatar_asset_id: row.try_get("avatar_asset_id")?,
+        avatar_crop_x: row.try_get("avatar_crop_x")?,
+        avatar_crop_y: row.try_get("avatar_crop_y")?,
+        avatar_crop_size: row.try_get("avatar_crop_size")?,
+    })
+}
+
+fn validate_model_avatar(
+    params: UpdateModelAvatarParams,
+) -> Result<ModelAvatarReference, ApiError> {
+    let valid_center = |value: f64| value.is_finite() && (0.0..=100.0).contains(&value);
+    if !valid_center(params.avatar_crop_x) || !valid_center(params.avatar_crop_y) {
+        return Err(ApiError::bad_request(
+            "invalid_avatar_crop",
+            "Profile image crop position must be between 0 and 100",
+        ));
+    }
+    if !params.avatar_crop_size.is_finite() || !(10.0..=100.0).contains(&params.avatar_crop_size) {
+        return Err(ApiError::bad_request(
+            "invalid_avatar_crop",
+            "Profile image crop size must be between 10 and 100",
+        ));
+    }
+
+    Ok(ModelAvatarReference {
+        avatar_asset_id: params.avatar_asset_id,
+        avatar_crop_x: params.avatar_crop_x,
+        avatar_crop_y: params.avatar_crop_y,
+        avatar_crop_size: params.avatar_crop_size,
     })
 }
 

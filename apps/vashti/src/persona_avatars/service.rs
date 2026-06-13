@@ -135,10 +135,22 @@ pub async fn get_asset_file(
                 WHERE c.user_id = ?
                   AND v.avatar_asset_id = a.id
             )
+            OR EXISTS (
+                SELECT 1
+                FROM model_availability ma
+                WHERE ma.avatar_asset_id = a.id
+            )
+            OR EXISTS (
+                SELECT 1
+                FROM user_model_preferences ump
+                WHERE ump.user_id = ?
+                  AND ump.avatar_asset_id = a.id
+            )
           )
         "#,
     )
     .bind(asset_id)
+    .bind(user_id)
     .bind(user_id)
     .bind(user_id)
     .bind(user_id)
@@ -255,15 +267,23 @@ pub async fn delete_unused_asset(
     .await?
     .ok_or_else(|| ApiError::not_found("avatar_not_found", "Profile image not found"))?;
 
-    let reference_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM persona_versions WHERE avatar_asset_id = ?")
-            .bind(asset_id)
-            .fetch_one(pool)
-            .await?;
+    let reference_count: i64 = sqlx::query_scalar(
+        r#"
+        SELECT
+            (SELECT COUNT(*) FROM persona_versions WHERE avatar_asset_id = ?)
+          + (SELECT COUNT(*) FROM model_availability WHERE avatar_asset_id = ?)
+          + (SELECT COUNT(*) FROM user_model_preferences WHERE avatar_asset_id = ?)
+        "#,
+    )
+    .bind(asset_id)
+    .bind(asset_id)
+    .bind(asset_id)
+    .fetch_one(pool)
+    .await?;
     if reference_count > 0 {
         return Err(ApiError::conflict(
             "avatar_in_use",
-            "Profile image is still used by a custom model version",
+            "Profile image is still in use",
         ));
     }
 

@@ -210,6 +210,14 @@ export function ModelPicker({
           setIsOpen(false);
         }}
       >
+        <ModelAvatar
+          displayName={compactModelName(model.name)}
+          assetId={model.avatar_asset_id}
+          cropX={model.avatar_crop_x}
+          cropY={model.avatar_crop_y}
+          cropSize={model.avatar_crop_size}
+          className="model-avatar-picker-option"
+        />
         <span className="model-option-content">
           <span className="model-option-title-row">
             <span className="model-name">{compactModelName(model.name)}</span>
@@ -278,6 +286,15 @@ export function ModelPicker({
             cropX={selectedPersona.current_version.avatar_crop_x}
             cropY={selectedPersona.current_version.avatar_crop_y}
             cropSize={selectedPersona.current_version.avatar_crop_size}
+            className="model-avatar-picker-selected"
+          />
+        ) : selected ? (
+          <ModelAvatar
+            displayName={compactModelName(selected.model.name)}
+            assetId={selected.model.avatar_asset_id}
+            cropX={selected.model.avatar_crop_x}
+            cropY={selected.model.avatar_crop_y}
+            cropSize={selected.model.avatar_crop_size}
             className="model-avatar-picker-selected"
           />
         ) : null}

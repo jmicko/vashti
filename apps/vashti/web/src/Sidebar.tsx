@@ -20,7 +20,7 @@ import type {
   PrivateChatSummary,
   PrivatePersonaVersion
 } from "./privateChatStore";
-import type { ChatSummary, Page, PersonaVersion } from "./types";
+import type { BackendModelGroup, ChatSummary, Page, PersonaVersion } from "./types";
 
 export function Sidebar({
   chats,
@@ -33,6 +33,7 @@ export function Sidebar({
   isLoadingPrivateChats,
   personaVersions,
   privatePersonaVersions,
+  modelGroups,
   onClose,
   onDeleteChat,
   onDeletePrivateChat,
@@ -51,6 +52,7 @@ export function Sidebar({
   isLoadingPrivateChats: boolean;
   personaVersions: PersonaVersion[];
   privatePersonaVersions: PrivatePersonaVersion[];
+  modelGroups: BackendModelGroup[];
   onClose: () => void;
   onDeleteChat: (chat: ChatSummary) => void;
   onDeletePrivateChat: (chat: PrivateChatSummary) => void;
@@ -160,6 +162,11 @@ export function Sidebar({
                     (candidate) => candidate.id === chat.persona_version_id
                   )
                 : null;
+              const model = !version
+                ? modelGroups
+                    .find((group) => group.backend.id === chat.default_backend_id)
+                    ?.models.find((candidate) => candidate.name === chat.default_model_name)
+                : null;
               return (
                 <ChatListItem
                 key={chat.id}
@@ -174,7 +181,16 @@ export function Sidebar({
                         cropY: version.avatar_crop_y,
                         cropSize: version.avatar_crop_size
                       }
-                    : null
+                    : model
+                      ? {
+                          displayName: model.name,
+                          assetId: model.avatar_asset_id,
+                          privateAssetId: null,
+                          cropX: model.avatar_crop_x,
+                          cropY: model.avatar_crop_y,
+                          cropSize: model.avatar_crop_size
+                        }
+                      : null
                 }
                 isActive={
                   isPrivate ? currentPrivateChatId === chat.id : currentChatId === chat.id

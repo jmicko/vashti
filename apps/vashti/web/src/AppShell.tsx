@@ -903,6 +903,7 @@ export function AppShell({
             isLoadingPrivateChats={isLoadingPrivateChats}
             personaVersions={knownPersonaVersions}
             privatePersonaVersions={knownPrivatePersonaVersions}
+            modelGroups={modelGroups}
             onClose={() => setIsSidebarOpen(false)}
             onDeleteChat={setChatDeleteTarget}
             onDeletePrivateChat={setPrivateChatDeleteTarget}
@@ -1043,6 +1044,7 @@ export function AppShell({
             }
             selectedModel={selectedModel}
             selectedModelInfo={selectedModelInfo()}
+            modelGroups={modelGroups}
             privatePersonas={privatePersonas}
             privatePersonaVersions={knownPrivatePersonaVersions}
             systemPromptOverride={chatSystemPromptOverride}
@@ -1062,6 +1064,7 @@ export function AppShell({
               queuedPrompt={queuedPrompt?.chatId === currentChatId ? queuedPrompt : null}
               selectedModel={selectedModel}
               selectedModelInfo={selectedModelInfo()}
+              modelGroups={modelGroups}
               inferenceSettings={chatInferenceSettings}
               availableTools={availableTools}
               personas={personas}

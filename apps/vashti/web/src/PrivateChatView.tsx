@@ -52,6 +52,7 @@ import {
 } from "./modelSelection";
 import type {
   AutoScrollMode,
+  BackendModelGroup,
   BranchScrollAnchor,
   ChatMessage,
   ChatInferenceSettings,
@@ -71,6 +72,7 @@ export function PrivateChatView({
   queuedPrompt,
   selectedModel,
   selectedModelInfo,
+  modelGroups,
   privatePersonas,
   privatePersonaVersions,
   systemPromptOverride,
@@ -87,6 +89,7 @@ export function PrivateChatView({
   queuedPrompt: ({ chatId: string } & ComposerSubmitPayload) | null;
   selectedModel: string;
   selectedModelInfo: ModelInfo | null;
+  modelGroups: BackendModelGroup[];
   privatePersonas: PrivatePersona[];
   privatePersonaVersions: PrivatePersonaVersion[];
   systemPromptOverride: string | null;
@@ -1450,9 +1453,10 @@ export function PrivateChatView({
                   onUploadAttachment={preparePrivateAttachment}
                   onRegenerate={regenerateMessage}
                   selectedModelInfo={selectedModelInfo}
-                  personaAvatar={privatePersonaAvatarForMessage(
+                  modelAvatar={privateModelAvatarForMessage(
                     message,
-                    privatePersonaVersions
+                    privatePersonaVersions,
+                    modelGroups
                   )}
                 />
               ))
@@ -1492,25 +1496,38 @@ export function PrivateChatView({
   );
 }
 
-function privatePersonaAvatarForMessage(
+function privateModelAvatarForMessage(
   message: PrivateChatMessage,
-  versions: PrivatePersonaVersion[]
+  versions: PrivatePersonaVersion[],
+  modelGroups: BackendModelGroup[]
 ) {
-  if (!message.persona_version_id) {
+  if (message.persona_version_id) {
+    const version = versions.find((candidate) => candidate.id === message.persona_version_id);
+    if (version) {
+      return {
+        displayName: version.display_name,
+        privateAssetId: version.avatar_asset_id,
+        cropX: version.avatar_crop_x,
+        cropY: version.avatar_crop_y,
+        cropSize: version.avatar_crop_size
+      };
+    }
+  }
+  if (!message.backend_id || !message.model_name) {
     return null;
   }
-  const version = versions.find((candidate) => candidate.id === message.persona_version_id);
-  if (!version) {
-    return null;
-  }
-
-  return {
-    displayName: version.display_name,
-    privateAssetId: version.avatar_asset_id,
-    cropX: version.avatar_crop_x,
-    cropY: version.avatar_crop_y,
-    cropSize: version.avatar_crop_size
-  };
+  const model = modelGroups
+    .find((group) => group.backend.id === message.backend_id)
+    ?.models.find((candidate) => candidate.name === message.model_name);
+  return model
+    ? {
+        displayName: model.name,
+        assetId: model.avatar_asset_id,
+        cropX: model.avatar_crop_x,
+        cropY: model.avatar_crop_y,
+        cropSize: model.avatar_crop_size
+      }
+    : null;
 }
 
 function thinkModeToPayload(mode: ThinkingMode) {

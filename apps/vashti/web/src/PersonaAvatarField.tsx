@@ -192,7 +192,7 @@ export function PersonaAvatarField({
   }
 
   return (
-    <section className="persona-avatar-field" aria-label="Custom model profile image">
+    <section className="persona-avatar-field" aria-label="Model profile image">
       <div
         ref={stageRef}
         className="persona-avatar-crop-stage"

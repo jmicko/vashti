@@ -75,6 +75,10 @@ pub struct ModelResponse {
     pub capabilities: Vec<String>,
     pub is_favorite: bool,
     pub is_default: bool,
+    pub avatar_asset_id: Option<String>,
+    pub avatar_crop_x: f64,
+    pub avatar_crop_y: f64,
+    pub avatar_crop_size: f64,
 }
 
 #[derive(Debug, Serialize)]
@@ -108,6 +112,18 @@ pub struct UserModelResponse {
     pub is_visible: bool,
     pub is_favorite: bool,
     pub is_default: bool,
+    pub avatar_asset_id: Option<String>,
+    pub avatar_crop_x: f64,
+    pub avatar_crop_y: f64,
+    pub avatar_crop_size: f64,
+    pub personal_avatar_asset_id: Option<String>,
+    pub personal_avatar_crop_x: f64,
+    pub personal_avatar_crop_y: f64,
+    pub personal_avatar_crop_size: f64,
+    pub default_avatar_asset_id: Option<String>,
+    pub default_avatar_crop_x: f64,
+    pub default_avatar_crop_y: f64,
+    pub default_avatar_crop_size: f64,
 }
 
 #[derive(Debug, Serialize)]
@@ -125,6 +141,10 @@ pub struct AdminModelResponse {
     pub is_enabled: bool,
     pub permission_tags: Vec<PermissionTagResponse>,
     pub default_permission_tags: Vec<PermissionTagResponse>,
+    pub avatar_asset_id: Option<String>,
+    pub avatar_crop_x: f64,
+    pub avatar_crop_y: f64,
+    pub avatar_crop_size: f64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -178,6 +198,44 @@ pub struct UpdateUserModelPreferenceRequest {
     pub is_visible: Option<bool>,
     pub is_favorite: Option<bool>,
     pub is_default: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateModelAvatarRequest {
+    pub backend_id: String,
+    pub model_name: String,
+    pub avatar_asset_id: Option<String>,
+    pub avatar_crop_x: f64,
+    pub avatar_crop_y: f64,
+    pub avatar_crop_size: f64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UserModelAvatarResponse {
+    pub backend_id: String,
+    pub model_name: String,
+    pub avatar_asset_id: Option<String>,
+    pub avatar_crop_x: f64,
+    pub avatar_crop_y: f64,
+    pub avatar_crop_size: f64,
+    pub personal_avatar_asset_id: Option<String>,
+    pub personal_avatar_crop_x: f64,
+    pub personal_avatar_crop_y: f64,
+    pub personal_avatar_crop_size: f64,
+    pub default_avatar_asset_id: Option<String>,
+    pub default_avatar_crop_x: f64,
+    pub default_avatar_crop_y: f64,
+    pub default_avatar_crop_size: f64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AdminModelAvatarResponse {
+    pub backend_id: String,
+    pub model_name: String,
+    pub avatar_asset_id: Option<String>,
+    pub avatar_crop_x: f64,
+    pub avatar_crop_y: f64,
+    pub avatar_crop_size: f64,
 }
 
 pub async fn list_backends(
@@ -326,6 +384,8 @@ async fn models_response(
 
     for backend in service::list_enabled_backends(&state.db).await? {
         let availability = service::model_availability_by_backend(&state.db, &backend.id).await?;
+        let default_avatars =
+            service::model_avatar_defaults_by_backend(&state.db, &backend.id).await?;
         let preferences =
             service::user_model_preferences_by_backend(&state.db, user_id, &backend.id).await?;
         let model_tags = permissions::model_tags_by_backend(&state.db, &backend.id).await?;
@@ -348,8 +408,9 @@ async fn models_response(
                     .unwrap_or(true)
             })
             .map(|model| {
-                let preference = preferences.get(&model.name).copied();
-                model_response(model, preference)
+                let preference = preferences.get(&model.name);
+                let default_avatar = default_avatars.get(&model.name);
+                model_response(model, preference, default_avatar)
             })
             .collect();
 
@@ -379,6 +440,8 @@ async fn user_models_response(
 
     for backend in service::list_enabled_backends(&state.db).await? {
         let availability = service::model_availability_by_backend(&state.db, &backend.id).await?;
+        let default_avatars =
+            service::model_avatar_defaults_by_backend(&state.db, &backend.id).await?;
         let preferences =
             service::user_model_preferences_by_backend(&state.db, user_id, &backend.id).await?;
         let model_tags = permissions::model_tags_by_backend(&state.db, &backend.id).await?;
@@ -394,23 +457,52 @@ async fn user_models_response(
                     .get(&model.name)
                     .is_some_and(|tags| permissions::has_matching_tag(&user_tags, tags))
             })
-            .map(|model| UserModelResponse {
-                is_visible: preferences
-                    .get(&model.name)
-                    .map(|preference| preference.is_visible)
-                    .unwrap_or(true),
-                is_favorite: preferences
-                    .get(&model.name)
-                    .map(|preference| preference.is_favorite)
-                    .unwrap_or(false),
-                is_default: preferences
-                    .get(&model.name)
-                    .map(|preference| preference.is_default)
-                    .unwrap_or(false),
-                name: model.name,
-                supports_images: model.supports_images,
-                supports_thinking: model.supports_thinking,
-                capabilities: model.capabilities,
+            .map(|model| {
+                let preference = preferences.get(&model.name);
+                let personal_avatar = preference.map(|preference| &preference.avatar);
+                let default_avatar = default_avatars.get(&model.name);
+                let effective_avatar = effective_avatar(personal_avatar, default_avatar);
+                UserModelResponse {
+                    is_visible: preference
+                        .map(|preference| preference.is_visible)
+                        .unwrap_or(true),
+                    is_favorite: preference
+                        .map(|preference| preference.is_favorite)
+                        .unwrap_or(false),
+                    is_default: preference
+                        .map(|preference| preference.is_default)
+                        .unwrap_or(false),
+                    avatar_asset_id: effective_avatar.avatar_asset_id.clone(),
+                    avatar_crop_x: effective_avatar.avatar_crop_x,
+                    avatar_crop_y: effective_avatar.avatar_crop_y,
+                    avatar_crop_size: effective_avatar.avatar_crop_size,
+                    personal_avatar_asset_id: personal_avatar
+                        .and_then(|avatar| avatar.avatar_asset_id.clone()),
+                    personal_avatar_crop_x: personal_avatar
+                        .map(|avatar| avatar.avatar_crop_x)
+                        .unwrap_or(50.0),
+                    personal_avatar_crop_y: personal_avatar
+                        .map(|avatar| avatar.avatar_crop_y)
+                        .unwrap_or(50.0),
+                    personal_avatar_crop_size: personal_avatar
+                        .map(|avatar| avatar.avatar_crop_size)
+                        .unwrap_or(100.0),
+                    default_avatar_asset_id: default_avatar
+                        .and_then(|avatar| avatar.avatar_asset_id.clone()),
+                    default_avatar_crop_x: default_avatar
+                        .map(|avatar| avatar.avatar_crop_x)
+                        .unwrap_or(50.0),
+                    default_avatar_crop_y: default_avatar
+                        .map(|avatar| avatar.avatar_crop_y)
+                        .unwrap_or(50.0),
+                    default_avatar_crop_size: default_avatar
+                        .map(|avatar| avatar.avatar_crop_size)
+                        .unwrap_or(100.0),
+                    name: model.name,
+                    supports_images: model.supports_images,
+                    supports_thinking: model.supports_thinking,
+                    capabilities: model.capabilities,
+                }
             })
             .collect();
 
@@ -441,6 +533,8 @@ async fn admin_models_response(
 
     for backend in service::list_enabled_backends(&state.db).await? {
         let availability = service::model_availability_by_backend(&state.db, &backend.id).await?;
+        let default_avatars =
+            service::model_avatar_defaults_by_backend(&state.db, &backend.id).await?;
         let manual_model_tags =
             permissions::manual_model_tags_by_backend(&state.db, &backend.id).await?;
         let default_model_tags =
@@ -461,6 +555,10 @@ async fn admin_models_response(
                 Some(tags) => permissions::tag_responses(&state.db, tags).await?,
                 None => Vec::new(),
             };
+            let avatar = default_avatars
+                .get(&model.name)
+                .cloned()
+                .unwrap_or_else(empty_avatar);
             models.push(AdminModelResponse {
                 permission_tags,
                 default_permission_tags,
@@ -469,6 +567,10 @@ async fn admin_models_response(
                 supports_images: model.supports_images,
                 supports_thinking: model.supports_thinking,
                 capabilities: model.capabilities,
+                avatar_asset_id: avatar.avatar_asset_id,
+                avatar_crop_x: avatar.avatar_crop_x,
+                avatar_crop_y: avatar.avatar_crop_y,
+                avatar_crop_size: avatar.avatar_crop_size,
             });
         }
 
@@ -492,21 +594,52 @@ async fn admin_models_response(
 
 fn model_response(
     model: OllamaModel,
-    preference: Option<service::UserModelPreference>,
+    preference: Option<&service::UserModelPreference>,
+    default_avatar: Option<&service::ModelAvatarReference>,
 ) -> ModelResponse {
+    let effective_avatar = effective_avatar(
+        preference.map(|preference| &preference.avatar),
+        default_avatar,
+    );
     ModelResponse {
         name: model.name,
         supports_images: model.supports_images,
         supports_thinking: model.supports_thinking,
         capabilities: model.capabilities,
-        is_favorite: preference
-            .map(|preference| preference.is_favorite)
-            .unwrap_or(false),
-        is_default: preference
-            .map(|preference| preference.is_default)
-            .unwrap_or(false),
+        is_favorite: preference.is_some_and(|preference| preference.is_favorite),
+        is_default: preference.is_some_and(|preference| preference.is_default),
+        avatar_asset_id: effective_avatar.avatar_asset_id.clone(),
+        avatar_crop_x: effective_avatar.avatar_crop_x,
+        avatar_crop_y: effective_avatar.avatar_crop_y,
+        avatar_crop_size: effective_avatar.avatar_crop_size,
     }
 }
+
+fn empty_avatar() -> service::ModelAvatarReference {
+    service::ModelAvatarReference {
+        avatar_asset_id: None,
+        avatar_crop_x: 50.0,
+        avatar_crop_y: 50.0,
+        avatar_crop_size: 100.0,
+    }
+}
+
+fn effective_avatar<'a>(
+    personal: Option<&'a service::ModelAvatarReference>,
+    default: Option<&'a service::ModelAvatarReference>,
+) -> &'a service::ModelAvatarReference {
+    personal
+        .filter(|avatar| avatar.avatar_asset_id.is_some())
+        .or_else(|| default.filter(|avatar| avatar.avatar_asset_id.is_some()))
+        .unwrap_or(&EMPTY_AVATAR)
+}
+
+static EMPTY_AVATAR: service::ModelAvatarReference = service::ModelAvatarReference {
+    avatar_asset_id: None,
+    avatar_crop_x: 50.0,
+    avatar_crop_y: 50.0,
+    avatar_crop_size: 100.0,
+};
 
 pub async fn update_model_availability(
     State(state): State<AppState>,
@@ -546,6 +679,81 @@ pub async fn update_user_model_preference(
     .await?;
 
     Ok(Json(preference))
+}
+
+pub async fn update_user_model_avatar(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Json(payload): Json<UpdateModelAvatarRequest>,
+) -> Result<Json<UserModelAvatarResponse>, ApiError> {
+    let user =
+        auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
+    let personal = service::set_user_model_avatar(
+        &state.db,
+        &user.id,
+        &payload.backend_id,
+        &payload.model_name,
+        service::UpdateModelAvatarParams {
+            avatar_asset_id: payload.avatar_asset_id,
+            avatar_crop_x: payload.avatar_crop_x,
+            avatar_crop_y: payload.avatar_crop_y,
+            avatar_crop_size: payload.avatar_crop_size,
+        },
+    )
+    .await?;
+    let default = service::model_avatar_defaults_by_backend(&state.db, &payload.backend_id)
+        .await?
+        .remove(&payload.model_name)
+        .unwrap_or_else(empty_avatar);
+    let effective = effective_avatar(Some(&personal), Some(&default));
+
+    Ok(Json(UserModelAvatarResponse {
+        backend_id: payload.backend_id,
+        model_name: payload.model_name,
+        avatar_asset_id: effective.avatar_asset_id.clone(),
+        avatar_crop_x: effective.avatar_crop_x,
+        avatar_crop_y: effective.avatar_crop_y,
+        avatar_crop_size: effective.avatar_crop_size,
+        personal_avatar_asset_id: personal.avatar_asset_id,
+        personal_avatar_crop_x: personal.avatar_crop_x,
+        personal_avatar_crop_y: personal.avatar_crop_y,
+        personal_avatar_crop_size: personal.avatar_crop_size,
+        default_avatar_asset_id: default.avatar_asset_id,
+        default_avatar_crop_x: default.avatar_crop_x,
+        default_avatar_crop_y: default.avatar_crop_y,
+        default_avatar_crop_size: default.avatar_crop_size,
+    }))
+}
+
+pub async fn update_admin_model_avatar(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Json(payload): Json<UpdateModelAvatarRequest>,
+) -> Result<Json<AdminModelAvatarResponse>, ApiError> {
+    let user =
+        auth::service::require_admin(&state.db, &jar, &state.config.session_cookie_name).await?;
+    let avatar = service::set_default_model_avatar(
+        &state.db,
+        &user.id,
+        &payload.backend_id,
+        &payload.model_name,
+        service::UpdateModelAvatarParams {
+            avatar_asset_id: payload.avatar_asset_id,
+            avatar_crop_x: payload.avatar_crop_x,
+            avatar_crop_y: payload.avatar_crop_y,
+            avatar_crop_size: payload.avatar_crop_size,
+        },
+    )
+    .await?;
+
+    Ok(Json(AdminModelAvatarResponse {
+        backend_id: payload.backend_id,
+        model_name: payload.model_name,
+        avatar_asset_id: avatar.avatar_asset_id,
+        avatar_crop_x: avatar.avatar_crop_x,
+        avatar_crop_y: avatar.avatar_crop_y,
+        avatar_crop_size: avatar.avatar_crop_size,
+    }))
 }
 
 pub async fn update_backend_model_availability(

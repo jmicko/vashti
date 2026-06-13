@@ -1037,4 +1037,91 @@ mod tests {
                 .is_empty()
         );
     }
+
+    #[tokio::test]
+    async fn model_avatar_defaults_and_personal_overrides_are_separate() {
+        let pool = test_pool().await;
+        let admin = register_user(&pool, "admin".to_string(), None, "secret".to_string())
+            .await
+            .expect("register first admin");
+        let backend = backends_service::create_backend(
+            &pool,
+            "local".to_string(),
+            "http://127.0.0.1:11434".to_string(),
+        )
+        .await
+        .expect("create backend");
+        backends_service::set_model_availability(&pool, &backend.id, "gemma4:e2b", true)
+            .await
+            .expect("enable model");
+
+        for asset_id in ["server-avatar", "personal-avatar"] {
+            sqlx::query(
+                r#"
+                INSERT INTO persona_avatar_assets (
+                    id,
+                    owner_user_id,
+                    original_filename,
+                    storage_path,
+                    mime_type,
+                    size_bytes,
+                    created_at
+                )
+                VALUES (?, ?, 'avatar.png', ?, 'image/png', 8, 1)
+                "#,
+            )
+            .bind(asset_id)
+            .bind(&admin.user.id)
+            .bind(format!("{}/{}", admin.user.id, asset_id))
+            .execute(&pool)
+            .await
+            .expect("insert avatar asset");
+        }
+
+        backends_service::set_default_model_avatar(
+            &pool,
+            &admin.user.id,
+            &backend.id,
+            "gemma4:e2b",
+            backends_service::UpdateModelAvatarParams {
+                avatar_asset_id: Some("server-avatar".to_string()),
+                avatar_crop_x: 42.0,
+                avatar_crop_y: 48.0,
+                avatar_crop_size: 70.0,
+            },
+        )
+        .await
+        .expect("set server avatar");
+        backends_service::set_user_model_avatar(
+            &pool,
+            &admin.user.id,
+            &backend.id,
+            "gemma4:e2b",
+            backends_service::UpdateModelAvatarParams {
+                avatar_asset_id: Some("personal-avatar".to_string()),
+                avatar_crop_x: 55.0,
+                avatar_crop_y: 60.0,
+                avatar_crop_size: 65.0,
+            },
+        )
+        .await
+        .expect("set personal avatar");
+
+        let defaults = backends_service::model_avatar_defaults_by_backend(&pool, &backend.id)
+            .await
+            .expect("load server avatars");
+        let preferences =
+            backends_service::user_model_preferences_by_backend(&pool, &admin.user.id, &backend.id)
+                .await
+                .expect("load personal avatars");
+
+        assert_eq!(
+            defaults["gemma4:e2b"].avatar_asset_id.as_deref(),
+            Some("server-avatar")
+        );
+        assert_eq!(
+            preferences["gemma4:e2b"].avatar.avatar_asset_id.as_deref(),
+            Some("personal-avatar")
+        );
+    }
 }
