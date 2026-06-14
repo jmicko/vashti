@@ -251,20 +251,22 @@ export function modelInfoForValue(
     value
   );
   if (selectedPrivatePersonaVersion) {
-    return modelInfoForBase(
+    const base = modelInfoForBase(
       groups,
       selectedPrivatePersonaVersion.base_backend_id,
       selectedPrivatePersonaVersion.base_model_name
     );
+    return personaModelInfo(base, selectedPrivatePersonaVersion, true);
   }
 
   const selectedPersonaVersion = personaVersionForValue(personas, personaVersions, value);
   if (selectedPersonaVersion) {
-    return modelInfoForBase(
+    const base = modelInfoForBase(
       groups,
       selectedPersonaVersion.base_backend_id,
       selectedPersonaVersion.base_model_name
     );
+    return personaModelInfo(base, selectedPersonaVersion, false);
   }
 
   const selected = modelParts(value);
@@ -273,6 +275,29 @@ export function modelInfoForValue(
   }
 
   return modelInfoForBase(groups, selected.backendId, selected.modelName);
+}
+
+function personaModelInfo(
+  base: ReturnType<typeof modelInfoForBase>,
+  version: PersonaVersion | PrivatePersonaVersion,
+  isPrivate: boolean
+) {
+  if (!base || !version.background_asset_id) return base;
+  return {
+    ...base,
+    background_asset_id: version.background_asset_id,
+    background_dim: version.background_dim ?? 0.72,
+    background_message_dim: version.background_message_dim ?? 0.82,
+    background_landscape_mode: version.background_landscape_mode ?? "fill",
+    background_landscape_x: version.background_landscape_x ?? 50,
+    background_landscape_y: version.background_landscape_y ?? 50,
+    background_landscape_scale: version.background_landscape_scale ?? 35,
+    background_portrait_mode: version.background_portrait_mode ?? "fill",
+    background_portrait_x: version.background_portrait_x ?? 50,
+    background_portrait_y: version.background_portrait_y ?? 50,
+    background_portrait_scale: version.background_portrait_scale ?? 35,
+    background_is_private: isPrivate
+  };
 }
 
 export function modelInfoForBase(groups: BackendModelGroup[], backendId: string, modelName: string) {

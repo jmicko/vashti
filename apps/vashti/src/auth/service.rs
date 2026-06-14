@@ -1039,7 +1039,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn model_avatar_defaults_and_personal_overrides_are_separate() {
+    async fn model_appearance_defaults_and_personal_overrides_are_separate() {
         let pool = test_pool().await;
         let admin = register_user(&pool, "admin".to_string(), None, "secret".to_string())
             .await
@@ -1055,7 +1055,12 @@ mod tests {
             .await
             .expect("enable model");
 
-        for asset_id in ["server-avatar", "personal-avatar"] {
+        for asset_id in [
+            "server-avatar",
+            "personal-avatar",
+            "server-background",
+            "personal-background",
+        ] {
             sqlx::query(
                 r#"
                 INSERT INTO persona_avatar_assets (
@@ -1106,10 +1111,56 @@ mod tests {
         )
         .await
         .expect("set personal avatar");
+        backends_service::set_default_model_background(
+            &pool,
+            &admin.user.id,
+            &backend.id,
+            "gemma4:e2b",
+            backends_service::UpdateModelBackgroundParams {
+                background_asset_id: Some("server-background".to_string()),
+                background_dim: 0.68,
+                background_message_dim: 0.79,
+                background_landscape_mode: "fill".to_string(),
+                background_landscape_x: 40.0,
+                background_landscape_y: 55.0,
+                background_landscape_scale: 30.0,
+                background_portrait_mode: "fit".to_string(),
+                background_portrait_x: 50.0,
+                background_portrait_y: 25.0,
+                background_portrait_scale: 45.0,
+            },
+        )
+        .await
+        .expect("set server background");
+        backends_service::set_user_model_background(
+            &pool,
+            &admin.user.id,
+            &backend.id,
+            "gemma4:e2b",
+            backends_service::UpdateModelBackgroundParams {
+                background_asset_id: Some("personal-background".to_string()),
+                background_dim: 0.74,
+                background_message_dim: 0.86,
+                background_landscape_mode: "stretch".to_string(),
+                background_landscape_x: 10.0,
+                background_landscape_y: 20.0,
+                background_landscape_scale: 40.0,
+                background_portrait_mode: "tile".to_string(),
+                background_portrait_x: 75.0,
+                background_portrait_y: 80.0,
+                background_portrait_scale: 25.0,
+            },
+        )
+        .await
+        .expect("set personal background");
 
         let defaults = backends_service::model_avatar_defaults_by_backend(&pool, &backend.id)
             .await
             .expect("load server avatars");
+        let background_defaults =
+            backends_service::model_background_defaults_by_backend(&pool, &backend.id)
+                .await
+                .expect("load server backgrounds");
         let preferences =
             backends_service::user_model_preferences_by_backend(&pool, &admin.user.id, &backend.id)
                 .await
@@ -1122,6 +1173,35 @@ mod tests {
         assert_eq!(
             preferences["gemma4:e2b"].avatar.avatar_asset_id.as_deref(),
             Some("personal-avatar")
+        );
+        assert_eq!(
+            background_defaults["gemma4:e2b"]
+                .background_asset_id
+                .as_deref(),
+            Some("server-background")
+        );
+        assert_eq!(
+            background_defaults["gemma4:e2b"].background_portrait_mode,
+            "fit"
+        );
+        assert_eq!(
+            preferences["gemma4:e2b"]
+                .background
+                .background_asset_id
+                .as_deref(),
+            Some("personal-background")
+        );
+        assert_eq!(
+            preferences["gemma4:e2b"]
+                .background
+                .background_landscape_mode,
+            "stretch"
+        );
+        assert_eq!(
+            preferences["gemma4:e2b"]
+                .background
+                .background_portrait_mode,
+            "tile"
         );
     }
 }

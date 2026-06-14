@@ -3,6 +3,7 @@ import { Lock, MessageSquare } from "lucide-react";
 import { prepareLocalAttachment, preparePrivateAttachment } from "./attachments";
 import { BrandMark } from "./common";
 import { StartChatComposer } from "./Composer";
+import { ModelBackgroundLayer, modelBackgroundContainerStyle } from "./ModelBackground";
 import { defaultToolPreferences } from "./toolPreferences";
 import type {
   AvailableTool,
@@ -53,7 +54,15 @@ export function ChatHome({
   const [thinkingMode, setThinkingMode] = useState<ThinkingMode>("auto");
 
   return (
-    <div className="chat-home">
+    <div
+      className={
+        selectedModelInfo?.background_asset_id
+          ? "chat-home chat-view-with-background"
+          : "chat-home"
+      }
+      style={modelBackgroundContainerStyle(selectedModelInfo)}
+    >
+      <ModelBackgroundLayer background={selectedModelInfo} />
       <div className="chat-home-inner">
         <BrandMark compact />
         <div className="new-chat-mode" aria-label="New chat mode">

@@ -113,7 +113,7 @@ pub async fn get_asset_file(
                 LEFT JOIN persona_members pm
                   ON pm.persona_id = p.id
                  AND pm.user_id = ?
-                WHERE v.avatar_asset_id = a.id
+                WHERE (v.avatar_asset_id = a.id OR v.background_asset_id = a.id)
                   AND (
                     p.owner_user_id = ?
                     OR (p.visibility = 'public' AND p.lifecycle_state = 'active')
@@ -125,7 +125,7 @@ pub async fn get_asset_file(
                 FROM chats c
                 JOIN persona_versions v ON v.id = c.persona_version_id
                 WHERE c.user_id = ?
-                  AND v.avatar_asset_id = a.id
+                  AND (v.avatar_asset_id = a.id OR v.background_asset_id = a.id)
             )
             OR EXISTS (
                 SELECT 1
@@ -133,18 +133,22 @@ pub async fn get_asset_file(
                 JOIN chats c ON c.id = m.chat_id
                 JOIN persona_versions v ON v.id = m.persona_version_id
                 WHERE c.user_id = ?
-                  AND v.avatar_asset_id = a.id
+                  AND (v.avatar_asset_id = a.id OR v.background_asset_id = a.id)
             )
             OR EXISTS (
                 SELECT 1
                 FROM model_availability ma
                 WHERE ma.avatar_asset_id = a.id
+                   OR ma.background_asset_id = a.id
             )
             OR EXISTS (
                 SELECT 1
                 FROM user_model_preferences ump
                 WHERE ump.user_id = ?
-                  AND ump.avatar_asset_id = a.id
+                  AND (
+                    ump.avatar_asset_id = a.id
+                    OR ump.background_asset_id = a.id
+                  )
             )
           )
         "#,
@@ -271,10 +275,16 @@ pub async fn delete_unused_asset(
         r#"
         SELECT
             (SELECT COUNT(*) FROM persona_versions WHERE avatar_asset_id = ?)
+          + (SELECT COUNT(*) FROM persona_versions WHERE background_asset_id = ?)
           + (SELECT COUNT(*) FROM model_availability WHERE avatar_asset_id = ?)
           + (SELECT COUNT(*) FROM user_model_preferences WHERE avatar_asset_id = ?)
+          + (SELECT COUNT(*) FROM model_availability WHERE background_asset_id = ?)
+          + (SELECT COUNT(*) FROM user_model_preferences WHERE background_asset_id = ?)
         "#,
     )
+    .bind(asset_id)
+    .bind(asset_id)
+    .bind(asset_id)
     .bind(asset_id)
     .bind(asset_id)
     .bind(asset_id)

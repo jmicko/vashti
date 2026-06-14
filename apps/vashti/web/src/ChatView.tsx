@@ -19,6 +19,7 @@ import { ConfirmDialog, RetroLoader } from "./common";
 import { StartChatComposer } from "./Composer";
 import { readGenerateEventStream } from "./generationStream";
 import { MessageBubble } from "./MessageBubble";
+import { ModelBackgroundLayer, modelBackgroundContainerStyle } from "./ModelBackground";
 import { defaultToolPreferences, normalizeChatDetail } from "./toolPreferences";
 import { getCachedHostedChat, saveCachedHostedChat } from "./privateChatStore";
 import {
@@ -1109,7 +1110,15 @@ export function ChatView({
   }
 
   return (
-    <div className="chat-view">
+    <div
+      className={
+        selectedModelInfo?.background_asset_id
+          ? "chat-view chat-view-with-background"
+          : "chat-view"
+      }
+      style={modelBackgroundContainerStyle(selectedModelInfo)}
+    >
+      <ModelBackgroundLayer background={selectedModelInfo} />
       {isLoading ? (
         <div className="empty-state">
           <RetroLoader />

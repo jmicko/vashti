@@ -42,6 +42,11 @@
   --theme-swatch-light-bg: #f4f8f0;
   --theme-swatch-light-accent: #1c8416;
   --theme-swatch-light-panel: #ffffff;
+  --background-chat-text-rgb: 244, 250, 242;
+  --background-chat-muted-rgb: 191, 207, 187;
+  --background-chat-surface-rgb: 2, 5, 3;
+  --background-chat-panel-rgb: 5, 10, 6;
+  --background-chat-panel-strong-rgb: 10, 17, 11;
 
   color: var(--text);
   background: var(--app-bg);
@@ -1269,6 +1274,8 @@ textarea {
 }
 
 .chat-home {
+  position: relative;
+  isolation: isolate;
   min-height: 0;
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
@@ -1276,6 +1283,11 @@ textarea {
   justify-items: center;
   gap: 18px;
   padding: 24px;
+}
+
+.chat-home > :not(.model-background-layer) {
+  position: relative;
+  z-index: 1;
 }
 
 .chat-home-inner {
@@ -1890,10 +1902,75 @@ textarea {
 }
 
 .chat-view {
+  position: relative;
+  isolation: isolate;
   min-height: 0;
   overflow: hidden;
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto auto;
+}
+
+.chat-view > :not(.model-background-layer) {
+  position: relative;
+  z-index: 1;
+}
+
+.chat-view-with-background {
+  --text-rgb: var(--background-chat-text-rgb);
+  --muted-rgb: var(--background-chat-muted-rgb);
+  --surface-rgb: var(--background-chat-surface-rgb);
+  --panel-rgb: var(--background-chat-panel-rgb);
+  --panel-strong-rgb: var(--background-chat-panel-strong-rgb);
+}
+
+.model-background-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-position: var(--model-background-landscape-position);
+  background-repeat: var(--model-background-landscape-repeat);
+  background-size: var(--model-background-landscape-size);
+}
+
+.model-background-layer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgb(0 0 0 / var(--model-background-dim));
+}
+
+.chat-view-with-background .message-bubble {
+  background: rgba(var(--panel-rgb), var(--model-background-message-dim));
+  box-shadow: 0 0.5rem 1.5rem rgba(var(--shadow-rgb), 0.24);
+}
+
+.chat-view-with-background .message-bubble-user {
+  background: rgba(var(--panel-rgb), var(--model-background-message-dim));
+  border-color: rgba(var(--accent-rgb), 0.72);
+}
+
+.chat-view-with-background .chat-composer,
+.chat-view-with-background .new-chat-mode {
+  background: rgba(var(--panel-rgb), var(--model-background-message-dim));
+  backdrop-filter: blur(0.35rem);
+}
+
+.chat-view-with-background .chat-mode-note {
+  border: 1px solid rgba(var(--accent-rgb), 0.24);
+  border-radius: 8px;
+  background: rgba(var(--panel-rgb), var(--model-background-message-dim));
+  box-shadow: 0 0.35rem 1rem rgba(var(--shadow-rgb), 0.18);
+  padding: 0.35rem 0.55rem;
+  backdrop-filter: blur(0.35rem);
+}
+
+@media (orientation: portrait) {
+  .model-background-layer {
+    background-position: var(--model-background-portrait-position);
+    background-repeat: var(--model-background-portrait-repeat);
+    background-size: var(--model-background-portrait-size);
+  }
 }
 
 .private-chat-view {
@@ -4026,6 +4103,66 @@ textarea {
   pointer-events: none;
 }
 
+.model-background-button {
+  position: relative;
+  overflow: hidden;
+  width: 2.5rem;
+  min-width: 2.5rem;
+  min-height: 2.5rem;
+  border-color: var(--line-soft);
+  background: transparent;
+  color: var(--muted);
+  padding: 0;
+  box-shadow: none;
+  background-position: center;
+  background-size: cover;
+}
+
+.model-background-button:hover,
+.model-background-button:focus-visible {
+  border-color: var(--line);
+  background: var(--accent-muted);
+  color: var(--accent);
+}
+
+.model-background-button-shade {
+  position: absolute;
+  inset: 0;
+  background: rgba(var(--shadow-rgb), 0.42);
+  pointer-events: none;
+}
+
+.model-background-button svg {
+  position: relative;
+  z-index: 1;
+  width: 1.15rem;
+  height: 1.15rem;
+  color: var(--muted);
+}
+
+.model-background-button-preview svg {
+  color: var(--accent);
+}
+
+.persona-background-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  padding: 0.75rem;
+}
+
+.persona-background-field > div {
+  min-width: 0;
+}
+
+.persona-background-field p {
+  margin: 0.2rem 0 0;
+  color: var(--muted);
+}
+
 .model-row-actions {
   display: inline-flex;
   align-items: center;
@@ -4417,6 +4554,239 @@ textarea {
   margin-top: 1rem;
 }
 
+.model-background-editor-backdrop {
+  overflow-y: auto;
+}
+
+.model-background-editor-dialog {
+  width: min(62rem, 100%);
+  max-height: calc(var(--app-height) - 2rem);
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow:
+    0 0 30px rgba(var(--accent-rgb), 0.16),
+    0 18px 60px rgba(var(--shadow-rgb), 0.7);
+  padding: 1.25rem;
+}
+
+.model-background-editor-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.model-background-editor-header h2 {
+  margin: 0.2rem 0 0;
+}
+
+.model-background-inherited {
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--muted);
+  margin: 0 0 1rem;
+  padding: 0.75rem;
+}
+
+.model-background-editor-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(18rem, 0.65fr);
+  align-items: start;
+  gap: 1.25rem;
+}
+
+.model-background-preview-column,
+.model-background-controls {
+  min-width: 0;
+  display: grid;
+  gap: 0.85rem;
+}
+
+.model-background-orientation,
+.model-background-mode {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0;
+}
+
+.model-background-mode {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.model-background-orientation button,
+.model-background-mode button {
+  min-width: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  box-shadow: none;
+  text-transform: capitalize;
+}
+
+.model-background-orientation button:first-child,
+.model-background-mode button:first-child {
+  border-radius: 8px 0 0 8px;
+}
+
+.model-background-orientation button:last-child,
+.model-background-mode button:last-child {
+  border-radius: 0 8px 8px 0;
+}
+
+.model-background-orientation .segmented-option-active,
+.model-background-mode .segmented-option-active {
+  background: var(--accent-muted);
+  color: var(--accent);
+}
+
+.model-background-preview {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background-color: var(--surface);
+  color: rgb(var(--background-chat-text-rgb));
+  display: grid;
+  align-items: end;
+}
+
+.model-background-preview-landscape {
+  aspect-ratio: 16 / 9;
+}
+
+.model-background-preview-portrait {
+  width: min(22rem, 100%);
+  aspect-ratio: 9 / 16;
+  justify-self: center;
+}
+
+.model-background-preview-dim {
+  position: absolute;
+  inset: 0;
+  background: #000;
+}
+
+.model-background-preview-copy {
+  position: relative;
+  z-index: 1;
+  margin: 1rem;
+  border: 1px solid rgba(var(--accent-rgb), 0.32);
+  border-radius: 8px;
+  padding: 0.85rem;
+}
+
+.model-background-preview-copy span {
+  color: rgb(var(--background-chat-muted-rgb));
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.model-background-preview-copy p {
+  margin: 0.35rem 0 0;
+}
+
+.model-background-file-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.model-background-file-actions .file-button {
+  position: relative;
+  cursor: pointer;
+}
+
+.model-background-file-actions .file-button input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.model-background-controls fieldset {
+  min-width: 0;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  display: grid;
+  gap: 1.1rem;
+  margin: 0;
+  padding: 1rem;
+}
+
+.model-background-controls fieldset:disabled {
+  opacity: 0.56;
+}
+
+.model-background-controls legend {
+  color: var(--accent);
+  font-weight: 800;
+  padding: 0 0.35rem;
+}
+
+.model-background-dim-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.5rem;
+}
+
+.model-background-dim-control output {
+  color: var(--muted);
+}
+
+.model-background-dim-control input {
+  grid-column: 1 / -1;
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.model-background-control-label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-weight: 700;
+}
+
+.model-background-position {
+  width: 8rem;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.35rem;
+}
+
+.model-background-position button {
+  width: 100%;
+  min-width: 0;
+  aspect-ratio: 1;
+  min-height: 0;
+  background: var(--surface);
+  padding: 0;
+  box-shadow: none;
+}
+
+.model-background-position button span {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.model-background-position button.active {
+  border-color: var(--accent);
+  background: var(--accent-muted);
+}
+
+.model-background-position button.active span {
+  background: var(--accent);
+}
+
+.model-background-editor-dialog .dialog-actions {
+  margin-top: 1rem;
+}
+
 .dialog-actions {
   display: flex;
   justify-content: flex-end;
@@ -4582,6 +4952,30 @@ textarea {
   .model-avatar-editor-dialog {
     max-height: calc(var(--app-height) - 1rem);
     padding: 0.85rem;
+  }
+
+  .model-background-editor-dialog {
+    max-height: calc(var(--app-height) - 1rem);
+    padding: 0.85rem;
+  }
+
+  .model-background-editor-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .model-background-mode {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.35rem;
+  }
+
+  .model-background-mode button,
+  .model-background-mode button:first-child,
+  .model-background-mode button:last-child {
+    border-radius: 8px;
+  }
+
+  .model-background-position {
+    width: min(10rem, 100%);
   }
 
   .model-access-row {

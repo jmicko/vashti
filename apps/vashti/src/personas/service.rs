@@ -9,7 +9,10 @@ use crate::{
     error::ApiError,
     persona_avatars,
     personas::{
-        handlers::{CopyPersonaRequest, CreatePersonaRequest, UpdatePersonaRequest},
+        handlers::{
+            CopyPersonaRequest, CreatePersonaRequest, PersonaBackgroundRequest,
+            UpdatePersonaRequest,
+        },
         models::{PersonaResponse, PersonaVersionResponse},
     },
 };
@@ -53,6 +56,17 @@ pub async fn list_personas(
                v.avatar_crop_x,
                v.avatar_crop_y,
                v.avatar_crop_size,
+               v.background_asset_id,
+               v.background_dim,
+               v.background_message_dim,
+               v.background_landscape_mode,
+               v.background_landscape_x,
+               v.background_landscape_y,
+               v.background_landscape_scale,
+               v.background_portrait_mode,
+               v.background_portrait_x,
+               v.background_portrait_y,
+               v.background_portrait_scale,
                v.base_backend_id,
                v.base_model_name,
                v.system_prompt,
@@ -110,6 +124,13 @@ pub async fn create_persona(
     let avatar_crop_x = validate_crop(payload.avatar_crop_x.unwrap_or(50.0))?;
     let avatar_crop_y = validate_crop(payload.avatar_crop_y.unwrap_or(50.0))?;
     let avatar_crop_size = validate_crop_size(payload.avatar_crop_size.unwrap_or(100.0))?;
+    let background = validate_background(payload.background, None)?;
+    persona_avatars::service::ensure_asset_assignable(
+        pool,
+        user_id,
+        background.asset_id.as_deref(),
+    )
+    .await?;
     let now = unix_timestamp();
     let persona_id = Uuid::new_v4().to_string();
     let version_id = Uuid::new_v4().to_string();
@@ -146,6 +167,7 @@ pub async fn create_persona(
             avatar_crop_x,
             avatar_crop_y,
             avatar_crop_size,
+            background: &background,
             base_backend_id: &base_backend_id,
             base_model_name: &base_model_name,
             system_prompt: &system_prompt,
@@ -212,6 +234,21 @@ pub async fn update_persona(
         Some(value) => validate_crop_size(value)?,
         None => current_version.avatar_crop_size,
     };
+    let background_asset_changed = payload
+        .background
+        .as_ref()
+        .and_then(|background| background.asset_changed)
+        .unwrap_or(false);
+    let background = validate_background(
+        payload.background,
+        Some(PersonaBackground::from_version(&current_version)),
+    )?;
+    persona_avatars::service::ensure_asset_assignable(
+        pool,
+        user_id,
+        background.asset_id.as_deref(),
+    )
+    .await?;
     let base_backend_id = match payload.base_backend_id {
         Some(backend_id) => validate_base_backend(pool, &backend_id).await?,
         None => current_version.base_backend_id.clone(),
@@ -248,6 +285,7 @@ pub async fn update_persona(
 
     let has_version_change = display_name != current_version.display_name
         || avatar_asset_id != current_version.avatar_asset_id
+        || (background_asset_changed && background.asset_id != current_version.background_asset_id)
         || base_backend_id != current_version.base_backend_id
         || base_model_name != current_version.base_model_name
         || system_prompt != current_version.system_prompt
@@ -269,6 +307,7 @@ pub async fn update_persona(
                 avatar_crop_x,
                 avatar_crop_y,
                 avatar_crop_size,
+                background: &background,
                 base_backend_id: &base_backend_id,
                 base_model_name: &base_model_name,
                 system_prompt: &system_prompt,
@@ -282,19 +321,42 @@ pub async fn update_persona(
     } else if avatar_crop_x != current_version.avatar_crop_x
         || avatar_crop_y != current_version.avatar_crop_y
         || avatar_crop_size != current_version.avatar_crop_size
+        || background.differs_from(&current_version)
     {
         sqlx::query(
             r#"
             UPDATE persona_versions
             SET avatar_crop_x = ?,
                 avatar_crop_y = ?,
-                avatar_crop_size = ?
+                avatar_crop_size = ?,
+                background_asset_id = ?,
+                background_dim = ?,
+                background_message_dim = ?,
+                background_landscape_mode = ?,
+                background_landscape_x = ?,
+                background_landscape_y = ?,
+                background_landscape_scale = ?,
+                background_portrait_mode = ?,
+                background_portrait_x = ?,
+                background_portrait_y = ?,
+                background_portrait_scale = ?
             WHERE id = ?
             "#,
         )
         .bind(avatar_crop_x)
         .bind(avatar_crop_y)
         .bind(avatar_crop_size)
+        .bind(background.asset_id.as_deref())
+        .bind(background.dim)
+        .bind(background.message_dim)
+        .bind(&background.landscape_mode)
+        .bind(background.landscape_x)
+        .bind(background.landscape_y)
+        .bind(background.landscape_scale)
+        .bind(&background.portrait_mode)
+        .bind(background.portrait_x)
+        .bind(background.portrait_y)
+        .bind(background.portrait_scale)
         .bind(&current.current_version_id)
         .execute(&mut *tx)
         .await?;
@@ -354,6 +416,14 @@ pub async fn copy_persona(
         ),
         None => None,
     };
+    let copied_background_asset_id = match source.background_asset_id.as_deref() {
+        Some(asset_id) => Some(
+            persona_avatars::service::clone_asset_for_owner(pool, avatars_dir, asset_id, user_id)
+                .await?
+                .id,
+        ),
+        None => None,
+    };
     let result = create_persona(
         pool,
         user_id,
@@ -364,6 +434,20 @@ pub async fn copy_persona(
             avatar_crop_x: Some(source.avatar_crop_x),
             avatar_crop_y: Some(source.avatar_crop_y),
             avatar_crop_size: Some(source.avatar_crop_size),
+            background: Some(PersonaBackgroundRequest {
+                asset_id: copied_background_asset_id.clone(),
+                asset_changed: Some(true),
+                dim: source.background_dim,
+                message_dim: source.background_message_dim,
+                landscape_mode: source.background_landscape_mode,
+                landscape_x: source.background_landscape_x,
+                landscape_y: source.background_landscape_y,
+                landscape_scale: source.background_landscape_scale,
+                portrait_mode: source.background_portrait_mode,
+                portrait_x: source.background_portrait_x,
+                portrait_y: source.background_portrait_y,
+                portrait_scale: source.background_portrait_scale,
+            }),
             base_backend_id: source.base_backend_id,
             base_model_name: source.base_model_name,
             system_prompt: source.system_prompt,
@@ -374,6 +458,13 @@ pub async fn copy_persona(
 
     if result.is_err()
         && let Some(asset_id) = copied_avatar_asset_id
+    {
+        let _ =
+            persona_avatars::service::delete_unused_asset(pool, avatars_dir, user_id, &asset_id)
+                .await;
+    }
+    if result.is_err()
+        && let Some(asset_id) = copied_background_asset_id
     {
         let _ =
             persona_avatars::service::delete_unused_asset(pool, avatars_dir, user_id, &asset_id)
@@ -451,6 +542,17 @@ pub async fn list_versions(
                avatar_crop_x,
                avatar_crop_y,
                avatar_crop_size,
+               background_asset_id,
+               background_dim,
+               background_message_dim,
+               background_landscape_mode,
+               background_landscape_x,
+               background_landscape_y,
+               background_landscape_scale,
+               background_portrait_mode,
+               background_portrait_x,
+               background_portrait_y,
+               background_portrait_scale,
                base_backend_id,
                base_model_name,
                system_prompt,
@@ -569,12 +671,28 @@ struct InsertPersonaVersion<'a> {
     avatar_crop_x: f64,
     avatar_crop_y: f64,
     avatar_crop_size: f64,
+    background: &'a PersonaBackground,
     base_backend_id: &'a str,
     base_model_name: &'a str,
     system_prompt: &'a str,
     tool_policy_json: Option<&'a str>,
     created_by_user_id: Option<&'a str>,
     now: i64,
+}
+
+#[derive(Clone, Debug)]
+struct PersonaBackground {
+    asset_id: Option<String>,
+    dim: f64,
+    message_dim: f64,
+    landscape_mode: String,
+    landscape_x: f64,
+    landscape_y: f64,
+    landscape_scale: f64,
+    portrait_mode: String,
+    portrait_x: f64,
+    portrait_y: f64,
+    portrait_scale: f64,
 }
 
 async fn insert_persona_version(
@@ -592,6 +710,17 @@ async fn insert_persona_version(
             avatar_crop_x,
             avatar_crop_y,
             avatar_crop_size,
+            background_asset_id,
+            background_dim,
+            background_message_dim,
+            background_landscape_mode,
+            background_landscape_x,
+            background_landscape_y,
+            background_landscape_scale,
+            background_portrait_mode,
+            background_portrait_x,
+            background_portrait_y,
+            background_portrait_scale,
             base_backend_id,
             base_model_name,
             system_prompt,
@@ -599,7 +728,7 @@ async fn insert_persona_version(
             created_by_user_id,
             created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
     )
     .bind(params.version_id)
@@ -610,6 +739,17 @@ async fn insert_persona_version(
     .bind(params.avatar_crop_x)
     .bind(params.avatar_crop_y)
     .bind(params.avatar_crop_size)
+    .bind(params.background.asset_id.as_deref())
+    .bind(params.background.dim)
+    .bind(params.background.message_dim)
+    .bind(&params.background.landscape_mode)
+    .bind(params.background.landscape_x)
+    .bind(params.background.landscape_y)
+    .bind(params.background.landscape_scale)
+    .bind(&params.background.portrait_mode)
+    .bind(params.background.portrait_x)
+    .bind(params.background.portrait_y)
+    .bind(params.background.portrait_scale)
     .bind(params.base_backend_id)
     .bind(params.base_model_name)
     .bind(params.system_prompt)
@@ -709,6 +849,17 @@ async fn get_visible_persona(
                v.avatar_crop_x,
                v.avatar_crop_y,
                v.avatar_crop_size,
+               v.background_asset_id,
+               v.background_dim,
+               v.background_message_dim,
+               v.background_landscape_mode,
+               v.background_landscape_x,
+               v.background_landscape_y,
+               v.background_landscape_scale,
+               v.background_portrait_mode,
+               v.background_portrait_x,
+               v.background_portrait_y,
+               v.background_portrait_scale,
                v.base_backend_id,
                v.base_model_name,
                v.system_prompt,
@@ -833,6 +984,17 @@ async fn get_version(
                avatar_crop_x,
                avatar_crop_y,
                avatar_crop_size,
+               background_asset_id,
+               background_dim,
+               background_message_dim,
+               background_landscape_mode,
+               background_landscape_x,
+               background_landscape_y,
+               background_landscape_scale,
+               background_portrait_mode,
+               background_portrait_x,
+               background_portrait_y,
+               background_portrait_scale,
                base_backend_id,
                base_model_name,
                system_prompt,
@@ -1003,6 +1165,123 @@ fn validate_crop_size(value: f64) -> Result<f64, ApiError> {
     Ok(value)
 }
 
+impl PersonaBackground {
+    fn from_version(version: &PersonaVersionResponse) -> Self {
+        Self {
+            asset_id: version.background_asset_id.clone(),
+            dim: version.background_dim,
+            message_dim: version.background_message_dim,
+            landscape_mode: version.background_landscape_mode.clone(),
+            landscape_x: version.background_landscape_x,
+            landscape_y: version.background_landscape_y,
+            landscape_scale: version.background_landscape_scale,
+            portrait_mode: version.background_portrait_mode.clone(),
+            portrait_x: version.background_portrait_x,
+            portrait_y: version.background_portrait_y,
+            portrait_scale: version.background_portrait_scale,
+        }
+    }
+
+    fn differs_from(&self, version: &PersonaVersionResponse) -> bool {
+        self.asset_id != version.background_asset_id
+            || self.dim != version.background_dim
+            || self.message_dim != version.background_message_dim
+            || self.landscape_mode != version.background_landscape_mode
+            || self.landscape_x != version.background_landscape_x
+            || self.landscape_y != version.background_landscape_y
+            || self.landscape_scale != version.background_landscape_scale
+            || self.portrait_mode != version.background_portrait_mode
+            || self.portrait_x != version.background_portrait_x
+            || self.portrait_y != version.background_portrait_y
+            || self.portrait_scale != version.background_portrait_scale
+    }
+}
+
+fn validate_background(
+    payload: Option<PersonaBackgroundRequest>,
+    current: Option<PersonaBackground>,
+) -> Result<PersonaBackground, ApiError> {
+    let Some(payload) = payload else {
+        return Ok(current.unwrap_or(PersonaBackground {
+            asset_id: None,
+            dim: 0.72,
+            message_dim: 0.82,
+            landscape_mode: "fill".to_string(),
+            landscape_x: 50.0,
+            landscape_y: 50.0,
+            landscape_scale: 35.0,
+            portrait_mode: "fill".to_string(),
+            portrait_x: 50.0,
+            portrait_y: 50.0,
+            portrait_scale: 35.0,
+        }));
+    };
+
+    let asset_id = if payload.asset_changed.unwrap_or(current.is_none()) {
+        normalize_optional(payload.asset_id)
+    } else {
+        current
+            .as_ref()
+            .and_then(|background| background.asset_id.clone())
+    };
+    let validate_unit = |value: f64, code: &'static str, label: &'static str| {
+        if value.is_finite() && (0.0..=0.98).contains(&value) {
+            Ok(value)
+        } else {
+            Err(ApiError::bad_request(code, label))
+        }
+    };
+    let validate_position = |value: f64| {
+        if value.is_finite() && (0.0..=100.0).contains(&value) {
+            Ok(value)
+        } else {
+            Err(ApiError::bad_request(
+                "invalid_background_position",
+                "Background placement must be between 0 and 100",
+            ))
+        }
+    };
+    let validate_scale = |value: f64| {
+        if value.is_finite() && (10.0..=100.0).contains(&value) {
+            Ok(value)
+        } else {
+            Err(ApiError::bad_request(
+                "invalid_background_scale",
+                "Background tile size must be between 10 and 100",
+            ))
+        }
+    };
+    let validate_mode = |value: String| match value.as_str() {
+        "fill" | "fit" | "stretch" | "tile" => Ok(value),
+        _ => Err(ApiError::bad_request(
+            "invalid_background_mode",
+            "Background mode must be fill, fit, stretch, or tile",
+        )),
+    };
+
+    Ok(PersonaBackground {
+        asset_id,
+        dim: validate_unit(
+            payload.dim,
+            "invalid_background_dim",
+            "Background dimming must be between 0 and 0.98",
+        )?,
+        message_dim: validate_unit(
+            payload.message_dim,
+            "invalid_background_message_dim",
+            "Message backing dimming must be between 0 and 0.98",
+        )?,
+        landscape_mode: validate_mode(payload.landscape_mode)?,
+        landscape_x: validate_position(payload.landscape_x)?,
+        landscape_y: validate_position(payload.landscape_y)?,
+        landscape_scale: validate_scale(payload.landscape_scale)?,
+        portrait_mode: validate_mode(payload.portrait_mode)?,
+        portrait_x: validate_position(payload.portrait_x)?,
+        portrait_y: validate_position(payload.portrait_y)?,
+        portrait_scale: validate_scale(payload.portrait_scale)?,
+    })
+}
+
 fn row_to_persona(row: sqlx::sqlite::SqliteRow) -> Result<PersonaResponse, sqlx::Error> {
     Ok(PersonaResponse {
         id: row.try_get("id")?,
@@ -1019,6 +1298,17 @@ fn row_to_persona(row: sqlx::sqlite::SqliteRow) -> Result<PersonaResponse, sqlx:
             avatar_crop_x: row.try_get("avatar_crop_x")?,
             avatar_crop_y: row.try_get("avatar_crop_y")?,
             avatar_crop_size: row.try_get("avatar_crop_size")?,
+            background_asset_id: row.try_get("background_asset_id")?,
+            background_dim: row.try_get("background_dim")?,
+            background_message_dim: row.try_get("background_message_dim")?,
+            background_landscape_mode: row.try_get("background_landscape_mode")?,
+            background_landscape_x: row.try_get("background_landscape_x")?,
+            background_landscape_y: row.try_get("background_landscape_y")?,
+            background_landscape_scale: row.try_get("background_landscape_scale")?,
+            background_portrait_mode: row.try_get("background_portrait_mode")?,
+            background_portrait_x: row.try_get("background_portrait_x")?,
+            background_portrait_y: row.try_get("background_portrait_y")?,
+            background_portrait_scale: row.try_get("background_portrait_scale")?,
             base_backend_id: row.try_get("base_backend_id")?,
             base_model_name: row.try_get("base_model_name")?,
             system_prompt: row.try_get("system_prompt")?,
@@ -1043,6 +1333,17 @@ fn row_to_version(row: sqlx::sqlite::SqliteRow) -> Result<PersonaVersionResponse
         avatar_crop_x: row.try_get("avatar_crop_x")?,
         avatar_crop_y: row.try_get("avatar_crop_y")?,
         avatar_crop_size: row.try_get("avatar_crop_size")?,
+        background_asset_id: row.try_get("background_asset_id")?,
+        background_dim: row.try_get("background_dim")?,
+        background_message_dim: row.try_get("background_message_dim")?,
+        background_landscape_mode: row.try_get("background_landscape_mode")?,
+        background_landscape_x: row.try_get("background_landscape_x")?,
+        background_landscape_y: row.try_get("background_landscape_y")?,
+        background_landscape_scale: row.try_get("background_landscape_scale")?,
+        background_portrait_mode: row.try_get("background_portrait_mode")?,
+        background_portrait_x: row.try_get("background_portrait_x")?,
+        background_portrait_y: row.try_get("background_portrait_y")?,
+        background_portrait_scale: row.try_get("background_portrait_scale")?,
         base_backend_id: row.try_get("base_backend_id")?,
         base_model_name: row.try_get("base_model_name")?,
         system_prompt: row.try_get("system_prompt")?,
@@ -1112,6 +1413,7 @@ mod tests {
                 avatar_crop_x: None,
                 avatar_crop_y: None,
                 avatar_crop_size: None,
+                background: None,
                 base_backend_id: backend_id.clone(),
                 base_model_name: "gemma4:e2b".to_string(),
                 system_prompt: "Answer carefully.".to_string(),
@@ -1136,6 +1438,7 @@ mod tests {
                 avatar_crop_x: None,
                 avatar_crop_y: None,
                 avatar_crop_size: None,
+                background: None,
                 base_backend_id: Some(backend_id),
                 base_model_name: Some("gemma4:e2b".to_string()),
                 system_prompt: Some("Answer carefully and cite uncertainty.".to_string()),
@@ -1202,6 +1505,7 @@ mod tests {
                 avatar_crop_x: Some(35.0),
                 avatar_crop_y: Some(65.0),
                 avatar_crop_size: Some(70.0),
+                background: None,
                 base_backend_id: backend_id,
                 base_model_name: "gemma4:e2b".to_string(),
                 system_prompt: "Be helpful.".to_string(),
@@ -1309,6 +1613,7 @@ mod tests {
                 avatar_crop_x: None,
                 avatar_crop_y: None,
                 avatar_crop_size: None,
+                background: None,
                 base_backend_id: backend_id.clone(),
                 base_model_name: "gemma4:e2b".to_string(),
                 system_prompt: "Be helpful.".to_string(),
@@ -1330,6 +1635,7 @@ mod tests {
                 avatar_crop_x: Some(40.0),
                 avatar_crop_y: Some(60.0),
                 avatar_crop_size: Some(80.0),
+                background: None,
                 base_backend_id: None,
                 base_model_name: None,
                 system_prompt: None,
@@ -1356,6 +1662,7 @@ mod tests {
                 avatar_crop_x: Some(25.0),
                 avatar_crop_y: Some(75.0),
                 avatar_crop_size: Some(45.0),
+                background: None,
                 base_backend_id: None,
                 base_model_name: None,
                 system_prompt: None,
@@ -1370,12 +1677,97 @@ mod tests {
         assert_eq!(recropped.current_version.avatar_crop_x, 25.0);
         assert_eq!(recropped.current_version.avatar_crop_y, 75.0);
         assert_eq!(recropped.current_version.avatar_crop_size, 45.0);
+
+        let with_background = update_persona(
+            &pool,
+            &user.id,
+            &persona.id,
+            UpdatePersonaRequest {
+                visibility: None,
+                display_name: None,
+                avatar_asset_id: None,
+                avatar_asset_changed: Some(false),
+                avatar_crop_x: None,
+                avatar_crop_y: None,
+                avatar_crop_size: None,
+                background: Some(PersonaBackgroundRequest {
+                    asset_id: Some(asset_id.clone()),
+                    asset_changed: Some(true),
+                    dim: 0.6,
+                    message_dim: 0.75,
+                    landscape_mode: "tile".to_string(),
+                    landscape_x: 50.0,
+                    landscape_y: 50.0,
+                    landscape_scale: 30.0,
+                    portrait_mode: "fill".to_string(),
+                    portrait_x: 40.0,
+                    portrait_y: 60.0,
+                    portrait_scale: 35.0,
+                }),
+                base_backend_id: None,
+                base_model_name: None,
+                system_prompt: None,
+                tool_policy_json: None,
+            },
+        )
+        .await
+        .expect("assign background");
+        assert_eq!(with_background.current_version.version_number, 3);
+        assert_eq!(
+            with_background
+                .current_version
+                .background_asset_id
+                .as_deref(),
+            Some(asset_id.as_str())
+        );
+
+        let retuned = update_persona(
+            &pool,
+            &user.id,
+            &persona.id,
+            UpdatePersonaRequest {
+                visibility: None,
+                display_name: None,
+                avatar_asset_id: None,
+                avatar_asset_changed: Some(false),
+                avatar_crop_x: None,
+                avatar_crop_y: None,
+                avatar_crop_size: None,
+                background: Some(PersonaBackgroundRequest {
+                    asset_id: None,
+                    asset_changed: Some(false),
+                    dim: 0.7,
+                    message_dim: 0.88,
+                    landscape_mode: "tile".to_string(),
+                    landscape_x: 25.0,
+                    landscape_y: 75.0,
+                    landscape_scale: 55.0,
+                    portrait_mode: "fit".to_string(),
+                    portrait_x: 50.0,
+                    portrait_y: 50.0,
+                    portrait_scale: 35.0,
+                }),
+                base_backend_id: None,
+                base_model_name: None,
+                system_prompt: None,
+                tool_policy_json: None,
+            },
+        )
+        .await
+        .expect("retune background");
+        assert_eq!(
+            retuned.current_version.id,
+            with_background.current_version.id
+        );
+        assert_eq!(retuned.current_version.version_number, 3);
+        assert_eq!(retuned.current_version.background_landscape_scale, 55.0);
+        assert_eq!(retuned.current_version.background_message_dim, 0.88);
         assert_eq!(
             list_versions(&pool, &user.id, &persona.id)
                 .await
                 .expect("list versions")
                 .len(),
-            2
+            3
         );
     }
 }

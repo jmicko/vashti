@@ -23,6 +23,11 @@ import {
 import { ConfirmDialog, RetroLoader } from "./common";
 import { takeCustomModelDraft, type CustomModelDraft } from "./customModelDraft";
 import { ModelAvatar } from "./ModelAvatar";
+import { ModelBackgroundButton } from "./ModelBackground";
+import {
+  ModelBackgroundEditorDialog,
+  type ModelBackgroundEdit
+} from "./ModelBackgroundEditorDialog";
 import { modelParts, modelValue } from "./modelSelection";
 import { PersonaAvatarField } from "./PersonaAvatarField";
 import {
@@ -40,8 +45,10 @@ import type {
   BackendModelGroup,
   ModelsResponse,
   Persona,
+  PersonaVersion,
   PersonaMutationResponse,
-  PersonasResponse
+  PersonasResponse,
+  ModelBackgroundMode
 } from "./types";
 
 export function CustomModelsSection({
@@ -72,6 +79,33 @@ export function CustomModelsSection({
   const [avatarCropX, setAvatarCropX] = useState(50);
   const [avatarCropY, setAvatarCropY] = useState(50);
   const [avatarCropSize, setAvatarCropSize] = useState(100);
+  const [backgroundAssetId, setBackgroundAssetId] = useState<string | null>(null);
+  const [backgroundFile, setBackgroundFile] = useState<File | null>(null);
+  const [backgroundDim, setBackgroundDim] = useState(0.72);
+  const [backgroundMessageDim, setBackgroundMessageDim] = useState(0.82);
+  const [backgroundLandscape, setBackgroundLandscape] = useState<{
+    mode: ModelBackgroundMode;
+    x: number;
+    y: number;
+    scale: number;
+  }>({
+    mode: "fill",
+    x: 50,
+    y: 50,
+    scale: 35
+  });
+  const [backgroundPortrait, setBackgroundPortrait] = useState<{
+    mode: ModelBackgroundMode;
+    x: number;
+    y: number;
+    scale: number;
+  }>({
+    mode: "fill",
+    x: 50,
+    y: 50,
+    scale: 35
+  });
+  const [isBackgroundEditorOpen, setIsBackgroundEditorOpen] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -102,6 +136,36 @@ export function CustomModelsSection({
     void loadPersonas();
   }, [loadPersonas]);
 
+  function resetBackground() {
+    setBackgroundAssetId(null);
+    setBackgroundFile(null);
+    setBackgroundDim(0.72);
+    setBackgroundMessageDim(0.82);
+    setBackgroundLandscape({ mode: "fill", x: 50, y: 50, scale: 35 });
+    setBackgroundPortrait({ mode: "fill", x: 50, y: 50, scale: 35 });
+    setIsBackgroundEditorOpen(false);
+  }
+
+  function loadBackground(version: PersonaVersion | PrivatePersona["current_version"]) {
+    setBackgroundAssetId(version.background_asset_id ?? null);
+    setBackgroundFile(null);
+    setBackgroundDim(version.background_dim ?? 0.72);
+    setBackgroundMessageDim(version.background_message_dim ?? 0.82);
+    setBackgroundLandscape({
+      mode: (version.background_landscape_mode ?? "fill") as ModelBackgroundMode,
+      x: version.background_landscape_x ?? 50,
+      y: version.background_landscape_y ?? 50,
+      scale: version.background_landscape_scale ?? 35
+    });
+    setBackgroundPortrait({
+      mode: (version.background_portrait_mode ?? "fill") as ModelBackgroundMode,
+      x: version.background_portrait_x ?? 50,
+      y: version.background_portrait_y ?? 50,
+      scale: version.background_portrait_scale ?? 35
+    });
+    setIsBackgroundEditorOpen(false);
+  }
+
   function resetDraft() {
     setIsEditorOpen(false);
     setEditingPersona(null);
@@ -114,6 +178,7 @@ export function CustomModelsSection({
     setAvatarCropX(50);
     setAvatarCropY(50);
     setAvatarCropSize(100);
+    resetBackground();
     setSelectedBaseModel(firstModelValue(modelGroups));
     setError(null);
     setStatus(null);
@@ -135,6 +200,7 @@ export function CustomModelsSection({
     setAvatarCropX(50);
     setAvatarCropY(50);
     setAvatarCropSize(100);
+    resetBackground();
     setError(null);
     setStatus(null);
     setIsEditorOpen(true);
@@ -165,6 +231,7 @@ export function CustomModelsSection({
     setAvatarCropX(version.avatar_crop_x ?? 50);
     setAvatarCropY(version.avatar_crop_y ?? 50);
     setAvatarCropSize(version.avatar_crop_size ?? 100);
+    loadBackground(version);
     setError(null);
     setStatus(null);
   }
@@ -183,6 +250,7 @@ export function CustomModelsSection({
     setAvatarCropX(version.avatar_crop_x ?? 50);
     setAvatarCropY(version.avatar_crop_y ?? 50);
     setAvatarCropSize(version.avatar_crop_size ?? 100);
+    loadBackground(version);
     setError(null);
     setStatus(null);
   }
@@ -200,6 +268,7 @@ export function CustomModelsSection({
     setStatus(null);
 
     let uploadedAssetId: string | null = null;
+    let uploadedBackgroundAssetId: string | null = null;
     try {
       const backendName = backendNameFor(modelGroups, selected.backendId);
       let nextAvatarAssetId = avatarAssetId;
@@ -221,6 +290,30 @@ export function CustomModelsSection({
           uploadedAssetId = asset.id;
         }
       }
+      let nextBackgroundAssetId = backgroundAssetId;
+      let backgroundUploadFile = backgroundFile;
+      if (!backgroundUploadFile && backgroundAssetId && storageMode === "local" && editingPersona) {
+        backgroundUploadFile = await hostedPersonaAvatarFile(backgroundAssetId);
+      }
+      if (
+        !backgroundUploadFile &&
+        backgroundAssetId &&
+        storageMode !== "local" &&
+        editingPrivatePersona
+      ) {
+        backgroundUploadFile = await privatePersonaAvatarFile(backgroundAssetId);
+      }
+      if (backgroundUploadFile) {
+        if (storageMode === "local") {
+          const asset = await savePrivatePersonaAvatar(backgroundUploadFile);
+          nextBackgroundAssetId = asset.id;
+          uploadedBackgroundAssetId = asset.id;
+        } else {
+          const asset = await uploadHostedPersonaAvatar(backgroundUploadFile);
+          nextBackgroundAssetId = asset.id;
+          uploadedBackgroundAssetId = asset.id;
+        }
+      }
 
       if (storageMode === "local") {
         const body = {
@@ -232,7 +325,18 @@ export function CustomModelsSection({
           avatarAssetId: nextAvatarAssetId,
           avatarCropX,
           avatarCropY,
-          avatarCropSize
+          avatarCropSize,
+          backgroundAssetId: nextBackgroundAssetId,
+          backgroundDim,
+          backgroundMessageDim,
+          backgroundLandscapeMode: backgroundLandscape.mode,
+          backgroundLandscapeX: backgroundLandscape.x,
+          backgroundLandscapeY: backgroundLandscape.y,
+          backgroundLandscapeScale: backgroundLandscape.scale,
+          backgroundPortraitMode: backgroundPortrait.mode,
+          backgroundPortraitX: backgroundPortrait.x,
+          backgroundPortraitY: backgroundPortrait.y,
+          backgroundPortraitScale: backgroundPortrait.scale
         };
         if (editingPrivatePersona) {
           await updatePrivatePersona(editingPrivatePersona.id, body);
@@ -257,6 +361,23 @@ export function CustomModelsSection({
         avatar_crop_x: avatarCropX,
         avatar_crop_y: avatarCropY,
         avatar_crop_size: avatarCropSize,
+        background: {
+          asset_id: nextBackgroundAssetId,
+          asset_changed: editingPersona
+            ? nextBackgroundAssetId !==
+              (editingPersona.current_version.background_asset_id ?? null)
+            : true,
+          dim: backgroundDim,
+          message_dim: backgroundMessageDim,
+          landscape_mode: backgroundLandscape.mode,
+          landscape_x: backgroundLandscape.x,
+          landscape_y: backgroundLandscape.y,
+          landscape_scale: backgroundLandscape.scale,
+          portrait_mode: backgroundPortrait.mode,
+          portrait_x: backgroundPortrait.x,
+          portrait_y: backgroundPortrait.y,
+          portrait_scale: backgroundPortrait.scale
+        },
         base_backend_id: selected.backendId,
         base_model_name: selected.modelName,
         system_prompt: systemPrompt,
@@ -284,6 +405,13 @@ export function CustomModelsSection({
           await deleteUnusedPrivatePersonaAvatar(uploadedAssetId).catch(() => undefined);
         } else {
           await deleteHostedPersonaAvatar(uploadedAssetId).catch(() => undefined);
+        }
+      }
+      if (uploadedBackgroundAssetId) {
+        if (storageMode === "local") {
+          await deleteUnusedPrivatePersonaAvatar(uploadedBackgroundAssetId).catch(() => undefined);
+        } else {
+          await deleteHostedPersonaAvatar(uploadedBackgroundAssetId).catch(() => undefined);
         }
       }
       setError(saveError instanceof Error ? saveError.message : "Failed to save custom model");
@@ -322,6 +450,7 @@ export function CustomModelsSection({
     setStatus(null);
 
     let uploadedAvatarAssetId: string | null = null;
+    let uploadedBackgroundAssetId: string | null = null;
     try {
       let avatarAssetId: string | null = null;
       if (version.avatar_asset_id) {
@@ -337,6 +466,18 @@ export function CustomModelsSection({
         avatarAssetId = (await savePrivatePersonaAvatar(file)).id;
         uploadedAvatarAssetId = avatarAssetId;
       }
+      let backgroundAssetId: string | null = null;
+      if (version.background_asset_id) {
+        const response = await fetch(
+          `/api/persona-avatars/${encodeURIComponent(version.background_asset_id)}`,
+          { credentials: "include" }
+        );
+        if (!response.ok) throw new Error(await responseErrorMessage(response));
+        const blob = await response.blob();
+        const file = new File([blob], "chat-background", { type: blob.type });
+        backgroundAssetId = (await savePrivatePersonaAvatar(file)).id;
+        uploadedBackgroundAssetId = backgroundAssetId;
+      }
       await createPrivatePersona({
         displayName: version.display_name,
         baseBackendId: version.base_backend_id,
@@ -347,6 +488,17 @@ export function CustomModelsSection({
         avatarCropX: version.avatar_crop_x,
         avatarCropY: version.avatar_crop_y,
         avatarCropSize: version.avatar_crop_size,
+        backgroundAssetId,
+        backgroundDim: version.background_dim,
+        backgroundMessageDim: version.background_message_dim,
+        backgroundLandscapeMode: version.background_landscape_mode,
+        backgroundLandscapeX: version.background_landscape_x,
+        backgroundLandscapeY: version.background_landscape_y,
+        backgroundLandscapeScale: version.background_landscape_scale,
+        backgroundPortraitMode: version.background_portrait_mode,
+        backgroundPortraitX: version.background_portrait_x,
+        backgroundPortraitY: version.background_portrait_y,
+        backgroundPortraitScale: version.background_portrait_scale,
         sourcePersonaId: persona.id,
         sourcePersonaVersionId: version.id
       });
@@ -356,6 +508,9 @@ export function CustomModelsSection({
     } catch (copyError) {
       if (uploadedAvatarAssetId) {
         await deleteUnusedPrivatePersonaAvatar(uploadedAvatarAssetId).catch(() => undefined);
+      }
+      if (uploadedBackgroundAssetId) {
+        await deleteUnusedPrivatePersonaAvatar(uploadedBackgroundAssetId).catch(() => undefined);
       }
       setError(copyError instanceof Error ? copyError.message : "Failed to copy persona to device");
     } finally {
@@ -536,6 +691,19 @@ export function CustomModelsSection({
               setAvatarCropSize(cropSize);
             }}
           />
+          <div className="persona-background-field">
+            <div>
+              <span>Chat Background</span>
+              <p>Shown behind conversations that use this custom model.</p>
+            </div>
+            <ModelBackgroundButton
+              assetId={storageMode === "local" ? null : backgroundAssetId}
+              privateAssetId={storageMode === "local" ? backgroundAssetId : null}
+              previewFile={backgroundFile}
+              label="Change custom model chat background"
+              onClick={() => setIsBackgroundEditorOpen(true)}
+            />
+          </div>
           <label>
             <span>System Prompt</span>
             <textarea
@@ -629,6 +797,29 @@ export function CustomModelsSection({
           isBusy={busyPersonaId === deletePrivateTarget.id}
           onCancel={() => setDeletePrivateTarget(null)}
           onConfirm={() => void deletePrivatePersonaTarget(deletePrivateTarget)}
+        />
+      )}
+      {isBackgroundEditorOpen && (
+        <ModelBackgroundEditorDialog
+          title={`Background for ${displayName.trim() || "custom model"}`}
+          assetId={storageMode === "local" ? null : backgroundAssetId}
+          privateAssetId={storageMode === "local" ? backgroundAssetId : null}
+          dim={backgroundDim}
+          messageDim={backgroundMessageDim}
+          landscape={backgroundLandscape}
+          portrait={backgroundPortrait}
+          isBusy={false}
+          error={null}
+          onCancel={() => setIsBackgroundEditorOpen(false)}
+          onSave={(edit: ModelBackgroundEdit) => {
+            setBackgroundAssetId(edit.assetId);
+            setBackgroundFile(edit.file);
+            setBackgroundDim(edit.dim);
+            setBackgroundMessageDim(edit.messageDim);
+            setBackgroundLandscape(edit.landscape);
+            setBackgroundPortrait(edit.portrait);
+            setIsBackgroundEditorOpen(false);
+          }}
         />
       )}
     </section>

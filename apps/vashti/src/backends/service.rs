@@ -54,6 +54,17 @@ pub struct UserModelPreferenceResponse {
     pub avatar_crop_x: f64,
     pub avatar_crop_y: f64,
     pub avatar_crop_size: f64,
+    pub background_asset_id: Option<String>,
+    pub background_dim: f64,
+    pub background_message_dim: f64,
+    pub background_landscape_mode: String,
+    pub background_landscape_x: f64,
+    pub background_landscape_y: f64,
+    pub background_landscape_scale: f64,
+    pub background_portrait_mode: String,
+    pub background_portrait_x: f64,
+    pub background_portrait_y: f64,
+    pub background_portrait_scale: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -62,6 +73,7 @@ pub struct UserModelPreference {
     pub is_favorite: bool,
     pub is_default: bool,
     pub avatar: ModelAvatarReference,
+    pub background: ModelBackgroundReference,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -77,6 +89,35 @@ pub struct UpdateModelAvatarParams {
     pub avatar_crop_x: f64,
     pub avatar_crop_y: f64,
     pub avatar_crop_size: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ModelBackgroundReference {
+    pub background_asset_id: Option<String>,
+    pub background_dim: f64,
+    pub background_message_dim: f64,
+    pub background_landscape_mode: String,
+    pub background_landscape_x: f64,
+    pub background_landscape_y: f64,
+    pub background_landscape_scale: f64,
+    pub background_portrait_mode: String,
+    pub background_portrait_x: f64,
+    pub background_portrait_y: f64,
+    pub background_portrait_scale: f64,
+}
+
+pub struct UpdateModelBackgroundParams {
+    pub background_asset_id: Option<String>,
+    pub background_dim: f64,
+    pub background_message_dim: f64,
+    pub background_landscape_mode: String,
+    pub background_landscape_x: f64,
+    pub background_landscape_y: f64,
+    pub background_landscape_scale: f64,
+    pub background_portrait_mode: String,
+    pub background_portrait_x: f64,
+    pub background_portrait_y: f64,
+    pub background_portrait_scale: f64,
 }
 
 pub struct UpdateUserModelPreferenceParams {
@@ -399,6 +440,54 @@ pub async fn model_avatar_defaults_by_backend(
         .collect()
 }
 
+pub async fn model_background_defaults_by_backend(
+    pool: &SqlitePool,
+    backend_id: &str,
+) -> Result<HashMap<String, ModelBackgroundReference>, sqlx::Error> {
+    let rows = sqlx::query(
+        r#"
+        SELECT model_name,
+               background_asset_id,
+               background_dim,
+               background_message_dim,
+               background_landscape_mode,
+               background_landscape_x,
+               background_landscape_y,
+               background_landscape_scale,
+               background_portrait_mode,
+               background_portrait_x,
+               background_portrait_y,
+               background_portrait_scale
+        FROM model_availability
+        WHERE backend_id = ?
+        "#,
+    )
+    .bind(backend_id)
+    .fetch_all(pool)
+    .await?;
+
+    rows.into_iter()
+        .map(|row| {
+            Ok((
+                row.try_get("model_name")?,
+                ModelBackgroundReference {
+                    background_asset_id: row.try_get("background_asset_id")?,
+                    background_dim: row.try_get("background_dim")?,
+                    background_message_dim: row.try_get("background_message_dim")?,
+                    background_landscape_mode: row.try_get("background_landscape_mode")?,
+                    background_landscape_x: row.try_get("background_landscape_x")?,
+                    background_landscape_y: row.try_get("background_landscape_y")?,
+                    background_landscape_scale: row.try_get("background_landscape_scale")?,
+                    background_portrait_mode: row.try_get("background_portrait_mode")?,
+                    background_portrait_x: row.try_get("background_portrait_x")?,
+                    background_portrait_y: row.try_get("background_portrait_y")?,
+                    background_portrait_scale: row.try_get("background_portrait_scale")?,
+                },
+            ))
+        })
+        .collect()
+}
+
 pub async fn user_model_preferences_by_backend(
     pool: &SqlitePool,
     user_id: &str,
@@ -413,7 +502,18 @@ pub async fn user_model_preferences_by_backend(
                avatar_asset_id,
                avatar_crop_x,
                avatar_crop_y,
-               avatar_crop_size
+               avatar_crop_size,
+               background_asset_id,
+               background_dim,
+               background_message_dim,
+               background_landscape_mode,
+               background_landscape_x,
+               background_landscape_y,
+               background_landscape_scale,
+               background_portrait_mode,
+               background_portrait_x,
+               background_portrait_y,
+               background_portrait_scale
         FROM user_model_preferences
         WHERE user_id = ?
           AND backend_id = ?
@@ -437,6 +537,19 @@ pub async fn user_model_preferences_by_backend(
                         avatar_crop_x: row.try_get("avatar_crop_x")?,
                         avatar_crop_y: row.try_get("avatar_crop_y")?,
                         avatar_crop_size: row.try_get("avatar_crop_size")?,
+                    },
+                    background: ModelBackgroundReference {
+                        background_asset_id: row.try_get("background_asset_id")?,
+                        background_dim: row.try_get("background_dim")?,
+                        background_message_dim: row.try_get("background_message_dim")?,
+                        background_landscape_mode: row.try_get("background_landscape_mode")?,
+                        background_landscape_x: row.try_get("background_landscape_x")?,
+                        background_landscape_y: row.try_get("background_landscape_y")?,
+                        background_landscape_scale: row.try_get("background_landscape_scale")?,
+                        background_portrait_mode: row.try_get("background_portrait_mode")?,
+                        background_portrait_x: row.try_get("background_portrait_x")?,
+                        background_portrait_y: row.try_get("background_portrait_y")?,
+                        background_portrait_scale: row.try_get("background_portrait_scale")?,
                     },
                 },
             ))
@@ -553,6 +666,159 @@ pub async fn set_user_model_avatar(
     .await?;
 
     Ok(avatar)
+}
+
+pub async fn set_default_model_background(
+    pool: &SqlitePool,
+    user_id: &str,
+    backend_id: &str,
+    model_name: &str,
+    params: UpdateModelBackgroundParams,
+) -> Result<ModelBackgroundReference, ApiError> {
+    ensure_backend_exists(pool, backend_id).await?;
+    let model_name = validate_model_name(model_name)?;
+    permissions::ensure_model_record(pool, backend_id, &model_name).await?;
+    persona_avatars::service::ensure_asset_assignable(
+        pool,
+        user_id,
+        params.background_asset_id.as_deref(),
+    )
+    .await?;
+    let background = validate_model_background(params)?;
+    let now = unix_timestamp();
+
+    sqlx::query(
+        r#"
+        INSERT INTO model_availability (
+            backend_id,
+            model_name,
+            background_asset_id,
+            background_dim,
+            background_message_dim,
+            background_landscape_mode,
+            background_landscape_x,
+            background_landscape_y,
+            background_landscape_scale,
+            background_portrait_mode,
+            background_portrait_x,
+            background_portrait_y,
+            background_portrait_scale,
+            created_at,
+            updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(backend_id, model_name)
+        DO UPDATE SET
+            background_asset_id = excluded.background_asset_id,
+            background_dim = excluded.background_dim,
+            background_message_dim = excluded.background_message_dim,
+            background_landscape_mode = excluded.background_landscape_mode,
+            background_landscape_x = excluded.background_landscape_x,
+            background_landscape_y = excluded.background_landscape_y,
+            background_landscape_scale = excluded.background_landscape_scale,
+            background_portrait_mode = excluded.background_portrait_mode,
+            background_portrait_x = excluded.background_portrait_x,
+            background_portrait_y = excluded.background_portrait_y,
+            background_portrait_scale = excluded.background_portrait_scale,
+            updated_at = excluded.updated_at
+        "#,
+    )
+    .bind(backend_id)
+    .bind(&model_name)
+    .bind(&background.background_asset_id)
+    .bind(background.background_dim)
+    .bind(background.background_message_dim)
+    .bind(&background.background_landscape_mode)
+    .bind(background.background_landscape_x)
+    .bind(background.background_landscape_y)
+    .bind(background.background_landscape_scale)
+    .bind(&background.background_portrait_mode)
+    .bind(background.background_portrait_x)
+    .bind(background.background_portrait_y)
+    .bind(background.background_portrait_scale)
+    .bind(now)
+    .bind(now)
+    .execute(pool)
+    .await?;
+
+    Ok(background)
+}
+
+pub async fn set_user_model_background(
+    pool: &SqlitePool,
+    user_id: &str,
+    backend_id: &str,
+    model_name: &str,
+    params: UpdateModelBackgroundParams,
+) -> Result<ModelBackgroundReference, ApiError> {
+    ensure_model_enabled_for_user(pool, user_id, backend_id, model_name).await?;
+    let model_name = validate_model_name(model_name)?;
+    persona_avatars::service::ensure_asset_assignable(
+        pool,
+        user_id,
+        params.background_asset_id.as_deref(),
+    )
+    .await?;
+    let background = validate_model_background(params)?;
+    let now = unix_timestamp();
+
+    sqlx::query(
+        r#"
+        INSERT INTO user_model_preferences (
+            user_id,
+            backend_id,
+            model_name,
+            background_asset_id,
+            background_dim,
+            background_message_dim,
+            background_landscape_mode,
+            background_landscape_x,
+            background_landscape_y,
+            background_landscape_scale,
+            background_portrait_mode,
+            background_portrait_x,
+            background_portrait_y,
+            background_portrait_scale,
+            created_at,
+            updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id, backend_id, model_name)
+        DO UPDATE SET
+            background_asset_id = excluded.background_asset_id,
+            background_dim = excluded.background_dim,
+            background_message_dim = excluded.background_message_dim,
+            background_landscape_mode = excluded.background_landscape_mode,
+            background_landscape_x = excluded.background_landscape_x,
+            background_landscape_y = excluded.background_landscape_y,
+            background_landscape_scale = excluded.background_landscape_scale,
+            background_portrait_mode = excluded.background_portrait_mode,
+            background_portrait_x = excluded.background_portrait_x,
+            background_portrait_y = excluded.background_portrait_y,
+            background_portrait_scale = excluded.background_portrait_scale,
+            updated_at = excluded.updated_at
+        "#,
+    )
+    .bind(user_id)
+    .bind(backend_id)
+    .bind(&model_name)
+    .bind(&background.background_asset_id)
+    .bind(background.background_dim)
+    .bind(background.background_message_dim)
+    .bind(&background.background_landscape_mode)
+    .bind(background.background_landscape_x)
+    .bind(background.background_landscape_y)
+    .bind(background.background_landscape_scale)
+    .bind(&background.background_portrait_mode)
+    .bind(background.background_portrait_x)
+    .bind(background.background_portrait_y)
+    .bind(background.background_portrait_scale)
+    .bind(now)
+    .bind(now)
+    .execute(pool)
+    .await?;
+
+    Ok(background)
 }
 
 pub async fn set_model_availability(
@@ -771,7 +1037,18 @@ pub async fn update_user_model_preference(
                avatar_asset_id,
                avatar_crop_x,
                avatar_crop_y,
-               avatar_crop_size
+               avatar_crop_size,
+               background_asset_id,
+               background_dim,
+               background_message_dim,
+               background_landscape_mode,
+               background_landscape_x,
+               background_landscape_y,
+               background_landscape_scale,
+               background_portrait_mode,
+               background_portrait_x,
+               background_portrait_y,
+               background_portrait_scale
         FROM user_model_preferences
         WHERE user_id = ?
           AND backend_id = ?
@@ -799,6 +1076,17 @@ pub async fn update_user_model_preference(
         avatar_crop_x: row.try_get("avatar_crop_x")?,
         avatar_crop_y: row.try_get("avatar_crop_y")?,
         avatar_crop_size: row.try_get("avatar_crop_size")?,
+        background_asset_id: row.try_get("background_asset_id")?,
+        background_dim: row.try_get("background_dim")?,
+        background_message_dim: row.try_get("background_message_dim")?,
+        background_landscape_mode: row.try_get("background_landscape_mode")?,
+        background_landscape_x: row.try_get("background_landscape_x")?,
+        background_landscape_y: row.try_get("background_landscape_y")?,
+        background_landscape_scale: row.try_get("background_landscape_scale")?,
+        background_portrait_mode: row.try_get("background_portrait_mode")?,
+        background_portrait_x: row.try_get("background_portrait_x")?,
+        background_portrait_y: row.try_get("background_portrait_y")?,
+        background_portrait_scale: row.try_get("background_portrait_scale")?,
     })
 }
 
@@ -824,6 +1112,71 @@ fn validate_model_avatar(
         avatar_crop_x: params.avatar_crop_x,
         avatar_crop_y: params.avatar_crop_y,
         avatar_crop_size: params.avatar_crop_size,
+    })
+}
+
+fn validate_model_background(
+    params: UpdateModelBackgroundParams,
+) -> Result<ModelBackgroundReference, ApiError> {
+    let valid_position = |value: f64| value.is_finite() && (0.0..=100.0).contains(&value);
+    if !params.background_dim.is_finite() || !(0.0..=0.95).contains(&params.background_dim) {
+        return Err(ApiError::bad_request(
+            "invalid_background_dim",
+            "Background dimming must be between 0 and 0.95",
+        ));
+    }
+    if !params.background_message_dim.is_finite()
+        || !(0.0..=0.98).contains(&params.background_message_dim)
+    {
+        return Err(ApiError::bad_request(
+            "invalid_background_message_dim",
+            "Message backing must be between 0 and 0.98",
+        ));
+    }
+    for (x, y) in [
+        (params.background_landscape_x, params.background_landscape_y),
+        (params.background_portrait_x, params.background_portrait_y),
+    ] {
+        if !valid_position(x) || !valid_position(y) {
+            return Err(ApiError::bad_request(
+                "invalid_background_position",
+                "Background position must be between 0 and 100",
+            ));
+        }
+    }
+    let valid_mode = |mode: &str| matches!(mode, "fill" | "fit" | "stretch" | "tile");
+    if !valid_mode(&params.background_landscape_mode)
+        || !valid_mode(&params.background_portrait_mode)
+    {
+        return Err(ApiError::bad_request(
+            "invalid_background_mode",
+            "Background mode must be fill, fit, stretch, or tile",
+        ));
+    }
+    for scale in [
+        params.background_landscape_scale,
+        params.background_portrait_scale,
+    ] {
+        if !scale.is_finite() || !(10.0..=100.0).contains(&scale) {
+            return Err(ApiError::bad_request(
+                "invalid_background_scale",
+                "Background tile size must be between 10 and 100",
+            ));
+        }
+    }
+
+    Ok(ModelBackgroundReference {
+        background_asset_id: params.background_asset_id,
+        background_dim: params.background_dim,
+        background_message_dim: params.background_message_dim,
+        background_landscape_mode: params.background_landscape_mode,
+        background_landscape_x: params.background_landscape_x,
+        background_landscape_y: params.background_landscape_y,
+        background_landscape_scale: params.background_landscape_scale,
+        background_portrait_mode: params.background_portrait_mode,
+        background_portrait_x: params.background_portrait_x,
+        background_portrait_y: params.background_portrait_y,
+        background_portrait_scale: params.background_portrait_scale,
     })
 }
 

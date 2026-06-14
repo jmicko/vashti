@@ -43,6 +43,7 @@ pub struct CreatePersonaRequest {
     pub avatar_crop_x: Option<f64>,
     pub avatar_crop_y: Option<f64>,
     pub avatar_crop_size: Option<f64>,
+    pub background: Option<PersonaBackgroundRequest>,
     pub base_backend_id: String,
     pub base_model_name: String,
     pub system_prompt: String,
@@ -58,10 +59,27 @@ pub struct UpdatePersonaRequest {
     pub avatar_crop_x: Option<f64>,
     pub avatar_crop_y: Option<f64>,
     pub avatar_crop_size: Option<f64>,
+    pub background: Option<PersonaBackgroundRequest>,
     pub base_backend_id: Option<String>,
     pub base_model_name: Option<String>,
     pub system_prompt: Option<String>,
     pub tool_policy_json: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PersonaBackgroundRequest {
+    pub asset_id: Option<String>,
+    pub asset_changed: Option<bool>,
+    pub dim: f64,
+    pub message_dim: f64,
+    pub landscape_mode: String,
+    pub landscape_x: f64,
+    pub landscape_y: f64,
+    pub landscape_scale: f64,
+    pub portrait_mode: String,
+    pub portrait_x: f64,
+    pub portrait_y: f64,
+    pub portrait_scale: f64,
 }
 
 #[derive(Debug, Deserialize)]

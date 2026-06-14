@@ -4,6 +4,7 @@ use axum::{
 };
 use axum_extra::extract::CookieJar;
 use serde::{Deserialize, Serialize};
+use std::sync::LazyLock;
 
 use crate::{
     app_state::AppState,
@@ -79,6 +80,17 @@ pub struct ModelResponse {
     pub avatar_crop_x: f64,
     pub avatar_crop_y: f64,
     pub avatar_crop_size: f64,
+    pub background_asset_id: Option<String>,
+    pub background_dim: f64,
+    pub background_message_dim: f64,
+    pub background_landscape_mode: String,
+    pub background_landscape_x: f64,
+    pub background_landscape_y: f64,
+    pub background_landscape_scale: f64,
+    pub background_portrait_mode: String,
+    pub background_portrait_x: f64,
+    pub background_portrait_y: f64,
+    pub background_portrait_scale: f64,
 }
 
 #[derive(Debug, Serialize)]
@@ -124,6 +136,39 @@ pub struct UserModelResponse {
     pub default_avatar_crop_x: f64,
     pub default_avatar_crop_y: f64,
     pub default_avatar_crop_size: f64,
+    pub background_asset_id: Option<String>,
+    pub background_dim: f64,
+    pub background_message_dim: f64,
+    pub background_landscape_mode: String,
+    pub background_landscape_x: f64,
+    pub background_landscape_y: f64,
+    pub background_landscape_scale: f64,
+    pub background_portrait_mode: String,
+    pub background_portrait_x: f64,
+    pub background_portrait_y: f64,
+    pub background_portrait_scale: f64,
+    pub personal_background_asset_id: Option<String>,
+    pub personal_background_dim: f64,
+    pub personal_background_message_dim: f64,
+    pub personal_background_landscape_mode: String,
+    pub personal_background_landscape_x: f64,
+    pub personal_background_landscape_y: f64,
+    pub personal_background_landscape_scale: f64,
+    pub personal_background_portrait_mode: String,
+    pub personal_background_portrait_x: f64,
+    pub personal_background_portrait_y: f64,
+    pub personal_background_portrait_scale: f64,
+    pub default_background_asset_id: Option<String>,
+    pub default_background_dim: f64,
+    pub default_background_message_dim: f64,
+    pub default_background_landscape_mode: String,
+    pub default_background_landscape_x: f64,
+    pub default_background_landscape_y: f64,
+    pub default_background_landscape_scale: f64,
+    pub default_background_portrait_mode: String,
+    pub default_background_portrait_x: f64,
+    pub default_background_portrait_y: f64,
+    pub default_background_portrait_scale: f64,
 }
 
 #[derive(Debug, Serialize)]
@@ -145,6 +190,17 @@ pub struct AdminModelResponse {
     pub avatar_crop_x: f64,
     pub avatar_crop_y: f64,
     pub avatar_crop_size: f64,
+    pub background_asset_id: Option<String>,
+    pub background_dim: f64,
+    pub background_message_dim: f64,
+    pub background_landscape_mode: String,
+    pub background_landscape_x: f64,
+    pub background_landscape_y: f64,
+    pub background_landscape_scale: f64,
+    pub background_portrait_mode: String,
+    pub background_portrait_x: f64,
+    pub background_portrait_y: f64,
+    pub background_portrait_scale: f64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -236,6 +292,79 @@ pub struct AdminModelAvatarResponse {
     pub avatar_crop_x: f64,
     pub avatar_crop_y: f64,
     pub avatar_crop_size: f64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateModelBackgroundRequest {
+    pub backend_id: String,
+    pub model_name: String,
+    pub background_asset_id: Option<String>,
+    pub background_dim: f64,
+    pub background_message_dim: f64,
+    pub background_landscape_mode: String,
+    pub background_landscape_x: f64,
+    pub background_landscape_y: f64,
+    pub background_landscape_scale: f64,
+    pub background_portrait_mode: String,
+    pub background_portrait_x: f64,
+    pub background_portrait_y: f64,
+    pub background_portrait_scale: f64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UserModelBackgroundResponse {
+    pub backend_id: String,
+    pub model_name: String,
+    pub background_asset_id: Option<String>,
+    pub background_dim: f64,
+    pub background_message_dim: f64,
+    pub background_landscape_mode: String,
+    pub background_landscape_x: f64,
+    pub background_landscape_y: f64,
+    pub background_landscape_scale: f64,
+    pub background_portrait_mode: String,
+    pub background_portrait_x: f64,
+    pub background_portrait_y: f64,
+    pub background_portrait_scale: f64,
+    pub personal_background_asset_id: Option<String>,
+    pub personal_background_dim: f64,
+    pub personal_background_message_dim: f64,
+    pub personal_background_landscape_mode: String,
+    pub personal_background_landscape_x: f64,
+    pub personal_background_landscape_y: f64,
+    pub personal_background_landscape_scale: f64,
+    pub personal_background_portrait_mode: String,
+    pub personal_background_portrait_x: f64,
+    pub personal_background_portrait_y: f64,
+    pub personal_background_portrait_scale: f64,
+    pub default_background_asset_id: Option<String>,
+    pub default_background_dim: f64,
+    pub default_background_message_dim: f64,
+    pub default_background_landscape_mode: String,
+    pub default_background_landscape_x: f64,
+    pub default_background_landscape_y: f64,
+    pub default_background_landscape_scale: f64,
+    pub default_background_portrait_mode: String,
+    pub default_background_portrait_x: f64,
+    pub default_background_portrait_y: f64,
+    pub default_background_portrait_scale: f64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AdminModelBackgroundResponse {
+    pub backend_id: String,
+    pub model_name: String,
+    pub background_asset_id: Option<String>,
+    pub background_dim: f64,
+    pub background_message_dim: f64,
+    pub background_landscape_mode: String,
+    pub background_landscape_x: f64,
+    pub background_landscape_y: f64,
+    pub background_landscape_scale: f64,
+    pub background_portrait_mode: String,
+    pub background_portrait_x: f64,
+    pub background_portrait_y: f64,
+    pub background_portrait_scale: f64,
 }
 
 pub async fn list_backends(
@@ -386,6 +515,8 @@ async fn models_response(
         let availability = service::model_availability_by_backend(&state.db, &backend.id).await?;
         let default_avatars =
             service::model_avatar_defaults_by_backend(&state.db, &backend.id).await?;
+        let default_backgrounds =
+            service::model_background_defaults_by_backend(&state.db, &backend.id).await?;
         let preferences =
             service::user_model_preferences_by_backend(&state.db, user_id, &backend.id).await?;
         let model_tags = permissions::model_tags_by_backend(&state.db, &backend.id).await?;
@@ -410,7 +541,8 @@ async fn models_response(
             .map(|model| {
                 let preference = preferences.get(&model.name);
                 let default_avatar = default_avatars.get(&model.name);
-                model_response(model, preference, default_avatar)
+                let default_background = default_backgrounds.get(&model.name);
+                model_response(model, preference, default_avatar, default_background)
             })
             .collect();
 
@@ -442,6 +574,8 @@ async fn user_models_response(
         let availability = service::model_availability_by_backend(&state.db, &backend.id).await?;
         let default_avatars =
             service::model_avatar_defaults_by_backend(&state.db, &backend.id).await?;
+        let default_backgrounds =
+            service::model_background_defaults_by_backend(&state.db, &backend.id).await?;
         let preferences =
             service::user_model_preferences_by_backend(&state.db, user_id, &backend.id).await?;
         let model_tags = permissions::model_tags_by_backend(&state.db, &backend.id).await?;
@@ -462,6 +596,10 @@ async fn user_models_response(
                 let personal_avatar = preference.map(|preference| &preference.avatar);
                 let default_avatar = default_avatars.get(&model.name);
                 let effective_avatar = effective_avatar(personal_avatar, default_avatar);
+                let personal_background = preference.map(|preference| &preference.background);
+                let default_background = default_backgrounds.get(&model.name);
+                let effective_background =
+                    effective_background(personal_background, default_background);
                 UserModelResponse {
                     is_visible: preference
                         .map(|preference| preference.is_visible)
@@ -498,6 +636,83 @@ async fn user_models_response(
                     default_avatar_crop_size: default_avatar
                         .map(|avatar| avatar.avatar_crop_size)
                         .unwrap_or(100.0),
+                    background_asset_id: effective_background.background_asset_id.clone(),
+                    background_dim: effective_background.background_dim,
+                    background_message_dim: effective_background.background_message_dim,
+                    background_landscape_mode: effective_background
+                        .background_landscape_mode
+                        .clone(),
+                    background_landscape_x: effective_background.background_landscape_x,
+                    background_landscape_y: effective_background.background_landscape_y,
+                    background_landscape_scale: effective_background.background_landscape_scale,
+                    background_portrait_mode: effective_background.background_portrait_mode.clone(),
+                    background_portrait_x: effective_background.background_portrait_x,
+                    background_portrait_y: effective_background.background_portrait_y,
+                    background_portrait_scale: effective_background.background_portrait_scale,
+                    personal_background_asset_id: personal_background
+                        .and_then(|background| background.background_asset_id.clone()),
+                    personal_background_dim: personal_background
+                        .map(|background| background.background_dim)
+                        .unwrap_or(0.72),
+                    personal_background_message_dim: personal_background
+                        .map(|background| background.background_message_dim)
+                        .unwrap_or(0.82),
+                    personal_background_landscape_mode: personal_background
+                        .map(|background| background.background_landscape_mode.clone())
+                        .unwrap_or_else(|| "fill".to_string()),
+                    personal_background_landscape_x: personal_background
+                        .map(|background| background.background_landscape_x)
+                        .unwrap_or(50.0),
+                    personal_background_landscape_y: personal_background
+                        .map(|background| background.background_landscape_y)
+                        .unwrap_or(50.0),
+                    personal_background_landscape_scale: personal_background
+                        .map(|background| background.background_landscape_scale)
+                        .unwrap_or(35.0),
+                    personal_background_portrait_mode: personal_background
+                        .map(|background| background.background_portrait_mode.clone())
+                        .unwrap_or_else(|| "fill".to_string()),
+                    personal_background_portrait_x: personal_background
+                        .map(|background| background.background_portrait_x)
+                        .unwrap_or(50.0),
+                    personal_background_portrait_y: personal_background
+                        .map(|background| background.background_portrait_y)
+                        .unwrap_or(50.0),
+                    personal_background_portrait_scale: personal_background
+                        .map(|background| background.background_portrait_scale)
+                        .unwrap_or(35.0),
+                    default_background_asset_id: default_background
+                        .and_then(|background| background.background_asset_id.clone()),
+                    default_background_dim: default_background
+                        .map(|background| background.background_dim)
+                        .unwrap_or(0.72),
+                    default_background_message_dim: default_background
+                        .map(|background| background.background_message_dim)
+                        .unwrap_or(0.82),
+                    default_background_landscape_mode: default_background
+                        .map(|background| background.background_landscape_mode.clone())
+                        .unwrap_or_else(|| "fill".to_string()),
+                    default_background_landscape_x: default_background
+                        .map(|background| background.background_landscape_x)
+                        .unwrap_or(50.0),
+                    default_background_landscape_y: default_background
+                        .map(|background| background.background_landscape_y)
+                        .unwrap_or(50.0),
+                    default_background_landscape_scale: default_background
+                        .map(|background| background.background_landscape_scale)
+                        .unwrap_or(35.0),
+                    default_background_portrait_mode: default_background
+                        .map(|background| background.background_portrait_mode.clone())
+                        .unwrap_or_else(|| "fill".to_string()),
+                    default_background_portrait_x: default_background
+                        .map(|background| background.background_portrait_x)
+                        .unwrap_or(50.0),
+                    default_background_portrait_y: default_background
+                        .map(|background| background.background_portrait_y)
+                        .unwrap_or(50.0),
+                    default_background_portrait_scale: default_background
+                        .map(|background| background.background_portrait_scale)
+                        .unwrap_or(35.0),
                     name: model.name,
                     supports_images: model.supports_images,
                     supports_thinking: model.supports_thinking,
@@ -535,6 +750,8 @@ async fn admin_models_response(
         let availability = service::model_availability_by_backend(&state.db, &backend.id).await?;
         let default_avatars =
             service::model_avatar_defaults_by_backend(&state.db, &backend.id).await?;
+        let default_backgrounds =
+            service::model_background_defaults_by_backend(&state.db, &backend.id).await?;
         let manual_model_tags =
             permissions::manual_model_tags_by_backend(&state.db, &backend.id).await?;
         let default_model_tags =
@@ -559,6 +776,10 @@ async fn admin_models_response(
                 .get(&model.name)
                 .cloned()
                 .unwrap_or_else(empty_avatar);
+            let background = default_backgrounds
+                .get(&model.name)
+                .cloned()
+                .unwrap_or_else(empty_background);
             models.push(AdminModelResponse {
                 permission_tags,
                 default_permission_tags,
@@ -571,6 +792,17 @@ async fn admin_models_response(
                 avatar_crop_x: avatar.avatar_crop_x,
                 avatar_crop_y: avatar.avatar_crop_y,
                 avatar_crop_size: avatar.avatar_crop_size,
+                background_asset_id: background.background_asset_id,
+                background_dim: background.background_dim,
+                background_message_dim: background.background_message_dim,
+                background_landscape_mode: background.background_landscape_mode,
+                background_landscape_x: background.background_landscape_x,
+                background_landscape_y: background.background_landscape_y,
+                background_landscape_scale: background.background_landscape_scale,
+                background_portrait_mode: background.background_portrait_mode,
+                background_portrait_x: background.background_portrait_x,
+                background_portrait_y: background.background_portrait_y,
+                background_portrait_scale: background.background_portrait_scale,
             });
         }
 
@@ -596,10 +828,15 @@ fn model_response(
     model: OllamaModel,
     preference: Option<&service::UserModelPreference>,
     default_avatar: Option<&service::ModelAvatarReference>,
+    default_background: Option<&service::ModelBackgroundReference>,
 ) -> ModelResponse {
     let effective_avatar = effective_avatar(
         preference.map(|preference| &preference.avatar),
         default_avatar,
+    );
+    let effective_background = effective_background(
+        preference.map(|preference| &preference.background),
+        default_background,
     );
     ModelResponse {
         name: model.name,
@@ -612,6 +849,17 @@ fn model_response(
         avatar_crop_x: effective_avatar.avatar_crop_x,
         avatar_crop_y: effective_avatar.avatar_crop_y,
         avatar_crop_size: effective_avatar.avatar_crop_size,
+        background_asset_id: effective_background.background_asset_id.clone(),
+        background_dim: effective_background.background_dim,
+        background_message_dim: effective_background.background_message_dim,
+        background_landscape_mode: effective_background.background_landscape_mode.clone(),
+        background_landscape_x: effective_background.background_landscape_x,
+        background_landscape_y: effective_background.background_landscape_y,
+        background_landscape_scale: effective_background.background_landscape_scale,
+        background_portrait_mode: effective_background.background_portrait_mode.clone(),
+        background_portrait_x: effective_background.background_portrait_x,
+        background_portrait_y: effective_background.background_portrait_y,
+        background_portrait_scale: effective_background.background_portrait_scale,
     }
 }
 
@@ -634,12 +882,41 @@ fn effective_avatar<'a>(
         .unwrap_or(&EMPTY_AVATAR)
 }
 
+fn empty_background() -> service::ModelBackgroundReference {
+    EMPTY_BACKGROUND.clone()
+}
+
+fn effective_background<'a>(
+    personal: Option<&'a service::ModelBackgroundReference>,
+    default: Option<&'a service::ModelBackgroundReference>,
+) -> &'a service::ModelBackgroundReference {
+    personal
+        .filter(|background| background.background_asset_id.is_some())
+        .or_else(|| default.filter(|background| background.background_asset_id.is_some()))
+        .unwrap_or(&EMPTY_BACKGROUND)
+}
+
 static EMPTY_AVATAR: service::ModelAvatarReference = service::ModelAvatarReference {
     avatar_asset_id: None,
     avatar_crop_x: 50.0,
     avatar_crop_y: 50.0,
     avatar_crop_size: 100.0,
 };
+
+static EMPTY_BACKGROUND: LazyLock<service::ModelBackgroundReference> =
+    LazyLock::new(|| service::ModelBackgroundReference {
+        background_asset_id: None,
+        background_dim: 0.72,
+        background_message_dim: 0.82,
+        background_landscape_mode: "fill".to_string(),
+        background_landscape_x: 50.0,
+        background_landscape_y: 50.0,
+        background_landscape_scale: 35.0,
+        background_portrait_mode: "fill".to_string(),
+        background_portrait_x: 50.0,
+        background_portrait_y: 50.0,
+        background_portrait_scale: 35.0,
+    });
 
 pub async fn update_model_availability(
     State(state): State<AppState>,
@@ -753,6 +1030,123 @@ pub async fn update_admin_model_avatar(
         avatar_crop_x: avatar.avatar_crop_x,
         avatar_crop_y: avatar.avatar_crop_y,
         avatar_crop_size: avatar.avatar_crop_size,
+    }))
+}
+
+pub async fn update_user_model_background(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Json(payload): Json<UpdateModelBackgroundRequest>,
+) -> Result<Json<UserModelBackgroundResponse>, ApiError> {
+    let user =
+        auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
+    let personal = service::set_user_model_background(
+        &state.db,
+        &user.id,
+        &payload.backend_id,
+        &payload.model_name,
+        service::UpdateModelBackgroundParams {
+            background_asset_id: payload.background_asset_id,
+            background_dim: payload.background_dim,
+            background_message_dim: payload.background_message_dim,
+            background_landscape_mode: payload.background_landscape_mode,
+            background_landscape_x: payload.background_landscape_x,
+            background_landscape_y: payload.background_landscape_y,
+            background_landscape_scale: payload.background_landscape_scale,
+            background_portrait_mode: payload.background_portrait_mode,
+            background_portrait_x: payload.background_portrait_x,
+            background_portrait_y: payload.background_portrait_y,
+            background_portrait_scale: payload.background_portrait_scale,
+        },
+    )
+    .await?;
+    let default = service::model_background_defaults_by_backend(&state.db, &payload.backend_id)
+        .await?
+        .remove(&payload.model_name)
+        .unwrap_or_else(empty_background);
+    let effective = effective_background(Some(&personal), Some(&default));
+
+    Ok(Json(UserModelBackgroundResponse {
+        backend_id: payload.backend_id,
+        model_name: payload.model_name,
+        background_asset_id: effective.background_asset_id.clone(),
+        background_dim: effective.background_dim,
+        background_message_dim: effective.background_message_dim,
+        background_landscape_mode: effective.background_landscape_mode.clone(),
+        background_landscape_x: effective.background_landscape_x,
+        background_landscape_y: effective.background_landscape_y,
+        background_landscape_scale: effective.background_landscape_scale,
+        background_portrait_mode: effective.background_portrait_mode.clone(),
+        background_portrait_x: effective.background_portrait_x,
+        background_portrait_y: effective.background_portrait_y,
+        background_portrait_scale: effective.background_portrait_scale,
+        personal_background_asset_id: personal.background_asset_id,
+        personal_background_dim: personal.background_dim,
+        personal_background_message_dim: personal.background_message_dim,
+        personal_background_landscape_mode: personal.background_landscape_mode,
+        personal_background_landscape_x: personal.background_landscape_x,
+        personal_background_landscape_y: personal.background_landscape_y,
+        personal_background_landscape_scale: personal.background_landscape_scale,
+        personal_background_portrait_mode: personal.background_portrait_mode,
+        personal_background_portrait_x: personal.background_portrait_x,
+        personal_background_portrait_y: personal.background_portrait_y,
+        personal_background_portrait_scale: personal.background_portrait_scale,
+        default_background_asset_id: default.background_asset_id,
+        default_background_dim: default.background_dim,
+        default_background_message_dim: default.background_message_dim,
+        default_background_landscape_mode: default.background_landscape_mode,
+        default_background_landscape_x: default.background_landscape_x,
+        default_background_landscape_y: default.background_landscape_y,
+        default_background_landscape_scale: default.background_landscape_scale,
+        default_background_portrait_mode: default.background_portrait_mode,
+        default_background_portrait_x: default.background_portrait_x,
+        default_background_portrait_y: default.background_portrait_y,
+        default_background_portrait_scale: default.background_portrait_scale,
+    }))
+}
+
+pub async fn update_admin_model_background(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Json(payload): Json<UpdateModelBackgroundRequest>,
+) -> Result<Json<AdminModelBackgroundResponse>, ApiError> {
+    let user =
+        auth::service::require_admin(&state.db, &jar, &state.config.session_cookie_name).await?;
+    let background = service::set_default_model_background(
+        &state.db,
+        &user.id,
+        &payload.backend_id,
+        &payload.model_name,
+        service::UpdateModelBackgroundParams {
+            background_asset_id: payload.background_asset_id,
+            background_dim: payload.background_dim,
+            background_message_dim: payload.background_message_dim,
+            background_landscape_mode: payload.background_landscape_mode,
+            background_landscape_x: payload.background_landscape_x,
+            background_landscape_y: payload.background_landscape_y,
+            background_landscape_scale: payload.background_landscape_scale,
+            background_portrait_mode: payload.background_portrait_mode,
+            background_portrait_x: payload.background_portrait_x,
+            background_portrait_y: payload.background_portrait_y,
+            background_portrait_scale: payload.background_portrait_scale,
+        },
+    )
+    .await?;
+
+    Ok(Json(AdminModelBackgroundResponse {
+        backend_id: payload.backend_id,
+        model_name: payload.model_name,
+        background_asset_id: background.background_asset_id,
+        background_dim: background.background_dim,
+        background_message_dim: background.background_message_dim,
+        background_landscape_mode: background.background_landscape_mode,
+        background_landscape_x: background.background_landscape_x,
+        background_landscape_y: background.background_landscape_y,
+        background_landscape_scale: background.background_landscape_scale,
+        background_portrait_mode: background.background_portrait_mode,
+        background_portrait_x: background.background_portrait_x,
+        background_portrait_y: background.background_portrait_y,
+        background_portrait_scale: background.background_portrait_scale,
     }))
 }
 

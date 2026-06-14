@@ -23,6 +23,11 @@ import {
   ModelAvatarEditorDialog,
   type ModelAvatarEdit
 } from "./ModelAvatarEditorDialog";
+import {
+  ModelBackgroundEditorDialog,
+  type ModelBackgroundEdit
+} from "./ModelBackgroundEditorDialog";
+import { ModelBackgroundButton } from "./ModelBackground";
 import { ModelPicker } from "./ModelPicker";
 import { ModelCapabilityBadges } from "./modelCapabilities";
 import { compactModelName, modelValue } from "./modelSelection";
@@ -42,6 +47,7 @@ import type {
   Backend,
   PermissionTag,
   AdminModelInfo,
+  ModelBackgroundMode,
   UserModelInfo,
   UserBackendModelGroup,
   UserModelsResponse
@@ -65,6 +71,16 @@ type UserAvatarTarget = {
 };
 
 type AdminAvatarTarget = {
+  backendId: string;
+  model: AdminModelInfo;
+};
+
+type UserBackgroundTarget = {
+  backendId: string;
+  model: UserModelInfo;
+};
+
+type AdminBackgroundTarget = {
   backendId: string;
   model: AdminModelInfo;
 };
@@ -93,6 +109,47 @@ type AdminModelAvatarResponse = {
   avatar_crop_x: number;
   avatar_crop_y: number;
   avatar_crop_size: number;
+};
+
+type ModelBackgroundResponse = {
+  backend_id: string;
+  model_name: string;
+  background_asset_id: string | null;
+  background_dim: number;
+  background_message_dim: number;
+  background_landscape_mode: ModelBackgroundMode;
+  background_landscape_x: number;
+  background_landscape_y: number;
+  background_landscape_scale: number;
+  background_portrait_mode: ModelBackgroundMode;
+  background_portrait_x: number;
+  background_portrait_y: number;
+  background_portrait_scale: number;
+};
+
+type UserModelBackgroundResponse = ModelBackgroundResponse & {
+  personal_background_asset_id: string | null;
+  personal_background_dim: number;
+  personal_background_message_dim: number;
+  personal_background_landscape_mode: ModelBackgroundMode;
+  personal_background_landscape_x: number;
+  personal_background_landscape_y: number;
+  personal_background_landscape_scale: number;
+  personal_background_portrait_mode: ModelBackgroundMode;
+  personal_background_portrait_x: number;
+  personal_background_portrait_y: number;
+  personal_background_portrait_scale: number;
+  default_background_asset_id: string | null;
+  default_background_dim: number;
+  default_background_message_dim: number;
+  default_background_landscape_mode: ModelBackgroundMode;
+  default_background_landscape_x: number;
+  default_background_landscape_y: number;
+  default_background_landscape_scale: number;
+  default_background_portrait_mode: ModelBackgroundMode;
+  default_background_portrait_x: number;
+  default_background_portrait_y: number;
+  default_background_portrait_scale: number;
 };
 
 function preferenceActionForPatch(patch: UserModelPreferencePatch): UserModelPreferenceAction {
@@ -125,6 +182,9 @@ export function UserModelsPanel({
   const [avatarTarget, setAvatarTarget] = useState<UserAvatarTarget | null>(null);
   const [isSavingAvatar, setIsSavingAvatar] = useState(false);
   const [avatarError, setAvatarError] = useState<string | null>(null);
+  const [backgroundTarget, setBackgroundTarget] = useState<UserBackgroundTarget | null>(null);
+  const [isSavingBackground, setIsSavingBackground] = useState(false);
+  const [backgroundError, setBackgroundError] = useState<string | null>(null);
   const primaryModelRowRefs = useRef(new Map<string, HTMLElement>());
   const pendingFavoriteAnchorRef = useRef<{
     value: string;
@@ -377,6 +437,69 @@ export function UserModelsPanel({
     }
   }
 
+  async function saveUserModelBackground(edit: ModelBackgroundEdit) {
+    if (!backgroundTarget) {
+      return;
+    }
+    setIsSavingBackground(true);
+    setBackgroundError(null);
+    const oldAssetId = backgroundTarget.model.personal_background_asset_id;
+    let uploadedAssetId: string | null = null;
+
+    try {
+      if (edit.file) {
+        uploadedAssetId = (await uploadHostedAvatar(edit.file)).id;
+      }
+      const response = await requestJson<UserModelBackgroundResponse>(
+        "/api/user-models/background",
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            backend_id: backgroundTarget.backendId,
+            model_name: backgroundTarget.model.name,
+            background_asset_id: uploadedAssetId ?? edit.assetId,
+            background_dim: edit.dim,
+            background_message_dim: edit.messageDim,
+            background_landscape_mode: edit.landscape.mode,
+            background_landscape_x: edit.landscape.x,
+            background_landscape_y: edit.landscape.y,
+            background_landscape_scale: edit.landscape.scale,
+            background_portrait_mode: edit.portrait.mode,
+            background_portrait_x: edit.portrait.x,
+            background_portrait_y: edit.portrait.y,
+            background_portrait_scale: edit.portrait.scale
+          })
+        }
+      );
+      setGroups((current) =>
+        current.map((group) =>
+          group.backend.id === response.backend_id
+            ? {
+                ...group,
+                models: group.models.map((model) =>
+                  model.name === response.model_name ? { ...model, ...response } : model
+                )
+              }
+            : group
+        )
+      );
+      await onModelsChanged().catch(() => undefined);
+      setBackgroundTarget(null);
+      if (oldAssetId && oldAssetId !== response.personal_background_asset_id) {
+        await deleteHostedAvatar(oldAssetId).catch(() => undefined);
+      }
+    } catch (saveError) {
+      if (uploadedAssetId) {
+        await deleteHostedAvatar(uploadedAssetId).catch(() => undefined);
+      }
+      setBackgroundError(
+        saveError instanceof Error ? saveError.message : "Failed to save chat background"
+      );
+    } finally {
+      setIsSavingBackground(false);
+    }
+  }
+
   function anchorPrimaryModelRow(value: string) {
     const element = primaryModelRowRefs.current.get(value);
     if (!element) {
@@ -540,6 +663,14 @@ export function UserModelsPanel({
           <ModelCapabilityBadges model={model} />
         </span>
         <div className="model-row-actions">
+          <ModelBackgroundButton
+            assetId={model.background_asset_id}
+            label={`Change chat background for ${compactModelName(model.name)}`}
+            onClick={() => {
+              setBackgroundError(null);
+              setBackgroundTarget(option);
+            }}
+          />
           <ToggleSwitch
             label={model.is_visible ? "Shown" : "Hidden"}
             checked={model.is_visible}
@@ -693,6 +824,54 @@ export function UserModelsPanel({
           onSave={(edit) => void saveUserModelAvatar(edit)}
         />
       )}
+      {backgroundTarget && (
+        <ModelBackgroundEditorDialog
+          title={`Personal background for ${compactModelName(backgroundTarget.model.name)}`}
+          assetId={backgroundTarget.model.personal_background_asset_id}
+          dim={backgroundTarget.model.personal_background_dim}
+          messageDim={backgroundTarget.model.personal_background_message_dim}
+          landscape={{
+            mode: backgroundTarget.model.personal_background_landscape_mode,
+            x: backgroundTarget.model.personal_background_landscape_x,
+            y: backgroundTarget.model.personal_background_landscape_y,
+            scale: backgroundTarget.model.personal_background_landscape_scale
+          }}
+          portrait={{
+            mode: backgroundTarget.model.personal_background_portrait_mode,
+            x: backgroundTarget.model.personal_background_portrait_x,
+            y: backgroundTarget.model.personal_background_portrait_y,
+            scale: backgroundTarget.model.personal_background_portrait_scale
+          }}
+          inheritedBackground={
+            backgroundTarget.model.default_background_asset_id
+              ? {
+                  assetId: backgroundTarget.model.default_background_asset_id,
+                  dim: backgroundTarget.model.default_background_dim,
+                  messageDim: backgroundTarget.model.default_background_message_dim,
+                  landscape: {
+                    mode: backgroundTarget.model.default_background_landscape_mode,
+                    x: backgroundTarget.model.default_background_landscape_x,
+                    y: backgroundTarget.model.default_background_landscape_y,
+                    scale: backgroundTarget.model.default_background_landscape_scale
+                  },
+                  portrait: {
+                    mode: backgroundTarget.model.default_background_portrait_mode,
+                    x: backgroundTarget.model.default_background_portrait_x,
+                    y: backgroundTarget.model.default_background_portrait_y,
+                    scale: backgroundTarget.model.default_background_portrait_scale
+                  }
+                }
+              : null
+          }
+          isBusy={isSavingBackground}
+          error={backgroundError}
+          onCancel={() => {
+            setBackgroundTarget(null);
+            setBackgroundError(null);
+          }}
+          onSave={(edit) => void saveUserModelBackground(edit)}
+        />
+      )}
     </SettingsPanel>
   );
 }
@@ -741,6 +920,9 @@ export function AdminModelsAccessPanel({
   const [avatarTarget, setAvatarTarget] = useState<AdminAvatarTarget | null>(null);
   const [isSavingAvatar, setIsSavingAvatar] = useState(false);
   const [avatarError, setAvatarError] = useState<string | null>(null);
+  const [backgroundTarget, setBackgroundTarget] = useState<AdminBackgroundTarget | null>(null);
+  const [isSavingBackground, setIsSavingBackground] = useState(false);
+  const [backgroundError, setBackgroundError] = useState<string | null>(null);
 
   const applyAdminModelsResponse = useCallback((response: AdminModelsResponse) => {
     setGroups(response.backends);
@@ -952,6 +1134,70 @@ export function AdminModelsAccessPanel({
       );
     } finally {
       setIsSavingAvatar(false);
+    }
+  }
+
+  async function saveAdminModelBackground(edit: ModelBackgroundEdit) {
+    if (!backgroundTarget) {
+      return;
+    }
+    setIsSavingBackground(true);
+    setBackgroundError(null);
+    const oldAssetId = backgroundTarget.model.background_asset_id;
+    let uploadedAssetId: string | null = null;
+
+    try {
+      if (edit.file) {
+        uploadedAssetId = (await uploadHostedAvatar(edit.file)).id;
+      }
+      const response = await requestJson<ModelBackgroundResponse>(
+        "/api/admin/models/background",
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            backend_id: backgroundTarget.backendId,
+            model_name: backgroundTarget.model.name,
+            background_asset_id: uploadedAssetId ?? edit.assetId,
+            background_dim: edit.dim,
+            background_message_dim: edit.messageDim,
+            background_landscape_mode: edit.landscape.mode,
+            background_landscape_x: edit.landscape.x,
+            background_landscape_y: edit.landscape.y,
+            background_landscape_scale: edit.landscape.scale,
+            background_portrait_mode: edit.portrait.mode,
+            background_portrait_x: edit.portrait.x,
+            background_portrait_y: edit.portrait.y,
+            background_portrait_scale: edit.portrait.scale
+          })
+        }
+      );
+      const updateGroups = (current: AdminBackendModelGroup[]) =>
+        current.map((group) =>
+          group.backend.id === response.backend_id
+            ? {
+                ...group,
+                models: group.models.map((model) =>
+                  model.name === response.model_name ? { ...model, ...response } : model
+                )
+              }
+            : group
+        );
+      setGroups(updateGroups);
+      setSavedGroups(updateGroups);
+      await onModelsChanged().catch(() => undefined);
+      setBackgroundTarget(null);
+      if (oldAssetId && oldAssetId !== response.background_asset_id) {
+        await deleteHostedAvatar(oldAssetId).catch(() => undefined);
+      }
+    } catch (saveError) {
+      if (uploadedAssetId) {
+        await deleteHostedAvatar(uploadedAssetId).catch(() => undefined);
+      }
+      setBackgroundError(
+        saveError instanceof Error ? saveError.message : "Failed to save chat background"
+      );
+    } finally {
+      setIsSavingBackground(false);
     }
   }
 
@@ -1242,28 +1488,41 @@ export function AdminModelsAccessPanel({
 
                         return (
                           <article key={key} className="model-access-row">
-                            <button
-                              type="button"
-                              className="model-avatar-edit-button"
-                              title="Change server default profile image"
-                              aria-label={`Change server default profile image for ${compactModelName(model.name)}`}
-                              onClick={() => {
-                                setAvatarError(null);
-                                setAvatarTarget({
-                                  backendId: backend.id,
-                                  model
-                                });
-                              }}
-                            >
-                              <ModelAvatar
-                                displayName={compactModelName(model.name)}
-                                assetId={model.avatar_asset_id}
-                                cropX={model.avatar_crop_x}
-                                cropY={model.avatar_crop_y}
-                                cropSize={model.avatar_crop_size}
+                            <div className="model-access-leading">
+                              <button
+                                type="button"
+                                className="model-avatar-edit-button"
+                                title="Change server default profile image"
+                                aria-label={`Change server default profile image for ${compactModelName(model.name)}`}
+                                onClick={() => {
+                                  setAvatarError(null);
+                                  setAvatarTarget({
+                                    backendId: backend.id,
+                                    model
+                                  });
+                                }}
+                              >
+                                <ModelAvatar
+                                  displayName={compactModelName(model.name)}
+                                  assetId={model.avatar_asset_id}
+                                  cropX={model.avatar_crop_x}
+                                  cropY={model.avatar_crop_y}
+                                  cropSize={model.avatar_crop_size}
+                                />
+                                <Pencil />
+                              </button>
+                              <ModelBackgroundButton
+                                assetId={model.background_asset_id}
+                                label={`Change server default chat background for ${compactModelName(model.name)}`}
+                                onClick={() => {
+                                  setBackgroundError(null);
+                                  setBackgroundTarget({
+                                    backendId: backend.id,
+                                    model
+                                  });
+                                }}
                               />
-                              <Pencil />
-                            </button>
+                            </div>
                             <span className="model-access-main">
                               <span className="model-name" title={model.name}>
                                 {compactModelName(model.name)}
@@ -1318,6 +1577,33 @@ export function AdminModelsAccessPanel({
             setAvatarError(null);
           }}
           onSave={(edit) => void saveAdminModelAvatar(edit)}
+        />
+      )}
+      {backgroundTarget && (
+        <ModelBackgroundEditorDialog
+          title={`Server default for ${compactModelName(backgroundTarget.model.name)}`}
+          assetId={backgroundTarget.model.background_asset_id}
+          dim={backgroundTarget.model.background_dim}
+          messageDim={backgroundTarget.model.background_message_dim}
+          landscape={{
+            mode: backgroundTarget.model.background_landscape_mode,
+            x: backgroundTarget.model.background_landscape_x,
+            y: backgroundTarget.model.background_landscape_y,
+            scale: backgroundTarget.model.background_landscape_scale
+          }}
+          portrait={{
+            mode: backgroundTarget.model.background_portrait_mode,
+            x: backgroundTarget.model.background_portrait_x,
+            y: backgroundTarget.model.background_portrait_y,
+            scale: backgroundTarget.model.background_portrait_scale
+          }}
+          isBusy={isSavingBackground}
+          error={backgroundError}
+          onCancel={() => {
+            setBackgroundTarget(null);
+            setBackgroundError(null);
+          }}
+          onSave={(edit) => void saveAdminModelBackground(edit)}
         />
       )}
     </>

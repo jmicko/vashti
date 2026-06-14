@@ -64,6 +64,23 @@ export type DetectLocalhostResponse = {
   }>;
 };
 
+export type ModelBackgroundMode = "fill" | "fit" | "stretch" | "tile";
+
+export type ModelBackgroundSettings = {
+  background_asset_id: string | null;
+  background_dim: number;
+  background_message_dim: number;
+  background_landscape_mode: ModelBackgroundMode;
+  background_landscape_x: number;
+  background_landscape_y: number;
+  background_landscape_scale: number;
+  background_portrait_mode: ModelBackgroundMode;
+  background_portrait_x: number;
+  background_portrait_y: number;
+  background_portrait_scale: number;
+  background_is_private?: boolean;
+};
+
 export type ModelInfo = {
   name: string;
   supports_images: boolean;
@@ -75,7 +92,7 @@ export type ModelInfo = {
   avatar_crop_x: number;
   avatar_crop_y: number;
   avatar_crop_size: number;
-};
+} & ModelBackgroundSettings;
 
 export type AdminModelInfo = ModelInfo & {
   is_enabled: boolean;
@@ -95,6 +112,28 @@ export type UserModelInfo = ModelInfo & {
   default_avatar_crop_x: number;
   default_avatar_crop_y: number;
   default_avatar_crop_size: number;
+  personal_background_asset_id: string | null;
+  personal_background_dim: number;
+  personal_background_message_dim: number;
+  personal_background_landscape_mode: ModelBackgroundMode;
+  personal_background_landscape_x: number;
+  personal_background_landscape_y: number;
+  personal_background_landscape_scale: number;
+  personal_background_portrait_mode: ModelBackgroundMode;
+  personal_background_portrait_x: number;
+  personal_background_portrait_y: number;
+  personal_background_portrait_scale: number;
+  default_background_asset_id: string | null;
+  default_background_dim: number;
+  default_background_message_dim: number;
+  default_background_landscape_mode: ModelBackgroundMode;
+  default_background_landscape_x: number;
+  default_background_landscape_y: number;
+  default_background_landscape_scale: number;
+  default_background_portrait_mode: ModelBackgroundMode;
+  default_background_portrait_x: number;
+  default_background_portrait_y: number;
+  default_background_portrait_scale: number;
 };
 
 export type BackendModelGroup = {
@@ -157,6 +196,17 @@ export type PersonaVersion = {
   avatar_crop_x: number;
   avatar_crop_y: number;
   avatar_crop_size: number;
+  background_asset_id: string | null;
+  background_dim: number;
+  background_message_dim: number;
+  background_landscape_mode: ModelBackgroundMode;
+  background_landscape_x: number;
+  background_landscape_y: number;
+  background_landscape_scale: number;
+  background_portrait_mode: ModelBackgroundMode;
+  background_portrait_x: number;
+  background_portrait_y: number;
+  background_portrait_scale: number;
   base_backend_id: string;
   base_model_name: string;
   system_prompt: string;

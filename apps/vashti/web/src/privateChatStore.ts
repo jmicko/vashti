@@ -156,6 +156,17 @@ export type PrivatePersonaVersion = {
   avatar_crop_x: number;
   avatar_crop_y: number;
   avatar_crop_size: number;
+  background_asset_id: string | null;
+  background_dim: number;
+  background_message_dim: number;
+  background_landscape_mode: "fill" | "fit" | "stretch" | "tile";
+  background_landscape_x: number;
+  background_landscape_y: number;
+  background_landscape_scale: number;
+  background_portrait_mode: "fill" | "fit" | "stretch" | "tile";
+  background_portrait_x: number;
+  background_portrait_y: number;
+  background_portrait_scale: number;
   base_backend_id: string;
   base_backend_name: string;
   base_model_name: string;
@@ -184,6 +195,17 @@ export type SavePrivatePersonaParams = {
   avatarCropX?: number;
   avatarCropY?: number;
   avatarCropSize?: number;
+  backgroundAssetId?: string | null;
+  backgroundDim?: number;
+  backgroundMessageDim?: number;
+  backgroundLandscapeMode?: "fill" | "fit" | "stretch" | "tile";
+  backgroundLandscapeX?: number;
+  backgroundLandscapeY?: number;
+  backgroundLandscapeScale?: number;
+  backgroundPortraitMode?: "fill" | "fit" | "stretch" | "tile";
+  backgroundPortraitX?: number;
+  backgroundPortraitY?: number;
+  backgroundPortraitScale?: number;
   toolPolicyJson?: string | null;
   sourcePersonaId?: string | null;
   sourcePersonaVersionId?: string | null;
@@ -634,6 +656,7 @@ export async function updatePrivatePersona(
   const nextAvatarCropX = normalizeAvatarCrop(params.avatarCropX);
   const nextAvatarCropY = normalizeAvatarCrop(params.avatarCropY);
   const nextAvatarCropSize = normalizeAvatarCropSize(params.avatarCropSize);
+  const nextBackgroundAssetId = params.backgroundAssetId ?? null;
   const hasVersionChange =
     params.displayName.trim() !== currentVersion.display_name ||
     params.baseBackendId !== currentVersion.base_backend_id ||
@@ -644,7 +667,8 @@ export async function updatePrivatePersona(
     (params.sourcePersonaId ?? null) !== (currentVersion.source_persona_id ?? null) ||
     (params.sourcePersonaVersionId ?? null) !==
       (currentVersion.source_persona_version_id ?? null) ||
-    nextAvatarAssetId !== (currentVersion.avatar_asset_id ?? null);
+    nextAvatarAssetId !== (currentVersion.avatar_asset_id ?? null) ||
+    nextBackgroundAssetId !== (currentVersion.background_asset_id ?? null);
   const now = unixTimestamp();
 
   if (!hasVersionChange) {
@@ -652,7 +676,18 @@ export async function updatePrivatePersona(
       ...currentVersion,
       avatar_crop_x: nextAvatarCropX,
       avatar_crop_y: nextAvatarCropY,
-      avatar_crop_size: nextAvatarCropSize
+      avatar_crop_size: nextAvatarCropSize,
+      background_asset_id: nextBackgroundAssetId,
+      background_dim: normalizeBackgroundUnit(params.backgroundDim, 0.72),
+      background_message_dim: normalizeBackgroundUnit(params.backgroundMessageDim, 0.82),
+      background_landscape_mode: params.backgroundLandscapeMode ?? "fill",
+      background_landscape_x: normalizeAvatarCrop(params.backgroundLandscapeX),
+      background_landscape_y: normalizeAvatarCrop(params.backgroundLandscapeY),
+      background_landscape_scale: normalizeBackgroundScale(params.backgroundLandscapeScale),
+      background_portrait_mode: params.backgroundPortraitMode ?? "fill",
+      background_portrait_x: normalizeAvatarCrop(params.backgroundPortraitX),
+      background_portrait_y: normalizeAvatarCrop(params.backgroundPortraitY),
+      background_portrait_scale: normalizeBackgroundScale(params.backgroundPortraitScale)
     };
     const updatedPersona = {
       id: persona.id,
@@ -773,7 +808,12 @@ export async function deleteUnusedPrivatePersonaAvatar(assetId: string): Promise
     await openPrivateDb(),
     PERSONA_VERSION_STORE
   );
-  if (versions.some((version) => version.avatar_asset_id === assetId)) {
+  if (
+    versions.some(
+      (version) =>
+        version.avatar_asset_id === assetId || version.background_asset_id === assetId
+    )
+  ) {
     return;
   }
 
@@ -1222,6 +1262,17 @@ function privatePersonaVersionFromParams({
     avatar_crop_x: normalizeAvatarCrop(params.avatarCropX),
     avatar_crop_y: normalizeAvatarCrop(params.avatarCropY),
     avatar_crop_size: normalizeAvatarCropSize(params.avatarCropSize),
+    background_asset_id: params.backgroundAssetId ?? null,
+    background_dim: normalizeBackgroundUnit(params.backgroundDim, 0.72),
+    background_message_dim: normalizeBackgroundUnit(params.backgroundMessageDim, 0.82),
+    background_landscape_mode: params.backgroundLandscapeMode ?? "fill",
+    background_landscape_x: normalizeAvatarCrop(params.backgroundLandscapeX),
+    background_landscape_y: normalizeAvatarCrop(params.backgroundLandscapeY),
+    background_landscape_scale: normalizeBackgroundScale(params.backgroundLandscapeScale),
+    background_portrait_mode: params.backgroundPortraitMode ?? "fill",
+    background_portrait_x: normalizeAvatarCrop(params.backgroundPortraitX),
+    background_portrait_y: normalizeAvatarCrop(params.backgroundPortraitY),
+    background_portrait_scale: normalizeBackgroundScale(params.backgroundPortraitScale),
     base_backend_id: params.baseBackendId,
     base_backend_name: params.baseBackendName,
     base_model_name: params.baseModelName,
@@ -1244,6 +1295,16 @@ function normalizeAvatarCropSize(value: number | undefined) {
   if (value === undefined || !Number.isFinite(value)) {
     return 100;
   }
+  return Math.min(100, Math.max(10, value));
+}
+
+function normalizeBackgroundUnit(value: number | undefined, fallback: number) {
+  if (value === undefined || !Number.isFinite(value)) return fallback;
+  return Math.min(0.98, Math.max(0, value));
+}
+
+function normalizeBackgroundScale(value: number | undefined) {
+  if (value === undefined || !Number.isFinite(value)) return 35;
   return Math.min(100, Math.max(10, value));
 }
 
