@@ -1,0 +1,8 @@
+[[task]]
+name = "backend_server"
+command = "cargo run -p vashti"
+
+[[task]]
+name = "frontend_client"
+command = "npm run dev -- --host 0.0.0.0"
+cwd = "./apps/vashti/web"
