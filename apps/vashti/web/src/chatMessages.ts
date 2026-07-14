@@ -1,4 +1,5 @@
 import { isImageAttachment } from "./attachments";
+import { compileContextSystemPrompt } from "./contextBlocks";
 import { messageModelValue } from "./modelSelection";
 import { privateId, unixTimestamp, type PrivateChatMessage, type PrivatePersona } from "./privateChatStore";
 import type {
@@ -6,6 +7,7 @@ import type {
   ChatMessage,
   ChatMessageRevision,
   ComposerAttachment,
+  ContextBlockSelection,
   MessageStreamSegment,
   MessageVersion,
   ParsedThinkingText,
@@ -294,21 +296,23 @@ export function privatePromptMessagesWithPersona(
   activeRootMessageId: string | null,
   stopBeforeMessageId: string,
   persona: PrivatePersona | null,
-  systemPromptOverride?: string | null
+  systemPromptOverride?: string | null,
+  contextBlocks: ContextBlockSelection[] = []
 ) {
   const promptMessages = privatePromptMessages(messages, activeRootMessageId, stopBeforeMessageId);
   const systemPrompt =
     systemPromptOverride === undefined || systemPromptOverride === null
       ? persona?.current_version.system_prompt.trim()
       : systemPromptOverride.trim();
-  if (!systemPrompt) {
+  const compiledSystemPrompt = compileContextSystemPrompt(systemPrompt, contextBlocks);
+  if (!compiledSystemPrompt) {
     return promptMessages;
   }
 
   return [
     {
       role: "system",
-      content_text: systemPrompt,
+      content_text: compiledSystemPrompt,
       thinking_text: null,
       images: []
     },

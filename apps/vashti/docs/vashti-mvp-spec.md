@@ -181,7 +181,38 @@ Public persona lifecycle direction:
 * the creator remains the only user who can publish new versions in MVP
 * users may copy a visible persona version into a new persona they own
 
-### 5.5 Attachments
+### 5.5 Context blocks
+
+Vashti should provide a reusable context library that is independent of custom
+models. A context block is a named prompt fragment that can be attached to any
+chat whose selected model is otherwise available to the user.
+
+Context blocks are organized into user-created categories. Categories are for
+organization and selection behavior, not permissions:
+
+* a `single` category allows at most one selected block in a chat
+* a `multiple` category allows any number of selected blocks
+* users may select blocks from several categories and reorder the final prompt order
+* blocks remain usable with base models and custom models alike
+
+Version and generation rules:
+
+* block content edits create immutable versions
+* a chat pins the exact selected block versions until the user changes them
+* deleting a block removes it from the library without breaking existing chats
+* each assistant generation snapshots the block versions used for that response
+* generation prepends the effective model/custom-model system prompt first, then selected blocks in the user's explicit order
+* Vashti must reject an oversized compiled system prompt rather than silently truncating it
+
+Storage modes follow the same privacy boundary as chats:
+
+* server blocks are owner-only in MVP and may be used in standard chats
+* device blocks are stored only in encrypted browser IndexedDB and may be used in private-local chats
+* standard chats must never reference device-only blocks
+* private chats must not disclose device-only block names or content to server storage
+* copying blocks across the server/device boundary may be added later as an explicit confirmed action
+
+### 5.6 Attachments
 
 * upload images
 * upload files
@@ -189,7 +220,7 @@ Public persona lifecycle direction:
 * image attachments should work with multimodal models when supported
 * generic file attachments may be stored and surfaced in UI without semantic retrieval
 
-### 5.6 PWA support
+### 5.7 PWA support
 
 * installable web app
 * manifest and icons
@@ -197,11 +228,12 @@ Public persona lifecycle direction:
 * fast reload of app shell
 * responsive layout for mobile and desktop
 
-### 5.7 Settings
+### 5.8 Settings
 
 * default Ollama backend
 * default model
 * persona management
+* server and device context-block libraries
 * request timeout
 * upload size limit
 * signup/admin settings, including public signup enablement and limit
@@ -209,7 +241,7 @@ Public persona lifecycle direction:
 * admin global model availability
 * advanced network access mode for LAN HTTP vs public HTTPS reverse-proxy deployment
 
-### 5.8 Admin basics
+### 5.9 Admin basics
 
 * manage users
 
@@ -297,6 +329,21 @@ Rationale:
 * a private persona name or prompt may itself contain sensitive information
 * standard chats are server-backed, so attaching a private persona to them would weaken the privacy promise
 * prompt visibility helps users evaluate safety before using public personas, especially once tools exist
+
+### 6.6 Context-block privacy
+
+Context blocks may contain project details, roleplay scenarios, personal notes,
+or other sensitive prompt material. Their storage mode is therefore a hard
+privacy boundary rather than a display preference.
+
+Rules:
+
+* server blocks are stored in SQLite and are available only to their owner in MVP
+* device blocks and categories are stored in the same encrypted IndexedDB boundary as private chats
+* standard chats may select server blocks only
+* private-local chats may select device blocks only
+* private generation sends compiled device-block content transiently but never stores block metadata or content on the server
+* moving or copying a block across the boundary requires an explicit future confirmation flow
 
 ---
 

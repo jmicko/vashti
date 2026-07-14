@@ -53,6 +53,8 @@ pub struct CreateChatRequest {
     pub system_prompt_override: Option<String>,
     pub inference_settings: Option<ChatInferenceSettings>,
     pub tool_preferences: Option<ChatToolPreferences>,
+    #[serde(default)]
+    pub context_block_version_ids: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -64,6 +66,7 @@ pub struct UpdateChatRequest {
     pub system_prompt_override: Option<Option<String>>,
     pub inference_settings: Option<ChatInferenceSettings>,
     pub tool_preferences: Option<ChatToolPreferences>,
+    pub context_block_version_ids: Option<Vec<String>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -185,8 +188,8 @@ pub struct BranchMessageRequest {
 #[serde(tag = "type", rename_all = "snake_case")]
 enum GenerateEvent {
     MessageStart {
-        user_message: Option<ChatMessage>,
-        assistant_message: ChatMessage,
+        user_message: Option<Box<ChatMessage>>,
+        assistant_message: Box<ChatMessage>,
     },
     ThinkingDelta {
         assistant_message_id: String,
@@ -212,6 +215,37 @@ enum GenerateEvent {
         assistant_message_id: Option<String>,
         message: String,
     },
+}
+
+struct GenerationStreamTask {
+    tx: mpsc::Sender<Result<Bytes, Infallible>>,
+    db: sqlx::SqlitePool,
+    client: reqwest::Client,
+    progress: GenerationProgressMap,
+    user_id: String,
+    chat_id: String,
+    prepared: service::PreparedGeneration,
+    cancellation: tokio_util::sync::CancellationToken,
+}
+
+struct TitleGenerationRequest<'a> {
+    db: &'a sqlx::SqlitePool,
+    client: &'a reqwest::Client,
+    user_id: &'a str,
+    chat_id: &'a str,
+    backend_base_url: &'a str,
+    model_name: &'a str,
+    prompt_messages: &'a [OllamaChatMessage],
+    assistant_text: &'a str,
+}
+
+struct GenerationLineState<'a> {
+    content_text: &'a mut String,
+    thinking_text: &'a mut String,
+    thinking_content_cursor: &'a mut usize,
+    done_reason: &'a mut Option<String>,
+    usage_stats: &'a mut Option<OllamaUsageStats>,
+    tool_calls: &'a mut Vec<OllamaToolCall>,
 }
 
 pub async fn list_chats(
@@ -513,16 +547,17 @@ pub async fn stop_generation(
     Ok(Json(StopGenerationResponse { ok: true }))
 }
 
-async fn stream_generation(
-    tx: mpsc::Sender<Result<Bytes, Infallible>>,
-    db: sqlx::SqlitePool,
-    client: reqwest::Client,
-    progress: GenerationProgressMap,
-    user_id: String,
-    chat_id: String,
-    prepared: service::PreparedGeneration,
-    cancellation: tokio_util::sync::CancellationToken,
-) {
+async fn stream_generation(task: GenerationStreamTask) {
+    let GenerationStreamTask {
+        tx,
+        db,
+        client,
+        progress,
+        user_id,
+        chat_id,
+        prepared,
+        cancellation,
+    } = task;
     let assistant_message_id = prepared.assistant_message.id.clone();
     let title_backend_base_url = prepared.backend_base_url.clone();
     let title_model_name = prepared.model_name.clone();
@@ -545,8 +580,8 @@ async fn stream_generation(
     if !send_event(
         &tx,
         &GenerateEvent::MessageStart {
-            user_message: prepared.user_message,
-            assistant_message: prepared.assistant_message,
+            user_message: prepared.user_message.map(Box::new),
+            assistant_message: Box::new(prepared.assistant_message),
         },
     )
     .await
@@ -596,20 +631,20 @@ async fn stream_generation(
         available_tools.clear();
     }
     let mut prompt_messages = prepared.prompt_messages;
-    if !available_tools.is_empty() {
-        if let Some(tool_settings) = tool_settings.as_ref() {
-            prompt_messages.insert(
-                0,
-                OllamaChatMessage {
-                    role: "system".to_string(),
-                    content: tools::service::tool_system_prompt(tool_settings, &available_tools),
-                    thinking: None,
-                    images: None,
-                    tool_name: None,
-                    tool_calls: None,
-                },
-            );
-        }
+    if !available_tools.is_empty()
+        && let Some(tool_settings) = tool_settings.as_ref()
+    {
+        prompt_messages.insert(
+            0,
+            OllamaChatMessage {
+                role: "system".to_string(),
+                content: tools::service::tool_system_prompt(tool_settings, &available_tools),
+                thinking: None,
+                images: None,
+                tool_name: None,
+                tool_calls: None,
+            },
+        );
     }
     let available_tool_names = available_tools
         .iter()
@@ -702,12 +737,14 @@ async fn stream_generation(
                                     &user_id,
                                     &chat_id,
                                     &line,
-                                    &mut content_text,
-                                    &mut thinking_text,
-                                    &mut thinking_content_cursor,
-                                    &mut done_reason,
-                                    &mut usage_stats,
-                                    &mut round_tool_calls,
+                                    GenerationLineState {
+                                        content_text: &mut content_text,
+                                        thinking_text: &mut thinking_text,
+                                        thinking_content_cursor: &mut thinking_content_cursor,
+                                        done_reason: &mut done_reason,
+                                        usage_stats: &mut usage_stats,
+                                        tool_calls: &mut round_tool_calls,
+                                    },
                                 )
                                 .await
                                 {
@@ -756,34 +793,35 @@ async fn stream_generation(
         }
 
         let line = buffer.trim().to_string();
-        if !line.is_empty() {
-            if let Err(message) = handle_ollama_line(
+        if !line.is_empty()
+            && let Err(message) = handle_ollama_line(
                 &tx,
                 &progress,
                 &assistant_message_id,
                 &user_id,
                 &chat_id,
                 &line,
-                &mut content_text,
-                &mut thinking_text,
-                &mut thinking_content_cursor,
-                &mut done_reason,
-                &mut usage_stats,
-                &mut round_tool_calls,
+                GenerationLineState {
+                    content_text: &mut content_text,
+                    thinking_text: &mut thinking_text,
+                    thinking_content_cursor: &mut thinking_content_cursor,
+                    done_reason: &mut done_reason,
+                    usage_stats: &mut usage_stats,
+                    tool_calls: &mut round_tool_calls,
+                },
             )
             .await
-            {
-                let _ = service::fail_generation(
-                    &db,
-                    &assistant_message_id,
-                    &content_text,
-                    &thinking_text,
-                    &message,
-                )
-                .await;
-                clear_generation_progress(&progress, &assistant_message_id).await;
-                return;
-            }
+        {
+            let _ = service::fail_generation(
+                &db,
+                &assistant_message_id,
+                &content_text,
+                &thinking_text,
+                &message,
+            )
+            .await;
+            clear_generation_progress(&progress, &assistant_message_id).await;
+            return;
         }
 
         if round_tool_calls.is_empty() {
@@ -880,16 +918,16 @@ async fn stream_generation(
     .await;
     clear_generation_progress(&progress, &assistant_message_id).await;
 
-    if let Some(title) = maybe_generate_chat_title(
-        &db,
-        &client,
-        &user_id,
-        &chat_id,
-        &title_backend_base_url,
-        &title_model_name,
-        &title_prompt_messages,
-        &content_text,
-    )
+    if let Some(title) = maybe_generate_chat_title(TitleGenerationRequest {
+        db: &db,
+        client: &client,
+        user_id: &user_id,
+        chat_id: &chat_id,
+        backend_base_url: &title_backend_base_url,
+        model_name: &title_model_name,
+        prompt_messages: &title_prompt_messages,
+        assistant_text: &content_text,
+    })
     .await
     {
         let _ = send_event(&tx, &GenerateEvent::ChatTitle { chat_id, title }).await;
@@ -992,7 +1030,7 @@ async fn start_generation_stream(
     let progress = state.generation_progress.clone();
 
     tokio::spawn(async move {
-        stream_generation(
+        stream_generation(GenerationStreamTask {
             tx,
             db,
             client,
@@ -1001,7 +1039,7 @@ async fn start_generation_stream(
             chat_id,
             prepared,
             cancellation,
-        )
+        })
         .await;
         cancellations.lock().await.remove(&assistant_message_id);
     });
@@ -1020,16 +1058,17 @@ async fn start_generation_stream(
     response
 }
 
-async fn maybe_generate_chat_title(
-    db: &sqlx::SqlitePool,
-    client: &reqwest::Client,
-    user_id: &str,
-    chat_id: &str,
-    backend_base_url: &str,
-    model_name: &str,
-    prompt_messages: &[OllamaChatMessage],
-    assistant_text: &str,
-) -> Option<String> {
+async fn maybe_generate_chat_title(request: TitleGenerationRequest<'_>) -> Option<String> {
+    let TitleGenerationRequest {
+        db,
+        client,
+        user_id,
+        chat_id,
+        backend_base_url,
+        model_name,
+        prompt_messages,
+        assistant_text,
+    } = request;
     let chat = service::get_chat(db, user_id, chat_id).await.ok()?;
     if chat.title != "New Chat" {
         return None;
@@ -1072,6 +1111,7 @@ async fn maybe_generate_chat_title(
             tool_preferences: None,
             system_prompt_override: None,
             inference_settings: None,
+            context_block_version_ids: None,
         },
     )
     .await
@@ -1189,13 +1229,16 @@ async fn handle_ollama_line(
     user_id: &str,
     chat_id: &str,
     line: &str,
-    content_text: &mut String,
-    thinking_text: &mut String,
-    thinking_content_cursor: &mut usize,
-    done_reason: &mut Option<String>,
-    usage_stats: &mut Option<OllamaUsageStats>,
-    tool_calls: &mut Vec<OllamaToolCall>,
+    state: GenerationLineState<'_>,
 ) -> Result<(), String> {
+    let GenerationLineState {
+        content_text,
+        thinking_text,
+        thinking_content_cursor,
+        done_reason,
+        usage_stats,
+        tool_calls,
+    } = state;
     let chunk = match serde_json::from_str::<OllamaChatChunk>(line) {
         Ok(chunk) => chunk,
         Err(error) => {

@@ -1,6 +1,6 @@
-use std::{collections::HashMap, collections::VecDeque};
+use std::{collections::HashMap, collections::VecDeque, net::IpAddr};
 
-use axum::http::{HeaderMap, HeaderName, header};
+use axum::http::{HeaderMap, HeaderName};
 use tokio::sync::Mutex;
 
 use crate::{auth::service::unix_timestamp, error::ApiError};
@@ -51,29 +51,27 @@ impl RateLimiter {
     }
 }
 
-pub fn client_key(headers: &HeaderMap, trust_proxy_headers: bool) -> String {
+pub fn client_key(ip: IpAddr) -> String {
+    format!("ip:{ip}")
+}
+
+pub fn client_ip(headers: &HeaderMap, trust_proxy_headers: bool, peer_ip: IpAddr) -> IpAddr {
     if trust_proxy_headers {
         if let Some(forwarded_for) = header_text(headers, &X_FORWARDED_FOR)
             && let Some(first_ip) = forwarded_for.split(',').next().map(str::trim)
-            && !first_ip.is_empty()
+            && let Ok(ip) = first_ip.parse()
         {
-            return format!("ip:{}", compact_key_part(first_ip, 96));
+            return ip;
         }
 
         if let Some(real_ip) = header_text(headers, &X_REAL_IP)
-            && !real_ip.trim().is_empty()
+            && let Ok(ip) = real_ip.trim().parse()
         {
-            return format!("ip:{}", compact_key_part(real_ip.trim(), 96));
+            return ip;
         }
     }
 
-    let host = header_text(headers, &header::HOST).unwrap_or("unknown-host");
-    let user_agent = header_text(headers, &header::USER_AGENT).unwrap_or("unknown-agent");
-    format!(
-        "headers:{}:{}",
-        compact_key_part(host, 96),
-        compact_key_part(user_agent, 160)
-    )
+    peer_ip
 }
 
 pub fn compact_key_part(value: &str, max_chars: usize) -> String {
@@ -91,4 +89,48 @@ pub fn user_action_key(action: &str, user_id: &str) -> String {
 
 fn header_text<'a>(headers: &'a HeaderMap, name: &HeaderName) -> Option<&'a str> {
     headers.get(name).and_then(|value| value.to_str().ok())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::{IpAddr, Ipv4Addr};
+
+    use axum::http::{HeaderMap, HeaderValue};
+
+    use super::*;
+
+    #[test]
+    fn client_ip_uses_peer_address_without_trusted_proxy_headers() {
+        let mut headers = HeaderMap::new();
+        headers.insert(&X_FORWARDED_FOR, HeaderValue::from_static("203.0.113.10"));
+        let peer_ip = IpAddr::V4(Ipv4Addr::new(192, 0, 2, 20));
+
+        assert_eq!(client_ip(&headers, false, peer_ip), peer_ip);
+        assert_eq!(client_key(peer_ip), "ip:192.0.2.20");
+    }
+
+    #[test]
+    fn client_ip_uses_first_valid_trusted_proxy_address() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            &X_FORWARDED_FOR,
+            HeaderValue::from_static("203.0.113.10, 10.0.0.2"),
+        );
+        let peer_ip = IpAddr::V4(Ipv4Addr::LOCALHOST);
+
+        assert_eq!(
+            client_ip(&headers, true, peer_ip),
+            "203.0.113.10".parse::<IpAddr>().expect("valid IP")
+        );
+    }
+
+    #[test]
+    fn invalid_trusted_proxy_values_fall_back_to_peer_address() {
+        let mut headers = HeaderMap::new();
+        headers.insert(&X_FORWARDED_FOR, HeaderValue::from_static("not-an-ip"));
+        headers.insert(&X_REAL_IP, HeaderValue::from_static("also-not-an-ip"));
+        let peer_ip = IpAddr::V4(Ipv4Addr::LOCALHOST);
+
+        assert_eq!(client_ip(&headers, true, peer_ip), peer_ip);
+    }
 }

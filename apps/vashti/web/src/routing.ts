@@ -5,6 +5,7 @@ const settingsSections: SettingsSection[] = [
   "users",
   "backends",
   "models",
+  "context",
   "tools",
   "app"
 ];

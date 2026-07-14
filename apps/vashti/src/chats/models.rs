@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::context_blocks::models::ContextBlockSelection;
 use crate::ollama::models::OllamaUsageStats;
 use crate::uploads::models::Attachment;
 
@@ -84,6 +85,7 @@ pub struct ChatDetail {
     pub system_prompt_override: Option<String>,
     pub tool_preferences: ChatToolPreferences,
     pub inference_settings: ChatInferenceSettings,
+    pub context_blocks: Vec<ContextBlockSelection>,
     pub active_root_message_id: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
@@ -115,6 +117,7 @@ pub struct ChatMessage {
     pub revisions: Vec<ChatMessageRevision>,
     pub revision_count: i64,
     pub attachments: Vec<Attachment>,
+    pub context_blocks: Vec<ContextBlockSelection>,
 }
 
 #[derive(Clone, Debug, Serialize)]

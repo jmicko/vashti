@@ -406,6 +406,8 @@ struct ReleasePointers {
     prerelease_version: Option<String>,
 }
 
+const DEFAULT_REQUEST_BODY_LIMIT: usize = 1024 * 1024;
+
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
     tracing_subscriber::registry()
@@ -417,8 +419,7 @@ async fn main() -> Result<(), AppError> {
         .init();
 
     let config = Config::from_env()?;
-    fs::create_dir_all(&config.data_dir).await?;
-    fs::create_dir_all(&config.artifact_dir).await?;
+    prepare_storage(&config).await?;
 
     let database_url = format!("sqlite://{}", config.database_path.display());
     let database_options = SqliteConnectOptions::from_str(&database_url)
@@ -430,6 +431,7 @@ async fn main() -> Result<(), AppError> {
         .connect_with(database_options)
         .await
         .map_err(AppError::from)?;
+    secure_file_if_present(&config.database_path).await?;
     sqlx::migrate!("./migrations")
         .run(&db)
         .await
@@ -490,7 +492,12 @@ fn router(state: AppState) -> Router {
             "/api/admin/password-reset/confirm",
             post(confirm_password_reset),
         )
-        .route("/api/releases", get(list_releases).post(upload_release))
+        .route(
+            "/api/releases",
+            get(list_releases)
+                .post(upload_release)
+                .layer(DefaultBodyLimit::max(state.config.max_upload_bytes)),
+        )
         .route("/api/releases/{version}", delete(delete_release))
         .route("/api/releases/{version}/promote", post(promote_release))
         .route("/api/releases/latest", get(latest_release))
@@ -502,12 +509,56 @@ fn router(state: AppState) -> Router {
         .route("/releases/{version}/SHA256SUMS", get(version_checksums))
         .route("/releases/{version}/{filename}", get(download_version))
         .with_state(state.clone())
-        .layer(DefaultBodyLimit::max(state.config.max_upload_bytes))
+        .layer(DefaultBodyLimit::max(DEFAULT_REQUEST_BODY_LIMIT))
         .layer(SetResponseHeaderLayer::if_not_present(
             header::X_CONTENT_TYPE_OPTIONS,
             HeaderValue::from_static("nosniff"),
         ))
         .layer(TraceLayer::new_for_http())
+}
+
+async fn prepare_storage(config: &Config) -> Result<(), std::io::Error> {
+    fs::create_dir_all(&config.data_dir).await?;
+    fs::create_dir_all(&config.artifact_dir).await?;
+    secure_directory(&config.data_dir).await?;
+    secure_directory(&config.artifact_dir).await?;
+    Ok(())
+}
+
+#[cfg(unix)]
+async fn secure_directory(path: &Path) -> Result<(), std::io::Error> {
+    set_mode(path, 0o700).await
+}
+
+#[cfg(not(unix))]
+async fn secure_directory(_path: &Path) -> Result<(), std::io::Error> {
+    Ok(())
+}
+
+#[cfg(unix)]
+async fn secure_file_if_present(path: &Path) -> Result<(), std::io::Error> {
+    if fs::try_exists(path).await? {
+        set_mode(path, 0o600).await?;
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+async fn secure_file_if_present(_path: &Path) -> Result<(), std::io::Error> {
+    Ok(())
+}
+
+#[cfg(unix)]
+async fn set_mode(path: &Path, mode: u32) -> Result<(), std::io::Error> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let metadata = fs::metadata(path).await?;
+    let mut permissions = metadata.permissions();
+    if permissions.mode() & 0o777 != mode {
+        permissions.set_mode(mode);
+        fs::set_permissions(path, permissions).await?;
+    }
+    Ok(())
 }
 
 async fn index(
@@ -2063,10 +2114,10 @@ fn safe_filename(value: &str) -> String {
 
 fn hash_password(password: &str) -> Result<String, AppError> {
     let password = password.trim();
-    if password.len() < 8 {
+    if password.len() < 8 || password.len() > 1024 {
         return Err(AppError::bad_request(
             "invalid_password",
-            "Password must be at least 8 characters.",
+            "Password must be between 8 and 1024 bytes.",
         ));
     }
 
@@ -2081,6 +2132,9 @@ fn hash_password(password: &str) -> Result<String, AppError> {
 }
 
 fn verify_password(password: &str, password_hash: &str) -> Result<bool, AppError> {
+    if password.len() > 1024 {
+        return Ok(false);
+    }
     let parsed_hash = PasswordHash::new(password_hash).map_err(|error| {
         tracing::error!(?error, "stored password hash is invalid");
         AppError::internal("Stored password hash is invalid")

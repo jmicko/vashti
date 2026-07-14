@@ -181,6 +181,7 @@ export function AdminUsersPanel({ currentUserId }: { currentUserId: string }) {
             <label>
               <span>Username</span>
               <input
+                maxLength={64}
                 required
                 value={newUsername}
                 onChange={(event) => setNewUsername(event.target.value)}
@@ -189,6 +190,7 @@ export function AdminUsersPanel({ currentUserId }: { currentUserId: string }) {
             <label>
               <span>Email</span>
               <input
+                maxLength={254}
                 type="email"
                 value={newEmail}
                 onChange={(event) => setNewEmail(event.target.value)}
@@ -197,6 +199,7 @@ export function AdminUsersPanel({ currentUserId }: { currentUserId: string }) {
             <label>
               <span>Password</span>
               <input
+                maxLength={1024}
                 required
                 type="password"
                 value={newPassword}

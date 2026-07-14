@@ -98,6 +98,7 @@ function LoginForm({
           <input
             autoComplete="username"
             autoFocus
+            maxLength={254}
             required
             value={identifier}
             onChange={(event) => setIdentifier(event.target.value)}
@@ -107,6 +108,7 @@ function LoginForm({
           <span>Password</span>
           <input
             autoComplete="current-password"
+            maxLength={1024}
             required
             type="password"
             value={password}
@@ -181,6 +183,7 @@ function RegisterForm({
           <input
             autoComplete="username"
             autoFocus
+            maxLength={64}
             required
             value={username}
             onChange={(event) => setUsername(event.target.value)}
@@ -190,6 +193,7 @@ function RegisterForm({
           <span>Email</span>
           <input
             autoComplete="email"
+            maxLength={254}
             type="email"
             value={email}
             onChange={(event) => setEmail(event.target.value)}
@@ -199,6 +203,7 @@ function RegisterForm({
           <span>Password</span>
           <input
             autoComplete="new-password"
+            maxLength={1024}
             required
             type="password"
             value={password}

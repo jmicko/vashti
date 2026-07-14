@@ -1,6 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, Info, Plus, RotateCcw, SlidersHorizontal } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  Blocks,
+  ChevronDown,
+  Info,
+  Plus,
+  RefreshCw,
+  RotateCcw,
+  SlidersHorizontal,
+  X
+} from "lucide-react";
 import { requestJson } from "./api";
+import {
+  moveContextSelection,
+  normalizeContextSelections,
+  toggleContextBlock,
+  updateContextSelectionVersion
+} from "./contextBlocks";
 import type { CustomModelDraft } from "./customModelDraft";
 import {
   hasInferenceSettings,
@@ -25,6 +42,8 @@ import {
 import type {
   BackendModelGroup,
   ChatInferenceSettings,
+  ContextBlockSelection,
+  ContextLibraryResponse,
   ModelInfo,
   Persona,
   PersonaVersion
@@ -170,6 +189,8 @@ export function ModelSettingsMenu({
   selectedModelInfo,
   systemPromptOverride,
   inferenceSettings,
+  contextLibrary,
+  contextBlocks,
   canSaveConversationSettings,
   disabled,
   onModelSelected,
@@ -177,7 +198,9 @@ export function ModelSettingsMenu({
   onPersonaVersionsLoaded,
   onPrivatePersonaVersionsLoaded,
   onSystemPromptOverrideChange,
-  onInferenceSettingsChange
+  onInferenceSettingsChange,
+  onContextBlocksChange,
+  onOpenContextSettings
 }: {
   groups: BackendModelGroup[];
   personas: Persona[];
@@ -188,6 +211,8 @@ export function ModelSettingsMenu({
   selectedModelInfo: ModelInfo | null;
   systemPromptOverride?: string | null;
   inferenceSettings?: ChatInferenceSettings;
+  contextLibrary: ContextLibraryResponse;
+  contextBlocks: ContextBlockSelection[];
   canSaveConversationSettings?: boolean;
   disabled: boolean;
   onModelSelected: (value: string) => void;
@@ -196,6 +221,8 @@ export function ModelSettingsMenu({
   onPrivatePersonaVersionsLoaded: (versions: PrivatePersonaVersion[]) => void;
   onSystemPromptOverrideChange?: (value: string | null) => void;
   onInferenceSettingsChange?: (value: ChatInferenceSettings) => void;
+  onContextBlocksChange: (value: ContextBlockSelection[]) => void;
+  onOpenContextSettings?: () => void;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [isVersionMenuOpen, setIsVersionMenuOpen] = useState(false);
@@ -205,6 +232,7 @@ export function ModelSettingsMenu({
     inferenceSettingsToInputs({})
   );
   const [error, setError] = useState<string | null>(null);
+  const [contextError, setContextError] = useState<string | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const versionPickerRef = useRef<HTMLDivElement>(null);
   const loadedHostedPersonaIdsRef = useRef(new Set<string>());
@@ -298,7 +326,10 @@ export function ModelSettingsMenu({
   );
   const isInferenceCustomized = hasInferenceSettings(effectiveInferenceSettings);
   const hasConversationSettings =
-    isUsingNonDefaultVersion || isSystemPromptCustomized || isInferenceCustomized;
+    isUsingNonDefaultVersion ||
+    isSystemPromptCustomized ||
+    isInferenceCustomized ||
+    contextBlocks.length > 0;
   const baseModelName =
     selectedHostedVersion?.base_model_name ??
     selectedPrivateVersion?.base_model_name ??
@@ -313,10 +344,27 @@ export function ModelSettingsMenu({
         : null;
   const selectedVersionId = selectedHostedVersion?.id ?? selectedPrivateVersion?.id ?? "";
   const displayedVersions = selectedHostedVersion ? hostedVersions : privateVersions;
+  const selectedVersion = selectedHostedVersion ?? selectedPrivateVersion;
   const selectedVersionLabel =
-    (selectedHostedVersion ?? selectedPrivateVersion)
-      ? versionOptionLabel(selectedHostedVersion ?? selectedPrivateVersion)
-      : "Select version";
+    selectedVersion ? versionOptionLabel(selectedVersion) : "Select version";
+  const normalizedContextBlocks = useMemo(
+    () => normalizeContextSelections(contextBlocks),
+    [contextBlocks]
+  );
+  const contextCategories = useMemo(() => {
+    const groups = contextLibrary.categories.map((category) => ({
+      category,
+      blocks: contextLibrary.blocks.filter((block) => block.category_id === category.id)
+    }));
+    const uncategorized = contextLibrary.blocks.filter((block) => !block.category_id);
+    return uncategorized.length > 0
+      ? [...groups, { category: null, blocks: uncategorized }]
+      : groups;
+  }, [contextLibrary]);
+  const selectedContextBlockIds = useMemo(
+    () => new Set(normalizedContextBlocks.map((selection) => selection.block_id)),
+    [normalizedContextBlocks]
+  );
 
   useEffect(() => {
     function handlePointerDown(event: MouseEvent) {
@@ -461,6 +509,31 @@ export function ModelSettingsMenu({
   function resetSystemPromptOverride() {
     setDraftSystemPrompt(defaultSystemPrompt);
     onSystemPromptOverrideChange?.(null);
+  }
+
+  function toggleSelectedContextBlock(
+    block: ContextLibraryResponse["blocks"][number],
+    category: ContextLibraryResponse["categories"][number] | null
+  ) {
+    setContextError(null);
+    try {
+      onContextBlocksChange(toggleContextBlock(normalizedContextBlocks, block, category));
+    } catch (toggleError) {
+      setContextError(
+        toggleError instanceof Error ? toggleError.message : "Failed to update context blocks"
+      );
+    }
+  }
+
+  function removeContextBlock(blockVersionId: string) {
+    setContextError(null);
+    onContextBlocksChange(
+      normalizeContextSelections(
+        normalizedContextBlocks.filter(
+          (selection) => selection.block_version_id !== blockVersionId
+        )
+      )
+    );
   }
 
   function renderInferenceField(field: InferenceFieldDefinition) {
@@ -629,6 +702,164 @@ export function ModelSettingsMenu({
                 </p>
               </>
             ) : null}
+
+            <details className="model-settings-prompt model-settings-context">
+              <summary>
+                Context
+                {normalizedContextBlocks.length > 0 && (
+                  <span>{normalizedContextBlocks.length} selected</span>
+                )}
+              </summary>
+              {normalizedContextBlocks.length > 0 && (
+                <div className="context-selection-list">
+                  {normalizedContextBlocks.map((selection, index) => {
+                    const currentBlock = contextLibrary.blocks.find(
+                      (block) => block.id === selection.block_id
+                    );
+                    const hasUpdate = Boolean(
+                      currentBlock &&
+                        currentBlock.current_version.id !== selection.block_version_id
+                    );
+                    return (
+                      <div className="context-selection-row" key={selection.block_version_id}>
+                        <div className="context-selection-order">
+                          <button
+                            type="button"
+                            className="icon-button"
+                            aria-label={`Move ${selection.name} up`}
+                            disabled={index === 0}
+                            onClick={() =>
+                              onContextBlocksChange(
+                                moveContextSelection(
+                                  normalizedContextBlocks,
+                                  selection.block_version_id,
+                                  -1
+                                )
+                              )
+                            }
+                          >
+                            <ArrowUp />
+                          </button>
+                          <button
+                            type="button"
+                            className="icon-button"
+                            aria-label={`Move ${selection.name} down`}
+                            disabled={index === normalizedContextBlocks.length - 1}
+                            onClick={() =>
+                              onContextBlocksChange(
+                                moveContextSelection(
+                                  normalizedContextBlocks,
+                                  selection.block_version_id,
+                                  1
+                                )
+                              )
+                            }
+                          >
+                            <ArrowDown />
+                          </button>
+                        </div>
+                        <div className="context-selection-copy">
+                          <strong>{selection.name}</strong>
+                          <span>
+                            {selection.category_name ?? "Uncategorized"} · v{selection.version_number}
+                          </span>
+                        </div>
+                        {hasUpdate && currentBlock && (
+                          <button
+                            type="button"
+                            className="context-update-button"
+                            aria-label={`Update ${selection.name} to v${currentBlock.current_version.version_number}`}
+                            title={`Update to v${currentBlock.current_version.version_number}`}
+                            onClick={() =>
+                              onContextBlocksChange(
+                                updateContextSelectionVersion(
+                                  normalizedContextBlocks,
+                                  currentBlock,
+                                  contextLibrary
+                                )
+                              )
+                            }
+                          >
+                            <RefreshCw />
+                            <span>Update</span>
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="icon-button"
+                          aria-label={`Remove ${selection.name}`}
+                          onClick={() => removeContextBlock(selection.block_version_id)}
+                        >
+                          <X />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {contextCategories.length > 0 ? (
+                <div className="context-picker-groups">
+                  {contextCategories.map(({ category, blocks }) => (
+                    <section className="context-picker-group" key={category?.id ?? "uncategorized"}>
+                      <header>
+                        <strong>{category?.name ?? "Uncategorized"}</strong>
+                        {category && (
+                          <span>
+                            {category.selection_mode === "single" ? "Choose one" : "Choose multiple"}
+                          </span>
+                        )}
+                      </header>
+                      {blocks.length === 0 ? (
+                        <p className="model-settings-note">No blocks in this category.</p>
+                      ) : (
+                        <div className="context-picker-options">
+                          {blocks.map((block) => {
+                            const selected = selectedContextBlockIds.has(block.id);
+                            return (
+                              <button
+                                type="button"
+                                className={selected ? "context-picker-option selected" : "context-picker-option"}
+                                key={block.id}
+                                onClick={() => toggleSelectedContextBlock(block, category)}
+                              >
+                                <span className="context-picker-check" aria-hidden="true">
+                                  {selected ? "✓" : "+"}
+                                </span>
+                                <span>
+                                  <strong>{block.current_version.name}</strong>
+                                  <small>{block.current_version.content}</small>
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </section>
+                  ))}
+                </div>
+              ) : normalizedContextBlocks.length === 0 ? (
+                <div className="context-picker-empty">
+                  <Blocks />
+                  <span>No context blocks in this library.</span>
+                </div>
+              ) : null}
+
+              {contextError && <p className="error">{contextError}</p>}
+              {onOpenContextSettings && (
+                <button
+                  type="button"
+                  className="secondary-button model-settings-wide-action"
+                  onClick={() => {
+                    setIsOpen(false);
+                    onOpenContextSettings();
+                  }}
+                >
+                  <Blocks />
+                  <span>Manage context library</span>
+                </button>
+              )}
+            </details>
 
             <details className="model-settings-prompt">
               <summary>

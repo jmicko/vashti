@@ -88,7 +88,26 @@ Storage modes:
 
 Generation uses the resolved base backend/model and prepends or includes the persona version's system prompt in the prompt sent to Ollama.
 
-### 2.5 Tools
+### 2.5 Context blocks
+
+Context blocks are reusable, versioned prompt fragments that are independent of
+personas and base models. Users organize blocks into categories with either
+`single` or `multiple` selection behavior, then attach an ordered set of block
+versions to a conversation.
+
+Standard-chat blocks are owner-scoped SQLite records. Private-local blocks are
+encrypted IndexedDB records and never become server metadata. In both modes,
+the conversation pins immutable versions and every generated assistant message
+records the versions used for that response.
+
+Prompt assembly is deterministic:
+
+1. resolve the chat's system-prompt override or selected persona prompt
+2. append selected context blocks in the chat's stored order
+3. label each fragment as `[Context: <block name>]`
+4. reject the request if the compiled prompt exceeds the configured hard limit
+
+### 2.6 Tools
 
 Tools are optional backend capabilities that can be exposed to Ollama models through Ollama's function-calling API.
 
@@ -512,6 +531,64 @@ Notes:
 * a user is inserted as a member when they start a chat with a public persona
 * removing a public persona from the user's picker removes membership
 * deleting the final membership allows server cleanup
+
+### 3.2.14 `context_categories`
+
+Owner-scoped organizational categories for server context blocks.
+
+Columns:
+
+* `id` TEXT PRIMARY KEY
+* `user_id` TEXT NOT NULL REFERENCES `users`(`id`) ON DELETE CASCADE
+* `name` TEXT NOT NULL
+* `selection_mode` TEXT NOT NULL DEFAULT `single`
+  Allowed values: `single`, `multiple`
+* `sort_order` INTEGER NOT NULL DEFAULT 0
+* `created_at` INTEGER NOT NULL
+* `updated_at` INTEGER NOT NULL
+
+Category deletion sets matching block category IDs to null; it does not delete
+the blocks.
+
+### 3.2.15 `context_blocks`
+
+Stable identities for owner-scoped reusable prompt fragments.
+
+Columns:
+
+* `id` TEXT PRIMARY KEY
+* `user_id` TEXT NOT NULL REFERENCES `users`(`id`) ON DELETE CASCADE
+* `category_id` TEXT REFERENCES `context_categories`(`id`) ON DELETE SET NULL
+* `current_version_id` TEXT NOT NULL
+* `sort_order` INTEGER NOT NULL DEFAULT 0
+* `deleted_at` INTEGER
+* `created_at` INTEGER NOT NULL
+* `updated_at` INTEGER NOT NULL
+
+Deleting a block is a soft delete so versions already pinned to chats remain
+available.
+
+### 3.2.16 `context_block_versions`
+
+Immutable context-block content snapshots.
+
+Columns:
+
+* `id` TEXT PRIMARY KEY
+* `block_id` TEXT NOT NULL REFERENCES `context_blocks`(`id`) ON DELETE CASCADE
+* `version_number` INTEGER NOT NULL
+* `name` TEXT NOT NULL
+* `content` TEXT NOT NULL
+* `created_at` INTEGER NOT NULL
+* UNIQUE (`block_id`, `version_number`)
+
+### 3.2.17 chat context selections
+
+`chat_context_blocks` stores the ordered block versions currently selected for
+a standard chat. `chat_message_context_blocks` stores the ordered immutable
+snapshot used for each generated assistant message. Both tables reference
+`context_block_versions`; chat/message deletion cascades, while referenced
+versions are protected from deletion.
 
 ### 3.2.13 `model_availability`
 
@@ -2174,6 +2251,9 @@ Store objects like:
 * `private_messages`
 * `private_personas`
 * `private_persona_versions`
+* `private_context_categories`
+* `private_context_blocks`
+* `private_context_block_versions`
 * local attachment metadata and payloads embedded on private messages
 
 Suggested private chat shape:
@@ -2282,6 +2362,22 @@ Rules:
 * moving a server persona to private storage creates a local copy from the selected server version and then follows server lifecycle rules for the original
 * either direction across the private/server boundary requires a confirmation dialog
 * private persona deletion removes only local IndexedDB records
+
+## 8.3 IndexedDB for private context blocks
+
+Device-only context categories, block identities, and immutable block versions
+mirror the server model but are stored as encrypted private records. A private
+chat stores its ordered selected version snapshots, and each generated
+assistant message stores the snapshots used for that response. This preserves
+old conversations if a local block is edited or removed.
+
+Private context rules:
+
+* private chats may select device blocks only
+* category `single`/`multiple` behavior is enforced before generation
+* block content is compiled into the transient system prompt in the frontend
+* neither block IDs, names, category names, nor content are persisted by the server
+* clearing browser storage can permanently remove the device library
 
 ---
 

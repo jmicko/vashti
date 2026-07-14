@@ -60,6 +60,7 @@ import {
   getPrivateChat,
   listPrivatePersonas,
   listPrivateChats,
+  listPrivateContextLibrary,
   renamePrivateChat,
   resetPrivateStorageUser,
   saveCachedModelState,
@@ -79,6 +80,8 @@ import type {
   BackendModelGroup,
   ChatResponse,
   ChatInferenceSettings,
+  ContextBlockSelection,
+  ContextLibraryResponse,
   ChatSummary,
   ChatToolPreferences,
   ComposerAttachment,
@@ -154,6 +157,15 @@ export function AppShell({
   >(null);
   const [chatSystemPromptOverride, setChatSystemPromptOverride] = useState<string | null>(null);
   const [chatInferenceSettings, setChatInferenceSettings] = useState<ChatInferenceSettings>({});
+  const [chatContextBlocks, setChatContextBlocks] = useState<ContextBlockSelection[]>([]);
+  const [serverContextLibrary, setServerContextLibrary] = useState<ContextLibraryResponse>({
+    categories: [],
+    blocks: []
+  });
+  const [deviceContextLibrary, setDeviceContextLibrary] = useState<ContextLibraryResponse>({
+    categories: [],
+    blocks: []
+  });
   const [error, setError] = useState<string | null>(null);
   const isAdmin = user.role === "admin";
   const page = route.page;
@@ -214,6 +226,7 @@ export function AppShell({
     }
     setChatSystemPromptOverride(null);
     setChatInferenceSettings({});
+    setChatContextBlocks([]);
   }, [route]);
 
   const updateAppSettingsGuard = useCallback((guard: AppSettingsGuard | null) => {
@@ -223,6 +236,7 @@ export function AppShell({
   function setNewChatMode(mode: NewChatMode) {
     setNewChatModeState(mode);
     storeNewChatMode(mode);
+    setChatContextBlocks([]);
   }
 
   const applyModelPickerData = useCallback(
@@ -380,6 +394,30 @@ export function AppShell({
   useEffect(() => {
     void loadAvailableTools();
   }, [loadAvailableTools]);
+
+  const loadContextLibraries = useCallback(async () => {
+    const [serverResult, deviceResult] = await Promise.allSettled([
+      requestJson<ContextLibraryResponse>("/api/context-library"),
+      listPrivateContextLibrary()
+    ]);
+
+    if (serverResult.status === "fulfilled") {
+      setServerContextLibrary(serverResult.value);
+    }
+    if (deviceResult.status === "fulfilled") {
+      setDeviceContextLibrary(deviceResult.value);
+    }
+    if (serverResult.status === "rejected" && deviceResult.status === "rejected") {
+      const reason = serverResult.reason;
+      throw reason instanceof Error ? reason : new Error("Failed to load context libraries");
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadContextLibraries().catch((loadError) => {
+      setError(loadError instanceof Error ? loadError.message : "Failed to load context blocks");
+    });
+  }, [loadContextLibraries]);
 
   const loadChats = useCallback(async () => {
     setIsLoadingChats(true);
@@ -618,7 +656,10 @@ export function AppShell({
           persona_version_id: selectedPersonaVersionId,
           tool_preferences: toolPreferences,
           system_prompt_override: chatSystemPromptOverride,
-          inference_settings: chatInferenceSettings
+          inference_settings: chatInferenceSettings,
+          context_block_version_ids: chatContextBlocks.map(
+            (selection) => selection.block_version_id
+          )
         })
       });
 
@@ -630,7 +671,8 @@ export function AppShell({
           attachments: uploadedAttachments,
           toolPreferences,
           thinkMode,
-          inferenceSettings: chatInferenceSettings
+          inferenceSettings: chatInferenceSettings,
+          contextBlocks: chatContextBlocks
         });
       }
 
@@ -695,11 +737,15 @@ export function AppShell({
         method: "PATCH",
         body: JSON.stringify({
           system_prompt_override: chatSystemPromptOverride,
-          inference_settings: chatInferenceSettings
+          inference_settings: chatInferenceSettings,
+          context_block_version_ids: chatContextBlocks.map(
+            (selection) => selection.block_version_id
+          )
         })
       });
       setChatSystemPromptOverride(response.chat.system_prompt_override ?? null);
       setChatInferenceSettings(response.chat.inference_settings ?? {});
+      setChatContextBlocks(response.chat.context_blocks ?? []);
       return;
     }
 
@@ -713,11 +759,16 @@ export function AppShell({
         ...chat,
         system_prompt_override: chatSystemPromptOverride,
         inference_settings: chatInferenceSettings,
+        context_blocks: chatContextBlocks.map((selection, position) => ({
+          ...selection,
+          position
+        })),
         updated_at: unixTimestamp()
       };
       await savePrivateChat(nextChat);
       setChatSystemPromptOverride(chatSystemPromptOverride);
       setChatInferenceSettings(chatInferenceSettings);
+      setChatContextBlocks(nextChat.context_blocks);
       await loadPrivateChats();
       return;
     }
@@ -725,10 +776,12 @@ export function AppShell({
 
   const handleChatSettingsLoaded = useCallback((
     override: string | null | undefined,
-    inferenceSettings?: ChatInferenceSettings
+    inferenceSettings?: ChatInferenceSettings,
+    contextBlocks?: ContextBlockSelection[]
   ) => {
     setChatSystemPromptOverride(override ?? null);
     setChatInferenceSettings(inferenceSettings ?? {});
+    setChatContextBlocks(contextBlocks ?? []);
   }, []);
 
   function createCustomModelFromSettings(draft: CustomModelDraft) {
@@ -776,7 +829,8 @@ export function AppShell({
         personaVersionId: selectedPrivatePersona?.current_version.id ?? null,
         personaName: selectedPrivatePersona?.current_version.display_name ?? null,
         systemPromptOverride: chatSystemPromptOverride,
-        inferenceSettings: chatInferenceSettings
+        inferenceSettings: chatInferenceSettings,
+        contextBlocks: chatContextBlocks
       });
 
       if (prompt.trim()) {
@@ -786,7 +840,8 @@ export function AppShell({
           attachments,
           thinkMode,
           systemPromptOverride: chatSystemPromptOverride,
-          inferenceSettings: chatInferenceSettings
+          inferenceSettings: chatInferenceSettings,
+          contextBlocks: chatContextBlocks
         });
       }
 
@@ -959,6 +1014,10 @@ export function AppShell({
                   selectedModelInfo={activeSelectedModel ? selectedModelInfo() : null}
                   systemPromptOverride={chatSystemPromptOverride}
                   inferenceSettings={chatInferenceSettings}
+                  contextLibrary={
+                    allowPrivatePersonaSelection ? deviceContextLibrary : serverContextLibrary
+                  }
+                  contextBlocks={chatContextBlocks}
                   canSaveConversationSettings={page === "chat" || Boolean(currentPrivateChatId)}
                   disabled={!activeSelectedModel || isLoadingModels}
                   onModelSelected={setSelectedModel}
@@ -967,6 +1026,8 @@ export function AppShell({
                   onPrivatePersonaVersionsLoaded={rememberPrivatePersonaVersions}
                   onSystemPromptOverrideChange={setChatSystemPromptOverride}
                   onInferenceSettingsChange={setChatInferenceSettings}
+                  onContextBlocksChange={setChatContextBlocks}
+                  onOpenContextSettings={() => openSettings("context")}
                 />
               </>
             )}
@@ -1030,6 +1091,7 @@ export function AppShell({
             onToolsChanged={loadAvailableTools}
             onPersonasChanged={loadModels}
             onPrivatePersonasChanged={loadPrivatePersonas}
+            onContextChanged={loadContextLibraries}
             onAppSettingsGuardChange={updateAppSettingsGuard}
             onSelectSection={(section) => openSettings(section)}
             onUserChanged={onUserChanged}
@@ -1049,6 +1111,7 @@ export function AppShell({
             privatePersonaVersions={knownPrivatePersonaVersions}
             systemPromptOverride={chatSystemPromptOverride}
             inferenceSettings={chatInferenceSettings}
+            contextBlocks={chatContextBlocks}
             onImageOpen={openImageViewer}
             onChatSettingsLoaded={handleChatSettingsLoaded}
             onModelSelected={setSelectedModel}

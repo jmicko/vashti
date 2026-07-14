@@ -1397,7 +1397,7 @@ mod tests {
     #[tokio::test]
     async fn persona_edits_create_immutable_versions() {
         let pool = test_pool().await;
-        let user = register_user(&pool, "admin".to_string(), None, "secret".to_string())
+        let user = register_user(&pool, "admin".to_string(), None, "secret-pass".to_string())
             .await
             .expect("register user")
             .user;
@@ -1469,11 +1469,11 @@ mod tests {
         let pool = test_pool().await;
         let avatars_dir =
             std::env::temp_dir().join(format!("vashti-persona-copy-{}", Uuid::new_v4()));
-        let owner = register_user(&pool, "owner".to_string(), None, "secret".to_string())
+        let owner = register_user(&pool, "owner".to_string(), None, "secret-pass".to_string())
             .await
             .expect("register owner")
             .user;
-        let other = register_user(&pool, "other".to_string(), None, "secret".to_string())
+        let other = register_user(&pool, "other".to_string(), None, "secret-pass".to_string())
             .await
             .expect("register other")
             .user;
@@ -1574,7 +1574,7 @@ mod tests {
             &pool,
             "avatar-owner".to_string(),
             None,
-            "secret".to_string(),
+            "secret-pass".to_string(),
         )
         .await
         .expect("register user")

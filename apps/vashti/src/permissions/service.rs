@@ -123,7 +123,7 @@ pub async fn tag_responses(
         .iter()
         .map(|tag_id| tag_response(tag_id, &user_labels))
         .collect::<Vec<_>>();
-    tags.sort_by(|left, right| tag_sort_key(left).cmp(&tag_sort_key(right)));
+    tags.sort_by_key(tag_sort_key);
     Ok(tags)
 }
 

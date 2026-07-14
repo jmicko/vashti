@@ -13,6 +13,12 @@ use uuid::Uuid;
 
 use crate::{config::Config, error::ApiError};
 
+const MAX_USERNAME_CHARS: usize = 64;
+const MAX_EMAIL_CHARS: usize = 254;
+const MAX_PASSWORD_BYTES: usize = 1024;
+const MIN_RELEASE_PASSWORD_CHARS: usize = 8;
+const SESSION_TOUCH_INTERVAL_SECONDS: i64 = 5 * 60;
+
 #[derive(Debug, Clone, Serialize)]
 pub struct UserPublic {
     pub id: String,
@@ -57,25 +63,12 @@ pub async fn register_user(
     password: String,
 ) -> Result<RegistrationResult, ApiError> {
     let username = username.trim().to_string();
-    if username.is_empty() {
-        return Err(ApiError::bad_request(
-            "invalid_username",
-            "Username is required",
-        ));
-    }
-
-    if password.is_empty() {
-        return Err(ApiError::bad_request(
-            "invalid_password",
-            "Password is required",
-        ));
-    }
-
     let email = email
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_owned);
+    validate_new_user_fields(&username, email.as_deref(), &password)?;
 
     let now = unix_timestamp();
     let password_hash = hash_password(&password)?;
@@ -179,13 +172,13 @@ pub async fn register_user(
     match insert_user {
         Ok(_) => {}
         Err(error) => {
-            if let sqlx::Error::Database(database_error) = &error {
-                if database_error.is_unique_violation() {
-                    return Err(ApiError::conflict(
-                        "user_exists",
-                        "Username or email is already in use",
-                    ));
-                }
+            if let sqlx::Error::Database(database_error) = &error
+                && database_error.is_unique_violation()
+            {
+                return Err(ApiError::conflict(
+                    "user_exists",
+                    "Username or email is already in use",
+                ));
             }
             return Err(error.into());
         }
@@ -271,7 +264,11 @@ pub async fn authenticate_user(
     password: String,
 ) -> Result<UserPublic, ApiError> {
     let identifier = identifier.trim().to_string();
-    if identifier.is_empty() || password.is_empty() {
+    if identifier.is_empty()
+        || identifier.chars().count() > MAX_EMAIL_CHARS
+        || password.is_empty()
+        || password.len() > MAX_PASSWORD_BYTES
+    {
         return Err(ApiError::invalid_credentials());
     }
 
@@ -375,13 +372,13 @@ pub async fn update_profile(
     let row = match updated {
         Ok(row) => row,
         Err(error) => {
-            if let sqlx::Error::Database(database_error) = &error {
-                if database_error.is_unique_violation() {
-                    return Err(ApiError::conflict(
-                        "profile_conflict",
-                        "That email is already in use",
-                    ));
-                }
+            if let sqlx::Error::Database(database_error) = &error
+                && database_error.is_unique_violation()
+            {
+                return Err(ApiError::conflict(
+                    "profile_conflict",
+                    "That email is already in use",
+                ));
             }
             return Err(error.into());
         }
@@ -401,7 +398,7 @@ pub async fn verify_user_password(
     user_id: &str,
     password: &str,
 ) -> Result<bool, ApiError> {
-    if password.is_empty() {
+    if password.is_empty() || password.len() > MAX_PASSWORD_BYTES {
         return Ok(false);
     }
 
@@ -511,9 +508,9 @@ pub async fn current_user_from_cookie(
     };
 
     let now = unix_timestamp();
-    let user = sqlx::query(
+    let Some(row) = sqlx::query(
         r#"
-        SELECT u.id, u.username, u.display_name, u.email, u.role
+        SELECT u.id, u.username, u.display_name, u.email, u.role, s.last_seen_at
         FROM sessions s
         JOIN users u ON u.id = s.user_id
         WHERE s.id = ?
@@ -525,15 +522,20 @@ pub async fn current_user_from_cookie(
     .bind(now)
     .fetch_optional(pool)
     .await?
-    .map(|row| UserPublic {
-        id: row.try_get("id").expect("id selected"),
-        username: row.try_get("username").expect("username selected"),
-        display_name: row.try_get("display_name").expect("display_name selected"),
-        email: row.try_get("email").expect("email selected"),
-        role: row.try_get("role").expect("role selected"),
-    });
+    else {
+        return Ok(None);
+    };
 
-    if user.is_some() {
+    let user = UserPublic {
+        id: row.try_get("id")?,
+        username: row.try_get("username")?,
+        display_name: row.try_get("display_name")?,
+        email: row.try_get("email")?,
+        role: row.try_get("role")?,
+    };
+    let last_seen_at: i64 = row.try_get("last_seen_at")?;
+
+    if last_seen_at <= now.saturating_sub(SESSION_TOUCH_INTERVAL_SECONDS) {
         sqlx::query("UPDATE sessions SET last_seen_at = ? WHERE id = ?")
             .bind(now)
             .bind(cookie.value())
@@ -541,7 +543,7 @@ pub async fn current_user_from_cookie(
             .await?;
     }
 
-    Ok(user)
+    Ok(Some(user))
 }
 
 pub async fn require_user(
@@ -616,6 +618,39 @@ pub(crate) fn hash_password(password: &str) -> Result<String, argon2::password_h
         .to_string())
 }
 
+pub(crate) fn validate_new_user_fields(
+    username: &str,
+    email: Option<&str>,
+    password: &str,
+) -> Result<(), ApiError> {
+    if username.is_empty() || username.chars().count() > MAX_USERNAME_CHARS {
+        return Err(ApiError::bad_request(
+            "invalid_username",
+            "Username is required and must be at most 64 characters",
+        ));
+    }
+    if email.is_some_and(|value| value.chars().count() > MAX_EMAIL_CHARS) {
+        return Err(ApiError::bad_request(
+            "invalid_email",
+            "Email must be at most 254 characters",
+        ));
+    }
+    if password.is_empty() || password.len() > MAX_PASSWORD_BYTES {
+        return Err(ApiError::bad_request(
+            "invalid_password",
+            "Password is required and must be at most 1024 bytes",
+        ));
+    }
+    if !cfg!(debug_assertions) && password.chars().count() < MIN_RELEASE_PASSWORD_CHARS {
+        return Err(ApiError::bad_request(
+            "invalid_password",
+            "Password must be at least 8 characters",
+        ));
+    }
+
+    Ok(())
+}
+
 fn verify_password(
     password: &str,
     password_hash: &str,
@@ -628,6 +663,7 @@ fn verify_password(
 
 #[cfg(test)]
 mod tests {
+    use axum_extra::extract::{CookieJar, cookie::Cookie};
     use sqlx::{
         Row, SqlitePool,
         sqlite::{SqliteConnectOptions, SqlitePoolOptions},
@@ -680,7 +716,7 @@ mod tests {
             &pool,
             "admin".to_string(),
             Some("admin@example.com".to_string()),
-            "secret".to_string(),
+            "secret-pass".to_string(),
         )
         .await
         .expect("register first admin");
@@ -705,7 +741,7 @@ mod tests {
             &pool,
             "pending".to_string(),
             Some("pending@example.com".to_string()),
-            "secret".to_string(),
+            "secret-pass".to_string(),
         )
         .await
         .expect("register pending user");
@@ -714,7 +750,7 @@ mod tests {
         assert_eq!(pending.user.role, "user");
         assert!(pending.user.is_disabled);
         assert!(
-            authenticate_user(&pool, "pending".to_string(), "secret".to_string())
+            authenticate_user(&pool, "pending".to_string(), "secret-pass".to_string())
                 .await
                 .is_err()
         );
@@ -731,7 +767,7 @@ mod tests {
     async fn admin_created_user_and_user_settings_work() {
         let pool = test_pool().await;
 
-        register_user(&pool, "admin".to_string(), None, "secret".to_string())
+        register_user(&pool, "admin".to_string(), None, "secret-pass".to_string())
             .await
             .expect("register first admin");
 
@@ -748,7 +784,7 @@ mod tests {
             CreateUserRequest {
                 username: "friend".to_string(),
                 email: Some("friend@example.com".to_string()),
-                password: "secret".to_string(),
+                password: "secret-pass".to_string(),
                 role: Some("user".to_string()),
                 is_disabled: Some(false),
             },
@@ -760,7 +796,7 @@ mod tests {
         assert_eq!(created.role, "user");
         assert!(!created.is_disabled);
         assert!(
-            authenticate_user(&pool, "friend".to_string(), "secret".to_string())
+            authenticate_user(&pool, "friend".to_string(), "secret-pass".to_string())
                 .await
                 .is_ok()
         );
@@ -804,7 +840,7 @@ mod tests {
     #[tokio::test]
     async fn model_permission_tags_gate_model_access() {
         let pool = test_pool().await;
-        let admin = register_user(&pool, "admin".to_string(), None, "secret".to_string())
+        let admin = register_user(&pool, "admin".to_string(), None, "secret-pass".to_string())
             .await
             .expect("register first admin");
         let backend = backends_service::create_backend(
@@ -819,7 +855,7 @@ mod tests {
             CreateUserRequest {
                 username: "friend".to_string(),
                 email: None,
-                password: "secret".to_string(),
+                password: "secret-pass".to_string(),
                 role: Some("user".to_string()),
                 is_disabled: Some(false),
             },
@@ -902,7 +938,7 @@ mod tests {
     #[tokio::test]
     async fn expired_session_cleanup_deletes_only_expired_sessions() {
         let pool = test_pool().await;
-        let admin = register_user(&pool, "admin".to_string(), None, "secret".to_string())
+        let admin = register_user(&pool, "admin".to_string(), None, "secret-pass".to_string())
             .await
             .expect("register first admin");
 
@@ -931,9 +967,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn authenticated_session_touches_are_throttled() {
+        let pool = test_pool().await;
+        let admin = register_user(&pool, "admin".to_string(), None, "secret-pass".to_string())
+            .await
+            .expect("register first admin");
+        let session = create_session(&pool, &admin.user.id, 60, None, None)
+            .await
+            .expect("create session");
+        let jar = CookieJar::new().add(Cookie::new("test_session", session.id.clone()));
+
+        let recent_last_seen = unix_timestamp() - 30;
+        sqlx::query("UPDATE sessions SET last_seen_at = ? WHERE id = ?")
+            .bind(recent_last_seen)
+            .bind(&session.id)
+            .execute(&pool)
+            .await
+            .expect("set recent session timestamp");
+
+        current_user_from_cookie(&pool, &jar, "test_session")
+            .await
+            .expect("load current user");
+        let unchanged: i64 = sqlx::query_scalar("SELECT last_seen_at FROM sessions WHERE id = ?")
+            .bind(&session.id)
+            .fetch_one(&pool)
+            .await
+            .expect("load untouched timestamp");
+        assert_eq!(unchanged, recent_last_seen);
+
+        let stale_last_seen = unix_timestamp() - SESSION_TOUCH_INTERVAL_SECONDS - 1;
+        sqlx::query("UPDATE sessions SET last_seen_at = ? WHERE id = ?")
+            .bind(stale_last_seen)
+            .bind(&session.id)
+            .execute(&pool)
+            .await
+            .expect("set stale session timestamp");
+
+        current_user_from_cookie(&pool, &jar, "test_session")
+            .await
+            .expect("refresh current user session");
+        let refreshed: i64 = sqlx::query_scalar("SELECT last_seen_at FROM sessions WHERE id = ?")
+            .bind(&session.id)
+            .fetch_one(&pool)
+            .await
+            .expect("load refreshed timestamp");
+        assert!(refreshed > stale_last_seen);
+    }
+
+    #[tokio::test]
     async fn chat_crud_is_scoped_to_owner() {
         let pool = test_pool().await;
-        let admin = register_user(&pool, "admin".to_string(), None, "secret".to_string())
+        let admin = register_user(&pool, "admin".to_string(), None, "secret-pass".to_string())
             .await
             .expect("register first admin");
         let other = admin_service::create_user(
@@ -941,7 +1025,7 @@ mod tests {
             CreateUserRequest {
                 username: "other".to_string(),
                 email: None,
-                password: "secret".to_string(),
+                password: "secret-pass".to_string(),
                 role: Some("user".to_string()),
                 is_disabled: Some(false),
             },
@@ -969,6 +1053,7 @@ mod tests {
                     default_model_name: "gemma4:e2b".to_string(),
                     persona_version_id: None,
                     tool_preferences: None,
+                    context_block_version_ids: Vec::new(),
                     system_prompt_override: None,
                     inference_settings: None,
                 },
@@ -989,6 +1074,7 @@ mod tests {
                 default_model_name: "gemma4:e2b".to_string(),
                 persona_version_id: None,
                 tool_preferences: None,
+                context_block_version_ids: Vec::new(),
                 system_prompt_override: None,
                 inference_settings: None,
             },
@@ -1019,6 +1105,7 @@ mod tests {
                 default_model_name: None,
                 persona_version_id: None,
                 tool_preferences: None,
+                context_block_version_ids: None,
                 system_prompt_override: None,
                 inference_settings: None,
             },
@@ -1041,7 +1128,7 @@ mod tests {
     #[tokio::test]
     async fn model_appearance_defaults_and_personal_overrides_are_separate() {
         let pool = test_pool().await;
-        let admin = register_user(&pool, "admin".to_string(), None, "secret".to_string())
+        let admin = register_user(&pool, "admin".to_string(), None, "secret-pass".to_string())
             .await
             .expect("register first admin");
         let backend = backends_service::create_backend(

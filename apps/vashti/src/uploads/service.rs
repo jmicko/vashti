@@ -8,13 +8,16 @@ use uuid::Uuid;
 use crate::{auth::service::unix_timestamp, error::ApiError, uploads::models::Attachment};
 
 const MAX_ATTACHMENTS_PER_MESSAGE: usize = 10;
-const SUPPORTED_IMAGE_EXTENSIONS: &[&str] = &["gif", "jpeg", "jpg", "png", "webp"];
+
+enum AttachmentClassification {
+    Image(&'static str),
+    Text,
+}
 
 pub struct UploadInput {
     pub message_id: Option<String>,
     pub revision_id: Option<String>,
     pub original_filename: String,
-    pub mime_type: String,
     pub bytes: Vec<u8>,
 }
 
@@ -51,7 +54,11 @@ pub async fn create_attachment(
     }
 
     let original_filename = normalize_filename(&input.original_filename);
-    let attachment_kind = classify_attachment(&original_filename, &input.mime_type, &input.bytes)?;
+    let classification = classify_attachment(&input.bytes)?;
+    let (attachment_kind, mime_type) = match classification {
+        AttachmentClassification::Image(mime_type) => ("image", mime_type.to_string()),
+        AttachmentClassification::Text => ("text", "text/plain".to_string()),
+    };
     let attachment_id = Uuid::new_v4().to_string();
     let storage_path = format!("{chat_id}/{attachment_id}");
     let full_path = uploads_dir.join(&storage_path);
@@ -93,9 +100,9 @@ pub async fn create_attachment(
     .bind(&input.revision_id)
     .bind(&original_filename)
     .bind(&storage_path)
-    .bind(&input.mime_type)
+    .bind(&mime_type)
     .bind(input.bytes.len() as i64)
-    .bind(&attachment_kind)
+    .bind(attachment_kind)
     .bind(now)
     .execute(pool)
     .await;
@@ -471,24 +478,24 @@ pub fn safe_content_disposition(filename: &str) -> String {
     format!("attachment; filename=\"{escaped}\"")
 }
 
-fn classify_attachment(filename: &str, mime_type: &str, bytes: &[u8]) -> Result<String, ApiError> {
-    let extension = Path::new(filename)
-        .extension()
-        .and_then(|value| value.to_str())
-        .map(str::to_ascii_lowercase);
-
-    if mime_type.to_ascii_lowercase().starts_with("image/")
-        && extension
-            .as_deref()
-            .is_some_and(|extension| SUPPORTED_IMAGE_EXTENSIONS.contains(&extension))
-    {
-        return Ok("image".to_string());
+fn classify_attachment(bytes: &[u8]) -> Result<AttachmentClassification, ApiError> {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return Ok(AttachmentClassification::Image("image/png"));
+    }
+    if bytes.starts_with(b"\xff\xd8\xff") {
+        return Ok(AttachmentClassification::Image("image/jpeg"));
+    }
+    if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        return Ok(AttachmentClassification::Image("image/gif"));
+    }
+    if bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP" {
+        return Ok(AttachmentClassification::Image("image/webp"));
     }
 
-    if let Ok(text) = std::str::from_utf8(bytes) {
-        if !text.contains('\0') {
-            return Ok("text".to_string());
-        }
+    if let Ok(text) = std::str::from_utf8(bytes)
+        && !text.contains('\0')
+    {
+        return Ok(AttachmentClassification::Text);
     }
 
     Err(ApiError::bad_request(
@@ -600,4 +607,35 @@ fn row_to_attachment(row: sqlx::sqlite::SqliteRow) -> Result<Attachment, ApiErro
         attachment_kind: row.try_get("attachment_kind")?,
         created_at: row.try_get("created_at")?,
     })
+}
+
+#[cfg(test)]
+mod classification_tests {
+    use super::{AttachmentClassification, classify_attachment};
+
+    #[test]
+    fn image_classification_uses_file_signatures() {
+        let cases: &[(&[u8], &str)] = &[
+            (b"\x89PNG\r\n\x1a\nrest", "image/png"),
+            (b"\xff\xd8\xffrest", "image/jpeg"),
+            (b"GIF89arest", "image/gif"),
+            (b"RIFF\x04\x00\x00\x00WEBPrest", "image/webp"),
+        ];
+
+        for (bytes, expected_mime) in cases {
+            match classify_attachment(bytes).expect("supported image") {
+                AttachmentClassification::Image(mime) => assert_eq!(mime, *expected_mime),
+                AttachmentClassification::Text => panic!("image was classified as text"),
+            }
+        }
+    }
+
+    #[test]
+    fn utf8_text_is_supported_and_arbitrary_binary_is_rejected() {
+        assert!(matches!(
+            classify_attachment(b"const answer = 42;\n").expect("UTF-8 text"),
+            AttachmentClassification::Text
+        ));
+        assert!(classify_attachment(b"\0\x01\x02\x03").is_err());
+    }
 }

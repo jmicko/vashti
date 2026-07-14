@@ -1,14 +1,26 @@
 import { gcm as aesGcm } from "@noble/ciphers/aes.js";
-import type { ChatInferenceSettings, MessageStats } from "./types";
+import type {
+  ChatInferenceSettings,
+  ContextBlock,
+  ContextBlockSelection,
+  ContextBlockVersion,
+  ContextCategory,
+  ContextLibraryResponse,
+  ContextSelectionMode,
+  MessageStats
+} from "./types";
 
 const LEGACY_DB_NAME = "vashti-private-local";
 const DB_NAME_PREFIX = "vashti-private-local";
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 const CHAT_STORE = "private_chats";
 const MESSAGE_STORE = "private_messages";
 const PERSONA_STORE = "private_personas";
 const PERSONA_VERSION_STORE = "private_persona_versions";
 const PERSONA_AVATAR_STORE = "private_persona_avatars";
+const CONTEXT_CATEGORY_STORE = "private_context_categories";
+const CONTEXT_BLOCK_STORE = "private_context_blocks";
+const CONTEXT_BLOCK_VERSION_STORE = "private_context_block_versions";
 const HOSTED_CHAT_CACHE_STORE = "hosted_chat_cache";
 const MODEL_CACHE_STORE = "model_cache";
 const MODEL_CACHE_ID = "model-picker";
@@ -28,10 +40,16 @@ type PrivateStoreRecord = {
   id: string;
   chat_id?: string;
   persona_id?: string;
+  category_id?: string;
+  block_id?: string;
   created_at?: number;
   updated_at?: number;
   last_message_at?: number;
   encrypted_payload?: EncryptedPayload;
+};
+
+type PrivateStoredContextBlock = Omit<ContextBlock, "current_version"> & {
+  current_version_id: string;
 };
 
 export type PrivateChatSummary = {
@@ -63,6 +81,7 @@ export type PrivateChatDetail = {
   persona_name?: string | null;
   system_prompt_override?: string | null;
   inference_settings?: ChatInferenceSettings;
+  context_blocks: ContextBlockSelection[];
   active_root_message_id: string | null;
   created_at: number;
   updated_at: number;
@@ -117,6 +136,7 @@ export type PrivateChatMessage = {
   revisions: PrivateChatMessageRevision[];
   revision_count: number;
   attachments: PrivateChatAttachment[];
+  context_blocks: ContextBlockSelection[];
 };
 
 export type CreatePrivateChatParams = {
@@ -129,6 +149,7 @@ export type CreatePrivateChatParams = {
   personaName?: string | null;
   systemPromptOverride?: string | null;
   inferenceSettings?: ChatInferenceSettings;
+  contextBlocks?: ContextBlockSelection[];
 };
 
 export type CreatePrivateMessageParams = {
@@ -144,6 +165,7 @@ export type CreatePrivateMessageParams = {
   personaVersionId?: string | null;
   personaNameSnapshot?: string | null;
   thinkMode?: string | null;
+  contextBlocks?: ContextBlockSelection[];
   createdAt?: number;
 };
 
@@ -310,6 +332,7 @@ export function createPrivateMessage({
   personaVersionId = null,
   personaNameSnapshot = null,
   thinkMode = null,
+  contextBlocks = [],
   createdAt = unixTimestamp()
 }: CreatePrivateMessageParams): PrivateChatMessage {
   const revision = {
@@ -345,7 +368,8 @@ export function createPrivateMessage({
     active_revision: revision,
     revisions: [revision],
     revision_count: 1,
-    attachments: []
+    attachments: [],
+    context_blocks: contextBlocks.map((selection, position) => ({ ...selection, position }))
   };
 }
 
@@ -361,6 +385,7 @@ export async function listPrivateChats(): Promise<PrivateChatSummary[]> {
   }
 
   return chats
+    .map(normalizePrivateChat)
     .map((chat) => ({
       ...chat,
       message_count: messageCounts.get(chat.id) ?? 0
@@ -377,7 +402,8 @@ export async function createPrivateChat({
   personaVersionId = null,
   personaName = null,
   systemPromptOverride = null,
-  inferenceSettings = {}
+  inferenceSettings = {},
+  contextBlocks = []
 }: CreatePrivateChatParams): Promise<PrivateChatDetail> {
   const now = unixTimestamp();
   const chat: PrivateChatDetail = {
@@ -391,6 +417,7 @@ export async function createPrivateChat({
     persona_name: personaName,
     system_prompt_override: systemPromptOverride,
     inference_settings: inferenceSettings,
+    context_blocks: contextBlocks.map((selection, position) => ({ ...selection, position })),
     active_root_message_id: null,
     created_at: now,
     updated_at: now,
@@ -408,7 +435,7 @@ export async function getPrivateChat(chatId: string): Promise<PrivateChatDetail 
     tx.objectStore(CHAT_STORE).get(chatId)
   );
   await transactionDone(tx);
-  return chat ? readPrivateRecord<PrivateChatDetail>(chat) : null;
+  return chat ? normalizePrivateChat(await readPrivateRecord<PrivateChatDetail>(chat)) : null;
 }
 
 export async function savePrivateChat(chat: PrivateChatDetail): Promise<void> {
@@ -862,6 +889,285 @@ export async function listPrivatePersonaVersions(
   return versions.sort((left, right) => left.version_number - right.version_number);
 }
 
+export async function listPrivateContextLibrary(): Promise<ContextLibraryResponse> {
+  const db = await openPrivateDb();
+  const [categories, blocks, versions] = await Promise.all([
+    getAllPrivateRecords<ContextCategory>(db, CONTEXT_CATEGORY_STORE),
+    getAllPrivateRecords<PrivateStoredContextBlock>(db, CONTEXT_BLOCK_STORE),
+    getAllPrivateRecords<ContextBlockVersion>(db, CONTEXT_BLOCK_VERSION_STORE)
+  ]);
+  const versionsById = new Map(versions.map((version) => [version.id, version]));
+  return {
+    categories: categories.sort(compareContextLibraryItems),
+    blocks: blocks
+      .map((block) => {
+        const currentVersion = versionsById.get(block.current_version_id);
+        if (!currentVersion) {
+          return null;
+        }
+        const { current_version_id: _currentVersionId, ...responseBlock } = block;
+        return { ...responseBlock, current_version: currentVersion };
+      })
+      .filter((block): block is ContextBlock => Boolean(block))
+      .sort(compareContextLibraryItems)
+  };
+}
+
+export async function createPrivateContextCategory({
+  name,
+  selectionMode = "single"
+}: {
+  name: string;
+  selectionMode?: ContextSelectionMode;
+}): Promise<ContextCategory> {
+  const normalizedName = validatePrivateContextName(name, 80, "Category name");
+  const library = await listPrivateContextLibrary();
+  if (library.categories.some((category) => category.name.toLowerCase() === normalizedName.toLowerCase())) {
+    throw new Error("A context category with that name already exists");
+  }
+  const now = unixTimestamp();
+  const category: ContextCategory = {
+    id: privateId("private-context-category"),
+    name: normalizedName,
+    selection_mode: selectionMode,
+    sort_order: 0,
+    created_at: now,
+    updated_at: now
+  };
+  await putPrivateContextRecord(CONTEXT_CATEGORY_STORE, category, {
+    created_at: now,
+    updated_at: now
+  });
+  return category;
+}
+
+export async function updatePrivateContextCategory(
+  categoryId: string,
+  updates: { name?: string; selectionMode?: ContextSelectionMode; sortOrder?: number }
+): Promise<ContextCategory> {
+  const library = await listPrivateContextLibrary();
+  const current = library.categories.find((category) => category.id === categoryId);
+  if (!current) {
+    throw new Error("Context category not found on this device");
+  }
+  const name = updates.name === undefined
+    ? current.name
+    : validatePrivateContextName(updates.name, 80, "Category name");
+  if (
+    library.categories.some(
+      (category) =>
+        category.id !== categoryId && category.name.toLowerCase() === name.toLowerCase()
+    )
+  ) {
+    throw new Error("A context category with that name already exists");
+  }
+  const updated: ContextCategory = {
+    ...current,
+    name,
+    selection_mode: updates.selectionMode ?? current.selection_mode,
+    sort_order: updates.sortOrder ?? current.sort_order,
+    updated_at: unixTimestamp()
+  };
+  await putPrivateContextRecord(CONTEXT_CATEGORY_STORE, updated, {
+    created_at: updated.created_at,
+    updated_at: updated.updated_at
+  });
+  return updated;
+}
+
+export async function deletePrivateContextCategory(categoryId: string): Promise<void> {
+  const library = await listPrivateContextLibrary();
+  if (!library.categories.some((category) => category.id === categoryId)) {
+    throw new Error("Context category not found on this device");
+  }
+  const changedBlocks = library.blocks
+    .filter((block) => block.category_id === categoryId)
+    .map(({ current_version: currentVersion, ...block }) => ({
+      ...block,
+      category_id: null,
+      current_version_id: currentVersion.id,
+      updated_at: unixTimestamp()
+    }));
+  const records = await Promise.all(
+    changedBlocks.map((block) =>
+      privateStoreRecord(block, {
+        category_id: undefined,
+        created_at: block.created_at,
+        updated_at: block.updated_at
+      })
+    )
+  );
+  const db = await openPrivateDb();
+  const tx = db.transaction([CONTEXT_CATEGORY_STORE, CONTEXT_BLOCK_STORE], "readwrite");
+  tx.objectStore(CONTEXT_CATEGORY_STORE).delete(categoryId);
+  const blockStore = tx.objectStore(CONTEXT_BLOCK_STORE);
+  records.forEach((record) => blockStore.put(record));
+  await transactionDone(tx);
+}
+
+export async function createPrivateContextBlock({
+  categoryId = null,
+  name,
+  content
+}: {
+  categoryId?: string | null;
+  name: string;
+  content: string;
+}): Promise<ContextBlock> {
+  const library = await listPrivateContextLibrary();
+  ensurePrivateCategoryExists(library, categoryId);
+  const blockName = validatePrivateContextName(name, 120, "Block name");
+  const blockContent = validatePrivateContextContent(content);
+  const now = unixTimestamp();
+  const blockId = privateId("private-context-block");
+  const version: ContextBlockVersion = {
+    id: privateId("private-context-version"),
+    block_id: blockId,
+    version_number: 1,
+    name: blockName,
+    content: blockContent,
+    created_at: now
+  };
+  const storedBlock = {
+    id: blockId,
+    category_id: categoryId,
+    current_version_id: version.id,
+    sort_order: 0,
+    created_at: now,
+    updated_at: now
+  };
+  const [blockRecord, versionRecord] = await Promise.all([
+    privateStoreRecord(storedBlock, {
+      category_id: categoryId ?? undefined,
+      created_at: now,
+      updated_at: now
+    }),
+    privateStoreRecord(version, { block_id: blockId, created_at: now })
+  ]);
+  const db = await openPrivateDb();
+  const tx = db.transaction([CONTEXT_BLOCK_STORE, CONTEXT_BLOCK_VERSION_STORE], "readwrite");
+  tx.objectStore(CONTEXT_BLOCK_STORE).put(blockRecord);
+  tx.objectStore(CONTEXT_BLOCK_VERSION_STORE).put(versionRecord);
+  await transactionDone(tx);
+  return { ...storedBlock, current_version: version };
+}
+
+export async function updatePrivateContextBlock(
+  blockId: string,
+  updates: {
+    categoryId?: string | null;
+    name?: string;
+    content?: string;
+    sortOrder?: number;
+  }
+): Promise<ContextBlock> {
+  const library = await listPrivateContextLibrary();
+  const current = library.blocks.find((block) => block.id === blockId);
+  if (!current) {
+    throw new Error("Context block not found on this device");
+  }
+  const categoryId = updates.categoryId === undefined ? current.category_id : updates.categoryId;
+  ensurePrivateCategoryExists(library, categoryId);
+  const name = updates.name === undefined
+    ? current.current_version.name
+    : validatePrivateContextName(updates.name, 120, "Block name");
+  const content = updates.content === undefined
+    ? current.current_version.content
+    : validatePrivateContextContent(updates.content);
+  const now = unixTimestamp();
+  const contentChanged = name !== current.current_version.name || content !== current.current_version.content;
+  const versions = contentChanged ? await listPrivateContextBlockVersions(blockId) : [];
+  const nextVersion: ContextBlockVersion = contentChanged
+    ? {
+        id: privateId("private-context-version"),
+        block_id: blockId,
+        version_number: Math.max(0, ...versions.map((version) => version.version_number)) + 1,
+        name,
+        content,
+        created_at: now
+      }
+    : current.current_version;
+  const storedBlock = {
+    id: current.id,
+    category_id: categoryId,
+    current_version_id: nextVersion.id,
+    sort_order: updates.sortOrder ?? current.sort_order,
+    created_at: current.created_at,
+    updated_at: now
+  };
+  const blockRecord = await privateStoreRecord(storedBlock, {
+    category_id: categoryId ?? undefined,
+    created_at: storedBlock.created_at,
+    updated_at: now
+  });
+  const versionRecord = contentChanged
+    ? await privateStoreRecord(nextVersion, {
+        block_id: blockId,
+        created_at: nextVersion.created_at
+      })
+    : null;
+  const db = await openPrivateDb();
+  const stores = contentChanged
+    ? [CONTEXT_BLOCK_STORE, CONTEXT_BLOCK_VERSION_STORE]
+    : [CONTEXT_BLOCK_STORE];
+  const tx = db.transaction(stores, "readwrite");
+  tx.objectStore(CONTEXT_BLOCK_STORE).put(blockRecord);
+  if (versionRecord) {
+    tx.objectStore(CONTEXT_BLOCK_VERSION_STORE).put(versionRecord);
+  }
+  await transactionDone(tx);
+  return { ...storedBlock, current_version: nextVersion };
+}
+
+export async function deletePrivateContextBlock(blockId: string): Promise<void> {
+  const library = await listPrivateContextLibrary();
+  if (!library.blocks.some((block) => block.id === blockId)) {
+    throw new Error("Context block not found on this device");
+  }
+  const db = await openPrivateDb();
+  const tx = db.transaction([CONTEXT_BLOCK_STORE, CONTEXT_BLOCK_VERSION_STORE], "readwrite");
+  tx.objectStore(CONTEXT_BLOCK_STORE).delete(blockId);
+  const cursorRequest = tx
+    .objectStore(CONTEXT_BLOCK_VERSION_STORE)
+    .index("block_id")
+    .openCursor(IDBKeyRange.only(blockId));
+  cursorRequest.onsuccess = () => {
+    const cursor = cursorRequest.result;
+    if (cursor) {
+      cursor.delete();
+      cursor.continue();
+    }
+  };
+  await transactionDone(tx);
+}
+
+export async function listPrivateContextBlockVersions(
+  blockId: string
+): Promise<ContextBlockVersion[]> {
+  const db = await openPrivateDb();
+  const tx = db.transaction(CONTEXT_BLOCK_VERSION_STORE, "readonly");
+  const records = await requestResult<Array<PrivateStoreRecord | ContextBlockVersion>>(
+    tx.objectStore(CONTEXT_BLOCK_VERSION_STORE).index("block_id").getAll(blockId)
+  );
+  await transactionDone(tx);
+  const versions = await Promise.all(
+    records.map((record) => readPrivateRecord<ContextBlockVersion>(record))
+  );
+  return versions.sort((left, right) => left.version_number - right.version_number);
+}
+
+async function putPrivateContextRecord<T extends { id: string }>(
+  storeName: string,
+  value: T,
+  metadata: Omit<PrivateStoreRecord, "id" | "encrypted_payload">
+) {
+  const record = await privateStoreRecord(value, metadata);
+  const db = await openPrivateDb();
+  const tx = db.transaction(storeName, "readwrite");
+  tx.objectStore(storeName).put(record);
+  await transactionDone(tx);
+}
+
 async function openPrivateDb(): Promise<IDBDatabase> {
   if (!dbPromise) {
     dbPromise = new Promise((resolve, reject) => {
@@ -910,6 +1216,19 @@ function ensurePrivateStores(db: IDBDatabase) {
   }
   if (!db.objectStoreNames.contains(PERSONA_AVATAR_STORE)) {
     db.createObjectStore(PERSONA_AVATAR_STORE, { keyPath: "id" });
+  }
+  if (!db.objectStoreNames.contains(CONTEXT_CATEGORY_STORE)) {
+    db.createObjectStore(CONTEXT_CATEGORY_STORE, { keyPath: "id" });
+  }
+  if (!db.objectStoreNames.contains(CONTEXT_BLOCK_STORE)) {
+    const contextBlockStore = db.createObjectStore(CONTEXT_BLOCK_STORE, { keyPath: "id" });
+    contextBlockStore.createIndex("category_id", "category_id", { unique: false });
+  }
+  if (!db.objectStoreNames.contains(CONTEXT_BLOCK_VERSION_STORE)) {
+    const contextVersionStore = db.createObjectStore(CONTEXT_BLOCK_VERSION_STORE, {
+      keyPath: "id"
+    });
+    contextVersionStore.createIndex("block_id", "block_id", { unique: false });
   }
   if (!db.objectStoreNames.contains(HOSTED_CHAT_CACHE_STORE)) {
     db.createObjectStore(HOSTED_CHAT_CACHE_STORE, { keyPath: "id" });
@@ -1236,8 +1555,54 @@ function normalizePrivateMessage(message: PrivateChatMessage): PrivateChatMessag
   return {
     ...message,
     stats: message.stats ?? null,
-    attachments: message.attachments ?? []
+    attachments: message.attachments ?? [],
+    context_blocks: message.context_blocks ?? []
   };
+}
+
+function normalizePrivateChat(chat: PrivateChatDetail): PrivateChatDetail {
+  return {
+    ...chat,
+    context_blocks: chat.context_blocks ?? []
+  };
+}
+
+function compareContextLibraryItems(
+  left: { sort_order: number; created_at: number },
+  right: { sort_order: number; created_at: number }
+) {
+  return left.sort_order - right.sort_order || left.created_at - right.created_at;
+}
+
+function validatePrivateContextName(value: string, maxLength: number, label: string) {
+  const normalized = value.trim();
+  if (!normalized) {
+    throw new Error(`${label} is required`);
+  }
+  if ([...normalized].length > maxLength) {
+    throw new Error(`${label} must be ${maxLength} characters or fewer`);
+  }
+  return normalized;
+}
+
+function validatePrivateContextContent(value: string) {
+  const normalized = value.trim();
+  if (!normalized) {
+    throw new Error("Context block content is required");
+  }
+  if (new TextEncoder().encode(normalized).length > 60_000) {
+    throw new Error("Context block content must be 60000 bytes or fewer");
+  }
+  return normalized;
+}
+
+function ensurePrivateCategoryExists(
+  library: ContextLibraryResponse,
+  categoryId: string | null
+) {
+  if (categoryId && !library.categories.some((category) => category.id === categoryId)) {
+    throw new Error("Context category not found on this device");
+  }
 }
 
 function privatePersonaVersionFromParams({

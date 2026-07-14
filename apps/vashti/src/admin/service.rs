@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use crate::{
     admin::handlers::{CreateUserRequest, UpdateUserRequest},
-    auth::service::{hash_password, unix_timestamp},
+    auth::service::{hash_password, unix_timestamp, validate_new_user_fields},
     error::ApiError,
     permissions::service::{self as permissions, PermissionTagResponse},
 };
@@ -47,26 +47,13 @@ pub async fn create_user(
     payload: CreateUserRequest,
 ) -> Result<AdminUserResponse, ApiError> {
     let username = payload.username.trim().to_string();
-    if username.is_empty() {
-        return Err(ApiError::bad_request(
-            "invalid_username",
-            "Username is required",
-        ));
-    }
-
-    if payload.password.is_empty() {
-        return Err(ApiError::bad_request(
-            "invalid_password",
-            "Password is required",
-        ));
-    }
-
     let email = payload
         .email
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_owned);
+    validate_new_user_fields(&username, email.as_deref(), &payload.password)?;
     let role = match payload.role {
         Some(role) => normalize_role(role)?,
         None => "user".to_string(),
@@ -108,13 +95,13 @@ pub async fn create_user(
     let row = match insert {
         Ok(row) => row,
         Err(error) => {
-            if let sqlx::Error::Database(database_error) = &error {
-                if database_error.is_unique_violation() {
-                    return Err(ApiError::conflict(
-                        "user_exists",
-                        "Username or email is already in use",
-                    ));
-                }
+            if let sqlx::Error::Database(database_error) = &error
+                && database_error.is_unique_violation()
+            {
+                return Err(ApiError::conflict(
+                    "user_exists",
+                    "Username or email is already in use",
+                ));
             }
             return Err(error.into());
         }

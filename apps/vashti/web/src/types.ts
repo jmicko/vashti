@@ -278,6 +278,52 @@ export type ChatInferenceSettings = {
   seed?: number | null;
 };
 
+export type ContextSelectionMode = "single" | "multiple";
+
+export type ContextCategory = {
+  id: string;
+  name: string;
+  selection_mode: ContextSelectionMode;
+  sort_order: number;
+  created_at: number;
+  updated_at: number;
+};
+
+export type ContextBlockVersion = {
+  id: string;
+  block_id: string;
+  version_number: number;
+  name: string;
+  content: string;
+  created_at: number;
+};
+
+export type ContextBlock = {
+  id: string;
+  category_id: string | null;
+  sort_order: number;
+  current_version: ContextBlockVersion;
+  created_at: number;
+  updated_at: number;
+};
+
+export type ContextLibraryResponse = {
+  categories: ContextCategory[];
+  blocks: ContextBlock[];
+};
+
+export type ContextBlockSelection = {
+  block_id: string;
+  block_version_id: string;
+  category_id: string | null;
+  category_name: string | null;
+  category_selection_mode: ContextSelectionMode | null;
+  version_number: number;
+  name: string;
+  content: string;
+  position: number;
+};
+
 export type ChatDetail = {
   id: string;
   title: string;
@@ -290,6 +336,7 @@ export type ChatDetail = {
   system_prompt_override?: string | null;
   tool_preferences: ChatToolPreferences;
   inference_settings: ChatInferenceSettings;
+  context_blocks: ContextBlockSelection[];
   active_root_message_id: string | null;
   created_at: number;
   updated_at: number;
@@ -346,6 +393,7 @@ export type ComposerSubmitPayload = {
   thinkMode?: ThinkingMode;
   systemPromptOverride?: string | null;
   inferenceSettings?: ChatInferenceSettings;
+  contextBlocks?: ContextBlockSelection[];
 };
 
 export type ThinkingMode = "auto" | "false" | "low" | "medium" | "high";
@@ -384,6 +432,7 @@ export type ChatMessage = {
   revisions: ChatMessageRevision[];
   revision_count: number;
   attachments: AttachmentInfo[];
+  context_blocks: ContextBlockSelection[];
 };
 
 export type ListMessagesResponse = {
@@ -550,6 +599,7 @@ export type FormState = {
 export type Page = "chat" | "private-chat" | "settings";
 export type SettingsSection =
   | "profile"
+  | "context"
   | "users"
   | "models"
   | "tools"

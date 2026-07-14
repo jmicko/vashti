@@ -1296,12 +1296,12 @@ async fn ensure_detected_backend(
 ) -> Result<DetectedBackendResponse, ApiError> {
     let base_url = normalize_base_url(base_url);
 
-    if is_localhost_base_url(&base_url) {
-        if let Some(row) = find_equivalent_local_backend(pool, &base_url, None).await? {
-            let backend_id: String = row.try_get("id")?;
-            record_backend_health(pool, &backend_id, "ok", None).await?;
-            return Ok(row_to_detected_backend(row)?);
-        }
+    if is_localhost_base_url(&base_url)
+        && let Some(row) = find_equivalent_local_backend(pool, &base_url, None).await?
+    {
+        let backend_id: String = row.try_get("id")?;
+        record_backend_health(pool, &backend_id, "ok", None).await?;
+        return Ok(row_to_detected_backend(row)?);
     }
 
     if let Some(row) = sqlx::query(
@@ -1583,13 +1583,13 @@ fn row_to_detected_backend(
 }
 
 fn handle_backend_write_error(error: sqlx::Error) -> Result<BackendResponse, ApiError> {
-    if let sqlx::Error::Database(database_error) = &error {
-        if database_error.is_unique_violation() {
-            return Err(ApiError::conflict(
-                "backend_exists",
-                "A backend with that name already exists",
-            ));
-        }
+    if let sqlx::Error::Database(database_error) = &error
+        && database_error.is_unique_violation()
+    {
+        return Err(ApiError::conflict(
+            "backend_exists",
+            "A backend with that name already exists",
+        ));
     }
 
     Err(error.into())

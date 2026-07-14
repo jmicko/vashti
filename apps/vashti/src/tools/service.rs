@@ -1,4 +1,7 @@
-use std::{net::IpAddr, time::Duration};
+use std::{
+    net::{IpAddr, SocketAddr},
+    time::Duration,
+};
 
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -419,12 +422,18 @@ async fn brave_web_search(
 async fn direct_web_fetch(url: &str) -> Result<String, String> {
     let url = reqwest::Url::parse(url)
         .map_err(|_| "Direct fetch URL must be a valid HTTP or HTTPS URL.".to_string())?;
-    validate_public_http_url(&url).await?;
+    let resolved_host = validate_public_http_url(&url).await?;
 
-    let client = reqwest::Client::builder()
+    let mut client_builder = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(8))
         .timeout(Duration::from_secs(20))
         .redirect(reqwest::redirect::Policy::none())
+        .no_proxy();
+    if let Some(resolved_host) = &resolved_host {
+        client_builder =
+            client_builder.resolve_to_addrs(&resolved_host.host, &resolved_host.addresses);
+    }
+    let client = client_builder
         .build()
         .map_err(|error| format!("Could not create direct fetch client: {error}"))?;
     let response = client
@@ -477,7 +486,14 @@ async fn direct_web_fetch(url: &str) -> Result<String, String> {
     .map_err(|error| format!("Could not serialize fetch result: {error}"))
 }
 
-async fn validate_public_http_url(url: &reqwest::Url) -> Result<(), String> {
+struct ResolvedPublicHost {
+    host: String,
+    addresses: Vec<SocketAddr>,
+}
+
+async fn validate_public_http_url(
+    url: &reqwest::Url,
+) -> Result<Option<ResolvedPublicHost>, String> {
     match url.scheme() {
         "http" | "https" => {}
         _ => return Err("Only HTTP and HTTPS URLs can be fetched.".to_string()),
@@ -492,54 +508,71 @@ async fn validate_public_http_url(url: &reqwest::Url) -> Result<(), String> {
     if host.eq_ignore_ascii_case("localhost") {
         return Err("Localhost URLs cannot be fetched.".to_string());
     }
-    if let Ok(ip) = host.parse::<IpAddr>() {
+    let unbracketed_host = host
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .unwrap_or(host);
+    if let Ok(ip) = unbracketed_host.parse::<IpAddr>() {
         ensure_public_ip(ip)?;
-        return Ok(());
+        return Ok(None);
     }
 
     let port = url.port_or_known_default().unwrap_or(80);
     let addresses = tokio::net::lookup_host((host, port))
         .await
-        .map_err(|error| format!("Could not resolve URL host: {error}"))?;
-    for address in addresses {
+        .map_err(|error| format!("Could not resolve URL host: {error}"))?
+        .collect::<Vec<_>>();
+    if addresses.is_empty() {
+        return Err("URL host did not resolve to an address.".to_string());
+    }
+    for address in &addresses {
         ensure_public_ip(address.ip())?;
+    }
+
+    Ok(Some(ResolvedPublicHost {
+        host: host.to_string(),
+        addresses,
+    }))
+}
+
+fn ensure_public_ip(ip: IpAddr) -> Result<(), String> {
+    let is_public = match ip {
+        IpAddr::V4(ip) => is_public_ipv4(ip),
+        IpAddr::V6(ip) => {
+            if let Some(mapped) = ip.to_ipv4_mapped() {
+                is_public_ipv4(mapped)
+            } else {
+                let segments = ip.segments();
+                segments[0] & 0xe000 == 0x2000
+                    && !(segments[0] == 0x2001 && matches!(segments[1], 0x0000 | 0x0002 | 0x0db8))
+                    && segments[0] != 0x2002
+            }
+        }
+    };
+    if !is_public {
+        return Err("Only publicly routable addresses can be fetched.".to_string());
     }
 
     Ok(())
 }
 
-fn ensure_public_ip(ip: IpAddr) -> Result<(), String> {
-    match ip {
-        IpAddr::V4(ip) => {
-            if ip.is_private()
-                || ip.is_loopback()
-                || ip.is_link_local()
-                || ip.is_multicast()
-                || ip.is_broadcast()
-                || ip.is_unspecified()
-            {
-                return Err(
-                    "Private, local, multicast, and unspecified addresses cannot be fetched."
-                        .to_string(),
-                );
-            }
-        }
-        IpAddr::V6(ip) => {
-            if ip.is_loopback()
-                || ip.is_unspecified()
-                || ip.is_unique_local()
-                || ip.is_unicast_link_local()
-                || ip.is_multicast()
-            {
-                return Err(
-                    "Private, local, multicast, and unspecified addresses cannot be fetched."
-                        .to_string(),
-                );
-            }
-        }
-    }
-
-    Ok(())
+fn is_public_ipv4(ip: std::net::Ipv4Addr) -> bool {
+    let [first, second, third, _] = ip.octets();
+    !(ip.is_private()
+        || ip.is_loopback()
+        || ip.is_link_local()
+        || ip.is_multicast()
+        || ip.is_broadcast()
+        || ip.is_unspecified()
+        || first == 0
+        || first >= 224
+        || (first == 100 && (64..=127).contains(&second))
+        || (first == 192 && second == 0 && third == 0)
+        || (first == 192 && second == 0 && third == 2)
+        || (first == 192 && second == 88 && third == 99)
+        || (first == 198 && matches!(second, 18 | 19))
+        || (first == 198 && second == 51 && third == 100)
+        || (first == 203 && second == 0 && third == 113))
 }
 
 fn required_string(arguments: &serde_json::Value, key: &str) -> Result<String, String> {
@@ -656,4 +689,67 @@ struct BraveWebResult {
     title: String,
     url: String,
     description: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::IpAddr;
+
+    use super::ensure_public_ip;
+
+    #[test]
+    fn direct_fetch_accepts_public_addresses() {
+        for address in ["1.1.1.1", "8.8.8.8", "2606:4700:4700::1111"] {
+            let ip = address.parse::<IpAddr>().expect("valid test address");
+            ensure_public_ip(ip).expect("public address should be accepted");
+        }
+    }
+
+    #[test]
+    fn direct_fetch_rejects_local_reserved_and_tunneled_addresses() {
+        for address in [
+            "127.0.0.1",
+            "10.0.0.1",
+            "100.64.0.1",
+            "169.254.1.1",
+            "192.0.2.1",
+            "198.18.0.1",
+            "198.51.100.1",
+            "203.0.113.1",
+            "::1",
+            "fd00::1",
+            "fe80::1",
+            "2001:db8::1",
+            "2002:0a00:0001::1",
+            "::ffff:10.0.0.1",
+        ] {
+            let ip = address.parse::<IpAddr>().expect("valid test address");
+            assert!(
+                ensure_public_ip(ip).is_err(),
+                "{address} should not be fetchable"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn direct_fetch_validates_literal_ipv4_and_ipv6_urls_without_dns() {
+        let public_v4 = reqwest::Url::parse("https://1.1.1.1/").expect("valid IPv4 URL");
+        let public_v6 =
+            reqwest::Url::parse("https://[2606:4700:4700::1111]/").expect("valid IPv6 URL");
+        let local_v6 = reqwest::Url::parse("http://[::1]/").expect("valid local IPv6 URL");
+
+        assert!(
+            super::validate_public_http_url(&public_v4)
+                .await
+                .expect("public IPv4")
+                .is_none()
+        );
+        assert!(
+            super::validate_public_http_url(&public_v6)
+                .await
+                .expect("public IPv6")
+                .is_none()
+        );
+        assert!(super::validate_public_http_url(&local_v6).await.is_err());
+    }
 }

@@ -247,8 +247,9 @@ if ! id "$service_user" >/dev/null 2>&1; then
 fi
 
 echo "Preparing data directory $data_dir..."
-$sudo_cmd install -d "$data_dir"
+$sudo_cmd install -d -m 0700 "$data_dir"
 $sudo_cmd chown "$service_user:$service_user" "$data_dir"
+$sudo_cmd chmod 0700 "$data_dir"
 
 if command -v systemctl >/dev/null 2>&1 && [ "${VASHTI_NO_SYSTEMD:-0}" != "1" ]; then
     echo "Installing systemd service..."
@@ -264,6 +265,7 @@ Type=simple
 User=$service_user
 Group=$service_user
 StateDirectory=vashti
+StateDirectoryMode=0700
 WorkingDirectory=$data_dir
 Environment=VASHTI_DATA_DIR=$data_dir
 Environment=VASHTI_BIND=$bind_addr

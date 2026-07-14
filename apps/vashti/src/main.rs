@@ -4,6 +4,7 @@ mod auth;
 mod backends;
 mod chats;
 mod config;
+mod context_blocks;
 mod db;
 mod error;
 mod frontend;
@@ -21,7 +22,7 @@ mod tools;
 mod uploads;
 mod version;
 
-use std::{error::Error, time::Duration};
+use std::{error::Error, net::SocketAddr, time::Duration};
 
 use app_state::AppState;
 use axum::{
@@ -35,6 +36,9 @@ use error::ApiError;
 use tokio::signal;
 use tower_http::{set_header::SetResponseHeaderLayer, trace::TraceLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+const DEFAULT_REQUEST_BODY_LIMIT: usize = 1024 * 1024;
+const LARGE_REQUEST_BODY_LIMIT: usize = 64 * 1024 * 1024;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
@@ -55,6 +59,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     startup::prepare_data_dir(&config).await?;
 
     let db = db::connect(&config).await?;
+    startup::secure_data_files(&config).await?;
     startup::migrations::run(&db).await?;
     startup::bootstrap::ensure_app_settings(&db).await?;
     startup::network_recovery::recover_network_if_requested(&db, &config).await?;
@@ -75,9 +80,12 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let listener = tokio::net::TcpListener::bind(bind_addr).await?;
     tracing::info!("listening on http://{}", listener.local_addr()?);
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await?;
 
     Ok(())
 }
@@ -206,8 +214,35 @@ fn router(state: AppState) -> Router {
             get(personas::handlers::list_versions),
         )
         .route(
+            "/context-library",
+            get(context_blocks::handlers::get_library),
+        )
+        .route(
+            "/context-categories",
+            post(context_blocks::handlers::create_category),
+        )
+        .route(
+            "/context-categories/{category_id}",
+            patch(context_blocks::handlers::update_category)
+                .delete(context_blocks::handlers::delete_category),
+        )
+        .route(
+            "/context-blocks",
+            post(context_blocks::handlers::create_block),
+        )
+        .route(
+            "/context-blocks/{block_id}",
+            patch(context_blocks::handlers::update_block)
+                .delete(context_blocks::handlers::delete_block),
+        )
+        .route(
+            "/context-blocks/{block_id}/versions",
+            get(context_blocks::handlers::list_block_versions),
+        )
+        .route(
             "/persona-avatars",
-            post(persona_avatars::handlers::upload_avatar),
+            post(persona_avatars::handlers::upload_avatar)
+                .layer(DefaultBodyLimit::max(LARGE_REQUEST_BODY_LIMIT)),
         )
         .route(
             "/persona-avatars/{asset_id}",
@@ -263,14 +298,19 @@ fn router(state: AppState) -> Router {
         )
         .route(
             "/chats/{chat_id}/attachments",
-            post(uploads::handlers::upload_attachment),
+            post(uploads::handlers::upload_attachment)
+                .layer(DefaultBodyLimit::max(LARGE_REQUEST_BODY_LIMIT)),
         )
         .route(
             "/attachments/{attachment_id}",
             get(uploads::handlers::get_attachment).delete(uploads::handlers::delete_attachment),
         )
         .route("/private/vault-key", get(private::handlers::vault_key))
-        .route("/private/generate", post(private::handlers::generate));
+        .route(
+            "/private/generate",
+            post(private::handlers::generate)
+                .layer(DefaultBodyLimit::max(LARGE_REQUEST_BODY_LIMIT)),
+        );
 
     #[cfg(debug_assertions)]
     let api = api.route(
@@ -283,6 +323,10 @@ fn router(state: AppState) -> Router {
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             security::origin_check,
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("no-store"),
         ));
 
     Router::new()
@@ -292,7 +336,7 @@ fn router(state: AppState) -> Router {
         .route("/app/{*path}", get(frontend::serve_index))
         .fallback(frontend::serve_asset)
         .with_state(state)
-        .layer(DefaultBodyLimit::max(64 * 1024 * 1024))
+        .layer(DefaultBodyLimit::max(DEFAULT_REQUEST_BODY_LIMIT))
         .layer(SetResponseHeaderLayer::if_not_present(
             HeaderName::from_static("content-security-policy"),
             HeaderValue::from_static(

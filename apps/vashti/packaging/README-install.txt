@@ -7,7 +7,7 @@ Quick start:
 
   sudo install -m 0755 vashti /usr/local/bin/vashti
   sudo useradd --system --home-dir /var/lib/vashti --shell /usr/sbin/nologin vashti
-  sudo mkdir -p /var/lib/vashti
+  sudo install -d -m 0700 /var/lib/vashti
   sudo chown vashti:vashti /var/lib/vashti
   sudo install -m 0644 vashti.service /etc/systemd/system/vashti.service
   sudo systemctl daemon-reload

@@ -8,6 +8,7 @@ Type=simple
 User=vashti
 Group=vashti
 StateDirectory=vashti
+StateDirectoryMode=0700
 WorkingDirectory=/var/lib/vashti
 Environment=VASHTI_DATA_DIR=/var/lib/vashti
 Environment=VASHTI_BIND=0.0.0.0:7771

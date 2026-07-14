@@ -1,4 +1,11 @@
-use axum::{Json, extract::State, http::HeaderMap, response::IntoResponse};
+use std::net::SocketAddr;
+
+use axum::{
+    Json,
+    extract::{ConnectInfo, State},
+    http::HeaderMap,
+    response::IntoResponse,
+};
 use axum_extra::extract::CookieJar;
 use serde::{Deserialize, Serialize};
 
@@ -70,11 +77,14 @@ pub async fn session(
 pub async fn register(
     State(state): State<AppState>,
     jar: CookieJar,
+    ConnectInfo(peer_addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     Json(payload): Json<RegisterRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     let app_settings = settings::service::get_app_settings(&state.db).await?;
-    let client_key = rate_limit::client_key(&headers, app_settings.trust_proxy_headers);
+    let client_ip =
+        rate_limit::client_ip(&headers, app_settings.trust_proxy_headers, peer_addr.ip());
+    let client_key = rate_limit::client_key(client_ip);
     state
         .rate_limiter
         .check(format!("auth:register:{}", client_key), 5, 60 * 60)
@@ -98,7 +108,7 @@ pub async fn register(
         &state.db,
         &registration.user.id,
         state.config.session_ttl_seconds,
-        None,
+        Some(client_ip.to_string()),
         user_agent(&headers),
     )
     .await?;
@@ -121,11 +131,14 @@ pub async fn register(
 pub async fn login(
     State(state): State<AppState>,
     jar: CookieJar,
+    ConnectInfo(peer_addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     Json(payload): Json<LoginRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     let app_settings = settings::service::get_app_settings(&state.db).await?;
-    let client_key = rate_limit::client_key(&headers, app_settings.trust_proxy_headers);
+    let client_ip =
+        rate_limit::client_ip(&headers, app_settings.trust_proxy_headers, peer_addr.ip());
+    let client_key = rate_limit::client_key(client_ip);
     let identifier_key = rate_limit::compact_key_part(&payload.identifier, 128);
     state
         .rate_limiter
@@ -145,7 +158,7 @@ pub async fn login(
         &state.db,
         &user.id,
         state.config.session_ttl_seconds,
-        None,
+        Some(client_ip.to_string()),
         user_agent(&headers),
     )
     .await?;

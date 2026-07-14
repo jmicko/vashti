@@ -35,6 +35,7 @@ import type {
   BranchScrollAnchor,
   ChatDetail,
   ChatInferenceSettings,
+  ContextBlockSelection,
   ChatMessage,
   ChatResponse,
   ChatSyncResponse,
@@ -85,7 +86,8 @@ export function ChatView({
   onChatsChanged: () => Promise<void>;
   onChatSettingsLoaded: (
     override: string | null | undefined,
-    inferenceSettings?: ChatInferenceSettings
+    inferenceSettings?: ChatInferenceSettings,
+    contextBlocks?: ContextBlockSelection[]
   ) => void;
   onConversationSettingsSave: () => Promise<void>;
   onImageOpen: ImageOpenHandler;
@@ -132,23 +134,28 @@ export function ChatView({
   const applyLoadedChat = useCallback(
     (nextChat: ChatDetail, activeRootMessageId: string | null, nextMessages: ChatMessage[]) => {
       const normalizedChat = normalizeChatDetail(nextChat);
+      const normalizedMessages = nextMessages.map((message) => ({
+        ...message,
+        context_blocks: message.context_blocks ?? []
+      }));
       setChat({
         ...normalizedChat,
         active_root_message_id: activeRootMessageId
       });
       onChatSettingsLoaded(
         normalizedChat.system_prompt_override,
-        normalizedChat.inference_settings
+        normalizedChat.inference_settings,
+        normalizedChat.context_blocks
       );
       thinkingStartedAtRef.current.clear();
       setThinkingDurations({});
       setStreamSegments({});
-      setMessages(nextMessages);
-      const streamingAssistantId = streamingAssistantIdFromMessages(nextMessages);
+      setMessages(normalizedMessages);
+      const streamingAssistantId = streamingAssistantIdFromMessages(normalizedMessages);
       setActiveAssistantId(streamingAssistantId);
       setIsGenerating(Boolean(streamingAssistantId));
       const latestModel = latestAssistantModelValue(
-        activePathMessages(nextMessages, activeRootMessageId)
+        activePathMessages(normalizedMessages, activeRootMessageId)
       );
       onModelSelected(
         latestModel ??
@@ -254,7 +261,11 @@ export function ChatView({
           active_root_message_id: messageResponse.active_root_message_id
         };
         setChat(nextChat);
-        onChatSettingsLoaded(nextChat.system_prompt_override, nextChat.inference_settings);
+        onChatSettingsLoaded(
+          nextChat.system_prompt_override,
+          nextChat.inference_settings,
+          nextChat.context_blocks
+        );
         await saveCachedHostedChat<ChatDetail, ChatMessage>({
           chat: nextChat,
           active_root_message_id: messageResponse.active_root_message_id,

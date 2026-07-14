@@ -18,6 +18,7 @@ use crate::{
             ChatToolPreferences,
         },
     },
+    context_blocks::service as context_block_service,
     error::ApiError,
     ollama::models::{OllamaChatMessage, OllamaChatOptions, OllamaUsageStats},
     personas::service::{self as persona_service, ResolvedPersonaVersion},
@@ -141,6 +142,12 @@ pub async fn create_chat(
     payload: CreateChatRequest,
 ) -> Result<ChatDetail, ApiError> {
     let title = normalized_title(payload.title);
+    let context_selections = context_block_service::resolve_selections_for_user(
+        pool,
+        user_id,
+        &payload.context_block_version_ids,
+    )
+    .await?;
     let tool_preferences = payload.tool_preferences.unwrap_or_default();
     let persona = match normalize_optional_string(payload.persona_version_id) {
         Some(persona_version_id) => Some(
@@ -184,6 +191,7 @@ pub async fn create_chat(
     let inference_settings_json = serialize_inference_settings(&inference_settings)?;
     let system_prompt_override = payload.system_prompt_override.map(normalized_system_prompt);
 
+    let mut tx = pool.begin().await?;
     sqlx::query(
         r#"
         INSERT INTO chats (
@@ -228,8 +236,10 @@ pub async fn create_chat(
     .bind(now)
     .bind(now)
     .bind(now)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    context_block_service::replace_chat_selections(&mut tx, &chat_id, &context_selections).await?;
+    tx.commit().await?;
 
     get_chat(pool, user_id, &chat_id).await
 }
@@ -274,7 +284,9 @@ pub async fn get_chat(
         return Err(ApiError::not_found("chat_not_found", "Chat not found"));
     };
 
-    row_to_chat_detail(row).map_err(ApiError::from)
+    let mut chat = row_to_chat_detail(row).map_err(ApiError::from)?;
+    chat.context_blocks = context_block_service::load_chat_selections(pool, chat_id).await?;
+    Ok(chat)
 }
 
 pub async fn update_chat(
@@ -284,6 +296,18 @@ pub async fn update_chat(
     payload: UpdateChatRequest,
 ) -> Result<ChatDetail, ApiError> {
     let current = get_chat(pool, user_id, chat_id).await?;
+    let context_selections = match payload.context_block_version_ids.as_ref() {
+        Some(version_ids) => Some(
+            context_block_service::resolve_selections_for_chat_update(
+                pool,
+                user_id,
+                chat_id,
+                version_ids,
+            )
+            .await?,
+        ),
+        None => None,
+    };
     let tool_preferences = payload.tool_preferences.unwrap_or(current.tool_preferences);
     let inference_settings = payload
         .inference_settings
@@ -350,6 +374,7 @@ pub async fn update_chat(
     let tool_preferences_json = serialize_tool_preferences(&tool_preferences)?;
     let inference_settings_json = serialize_inference_settings(&inference_settings)?;
 
+    let mut tx = pool.begin().await?;
     sqlx::query(
         r#"
         UPDATE chats
@@ -383,8 +408,12 @@ pub async fn update_chat(
     .bind(unix_timestamp())
     .bind(chat_id)
     .bind(user_id)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    if let Some(selections) = &context_selections {
+        context_block_service::replace_chat_selections(&mut tx, chat_id, selections).await?;
+    }
+    tx.commit().await?;
 
     get_chat(pool, user_id, chat_id).await
 }
@@ -462,6 +491,7 @@ pub async fn list_messages(
         let mut message = row_to_message(row)?;
         hydrate_message_revisions(pool, &mut message).await?;
         hydrate_message_attachments(pool, user_id, chat_id, &mut message).await?;
+        hydrate_message_context_blocks(pool, &mut message).await?;
         messages.push(message);
     }
 
@@ -658,6 +688,14 @@ pub async fn prepare_generation(
     let backend = resolved.backend;
     let model_name = resolved.model_name;
     let persona = resolved.persona;
+    let compiled_system_prompt = context_block_service::compile_system_prompt(
+        chat.system_prompt_override.as_deref().or_else(|| {
+            persona
+                .as_ref()
+                .map(|persona| persona.system_prompt.as_str())
+        }),
+        &chat.context_blocks,
+    )?;
     let parent_message_id =
         active_tail_message_id(pool, chat_id, chat.active_root_message_id).await?;
     let now = unix_timestamp();
@@ -750,6 +788,12 @@ pub async fn prepare_generation(
         now,
     )
     .await?;
+    context_block_service::snapshot_message_selections(
+        &mut tx,
+        &assistant_message_id,
+        &chat.context_blocks,
+    )
+    .await?;
     set_active_child(
         &mut tx,
         chat_id,
@@ -791,11 +835,7 @@ pub async fn prepare_generation(
 
     let mut prompt_messages =
         active_prompt_messages(pool, uploads_dir, user_id, chat_id, &assistant_message_id).await?;
-    prepend_system_prompt(
-        &mut prompt_messages,
-        chat.system_prompt_override.as_deref(),
-        persona.as_ref(),
-    );
+    prepend_system_prompt(&mut prompt_messages, compiled_system_prompt.as_deref());
     let user_message = get_message(pool, user_id, chat_id, &user_message_id).await?;
     let assistant_message = get_message(pool, user_id, chat_id, &assistant_message_id).await?;
 
@@ -872,6 +912,14 @@ pub async fn prepare_regeneration(
     let backend = resolved.backend;
     let model_name = resolved.model_name;
     let persona = resolved.persona;
+    let compiled_system_prompt = context_block_service::compile_system_prompt(
+        chat.system_prompt_override.as_deref().or_else(|| {
+            persona
+                .as_ref()
+                .map(|persona| persona.system_prompt.as_str())
+        }),
+        &chat.context_blocks,
+    )?;
     let now = unix_timestamp();
     let assistant_message_id = Uuid::new_v4().to_string();
     let assistant_revision_id = Uuid::new_v4().to_string();
@@ -910,6 +958,12 @@ pub async fn prepare_regeneration(
         "",
         "regeneration",
         now,
+    )
+    .await?;
+    context_block_service::snapshot_message_selections(
+        &mut tx,
+        &assistant_message_id,
+        &chat.context_blocks,
     )
     .await?;
     set_active_child(
@@ -952,11 +1006,7 @@ pub async fn prepare_regeneration(
 
     let mut prompt_messages =
         active_prompt_messages(pool, uploads_dir, user_id, chat_id, &assistant_message_id).await?;
-    prepend_system_prompt(
-        &mut prompt_messages,
-        chat.system_prompt_override.as_deref(),
-        persona.as_ref(),
-    );
+    prepend_system_prompt(&mut prompt_messages, compiled_system_prompt.as_deref());
     let assistant_message = get_message(pool, user_id, chat_id, &assistant_message_id).await?;
 
     Ok(PreparedGeneration {
@@ -1030,6 +1080,14 @@ pub async fn prepare_branch_generation(
     let backend = resolved.backend;
     let model_name = resolved.model_name;
     let persona = resolved.persona;
+    let compiled_system_prompt = context_block_service::compile_system_prompt(
+        chat.system_prompt_override.as_deref().or_else(|| {
+            persona
+                .as_ref()
+                .map(|persona| persona.system_prompt.as_str())
+        }),
+        &chat.context_blocks,
+    )?;
     let parent_message_id = target.parent_message_id.clone();
     let now = unix_timestamp();
     let attachment_ids = attachment_ids(&attachments)?;
@@ -1121,6 +1179,12 @@ pub async fn prepare_branch_generation(
         now,
     )
     .await?;
+    context_block_service::snapshot_message_selections(
+        &mut tx,
+        &assistant_message_id,
+        &chat.context_blocks,
+    )
+    .await?;
     set_active_child(
         &mut tx,
         chat_id,
@@ -1162,11 +1226,7 @@ pub async fn prepare_branch_generation(
 
     let mut prompt_messages =
         active_prompt_messages(pool, uploads_dir, user_id, chat_id, &assistant_message_id).await?;
-    prepend_system_prompt(
-        &mut prompt_messages,
-        chat.system_prompt_override.as_deref(),
-        persona.as_ref(),
-    );
+    prepend_system_prompt(&mut prompt_messages, compiled_system_prompt.as_deref());
     let user_message = get_message(pool, user_id, chat_id, &user_message_id).await?;
     let assistant_message = get_message(pool, user_id, chat_id, &assistant_message_id).await?;
 
@@ -1530,12 +1590,14 @@ pub async fn finish_generation(
     update_generation_message(
         pool,
         assistant_message_id,
-        content_text,
-        thinking_text,
-        "complete",
-        done_reason,
-        None,
-        stats,
+        GenerationMessageUpdate {
+            content_text,
+            thinking_text,
+            status: "complete",
+            done_reason,
+            error_text: None,
+            stats,
+        },
     )
     .await
 }
@@ -1552,12 +1614,14 @@ pub async fn stop_generation(
     update_generation_message(
         pool,
         assistant_message_id,
-        content_text,
-        thinking_text,
-        "stopped",
-        Some("stopped"),
-        None,
-        None,
+        GenerationMessageUpdate {
+            content_text,
+            thinking_text,
+            status: "stopped",
+            done_reason: Some("stopped"),
+            error_text: None,
+            stats: None,
+        },
     )
     .await
 }
@@ -1602,12 +1666,14 @@ pub async fn fail_generation(
     update_generation_message(
         pool,
         assistant_message_id,
-        content_text,
-        thinking_text,
-        "error",
-        Some("error"),
-        Some(error_text),
-        None,
+        GenerationMessageUpdate {
+            content_text,
+            thinking_text,
+            status: "error",
+            done_reason: Some("error"),
+            error_text: Some(error_text),
+            stats: None,
+        },
     )
     .await
 }
@@ -1697,13 +1763,13 @@ async fn resolve_generation_model(
         return resolve_persona_generation_model(pool, user_id, &persona_version_id).await;
     }
 
-    if explicit_backend_id.is_none() && explicit_model_name.is_none() {
-        if let Some(persona_version_id) = latest_model
+    if explicit_backend_id.is_none()
+        && explicit_model_name.is_none()
+        && let Some(persona_version_id) = latest_model
             .and_then(|model| model.persona_version_id.clone())
             .or_else(|| chat.persona_version_id.clone())
-        {
-            return resolve_persona_generation_model(pool, user_id, &persona_version_id).await;
-        }
+    {
+        return resolve_persona_generation_model(pool, user_id, &persona_version_id).await;
     }
 
     let backend_id = explicit_backend_id
@@ -1756,15 +1822,8 @@ async fn resolve_persona_generation_model(
     })
 }
 
-fn prepend_system_prompt(
-    messages: &mut Vec<OllamaChatMessage>,
-    system_prompt_override: Option<&str>,
-    persona: Option<&ResolvedPersonaVersion>,
-) {
-    let system_prompt = system_prompt_override
-        .or_else(|| persona.map(|persona| persona.system_prompt.as_str()))
-        .unwrap_or("")
-        .trim();
+fn prepend_system_prompt(messages: &mut Vec<OllamaChatMessage>, system_prompt: Option<&str>) {
+    let system_prompt = system_prompt.unwrap_or("").trim();
     if system_prompt.is_empty() {
         return;
     }
@@ -2081,16 +2140,28 @@ async fn active_prompt_messages(
     Ok(messages)
 }
 
+struct GenerationMessageUpdate<'a> {
+    content_text: &'a str,
+    thinking_text: &'a str,
+    status: &'a str,
+    done_reason: Option<&'a str>,
+    error_text: Option<&'a str>,
+    stats: Option<&'a OllamaUsageStats>,
+}
+
 async fn update_generation_message(
     pool: &SqlitePool,
     assistant_message_id: &str,
-    content_text: &str,
-    thinking_text: &str,
-    status: &str,
-    done_reason: Option<&str>,
-    error_text: Option<&str>,
-    stats: Option<&OllamaUsageStats>,
+    update: GenerationMessageUpdate<'_>,
 ) -> Result<(), ApiError> {
+    let GenerationMessageUpdate {
+        content_text,
+        thinking_text,
+        status,
+        done_reason,
+        error_text,
+        stats,
+    } = update;
     let now = unix_timestamp();
     let stats_json = stats
         .and_then(|stats| serde_json::to_string(stats).ok())
@@ -2192,6 +2263,7 @@ fn row_to_chat_detail(row: sqlx::sqlite::SqliteRow) -> Result<ChatDetail, sqlx::
         system_prompt_override: row.try_get("system_prompt_override")?,
         tool_preferences,
         inference_settings,
+        context_blocks: Vec::new(),
         active_root_message_id: row.try_get("active_root_message_id")?,
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
@@ -2211,10 +2283,10 @@ fn serialize_inference_settings(settings: &ChatInferenceSettings) -> Result<Stri
 fn row_to_inference_settings(
     row: &sqlx::sqlite::SqliteRow,
 ) -> Result<ChatInferenceSettings, sqlx::Error> {
-    if let Some(json) = row.try_get::<Option<String>, _>("inference_settings_json")? {
-        if let Ok(settings) = serde_json::from_str::<ChatInferenceSettings>(&json) {
-            return Ok(normalized_inference_settings(settings));
-        }
+    if let Some(json) = row.try_get::<Option<String>, _>("inference_settings_json")?
+        && let Ok(settings) = serde_json::from_str::<ChatInferenceSettings>(&json)
+    {
+        return Ok(normalized_inference_settings(settings));
     }
 
     Ok(ChatInferenceSettings::default())
@@ -2223,10 +2295,10 @@ fn row_to_inference_settings(
 fn row_to_tool_preferences(
     row: &sqlx::sqlite::SqliteRow,
 ) -> Result<ChatToolPreferences, sqlx::Error> {
-    if let Some(json) = row.try_get::<Option<String>, _>("tool_preferences_json")? {
-        if let Ok(preferences) = serde_json::from_str::<ChatToolPreferences>(&json) {
-            return Ok(preferences);
-        }
+    if let Some(json) = row.try_get::<Option<String>, _>("tool_preferences_json")?
+        && let Ok(preferences) = serde_json::from_str::<ChatToolPreferences>(&json)
+    {
+        return Ok(preferences);
     }
 
     let mut preferences = ChatToolPreferences {
@@ -2357,6 +2429,7 @@ fn row_to_message(row: sqlx::sqlite::SqliteRow) -> Result<ChatMessage, sqlx::Err
         revision_count: row.try_get("revision_count")?,
         active_revision,
         attachments: Vec::new(),
+        context_blocks: Vec::new(),
     })
 }
 
@@ -2430,6 +2503,15 @@ async fn hydrate_message_attachments(
     Ok(())
 }
 
+async fn hydrate_message_context_blocks(
+    pool: &SqlitePool,
+    message: &mut ChatMessage,
+) -> Result<(), ApiError> {
+    message.context_blocks =
+        context_block_service::load_message_selections(pool, &message.id).await?;
+    Ok(())
+}
+
 async fn get_message(
     pool: &SqlitePool,
     user_id: &str,
@@ -2492,6 +2574,7 @@ async fn get_message(
     let mut message = row_to_message(row)?;
     hydrate_message_revisions(pool, &mut message).await?;
     hydrate_message_attachments(pool, user_id, chat_id, &mut message).await?;
+    hydrate_message_context_blocks(pool, &mut message).await?;
 
     Ok(message)
 }

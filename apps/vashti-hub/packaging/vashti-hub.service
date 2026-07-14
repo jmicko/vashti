@@ -8,6 +8,7 @@ Type=simple
 User=vashti-hub
 Group=vashti-hub
 StateDirectory=vashti-hub
+StateDirectoryMode=0700
 WorkingDirectory=/var/lib/vashti-hub
 Environment=VASHTI_HUB_DATA_DIR=/var/lib/vashti-hub
 Environment=VASHTI_HUB_BIND=127.0.0.1:7781

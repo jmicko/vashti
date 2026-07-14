@@ -68,6 +68,17 @@ enum PrivateGenerateEvent {
     },
 }
 
+struct PrivateGenerationTask {
+    tx: mpsc::Sender<Result<Bytes, Infallible>>,
+    client: reqwest::Client,
+    backend_base_url: String,
+    model_name: String,
+    assistant_message_id: String,
+    think_mode: Option<String>,
+    inference_options: Option<OllamaChatOptions>,
+    messages: Vec<ollama::models::OllamaChatMessage>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct PrivateVaultKeyResponse {
     pub user_id: String,
@@ -185,7 +196,7 @@ async fn start_private_stream(
     let (tx, rx) = mpsc::channel::<Result<Bytes, Infallible>>(32);
 
     tokio::spawn(async move {
-        stream_private_generation(
+        stream_private_generation(PrivateGenerationTask {
             tx,
             client,
             backend_base_url,
@@ -194,7 +205,7 @@ async fn start_private_stream(
             think_mode,
             inference_options,
             messages,
-        )
+        })
         .await;
     });
 
@@ -212,16 +223,17 @@ async fn start_private_stream(
     response
 }
 
-async fn stream_private_generation(
-    tx: mpsc::Sender<Result<Bytes, Infallible>>,
-    client: reqwest::Client,
-    backend_base_url: String,
-    model_name: String,
-    assistant_message_id: String,
-    think_mode: Option<String>,
-    inference_options: Option<OllamaChatOptions>,
-    messages: Vec<ollama::models::OllamaChatMessage>,
-) {
+async fn stream_private_generation(task: PrivateGenerationTask) {
+    let PrivateGenerationTask {
+        tx,
+        client,
+        backend_base_url,
+        model_name,
+        assistant_message_id,
+        think_mode,
+        inference_options,
+        messages,
+    } = task;
     let request = OllamaChatRequest {
         model: model_name,
         messages,
@@ -454,7 +466,7 @@ fn synthetic_thinking_delta(index: u32) -> String {
 
 #[cfg(debug_assertions)]
 fn synthetic_content_delta(index: u32) -> String {
-    if index % 17 == 0 {
+    if index.is_multiple_of(17) {
         format!("\nchunk-{index:05};")
     } else {
         format!("tok-{index:05} ")

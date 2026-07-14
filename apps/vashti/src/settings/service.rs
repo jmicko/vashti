@@ -692,25 +692,33 @@ fn normalize_public_base_url(public_base_url: Option<String>) -> Result<Option<S
     let Some(public_base_url) = public_base_url else {
         return Ok(None);
     };
-    let public_base_url = public_base_url.trim().trim_end_matches('/').to_string();
+    let public_base_url = public_base_url.trim();
     if public_base_url.is_empty() {
         return Ok(None);
     }
 
-    let parsed = reqwest::Url::parse(&public_base_url).map_err(|_| {
+    let mut parsed = reqwest::Url::parse(public_base_url).map_err(|_| {
         ApiError::bad_request(
             "invalid_public_base_url",
             "Public base URL must be a valid HTTPS URL",
         )
     })?;
-    if parsed.scheme() != "https" || parsed.host_str().is_none() {
+    if parsed.scheme() != "https"
+        || parsed.host_str().is_none()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.path() != "/"
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+    {
         return Err(ApiError::bad_request(
             "invalid_public_base_url",
-            "Public base URL must be a valid HTTPS URL",
+            "Public base URL must be an HTTPS origin without a path, query, or credentials",
         ));
     }
 
-    Ok(Some(public_base_url))
+    parsed.set_path("");
+    Ok(Some(parsed.as_str().trim_end_matches('/').to_string()))
 }
 
 async fn ensure_user_settings(pool: &SqlitePool, user_id: &str) -> Result<(), sqlx::Error> {
@@ -815,4 +823,41 @@ fn row_to_user_settings(row: sqlx::sqlite::SqliteRow) -> Result<UserSettingsResp
         default_model_name: row.try_get("default_model_name")?,
         theme: row.try_get("theme")?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_public_base_url;
+
+    #[test]
+    fn public_base_url_is_normalized_to_an_https_origin() {
+        assert_eq!(
+            normalize_public_base_url(Some(" https://chat.example.com/ ".to_string()))
+                .expect("valid public URL")
+                .as_deref(),
+            Some("https://chat.example.com")
+        );
+        assert_eq!(
+            normalize_public_base_url(Some("https://chat.example.com:8443".to_string()))
+                .expect("valid public URL with port")
+                .as_deref(),
+            Some("https://chat.example.com:8443")
+        );
+    }
+
+    #[test]
+    fn public_base_url_rejects_non_origin_values() {
+        for value in [
+            "http://chat.example.com",
+            "https://user:password@chat.example.com",
+            "https://chat.example.com/app",
+            "https://chat.example.com?mode=public",
+            "https://chat.example.com/#section",
+        ] {
+            assert!(
+                normalize_public_base_url(Some(value.to_string())).is_err(),
+                "{value} should be rejected"
+            );
+        }
+    }
 }

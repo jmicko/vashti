@@ -33,7 +33,6 @@ struct ParsedUpload {
     message_id: Option<String>,
     revision_id: Option<String>,
     original_filename: String,
-    mime_type: String,
     bytes: Vec<u8>,
 }
 
@@ -61,7 +60,6 @@ pub async fn upload_attachment(
             message_id: upload.message_id,
             revision_id: upload.revision_id,
             original_filename: upload.original_filename,
-            mime_type: upload.mime_type,
             bytes: upload.bytes,
         },
         app_settings.max_upload_bytes,
@@ -126,7 +124,6 @@ async fn parse_upload(multipart: &mut Multipart) -> Result<ParsedUpload, ApiErro
     let mut message_id = None;
     let mut revision_id = None;
     let mut original_filename = None;
-    let mut mime_type = None;
     let mut bytes = None;
 
     while let Some(field) = multipart
@@ -144,22 +141,10 @@ async fn parse_upload(multipart: &mut Multipart) -> Result<ParsedUpload, ApiErro
             }
             "file" => {
                 let filename = field.file_name().unwrap_or("upload").to_string();
-                let field_mime_type = field.content_type().map(ToString::to_string);
-                let guessed_mime_type = mime_guess::from_path(&filename)
-                    .first()
-                    .map(|mime| mime.to_string());
-                let detected_mime_type =
-                    match field_mime_type.as_deref() {
-                        None | Some("application/octet-stream") => guessed_mime_type
-                            .unwrap_or_else(|| "application/octet-stream".to_string()),
-                        Some(_) => field_mime_type
-                            .unwrap_or_else(|| "application/octet-stream".to_string()),
-                    };
                 let file_bytes = field.bytes().await.map_err(|_| {
                     ApiError::bad_request("invalid_upload", "Could not read uploaded file")
                 })?;
                 original_filename = Some(filename);
-                mime_type = Some(detected_mime_type);
                 bytes = Some(file_bytes.to_vec());
             }
             _ => {}
@@ -171,7 +156,6 @@ async fn parse_upload(multipart: &mut Multipart) -> Result<ParsedUpload, ApiErro
         revision_id,
         original_filename: original_filename
             .ok_or_else(|| ApiError::bad_request("missing_file", "Upload file is required"))?,
-        mime_type: mime_type.unwrap_or_else(|| "application/octet-stream".to_string()),
         bytes: bytes
             .ok_or_else(|| ApiError::bad_request("missing_file", "Upload file is required"))?,
     })

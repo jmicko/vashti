@@ -23,6 +23,7 @@ import {
 } from "./chatMessages";
 import { ConfirmDialog, RetroLoader } from "./common";
 import { StartChatComposer } from "./Composer";
+import { normalizeContextSelections } from "./contextBlocks";
 import { readGenerateEventStream } from "./generationStream";
 import { MessageBubble } from "./MessageBubble";
 import { ModelBackgroundLayer, modelBackgroundContainerStyle } from "./ModelBackground";
@@ -57,6 +58,7 @@ import type {
   BranchScrollAnchor,
   ChatMessage,
   ChatInferenceSettings,
+  ContextBlockSelection,
   ComposerAttachment,
   ComposerSubmitPayload,
   GenerateEvent,
@@ -78,6 +80,7 @@ export function PrivateChatView({
   privatePersonaVersions,
   systemPromptOverride,
   inferenceSettings,
+  contextBlocks,
   onChatSettingsLoaded,
   onConversationSettingsSave,
   onImageOpen,
@@ -95,9 +98,11 @@ export function PrivateChatView({
   privatePersonaVersions: PrivatePersonaVersion[];
   systemPromptOverride: string | null;
   inferenceSettings: ChatInferenceSettings;
+  contextBlocks: ContextBlockSelection[];
   onChatSettingsLoaded: (
     override: string | null | undefined,
-    inferenceSettings?: ChatInferenceSettings
+    inferenceSettings?: ChatInferenceSettings,
+    contextBlocks?: ContextBlockSelection[]
   ) => void;
   onConversationSettingsSave: () => Promise<void>;
   onImageOpen: ImageOpenHandler;
@@ -165,7 +170,11 @@ export function PrivateChatView({
       }
 
       setChat(nextChat);
-      onChatSettingsLoaded(nextChat.system_prompt_override, nextChat.inference_settings ?? {});
+      onChatSettingsLoaded(
+        nextChat.system_prompt_override,
+        nextChat.inference_settings ?? {},
+        nextChat.context_blocks
+      );
       thinkingStartedAtRef.current.clear();
       thinkingContentCursorRef.current.clear();
       setThinkingDurations({});
@@ -436,10 +445,12 @@ export function PrivateChatView({
         : systemPromptOverride,
       queuedPrompt.inferenceSettings !== undefined
         ? queuedPrompt.inferenceSettings
-        : inferenceSettings
+        : inferenceSettings,
+      queuedPrompt.contextBlocks !== undefined ? queuedPrompt.contextBlocks : contextBlocks
     );
   }, [
     chat,
+    contextBlocks,
     inferenceSettings,
     isGenerating,
     isLoading,
@@ -462,9 +473,18 @@ export function PrivateChatView({
       prompt.systemPromptOverride !== undefined
         ? prompt.systemPromptOverride
         : systemPromptOverride,
-      prompt.inferenceSettings !== undefined ? prompt.inferenceSettings : inferenceSettings
+      prompt.inferenceSettings !== undefined ? prompt.inferenceSettings : inferenceSettings,
+      prompt.contextBlocks !== undefined ? prompt.contextBlocks : contextBlocks
     );
-  }, [chat, inferenceSettings, isGenerating, isLoading, pendingPrompt, systemPromptOverride]);
+  }, [
+    chat,
+    contextBlocks,
+    inferenceSettings,
+    isGenerating,
+    isLoading,
+    pendingPrompt,
+    systemPromptOverride
+  ]);
 
   function noteUserScrollIntent() {
     if (!isGenerating) {
@@ -619,7 +639,8 @@ export function PrivateChatView({
     attachments: ComposerAttachment[] = [],
     thinkMode: ThinkingMode = "auto",
     promptSystemPromptOverride: string | null = systemPromptOverride,
-    promptInferenceSettings: ChatInferenceSettings = inferenceSettings
+    promptInferenceSettings: ChatInferenceSettings = inferenceSettings,
+    promptContextBlocks: ContextBlockSelection[] = contextBlocks
   ) {
     if (!chat || isGenerating) {
       return;
@@ -655,6 +676,7 @@ export function PrivateChatView({
     }
 
     const now = unixTimestamp();
+    const normalizedContextBlocks = normalizeContextSelections(promptContextBlocks);
     const pathMessages = activePathMessages(messages, chat.active_root_message_id);
     const parent = pathMessages[pathMessages.length - 1] as PrivateChatMessage | undefined;
     const userMessage = createPrivateMessage({
@@ -677,6 +699,7 @@ export function PrivateChatView({
       personaVersionId: selectedPrivatePersona?.current_version.id ?? null,
       personaNameSnapshot: selectedPrivatePersona?.current_version.display_name ?? null,
       thinkMode: thinkModeToPayload(thinkMode),
+      contextBlocks: normalizedContextBlocks,
       createdAt: now
     });
     userMessage.active_child_message_id = assistantMessage.id;
@@ -704,10 +727,28 @@ export function PrivateChatView({
       persona_name: selectedPrivatePersona?.current_version.display_name ?? null,
       system_prompt_override: promptSystemPromptOverride,
       inference_settings: promptInferenceSettings,
+      context_blocks: normalizedContextBlocks,
       active_root_message_id: chat.active_root_message_id ?? userMessage.id,
       updated_at: now,
       last_message_at: now
     };
+
+    let generationMessages: ReturnType<typeof privatePromptMessagesWithPersona>;
+    try {
+      generationMessages = privatePromptMessagesWithPersona(
+        nextMessages,
+        nextChat.active_root_message_id,
+        assistantMessage.id,
+        selectedPrivatePersona,
+        promptSystemPromptOverride,
+        normalizedContextBlocks
+      );
+    } catch (promptError) {
+      setGenerationError(
+        promptError instanceof Error ? promptError.message : "Failed to compile context blocks"
+      );
+      return;
+    }
 
     setChat(nextChat);
     messagesRef.current = nextMessages;
@@ -721,13 +762,7 @@ export function PrivateChatView({
       model_name: selected.modelName,
       think_mode: thinkModeToPayload(thinkMode),
       inference_settings: promptInferenceSettings,
-      messages: privatePromptMessagesWithPersona(
-        nextMessages,
-        nextChat.active_root_message_id,
-        assistantMessage.id,
-        selectedPrivatePersona,
-        promptSystemPromptOverride
-      ),
+      messages: generationMessages,
       attachments: []
     });
   }
@@ -819,7 +854,8 @@ export function PrivateChatView({
     _toolPreferences?: unknown,
     thinkMode: ThinkingMode = "auto",
     promptSystemPromptOverride: string | null = systemPromptOverride,
-    promptInferenceSettings: ChatInferenceSettings = inferenceSettings
+    promptInferenceSettings: ChatInferenceSettings = inferenceSettings,
+    promptContextBlocks: ContextBlockSelection[] = contextBlocks
   ) {
     if (isGenerating) {
       setPendingPrompt({
@@ -827,7 +863,8 @@ export function PrivateChatView({
         attachments,
         thinkMode,
         systemPromptOverride: promptSystemPromptOverride,
-        inferenceSettings: promptInferenceSettings
+        inferenceSettings: promptInferenceSettings,
+        contextBlocks: promptContextBlocks
       });
       await stopGeneration();
       return;
@@ -838,7 +875,8 @@ export function PrivateChatView({
       attachments,
       thinkMode,
       promptSystemPromptOverride,
-      promptInferenceSettings
+      promptInferenceSettings,
+      promptContextBlocks
     );
   }
 
@@ -1093,6 +1131,7 @@ export function PrivateChatView({
       }
 
       const now = unixTimestamp();
+      const normalizedContextBlocks = normalizeContextSelections(contextBlocks);
       const userMessage = createPrivateMessage({
         chatId: chat.id,
         parentMessageId: message.parent_message_id,
@@ -1113,6 +1152,7 @@ export function PrivateChatView({
         personaVersionId: selectedPrivatePersona?.current_version.id ?? null,
         personaNameSnapshot: selectedPrivatePersona?.current_version.display_name ?? null,
         thinkMode: thinkModeToPayload(thinkingMode),
+        contextBlocks: normalizedContextBlocks,
         createdAt: now
       });
       userMessage.active_child_message_id = assistantMessage.id;
@@ -1135,12 +1175,30 @@ export function PrivateChatView({
         persona_name: selectedPrivatePersona?.current_version.display_name ?? null,
         system_prompt_override: systemPromptOverride,
         inference_settings: inferenceSettings,
+        context_blocks: normalizedContextBlocks,
         active_root_message_id: message.parent_message_id
           ? chat.active_root_message_id
           : userMessage.id,
         updated_at: now,
         last_message_at: now
       };
+
+      let generationMessages: ReturnType<typeof privatePromptMessagesWithPersona>;
+      try {
+        generationMessages = privatePromptMessagesWithPersona(
+          nextMessages,
+          nextChat.active_root_message_id,
+          assistantMessage.id,
+          selectedPrivatePersona,
+          systemPromptOverride,
+          normalizedContextBlocks
+        );
+      } catch (promptError) {
+        setGenerationError(
+          promptError instanceof Error ? promptError.message : "Failed to compile context blocks"
+        );
+        return;
+      }
 
       setChat(nextChat);
       replacePrivateMessages(nextMessages);
@@ -1154,13 +1212,7 @@ export function PrivateChatView({
         model_name: selected.modelName,
         think_mode: thinkModeToPayload(thinkingMode),
         inference_settings: inferenceSettings,
-        messages: privatePromptMessagesWithPersona(
-          nextMessages,
-          nextChat.active_root_message_id,
-          assistantMessage.id,
-          selectedPrivatePersona,
-          systemPromptOverride
-        ),
+        messages: generationMessages,
         attachments: []
       });
     } finally {
@@ -1231,6 +1283,7 @@ export function PrivateChatView({
       }
 
       const now = unixTimestamp();
+      const normalizedContextBlocks = normalizeContextSelections(contextBlocks);
       const assistantMessage = createPrivateMessage({
         chatId: chat.id,
         parentMessageId: message.parent_message_id,
@@ -1243,6 +1296,7 @@ export function PrivateChatView({
         personaVersionId: selectedPrivatePersona?.current_version.id ?? null,
         personaNameSnapshot: selectedPrivatePersona?.current_version.display_name ?? null,
         thinkMode: thinkModeToPayload(thinkingMode),
+        contextBlocks: normalizedContextBlocks,
         createdAt: now
       });
 
@@ -1263,12 +1317,30 @@ export function PrivateChatView({
         persona_name: selectedPrivatePersona?.current_version.display_name ?? null,
         system_prompt_override: systemPromptOverride,
         inference_settings: inferenceSettings,
+        context_blocks: normalizedContextBlocks,
         active_root_message_id: message.parent_message_id
           ? chat.active_root_message_id
           : assistantMessage.id,
         updated_at: now,
         last_message_at: now
       };
+
+      let generationMessages: ReturnType<typeof privatePromptMessagesWithPersona>;
+      try {
+        generationMessages = privatePromptMessagesWithPersona(
+          nextMessages,
+          nextChat.active_root_message_id,
+          assistantMessage.id,
+          selectedPrivatePersona,
+          systemPromptOverride,
+          normalizedContextBlocks
+        );
+      } catch (promptError) {
+        setGenerationError(
+          promptError instanceof Error ? promptError.message : "Failed to compile context blocks"
+        );
+        return;
+      }
 
       setChat(nextChat);
       replacePrivateMessages(nextMessages);
@@ -1282,13 +1354,7 @@ export function PrivateChatView({
         model_name: modelName,
         think_mode: thinkModeToPayload(thinkingMode),
         inference_settings: inferenceSettings,
-        messages: privatePromptMessagesWithPersona(
-          nextMessages,
-          nextChat.active_root_message_id,
-          assistantMessage.id,
-          selectedPrivatePersona,
-          systemPromptOverride
-        ),
+        messages: generationMessages,
         attachments: []
       });
     } finally {
@@ -1506,7 +1572,7 @@ export function PrivateChatView({
 }
 
 function privateModelAvatarForMessage(
-  message: PrivateChatMessage,
+  message: ChatMessage,
   versions: PrivatePersonaVersion[],
   modelGroups: BackendModelGroup[]
 ) {
