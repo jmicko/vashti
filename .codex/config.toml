@@ -1,0 +1,7 @@
+[mcp_servers]
+
+# Managed by Demons
+[mcp_servers.demons]
+command = "demons"
+args = ["--config", "/home/jmicko/dev/vashti/demons.toml", "mcp", "serve", "--scope", "c55323fc-83ec-4807-8fd8-5e2dbacf5418"]
+default_tools_approval_mode = "writes"

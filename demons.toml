@@ -1,8 +1,41 @@
+schema_version = 4
+
+[settings]
+layout = "grid"
+leader = "ctrl-b"
+multi_click_ms = 500
+logging = false
+mcp_access = "full"
+mcp_status_bar = true
+mcp_scope_id = "c55323fc-83ec-4807-8fd8-5e2dbacf5418"
+
 [[task]]
 name = "backend_server"
 command = "cargo run -p vashti"
+cwd = "."
+depends_on = []
+
+[task.env]
 
 [[task]]
 name = "frontend_client"
 command = "npm run dev -- --host 0.0.0.0"
 cwd = "./apps/vashti/web"
+depends_on = ["backend_server"]
+start_delay = "1"
+
+[task.env]
+
+[[task]]
+name = "test"
+command = "echo fixe!"
+cwd = "."
+depends_on = []
+
+[task.env]
+
+[[terminal]]
+name = "terminal"
+cwd = "."
+
+[terminal.env]
