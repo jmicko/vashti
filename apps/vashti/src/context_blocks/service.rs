@@ -926,10 +926,13 @@ mod tests {
         )
         .await
         .expect("create context block");
-        let selections =
-            resolve_selections_for_user(&pool, &user_id, &[block.current_version.id.clone()])
-                .await
-                .expect("resolve selection");
+        let selections = resolve_selections_for_user(
+            &pool,
+            &user_id,
+            std::slice::from_ref(&block.current_version.id),
+        )
+        .await
+        .expect("resolve selection");
         let mut tx = pool.begin().await.expect("begin selection transaction");
         replace_chat_selections(&mut tx, chat_id, &selections)
             .await
@@ -949,14 +952,18 @@ mod tests {
             &pool,
             &user_id,
             chat_id,
-            &[block.current_version.id.clone()],
+            std::slice::from_ref(&block.current_version.id),
         )
         .await
         .expect("existing chat can retain deleted selection");
         assert!(
-            resolve_selections_for_user(&pool, &user_id, &[block.current_version.id.clone()])
-                .await
-                .is_err()
+            resolve_selections_for_user(
+                &pool,
+                &user_id,
+                std::slice::from_ref(&block.current_version.id),
+            )
+            .await
+            .is_err()
         );
     }
 
@@ -977,10 +984,13 @@ mod tests {
         )
         .await
         .expect("create context block");
-        let selections =
-            resolve_selections_for_user(&pool, &user_id, &[block.current_version.id.clone()])
-                .await
-                .expect("resolve selection");
+        let selections = resolve_selections_for_user(
+            &pool,
+            &user_id,
+            std::slice::from_ref(&block.current_version.id),
+        )
+        .await
+        .expect("resolve selection");
         let now = unix_timestamp();
         sqlx::query(
             "INSERT INTO chat_messages (id, chat_id, role, status, created_at, updated_at) VALUES ('context-message', ?, 'assistant', 'complete', ?, ?)",

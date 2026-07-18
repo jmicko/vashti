@@ -3,6 +3,7 @@ import {
   Blocks,
   Check,
   ChevronDown,
+  FolderOpen,
   HardDrive,
   Pencil,
   Plus,
@@ -53,6 +54,9 @@ export function ContextSettingsPanel({
   const [error, setError] = useState<string | null>(null);
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
+  const [collapsedCategoryIds, setCollapsedCategoryIds] = useState<Set<string>>(
+    () => new Set()
+  );
 
   const loadLibraries = useCallback(async () => {
     setIsLoading(true);
@@ -97,6 +101,18 @@ export function ContextSettingsPanel({
   async function finishMutation() {
     await loadLibraries();
     await onContextChanged();
+  }
+
+  function toggleCategory(categoryId: string) {
+    setCollapsedCategoryIds((collapsedIds) => {
+      const nextIds = new Set(collapsedIds);
+      if (nextIds.has(categoryId)) {
+        nextIds.delete(categoryId);
+      } else {
+        nextIds.add(categoryId);
+      }
+      return nextIds;
+    });
   }
 
   async function handleDelete() {
@@ -183,51 +199,100 @@ export function ContextSettingsPanel({
         </div>
       ) : (
         <div className="context-category-list">
-          {groupedBlocks.map(({ category, blocks }) => (
-            <section className="context-category" key={category?.id ?? "uncategorized"}>
-              <header className="context-category-header">
-                <div>
-                  <strong>{category?.name ?? "Uncategorized"}</strong>
+          {groupedBlocks.map(({ category, blocks }) => {
+            const categoryId = `${storageMode}:${category?.id ?? "uncategorized"}`;
+            const isCollapsed = collapsedCategoryIds.has(categoryId);
+            return (
+              <section
+                className={isCollapsed ? "context-category collapsed" : "context-category"}
+                key={category?.id ?? "uncategorized"}
+              >
+                <header className="context-category-header">
+                  <button
+                    type="button"
+                    className="context-category-toggle"
+                    aria-expanded={!isCollapsed}
+                    onClick={() => toggleCategory(categoryId)}
+                  >
+                    <ChevronDown className="context-category-chevron" aria-hidden="true" />
+                    <FolderOpen aria-hidden="true" />
+                    <span className="context-category-title">
+                      <strong>{category?.name ?? "Uncategorized"}</strong>
+                      {category && (
+                        <small>
+                          {category.selection_mode === "single"
+                            ? "Choose one"
+                            : "Choose multiple"}
+                        </small>
+                      )}
+                    </span>
+                  </button>
                   {category && (
-                    <span>{category.selection_mode === "single" ? "Choose one" : "Choose multiple"}</span>
+                    <div className="icon-action-row">
+                      <button
+                        type="button"
+                        className="icon-button"
+                        aria-label={`Edit ${category.name} category`}
+                        title="Edit category"
+                        onClick={() => setEditor({ type: "category", category })}
+                      >
+                        <Pencil />
+                      </button>
+                      <button
+                        type="button"
+                        className="icon-button danger-icon-button"
+                        aria-label={`Delete ${category.name} category`}
+                        title="Delete category"
+                        onClick={() =>
+                          setDeleteTarget({ type: "category", item: category })
+                        }
+                      >
+                        <Trash2 />
+                      </button>
+                    </div>
                   )}
-                </div>
-                {category && (
-                  <div className="icon-action-row">
-                    <button type="button" className="icon-button" title="Edit category" onClick={() => setEditor({ type: "category", category })}>
-                      <Pencil />
-                    </button>
-                    <button type="button" className="icon-button danger-icon-button" title="Delete category" onClick={() => setDeleteTarget({ type: "category", item: category })}>
-                      <Trash2 />
-                    </button>
-                  </div>
-                )}
-              </header>
-              {blocks.length === 0 ? (
-                <p className="context-category-empty">No blocks in this category.</p>
-              ) : (
-                <div className="context-block-list">
-                  {blocks.map((block) => (
-                    <article className="context-block-row" key={block.id}>
-                      <div className="context-block-copy">
-                        <strong>{block.current_version.name}</strong>
-                        <span>v{block.current_version.version_number}</span>
-                        <p>{block.current_version.content}</p>
-                      </div>
-                      <div className="icon-action-row">
-                        <button type="button" className="icon-button" title="Edit block" onClick={() => setEditor({ type: "block", block })}>
-                          <Pencil />
-                        </button>
-                        <button type="button" className="icon-button danger-icon-button" title="Delete block" onClick={() => setDeleteTarget({ type: "block", item: block })}>
-                          <Trash2 />
-                        </button>
-                      </div>
-                    </article>
+                </header>
+                {!isCollapsed &&
+                  (blocks.length === 0 ? (
+                    <p className="context-category-empty">No blocks in this category.</p>
+                  ) : (
+                    <div className="context-block-list">
+                      {blocks.map((block) => (
+                        <article className="context-block-row" key={block.id}>
+                          <div className="context-block-copy">
+                            <strong>{block.current_version.name}</strong>
+                            <span>v{block.current_version.version_number}</span>
+                            <p>{block.current_version.content}</p>
+                          </div>
+                          <div className="icon-action-row">
+                            <button
+                              type="button"
+                              className="icon-button"
+                              aria-label={`Edit ${block.current_version.name} context block`}
+                              title="Edit block"
+                              onClick={() => setEditor({ type: "block", block })}
+                            >
+                              <Pencil />
+                            </button>
+                            <button
+                              type="button"
+                              className="icon-button danger-icon-button"
+                              aria-label={`Delete ${block.current_version.name} context block`}
+                              title="Delete block"
+                              onClick={() =>
+                                setDeleteTarget({ type: "block", item: block })
+                              }
+                            >
+                              <Trash2 />
+                            </button>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
                   ))}
-                </div>
-              )}
-            </section>
-          ))}
+              </section>
+            );
+          })}
         </div>
       )}
 
