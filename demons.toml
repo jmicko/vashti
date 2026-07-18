@@ -1,4 +1,4 @@
-schema_version = 4
+schema_version = 5
 
 [settings]
 layout = "grid"
@@ -8,12 +8,15 @@ logging = false
 mcp_access = "full"
 mcp_status_bar = true
 mcp_scope_id = "c55323fc-83ec-4807-8fd8-5e2dbacf5418"
+watch_mode = "auto"
+watch_poll_interval = "1s"
 
 [[task]]
 name = "backend_server"
 command = "cargo run -p vashti"
-cwd = "."
+cwd = "./apps/vashti"
 depends_on = []
+watch = ["./src/", "./migrations/", "./Cargo.toml", "./build.rs"]
 
 [task.env]
 
@@ -28,7 +31,7 @@ start_delay = "1"
 
 [[task]]
 name = "test"
-command = "echo fixe!"
+command = "VASHTI_SKIP_WEB_BUILD=1 cargo test --workspace"
 cwd = "."
 depends_on = []
 
