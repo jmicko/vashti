@@ -12,33 +12,33 @@ watch_mode = "auto"
 watch_poll_interval = "1s"
 
 [[task]]
-name = "backend_server"
-command = "cargo run -p vashti"
+name = "backend"
+command = ["cargo", "run", "-p", "vashti"]
 cwd = "./apps/vashti"
 depends_on = []
-watch = ["./src/", "./migrations/", "./Cargo.toml", "./build.rs"]
+watch = [
+    "Cargo.toml",
+    "Cargo.lock",
+    "apps/vashti/src",
+    "apps/vashti/Cargo.toml",
+    "apps/vashti/build.rs",
+    "apps/vashti/migrations",
+]
+watch_delay = "400ms"
 
 [task.env]
+RUST_BACKTRACE = "1"
 
 [[task]]
-name = "frontend_client"
-command = "npm run dev -- --host 0.0.0.0"
+name = "web"
+command = ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
 cwd = "./apps/vashti/web"
-depends_on = ["backend_server"]
-start_delay = "1"
-
-[task.env]
-
-[[task]]
-name = "test"
-command = "VASHTI_SKIP_WEB_BUILD=1 cargo test --workspace"
-cwd = "."
 depends_on = []
 
 [task.env]
 
 [[terminal]]
-name = "terminal"
+name = "shell"
 cwd = "."
 
 [terminal.env]
