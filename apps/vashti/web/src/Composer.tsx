@@ -41,7 +41,7 @@ import type {
   ModelInfo,
   ThinkingMode
 } from "./types";
-import { dismissMobileKeyboard, usesTouchViewport } from "./viewport";
+import { dismissMobileKeyboard, usesMobileInputBehavior } from "./viewport";
 
 export function StartChatComposer({
   isBusy,
@@ -80,7 +80,7 @@ export function StartChatComposer({
     attachments?: ComposerAttachment[],
     toolPreferences?: ChatToolPreferences,
     thinkMode?: ThinkingMode
-  ) => Promise<void>;
+  ) => Promise<boolean | void>;
   autoFocusOnReady?: boolean;
 }) {
   const [prompt, setPrompt] = useState("");
@@ -144,7 +144,7 @@ export function StartChatComposer({
       : undefined;
 
   useEffect(() => {
-    if (autoFocusOnReady && !isGenerating && !usesTouchViewport()) {
+    if (autoFocusOnReady && !isGenerating && !usesMobileInputBehavior()) {
       textareaRef.current?.focus();
     }
   }, [autoFocusOnReady, isGenerating]);
@@ -226,17 +226,21 @@ export function StartChatComposer({
     setAttachments([]);
     setIsComposerExpanded(false);
     setExpandedComposerFrame(null);
-    const shouldRestoreFocus = !usesTouchViewport();
+    const shouldRestoreFocus = !usesMobileInputBehavior();
     if (!shouldRestoreFocus) {
       textareaRef.current?.blur();
       dismissMobileKeyboard();
     }
-    await onSubmit(
+    const accepted = await onSubmit(
       submittedPrompt,
       submittedAttachments,
       currentToolPreferences,
       activeThinkingMode
     );
+    if (accepted === false) {
+      setPrompt(submittedPrompt);
+      setAttachments(submittedAttachments);
+    }
     if (shouldRestoreFocus) {
       window.requestAnimationFrame(() => textareaRef.current?.focus());
     }
@@ -494,7 +498,18 @@ export function StartChatComposer({
           onFocus={() => setIsTextInputFocused(true)}
           onBlur={() => setIsTextInputFocused(false)}
           onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey && !usesTouchViewport()) {
+            if (
+              event.key !== "Enter" ||
+              event.shiftKey ||
+              event.altKey ||
+              event.nativeEvent.isComposing ||
+              event.keyCode === 229
+            ) {
+              return;
+            }
+
+            const explicitSendShortcut = event.ctrlKey || event.metaKey;
+            if (explicitSendShortcut || !usesMobileInputBehavior()) {
               event.preventDefault();
               event.currentTarget.form?.requestSubmit();
             }

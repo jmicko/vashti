@@ -400,6 +400,19 @@ export type ComposerSubmitPayload = {
   contextBlocks?: ContextBlockSelection[];
 };
 
+export type HostedPendingSend = {
+  id: string;
+  chat_id: string;
+  prompt: string;
+  attachments: AttachmentInfo[];
+  request_path: string;
+  request_body: Record<string, unknown>;
+  known_message_ids: string[];
+  status: "sending" | "failed";
+  error_text: string | null;
+  created_at: number;
+};
+
 export type ThinkingMode = "auto" | "false" | "low" | "medium" | "high";
 
 export type MessageStats = {

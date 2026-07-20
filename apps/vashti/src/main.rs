@@ -68,6 +68,13 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let db = db::connect(&config).await?;
     startup::secure_data_files(&config).await?;
     startup::migrations::run(&db).await?;
+    let interrupted_generations = chats::service::recover_interrupted_generations(&db).await?;
+    if interrupted_generations > 0 {
+        tracing::warn!(
+            interrupted_generations,
+            "marked generations interrupted by the previous server shutdown as stopped"
+        );
+    }
     startup::bootstrap::ensure_app_settings(&db).await?;
     startup::network_recovery::recover_network_if_requested(&db, &config).await?;
     auth::service::delete_expired_sessions(&db).await?;

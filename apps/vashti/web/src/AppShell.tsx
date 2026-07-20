@@ -57,6 +57,7 @@ import { applyTheme, normalizeTheme, storeAndApplyTheme, storedTheme } from "./t
 import {
   createPrivateChat,
   deleteCachedHostedChat,
+  deleteHostedPendingSend,
   deletePrivateChat,
   getCachedHostedChatList,
   getCachedModelState,
@@ -682,7 +683,7 @@ export function AppShell({
   ) {
     if (!prompt.trim()) {
       openChat();
-      return;
+      return true;
     }
 
     const selected = selectedModelBaseParts(
@@ -694,7 +695,7 @@ export function AppShell({
     );
     if (!selected) {
       setError("Select a model before starting a chat");
-      return;
+      return false;
     }
     const selectedPersonaVersionId = personaVersionIdFromValue(selectedModel);
 
@@ -733,8 +734,10 @@ export function AppShell({
 
       await loadChats();
       openChat(response.chat.id);
+      return true;
     } catch (createError) {
       setError(createError instanceof Error ? createError.message : "Failed to create chat");
+      return false;
     } finally {
       setIsCreatingChat(false);
     }
@@ -852,12 +855,12 @@ export function AppShell({
   ) {
     if (!prompt.trim()) {
       openChat();
-      return;
+      return true;
     }
 
     if (personaVersionIdFromValue(selectedModel)) {
       setError("Copy this hosted persona to your device before using it in a private chat");
-      return;
+      return false;
     }
 
     const selected = currentSelectedModel();
@@ -868,7 +871,7 @@ export function AppShell({
     );
     if (!selected) {
       setError("Select a model before starting a private chat");
-      return;
+      return false;
     }
 
     setIsCreatingPrivateChat(true);
@@ -902,10 +905,12 @@ export function AppShell({
 
       await loadPrivateChats();
       openPrivateChat(chat.id);
+      return true;
     } catch (createError) {
       setError(
         createError instanceof Error ? createError.message : "Failed to create private chat"
       );
+      return false;
     } finally {
       setIsCreatingPrivateChat(false);
     }
@@ -960,7 +965,8 @@ export function AppShell({
       setChats(nextChats);
       await Promise.all([
         saveCachedHostedChatList(nextChats),
-        deleteCachedHostedChat(chat.id)
+        deleteCachedHostedChat(chat.id),
+        deleteHostedPendingSend(chat.id)
       ]).catch(() => undefined);
       setChatDeleteTarget(null);
       if (currentChatId === chat.id) {

@@ -7,10 +7,12 @@ import {
   type SyntheticEvent
 } from "react";
 import {
+  CircleAlert,
   ChevronLeft,
   ChevronRight,
   Copy,
   Info,
+  LoaderCircle,
   Paperclip,
   Pencil,
   RefreshCw,
@@ -42,6 +44,7 @@ import { ModelAvatar } from "./ModelAvatar";
 import type {
   ChatMessage,
   ComposerAttachment,
+  HostedPendingSend,
   ImageOpenHandler,
   MessageStats,
   MessageStreamSegment,
@@ -49,6 +52,55 @@ import type {
   VersionInfo
 } from "./types";
 import { dismissMobileKeyboard } from "./viewport";
+
+export function PendingOutgoingMessage({
+  pendingSend,
+  onDiscard,
+  onImageOpen,
+  onRetry
+}: {
+  pendingSend: HostedPendingSend;
+  onDiscard: () => void;
+  onImageOpen?: ImageOpenHandler;
+  onRetry: () => void;
+}) {
+  const isSending = pendingSend.status === "sending";
+
+  return (
+    <article
+      className={
+        isSending
+          ? "message-bubble message-bubble-user message-bubble-pending"
+          : "message-bubble message-bubble-user message-bubble-pending failed"
+      }
+      data-message-id={`pending-${pendingSend.id}`}
+      aria-busy={isSending}
+      aria-live="polite"
+    >
+      <MessageAttachments attachments={pendingSend.attachments} onImageOpen={onImageOpen} />
+      <MarkdownContent content={pendingSend.prompt} />
+      <div className={isSending ? "pending-send-status" : "pending-send-status failed"}>
+        {isSending ? <LoaderCircle className="pending-send-spinner" /> : <CircleAlert />}
+        <div>
+          <strong>{isSending ? "Sending..." : "Message not sent"}</strong>
+          {!isSending && pendingSend.error_text && <span>{pendingSend.error_text}</span>}
+        </div>
+      </div>
+      {!isSending && (
+        <div className="message-actions pending-send-actions">
+          <button type="button" onClick={onRetry}>
+            <RefreshCw />
+            Retry
+          </button>
+          <button type="button" className="danger-button" onClick={onDiscard}>
+            <Trash2 />
+            Discard
+          </button>
+        </div>
+      )}
+    </article>
+  );
+}
 
 export function MessageBubble({
   message,
@@ -361,6 +413,12 @@ export function MessageBubble({
         <MarkdownContent content={content} />
       ) : (
         <p>{message.status === "streaming" ? <RetroLoader /> : "No content"}</p>
+      )}
+      {message.status !== "streaming" && message.error_text && (
+        <div className="message-generation-notice" role="status">
+          <CircleAlert />
+          <span>{message.error_text}</span>
+        </div>
       )}
       {!isEditing && (
         <>

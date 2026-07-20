@@ -1602,6 +1602,53 @@ pub async fn finish_generation(
     .await
 }
 
+pub async fn recover_interrupted_generations(pool: &SqlitePool) -> Result<u64, sqlx::Error> {
+    let now = unix_timestamp();
+    let mut tx = pool.begin().await?;
+
+    sqlx::query(
+        r#"
+        UPDATE chats
+        SET updated_at = CASE
+                WHEN updated_at >= ? THEN updated_at + 1
+                ELSE ?
+            END
+        WHERE id IN (
+            SELECT DISTINCT chat_id
+            FROM chat_messages
+            WHERE status = 'streaming'
+        )
+        "#,
+    )
+    .bind(now)
+    .bind(now)
+    .execute(&mut *tx)
+    .await?;
+
+    let result = sqlx::query(
+        r#"
+        UPDATE chat_messages
+        SET status = 'stopped',
+            done_reason = 'server_restart',
+            error_text = 'Generation was interrupted when the server restarted.',
+            completed_at = COALESCE(completed_at, ?),
+            updated_at = CASE
+                WHEN updated_at >= ? THEN updated_at + 1
+                ELSE ?
+            END
+        WHERE status = 'streaming'
+        "#,
+    )
+    .bind(now)
+    .bind(now)
+    .bind(now)
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+    Ok(result.rows_affected())
+}
+
 pub async fn stop_generation(
     pool: &SqlitePool,
     user_id: &str,
@@ -2577,4 +2624,92 @@ async fn get_message(
     hydrate_message_context_blocks(pool, &mut message).await?;
 
     Ok(message)
+}
+
+#[cfg(test)]
+mod tests {
+    use sqlx::{
+        Row, SqlitePool,
+        sqlite::{SqliteConnectOptions, SqlitePoolOptions},
+    };
+
+    use super::recover_interrupted_generations;
+    use crate::startup;
+
+    async fn test_pool() -> SqlitePool {
+        let options = SqliteConnectOptions::new()
+            .filename(":memory:")
+            .foreign_keys(true);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .expect("connect test database");
+        startup::migrations::run(&pool)
+            .await
+            .expect("run migrations");
+        pool
+    }
+
+    #[tokio::test]
+    async fn startup_recovery_stops_only_interrupted_generations() {
+        let pool = test_pool().await;
+        sqlx::query(
+            "INSERT INTO users (id, username, password_hash, created_at, updated_at) VALUES ('user', 'user', 'hash', 100, 100)",
+        )
+        .execute(&pool)
+        .await
+        .expect("insert user");
+        sqlx::query(
+            "INSERT INTO ollama_backends (id, name, base_url, created_at, updated_at) VALUES ('backend', 'Backend', 'http://127.0.0.1:11434', 100, 100)",
+        )
+        .execute(&pool)
+        .await
+        .expect("insert backend");
+        sqlx::query(
+            "INSERT INTO chats (id, user_id, default_backend_id, default_model_name, title, created_at, updated_at, last_message_at) VALUES ('chat', 'user', 'backend', 'model', 'Chat', 100, 100, 100)",
+        )
+        .execute(&pool)
+        .await
+        .expect("insert chat");
+        sqlx::query(
+            "INSERT INTO chat_messages (id, chat_id, role, status, created_at, updated_at) VALUES ('streaming', 'chat', 'assistant', 'streaming', 100, 100), ('complete', 'chat', 'assistant', 'complete', 101, 101)",
+        )
+        .execute(&pool)
+        .await
+        .expect("insert messages");
+
+        assert_eq!(recover_interrupted_generations(&pool).await.unwrap(), 1);
+
+        let interrupted = sqlx::query(
+            "SELECT status, done_reason, error_text, completed_at FROM chat_messages WHERE id = 'streaming'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("load interrupted message");
+        assert_eq!(interrupted.get::<String, _>("status"), "stopped");
+        assert_eq!(
+            interrupted.get::<String, _>("done_reason"),
+            "server_restart"
+        );
+        assert_eq!(
+            interrupted.get::<String, _>("error_text"),
+            "Generation was interrupted when the server restarted."
+        );
+        assert!(interrupted.get::<Option<i64>, _>("completed_at").is_some());
+
+        let complete_status: String =
+            sqlx::query_scalar("SELECT status FROM chat_messages WHERE id = 'complete'")
+                .fetch_one(&pool)
+                .await
+                .expect("load complete message");
+        assert_eq!(complete_status, "complete");
+
+        let updated_at: i64 = sqlx::query_scalar("SELECT updated_at FROM chats WHERE id = 'chat'")
+            .fetch_one(&pool)
+            .await
+            .expect("load chat timestamp");
+        assert!(updated_at > 100);
+        assert_eq!(recover_interrupted_generations(&pool).await.unwrap(), 0);
+    }
 }

@@ -12,7 +12,7 @@ import type {
 
 const LEGACY_DB_NAME = "vashti-private-local";
 const DB_NAME_PREFIX = "vashti-private-local";
-const DB_VERSION = 6;
+const DB_VERSION = 7;
 const CHAT_STORE = "private_chats";
 const MESSAGE_STORE = "private_messages";
 const PERSONA_STORE = "private_personas";
@@ -23,6 +23,7 @@ const CONTEXT_BLOCK_STORE = "private_context_blocks";
 const CONTEXT_BLOCK_VERSION_STORE = "private_context_block_versions";
 const HOSTED_CHAT_CACHE_STORE = "hosted_chat_cache";
 const HOSTED_CHAT_LIST_CACHE_STORE = "hosted_chat_list_cache";
+const HOSTED_PENDING_SEND_STORE = "hosted_pending_sends";
 const MODEL_CACHE_STORE = "model_cache";
 const MODEL_CACHE_ID = "model-picker";
 const HOSTED_CHAT_LIST_CACHE_ID = "hosted-chat-list";
@@ -602,6 +603,36 @@ export async function deleteCachedHostedChat(chatId: string): Promise<void> {
   const db = await openPrivateDb();
   const tx = db.transaction(HOSTED_CHAT_CACHE_STORE, "readwrite");
   tx.objectStore(HOSTED_CHAT_CACHE_STORE).delete(chatId);
+  await transactionDone(tx);
+}
+
+export async function getHostedPendingSend<T>(chatId: string): Promise<T | null> {
+  const db = await openPrivateDb();
+  const tx = db.transaction(HOSTED_PENDING_SEND_STORE, "readonly");
+  const record = await requestResult<PrivateStoreRecord | T | undefined>(
+    tx.objectStore(HOSTED_PENDING_SEND_STORE).get(chatId)
+  );
+  await transactionDone(tx);
+  return record ? readPrivateRecord<T>(record) : null;
+}
+
+export async function saveHostedPendingSend<
+  T extends { id: string; chat_id: string; created_at: number }
+>(pendingSend: T): Promise<void> {
+  const db = await openPrivateDb();
+  const record = await privateStoreRecord(pendingSend, {
+    chat_id: pendingSend.chat_id,
+    created_at: pendingSend.created_at
+  });
+  const tx = db.transaction(HOSTED_PENDING_SEND_STORE, "readwrite");
+  tx.objectStore(HOSTED_PENDING_SEND_STORE).put(record);
+  await transactionDone(tx);
+}
+
+export async function deleteHostedPendingSend(chatId: string): Promise<void> {
+  const db = await openPrivateDb();
+  const tx = db.transaction(HOSTED_PENDING_SEND_STORE, "readwrite");
+  tx.objectStore(HOSTED_PENDING_SEND_STORE).delete(chatId);
   await transactionDone(tx);
 }
 
@@ -1320,6 +1351,9 @@ function ensurePrivateStores(db: IDBDatabase) {
   }
   if (!db.objectStoreNames.contains(HOSTED_CHAT_LIST_CACHE_STORE)) {
     db.createObjectStore(HOSTED_CHAT_LIST_CACHE_STORE, { keyPath: "id" });
+  }
+  if (!db.objectStoreNames.contains(HOSTED_PENDING_SEND_STORE)) {
+    db.createObjectStore(HOSTED_PENDING_SEND_STORE, { keyPath: "id" });
   }
   if (!db.objectStoreNames.contains(MODEL_CACHE_STORE)) {
     db.createObjectStore(MODEL_CACHE_STORE, { keyPath: "id" });

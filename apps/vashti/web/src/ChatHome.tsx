@@ -39,13 +39,13 @@ export function ChatHome({
     attachments?: ComposerAttachment[],
     toolPreferences?: ChatToolPreferences,
     thinkMode?: ThinkingMode
-  ) => Promise<void>;
+  ) => Promise<boolean | void>;
   onCreatePrivateChat: (
     prompt: string,
     attachments?: ComposerAttachment[],
     toolPreferences?: ChatToolPreferences,
     thinkMode?: ThinkingMode
-  ) => Promise<void>;
+  ) => Promise<boolean | void>;
 }) {
   const isPrivate = mode === "private";
   const isCreatingSelectedMode = isPrivate ? isCreatingPrivate : isCreating;

@@ -2275,6 +2275,83 @@ textarea {
   background: rgba(var(--accent-rgb), 0.09);
 }
 
+.message-bubble-pending {
+  border-style: dashed;
+  opacity: 0.86;
+}
+
+.message-bubble-pending.failed {
+  border-color: rgba(var(--error-rgb), 0.62);
+  border-style: solid;
+  opacity: 1;
+}
+
+.pending-send-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--muted);
+}
+
+.pending-send-status.failed {
+  color: var(--error-text-muted);
+}
+
+.pending-send-status > svg {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.pending-send-spinner {
+  animation: pending-send-spin 0.9s linear infinite;
+}
+
+@keyframes pending-send-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.pending-send-status > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.pending-send-status span {
+  overflow-wrap: anywhere;
+  font-size: 0.82rem;
+}
+
+.pending-send-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 38px;
+}
+
+.pending-send-actions svg {
+  width: 17px;
+  height: 17px;
+}
+
+.message-generation-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--error-text-muted);
+  font-size: 0.84rem;
+}
+
+.message-generation-notice svg {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
 .message-bubble-assistant,
 .message-bubble-system {
   justify-self: start;

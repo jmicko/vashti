@@ -18,10 +18,16 @@ import {
 import { ConfirmDialog, RetroLoader } from "./common";
 import { StartChatComposer } from "./Composer";
 import { readGenerateEventStream } from "./generationStream";
-import { MessageBubble } from "./MessageBubble";
+import { MessageBubble, PendingOutgoingMessage } from "./MessageBubble";
 import { ModelBackgroundLayer, modelBackgroundContainerStyle } from "./ModelBackground";
 import { defaultToolPreferences, normalizeChatDetail } from "./toolPreferences";
-import { getCachedHostedChat, saveCachedHostedChat } from "./privateChatStore";
+import {
+  deleteHostedPendingSend,
+  getCachedHostedChat,
+  getHostedPendingSend,
+  saveCachedHostedChat,
+  saveHostedPendingSend
+} from "./privateChatStore";
 import {
   modelParts,
   modelValue,
@@ -31,6 +37,7 @@ import {
 } from "./modelSelection";
 import type {
   AutoScrollMode,
+  AttachmentInfo,
   AvailableTool,
   BranchScrollAnchor,
   ChatDetail,
@@ -43,6 +50,7 @@ import type {
   ComposerAttachment,
   ComposerSubmitPayload,
   GenerateEvent,
+  HostedPendingSend,
   ImageOpenHandler,
   ListMessagesResponse,
   MessageResponse,
@@ -102,6 +110,8 @@ export function ChatView({
   const [isGenerating, setIsGenerating] = useState(false);
   const [activeAssistantId, setActiveAssistantId] = useState<string | null>(null);
   const [pendingPrompt, setPendingPrompt] = useState<ComposerSubmitPayload | null>(null);
+  const [pendingSend, setPendingSend] = useState<HostedPendingSend | null>(null);
+  const [isPendingSendLoading, setIsPendingSendLoading] = useState(true);
   const [thinkingMode, setThinkingMode] = useState<ThinkingMode>("auto");
   const [busyMessageId, setBusyMessageId] = useState<string | null>(null);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
@@ -110,6 +120,7 @@ export function ChatView({
   const messageListRef = useRef<HTMLElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const generationRunRef = useRef(0);
+  const pendingSendRef = useRef<HostedPendingSend | null>(null);
   const autoScrollModeRef = useRef<AutoScrollMode>("top");
   const userScrollIntentRef = useRef(false);
   const userScrollIntentTimeoutRef = useRef<number | null>(null);
@@ -130,6 +141,34 @@ export function ChatView({
     selectedModelInfo && !selectedModelInfo.supports_images && chatContainsImages
       ? "This chat includes images. Images may not be supported by this model."
       : null;
+
+  const updatePendingSend = useCallback((next: HostedPendingSend | null) => {
+    pendingSendRef.current = next;
+    setPendingSend(next);
+  }, []);
+
+  const clearPendingSend = useCallback(
+    async (pendingSendId: string) => {
+      if (pendingSendRef.current?.id === pendingSendId) {
+        updatePendingSend(null);
+      }
+      await deleteHostedPendingSend(pendingSendId).catch(() => undefined);
+    },
+    [updatePendingSend]
+  );
+
+  const failPendingSend = useCallback(
+    (attempt: HostedPendingSend, message: string) => {
+      const failedAttempt: HostedPendingSend = {
+        ...attempt,
+        status: "failed",
+        error_text: message
+      };
+      updatePendingSend(failedAttempt);
+      void saveHostedPendingSend(failedAttempt).catch(() => undefined);
+    },
+    [updatePendingSend]
+  );
 
   const applyLoadedChat = useCallback(
     (nextChat: ChatDetail, activeRootMessageId: string | null, nextMessages: ChatMessage[]) => {
@@ -293,7 +332,7 @@ export function ChatView({
   }, [chat, isGenerating, isLoading, messages]);
 
   const streamAssistantResponse = useCallback(
-    async (path: string, body: unknown) => {
+    async (path: string, body: unknown, pendingAttempt?: HostedPendingSend) => {
       const runId = generationRunRef.current + 1;
       generationRunRef.current = runId;
       const controller = new AbortController();
@@ -301,23 +340,49 @@ export function ChatView({
       autoScrollModeRef.current = "top";
       setIsGenerating(true);
       setGenerationError(null);
+      let acknowledged = false;
+      let streamError: string | null = null;
 
       try {
         await readGenerateEventStream({
           path,
           body,
           signal: controller.signal,
-          onEvent: (event) => applyGenerateEvent(event, runId)
+          onEvent: (event) => {
+            if (pendingAttempt && event.type === "message_start" && event.user_message) {
+              acknowledged = true;
+              void clearPendingSend(pendingAttempt.id);
+            } else if (pendingAttempt && event.type === "error" && !acknowledged) {
+              streamError = event.message;
+            }
+            applyGenerateEvent(event, runId);
+          }
         });
+        if (pendingAttempt && !acknowledged) {
+          failPendingSend(
+            pendingAttempt,
+            streamError ?? "The server did not acknowledge the message."
+          );
+          setGenerationError(null);
+          return;
+        }
         await onChatsChanged();
       } catch (generateError) {
         if (generateError instanceof DOMException && generateError.name === "AbortError") {
+          if (pendingAttempt && !acknowledged) {
+            failPendingSend(pendingAttempt, "The send was interrupted before it was acknowledged.");
+          }
           return;
         }
 
-        setGenerationError(
-          generateError instanceof Error ? generateError.message : "Generation failed"
-        );
+        const message =
+          generateError instanceof Error ? generateError.message : "Generation failed";
+        if (pendingAttempt && !acknowledged) {
+          failPendingSend(pendingAttempt, message);
+          setGenerationError(null);
+        } else {
+          setGenerationError(message);
+        }
       } finally {
         if (generationRunRef.current === runId) {
           setIsGenerating(false);
@@ -326,20 +391,20 @@ export function ChatView({
         }
       }
     },
-    [onChatsChanged]
+    [clearPendingSend, failPendingSend, onChatsChanged]
   );
 
   const persistConversationSettingsForGeneration = useCallback(async () => {
     try {
       await onConversationSettingsSave();
-      return true;
+      return null;
     } catch (settingsError) {
-      setGenerationError(
+      const message =
         settingsError instanceof Error
           ? settingsError.message
-          : "Failed to save conversation settings"
-      );
-      return false;
+          : "Failed to save conversation settings";
+      setGenerationError(message);
+      return message;
     }
   }, [onConversationSettingsSave]);
 
@@ -350,11 +415,7 @@ export function ChatView({
       thinkMode: ThinkingMode = "auto",
       promptInferenceSettings: ChatInferenceSettings = inferenceSettings
     ) => {
-      if (isGenerating) {
-        return;
-      }
-
-      if (!(await persistConversationSettingsForGeneration())) {
+      if (isGenerating || pendingSendRef.current) {
         return;
       }
 
@@ -362,7 +423,8 @@ export function ChatView({
         selectedModelBaseParts([], personas, [], selectedModel, personaVersions) ??
         modelParts(selectedModel);
       const personaVersionId = personaVersionIdFromValue(selectedModel);
-      await streamAssistantResponse(`/api/chats/${chatId}/generate`, {
+      const requestPath = `/api/chats/${chatId}/generate`;
+      const requestBody: Record<string, unknown> = {
         user_message: { content_text: prompt },
         backend_id: selected?.backendId ?? null,
         model_name: selected?.modelName ?? null,
@@ -371,24 +433,96 @@ export function ChatView({
         inference_settings: promptInferenceSettings,
         tool_preferences: chat?.tool_preferences ?? defaultToolPreferences,
         attachments: attachmentReferences(attachments)
-      });
+      };
+      const attempt: HostedPendingSend = {
+        id: chatId,
+        chat_id: chatId,
+        prompt,
+        attachments: persistedAttachmentMetadata(attachments),
+        request_path: requestPath,
+        request_body: requestBody,
+        known_message_ids: messages.map((message) => message.id),
+        status: "sending",
+        error_text: null,
+        created_at: Math.floor(Date.now() / 1000)
+      };
+
+      updatePendingSend(attempt);
+      await saveHostedPendingSend(attempt).catch(() => undefined);
+
+      const settingsError = await persistConversationSettingsForGeneration();
+      if (settingsError) {
+        failPendingSend(attempt, settingsError);
+        setGenerationError(null);
+        return;
+      }
+
+      await streamAssistantResponse(requestPath, requestBody, attempt);
     },
     [
       chat?.tool_preferences,
       inferenceSettings,
       chatId,
       isGenerating,
+      messages,
       persistConversationSettingsForGeneration,
       personas,
       personaVersions,
       selectedModel,
-      streamAssistantResponse
+      streamAssistantResponse,
+      updatePendingSend,
+      failPendingSend
     ]
   );
 
   useEffect(() => {
     void loadChat();
   }, [loadChat]);
+
+  useEffect(() => {
+    let cancelled = false;
+    updatePendingSend(null);
+    setIsPendingSendLoading(true);
+
+    void getHostedPendingSend<HostedPendingSend>(chatId)
+      .then((storedAttempt) => {
+        if (cancelled || !storedAttempt || storedAttempt.chat_id !== chatId) {
+          return;
+        }
+
+        const recoveredAttempt: HostedPendingSend =
+          storedAttempt.status === "sending"
+            ? {
+                ...storedAttempt,
+                status: "failed",
+                error_text: "The page closed before the server acknowledged this message."
+              }
+            : storedAttempt;
+        updatePendingSend(recoveredAttempt);
+        if (recoveredAttempt !== storedAttempt) {
+          void saveHostedPendingSend(recoveredAttempt).catch(() => undefined);
+        }
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) {
+          setIsPendingSendLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [chatId, updatePendingSend]);
+
+  useEffect(() => {
+    if (isLoading || isPendingSendLoading || !pendingSend) {
+      return;
+    }
+    if (acknowledgedMessageForAttempt(messages, pendingSend)) {
+      void clearPendingSend(pendingSend.id);
+    }
+  }, [clearPendingSend, isLoading, isPendingSendLoading, messages, pendingSend]);
 
   useEffect(() => {
     const latestModel = latestAssistantModelValue(visibleMessages);
@@ -422,7 +556,14 @@ export function ChatView({
   }, [messages, refreshStreamingMessages]);
 
   useEffect(() => {
-    if (!queuedPrompt || isLoading || !chat || isGenerating) {
+    if (
+      !queuedPrompt ||
+      isLoading ||
+      isPendingSendLoading ||
+      !chat ||
+      isGenerating ||
+      pendingSend
+    ) {
       return;
     }
 
@@ -439,14 +580,23 @@ export function ChatView({
     chat,
     generate,
     isGenerating,
+    isPendingSendLoading,
     isLoading,
     onQueuedPromptConsumed,
     queuedPrompt,
+    pendingSend,
     inferenceSettings
   ]);
 
   useEffect(() => {
-    if (!pendingPrompt || isGenerating || isLoading || !chat) {
+    if (
+      !pendingPrompt ||
+      isGenerating ||
+      isLoading ||
+      isPendingSendLoading ||
+      pendingSend ||
+      !chat
+    ) {
       return;
     }
 
@@ -458,7 +608,16 @@ export function ChatView({
       prompt.thinkMode,
       prompt.inferenceSettings !== undefined ? prompt.inferenceSettings : inferenceSettings
     );
-  }, [chat, generate, inferenceSettings, isGenerating, isLoading, pendingPrompt]);
+  }, [
+    chat,
+    generate,
+    inferenceSettings,
+    isGenerating,
+    isLoading,
+    isPendingSendLoading,
+    pendingPrompt,
+    pendingSend
+  ]);
 
   useLayoutEffect(() => {
     if (isLoading) {
@@ -471,7 +630,9 @@ export function ChatView({
     }
 
     const messageList = list;
-    const finalMessageId = visibleMessages[visibleMessages.length - 1]?.id ?? null;
+    const finalMessageId = pendingSend
+      ? `pending-${pendingSend.id}`
+      : visibleMessages[visibleMessages.length - 1]?.id ?? null;
     const finalMessage = finalMessageId
       ? messageList.querySelector<HTMLElement>(`[data-message-id="${finalMessageId}"]`)
       : null;
@@ -514,7 +675,7 @@ export function ChatView({
       window.removeEventListener("resize", updateMessageListBuffer);
       window.visualViewport?.removeEventListener("resize", updateMessageListBuffer);
     };
-  }, [chatId, isLoading, visibleMessages]);
+  }, [chatId, isLoading, pendingSend, visibleMessages]);
 
   useLayoutEffect(() => {
     if (isLoading || !scrollToBottomAfterLoadRef.current) {
@@ -927,6 +1088,66 @@ export function ChatView({
     await generate(prompt, attachments, thinkMode, inferenceSettings);
   }
 
+  async function retryPendingMessage() {
+    const storedAttempt = pendingSendRef.current;
+    if (!storedAttempt || isGenerating) {
+      return;
+    }
+
+    const retryAttempt: HostedPendingSend = {
+      ...storedAttempt,
+      status: "sending",
+      error_text: null
+    };
+    updatePendingSend(retryAttempt);
+    await saveHostedPendingSend(retryAttempt).catch(() => undefined);
+
+    try {
+      const response = await requestJson<ListMessagesResponse>(
+        `/api/chats/${chatId}/messages`
+      );
+      if (acknowledgedMessageForAttempt(response.messages, retryAttempt)) {
+        setChat((current) =>
+          current
+            ? { ...current, active_root_message_id: response.active_root_message_id }
+            : current
+        );
+        setMessages(
+          response.messages.map((message) => ({
+            ...message,
+            context_blocks: message.context_blocks ?? []
+          }))
+        );
+        await clearPendingSend(retryAttempt.id);
+        await onChatsChanged();
+        return;
+      }
+    } catch {
+      // The generation request below will surface the useful connection error.
+    }
+
+    const settingsError = await persistConversationSettingsForGeneration();
+    if (settingsError) {
+      failPendingSend(retryAttempt, settingsError);
+      setGenerationError(null);
+      return;
+    }
+
+    await streamAssistantResponse(
+      retryAttempt.request_path,
+      retryAttempt.request_body,
+      retryAttempt
+    );
+  }
+
+  function discardPendingMessage() {
+    const storedAttempt = pendingSendRef.current;
+    if (!storedAttempt || storedAttempt.status === "sending") {
+      return;
+    }
+    void clearPendingSend(storedAttempt.id);
+  }
+
   function replaceMessage(nextMessage: ChatMessage) {
     setMessages((current) =>
       current.map((message) => (message.id === nextMessage.id ? nextMessage : message))
@@ -989,7 +1210,7 @@ export function ChatView({
       selectedModelBaseParts([], personas, [], selectedModel, personaVersions) ??
       modelParts(selectedModel);
     const personaVersionId = personaVersionIdFromValue(selectedModel);
-    if (!(await persistConversationSettingsForGeneration())) {
+    if (await persistConversationSettingsForGeneration()) {
       return;
     }
     await streamAssistantResponse(`/api/chats/${chatId}/messages/${message.id}/branch`, {
@@ -1034,7 +1255,7 @@ export function ChatView({
       selectedModelBaseParts([], personas, [], selectedModel, personaVersions) ??
       modelParts(selectedModel);
     const personaVersionId = personaVersionIdFromValue(selectedModel);
-    if (!(await persistConversationSettingsForGeneration())) {
+    if (await persistConversationSettingsForGeneration()) {
       return;
     }
     await streamAssistantResponse(`/api/chats/${chatId}/messages/${message.id}/regenerate`, {
@@ -1142,7 +1363,9 @@ export function ChatView({
         <>
           <section
             className={
-              visibleMessages.length > 0 ? "message-list message-list-buffered" : "message-list"
+              visibleMessages.length > 0 || pendingSend
+                ? "message-list message-list-buffered"
+                : "message-list"
             }
             aria-label="Chat messages"
             ref={messageListRef}
@@ -1150,51 +1373,67 @@ export function ChatView({
             onTouchMove={noteUserScrollIntent}
             onWheel={noteUserScrollIntent}
           >
-            {visibleMessages.length === 0 ? (
+            {visibleMessages.length === 0 && !pendingSend ? (
               <div className="message-list-empty">
                 <p>Ready for messages.</p>
               </div>
             ) : (
-              visibleMessages.map((message) => (
-                <MessageBubble
-                  key={message.id}
-                  message={message}
-                  versionInfo={versionInfoForMessage(
-                    message,
-                    siblingGroups,
-                    (targetMessage, version) => {
-                      void selectVersion(targetMessage, version);
-                    }
-                  )}
-                  copied={copiedMessageId === message.id}
-                  isBusy={busyMessageId === message.id}
-                  isGenerating={isGenerating}
-                  streamSegments={streamSegments[message.id]}
-                  thinkingDurationSeconds={thinkingDurations[message.id] ?? null}
-                  onCopy={copyMessage}
-                  onDelete={setDeleteTarget}
-                  onBranch={branchMessage}
-                  onEdit={editMessage}
-                  onImageOpen={onImageOpen}
-                  onRemoveAttachment={removeAttachment}
-                  onUploadAttachment={uploadAttachment}
-                  onRegenerate={regenerateMessage}
-                  selectedModelInfo={selectedModelInfo}
-                  modelAvatar={hostedModelAvatarForMessage(
-                    message,
-                    personaVersions,
-                    modelGroups
-                  )}
-                />
-              ))
+              <>
+                {visibleMessages.map((message) => (
+                  <MessageBubble
+                    key={message.id}
+                    message={message}
+                    versionInfo={versionInfoForMessage(
+                      message,
+                      siblingGroups,
+                      (targetMessage, version) => {
+                        void selectVersion(targetMessage, version);
+                      }
+                    )}
+                    copied={copiedMessageId === message.id}
+                    isBusy={busyMessageId === message.id}
+                    isGenerating={isGenerating}
+                    streamSegments={streamSegments[message.id]}
+                    thinkingDurationSeconds={thinkingDurations[message.id] ?? null}
+                    onCopy={copyMessage}
+                    onDelete={setDeleteTarget}
+                    onBranch={branchMessage}
+                    onEdit={editMessage}
+                    onImageOpen={onImageOpen}
+                    onRemoveAttachment={removeAttachment}
+                    onUploadAttachment={uploadAttachment}
+                    onRegenerate={regenerateMessage}
+                    selectedModelInfo={selectedModelInfo}
+                    modelAvatar={hostedModelAvatarForMessage(
+                      message,
+                      personaVersions,
+                      modelGroups
+                    )}
+                  />
+                ))}
+                {pendingSend && (
+                  <PendingOutgoingMessage
+                    pendingSend={pendingSend}
+                    onDiscard={discardPendingMessage}
+                    onImageOpen={onImageOpen}
+                    onRetry={() => void retryPendingMessage()}
+                  />
+                )}
+              </>
             )}
           </section>
           <div className="chat-composer-wrap">
             <StartChatComposer
-              isBusy={isGenerating}
-              isDisabled={!selectedModel}
+              isBusy={isGenerating || pendingSend?.status === "sending"}
+              isDisabled={!selectedModel || isPendingSendLoading || Boolean(pendingSend)}
               isGenerating={isGenerating}
-              placeholder={selectedModel ? "Message Vashti" : "Select a model to continue"}
+              placeholder={
+                pendingSend
+                  ? "Retry or discard the unsent message"
+                  : selectedModel
+                    ? "Message Vashti"
+                    : "Select a model to continue"
+              }
               selectedModelInfo={selectedModelInfo}
               availableTools={availableTools}
               toolPreferences={chat.tool_preferences}
@@ -1265,4 +1504,44 @@ function hostedModelAvatarForMessage(
 
 function thinkModeToPayload(mode: ThinkingMode) {
   return mode === "auto" ? null : mode;
+}
+
+function persistedAttachmentMetadata(attachments: ComposerAttachment[]): AttachmentInfo[] {
+  return attachments
+    .filter((attachment) => attachment.status === "uploaded")
+    .map((attachment) => {
+      const metadata = { ...attachment } as Partial<ComposerAttachment>;
+      delete metadata.status;
+      delete metadata.error;
+      delete metadata.file;
+      delete metadata.isExisting;
+      return metadata as AttachmentInfo;
+    });
+}
+
+function acknowledgedMessageForAttempt(
+  messages: ChatMessage[],
+  attempt: HostedPendingSend
+): ChatMessage | null {
+  const knownMessageIds = new Set(attempt.known_message_ids);
+  const expectedAttachmentIds = attempt.attachments.map((attachment) => attachment.id).sort();
+
+  return (
+    messages.find((message) => {
+      if (message.role !== "user" || knownMessageIds.has(message.id)) {
+        return false;
+      }
+      if ((message.active_revision?.content_text ?? "").trim() !== attempt.prompt.trim()) {
+        return false;
+      }
+
+      const messageAttachmentIds = activeMessageAttachments(message)
+        .map((attachment) => attachment.id)
+        .sort();
+      return (
+        messageAttachmentIds.length === expectedAttachmentIds.length &&
+        messageAttachmentIds.every((id, index) => id === expectedAttachmentIds[index])
+      );
+    }) ?? null
+  );
 }
