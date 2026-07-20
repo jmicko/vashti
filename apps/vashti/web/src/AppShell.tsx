@@ -1,4 +1,6 @@
 import {
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useMemo,
@@ -20,7 +22,7 @@ import {
   uploadComposerAttachments
 } from "./attachments";
 import { ChatHome } from "./ChatHome";
-import { ConfirmDialog } from "./common";
+import { ConfirmDialog, RetroLoader } from "./common";
 import { ModelPicker } from "./ModelPicker";
 import { ModelSettingsMenu } from "./ModelSettingsMenu";
 import { storeCustomModelDraft, type CustomModelDraft } from "./customModelDraft";
@@ -40,8 +42,7 @@ import {
 import { Sidebar } from "./Sidebar";
 import { UnsavedSettingsDialog } from "./settingsControls";
 import { SettingsPage } from "./settingsPage";
-import { ChatView } from "./ChatView";
-import { PrivateChatView } from "./PrivateChatView";
+import { markPerformance, measurePerformance } from "./performance";
 import {
   pathForRoute,
   routeFromLocation,
@@ -55,7 +56,9 @@ import {
 import { applyTheme, normalizeTheme, storeAndApplyTheme, storedTheme } from "./theme";
 import {
   createPrivateChat,
+  deleteCachedHostedChat,
   deletePrivateChat,
+  getCachedHostedChatList,
   getCachedModelState,
   getPrivateChat,
   listPrivatePersonas,
@@ -64,8 +67,8 @@ import {
   renamePrivateChat,
   resetPrivateStorageUser,
   saveCachedModelState,
+  saveCachedHostedChatList,
   savePrivateChat,
-  setPrivateStorageUser,
   unixTimestamp,
   type PrivateChatSummary,
   type PrivatePersona,
@@ -100,6 +103,13 @@ import type {
   UserSettings
 } from "./types";
 
+const ChatView = lazy(() =>
+  import("./ChatView").then((module) => ({ default: module.ChatView }))
+);
+const PrivateChatView = lazy(() =>
+  import("./PrivateChatView").then((module) => ({ default: module.PrivateChatView }))
+);
+
 export function AppShell({
   user,
   onSessionChanged,
@@ -109,8 +119,6 @@ export function AppShell({
   onSessionChanged: () => Promise<void>;
   onUserChanged: (user: User) => void;
 }) {
-  setPrivateStorageUser(user.id);
-
   const [route, setRoute] = useState<AppRoute>(() => routeFromLocation());
   const routeRef = useRef(route);
   const appSettingsGuardRef = useRef<AppSettingsGuard | null>(null);
@@ -136,8 +144,21 @@ export function AppShell({
   const [selectedModel, setSelectedModel] = useState("");
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [modelError, setModelError] = useState<string | null>(null);
+  const hasHydratedModelCacheRef = useRef(false);
+  const hasModelPickerDataRef = useRef(false);
   const [chats, setChats] = useState<ChatSummary[]>([]);
+  const chatsRef = useRef<ChatSummary[]>([]);
+  const hasHydratedChatListCacheRef = useRef(false);
   const [privateChats, setPrivateChats] = useState<PrivateChatSummary[]>([]);
+
+  useEffect(() => {
+    markPerformance("vashti:shell-mounted");
+    measurePerformance(
+      "vashti:startup-to-shell",
+      "vashti:app-start",
+      "vashti:shell-mounted"
+    );
+  }, []);
   const [isLoadingChats, setIsLoadingChats] = useState(false);
   const [isLoadingPrivateChats, setIsLoadingPrivateChats] = useState(false);
   const [newChatMode, setNewChatModeState] = useState<NewChatMode>(() => storedNewChatMode());
@@ -241,6 +262,7 @@ export function AppShell({
 
   const applyModelPickerData = useCallback(
     (modelsResponse: ModelsResponse, personasResponse: PersonasResponse) => {
+      hasModelPickerDataRef.current = true;
       const enabledValues = enabledModelValueSet(modelsResponse.backends);
       const visiblePersonas = personasResponse.personas.filter((persona) =>
         enabledValues.has(personaBaseModelValue(persona))
@@ -280,17 +302,18 @@ export function AppShell({
   const loadModels = useCallback(async () => {
     setIsLoadingModels(true);
     setModelError(null);
-    let displayedCachedModels = false;
 
-    try {
-      const cached = await getCachedModelState<ModelPickerCache>();
-      if (cached) {
-        applyModelPickerData(cached.models, cached.personas);
-        displayedCachedModels = true;
-        setIsLoadingModels(false);
+    if (!hasHydratedModelCacheRef.current) {
+      hasHydratedModelCacheRef.current = true;
+      try {
+        const cached = await getCachedModelState<ModelPickerCache>();
+        if (cached) {
+          applyModelPickerData(cached.models, cached.personas);
+          setIsLoadingModels(false);
+        }
+      } catch {
+        // Model cache is an optimization. The live server fetch below remains authoritative.
       }
-    } catch {
-      // Model cache is an optimization. The live server fetch below remains authoritative.
     }
 
     try {
@@ -304,7 +327,7 @@ export function AppShell({
         personas: personasResponse
       }).catch(() => undefined);
     } catch (loadError) {
-      if (!displayedCachedModels) {
+      if (!hasModelPickerDataRef.current) {
         setModelGroups([]);
         setPersonas([]);
         setSelectedModel("");
@@ -421,12 +444,44 @@ export function AppShell({
 
   const loadChats = useCallback(async () => {
     setIsLoadingChats(true);
+    let displayedCachedChats = false;
+
+    if (!hasHydratedChatListCacheRef.current) {
+      hasHydratedChatListCacheRef.current = true;
+      try {
+        const cachedChats = await getCachedHostedChatList<ChatSummary>();
+        if (cachedChats) {
+          chatsRef.current = cachedChats;
+          setChats(cachedChats);
+          displayedCachedChats = true;
+          setIsLoadingChats(false);
+          markPerformance("vashti:chat-list-cache-ready");
+          measurePerformance(
+            "vashti:startup-to-cached-chat-list",
+            "vashti:app-start",
+            "vashti:chat-list-cache-ready"
+          );
+        }
+      } catch {
+        // Chat summary caching is best-effort. The server remains authoritative.
+      }
+    }
 
     try {
       const response = await requestJson<ListChatsResponse>("/api/chats");
+      chatsRef.current = response.chats;
       setChats(response.chats);
+      markPerformance("vashti:chat-list-live-ready");
+      measurePerformance(
+        "vashti:startup-to-live-chat-list",
+        "vashti:app-start",
+        "vashti:chat-list-live-ready"
+      );
+      await saveCachedHostedChatList(response.chats).catch(() => undefined);
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Failed to load chats");
+      if (!displayedCachedChats) {
+        setError(loadError instanceof Error ? loadError.message : "Failed to load chats");
+      }
     } finally {
       setIsLoadingChats(false);
     }
@@ -863,11 +918,12 @@ export function AppShell({
         method: "PATCH",
         body: JSON.stringify({ title })
       });
-      setChats((current) =>
-        current.map((chat) =>
-          chat.id === chatId ? { ...chat, title: response.chat.title } : chat
-        )
+      const nextChats = chatsRef.current.map((chat) =>
+        chat.id === chatId ? { ...chat, title: response.chat.title } : chat
       );
+      chatsRef.current = nextChats;
+      setChats(nextChats);
+      await saveCachedHostedChatList(nextChats).catch(() => undefined);
     } catch (renameError) {
       setError(renameError instanceof Error ? renameError.message : "Failed to rename chat");
       throw renameError;
@@ -899,7 +955,13 @@ export function AppShell({
     setError(null);
     try {
       await requestJson(`/api/chats/${chat.id}`, { method: "DELETE" });
-      setChats((current) => current.filter((item) => item.id !== chat.id));
+      const nextChats = chatsRef.current.filter((item) => item.id !== chat.id);
+      chatsRef.current = nextChats;
+      setChats(nextChats);
+      await Promise.all([
+        saveCachedHostedChatList(nextChats),
+        deleteCachedHostedChat(chat.id)
+      ]).catch(() => undefined);
       setChatDeleteTarget(null);
       if (currentChatId === chat.id) {
         openChat();
@@ -1098,47 +1160,51 @@ export function AppShell({
             isAdmin={isAdmin}
           />
         ) : page === "private-chat" && currentPrivateChatId ? (
-          <PrivateChatView
-            chatId={currentPrivateChatId}
-            error={error}
-            queuedPrompt={
-              queuedPrivatePrompt?.chatId === currentPrivateChatId ? queuedPrivatePrompt : null
-            }
-            selectedModel={selectedModel}
-            selectedModelInfo={selectedModelInfo()}
-            modelGroups={modelGroups}
-            privatePersonas={privatePersonas}
-            privatePersonaVersions={knownPrivatePersonaVersions}
-            systemPromptOverride={chatSystemPromptOverride}
-            inferenceSettings={chatInferenceSettings}
-            contextBlocks={chatContextBlocks}
-            onImageOpen={openImageViewer}
-            onChatSettingsLoaded={handleChatSettingsLoaded}
-            onModelSelected={setSelectedModel}
-            onConversationSettingsSave={persistChatConversationSettings}
-            onPrivateChatsChanged={loadPrivateChats}
-            onQueuedPromptConsumed={() => setQueuedPrivatePrompt(null)}
-          />
-        ) : (
-          currentChatId ? (
-            <ChatView
-              chatId={currentChatId}
+          <Suspense fallback={<ChatInterfaceLoader />}>
+            <PrivateChatView
+              chatId={currentPrivateChatId}
               error={error}
-              queuedPrompt={queuedPrompt?.chatId === currentChatId ? queuedPrompt : null}
+              queuedPrompt={
+                queuedPrivatePrompt?.chatId === currentPrivateChatId ? queuedPrivatePrompt : null
+              }
               selectedModel={selectedModel}
               selectedModelInfo={selectedModelInfo()}
               modelGroups={modelGroups}
+              privatePersonas={privatePersonas}
+              privatePersonaVersions={knownPrivatePersonaVersions}
+              systemPromptOverride={chatSystemPromptOverride}
               inferenceSettings={chatInferenceSettings}
-              availableTools={availableTools}
-              personas={personas}
-              personaVersions={knownPersonaVersions}
-              onChatSettingsLoaded={handleChatSettingsLoaded}
-              onChatsChanged={loadChats}
-              onConversationSettingsSave={persistChatConversationSettings}
+              contextBlocks={chatContextBlocks}
               onImageOpen={openImageViewer}
+              onChatSettingsLoaded={handleChatSettingsLoaded}
               onModelSelected={setSelectedModel}
-              onQueuedPromptConsumed={() => setQueuedPrompt(null)}
+              onConversationSettingsSave={persistChatConversationSettings}
+              onPrivateChatsChanged={loadPrivateChats}
+              onQueuedPromptConsumed={() => setQueuedPrivatePrompt(null)}
             />
+          </Suspense>
+        ) : (
+          currentChatId ? (
+            <Suspense fallback={<ChatInterfaceLoader />}>
+              <ChatView
+                chatId={currentChatId}
+                error={error}
+                queuedPrompt={queuedPrompt?.chatId === currentChatId ? queuedPrompt : null}
+                selectedModel={selectedModel}
+                selectedModelInfo={selectedModelInfo()}
+                modelGroups={modelGroups}
+                inferenceSettings={chatInferenceSettings}
+                availableTools={availableTools}
+                personas={personas}
+                personaVersions={knownPersonaVersions}
+                onChatSettingsLoaded={handleChatSettingsLoaded}
+                onChatsChanged={loadChats}
+                onConversationSettingsSave={persistChatConversationSettings}
+                onImageOpen={openImageViewer}
+                onModelSelected={setSelectedModel}
+                onQueuedPromptConsumed={() => setQueuedPrompt(null)}
+              />
+            </Suspense>
           ) : (
             <ChatHome
               error={error}
@@ -1194,5 +1260,15 @@ export function AppShell({
         />
       )}
     </main>
+  );
+}
+
+function ChatInterfaceLoader() {
+  return (
+    <section className="chat-view" role="status" aria-label="Loading chat interface">
+      <div className="empty-state">
+        <RetroLoader />
+      </div>
+    </section>
   );
 }

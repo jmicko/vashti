@@ -224,8 +224,13 @@ Storage modes follow the same privacy boundary as chats:
 
 * installable web app
 * manifest and icons
-* service worker for static asset caching
+* production-only service worker for static asset caching
 * fast reload of app shell
+* background update checks with an explicit reload prompt
+* no service-worker caching of API responses or user data
+* lazy-loaded chat and settings code that is precached but parsed only when used
+* Brotli or gzip delivery for static text assets when supported
+* LAN HTTP remains usable without PWA installation or service-worker support
 * responsive layout for mobile and desktop
 
 ### 5.8 Settings
@@ -360,6 +365,10 @@ On initial app load, the frontend should request only:
 
 It should **not** request every message from every chat.
 
+Authenticated startup should receive the per-user private-storage key with the
+no-store session response. This avoids a second request before encrypted local
+caches can be read.
+
 ### 7.2 Lazy chat loading
 
 * full chat history loads only when a chat is opened
@@ -368,9 +377,16 @@ It should **not** request every message from every chat.
 
 ### 7.3 Browser caching
 
-* static assets cached with service worker
+* revisioned static assets are precached by the service worker
+* mutable entry files revalidate while revisioned build artifacts are immutable
+* the current app shell loads immediately while updates install in the background
+* API responses are network-only and use `Cache-Control: no-store`
 * client-side structured data may be stored locally for responsiveness
 * IndexedDB is the preferred storage for local private chats and optional cached chat data
+* hosted chat summaries and the model picker may render from an encrypted,
+  user-scoped IndexedDB cache before being replaced by authoritative server data
+* private chat summaries count messages through an IndexedDB index rather than
+  loading and decrypting all private messages during startup
 
 ### 7.4 UI principles
 

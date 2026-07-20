@@ -13,7 +13,7 @@ use crate::{
     app_state::AppState,
     auth::service::{self, UserPublic},
     error::ApiError,
-    rate_limit, settings,
+    private, rate_limit, settings,
 };
 
 #[derive(Debug, Deserialize)]
@@ -45,6 +45,7 @@ pub struct SessionResponse {
     pub is_authenticated: bool,
     pub user: Option<UserPublic>,
     pub can_create_account: bool,
+    pub private_vault_key: Option<private::handlers::PrivateVaultKeyResponse>,
 }
 
 #[derive(Debug, Serialize)]
@@ -65,12 +66,26 @@ pub async fn session(
     let user =
         service::current_user_from_cookie(&state.db, &jar, &state.config.session_cookie_name)
             .await?;
-    let can_create_account = service::can_create_account(&state.db).await?;
+    let (can_create_account, private_vault_key) = tokio::try_join!(
+        async { Ok::<_, ApiError>(service::can_create_account(&state.db).await?) },
+        async {
+            let Some(user) = user.as_ref() else {
+                return Ok::<_, ApiError>(None);
+            };
+            let key =
+                private::service::get_or_create_private_vault_key(&state.db, &user.id).await?;
+            Ok(Some(private::handlers::PrivateVaultKeyResponse {
+                user_id: user.id.clone(),
+                key_material: key.key_material,
+            }))
+        }
+    )?;
 
     Ok(Json(SessionResponse {
         is_authenticated: user.is_some(),
         user,
         can_create_account,
+        private_vault_key,
     }))
 }
 

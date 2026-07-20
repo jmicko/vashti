@@ -28,6 +28,10 @@ export type SessionResponse = {
   is_authenticated: boolean;
   user: User | null;
   can_create_account: boolean;
+  private_vault_key: {
+    user_id: string;
+    key_material: string;
+  } | null;
 };
 
 export type RegisterResponse = {

@@ -1,7 +1,8 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { Save, X } from "lucide-react";
+import { CheckCircle2, Download, Save, X } from "lucide-react";
 import { requestJson } from "./api";
 import { RetroLoader } from "./common";
+import { usePwa } from "./pwa";
 import { SettingsPanel, SettingsSaveBanner } from "./settingsControls";
 import {
   THEME_OPTIONS,
@@ -20,6 +21,7 @@ export function ProfileSettings({
   user: User;
   onUserChanged: (user: User) => void;
 }) {
+  const { installState, installError, isInstalling, install } = usePwa();
   const [displayName, setDisplayName] = useState(user.display_name ?? "");
   const [email, setEmail] = useState(user.email ?? "");
   const [theme, setTheme] = useState<ThemeId>(storedTheme());
@@ -241,6 +243,52 @@ export function ProfileSettings({
               </button>
             ))}
           </div>
+        </section>
+
+        <section className="settings-subsection pwa-install-section">
+          <div>
+            <p className="eyebrow">App</p>
+            <h2>Install Vashti</h2>
+          </div>
+          {installState === "installed" && (
+            <p className="pwa-install-status pwa-install-status-ready">
+              <CheckCircle2 aria-hidden="true" />
+              <span>Vashti is installed on this device.</span>
+            </p>
+          )}
+          {installState === "available" && (
+            <>
+              <p className="status-message">Install Vashti for quick access on this device.</p>
+              <button
+                type="button"
+                className="secondary-button pwa-install-button"
+                disabled={isInstalling}
+                onClick={() => void install()}
+              >
+                <Download aria-hidden="true" />
+                <span>{isInstalling ? "Installing..." : "Install Vashti"}</span>
+              </button>
+            </>
+          )}
+          {installState === "browser" && (
+            <p className="status-message">
+              Installation is available from your browser's app menu.
+            </p>
+          )}
+          {installState === "development" && (
+            <p className="status-message">
+              Installation is available from the built Vashti app.
+            </p>
+          )}
+          {installState === "insecure" && (
+            <p className="status-message">
+              App installation requires HTTPS or localhost.
+            </p>
+          )}
+          {installState === "unsupported" && (
+            <p className="status-message">This browser does not support app installation.</p>
+          )}
+          {installError && <p className="error">{installError}</p>}
         </section>
       </form>
     </SettingsPanel>

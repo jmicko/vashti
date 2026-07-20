@@ -34,7 +34,14 @@ use axum::{
 use config::Config;
 use error::ApiError;
 use tokio::signal;
-use tower_http::{set_header::SetResponseHeaderLayer, trace::TraceLayer};
+use tower_http::{
+    compression::{
+        CompressionLayer,
+        predicate::{DefaultPredicate, NotForContentType, Predicate},
+    },
+    set_header::SetResponseHeaderLayer,
+    trace::TraceLayer,
+};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 const DEFAULT_REQUEST_BODY_LIMIT: usize = 1024 * 1024;
@@ -337,6 +344,13 @@ fn router(state: AppState) -> Router {
         .fallback(frontend::serve_asset)
         .with_state(state)
         .layer(DefaultBodyLimit::max(DEFAULT_REQUEST_BODY_LIMIT))
+        .layer(
+            CompressionLayer::new().compress_when(
+                DefaultPredicate::new()
+                    .and(NotForContentType::const_new("application/json"))
+                    .and(NotForContentType::const_new("application/x-ndjson")),
+            ),
+        )
         .layer(SetResponseHeaderLayer::if_not_present(
             HeaderName::from_static("content-security-policy"),
             HeaderValue::from_static(

@@ -49,6 +49,36 @@ The frontend is responsible for:
 * upload selection UX
 * PWA installation and asset caching
 
+#### PWA asset lifecycle
+
+The production Vite build generates the web manifest and a Workbox service
+worker. The worker precaches the complete revisioned frontend shell, including
+lazy-loaded chat and settings chunks, but the browser only parses those chunks
+when their route is opened. The worker never caches `/api` responses or user
+data.
+Private-local and optional structured-data caches remain explicit IndexedDB
+features rather than service-worker runtime caches.
+
+The app registers the worker without delaying the initial render. It checks for
+updates after registration, hourly while open, and when a visible tab has not
+checked recently. A waiting worker produces a reload prompt; Vashti does not
+silently replace the running frontend while the user may be editing or
+generating content.
+
+HTTP cache policy supports the same lifecycle:
+
+* `index.html`, `sw.js`, the web manifest, and stable-name public assets use
+  `Cache-Control: no-cache`
+* revisioned Vite assets and the fingerprinted Workbox runtime use a one-year
+  immutable cache policy
+* API middleware continues to set `Cache-Control: no-store`
+* the Rust server compresses static text assets with Brotli or gzip when the
+  client supports it; JSON and streaming NDJSON responses remain uncompressed
+
+Service-worker registration is disabled in Vite development. Installation and
+offline shell caching require a browser secure context (HTTPS or localhost),
+while normal LAN HTTP access continues without those PWA features.
+
 ### 2.3 Chat storage split
 
 There are two storage modes.
@@ -956,6 +986,10 @@ Response:
     "username": "john",
     "email": "john@example.com",
     "role": "admin"
+  },
+  "private_vault_key": {
+    "user_id": "uuid",
+    "key_material": "base64-key-material"
   }
 }
 ```
@@ -993,11 +1027,18 @@ Response when not logged in:
 {
   "is_authenticated": false,
   "can_create_account": true,
-  "user": null
+  "user": null,
+  "private_vault_key": null
 }
 ```
 
 `can_create_account` is true when no enabled admin exists, or when an enabled admin exists and public signup is currently enabled and under the configured signup limit. The frontend uses this to show or hide the create-account action on the login screen.
+
+For an authenticated session, `private_vault_key` is the same per-user key
+available from `GET /api/private/vault-key`. Returning it with the no-store
+session response lets the frontend unlock its encrypted per-user caches without
+a second startup request. The dedicated endpoint remains available as a
+fallback for older clients and storage recovery.
 
 ---
 
@@ -2137,6 +2178,13 @@ Startup fetches:
 * `GET /api/user-settings`
 * optional `GET /api/models/status` later or lazily
 
+The authenticated session response also carries the current user's private
+storage key. The shell can therefore render encrypted cached chat summaries and
+the cached model picker immediately, while the authoritative `/api/chats` and
+model refreshes continue in the background. The chat-summary cache is hydrated
+only once per app session so later refreshes cannot momentarily restore stale
+rows.
+
 Layout:
 
 * left sidebar for chat list
@@ -2254,7 +2302,15 @@ Store objects like:
 * `private_context_categories`
 * `private_context_blocks`
 * `private_context_block_versions`
+* `hosted_chat_cache`
+* `hosted_chat_list_cache`
+* `model_cache`
 * local attachment metadata and payloads embedded on private messages
+
+The hosted-chat and model stores are per-user encrypted responsiveness caches;
+the server remains authoritative. Listing private chats reads chat metadata and
+uses the `private_messages.chat_id` index to count messages without loading or
+decrypting every message payload at startup.
 
 Suggested private chat shape:
 

@@ -12,7 +12,7 @@ import type {
 
 const LEGACY_DB_NAME = "vashti-private-local";
 const DB_NAME_PREFIX = "vashti-private-local";
-const DB_VERSION = 5;
+const DB_VERSION = 6;
 const CHAT_STORE = "private_chats";
 const MESSAGE_STORE = "private_messages";
 const PERSONA_STORE = "private_personas";
@@ -22,10 +22,12 @@ const CONTEXT_CATEGORY_STORE = "private_context_categories";
 const CONTEXT_BLOCK_STORE = "private_context_blocks";
 const CONTEXT_BLOCK_VERSION_STORE = "private_context_block_versions";
 const HOSTED_CHAT_CACHE_STORE = "hosted_chat_cache";
+const HOSTED_CHAT_LIST_CACHE_STORE = "hosted_chat_list_cache";
 const MODEL_CACHE_STORE = "model_cache";
 const MODEL_CACHE_ID = "model-picker";
+const HOSTED_CHAT_LIST_CACHE_ID = "hosted-chat-list";
 
-type PrivateVaultKeyResponse = {
+export type PrivateVaultKeyResponse = {
   user_id: string;
   key_material: string;
 };
@@ -254,6 +256,12 @@ export type CachedHostedChat<
   cached_at: number;
 };
 
+type CachedHostedChatList<TSummary> = {
+  id: string;
+  chats: TSummary[];
+  cached_at: number;
+};
+
 let currentUserId: string | null = null;
 let dbPromise: Promise<IDBDatabase> | null = null;
 let vaultKeyPromise: Promise<PrivateVaultKeyResponse> | null = null;
@@ -261,19 +269,29 @@ let vaultKeyBytesPromise: Promise<Uint8Array> | null = null;
 let webCryptoKeyPromise: Promise<CryptoKey> | null = null;
 let legacyMigrationPromise: Promise<void> | null = null;
 
-export function setPrivateStorageUser(userId: string) {
-  if (currentUserId === userId) {
-    return;
+export function setPrivateStorageUser(
+  userId: string,
+  vaultKey?: PrivateVaultKeyResponse
+) {
+  if (currentUserId !== userId) {
+    currentUserId = userId;
+    vaultKeyPromise = null;
+    vaultKeyBytesPromise = null;
+    webCryptoKeyPromise = null;
+    legacyMigrationPromise = null;
+    if (dbPromise) {
+      void dbPromise.then((db) => db.close()).catch(() => undefined);
+      dbPromise = null;
+    }
   }
 
-  currentUserId = userId;
-  vaultKeyPromise = null;
-  vaultKeyBytesPromise = null;
-  webCryptoKeyPromise = null;
-  legacyMigrationPromise = null;
-  if (dbPromise) {
-    void dbPromise.then((db) => db.close()).catch(() => undefined);
-    dbPromise = null;
+  if (vaultKey) {
+    if (vaultKey.user_id !== userId) {
+      throw new Error("Private storage user changed");
+    }
+    vaultKeyPromise = Promise.resolve(vaultKey);
+    vaultKeyBytesPromise = null;
+    webCryptoKeyPromise = null;
   }
 }
 
@@ -375,22 +393,27 @@ export function createPrivateMessage({
 
 export async function listPrivateChats(): Promise<PrivateChatSummary[]> {
   const db = await openPrivateDb();
-  const [chats, messages] = await Promise.all([
-    getAllPrivateRecords<PrivateChatDetail>(db, CHAT_STORE),
-    getAllPrivateRecords<PrivateChatMessage>(db, MESSAGE_STORE)
-  ]);
-  const messageCounts = new Map<string, number>();
-  for (const message of messages) {
-    messageCounts.set(message.chat_id, (messageCounts.get(message.chat_id) ?? 0) + 1);
+  const chats = await getAllPrivateRecords<PrivateChatDetail>(db, CHAT_STORE);
+  if (chats.length === 0) {
+    return [];
   }
 
+  const tx = db.transaction(MESSAGE_STORE, "readonly");
+  const messageIndex = tx.objectStore(MESSAGE_STORE).index("chat_id");
+  const messageCounts = await Promise.all(
+    chats.map((chat) => requestResult<number>(messageIndex.count(IDBKeyRange.only(chat.id))))
+  );
+  await transactionDone(tx);
+
   return chats
-    .map(normalizePrivateChat)
-    .map((chat) => ({
-      ...chat,
-      message_count: messageCounts.get(chat.id) ?? 0
+    .map((chat, index) => ({
+      ...normalizePrivateChat(chat),
+      message_count: messageCounts[index] ?? 0
     }))
-    .sort((left, right) => right.last_message_at - left.last_message_at || left.title.localeCompare(right.title));
+    .sort(
+      (left, right) =>
+        right.last_message_at - left.last_message_at || left.title.localeCompare(right.title)
+    );
 }
 
 export async function createPrivateChat({
@@ -572,6 +595,41 @@ export async function saveCachedHostedChat<
   });
   const tx = db.transaction(HOSTED_CHAT_CACHE_STORE, "readwrite");
   tx.objectStore(HOSTED_CHAT_CACHE_STORE).put(record);
+  await transactionDone(tx);
+}
+
+export async function deleteCachedHostedChat(chatId: string): Promise<void> {
+  const db = await openPrivateDb();
+  const tx = db.transaction(HOSTED_CHAT_CACHE_STORE, "readwrite");
+  tx.objectStore(HOSTED_CHAT_CACHE_STORE).delete(chatId);
+  await transactionDone(tx);
+}
+
+export async function getCachedHostedChatList<TSummary>(): Promise<TSummary[] | null> {
+  const db = await openPrivateDb();
+  const tx = db.transaction(HOSTED_CHAT_LIST_CACHE_STORE, "readonly");
+  const record = await requestResult<
+    PrivateStoreRecord | CachedHostedChatList<TSummary> | undefined
+  >(tx.objectStore(HOSTED_CHAT_LIST_CACHE_STORE).get(HOSTED_CHAT_LIST_CACHE_ID));
+  await transactionDone(tx);
+  if (!record) {
+    return null;
+  }
+
+  const cache = await readPrivateRecord<CachedHostedChatList<TSummary>>(record);
+  return cache.chats;
+}
+
+export async function saveCachedHostedChatList<TSummary>(chats: TSummary[]): Promise<void> {
+  const cache: CachedHostedChatList<TSummary> = {
+    id: HOSTED_CHAT_LIST_CACHE_ID,
+    chats,
+    cached_at: unixTimestamp()
+  };
+  const db = await openPrivateDb();
+  const record = await privateStoreRecord(cache);
+  const tx = db.transaction(HOSTED_CHAT_LIST_CACHE_STORE, "readwrite");
+  tx.objectStore(HOSTED_CHAT_LIST_CACHE_STORE).put(record);
   await transactionDone(tx);
 }
 
@@ -1172,16 +1230,43 @@ async function openPrivateDb(): Promise<IDBDatabase> {
   if (!dbPromise) {
     dbPromise = new Promise((resolve, reject) => {
       const request = indexedDB.open(privateDbName(), DB_VERSION);
-      request.onerror = () => reject(request.error ?? new Error("Failed to open private storage"));
+      let settled = false;
+      const rejectOpen = (error: Error) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        reject(error);
+      };
+
+      request.onerror = () =>
+        rejectOpen(request.error ?? new Error("Failed to open private storage"));
+      request.onblocked = () =>
+        rejectOpen(new Error("Close other Vashti tabs to update private storage"));
       request.onupgradeneeded = () => {
         const db = request.result;
         ensurePrivateStores(db);
       };
-      request.onsuccess = () => resolve(request.result);
+      request.onsuccess = () => {
+        const db = request.result;
+        if (settled) {
+          db.close();
+          return;
+        }
+        settled = true;
+        db.onversionchange = () => db.close();
+        resolve(db);
+      };
     });
   }
 
-  const db = await dbPromise;
+  let db: IDBDatabase;
+  try {
+    db = await dbPromise;
+  } catch (error) {
+    dbPromise = null;
+    throw error;
+  }
   if (!legacyMigrationPromise) {
     legacyMigrationPromise = migrateLegacyPrivateDb(db).catch(() => undefined);
   }
@@ -1232,6 +1317,9 @@ function ensurePrivateStores(db: IDBDatabase) {
   }
   if (!db.objectStoreNames.contains(HOSTED_CHAT_CACHE_STORE)) {
     db.createObjectStore(HOSTED_CHAT_CACHE_STORE, { keyPath: "id" });
+  }
+  if (!db.objectStoreNames.contains(HOSTED_CHAT_LIST_CACHE_STORE)) {
+    db.createObjectStore(HOSTED_CHAT_LIST_CACHE_STORE, { keyPath: "id" });
   }
   if (!db.objectStoreNames.contains(MODEL_CACHE_STORE)) {
     db.createObjectStore(MODEL_CACHE_STORE, { keyPath: "id" });

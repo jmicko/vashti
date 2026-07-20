@@ -10,6 +10,7 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import { Copy } from "lucide-react";
+import "highlight.js/styles/github-dark.css";
 
 const markdownComponents = {
   pre({ children }) {

@@ -3,6 +3,8 @@ import { requestJson } from "./api";
 import { AppShell } from "./AppShell";
 import { AuthScreen } from "./auth";
 import { BrandMark } from "./common";
+import { resetPrivateStorageUser, setPrivateStorageUser } from "./privateChatStore";
+import { markPerformance, measurePerformance } from "./performance";
 import type { LoadState, SessionResponse, User } from "./types";
 
 export default function App() {
@@ -10,9 +12,24 @@ export default function App() {
 
   const loadSession = useCallback(async () => {
     setState({ status: "loading" });
+    markPerformance("vashti:session-request");
     try {
       const session = await requestJson<SessionResponse>("/api/auth/session");
-      setState({ status: "loaded", session });
+      if (session.is_authenticated && session.user) {
+        setPrivateStorageUser(session.user.id, session.private_vault_key ?? undefined);
+      } else {
+        resetPrivateStorageUser();
+      }
+      markPerformance("vashti:session-ready");
+      measurePerformance(
+        "vashti:session-duration",
+        "vashti:session-request",
+        "vashti:session-ready"
+      );
+      setState({
+        status: "loaded",
+        session: { ...session, private_vault_key: null }
+      });
     } catch (error) {
       setState({
         status: "error",
