@@ -34,6 +34,7 @@ use sqlx::{
 };
 use tokio::sync::Mutex;
 use tokio::{fs, signal};
+use tokio_util::io::ReaderStream;
 use tower_http::{set_header::SetResponseHeaderLayer, trace::TraceLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use uuid::Uuid;
@@ -394,8 +395,13 @@ struct ParsedUpload {
     major: i64,
     minor: i64,
     patch: i64,
-    target: String,
     notes: Option<String>,
+    artifacts: Vec<ParsedArtifactUpload>,
+}
+
+#[derive(Debug)]
+struct ParsedArtifactUpload {
+    target: String,
     filename: String,
     content_type: String,
     bytes: Vec<u8>,
@@ -1007,10 +1013,6 @@ async fn upload_release(
     clear_existing_prerelease(&state).await?;
     let artifact_dir = state.config.artifact_dir.join(&upload.version);
     fs::create_dir_all(&artifact_dir).await?;
-    let storage_path = artifact_dir.join(&upload.filename);
-    fs::write(&storage_path, &upload.bytes).await?;
-
-    let sha256 = sha256_hex(&upload.bytes);
     let now = unix_timestamp();
     sqlx::query(
         r#"
@@ -1031,31 +1033,29 @@ async fn upload_release(
     .execute(&state.db)
     .await?;
 
-    sqlx::query(
-        r#"
-        INSERT INTO release_artifacts
-            (id, release_version, target, filename, content_type, size_bytes, sha256, storage_path, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(release_version, target) DO UPDATE SET
-            filename = excluded.filename,
-            content_type = excluded.content_type,
-            size_bytes = excluded.size_bytes,
-            sha256 = excluded.sha256,
-            storage_path = excluded.storage_path,
-            created_at = excluded.created_at
-        "#,
-    )
-    .bind(Uuid::new_v4().to_string())
-    .bind(&upload.version)
-    .bind(&upload.target)
-    .bind(&upload.filename)
-    .bind(&upload.content_type)
-    .bind(upload.bytes.len() as i64)
-    .bind(&sha256)
-    .bind(storage_path.to_string_lossy().to_string())
-    .bind(now)
-    .execute(&state.db)
-    .await?;
+    for artifact in &upload.artifacts {
+        let storage_path = artifact_dir.join(&artifact.filename);
+        fs::write(&storage_path, &artifact.bytes).await?;
+        let sha256 = sha256_hex(&artifact.bytes);
+        sqlx::query(
+            r#"
+            INSERT INTO release_artifacts
+                (id, release_version, target, filename, content_type, size_bytes, sha256, storage_path, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(Uuid::new_v4().to_string())
+        .bind(&upload.version)
+        .bind(&artifact.target)
+        .bind(&artifact.filename)
+        .bind(&artifact.content_type)
+        .bind(artifact.bytes.len() as i64)
+        .bind(&sha256)
+        .bind(storage_path.to_string_lossy().to_string())
+        .bind(now)
+        .execute(&state.db)
+        .await?;
+    }
 
     sqlx::query(
         r#"
@@ -1166,7 +1166,7 @@ async fn download_artifact(
 ) -> Result<Response, AppError> {
     let row = sqlx::query(
         r#"
-        SELECT id, release_version, target, filename, content_type, storage_path
+        SELECT id, release_version, target, filename, content_type, size_bytes, storage_path
         FROM release_artifacts
         WHERE release_version = ? AND filename = ?
         "#,
@@ -1181,8 +1181,9 @@ async fn download_artifact(
     let release_version: String = row.try_get("release_version")?;
     let target: String = row.try_get("target")?;
     let content_type: String = row.try_get("content_type")?;
+    let size_bytes: i64 = row.try_get("size_bytes")?;
     let storage_path: String = row.try_get("storage_path")?;
-    let bytes = fs::read(&storage_path).await?;
+    let file = fs::File::open(&storage_path).await?;
 
     record_download(
         &state.db,
@@ -1197,19 +1198,20 @@ async fn download_artifact(
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, content_type)
+        .header(header::CONTENT_LENGTH, size_bytes.to_string())
         .header(
             header::CONTENT_DISPOSITION,
             format!("attachment; filename=\"{}\"", filename.replace('"', "")),
         )
-        .body(Body::from(bytes))
+        .body(Body::from_stream(ReaderStream::new(file)))
         .map_err(|_| AppError::internal("Failed to build response"))
 }
 
 async fn parse_upload(mut multipart: Multipart) -> Result<ParsedUpload, AppError> {
     let mut version = None;
-    let mut target = None;
+    let mut targets = Vec::new();
     let mut notes = None;
-    let mut artifact = None;
+    let mut uploaded_artifacts = Vec::new();
 
     while let Some(field) = multipart
         .next_field()
@@ -1232,14 +1234,14 @@ async fn parse_upload(mut multipart: Multipart) -> Result<ParsedUpload, AppError
                 version = Some(text_field(bytes.as_ref())?);
             }
             "target" => {
-                target = Some(validate_target(&text_field(bytes.as_ref())?)?);
+                targets.push(validate_target(&text_field(bytes.as_ref())?)?);
             }
             "notes" => {
                 let value = text_field(bytes.as_ref())?;
                 notes = (!value.trim().is_empty()).then_some(value);
             }
             "artifact" => {
-                artifact = Some((
+                uploaded_artifacts.push((
                     filename.ok_or_else(|| {
                         AppError::bad_request("missing_filename", "Artifact filename is required")
                     })?,
@@ -1254,28 +1256,68 @@ async fn parse_upload(mut multipart: Multipart) -> Result<ParsedUpload, AppError
     let (version, major, minor, patch) = normalize_version_label(
         &version.ok_or_else(|| AppError::bad_request("missing_version", "Version is required"))?,
     )?;
-    let target =
-        target.ok_or_else(|| AppError::bad_request("missing_target", "Target is required"))?;
-    let (filename, content_type, bytes) = artifact
-        .ok_or_else(|| AppError::bad_request("missing_artifact", "Artifact is required"))?;
-    if bytes.is_empty() {
-        return Err(AppError::bad_request(
-            "empty_artifact",
-            "Artifact cannot be empty",
-        ));
-    }
+    let artifacts = assemble_artifact_uploads(targets, uploaded_artifacts)?;
 
     Ok(ParsedUpload {
         version,
         major,
         minor,
         patch,
-        target,
         notes,
-        filename,
-        content_type,
-        bytes,
+        artifacts,
     })
+}
+
+type UploadedArtifact = (String, String, Vec<u8>);
+
+fn assemble_artifact_uploads(
+    targets: Vec<String>,
+    uploaded_artifacts: Vec<UploadedArtifact>,
+) -> Result<Vec<ParsedArtifactUpload>, AppError> {
+    if targets.is_empty() || uploaded_artifacts.is_empty() {
+        return Err(AppError::bad_request(
+            "missing_artifact",
+            "At least one target and artifact are required",
+        ));
+    }
+    if targets.len() != uploaded_artifacts.len() {
+        return Err(AppError::bad_request(
+            "artifact_target_mismatch",
+            "Each artifact must have one matching target",
+        ));
+    }
+
+    let mut seen_targets = std::collections::HashSet::new();
+    let mut seen_filenames = std::collections::HashSet::new();
+    let mut artifacts = Vec::with_capacity(targets.len());
+    for (target, (filename, content_type, bytes)) in targets.into_iter().zip(uploaded_artifacts) {
+        if bytes.is_empty() {
+            return Err(AppError::bad_request(
+                "empty_artifact",
+                "Artifact cannot be empty",
+            ));
+        }
+        if !seen_targets.insert(target.clone()) {
+            return Err(AppError::bad_request(
+                "duplicate_target",
+                "Each release target may be uploaded only once",
+            ));
+        }
+        if !seen_filenames.insert(filename.clone()) {
+            return Err(AppError::bad_request(
+                "duplicate_filename",
+                "Each release artifact filename must be unique",
+            ));
+        }
+        artifacts.push(ParsedArtifactUpload {
+            target,
+            filename,
+            content_type,
+            bytes,
+        });
+    }
+
+    Ok(artifacts)
 }
 
 async fn clear_existing_prerelease(state: &AppState) -> Result<(), AppError> {
@@ -2201,5 +2243,81 @@ async fn shutdown_signal() {
     tokio::select! {
         _ = ctrl_c => {},
         _ = terminate => {},
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn artifact(filename: &str, bytes: &[u8]) -> UploadedArtifact {
+        (
+            filename.to_string(),
+            "application/octet-stream".to_string(),
+            bytes.to_vec(),
+        )
+    }
+
+    #[test]
+    fn assembles_multiple_release_artifacts_in_field_order() {
+        let artifacts = assemble_artifact_uploads(
+            vec!["linux-x86_64".to_string(), "android-universal".to_string()],
+            vec![
+                artifact("vashti-linux-x86_64.tar.gz", b"linux"),
+                artifact("vashti-android.apk", b"android"),
+            ],
+        )
+        .expect("valid artifacts should be accepted");
+
+        assert_eq!(artifacts.len(), 2);
+        assert_eq!(artifacts[0].target, "linux-x86_64");
+        assert_eq!(artifacts[0].filename, "vashti-linux-x86_64.tar.gz");
+        assert_eq!(artifacts[1].target, "android-universal");
+        assert_eq!(artifacts[1].filename, "vashti-android.apk");
+    }
+
+    #[test]
+    fn rejects_mismatched_artifact_and_target_counts() {
+        let error = assemble_artifact_uploads(
+            vec!["linux-x86_64".to_string(), "android-universal".to_string()],
+            vec![artifact("vashti-linux-x86_64.tar.gz", b"linux")],
+        )
+        .expect_err("unpaired fields must be rejected");
+
+        assert_eq!(error.code, "artifact_target_mismatch");
+    }
+
+    #[test]
+    fn rejects_duplicate_targets_and_filenames() {
+        let duplicate_target = assemble_artifact_uploads(
+            vec!["linux-x86_64".to_string(), "linux-x86_64".to_string()],
+            vec![
+                artifact("one.tar.gz", b"one"),
+                artifact("two.tar.gz", b"two"),
+            ],
+        )
+        .expect_err("duplicate targets must be rejected");
+        assert_eq!(duplicate_target.code, "duplicate_target");
+
+        let duplicate_filename = assemble_artifact_uploads(
+            vec!["linux-x86_64".to_string(), "android-universal".to_string()],
+            vec![
+                artifact("vashti.bin", b"one"),
+                artifact("vashti.bin", b"two"),
+            ],
+        )
+        .expect_err("duplicate filenames must be rejected");
+        assert_eq!(duplicate_filename.code, "duplicate_filename");
+    }
+
+    #[test]
+    fn rejects_empty_artifacts() {
+        let error = assemble_artifact_uploads(
+            vec!["android-universal".to_string()],
+            vec![artifact("vashti-android.apk", b"")],
+        )
+        .expect_err("empty artifacts must be rejected");
+
+        assert_eq!(error.code, "empty_artifact");
     }
 }

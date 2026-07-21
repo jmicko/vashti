@@ -14,7 +14,7 @@ import {
   Trash2,
   X
 } from "lucide-react";
-import { requestJson, responseErrorMessage } from "./api";
+import { requestBlob, requestJson } from "./api";
 import {
   deleteHostedAvatar as deleteHostedPersonaAvatar,
   hostedAvatarFile as hostedPersonaAvatarFile,
@@ -454,26 +454,18 @@ export function CustomModelsSection({
     try {
       let avatarAssetId: string | null = null;
       if (version.avatar_asset_id) {
-        const response = await fetch(
-          `/api/persona-avatars/${encodeURIComponent(version.avatar_asset_id)}`,
-          { credentials: "include" }
+        const blob = await requestBlob(
+          `/api/persona-avatars/${encodeURIComponent(version.avatar_asset_id)}`
         );
-        if (!response.ok) {
-          throw new Error(await responseErrorMessage(response));
-        }
-        const blob = await response.blob();
         const file = new File([blob], "profile-image", { type: blob.type });
         avatarAssetId = (await savePrivatePersonaAvatar(file)).id;
         uploadedAvatarAssetId = avatarAssetId;
       }
       let backgroundAssetId: string | null = null;
       if (version.background_asset_id) {
-        const response = await fetch(
-          `/api/persona-avatars/${encodeURIComponent(version.background_asset_id)}`,
-          { credentials: "include" }
+        const blob = await requestBlob(
+          `/api/persona-avatars/${encodeURIComponent(version.background_asset_id)}`
         );
-        if (!response.ok) throw new Error(await responseErrorMessage(response));
-        const blob = await response.blob();
         const file = new File([blob], "chat-background", { type: blob.type });
         backgroundAssetId = (await savePrivatePersonaAvatar(file)).id;
         uploadedBackgroundAssetId = backgroundAssetId;

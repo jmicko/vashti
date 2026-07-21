@@ -103,9 +103,11 @@ https://vashti.chat/install.sh
 https://vashti.chat/releases/latest/VERSION
 https://vashti.chat/releases/latest/SHA256SUMS
 https://vashti.chat/releases/latest/vashti-linux-x86_64.tar.gz
+https://vashti.chat/releases/latest/vashti-android.apk
 https://vashti.chat/releases/v0.1.0/VERSION
 https://vashti.chat/releases/v0.1.0/SHA256SUMS
 https://vashti.chat/releases/v0.1.0/vashti-linux-x86_64.tar.gz
+https://vashti.chat/releases/v0.1.0/vashti-android.apk
 ```
 
 The admin page can create one-time upload keys and inspect basic download counts.
@@ -139,6 +141,21 @@ apps/vashti/dist/release/v0.1.0/SHA256SUMS
 apps/vashti/dist/release/v0.1.0/VERSION
 ```
 
+Package the Android app separately after configuring its release signing key:
+
+```sh
+./apps/vashti/scripts/package-android-release.sh
+```
+
+This adds:
+
+```txt
+apps/vashti/dist/release/v0.1.0/vashti-android.apk
+```
+
+See [Android client documentation](../../vashti/docs/android-client.md) for SDK setup, signing,
+and the physical-device test checklist.
+
 ## Publish a Release
 
 See [release-process.md](release-process.md) for the full prerelease, testing, and promotion flow.
@@ -150,7 +167,8 @@ Upload the package to Vashti Hub:
 ```
 
 The script asks for a one-time upload key. Create the key from the Hub admin page and paste it when
-prompted.
+prompted. It uploads every recognized artifact already present in the version's release directory,
+including the Linux archive and Android APK, in one request.
 
 Release notes are sent with the upload. By default, `publish-release.sh` uses
 `apps/vashti/release-notes/vX.Y.Z.md` for the version being published, falling back to

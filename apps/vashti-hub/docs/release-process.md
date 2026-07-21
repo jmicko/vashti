@@ -18,14 +18,20 @@ prerelease until an admin promotes them.
    apps/vashti/release-notes/vX.Y.Z.md
    ```
 
-4. Build the app release package:
+4. Build the Linux release package:
 
    ```sh
    ./apps/vashti/scripts/package-release.sh
    ```
 
-5. Open the Hub admin page and create a one-time upload key.
-6. Publish the package:
+5. Build the signed universal Android APK when publishing the Android app:
+
+   ```sh
+   ./apps/vashti/scripts/package-android-release.sh
+   ```
+
+6. Open the Hub admin page and create a one-time upload key.
+7. Publish all artifacts found for that version:
 
    ```sh
    ./apps/vashti/scripts/publish-release.sh
@@ -34,8 +40,12 @@ prerelease until an admin promotes them.
    The script automatically uses the versioned notes file if it exists, otherwise it falls back to
    `release-notes-latest.md`.
 
-7. Test the staged prerelease from the Releases page using the version-specific install command.
-8. If it works, promote it to latest from the Hub admin page.
+   Linux and Android are uploaded in one request and belong to the same staged release. A one-time
+   key cannot be reused to add a second artifact later.
+
+8. Test the staged prerelease from the Releases page using the version-specific install command and
+   APK download.
+9. If both artifacts work, promote the release to latest from the Hub admin page.
 
 ## Staged Prereleases
 

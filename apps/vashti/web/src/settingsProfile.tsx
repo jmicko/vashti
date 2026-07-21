@@ -13,6 +13,7 @@ import {
   type ThemeId
 } from "./theme";
 import type { User, UserSettings } from "./types";
+import { NativeConnectionsSettings, useNativeConnections } from "./nativeConnections";
 
 export function ProfileSettings({
   user,
@@ -22,6 +23,7 @@ export function ProfileSettings({
   onUserChanged: (user: User) => void;
 }) {
   const { installState, installError, isInstalling, install } = usePwa();
+  const { isNative } = useNativeConnections();
   const [displayName, setDisplayName] = useState(user.display_name ?? "");
   const [email, setEmail] = useState(user.email ?? "");
   const [theme, setTheme] = useState<ThemeId>(storedTheme());
@@ -245,7 +247,9 @@ export function ProfileSettings({
           </div>
         </section>
 
-        <section className="settings-subsection pwa-install-section">
+        <NativeConnectionsSettings />
+
+        {!isNative && <section className="settings-subsection pwa-install-section">
           <div>
             <p className="eyebrow">App</p>
             <h2>Install Vashti</h2>
@@ -289,7 +293,14 @@ export function ProfileSettings({
             <p className="status-message">This browser does not support app installation.</p>
           )}
           {installError && <p className="error">{installError}</p>}
-        </section>
+          <a
+            className="button-link secondary-button pwa-install-button"
+            href="https://vashti.chat/releases/latest/vashti-android.apk"
+          >
+            <Download aria-hidden="true" />
+            <span>Download Android App</span>
+          </a>
+        </section>}
       </form>
     </SettingsPanel>
   );
