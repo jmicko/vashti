@@ -12,7 +12,7 @@ import {
   storedTheme,
   type ThemeId
 } from "./theme";
-import type { User, UserSettings } from "./types";
+import type { User, UserSettings, VersionResponse } from "./types";
 import { NativeConnectionsSettings, useNativeConnections } from "./nativeConnections";
 
 export function ProfileSettings({
@@ -34,6 +34,7 @@ export function ProfileSettings({
   const [isSaving, setIsSaving] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [serverVersion, setServerVersion] = useState<string | null>(null);
   const themeRef = useRef(theme);
   const savedThemeRef = useRef(savedTheme);
   const statusTimerRef = useRef<number | null>(null);
@@ -70,6 +71,16 @@ export function ProfileSettings({
   useEffect(() => {
     void loadProfileSettings();
   }, [loadProfileSettings]);
+
+  useEffect(() => {
+    if (isNative) {
+      return;
+    }
+
+    void requestJson<VersionResponse>("/api/version")
+      .then((response) => setServerVersion(response.version))
+      .catch(() => setServerVersion(null));
+  }, [isNative]);
 
   useEffect(
     () => () => {
@@ -293,13 +304,19 @@ export function ProfileSettings({
             <p className="status-message">This browser does not support app installation.</p>
           )}
           {installError && <p className="error">{installError}</p>}
-          <a
-            className="button-link secondary-button pwa-install-button"
-            href="https://vashti.chat/releases/latest/vashti-android.apk"
-          >
-            <Download aria-hidden="true" />
-            <span>Download Android App</span>
-          </a>
+          {serverVersion ? (
+            <a
+              className="button-link secondary-button pwa-install-button"
+              href={`https://vashti.chat/releases/v${serverVersion}/vashti-android.apk`}
+            >
+              <Download aria-hidden="true" />
+              <span>Download Android App v{serverVersion}</span>
+            </a>
+          ) : (
+            <p className="status-message">
+              Android download unavailable because the server version could not be determined.
+            </p>
+          )}
         </section>}
       </form>
     </SettingsPanel>
