@@ -122,9 +122,14 @@ else
 fi
 
 "$apksigner" verify --verbose "$artifact" >/dev/null
+rm -f "$artifact.idsig"
 (
     cd "$release_dir"
-    sha256sum vashti-* > SHA256SUMS
+    checksum_files=(vashti-android.apk)
+    if [[ -f vashti-linux-x86_64.tar.gz ]]; then
+        checksum_files+=(vashti-linux-x86_64.tar.gz)
+    fi
+    sha256sum "${checksum_files[@]}" > SHA256SUMS
 )
 printf '%s\n' "$version_label" > "$release_dir/VERSION"
 
