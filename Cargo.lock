@@ -4858,7 +4858,7 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
 name = "vashti"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "argon2",
  "axum",
@@ -4885,7 +4885,7 @@ dependencies = [
 
 [[package]]
 name = "vashti-android"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "android-native-keyring-store",
  "base64 0.22.1",
