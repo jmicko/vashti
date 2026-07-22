@@ -76,6 +76,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         );
     }
     startup::bootstrap::ensure_app_settings(&db).await?;
+    let server_instance_id = startup::bootstrap::ensure_server_identity(&db).await?;
     startup::network_recovery::recover_network_if_requested(&db, &config).await?;
     auth::service::delete_expired_sessions(&db).await?;
 
@@ -86,7 +87,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     startup::bootstrap::detect_localhost_ollama_if_empty(&db, &http_client).await?;
 
     let bind_addr = config.bind_addr;
-    let state = AppState::new(config, db, http_client);
+    let state = AppState::new(config, db, http_client, server_instance_id);
     spawn_session_cleanup(state.db.clone());
     spawn_model_cache_refresh(state.clone());
     let app = router(state);

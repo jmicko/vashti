@@ -1,0 +1,37 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Vashti",
+  "version": "0.7.1",
+  "identifier": "chat.vashti.app",
+  "build": {
+    "beforeDevCommand": "npm --prefix ../vashti/web run dev",
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": "npm --prefix ../vashti/web run build:native",
+    "frontendDist": "../vashti/web/dist-native"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Vashti",
+        "width": 430,
+        "height": 850,
+        "minWidth": 320,
+        "minHeight": 480
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self' ipc: http://ipc.localhost; img-src 'self' blob: data: http://vashtiasset.localhost; media-src 'self' blob: data: http://vashtiasset.localhost; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}

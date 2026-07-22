@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "apps/vashti",
+    "apps/vashti-android",
     "apps/vashti-hub",
 ]
 resolver = "3"

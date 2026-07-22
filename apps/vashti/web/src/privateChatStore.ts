@@ -9,6 +9,7 @@ import type {
   ContextSelectionMode,
   MessageStats
 } from "./types";
+import { requestJson } from "./api";
 
 const LEGACY_DB_NAME = "vashti-private-local";
 const DB_NAME_PREFIX = "vashti-private-local";
@@ -264,6 +265,7 @@ type CachedHostedChatList<TSummary> = {
 };
 
 let currentUserId: string | null = null;
+let currentStorageNamespace: string | null = null;
 let dbPromise: Promise<IDBDatabase> | null = null;
 let vaultKeyPromise: Promise<PrivateVaultKeyResponse> | null = null;
 let vaultKeyBytesPromise: Promise<Uint8Array> | null = null;
@@ -272,10 +274,13 @@ let legacyMigrationPromise: Promise<void> | null = null;
 
 export function setPrivateStorageUser(
   userId: string,
-  vaultKey?: PrivateVaultKeyResponse
+  vaultKey?: PrivateVaultKeyResponse,
+  storageNamespace?: string | null
 ) {
-  if (currentUserId !== userId) {
+  const normalizedNamespace = storageNamespace?.trim() || null;
+  if (currentUserId !== userId || currentStorageNamespace !== normalizedNamespace) {
     currentUserId = userId;
+    currentStorageNamespace = normalizedNamespace;
     vaultKeyPromise = null;
     vaultKeyBytesPromise = null;
     webCryptoKeyPromise = null;
@@ -298,6 +303,7 @@ export function setPrivateStorageUser(
 
 export function resetPrivateStorageUser() {
   currentUserId = null;
+  currentStorageNamespace = null;
   vaultKeyPromise = null;
   vaultKeyBytesPromise = null;
   webCryptoKeyPromise = null;
@@ -1310,7 +1316,9 @@ function privateDbName() {
     throw new Error("Private storage is not ready");
   }
 
-  return `${DB_NAME_PREFIX}-${currentUserId}`;
+  return currentStorageNamespace
+    ? `${DB_NAME_PREFIX}-${currentStorageNamespace}-${currentUserId}`
+    : `${DB_NAME_PREFIX}-${currentUserId}`;
 }
 
 function ensurePrivateStores(db: IDBDatabase) {
@@ -1595,13 +1603,8 @@ async function privateVaultKeyBytes(): Promise<Uint8Array> {
 
 async function privateVaultKey(): Promise<PrivateVaultKeyResponse> {
   if (!vaultKeyPromise) {
-    vaultKeyPromise = fetch("/api/private/vault-key", { credentials: "include" }).then(
-      async (response) => {
-        if (!response.ok) {
-          throw new Error(await responseErrorMessage(response));
-        }
-
-        const vaultKey = (await response.json()) as PrivateVaultKeyResponse;
+    vaultKeyPromise = requestJson<PrivateVaultKeyResponse>("/api/private/vault-key").then(
+      (vaultKey) => {
         if (currentUserId && vaultKey.user_id !== currentUserId) {
           throw new Error("Private storage user changed");
         }
@@ -1614,14 +1617,6 @@ async function privateVaultKey(): Promise<PrivateVaultKeyResponse> {
   return vaultKeyPromise;
 }
 
-async function responseErrorMessage(response: Response) {
-  try {
-    const body = (await response.json()) as { error?: { message?: string } };
-    return body.error?.message ?? `Request failed with status ${response.status}`;
-  } catch {
-    return `Request failed with status ${response.status}`;
-  }
-}
 
 function bytesToBase64(bytes: Uint8Array) {
   let binary = "";

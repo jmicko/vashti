@@ -2,16 +2,24 @@ const JPEG_MIME = "image/jpeg";
 const PNG_MIME = "image/png";
 const GIF_MIME = "image/gif";
 
-export async function normalizePersonaAvatarFile(file: File): Promise<File> {
-  const detectedType = await detectPreservedType(file);
+export async function normalizePersonaImageFile(file: File): Promise<File> {
+  // Some mobile browsers expose picker files through a short-lived content-provider
+  // handle. Materialize the bytes while that handle is valid instead of retaining it
+  // until the user eventually saves the form.
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const detectedType = detectPreservedType(bytes);
   if (detectedType) {
-    return new File([file], file.name || defaultFilename(detectedType), {
+    return new File([bytes], file.name || defaultFilename(detectedType), {
       type: detectedType,
       lastModified: file.lastModified
     });
   }
 
-  const image = await loadImage(file);
+  const ownedFile = new File([bytes], file.name || "profile-image", {
+    type: file.type,
+    lastModified: file.lastModified
+  });
+  const image = await loadImage(ownedFile);
   const canvas = document.createElement("canvas");
   canvas.width = image.naturalWidth;
   canvas.height = image.naturalHeight;
@@ -27,8 +35,9 @@ export async function normalizePersonaAvatarFile(file: File): Promise<File> {
   });
 }
 
-async function detectPreservedType(file: File) {
-  const bytes = new Uint8Array(await file.slice(0, 12).arrayBuffer());
+export const normalizePersonaAvatarFile = normalizePersonaImageFile;
+
+function detectPreservedType(bytes: Uint8Array) {
   if (
     bytes.length >= 8 &&
     bytes[0] === 0x89 &&

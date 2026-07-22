@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { ImagePlus, Save, Trash2, X } from "lucide-react";
 import { RetroLoader } from "./common";
 import { ModelBackgroundPreview } from "./ModelBackground";
+import { normalizePersonaImageFile } from "./personaAvatarImage";
 import type { ModelBackgroundMode } from "./types";
 
 type BackgroundLayout = {
@@ -60,6 +61,9 @@ export function ModelBackgroundEditorDialog({
   const [nextLandscape, setNextLandscape] = useState(landscape);
   const [nextPortrait, setNextPortrait] = useState(portrait);
   const [orientation, setOrientation] = useState<"landscape" | "portrait">("landscape");
+  const [isReadingFile, setIsReadingFile] = useState(false);
+  const [fileError, setFileError] = useState<string | null>(null);
+  const controlsDisabled = isBusy || isReadingFile;
   const hasOwnImage = Boolean(nextAssetId || file);
   const previewAssetId =
     nextAssetId ?? (!file && inheritedBackground ? inheritedBackground.assetId : null);
@@ -79,13 +83,13 @@ export function ModelBackgroundEditorDialog({
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape" && !isBusy) {
+      if (event.key === "Escape" && !controlsDisabled) {
         onCancel();
       }
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isBusy, onCancel]);
+  }, [controlsDisabled, onCancel]);
 
   function updateLayout(patch: Partial<BackgroundLayout>) {
     if (orientation === "landscape") {
@@ -100,7 +104,7 @@ export function ModelBackgroundEditorDialog({
       className="confirm-backdrop model-background-editor-backdrop"
       role="presentation"
       onPointerDown={(event) => {
-        if (event.target === event.currentTarget && !isBusy) {
+        if (event.target === event.currentTarget && !controlsDisabled) {
           onCancel();
         }
       }}
@@ -166,15 +170,29 @@ export function ModelBackgroundEditorDialog({
                 <span>{hasOwnImage ? "Replace image" : "Choose image"}</span>
                 <input
                   type="file"
-                  accept="image/png,image/jpeg,image/gif"
-                  disabled={isBusy}
+                  accept="image/*"
+                  disabled={controlsDisabled}
                   onChange={(event) => {
                     const nextFile = event.currentTarget.files?.[0] ?? null;
-                    if (nextFile) {
-                      setFile(nextFile);
-                      setNextAssetId(null);
-                    }
                     event.currentTarget.value = "";
+                    if (!nextFile) {
+                      return;
+                    }
+                    setFileError(null);
+                    setIsReadingFile(true);
+                    void normalizePersonaImageFile(nextFile)
+                      .then((ownedFile) => {
+                        setFile(ownedFile);
+                        setNextAssetId(null);
+                      })
+                      .catch((readError) => {
+                        setFileError(
+                          readError instanceof Error
+                            ? readError.message
+                            : "Could not read background image"
+                        );
+                      })
+                      .finally(() => setIsReadingFile(false));
                   }}
                 />
               </label>
@@ -182,7 +200,7 @@ export function ModelBackgroundEditorDialog({
                 <button
                   type="button"
                   className="danger-button"
-                  disabled={isBusy}
+                  disabled={controlsDisabled}
                   onClick={() => {
                     setNextAssetId(null);
                     setFile(null);
@@ -196,7 +214,7 @@ export function ModelBackgroundEditorDialog({
           </div>
 
           <div className="model-background-controls">
-            <fieldset disabled={!canEditLayout || isBusy}>
+            <fieldset disabled={!canEditLayout || controlsDisabled}>
               <legend>{orientation === "landscape" ? "Landscape layout" : "Portrait layout"}</legend>
               <div className="model-background-mode" aria-label="Background sizing">
                 {(["fill", "fit", "stretch", "tile"] as ModelBackgroundMode[]).map((mode) => (
@@ -278,19 +296,19 @@ export function ModelBackgroundEditorDialog({
           </div>
         </div>
 
-        {error && <p className="error">{error}</p>}
+        {(error || fileError) && <p className="error">{error ?? fileError}</p>}
         <div className="dialog-actions">
           <button
             type="button"
             className="secondary-button"
-            disabled={isBusy}
+            disabled={controlsDisabled}
             onClick={onCancel}
           >
             Cancel
           </button>
           <button
             type="button"
-            disabled={isBusy}
+            disabled={controlsDisabled}
             onClick={() =>
               onSave({
                 assetId: nextAssetId,
@@ -302,8 +320,8 @@ export function ModelBackgroundEditorDialog({
               })
             }
           >
-            {isBusy ? <RetroLoader /> : <Save />}
-            <span>{isBusy ? "Saving..." : "Save"}</span>
+            {controlsDisabled ? <RetroLoader /> : <Save />}
+            <span>{isReadingFile ? "Reading image..." : isBusy ? "Saving..." : "Save"}</span>
           </button>
         </div>
       </section>

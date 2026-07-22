@@ -1,4 +1,4 @@
-import { responseErrorMessage } from "./api";
+import { requestBlob, requestJson, requestMultipartJson } from "./api";
 
 export type HostedAvatarAsset = {
   id: string;
@@ -11,35 +11,23 @@ export type HostedAvatarAsset = {
 export async function uploadHostedAvatar(file: File) {
   const formData = new FormData();
   formData.append("file", file);
-  const response = await fetch("/api/persona-avatars", {
+  const response = await requestMultipartJson<{ asset: HostedAvatarAsset }>(
+    "/api/persona-avatars",
+    formData,
+    {
     method: "POST",
-    credentials: "include",
-    body: formData
-  });
-  if (!response.ok) {
-    throw new Error(await responseErrorMessage(response));
-  }
-
-  return ((await response.json()) as { asset: HostedAvatarAsset }).asset;
+    }
+  );
+  return response.asset;
 }
 
 export async function deleteHostedAvatar(assetId: string) {
-  const response = await fetch(`/api/persona-avatars/${encodeURIComponent(assetId)}`, {
-    method: "DELETE",
-    credentials: "include"
+  await requestJson(`/api/persona-avatars/${encodeURIComponent(assetId)}`, {
+    method: "DELETE"
   });
-  if (!response.ok) {
-    throw new Error(await responseErrorMessage(response));
-  }
 }
 
 export async function hostedAvatarFile(assetId: string) {
-  const response = await fetch(`/api/persona-avatars/${encodeURIComponent(assetId)}`, {
-    credentials: "include"
-  });
-  if (!response.ok) {
-    throw new Error(await responseErrorMessage(response));
-  }
-  const blob = await response.blob();
+  const blob = await requestBlob(`/api/persona-avatars/${encodeURIComponent(assetId)}`);
   return new File([blob], "profile-image", { type: blob.type });
 }

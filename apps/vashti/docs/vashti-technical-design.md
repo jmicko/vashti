@@ -79,6 +79,39 @@ Service-worker registration is disabled in Vite development. Installation and
 offline shell caching require a browser secure context (HTTPS or localhost),
 while normal LAN HTTP access continues without those PWA features.
 
+#### Native Android client
+
+The Android client is a Tauri 2 shell that bundles the production React
+frontend. It does not navigate to a configured server or execute server-hosted
+JavaScript. A separate native Vite build omits PWA registration because the APK
+already owns the application lifecycle and static assets.
+
+The Rust shell owns all remote transport. Frontend API helpers invoke native
+commands for JSON, multipart, binary, and streaming requests. The shell permits
+only relative Vashti `/api/` paths, disables redirects, validates HTTPS
+certificates normally, and requires explicit acknowledgement before storing a
+plain-HTTP LAN connection. Authenticated media is exposed through a narrow
+application protocol limited to known attachment and persona-asset routes.
+
+The session cookie never enters JavaScript. The shell captures only the
+`vashti_session` cookie and persists it with Android's native keystore,
+namespaced by the saved connection. Private-storage vault keys remain in the
+active frontend runtime and are not written to the connection configuration.
+
+Every Vashti installation has a durable random `instance_id`. `/api/version`
+and the session response return that identity with an integer API protocol
+version. The Android client uses the installation identity, connection
+identity, and signed-in user to namespace local IndexedDB storage, preventing
+data from different servers or accounts from sharing a local database. The
+session response lets the app re-check identity during normal startup without
+adding a second network request.
+
+The first app launch requires a server root URL. Compatible servers can be
+saved, edited, removed, and selected later from Profile settings. The native
+shell must validate server identity and protocol compatibility before saving a
+connection, re-check both during startup, and clear its saved session if a
+connection's transport or server identity changes.
+
 ### 2.3 Chat storage split
 
 There are two storage modes.
@@ -986,10 +1019,6 @@ Response:
     "username": "john",
     "email": "john@example.com",
     "role": "admin"
-  },
-  "private_vault_key": {
-    "user_id": "uuid",
-    "key_material": "base64-key-material"
   }
 }
 ```
@@ -1012,11 +1041,17 @@ Response when logged in:
 {
   "is_authenticated": true,
   "can_create_account": true,
+  "instance_id": "server-installation-uuid",
+  "api_version": 1,
   "user": {
     "id": "uuid",
     "username": "john",
     "email": "john@example.com",
     "role": "admin"
+  },
+  "private_vault_key": {
+    "user_id": "uuid",
+    "key_material": "base64-key-material"
   }
 }
 ```
@@ -1027,6 +1062,8 @@ Response when not logged in:
 {
   "is_authenticated": false,
   "can_create_account": true,
+  "instance_id": "server-installation-uuid",
+  "api_version": 1,
   "user": null,
   "private_vault_key": null
 }
@@ -1039,6 +1076,11 @@ available from `GET /api/private/vault-key`. Returning it with the no-store
 session response lets the frontend unlock its encrypted per-user caches without
 a second startup request. The dedicated endpoint remains available as a
 fallback for older clients and storage recovery.
+
+`instance_id` and `api_version` are always present. The native client compares
+them with its selected saved connection before opening local private storage.
+If the server installation changed at the same URL, it clears the old native
+session and reloads under the new installation namespace.
 
 ---
 

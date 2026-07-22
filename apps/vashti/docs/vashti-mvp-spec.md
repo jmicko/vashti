@@ -233,6 +233,21 @@ Storage modes follow the same privacy boundary as chats:
 * LAN HTTP remains usable without PWA installation or service-worker support
 * responsive layout for mobile and desktop
 
+### 5.7.1 Android app
+
+* installable APK built with Tauri 2
+* bundled Vashti frontend rather than remotely loaded server JavaScript
+* first-run server selection plus multiple saved Vashti server connections
+* native Rust API, streaming, upload, and authenticated-media transport
+* session persistence through Android's native keystore without exposing the
+  session cookie to frontend JavaScript
+* normal HTTPS certificate validation with no certificate bypass
+* explicit warning and acknowledgement before using plain HTTP on a LAN
+* local private-chat and persona storage isolated by server installation and
+  signed-in account
+* background generation and notification services remain out of scope for the
+  initial Android release
+
 ### 5.8 Settings
 
 * default Ollama backend
@@ -843,7 +858,7 @@ Proposed high-level route groups:
 * `GET /assets/*path` → embedded frontend assets
 * `GET /manifest.webmanifest` → PWA manifest
 * `GET /sw.js` → service worker
-* `GET /api/version` → running app name/version
+* `GET /api/version` → running app name/version, durable installation ID, and API protocol version
 
 #### Auth/session
 

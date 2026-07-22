@@ -7,9 +7,10 @@ import {
   useState
 } from "react";
 import { ChevronLeft, ChevronRight, FileText, Image as ImageIcon, X } from "lucide-react";
-import { responseErrorMessage } from "./api";
+import { requestMultipartJson } from "./api";
 import { RetroLoader } from "./common";
 import { unixTimestamp } from "./privateChatStore";
+import { apiAssetUrl } from "./runtime";
 import type {
   AttachmentInfo,
   AttachmentResponse,
@@ -488,7 +489,7 @@ function useAttachmentImageUrl(attachment: ComposerAttachment) {
 }
 
 function attachmentUrl(attachmentId: string) {
-  return `/api/attachments/${attachmentId}`;
+  return apiAssetUrl(`/api/attachments/${attachmentId}`);
 }
 
 function attachmentDisplayUrl(attachment: AttachmentInfo) {
@@ -640,17 +641,12 @@ export async function uploadAttachmentToChat(chatId: string, file: File) {
   const formData = new FormData();
   formData.append("file", file);
 
-  const response = await fetch(`/api/chats/${chatId}/attachments`, {
-    method: "POST",
-    credentials: "include",
-    body: formData
-  });
-
-  if (!response.ok) {
-    throw new Error(await responseErrorMessage(response));
-  }
-
-  return ((await response.json()) as AttachmentResponse).attachment;
+  const response = await requestMultipartJson<AttachmentResponse>(
+    `/api/chats/${chatId}/attachments`,
+    formData,
+    { method: "POST" }
+  );
+  return response.attachment;
 }
 
 export async function uploadComposerAttachments(

@@ -1,4 +1,5 @@
 use sqlx::{Row, SqlitePool};
+use uuid::Uuid;
 
 use crate::{backends, ollama};
 
@@ -18,6 +19,27 @@ pub async fn ensure_app_settings(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     .await?;
 
     Ok(())
+}
+
+pub async fn ensure_server_identity(pool: &SqlitePool) -> Result<String, sqlx::Error> {
+    let instance_id = Uuid::new_v4().to_string();
+    let now = crate::auth::service::unix_timestamp();
+
+    sqlx::query(
+        r#"
+        INSERT INTO server_identity (id, instance_id, created_at)
+        VALUES (1, ?, ?)
+        ON CONFLICT(id) DO NOTHING
+        "#,
+    )
+    .bind(instance_id)
+    .bind(now)
+    .execute(pool)
+    .await?;
+
+    sqlx::query_scalar("SELECT instance_id FROM server_identity WHERE id = 1")
+        .fetch_one(pool)
+        .await
 }
 
 pub async fn detect_localhost_ollama_if_empty(
@@ -48,4 +70,37 @@ pub async fn detect_localhost_ollama_if_empty(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+
+    use super::*;
+    use crate::startup;
+
+    #[tokio::test]
+    async fn server_identity_is_created_once_and_remains_stable() {
+        let options = SqliteConnectOptions::new()
+            .filename(":memory:")
+            .foreign_keys(true);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .expect("connect test database");
+        startup::migrations::run(&pool)
+            .await
+            .expect("run migrations");
+
+        let first = ensure_server_identity(&pool)
+            .await
+            .expect("create server identity");
+        let second = ensure_server_identity(&pool)
+            .await
+            .expect("load server identity");
+
+        assert_eq!(first, second);
+        assert!(Uuid::parse_str(&first).is_ok());
+    }
 }

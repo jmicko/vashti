@@ -46,6 +46,8 @@ pub struct SessionResponse {
     pub user: Option<UserPublic>,
     pub can_create_account: bool,
     pub private_vault_key: Option<private::handlers::PrivateVaultKeyResponse>,
+    pub instance_id: String,
+    pub api_version: u32,
 }
 
 #[derive(Debug, Serialize)]
@@ -86,6 +88,8 @@ pub async fn session(
         user,
         can_create_account,
         private_vault_key,
+        instance_id: state.server_instance_id.to_string(),
+        api_version: crate::version::API_VERSION,
     }))
 }
 

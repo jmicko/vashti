@@ -19,6 +19,7 @@ pub struct AppState {
     pub config: Arc<Config>,
     pub db: SqlitePool,
     pub http_client: reqwest::Client,
+    pub server_instance_id: Arc<str>,
     pub rate_limiter: Arc<RateLimiter>,
     pub model_cache: Arc<ModelCache>,
     pub generation_cancellations: Arc<Mutex<HashMap<String, CancellationToken>>>,
@@ -26,11 +27,17 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(config: Config, db: SqlitePool, http_client: reqwest::Client) -> Self {
+    pub fn new(
+        config: Config,
+        db: SqlitePool,
+        http_client: reqwest::Client,
+        server_instance_id: String,
+    ) -> Self {
         Self {
             config: Arc::new(config),
             db,
             http_client,
+            server_instance_id: server_instance_id.into(),
             rate_limiter: Arc::new(RateLimiter::new()),
             model_cache: Arc::new(ModelCache::new()),
             generation_cancellations: Arc::new(Mutex::new(HashMap::new())),

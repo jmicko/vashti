@@ -9,4 +9,5 @@
 /apps/*/.secrets
 /apps/vashti/web/node_modules
 /apps/vashti/web/dist
+/apps/vashti/web/dist-native
 upload_key.txt

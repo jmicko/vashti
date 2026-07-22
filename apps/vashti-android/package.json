@@ -1,0 +1,7 @@
+{
+  "name": "vashti-android-shell",
+  "private": true,
+  "scripts": {
+    "tauri": "../vashti/web/node_modules/.bin/tauri"
+  }
+}

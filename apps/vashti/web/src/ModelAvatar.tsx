@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { avatarImageStyle, type ImageDimensions } from "./avatarCrop";
 import { getPrivatePersonaAvatar } from "./privateChatStore";
+import { apiAssetUrl } from "./runtime";
 
 type LoadedImage = ImageDimensions & {
   src: string;
@@ -114,7 +115,9 @@ export function useModelAvatarSource({
   const src =
     previewUrl ??
     privateUrl ??
-    (assetId ? `/api/persona-avatars/${encodeURIComponent(assetId)}` : null);
+    (assetId
+      ? apiAssetUrl(`/api/persona-avatars/${encodeURIComponent(assetId)}`)
+      : null);
   return src;
 }
 

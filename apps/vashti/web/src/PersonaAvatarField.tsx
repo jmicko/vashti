@@ -55,6 +55,7 @@ export function PersonaAvatarField({
   cropY,
   cropSize,
   onFileChange,
+  onReadingChange,
   onRemove,
   onCropChange
 }: {
@@ -66,6 +67,7 @@ export function PersonaAvatarField({
   cropY: number;
   cropSize: number;
   onFileChange: (file: File) => void;
+  onReadingChange?: (isReading: boolean) => void;
   onRemove: () => void;
   onCropChange: (cropX: number, cropY: number, cropSize: number) => void;
 }) {
@@ -184,10 +186,13 @@ export function PersonaAvatarField({
 
   async function chooseFile(file: File) {
     setFileError(null);
+    onReadingChange?.(true);
     try {
       onFileChange(await normalizePersonaAvatarFile(file));
     } catch (error) {
       setFileError(error instanceof Error ? error.message : "Could not read profile image");
+    } finally {
+      onReadingChange?.(false);
     }
   }
 

@@ -28,6 +28,8 @@ export type SessionResponse = {
   is_authenticated: boolean;
   user: User | null;
   can_create_account: boolean;
+  instance_id: string;
+  api_version: number;
   private_vault_key: {
     user_id: string;
     key_material: string;
@@ -601,6 +603,8 @@ export type AvailableToolsResponse = {
 export type VersionResponse = {
   name: string;
   version: string;
+  instance_id: string;
+  api_version: number;
 };
 
 export type LoadState =

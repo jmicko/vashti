@@ -5,9 +5,11 @@ import { AuthScreen } from "./auth";
 import { BrandMark } from "./common";
 import { resetPrivateStorageUser, setPrivateStorageUser } from "./privateChatStore";
 import { markPerformance, measurePerformance } from "./performance";
+import { useNativeConnections } from "./nativeConnections";
 import type { LoadState, SessionResponse, User } from "./types";
 
 export default function App() {
+  const { activeConnection, syncActiveIdentity } = useNativeConnections();
   const [state, setState] = useState<LoadState>({ status: "loading" });
 
   const loadSession = useCallback(async () => {
@@ -15,8 +17,19 @@ export default function App() {
     markPerformance("vashti:session-request");
     try {
       const session = await requestJson<SessionResponse>("/api/auth/session");
+      if (
+        activeConnection &&
+        (await syncActiveIdentity(session.instance_id, session.api_version))
+      ) {
+        window.location.reload();
+        return;
+      }
       if (session.is_authenticated && session.user) {
-        setPrivateStorageUser(session.user.id, session.private_vault_key ?? undefined);
+        setPrivateStorageUser(
+          session.user.id,
+          session.private_vault_key ?? undefined,
+          activeConnection?.instance_id
+        );
       } else {
         resetPrivateStorageUser();
       }
@@ -36,7 +49,7 @@ export default function App() {
         message: error instanceof Error ? error.message : "Session request failed"
       });
     }
-  }, []);
+  }, [activeConnection, syncActiveIdentity]);
 
   useEffect(() => {
     void loadSession();
