@@ -76,6 +76,7 @@ export function CustomModelsSection({
   const [systemPrompt, setSystemPrompt] = useState("");
   const [avatarAssetId, setAvatarAssetId] = useState<string | null>(null);
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
+  const [isReadingAvatar, setIsReadingAvatar] = useState(false);
   const [avatarCropX, setAvatarCropX] = useState(50);
   const [avatarCropY, setAvatarCropY] = useState(50);
   const [avatarCropSize, setAvatarCropSize] = useState(100);
@@ -557,6 +558,7 @@ export function CustomModelsSection({
   }
 
   const canSave =
+    !isReadingAvatar &&
     displayName.trim() !== "" &&
     selectedBaseModel !== "" &&
     !(editingPersona && storageMode === "local") &&
@@ -583,7 +585,7 @@ export function CustomModelsSection({
             <button
               type="button"
               className="secondary-button refresh-button"
-              disabled={isSaving}
+              disabled={isSaving || isReadingAvatar}
               onClick={resetDraft}
             >
               <X />
@@ -670,6 +672,7 @@ export function CustomModelsSection({
               setAvatarCropY(50);
               setAvatarCropSize(100);
             }}
+            onReadingChange={setIsReadingAvatar}
             onRemove={() => {
               setAvatarAssetId(null);
               setAvatarFile(null);
@@ -709,7 +712,7 @@ export function CustomModelsSection({
             <button
               type="button"
               className="secondary-button"
-              disabled={isSaving}
+              disabled={isSaving || isReadingAvatar}
               onClick={resetDraft}
             >
               <X />
@@ -720,6 +723,8 @@ export function CustomModelsSection({
               <span>
                 {isSaving
                   ? "Saving..."
+                  : isReadingAvatar
+                    ? "Reading image..."
                   : editingPersona || editingPrivatePersona
                     ? "Save Custom Model"
                     : "Create Custom Model"}

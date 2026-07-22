@@ -47,23 +47,25 @@ export function ModelAvatarEditorDialog({
   const [nextCropX, setNextCropX] = useState(cropX);
   const [nextCropY, setNextCropY] = useState(cropY);
   const [nextCropSize, setNextCropSize] = useState(cropSize);
+  const [isReadingFile, setIsReadingFile] = useState(false);
+  const controlsDisabled = isBusy || isReadingFile;
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape" && !isBusy) {
+      if (event.key === "Escape" && !controlsDisabled) {
         onCancel();
       }
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isBusy, onCancel]);
+  }, [controlsDisabled, onCancel]);
 
   return (
     <div
       className="confirm-backdrop model-avatar-editor-backdrop"
       role="presentation"
       onPointerDown={(event) => {
-        if (event.target === event.currentTarget && !isBusy) {
+        if (event.target === event.currentTarget && !controlsDisabled) {
           onCancel();
         }
       }}
@@ -83,7 +85,7 @@ export function ModelAvatarEditorDialog({
             type="button"
             className="icon-button"
             aria-label="Close profile image editor"
-            disabled={isBusy}
+            disabled={controlsDisabled}
             onClick={onCancel}
           >
             <X />
@@ -112,6 +114,7 @@ export function ModelAvatarEditorDialog({
           cropY={nextCropY}
           cropSize={nextCropSize}
           onFileChange={(nextFile) => setFile(nextFile)}
+          onReadingChange={setIsReadingFile}
           onRemove={() => {
             setNextAssetId(null);
             setFile(null);
@@ -130,14 +133,14 @@ export function ModelAvatarEditorDialog({
           <button
             type="button"
             className="secondary-button"
-            disabled={isBusy}
+            disabled={controlsDisabled}
             onClick={onCancel}
           >
             Cancel
           </button>
           <button
             type="button"
-            disabled={isBusy}
+            disabled={controlsDisabled}
             onClick={() =>
               onSave({
                 assetId: nextAssetId,
@@ -148,8 +151,8 @@ export function ModelAvatarEditorDialog({
               })
             }
           >
-            {isBusy ? <RetroLoader /> : <Save />}
-            <span>{isBusy ? "Saving..." : "Save"}</span>
+            {controlsDisabled ? <RetroLoader /> : <Save />}
+            <span>{isReadingFile ? "Reading image..." : isBusy ? "Saving..." : "Save"}</span>
           </button>
         </div>
       </section>
