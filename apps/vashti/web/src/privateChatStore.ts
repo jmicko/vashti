@@ -271,6 +271,10 @@ let vaultKeyPromise: Promise<PrivateVaultKeyResponse> | null = null;
 let vaultKeyBytesPromise: Promise<Uint8Array> | null = null;
 let webCryptoKeyPromise: Promise<CryptoKey> | null = null;
 let legacyMigrationPromise: Promise<void> | null = null;
+const privatePersonaAvatarCache = new Map<
+  string,
+  Promise<PrivatePersonaAvatarAsset | null>
+>();
 
 export function setPrivateStorageUser(
   userId: string,
@@ -285,6 +289,7 @@ export function setPrivateStorageUser(
     vaultKeyBytesPromise = null;
     webCryptoKeyPromise = null;
     legacyMigrationPromise = null;
+    privatePersonaAvatarCache.clear();
     if (dbPromise) {
       void dbPromise.then((db) => db.close()).catch(() => undefined);
       dbPromise = null;
@@ -308,6 +313,7 @@ export function resetPrivateStorageUser() {
   vaultKeyBytesPromise = null;
   webCryptoKeyPromise = null;
   legacyMigrationPromise = null;
+  privatePersonaAvatarCache.clear();
   if (dbPromise) {
     void dbPromise.then((db) => db.close()).catch(() => undefined);
     dbPromise = null;
@@ -910,10 +916,27 @@ export async function savePrivatePersonaAvatar(
   const tx = db.transaction(PERSONA_AVATAR_STORE, "readwrite");
   tx.objectStore(PERSONA_AVATAR_STORE).put(record);
   await transactionDone(tx);
+  privatePersonaAvatarCache.set(asset.id, Promise.resolve(asset));
   return asset;
 }
 
-export async function getPrivatePersonaAvatar(
+export function getPrivatePersonaAvatar(
+  assetId: string
+): Promise<PrivatePersonaAvatarAsset | null> {
+  const cached = privatePersonaAvatarCache.get(assetId);
+  if (cached) {
+    return cached;
+  }
+
+  const pending = loadPrivatePersonaAvatar(assetId).catch((error) => {
+    privatePersonaAvatarCache.delete(assetId);
+    throw error;
+  });
+  privatePersonaAvatarCache.set(assetId, pending);
+  return pending;
+}
+
+async function loadPrivatePersonaAvatar(
   assetId: string
 ): Promise<PrivatePersonaAvatarAsset | null> {
   const db = await openPrivateDb();
@@ -943,6 +966,7 @@ export async function deleteUnusedPrivatePersonaAvatar(assetId: string): Promise
   const tx = db.transaction(PERSONA_AVATAR_STORE, "readwrite");
   tx.objectStore(PERSONA_AVATAR_STORE).delete(assetId);
   await transactionDone(tx);
+  privatePersonaAvatarCache.delete(assetId);
 }
 
 export async function getPrivatePersona(personaId: string): Promise<PrivatePersona | null> {

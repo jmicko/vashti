@@ -48,6 +48,8 @@ export function ModelAvatar({
       <img
         src={src}
         alt=""
+        decoding="async"
+        loading="lazy"
         draggable={false}
         style={avatarImageStyle(dimensions, { x: cropX, y: cropY, size: cropSize })}
         onLoad={(event) =>

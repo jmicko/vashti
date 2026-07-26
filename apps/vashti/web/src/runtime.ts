@@ -1,6 +1,7 @@
 const NATIVE_ASSET_ORIGIN = "http://vashtiasset.localhost";
 
 let nativeAssetNamespace = "unselected";
+let assetViewer = "signed-out";
 
 export function isNativeRuntime() {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -22,12 +23,17 @@ export function setNativeAssetNamespace(namespace: string | null) {
   nativeAssetNamespace = namespace?.trim() || "unselected";
 }
 
+export function setAssetViewer(viewerId: string | null) {
+  assetViewer = viewerId?.trim() || "signed-out";
+}
+
 export function apiAssetUrl(path: string) {
+  const viewerQuery = `viewer=${encodeURIComponent(assetViewer)}`;
   if (!isNativeRuntime()) {
-    return path;
+    return `${path}${path.includes("?") ? "&" : "?"}${viewerQuery}`;
   }
 
-  return `${NATIVE_ASSET_ORIGIN}/${encodeURIComponent(nativeAssetNamespace)}/${encodePath(path)}`;
+  return `${NATIVE_ASSET_ORIGIN}/${encodeURIComponent(nativeAssetNamespace)}/${encodePath(path)}?${viewerQuery}`;
 }
 
 function encodePath(path: string) {

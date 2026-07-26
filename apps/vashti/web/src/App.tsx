@@ -6,6 +6,7 @@ import { BrandMark } from "./common";
 import { resetPrivateStorageUser, setPrivateStorageUser } from "./privateChatStore";
 import { markPerformance, measurePerformance } from "./performance";
 import { useNativeConnections } from "./nativeConnections";
+import { setAssetViewer } from "./runtime";
 import type { LoadState, SessionResponse, User } from "./types";
 
 export default function App() {
@@ -25,12 +26,14 @@ export default function App() {
         return;
       }
       if (session.is_authenticated && session.user) {
+        setAssetViewer(session.user.id);
         setPrivateStorageUser(
           session.user.id,
           session.private_vault_key ?? undefined,
           activeConnection?.instance_id
         );
       } else {
+        setAssetViewer(null);
         resetPrivateStorageUser();
       }
       markPerformance("vashti:session-ready");

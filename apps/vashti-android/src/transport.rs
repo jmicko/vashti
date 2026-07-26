@@ -378,6 +378,8 @@ fn response_headers(response: &Response) -> HashMap<String, String> {
         header::CONTENT_TYPE,
         header::CONTENT_LENGTH,
         header::CONTENT_RANGE,
+        header::CACHE_CONTROL,
+        header::CONTENT_DISPOSITION,
     ] {
         if let Some(value) = response
             .headers()

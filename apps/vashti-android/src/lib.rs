@@ -35,7 +35,6 @@ pub fn run() {
                         Ok((status, headers, body)) => {
                             let mut response = tauri::http::Response::builder()
                                 .status(status)
-                                .header("cache-control", "no-store")
                                 .header("content-security-policy", "default-src 'none'; sandbox")
                                 .header("referrer-policy", "no-referrer")
                                 .header("x-content-type-options", "nosniff");
