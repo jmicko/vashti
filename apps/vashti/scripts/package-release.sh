@@ -35,6 +35,16 @@ if [[ -n "${TARGET:-}" ]]; then
     binary_path="target/$target/release/vashti"
 fi
 
+if ! command -v readelf >/dev/null 2>&1; then
+    echo "readelf is required to verify release binary dependencies" >&2
+    exit 1
+fi
+
+if readelf -d "$binary_path" | grep -Eq '\(NEEDED\).*libsqlite3([.]so)?'; then
+    echo "release binary dynamically links SQLite; use the bundled SQLite build instead" >&2
+    exit 1
+fi
+
 package_name="vashti-v${version}-${os}-${arch}"
 work_dir="$dist_dir/work"
 package_dir="$work_dir/$package_name"
