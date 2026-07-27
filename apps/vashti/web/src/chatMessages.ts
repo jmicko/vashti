@@ -490,6 +490,77 @@ export function activePathMessages(messages: ChatMessage[], activeRootMessageId:
   return path;
 }
 
+export function applyMessageVersionSelection<
+  TMessage extends ChatMessage,
+  TChat extends { active_root_message_id: string | null; updated_at: number }
+>({
+  chat,
+  messages,
+  currentMessage,
+  nextMessage,
+  nextRevision,
+  updatedAt
+}: {
+  chat: TChat;
+  messages: TMessage[];
+  currentMessage: TMessage;
+  nextMessage: TMessage;
+  nextRevision: ChatMessageRevision;
+  updatedAt?: number;
+}) {
+  const isSameMessage = currentMessage.id === nextMessage.id;
+  const isSameRevision = nextMessage.active_revision_id === nextRevision.id;
+  const changedMessages: TMessage[] = [];
+
+  const nextMessages = messages.map((message) => {
+    let updatedMessage = message;
+
+    if (
+      !isSameMessage &&
+      currentMessage.parent_message_id &&
+      message.id === currentMessage.parent_message_id
+    ) {
+      updatedMessage = {
+        ...updatedMessage,
+        active_child_message_id: nextMessage.id,
+        ...(updatedAt === undefined ? {} : { updated_at: updatedAt })
+      };
+    }
+
+    if (message.id === nextMessage.id && !isSameRevision) {
+      updatedMessage = {
+        ...updatedMessage,
+        active_revision_id: nextRevision.id,
+        active_revision: nextRevision,
+        ...(updatedAt === undefined ? {} : { updated_at: updatedAt })
+      };
+    }
+
+    if (updatedMessage !== message) {
+      changedMessages.push(updatedMessage);
+    }
+    return updatedMessage;
+  });
+
+  const nextChat =
+    !isSameMessage && !currentMessage.parent_message_id
+      ? {
+          ...chat,
+          active_root_message_id: nextMessage.id,
+          ...(updatedAt === undefined ? {} : { updated_at: updatedAt })
+        }
+      : chat;
+
+  return {
+    chat: nextChat,
+    messages: nextMessages,
+    changedMessages,
+    chatChanged: nextChat !== chat,
+    messageChanged: !isSameMessage,
+    revisionChanged: !isSameRevision
+  };
+}
+
 export function groupMessagesByParent(messages: ChatMessage[]) {
   const groups = new Map<string, ChatMessage[]>();
 

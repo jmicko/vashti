@@ -4,6 +4,7 @@ import { attachmentReferences, isImageAttachment, uploadAttachmentToChat } from 
 import {
   activeMessageAttachments,
   activePathMessages,
+  applyMessageVersionSelection,
   groupMessagesByParent,
   latestAssistantThinkingMode,
   latestAssistantModelValue,
@@ -62,6 +63,28 @@ import type {
   PersonaVersion,
   ThinkingMode
 } from "./types";
+
+type HostedVersionMutation =
+  | {
+      key: string;
+      kind: "root";
+      chatId: string;
+      messageId: string;
+    }
+  | {
+      key: string;
+      kind: "child";
+      chatId: string;
+      parentMessageId: string;
+      messageId: string;
+    }
+  | {
+      key: string;
+      kind: "revision";
+      chatId: string;
+      messageId: string;
+      revisionId: string;
+    };
 
 export function ChatView({
   chatId,
@@ -126,6 +149,18 @@ export function ChatView({
   const userScrollIntentTimeoutRef = useRef<number | null>(null);
   const scrollToBottomAfterLoadRef = useRef(false);
   const branchScrollAnchorRef = useRef<BranchScrollAnchor | null>(null);
+  const activeChatIdRef = useRef(chatId);
+  const chatStateRef = useRef<ChatDetail | null>(null);
+  const messagesStateRef = useRef<ChatMessage[]>([]);
+  const loadChatRef = useRef<((bypassCache?: boolean) => Promise<void>) | null>(null);
+  const pendingVersionMutationsRef = useRef(new Map<string, HostedVersionMutation>());
+  const isPersistingVersionMutationsRef = useRef(false);
+  const pendingHostedCacheRef = useRef<{
+    chat: ChatDetail;
+    active_root_message_id: string | null;
+    messages: ChatMessage[];
+  } | null>(null);
+  const isSavingHostedCacheRef = useRef(false);
   const thinkingStartedAtRef = useRef(new Map<string, number>());
   const [thinkingDurations, setThinkingDurations] = useState<Record<string, number>>({});
   const visibleMessages = useMemo(
@@ -141,6 +176,9 @@ export function ChatView({
     selectedModelInfo && !selectedModelInfo.supports_images && chatContainsImages
       ? "This chat includes images. Images may not be supported by this model."
       : null;
+  activeChatIdRef.current = chatId;
+  chatStateRef.current = chat;
+  messagesStateRef.current = messages;
 
   const updatePendingSend = useCallback((next: HostedPendingSend | null) => {
     pendingSendRef.current = next;
@@ -190,6 +228,11 @@ export function ChatView({
       setThinkingDurations({});
       setStreamSegments({});
       setMessages(normalizedMessages);
+      chatStateRef.current = {
+        ...normalizedChat,
+        active_root_message_id: activeRootMessageId
+      };
+      messagesStateRef.current = normalizedMessages;
       const streamingAssistantId = streamingAssistantIdFromMessages(normalizedMessages);
       setActiveAssistantId(streamingAssistantId);
       setIsGenerating(Boolean(streamingAssistantId));
@@ -207,7 +250,37 @@ export function ChatView({
     [onChatSettingsLoaded, onModelSelected]
   );
 
-  const loadChat = useCallback(async () => {
+  const queueHostedCacheSave = useCallback(
+    (snapshot: {
+      chat: ChatDetail;
+      active_root_message_id: string | null;
+      messages: ChatMessage[];
+    }) => {
+      pendingHostedCacheRef.current = snapshot;
+      if (isSavingHostedCacheRef.current) {
+        return;
+      }
+
+      isSavingHostedCacheRef.current = true;
+      void (async () => {
+        try {
+          while (pendingHostedCacheRef.current) {
+            const pending = pendingHostedCacheRef.current;
+            pendingHostedCacheRef.current = null;
+            await saveCachedHostedChat<ChatDetail, ChatMessage>(pending).catch(() => undefined);
+          }
+        } finally {
+          isSavingHostedCacheRef.current = false;
+          if (pendingHostedCacheRef.current) {
+            queueHostedCacheSave(pendingHostedCacheRef.current);
+          }
+        }
+      })();
+    },
+    []
+  );
+
+  const loadChat = useCallback(async (bypassCache = false) => {
     scrollToBottomAfterLoadRef.current = true;
     setIsLoading(true);
     setLoadError(null);
@@ -220,15 +293,17 @@ export function ChatView({
     let displayedCachedChat = false;
 
     try {
-      cachedChat = await getCachedHostedChat<ChatDetail, ChatMessage>(chatId);
-      if (cachedChat) {
-        applyLoadedChat(
-          cachedChat.chat,
-          cachedChat.active_root_message_id,
-          cachedChat.messages
-        );
-        displayedCachedChat = true;
-        setIsLoading(false);
+      if (!bypassCache) {
+        cachedChat = await getCachedHostedChat<ChatDetail, ChatMessage>(chatId);
+        if (cachedChat) {
+          applyLoadedChat(
+            cachedChat.chat,
+            cachedChat.active_root_message_id,
+            cachedChat.messages
+          );
+          displayedCachedChat = true;
+          setIsLoading(false);
+        }
       }
     } catch {
       // Hosted chat cache is best-effort. The server remains authoritative.
@@ -260,14 +335,14 @@ export function ChatView({
         syncResponse.active_root_message_id,
         nextMessages
       );
-      await saveCachedHostedChat<ChatDetail, ChatMessage>({
+      queueHostedCacheSave({
         chat: {
           ...syncResponse.chat,
           active_root_message_id: syncResponse.active_root_message_id
         },
         active_root_message_id: syncResponse.active_root_message_id,
         messages: nextMessages
-      }).catch(() => undefined);
+      });
     } catch (chatError) {
       if (!displayedCachedChat) {
         setLoadError(chatError instanceof Error ? chatError.message : "Failed to load chat");
@@ -275,7 +350,8 @@ export function ChatView({
     } finally {
       setIsLoading(false);
     }
-  }, [applyLoadedChat, chatId]);
+  }, [applyLoadedChat, chatId, queueHostedCacheSave]);
+  loadChatRef.current = loadChat;
 
   const refreshStreamingMessages = useCallback(async () => {
     try {
@@ -305,11 +381,11 @@ export function ChatView({
           nextChat.inference_settings,
           nextChat.context_blocks
         );
-        await saveCachedHostedChat<ChatDetail, ChatMessage>({
+        queueHostedCacheSave({
           chat: nextChat,
           active_root_message_id: messageResponse.active_root_message_id,
           messages: messageResponse.messages
-        }).catch(() => undefined);
+        });
         await onChatsChanged();
       }
     } catch (refreshError) {
@@ -317,19 +393,25 @@ export function ChatView({
         refreshError instanceof Error ? refreshError.message : "Failed to refresh generation"
       );
     }
-  }, [chatId, onChatSettingsLoaded, onChatsChanged]);
+  }, [chatId, onChatSettingsLoaded, onChatsChanged, queueHostedCacheSave]);
 
   useEffect(() => {
-    if (!chat || isLoading || isGenerating) {
+    if (
+      !chat ||
+      isLoading ||
+      isGenerating ||
+      isPersistingVersionMutationsRef.current ||
+      pendingVersionMutationsRef.current.size > 0
+    ) {
       return;
     }
 
-    void saveCachedHostedChat<ChatDetail, ChatMessage>({
+    queueHostedCacheSave({
       chat,
       active_root_message_id: chat.active_root_message_id,
       messages
-    }).catch(() => undefined);
-  }, [chat, isGenerating, isLoading, messages]);
+    });
+  }, [chat, isGenerating, isLoading, messages, queueHostedCacheSave]);
 
   const streamAssistantResponse = useCallback(
     async (path: string, body: unknown, pendingAttempt?: HostedPendingSend) => {
@@ -1291,53 +1373,133 @@ export function ChatView({
       };
     }
 
-    setBusyMessageId(currentMessage.id);
     setGenerationError(null);
 
-    try {
-      if (!isSameMessage) {
-        if (currentMessage.parent_message_id) {
-          const response = await requestJson<MessageResponse>(
-            `/api/chats/${chatId}/messages/${currentMessage.parent_message_id}/active-child`,
-            {
-              method: "PATCH",
-              body: JSON.stringify({ active_child_message_id: nextMessage.id })
-            }
-          );
-          replaceMessage(response.message);
-        } else {
-          const response = await requestJson<ChatResponse>(`/api/chats/${chatId}/active-root`, {
-            method: "PATCH",
-            body: JSON.stringify({ active_root_message_id: nextMessage.id })
-          });
-          setChat(response.chat);
-        }
+    const currentChat = chatStateRef.current;
+    if (!currentChat) {
+      return;
+    }
 
-        if (nextMessage.role === "assistant") {
-          if (nextMessage.persona_version_id) {
-            onModelSelected(personaModelValue(nextMessage.persona_version_id));
-          } else if (nextMessage.backend_id && nextMessage.model_name) {
-            onModelSelected(modelValue(nextMessage.backend_id, nextMessage.model_name));
-          }
-        }
-      }
+    const selection = applyMessageVersionSelection({
+      chat: currentChat,
+      messages: messagesStateRef.current,
+      currentMessage,
+      nextMessage,
+      nextRevision
+    });
+    chatStateRef.current = selection.chat;
+    messagesStateRef.current = selection.messages;
+    setChat(selection.chat);
+    setMessages(selection.messages);
 
-      if (!isSameRevision) {
-        const response = await requestJson<MessageResponse>(
-          `/api/chats/${chatId}/messages/${nextMessage.id}/active-revision`,
-          {
-            method: "PATCH",
-            body: JSON.stringify({ active_revision_id: nextRevision.id })
+    if (selection.messageChanged) {
+      const mutation: HostedVersionMutation = currentMessage.parent_message_id
+        ? {
+            key: `child:${currentMessage.parent_message_id}`,
+            kind: "child",
+            chatId,
+            parentMessageId: currentMessage.parent_message_id,
+            messageId: nextMessage.id
           }
-        );
-        replaceMessage(response.message);
-      }
-    } catch (selectError) {
-      setGenerationError(
-        selectError instanceof Error ? selectError.message : "Failed to switch version"
+        : {
+            key: `root:${chatId}`,
+            kind: "root",
+            chatId,
+            messageId: nextMessage.id
+          };
+      pendingVersionMutationsRef.current.set(mutation.key, mutation);
+    }
+    if (selection.revisionChanged) {
+      const mutation: HostedVersionMutation = {
+        key: `revision:${nextMessage.id}`,
+        kind: "revision",
+        chatId,
+        messageId: nextMessage.id,
+        revisionId: nextRevision.id
+      };
+      pendingVersionMutationsRef.current.set(mutation.key, mutation);
+    }
+
+    void flushVersionMutations();
+  }
+
+  async function persistVersionMutation(mutation: HostedVersionMutation) {
+    if (mutation.kind === "root") {
+      await requestJson<ChatResponse>(`/api/chats/${mutation.chatId}/active-root`, {
+        method: "PATCH",
+        body: JSON.stringify({ active_root_message_id: mutation.messageId })
+      });
+      return;
+    }
+
+    if (mutation.kind === "child") {
+      await requestJson<MessageResponse>(
+        `/api/chats/${mutation.chatId}/messages/${mutation.parentMessageId}/active-child`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ active_child_message_id: mutation.messageId })
+        }
       );
+      return;
+    }
+
+    await requestJson<MessageResponse>(
+      `/api/chats/${mutation.chatId}/messages/${mutation.messageId}/active-revision`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ active_revision_id: mutation.revisionId })
+      }
+    );
+  }
+
+  async function flushVersionMutations() {
+    if (isPersistingVersionMutationsRef.current) {
+      return;
+    }
+
+    isPersistingVersionMutationsRef.current = true;
+    const failedMutations = new Map<
+      string,
+      { mutation: HostedVersionMutation; error: unknown }
+    >();
+    try {
+      while (pendingVersionMutationsRef.current.size > 0) {
+        const mutations = [...pendingVersionMutationsRef.current.values()];
+        pendingVersionMutationsRef.current.clear();
+        for (const mutation of mutations) {
+          try {
+            await persistVersionMutation(mutation);
+            failedMutations.delete(mutation.key);
+          } catch (mutationError) {
+            failedMutations.set(mutation.key, { mutation, error: mutationError });
+          }
+        }
+      }
+
+      const activeFailures = [...failedMutations.values()].filter(
+        ({ mutation }) => mutation.chatId === activeChatIdRef.current
+      );
+      if (activeFailures.length > 0) {
+        const lastError = activeFailures[activeFailures.length - 1].error;
+        setGenerationError(
+          lastError instanceof Error ? lastError.message : "Failed to switch version"
+        );
+        await loadChatRef.current?.(true);
+      } else {
+        const currentChat = chatStateRef.current;
+        if (currentChat && currentChat.id === activeChatIdRef.current) {
+          queueHostedCacheSave({
+            chat: currentChat,
+            active_root_message_id: currentChat.active_root_message_id,
+            messages: messagesStateRef.current
+          });
+        }
+      }
     } finally {
-      setBusyMessageId(null);
+      isPersistingVersionMutationsRef.current = false;
+      if (pendingVersionMutationsRef.current.size > 0) {
+        void flushVersionMutations();
+      }
     }
   }
 

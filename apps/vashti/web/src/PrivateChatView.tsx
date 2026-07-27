@@ -5,6 +5,7 @@ import { privateStreamTestEnabled } from "./browserFlags";
 import {
   activeMessageAttachments,
   activePathMessages,
+  applyMessageVersionSelection,
   fallbackTitleFromPrompt,
   groupMessagesByParent,
   latestAssistantThinkingMode,
@@ -133,6 +134,7 @@ export function PrivateChatView({
   const userScrollIntentTimeoutRef = useRef<number | null>(null);
   const scrollToBottomAfterLoadRef = useRef(false);
   const branchScrollAnchorRef = useRef<BranchScrollAnchor | null>(null);
+  const activeChatIdRef = useRef(chatId);
   const messagesRef = useRef<PrivateChatMessage[]>([]);
   const privateSaveChainRef = useRef<Promise<void>>(Promise.resolve());
   const privateBannerTimerRef = useRef<number | null>(null);
@@ -152,6 +154,7 @@ export function PrivateChatView({
     selectedModelInfo && !selectedModelInfo.supports_images && chatContainsImages
       ? "This chat includes images. Images may not be supported by this model."
       : null;
+  activeChatIdRef.current = chatId;
   const showStreamTest = privateStreamTestEnabled();
   const hasChat = Boolean(chat);
 
@@ -1371,7 +1374,6 @@ export function PrivateChatView({
       return;
     }
 
-    setBusyMessageId(currentMessage.id);
     setGenerationError(null);
 
     const list = messageListRef.current;
@@ -1387,47 +1389,39 @@ export function PrivateChatView({
       };
     }
 
-    try {
-      const now = unixTimestamp();
-      const nextMessages = messagesRef.current.map((message) => {
-        if (!isSameMessage) {
-          if (currentMessage.parent_message_id && message.id === currentMessage.parent_message_id) {
-            return { ...message, active_child_message_id: nextMessage.id, updated_at: now };
-          }
-        }
+    const selection = applyMessageVersionSelection({
+      chat,
+      messages: messagesRef.current,
+      currentMessage: currentMessage as PrivateChatMessage,
+      nextMessage,
+      nextRevision,
+      updatedAt: unixTimestamp()
+    });
 
-        if (message.id === nextMessage.id && !isSameRevision) {
-          return {
-            ...message,
-            active_revision_id: nextRevision.id,
-            active_revision: nextRevision,
-            updated_at: now
-          };
-        }
-
-        return message;
-      });
-      const nextChat =
-        !isSameMessage && !currentMessage.parent_message_id
-          ? { ...chat, active_root_message_id: nextMessage.id, updated_at: now }
-          : chat;
-
-      setChat(nextChat);
-      replacePrivateMessages(nextMessages);
-      const nextModelValue = messageModelValue(nextMessage);
-      if (nextMessage.role === "assistant" && nextModelValue) {
-        onModelSelected(nextModelValue);
-      }
-
-      await privateSaveChainRef.current;
-      await Promise.all([
-        nextChat === chat ? Promise.resolve() : savePrivateChat(nextChat),
-        savePrivateMessages(nextMessages)
-      ]);
-      await onPrivateChatsChanged();
-    } finally {
-      setBusyMessageId(null);
+    setChat(selection.chat);
+    replacePrivateMessages(selection.messages);
+    const nextModelValue = messageModelValue(nextMessage);
+    if (nextMessage.role === "assistant" && nextModelValue) {
+      onModelSelected(nextModelValue);
     }
+
+    privateSaveChainRef.current = privateSaveChainRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        await Promise.all([
+          selection.chatChanged ? savePrivateChat(selection.chat) : Promise.resolve(),
+          ...selection.changedMessages.map(savePrivateMessage)
+        ]);
+        await onPrivateChatsChanged();
+      })
+      .catch((saveError) => {
+        if (activeChatIdRef.current === chatId) {
+          setGenerationError(
+            saveError instanceof Error ? saveError.message : "Failed to save private version"
+          );
+          void loadPrivateChat();
+        }
+      });
   }
 
   return (
