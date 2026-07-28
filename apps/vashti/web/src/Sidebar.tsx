@@ -9,6 +9,7 @@ import {
   Copy,
   Lock,
   MessageSquare,
+  MessageSquarePlus,
   MoreHorizontal,
   Pencil,
   Trash2,
@@ -37,6 +38,7 @@ export function Sidebar({
   onClose,
   onDeleteChat,
   onDeletePrivateChat,
+  onNewChat,
   onOpenChat,
   onOpenPrivateChat,
   onRenameChat,
@@ -56,6 +58,7 @@ export function Sidebar({
   onClose: () => void;
   onDeleteChat: (chat: ChatSummary) => void;
   onDeletePrivateChat: (chat: PrivateChatSummary) => void;
+  onNewChat: () => void;
   onOpenChat: (chatId?: string) => void;
   onOpenPrivateChat: (chatId: string) => void;
   onRenameChat: (chatId: string, title: string) => Promise<void>;
@@ -234,6 +237,12 @@ export function Sidebar({
             })}
           </div>
         )}
+      </div>
+      <div className="sidebar-footer">
+        <button type="button" className="primary-action sidebar-new-chat" onClick={onNewChat}>
+          <MessageSquarePlus />
+          <span>New Chat</span>
+        </button>
       </div>
     </aside>
   );

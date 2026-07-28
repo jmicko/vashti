@@ -3,6 +3,7 @@ import { Lock } from "lucide-react";
 import { isImageAttachment, preparePrivateAttachment } from "./attachments";
 import { privateStreamTestEnabled } from "./browserFlags";
 import {
+  activateMessagePath,
   activeMessageAttachments,
   activePathMessages,
   applyMessageVersionSelection,
@@ -23,11 +24,12 @@ import {
   versionInfoForMessage
 } from "./chatMessages";
 import { ConfirmDialog, RetroLoader } from "./common";
-import { StartChatComposer } from "./Composer";
+import { StartChatComposer, type GenerationNotice } from "./Composer";
 import { normalizeContextSelections } from "./contextBlocks";
 import { readGenerateEventStream } from "./generationStream";
 import { MessageBubble } from "./MessageBubble";
 import { ModelBackgroundLayer, modelBackgroundContainerStyle } from "./ModelBackground";
+import { MessageTreeExplorer } from "./MessageTreeExplorer";
 import {
   createPrivateMessage,
   getPrivateChat,
@@ -82,6 +84,8 @@ export function PrivateChatView({
   systemPromptOverride,
   inferenceSettings,
   contextBlocks,
+  isTreeOpen,
+  onTreeClose,
   onChatSettingsLoaded,
   onConversationSettingsSave,
   onImageOpen,
@@ -100,6 +104,8 @@ export function PrivateChatView({
   systemPromptOverride: string | null;
   inferenceSettings: ChatInferenceSettings;
   contextBlocks: ContextBlockSelection[];
+  isTreeOpen: boolean;
+  onTreeClose: () => void;
   onChatSettingsLoaded: (
     override: string | null | undefined,
     inferenceSettings?: ChatInferenceSettings,
@@ -118,6 +124,7 @@ export function PrivateChatView({
   const [generationError, setGenerationError] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [activeAssistantId, setActiveAssistantId] = useState<string | null>(null);
+  const [generationNotices, setGenerationNotices] = useState<GenerationNotice[]>([]);
   const [pendingPrompt, setPendingPrompt] = useState<ComposerSubmitPayload | null>(null);
   const [thinkingMode, setThinkingMode] = useState<ThinkingMode>("auto");
   const [busyMessageId, setBusyMessageId] = useState<string | null>(null);
@@ -134,7 +141,9 @@ export function PrivateChatView({
   const userScrollIntentTimeoutRef = useRef<number | null>(null);
   const scrollToBottomAfterLoadRef = useRef(false);
   const branchScrollAnchorRef = useRef<BranchScrollAnchor | null>(null);
+  const generationJumpTargetRef = useRef<string | null>(null);
   const activeChatIdRef = useRef(chatId);
+  const chatRef = useRef<PrivateChatDetail | null>(null);
   const messagesRef = useRef<PrivateChatMessage[]>([]);
   const privateSaveChainRef = useRef<Promise<void>>(Promise.resolve());
   const privateBannerTimerRef = useRef<number | null>(null);
@@ -145,6 +154,9 @@ export function PrivateChatView({
     () => activePathMessages(messages, chat?.active_root_message_id ?? null),
     [chat?.active_root_message_id, messages]
   );
+  const isActiveGenerationVisible =
+    Boolean(activeAssistantId) &&
+    visibleMessages.some((message) => message.id === activeAssistantId);
   const siblingGroups = useMemo(() => groupMessagesByParent(messages), [messages]);
   const chatContainsImages = useMemo(
     () => messages.some((message) => activeMessageAttachments(message).some(isImageAttachment)),
@@ -154,9 +166,23 @@ export function PrivateChatView({
     selectedModelInfo && !selectedModelInfo.supports_images && chatContainsImages
       ? "This chat includes images. Images may not be supported by this model."
       : null;
+  const currentGenerationNotice = generationNotices[generationNotices.length - 1] ?? null;
   activeChatIdRef.current = chatId;
+  chatRef.current = chat;
   const showStreamTest = privateStreamTestEnabled();
   const hasChat = Boolean(chat);
+
+  useEffect(() => {
+    setGenerationNotices([]);
+  }, [chatId]);
+
+  useEffect(() => {
+    const visibleMessageIds = new Set(visibleMessages.map((message) => message.id));
+    setGenerationNotices((current) => {
+      const next = current.filter((notice) => !visibleMessageIds.has(notice.messageId));
+      return next.length === current.length ? current : next;
+    });
+  }, [visibleMessages]);
 
   const loadPrivateChat = useCallback(async () => {
     scrollToBottomAfterLoadRef.current = true;
@@ -403,6 +429,25 @@ export function PrivateChatView({
   }, [isLoading, visibleMessages]);
 
   useLayoutEffect(() => {
+    const targetMessageId = generationJumpTargetRef.current;
+    if (!targetMessageId || isLoading) {
+      return;
+    }
+
+    const list = messageListRef.current;
+    const messageElement = list?.querySelector<HTMLElement>(
+      `[data-message-id="${targetMessageId}"]`
+    );
+    if (!list || !messageElement) {
+      return;
+    }
+
+    scrollMessageTopIntoListView(list, messageElement);
+    autoScrollModeRef.current = "top";
+    generationJumpTargetRef.current = null;
+  }, [isLoading, visibleMessages]);
+
+  useLayoutEffect(() => {
     if (!isGenerating || !activeAssistantId || autoScrollModeRef.current === "paused") {
       return;
     }
@@ -606,6 +651,7 @@ export function PrivateChatView({
 
       const message = generateError instanceof Error ? generateError.message : "Generation failed";
       setGenerationError(message);
+      queueGenerationNotice(assistantId, "error");
       updateMessage(assistantId, (current) => ({
         ...current,
         status: "error",
@@ -682,7 +728,7 @@ export function PrivateChatView({
     const normalizedContextBlocks = normalizeContextSelections(promptContextBlocks);
     const pathMessages = activePathMessages(messages, chat.active_root_message_id);
     const parent = pathMessages[pathMessages.length - 1] as PrivateChatMessage | undefined;
-    const userMessage = createPrivateMessage({
+    let userMessage = createPrivateMessage({
       chatId: chat.id,
       parentMessageId: parent?.id ?? null,
       role: "user",
@@ -780,7 +826,7 @@ export function PrivateChatView({
     const now = unixTimestamp();
     const pathMessages = activePathMessages(messagesRef.current, chat.active_root_message_id);
     const parent = pathMessages[pathMessages.length - 1] as PrivateChatMessage | undefined;
-    const userMessage = createPrivateMessage({
+    let userMessage = createPrivateMessage({
       chatId: chat.id,
       parentMessageId: parent?.id ?? null,
       role: "user",
@@ -927,6 +973,7 @@ export function PrivateChatView({
         break;
       case "message_done":
         finishThinkingDuration(event.assistant_message_id);
+        queueGenerationNotice(event.assistant_message_id, "complete");
         updateMessage(event.assistant_message_id, (current) => ({
           ...current,
           status: "complete",
@@ -953,6 +1000,7 @@ export function PrivateChatView({
       case "error":
         setGenerationError(event.message);
         if (event.assistant_message_id) {
+          queueGenerationNotice(event.assistant_message_id, "error");
           updateMessage(event.assistant_message_id, (current) => ({
             ...current,
             status: "error",
@@ -1048,6 +1096,27 @@ export function PrivateChatView({
     );
   }
 
+  function queueGenerationNotice(
+    messageId: string,
+    kind: GenerationNotice["kind"]
+  ) {
+    const currentChat = chatRef.current;
+    if (
+      currentChat &&
+      activePathMessages(
+        messagesRef.current,
+        currentChat.active_root_message_id
+      ).some((message) => message.id === messageId)
+    ) {
+      return;
+    }
+
+    setGenerationNotices((current) => [
+      ...current.filter((notice) => notice.messageId !== messageId),
+      { messageId, kind }
+    ]);
+  }
+
   async function copyMessage(message: ChatMessage) {
     const content = message.active_revision?.content_text ?? "";
     if (!content || message.is_deleted) {
@@ -1135,7 +1204,7 @@ export function PrivateChatView({
 
       const now = unixTimestamp();
       const normalizedContextBlocks = normalizeContextSelections(contextBlocks);
-      const userMessage = createPrivateMessage({
+      let userMessage = createPrivateMessage({
         chatId: chat.id,
         parentMessageId: message.parent_message_id,
         role: "user",
@@ -1370,7 +1439,7 @@ export function PrivateChatView({
     const nextRevision = version.revision as PrivateChatMessageRevision;
     const isSameMessage = currentMessage.id === nextMessage.id;
     const isSameRevision = nextMessage.active_revision_id === nextRevision.id;
-    if ((isSameMessage && isSameRevision) || isGenerating || !chat) {
+    if ((isSameMessage && isSameRevision) || !chat) {
       return;
     }
 
@@ -1422,6 +1491,109 @@ export function PrivateChatView({
           void loadPrivateChat();
         }
       });
+  }
+
+  function activatePathToMessage(
+    messageId: string,
+    missingMessage: string,
+    targetRevisionId?: string
+  ) {
+    const currentChat = chatRef.current;
+    if (!currentChat) {
+      return false;
+    }
+
+    const selection = activateMessagePath({
+      chat: currentChat,
+      messages: messagesRef.current,
+      targetMessageId: messageId,
+      targetRevisionId,
+      updatedAt: unixTimestamp()
+    });
+    if (!selection.rootMessageId) {
+      setGenerationError(missingMessage);
+      return false;
+    }
+
+    setGenerationError(null);
+    branchScrollAnchorRef.current = null;
+    generationJumpTargetRef.current = messageId;
+    setChat(selection.chat);
+    replacePrivateMessages(selection.messages);
+
+    privateSaveChainRef.current = privateSaveChainRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        await Promise.all([
+          selection.chatChanged ? savePrivateChat(selection.chat) : Promise.resolve(),
+          ...selection.changedMessages.map(savePrivateMessage)
+        ]);
+        await onPrivateChatsChanged();
+      })
+      .catch((saveError) => {
+        if (activeChatIdRef.current === chatId) {
+          setGenerationError(
+            saveError instanceof Error
+              ? saveError.message
+              : "Failed to return to the generating response"
+          );
+          void loadPrivateChat();
+        }
+      });
+    return true;
+  }
+
+  function openTreeBranch(messageId: string, revisionId: string) {
+    if (
+      !activatePathToMessage(
+        messageId,
+        "That message version is no longer available in this private chat.",
+        revisionId
+      )
+    ) {
+      return;
+    }
+    onTreeClose();
+  }
+
+  function jumpToActiveGeneration() {
+    const assistantId = activeAssistantId;
+    if (!assistantId || isActiveGenerationVisible) {
+      return;
+    }
+
+    activatePathToMessage(
+      assistantId,
+      "The generating response is no longer available in this chat."
+    );
+  }
+
+  function jumpToGenerationNotice() {
+    const notice = generationNotices[generationNotices.length - 1];
+    if (
+      !notice ||
+      !activatePathToMessage(
+        notice.messageId,
+        "The completed response is no longer available in this chat."
+      )
+    ) {
+      return;
+    }
+
+    setGenerationNotices((current) =>
+      current.filter((currentNotice) => currentNotice.messageId !== notice.messageId)
+    );
+  }
+
+  function dismissGenerationNotice() {
+    const notice = generationNotices[generationNotices.length - 1];
+    if (!notice) {
+      return;
+    }
+
+    setGenerationNotices((current) =>
+      current.filter((currentNotice) => currentNotice.messageId !== notice.messageId)
+    );
   }
 
   return (
@@ -1541,6 +1713,25 @@ export function PrivateChatView({
               thinkingMode={thinkingMode}
               warning={modelImageWarning}
               onThinkingModeChange={setThinkingMode}
+              onJumpToGeneration={
+                isGenerating && activeAssistantId && !isActiveGenerationVisible
+                  ? jumpToActiveGeneration
+                  : undefined
+              }
+              generationNotice={
+                currentGenerationNotice
+                  ? {
+                      kind: currentGenerationNotice.kind,
+                      count: generationNotices.length
+                    }
+                  : null
+              }
+              onJumpToGenerationNotice={
+                currentGenerationNotice ? jumpToGenerationNotice : undefined
+              }
+              onDismissGenerationNotice={
+                currentGenerationNotice ? dismissGenerationNotice : undefined
+              }
               onStop={stopGeneration}
               onUploadAttachment={preparePrivateAttachment}
               onSubmit={submitPrompt}
@@ -1548,6 +1739,14 @@ export function PrivateChatView({
           </div>
         </>
       ) : null}
+      {chat && isTreeOpen && (
+        <MessageTreeExplorer
+          activeRootMessageId={chat.active_root_message_id}
+          messages={messages}
+          onClose={onTreeClose}
+          onOpenBranch={openTreeBranch}
+        />
+      )}
       {(error || generationError) && (
         <p className="error chat-view-error">{generationError ?? error}</p>
       )}

@@ -490,6 +490,115 @@ export function activePathMessages(messages: ChatMessage[], activeRootMessageId:
   return path;
 }
 
+export function activateMessagePath<
+  TMessage extends ChatMessage,
+  TChat extends { active_root_message_id: string | null; updated_at: number }
+>({
+  chat,
+  messages,
+  targetMessageId,
+  targetRevisionId,
+  updatedAt
+}: {
+  chat: TChat;
+  messages: TMessage[];
+  targetMessageId: string;
+  targetRevisionId?: string | null;
+  updatedAt?: number;
+}) {
+  const messagesById = new Map(messages.map((message) => [message.id, message]));
+  const reversePath: TMessage[] = [];
+  const seen = new Set<string>();
+  let current = messagesById.get(targetMessageId);
+
+  while (current && !seen.has(current.id)) {
+    reversePath.push(current);
+    seen.add(current.id);
+    current = current.parent_message_id
+      ? messagesById.get(current.parent_message_id)
+      : undefined;
+  }
+
+  const path = reversePath.reverse();
+  const root = path[0];
+  if (!root || root.parent_message_id) {
+    return {
+      chat,
+      messages,
+      changedMessages: [] as TMessage[],
+      chatChanged: false,
+      rootMessageId: null,
+      childSelections: [] as Array<{
+        parentMessageId: string;
+        messageId: string;
+      }>,
+      revisionSelections: [] as Array<{ messageId: string; revisionId: string }>
+    };
+  }
+
+  const childSelections = path.slice(1).map((message, index) => ({
+    parentMessageId: path[index].id,
+    messageId: message.id
+  }));
+  const selectionsByParent = new Map(
+    childSelections.map((selection) => [selection.parentMessageId, selection])
+  );
+  const revisionSelections: Array<{ messageId: string; revisionId: string }> = [];
+  const changedMessages: TMessage[] = [];
+  const nextMessages = messages.map((message) => {
+    const childSelection = selectionsByParent.get(message.id);
+    const selectedRevision =
+      message.id === targetMessageId && targetRevisionId
+        ? revisionForMessage(message, targetRevisionId)
+        : null;
+    const revisionChanged =
+      Boolean(selectedRevision) && message.active_revision_id !== selectedRevision?.id;
+    const childChanged =
+      Boolean(childSelection) &&
+      message.active_child_message_id !== childSelection?.messageId;
+    if (!revisionChanged && !childChanged) {
+      return message;
+    }
+
+    const nextMessage = {
+      ...message,
+      ...(selectedRevision
+        ? {
+            active_revision_id: selectedRevision.id,
+            active_revision: selectedRevision
+          }
+        : {}),
+      ...(childSelection
+        ? { active_child_message_id: childSelection.messageId }
+        : {}),
+      ...(updatedAt === undefined ? {} : { updated_at: updatedAt })
+    };
+    if (revisionChanged && selectedRevision) {
+      revisionSelections.push({ messageId: message.id, revisionId: selectedRevision.id });
+    }
+    changedMessages.push(nextMessage);
+    return nextMessage;
+  });
+  const nextChat =
+    chat.active_root_message_id === root.id
+      ? chat
+      : {
+          ...chat,
+          active_root_message_id: root.id,
+          ...(updatedAt === undefined ? {} : { updated_at: updatedAt })
+        };
+
+  return {
+    chat: nextChat,
+    messages: nextMessages,
+    changedMessages,
+    chatChanged: nextChat !== chat,
+    rootMessageId: root.id,
+    childSelections,
+    revisionSelections
+  };
+}
+
 export function applyMessageVersionSelection<
   TMessage extends ChatMessage,
   TChat extends { active_root_message_id: string | null; updated_at: number }
@@ -511,6 +620,7 @@ export function applyMessageVersionSelection<
   const isSameMessage = currentMessage.id === nextMessage.id;
   const isSameRevision = nextMessage.active_revision_id === nextRevision.id;
   const changedMessages: TMessage[] = [];
+  const revisionSelections: Array<{ messageId: string; revisionId: string }> = [];
 
   const nextMessages = messages.map((message) => {
     let updatedMessage = message;
@@ -534,6 +644,7 @@ export function applyMessageVersionSelection<
         active_revision: nextRevision,
         ...(updatedAt === undefined ? {} : { updated_at: updatedAt })
       };
+      revisionSelections.push({ messageId: nextMessage.id, revisionId: nextRevision.id });
     }
 
     if (updatedMessage !== message) {
@@ -557,7 +668,8 @@ export function applyMessageVersionSelection<
     changedMessages,
     chatChanged: nextChat !== chat,
     messageChanged: !isSameMessage,
-    revisionChanged: !isSameRevision
+    revisionChanged: !isSameRevision,
+    revisionSelections
   };
 }
 
@@ -611,6 +723,19 @@ export function versionsForMessage(
       }))
     )
     .sort(compareVersionsByCreatedAt);
+}
+
+export function revisionForMessage(
+  message: ChatMessage,
+  revisionId: string | null | undefined
+) {
+  if (!revisionId) {
+    return null;
+  }
+  if (message.active_revision?.id === revisionId) {
+    return message.active_revision;
+  }
+  return message.revisions.find((revision) => revision.id === revisionId) ?? null;
 }
 
 export function versionInfoForMessage(

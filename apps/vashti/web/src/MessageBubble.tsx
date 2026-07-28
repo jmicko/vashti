@@ -317,11 +317,7 @@ export function MessageBubble({
             </div>
           )}
           {versionInfo && (
-            <VersionSwitcher
-              versionInfo={versionInfo}
-              isBusy={isBusy}
-              isGenerating={isGenerating}
-            />
+            <VersionSwitcher versionInfo={versionInfo} isBusy={isBusy} />
           )}
         </div>
       )}
@@ -557,12 +553,10 @@ function formatNanoseconds(value: number | null | undefined) {
 
 function VersionSwitcher({
   versionInfo,
-  isBusy,
-  isGenerating
+  isBusy
 }: {
   versionInfo: VersionInfo;
   isBusy: boolean;
-  isGenerating: boolean;
 }) {
   const hidePrevious = !versionInfo.canPrevious;
   const hideNext = !versionInfo.canNext;
@@ -580,7 +574,7 @@ function VersionSwitcher({
         aria-label="Previous version"
         aria-hidden={hidePrevious}
         tabIndex={hidePrevious ? -1 : undefined}
-        disabled={isBusy || isGenerating || hidePrevious}
+        disabled={isBusy || hidePrevious}
         onClick={versionInfo.onPrevious}
       >
         <ChevronLeft />
@@ -597,7 +591,7 @@ function VersionSwitcher({
         aria-label="Next version"
         aria-hidden={hideNext}
         tabIndex={hideNext ? -1 : undefined}
-        disabled={isBusy || isGenerating || hideNext}
+        disabled={isBusy || hideNext}
         onClick={versionInfo.onNext}
       >
         <ChevronRight />

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { requestJson } from "./api";
 import { attachmentReferences, isImageAttachment, uploadAttachmentToChat } from "./attachments";
 import {
+  activateMessagePath,
   activeMessageAttachments,
   activePathMessages,
   applyMessageVersionSelection,
@@ -17,10 +18,11 @@ import {
   versionInfoForMessage
 } from "./chatMessages";
 import { ConfirmDialog, RetroLoader } from "./common";
-import { StartChatComposer } from "./Composer";
+import { StartChatComposer, type GenerationNotice } from "./Composer";
 import { readGenerateEventStream } from "./generationStream";
 import { MessageBubble, PendingOutgoingMessage } from "./MessageBubble";
 import { ModelBackgroundLayer, modelBackgroundContainerStyle } from "./ModelBackground";
+import { MessageTreeExplorer } from "./MessageTreeExplorer";
 import { defaultToolPreferences, normalizeChatDetail } from "./toolPreferences";
 import {
   deleteHostedPendingSend,
@@ -97,6 +99,8 @@ export function ChatView({
   availableTools,
   personas,
   personaVersions,
+  isTreeOpen,
+  onTreeClose,
   onChatsChanged,
   onChatSettingsLoaded,
   onConversationSettingsSave,
@@ -114,6 +118,8 @@ export function ChatView({
   availableTools: AvailableTool[];
   personas: Persona[];
   personaVersions: PersonaVersion[];
+  isTreeOpen: boolean;
+  onTreeClose: () => void;
   onChatsChanged: () => Promise<void>;
   onChatSettingsLoaded: (
     override: string | null | undefined,
@@ -132,6 +138,7 @@ export function ChatView({
   const [generationError, setGenerationError] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [activeAssistantId, setActiveAssistantId] = useState<string | null>(null);
+  const [generationNotices, setGenerationNotices] = useState<GenerationNotice[]>([]);
   const [pendingPrompt, setPendingPrompt] = useState<ComposerSubmitPayload | null>(null);
   const [pendingSend, setPendingSend] = useState<HostedPendingSend | null>(null);
   const [isPendingSendLoading, setIsPendingSendLoading] = useState(true);
@@ -149,7 +156,9 @@ export function ChatView({
   const userScrollIntentTimeoutRef = useRef<number | null>(null);
   const scrollToBottomAfterLoadRef = useRef(false);
   const branchScrollAnchorRef = useRef<BranchScrollAnchor | null>(null);
+  const generationJumpTargetRef = useRef<string | null>(null);
   const activeChatIdRef = useRef(chatId);
+  const activeAssistantIdRef = useRef<string | null>(null);
   const chatStateRef = useRef<ChatDetail | null>(null);
   const messagesStateRef = useRef<ChatMessage[]>([]);
   const loadChatRef = useRef<((bypassCache?: boolean) => Promise<void>) | null>(null);
@@ -163,10 +172,33 @@ export function ChatView({
   const isSavingHostedCacheRef = useRef(false);
   const thinkingStartedAtRef = useRef(new Map<string, number>());
   const [thinkingDurations, setThinkingDurations] = useState<Record<string, number>>({});
+  const replaceChatState = useCallback((nextChat: ChatDetail | null) => {
+    chatStateRef.current = nextChat;
+    setChat(nextChat);
+  }, []);
+  const updateChatState = useCallback(
+    (updater: (current: ChatDetail | null) => ChatDetail | null) => {
+      replaceChatState(updater(chatStateRef.current));
+    },
+    [replaceChatState]
+  );
+  const replaceMessageList = useCallback((nextMessages: ChatMessage[]) => {
+    messagesStateRef.current = nextMessages;
+    setMessages(nextMessages);
+  }, []);
+  const updateMessageList = useCallback(
+    (updater: (current: ChatMessage[]) => ChatMessage[]) => {
+      replaceMessageList(updater(messagesStateRef.current));
+    },
+    [replaceMessageList]
+  );
   const visibleMessages = useMemo(
     () => activePathMessages(messages, chat?.active_root_message_id ?? null),
     [chat?.active_root_message_id, messages]
   );
+  const isActiveGenerationVisible =
+    Boolean(activeAssistantId) &&
+    visibleMessages.some((message) => message.id === activeAssistantId);
   const siblingGroups = useMemo(() => groupMessagesByParent(messages), [messages]);
   const chatContainsImages = useMemo(
     () => messages.some((message) => activeMessageAttachments(message).some(isImageAttachment)),
@@ -176,9 +208,23 @@ export function ChatView({
     selectedModelInfo && !selectedModelInfo.supports_images && chatContainsImages
       ? "This chat includes images. Images may not be supported by this model."
       : null;
+  const currentGenerationNotice = generationNotices[generationNotices.length - 1] ?? null;
   activeChatIdRef.current = chatId;
+  activeAssistantIdRef.current = activeAssistantId;
   chatStateRef.current = chat;
   messagesStateRef.current = messages;
+
+  useEffect(() => {
+    setGenerationNotices([]);
+  }, [chatId]);
+
+  useEffect(() => {
+    const visibleMessageIds = new Set(visibleMessages.map((message) => message.id));
+    setGenerationNotices((current) => {
+      const next = current.filter((notice) => !visibleMessageIds.has(notice.messageId));
+      return next.length === current.length ? current : next;
+    });
+  }, [visibleMessages]);
 
   const updatePendingSend = useCallback((next: HostedPendingSend | null) => {
     pendingSendRef.current = next;
@@ -215,7 +261,7 @@ export function ChatView({
         ...message,
         context_blocks: message.context_blocks ?? []
       }));
-      setChat({
+      replaceChatState({
         ...normalizedChat,
         active_root_message_id: activeRootMessageId
       });
@@ -227,12 +273,7 @@ export function ChatView({
       thinkingStartedAtRef.current.clear();
       setThinkingDurations({});
       setStreamSegments({});
-      setMessages(normalizedMessages);
-      chatStateRef.current = {
-        ...normalizedChat,
-        active_root_message_id: activeRootMessageId
-      };
-      messagesStateRef.current = normalizedMessages;
+      replaceMessageList(normalizedMessages);
       const streamingAssistantId = streamingAssistantIdFromMessages(normalizedMessages);
       setActiveAssistantId(streamingAssistantId);
       setIsGenerating(Boolean(streamingAssistantId));
@@ -247,7 +288,7 @@ export function ChatView({
           modelValue(normalizedChat.default_backend_id, normalizedChat.default_model_name)
       );
     },
-    [onChatSettingsLoaded, onModelSelected]
+    [onChatSettingsLoaded, onModelSelected, replaceChatState, replaceMessageList]
   );
 
   const queueHostedCacheSave = useCallback(
@@ -358,12 +399,12 @@ export function ChatView({
       const messageResponse = await requestJson<ListMessagesResponse>(
         `/api/chats/${chatId}/messages`
       );
-      setChat((current) =>
+      updateChatState((current) =>
         current
           ? { ...current, active_root_message_id: messageResponse.active_root_message_id }
           : current
       );
-      setMessages(messageResponse.messages);
+      replaceMessageList(messageResponse.messages);
 
       const streamingAssistantId = streamingAssistantIdFromMessages(messageResponse.messages);
       setActiveAssistantId(streamingAssistantId);
@@ -375,7 +416,7 @@ export function ChatView({
           ...normalizeChatDetail(chatResponse.chat),
           active_root_message_id: messageResponse.active_root_message_id
         };
-        setChat(nextChat);
+        replaceChatState(nextChat);
         onChatSettingsLoaded(
           nextChat.system_prompt_override,
           nextChat.inference_settings,
@@ -393,7 +434,15 @@ export function ChatView({
         refreshError instanceof Error ? refreshError.message : "Failed to refresh generation"
       );
     }
-  }, [chatId, onChatSettingsLoaded, onChatsChanged, queueHostedCacheSave]);
+  }, [
+    chatId,
+    onChatSettingsLoaded,
+    onChatsChanged,
+    queueHostedCacheSave,
+    replaceChatState,
+    replaceMessageList,
+    updateChatState
+  ]);
 
   useEffect(() => {
     if (
@@ -464,6 +513,10 @@ export function ChatView({
           setGenerationError(null);
         } else {
           setGenerationError(message);
+          const assistantId = activeAssistantIdRef.current;
+          if (assistantId) {
+            queueGenerationNotice(assistantId, "error");
+          }
         }
       } finally {
         if (generationRunRef.current === runId) {
@@ -818,6 +871,25 @@ export function ChatView({
   }, [isLoading, visibleMessages]);
 
   useLayoutEffect(() => {
+    const targetMessageId = generationJumpTargetRef.current;
+    if (!targetMessageId || isLoading) {
+      return;
+    }
+
+    const list = messageListRef.current;
+    const messageElement = list?.querySelector<HTMLElement>(
+      `[data-message-id="${targetMessageId}"]`
+    );
+    if (!list || !messageElement) {
+      return;
+    }
+
+    scrollMessageTopIntoListView(list, messageElement);
+    autoScrollModeRef.current = "top";
+    generationJumpTargetRef.current = null;
+  }, [isLoading, visibleMessages]);
+
+  useLayoutEffect(() => {
     if (!isGenerating || !activeAssistantId || autoScrollModeRef.current === "paused") {
       return;
     }
@@ -930,6 +1002,27 @@ export function ChatView({
     );
   }
 
+  function queueGenerationNotice(
+    messageId: string,
+    kind: GenerationNotice["kind"]
+  ) {
+    const currentChat = chatStateRef.current;
+    if (
+      currentChat &&
+      activePathMessages(
+        messagesStateRef.current,
+        currentChat.active_root_message_id
+      ).some((message) => message.id === messageId)
+    ) {
+      return;
+    }
+
+    setGenerationNotices((current) => [
+      ...current.filter((notice) => notice.messageId !== messageId),
+      { messageId, kind }
+    ]);
+  }
+
   function applyGenerateEvent(event: GenerateEvent, runId: number) {
     if (generationRunRef.current !== runId && event.type !== "chat_title") {
       return;
@@ -942,11 +1035,11 @@ export function ChatView({
         clearThinkingDuration(event.assistant_message.id);
         setStreamSegments((current) => ({ ...current, [event.assistant_message.id]: [] }));
         if (event.user_message && !event.user_message.parent_message_id) {
-          setChat((current) =>
+          updateChatState((current) =>
             current ? { ...current, active_root_message_id: event.user_message?.id ?? null } : current
           );
         }
-        setMessages((current) => {
+        updateMessageList((current) => {
           const parentUpdates = new Map<string, string>();
           if (event.user_message?.parent_message_id) {
             parentUpdates.set(event.user_message.parent_message_id, event.user_message.id);
@@ -992,6 +1085,7 @@ export function ChatView({
         break;
       case "message_done":
         finishThinkingDuration(event.assistant_message_id);
+        queueGenerationNotice(event.assistant_message_id, "complete");
         updateMessageStatus(
           event.assistant_message_id,
           "complete",
@@ -1006,7 +1100,7 @@ export function ChatView({
         }
         break;
       case "chat_title":
-        setChat((current) =>
+        updateChatState((current) =>
           current && current.id === event.chat_id ? { ...current, title: event.title } : current
         );
         break;
@@ -1018,6 +1112,7 @@ export function ChatView({
       case "error":
         setGenerationError(event.message);
         if (event.assistant_message_id) {
+          queueGenerationNotice(event.assistant_message_id, "error");
           finishThinkingDuration(event.assistant_message_id);
           updateMessageStatus(event.assistant_message_id, "error", "error");
           clearStreamSegments(event.assistant_message_id);
@@ -1031,7 +1126,7 @@ export function ChatView({
     field: "content_text" | "thinking_text",
     delta: string
   ) {
-    setMessages((current) =>
+    updateMessageList((current) =>
       current.map((message) => {
         if (message.id !== messageId) {
           return message;
@@ -1082,7 +1177,7 @@ export function ChatView({
     doneReason: string | null,
     stats?: ChatMessage["stats"]
   ) {
-    setMessages((current) =>
+    updateMessageList((current) =>
       current.map((message) =>
         message.id === messageId
           ? {
@@ -1121,7 +1216,7 @@ export function ChatView({
   }
 
   async function updateChatToolPreferences(nextPreferences: ChatToolPreferences) {
-    setChat((current) =>
+    updateChatState((current) =>
       current ? { ...current, tool_preferences: nextPreferences } : current
     );
 
@@ -1130,7 +1225,7 @@ export function ChatView({
         method: "PATCH",
         body: JSON.stringify({ tool_preferences: nextPreferences })
       });
-      setChat(normalizeChatDetail(response.chat));
+      replaceChatState(normalizeChatDetail(response.chat));
     } catch (updateError) {
       setGenerationError(
         updateError instanceof Error ? updateError.message : "Failed to update tool settings"
@@ -1189,12 +1284,12 @@ export function ChatView({
         `/api/chats/${chatId}/messages`
       );
       if (acknowledgedMessageForAttempt(response.messages, retryAttempt)) {
-        setChat((current) =>
+        updateChatState((current) =>
           current
             ? { ...current, active_root_message_id: response.active_root_message_id }
             : current
         );
-        setMessages(
+        replaceMessageList(
           response.messages.map((message) => ({
             ...message,
             context_blocks: message.context_blocks ?? []
@@ -1231,7 +1326,7 @@ export function ChatView({
   }
 
   function replaceMessage(nextMessage: ChatMessage) {
-    setMessages((current) =>
+    updateMessageList((current) =>
       current.map((message) => (message.id === nextMessage.id ? nextMessage : message))
     );
   }
@@ -1351,12 +1446,132 @@ export function ChatView({
     });
   }
 
+  function activatePathToMessage(
+    messageId: string,
+    missingMessage: string,
+    targetRevisionId?: string
+  ) {
+    const currentChat = chatStateRef.current;
+    if (!currentChat) {
+      return false;
+    }
+
+    const selection = activateMessagePath({
+      chat: currentChat,
+      messages: messagesStateRef.current,
+      targetMessageId: messageId,
+      targetRevisionId
+    });
+    if (!selection.rootMessageId) {
+      setGenerationError(missingMessage);
+      return false;
+    }
+
+    setGenerationError(null);
+    branchScrollAnchorRef.current = null;
+    generationJumpTargetRef.current = messageId;
+    replaceChatState(selection.chat);
+    replaceMessageList(selection.messages);
+
+    if (selection.chatChanged) {
+      const mutation: HostedVersionMutation = {
+        key: `root:${chatId}`,
+        kind: "root",
+        chatId,
+        messageId: selection.rootMessageId
+      };
+      pendingVersionMutationsRef.current.set(mutation.key, mutation);
+    }
+
+    for (const revisionSelection of selection.revisionSelections) {
+      const mutation: HostedVersionMutation = {
+        key: `revision:${revisionSelection.messageId}`,
+        kind: "revision",
+        chatId,
+        messageId: revisionSelection.messageId,
+        revisionId: revisionSelection.revisionId
+      };
+      pendingVersionMutationsRef.current.set(mutation.key, mutation);
+    }
+
+    const changedParentIds = new Set(selection.changedMessages.map((message) => message.id));
+    for (const childSelection of selection.childSelections) {
+      if (!changedParentIds.has(childSelection.parentMessageId)) {
+        continue;
+      }
+      const mutation: HostedVersionMutation = {
+        key: `child:${childSelection.parentMessageId}`,
+        kind: "child",
+        chatId,
+        parentMessageId: childSelection.parentMessageId,
+        messageId: childSelection.messageId
+      };
+      pendingVersionMutationsRef.current.set(mutation.key, mutation);
+    }
+
+    void flushVersionMutations();
+    return true;
+  }
+
+  function openTreeBranch(messageId: string, revisionId: string) {
+    if (
+      !activatePathToMessage(
+        messageId,
+        "That message version is no longer available in this chat.",
+        revisionId
+      )
+    ) {
+      return;
+    }
+    onTreeClose();
+  }
+
+  function jumpToActiveGeneration() {
+    const assistantId = activeAssistantId;
+    if (!assistantId || isActiveGenerationVisible) {
+      return;
+    }
+
+    activatePathToMessage(
+      assistantId,
+      "The generating response is no longer available in this chat."
+    );
+  }
+
+  function jumpToGenerationNotice() {
+    const notice = generationNotices[generationNotices.length - 1];
+    if (
+      !notice ||
+      !activatePathToMessage(
+        notice.messageId,
+        "The completed response is no longer available in this chat."
+      )
+    ) {
+      return;
+    }
+
+    setGenerationNotices((current) =>
+      current.filter((currentNotice) => currentNotice.messageId !== notice.messageId)
+    );
+  }
+
+  function dismissGenerationNotice() {
+    const notice = generationNotices[generationNotices.length - 1];
+    if (!notice) {
+      return;
+    }
+
+    setGenerationNotices((current) =>
+      current.filter((currentNotice) => currentNotice.messageId !== notice.messageId)
+    );
+  }
+
   async function selectVersion(currentMessage: ChatMessage, version: MessageVersion) {
     const nextMessage = version.message;
     const nextRevision = version.revision;
     const isSameMessage = currentMessage.id === nextMessage.id;
     const isSameRevision = nextMessage.active_revision_id === nextRevision.id;
-    if ((isSameMessage && isSameRevision) || isGenerating) {
+    if (isSameMessage && isSameRevision) {
       return;
     }
 
@@ -1387,11 +1602,19 @@ export function ChatView({
       nextMessage,
       nextRevision
     });
-    chatStateRef.current = selection.chat;
-    messagesStateRef.current = selection.messages;
-    setChat(selection.chat);
-    setMessages(selection.messages);
+    replaceChatState(selection.chat);
+    replaceMessageList(selection.messages);
 
+    for (const revisionSelection of selection.revisionSelections) {
+      const mutation: HostedVersionMutation = {
+        key: `revision:${revisionSelection.messageId}`,
+        kind: "revision",
+        chatId,
+        messageId: revisionSelection.messageId,
+        revisionId: revisionSelection.revisionId
+      };
+      pendingVersionMutationsRef.current.set(mutation.key, mutation);
+    }
     if (selection.messageChanged) {
       const mutation: HostedVersionMutation = currentMessage.parent_message_id
         ? {
@@ -1406,16 +1629,6 @@ export function ChatView({
             kind: "root",
             chatId,
             messageId: nextMessage.id
-          };
-      pendingVersionMutationsRef.current.set(mutation.key, mutation);
-    }
-    if (selection.revisionChanged) {
-      const mutation: HostedVersionMutation = {
-        key: `revision:${nextMessage.id}`,
-        kind: "revision",
-        chatId,
-        messageId: nextMessage.id,
-        revisionId: nextRevision.id
       };
       pendingVersionMutationsRef.current.set(mutation.key, mutation);
     }
@@ -1464,7 +1677,9 @@ export function ChatView({
     >();
     try {
       while (pendingVersionMutationsRef.current.size > 0) {
-        const mutations = [...pendingVersionMutationsRef.current.values()];
+        const mutations = [...pendingVersionMutationsRef.current.values()].sort(
+          (left, right) => versionMutationOrder(left) - versionMutationOrder(right)
+        );
         pendingVersionMutationsRef.current.clear();
         for (const mutation of mutations) {
           try {
@@ -1605,6 +1820,25 @@ export function ChatView({
                 void updateChatToolPreferences(nextPreferences)
               }
               onThinkingModeChange={setThinkingMode}
+              onJumpToGeneration={
+                isGenerating && activeAssistantId && !isActiveGenerationVisible
+                  ? jumpToActiveGeneration
+                  : undefined
+              }
+              generationNotice={
+                currentGenerationNotice
+                  ? {
+                      kind: currentGenerationNotice.kind,
+                      count: generationNotices.length
+                    }
+                  : null
+              }
+              onJumpToGenerationNotice={
+                currentGenerationNotice ? jumpToGenerationNotice : undefined
+              }
+              onDismissGenerationNotice={
+                currentGenerationNotice ? dismissGenerationNotice : undefined
+              }
               onStop={stopGeneration}
               onUploadAttachment={uploadAttachment}
               onRemoveAttachment={removeAttachment}
@@ -1613,6 +1847,14 @@ export function ChatView({
           </div>
         </>
       ) : null}
+      {chat && isTreeOpen && (
+        <MessageTreeExplorer
+          activeRootMessageId={chat.active_root_message_id}
+          messages={messages}
+          onClose={onTreeClose}
+          onOpenBranch={openTreeBranch}
+        />
+      )}
       {(error || generationError) && (
         <p className="error chat-view-error">{generationError ?? error}</p>
       )}
@@ -1628,6 +1870,17 @@ export function ChatView({
       )}
     </div>
   );
+}
+
+function versionMutationOrder(mutation: HostedVersionMutation) {
+  switch (mutation.kind) {
+    case "root":
+      return 0;
+    case "revision":
+      return 1;
+    case "child":
+      return 2;
+  }
 }
 
 function hostedModelAvatarForMessage(

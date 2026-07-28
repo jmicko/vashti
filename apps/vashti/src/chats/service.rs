@@ -592,21 +592,7 @@ pub async fn create_user_message(
     .await?;
 
     if let Some(parent_id) = &parent_message_id {
-        sqlx::query(
-            r#"
-            UPDATE chat_messages
-            SET active_child_message_id = ?,
-                updated_at = ?
-            WHERE id = ?
-              AND chat_id = ?
-            "#,
-        )
-        .bind(&message_id)
-        .bind(now)
-        .bind(parent_id)
-        .bind(chat_id)
-        .execute(&mut *tx)
-        .await?;
+        set_active_child(&mut tx, chat_id, parent_id, &message_id, now).await?;
     } else {
         sqlx::query(
             r#"
@@ -2628,12 +2614,18 @@ async fn get_message(
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use sqlx::{
         Row, SqlitePool,
         sqlite::{SqliteConnectOptions, SqlitePoolOptions},
     };
 
-    use super::recover_interrupted_generations;
+    use super::{
+        active_tail_message_id, edit_message, recover_interrupted_generations,
+        select_active_revision,
+    };
+    use crate::chats::handlers::{EditMessageRequest, SetActiveRevisionRequest};
     use crate::startup;
 
     async fn test_pool() -> SqlitePool {
@@ -2649,6 +2641,57 @@ mod tests {
             .await
             .expect("run migrations");
         pool
+    }
+
+    async fn seed_revision_tree(pool: &SqlitePool) {
+        sqlx::query(
+            "INSERT INTO users (id, username, password_hash, created_at, updated_at) VALUES ('user', 'user', 'hash', 100, 100)",
+        )
+        .execute(pool)
+        .await
+        .expect("insert user");
+        sqlx::query(
+            "INSERT INTO ollama_backends (id, name, base_url, created_at, updated_at) VALUES ('backend', 'Backend', 'http://127.0.0.1:11434', 100, 100)",
+        )
+        .execute(pool)
+        .await
+        .expect("insert backend");
+        sqlx::query(
+            "INSERT INTO chats (id, user_id, default_backend_id, default_model_name, title, active_root_message_id, created_at, updated_at, last_message_at) VALUES ('chat', 'user', 'backend', 'model', 'Chat', NULL, 100, 100, 100)",
+        )
+        .execute(pool)
+        .await
+        .expect("insert chat");
+        sqlx::query(
+            "INSERT INTO chat_messages (id, chat_id, role, status, created_at, updated_at) VALUES ('parent', 'chat', 'user', 'complete', 100, 100)",
+        )
+        .execute(pool)
+        .await
+        .expect("insert parent");
+        sqlx::query(
+            "INSERT INTO chat_message_revisions (id, message_id, content_text, thinking_text, source, created_at) VALUES ('parent-r1', 'parent', 'original', '', 'original', 100)",
+        )
+        .execute(pool)
+        .await
+        .expect("insert parent revision");
+        sqlx::query(
+            "INSERT INTO chat_messages (id, chat_id, parent_message_id, role, status, created_at, updated_at) VALUES ('child-r1', 'chat', 'parent', 'assistant', 'complete', 101, 101)",
+        )
+        .execute(pool)
+        .await
+        .expect("insert child");
+        sqlx::query(
+            "INSERT INTO chat_message_revisions (id, message_id, content_text, thinking_text, source, created_at) VALUES ('child-r1-revision', 'child-r1', 'child', '', 'original', 101)",
+        )
+        .execute(pool)
+        .await
+        .expect("insert child revision");
+        sqlx::query(
+            "UPDATE chat_messages SET active_revision_id = 'parent-r1', active_child_message_id = 'child-r1' WHERE id = 'parent'; UPDATE chat_messages SET active_revision_id = 'child-r1-revision' WHERE id = 'child-r1'; UPDATE chats SET active_root_message_id = 'parent' WHERE id = 'chat'",
+        )
+        .execute(pool)
+        .await
+        .expect("activate seeded tree");
     }
 
     #[tokio::test]
@@ -2711,5 +2754,81 @@ mod tests {
             .expect("load chat timestamp");
         assert!(updated_at > 100);
         assert_eq!(recover_interrupted_generations(&pool).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn edited_revision_keeps_the_existing_child_path() {
+        let pool = test_pool().await;
+        seed_revision_tree(&pool).await;
+
+        assert_eq!(
+            active_tail_message_id(&pool, "chat", Some("parent".to_string()))
+                .await
+                .unwrap(),
+            Some("child-r1".to_string())
+        );
+
+        let edited = edit_message(
+            &pool,
+            Path::new("/tmp"),
+            "user",
+            "chat",
+            "parent",
+            EditMessageRequest {
+                content_text: "edited parent".to_string(),
+                attachments: Vec::new(),
+            },
+        )
+        .await
+        .expect("edit parent");
+
+        let edited_revision_id = edited
+            .active_revision_id
+            .expect("edited revision should be active");
+        assert_eq!(edited.active_child_message_id.as_deref(), Some("child-r1"));
+        assert_eq!(
+            active_tail_message_id(&pool, "chat", Some("parent".to_string()))
+                .await
+                .unwrap(),
+            Some("child-r1".to_string())
+        );
+
+        let restored = select_active_revision(
+            &pool,
+            "user",
+            "chat",
+            "parent",
+            SetActiveRevisionRequest {
+                active_revision_id: "parent-r1".to_string(),
+            },
+        )
+        .await
+        .expect("restore old revision");
+        assert_eq!(
+            restored.active_child_message_id.as_deref(),
+            Some("child-r1")
+        );
+        assert_eq!(
+            active_tail_message_id(&pool, "chat", Some("parent".to_string()))
+                .await
+                .unwrap(),
+            Some("child-r1".to_string())
+        );
+
+        let restored_edit = select_active_revision(
+            &pool,
+            "user",
+            "chat",
+            "parent",
+            SetActiveRevisionRequest {
+                active_revision_id: edited_revision_id,
+            },
+        )
+        .await
+        .expect("restore edited revision");
+        assert_eq!(
+            restored_edit.active_child_message_id.as_deref(),
+            Some("child-r1")
+        );
     }
 }

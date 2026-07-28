@@ -9,9 +9,9 @@ import {
 } from "react";
 import {
   Cog,
+  GitFork,
   LogOut,
   Menu,
-  MessageSquarePlus,
   Settings as SettingsIcon,
   X
 } from "lucide-react";
@@ -125,6 +125,7 @@ export function AppShell({
   const appSettingsGuardRef = useRef<AppSettingsGuard | null>(null);
   const settingsMenuRef = useRef<HTMLDivElement>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isMessageTreeOpen, setIsMessageTreeOpen] = useState(false);
   const [isSettingsMenuOpen, setIsSettingsMenuOpen] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [pendingNavigation, setPendingNavigation] = useState<AppRoute | null>(null);
@@ -206,6 +207,10 @@ export function AppShell({
   useEffect(() => {
     routeRef.current = route;
   }, [route]);
+
+  useEffect(() => {
+    setIsMessageTreeOpen(false);
+  }, [currentChatId, currentPrivateChatId]);
 
   useEffect(() => {
     if (!isSettingsMenuOpen) {
@@ -1030,6 +1035,7 @@ export function AppShell({
             onClose={() => setIsSidebarOpen(false)}
             onDeleteChat={setChatDeleteTarget}
             onDeletePrivateChat={setPrivateChatDeleteTarget}
+            onNewChat={() => openChat()}
             onOpenChat={openChat}
             onOpenPrivateChat={openPrivateChat}
             onRenameChat={renameChat}
@@ -1056,8 +1062,9 @@ export function AppShell({
                 <button
                   type="button"
                   className="icon-button mobile-only"
-                  aria-label="Open sidebar"
-                  onClick={() => setIsSidebarOpen(true)}
+                  aria-label={isSidebarOpen ? "Close sidebar" : "Open sidebar"}
+                  aria-expanded={isSidebarOpen}
+                  onClick={() => setIsSidebarOpen((open) => !open)}
                 >
                   <Menu />
                 </button>
@@ -1101,14 +1108,20 @@ export function AppShell({
             )}
           </div>
           <div className="topbar-right">
-            {!isSettingsPage && (
+            {(currentChatId || currentPrivateChatId) && (
               <button
                 type="button"
-                className="primary-action"
-                onClick={() => openChat()}
+                className="icon-button"
+                aria-label={isMessageTreeOpen ? "Close message tree" : "Explore message tree"}
+                aria-pressed={isMessageTreeOpen}
+                title={isMessageTreeOpen ? "Close message tree" : "Explore message tree"}
+                onClick={() => {
+                  setIsSidebarOpen(false);
+                  setIsSettingsMenuOpen(false);
+                  setIsMessageTreeOpen((open) => !open);
+                }}
               >
-                <MessageSquarePlus />
-                <span>New Chat</span>
+                <GitFork />
               </button>
             )}
             <div className="settings-menu-wrap" ref={settingsMenuRef}>
@@ -1181,6 +1194,8 @@ export function AppShell({
               systemPromptOverride={chatSystemPromptOverride}
               inferenceSettings={chatInferenceSettings}
               contextBlocks={chatContextBlocks}
+              isTreeOpen={isMessageTreeOpen}
+              onTreeClose={() => setIsMessageTreeOpen(false)}
               onImageOpen={openImageViewer}
               onChatSettingsLoaded={handleChatSettingsLoaded}
               onModelSelected={setSelectedModel}
@@ -1203,6 +1218,8 @@ export function AppShell({
                 availableTools={availableTools}
                 personas={personas}
                 personaVersions={knownPersonaVersions}
+                isTreeOpen={isMessageTreeOpen}
+                onTreeClose={() => setIsMessageTreeOpen(false)}
                 onChatSettingsLoaded={handleChatSettingsLoaded}
                 onChatsChanged={loadChats}
                 onConversationSettingsSave={persistChatConversationSettings}

@@ -9,8 +9,11 @@ import {
 } from "react";
 import {
   Brain,
+  CheckCircle2,
   ChevronDown,
   ChevronUp,
+  CircleAlert,
+  LocateFixed,
   Paperclip,
   SendHorizontal,
   Square,
@@ -43,6 +46,11 @@ import type {
 } from "./types";
 import { dismissMobileKeyboard, usesMobileInputBehavior } from "./viewport";
 
+export type GenerationNotice = {
+  messageId: string;
+  kind: "complete" | "error";
+};
+
 export function StartChatComposer({
   isBusy,
   isDisabled,
@@ -55,6 +63,10 @@ export function StartChatComposer({
   warning,
   onToolPreferencesChange,
   onThinkingModeChange,
+  onJumpToGeneration,
+  generationNotice,
+  onJumpToGenerationNotice,
+  onDismissGenerationNotice,
   onStop,
   onUploadAttachment,
   onRemoveAttachment,
@@ -72,6 +84,10 @@ export function StartChatComposer({
   warning?: string | null;
   onToolPreferencesChange?: (preferences: ChatToolPreferences) => void | Promise<void>;
   onThinkingModeChange?: (mode: ThinkingMode) => void;
+  onJumpToGeneration?: () => void;
+  generationNotice?: Pick<GenerationNotice, "kind"> & { count: number } | null;
+  onJumpToGenerationNotice?: () => void;
+  onDismissGenerationNotice?: () => void;
   onStop?: () => void;
   onUploadAttachment?: (file: File) => Promise<ComposerAttachment> | ComposerAttachment;
   onRemoveAttachment?: (attachment: ComposerAttachment) => Promise<void>;
@@ -309,6 +325,47 @@ export function StartChatComposer({
     <>
       {visibleWarning && <p className="composer-warning">{visibleWarning}</p>}
       <form ref={formRef} className={composerClassName} style={composerStyle} onSubmit={submit}>
+        {isGenerating && onJumpToGeneration && (
+          <button
+            type="button"
+            className="composer-generation-jump"
+            aria-label="Jump to generating response"
+            title="Jump to generating response"
+            onClick={onJumpToGeneration}
+          >
+            <LocateFixed />
+            <span>Generating</span>
+          </button>
+        )}
+        {!(isGenerating && onJumpToGeneration) &&
+          generationNotice &&
+          onJumpToGenerationNotice &&
+          onDismissGenerationNotice && (
+            <div
+              className={`composer-generation-notice composer-generation-notice-${generationNotice.kind}`}
+            >
+              <button
+                type="button"
+                className="composer-generation-notice-open"
+                onClick={onJumpToGenerationNotice}
+              >
+                {generationNotice.kind === "complete" ? <CheckCircle2 /> : <CircleAlert />}
+                <span>
+                  {generationNotice.kind === "complete" ? "Response ready" : "Generation failed"}
+                  {generationNotice.count > 1 ? ` (${generationNotice.count})` : ""}
+                </span>
+              </button>
+              <button
+                type="button"
+                className="composer-generation-notice-dismiss"
+                aria-label="Dismiss generation notice"
+                title="Dismiss"
+                onClick={onDismissGenerationNotice}
+              >
+                <X />
+              </button>
+            </div>
+          )}
         {(isTextInputFocused || isComposerExpanded) && (
           <button
             type="button"
