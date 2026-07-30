@@ -41,6 +41,7 @@ import { RetroLoader } from "./common";
 import { MarkdownContent } from "./MarkdownContent";
 import { MessageStreamContent, ThinkingContent, thinkingSummary } from "./messageContent";
 import { ModelAvatar } from "./ModelAvatar";
+import { MessageVersionCarousel } from "./MessageVersionCarousel";
 import type {
   ChatMessage,
   ComposerAttachment,
@@ -102,28 +103,16 @@ export function PendingOutgoingMessage({
   );
 }
 
-export function MessageBubble({
-  message,
-  versionInfo,
-  copied,
-  isBusy,
-  isGenerating,
-  canBranch = true,
-  canRegenerate = true,
-  canEdit = true,
-  streamSegments,
-  thinkingDurationSeconds,
-  onCopy,
-  onDelete,
-  onBranch,
-  onEdit,
-  onImageOpen,
-  onRemoveAttachment,
-  onUploadAttachment,
-  onRegenerate,
-  selectedModelInfo,
-  modelAvatar
-}: {
+type MessageAvatarInfo = {
+  displayName: string;
+  assetId?: string | null;
+  privateAssetId?: string | null;
+  cropX?: number;
+  cropY?: number;
+  cropSize?: number;
+};
+
+type MessageBubbleProps = {
   message: ChatMessage;
   versionInfo: VersionInfo | null;
   copied: boolean;
@@ -151,15 +140,83 @@ export function MessageBubble({
   onUploadAttachment?: (file: File) => Promise<ComposerAttachment> | ComposerAttachment;
   onRegenerate: (message: ChatMessage) => Promise<void>;
   selectedModelInfo?: ModelInfo | null;
-  modelAvatar?: {
-    displayName: string;
-    assetId?: string | null;
-    privateAssetId?: string | null;
-    cropX?: number;
-    cropY?: number;
-    cropSize?: number;
-  } | null;
-}) {
+  modelAvatar?: MessageAvatarInfo | null;
+  modelAvatarForMessage?: (message: ChatMessage) => MessageAvatarInfo | null;
+  streamSegmentsForMessage?: (message: ChatMessage) => MessageStreamSegment[] | undefined;
+  thinkingDurationForMessage?: (message: ChatMessage) => number | null;
+  isCarouselPreview?: boolean;
+};
+
+export function MessageBubble(props: MessageBubbleProps) {
+  const { message, versionInfo } = props;
+  const bubble = <MessageBubbleCard {...props} />;
+
+  if (!versionInfo) {
+    return bubble;
+  }
+
+  return (
+    <MessageVersionCarousel
+      isBusy={props.isBusy}
+      role={message.role}
+      versionInfo={versionInfo}
+      renderVersion={(version, index) => {
+        const previewMessage = messageAtVersion(version);
+
+        return (
+          <MessageBubbleCard
+            {...props}
+            message={previewMessage}
+            versionInfo={versionInfoAtIndex(versionInfo, index)}
+            copied={false}
+            isBusy={false}
+            isGenerating={previewMessage.status === "streaming"}
+            streamSegments={
+              props.streamSegmentsForMessage?.(previewMessage) ??
+              (previewMessage.id === message.id ? props.streamSegments : undefined)
+            }
+            thinkingDurationSeconds={
+              props.thinkingDurationForMessage?.(previewMessage) ??
+              (previewMessage.id === message.id ? props.thinkingDurationSeconds : null)
+            }
+            modelAvatar={
+              props.modelAvatarForMessage
+                ? props.modelAvatarForMessage(previewMessage)
+                : props.modelAvatar
+            }
+            isCarouselPreview
+          />
+        );
+      }}
+    >
+      {bubble}
+    </MessageVersionCarousel>
+  );
+}
+
+function MessageBubbleCard({
+  message,
+  versionInfo,
+  copied,
+  isBusy,
+  isGenerating,
+  canBranch = true,
+  canRegenerate = true,
+  canEdit = true,
+  streamSegments,
+  thinkingDurationSeconds,
+  onCopy,
+  onDelete,
+  onBranch,
+  onEdit,
+  onImageOpen,
+  onRemoveAttachment,
+  onUploadAttachment,
+  onRegenerate,
+  selectedModelInfo,
+  modelAvatar,
+  isCarouselPreview = false
+}: MessageBubbleProps) {
   const content = message.is_deleted
     ? "Message deleted"
     : message.active_revision?.content_text.trim() || "";
@@ -296,7 +353,8 @@ export function MessageBubble({
   return (
     <article
       className={`message-bubble message-bubble-${message.role}`}
-      data-message-id={message.id}
+      data-message-id={isCarouselPreview ? undefined : message.id}
+      data-carousel-message-id={isCarouselPreview ? message.id : undefined}
     >
       {showMessageHeader && (
         <div className={showMessageLabel ? "message-header" : "message-header message-header-end"}>
@@ -490,6 +548,25 @@ export function MessageBubble({
       )}
     </article>
   );
+}
+
+function messageAtVersion(version: VersionInfo["versions"][number]): ChatMessage {
+  return {
+    ...version.message,
+    active_revision_id: version.revision.id,
+    active_revision: version.revision
+  };
+}
+
+function versionInfoAtIndex(versionInfo: VersionInfo, index: number): VersionInfo {
+  return {
+    ...versionInfo,
+    index,
+    canPrevious: index > 0,
+    canNext: index < versionInfo.total - 1,
+    onPrevious: () => versionInfo.onSelectIndex(index - 1),
+    onNext: () => versionInfo.onSelectIndex(index + 1)
+  };
 }
 
 function MessageStatsPanel({ stats }: { stats: MessageStats | null }) {

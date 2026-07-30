@@ -820,7 +820,8 @@ pub async fn prepare_generation(
     tx.commit().await?;
 
     let mut prompt_messages =
-        active_prompt_messages(pool, uploads_dir, user_id, chat_id, &assistant_message_id).await?;
+        ancestor_prompt_messages(pool, uploads_dir, user_id, chat_id, &assistant_message_id)
+            .await?;
     prepend_system_prompt(&mut prompt_messages, compiled_system_prompt.as_deref());
     let user_message = get_message(pool, user_id, chat_id, &user_message_id).await?;
     let assistant_message = get_message(pool, user_id, chat_id, &assistant_message_id).await?;
@@ -991,7 +992,8 @@ pub async fn prepare_regeneration(
     tx.commit().await?;
 
     let mut prompt_messages =
-        active_prompt_messages(pool, uploads_dir, user_id, chat_id, &assistant_message_id).await?;
+        ancestor_prompt_messages(pool, uploads_dir, user_id, chat_id, &assistant_message_id)
+            .await?;
     prepend_system_prompt(&mut prompt_messages, compiled_system_prompt.as_deref());
     let assistant_message = get_message(pool, user_id, chat_id, &assistant_message_id).await?;
 
@@ -1211,7 +1213,8 @@ pub async fn prepare_branch_generation(
     tx.commit().await?;
 
     let mut prompt_messages =
-        active_prompt_messages(pool, uploads_dir, user_id, chat_id, &assistant_message_id).await?;
+        ancestor_prompt_messages(pool, uploads_dir, user_id, chat_id, &assistant_message_id)
+            .await?;
     prepend_system_prompt(&mut prompt_messages, compiled_system_prompt.as_deref());
     let user_message = get_message(pool, user_id, chat_id, &user_message_id).await?;
     let assistant_message = get_message(pool, user_id, chat_id, &assistant_message_id).await?;
@@ -2091,28 +2094,42 @@ async fn active_tail_message_id(
     Ok(tail)
 }
 
-async fn active_prompt_messages(
+async fn ancestor_prompt_messages(
     pool: &SqlitePool,
     uploads_dir: &Path,
     user_id: &str,
     chat_id: &str,
     stop_before_message_id: &str,
 ) -> Result<Vec<OllamaChatMessage>, ApiError> {
-    let chat = get_chat(pool, user_id, chat_id).await?;
-    let mut current = chat.active_root_message_id;
+    get_chat(pool, user_id, chat_id).await?;
+    let mut current = sqlx::query_scalar::<_, Option<String>>(
+        r#"
+        SELECT parent_message_id
+        FROM chat_messages
+        WHERE id = ?
+          AND chat_id = ?
+        "#,
+    )
+    .bind(stop_before_message_id)
+    .bind(chat_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| ApiError::internal("Generation message is missing from its conversation"))?;
     let mut seen = HashSet::new();
     let mut messages = Vec::new();
 
     while let Some(message_id) = current {
-        if message_id == stop_before_message_id || !seen.insert(message_id.clone()) {
-            break;
+        if !seen.insert(message_id.clone()) {
+            return Err(ApiError::internal(
+                "Conversation contains a cyclic message path",
+            ));
         }
 
         let Some(row) = sqlx::query(
             r#"
-            SELECT m.role,
+            SELECT m.parent_message_id,
+                   m.role,
                    m.is_deleted,
-                   m.active_child_message_id,
                    r.id AS revision_id,
                    r.content_text,
                    r.thinking_text
@@ -2127,9 +2144,12 @@ async fn active_prompt_messages(
         .fetch_optional(pool)
         .await?
         else {
-            break;
+            return Err(ApiError::internal(
+                "Conversation contains a missing ancestor message",
+            ));
         };
 
+        let parent_message_id: Option<String> = row.try_get("parent_message_id")?;
         let role: String = row.try_get("role")?;
         let is_deleted = row.try_get::<i64, _>("is_deleted")? != 0;
         let revision_id: Option<String> = row.try_get("revision_id")?;
@@ -2167,9 +2187,10 @@ async fn active_prompt_messages(
             }
         }
 
-        current = row.try_get("active_child_message_id")?;
+        current = parent_message_id;
     }
 
+    messages.reverse();
     Ok(messages)
 }
 
@@ -2622,8 +2643,8 @@ mod tests {
     };
 
     use super::{
-        active_tail_message_id, edit_message, recover_interrupted_generations,
-        select_active_revision,
+        active_tail_message_id, ancestor_prompt_messages, edit_message,
+        recover_interrupted_generations, select_active_revision,
     };
     use crate::chats::handlers::{EditMessageRequest, SetActiveRevisionRequest};
     use crate::startup;
@@ -2829,6 +2850,44 @@ mod tests {
         assert_eq!(
             restored_edit.active_child_message_id.as_deref(),
             Some("child-r1")
+        );
+    }
+
+    #[tokio::test]
+    async fn generation_prompt_follows_its_parent_lineage() {
+        let pool = test_pool().await;
+        seed_revision_tree(&pool).await;
+
+        sqlx::query(
+            "INSERT INTO chat_messages (id, chat_id, parent_message_id, role, status, created_at, updated_at) VALUES ('alternate', 'chat', 'parent', 'assistant', 'complete', 102, 102), ('branch-user', 'chat', 'alternate', 'user', 'complete', 103, 103), ('generation', 'chat', 'branch-user', 'assistant', 'streaming', 104, 104)",
+        )
+        .execute(&pool)
+        .await
+        .expect("insert alternate branch");
+        sqlx::query(
+            "INSERT INTO chat_message_revisions (id, message_id, content_text, thinking_text, source, created_at) VALUES ('alternate-r1', 'alternate', 'alternate', '', 'original', 102), ('branch-user-r1', 'branch-user', 'branch prompt', '', 'original', 103)",
+        )
+        .execute(&pool)
+        .await
+        .expect("insert alternate branch revisions");
+        sqlx::query(
+            "UPDATE chat_messages SET active_revision_id = 'alternate-r1', active_child_message_id = 'branch-user' WHERE id = 'alternate'; UPDATE chat_messages SET active_revision_id = 'branch-user-r1', active_child_message_id = 'generation' WHERE id = 'branch-user'",
+        )
+        .execute(&pool)
+        .await
+        .expect("activate alternate branch revisions");
+
+        let prompt =
+            ancestor_prompt_messages(&pool, Path::new("/tmp"), "user", "chat", "generation")
+                .await
+                .expect("build prompt from generation ancestry");
+
+        assert_eq!(
+            prompt
+                .iter()
+                .map(|message| message.content.as_str())
+                .collect::<Vec<_>>(),
+            vec!["original", "alternate", "branch prompt"]
         );
     }
 }

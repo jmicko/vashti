@@ -648,8 +648,10 @@ export type MessageVersion = {
 export type VersionInfo = {
   index: number;
   total: number;
+  versions: MessageVersion[];
   canPrevious: boolean;
   canNext: boolean;
+  onSelectIndex: (index: number) => void;
   onPrevious: () => void;
   onNext: () => void;
 };

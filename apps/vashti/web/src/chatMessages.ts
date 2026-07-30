@@ -270,11 +270,38 @@ export function streamingAssistantIdFromMessages(messages: ChatMessage[]) {
 
 export function privatePromptMessages(
   messages: ChatMessage[],
-  activeRootMessageId: string | null,
   stopBeforeMessageId: string
 ) {
-  return activePathMessages(messages, activeRootMessageId)
-    .filter((message) => message.id !== stopBeforeMessageId)
+  const messagesById = new Map(messages.map((message) => [message.id, message]));
+  const stopMessage = messagesById.get(stopBeforeMessageId);
+  if (!stopMessage) {
+    throw new Error("Generation message is missing from its conversation");
+  }
+  const ancestors: ChatMessage[] = [];
+  const seen = new Set<string>();
+  let current = stopMessage.parent_message_id
+    ? messagesById.get(stopMessage.parent_message_id)
+    : undefined;
+
+  while (current) {
+    if (seen.has(current.id)) {
+      throw new Error("Conversation contains a cyclic message path");
+    }
+    seen.add(current.id);
+    ancestors.push(current);
+    if (current.parent_message_id) {
+      const parent = messagesById.get(current.parent_message_id);
+      if (!parent) {
+        throw new Error("Conversation contains a missing ancestor message");
+      }
+      current = parent;
+    } else {
+      current = undefined;
+    }
+  }
+
+  return ancestors
+    .reverse()
     .filter((message) => !message.is_deleted)
     .map((message) => {
       const attachmentPayload = privateAttachmentPromptPayload(activeMessageAttachments(message));
@@ -293,13 +320,12 @@ export function privatePromptMessages(
 
 export function privatePromptMessagesWithPersona(
   messages: ChatMessage[],
-  activeRootMessageId: string | null,
   stopBeforeMessageId: string,
   persona: PrivatePersona | null,
   systemPromptOverride?: string | null,
   contextBlocks: ContextBlockSelection[] = []
 ) {
-  const promptMessages = privatePromptMessages(messages, activeRootMessageId, stopBeforeMessageId);
+  const promptMessages = privatePromptMessages(messages, stopBeforeMessageId);
   const systemPrompt =
     systemPromptOverride === undefined || systemPromptOverride === null
       ? persona?.current_version.system_prompt.trim()
@@ -762,8 +788,15 @@ export function versionInfoForMessage(
   return {
     index,
     total: versions.length,
+    versions,
     canPrevious: Boolean(previousVersion),
     canNext: Boolean(nextVersion),
+    onSelectIndex: (nextIndex) => {
+      const nextVersion = versions[nextIndex];
+      if (nextVersion && nextIndex !== index) {
+        selectVersion(message, nextVersion);
+      }
+    },
     onPrevious: () => {
       if (previousVersion) {
         selectVersion(message, previousVersion);

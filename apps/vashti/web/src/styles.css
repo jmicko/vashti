@@ -2725,6 +2725,85 @@ textarea {
   padding: 14px;
 }
 
+.message-version-carousel {
+  --message-version-peek: 1rem;
+  min-width: 0;
+  position: relative;
+}
+
+.message-version-carousel-assistant,
+.message-version-carousel-system {
+  width: 100%;
+  justify-self: start;
+}
+
+.message-version-carousel-user {
+  width: min(var(--user-message-width), calc(100% - var(--user-message-offset)));
+  max-width: 100%;
+  justify-self: end;
+}
+
+.message-version-viewport {
+  width: calc(100% + var(--message-version-peek) * 2);
+  margin-inline: calc(var(--message-version-peek) * -1);
+  box-sizing: border-box;
+  overflow: hidden;
+  overflow: clip;
+  padding-inline: var(--message-version-peek);
+  position: relative;
+  touch-action: pan-y;
+  transition: height 180ms cubic-bezier(0.22, 0.72, 0.22, 1);
+}
+
+.message-version-current,
+.message-version-preview {
+  transform: translate3d(var(--message-version-offset), 0, 0);
+  transition: transform var(--message-version-transition) cubic-bezier(0.22, 0.72, 0.22, 1);
+  will-change: transform;
+}
+
+.message-version-current {
+  min-width: 0;
+  position: relative;
+  z-index: 2;
+}
+
+.message-version-carousel-user .message-version-current > .message-bubble-user {
+  width: 100%;
+  max-width: none;
+}
+
+.message-version-preview {
+  width: calc(100% - var(--message-version-peek) * 2);
+  position: absolute;
+  top: 0;
+  left: var(--message-version-peek);
+  z-index: 1;
+  pointer-events: none;
+  transform: translate3d(
+    calc(
+      var(--message-version-distance-percent) + var(--message-version-gap-offset) +
+        var(--message-version-offset)
+    ),
+    0,
+    0
+  );
+}
+
+.message-version-preview > .message-bubble {
+  width: 100%;
+  max-width: none;
+}
+
+.message-version-carousel.is-dragging {
+  cursor: grabbing;
+  user-select: none;
+}
+
+.message-version-carousel.is-settling .message-version-current {
+  pointer-events: none;
+}
+
 .message-bubble-user {
   justify-self: end;
   width: fit-content;
@@ -3314,6 +3393,19 @@ textarea {
   font-size: 0.76rem;
   font-weight: 700;
   text-align: center;
+}
+
+@media (max-width: 700px) {
+  .message-version-carousel {
+    --message-version-peek: 0.875rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .message-version-current,
+  .message-version-preview {
+    transition-duration: 0ms;
+  }
 }
 
 .message-icon-button {

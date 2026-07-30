@@ -1771,7 +1771,13 @@ export function ChatView({
                     isBusy={busyMessageId === message.id}
                     isGenerating={isGenerating}
                     streamSegments={streamSegments[message.id]}
+                    streamSegmentsForMessage={(targetMessage) =>
+                      streamSegments[targetMessage.id]
+                    }
                     thinkingDurationSeconds={thinkingDurations[message.id] ?? null}
+                    thinkingDurationForMessage={(targetMessage) =>
+                      thinkingDurations[targetMessage.id] ?? null
+                    }
                     onCopy={copyMessage}
                     onDelete={setDeleteTarget}
                     onBranch={branchMessage}
@@ -1786,6 +1792,13 @@ export function ChatView({
                       personaVersions,
                       modelGroups
                     )}
+                    modelAvatarForMessage={(targetMessage) =>
+                      hostedModelAvatarForMessage(
+                        targetMessage,
+                        personaVersions,
+                        modelGroups
+                      )
+                    }
                   />
                 ))}
                 {pendingSend && (

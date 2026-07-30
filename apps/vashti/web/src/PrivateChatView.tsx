@@ -786,7 +786,6 @@ export function PrivateChatView({
     try {
       generationMessages = privatePromptMessagesWithPersona(
         nextMessages,
-        nextChat.active_root_message_id,
         assistantMessage.id,
         selectedPrivatePersona,
         promptSystemPromptOverride,
@@ -1259,7 +1258,6 @@ export function PrivateChatView({
       try {
         generationMessages = privatePromptMessagesWithPersona(
           nextMessages,
-          nextChat.active_root_message_id,
           assistantMessage.id,
           selectedPrivatePersona,
           systemPromptOverride,
@@ -1401,7 +1399,6 @@ export function PrivateChatView({
       try {
         generationMessages = privatePromptMessagesWithPersona(
           nextMessages,
-          nextChat.active_root_message_id,
           assistantMessage.id,
           selectedPrivatePersona,
           systemPromptOverride,
@@ -1685,7 +1682,13 @@ export function PrivateChatView({
                   isBusy={busyMessageId === message.id}
                   isGenerating={isGenerating}
                   streamSegments={streamSegments[message.id]}
+                  streamSegmentsForMessage={(targetMessage) =>
+                    streamSegments[targetMessage.id]
+                  }
                   thinkingDurationSeconds={thinkingDurations[message.id] ?? null}
+                  thinkingDurationForMessage={(targetMessage) =>
+                    thinkingDurations[targetMessage.id] ?? null
+                  }
                   onCopy={copyMessage}
                   onDelete={(message) => setDeleteTarget(message as PrivateChatMessage)}
                   onBranch={branchMessage}
@@ -1699,6 +1702,13 @@ export function PrivateChatView({
                     privatePersonaVersions,
                     modelGroups
                   )}
+                  modelAvatarForMessage={(targetMessage) =>
+                    privateModelAvatarForMessage(
+                      targetMessage,
+                      privatePersonaVersions,
+                      modelGroups
+                    )
+                  }
                 />
               ))
             )}
