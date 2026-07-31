@@ -36,6 +36,7 @@ export function MessageVersionCarousel({
   role: ChatMessage["role"];
   versionInfo: VersionInfo;
 }) {
+  const swipeEnabled = useCoarsePointer();
   const [dragOffset, setDragOffset] = useState(0);
   const [transitionMs, setTransitionMs] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
@@ -82,6 +83,10 @@ export function MessageVersionCarousel({
   const renderedIndicesKey = renderedIndices.join(",");
 
   useLayoutEffect(() => {
+    if (!swipeEnabled) {
+      return;
+    }
+
     const observer = new ResizeObserver((entries) => {
       setCardHeights((current) => {
         let changed = false;
@@ -108,7 +113,11 @@ export function MessageVersionCarousel({
     }
 
     return () => observer.disconnect();
-  }, [renderedIndicesKey]);
+  }, [renderedIndicesKey, swipeEnabled]);
+
+  if (!swipeEnabled) {
+    return children;
+  }
 
   function clearSettleTimeout() {
     if (settleTimeoutRef.current !== null) {
@@ -209,7 +218,10 @@ export function MessageVersionCarousel({
 
     const deltaX = event.clientX - gesture.startX;
     const width = viewportRef.current?.clientWidth ?? 0;
-    const cardDistance = Math.max(width - carouselPeekWidth() * 2 + cardGap, 1);
+    const cardDistance = Math.max(
+      width - carouselPeekWidth(viewportRef.current) * 2 + cardGap,
+      1
+    );
     const displacementThreshold = Math.min(72, Math.max(42, cardDistance * 0.16));
     const hasIntent =
       Math.abs(deltaX) >= displacementThreshold || Math.abs(gesture.velocityX) >= 0.52;
@@ -304,7 +316,9 @@ export function MessageVersionCarousel({
   const targetHeight =
     heightTargetIndex === null ? currentHeight : (cardHeights[heightTargetIndex] ?? currentHeight);
   const cardDistance = Math.max(
-    (viewportRef.current?.clientWidth ?? 0) - carouselPeekWidth() * 2 + cardGap,
+    (viewportRef.current?.clientWidth ?? 0) -
+      carouselPeekWidth(viewportRef.current) * 2 +
+      cardGap,
     1
   );
   const heightProgress = isSettling
@@ -440,6 +454,25 @@ function clampIndex(index: number, total: number) {
   return Math.max(0, Math.min(index, total - 1));
 }
 
-function carouselPeekWidth() {
-  return window.matchMedia("(max-width: 700px)").matches ? 14 : 16;
+function carouselPeekWidth(viewport: HTMLDivElement | null) {
+  if (!viewport) {
+    return 0;
+  }
+  return Number.parseFloat(window.getComputedStyle(viewport).paddingLeft) || 0;
+}
+
+function useCoarsePointer() {
+  const [isCoarsePointer, setIsCoarsePointer] = useState(() =>
+    typeof window === "undefined" ? false : window.matchMedia("(pointer: coarse)").matches
+  );
+
+  useEffect(() => {
+    const query = window.matchMedia("(pointer: coarse)");
+    const update = () => setIsCoarsePointer(query.matches);
+    query.addEventListener("change", update);
+    update();
+    return () => query.removeEventListener("change", update);
+  }, []);
+
+  return isCoarsePointer;
 }

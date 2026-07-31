@@ -2688,6 +2688,7 @@ textarea {
   --user-message-width: 38rem;
   --user-message-offset: clamp(1.5rem, 12vw, 9.5rem);
   min-height: 0;
+  overflow-x: hidden;
   overflow-y: auto;
   overflow-anchor: auto;
   display: grid;
@@ -2726,7 +2727,7 @@ textarea {
 }
 
 .message-version-carousel {
-  --message-version-peek: 1rem;
+  --message-version-peek: 2rem;
   min-width: 0;
   position: relative;
 }
@@ -2738,8 +2739,7 @@ textarea {
 }
 
 .message-version-carousel-user {
-  width: min(var(--user-message-width), calc(100% - var(--user-message-offset)));
-  max-width: 100%;
+  width: 100%;
   justify-self: end;
 }
 
@@ -3397,7 +3397,7 @@ textarea {
 
 @media (max-width: 700px) {
   .message-version-carousel {
-    --message-version-peek: 0.875rem;
+    --message-version-peek: 1.75rem;
   }
 }
 
