@@ -8,10 +8,10 @@ use crate::{
     backends::service as backends_service,
     chats::{
         handlers::{
-            AttachmentReference, BranchMessageRequest, CreateChatRequest, CreateMessageRequest,
-            EditMessageRequest, GenerateChatRequest, RegenerateMessageRequest,
-            SetActiveChildRequest, SetActiveRevisionRequest, SetActiveRootRequest,
-            UpdateChatRequest,
+            AttachmentReference, BranchMessageRequest, ContinueMessageRequest, CreateChatRequest,
+            CreateMessageRequest, EditMessageRequest, GenerateChatRequest,
+            RegenerateMessageRequest, SetActiveChildRequest, SetActiveRevisionRequest,
+            SetActiveRootRequest, UpdateChatRequest,
         },
         models::{
             ChatDetail, ChatInferenceSettings, ChatMessage, ChatMessageRevision, ChatSummary,
@@ -26,6 +26,8 @@ use crate::{
     uploads,
 };
 
+const CONTINUATION_INSTRUCTION: &str = "Continue the existing assistant response seamlessly and return only the added text. Do not repeat, summarize, restart, or comment on the existing response. If it ends mid-sentence, resume that sentence directly. If it is already complete, expand it with new relevant details.";
+
 #[derive(Debug)]
 pub struct PreparedGeneration {
     pub backend_base_url: String,
@@ -36,6 +38,8 @@ pub struct PreparedGeneration {
     pub user_message: Option<ChatMessage>,
     pub assistant_message: ChatMessage,
     pub tool_selection: ToolSelection,
+    pub initial_content_text: String,
+    pub initial_thinking_text: String,
 }
 
 #[derive(Debug)]
@@ -835,6 +839,8 @@ pub async fn prepare_generation(
         user_message: Some(user_message),
         assistant_message,
         tool_selection: tool_preferences.into(),
+        initial_content_text: String::new(),
+        initial_thinking_text: String::new(),
     })
 }
 
@@ -1006,6 +1012,188 @@ pub async fn prepare_regeneration(
         user_message: None,
         assistant_message,
         tool_selection: tool_preferences.into(),
+        initial_content_text: String::new(),
+        initial_thinking_text: String::new(),
+    })
+}
+
+pub async fn prepare_continuation(
+    pool: &SqlitePool,
+    uploads_dir: &Path,
+    user_id: &str,
+    chat_id: &str,
+    message_id: &str,
+    payload: ContinueMessageRequest,
+) -> Result<PreparedGeneration, ApiError> {
+    let target = get_message(pool, user_id, chat_id, message_id).await?;
+    if target.role != "assistant" || target.is_deleted {
+        return Err(ApiError::bad_request(
+            "invalid_message",
+            "Only existing assistant responses can be continued",
+        ));
+    }
+    if target.status == "streaming" {
+        return Err(ApiError::conflict(
+            "generation_in_progress",
+            "This response is already generating",
+        ));
+    }
+
+    let active_revision = target.active_revision.as_ref().ok_or_else(|| {
+        ApiError::bad_request("invalid_message", "The response has no active revision")
+    })?;
+    let initial_content_text = active_revision.content_text.clone();
+    let initial_thinking_text = active_revision.thinking_text.clone();
+    if initial_content_text.trim().is_empty() {
+        return Err(ApiError::bad_request(
+            "invalid_message",
+            "The response has no text to continue",
+        ));
+    }
+
+    let chat = get_chat(pool, user_id, chat_id).await?;
+    let tool_preferences = payload
+        .tool_preferences
+        .unwrap_or_else(|| chat.tool_preferences.clone());
+    let inference_settings = payload
+        .inference_settings
+        .map(normalized_inference_settings)
+        .unwrap_or_else(|| chat.inference_settings.clone());
+    let fallback_model = MessageModel {
+        backend_id: target.backend_id.clone().unwrap_or_default(),
+        model_name: target.model_name.clone().unwrap_or_default(),
+        persona_version_id: target.persona_version_id.clone(),
+    };
+    let resolved = resolve_generation_model(
+        pool,
+        user_id,
+        &chat,
+        Some(&fallback_model),
+        None,
+        None,
+        target.persona_version_id.clone(),
+    )
+    .await?;
+    let backend = resolved.backend;
+    let model_name = resolved.model_name;
+    let persona = resolved.persona;
+    let compiled_system_prompt = context_block_service::compile_system_prompt(
+        chat.system_prompt_override.as_deref().or_else(|| {
+            persona
+                .as_ref()
+                .map(|persona| persona.system_prompt.as_str())
+        }),
+        &target.context_blocks,
+    )?;
+    // Continuing should extend the existing answer, not start a second reasoning cycle.
+    let think_mode = Some("off".to_string());
+    let revision_id = Uuid::new_v4().to_string();
+    let now = unix_timestamp();
+    let mut tx = pool.begin().await?;
+
+    insert_revision(
+        &mut tx,
+        &revision_id,
+        message_id,
+        &initial_content_text,
+        &initial_thinking_text,
+        "regeneration",
+        now,
+    )
+    .await?;
+    sqlx::query(
+        r#"
+        UPDATE chat_messages
+        SET active_revision_id = ?,
+            status = 'streaming',
+            backend_id = ?,
+            model_name = ?,
+            persona_id = ?,
+            persona_version_id = ?,
+            persona_name_snapshot = ?,
+            think_mode = ?,
+            done_reason = NULL,
+            error_text = NULL,
+            stats_json = NULL,
+            started_at = ?,
+            completed_at = NULL,
+            updated_at = ?
+        WHERE id = ?
+          AND chat_id = ?
+        "#,
+    )
+    .bind(&revision_id)
+    .bind(&backend.id)
+    .bind(&model_name)
+    .bind(persona.as_ref().map(|persona| persona.persona_id.as_str()))
+    .bind(
+        persona
+            .as_ref()
+            .map(|persona| persona.persona_version_id.as_str()),
+    )
+    .bind(
+        persona
+            .as_ref()
+            .map(|persona| persona.display_name.as_str()),
+    )
+    .bind(think_mode.as_deref())
+    .bind(now)
+    .bind(now)
+    .bind(message_id)
+    .bind(chat_id)
+    .execute(&mut *tx)
+    .await?;
+    if let Some(parent_message_id) = target.parent_message_id.as_deref() {
+        set_active_child(&mut tx, chat_id, parent_message_id, message_id, now).await?;
+    } else {
+        set_active_root(&mut tx, user_id, chat_id, message_id).await?;
+    }
+    sqlx::query(
+        r#"
+        UPDATE chats
+        SET default_backend_id = ?,
+            default_model_name = ?,
+            persona_id = ?,
+            persona_version_id = ?,
+            updated_at = ?,
+            last_message_at = ?
+        WHERE id = ?
+          AND user_id = ?
+        "#,
+    )
+    .bind(&backend.id)
+    .bind(&model_name)
+    .bind(persona.as_ref().map(|persona| persona.persona_id.as_str()))
+    .bind(
+        persona
+            .as_ref()
+            .map(|persona| persona.persona_version_id.as_str()),
+    )
+    .bind(now)
+    .bind(now)
+    .bind(chat_id)
+    .bind(user_id)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+
+    let mut prompt_messages =
+        ancestor_prompt_messages(pool, uploads_dir, user_id, chat_id, message_id).await?;
+    prepend_system_prompt(&mut prompt_messages, compiled_system_prompt.as_deref());
+    append_continuation_prefill(&mut prompt_messages, &initial_content_text);
+    let assistant_message = get_message(pool, user_id, chat_id, message_id).await?;
+
+    Ok(PreparedGeneration {
+        backend_base_url: backend.base_url,
+        model_name,
+        think_mode,
+        inference_options: inference_settings_to_options(&inference_settings),
+        prompt_messages,
+        user_message: None,
+        assistant_message,
+        tool_selection: tool_preferences.into(),
+        initial_content_text,
+        initial_thinking_text,
     })
 }
 
@@ -1228,6 +1416,8 @@ pub async fn prepare_branch_generation(
         user_message: Some(user_message),
         assistant_message,
         tool_selection: tool_preferences.into(),
+        initial_content_text: String::new(),
+        initial_thinking_text: String::new(),
     })
 }
 
@@ -1875,6 +2065,25 @@ fn prepend_system_prompt(messages: &mut Vec<OllamaChatMessage>, system_prompt: O
             tool_calls: None,
         },
     );
+}
+
+fn append_continuation_prefill(messages: &mut Vec<OllamaChatMessage>, existing_content: &str) {
+    messages.push(OllamaChatMessage {
+        role: "assistant".to_string(),
+        content: existing_content.to_string(),
+        thinking: None,
+        images: None,
+        tool_name: None,
+        tool_calls: None,
+    });
+    messages.push(OllamaChatMessage {
+        role: "user".to_string(),
+        content: CONTINUATION_INSTRUCTION.to_string(),
+        thinking: None,
+        images: None,
+        tool_name: None,
+        tool_calls: None,
+    });
 }
 
 fn normalized_title(title: String) -> String {
@@ -2643,10 +2852,12 @@ mod tests {
     };
 
     use super::{
-        active_tail_message_id, ancestor_prompt_messages, edit_message,
+        active_tail_message_id, ancestor_prompt_messages, edit_message, prepare_continuation,
         recover_interrupted_generations, select_active_revision,
     };
-    use crate::chats::handlers::{EditMessageRequest, SetActiveRevisionRequest};
+    use crate::chats::handlers::{
+        ContinueMessageRequest, EditMessageRequest, SetActiveRevisionRequest,
+    };
     use crate::startup;
 
     async fn test_pool() -> SqlitePool {
@@ -2661,6 +2872,9 @@ mod tests {
         startup::migrations::run(&pool)
             .await
             .expect("run migrations");
+        startup::bootstrap::ensure_app_settings(&pool)
+            .await
+            .expect("initialize app settings");
         pool
     }
 
@@ -2889,5 +3103,73 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["original", "alternate", "branch prompt"]
         );
+    }
+
+    #[tokio::test]
+    async fn continuation_copies_the_active_revision_without_branching() {
+        let pool = test_pool().await;
+        seed_revision_tree(&pool).await;
+        sqlx::query(
+            "UPDATE chat_messages SET backend_id = 'backend', model_name = 'model', think_mode = 'low' WHERE id = 'child-r1'",
+        )
+        .execute(&pool)
+        .await
+        .expect("assign assistant model");
+
+        let prepared = prepare_continuation(
+            &pool,
+            Path::new("/tmp"),
+            "user",
+            "chat",
+            "child-r1",
+            ContinueMessageRequest {
+                inference_settings: None,
+                tool_preferences: None,
+            },
+        )
+        .await
+        .expect("prepare continuation");
+
+        assert_eq!(prepared.assistant_message.id, "child-r1");
+        assert_eq!(prepared.assistant_message.status, "streaming");
+        assert_eq!(prepared.assistant_message.revision_count, 2);
+        assert_eq!(prepared.initial_content_text, "child");
+        assert_eq!(prepared.initial_thinking_text, "");
+        assert_eq!(prepared.think_mode.as_deref(), Some("off"));
+        assert_eq!(
+            prepared
+                .assistant_message
+                .active_revision
+                .as_ref()
+                .map(|revision| revision.source.as_str()),
+            Some("regeneration")
+        );
+        assert_eq!(prepared.prompt_messages.len(), 3);
+        assert_eq!(prepared.prompt_messages[0].role, "user");
+        assert_eq!(prepared.prompt_messages[0].content, "original");
+        assert_eq!(prepared.prompt_messages[1].role, "assistant");
+        assert_eq!(prepared.prompt_messages[1].content, "child");
+        assert_eq!(prepared.prompt_messages[2].role, "user");
+        assert!(
+            prepared.prompt_messages[2]
+                .content
+                .contains("If it is already complete")
+        );
+
+        let original: String = sqlx::query_scalar(
+            "SELECT content_text FROM chat_message_revisions WHERE id = 'child-r1-revision'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("load original revision");
+        assert_eq!(original, "child");
+
+        let active_child: Option<String> = sqlx::query_scalar(
+            "SELECT active_child_message_id FROM chat_messages WHERE id = 'parent'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("load parent");
+        assert_eq!(active_child.as_deref(), Some("child-r1"));
     }
 }

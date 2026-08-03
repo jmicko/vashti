@@ -6,6 +6,7 @@ import {
   activateMessagePath,
   activeMessageAttachments,
   activePathMessages,
+  appendPrivateContinuationPrompt,
   applyMessageVersionSelection,
   fallbackTitleFromPrompt,
   groupMessagesByParent,
@@ -17,6 +18,7 @@ import {
   scrollMessageListToBottom,
   scrollMessageTopIntoListView,
   splitThinkingDelta,
+  streamSegmentsFromRevision,
   streamingAssistantIdFromMessages,
   syntheticStreamExpectedContent,
   syntheticStreamExpectedThinking,
@@ -622,7 +624,8 @@ export function PrivateChatView({
   async function streamPrivateAssistantResponse(
     assistantId: string,
     body: unknown,
-    path = "/api/private/generate"
+    path = "/api/private/generate",
+    initialRevision?: PrivateChatMessageRevision | null
   ) {
     const runId = generationRunRef.current + 1;
     generationRunRef.current = runId;
@@ -632,7 +635,12 @@ export function PrivateChatView({
     setIsGenerating(true);
     setActiveAssistantId(assistantId);
     setGenerationError(null);
-    setStreamSegments((current) => ({ ...current, [assistantId]: [] }));
+    const initialContent = initialRevision?.content_text ?? "";
+    const initialThinking = initialRevision?.thinking_text ?? "";
+    setStreamSegments((current) => ({
+      ...current,
+      [assistantId]: streamSegmentsFromRevision(initialContent, initialThinking)
+    }));
     thinkingContentCursorRef.current.set(assistantId, 0);
 
     try {
@@ -1431,6 +1439,128 @@ export function PrivateChatView({
     }
   }
 
+  async function continueMessage(message: ChatMessage) {
+    if (
+      !chat ||
+      isGenerating ||
+      message.role !== "assistant" ||
+      message.is_deleted ||
+      !message.active_revision?.content_text.trim()
+    ) {
+      return;
+    }
+
+    const backendId = message.backend_id;
+    const modelName = message.model_name;
+    if (!backendId || !modelName) {
+      setGenerationError("This response does not identify the model needed to continue it");
+      return;
+    }
+
+    setBusyMessageId(message.id);
+    setGenerationError(null);
+
+    try {
+      if (!(await persistConversationSettingsForGeneration())) {
+        return;
+      }
+
+      const now = unixTimestamp();
+      const sourceRevision = message.active_revision;
+      const continuationRevision: PrivateChatMessageRevision = {
+        id: privateId("private-revision"),
+        content_text: sourceRevision.content_text,
+        thinking_text: sourceRevision.thinking_text,
+        source: "continuation",
+        created_at: now
+      };
+      const exactPersona = message.persona_version_id
+        ? privatePersonaWithVersionForId(
+            privatePersonas,
+            privatePersonaVersions,
+            message.persona_version_id
+          )
+        : null;
+      const continuedMessage: PrivateChatMessage = {
+        ...(message as PrivateChatMessage),
+        active_revision_id: continuationRevision.id,
+        active_revision: continuationRevision,
+        revisions: updateRevisionList(message.revisions, continuationRevision),
+        revision_count: message.revisions.some(
+          (revision) => revision.id === continuationRevision.id
+        )
+          ? message.revision_count
+          : message.revision_count + 1,
+        status: "streaming",
+        think_mode: "off",
+        done_reason: null,
+        error_text: null,
+        stats: null,
+        started_at: now,
+        completed_at: null,
+        updated_at: now
+      };
+      const nextMessages = messagesRef.current.map((current) => {
+        if (current.id === message.id) {
+          return continuedMessage;
+        }
+        if (message.parent_message_id && current.id === message.parent_message_id) {
+          return { ...current, active_child_message_id: message.id, updated_at: now };
+        }
+        return current;
+      });
+      const nextChat: PrivateChatDetail = {
+        ...chat,
+        default_backend_id: backendId,
+        default_model_name: modelName,
+        persona_id: message.persona_id ?? null,
+        persona_version_id: message.persona_version_id ?? null,
+        persona_name: message.persona_name_snapshot ?? null,
+        updated_at: now,
+        last_message_at: now
+      };
+
+      let generationMessages: ReturnType<typeof privatePromptMessagesWithPersona>;
+      try {
+        generationMessages = privatePromptMessagesWithPersona(
+          nextMessages,
+          message.id,
+          exactPersona,
+          systemPromptOverride,
+          message.context_blocks
+        );
+        appendPrivateContinuationPrompt(generationMessages, sourceRevision.content_text);
+      } catch (promptError) {
+        setGenerationError(
+          promptError instanceof Error ? promptError.message : "Failed to compile context blocks"
+        );
+        return;
+      }
+
+      setChat(nextChat);
+      replacePrivateMessages(nextMessages);
+      await privateSaveChainRef.current;
+      await Promise.all([savePrivateChat(nextChat), savePrivateMessages(nextMessages)]);
+      await onPrivateChatsChanged();
+
+      await streamPrivateAssistantResponse(
+        message.id,
+        {
+          assistant_message_id: message.id,
+          backend_id: backendId,
+          model_name: modelName,
+          think_mode: "off",
+          inference_settings: inferenceSettings,
+          messages: generationMessages
+        },
+        "/api/private/generate",
+        continuationRevision
+      );
+    } finally {
+      setBusyMessageId(null);
+    }
+  }
+
   async function selectVersion(currentMessage: ChatMessage, version: MessageVersion) {
     const nextMessage = version.message as PrivateChatMessage;
     const nextRevision = version.revision as PrivateChatMessageRevision;
@@ -1696,6 +1826,7 @@ export function PrivateChatView({
                   onImageOpen={onImageOpen}
                   onUploadAttachment={preparePrivateAttachment}
                   onRegenerate={regenerateMessage}
+                  onContinue={continueMessage}
                   selectedModelInfo={selectedModelInfo}
                   modelAvatar={privateModelAvatarForMessage(
                     message,

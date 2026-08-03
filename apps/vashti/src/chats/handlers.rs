@@ -172,6 +172,12 @@ pub struct RegenerateMessageRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct ContinueMessageRequest {
+    pub inference_settings: Option<ChatInferenceSettings>,
+    pub tool_preferences: Option<ChatToolPreferences>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct BranchMessageRequest {
     pub content_text: String,
     pub backend_id: Option<String>,
@@ -526,6 +532,31 @@ pub async fn regenerate_message(
     Ok(start_generation_stream(state, user.id, chat_id, prepared).await)
 }
 
+pub async fn continue_message(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Path((chat_id, message_id)): Path<(String, String)>,
+    Json(payload): Json<ContinueMessageRequest>,
+) -> Result<Response, ApiError> {
+    let user =
+        auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
+    state
+        .rate_limiter
+        .check(rate_limit::user_action_key("generate", &user.id), 60, 60)
+        .await?;
+
+    let prepared = service::prepare_continuation(
+        &state.db,
+        &state.config.uploads_dir(),
+        &user.id,
+        &chat_id,
+        &message_id,
+        payload,
+    )
+    .await?;
+    Ok(start_generation_stream(state, user.id, chat_id, prepared).await)
+}
+
 pub async fn stop_generation(
     State(state): State<AppState>,
     jar: CookieJar,
@@ -562,8 +593,8 @@ async fn stream_generation(task: GenerationStreamTask) {
     let title_backend_base_url = prepared.backend_base_url.clone();
     let title_model_name = prepared.model_name.clone();
     let title_prompt_messages = prepared.prompt_messages.clone();
-    let mut content_text = String::new();
-    let mut thinking_text = String::new();
+    let mut content_text = prepared.initial_content_text.clone();
+    let mut thinking_text = prepared.initial_thinking_text.clone();
     let mut thinking_content_cursor = 0usize;
     let mut done_reason = None;
     let mut usage_stats: Option<OllamaUsageStats> = None;

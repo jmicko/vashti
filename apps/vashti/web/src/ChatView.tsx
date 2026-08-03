@@ -13,6 +13,7 @@ import {
   scrollMessageListToBottom,
   scrollMessageTopIntoListView,
   splitThinkingDelta,
+  streamSegmentsFromRevision,
   streamingAssistantIdFromMessages,
   updateRevisionList,
   versionInfoForMessage
@@ -1033,7 +1034,13 @@ export function ChatView({
         autoScrollModeRef.current = "top";
         setActiveAssistantId(event.assistant_message.id);
         clearThinkingDuration(event.assistant_message.id);
-        setStreamSegments((current) => ({ ...current, [event.assistant_message.id]: [] }));
+        setStreamSegments((current) => ({
+          ...current,
+          [event.assistant_message.id]: streamSegmentsFromRevision(
+            event.assistant_message.active_revision?.content_text ?? "",
+            event.assistant_message.active_revision?.thinking_text ?? ""
+          )
+        }));
         if (event.user_message && !event.user_message.parent_message_id) {
           updateChatState((current) =>
             current ? { ...current, active_root_message_id: event.user_message?.id ?? null } : current
@@ -1446,6 +1453,25 @@ export function ChatView({
     });
   }
 
+  async function continueMessage(message: ChatMessage) {
+    if (
+      isGenerating ||
+      message.role !== "assistant" ||
+      message.is_deleted ||
+      !message.active_revision?.content_text.trim()
+    ) {
+      return;
+    }
+
+    if (await persistConversationSettingsForGeneration()) {
+      return;
+    }
+    await streamAssistantResponse(`/api/chats/${chatId}/messages/${message.id}/continue`, {
+      inference_settings: inferenceSettings,
+      tool_preferences: chat?.tool_preferences ?? defaultToolPreferences
+    });
+  }
+
   function activatePathToMessage(
     messageId: string,
     missingMessage: string,
@@ -1786,6 +1812,7 @@ export function ChatView({
                     onRemoveAttachment={removeAttachment}
                     onUploadAttachment={uploadAttachment}
                     onRegenerate={regenerateMessage}
+                    onContinue={continueMessage}
                     selectedModelInfo={selectedModelInfo}
                     modelAvatar={hostedModelAvatarForMessage(
                       message,

@@ -18,6 +18,8 @@ import type {
 } from "./types";
 
 const rootSiblingGroupKey = "__root__";
+const continuationInstruction =
+  "Continue the existing assistant response seamlessly and return only the added text. Do not repeat, summarize, restart, or comment on the existing response. If it ends mid-sentence, resume that sentence directly. If it is already complete, expand it with new relevant details.";
 
 export function parseThinkingText(rawThinkingText: string): ParsedThinkingText {
   const segments: ThinkingSegment[] = [];
@@ -127,6 +129,22 @@ export function messageDisplaySegmentsFromRevision(
   }
   appendContentSlice(segments, contentCodePoints, contentCursor, contentCodePoints.length);
 
+  return mergeMessageStreamSegments([], segments);
+}
+
+export function streamSegmentsFromRevision(
+  contentText: string,
+  thinkingText: string
+): MessageStreamSegment[] {
+  const ordered = messageDisplaySegmentsFromRevision(contentText, thinkingText);
+  if (ordered.length > 0) {
+    return ordered;
+  }
+
+  const segments = splitThinkingDelta(thinkingText);
+  if (contentText) {
+    segments.push({ type: "content", text: contentText });
+  }
   return mergeMessageStreamSegments([], segments);
 }
 
@@ -344,6 +362,25 @@ export function privatePromptMessagesWithPersona(
     },
     ...promptMessages
   ];
+}
+
+export function appendPrivateContinuationPrompt(
+  promptMessages: ReturnType<typeof privatePromptMessagesWithPersona>,
+  existingContent: string
+) {
+  promptMessages.push({
+    role: "assistant",
+    content_text: existingContent,
+    thinking_text: null,
+    images: []
+  });
+  promptMessages.push({
+    role: "user",
+    content_text: continuationInstruction,
+    thinking_text: null,
+    images: []
+  });
+  return promptMessages;
 }
 
 function privateAttachmentPromptPayload(attachments: AttachmentInfo[]) {

@@ -304,6 +304,10 @@ fn router(state: AppState) -> Router {
             post(chats::handlers::regenerate_message),
         )
         .route(
+            "/chats/{chat_id}/messages/{message_id}/continue",
+            post(chats::handlers::continue_message),
+        )
+        .route(
             "/chats/{chat_id}/generate",
             post(chats::handlers::generate_chat),
         )

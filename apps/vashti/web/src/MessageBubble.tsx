@@ -16,6 +16,7 @@ import {
   Paperclip,
   Pencil,
   RefreshCw,
+  StepForward,
   Save,
   SendHorizontal,
   Trash2,
@@ -139,6 +140,7 @@ type MessageBubbleProps = {
   onRemoveAttachment?: (attachment: ComposerAttachment) => Promise<void>;
   onUploadAttachment?: (file: File) => Promise<ComposerAttachment> | ComposerAttachment;
   onRegenerate: (message: ChatMessage) => Promise<void>;
+  onContinue: (message: ChatMessage) => Promise<void>;
   selectedModelInfo?: ModelInfo | null;
   modelAvatar?: MessageAvatarInfo | null;
   modelAvatarForMessage?: (message: ChatMessage) => MessageAvatarInfo | null;
@@ -213,6 +215,7 @@ function MessageBubbleCard({
   onRemoveAttachment,
   onUploadAttachment,
   onRegenerate,
+  onContinue,
   selectedModelInfo,
   modelAvatar,
   isCarouselPreview = false
@@ -490,6 +493,27 @@ function MessageBubbleCard({
                 }}
               >
                 <RefreshCw />
+              </button>
+            )}
+            {message.role === "assistant" && (
+              <button
+                type="button"
+                className="message-icon-button"
+                title="Continue response"
+                aria-label="Continue response"
+                disabled={
+                  isBusy ||
+                  isGenerating ||
+                  message.is_deleted ||
+                  message.status === "streaming" ||
+                  content === ""
+                }
+                onClick={() => {
+                  dismissMobileKeyboard();
+                  void onContinue(message);
+                }}
+              >
+                <StepForward />
               </button>
             )}
             <button
