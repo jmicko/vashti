@@ -16,7 +16,7 @@ use axum::{
     Json, Router,
     body::Body,
     extract::{ConnectInfo, DefaultBodyLimit, Multipart, Path as AxumPath, State},
-    http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header},
+    http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, header},
     response::{IntoResponse, Response},
     routing::{delete, get, post},
 };
@@ -1121,22 +1121,24 @@ async fn version_checksums(
 
 async fn download_latest(
     State(state): State<AppState>,
+    method: Method,
     headers: HeaderMap,
     AxumPath(filename): AxumPath<String>,
 ) -> Result<Response, AppError> {
     require_claimed(&state.db).await?;
     let version = latest_version(&state.db).await?;
-    download_artifact(&state, &headers, &version, &filename, "latest").await
+    download_artifact(&state, &method, &headers, &version, &filename, "latest").await
 }
 
 async fn download_version(
     State(state): State<AppState>,
+    method: Method,
     headers: HeaderMap,
     AxumPath((version, filename)): AxumPath<(String, String)>,
 ) -> Result<Response, AppError> {
     require_claimed(&state.db).await?;
     let version = normalize_version_label(&version)?.0;
-    download_artifact(&state, &headers, &version, &filename, "version").await
+    download_artifact(&state, &method, &headers, &version, &filename, "version").await
 }
 
 async fn checksums_for_version(state: &AppState, version: &str) -> Result<Response, AppError> {
@@ -1159,6 +1161,7 @@ async fn checksums_for_version(state: &AppState, version: &str) -> Result<Respon
 
 async fn download_artifact(
     state: &AppState,
+    method: &Method,
     headers: &HeaderMap,
     version: &str,
     filename: &str,
@@ -1185,15 +1188,17 @@ async fn download_artifact(
     let storage_path: String = row.try_get("storage_path")?;
     let file = fs::File::open(&storage_path).await?;
 
-    record_download(
-        &state.db,
-        headers,
-        &artifact_id,
-        &release_version,
-        &target,
-        kind,
-    )
-    .await?;
+    if counts_as_download(method) {
+        record_download(
+            &state.db,
+            headers,
+            &artifact_id,
+            &release_version,
+            &target,
+            kind,
+        )
+        .await?;
+    }
 
     Response::builder()
         .status(StatusCode::OK)
@@ -1205,6 +1210,10 @@ async fn download_artifact(
         )
         .body(Body::from_stream(ReaderStream::new(file)))
         .map_err(|_| AppError::internal("Failed to build response"))
+}
+
+fn counts_as_download(method: &Method) -> bool {
+    method == Method::GET
 }
 
 async fn parse_upload(mut multipart: Multipart) -> Result<ParsedUpload, AppError> {
@@ -2256,6 +2265,13 @@ mod tests {
             "application/octet-stream".to_string(),
             bytes.to_vec(),
         )
+    }
+
+    #[test]
+    fn only_get_requests_count_as_artifact_downloads() {
+        assert!(counts_as_download(&Method::GET));
+        assert!(!counts_as_download(&Method::HEAD));
+        assert!(!counts_as_download(&Method::OPTIONS));
     }
 
     #[test]
