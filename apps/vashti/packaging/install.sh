@@ -71,7 +71,7 @@ network_label() {
         wg* | tun* | tap* | tailscale* | zt* | zerotier*)
             printf '%s\n' "VPN"
             ;;
-        eth* | en* | wl* | wlan* | wifi* | br* | bond*)
+        eth* | en* | wl* | wifi* | br* | bond*)
             printf '%s\n' "same network"
             ;;
         *)

@@ -210,7 +210,7 @@ else
     sudo_cmd="sudo"
 fi
 
-script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+script_dir="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 binary_path="${VASHTI_HUB_BINARY:-$script_dir/vashti-hub}"
 
 if [ ! -x "$binary_path" ]; then
