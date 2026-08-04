@@ -266,6 +266,34 @@ export function AppShell({
     setChatContextBlocks([]);
   }
 
+  const rememberPersonaVersions = useCallback((versions: PersonaVersion[]) => {
+    if (versions.length === 0) {
+      return;
+    }
+
+    setPersonaVersions((current) => {
+      const next = { ...current };
+      for (const version of versions) {
+        next[version.id] = version;
+      }
+      return next;
+    });
+  }, []);
+
+  const rememberPrivatePersonaVersions = useCallback((versions: PrivatePersonaVersion[]) => {
+    if (versions.length === 0) {
+      return;
+    }
+
+    setPrivatePersonaVersions((current) => {
+      const next = { ...current };
+      for (const version of versions) {
+        next[version.id] = version;
+      }
+      return next;
+    });
+  }, []);
+
   const applyModelPickerData = useCallback(
     (modelsResponse: ModelsResponse, personasResponse: PersonasResponse) => {
       hasModelPickerDataRef.current = true;
@@ -302,7 +330,7 @@ export function AppShell({
           : defaultValue;
       });
     },
-    []
+    [rememberPersonaVersions]
   );
 
   const loadModels = useCallback(async () => {
@@ -377,35 +405,7 @@ export function AppShell({
           : "Failed to load private personas"
       );
     }
-  }, []);
-
-  function rememberPersonaVersions(versions: PersonaVersion[]) {
-    if (versions.length === 0) {
-      return;
-    }
-
-    setPersonaVersions((current) => {
-      const next = { ...current };
-      for (const version of versions) {
-        next[version.id] = version;
-      }
-      return next;
-    });
-  }
-
-  function rememberPrivatePersonaVersions(versions: PrivatePersonaVersion[]) {
-    if (versions.length === 0) {
-      return;
-    }
-
-    setPrivatePersonaVersions((current) => {
-      const next = { ...current };
-      for (const version of versions) {
-        next[version.id] = version;
-      }
-      return next;
-    });
-  }
+  }, [rememberPrivatePersonaVersions]);
 
   useEffect(() => {
     void loadPrivatePersonas();
@@ -1200,6 +1200,7 @@ export function AppShell({
               onChatSettingsLoaded={handleChatSettingsLoaded}
               onModelSelected={setSelectedModel}
               onConversationSettingsSave={persistChatConversationSettings}
+              onPrivatePersonaVersionsLoaded={rememberPrivatePersonaVersions}
               onPrivateChatsChanged={loadPrivateChats}
               onQueuedPromptConsumed={() => setQueuedPrivatePrompt(null)}
             />
@@ -1223,6 +1224,7 @@ export function AppShell({
                 onChatSettingsLoaded={handleChatSettingsLoaded}
                 onChatsChanged={loadChats}
                 onConversationSettingsSave={persistChatConversationSettings}
+                onPersonaVersionsLoaded={rememberPersonaVersions}
                 onImageOpen={openImageViewer}
                 onModelSelected={setSelectedModel}
                 onQueuedPromptConsumed={() => setQueuedPrompt(null)}

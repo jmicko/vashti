@@ -90,12 +90,14 @@ export function MessageTreeExplorer({
   activeRootMessageId,
   messages,
   onClose,
-  onOpenBranch
+  onOpenBranch,
+  dimmedEmphasisForMessage
 }: {
   activeRootMessageId: string | null;
   messages: ChatMessage[];
   onClose: () => void;
   onOpenBranch: (messageId: string, revisionId: string) => void;
+  dimmedEmphasisForMessage?: (message: ChatMessage) => boolean;
 }) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const pointersRef = useRef(new Map<number, PointerPosition>());
@@ -572,7 +574,14 @@ export function MessageTreeExplorer({
                   </details>
                 )}
                 {focusedNode.revision.content_text ? (
-                  <MarkdownContent content={focusedNode.revision.content_text} />
+                  <MarkdownContent
+                    content={focusedNode.revision.content_text}
+                    dimmedEmphasis={
+                      (focusedNode.message.role === "assistant" ||
+                        focusedNode.message.role === "user") &&
+                      Boolean(dimmedEmphasisForMessage?.(focusedNode.message))
+                    }
+                  />
                 ) : (
                   <p className="muted">
                     {focusedNode.message.is_deleted

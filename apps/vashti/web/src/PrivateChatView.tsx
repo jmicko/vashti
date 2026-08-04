@@ -33,8 +33,13 @@ import { MessageBubble } from "./MessageBubble";
 import { ModelBackgroundLayer, modelBackgroundContainerStyle } from "./ModelBackground";
 import { MessageTreeExplorer } from "./MessageTreeExplorer";
 import {
+  characterPersonaVersionIds,
+  characterPresentationMessageIds
+} from "./messagePresentation";
+import {
   createPrivateMessage,
   getPrivateChat,
+  listPrivatePersonaVersions,
   listPrivateMessages,
   privateId,
   savePrivateChat,
@@ -90,6 +95,7 @@ export function PrivateChatView({
   onTreeClose,
   onChatSettingsLoaded,
   onConversationSettingsSave,
+  onPrivatePersonaVersionsLoaded,
   onImageOpen,
   onModelSelected,
   onPrivateChatsChanged,
@@ -114,6 +120,7 @@ export function PrivateChatView({
     contextBlocks?: ContextBlockSelection[]
   ) => void;
   onConversationSettingsSave: () => Promise<void>;
+  onPrivatePersonaVersionsLoaded: (versions: PrivatePersonaVersion[]) => void;
   onImageOpen: ImageOpenHandler;
   onModelSelected: (value: string) => void;
   onPrivateChatsChanged: () => Promise<void>;
@@ -151,7 +158,39 @@ export function PrivateChatView({
   const privateBannerTimerRef = useRef<number | null>(null);
   const thinkingStartedAtRef = useRef(new Map<string, number>());
   const thinkingContentCursorRef = useRef(new Map<string, number>());
+  const requestedPersonaVersionIdsRef = useRef(new Set<string>());
   const [thinkingDurations, setThinkingDurations] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    const knownVersionIds = new Set(privatePersonaVersions.map((version) => version.id));
+    const missingByPersona = new Map<string, string[]>();
+
+    for (const message of messages) {
+      if (
+        !message.persona_id ||
+        !message.persona_version_id ||
+        knownVersionIds.has(message.persona_version_id) ||
+        requestedPersonaVersionIdsRef.current.has(message.persona_version_id)
+      ) {
+        continue;
+      }
+
+      const missingIds = missingByPersona.get(message.persona_id) ?? [];
+      missingIds.push(message.persona_version_id);
+      missingByPersona.set(message.persona_id, missingIds);
+      requestedPersonaVersionIdsRef.current.add(message.persona_version_id);
+    }
+
+    for (const [personaId, missingVersionIds] of missingByPersona) {
+      void listPrivatePersonaVersions(personaId)
+        .then(onPrivatePersonaVersionsLoaded)
+        .catch(() => {
+          for (const versionId of missingVersionIds) {
+            requestedPersonaVersionIdsRef.current.delete(versionId);
+          }
+        });
+    }
+  }, [messages, onPrivatePersonaVersionsLoaded, privatePersonaVersions]);
   const visibleMessages = useMemo(
     () => activePathMessages(messages, chat?.active_root_message_id ?? null),
     [chat?.active_root_message_id, messages]
@@ -160,6 +199,14 @@ export function PrivateChatView({
     Boolean(activeAssistantId) &&
     visibleMessages.some((message) => message.id === activeAssistantId);
   const siblingGroups = useMemo(() => groupMessagesByParent(messages), [messages]);
+  const characterVersionIds = useMemo(
+    () => characterPersonaVersionIds(privatePersonaVersions),
+    [privatePersonaVersions]
+  );
+  const characterMessageIds = useMemo(
+    () => characterPresentationMessageIds(messages, characterVersionIds),
+    [characterVersionIds, messages]
+  );
   const chatContainsImages = useMemo(
     () => messages.some((message) => activeMessageAttachments(message).some(isImageAttachment)),
     [messages]
@@ -1840,6 +1887,10 @@ export function PrivateChatView({
                       modelGroups
                     )
                   }
+                  dimmedEmphasis={characterMessageIds.has(message.id)}
+                  dimmedEmphasisForMessage={(targetMessage) =>
+                    characterMessageIds.has(targetMessage.id)
+                  }
                 />
               ))
             )}
@@ -1886,6 +1937,7 @@ export function PrivateChatView({
           messages={messages}
           onClose={onTreeClose}
           onOpenBranch={openTreeBranch}
+          dimmedEmphasisForMessage={(message) => characterMessageIds.has(message.id)}
         />
       )}
       {(error || generationError) && (

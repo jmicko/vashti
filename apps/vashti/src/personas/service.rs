@@ -52,6 +52,7 @@ pub async fn list_personas(
                v.persona_id AS version_persona_id,
                v.version_number,
                v.display_name,
+               v.model_type,
                v.avatar_asset_id,
                v.avatar_crop_x,
                v.avatar_crop_y,
@@ -107,6 +108,7 @@ pub async fn create_persona(
 ) -> Result<PersonaResponse, ApiError> {
     let visibility = validate_visibility(&payload.visibility)?;
     let display_name = validate_display_name(&payload.display_name)?;
+    let model_type = validate_model_type(payload.model_type.as_deref().unwrap_or("general"))?;
     let base_backend_id = validate_base_backend(pool, &payload.base_backend_id).await?;
     let base_model_name = validate_base_model_name(&payload.base_model_name)?;
     backends_service::ensure_model_enabled_for_user(
@@ -163,6 +165,7 @@ pub async fn create_persona(
             persona_id: &persona_id,
             version_number: 1,
             display_name: &display_name,
+            model_type: &model_type,
             avatar_asset_id: avatar_asset_id.as_deref(),
             avatar_crop_x,
             avatar_crop_y,
@@ -214,6 +217,10 @@ pub async fn update_persona(
     let display_name = match payload.display_name {
         Some(display_name) => validate_display_name(&display_name)?,
         None => current_version.display_name.clone(),
+    };
+    let model_type = match payload.model_type {
+        Some(model_type) => validate_model_type(&model_type)?,
+        None => current_version.model_type.clone(),
     };
     let avatar_asset_id = if payload.avatar_asset_changed.unwrap_or(false) {
         normalize_optional(payload.avatar_asset_id)
@@ -284,6 +291,7 @@ pub async fn update_persona(
     }
 
     let has_version_change = display_name != current_version.display_name
+        || model_type != current_version.model_type
         || avatar_asset_id != current_version.avatar_asset_id
         || (background_asset_changed && background.asset_id != current_version.background_asset_id)
         || base_backend_id != current_version.base_backend_id
@@ -303,6 +311,7 @@ pub async fn update_persona(
                 persona_id,
                 version_number,
                 display_name: &display_name,
+                model_type: &model_type,
                 avatar_asset_id: avatar_asset_id.as_deref(),
                 avatar_crop_x,
                 avatar_crop_y,
@@ -430,6 +439,7 @@ pub async fn copy_persona(
         CreatePersonaRequest {
             visibility,
             display_name: source.display_name,
+            model_type: Some(source.model_type),
             avatar_asset_id: copied_avatar_asset_id.clone(),
             avatar_crop_x: Some(source.avatar_crop_x),
             avatar_crop_y: Some(source.avatar_crop_y),
@@ -538,6 +548,7 @@ pub async fn list_versions(
                persona_id,
                version_number,
                display_name,
+               model_type,
                avatar_asset_id,
                avatar_crop_x,
                avatar_crop_y,
@@ -667,6 +678,7 @@ struct InsertPersonaVersion<'a> {
     persona_id: &'a str,
     version_number: i64,
     display_name: &'a str,
+    model_type: &'a str,
     avatar_asset_id: Option<&'a str>,
     avatar_crop_x: f64,
     avatar_crop_y: f64,
@@ -706,6 +718,7 @@ async fn insert_persona_version(
             persona_id,
             version_number,
             display_name,
+            model_type,
             avatar_asset_id,
             avatar_crop_x,
             avatar_crop_y,
@@ -728,13 +741,14 @@ async fn insert_persona_version(
             created_by_user_id,
             created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
     )
     .bind(params.version_id)
     .bind(params.persona_id)
     .bind(params.version_number)
     .bind(params.display_name)
+    .bind(params.model_type)
     .bind(params.avatar_asset_id)
     .bind(params.avatar_crop_x)
     .bind(params.avatar_crop_y)
@@ -845,6 +859,7 @@ async fn get_visible_persona(
                v.persona_id AS version_persona_id,
                v.version_number,
                v.display_name,
+               v.model_type,
                v.avatar_asset_id,
                v.avatar_crop_x,
                v.avatar_crop_y,
@@ -980,6 +995,7 @@ async fn get_version(
                persona_id,
                version_number,
                display_name,
+               model_type,
                avatar_asset_id,
                avatar_crop_x,
                avatar_crop_y,
@@ -1075,6 +1091,18 @@ fn validate_visibility(visibility: &str) -> Result<String, ApiError> {
     }
 
     Ok(visibility)
+}
+
+fn validate_model_type(model_type: &str) -> Result<String, ApiError> {
+    let model_type = model_type.trim().to_ascii_lowercase();
+    if !matches!(model_type.as_str(), "general" | "character") {
+        return Err(ApiError::bad_request(
+            "invalid_model_type",
+            "Custom model type must be general or character",
+        ));
+    }
+
+    Ok(model_type)
 }
 
 fn validate_display_name(display_name: &str) -> Result<String, ApiError> {
@@ -1294,6 +1322,7 @@ fn row_to_persona(row: sqlx::sqlite::SqliteRow) -> Result<PersonaResponse, sqlx:
             persona_id: row.try_get("version_persona_id")?,
             version_number: row.try_get("version_number")?,
             display_name: row.try_get("display_name")?,
+            model_type: row.try_get("model_type")?,
             avatar_asset_id: row.try_get("avatar_asset_id")?,
             avatar_crop_x: row.try_get("avatar_crop_x")?,
             avatar_crop_y: row.try_get("avatar_crop_y")?,
@@ -1329,6 +1358,7 @@ fn row_to_version(row: sqlx::sqlite::SqliteRow) -> Result<PersonaVersionResponse
         persona_id: row.try_get("persona_id")?,
         version_number: row.try_get("version_number")?,
         display_name: row.try_get("display_name")?,
+        model_type: row.try_get("model_type")?,
         avatar_asset_id: row.try_get("avatar_asset_id")?,
         avatar_crop_x: row.try_get("avatar_crop_x")?,
         avatar_crop_y: row.try_get("avatar_crop_y")?,
@@ -1409,6 +1439,7 @@ mod tests {
             CreatePersonaRequest {
                 visibility: "private".to_string(),
                 display_name: "Careful Researcher".to_string(),
+                model_type: None,
                 avatar_asset_id: None,
                 avatar_crop_x: None,
                 avatar_crop_y: None,
@@ -1424,6 +1455,7 @@ mod tests {
         .expect("create persona");
 
         assert_eq!(persona.current_version.version_number, 1);
+        assert_eq!(persona.current_version.model_type, "general");
         assert_eq!(persona.current_version.system_prompt, "Answer carefully.");
 
         let updated = update_persona(
@@ -1433,6 +1465,7 @@ mod tests {
             UpdatePersonaRequest {
                 visibility: Some("public".to_string()),
                 display_name: Some("Careful Researcher".to_string()),
+                model_type: Some("character".to_string()),
                 avatar_asset_id: None,
                 avatar_asset_changed: None,
                 avatar_crop_x: None,
@@ -1450,17 +1483,18 @@ mod tests {
 
         assert_eq!(updated.visibility, "public");
         assert_eq!(updated.current_version.version_number, 2);
+        assert_eq!(updated.current_version.model_type, "character");
         assert_ne!(updated.current_version.id, persona.current_version.id);
 
         let versions = list_versions(&pool, &user.id, &persona.id)
             .await
             .expect("list versions");
         assert_eq!(versions.len(), 2);
-        assert!(
-            versions.iter().any(|version| version.version_number == 1
-                && version.system_prompt == "Answer carefully.")
-        );
+        assert!(versions.iter().any(|version| version.version_number == 1
+            && version.model_type == "general"
+            && version.system_prompt == "Answer carefully."));
         assert!(versions.iter().any(|version| version.version_number == 2
+            && version.model_type == "character"
             && version.system_prompt == "Answer carefully and cite uncertainty."));
     }
 
@@ -1501,6 +1535,7 @@ mod tests {
             CreatePersonaRequest {
                 visibility: "public".to_string(),
                 display_name: "Shared Helper".to_string(),
+                model_type: Some("character".to_string()),
                 avatar_asset_id: Some(source_avatar.id.clone()),
                 avatar_crop_x: Some(35.0),
                 avatar_crop_y: Some(65.0),
@@ -1533,6 +1568,7 @@ mod tests {
         assert_eq!(copied.visibility, "private");
         assert_eq!(copied.current_version.version_number, 1);
         assert_eq!(copied.current_version.display_name, "Shared Helper");
+        assert_eq!(copied.current_version.model_type, "character");
         assert_eq!(copied.current_version.system_prompt, "Be helpful.");
         assert_eq!(copied.current_version.avatar_crop_x, 35.0);
         assert_eq!(copied.current_version.avatar_crop_y, 65.0);
@@ -1609,6 +1645,7 @@ mod tests {
             CreatePersonaRequest {
                 visibility: "private".to_string(),
                 display_name: "Avatar Helper".to_string(),
+                model_type: None,
                 avatar_asset_id: None,
                 avatar_crop_x: None,
                 avatar_crop_y: None,
@@ -1630,6 +1667,7 @@ mod tests {
             UpdatePersonaRequest {
                 visibility: None,
                 display_name: None,
+                model_type: None,
                 avatar_asset_id: Some(asset_id.clone()),
                 avatar_asset_changed: Some(true),
                 avatar_crop_x: Some(40.0),
@@ -1657,6 +1695,7 @@ mod tests {
             UpdatePersonaRequest {
                 visibility: None,
                 display_name: None,
+                model_type: None,
                 avatar_asset_id: None,
                 avatar_asset_changed: Some(false),
                 avatar_crop_x: Some(25.0),
@@ -1685,6 +1724,7 @@ mod tests {
             UpdatePersonaRequest {
                 visibility: None,
                 display_name: None,
+                model_type: None,
                 avatar_asset_id: None,
                 avatar_asset_changed: Some(false),
                 avatar_crop_x: None,
@@ -1728,6 +1768,7 @@ mod tests {
             UpdatePersonaRequest {
                 visibility: None,
                 display_name: None,
+                model_type: None,
                 avatar_asset_id: None,
                 avatar_asset_changed: Some(false),
                 avatar_crop_x: None,

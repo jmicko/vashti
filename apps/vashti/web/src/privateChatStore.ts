@@ -7,7 +7,8 @@ import type {
   ContextCategory,
   ContextLibraryResponse,
   ContextSelectionMode,
-  MessageStats
+  MessageStats,
+  CustomModelType
 } from "./types";
 import { requestJson } from "./api";
 
@@ -178,6 +179,7 @@ export type PrivatePersonaVersion = {
   persona_id: string;
   version_number: number;
   display_name: string;
+  model_type: CustomModelType;
   avatar_asset_id: string | null;
   avatar_crop_x: number;
   avatar_crop_y: number;
@@ -213,6 +215,7 @@ export type PrivatePersona = {
 
 export type SavePrivatePersonaParams = {
   displayName: string;
+  modelType?: CustomModelType;
   baseBackendId: string;
   baseBackendName: string;
   baseModelName: string;
@@ -709,7 +712,12 @@ export async function listPrivatePersonas(): Promise<PrivatePersona[]> {
     getAllPrivateRecords<Omit<PrivatePersona, "current_version">>(db, PERSONA_STORE),
     getAllPrivateRecords<PrivatePersonaVersion>(db, PERSONA_VERSION_STORE)
   ]);
-  const versionsById = new Map(versions.map((version) => [version.id, version]));
+  const versionsById = new Map(
+    versions.map((version) => {
+      const normalized = normalizePrivatePersonaVersion(version);
+      return [normalized.id, normalized];
+    })
+  );
 
   return personas
     .map((persona) => {
@@ -785,8 +793,13 @@ export async function updatePrivatePersona(
   const nextAvatarCropY = normalizeAvatarCrop(params.avatarCropY);
   const nextAvatarCropSize = normalizeAvatarCropSize(params.avatarCropSize);
   const nextBackgroundAssetId = params.backgroundAssetId ?? null;
+  const nextModelType =
+    params.modelType === undefined
+      ? currentVersion.model_type
+      : normalizeCustomModelType(params.modelType);
   const hasVersionChange =
     params.displayName.trim() !== currentVersion.display_name ||
+    nextModelType !== currentVersion.model_type ||
     params.baseBackendId !== currentVersion.base_backend_id ||
     params.baseBackendName !== currentVersion.base_backend_name ||
     params.baseModelName !== currentVersion.base_model_name ||
@@ -843,7 +856,7 @@ export async function updatePrivatePersona(
     versions.reduce((max, version) => Math.max(max, version.version_number), 0) + 1;
   const versionId = privateId("private-persona-version");
   const version = privatePersonaVersionFromParams({
-    params,
+    params: { ...params, modelType: nextModelType },
     personaId,
     versionId,
     versionNumber: nextVersionNumber,
@@ -988,7 +1001,7 @@ export async function getPrivatePersona(personaId: string): Promise<PrivatePerso
   );
   await transactionDone(tx);
   const version = versionRecord
-    ? await readPrivateRecord<PrivatePersonaVersion>(versionRecord)
+    ? normalizePrivatePersonaVersion(await readPrivateRecord<PrivatePersonaVersion>(versionRecord))
     : null;
   return version ? { ...persona, current_version: version } : null;
 }
@@ -1005,7 +1018,9 @@ export async function listPrivatePersonaVersions(
   const versions = await Promise.all(
     records.map((record) => readPrivateRecord<PrivatePersonaVersion>(record))
   );
-  return versions.sort((left, right) => left.version_number - right.version_number);
+  return versions
+    .map(normalizePrivatePersonaVersion)
+    .sort((left, right) => left.version_number - right.version_number);
 }
 
 export async function listPrivateContextLibrary(): Promise<ContextLibraryResponse> {
@@ -1764,6 +1779,7 @@ function privatePersonaVersionFromParams({
     persona_id: personaId,
     version_number: versionNumber,
     display_name: params.displayName.trim(),
+    model_type: normalizeCustomModelType(params.modelType),
     avatar_asset_id: params.avatarAssetId ?? null,
     avatar_crop_x: normalizeAvatarCrop(params.avatarCropX),
     avatar_crop_y: normalizeAvatarCrop(params.avatarCropY),
@@ -1787,6 +1803,17 @@ function privatePersonaVersionFromParams({
     source_persona_id: params.sourcePersonaId ?? null,
     source_persona_version_id: params.sourcePersonaVersionId ?? null,
     created_at: now
+  };
+}
+
+function normalizeCustomModelType(value: unknown): CustomModelType {
+  return value === "character" ? "character" : "general";
+}
+
+function normalizePrivatePersonaVersion(version: PrivatePersonaVersion): PrivatePersonaVersion {
+  return {
+    ...version,
+    model_type: normalizeCustomModelType(version.model_type)
   };
 }
 

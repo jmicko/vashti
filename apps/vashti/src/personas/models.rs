@@ -20,6 +20,7 @@ pub struct PersonaVersionResponse {
     pub persona_id: String,
     pub version_number: i64,
     pub display_name: String,
+    pub model_type: String,
     pub avatar_asset_id: Option<String>,
     pub avatar_crop_x: f64,
     pub avatar_crop_y: f64,

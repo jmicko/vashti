@@ -46,12 +46,9 @@ import type {
   ContextLibraryResponse,
   ModelInfo,
   Persona,
-  PersonaVersion
+  PersonaVersion,
+  PersonaVersionsResponse
 } from "./types";
-
-type PersonaVersionsResponse = {
-  versions: PersonaVersion[];
-};
 
 type InferenceInputKey = keyof ChatInferenceSettings;
 
@@ -584,7 +581,8 @@ export function ModelSettingsMenu({
       displayName: isCustomModel ? `${title} copy` : compactModelName(baseModelName ?? title),
       baseModelValue: baseModelDraftValue,
       systemPrompt: draftSystemPrompt,
-      storageMode: selectedPrivateVersion ? "local" : "private"
+      storageMode: selectedPrivateVersion ? "local" : "private",
+      modelType: selectedVersion?.model_type ?? "general"
     });
     setIsOpen(false);
   }

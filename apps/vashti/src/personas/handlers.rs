@@ -39,6 +39,7 @@ pub struct PersonaDisownResponse {
 pub struct CreatePersonaRequest {
     pub visibility: String,
     pub display_name: String,
+    pub model_type: Option<String>,
     pub avatar_asset_id: Option<String>,
     pub avatar_crop_x: Option<f64>,
     pub avatar_crop_y: Option<f64>,
@@ -54,6 +55,7 @@ pub struct CreatePersonaRequest {
 pub struct UpdatePersonaRequest {
     pub visibility: Option<String>,
     pub display_name: Option<String>,
+    pub model_type: Option<String>,
     pub avatar_asset_id: Option<String>,
     pub avatar_asset_changed: Option<bool>,
     pub avatar_crop_x: Option<f64>,

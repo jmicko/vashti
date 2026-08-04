@@ -57,11 +57,13 @@ import { dismissMobileKeyboard } from "./viewport";
 
 export function PendingOutgoingMessage({
   pendingSend,
+  dimmedEmphasis = false,
   onDiscard,
   onImageOpen,
   onRetry
 }: {
   pendingSend: HostedPendingSend;
+  dimmedEmphasis?: boolean;
   onDiscard: () => void;
   onImageOpen?: ImageOpenHandler;
   onRetry: () => void;
@@ -80,7 +82,7 @@ export function PendingOutgoingMessage({
       aria-live="polite"
     >
       <MessageAttachments attachments={pendingSend.attachments} onImageOpen={onImageOpen} />
-      <MarkdownContent content={pendingSend.prompt} />
+      <MarkdownContent content={pendingSend.prompt} dimmedEmphasis={dimmedEmphasis} />
       <div className={isSending ? "pending-send-status" : "pending-send-status failed"}>
         {isSending ? <LoaderCircle className="pending-send-spinner" /> : <CircleAlert />}
         <div>
@@ -144,6 +146,8 @@ type MessageBubbleProps = {
   selectedModelInfo?: ModelInfo | null;
   modelAvatar?: MessageAvatarInfo | null;
   modelAvatarForMessage?: (message: ChatMessage) => MessageAvatarInfo | null;
+  dimmedEmphasis?: boolean;
+  dimmedEmphasisForMessage?: (message: ChatMessage) => boolean;
   streamSegmentsForMessage?: (message: ChatMessage) => MessageStreamSegment[] | undefined;
   thinkingDurationForMessage?: (message: ChatMessage) => number | null;
   isCarouselPreview?: boolean;
@@ -186,6 +190,10 @@ export function MessageBubble(props: MessageBubbleProps) {
                 ? props.modelAvatarForMessage(previewMessage)
                 : props.modelAvatar
             }
+            dimmedEmphasis={
+              props.dimmedEmphasisForMessage?.(previewMessage) ??
+              (previewMessage.id === message.id ? props.dimmedEmphasis : false)
+            }
             isCarouselPreview
           />
         );
@@ -218,6 +226,7 @@ function MessageBubbleCard({
   onContinue,
   selectedModelInfo,
   modelAvatar,
+  dimmedEmphasis = false,
   isCarouselPreview = false
 }: MessageBubbleProps) {
   const content = message.is_deleted
@@ -256,6 +265,8 @@ function MessageBubbleCard({
   const hasUploadingAttachment = draftAttachments.some(
     (attachment) => attachment.status === "uploading"
   );
+  const useDimmedEmphasis =
+    (message.role === "assistant" || message.role === "user") && dimmedEmphasis;
 
   useEffect(() => {
     if (!isEditing) {
@@ -465,9 +476,10 @@ function MessageBubbleCard({
           thinkingDurationSeconds={thinkingDurationSeconds}
           isThinkingOpen={isThinkingOpen}
           onThinkingToggle={handleThinkingToggle}
+          dimmedEmphasis={useDimmedEmphasis}
         />
       ) : content ? (
-        <MarkdownContent content={content} />
+        <MarkdownContent content={content} dimmedEmphasis={useDimmedEmphasis} />
       ) : (
         <p>{message.status === "streaming" ? <RetroLoader /> : "No content"}</p>
       )}

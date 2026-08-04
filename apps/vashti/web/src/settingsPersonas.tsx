@@ -48,7 +48,8 @@ import type {
   PersonaVersion,
   PersonaMutationResponse,
   PersonasResponse,
-  ModelBackgroundMode
+  ModelBackgroundMode,
+  CustomModelType
 } from "./types";
 
 export function CustomModelsSection({
@@ -71,6 +72,7 @@ export function CustomModelsSection({
   const [deleteTarget, setDeleteTarget] = useState<Persona | null>(null);
   const [deletePrivateTarget, setDeletePrivateTarget] = useState<PrivatePersona | null>(null);
   const [displayName, setDisplayName] = useState("");
+  const [modelType, setModelType] = useState<CustomModelType>("general");
   const [storageMode, setStorageMode] = useState("local");
   const [selectedBaseModel, setSelectedBaseModel] = useState("");
   const [systemPrompt, setSystemPrompt] = useState("");
@@ -172,6 +174,7 @@ export function CustomModelsSection({
     setEditingPersona(null);
     setEditingPrivatePersona(null);
     setDisplayName("");
+    setModelType("general");
     setStorageMode("local");
     setSystemPrompt("");
     setAvatarAssetId(null);
@@ -189,6 +192,7 @@ export function CustomModelsSection({
     setEditingPersona(null);
     setEditingPrivatePersona(null);
     setDisplayName(draft?.displayName ?? "");
+    setModelType(draft?.modelType ?? "general");
     setStorageMode(draft?.storageMode ?? "local");
     setSelectedBaseModel(
       draft?.baseModelValue && modelParts(draft.baseModelValue)
@@ -224,6 +228,7 @@ export function CustomModelsSection({
     setEditingPersona(persona);
     setEditingPrivatePersona(null);
     setDisplayName(version.display_name);
+    setModelType(version.model_type ?? "general");
     setStorageMode(persona.visibility);
     setSelectedBaseModel(modelValue(version.base_backend_id, version.base_model_name));
     setSystemPrompt(version.system_prompt);
@@ -243,6 +248,7 @@ export function CustomModelsSection({
     setEditingPrivatePersona(persona);
     setEditingPersona(null);
     setDisplayName(version.display_name);
+    setModelType(version.model_type ?? "general");
     setStorageMode("local");
     setSelectedBaseModel(modelValue(version.base_backend_id, version.base_model_name));
     setSystemPrompt(version.system_prompt);
@@ -319,6 +325,7 @@ export function CustomModelsSection({
       if (storageMode === "local") {
         const body = {
           displayName,
+          modelType,
           baseBackendId: selected.backendId,
           baseBackendName: backendName,
           baseModelName: selected.modelName,
@@ -355,6 +362,7 @@ export function CustomModelsSection({
       const body = {
         visibility: storageMode,
         display_name: displayName,
+        model_type: modelType,
         avatar_asset_id: nextAvatarAssetId,
         avatar_asset_changed: editingPersona
           ? nextAvatarAssetId !== (editingPersona.current_version.avatar_asset_id ?? null)
@@ -473,6 +481,7 @@ export function CustomModelsSection({
       }
       await createPrivatePersona({
         displayName: version.display_name,
+        modelType: version.model_type ?? "general",
         baseBackendId: version.base_backend_id,
         baseBackendName: backendNameFor(modelGroups, version.base_backend_id),
         baseModelName: version.base_model_name,
@@ -627,6 +636,27 @@ export function CustomModelsSection({
               placeholder="Careful Researcher"
             />
           </label>
+          <div className="custom-model-type-field">
+            <span>Type</span>
+            <div className="segmented-control custom-model-type-control">
+              <button
+                type="button"
+                className={modelType === "general" ? "active" : undefined}
+                aria-pressed={modelType === "general"}
+                onClick={() => setModelType("general")}
+              >
+                General
+              </button>
+              <button
+                type="button"
+                className={modelType === "character" ? "active" : undefined}
+                aria-pressed={modelType === "character"}
+                onClick={() => setModelType("character")}
+              >
+                Character
+              </button>
+            </div>
+          </div>
           <label>
             <span>Storage</span>
             <select value={storageMode} onChange={(event) => setStorageMode(event.target.value)}>
@@ -863,6 +893,7 @@ function PersonaRow({
         </div>
         <div className="badges">
           <span className="badge">custom</span>
+          {version.model_type === "character" && <span className="badge">character</span>}
           <span className={persona.visibility === "public" ? "badge" : "badge badge-warning"}>
             {persona.visibility}
           </span>
@@ -937,6 +968,7 @@ function PrivatePersonaRow({
         </div>
         <div className="badges">
           <span className="badge">custom</span>
+          {version.model_type === "character" && <span className="badge">character</span>}
           <span className="badge badge-warning">device</span>
           <span className="badge">v{version.version_number}</span>
         </div>

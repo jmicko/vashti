@@ -24,6 +24,10 @@ import { readGenerateEventStream } from "./generationStream";
 import { MessageBubble, PendingOutgoingMessage } from "./MessageBubble";
 import { ModelBackgroundLayer, modelBackgroundContainerStyle } from "./ModelBackground";
 import { MessageTreeExplorer } from "./MessageTreeExplorer";
+import {
+  characterPersonaVersionIds,
+  characterPresentationMessageIds
+} from "./messagePresentation";
 import { defaultToolPreferences, normalizeChatDetail } from "./toolPreferences";
 import {
   deleteHostedPendingSend,
@@ -64,6 +68,7 @@ import type {
   ModelInfo,
   Persona,
   PersonaVersion,
+  PersonaVersionsResponse,
   ThinkingMode
 } from "./types";
 
@@ -105,6 +110,7 @@ export function ChatView({
   onChatsChanged,
   onChatSettingsLoaded,
   onConversationSettingsSave,
+  onPersonaVersionsLoaded,
   onImageOpen,
   onModelSelected,
   onQueuedPromptConsumed
@@ -128,6 +134,7 @@ export function ChatView({
     contextBlocks?: ContextBlockSelection[]
   ) => void;
   onConversationSettingsSave: () => Promise<void>;
+  onPersonaVersionsLoaded: (versions: PersonaVersion[]) => void;
   onImageOpen: ImageOpenHandler;
   onModelSelected: (value: string) => void;
   onQueuedPromptConsumed: () => void;
@@ -172,7 +179,39 @@ export function ChatView({
   } | null>(null);
   const isSavingHostedCacheRef = useRef(false);
   const thinkingStartedAtRef = useRef(new Map<string, number>());
+  const requestedPersonaVersionIdsRef = useRef(new Set<string>());
   const [thinkingDurations, setThinkingDurations] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    const knownVersionIds = new Set(personaVersions.map((version) => version.id));
+    const missingByPersona = new Map<string, string[]>();
+
+    for (const message of messages) {
+      if (
+        !message.persona_id ||
+        !message.persona_version_id ||
+        knownVersionIds.has(message.persona_version_id) ||
+        requestedPersonaVersionIdsRef.current.has(message.persona_version_id)
+      ) {
+        continue;
+      }
+
+      const missingIds = missingByPersona.get(message.persona_id) ?? [];
+      missingIds.push(message.persona_version_id);
+      missingByPersona.set(message.persona_id, missingIds);
+      requestedPersonaVersionIdsRef.current.add(message.persona_version_id);
+    }
+
+    for (const [personaId, missingVersionIds] of missingByPersona) {
+      void requestJson<PersonaVersionsResponse>(`/api/personas/${personaId}/versions`)
+        .then((response) => onPersonaVersionsLoaded(response.versions))
+        .catch(() => {
+          for (const versionId of missingVersionIds) {
+            requestedPersonaVersionIdsRef.current.delete(versionId);
+          }
+        });
+    }
+  }, [messages, onPersonaVersionsLoaded, personaVersions]);
   const replaceChatState = useCallback((nextChat: ChatDetail | null) => {
     chatStateRef.current = nextChat;
     setChat(nextChat);
@@ -201,6 +240,14 @@ export function ChatView({
     Boolean(activeAssistantId) &&
     visibleMessages.some((message) => message.id === activeAssistantId);
   const siblingGroups = useMemo(() => groupMessagesByParent(messages), [messages]);
+  const characterVersionIds = useMemo(
+    () => characterPersonaVersionIds(personaVersions),
+    [personaVersions]
+  );
+  const characterMessageIds = useMemo(
+    () => characterPresentationMessageIds(messages, characterVersionIds),
+    [characterVersionIds, messages]
+  );
   const chatContainsImages = useMemo(
     () => messages.some((message) => activeMessageAttachments(message).some(isImageAttachment)),
     [messages]
@@ -1826,11 +1873,19 @@ export function ChatView({
                         modelGroups
                       )
                     }
+                    dimmedEmphasis={characterMessageIds.has(message.id)}
+                    dimmedEmphasisForMessage={(targetMessage) =>
+                      characterMessageIds.has(targetMessage.id)
+                    }
                   />
                 ))}
                 {pendingSend && (
                   <PendingOutgoingMessage
                     pendingSend={pendingSend}
+                    dimmedEmphasis={
+                      typeof pendingSend.request_body.persona_version_id === "string" &&
+                      characterVersionIds.has(pendingSend.request_body.persona_version_id)
+                    }
                     onDiscard={discardPendingMessage}
                     onImageOpen={onImageOpen}
                     onRetry={() => void retryPendingMessage()}
@@ -1893,6 +1948,7 @@ export function ChatView({
           messages={messages}
           onClose={onTreeClose}
           onOpenBranch={openTreeBranch}
+          dimmedEmphasisForMessage={(message) => characterMessageIds.has(message.id)}
         />
       )}
       {(error || generationError) && (

@@ -193,11 +193,14 @@ export type AdminModelsResponse = {
   cache_updated_at: number | null;
 };
 
+export type CustomModelType = "general" | "character";
+
 export type PersonaVersion = {
   id: string;
   persona_id: string;
   version_number: number;
   display_name: string;
+  model_type: CustomModelType;
   avatar_asset_id: string | null;
   avatar_crop_x: number;
   avatar_crop_y: number;
@@ -219,6 +222,10 @@ export type PersonaVersion = {
   tool_policy_json: string | null;
   created_by_user_id: string | null;
   created_at: number;
+};
+
+export type PersonaVersionsResponse = {
+  versions: PersonaVersion[];
 };
 
 export type Persona = {

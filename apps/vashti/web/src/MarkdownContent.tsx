@@ -18,9 +18,21 @@ const markdownComponents = {
   }
 } satisfies Components;
 
-export function MarkdownContent({ content }: { content: string }) {
+export function MarkdownContent({
+  content,
+  dimmedEmphasis = false
+}: {
+  content: string;
+  dimmedEmphasis?: boolean;
+}) {
   return (
-    <div className="message-markdown">
+    <div
+      className={
+        dimmedEmphasis
+          ? "message-markdown message-markdown-dimmed-emphasis"
+          : "message-markdown"
+      }
+    >
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeHighlight]}

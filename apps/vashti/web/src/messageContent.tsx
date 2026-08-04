@@ -9,13 +9,15 @@ export function MessageStreamContent({
   segments,
   thinkingDurationSeconds,
   isThinkingOpen,
-  onThinkingToggle
+  onThinkingToggle,
+  dimmedEmphasis = false
 }: {
   message: ChatMessage;
   segments: MessageStreamSegment[];
   thinkingDurationSeconds: number | null;
   isThinkingOpen: boolean;
   onThinkingToggle: (event: SyntheticEvent<HTMLDetailsElement>) => void;
+  dimmedEmphasis?: boolean;
 }) {
   const visibleSegments = segments.filter(
     (segment) => segment.type === "tool" || segment.text.trim() !== ""
@@ -29,7 +31,13 @@ export function MessageStreamContent({
     <div className="message-stream-content">
       {visibleSegments.map((segment, index) => {
         if (segment.type === "content") {
-          return <MarkdownContent key={`content-${index}`} content={segment.text} />;
+          return (
+            <MarkdownContent
+              key={`content-${index}`}
+              content={segment.text}
+              dimmedEmphasis={dimmedEmphasis}
+            />
+          );
         }
 
         if (segment.type === "tool") {

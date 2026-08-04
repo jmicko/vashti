@@ -56,6 +56,7 @@
   --panel-strong: rgb(var(--panel-strong-rgb));
   --text: rgb(var(--text-rgb));
   --muted: rgb(var(--muted-rgb));
+  --alternate-emphasis: rgb(var(--muted-rgb));
   --accent: rgb(var(--accent-rgb));
   --accent-strong: rgb(var(--accent-strong-rgb));
   --accent-muted: rgba(var(--accent-rgb), 0.18);
@@ -3099,6 +3100,10 @@ textarea {
   margin: 0;
 }
 
+.message-markdown-dimmed-emphasis em {
+  color: var(--alternate-emphasis);
+}
+
 .message-markdown p {
   margin: 0;
   white-space: pre-wrap;
@@ -5469,6 +5474,20 @@ textarea {
 .persona-form textarea {
   min-height: 170px;
   resize: vertical;
+}
+
+.custom-model-type-field {
+  display: grid;
+  gap: 7px;
+}
+
+.custom-model-type-field > span {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.custom-model-type-control {
+  width: min(22rem, 100%);
 }
 
 .persona-editor-form textarea {

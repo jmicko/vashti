@@ -1,8 +1,11 @@
+import type { CustomModelType } from "./types";
+
 export type CustomModelDraft = {
   displayName: string;
   baseModelValue: string;
   systemPrompt: string;
   storageMode: "local" | "private" | "public";
+  modelType: CustomModelType;
 };
 
 const customModelDraftKey = "vashti:custom-model-draft";
@@ -37,7 +40,8 @@ export function takeCustomModelDraft(): CustomModelDraft | null {
       displayName: draft.displayName,
       baseModelValue: draft.baseModelValue,
       systemPrompt: draft.systemPrompt,
-      storageMode: draft.storageMode
+      storageMode: draft.storageMode,
+      modelType: draft.modelType === "character" ? "character" : "general"
     };
   } catch {
     return null;
