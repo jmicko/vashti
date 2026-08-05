@@ -34,6 +34,7 @@ interface PwaContextValue {
   installError: string | null;
   isInstalling: boolean;
   install(): Promise<void>;
+  reloadLatestFrontend(): Promise<void>;
 }
 
 const PwaContext = createContext<PwaContextValue | null>(null);
@@ -44,6 +45,34 @@ function isStandaloneDisplay() {
     window.matchMedia?.("(display-mode: standalone)").matches === true ||
     navigatorWithStandalone.standalone === true
   );
+}
+
+function waitForWorkerInstall(worker: ServiceWorker, timeoutMs: number) {
+  if (worker.state === "installed" || worker.state === "activated" || worker.state === "redundant") {
+    return Promise.resolve();
+  }
+
+  return new Promise<void>((resolve) => {
+    const timeout = window.setTimeout(finish, timeoutMs);
+
+    function finish() {
+      window.clearTimeout(timeout);
+      worker.removeEventListener("statechange", handleStateChange);
+      resolve();
+    }
+
+    function handleStateChange() {
+      if (
+        worker.state === "installed" ||
+        worker.state === "activated" ||
+        worker.state === "redundant"
+      ) {
+        finish();
+      }
+    }
+
+    worker.addEventListener("statechange", handleStateChange);
+  });
 }
 
 export function PwaProvider({ children }: { children: ReactNode }) {
@@ -175,6 +204,28 @@ export function PwaProvider({ children }: { children: ReactNode }) {
     }
   }, [installPrompt, isInstalling]);
 
+  const reloadLatestFrontend = useCallback(async () => {
+    if (registration) {
+      try {
+        await registration.update();
+        if (registration.installing) {
+          await waitForWorkerInstall(registration.installing, 10_000);
+        }
+
+        const refreshedRegistration =
+          (await navigator.serviceWorker.getRegistration()) ?? registration;
+        if (refreshedRegistration.waiting) {
+          await updateServiceWorker(true);
+          return;
+        }
+      } catch {
+        // A normal reload remains a safe fallback when service-worker refresh fails.
+      }
+    }
+
+    window.location.reload();
+  }, [registration, updateServiceWorker]);
+
   async function applyUpdate() {
     setIsApplyingUpdate(true);
     setUpdateError(null);
@@ -191,9 +242,10 @@ export function PwaProvider({ children }: { children: ReactNode }) {
       installState,
       installError,
       isInstalling,
-      install
+      install,
+      reloadLatestFrontend
     }),
-    [install, installError, installState, isInstalling]
+    [install, installError, installState, isInstalling, reloadLatestFrontend]
   );
 
   return (

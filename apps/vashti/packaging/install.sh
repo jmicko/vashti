@@ -7,6 +7,49 @@ install_dir="${VASHTI_INSTALL_DIR:-/usr/local/bin}"
 data_dir="${VASHTI_DATA_DIR:-/var/lib/vashti}"
 bind_addr="${VASHTI_BIND:-0.0.0.0:7771}"
 service_user="${VASHTI_USER:-vashti}"
+update_base_url="${VASHTI_UPDATE_BASE_URL:-https://vashti.chat}"
+
+reject_whitespace() {
+    name="$1"
+    value="$2"
+    case "$value" in
+        *[[:space:]]*)
+            echo "$name cannot contain whitespace" >&2
+            exit 1
+            ;;
+    esac
+}
+
+case "$install_dir" in
+    /*) ;;
+    *) echo "VASHTI_INSTALL_DIR must be an absolute path" >&2; exit 1 ;;
+esac
+case "$data_dir" in
+    /*) ;;
+    *) echo "VASHTI_DATA_DIR must be an absolute path" >&2; exit 1 ;;
+esac
+reject_whitespace "VASHTI_INSTALL_DIR" "$install_dir"
+reject_whitespace "VASHTI_DATA_DIR" "$data_dir"
+reject_whitespace "VASHTI_BIND" "$bind_addr"
+case "$service_user" in
+    [A-Za-z_]* ) ;;
+    *) echo "VASHTI_USER must start with a letter or underscore" >&2; exit 1 ;;
+esac
+case "$service_user" in
+    *[!A-Za-z0-9_-]*) echo "VASHTI_USER contains unsupported characters" >&2; exit 1 ;;
+esac
+update_authority="${update_base_url#https://}"
+update_authority="${update_authority%/}"
+if [ "$update_authority" = "$update_base_url" ]; then
+    echo "VASHTI_UPDATE_BASE_URL must use HTTPS" >&2
+    exit 1
+fi
+case "$update_authority" in
+    '' | *[/@?#]*)
+        echo "VASHTI_UPDATE_BASE_URL must be an HTTPS origin without credentials or a path" >&2
+        exit 1
+        ;;
+esac
 
 need_cmd() {
     if ! command -v "$1" >/dev/null 2>&1; then
@@ -63,6 +106,16 @@ bind_host() {
         *:*) printf '%s\n' "${1%:*}" ;;
         *) printf '%s\n' "$1" ;;
     esac
+}
+
+health_check_url() {
+    host="$(bind_host "$bind_addr")"
+    port="$(bind_port "$bind_addr")"
+    case "$host" in
+        0.0.0.0 | 127.* | localhost) host="127.0.0.1" ;;
+        :: | '[::]') host="[::1]" ;;
+    esac
+    printf 'http://%s:%s/api/version\n' "$host" "$port"
 }
 
 network_label() {
@@ -269,6 +322,8 @@ StateDirectoryMode=0700
 WorkingDirectory=$data_dir
 Environment=VASHTI_DATA_DIR=$data_dir
 Environment=VASHTI_BIND=$bind_addr
+Environment=VASHTI_MANAGED_UPDATES=1
+Environment=VASHTI_UPDATE_BASE_URL=$update_base_url
 ExecStart=$install_dir/vashti
 Restart=on-failure
 RestartSec=3
@@ -280,9 +335,66 @@ ReadWritePaths=$data_dir
 [Install]
 WantedBy=multi-user.target
 EOF_SERVICE
+    update_service_file="$tmp_dir/vashti-update.service"
+    cat > "$update_service_file" <<EOF_UPDATE_SERVICE
+[Unit]
+Description=Install a verified Vashti update
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=$service_user
+UMask=0007
+StateDirectory=vashti-update
+StateDirectoryMode=0700
+Environment=VASHTI_UPDATE_DATA_DIR=$data_dir
+Environment=VASHTI_UPDATE_WORK_DIR=/var/lib/vashti-update
+Environment=VASHTI_UPDATE_DATABASE_PATH=$data_dir/app.db
+Environment=VASHTI_UPDATE_BINARY_PATH=$install_dir/vashti
+Environment=VASHTI_UPDATE_SERVICE_NAME=vashti.service
+Environment=VASHTI_UPDATE_HEALTH_URL=$(health_check_url)
+Environment=VASHTI_UPDATE_BASE_URL=$update_base_url
+ExecStart=$install_dir/vashti --apply-update
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+ReadWritePaths=$data_dir $install_dir
+RestrictSUIDSGID=true
+
+EOF_UPDATE_SERVICE
+    update_path_file="$tmp_dir/vashti-update.path"
+    cat > "$update_path_file" <<EOF_UPDATE_PATH
+[Unit]
+Description=Watch for an approved Vashti update request
+
+[Path]
+PathExists=$data_dir/update/request.json
+PathExists=$data_dir/update/request.in-progress.json
+Unit=vashti-update.service
+
+[Install]
+WantedBy=multi-user.target
+EOF_UPDATE_PATH
+    $sudo_cmd install -d -m 0700 -o "$service_user" -g "$service_user" "$data_dir/update"
     $sudo_cmd install -m 0644 "$service_file" /etc/systemd/system/vashti.service
+    $sudo_cmd install -m 0644 "$update_service_file" /etc/systemd/system/vashti-update.service
+    $sudo_cmd install -m 0644 "$update_path_file" /etc/systemd/system/vashti-update.path
     $sudo_cmd systemctl daemon-reload
     $sudo_cmd systemctl enable vashti
+    $sudo_cmd systemctl enable --now vashti-update.path
     $sudo_cmd systemctl restart vashti
 
     print_access_urls

@@ -28,6 +28,7 @@ pub struct AppSettingsResponse {
     pub public_base_url: Option<String>,
     pub trust_proxy_headers: bool,
     pub network_recovery_notice: Option<String>,
+    pub update_channel: String,
 }
 
 impl AppSettingsResponse {
@@ -184,7 +185,8 @@ pub async fn get_app_settings(pool: &SqlitePool) -> Result<AppSettingsResponse, 
                network_mode,
                public_base_url,
                trust_proxy_headers,
-               network_recovery_notice
+               network_recovery_notice,
+               update_channel
         FROM app_settings
         WHERE id = 1
         "#,
@@ -346,6 +348,12 @@ pub async fn update_app_settings(
         ));
     }
 
+    let update_channel = payload
+        .update_channel
+        .as_deref()
+        .map(validate_update_channel)
+        .transpose()?;
+
     let row = sqlx::query(
         r#"
         UPDATE app_settings
@@ -353,6 +361,7 @@ pub async fn update_app_settings(
             signup_limit = COALESCE(?, signup_limit),
             max_upload_bytes = COALESCE(?, max_upload_bytes),
             request_timeout_ms = COALESCE(?, request_timeout_ms),
+            update_channel = COALESCE(?, update_channel),
             updated_at = ?
         WHERE id = 1
         RETURNING allow_signup,
@@ -363,13 +372,15 @@ pub async fn update_app_settings(
                   network_mode,
                   public_base_url,
                   trust_proxy_headers,
-                  network_recovery_notice
+                  network_recovery_notice,
+                  update_channel
         "#,
     )
     .bind(payload.allow_signup.map(i64::from))
     .bind(payload.signup_limit)
     .bind(payload.max_upload_bytes)
     .bind(payload.request_timeout_ms)
+    .bind(update_channel)
     .bind(unix_timestamp())
     .fetch_one(pool)
     .await?;
@@ -413,7 +424,8 @@ pub async fn update_network_settings(
                   network_mode,
                   public_base_url,
                   trust_proxy_headers,
-                  network_recovery_notice
+                  network_recovery_notice,
+                  update_channel
         "#,
     )
     .bind(network_mode)
@@ -466,7 +478,8 @@ pub async fn dismiss_network_recovery_notice(
                   network_mode,
                   public_base_url,
                   trust_proxy_headers,
-                  network_recovery_notice
+                  network_recovery_notice,
+                  update_channel
         "#,
     )
     .bind(unix_timestamp())
@@ -557,7 +570,24 @@ fn row_to_app_settings(row: sqlx::sqlite::SqliteRow) -> Result<AppSettingsRespon
         public_base_url: row.try_get("public_base_url")?,
         trust_proxy_headers: row.try_get::<i64, _>("trust_proxy_headers")? != 0,
         network_recovery_notice: row.try_get("network_recovery_notice")?,
+        update_channel: row.try_get("update_channel")?,
     })
+}
+
+pub async fn get_update_channel(pool: &SqlitePool) -> Result<String, sqlx::Error> {
+    sqlx::query_scalar("SELECT update_channel FROM app_settings WHERE id = 1")
+        .fetch_one(pool)
+        .await
+}
+
+fn validate_update_channel(value: &str) -> Result<&str, ApiError> {
+    match value {
+        "stable" | "prerelease" => Ok(value),
+        _ => Err(ApiError::bad_request(
+            "invalid_update_channel",
+            "Update channel must be stable or prerelease",
+        )),
+    }
 }
 
 fn row_to_tool_settings_private(

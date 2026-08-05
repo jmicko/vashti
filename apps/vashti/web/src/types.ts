@@ -564,6 +564,31 @@ export type AppSettings = {
   public_base_url: string | null;
   trust_proxy_headers: boolean;
   network_recovery_notice: string | null;
+  update_channel: "stable" | "prerelease";
+};
+
+export type AvailableUpdate = {
+  version: string;
+  notes: string | null;
+  release_status: "released" | "prerelease";
+};
+
+export type UpdateOperationStatus = {
+  state: "idle" | "requested" | "installing" | "succeeded" | "failed" | "rolled_back";
+  version: string | null;
+  message: string | null;
+  updated_at: number | null;
+};
+
+export type UpdateStatusResponse = {
+  managed_updates: boolean;
+  target: string | null;
+  channel: AppSettings["update_channel"];
+  current_version: string;
+  available: AvailableUpdate | null;
+  checked_at: number | null;
+  check_error: string | null;
+  operation: UpdateOperationStatus;
 };
 
 export type UserSettings = {

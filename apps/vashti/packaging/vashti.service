@@ -12,6 +12,7 @@ StateDirectoryMode=0700
 WorkingDirectory=/var/lib/vashti
 Environment=VASHTI_DATA_DIR=/var/lib/vashti
 Environment=VASHTI_BIND=0.0.0.0:7771
+Environment=VASHTI_UPDATE_BASE_URL=https://vashti.chat
 ExecStart=/usr/local/bin/vashti
 Restart=on-failure
 RestartSec=3

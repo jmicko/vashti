@@ -6,10 +6,13 @@ cd "$repo_root"
 
 version="${VERSION:-v$(sed -n 's/^version = "\(.*\)"/\1/p' apps/vashti/Cargo.toml | head -n 1)}"
 hub_url="${VASHTI_HUB_URL:-https://vashti.chat}"
+signing_key="${VASHTI_RELEASE_SIGNING_KEY:-$repo_root/.private/keys/vashti-release-signing-key.pem}"
+public_key_file="$repo_root/crates/vashti-update-manifest/release-public-key.txt"
 notes="${NOTES:-}"
 notes_file="${RELEASE_NOTES_FILE:-}"
 declare -a targets=()
 declare -a artifacts=()
+declare -a signatures=()
 
 if [[ -n "${ARTIFACT:-}" ]]; then
     targets+=("${RELEASE_TARGET:-linux-x86_64}")
@@ -72,6 +75,55 @@ if [[ -n "$notes_file" && ! -f "$notes_file" ]]; then
     exit 1
 fi
 
+if ! command -v openssl >/dev/null 2>&1; then
+    echo "openssl is required to sign release artifacts" >&2
+    exit 1
+fi
+if [[ ! -f "$signing_key" ]]; then
+    echo "missing release signing key: $signing_key" >&2
+    echo "set VASHTI_RELEASE_SIGNING_KEY to the offline Ed25519 private key" >&2
+    exit 1
+fi
+if [[ ! -f "$public_key_file" ]]; then
+    echo "missing compiled release public key: $public_key_file" >&2
+    exit 1
+fi
+
+expected_public_key="$(tr -d '[:space:]' < "$public_key_file")"
+actual_public_key="$(
+    openssl pkey -in "$signing_key" -pubout -outform DER 2>/dev/null \
+        | tail -c 32 \
+        | openssl base64 -A
+)"
+if [[ "$actual_public_key" != "$expected_public_key" ]]; then
+    echo "release signing key does not match Vashti's compiled public key" >&2
+    exit 1
+fi
+
+signing_message_file="$(mktemp)"
+trap 'rm -f "$signing_message_file"' EXIT
+for index in "${!artifacts[@]}"; do
+    artifact="${artifacts[$index]}"
+    filename="$(basename "$artifact")"
+    size_bytes="$(wc -c < "$artifact" | tr -d '[:space:]')"
+    sha256="$(sha256sum "$artifact" | awk '{ print $1 }')"
+    printf '%s\nversion=%s\ntarget=%s\nfilename=%s\nsha256=%s\nsize_bytes=%s\n' \
+        'vashti-update-manifest-v1' \
+        "$version" \
+        "${targets[$index]}" \
+        "$filename" \
+        "$sha256" \
+        "$size_bytes" > "$signing_message_file"
+    signatures+=("$(
+        openssl pkeyutl \
+            -sign \
+            -rawin \
+            -inkey "$signing_key" \
+            -in "$signing_message_file" \
+            | openssl base64 -A
+    )")
+done
+
 curl_args=(
     -fsS
     -H "Authorization: Bearer $upload_key"
@@ -85,6 +137,7 @@ fi
 for index in "${!artifacts[@]}"; do
     curl_args+=(
         -F "target=${targets[$index]}"
+        -F "signature=${signatures[$index]}"
         -F "artifact=@${artifacts[$index]}"
     )
 done

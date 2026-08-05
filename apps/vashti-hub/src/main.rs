@@ -38,6 +38,7 @@ use tokio_util::io::ReaderStream;
 use tower_http::{set_header::SetResponseHeaderLayer, trace::TraceLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use uuid::Uuid;
+use vashti_update_manifest::{SCHEMA_VERSION, SignedArtifact, verify_release_signature};
 
 const INDEX_HTML: &str = include_str!("../static/index.html");
 const ADMIN_HTML: &str = include_str!("../static/admin.html");
@@ -319,6 +320,17 @@ struct ArtifactResponse {
 }
 
 #[derive(Debug, Serialize)]
+struct UpdateManifestResponse {
+    schema_version: u32,
+    channel: String,
+    release_status: String,
+    notes: Option<String>,
+    artifact: SignedArtifact,
+    signature: String,
+    download_url: String,
+}
+
+#[derive(Debug, Serialize)]
 struct UploadResponse {
     release: ReleaseResponse,
     latest_version: Option<String>,
@@ -405,6 +417,8 @@ struct ParsedArtifactUpload {
     filename: String,
     content_type: String,
     bytes: Vec<u8>,
+    sha256: String,
+    signature: String,
 }
 
 struct ReleasePointers {
@@ -507,6 +521,7 @@ fn router(state: AppState) -> Router {
         .route("/api/releases/{version}", delete(delete_release))
         .route("/api/releases/{version}/promote", post(promote_release))
         .route("/api/releases/latest", get(latest_release))
+        .route("/api/updates/{channel}/{target}", get(update_manifest))
         .route("/api/stats", get(stats))
         .route("/releases/latest/VERSION", get(latest_version_file))
         .route("/releases/latest/SHA256SUMS", get(latest_checksums))
@@ -881,6 +896,68 @@ async fn latest_release(State(state): State<AppState>) -> Result<Json<ReleaseRes
     Ok(Json(load_release(&state.db, &version).await?))
 }
 
+async fn update_manifest(
+    State(state): State<AppState>,
+    AxumPath((channel, target)): AxumPath<(String, String)>,
+) -> Result<impl IntoResponse, AppError> {
+    require_claimed(&state.db).await?;
+    let channel = validate_update_channel(&channel)?;
+    let target = validate_target(&target)?;
+    let version = update_version_for_channel(&state.db, channel).await?;
+    let row = sqlx::query(
+        r#"
+        SELECT r.release_status,
+               r.notes,
+               a.filename,
+               a.sha256,
+               a.size_bytes,
+               a.update_signature
+        FROM releases r
+        JOIN release_artifacts a ON a.release_version = r.version
+        WHERE r.version = ? AND a.target = ?
+        "#,
+    )
+    .bind(&version)
+    .bind(&target)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| {
+        AppError::not_found(
+            "update_not_found",
+            "No signed update is available for this target",
+        )
+    })?;
+    let signature: Option<String> = row.try_get("update_signature")?;
+    let signature = signature.ok_or_else(|| {
+        AppError::not_found(
+            "update_not_signed",
+            "This release is not available for managed updates",
+        )
+    })?;
+    let artifact = SignedArtifact {
+        version: version.clone(),
+        target,
+        filename: row.try_get("filename")?,
+        sha256: row.try_get("sha256")?,
+        size_bytes: row.try_get("size_bytes")?,
+    };
+    verify_release_signature(&artifact, &signature).map_err(|error| {
+        tracing::error!(?error, version, "stored update signature is invalid");
+        AppError::internal("Stored update manifest is invalid")
+    })?;
+
+    let manifest = UpdateManifestResponse {
+        schema_version: SCHEMA_VERSION,
+        channel: channel.to_string(),
+        release_status: row.try_get("release_status")?,
+        notes: row.try_get("notes")?,
+        download_url: format!("/releases/{version}/{}", artifact.filename),
+        artifact,
+        signature,
+    };
+    Ok(([(header::CACHE_CONTROL, "no-store")], Json(manifest)))
+}
+
 async fn promote_release(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1036,12 +1113,11 @@ async fn upload_release(
     for artifact in &upload.artifacts {
         let storage_path = artifact_dir.join(&artifact.filename);
         fs::write(&storage_path, &artifact.bytes).await?;
-        let sha256 = sha256_hex(&artifact.bytes);
         sqlx::query(
             r#"
             INSERT INTO release_artifacts
-                (id, release_version, target, filename, content_type, size_bytes, sha256, storage_path, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (id, release_version, target, filename, content_type, size_bytes, sha256, storage_path, update_signature, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(Uuid::new_v4().to_string())
@@ -1050,8 +1126,9 @@ async fn upload_release(
         .bind(&artifact.filename)
         .bind(&artifact.content_type)
         .bind(artifact.bytes.len() as i64)
-        .bind(&sha256)
+        .bind(&artifact.sha256)
         .bind(storage_path.to_string_lossy().to_string())
+        .bind(&artifact.signature)
         .bind(now)
         .execute(&state.db)
         .await?;
@@ -1219,6 +1296,7 @@ fn counts_as_download(method: &Method) -> bool {
 async fn parse_upload(mut multipart: Multipart) -> Result<ParsedUpload, AppError> {
     let mut version = None;
     let mut targets = Vec::new();
+    let mut signatures = Vec::new();
     let mut notes = None;
     let mut uploaded_artifacts = Vec::new();
 
@@ -1245,6 +1323,9 @@ async fn parse_upload(mut multipart: Multipart) -> Result<ParsedUpload, AppError
             "target" => {
                 targets.push(validate_target(&text_field(bytes.as_ref())?)?);
             }
+            "signature" => {
+                signatures.push(text_field(bytes.as_ref())?);
+            }
             "notes" => {
                 let value = text_field(bytes.as_ref())?;
                 notes = (!value.trim().is_empty()).then_some(value);
@@ -1265,7 +1346,8 @@ async fn parse_upload(mut multipart: Multipart) -> Result<ParsedUpload, AppError
     let (version, major, minor, patch) = normalize_version_label(
         &version.ok_or_else(|| AppError::bad_request("missing_version", "Version is required"))?,
     )?;
-    let artifacts = assemble_artifact_uploads(targets, uploaded_artifacts)?;
+    let artifacts = assemble_artifact_uploads(targets, uploaded_artifacts, signatures)?;
+    validate_upload_signatures(&version, &artifacts)?;
 
     Ok(ParsedUpload {
         version,
@@ -1282,6 +1364,7 @@ type UploadedArtifact = (String, String, Vec<u8>);
 fn assemble_artifact_uploads(
     targets: Vec<String>,
     uploaded_artifacts: Vec<UploadedArtifact>,
+    signatures: Vec<String>,
 ) -> Result<Vec<ParsedArtifactUpload>, AppError> {
     if targets.is_empty() || uploaded_artifacts.is_empty() {
         return Err(AppError::bad_request(
@@ -1289,17 +1372,19 @@ fn assemble_artifact_uploads(
             "At least one target and artifact are required",
         ));
     }
-    if targets.len() != uploaded_artifacts.len() {
+    if targets.len() != uploaded_artifacts.len() || targets.len() != signatures.len() {
         return Err(AppError::bad_request(
-            "artifact_target_mismatch",
-            "Each artifact must have one matching target",
+            "artifact_metadata_mismatch",
+            "Each artifact must have one matching target and signature",
         ));
     }
 
     let mut seen_targets = std::collections::HashSet::new();
     let mut seen_filenames = std::collections::HashSet::new();
     let mut artifacts = Vec::with_capacity(targets.len());
-    for (target, (filename, content_type, bytes)) in targets.into_iter().zip(uploaded_artifacts) {
+    for ((target, (filename, content_type, bytes)), signature) in
+        targets.into_iter().zip(uploaded_artifacts).zip(signatures)
+    {
         if bytes.is_empty() {
             return Err(AppError::bad_request(
                 "empty_artifact",
@@ -1318,15 +1403,83 @@ fn assemble_artifact_uploads(
                 "Each release artifact filename must be unique",
             ));
         }
+        let sha256 = sha256_hex(&bytes);
         artifacts.push(ParsedArtifactUpload {
             target,
             filename,
             content_type,
             bytes,
+            sha256,
+            signature,
         });
     }
 
     Ok(artifacts)
+}
+
+fn validate_upload_signatures(
+    version: &str,
+    artifacts: &[ParsedArtifactUpload],
+) -> Result<(), AppError> {
+    for artifact in artifacts {
+        let signed_artifact = SignedArtifact {
+            version: version.to_string(),
+            target: artifact.target.clone(),
+            filename: artifact.filename.clone(),
+            sha256: artifact.sha256.clone(),
+            size_bytes: artifact.bytes.len() as i64,
+        };
+        verify_release_signature(&signed_artifact, &artifact.signature).map_err(|_| {
+            AppError::bad_request(
+                "invalid_update_signature",
+                "Artifact release signature is invalid",
+            )
+        })?;
+    }
+    Ok(())
+}
+
+fn validate_update_channel(channel: &str) -> Result<&str, AppError> {
+    match channel {
+        "stable" | "prerelease" => Ok(channel),
+        _ => Err(AppError::bad_request(
+            "invalid_update_channel",
+            "Update channel must be stable or prerelease",
+        )),
+    }
+}
+
+async fn update_version_for_channel(db: &SqlitePool, channel: &str) -> Result<String, AppError> {
+    let pointers = release_pointers(db).await?;
+    let candidates = match channel {
+        "stable" => vec![pointers.latest_version],
+        "prerelease" => vec![pointers.latest_version, pointers.prerelease_version],
+        _ => unreachable!("validated update channel"),
+    }
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>();
+    if candidates.is_empty() {
+        return Err(AppError::not_found(
+            "update_not_found",
+            "No release is available for this update channel",
+        ));
+    }
+
+    sqlx::query_scalar(
+        r#"
+        SELECT version
+        FROM releases
+        WHERE version IN (?, ?)
+        ORDER BY version_major DESC, version_minor DESC, version_patch DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(candidates.first())
+    .bind(candidates.get(1))
+    .fetch_optional(db)
+    .await?
+    .ok_or_else(|| AppError::not_found("update_not_found", "Update release was not found"))
 }
 
 async fn clear_existing_prerelease(state: &AppState) -> Result<(), AppError> {
@@ -2282,6 +2435,10 @@ mod tests {
                 artifact("vashti-linux-x86_64.tar.gz", b"linux"),
                 artifact("vashti-android.apk", b"android"),
             ],
+            vec![
+                "linux-signature".to_string(),
+                "android-signature".to_string(),
+            ],
         )
         .expect("valid artifacts should be accepted");
 
@@ -2297,10 +2454,11 @@ mod tests {
         let error = assemble_artifact_uploads(
             vec!["linux-x86_64".to_string(), "android-universal".to_string()],
             vec![artifact("vashti-linux-x86_64.tar.gz", b"linux")],
+            vec!["linux-signature".to_string()],
         )
         .expect_err("unpaired fields must be rejected");
 
-        assert_eq!(error.code, "artifact_target_mismatch");
+        assert_eq!(error.code, "artifact_metadata_mismatch");
     }
 
     #[test]
@@ -2311,6 +2469,7 @@ mod tests {
                 artifact("one.tar.gz", b"one"),
                 artifact("two.tar.gz", b"two"),
             ],
+            vec!["one".to_string(), "two".to_string()],
         )
         .expect_err("duplicate targets must be rejected");
         assert_eq!(duplicate_target.code, "duplicate_target");
@@ -2321,6 +2480,7 @@ mod tests {
                 artifact("vashti.bin", b"one"),
                 artifact("vashti.bin", b"two"),
             ],
+            vec!["one".to_string(), "two".to_string()],
         )
         .expect_err("duplicate filenames must be rejected");
         assert_eq!(duplicate_filename.code, "duplicate_filename");
@@ -2331,9 +2491,24 @@ mod tests {
         let error = assemble_artifact_uploads(
             vec!["android-universal".to_string()],
             vec![artifact("vashti-android.apk", b"")],
+            vec!["android-signature".to_string()],
         )
         .expect_err("empty artifacts must be rejected");
 
         assert_eq!(error.code, "empty_artifact");
+    }
+
+    #[test]
+    fn rejects_artifacts_without_a_valid_release_signature() {
+        let artifacts = assemble_artifact_uploads(
+            vec!["linux-x86_64".to_string()],
+            vec![artifact("vashti-linux-x86_64.tar.gz", b"linux")],
+            vec!["not-a-signature".to_string()],
+        )
+        .expect("artifact metadata should assemble before verification");
+
+        let error = validate_upload_signatures("v1.2.3", &artifacts)
+            .expect_err("invalid signatures must be rejected before release storage changes");
+        assert_eq!(error.code, "invalid_update_signature");
     }
 }

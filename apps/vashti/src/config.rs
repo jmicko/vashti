@@ -12,6 +12,8 @@ pub struct Config {
     pub bind_addr: SocketAddr,
     pub session_cookie_name: String,
     pub session_ttl_seconds: i64,
+    pub managed_updates: bool,
+    pub update_base_url: String,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -45,6 +47,9 @@ impl Config {
             bind_addr,
             session_cookie_name: "vashti_session".to_string(),
             session_ttl_seconds: 60 * 60 * 24 * 30,
+            managed_updates: env_flag("VASHTI_MANAGED_UPDATES"),
+            update_base_url: env::var("VASHTI_UPDATE_BASE_URL")
+                .unwrap_or_else(|_| "https://vashti.chat".to_string()),
         })
     }
 
@@ -59,6 +64,28 @@ impl Config {
     pub fn tmp_dir(&self) -> PathBuf {
         self.data_dir.join("tmp")
     }
+
+    pub fn update_dir(&self) -> PathBuf {
+        self.data_dir.join("update")
+    }
+
+    pub fn update_request_path(&self) -> PathBuf {
+        self.update_dir().join("request.json")
+    }
+
+    pub fn update_processing_request_path(&self) -> PathBuf {
+        self.update_dir().join("request.in-progress.json")
+    }
+
+    pub fn update_status_path(&self) -> PathBuf {
+        self.update_dir().join("status.json")
+    }
+}
+
+fn env_flag(name: &str) -> bool {
+    env::var(name)
+        .ok()
+        .is_some_and(|value| matches!(value.trim(), "1" | "true" | "yes" | "on"))
 }
 
 fn default_data_dir(app_root: &Path) -> PathBuf {

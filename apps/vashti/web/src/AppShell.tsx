@@ -9,9 +9,11 @@ import {
 } from "react";
 import {
   Cog,
+  Download,
   GitFork,
   LogOut,
   Menu,
+  RefreshCw,
   Settings as SettingsIcon,
   X
 } from "lucide-react";
@@ -54,6 +56,7 @@ import {
   defaultToolPreferences,
 } from "./toolPreferences";
 import { applyTheme, normalizeTheme, storeAndApplyTheme, storedTheme } from "./theme";
+import { usePwa } from "./pwa";
 import {
   createPrivateChat,
   deleteCachedHostedChat,
@@ -101,8 +104,12 @@ import type {
   SettingsSection,
   ThinkingMode,
   User,
-  UserSettings
+  UserSettings,
+  UpdateStatusResponse,
+  VersionResponse
 } from "./types";
+
+const UPDATE_STATUS_POLL_MS = 15 * 60 * 1000;
 
 const ChatView = lazy(() =>
   import("./ChatView").then((module) => ({ default: module.ChatView }))
@@ -190,6 +197,9 @@ export function AppShell({
     blocks: []
   });
   const [error, setError] = useState<string | null>(null);
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatusResponse | null>(null);
+  const [updateStatusError, setUpdateStatusError] = useState<string | null>(null);
+  const { reloadLatestFrontend } = usePwa();
   const isAdmin = user.role === "admin";
   const page = route.page;
   const isSettingsPage = page === "settings";
@@ -203,6 +213,109 @@ export function AppShell({
     isNewChatDraft && newChatMode === "private" && Boolean(personaVersionIdFromValue(selectedModel));
   const activeSelectedModel = isHostedPersonaUnavailableForPrivateDraft ? "" : selectedModel;
   const imageViewerRef = useRef<ImageViewerState | null>(null);
+  const activeUpdateVersion =
+    updateStatus?.operation.state === "requested" ||
+    updateStatus?.operation.state === "installing"
+      ? updateStatus.operation.version
+      : null;
+
+  const refreshUpdateStatus = useCallback(async () => {
+    if (!isAdmin) {
+      return null;
+    }
+
+    try {
+      const response = await requestJson<UpdateStatusResponse>("/api/admin/update");
+      setUpdateStatus(response);
+      setUpdateStatusError(null);
+      return response;
+    } catch (statusError) {
+      setUpdateStatusError(
+        statusError instanceof Error ? statusError.message : "Failed to load update status"
+      );
+      return null;
+    }
+  }, [isAdmin]);
+
+  useEffect(() => {
+    if (!isAdmin) {
+      setUpdateStatus(null);
+      setUpdateStatusError(null);
+      return;
+    }
+
+    void refreshUpdateStatus();
+    const startupRefresh = window.setTimeout(() => void refreshUpdateStatus(), 5000);
+    const interval = window.setInterval(() => void refreshUpdateStatus(), UPDATE_STATUS_POLL_MS);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void refreshUpdateStatus();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      window.clearTimeout(startupRefresh);
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [isAdmin, refreshUpdateStatus]);
+
+  useEffect(() => {
+    if (!activeUpdateVersion) {
+      return;
+    }
+
+    let cancelled = false;
+    let timeout: number | null = null;
+
+    async function pollUpdate() {
+      try {
+        const version = await requestJson<VersionResponse>("/api/version");
+        if (`v${version.version.replace(/^v/, "")}` === activeUpdateVersion) {
+          await reloadLatestFrontend();
+          return;
+        }
+      } catch {
+        // The server is expected to disappear briefly while systemd replaces it.
+      }
+
+      try {
+        const status = await requestJson<UpdateStatusResponse>("/api/admin/update");
+        if (!cancelled) {
+          setUpdateStatus(status);
+          setUpdateStatusError(null);
+        }
+        if (
+          status.operation.version === activeUpdateVersion &&
+          status.operation.state === "succeeded"
+        ) {
+          await reloadLatestFrontend();
+          return;
+        }
+        if (
+          status.operation.version === activeUpdateVersion &&
+          ["failed", "rolled_back"].includes(status.operation.state)
+        ) {
+          return;
+        }
+      } catch {
+        // Continue polling until either the new server or a rolled-back server responds.
+      }
+
+      if (!cancelled) {
+        timeout = window.setTimeout(() => void pollUpdate(), 1000);
+      }
+    }
+
+    void pollUpdate();
+    return () => {
+      cancelled = true;
+      if (timeout !== null) {
+        window.clearTimeout(timeout);
+      }
+    };
+  }, [activeUpdateVersion, reloadLatestFrontend]);
 
   useEffect(() => {
     routeRef.current = route;
@@ -1136,12 +1249,26 @@ export function AppShell({
                       : "Open settings menu"
                 }
                 aria-expanded={isSettingsMenuOpen}
+                title={updateStatus?.available ? `${updateStatus.available.version} is available` : undefined}
                 onClick={activateSettingsControl}
               >
                 {isSettingsPage || isSettingsMenuOpen ? <X /> : <Cog />}
+                {updateStatus?.available && !isSettingsPage && (
+                  <span className="update-available-dot" aria-hidden="true" />
+                )}
               </button>
               {isSettingsMenuOpen && !isSettingsPage && (
                 <div className="settings-menu">
+                  {isAdmin && updateStatus?.available && (
+                    <button
+                      type="button"
+                      className="menu-item update-menu-item"
+                      onClick={() => openSettings("app")}
+                    >
+                      <Download />
+                      <span>Update to {updateStatus.available.version}</span>
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="menu-item"
@@ -1174,6 +1301,13 @@ export function AppShell({
             onPrivatePersonasChanged={loadPrivatePersonas}
             onContextChanged={loadContextLibraries}
             onAppSettingsGuardChange={updateAppSettingsGuard}
+            updateStatus={updateStatus}
+            updateStatusError={updateStatusError}
+            onUpdateStatusChange={(status) => {
+              setUpdateStatus(status);
+              setUpdateStatusError(null);
+            }}
+            onRefreshUpdateStatus={refreshUpdateStatus}
             onSelectSection={(section) => openSettings(section)}
             onUserChanged={onUserChanged}
             isAdmin={isAdmin}
@@ -1248,6 +1382,15 @@ export function AppShell({
           )
         )}
       </section>
+      {activeUpdateVersion && (
+        <aside className="server-update-notice" role="status" aria-live="polite">
+          <RefreshCw aria-hidden="true" />
+          <div>
+            <strong>Installing {activeUpdateVersion}</strong>
+            <span>Vashti may disconnect briefly, then this page will reload.</span>
+          </div>
+        </aside>
+      )}
       {pendingNavigation && (
         <UnsavedSettingsDialog
           isSaving={isSavingPendingNavigation}

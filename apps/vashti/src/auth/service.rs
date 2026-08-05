@@ -732,6 +732,7 @@ mod tests {
                 signup_limit: Some(1),
                 max_upload_bytes: None,
                 request_timeout_ms: None,
+                update_channel: None,
             },
         )
         .await

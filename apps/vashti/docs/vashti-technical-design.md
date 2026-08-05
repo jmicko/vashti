@@ -2542,8 +2542,23 @@ Install/update path:
 * `install.sh` should detect OS/architecture, download the matching archive from `vashti.chat/releases`, verify checksums, install the binary, and configure systemd on Linux
 * the default packaged install should store data in `/var/lib/vashti`
 * packaged installs should use `WorkingDirectory=/var/lib/vashti` so `recover_network.txt` recovery lives there
-* before in-app self-update exists, updates are performed by rerunning the installer
 * publishing should upload artifacts to the hub API using short-lived one-time bearer keys created from the Hub admin page
+* publishing signs a canonical manifest for each artifact with an offline Ed25519 release key; the private key never reaches Hub or a Vashti server
+* Hub stores the signature beside the server-computed checksum and exposes compact stable/prerelease update-manifest endpoints
+* official systemd installs include `vashti-update.path` and `vashti-update.service`; the path unit watches for a request written by the unprivileged app and invokes a restricted updater mode as root
+* update requests contain only a channel and exact version; the privileged updater resolves artifacts from the configured official Hub and never accepts an arbitrary URL or command from the web process
+* the updater verifies the signed manifest, artifact checksum, target, and version before stopping the running service
+* verified artifacts and rollback backups live under the updater's root-owned `StateDirectory`; they never share a writable parent with the web-facing Vashti process
+* after verification, the updater stops Vashti, backs up the binary and SQLite database, installs with an atomic rename, starts the service, and restores both backups when the new service fails its health check
+* update state is written to the data directory so the replacement process can report progress and the browser can reconnect after restart
+* existing installs must rerun the installer once to receive the updater units; non-systemd/manual installs remain manually updated
+
+Update channels:
+
+* `stable` follows Hub's promoted latest release
+* `prerelease` follows the newer of Hub's promoted latest release and current prerelease
+* checks happen after startup, on an admin-requested refresh, and periodically while the server runs
+* checks never trigger installation automatically
 
 Vashti Hub:
 

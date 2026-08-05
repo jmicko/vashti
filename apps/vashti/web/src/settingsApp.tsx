@@ -4,24 +4,36 @@ import {
   useEffect,
   useState
 } from "react";
-import { Copy, Lock, Save } from "lucide-react";
+import { Copy, Download, Lock, RefreshCw, Save } from "lucide-react";
 import { requestJson } from "./api";
 import { ConfirmDialog, RetroLoader } from "./common";
+import { MarkdownContent } from "./MarkdownContent";
 import { SettingsPanel, SettingsSaveBanner } from "./settingsControls";
 import type {
   AppSettings,
   AppSettingsGuard,
+  UpdateStatusResponse,
   VersionResponse
 } from "./types";
 
 export function AppSettingsPanel({
-  onGuardChange
+  onGuardChange,
+  updateStatus,
+  updateStatusError,
+  onUpdateStatusChange,
+  onRefreshUpdateStatus
 }: {
   onGuardChange: (guard: AppSettingsGuard | null) => void;
+  updateStatus: UpdateStatusResponse | null;
+  updateStatusError: string | null;
+  onUpdateStatusChange: (status: UpdateStatusResponse) => void;
+  onRefreshUpdateStatus: () => Promise<UpdateStatusResponse | null>;
 }) {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [allowSignup, setAllowSignup] = useState(true);
   const [signupLimit, setSignupLimit] = useState(25);
+  const [updateChannel, setUpdateChannel] =
+    useState<AppSettings["update_channel"]>("stable");
   const [networkMode, setNetworkMode] = useState<AppSettings["network_mode"]>("lan_http");
   const [publicBaseUrl, setPublicBaseUrl] = useState("");
   const [trustProxyHeaders, setTrustProxyHeaders] = useState(false);
@@ -40,6 +52,10 @@ export function AppSettingsPanel({
   const [error, setError] = useState<string | null>(null);
   const [networkError, setNetworkError] = useState<string | null>(null);
   const [appVersion, setAppVersion] = useState<VersionResponse | null>(null);
+  const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
+  const [isRequestingUpdate, setIsRequestingUpdate] = useState(false);
+  const [updateConfirmPending, setUpdateConfirmPending] = useState(false);
+  const [updateActionError, setUpdateActionError] = useState<string | null>(null);
 
   const loadSettings = useCallback(async () => {
     setIsLoading(true);
@@ -54,6 +70,7 @@ export function AppSettingsPanel({
       setSettings(response);
       setAllowSignup(response.allow_signup);
       setSignupLimit(response.signup_limit);
+      setUpdateChannel(response.update_channel);
       setNetworkMode(response.network_mode);
       setPublicBaseUrl(response.public_base_url ?? "");
       setTrustProxyHeaders(response.trust_proxy_headers);
@@ -70,9 +87,38 @@ export function AppSettingsPanel({
     void loadSettings();
   }, [loadSettings]);
 
-  const isDirty = Boolean(
-    settings && (settings.allow_signup !== allowSignup || settings.signup_limit !== signupLimit)
+  const isUpdateChannelDirty = Boolean(
+    settings && settings.update_channel !== updateChannel
   );
+  const isDirty = Boolean(
+    settings &&
+      (settings.allow_signup !== allowSignup ||
+        settings.signup_limit !== signupLimit ||
+        settings.update_channel !== updateChannel)
+  );
+  const updateOperationActive = Boolean(
+    updateStatus && ["requested", "installing"].includes(updateStatus.operation.state)
+  );
+  const updateStatusMatchesChannel = updateStatus?.channel === updateChannel;
+
+  const checkForUpdates = useCallback(async () => {
+    setIsCheckingUpdate(true);
+    setUpdateActionError(null);
+    try {
+      const response = await requestJson<UpdateStatusResponse>("/api/admin/update/check", {
+        method: "POST"
+      });
+      onUpdateStatusChange(response);
+      return response;
+    } catch (checkError) {
+      setUpdateActionError(
+        checkError instanceof Error ? checkError.message : "Failed to check for updates"
+      );
+      return null;
+    } finally {
+      setIsCheckingUpdate(false);
+    }
+  }, [onUpdateStatusChange]);
 
   const saveSettingsDraft = useCallback(async () => {
     setIsSaving(true);
@@ -80,17 +126,23 @@ export function AppSettingsPanel({
     setError(null);
 
     try {
+      const channelChanged = settings?.update_channel !== updateChannel;
       const response = await requestJson<AppSettings>("/api/settings", {
         method: "PATCH",
         body: JSON.stringify({
           allow_signup: allowSignup,
-          signup_limit: signupLimit
+          signup_limit: signupLimit,
+          update_channel: updateChannel
         })
       });
       setSettings(response);
       setAllowSignup(response.allow_signup);
       setSignupLimit(response.signup_limit);
+      setUpdateChannel(response.update_channel);
       setSaveStatus("App settings saved.");
+      if (channelChanged) {
+        void checkForUpdates();
+      }
       return true;
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Failed to save settings");
@@ -98,7 +150,7 @@ export function AppSettingsPanel({
     } finally {
       setIsSaving(false);
     }
-  }, [allowSignup, signupLimit]);
+  }, [allowSignup, checkForUpdates, settings?.update_channel, signupLimit, updateChannel]);
 
   const discardSettingsDraft = useCallback(() => {
     if (!settings) {
@@ -107,6 +159,7 @@ export function AppSettingsPanel({
 
     setAllowSignup(settings.allow_signup);
     setSignupLimit(settings.signup_limit);
+    setUpdateChannel(settings.update_channel);
     setSaveStatus(null);
     setError(null);
   }, [settings]);
@@ -213,6 +266,24 @@ export function AppSettingsPanel({
     }
   }
 
+  async function requestUpdateInstall() {
+    setIsRequestingUpdate(true);
+    setUpdateActionError(null);
+    try {
+      const response = await requestJson<UpdateStatusResponse>("/api/admin/update/install", {
+        method: "POST"
+      });
+      onUpdateStatusChange(response);
+      setUpdateConfirmPending(false);
+    } catch (installError) {
+      setUpdateActionError(
+        installError instanceof Error ? installError.message : "Failed to request the update"
+      );
+    } finally {
+      setIsRequestingUpdate(false);
+    }
+  }
+
   return (
     <SettingsPanel
       eyebrow="Admin"
@@ -221,7 +292,10 @@ export function AppSettingsPanel({
         <button
           type="button"
           className="secondary-button refresh-button"
-          onClick={() => void loadSettings()}
+          onClick={() => {
+            void loadSettings();
+            void onRefreshUpdateStatus();
+          }}
           disabled={isLoading}
         >
           {isLoading ? <RetroLoader /> : "Refresh"}
@@ -295,6 +369,159 @@ export function AppSettingsPanel({
               {settings.signup_count === 1 ? "" : "s"} used.
             </p>
           </form>
+
+          <section className="managed-update-panel">
+            <div className="managed-update-heading">
+              <div>
+                <p className="eyebrow">Updates</p>
+                <h2>Managed Updates</h2>
+                <p className="status-message">
+                  Vashti checks in the background, but installs only when an admin confirms one.
+                </p>
+              </div>
+              <div className="managed-update-version">
+                <span>Installed</span>
+                <strong>
+                  {updateStatus?.current_version ??
+                    (appVersion ? `v${appVersion.version}` : "Unknown")}
+                </strong>
+              </div>
+            </div>
+
+            <div
+              className={
+                isUpdateChannelDirty
+                  ? "setting-field setting-field-changed update-channel-field"
+                  : "setting-field update-channel-field"
+              }
+            >
+              <span>Release channel</span>
+              <div className="segmented-control update-channel-control">
+                <button
+                  type="button"
+                  className={updateChannel === "stable" ? "active" : undefined}
+                  aria-pressed={updateChannel === "stable"}
+                  onClick={() => setUpdateChannel("stable")}
+                >
+                  Stable
+                </button>
+                <button
+                  type="button"
+                  className={updateChannel === "prerelease" ? "active" : undefined}
+                  aria-pressed={updateChannel === "prerelease"}
+                  onClick={() => setUpdateChannel("prerelease")}
+                >
+                  Prerelease
+                </button>
+              </div>
+              <small>
+                {updateChannel === "stable"
+                  ? "Notify only for promoted releases."
+                  : "Include the current test release when it is newer than stable."}
+              </small>
+            </div>
+
+            {updateStatusError && <p className="error">{updateStatusError}</p>}
+            {updateActionError && <p className="error">{updateActionError}</p>}
+            {updateStatus?.check_error && (
+              <p className="error">Last update check failed: {updateStatus.check_error}</p>
+            )}
+            {isUpdateChannelDirty && (
+              <p className="status-message">Save the release channel before checking.</p>
+            )}
+            {!isUpdateChannelDirty && updateStatus && !updateStatusMatchesChannel && (
+              <p className="status-message">Refreshing the selected release channel...</p>
+            )}
+
+            {updateStatusMatchesChannel && updateStatus?.available ? (
+              <div className="available-update" role="status">
+                <div className="available-update-summary">
+                  <div>
+                    <strong>{updateStatus.available.version} is available</strong>
+                    <span>
+                      {updateStatus.available.release_status === "prerelease"
+                        ? "Prerelease"
+                        : "Stable release"}
+                    </span>
+                  </div>
+                  {updateStatus.checked_at && (
+                    <small>Checked {formatUpdateTimestamp(updateStatus.checked_at)}</small>
+                  )}
+                </div>
+                {updateStatus.available.notes && (
+                  <details className="update-release-notes">
+                    <summary>Release notes</summary>
+                    <MarkdownContent content={updateStatus.available.notes} />
+                  </details>
+                )}
+              </div>
+            ) : (
+              updateStatusMatchesChannel &&
+              updateStatus?.checked_at &&
+              !updateStatus.check_error && (
+                <p className="status-message">
+                  This installation is up to date. Checked {formatUpdateTimestamp(updateStatus.checked_at)}.
+                </p>
+              )
+            )}
+
+            {updateStatus && !updateStatus.managed_updates && (
+              <div className="info-box" role="status">
+                <p className="eyebrow">One-time Setup Required</p>
+                <p>
+                  This installation predates managed updates. Run the current Vashti installer once
+                  from a terminal to install the restricted system update service. Future updates
+                  can then be installed here.
+                </p>
+              </div>
+            )}
+            {updateStatus?.target === null && (
+              <p className="error">Managed updates are not available for this system target.</p>
+            )}
+            {updateStatus?.operation.message && updateStatus.operation.state !== "idle" && (
+              <p
+                className={
+                  ["failed", "rolled_back"].includes(updateStatus.operation.state)
+                    ? "error"
+                    : "status-message"
+                }
+              >
+                {updateStatus.operation.message}
+              </p>
+            )}
+
+            <div className="managed-update-actions">
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={
+                  isCheckingUpdate ||
+                  isRequestingUpdate ||
+                  isUpdateChannelDirty ||
+                  updateOperationActive
+                }
+                onClick={() => void checkForUpdates()}
+              >
+                {isCheckingUpdate ? <RetroLoader /> : <RefreshCw />}
+                <span>{isCheckingUpdate ? "Checking..." : "Check Now"}</span>
+              </button>
+              {updateStatusMatchesChannel && updateStatus?.available && (
+                <button
+                  type="button"
+                  disabled={
+                    !updateStatus.managed_updates ||
+                    updateStatus.target === null ||
+                    isRequestingUpdate ||
+                    updateOperationActive
+                  }
+                  onClick={() => setUpdateConfirmPending(true)}
+                >
+                  <Download />
+                  <span>{updateOperationActive ? "Updating..." : "Install Update"}</span>
+                </button>
+              )}
+            </div>
+          </section>
         </>
       )}
       {settings && (
@@ -487,6 +714,17 @@ export function AppSettingsPanel({
           onConfirm={() => void saveNetworkSettings()}
         />
       )}
+      {updateConfirmPending && updateStatus?.available && (
+        <ConfirmDialog
+          title={`Install ${updateStatus.available.version}?`}
+          message="Vashti will download and verify the release before briefly restarting. The database and current binary are backed up and restored automatically if the new version fails its health check."
+          confirmLabel="Install Update"
+          confirmTone="primary"
+          isBusy={isRequestingUpdate}
+          onCancel={() => setUpdateConfirmPending(false)}
+          onConfirm={() => void requestUpdateInstall()}
+        />
+      )}
     </SettingsPanel>
   );
 }
@@ -497,6 +735,13 @@ function defaultInternalVashtiUrl() {
   }
   const host = window.location.hostname || "127.0.0.1";
   return `http://${host}:7771`;
+}
+
+function formatUpdateTimestamp(timestamp: number) {
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short"
+  }).format(new Date(timestamp * 1000));
 }
 
 function domainFromPublicBaseUrl(publicBaseUrl: string | null) {

@@ -4,7 +4,9 @@ use sqlx::SqlitePool;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
-use crate::{config::Config, model_cache::ModelCache, rate_limit::RateLimiter};
+use crate::{
+    config::Config, model_cache::ModelCache, rate_limit::RateLimiter, updates::UpdateManager,
+};
 
 #[derive(Clone, Debug)]
 pub struct GenerationProgress {
@@ -22,6 +24,7 @@ pub struct AppState {
     pub server_instance_id: Arc<str>,
     pub rate_limiter: Arc<RateLimiter>,
     pub model_cache: Arc<ModelCache>,
+    pub updates: Arc<UpdateManager>,
     pub generation_cancellations: Arc<Mutex<HashMap<String, CancellationToken>>>,
     pub generation_progress: Arc<Mutex<HashMap<String, GenerationProgress>>>,
 }
@@ -40,6 +43,7 @@ impl AppState {
             server_instance_id: server_instance_id.into(),
             rate_limiter: Arc::new(RateLimiter::new()),
             model_cache: Arc::new(ModelCache::new()),
+            updates: Arc::new(UpdateManager::new()),
             generation_cancellations: Arc::new(Mutex::new(HashMap::new())),
             generation_progress: Arc::new(Mutex::new(HashMap::new())),
         }

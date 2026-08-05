@@ -604,17 +604,20 @@ Target installation model:
 
 ### 14.2 Updating
 
-Long-term goal:
+Managed updates are available for official Linux systemd installations:
 
-* app-managed self-update may exist later
+* admins choose either the stable or prerelease update channel; stable is the default
+* Vashti checks for updates after startup and periodically in the background, but never installs one without an admin action
+* admins can review the version and release notes, explicitly start an update, and remain on a restart screen until the new server is healthy
+* release manifests are signed offline and verified against a public key embedded in Vashti before privileged installation begins
+* the web-facing Vashti service remains unprivileged and cannot run arbitrary root commands or choose arbitrary download URLs
+* the installer creates a narrowly scoped root-owned systemd path/service pair that consumes update requests from the Vashti data directory
+* the updater keeps verified staging files and rollback backups in a root-owned private work directory, downloads and verifies the release before downtime, rejects downgrades, replaces the binary atomically, and rolls the binary and database back if the updated service fails its health check
+* manual, development, and non-systemd installations report managed updates as unavailable instead of attempting privilege escalation
+* existing installations require one final manual installer run to install the managed-update systemd units
+* migrations continue to run automatically on startup; database backup is part of managed update rollback because binary-only rollback may be incompatible after a migration
 
-MVP stance:
-
-* manual binary replacement is acceptable
-* data directory and database survive app updates
-* migrations run automatically on startup
-
-Self-update should not block the MVP.
+Android application updates remain separate from server updates.
 
 ---
 

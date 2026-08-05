@@ -178,6 +178,7 @@ mod tests {
             public_base_url: public_base_url.map(str::to_string),
             trust_proxy_headers,
             network_recovery_notice: None,
+            update_channel: "stable".to_string(),
         }
     }
 

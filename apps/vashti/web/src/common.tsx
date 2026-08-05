@@ -34,6 +34,7 @@ export function ConfirmDialog({
   title,
   message,
   confirmLabel = "Confirm",
+  confirmTone = "danger",
   cancelLabel = "Cancel",
   isBusy = false,
   onCancel,
@@ -42,6 +43,7 @@ export function ConfirmDialog({
   title: string;
   message: string;
   confirmLabel?: string;
+  confirmTone?: "danger" | "primary";
   cancelLabel?: string;
   isBusy?: boolean;
   onCancel: () => void;
@@ -72,7 +74,12 @@ export function ConfirmDialog({
           <button type="button" className="secondary-button" disabled={isBusy} onClick={onCancel}>
             {cancelLabel}
           </button>
-          <button type="button" className="danger-button" disabled={isBusy} onClick={onConfirm}>
+          <button
+            type="button"
+            className={confirmTone === "danger" ? "danger-button" : undefined}
+            disabled={isBusy}
+            onClick={onConfirm}
+          >
             {isBusy ? <RetroLoader /> : confirmLabel}
           </button>
         </div>

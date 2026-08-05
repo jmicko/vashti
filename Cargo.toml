@@ -3,5 +3,6 @@ members = [
     "apps/vashti",
     "apps/vashti-android",
     "apps/vashti-hub",
+    "crates/vashti-update-manifest",
 ]
 resolver = "3"

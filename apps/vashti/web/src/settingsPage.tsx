@@ -9,7 +9,12 @@ import {
   Wrench
 } from "lucide-react";
 import { RetroLoader } from "./common";
-import type { AppSettingsGuard, SettingsSection, User } from "./types";
+import type {
+  AppSettingsGuard,
+  SettingsSection,
+  UpdateStatusResponse,
+  User
+} from "./types";
 
 const AppSettingsPanel = lazy(() =>
   import("./settingsApp").then((module) => ({ default: module.AppSettingsPanel }))
@@ -42,6 +47,10 @@ export function SettingsPage({
   onPrivatePersonasChanged,
   onContextChanged,
   onAppSettingsGuardChange,
+  updateStatus,
+  updateStatusError,
+  onUpdateStatusChange,
+  onRefreshUpdateStatus,
   onSelectSection,
   onUserChanged,
   isAdmin
@@ -54,6 +63,10 @@ export function SettingsPage({
   onPrivatePersonasChanged: () => Promise<void>;
   onContextChanged: () => Promise<void>;
   onAppSettingsGuardChange: (guard: AppSettingsGuard | null) => void;
+  updateStatus: UpdateStatusResponse | null;
+  updateStatusError: string | null;
+  onUpdateStatusChange: (status: UpdateStatusResponse) => void;
+  onRefreshUpdateStatus: () => Promise<UpdateStatusResponse | null>;
   onSelectSection: (section: SettingsSection) => void;
   onUserChanged: (user: User) => void;
   isAdmin: boolean;
@@ -131,7 +144,13 @@ export function SettingsPage({
             <ToolsSettingsPanel onToolsChanged={onToolsChanged} />
           )}
           {selectedSection === "app" && (
-            <AppSettingsPanel onGuardChange={onAppSettingsGuardChange} />
+            <AppSettingsPanel
+              onGuardChange={onAppSettingsGuardChange}
+              updateStatus={updateStatus}
+              updateStatusError={updateStatusError}
+              onUpdateStatusChange={onUpdateStatusChange}
+              onRefreshUpdateStatus={onRefreshUpdateStatus}
+            />
           )}
         </Suspense>
       </section>

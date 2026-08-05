@@ -19,6 +19,7 @@ mod security;
 mod settings;
 mod startup;
 mod tools;
+mod updates;
 mod uploads;
 mod version;
 
@@ -49,7 +50,11 @@ const LARGE_REQUEST_BODY_LIMIT: usize = 64 * 1024 * 1024;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
-    if std::env::args().any(|arg| arg == "--version" || arg == "-V") {
+    let arguments = std::env::args().collect::<Vec<_>>();
+    if arguments
+        .iter()
+        .any(|arg| arg == "--version" || arg == "-V")
+    {
         println!("{}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
@@ -61,6 +66,11 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
+
+    if arguments.iter().any(|arg| arg == "--apply-update") {
+        updates::worker::apply_requested_update().await?;
+        return Ok(());
+    }
 
     let config = Config::from_env()?;
     startup::prepare_data_dir(&config).await?;
@@ -90,6 +100,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let state = AppState::new(config, db, http_client, server_instance_id);
     spawn_session_cleanup(state.db.clone());
     spawn_model_cache_refresh(state.clone());
+    spawn_update_checks(state.clone());
     let app = router(state);
 
     let listener = tokio::net::TcpListener::bind(bind_addr).await?;
@@ -108,6 +119,15 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 fn router(state: AppState) -> Router {
     let api = Router::new()
         .route("/version", get(version::get_version))
+        .route("/admin/update", get(updates::handlers::get_update_status))
+        .route(
+            "/admin/update/check",
+            post(updates::handlers::check_for_update),
+        )
+        .route(
+            "/admin/update/install",
+            post(updates::handlers::install_update),
+        )
         .route("/auth/session", get(auth::handlers::session))
         .route("/auth/register", post(auth::handlers::register))
         .route("/auth/login", post(auth::handlers::login))
@@ -438,6 +458,22 @@ fn spawn_model_cache_refresh(state: AppState) {
             }
 
             tokio::time::sleep(Duration::from_secs(5 * 60)).await;
+        }
+    });
+}
+
+fn spawn_update_checks(state: AppState) {
+    tokio::spawn(async move {
+        loop {
+            if let Err(error) = state
+                .updates
+                .check_for_update(&state.db, &state.http_client, &state.config)
+                .await
+            {
+                tracing::warn!(?error, "failed to check for a Vashti update");
+            }
+
+            tokio::time::sleep(Duration::from_secs(6 * 60 * 60)).await;
         }
     });
 }

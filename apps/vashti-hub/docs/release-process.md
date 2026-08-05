@@ -47,6 +47,24 @@ prerelease until an admin promotes them.
    APK download.
 9. If both artifacts work, promote the release to latest from the Hub admin page.
 
+## Release Signing Key
+
+Every uploaded artifact is signed before Hub accepts it. By default the publisher reads the
+Ed25519 private key from:
+
+```txt
+.private/keys/vashti-release-signing-key.pem
+```
+
+That directory is ignored by Git. Keep the file mode restricted to the release operator and keep
+an encrypted offline backup outside this workstation. Losing the private key prevents existing
+Vashti installations from trusting future managed updates; publishing with a replacement key
+requires an explicit key-rotation release or a manual recovery rollout.
+
+To use a key stored elsewhere, set `VASHTI_RELEASE_SIGNING_KEY` to its absolute path. The publish
+script derives its public key and refuses to continue unless it matches the public key compiled
+into Vashti and Hub.
+
 ## Staged Prereleases
 
 Hub keeps only one prerelease. Uploading another prerelease before promotion replaces the previous

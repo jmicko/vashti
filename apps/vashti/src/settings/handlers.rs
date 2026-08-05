@@ -10,6 +10,7 @@ pub struct UpdateAppSettingsRequest {
     pub signup_limit: Option<i64>,
     pub max_upload_bytes: Option<i64>,
     pub request_timeout_ms: Option<i64>,
+    pub update_channel: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -91,7 +92,24 @@ pub async fn update_app_settings(
     Json(payload): Json<UpdateAppSettingsRequest>,
 ) -> Result<Json<service::AppSettingsResponse>, ApiError> {
     auth::service::require_admin(&state.db, &jar, &state.config.session_cookie_name).await?;
+    let update_channel_changed = payload.update_channel.is_some();
     let settings = service::update_app_settings(&state.db, payload).await?;
+
+    if update_channel_changed {
+        let state = state.clone();
+        tokio::spawn(async move {
+            if let Err(error) = state
+                .updates
+                .check_for_update(&state.db, &state.http_client, &state.config)
+                .await
+            {
+                tracing::warn!(
+                    ?error,
+                    "failed to refresh update status after channel change"
+                );
+            }
+        });
+    }
 
     Ok(Json(settings))
 }
