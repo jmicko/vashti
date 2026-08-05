@@ -887,10 +887,17 @@ fn validate_url(value: &str, health_check: bool) -> Result<(), WorkerError> {
                 "health check URL must use HTTP or HTTPS".to_string(),
             ));
         }
-    } else if url.scheme() != "https" || url.path() != "/" {
-        return Err(WorkerError::InvalidConfig(
-            "update base URL must be an HTTPS origin without a path".to_string(),
-        ));
+    } else {
+        let local_http = url.scheme() == "http"
+            && url
+                .host_str()
+                .is_some_and(|host| matches!(host, "localhost" | "127.0.0.1" | "::1"));
+        if (!local_http && url.scheme() != "https") || url.path() != "/" {
+            return Err(WorkerError::InvalidConfig(
+                "update base URL must be an HTTPS origin or a loopback HTTP origin without a path"
+                    .to_string(),
+            ));
+        }
     }
     Ok(())
 }
@@ -987,7 +994,10 @@ mod tests {
     #[test]
     fn remote_update_url_requires_https() {
         assert!(validate_url("https://vashti.chat", false).is_ok());
+        assert!(validate_url("http://127.0.0.1:7781", false).is_ok());
+        assert!(validate_url("http://localhost:7781", false).is_ok());
         assert!(validate_url("http://vashti.chat", false).is_err());
+        assert!(validate_url("http://192.168.1.4:7781", false).is_err());
         assert!(validate_url("http://127.0.0.1:7771/api/version", true).is_ok());
         assert!(validate_url("http://192.168.1.4:7771/api/version", true).is_ok());
         assert!(validate_url("https://vashti.chat/releases", false).is_err());
