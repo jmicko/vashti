@@ -147,13 +147,37 @@
         <section class="admin-tool">
           <h2>Release History</h2>
           <p class="muted">
-            Uploads are staged as the single prerelease. Promote a prerelease after testing to make
-            it the latest install.
+            Uploads remain staged until promoted or deleted. Promote a tested prerelease to make it
+            the latest stable install.
           </p>
           <div id="release-list" class="release-list">
             <p class="muted">Loading releases...</p>
           </div>
         </section>
+
+        <dialog id="promotion-dialog" class="promotion-dialog">
+          <form id="promotion-form">
+            <div>
+              <p class="eyebrow">Promote Release</p>
+              <h2 id="promotion-title">Promote prerelease</h2>
+              <p class="muted">
+                This makes the selected version the latest stable release.
+              </p>
+            </div>
+            <label id="promotion-rollup-option" class="promotion-rollup-option hidden">
+              <input id="promotion-rollup" type="checkbox">
+              <span>
+                <strong>Include earlier prerelease notes and remove their files</strong>
+                <small id="promotion-rollup-detail"></small>
+              </span>
+            </label>
+            <p id="promotion-preserve-note" class="muted"></p>
+            <div class="button-row promotion-dialog-actions">
+              <button id="promotion-cancel" type="button">Cancel</button>
+              <button type="submit">Promote to latest</button>
+            </div>
+          </form>
+        </dialog>
       </section>
 
       <p id="message" class="status-line"></p>
@@ -165,6 +189,7 @@
     </main>
 
     <script src="/nav.js"></script>
+    <script src="/release-ui.js"></script>
     <script>
       const setupPanel = document.querySelector("#setup-panel");
       const loginPanel = document.querySelector("#login-panel");
@@ -175,6 +200,15 @@
       const releaseList = document.querySelector("#release-list");
       const releaseDashboard = document.querySelector("#release-dashboard");
       const trafficList = document.querySelector("#traffic-list");
+      const promotionDialog = document.querySelector("#promotion-dialog");
+      const promotionForm = document.querySelector("#promotion-form");
+      const promotionTitle = document.querySelector("#promotion-title");
+      const promotionRollupOption = document.querySelector("#promotion-rollup-option");
+      const promotionRollup = document.querySelector("#promotion-rollup");
+      const promotionRollupDetail = document.querySelector("#promotion-rollup-detail");
+      const promotionPreserveNote = document.querySelector("#promotion-preserve-note");
+      let loadedReleases = [];
+      let promotionVersion = null;
 
       function showPanel(panel) {
         for (const element of [setupPanel, loginPanel, adminPanel]) {
@@ -213,18 +247,12 @@
         );
       }
 
-      function installCommandFor(release) {
-        if (release.is_latest) {
-          return "curl -fsSL https://vashti.chat/install.sh | sh";
-        }
-        return `curl -fsSL https://vashti.chat/install.sh | VASHTI_VERSION=${release.version} sh`;
-      }
-
       async function loadReleases() {
         const [releases, stats] = await Promise.all([
           requestJson("/api/releases"),
           requestJson("/api/stats")
         ]);
+        loadedReleases = releases;
         renderReleases(releases);
         renderDashboard(releases, stats);
         renderTraffic(stats.page_hits || []);
@@ -241,8 +269,8 @@
           0
         );
         const latest = releases.find((release) => release.is_latest);
-        const prerelease = releases.find((release) => release.is_prerelease);
-        const promotedCount = releases.filter((release) => !release.is_prerelease).length;
+        const prereleaseCount = releases.filter((release) => release.is_prerelease).length;
+        const promotedCount = releases.filter((release) => release.release_status === "released").length;
 
         const cards = [
           ["Page hits", formatNumber(stats.total_page_hits)],
@@ -251,7 +279,7 @@
           ["Releases", formatNumber(promotedCount)],
           ["Stored size", formatBytes(storedBytes)],
           ["Latest", latest?.version || "None"],
-          ["Prerelease", prerelease?.version || "None"],
+          ["Prereleases", formatNumber(prereleaseCount)],
         ];
 
         releaseDashboard.textContent = "";
@@ -354,29 +382,54 @@
             card.append(notes);
           }
 
-          const artifacts = document.createElement("div");
-          artifacts.className = "release-artifacts";
-          for (const artifact of release.artifacts) {
-            const link = document.createElement("a");
-            link.href = artifact.download_url;
-            link.textContent = `${artifact.target} · ${formatBytes(artifact.size_bytes)} · ${artifact.downloads} downloads`;
-            artifacts.append(link);
-          }
-          card.append(artifacts);
-
-          const command = document.createElement("div");
-          command.className = "command compact";
-          const code = document.createElement("code");
-          code.textContent = installCommandFor(release);
-          const copy = document.createElement("button");
-          copy.type = "button";
-          copy.dataset.copyText = code.textContent;
-          copy.textContent = "Copy";
-          command.append(code, copy);
-          card.append(command);
+          card.append(
+            VashtiReleaseUI.createReleaseDelivery(release, { showDownloadCounts: true })
+          );
 
           releaseList.append(card);
         }
+      }
+
+      function versionParts(version) {
+        return version.replace(/^v/, "").split(".").map(Number);
+      }
+
+      function compareVersions(left, right) {
+        const leftParts = versionParts(left);
+        const rightParts = versionParts(right);
+        for (let index = 0; index < 3; index += 1) {
+          if (leftParts[index] !== rightParts[index]) {
+            return leftParts[index] - rightParts[index];
+          }
+        }
+        return 0;
+      }
+
+      function rollupCandidatesFor(version) {
+        const latest = loadedReleases.find((release) => release.is_latest);
+        return loadedReleases
+          .filter((release) =>
+            release.is_prerelease &&
+            release.version !== version &&
+            compareVersions(release.version, version) < 0 &&
+            (!latest || compareVersions(release.version, latest.version) > 0)
+          )
+          .sort((left, right) => compareVersions(right.version, left.version));
+      }
+
+      function openPromotionDialog(version) {
+        const candidates = rollupCandidatesFor(version);
+        promotionVersion = version;
+        promotionTitle.textContent = `Promote ${version}`;
+        promotionRollup.checked = false;
+        promotionRollupOption.classList.toggle("hidden", candidates.length === 0);
+        promotionRollupDetail.textContent = candidates.length === 0
+          ? ""
+          : `Merge notes from ${candidates.map((release) => release.version).join(", ")}, then delete those releases and their artifacts.`;
+        promotionPreserveNote.textContent = candidates.length === 0
+          ? "No earlier staged releases are eligible for cleanup."
+          : "Leave this unchecked to preserve every earlier prerelease unchanged.";
+        promotionDialog.showModal();
       }
 
       async function requestJson(url, options = {}) {
@@ -533,32 +586,7 @@
         if (promoteButton) {
           const version = promoteButton.dataset.promoteVersion;
           if (!version) return;
-
-          if (promoteButton.dataset.confirming !== "true") {
-            promoteButton.dataset.confirming = "true";
-            promoteButton.textContent = "Confirm promote";
-            setTimeout(() => {
-              if (promoteButton.dataset.confirming === "true") {
-                promoteButton.dataset.confirming = "false";
-                promoteButton.textContent = "Promote to latest";
-              }
-            }, 3500);
-            return;
-          }
-
-          try {
-            promoteButton.disabled = true;
-            await requestJson(`/api/releases/${encodeURIComponent(version)}/promote`, {
-              method: "POST"
-            });
-            setMessage(`${version} promoted to latest.`);
-            await loadReleases();
-          } catch (error) {
-            promoteButton.disabled = false;
-            promoteButton.dataset.confirming = "false";
-            promoteButton.textContent = "Promote to latest";
-            setMessage(error.message, true);
-          }
+          openPromotionDialog(version);
           return;
         }
 
@@ -591,6 +619,44 @@
           button.dataset.confirming = "false";
           button.textContent = "Delete";
           setMessage(error.message, true);
+        }
+      });
+
+      document.querySelector("#promotion-cancel").addEventListener("click", () => {
+        promotionDialog.close();
+      });
+
+      promotionDialog.addEventListener("click", (event) => {
+        if (event.target === promotionDialog) promotionDialog.close();
+      });
+
+      promotionForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        if (!promotionVersion) return;
+        const submitButton = promotionForm.querySelector('[type="submit"]');
+        try {
+          submitButton.disabled = true;
+          const body = await requestJson(
+            `/api/releases/${encodeURIComponent(promotionVersion)}/promote`,
+            {
+              method: "POST",
+              body: JSON.stringify({
+                rollup_previous_prereleases: promotionRollup.checked
+              })
+            }
+          );
+          const incorporated = body.incorporated_versions || [];
+          setMessage(
+            incorporated.length === 0
+              ? `${promotionVersion} promoted to latest.`
+              : `${promotionVersion} promoted; incorporated ${incorporated.join(", ")}.`
+          );
+          promotionDialog.close();
+          await loadReleases();
+        } catch (error) {
+          setMessage(error.message, true);
+        } finally {
+          submitButton.disabled = false;
         }
       });
 

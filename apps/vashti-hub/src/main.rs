@@ -46,6 +46,7 @@ const GETTING_STARTED_HTML: &str = include_str!("../static/getting-started.html"
 const RELEASES_HTML: &str = include_str!("../static/releases.html");
 const STYLES_CSS: &str = include_str!("../static/styles.css");
 const NAV_JS: &str = include_str!("../static/nav.js");
+const RELEASE_UI_JS: &str = include_str!("../static/release-ui.js");
 const ROBOTS_TXT: &str = include_str!("../static/robots.txt");
 const SITEMAP_XML: &str = include_str!("../static/sitemap.xml");
 const LLMS_TXT: &str = include_str!("../static/llms.txt");
@@ -337,6 +338,13 @@ struct UploadResponse {
 }
 
 #[derive(Debug, Serialize)]
+struct PromoteReleaseResponse {
+    release: ReleaseResponse,
+    latest_version: Option<String>,
+    incorporated_versions: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
 struct UploadKeyResponse {
     token: String,
     expires_at: i64,
@@ -402,6 +410,12 @@ struct ResetPasswordRequest {
     password: String,
 }
 
+#[derive(Debug, Default, Deserialize)]
+struct PromoteReleaseRequest {
+    #[serde(default)]
+    rollup_previous_prereleases: bool,
+}
+
 struct ParsedUpload {
     version: String,
     major: i64,
@@ -419,11 +433,6 @@ struct ParsedArtifactUpload {
     bytes: Vec<u8>,
     sha256: String,
     signature: String,
-}
-
-struct ReleasePointers {
-    latest_version: Option<String>,
-    prerelease_version: Option<String>,
 }
 
 const DEFAULT_REQUEST_BODY_LIMIT: usize = 1024 * 1024;
@@ -493,6 +502,7 @@ fn router(state: AppState) -> Router {
         .route("/releases", get(releases_page))
         .route("/styles.css", get(styles))
         .route("/nav.js", get(nav_js))
+        .route("/release-ui.js", get(release_ui_js))
         .route("/favicon.png", get(favicon))
         .route("/logo.png", get(logo))
         .route("/robots.txt", get(robots_txt))
@@ -634,6 +644,16 @@ async fn nav_js() -> impl IntoResponse {
             (header::CACHE_CONTROL, "public, max-age=604800"),
         ],
         NAV_JS,
+    )
+}
+
+async fn release_ui_js() -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "text/javascript; charset=utf-8"),
+            (header::CACHE_CONTROL, "no-cache"),
+        ],
+        RELEASE_UI_JS,
     )
 }
 
@@ -963,46 +983,100 @@ async fn promote_release(
     headers: HeaderMap,
     jar: CookieJar,
     AxumPath(version): AxumPath<String>,
-) -> Result<Json<UploadResponse>, AppError> {
+    request: Option<Json<PromoteReleaseRequest>>,
+) -> Result<Json<PromoteReleaseResponse>, AppError> {
     require_same_origin(&headers)?;
     require_admin_session(&state, &jar).await?;
     let version = normalize_version_label(&version)?.0;
-
-    let rows_updated = sqlx::query(
+    let request = request.map(|Json(request)| request).unwrap_or_default();
+    let target = sqlx::query(
         r#"
-        UPDATE releases
-        SET release_status = 'released'
+        SELECT release_status, notes, version_major, version_minor, version_patch
+        FROM releases
         WHERE version = ?
         "#,
     )
     .bind(&version)
-    .execute(&state.db)
+    .fetch_optional(&state.db)
     .await?
-    .rows_affected();
-    if rows_updated == 0 {
-        return Err(AppError::not_found(
-            "release_not_found",
-            "Release not found",
+    .ok_or_else(|| AppError::not_found("release_not_found", "Release not found"))?;
+    let release_status: String = target.try_get("release_status")?;
+    if release_status != "prerelease" {
+        return Err(AppError::conflict(
+            "release_already_promoted",
+            "Only a prerelease can be promoted",
         ));
     }
 
-    sqlx::query(
-        r#"
-        UPDATE release_settings
-        SET prerelease_version = CASE WHEN prerelease_version = ? THEN NULL ELSE prerelease_version END,
-            updated_at = ?
-        WHERE id = 1
-        "#,
-    )
-    .bind(&version)
-    .bind(unix_timestamp())
-    .execute(&state.db)
-    .await?;
+    let target_parts = (
+        target.try_get::<i64, _>("version_major")?,
+        target.try_get::<i64, _>("version_minor")?,
+        target.try_get::<i64, _>("version_patch")?,
+    );
+    if latest_released_parts(&state.db)
+        .await?
+        .is_some_and(|latest| target_parts <= latest)
+    {
+        return Err(AppError::conflict(
+            "release_not_newer",
+            "A promoted release must be newer than the current stable release",
+        ));
+    }
+    let target_notes: Option<String> = target.try_get("notes")?;
+    let mut incorporated = if request.rollup_previous_prereleases {
+        previous_prereleases_for_rollup(&state.db, &version, target_parts).await?
+    } else {
+        Vec::new()
+    };
+    incorporated.sort_by_key(|release| std::cmp::Reverse(release.parts));
+    let incorporated_versions = incorporated
+        .iter()
+        .map(|release| release.version.clone())
+        .collect::<Vec<_>>();
+    let merged_notes = merge_release_notes(&version, target_notes.as_deref(), &incorporated);
+
+    let mut transaction = state.db.begin().await?;
+    sqlx::query("UPDATE releases SET release_status = 'released', notes = ? WHERE version = ?")
+        .bind(&merged_notes)
+        .bind(&version)
+        .execute(&mut *transaction)
+        .await?;
+
+    for incorporated_version in &incorporated_versions {
+        sqlx::query("DELETE FROM download_events WHERE release_version = ?")
+            .bind(incorporated_version)
+            .execute(&mut *transaction)
+            .await?;
+        sqlx::query("DELETE FROM release_artifacts WHERE release_version = ?")
+            .bind(incorporated_version)
+            .execute(&mut *transaction)
+            .await?;
+        sqlx::query("DELETE FROM releases WHERE version = ? AND release_status = 'prerelease'")
+            .bind(incorporated_version)
+            .execute(&mut *transaction)
+            .await?;
+    }
+
+    transaction.commit().await?;
     update_latest_version(&state.db).await?;
 
-    Ok(Json(UploadResponse {
+    for incorporated_version in &incorporated_versions {
+        let artifact_dir = state.config.artifact_dir.join(incorporated_version);
+        if let Err(error) = fs::remove_dir_all(&artifact_dir).await
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(
+                ?error,
+                version = incorporated_version,
+                "failed to remove incorporated prerelease artifacts"
+            );
+        }
+    }
+
+    Ok(Json(PromoteReleaseResponse {
         release: load_release(&state.db, &version).await?,
         latest_version: latest_version_optional(&state.db).await?,
+        incorporated_versions,
     }))
 }
 
@@ -1036,19 +1110,6 @@ async fn delete_release(
         .bind(&version)
         .execute(&state.db)
         .await?;
-    sqlx::query(
-        r#"
-        UPDATE release_settings
-        SET prerelease_version = CASE WHEN prerelease_version = ? THEN NULL ELSE prerelease_version END,
-            updated_at = ?
-        WHERE id = 1
-        "#,
-    )
-    .bind(&version)
-    .bind(unix_timestamp())
-    .execute(&state.db)
-    .await?;
-
     let artifact_dir = state.config.artifact_dir.join(&version);
     match fs::remove_dir_all(&artifact_dir).await {
         Ok(()) => {}
@@ -1087,7 +1148,17 @@ async fn upload_release(
     require_claimed(&state.db).await?;
     consume_upload_key(&state, &headers).await?;
     let upload = parse_upload(multipart).await?;
-    clear_existing_prerelease(&state).await?;
+    let release_exists: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM releases WHERE version = ?)")
+            .bind(&upload.version)
+            .fetch_one(&state.db)
+            .await?;
+    if release_exists {
+        return Err(AppError::conflict(
+            "release_already_exists",
+            "That release version has already been uploaded",
+        ));
+    }
     let artifact_dir = state.config.artifact_dir.join(&upload.version);
     fs::create_dir_all(&artifact_dir).await?;
     let now = unix_timestamp();
@@ -1095,10 +1166,6 @@ async fn upload_release(
         r#"
         INSERT INTO releases (version, version_major, version_minor, version_patch, release_status, notes, created_at)
         VALUES (?, ?, ?, ?, 'prerelease', ?, ?)
-        ON CONFLICT(version) DO UPDATE SET
-            release_status = 'prerelease',
-            notes = COALESCE(excluded.notes, releases.notes),
-            created_at = excluded.created_at
         "#,
     )
     .bind(&upload.version)
@@ -1133,18 +1200,6 @@ async fn upload_release(
         .execute(&state.db)
         .await?;
     }
-
-    sqlx::query(
-        r#"
-        UPDATE release_settings
-        SET prerelease_version = ?, updated_at = ?
-        WHERE id = 1
-        "#,
-    )
-    .bind(&upload.version)
-    .bind(unix_timestamp())
-    .execute(&state.db)
-    .await?;
 
     Ok(Json(UploadResponse {
         release: load_release(&state.db, &upload.version).await?,
@@ -1450,78 +1505,135 @@ fn validate_update_channel(channel: &str) -> Result<&str, AppError> {
 }
 
 async fn update_version_for_channel(db: &SqlitePool, channel: &str) -> Result<String, AppError> {
-    let pointers = release_pointers(db).await?;
-    let candidates = match channel {
-        "stable" => vec![pointers.latest_version],
-        "prerelease" => vec![pointers.latest_version, pointers.prerelease_version],
-        _ => unreachable!("validated update channel"),
-    }
-    .into_iter()
-    .flatten()
-    .collect::<Vec<_>>();
-    if candidates.is_empty() {
-        return Err(AppError::not_found(
-            "update_not_found",
-            "No release is available for this update channel",
-        ));
-    }
-
     sqlx::query_scalar(
         r#"
         SELECT version
         FROM releases
-        WHERE version IN (?, ?)
+        WHERE release_status = 'released'
+           OR (? = 'prerelease' AND release_status = 'prerelease')
         ORDER BY version_major DESC, version_minor DESC, version_patch DESC
         LIMIT 1
         "#,
     )
-    .bind(candidates.first())
-    .bind(candidates.get(1))
+    .bind(channel)
     .fetch_optional(db)
     .await?
-    .ok_or_else(|| AppError::not_found("update_not_found", "Update release was not found"))
+    .ok_or_else(|| {
+        AppError::not_found(
+            "update_not_found",
+            "No release is available for this update channel",
+        )
+    })
 }
 
-async fn clear_existing_prerelease(state: &AppState) -> Result<(), AppError> {
-    let current: Option<String> =
-        sqlx::query_scalar("SELECT prerelease_version FROM release_settings WHERE id = 1")
-            .fetch_one(&state.db)
-            .await?;
-    let Some(version) = current else {
-        return Ok(());
-    };
+#[derive(Debug)]
+struct PrereleaseRollup {
+    version: String,
+    notes: Option<String>,
+    parts: (i64, i64, i64),
+}
 
-    sqlx::query("DELETE FROM download_events WHERE release_version = ?")
-        .bind(&version)
-        .execute(&state.db)
-        .await?;
-    sqlx::query("DELETE FROM release_artifacts WHERE release_version = ?")
-        .bind(&version)
-        .execute(&state.db)
-        .await?;
-    sqlx::query("DELETE FROM releases WHERE version = ? AND release_status = 'prerelease'")
-        .bind(&version)
-        .execute(&state.db)
-        .await?;
-    sqlx::query(
+async fn previous_prereleases_for_rollup(
+    db: &SqlitePool,
+    target_version: &str,
+    target_parts: (i64, i64, i64),
+) -> Result<Vec<PrereleaseRollup>, AppError> {
+    let latest_parts = latest_released_parts(db).await?;
+
+    let rows = sqlx::query(
         r#"
-        UPDATE release_settings
-        SET prerelease_version = NULL, updated_at = ?
-        WHERE id = 1
+        SELECT version, notes, version_major, version_minor, version_patch
+        FROM releases
+        WHERE release_status = 'prerelease' AND version != ?
         "#,
     )
-    .bind(unix_timestamp())
-    .execute(&state.db)
+    .bind(target_version)
+    .fetch_all(db)
     .await?;
 
-    let artifact_dir = state.config.artifact_dir.join(&version);
-    match fs::remove_dir_all(&artifact_dir).await {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error.into()),
+    rows.into_iter()
+        .map(|row| {
+            let parts = (
+                row.try_get::<i64, _>("version_major")?,
+                row.try_get::<i64, _>("version_minor")?,
+                row.try_get::<i64, _>("version_patch")?,
+            );
+            Ok(PrereleaseRollup {
+                version: row.try_get("version")?,
+                notes: row.try_get("notes")?,
+                parts,
+            })
+        })
+        .collect::<Result<Vec<_>, sqlx::Error>>()
+        .map(|releases| {
+            releases
+                .into_iter()
+                .filter(|release| {
+                    release.parts < target_parts
+                        && latest_parts.is_none_or(|latest| release.parts > latest)
+                })
+                .collect()
+        })
+        .map_err(AppError::from)
+}
+
+async fn latest_released_parts(db: &SqlitePool) -> Result<Option<(i64, i64, i64)>, AppError> {
+    sqlx::query(
+        r#"
+        SELECT version_major, version_minor, version_patch
+        FROM releases
+        WHERE release_status = 'released'
+        ORDER BY version_major DESC, version_minor DESC, version_patch DESC
+        LIMIT 1
+        "#,
+    )
+    .fetch_optional(db)
+    .await?
+    .map(|row| {
+        Ok::<_, sqlx::Error>((
+            row.try_get::<i64, _>("version_major")?,
+            row.try_get::<i64, _>("version_minor")?,
+            row.try_get::<i64, _>("version_patch")?,
+        ))
+    })
+    .transpose()
+    .map_err(AppError::from)
+}
+
+fn merge_release_notes(
+    target_version: &str,
+    target_notes: Option<&str>,
+    incorporated: &[PrereleaseRollup],
+) -> Option<String> {
+    let target_body = release_notes_body(target_notes.unwrap_or_default());
+    let mut sections = Vec::new();
+    if !target_body.is_empty() {
+        sections.push(target_body.to_string());
+    }
+    for release in incorporated {
+        let body = release_notes_body(release.notes.as_deref().unwrap_or_default());
+        if !body.is_empty() {
+            sections.push(format!("## Included from {}\n\n{}", release.version, body));
+        }
     }
 
-    Ok(())
+    if sections.is_empty() {
+        None
+    } else {
+        Some(format!("# {target_version}\n\n{}", sections.join("\n\n")))
+    }
+}
+
+fn release_notes_body(notes: &str) -> &str {
+    let notes = notes.trim();
+    let Some((first_line, remainder)) = notes.split_once('\n') else {
+        return if notes.starts_with("# ") { "" } else { notes };
+    };
+    if first_line.starts_with("# ") {
+        remainder.trim_start()
+    } else {
+        notes
+    }
 }
 
 async fn load_releases(db: &SqlitePool) -> Result<Vec<ReleaseResponse>, AppError> {
@@ -1539,15 +1651,15 @@ async fn load_releases(db: &SqlitePool) -> Result<Vec<ReleaseResponse>, AppError
     .fetch_all(db)
     .await?;
 
-    let pointers = release_pointers(db).await?;
+    let latest = latest_version_optional(db).await?;
     let mut releases = Vec::with_capacity(rows.len());
     for row in rows {
         let version: String = row.try_get("version")?;
         let release_status: String = row.try_get("release_status")?;
         releases.push(ReleaseResponse {
             artifacts: load_artifacts_with_downloads(db, Some(&version)).await?,
-            is_latest: pointers.latest_version.as_deref() == Some(version.as_str()),
-            is_prerelease: pointers.prerelease_version.as_deref() == Some(version.as_str()),
+            is_latest: latest.as_deref() == Some(version.as_str()),
+            is_prerelease: release_status == "prerelease",
             version,
             release_status,
             notes: row.try_get("notes")?,
@@ -1566,15 +1678,16 @@ async fn load_release(db: &SqlitePool, version: &str) -> Result<ReleaseResponse,
     .fetch_optional(db)
     .await?
     .ok_or_else(|| AppError::not_found("release_not_found", "Release not found"))?;
-    let pointers = release_pointers(db).await?;
+    let latest = latest_version_optional(db).await?;
     let version: String = row.try_get("version")?;
+    let release_status: String = row.try_get("release_status")?;
 
     Ok(ReleaseResponse {
         artifacts: load_artifacts_with_downloads(db, Some(&version)).await?,
-        is_latest: pointers.latest_version.as_deref() == Some(version.as_str()),
-        is_prerelease: pointers.prerelease_version.as_deref() == Some(version.as_str()),
+        is_latest: latest.as_deref() == Some(version.as_str()),
+        is_prerelease: release_status == "prerelease",
         version,
-        release_status: row.try_get("release_status")?,
+        release_status,
         notes: row.try_get("notes")?,
         created_at: row.try_get("created_at")?,
     })
@@ -1953,18 +2066,6 @@ async fn latest_version_optional(db: &SqlitePool) -> Result<Option<String>, AppE
             .fetch_one(db)
             .await?,
     )
-}
-
-async fn release_pointers(db: &SqlitePool) -> Result<ReleasePointers, AppError> {
-    let row =
-        sqlx::query("SELECT latest_version, prerelease_version FROM release_settings WHERE id = 1")
-            .fetch_one(db)
-            .await?;
-
-    Ok(ReleasePointers {
-        latest_version: row.try_get("latest_version")?,
-        prerelease_version: row.try_get("prerelease_version")?,
-    })
 }
 
 async fn record_download(
@@ -2412,6 +2513,39 @@ async fn shutdown_signal() {
 mod tests {
     use super::*;
 
+    async fn release_test_db() -> SqlitePool {
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("in-memory database should open");
+        sqlx::migrate!("./migrations")
+            .run(&db)
+            .await
+            .expect("Hub migrations should run");
+        db
+    }
+
+    async fn insert_test_release(db: &SqlitePool, version: &str, status: &str) {
+        let (_, major, minor, patch) =
+            normalize_version_label(version).expect("test version should be valid");
+        sqlx::query(
+            r#"
+            INSERT INTO releases
+                (version, version_major, version_minor, version_patch, release_status, created_at)
+            VALUES (?, ?, ?, ?, ?, 1)
+            "#,
+        )
+        .bind(version)
+        .bind(major)
+        .bind(minor)
+        .bind(patch)
+        .bind(status)
+        .execute(db)
+        .await
+        .expect("test release should insert");
+    }
+
     fn artifact(filename: &str, bytes: &[u8]) -> UploadedArtifact {
         (
             filename.to_string(),
@@ -2510,5 +2644,71 @@ mod tests {
         let error = validate_upload_signatures("v1.2.3", &artifacts)
             .expect_err("invalid signatures must be rejected before release storage changes");
         assert_eq!(error.code, "invalid_update_signature");
+    }
+
+    #[test]
+    fn merges_prerelease_notes_without_duplicate_top_level_headings() {
+        let incorporated = vec![
+            PrereleaseRollup {
+                version: "v0.9.1".to_string(),
+                notes: Some("# v0.9.1\n\nFirst staged change.".to_string()),
+                parts: (0, 9, 1),
+            },
+            PrereleaseRollup {
+                version: "v0.9.0".to_string(),
+                notes: Some("Second staged change.".to_string()),
+                parts: (0, 9, 0),
+            },
+        ];
+
+        let notes = merge_release_notes(
+            "v0.9.2",
+            Some("# v0.9.2\n\nCurrent release."),
+            &incorporated,
+        )
+        .expect("nonempty notes should merge");
+
+        assert_eq!(
+            notes,
+            "# v0.9.2\n\nCurrent release.\n\n## Included from v0.9.1\n\nFirst staged change.\n\n## Included from v0.9.0\n\nSecond staged change."
+        );
+    }
+
+    #[test]
+    fn empty_release_notes_stay_empty() {
+        assert_eq!(merge_release_notes("v1.0.0", None, &[]), None);
+    }
+
+    #[tokio::test]
+    async fn update_channels_and_rollup_support_multiple_prereleases() {
+        let db = release_test_db().await;
+        insert_test_release(&db, "v0.9.0", "released").await;
+        insert_test_release(&db, "v0.9.1", "prerelease").await;
+        insert_test_release(&db, "v0.9.2", "prerelease").await;
+        insert_test_release(&db, "v0.9.3", "prerelease").await;
+
+        assert_eq!(
+            update_version_for_channel(&db, "stable")
+                .await
+                .expect("stable release should resolve"),
+            "v0.9.0"
+        );
+        assert_eq!(
+            update_version_for_channel(&db, "prerelease")
+                .await
+                .expect("highest prerelease should resolve"),
+            "v0.9.3"
+        );
+
+        let candidates = previous_prereleases_for_rollup(&db, "v0.9.2", (0, 9, 2))
+            .await
+            .expect("rollup candidates should load");
+        assert_eq!(
+            candidates
+                .iter()
+                .map(|release| release.version.as_str())
+                .collect::<Vec<_>>(),
+            vec!["v0.9.1"]
+        );
     }
 }

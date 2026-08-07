@@ -228,7 +228,9 @@ curl -fsS -c "$test_root/hub-cookies.txt" \
     "$hub_url/api/admin/setup" >/dev/null
 
 upload_release "$current_version" "$current_archive"
-curl -fsS -b "$test_root/hub-cookies.txt" -X POST \
+curl -fsS -b "$test_root/hub-cookies.txt" \
+    -H 'Content-Type: application/json' \
+    -d '{"rollup_previous_prereleases":false}' \
     "$hub_url/api/releases/v$current_version/promote" >/dev/null
 upload_release "$candidate_version" "$candidate_archive"
 

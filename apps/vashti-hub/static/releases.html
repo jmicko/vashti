@@ -47,6 +47,7 @@
       </footer>
     </main>
     <script src="/nav.js"></script>
+    <script src="/release-ui.js"></script>
     <script>
       const releaseList = document.querySelector("#release-list");
 
@@ -70,13 +71,6 @@
           (total, artifact) => total + Number(artifact.size_bytes || 0),
           0
         );
-      }
-
-      function installCommandFor(release) {
-        if (release.is_latest) {
-          return "curl -fsSL https://vashti.chat/install.sh | sh";
-        }
-        return `curl -fsSL https://vashti.chat/install.sh | VASHTI_VERSION=${release.version} sh`;
       }
 
       function renderReleases(releases) {
@@ -123,42 +117,7 @@
           notes.textContent = release.notes || "No release notes were provided.";
           card.append(notes);
 
-          const artifacts = document.createElement("div");
-          artifacts.className = "release-artifacts";
-          for (const artifact of release.artifacts) {
-            const link = document.createElement("a");
-            link.href = artifact.download_url;
-            link.textContent = `${artifact.target} · ${formatBytes(artifact.size_bytes)}`;
-            artifacts.append(link);
-          }
-          card.append(artifacts);
-
-          const command = document.createElement("div");
-          command.className = "command compact";
-          const code = document.createElement("code");
-          code.textContent = installCommandFor(release);
-          const copy = document.createElement("button");
-          copy.type = "button";
-          copy.textContent = "Copy";
-          copy.addEventListener("click", async () => {
-            const text = code.textContent || "";
-            if (navigator.clipboard) {
-              await navigator.clipboard.writeText(text);
-            } else {
-              const textarea = document.createElement("textarea");
-              textarea.value = text;
-              document.body.append(textarea);
-              textarea.select();
-              document.execCommand("copy");
-              textarea.remove();
-            }
-            copy.textContent = "Copied";
-            setTimeout(() => {
-              copy.textContent = "Copy";
-            }, 1800);
-          });
-          command.append(code, copy);
-          card.append(command);
+          card.append(VashtiReleaseUI.createReleaseDelivery(release));
 
           releaseList.append(card);
         }

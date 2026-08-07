@@ -1,7 +1,7 @@
 # Vashti Release Process
 
-Vashti Hub keeps promoted releases as the official public history. Uploads are staged as a single
-prerelease until an admin promotes them.
+Vashti Hub keeps promoted releases as the official public history. Uploads remain staged as
+prereleases until an admin promotes or deletes them.
 
 ## Normal Release Flow
 
@@ -67,11 +67,15 @@ into Vashti and Hub.
 
 ## Staged Prereleases
 
-Hub keeps only one prerelease. Uploading another prerelease before promotion replaces the previous
-staged prerelease and removes its artifact files from Hub storage.
+Hub can retain multiple prereleases so a candidate can be installed and tested before a later
+candidate is uploaded. Uploading a new version never removes an earlier staged version. Uploading
+the same version twice is rejected; versioned artifacts are immutable after Hub accepts them.
 
-This keeps the official release history clean. Only promoted releases remain as durable public
-history.
+When promoting a release, the admin can optionally incorporate earlier prereleases newer than the
+current stable release. Hub deterministically appends their release notes to the promoted release,
+then deletes those incorporated release records and artifact files. The confirmation dialog lists
+every version that will be removed. Leaving the option unchecked promotes only the selected version
+and preserves all other prereleases.
 
 ## Installs And Updates
 

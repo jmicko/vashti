@@ -122,8 +122,9 @@ Before `v1.0.0`:
 * minor versions may include migrations and feature changes
 * downgrade support is not promised
 
-Vashti Hub does not invent versions. It validates uploaded `vMAJOR.MINOR.PATCH` labels, stages
-uploads as a single prerelease, and serves only the admin-promoted release as `latest`.
+Vashti Hub does not invent versions. It validates uploaded `vMAJOR.MINOR.PATCH` labels, retains
+uploads as prereleases until an admin acts on them, and serves only the admin-promoted release as
+`latest`. The prerelease update channel selects the highest available released or staged version.
 
 ## Build Vashti
 
