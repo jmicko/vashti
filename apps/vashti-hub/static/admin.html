@@ -421,7 +421,7 @@
         const candidates = rollupCandidatesFor(version);
         promotionVersion = version;
         promotionTitle.textContent = `Promote ${version}`;
-        promotionRollup.checked = false;
+        promotionRollup.checked = candidates.length > 0;
         promotionRollupOption.classList.toggle("hidden", candidates.length === 0);
         promotionRollupDetail.textContent = candidates.length === 0
           ? ""
