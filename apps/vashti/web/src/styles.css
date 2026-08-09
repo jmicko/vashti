@@ -2191,7 +2191,6 @@ textarea {
 }
 
 .chat-composer-wrap {
-  border-top: 1px solid var(--line-soft);
   display: grid;
   gap: 8px;
   justify-items: center;
@@ -2712,6 +2711,18 @@ textarea {
   overflow-x: hidden;
   overflow-y: auto;
   overflow-anchor: auto;
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    #000 0,
+    #000 calc(100% - 0.75rem),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    #000 0,
+    #000 calc(100% - 0.75rem),
+    transparent 100%
+  );
   display: grid;
   align-content: start;
   grid-template-columns: minmax(0, min(100%, var(--chat-content-width)));
