@@ -367,7 +367,6 @@ textarea {
 .text-button,
 .secondary-button,
 .danger-button,
-.nav-button,
 .settings-tab,
 .menu-item,
 .icon-button {
@@ -384,11 +383,9 @@ textarea {
 .text-button:hover,
 .secondary-button:hover,
 .danger-button:hover,
-.nav-button:hover,
 .settings-tab:hover,
 .menu-item:hover,
 .icon-button:hover,
-.nav-button-active,
 .settings-tab-active {
   background: var(--accent-muted);
 }
@@ -449,10 +446,17 @@ textarea {
   gap: 12px;
 }
 
-.nav-button {
-  width: 100%;
-  justify-content: flex-start;
-  margin-top: 18px;
+.sidebar-brand-button {
+  min-height: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+}
+
+.sidebar-brand-button:hover {
+  background: transparent;
+  filter: brightness(1.12);
 }
 
 .chat-history {

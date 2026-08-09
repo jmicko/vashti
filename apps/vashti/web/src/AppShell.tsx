@@ -745,6 +745,7 @@ export function AppShell({
       return;
     }
 
+    setIsSidebarOpen(false);
     setIsSettingsMenuOpen((open) => !open);
   }
 
@@ -1138,7 +1139,6 @@ export function AppShell({
             privateChats={privateChats}
             currentChatId={currentChatId}
             currentPrivateChatId={currentPrivateChatId}
-            currentPage={page}
             isOpen={isSidebarOpen}
             isLoading={isLoadingChats}
             isLoadingPrivateChats={isLoadingPrivateChats}
@@ -1177,7 +1177,10 @@ export function AppShell({
                   className="icon-button mobile-only"
                   aria-label={isSidebarOpen ? "Close sidebar" : "Open sidebar"}
                   aria-expanded={isSidebarOpen}
-                  onClick={() => setIsSidebarOpen((open) => !open)}
+                  onClick={() => {
+                    setIsSettingsMenuOpen(false);
+                    setIsSidebarOpen((open) => !open);
+                  }}
                 >
                   <Menu />
                 </button>

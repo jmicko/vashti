@@ -8,7 +8,6 @@ import {
 import {
   Copy,
   Lock,
-  MessageSquare,
   MessageSquarePlus,
   MoreHorizontal,
   Pencil,
@@ -21,14 +20,13 @@ import type {
   PrivateChatSummary,
   PrivatePersonaVersion
 } from "./privateChatStore";
-import type { BackendModelGroup, ChatSummary, Page, PersonaVersion } from "./types";
+import type { BackendModelGroup, ChatSummary, PersonaVersion } from "./types";
 
 export function Sidebar({
   chats,
   privateChats,
   currentChatId,
   currentPrivateChatId,
-  currentPage,
   isOpen,
   isLoading,
   isLoadingPrivateChats,
@@ -48,7 +46,6 @@ export function Sidebar({
   privateChats: PrivateChatSummary[];
   currentChatId: string | null;
   currentPrivateChatId: string | null;
-  currentPage: Page;
   isOpen: boolean;
   isLoading: boolean;
   isLoadingPrivateChats: boolean;
@@ -122,7 +119,18 @@ export function Sidebar({
     <aside className="sidebar">
       <div className="sidebar-static">
         <div className="sidebar-header">
-          <BrandMark compact />
+          <button
+            type="button"
+            className="sidebar-brand-button"
+            aria-label="Go to home"
+            title="Home"
+            onClick={() => {
+              setOpenMenuChatId(null);
+              onOpenChat();
+            }}
+          >
+            <BrandMark compact />
+          </button>
           <button
             type="button"
             className="icon-button mobile-only"
@@ -135,21 +143,6 @@ export function Sidebar({
             <X />
           </button>
         </div>
-        <button
-          type="button"
-          className={
-            currentPage === "chat" && !currentChatId
-              ? "nav-button nav-button-active"
-              : "nav-button"
-          }
-          onClick={() => {
-            setOpenMenuChatId(null);
-            onOpenChat();
-          }}
-        >
-          <MessageSquare />
-          <span>Chats</span>
-        </button>
       </div>
       <div className="chat-history">
         <p className="eyebrow">Previous Chats</p>
