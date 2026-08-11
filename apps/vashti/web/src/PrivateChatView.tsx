@@ -1926,7 +1926,9 @@ export function PrivateChatView({
               }
               onStop={stopGeneration}
               onUploadAttachment={preparePrivateAttachment}
-              onSubmit={submitPrompt}
+              onSubmit={(prompt, attachments, toolPreferences, thinkMode) =>
+                submitPrompt(prompt, attachments, toolPreferences, thinkMode)
+              }
             />
           </div>
         </>

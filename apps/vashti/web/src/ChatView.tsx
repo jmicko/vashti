@@ -66,6 +66,7 @@ import type {
   MessageVersion,
   BackendModelGroup,
   ModelInfo,
+  NoteContextSelection,
   Persona,
   PersonaVersion,
   PersonaVersionsResponse,
@@ -131,7 +132,8 @@ export function ChatView({
   onChatSettingsLoaded: (
     override: string | null | undefined,
     inferenceSettings?: ChatInferenceSettings,
-    contextBlocks?: ContextBlockSelection[]
+    contextBlocks?: ContextBlockSelection[],
+    pinnedNotes?: NoteContextSelection[]
   ) => void;
   onConversationSettingsSave: () => Promise<void>;
   onPersonaVersionsLoaded: (versions: PersonaVersion[]) => void;
@@ -305,10 +307,7 @@ export function ChatView({
   const applyLoadedChat = useCallback(
     (nextChat: ChatDetail, activeRootMessageId: string | null, nextMessages: ChatMessage[]) => {
       const normalizedChat = normalizeChatDetail(nextChat);
-      const normalizedMessages = nextMessages.map((message) => ({
-        ...message,
-        context_blocks: message.context_blocks ?? []
-      }));
+      const normalizedMessages = nextMessages.map(normalizeHostedMessage);
       replaceChatState({
         ...normalizedChat,
         active_root_message_id: activeRootMessageId
@@ -316,7 +315,8 @@ export function ChatView({
       onChatSettingsLoaded(
         normalizedChat.system_prompt_override,
         normalizedChat.inference_settings,
-        normalizedChat.context_blocks
+        normalizedChat.context_blocks,
+        normalizedChat.pinned_notes
       );
       thinkingStartedAtRef.current.clear();
       setThinkingDurations({});
@@ -452,9 +452,10 @@ export function ChatView({
           ? { ...current, active_root_message_id: messageResponse.active_root_message_id }
           : current
       );
-      replaceMessageList(messageResponse.messages);
+      const normalizedMessages = messageResponse.messages.map(normalizeHostedMessage);
+      replaceMessageList(normalizedMessages);
 
-      const streamingAssistantId = streamingAssistantIdFromMessages(messageResponse.messages);
+      const streamingAssistantId = streamingAssistantIdFromMessages(normalizedMessages);
       setActiveAssistantId(streamingAssistantId);
       setIsGenerating(Boolean(streamingAssistantId));
 
@@ -468,12 +469,13 @@ export function ChatView({
         onChatSettingsLoaded(
           nextChat.system_prompt_override,
           nextChat.inference_settings,
-          nextChat.context_blocks
+          nextChat.context_blocks,
+          nextChat.pinned_notes
         );
         queueHostedCacheSave({
           chat: nextChat,
           active_root_message_id: messageResponse.active_root_message_id,
-          messages: messageResponse.messages
+          messages: normalizedMessages
         });
         await onChatsChanged();
       }
@@ -596,7 +598,8 @@ export function ChatView({
       prompt: string,
       attachments: ComposerAttachment[] = [],
       thinkMode: ThinkingMode = "auto",
-      promptInferenceSettings: ChatInferenceSettings = inferenceSettings
+      promptInferenceSettings: ChatInferenceSettings = inferenceSettings,
+      notes: NoteContextSelection[] = []
     ) => {
       if (isGenerating || pendingSendRef.current) {
         return;
@@ -615,13 +618,15 @@ export function ChatView({
         think_mode: thinkModeToPayload(thinkMode),
         inference_settings: promptInferenceSettings,
         tool_preferences: chat?.tool_preferences ?? defaultToolPreferences,
-        attachments: attachmentReferences(attachments)
+        attachments: attachmentReferences(attachments),
+        note_version_ids: notes.map((note) => note.note_version_id)
       };
       const attempt: HostedPendingSend = {
         id: chatId,
         chat_id: chatId,
         prompt,
         attachments: persistedAttachmentMetadata(attachments),
+        notes,
         request_path: requestPath,
         request_body: requestBody,
         known_message_ids: messages.map((message) => message.id),
@@ -757,7 +762,8 @@ export function ChatView({
       queuedPrompt.thinkMode,
       queuedPrompt.inferenceSettings !== undefined
         ? queuedPrompt.inferenceSettings
-        : inferenceSettings
+        : inferenceSettings,
+      queuedPrompt.notes ?? []
     );
   }, [
     chat,
@@ -789,7 +795,8 @@ export function ChatView({
       prompt.prompt,
       prompt.attachments,
       prompt.thinkMode,
-      prompt.inferenceSettings !== undefined ? prompt.inferenceSettings : inferenceSettings
+      prompt.inferenceSettings !== undefined ? prompt.inferenceSettings : inferenceSettings,
+      prompt.notes ?? []
     );
   }, [
     chat,
@@ -1122,8 +1129,8 @@ export function ChatView({
 
           return [
             ...existingMessages,
-            ...(event.user_message ? [event.user_message] : []),
-            event.assistant_message
+            ...(event.user_message ? [normalizeHostedMessage(event.user_message)] : []),
+            normalizeHostedMessage(event.assistant_message)
           ];
         });
         break;
@@ -1308,15 +1315,16 @@ export function ChatView({
     prompt: string,
     attachments: ComposerAttachment[] = [],
     _toolPreferences?: ChatToolPreferences,
-    thinkMode: ThinkingMode = "auto"
+    thinkMode: ThinkingMode = "auto",
+    notes: NoteContextSelection[] = []
   ) {
     if (isGenerating) {
-      setPendingPrompt({ prompt, attachments, thinkMode, inferenceSettings });
+      setPendingPrompt({ prompt, attachments, thinkMode, inferenceSettings, notes });
       await stopGeneration();
       return;
     }
 
-    await generate(prompt, attachments, thinkMode, inferenceSettings);
+    await generate(prompt, attachments, thinkMode, inferenceSettings, notes);
   }
 
   async function retryPendingMessage() {
@@ -1343,12 +1351,7 @@ export function ChatView({
             ? { ...current, active_root_message_id: response.active_root_message_id }
             : current
         );
-        replaceMessageList(
-          response.messages.map((message) => ({
-            ...message,
-            context_blocks: message.context_blocks ?? []
-          }))
-        );
+        replaceMessageList(response.messages.map(normalizeHostedMessage));
         await clearPendingSend(retryAttempt.id);
         await onChatsChanged();
         return;
@@ -1381,7 +1384,9 @@ export function ChatView({
 
   function replaceMessage(nextMessage: ChatMessage) {
     updateMessageList((current) =>
-      current.map((message) => (message.id === nextMessage.id ? nextMessage : message))
+      current.map((message) =>
+        message.id === nextMessage.id ? normalizeHostedMessage(nextMessage) : message
+      )
     );
   }
 
@@ -1937,6 +1942,7 @@ export function ChatView({
               onStop={stopGeneration}
               onUploadAttachment={uploadAttachment}
               onRemoveAttachment={removeAttachment}
+              canAttachNotes
               onSubmit={submitPrompt}
             />
           </div>
@@ -1966,6 +1972,14 @@ export function ChatView({
       )}
     </div>
   );
+}
+
+function normalizeHostedMessage(message: ChatMessage): ChatMessage {
+  return {
+    ...message,
+    context_blocks: message.context_blocks ?? [],
+    note_attachments: message.note_attachments ?? []
+  };
 }
 
 function versionMutationOrder(mutation: HostedVersionMutation) {
@@ -2036,6 +2050,9 @@ function acknowledgedMessageForAttempt(
 ): ChatMessage | null {
   const knownMessageIds = new Set(attempt.known_message_ids);
   const expectedAttachmentIds = attempt.attachments.map((attachment) => attachment.id).sort();
+  const expectedNoteVersionIds = (attempt.notes ?? [])
+    .map((note) => note.note_version_id)
+    .sort();
 
   return (
     messages.find((message) => {
@@ -2049,9 +2066,15 @@ function acknowledgedMessageForAttempt(
       const messageAttachmentIds = activeMessageAttachments(message)
         .map((attachment) => attachment.id)
         .sort();
+      const messageNoteVersionIds = (message.note_attachments ?? [])
+        .filter((note) => note.source === "explicit")
+        .map((note) => note.note_version_id)
+        .sort();
       return (
         messageAttachmentIds.length === expectedAttachmentIds.length &&
-        messageAttachmentIds.every((id, index) => id === expectedAttachmentIds[index])
+        messageAttachmentIds.every((id, index) => id === expectedAttachmentIds[index]) &&
+        messageNoteVersionIds.length === expectedNoteVersionIds.length &&
+        messageNoteVersionIds.every((id, index) => id === expectedNoteVersionIds[index])
       );
     }) ?? null
   );

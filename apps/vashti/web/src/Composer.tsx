@@ -29,6 +29,9 @@ import {
 } from "./attachments";
 import { RetroLoader } from "./common";
 import { CompactModelCapabilityBadges } from "./modelCapabilities";
+import { ComposerNotePicker, useNoteSearch } from "./notes/NotePicker";
+import { NoteContextChips } from "./notes/NoteContextChips";
+import type { NoteSummary } from "./notes/types";
 import { ToggleSwitch } from "./settingsControls";
 import { toolIcon } from "./toolUi";
 import {
@@ -42,6 +45,7 @@ import type {
   ChatToolPreferences,
   ComposerAttachment,
   ModelInfo,
+  NoteContextSelection,
   ThinkingMode
 } from "./types";
 import { dismissMobileKeyboard, usesMobileInputBehavior } from "./viewport";
@@ -70,6 +74,7 @@ export function StartChatComposer({
   onStop,
   onUploadAttachment,
   onRemoveAttachment,
+  canAttachNotes = false,
   onSubmit,
   autoFocusOnReady = true
 }: {
@@ -91,16 +96,20 @@ export function StartChatComposer({
   onStop?: () => void;
   onUploadAttachment?: (file: File) => Promise<ComposerAttachment> | ComposerAttachment;
   onRemoveAttachment?: (attachment: ComposerAttachment) => Promise<void>;
+  canAttachNotes?: boolean;
   onSubmit: (
     prompt: string,
     attachments?: ComposerAttachment[],
     toolPreferences?: ChatToolPreferences,
-    thinkMode?: ThinkingMode
+    thinkMode?: ThinkingMode,
+    notes?: NoteContextSelection[]
   ) => Promise<boolean | void>;
   autoFocusOnReady?: boolean;
 }) {
   const [prompt, setPrompt] = useState("");
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
+  const [selectedNotes, setSelectedNotes] = useState<NoteContextSelection[]>([]);
+  const [activeNoteIndex, setActiveNoteIndex] = useState(0);
   const [isToolMenuOpen, setIsToolMenuOpen] = useState(false);
   const [isThinkingMenuOpen, setIsThinkingMenuOpen] = useState(false);
   const [isTextInputFocused, setIsTextInputFocused] = useState(false);
@@ -116,6 +125,10 @@ export function StartChatComposer({
   const toolMenuRef = useRef<HTMLDivElement | null>(null);
   const thinkingMenuRef = useRef<HTMLDivElement | null>(null);
   const canAttach = Boolean(onUploadAttachment);
+  const noteCommand = canAttachNotes ? noteCommandFromPrompt(prompt) : null;
+  const isNotePickerOpen = Boolean(noteCommand && isTextInputFocused);
+  const noteSearch = useNoteSearch(noteCommand?.query ?? "", isNotePickerOpen);
+  const selectedNoteIds = new Set(selectedNotes.map((note) => note.note_id));
   const currentToolPreferences = toolPreferences ?? defaultToolPreferences;
   const canUseTools =
     Boolean(onToolPreferencesChange) &&
@@ -137,8 +150,14 @@ export function StartChatComposer({
     attachments.some(isImageAttachment);
   const visibleWarning =
     warning ?? (hasUnsupportedImageWarning ? "Images may not be supported by this model." : null);
+  const submittablePrompt = noteCommand
+    ? removeNoteCommand(prompt, noteCommand.start).trim()
+    : prompt.trim();
   const canSubmit =
-    prompt.trim().length > 0 && !isDisabled && !hasUploadingAttachment && (!isBusy || isGenerating);
+    submittablePrompt.length > 0 &&
+    !isDisabled &&
+    !hasUploadingAttachment &&
+    (!isBusy || isGenerating);
   const thinkingModeLabel = thinkingModeOptionLabel(activeThinkingMode);
   const composerClassName = [
     "chat-composer",
@@ -196,6 +215,22 @@ export function StartChatComposer({
   }, [canAttach]);
 
   useEffect(() => {
+    if (!canAttachNotes) {
+      setSelectedNotes([]);
+    }
+  }, [canAttachNotes]);
+
+  useEffect(() => {
+    setActiveNoteIndex(0);
+  }, [noteCommand?.query]);
+
+  useEffect(() => {
+    if (activeNoteIndex >= noteSearch.notes.length) {
+      setActiveNoteIndex(Math.max(0, noteSearch.notes.length - 1));
+    }
+  }, [activeNoteIndex, noteSearch.notes.length]);
+
+  useEffect(() => {
     if (!canUseTools) {
       setIsToolMenuOpen(false);
     }
@@ -234,12 +269,16 @@ export function StartChatComposer({
       return;
     }
 
-    const submittedPrompt = prompt;
+    const submittedPrompt = noteCommand
+      ? removeNoteCommand(prompt, noteCommand.start)
+      : prompt;
     const submittedAttachments = attachments.filter(
       (attachment) => attachment.status === "ready" || attachment.status === "uploaded"
     );
+    const submittedNotes = selectedNotes;
     setPrompt("");
     setAttachments([]);
+    setSelectedNotes([]);
     setIsComposerExpanded(false);
     setExpandedComposerFrame(null);
     const shouldRestoreFocus = !usesMobileInputBehavior();
@@ -251,11 +290,13 @@ export function StartChatComposer({
       submittedPrompt,
       submittedAttachments,
       currentToolPreferences,
-      activeThinkingMode
+      activeThinkingMode,
+      submittedNotes
     );
     if (accepted === false) {
       setPrompt(submittedPrompt);
       setAttachments(submittedAttachments);
+      setSelectedNotes(submittedNotes);
     }
     if (shouldRestoreFocus) {
       window.requestAnimationFrame(() => textareaRef.current?.focus());
@@ -318,6 +359,37 @@ export function StartChatComposer({
 
     setAttachments((current) =>
       current.filter((currentAttachment) => currentAttachment.id !== attachment.id)
+    );
+  }
+
+  function selectNote(note: NoteSummary) {
+    setSelectedNotes((current) => {
+      if (current.some((selection) => selection.note_id === note.id)) {
+        return current;
+      }
+      return [
+        ...current,
+        {
+          note_id: note.id,
+          note_version_id: note.current_version_id,
+          version_number: note.current_version_number,
+          title: note.title,
+          source: "explicit",
+          position: current.length
+        }
+      ];
+    });
+    if (noteCommand) {
+      setPrompt(removeNoteCommand(prompt, noteCommand.start));
+    }
+    window.requestAnimationFrame(() => textareaRef.current?.focus());
+  }
+
+  function removeNote(noteId: string) {
+    setSelectedNotes((current) =>
+      current
+        .filter((selection) => selection.note_id !== noteId)
+        .map((selection, position) => ({ ...selection, position }))
     );
   }
 
@@ -398,6 +470,22 @@ export function StartChatComposer({
           <AttachmentChipList
             attachments={attachments}
             onRemove={(attachment) => void removeAttachment(attachment)}
+          />
+        )}
+        <NoteContextChips
+          notes={selectedNotes}
+          className="composer-note-chips"
+          onRemove={removeNote}
+        />
+        {isNotePickerOpen && (
+          <ComposerNotePicker
+            notes={noteSearch.notes}
+            selectedNoteIds={selectedNoteIds}
+            activeIndex={activeNoteIndex}
+            isLoading={noteSearch.isLoading}
+            error={noteSearch.error}
+            onActiveIndexChange={setActiveNoteIndex}
+            onSelect={selectNote}
           />
         )}
         {canAttach && (
@@ -555,6 +643,35 @@ export function StartChatComposer({
           onFocus={() => setIsTextInputFocused(true)}
           onBlur={() => setIsTextInputFocused(false)}
           onKeyDown={(event) => {
+            if (isNotePickerOpen) {
+              if (event.key === "ArrowDown") {
+                event.preventDefault();
+                setActiveNoteIndex((current) =>
+                  Math.min(current + 1, Math.max(0, noteSearch.notes.length - 1))
+                );
+                return;
+              }
+              if (event.key === "ArrowUp") {
+                event.preventDefault();
+                setActiveNoteIndex((current) => Math.max(0, current - 1));
+                return;
+              }
+              if (event.key === "Escape") {
+                event.preventDefault();
+                if (noteCommand) {
+                  setPrompt(removeNoteCommand(prompt, noteCommand.start));
+                }
+                return;
+              }
+              if (event.key === "Enter") {
+                event.preventDefault();
+                const activeNote = noteSearch.notes[activeNoteIndex];
+                if (activeNote) {
+                  selectNote(activeNote);
+                }
+                return;
+              }
+            }
             if (
               event.key !== "Enter" ||
               event.shiftKey ||
@@ -594,6 +711,21 @@ export function StartChatComposer({
       </form>
     </>
   );
+}
+
+function noteCommandFromPrompt(prompt: string) {
+  const lineStart = prompt.lastIndexOf("\n") + 1;
+  const line = prompt.slice(lineStart);
+  const match = line.match(/^\s*\/notes(?:\s+(.*))?$/i);
+  if (!match) {
+    return null;
+  }
+  return { start: lineStart, query: (match[1] ?? "").trim() };
+}
+
+function removeNoteCommand(prompt: string, start: number) {
+  const prefix = prompt.slice(0, start);
+  return prefix.endsWith("\n") ? prefix.slice(0, -1) : prefix;
 }
 
 const thinkingModeOptions: Array<{ value: ThinkingMode; label: string }> = [

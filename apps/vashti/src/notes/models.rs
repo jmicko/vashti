@@ -1,5 +1,15 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Debug, Serialize)]
+pub struct NoteContextSelection {
+    pub note_id: String,
+    pub note_version_id: String,
+    pub version_number: i64,
+    pub title: String,
+    pub source: String,
+    pub position: i64,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum NoteAiAccess {

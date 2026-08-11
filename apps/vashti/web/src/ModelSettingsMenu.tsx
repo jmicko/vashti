@@ -5,9 +5,11 @@ import {
   Blocks,
   ChevronDown,
   Info,
+  NotebookPen,
   Plus,
   RefreshCw,
   RotateCcw,
+  Search,
   SlidersHorizontal,
   X
 } from "lucide-react";
@@ -25,6 +27,9 @@ import {
   normalizeInferenceSettings
 } from "./inferenceSettings";
 import { ModelCapabilityBadges } from "./modelCapabilities";
+import { getNote } from "./notes/api";
+import { useNoteSearch } from "./notes/NotePicker";
+import type { Note } from "./notes/types";
 import {
   compactModelName,
   modelParts,
@@ -45,6 +50,7 @@ import type {
   ContextBlockSelection,
   ContextLibraryResponse,
   ModelInfo,
+  NoteContextSelection,
   Persona,
   PersonaVersion,
   PersonaVersionsResponse
@@ -188,6 +194,7 @@ export function ModelSettingsMenu({
   inferenceSettings,
   contextLibrary,
   contextBlocks,
+  pinnedNotes = [],
   canSaveConversationSettings,
   disabled,
   onModelSelected,
@@ -197,7 +204,9 @@ export function ModelSettingsMenu({
   onSystemPromptOverrideChange,
   onInferenceSettingsChange,
   onContextBlocksChange,
-  onOpenContextSettings
+  onOpenContextSettings,
+  onPinnedNotesChange,
+  onOpenNotes
 }: {
   groups: BackendModelGroup[];
   personas: Persona[];
@@ -210,6 +219,7 @@ export function ModelSettingsMenu({
   inferenceSettings?: ChatInferenceSettings;
   contextLibrary: ContextLibraryResponse;
   contextBlocks: ContextBlockSelection[];
+  pinnedNotes?: NoteContextSelection[];
   canSaveConversationSettings?: boolean;
   disabled: boolean;
   onModelSelected: (value: string) => void;
@@ -220,6 +230,8 @@ export function ModelSettingsMenu({
   onInferenceSettingsChange?: (value: ChatInferenceSettings) => void;
   onContextBlocksChange: (value: ContextBlockSelection[]) => void;
   onOpenContextSettings?: () => void;
+  onPinnedNotesChange?: (value: NoteContextSelection[]) => void;
+  onOpenNotes?: () => void;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [isVersionMenuOpen, setIsVersionMenuOpen] = useState(false);
@@ -230,10 +242,46 @@ export function ModelSettingsMenu({
   );
   const [error, setError] = useState<string | null>(null);
   const [contextError, setContextError] = useState<string | null>(null);
+  const [noteQuery, setNoteQuery] = useState("");
+  const [pinnedNoteDetails, setPinnedNoteDetails] = useState<Record<string, Note>>({});
   const wrapRef = useRef<HTMLDivElement>(null);
   const versionPickerRef = useRef<HTMLDivElement>(null);
   const loadedHostedPersonaIdsRef = useRef(new Set<string>());
   const loadedPrivatePersonaIdsRef = useRef(new Set<string>());
+  const noteSearch = useNoteSearch(noteQuery, isOpen && Boolean(onPinnedNotesChange));
+
+  useEffect(() => {
+    if (!isOpen) {
+      setNoteQuery("");
+      return;
+    }
+    if (!onPinnedNotesChange || pinnedNotes.length === 0) {
+      setPinnedNoteDetails({});
+      return;
+    }
+
+    let cancelled = false;
+    void Promise.all(
+      pinnedNotes.map(async (selection) => {
+        try {
+          return [selection.note_id, await getNote(selection.note_id)] as const;
+        } catch {
+          return null;
+        }
+      })
+    ).then((entries) => {
+      if (cancelled) {
+        return;
+      }
+      setPinnedNoteDetails(
+        Object.fromEntries(entries.filter((entry): entry is readonly [string, Note] => entry !== null))
+      );
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, onPinnedNotesChange, pinnedNotes]);
 
   const selectedHostedVersion = personaVersionForValue(personas, personaVersions, selectedModel);
   const selectedPrivateVersion = privatePersonaVersionForValue(
@@ -326,7 +374,8 @@ export function ModelSettingsMenu({
     isUsingNonDefaultVersion ||
     isSystemPromptCustomized ||
     isInferenceCustomized ||
-    contextBlocks.length > 0;
+    contextBlocks.length > 0 ||
+    pinnedNotes.length > 0;
   const baseModelName =
     selectedHostedVersion?.base_model_name ??
     selectedPrivateVersion?.base_model_name ??
@@ -347,6 +396,10 @@ export function ModelSettingsMenu({
   const normalizedContextBlocks = useMemo(
     () => normalizeContextSelections(contextBlocks),
     [contextBlocks]
+  );
+  const pinnedNoteIds = useMemo(
+    () => new Set(pinnedNotes.map((selection) => selection.note_id)),
+    [pinnedNotes]
   );
   const contextCategories = useMemo(() => {
     const groups = contextLibrary.categories.map((category) => ({
@@ -529,6 +582,59 @@ export function ModelSettingsMenu({
         normalizedContextBlocks.filter(
           (selection) => selection.block_version_id !== blockVersionId
         )
+      )
+    );
+  }
+
+  function togglePinnedNote(note: (typeof noteSearch.notes)[number]) {
+    if (!onPinnedNotesChange) {
+      return;
+    }
+    if (pinnedNoteIds.has(note.id)) {
+      removePinnedNote(note.id);
+      return;
+    }
+    onPinnedNotesChange([
+      ...pinnedNotes,
+      {
+        note_id: note.id,
+        note_version_id: note.current_version_id,
+        version_number: note.current_version_number,
+        title: note.title,
+        source: "pinned",
+        position: pinnedNotes.length
+      }
+    ]);
+  }
+
+  function removePinnedNote(noteId: string) {
+    onPinnedNotesChange?.(
+      pinnedNotes
+        .filter((selection) => selection.note_id !== noteId)
+        .map((selection, position) => ({ ...selection, position }))
+    );
+  }
+
+  function updatePinnedNote(noteId: string) {
+    const searchResult = noteSearch.notes.find((note) => note.id === noteId);
+    const detail = pinnedNoteDetails[noteId];
+    const currentVersionId = searchResult?.current_version_id ?? detail?.current_version.id;
+    const currentVersionNumber =
+      searchResult?.current_version_number ?? detail?.current_version.version_number;
+    const currentTitle = searchResult?.title ?? detail?.current_version.title;
+    if (!currentVersionId || currentVersionNumber === undefined || !currentTitle || !onPinnedNotesChange) {
+      return;
+    }
+    onPinnedNotesChange(
+      pinnedNotes.map((selection) =>
+        selection.note_id === noteId
+          ? {
+              ...selection,
+              note_version_id: currentVersionId,
+              version_number: currentVersionNumber,
+              title: currentTitle
+            }
+          : selection
       )
     );
   }
@@ -858,6 +964,119 @@ export function ModelSettingsMenu({
                 </button>
               )}
             </details>
+
+            {onPinnedNotesChange && (
+              <details className="model-settings-prompt model-settings-context">
+                <summary>
+                  Pinned notes
+                  {pinnedNotes.length > 0 && <span>{pinnedNotes.length} selected</span>}
+                </summary>
+                <p className="model-settings-note">
+                  Include these exact note versions with every new message in this conversation.
+                </p>
+                {pinnedNotes.length > 0 && (
+                  <div className="context-selection-list">
+                    {pinnedNotes.map((selection) => {
+                      const searchResult = noteSearch.notes.find((note) => note.id === selection.note_id);
+                      const detail = pinnedNoteDetails[selection.note_id];
+                      const currentVersionId =
+                        searchResult?.current_version_id ?? detail?.current_version.id;
+                      const currentVersionNumber =
+                        searchResult?.current_version_number ?? detail?.current_version.version_number;
+                      const hasUpdate = Boolean(
+                        currentVersionId && currentVersionId !== selection.note_version_id
+                      );
+                      return (
+                        <div className="context-selection-row" key={selection.note_id}>
+                          <NotebookPen aria-hidden="true" />
+                          <div className="context-selection-copy">
+                            <strong>{selection.title}</strong>
+                            <span>v{selection.version_number}</span>
+                          </div>
+                          {hasUpdate && currentVersionNumber !== undefined && (
+                            <button
+                              type="button"
+                              className="context-update-button"
+                              onClick={() => updatePinnedNote(selection.note_id)}
+                            >
+                              <RefreshCw />
+                              <span>Update to v{currentVersionNumber}</span>
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className="icon-button"
+                            aria-label={`Remove ${selection.title}`}
+                            onClick={() => removePinnedNote(selection.note_id)}
+                          >
+                            <X />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                <label className="model-settings-note-search">
+                  <Search aria-hidden="true" />
+                  <input
+                    type="search"
+                    value={noteQuery}
+                    onChange={(event) => setNoteQuery(event.target.value)}
+                    placeholder="Search notes"
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                </label>
+
+                {noteSearch.isLoading && noteSearch.notes.length === 0 ? (
+                  <p className="model-settings-note">Loading notes...</p>
+                ) : noteSearch.error ? (
+                  <p className="error">{noteSearch.error}</p>
+                ) : noteSearch.notes.length > 0 ? (
+                  <div className="context-picker-options">
+                    {noteSearch.notes.map((note) => {
+                      const selected = pinnedNoteIds.has(note.id);
+                      return (
+                        <button
+                          type="button"
+                          className={selected ? "context-picker-option selected" : "context-picker-option"}
+                          key={note.id}
+                          onClick={() => togglePinnedNote(note)}
+                        >
+                          <span className="context-picker-check" aria-hidden="true">
+                            {selected ? "✓" : "+"}
+                          </span>
+                          <span>
+                            <strong>{note.title}</strong>
+                            <small>{note.excerpt || "Empty note"}</small>
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="context-picker-empty">
+                    <NotebookPen />
+                    <span>No notes in your library.</span>
+                  </div>
+                )}
+
+                {onOpenNotes && (
+                  <button
+                    type="button"
+                    className="secondary-button model-settings-wide-action"
+                    onClick={() => {
+                      setIsOpen(false);
+                      onOpenNotes();
+                    }}
+                  >
+                    <NotebookPen />
+                    <span>Manage notes</span>
+                  </button>
+                )}
+              </details>
+            )}
 
             <details className="model-settings-prompt">
               <summary>

@@ -57,6 +57,7 @@ export function normalizeChatDetail(chat: ChatDetail): ChatDetail {
     ...chat,
     tool_preferences: normalizeToolPreferences(chat.tool_preferences),
     inference_settings: normalizeInferenceSettings(chat.inference_settings),
-    context_blocks: chat.context_blocks ?? []
+    context_blocks: chat.context_blocks ?? [],
+    pinned_notes: chat.pinned_notes ?? []
   };
 }

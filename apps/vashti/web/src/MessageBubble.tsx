@@ -43,6 +43,7 @@ import { MarkdownContent } from "./MarkdownContent";
 import { MessageStreamContent, ThinkingContent, thinkingSummary } from "./messageContent";
 import { ModelAvatar } from "./ModelAvatar";
 import { MessageVersionCarousel } from "./MessageVersionCarousel";
+import { NoteContextChips } from "./notes/NoteContextChips";
 import type {
   ChatMessage,
   ComposerAttachment,
@@ -82,6 +83,7 @@ export function PendingOutgoingMessage({
       aria-live="polite"
     >
       <MessageAttachments attachments={pendingSend.attachments} onImageOpen={onImageOpen} />
+      <NoteContextChips notes={pendingSend.notes ?? []} className="message-note-context" />
       <MarkdownContent content={pendingSend.prompt} dimmedEmphasis={dimmedEmphasis} />
       <div className={isSending ? "pending-send-status" : "pending-send-status failed"}>
         {isSending ? <LoaderCircle className="pending-send-spinner" /> : <CircleAlert />}
@@ -251,6 +253,9 @@ function MessageBubbleCard({
   const orderedSegments = shouldUseStreamSegments ? streamSegments ?? [] : storedOrderedSegments;
   const hasOrderedSegments = orderedSegments.length > 0;
   const attachments = activeMessageAttachments(message);
+  const explicitNotes = (message.note_attachments ?? []).filter(
+    (note) => note.source === "explicit"
+  );
   const [isEditing, setIsEditing] = useState(false);
   const [isThinkingOpen, setIsThinkingOpen] = useState(false);
   const [showStats, setShowStats] = useState(false);
@@ -405,6 +410,9 @@ function MessageBubbleCard({
       )}
       {!isEditing && !message.is_deleted && attachments.length > 0 && (
         <MessageAttachments attachments={attachments} onImageOpen={onImageOpen} />
+      )}
+      {!isEditing && !message.is_deleted && message.role === "user" && (
+        <NoteContextChips notes={explicitNotes} className="message-note-context" />
       )}
       {isEditing ? (
         <div className="message-edit">

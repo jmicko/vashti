@@ -20,6 +20,7 @@ use crate::{
     },
     context_blocks::service as context_block_service,
     error::ApiError,
+    notes::service as notes_service,
     ollama::models::{OllamaChatMessage, OllamaChatOptions, OllamaUsageStats},
     personas::service::{self as persona_service, ResolvedPersonaVersion},
     tools::service::{self as tools_service, ToolSelection},
@@ -153,6 +154,12 @@ pub async fn create_chat(
         &payload.context_block_version_ids,
     )
     .await?;
+    let pinned_notes = notes_service::resolve_pinned_note_context_for_user(
+        pool,
+        user_id,
+        &payload.pinned_note_version_ids,
+    )
+    .await?;
     let tool_preferences = payload.tool_preferences.unwrap_or_default();
     let persona = match normalize_optional_string(payload.persona_version_id) {
         Some(persona_version_id) => Some(
@@ -244,6 +251,7 @@ pub async fn create_chat(
     .execute(&mut *tx)
     .await?;
     context_block_service::replace_chat_selections(&mut tx, &chat_id, &context_selections).await?;
+    notes_service::replace_chat_pinned_notes(&mut tx, &chat_id, &pinned_notes).await?;
     tx.commit().await?;
 
     get_chat(pool, user_id, &chat_id).await
@@ -291,6 +299,7 @@ pub async fn get_chat(
 
     let mut chat = row_to_chat_detail(row).map_err(ApiError::from)?;
     chat.context_blocks = context_block_service::load_chat_selections(pool, chat_id).await?;
+    chat.pinned_notes = notes_service::load_chat_pinned_notes(pool, chat_id).await?;
     Ok(chat)
 }
 
@@ -304,6 +313,18 @@ pub async fn update_chat(
     let context_selections = match payload.context_block_version_ids.as_ref() {
         Some(version_ids) => Some(
             context_block_service::resolve_selections_for_chat_update(
+                pool,
+                user_id,
+                chat_id,
+                version_ids,
+            )
+            .await?,
+        ),
+        None => None,
+    };
+    let pinned_notes = match payload.pinned_note_version_ids.as_ref() {
+        Some(version_ids) => Some(
+            notes_service::resolve_pinned_note_context_for_chat_update(
                 pool,
                 user_id,
                 chat_id,
@@ -418,6 +439,9 @@ pub async fn update_chat(
     if let Some(selections) = &context_selections {
         context_block_service::replace_chat_selections(&mut tx, chat_id, selections).await?;
     }
+    if let Some(selections) = &pinned_notes {
+        notes_service::replace_chat_pinned_notes(&mut tx, chat_id, selections).await?;
+    }
     tx.commit().await?;
 
     get_chat(pool, user_id, chat_id).await
@@ -497,6 +521,7 @@ pub async fn list_messages(
         hydrate_message_revisions(pool, &mut message).await?;
         hydrate_message_attachments(pool, user_id, chat_id, &mut message).await?;
         hydrate_message_context_blocks(pool, &mut message).await?;
+        hydrate_message_note_attachments(pool, &mut message).await?;
         messages.push(message);
     }
 
@@ -652,6 +677,7 @@ pub async fn prepare_generation(
         inference_settings,
         tool_preferences,
         attachments,
+        note_version_ids,
     } = payload;
     let tool_preferences = tool_preferences.unwrap_or_else(|| chat.tool_preferences.clone());
     let inference_settings = inference_settings
@@ -679,7 +705,11 @@ pub async fn prepare_generation(
     let backend = resolved.backend;
     let model_name = resolved.model_name;
     let persona = resolved.persona;
-    let compiled_system_prompt = context_block_service::compile_system_prompt(
+    let explicit_notes =
+        notes_service::resolve_explicit_note_context(pool, user_id, &note_version_ids).await?;
+    let pinned_notes = notes_service::load_chat_pinned_note_context(pool, chat_id).await?;
+    let effective_notes = notes_service::combine_note_context(&pinned_notes, &explicit_notes)?;
+    let context_system_prompt = context_block_service::compile_system_prompt(
         chat.system_prompt_override.as_deref().or_else(|| {
             persona
                 .as_ref()
@@ -687,6 +717,8 @@ pub async fn prepare_generation(
         }),
         &chat.context_blocks,
     )?;
+    let compiled_system_prompt =
+        notes_service::compile_note_context(context_system_prompt.as_deref(), &effective_notes)?;
     let parent_message_id =
         active_tail_message_id(pool, chat_id, chat.active_root_message_id).await?;
     let now = unix_timestamp();
@@ -738,6 +770,8 @@ pub async fn prepare_generation(
         &attachment_ids,
     )
     .await?;
+    notes_service::snapshot_message_note_context(&mut tx, &user_message_id, &explicit_notes)
+        .await?;
 
     if let Some(parent_id) = &parent_message_id {
         set_active_child(&mut tx, chat_id, parent_id, &user_message_id, now).await?;
@@ -785,6 +819,8 @@ pub async fn prepare_generation(
         &chat.context_blocks,
     )
     .await?;
+    notes_service::snapshot_message_note_context(&mut tx, &assistant_message_id, &effective_notes)
+        .await?;
     set_active_child(
         &mut tx,
         chat_id,
@@ -906,14 +942,17 @@ pub async fn prepare_regeneration(
     let backend = resolved.backend;
     let model_name = resolved.model_name;
     let persona = resolved.persona;
-    let compiled_system_prompt = context_block_service::compile_system_prompt(
+    let note_context = notes_service::load_message_note_prompt_context(pool, &target.id).await?;
+    let context_system_prompt = context_block_service::compile_system_prompt(
         chat.system_prompt_override.as_deref().or_else(|| {
             persona
                 .as_ref()
                 .map(|persona| persona.system_prompt.as_str())
         }),
-        &chat.context_blocks,
+        &target.context_blocks,
     )?;
+    let compiled_system_prompt =
+        notes_service::compile_note_context(context_system_prompt.as_deref(), &note_context)?;
     let now = unix_timestamp();
     let assistant_message_id = Uuid::new_v4().to_string();
     let assistant_revision_id = Uuid::new_v4().to_string();
@@ -957,9 +996,11 @@ pub async fn prepare_regeneration(
     context_block_service::snapshot_message_selections(
         &mut tx,
         &assistant_message_id,
-        &chat.context_blocks,
+        &target.context_blocks,
     )
     .await?;
+    notes_service::snapshot_message_note_context(&mut tx, &assistant_message_id, &note_context)
+        .await?;
     set_active_child(
         &mut tx,
         chat_id,
@@ -1078,7 +1119,8 @@ pub async fn prepare_continuation(
     let backend = resolved.backend;
     let model_name = resolved.model_name;
     let persona = resolved.persona;
-    let compiled_system_prompt = context_block_service::compile_system_prompt(
+    let note_context = notes_service::load_message_note_prompt_context(pool, &target.id).await?;
+    let context_system_prompt = context_block_service::compile_system_prompt(
         chat.system_prompt_override.as_deref().or_else(|| {
             persona
                 .as_ref()
@@ -1086,6 +1128,8 @@ pub async fn prepare_continuation(
         }),
         &target.context_blocks,
     )?;
+    let compiled_system_prompt =
+        notes_service::compile_note_context(context_system_prompt.as_deref(), &note_context)?;
     // Continuing should extend the existing answer, not start a second reasoning cycle.
     let think_mode = Some("off".to_string());
     let revision_id = Uuid::new_v4().to_string();
@@ -1238,6 +1282,7 @@ pub async fn prepare_branch_generation(
         inference_settings,
         tool_preferences,
         attachments,
+        note_version_ids,
     } = payload;
     let tool_preferences = tool_preferences.unwrap_or_else(|| chat.tool_preferences.clone());
     let inference_settings = inference_settings
@@ -1257,7 +1302,11 @@ pub async fn prepare_branch_generation(
     let backend = resolved.backend;
     let model_name = resolved.model_name;
     let persona = resolved.persona;
-    let compiled_system_prompt = context_block_service::compile_system_prompt(
+    let explicit_notes =
+        resolve_branch_explicit_note_context(pool, user_id, &target.id, note_version_ids).await?;
+    let pinned_notes = notes_service::load_chat_pinned_note_context(pool, chat_id).await?;
+    let effective_notes = notes_service::combine_note_context(&pinned_notes, &explicit_notes)?;
+    let context_system_prompt = context_block_service::compile_system_prompt(
         chat.system_prompt_override.as_deref().or_else(|| {
             persona
                 .as_ref()
@@ -1265,6 +1314,8 @@ pub async fn prepare_branch_generation(
         }),
         &chat.context_blocks,
     )?;
+    let compiled_system_prompt =
+        notes_service::compile_note_context(context_system_prompt.as_deref(), &effective_notes)?;
     let parent_message_id = target.parent_message_id.clone();
     let now = unix_timestamp();
     let attachment_ids = attachment_ids(&attachments)?;
@@ -1315,6 +1366,8 @@ pub async fn prepare_branch_generation(
         &attachment_ids,
     )
     .await?;
+    notes_service::snapshot_message_note_context(&mut tx, &user_message_id, &explicit_notes)
+        .await?;
 
     if let Some(parent_id) = &parent_message_id {
         set_active_child(&mut tx, chat_id, parent_id, &user_message_id, now).await?;
@@ -1362,6 +1415,8 @@ pub async fn prepare_branch_generation(
         &chat.context_blocks,
     )
     .await?;
+    notes_service::snapshot_message_note_context(&mut tx, &assistant_message_id, &effective_notes)
+        .await?;
     set_active_child(
         &mut tx,
         chat_id,
@@ -1420,6 +1475,26 @@ pub async fn prepare_branch_generation(
         initial_content_text: String::new(),
         initial_thinking_text: String::new(),
     })
+}
+
+async fn resolve_branch_explicit_note_context(
+    pool: &SqlitePool,
+    user_id: &str,
+    target_message_id: &str,
+    note_version_ids: Option<Vec<String>>,
+) -> Result<Vec<notes_service::NotePromptSelection>, ApiError> {
+    match note_version_ids {
+        Some(version_ids) => {
+            notes_service::resolve_explicit_note_context(pool, user_id, &version_ids).await
+        }
+        None => Ok(
+            notes_service::load_message_note_prompt_context(pool, target_message_id)
+                .await?
+                .into_iter()
+                .filter(|selection| selection.source == "explicit")
+                .collect(),
+        ),
+    }
 }
 
 pub async fn edit_message(
@@ -2528,6 +2603,7 @@ fn row_to_chat_detail(row: sqlx::sqlite::SqliteRow) -> Result<ChatDetail, sqlx::
         tool_preferences,
         inference_settings,
         context_blocks: Vec::new(),
+        pinned_notes: Vec::new(),
         active_root_message_id: row.try_get("active_root_message_id")?,
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
@@ -2694,6 +2770,7 @@ fn row_to_message(row: sqlx::sqlite::SqliteRow) -> Result<ChatMessage, sqlx::Err
         active_revision,
         attachments: Vec::new(),
         context_blocks: Vec::new(),
+        note_attachments: Vec::new(),
     })
 }
 
@@ -2776,6 +2853,15 @@ async fn hydrate_message_context_blocks(
     Ok(())
 }
 
+async fn hydrate_message_note_attachments(
+    pool: &SqlitePool,
+    message: &mut ChatMessage,
+) -> Result<(), ApiError> {
+    message.note_attachments =
+        notes_service::load_message_note_attachments(pool, &message.id).await?;
+    Ok(())
+}
+
 async fn get_message(
     pool: &SqlitePool,
     user_id: &str,
@@ -2839,6 +2925,7 @@ async fn get_message(
     hydrate_message_revisions(pool, &mut message).await?;
     hydrate_message_attachments(pool, user_id, chat_id, &mut message).await?;
     hydrate_message_context_blocks(pool, &mut message).await?;
+    hydrate_message_note_attachments(pool, &mut message).await?;
 
     Ok(message)
 }
@@ -2854,7 +2941,8 @@ mod tests {
 
     use super::{
         active_tail_message_id, ancestor_prompt_messages, edit_message, prepare_continuation,
-        recover_interrupted_generations, select_active_revision,
+        recover_interrupted_generations, resolve_branch_explicit_note_context,
+        select_active_revision,
     };
     use crate::chats::handlers::{
         ContinueMessageRequest, EditMessageRequest, SetActiveRevisionRequest,
@@ -3104,6 +3192,41 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["original", "alternate", "branch prompt"]
         );
+    }
+
+    #[tokio::test]
+    async fn branch_reuses_only_explicit_note_snapshots_when_selection_is_omitted() {
+        let pool = test_pool().await;
+        seed_revision_tree(&pool).await;
+        sqlx::query(
+            r#"
+            INSERT INTO note_message_attachments (
+                message_id, note_id, note_version_id, version_number,
+                title_snapshot, content_snapshot, source, position
+            ) VALUES
+                ('parent', 'explicit-note', 'explicit-v1', 1,
+                 'Original note', 'Immutable original content', 'explicit', 0),
+                ('parent', 'pinned-note', 'pinned-v1', 1,
+                 'Pinned note', 'Conversation pin content', 'pinned', 1)
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .expect("snapshot note context");
+
+        let reused = resolve_branch_explicit_note_context(&pool, "user", "parent", None)
+            .await
+            .expect("reuse original explicit selection");
+        assert_eq!(reused.len(), 1);
+        assert_eq!(reused[0].note_id, "explicit-note");
+        assert_eq!(reused[0].note_version_id, "explicit-v1");
+        assert_eq!(reused[0].content, "Immutable original content");
+
+        let cleared =
+            resolve_branch_explicit_note_context(&pool, "user", "parent", Some(Vec::new()))
+                .await
+                .expect("clear explicit selections");
+        assert!(cleared.is_empty());
     }
 
     #[tokio::test]

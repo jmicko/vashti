@@ -56,6 +56,8 @@ pub struct CreateChatRequest {
     pub tool_preferences: Option<ChatToolPreferences>,
     #[serde(default)]
     pub context_block_version_ids: Vec<String>,
+    #[serde(default)]
+    pub pinned_note_version_ids: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -68,6 +70,7 @@ pub struct UpdateChatRequest {
     pub inference_settings: Option<ChatInferenceSettings>,
     pub tool_preferences: Option<ChatToolPreferences>,
     pub context_block_version_ids: Option<Vec<String>>,
+    pub pinned_note_version_ids: Option<Vec<String>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -143,6 +146,8 @@ pub struct GenerateChatRequest {
     pub tool_preferences: Option<ChatToolPreferences>,
     #[serde(default)]
     pub attachments: Vec<AttachmentReference>,
+    #[serde(default)]
+    pub note_version_ids: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -189,6 +194,7 @@ pub struct BranchMessageRequest {
     pub tool_preferences: Option<ChatToolPreferences>,
     #[serde(default)]
     pub attachments: Vec<AttachmentReference>,
+    pub note_version_ids: Option<Vec<String>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1193,6 +1199,7 @@ async fn maybe_generate_chat_title(request: TitleGenerationRequest<'_>) -> Optio
             system_prompt_override: None,
             inference_settings: None,
             context_block_version_ids: None,
+            pinned_note_version_ids: None,
         },
     )
     .await

@@ -99,6 +99,7 @@ import type {
   ModelPickerCache,
   ModelsResponse,
   NewChatMode,
+  NoteContextSelection,
   Persona,
   PersonaVersion,
   PersonasResponse,
@@ -192,6 +193,7 @@ export function AppShell({
   const [chatSystemPromptOverride, setChatSystemPromptOverride] = useState<string | null>(null);
   const [chatInferenceSettings, setChatInferenceSettings] = useState<ChatInferenceSettings>({});
   const [chatContextBlocks, setChatContextBlocks] = useState<ContextBlockSelection[]>([]);
+  const [chatPinnedNotes, setChatPinnedNotes] = useState<NoteContextSelection[]>([]);
   const [serverContextLibrary, setServerContextLibrary] = useState<ContextLibraryResponse>({
     categories: [],
     blocks: []
@@ -372,6 +374,7 @@ export function AppShell({
     setChatSystemPromptOverride(null);
     setChatInferenceSettings({});
     setChatContextBlocks([]);
+    setChatPinnedNotes([]);
   }, [route]);
 
   const updateAppSettingsGuard = useCallback((guard: AppSettingsGuard | null) => {
@@ -382,6 +385,7 @@ export function AppShell({
     setNewChatModeState(mode);
     storeNewChatMode(mode);
     setChatContextBlocks([]);
+    setChatPinnedNotes([]);
   }
 
   const rememberPersonaVersions = useCallback((versions: PersonaVersion[]) => {
@@ -807,7 +811,8 @@ export function AppShell({
     prompt: string,
     attachments: ComposerAttachment[] = [],
     toolPreferences: ChatToolPreferences = defaultToolPreferences,
-    thinkMode: ThinkingMode = "auto"
+    thinkMode: ThinkingMode = "auto",
+    notes: NoteContextSelection[] = []
   ) {
     if (!prompt.trim()) {
       openChat();
@@ -843,7 +848,8 @@ export function AppShell({
           inference_settings: chatInferenceSettings,
           context_block_version_ids: chatContextBlocks.map(
             (selection) => selection.block_version_id
-          )
+          ),
+          pinned_note_version_ids: chatPinnedNotes.map((selection) => selection.note_version_id)
         })
       });
 
@@ -856,7 +862,8 @@ export function AppShell({
           toolPreferences,
           thinkMode,
           inferenceSettings: chatInferenceSettings,
-          contextBlocks: chatContextBlocks
+          contextBlocks: chatContextBlocks,
+          notes
         });
       }
 
@@ -926,12 +933,14 @@ export function AppShell({
           inference_settings: chatInferenceSettings,
           context_block_version_ids: chatContextBlocks.map(
             (selection) => selection.block_version_id
-          )
+          ),
+          pinned_note_version_ids: chatPinnedNotes.map((selection) => selection.note_version_id)
         })
       });
       setChatSystemPromptOverride(response.chat.system_prompt_override ?? null);
       setChatInferenceSettings(response.chat.inference_settings ?? {});
       setChatContextBlocks(response.chat.context_blocks ?? []);
+      setChatPinnedNotes(response.chat.pinned_notes ?? []);
       return;
     }
 
@@ -963,11 +972,13 @@ export function AppShell({
   const handleChatSettingsLoaded = useCallback((
     override: string | null | undefined,
     inferenceSettings?: ChatInferenceSettings,
-    contextBlocks?: ContextBlockSelection[]
+    contextBlocks?: ContextBlockSelection[],
+    pinnedNotes?: NoteContextSelection[]
   ) => {
     setChatSystemPromptOverride(override ?? null);
     setChatInferenceSettings(inferenceSettings ?? {});
     setChatContextBlocks(contextBlocks ?? []);
+    setChatPinnedNotes(pinnedNotes ?? []);
   }, []);
 
   function createCustomModelFromSettings(draft: CustomModelDraft) {
@@ -1239,6 +1250,7 @@ export function AppShell({
                     allowPrivatePersonaSelection ? deviceContextLibrary : serverContextLibrary
                   }
                   contextBlocks={chatContextBlocks}
+                  pinnedNotes={allowPrivatePersonaSelection ? [] : chatPinnedNotes}
                   canSaveConversationSettings={page === "chat" || Boolean(currentPrivateChatId)}
                   disabled={!activeSelectedModel || isLoadingModels}
                   onModelSelected={setSelectedModel}
@@ -1249,6 +1261,10 @@ export function AppShell({
                   onInferenceSettingsChange={setChatInferenceSettings}
                   onContextBlocksChange={setChatContextBlocks}
                   onOpenContextSettings={() => openSettings("context")}
+                  onPinnedNotesChange={
+                    allowPrivatePersonaSelection ? undefined : setChatPinnedNotes
+                  }
+                  onOpenNotes={allowPrivatePersonaSelection ? undefined : openNotes}
                 />
               </>
             )}

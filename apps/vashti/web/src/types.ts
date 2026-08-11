@@ -337,6 +337,15 @@ export type ContextBlockSelection = {
   position: number;
 };
 
+export type NoteContextSelection = {
+  note_id: string;
+  note_version_id: string;
+  version_number: number;
+  title: string;
+  source: "explicit" | "pinned";
+  position: number;
+};
+
 export type ChatDetail = {
   id: string;
   title: string;
@@ -350,6 +359,7 @@ export type ChatDetail = {
   tool_preferences: ChatToolPreferences;
   inference_settings: ChatInferenceSettings;
   context_blocks: ContextBlockSelection[];
+  pinned_notes: NoteContextSelection[];
   active_root_message_id: string | null;
   created_at: number;
   updated_at: number;
@@ -407,6 +417,7 @@ export type ComposerSubmitPayload = {
   systemPromptOverride?: string | null;
   inferenceSettings?: ChatInferenceSettings;
   contextBlocks?: ContextBlockSelection[];
+  notes?: NoteContextSelection[];
 };
 
 export type HostedPendingSend = {
@@ -414,6 +425,7 @@ export type HostedPendingSend = {
   chat_id: string;
   prompt: string;
   attachments: AttachmentInfo[];
+  notes?: NoteContextSelection[];
   request_path: string;
   request_body: Record<string, unknown>;
   known_message_ids: string[];
@@ -459,6 +471,7 @@ export type ChatMessage = {
   revision_count: number;
   attachments: AttachmentInfo[];
   context_blocks: ContextBlockSelection[];
+  note_attachments?: NoteContextSelection[];
 };
 
 export type ListMessagesResponse = {

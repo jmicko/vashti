@@ -11,6 +11,7 @@ import type {
   ComposerAttachment,
   ModelInfo,
   NewChatMode,
+  NoteContextSelection,
   ThinkingMode
 } from "./types";
 
@@ -38,13 +39,15 @@ export function ChatHome({
     prompt: string,
     attachments?: ComposerAttachment[],
     toolPreferences?: ChatToolPreferences,
-    thinkMode?: ThinkingMode
+    thinkMode?: ThinkingMode,
+    notes?: NoteContextSelection[]
   ) => Promise<boolean | void>;
   onCreatePrivateChat: (
     prompt: string,
     attachments?: ComposerAttachment[],
     toolPreferences?: ChatToolPreferences,
-    thinkMode?: ThinkingMode
+    thinkMode?: ThinkingMode,
+    notes?: NoteContextSelection[]
   ) => Promise<boolean | void>;
 }) {
   const isPrivate = mode === "private";
@@ -100,6 +103,7 @@ export function ChatHome({
           onToolPreferencesChange={setToolPreferences}
           onThinkingModeChange={setThinkingMode}
           onUploadAttachment={isPrivate ? preparePrivateAttachment : prepareLocalAttachment}
+          canAttachNotes={!isPrivate}
           onSubmit={isPrivate ? onCreatePrivateChat : onCreateChat}
         />
         <p className={isPrivate ? "chat-mode-note private" : "chat-mode-note"}>
