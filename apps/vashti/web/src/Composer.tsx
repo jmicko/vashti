@@ -31,6 +31,7 @@ import { RetroLoader } from "./common";
 import { CompactModelCapabilityBadges } from "./modelCapabilities";
 import { ComposerNotePicker, useNoteSearch } from "./notes/NotePicker";
 import { NoteContextChips } from "./notes/NoteContextChips";
+import type { NoteSearchFunction } from "./notes/repository";
 import type { NoteSummary } from "./notes/types";
 import { ToggleSwitch } from "./settingsControls";
 import { toolIcon } from "./toolUi";
@@ -75,6 +76,7 @@ export function StartChatComposer({
   onUploadAttachment,
   onRemoveAttachment,
   canAttachNotes = false,
+  searchNotes,
   onSubmit,
   autoFocusOnReady = true
 }: {
@@ -97,6 +99,7 @@ export function StartChatComposer({
   onUploadAttachment?: (file: File) => Promise<ComposerAttachment> | ComposerAttachment;
   onRemoveAttachment?: (attachment: ComposerAttachment) => Promise<void>;
   canAttachNotes?: boolean;
+  searchNotes?: NoteSearchFunction;
   onSubmit: (
     prompt: string,
     attachments?: ComposerAttachment[],
@@ -127,7 +130,7 @@ export function StartChatComposer({
   const canAttach = Boolean(onUploadAttachment);
   const noteCommand = canAttachNotes ? noteCommandFromPrompt(prompt) : null;
   const isNotePickerOpen = Boolean(noteCommand && isTextInputFocused);
-  const noteSearch = useNoteSearch(noteCommand?.query ?? "", isNotePickerOpen);
+  const noteSearch = useNoteSearch(noteCommand?.query ?? "", isNotePickerOpen, searchNotes);
   const selectedNoteIds = new Set(selectedNotes.map((note) => note.note_id));
   const currentToolPreferences = toolPreferences ?? defaultToolPreferences;
   const canUseTools =

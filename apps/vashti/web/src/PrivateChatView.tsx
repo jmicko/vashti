@@ -32,6 +32,7 @@ import { readGenerateEventStream } from "./generationStream";
 import { MessageBubble } from "./MessageBubble";
 import { ModelBackgroundLayer, modelBackgroundContainerStyle } from "./ModelBackground";
 import { MessageTreeExplorer } from "./MessageTreeExplorer";
+import { searchDeviceNotes } from "./notes/repository";
 import {
   characterPersonaVersionIds,
   characterPresentationMessageIds
@@ -45,10 +46,12 @@ import {
   savePrivateChat,
   savePrivateMessage,
   savePrivateMessages,
+  snapshotPrivateNoteSelections,
   unixTimestamp,
   type PrivateChatDetail,
   type PrivateChatMessage,
   type PrivateChatMessageRevision,
+  type PrivateNoteContextSelection,
   type PrivatePersona,
   type PrivatePersonaVersion
 } from "./privateChatStore";
@@ -76,6 +79,7 @@ import type {
   MessageStreamSegment,
   MessageVersion,
   ModelInfo,
+  NoteContextSelection,
   ThinkingMode
 } from "./types";
 
@@ -543,7 +547,8 @@ export function PrivateChatView({
       queuedPrompt.inferenceSettings !== undefined
         ? queuedPrompt.inferenceSettings
         : inferenceSettings,
-      queuedPrompt.contextBlocks !== undefined ? queuedPrompt.contextBlocks : contextBlocks
+      queuedPrompt.contextBlocks !== undefined ? queuedPrompt.contextBlocks : contextBlocks,
+      queuedPrompt.notes ?? []
     );
   }, [
     chat,
@@ -571,7 +576,8 @@ export function PrivateChatView({
         ? prompt.systemPromptOverride
         : systemPromptOverride,
       prompt.inferenceSettings !== undefined ? prompt.inferenceSettings : inferenceSettings,
-      prompt.contextBlocks !== undefined ? prompt.contextBlocks : contextBlocks
+      prompt.contextBlocks !== undefined ? prompt.contextBlocks : contextBlocks,
+      prompt.notes ?? []
     );
   }, [
     chat,
@@ -744,7 +750,8 @@ export function PrivateChatView({
     thinkMode: ThinkingMode = "auto",
     promptSystemPromptOverride: string | null = systemPromptOverride,
     promptInferenceSettings: ChatInferenceSettings = inferenceSettings,
-    promptContextBlocks: ContextBlockSelection[] = contextBlocks
+    promptContextBlocks: ContextBlockSelection[] = contextBlocks,
+    promptNotes: NoteContextSelection[] = []
   ) {
     if (!chat || isGenerating) {
       return;
@@ -779,6 +786,16 @@ export function PrivateChatView({
       return;
     }
 
+    let noteSnapshots: PrivateNoteContextSelection[];
+    try {
+      noteSnapshots = await snapshotPrivateNoteSelections(promptNotes);
+    } catch (noteError) {
+      setGenerationError(
+        noteError instanceof Error ? noteError.message : "Failed to attach private notes"
+      );
+      return false;
+    }
+
     const now = unixTimestamp();
     const normalizedContextBlocks = normalizeContextSelections(promptContextBlocks);
     const pathMessages = activePathMessages(messages, chat.active_root_message_id);
@@ -788,6 +805,7 @@ export function PrivateChatView({
       parentMessageId: parent?.id ?? null,
       role: "user",
       contentText: prompt,
+      noteAttachments: noteSnapshots,
       createdAt: now
     });
     userMessage.attachments = privateAttachmentsForMessage(userMessage, attachments);
@@ -844,11 +862,12 @@ export function PrivateChatView({
         assistantMessage.id,
         selectedPrivatePersona,
         promptSystemPromptOverride,
-        normalizedContextBlocks
+        normalizedContextBlocks,
+        noteSnapshots
       );
     } catch (promptError) {
       setGenerationError(
-        promptError instanceof Error ? promptError.message : "Failed to compile context blocks"
+        promptError instanceof Error ? promptError.message : "Failed to compile private prompt context"
       );
       return;
     }
@@ -958,7 +977,8 @@ export function PrivateChatView({
     thinkMode: ThinkingMode = "auto",
     promptSystemPromptOverride: string | null = systemPromptOverride,
     promptInferenceSettings: ChatInferenceSettings = inferenceSettings,
-    promptContextBlocks: ContextBlockSelection[] = contextBlocks
+    promptContextBlocks: ContextBlockSelection[] = contextBlocks,
+    notes: NoteContextSelection[] = []
   ) {
     if (isGenerating) {
       setPendingPrompt({
@@ -967,19 +987,21 @@ export function PrivateChatView({
         thinkMode,
         systemPromptOverride: promptSystemPromptOverride,
         inferenceSettings: promptInferenceSettings,
-        contextBlocks: promptContextBlocks
+        contextBlocks: promptContextBlocks,
+        notes
       });
       await stopGeneration();
       return;
     }
 
-    await generate(
+    return generate(
       prompt,
       attachments,
       thinkMode,
       promptSystemPromptOverride,
       promptInferenceSettings,
-      promptContextBlocks
+      promptContextBlocks,
+      notes
     );
   }
 
@@ -1258,11 +1280,13 @@ export function PrivateChatView({
 
       const now = unixTimestamp();
       const normalizedContextBlocks = normalizeContextSelections(contextBlocks);
+      const noteSnapshots = (message as PrivateChatMessage).note_attachments ?? [];
       let userMessage = createPrivateMessage({
         chatId: chat.id,
         parentMessageId: message.parent_message_id,
         role: "user",
         contentText,
+        noteAttachments: noteSnapshots,
         createdAt: now
       });
       userMessage.attachments = privateAttachmentsForMessage(userMessage, attachments);
@@ -1316,11 +1340,12 @@ export function PrivateChatView({
           assistantMessage.id,
           selectedPrivatePersona,
           systemPromptOverride,
-          normalizedContextBlocks
+          normalizedContextBlocks,
+          noteSnapshots
         );
       } catch (promptError) {
         setGenerationError(
-          promptError instanceof Error ? promptError.message : "Failed to compile context blocks"
+          promptError instanceof Error ? promptError.message : "Failed to compile private prompt context"
         );
         return;
       }
@@ -1409,6 +1434,10 @@ export function PrivateChatView({
 
       const now = unixTimestamp();
       const normalizedContextBlocks = normalizeContextSelections(contextBlocks);
+      const parentUser = messagesRef.current.find(
+        (current) => current.id === message.parent_message_id && current.role === "user"
+      );
+      const noteSnapshots = parentUser?.note_attachments ?? [];
       const assistantMessage = createPrivateMessage({
         chatId: chat.id,
         parentMessageId: message.parent_message_id,
@@ -1457,11 +1486,12 @@ export function PrivateChatView({
           assistantMessage.id,
           selectedPrivatePersona,
           systemPromptOverride,
-          normalizedContextBlocks
+          normalizedContextBlocks,
+          noteSnapshots
         );
       } catch (promptError) {
         setGenerationError(
-          promptError instanceof Error ? promptError.message : "Failed to compile context blocks"
+          promptError instanceof Error ? promptError.message : "Failed to compile private prompt context"
         );
         return;
       }
@@ -1528,6 +1558,10 @@ export function PrivateChatView({
             message.persona_version_id
           )
         : null;
+      const parentUser = messagesRef.current.find(
+        (current) => current.id === message.parent_message_id && current.role === "user"
+      );
+      const noteSnapshots = parentUser?.note_attachments ?? [];
       const continuedMessage: PrivateChatMessage = {
         ...(message as PrivateChatMessage),
         active_revision_id: continuationRevision.id,
@@ -1574,12 +1608,13 @@ export function PrivateChatView({
           message.id,
           exactPersona,
           systemPromptOverride,
-          message.context_blocks
+          message.context_blocks,
+          noteSnapshots
         );
         appendPrivateContinuationPrompt(generationMessages, sourceRevision.content_text);
       } catch (promptError) {
         setGenerationError(
-          promptError instanceof Error ? promptError.message : "Failed to compile context blocks"
+          promptError instanceof Error ? promptError.message : "Failed to compile private prompt context"
         );
         return;
       }
@@ -1926,8 +1961,19 @@ export function PrivateChatView({
               }
               onStop={stopGeneration}
               onUploadAttachment={preparePrivateAttachment}
-              onSubmit={(prompt, attachments, toolPreferences, thinkMode) =>
-                submitPrompt(prompt, attachments, toolPreferences, thinkMode)
+              canAttachNotes
+              searchNotes={searchDeviceNotes}
+              onSubmit={(prompt, attachments, toolPreferences, thinkMode, notes) =>
+                submitPrompt(
+                  prompt,
+                  attachments,
+                  toolPreferences,
+                  thinkMode,
+                  undefined,
+                  undefined,
+                  undefined,
+                  notes
+                )
               }
             />
           </div>

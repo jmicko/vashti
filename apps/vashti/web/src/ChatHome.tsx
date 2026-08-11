@@ -4,6 +4,7 @@ import { prepareLocalAttachment, preparePrivateAttachment } from "./attachments"
 import { BrandMark } from "./common";
 import { StartChatComposer } from "./Composer";
 import { ModelBackgroundLayer, modelBackgroundContainerStyle } from "./ModelBackground";
+import { searchDeviceNotes } from "./notes/repository";
 import { defaultToolPreferences } from "./toolPreferences";
 import type {
   AvailableTool,
@@ -103,7 +104,8 @@ export function ChatHome({
           onToolPreferencesChange={setToolPreferences}
           onThinkingModeChange={setThinkingMode}
           onUploadAttachment={isPrivate ? preparePrivateAttachment : prepareLocalAttachment}
-          canAttachNotes={!isPrivate}
+          canAttachNotes
+          searchNotes={isPrivate ? searchDeviceNotes : undefined}
           onSubmit={isPrivate ? onCreatePrivateChat : onCreateChat}
         />
         <p className={isPrivate ? "chat-mode-note private" : "chat-mode-note"}>

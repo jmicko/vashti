@@ -8,13 +8,23 @@ import type {
   ContextLibraryResponse,
   ContextSelectionMode,
   MessageStats,
+  NoteContextSelection,
   CustomModelType
 } from "./types";
 import { requestJson } from "./api";
+import type {
+  Note,
+  NoteAiAccess,
+  NoteListStatus,
+  NoteModelScope,
+  NoteSort,
+  NoteSummary,
+  NoteVersion
+} from "./notes/types";
 
 const LEGACY_DB_NAME = "vashti-private-local";
 const DB_NAME_PREFIX = "vashti-private-local";
-const DB_VERSION = 7;
+const DB_VERSION = 8;
 const CHAT_STORE = "private_chats";
 const MESSAGE_STORE = "private_messages";
 const PERSONA_STORE = "private_personas";
@@ -23,6 +33,8 @@ const PERSONA_AVATAR_STORE = "private_persona_avatars";
 const CONTEXT_CATEGORY_STORE = "private_context_categories";
 const CONTEXT_BLOCK_STORE = "private_context_blocks";
 const CONTEXT_BLOCK_VERSION_STORE = "private_context_block_versions";
+const NOTE_STORE = "private_notes";
+const NOTE_VERSION_STORE = "private_note_versions";
 const HOSTED_CHAT_CACHE_STORE = "hosted_chat_cache";
 const HOSTED_CHAT_LIST_CACHE_STORE = "hosted_chat_list_cache";
 const HOSTED_PENDING_SEND_STORE = "hosted_pending_sends";
@@ -47,6 +59,7 @@ type PrivateStoreRecord = {
   persona_id?: string;
   category_id?: string;
   block_id?: string;
+  note_id?: string;
   created_at?: number;
   updated_at?: number;
   last_message_at?: number;
@@ -55,6 +68,14 @@ type PrivateStoreRecord = {
 
 type PrivateStoredContextBlock = Omit<ContextBlock, "current_version"> & {
   current_version_id: string;
+};
+
+type PrivateStoredNote = Omit<Note, "current_version"> & {
+  current_version_id: string;
+};
+
+export type PrivateNoteContextSelection = NoteContextSelection & {
+  content: string;
 };
 
 export type PrivateChatSummary = {
@@ -142,6 +163,7 @@ export type PrivateChatMessage = {
   revision_count: number;
   attachments: PrivateChatAttachment[];
   context_blocks: ContextBlockSelection[];
+  note_attachments: PrivateNoteContextSelection[];
 };
 
 export type CreatePrivateChatParams = {
@@ -171,6 +193,7 @@ export type CreatePrivateMessageParams = {
   personaNameSnapshot?: string | null;
   thinkMode?: string | null;
   contextBlocks?: ContextBlockSelection[];
+  noteAttachments?: PrivateNoteContextSelection[];
   createdAt?: number;
 };
 
@@ -367,6 +390,7 @@ export function createPrivateMessage({
   personaNameSnapshot = null,
   thinkMode = null,
   contextBlocks = [],
+  noteAttachments = [],
   createdAt = unixTimestamp()
 }: CreatePrivateMessageParams): PrivateChatMessage {
   const revision = {
@@ -403,7 +427,8 @@ export function createPrivateMessage({
     revisions: [revision],
     revision_count: 1,
     attachments: [],
-    context_blocks: contextBlocks.map((selection, position) => ({ ...selection, position }))
+    context_blocks: contextBlocks.map((selection, position) => ({ ...selection, position })),
+    note_attachments: noteAttachments.map((selection, position) => ({ ...selection, position }))
   };
 }
 
@@ -1290,6 +1315,535 @@ export async function listPrivateContextBlockVersions(
   return versions.sort((left, right) => left.version_number - right.version_number);
 }
 
+export async function listPrivateNotes({
+  query = "",
+  status = "active",
+  sort = "updated",
+  limit = 100,
+  offset = 0
+}: {
+  query?: string;
+  status?: NoteListStatus;
+  sort?: NoteSort;
+  limit?: number;
+  offset?: number;
+} = {}): Promise<{ notes: NoteSummary[]; total: number }> {
+  const db = await openPrivateDb();
+  const storedNotes = await getAllPrivateRecords<PrivateStoredNote>(db, NOTE_STORE);
+  const versions = await getPrivateNoteVersionsById(
+    db,
+    storedNotes.map((note) => note.current_version_id)
+  );
+  const versionsById = new Map(versions.map((version) => [version.id, version]));
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const matchingNotes = storedNotes
+    .map((storedNote) => {
+      const version = versionsById.get(storedNote.current_version_id);
+      return version
+        ? { summary: privateNoteSummary(storedNote, version), content: version.content }
+        : null;
+    })
+    .filter(
+      (note): note is { summary: NoteSummary; content: string } => Boolean(note)
+    )
+    .filter(({ summary }) => (status === "trashed") === Boolean(summary.deleted_at))
+    .filter(({ summary, content }) => {
+      if (!normalizedQuery) {
+        return true;
+      }
+      return `${summary.title}\n${content}\n${summary.tags.join("\n")}`
+        .toLocaleLowerCase()
+        .includes(normalizedQuery);
+    })
+    .map(({ summary }) => summary)
+    .sort((left, right) => comparePrivateNoteSummaries(left, right, sort));
+  const total = matchingNotes.length;
+  const boundedOffset = Math.max(0, Math.trunc(offset));
+  const boundedLimit = Math.min(200, Math.max(1, Math.trunc(limit)));
+  return {
+    notes: matchingNotes.slice(boundedOffset, boundedOffset + boundedLimit),
+    total
+  };
+}
+
+export async function getPrivateNote(noteId: string): Promise<Note> {
+  const db = await openPrivateDb();
+  const tx = db.transaction(NOTE_STORE, "readonly");
+  const record = await requestResult<PrivateStoreRecord | PrivateStoredNote | undefined>(
+    tx.objectStore(NOTE_STORE).get(noteId)
+  );
+  await transactionDone(tx);
+  if (!record) {
+    throw new Error("Note not found on this device");
+  }
+  const storedNote = await readPrivateRecord<PrivateStoredNote>(record);
+  const version = await getPrivateNoteVersion(storedNote.current_version_id);
+  if (!version || version.note_id !== storedNote.id) {
+    throw new Error("The current note version is unavailable on this device");
+  }
+  return privateNoteFromStored(storedNote, version);
+}
+
+export async function createPrivateNote({
+  title,
+  content = "",
+  tags = [],
+  is_pinned: isPinned = false,
+  ai_access: aiAccess = "none",
+  model_scope: modelScope = emptyPrivateNoteModelScope()
+}: {
+  title: string;
+  content?: string;
+  tags?: string[];
+  is_pinned?: boolean;
+  ai_access?: NoteAiAccess;
+  model_scope?: NoteModelScope;
+}): Promise<Note> {
+  const normalizedTitle = validatePrivateNoteTitle(title);
+  const normalizedContent = validatePrivateNoteContent(content);
+  const normalizedTags = validatePrivateNoteTags(tags);
+  const normalizedScope = validatePrivateNoteModelScope(modelScope);
+  const now = unixTimestamp();
+  const noteId = privateId("private-note");
+  const version: NoteVersion = {
+    id: privateId("private-note-version"),
+    note_id: noteId,
+    version_number: 1,
+    title: normalizedTitle,
+    content: normalizedContent,
+    actor_type: "human",
+    actor_user_id: privateStorageUserId(),
+    actor_model_key: null,
+    actor_model_name: null,
+    source_chat_id: null,
+    source_message_id: null,
+    source_tool_call_id: null,
+    created_at: now
+  };
+  const storedNote: PrivateStoredNote = {
+    id: noteId,
+    current_version_id: version.id,
+    tags: normalizedTags,
+    is_pinned: isPinned,
+    ai_access: aiAccess,
+    model_scope: normalizedScope,
+    deleted_at: null,
+    created_at: now,
+    updated_at: now
+  };
+  await putPrivateNoteAndVersion(storedNote, version);
+  return privateNoteFromStored(storedNote, version);
+}
+
+export async function updatePrivateNote(
+  noteId: string,
+  payload: {
+    expected_version: number;
+    title?: string;
+    content?: string;
+    tags?: string[];
+    is_pinned?: boolean;
+    ai_access?: NoteAiAccess;
+    model_scope?: NoteModelScope;
+  }
+): Promise<Note> {
+  const current = await getPrivateNote(noteId);
+  ensureExpectedPrivateNoteVersion(current, payload.expected_version);
+  if (current.deleted_at) {
+    throw new Error("Restore this note before editing it");
+  }
+
+  const title = payload.title === undefined
+    ? current.current_version.title
+    : validatePrivateNoteTitle(payload.title);
+  const content = payload.content === undefined
+    ? current.current_version.content
+    : validatePrivateNoteContent(payload.content);
+  const contentChanged =
+    title !== current.current_version.title || content !== current.current_version.content;
+  const now = unixTimestamp();
+  const version: NoteVersion = contentChanged
+    ? {
+        ...privateHumanNoteVersion(current.id, current.current_version.version_number + 1, now),
+        title,
+        content
+      }
+    : current.current_version;
+  const storedNote: PrivateStoredNote = {
+    id: current.id,
+    current_version_id: version.id,
+    tags: payload.tags === undefined ? current.tags : validatePrivateNoteTags(payload.tags),
+    is_pinned: payload.is_pinned ?? current.is_pinned,
+    ai_access: payload.ai_access ?? current.ai_access,
+    model_scope:
+      payload.model_scope === undefined
+        ? current.model_scope
+        : validatePrivateNoteModelScope(payload.model_scope),
+    deleted_at: null,
+    created_at: current.created_at,
+    updated_at: now
+  };
+  await putPrivateNoteAndVersion(storedNote, contentChanged ? version : null);
+  return privateNoteFromStored(storedNote, version);
+}
+
+export async function trashPrivateNote(noteId: string, expectedVersion: number): Promise<Note> {
+  const current = await getPrivateNote(noteId);
+  ensureExpectedPrivateNoteVersion(current, expectedVersion);
+  if (current.deleted_at) {
+    return current;
+  }
+  return savePrivateNoteMetadata(current, { deleted_at: unixTimestamp() });
+}
+
+export async function restorePrivateNote(noteId: string, expectedVersion: number): Promise<Note> {
+  const current = await getPrivateNote(noteId);
+  ensureExpectedPrivateNoteVersion(current, expectedVersion);
+  if (!current.deleted_at) {
+    return current;
+  }
+  return savePrivateNoteMetadata(current, { deleted_at: null });
+}
+
+export async function permanentlyDeletePrivateNote(noteId: string): Promise<{ ok: boolean }> {
+  const current = await getPrivateNote(noteId);
+  if (!current.deleted_at) {
+    throw new Error("Move this note to trash before deleting it forever");
+  }
+
+  const db = await openPrivateDb();
+  const tx = db.transaction([NOTE_STORE, NOTE_VERSION_STORE], "readwrite");
+  tx.objectStore(NOTE_STORE).delete(noteId);
+  const cursorRequest = tx
+    .objectStore(NOTE_VERSION_STORE)
+    .index("note_id")
+    .openCursor(IDBKeyRange.only(noteId));
+  cursorRequest.onsuccess = () => {
+    const cursor = cursorRequest.result;
+    if (cursor) {
+      cursor.delete();
+      cursor.continue();
+    }
+  };
+  await transactionDone(tx);
+  return { ok: true };
+}
+
+export async function listPrivateNoteVersions(noteId: string): Promise<NoteVersion[]> {
+  await getPrivateNote(noteId);
+  const db = await openPrivateDb();
+  const tx = db.transaction(NOTE_VERSION_STORE, "readonly");
+  const records = await requestResult<Array<PrivateStoreRecord | NoteVersion>>(
+    tx.objectStore(NOTE_VERSION_STORE).index("note_id").getAll(noteId)
+  );
+  await transactionDone(tx);
+  const versions = await Promise.all(
+    records.map((record) => readPrivateRecord<NoteVersion>(record))
+  );
+  return versions.sort(
+    (left, right) => right.version_number - left.version_number || right.id.localeCompare(left.id)
+  );
+}
+
+export async function restorePrivateNoteVersion(
+  noteId: string,
+  versionId: string,
+  expectedVersion: number
+): Promise<Note> {
+  const current = await getPrivateNote(noteId);
+  ensureExpectedPrivateNoteVersion(current, expectedVersion);
+  if (current.deleted_at) {
+    throw new Error("Restore this note before restoring one of its versions");
+  }
+  const source = await getPrivateNoteVersion(versionId);
+  if (!source || source.note_id !== noteId) {
+    throw new Error("Note version not found on this device");
+  }
+  const versions = await listPrivateNoteVersions(noteId);
+  const now = unixTimestamp();
+  const version: NoteVersion = {
+    ...privateHumanNoteVersion(
+      noteId,
+      Math.max(current.current_version.version_number, ...versions.map((item) => item.version_number)) + 1,
+      now
+    ),
+    title: source.title,
+    content: source.content
+  };
+  const storedNote: PrivateStoredNote = {
+    id: current.id,
+    current_version_id: version.id,
+    tags: current.tags,
+    is_pinned: current.is_pinned,
+    ai_access: current.ai_access,
+    model_scope: current.model_scope,
+    deleted_at: null,
+    created_at: current.created_at,
+    updated_at: now
+  };
+  await putPrivateNoteAndVersion(storedNote, version);
+  return privateNoteFromStored(storedNote, version);
+}
+
+export async function snapshotPrivateNoteSelections(
+  selections: NoteContextSelection[]
+): Promise<PrivateNoteContextSelection[]> {
+  if (selections.length > 12) {
+    throw new Error("Select at most 12 notes");
+  }
+  const noteIds = new Set<string>();
+  const versionIds = new Set<string>();
+  const snapshots: PrivateNoteContextSelection[] = [];
+
+  for (const [position, selection] of selections.entries()) {
+    if (noteIds.has(selection.note_id) || versionIds.has(selection.note_version_id)) {
+      throw new Error("Select only one version of each note");
+    }
+    noteIds.add(selection.note_id);
+    versionIds.add(selection.note_version_id);
+    const note = await getPrivateNote(selection.note_id);
+    if (note.deleted_at) {
+      throw new Error("A selected note is no longer available on this device");
+    }
+    const version = await getPrivateNoteVersion(selection.note_version_id);
+    if (!version || version.note_id !== note.id) {
+      throw new Error("A selected note version is no longer available on this device");
+    }
+    snapshots.push({
+      note_id: note.id,
+      note_version_id: version.id,
+      version_number: version.version_number,
+      title: version.title,
+      content: version.content,
+      source: "explicit",
+      position
+    });
+  }
+
+  const contextSize = snapshots.reduce(
+    (total, selection) => total + utf8ByteLength(selection.title) + utf8ByteLength(selection.content),
+    0
+  );
+  if (contextSize > 96_000) {
+    throw new Error("Selected note context exceeds 96 KB");
+  }
+  return snapshots;
+}
+
+async function savePrivateNoteMetadata(
+  current: Note,
+  patch: Pick<PrivateStoredNote, "deleted_at">
+) {
+  const now = unixTimestamp();
+  const storedNote: PrivateStoredNote = {
+    id: current.id,
+    current_version_id: current.current_version.id,
+    tags: current.tags,
+    is_pinned: current.is_pinned,
+    ai_access: current.ai_access,
+    model_scope: current.model_scope,
+    deleted_at: patch.deleted_at,
+    created_at: current.created_at,
+    updated_at: now
+  };
+  await putPrivateNoteAndVersion(storedNote, null);
+  return privateNoteFromStored(storedNote, current.current_version);
+}
+
+async function putPrivateNoteAndVersion(
+  note: PrivateStoredNote,
+  version: NoteVersion | null
+) {
+  const noteRecord = await privateStoreRecord(note, {
+    created_at: note.created_at,
+    updated_at: note.updated_at
+  });
+  const versionRecord = version
+    ? await privateStoreRecord(version, {
+        note_id: version.note_id,
+        created_at: version.created_at
+      })
+    : null;
+  const db = await openPrivateDb();
+  const tx = db.transaction(
+    versionRecord ? [NOTE_STORE, NOTE_VERSION_STORE] : [NOTE_STORE],
+    "readwrite"
+  );
+  tx.objectStore(NOTE_STORE).put(noteRecord);
+  if (versionRecord) {
+    tx.objectStore(NOTE_VERSION_STORE).put(versionRecord);
+  }
+  await transactionDone(tx);
+}
+
+async function getPrivateNoteVersion(versionId: string): Promise<NoteVersion | null> {
+  const db = await openPrivateDb();
+  const tx = db.transaction(NOTE_VERSION_STORE, "readonly");
+  const record = await requestResult<PrivateStoreRecord | NoteVersion | undefined>(
+    tx.objectStore(NOTE_VERSION_STORE).get(versionId)
+  );
+  await transactionDone(tx);
+  return record ? readPrivateRecord<NoteVersion>(record) : null;
+}
+
+function privateNoteFromStored(note: PrivateStoredNote, version: NoteVersion): Note {
+  return {
+    id: note.id,
+    current_version: version,
+    tags: [...note.tags],
+    is_pinned: note.is_pinned,
+    ai_access: note.ai_access,
+    model_scope: {
+      all_models: note.model_scope.all_models,
+      model_keys: [...note.model_scope.model_keys]
+    },
+    deleted_at: note.deleted_at,
+    created_at: note.created_at,
+    updated_at: note.updated_at
+  };
+}
+
+function privateNoteSummary(note: PrivateStoredNote, version: NoteVersion): NoteSummary {
+  return {
+    id: note.id,
+    title: version.title,
+    excerpt: privateNoteExcerpt(version.content),
+    current_version_id: version.id,
+    current_version_number: version.version_number,
+    tags: [...note.tags],
+    is_pinned: note.is_pinned,
+    ai_access: note.ai_access,
+    model_scope: {
+      all_models: note.model_scope.all_models,
+      model_keys: [...note.model_scope.model_keys]
+    },
+    deleted_at: note.deleted_at,
+    created_at: note.created_at,
+    updated_at: note.updated_at
+  };
+}
+
+function privateHumanNoteVersion(noteId: string, versionNumber: number, createdAt: number) {
+  return {
+    id: privateId("private-note-version"),
+    note_id: noteId,
+    version_number: versionNumber,
+    title: "",
+    content: "",
+    actor_type: "human",
+    actor_user_id: privateStorageUserId(),
+    actor_model_key: null,
+    actor_model_name: null,
+    source_chat_id: null,
+    source_message_id: null,
+    source_tool_call_id: null,
+    created_at: createdAt
+  } satisfies NoteVersion;
+}
+
+function emptyPrivateNoteModelScope(): NoteModelScope {
+  return { all_models: false, model_keys: [] };
+}
+
+function validatePrivateNoteTitle(title: string) {
+  const normalized = title.trim();
+  if (!normalized) {
+    throw new Error("A title is required");
+  }
+  if ([...normalized].length > 200) {
+    throw new Error("Note titles must be 200 characters or fewer");
+  }
+  return normalized;
+}
+
+function validatePrivateNoteContent(content: string) {
+  if (utf8ByteLength(content) > 900_000) {
+    throw new Error("Note content exceeds 900 KB");
+  }
+  return content;
+}
+
+function validatePrivateNoteTags(tags: string[]) {
+  const normalized = [...new Set(tags.map((tag) => tag.trim()).filter(Boolean))];
+  if (normalized.length > 32) {
+    throw new Error("Notes support at most 32 tags");
+  }
+  if (normalized.some((tag) => [...tag].length > 64)) {
+    throw new Error("Note tags must be 64 characters or fewer");
+  }
+  return normalized;
+}
+
+function validatePrivateNoteModelScope(scope: NoteModelScope): NoteModelScope {
+  const modelKeys = [...new Set(scope.model_keys.map((key) => key.trim()).filter(Boolean))];
+  if (modelKeys.length > 64) {
+    throw new Error("A note can be scoped to at most 64 models");
+  }
+  return { all_models: scope.all_models, model_keys: modelKeys.sort() };
+}
+
+function ensureExpectedPrivateNoteVersion(note: Note, expectedVersion: number) {
+  if (note.current_version.version_number !== expectedVersion) {
+    const error = new Error("This note changed elsewhere. Reload it before saving again.") as Error & {
+      code: string;
+    };
+    error.code = "note_version_conflict";
+    throw error;
+  }
+}
+
+function comparePrivateNoteSummaries(left: NoteSummary, right: NoteSummary, sort: NoteSort) {
+  if (left.is_pinned !== right.is_pinned) {
+    return left.is_pinned ? -1 : 1;
+  }
+  if (sort === "title") {
+    return left.title.localeCompare(right.title);
+  }
+  if (sort === "created") {
+    return right.created_at - left.created_at || right.id.localeCompare(left.id);
+  }
+  return right.updated_at - left.updated_at || right.id.localeCompare(left.id);
+}
+
+function privateNoteExcerpt(content: string) {
+  return content.replace(/[#>*_`\[\]-]/g, " ").replace(/\s+/g, " ").trim().slice(0, 180);
+}
+
+function privateStorageUserId() {
+  if (!currentUserId) {
+    throw new Error("Private storage is not ready");
+  }
+  return currentUserId;
+}
+
+function utf8ByteLength(value: string) {
+  return new TextEncoder().encode(value).byteLength;
+}
+
+async function getPrivateNoteVersionsById(
+  db: IDBDatabase,
+  versionIds: string[]
+): Promise<NoteVersion[]> {
+  if (versionIds.length === 0) {
+    return [];
+  }
+  const tx = db.transaction(NOTE_VERSION_STORE, "readonly");
+  const store = tx.objectStore(NOTE_VERSION_STORE);
+  const records = await Promise.all(
+    versionIds.map((versionId) =>
+      requestResult<PrivateStoreRecord | NoteVersion | undefined>(store.get(versionId))
+    )
+  );
+  await transactionDone(tx);
+  return Promise.all(
+    records
+      .filter(
+        (record): record is PrivateStoreRecord | NoteVersion => record !== undefined
+      )
+      .map((record) => readPrivateRecord<NoteVersion>(record))
+  );
+}
+
 async function putPrivateContextRecord<T extends { id: string }>(
   storeName: string,
   value: T,
@@ -1392,6 +1946,15 @@ function ensurePrivateStores(db: IDBDatabase) {
       keyPath: "id"
     });
     contextVersionStore.createIndex("block_id", "block_id", { unique: false });
+  }
+  if (!db.objectStoreNames.contains(NOTE_STORE)) {
+    db.createObjectStore(NOTE_STORE, { keyPath: "id" });
+  }
+  if (!db.objectStoreNames.contains(NOTE_VERSION_STORE)) {
+    const noteVersionStore = db.createObjectStore(NOTE_VERSION_STORE, {
+      keyPath: "id"
+    });
+    noteVersionStore.createIndex("note_id", "note_id", { unique: false });
   }
   if (!db.objectStoreNames.contains(HOSTED_CHAT_CACHE_STORE)) {
     db.createObjectStore(HOSTED_CHAT_CACHE_STORE, { keyPath: "id" });
@@ -1712,7 +2275,8 @@ function normalizePrivateMessage(message: PrivateChatMessage): PrivateChatMessag
     ...message,
     stats: message.stats ?? null,
     attachments: message.attachments ?? [],
-    context_blocks: message.context_blocks ?? []
+    context_blocks: message.context_blocks ?? [],
+    note_attachments: message.note_attachments ?? []
   };
 }
 

@@ -757,6 +757,27 @@ textarea {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.notes-storage-control {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.notes-storage-control button {
+  min-width: 0;
+  gap: 6px;
+}
+
+.notes-storage-control svg {
+  width: 16px;
+  height: 16px;
+}
+
+.notes-storage-control span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .notes-search,
 .notes-scope-search {
   position: relative;
@@ -804,6 +825,12 @@ textarea {
   gap: 8px;
   color: var(--muted);
   font-size: 0.8rem;
+}
+
+.notes-device-access-note {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.45;
 }
 
 .notes-list-menu-wrap,

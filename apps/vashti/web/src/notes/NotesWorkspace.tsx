@@ -10,35 +10,31 @@ import {
   Eye,
   FilePlus2,
   FileText,
+  HardDrive,
   History,
   MoreHorizontal,
   Pin,
   PinOff,
   RefreshCw,
   Search,
+  Server,
   Settings2,
   Trash2,
   Undo2,
   X
 } from "lucide-react";
-import { ApiRequestError } from "../api";
 import { ConfirmDialog, RetroLoader } from "../common";
 import { MarkdownContent } from "../MarkdownContent";
 import type { BackendModelGroup, Persona } from "../types";
 import {
-  createNote,
-  getNote,
   getNoteSettings,
-  listNotes,
-  listNoteVersions,
-  permanentlyDeleteNote,
-  restoreNote,
-  restoreNoteVersion,
-  trashNote,
-  updateNote,
   updateNoteSettings
 } from "./api";
 import { MarkdownToolbar } from "./MarkdownToolbar";
+import {
+  noteRepositoryFor,
+  type NoteStorageMode
+} from "./repository";
 import type {
   Note,
   NoteAiAccess,
@@ -74,6 +70,7 @@ export function NotesWorkspace({
   modelGroups: BackendModelGroup[];
   personas: Persona[];
 }) {
+  const [storageMode, setStorageMode] = useState<NoteStorageMode>("server");
   const [status, setStatus] = useState<NoteListStatus>("active");
   const [sort, setSort] = useState<NoteSort>("updated");
   const [searchInput, setSearchInput] = useState("");
@@ -119,6 +116,7 @@ export function NotesWorkspace({
   const flushDraftRef = useRef<() => Promise<boolean>>(async () => true);
   const pendingTitleFocusRef = useRef<string | null>(null);
   const savedStateTimerRef = useRef<number | null>(null);
+  const repository = noteRepositoryFor(storageMode);
 
   const modelOptions = useMemo<ModelOption[]>(() => {
     const baseModels = modelGroups.flatMap((group) =>
@@ -188,7 +186,7 @@ export function NotesWorkspace({
     setIsLoadingList(true);
     setListError(null);
 
-    void listNotes({ query, status, sort, limit: NOTE_LIST_LIMIT }).then(
+    void repository.list({ query, status, sort, limit: NOTE_LIST_LIMIT }).then(
       (response) => {
         if (requestId !== listRequestRef.current) {
           return;
@@ -205,7 +203,7 @@ export function NotesWorkspace({
         setIsLoadingList(false);
       }
     );
-  }, [listRefreshKey, query, sort, status]);
+  }, [listRefreshKey, query, repository, sort, status]);
 
   useEffect(() => {
     if (!selectedNoteId) {
@@ -230,7 +228,7 @@ export function NotesWorkspace({
     setSaveState("idle");
     setSaveMessage(null);
     setDrawer(null);
-    void getNote(selectedNoteId).then(
+    void repository.get(selectedNoteId).then(
       (nextNote) => {
         if (requestId !== noteRequestRef.current) {
           return;
@@ -246,7 +244,7 @@ export function NotesWorkspace({
         setIsLoadingNote(false);
       }
     );
-  }, [selectedNoteId]);
+  }, [repository, selectedNoteId]);
 
   useEffect(() => {
     if (!note || !draft || !isDirty || note.deleted_at || saveState === "conflict") {
@@ -344,7 +342,7 @@ export function NotesWorkspace({
     setSaveState("saving");
     setSaveMessage(null);
     try {
-      const updated = await updateNote(sourceNote.id, {
+      const updated = await repository.update(sourceNote.id, {
         expected_version: sourceNote.current_version.version_number,
         title: sourceDraft.title.trim(),
         content: sourceDraft.content,
@@ -375,9 +373,9 @@ export function NotesWorkspace({
       return updated;
     } catch (error) {
       if (selectedNoteIdRef.current === sourceNote.id) {
-        if (error instanceof ApiRequestError && error.code === "note_version_conflict") {
+        if (isNoteVersionConflict(error)) {
           setSaveState("conflict");
-          setSaveMessage(error.message);
+          setSaveMessage(errorMessage(error, "This note changed elsewhere."));
         } else {
           setSaveState("error");
           setSaveMessage(errorMessage(error, "Failed to save note"));
@@ -425,7 +423,7 @@ export function NotesWorkspace({
     setIsCreating(true);
     setListError(null);
     try {
-      const created = await createNote({ title: "Untitled note" });
+      const created = await repository.create({ title: "Untitled note" });
       setStatus("active");
       setSearchInput("");
       setQuery("");
@@ -448,7 +446,7 @@ export function NotesWorkspace({
     setIsLoadingNote(true);
     setNoteError(null);
     try {
-      applyLoadedNote(await getNote(selectedNoteId));
+      applyLoadedNote(await repository.get(selectedNoteId));
     } catch (error) {
       setNoteError(errorMessage(error, "Failed to reload note"));
     } finally {
@@ -462,7 +460,7 @@ export function NotesWorkspace({
     }
     setIsCreating(true);
     try {
-      const created = await createNote({
+      const created = await repository.create({
         ...draft,
         title: `${draft.title.trim() || "Untitled note"} (conflict copy)`,
         tags: normalizeTags(draft.tags),
@@ -486,21 +484,21 @@ export function NotesWorkspace({
     setIsConfirming(true);
     try {
       if (confirmAction.kind === "purge") {
-        await permanentlyDeleteNote(note.id);
+        await repository.purge(note.id);
         removeCurrentFromList();
       } else if (confirmAction.kind === "trash") {
         const current = draft && isDirty ? await saveDraft(note, draft) : note;
         if (!current) {
           return;
         }
-        await trashNote(current.id, current.current_version.version_number);
+        await repository.trash(current.id, current.current_version.version_number);
         removeCurrentFromList();
       } else {
         const current = draft && isDirty ? await saveDraft(note, draft) : note;
         if (!current) {
           return;
         }
-        const restored = await restoreNoteVersion(
+        const restored = await repository.restoreVersion(
           current.id,
           confirmAction.version.id,
           current.current_version.version_number
@@ -522,7 +520,7 @@ export function NotesWorkspace({
       return;
     }
     try {
-      await restoreNote(note.id, note.current_version.version_number);
+      await repository.restore(note.id, note.current_version.version_number);
       removeCurrentFromList();
     } catch (error) {
       setNoteError(errorMessage(error, "Failed to restore note"));
@@ -544,7 +542,7 @@ export function NotesWorkspace({
     setIsLoadingVersions(true);
     setHistoryError(null);
     try {
-      const loaded = await listNoteVersions(noteId);
+      const loaded = await repository.listVersions(noteId);
       setVersions(loaded);
       setSelectedVersionId(loaded[0]?.id ?? null);
     } catch (error) {
@@ -633,6 +631,36 @@ export function NotesWorkspace({
     setDrawer(null);
   }
 
+  async function switchStorageMode(nextMode: NoteStorageMode) {
+    if (nextMode === storageMode || !(await flushCurrentDraft())) {
+      return;
+    }
+    listRequestRef.current += 1;
+    noteRequestRef.current += 1;
+    selectedNoteIdRef.current = null;
+    noteRef.current = null;
+    draftRef.current = null;
+    setStorageMode(nextMode);
+    setStatus("active");
+    setSearchInput("");
+    setQuery("");
+    setSummaries([]);
+    setTotal(0);
+    setIsLoadingList(true);
+    setListError(null);
+    setSelectedNoteId(null);
+    setNote(null);
+    setDraft(null);
+    setTagsText("");
+    setVersions([]);
+    setSelectedVersionId(null);
+    setSaveState("idle");
+    setSaveMessage(null);
+    setNoteError(null);
+    setDrawer(null);
+    setIsMobileEditorOpen(false);
+  }
+
   return (
     <section className="notes-workspace">
       <header className="notes-workspace-header">
@@ -641,10 +669,12 @@ export function NotesWorkspace({
           <h1>Notes</h1>
         </div>
         <div className="notes-workspace-actions">
-          <button type="button" className="secondary-button" onClick={() => void openSettings()}>
-            <Settings2 />
-            <span>Note Access</span>
-          </button>
+          {storageMode === "server" && (
+            <button type="button" className="secondary-button" onClick={() => void openSettings()}>
+              <Settings2 />
+              <span>Note Access</span>
+            </button>
+          )}
           <button type="button" onClick={() => void createNewNote()} disabled={isCreating}>
             {isCreating ? <RetroLoader /> : <FilePlus2 />}
             <span>New Note</span>
@@ -655,6 +685,24 @@ export function NotesWorkspace({
       <div className={isMobileEditorOpen ? "notes-layout notes-mobile-editor-open" : "notes-layout"}>
         <aside className="notes-library" aria-label="Note library">
           <div className="notes-library-controls">
+            <div className="segmented-control notes-storage-control" role="group" aria-label="Note storage">
+              <button
+                type="button"
+                className={storageMode === "server" ? "active" : ""}
+                onClick={() => void switchStorageMode("server")}
+              >
+                <Server />
+                <span>Server</span>
+              </button>
+              <button
+                type="button"
+                className={storageMode === "device" ? "active" : ""}
+                onClick={() => void switchStorageMode("device")}
+              >
+                <HardDrive />
+                <span>This device</span>
+              </button>
+            </div>
             <div className="segmented-control notes-status-control">
               <button
                 type="button"
@@ -839,7 +887,13 @@ export function NotesWorkspace({
                       <button type="button" className="icon-button" aria-label="Version history" title="Version history" onClick={() => void openHistory()}>
                         <History />
                       </button>
-                      <button type="button" className="icon-button" aria-label="Note access and tags" title="Note access and tags" onClick={() => setDrawer("details")}>
+                      <button
+                        type="button"
+                        className="icon-button"
+                        aria-label={storageMode === "server" ? "Note access and tags" : "Note tags"}
+                        title={storageMode === "server" ? "Note access and tags" : "Note tags"}
+                        onClick={() => setDrawer("details")}
+                      >
                         <Settings2 />
                       </button>
                       <button type="button" className="icon-button danger-button" aria-label="Move to trash" title="Move to trash" onClick={() => setConfirmAction({ kind: "trash" })}>
@@ -908,11 +962,11 @@ export function NotesWorkspace({
         {drawer && (
           <>
             <button type="button" className="notes-drawer-backdrop" aria-label="Close panel" onClick={() => setDrawer(null)} />
-            <aside className="notes-drawer" aria-label={drawerTitle(drawer)}>
+            <aside className="notes-drawer" aria-label={drawerTitle(drawer, storageMode)}>
               <header>
                 <div>
                   <p className="eyebrow">Notes</p>
-                  <h2>{drawerTitle(drawer)}</h2>
+                  <h2>{drawerTitle(drawer, storageMode)}</h2>
                 </div>
                 <button type="button" className="icon-button" aria-label="Close panel" onClick={() => setDrawer(null)}><X /></button>
               </header>
@@ -921,6 +975,7 @@ export function NotesWorkspace({
                   draft={draft}
                   tagsText={tagsText}
                   modelOptions={modelOptions}
+                  allowAiAccess={storageMode === "server"}
                   onDraftChange={updateDraft}
                   onTagsTextChange={setTagsText}
                   onTagsCommit={commitTags}
@@ -974,6 +1029,7 @@ function NoteDetails({
   draft,
   tagsText,
   modelOptions,
+  allowAiAccess,
   onDraftChange,
   onTagsTextChange,
   onTagsCommit
@@ -981,6 +1037,7 @@ function NoteDetails({
   draft: NoteDraft;
   tagsText: string;
   modelOptions: ModelOption[];
+  allowAiAccess: boolean;
   onDraftChange: (patch: Partial<NoteDraft>) => void;
   onTagsTextChange: (value: string) => void;
   onTagsCommit: () => void;
@@ -1004,16 +1061,24 @@ function NoteDetails({
         />
         <small>Separate tags with commas.</small>
       </label>
-      <section className="notes-access-section">
-        <h3>AI Access</h3>
-        <p>Choose the maximum action a model may take with this note.</p>
-        <AccessLevelControl value={draft.ai_access} onChange={(ai_access) => onDraftChange({ ai_access })} />
-      </section>
-      <ModelScopeEditor
-        scope={draft.model_scope}
-        options={modelOptions}
-        onChange={(model_scope) => onDraftChange({ model_scope })}
-      />
+      {allowAiAccess ? (
+        <>
+          <section className="notes-access-section">
+            <h3>AI Access</h3>
+            <p>Choose the maximum action a model may take with this note.</p>
+            <AccessLevelControl value={draft.ai_access} onChange={(ai_access) => onDraftChange({ ai_access })} />
+          </section>
+          <ModelScopeEditor
+            scope={draft.model_scope}
+            options={modelOptions}
+            onChange={(model_scope) => onDraftChange({ model_scope })}
+          />
+        </>
+      ) : (
+        <p className="notes-device-access-note">
+          Device notes can be attached to private chats. Models cannot browse or change them autonomously.
+        </p>
+      )}
     </div>
   );
 }
@@ -1309,8 +1374,8 @@ function errorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
 
-function drawerTitle(drawer: Exclude<Drawer, null>) {
-  if (drawer === "details") return "Note Access";
+function drawerTitle(drawer: Exclude<Drawer, null>, storageMode: NoteStorageMode) {
+  if (drawer === "details") return storageMode === "server" ? "Note Access" : "Note Details";
   if (drawer === "history") return "Version History";
   return "AI Note Defaults";
 }
@@ -1335,4 +1400,13 @@ function cloneSettings(settings: NoteSettings): NoteSettings {
       model_keys: [...settings.default_model_scope.model_keys]
     }
   };
+}
+
+function isNoteVersionConflict(error: unknown) {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "note_version_conflict"
+  );
 }

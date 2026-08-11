@@ -990,7 +990,8 @@ export function AppShell({
     prompt: string,
     attachments: ComposerAttachment[] = [],
     _toolPreferences: ChatToolPreferences = defaultToolPreferences,
-    thinkMode: ThinkingMode = "auto"
+    thinkMode: ThinkingMode = "auto",
+    notes: NoteContextSelection[] = []
   ) {
     if (!prompt.trim()) {
       openChat();
@@ -1038,7 +1039,8 @@ export function AppShell({
           thinkMode,
           systemPromptOverride: chatSystemPromptOverride,
           inferenceSettings: chatInferenceSettings,
-          contextBlocks: chatContextBlocks
+          contextBlocks: chatContextBlocks,
+          notes
         });
       }
 

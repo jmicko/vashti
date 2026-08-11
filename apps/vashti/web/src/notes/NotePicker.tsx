@@ -1,9 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, NotebookPen, Search } from "lucide-react";
-import { listNotes } from "./api";
+import { searchServerNotes, type NoteSearchFunction } from "./repository";
 import type { NoteSummary } from "./types";
 
-export function useNoteSearch(query: string, enabled: boolean) {
+export function useNoteSearch(
+  query: string,
+  enabled: boolean,
+  searchNotes: NoteSearchFunction = searchServerNotes
+) {
   const [notes, setNotes] = useState<NoteSummary[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -21,7 +25,7 @@ export function useNoteSearch(query: string, enabled: boolean) {
     const timer = window.setTimeout(() => {
       setIsLoading(true);
       setError(null);
-      void listNotes({ query, status: "active", sort: "updated", limit: 20 })
+      void searchNotes(query)
         .then((response) => {
           if (requestId === requestIdRef.current) {
             setNotes(response.notes);
@@ -41,7 +45,7 @@ export function useNoteSearch(query: string, enabled: boolean) {
     }, 120);
 
     return () => window.clearTimeout(timer);
-  }, [enabled, query]);
+  }, [enabled, query, searchNotes]);
 
   return { notes, isLoading, error };
 }
