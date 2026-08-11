@@ -119,7 +119,14 @@ pub async fn trash_note(
     Json(payload): Json<ExpectedNoteVersionRequest>,
 ) -> Result<Json<NoteMutationResponse>, ApiError> {
     let user = require_user(&state, &jar).await?;
-    let note = service::trash_note(&state.db, &user.id, &note_id, payload.expected_version).await?;
+    let note = service::trash_note(
+        &state.db,
+        &user.id,
+        &note_id,
+        payload.expected_version,
+        &NoteMutationActor::human(&user.id),
+    )
+    .await?;
     Ok(Json(NoteMutationResponse { note }))
 }
 

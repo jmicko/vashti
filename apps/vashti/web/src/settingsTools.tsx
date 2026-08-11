@@ -4,7 +4,7 @@ import {
   useEffect,
   useState
 } from "react";
-import { FileText, Save, Search, Wrench } from "lucide-react";
+import { FileText, NotebookPen, Save, Search, Wrench } from "lucide-react";
 import { requestJson } from "./api";
 import { ConfirmDialog } from "./common";
 import { PermissionTagEditor } from "./permissionTags";
@@ -308,6 +308,35 @@ export function ToolsSettingsPanel({ onToolsChanged }: { onToolsChanged: () => P
                 Reset to Default
               </button>
             </details>
+          </section>
+
+          <section className="settings-subsection">
+            <div>
+              <p className="eyebrow">Vashti</p>
+              <h2>Notes</h2>
+              <p className="status-message">
+                Grants access to the Notes tool family. Each user still controls which note
+                operations and individual notes their models may use.
+              </p>
+            </div>
+            <div className="tool-setting-heading">
+              <NotebookPen aria-hidden="true" />
+              <div>
+                <strong>Notes tools</strong>
+                <p>Search, read, create, edit, and move permitted notes to trash.</p>
+              </div>
+            </div>
+            <PermissionTagEditor
+              label="Tags"
+              tags={toolPermissionTags.notes ?? []}
+              availableTags={availableTags}
+              onChange={(tags) =>
+                setToolPermissionTags((current) => ({
+                  ...current,
+                  notes: tags
+                }))
+              }
+            />
           </section>
 
           <section className="settings-subsection">

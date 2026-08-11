@@ -6,6 +6,7 @@ use sqlx::{Row, SqlitePool};
 use crate::{
     auth::service::{self as auth_service, unix_timestamp},
     error::ApiError,
+    notes::service as notes_service,
     permissions::service::{self as permissions, PermissionTagResponse},
     settings::handlers::{
         UpdateAppSettingsRequest, UpdateNetworkSettingsRequest, UpdateToolSettingsRequest,
@@ -13,7 +14,7 @@ use crate::{
     },
 };
 
-pub const DEFAULT_TOOL_SYSTEM_PROMPT: &str = "Tool behavior guidance:\n- Current date: {current_date} UTC.\n- Use an available web search tool proactively when the user asks for current, recent, latest, news, prices, schedules, releases, versions, or anything likely to have changed.\n- Use an available web fetch tool when the user provides a URL or when a search result needs more detail.\n- Treat tool results as current external data even when their dates are newer than your training cutoff.\n- Answer from the tool results and include source URLs when they are available.\n- Only call tools by the exact names listed as available in this chat.";
+pub const DEFAULT_TOOL_SYSTEM_PROMPT: &str = "Tool behavior guidance:\n- Current date: {current_date} UTC.\n- Use an available web search tool proactively when the user asks for current, recent, latest, news, prices, schedules, releases, versions, or anything likely to have changed.\n- Use an available web fetch tool when the user provides a URL or when a search result needs more detail.\n- Treat tool results as current external data even when their dates are newer than your training cutoff.\n- Answer from the tool results and include source URLs when they are available.\n- Search or read notes when the user asks about information they may have saved.\n- Create, update, or trash notes only when the user asks you to change their notes. Never infer permission to modify notes from permission to read them.\n- Only call tools by the exact names listed as available in this chat.";
 pub const DEFAULT_WEB_SEARCH_TOOL_PROMPT: &str = "Search the web for current public information. Returns compact result titles, URLs, and snippets. Use this for current or time-sensitive questions, latest news, recent releases, prices, schedules, or facts that may have changed.";
 pub const DEFAULT_WEB_FETCH_TOOL_PROMPT: &str = "Fetch a public HTTP or HTTPS page by URL and return readable text plus discovered links. Use this after web search when a result needs more detail, or when the user asks about a specific URL.";
 
@@ -100,7 +101,7 @@ pub struct ToolSettingsPrivate {
 pub async fn get_available_tools(
     pool: &SqlitePool,
     user_id: &str,
-) -> Result<AvailableToolsResponse, sqlx::Error> {
+) -> Result<AvailableToolsResponse, ApiError> {
     permissions::ensure_tool_records(pool).await?;
     let settings = get_tool_settings_private(pool).await?;
     let user_tags = permissions::effective_user_tag_ids(pool, user_id).await?;
@@ -164,6 +165,17 @@ pub async fn get_available_tools(
                 id: "direct_web_fetch",
                 label: "Direct page fetch",
                 description: "Fetch public HTTP/HTTPS pages from the Vashti server.",
+            });
+        }
+
+        let note_settings = notes_service::get_note_settings(pool, user_id).await?;
+        if (note_settings.allow_model_read || note_settings.allow_model_create)
+            && tool_allowed(crate::tools::service::TOOL_NOTES, &user_tags, &tool_tags)
+        {
+            tools.push(AvailableToolResponse {
+                id: crate::tools::service::TOOL_NOTES,
+                label: "Notes",
+                description: "Search and manage permitted notes with reversible changes.",
             });
         }
     }

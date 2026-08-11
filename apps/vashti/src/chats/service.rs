@@ -89,6 +89,7 @@ impl From<ChatToolPreferences> for ToolSelection {
                 .tool_enabled(tools_service::TOOL_OLLAMA_WEB_FETCH),
             direct_web_fetch_enabled: preferences
                 .tool_enabled(tools_service::TOOL_DIRECT_WEB_FETCH),
+            notes_enabled: preferences.tool_enabled(tools_service::TOOL_NOTES),
         }
     }
 }

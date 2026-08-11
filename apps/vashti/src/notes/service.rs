@@ -85,6 +85,29 @@ impl NoteMutationActor {
             source_tool_call_id: None,
         }
     }
+
+    pub fn model(
+        user_id: &str,
+        model_key: &str,
+        model_name: &str,
+        chat_id: &str,
+        message_id: &str,
+        tool_call_id: &str,
+    ) -> Self {
+        Self {
+            actor_type: "model",
+            actor_user_id: user_id.to_string(),
+            actor_model_key: Some(model_key.to_string()),
+            actor_model_name: Some(model_name.to_string()),
+            source_chat_id: Some(chat_id.to_string()),
+            source_message_id: Some(message_id.to_string()),
+            source_tool_call_id: Some(tool_call_id.to_string()),
+        }
+    }
+
+    fn is_model(&self) -> bool {
+        self.actor_type == "model"
+    }
 }
 
 struct NewNoteVersion<'a> {
@@ -130,6 +153,125 @@ pub async fn list_notes(
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(ListNotesResult { notes, total })
+}
+
+pub async fn search_notes_for_model(
+    pool: &SqlitePool,
+    user_id: &str,
+    model_key: &str,
+    query: &str,
+    limit: i64,
+) -> Result<Vec<NoteSummaryResponse>, ApiError> {
+    let query = normalize_search_query(Some(query.to_string())).ok_or_else(|| {
+        ApiError::bad_request("invalid_note_search", "A note search query is required")
+    })?;
+    let search = build_fts_query(&query);
+    if search.is_empty() {
+        return Ok(Vec::new());
+    }
+    let rows = sqlx::query(
+        r#"
+        SELECT n.id,
+               v.title,
+               snippet(notes_fts, 3, '', '', ' ... ', 28) AS excerpt,
+               n.current_version_id,
+               v.version_number AS current_version_number,
+               n.ai_access,
+               n.all_models,
+               n.is_pinned,
+               n.deleted_at,
+               n.created_at,
+               n.updated_at
+        FROM notes_fts
+        JOIN notes n ON n.id = notes_fts.note_id
+        JOIN note_versions v ON v.id = n.current_version_id
+        JOIN user_note_settings settings ON settings.user_id = n.user_id
+        WHERE notes_fts MATCH ?
+          AND notes_fts.user_id = ?
+          AND n.deleted_at IS NULL
+          AND settings.allow_model_read = 1
+          AND n.ai_access IN ('read', 'edit', 'manage')
+          AND (
+              n.all_models = 1
+              OR EXISTS (
+                  SELECT 1
+                  FROM note_model_scopes scopes
+                  WHERE scopes.note_id = n.id AND scopes.model_key = ?
+              )
+          )
+        ORDER BY bm25(notes_fts, 0.0, 0.0, 5.0, 1.0, 2.0) ASC,
+                 n.is_pinned DESC,
+                 n.updated_at DESC
+        LIMIT ?
+        "#,
+    )
+    .bind(search)
+    .bind(user_id)
+    .bind(model_key)
+    .bind(limit.clamp(1, 10))
+    .fetch_all(pool)
+    .await?;
+    let (tags, scopes) = load_library_metadata(pool, user_id).await?;
+    rows.into_iter()
+        .map(|row| row_to_summary(row, &tags, &scopes))
+        .collect()
+}
+
+pub async fn get_note_for_model(
+    pool: &SqlitePool,
+    user_id: &str,
+    note_id: &str,
+    model_key: &str,
+) -> Result<NoteResponse, ApiError> {
+    let row = sqlx::query(
+        r#"
+        SELECT n.id,
+               n.ai_access,
+               n.all_models,
+               n.is_pinned,
+               n.deleted_at,
+               n.created_at,
+               n.updated_at,
+               v.id AS version_id,
+               v.note_id AS version_note_id,
+               v.version_number,
+               v.title,
+               v.content,
+               v.actor_type,
+               v.actor_user_id,
+               v.actor_model_key,
+               v.actor_model_name,
+               v.source_chat_id,
+               v.source_message_id,
+               v.source_tool_call_id,
+               v.created_at AS version_created_at
+        FROM notes n
+        JOIN note_versions v ON v.id = n.current_version_id
+        JOIN user_note_settings settings ON settings.user_id = n.user_id
+        WHERE n.id = ?
+          AND n.user_id = ?
+          AND n.deleted_at IS NULL
+          AND settings.allow_model_read = 1
+          AND n.ai_access IN ('read', 'edit', 'manage')
+          AND (
+              n.all_models = 1
+              OR EXISTS (
+                  SELECT 1
+                  FROM note_model_scopes scopes
+                  WHERE scopes.note_id = n.id AND scopes.model_key = ?
+              )
+          )
+        "#,
+    )
+    .bind(note_id)
+    .bind(user_id)
+    .bind(model_key)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(model_note_unavailable)?;
+    let tags = load_note_tags(pool, user_id, note_id).await?;
+    let model_scope = load_note_scope(pool, user_id, note_id).await?;
+    row_to_note(row, tags, model_scope)
 }
 
 pub async fn get_note(
@@ -185,8 +327,23 @@ pub async fn create_note(
     let content = validate_content(&payload.content)?;
     let tags = validate_tags(payload.tags)?;
     let settings = get_note_settings(pool, user_id).await?;
-    let ai_access = payload.ai_access.unwrap_or(settings.default_ai_access);
-    let scope = validate_model_scope(payload.model_scope.unwrap_or(settings.default_model_scope))?;
+    if actor.is_model() && !settings.allow_model_create {
+        return Err(ApiError::forbidden(
+            "note_model_create_forbidden",
+            "Note creation is disabled for models",
+        ));
+    }
+    let ai_access = if actor.is_model() {
+        settings.default_ai_access
+    } else {
+        payload.ai_access.unwrap_or(settings.default_ai_access)
+    };
+    let scope = validate_model_scope(if actor.is_model() {
+        settings.default_model_scope
+    } else {
+        payload.model_scope.unwrap_or(settings.default_model_scope)
+    })?;
+    let is_pinned = !actor.is_model() && payload.is_pinned;
     let note_id = Uuid::new_v4().to_string();
     let version_id = Uuid::new_v4().to_string();
     let now = unix_timestamp();
@@ -205,7 +362,7 @@ pub async fn create_note(
     .bind(&version_id)
     .bind(ai_access.as_str())
     .bind(scope.all_models)
-    .bind(payload.is_pinned)
+    .bind(is_pinned)
     .bind(now)
     .bind(now)
     .execute(&mut *tx)
@@ -239,6 +396,17 @@ pub async fn update_note(
     actor: &NoteMutationActor,
 ) -> Result<NoteResponse, ApiError> {
     ensure_actor_owner(user_id, actor)?;
+    if actor.is_model()
+        && (payload.tags.is_some()
+            || payload.is_pinned.is_some()
+            || payload.ai_access.is_some()
+            || payload.model_scope.is_some())
+    {
+        return Err(ApiError::forbidden(
+            "note_model_metadata_forbidden",
+            "Models cannot change note tags, pin state, access, or model scope",
+        ));
+    }
     let mut tx = pool.begin().await?;
     acquire_expected_version(&mut tx, user_id, note_id, payload.expected_version).await?;
     let current = get_current_note_in_tx(&mut tx, user_id, note_id).await?;
@@ -248,6 +416,8 @@ pub async fn update_note(
             "Restore this note before editing it",
         ));
     }
+    ensure_model_note_mutation_allowed(&mut tx, user_id, note_id, actor, NoteAiAccess::Edit)
+        .await?;
 
     let title = match payload.title {
         Some(title) => validate_title(&title)?,
@@ -342,7 +512,9 @@ pub async fn trash_note(
     user_id: &str,
     note_id: &str,
     expected_version: i64,
+    actor: &NoteMutationActor,
 ) -> Result<NoteResponse, ApiError> {
+    ensure_actor_owner(user_id, actor)?;
     let mut tx = pool.begin().await?;
     acquire_expected_version(&mut tx, user_id, note_id, expected_version).await?;
     let current = get_current_note_in_tx(&mut tx, user_id, note_id).await?;
@@ -352,6 +524,8 @@ pub async fn trash_note(
             "Note is already in trash",
         ));
     }
+    ensure_model_note_mutation_allowed(&mut tx, user_id, note_id, actor, NoteAiAccess::Manage)
+        .await?;
     let now = unix_timestamp();
     sqlx::query("UPDATE notes SET deleted_at = ?, updated_at = ? WHERE id = ? AND user_id = ?")
         .bind(now)
@@ -1287,13 +1461,98 @@ fn parse_ai_access(value: String) -> Result<NoteAiAccess, ApiError> {
 }
 
 fn ensure_actor_owner(user_id: &str, actor: &NoteMutationActor) -> Result<(), ApiError> {
-    if actor.actor_user_id == user_id {
-        Ok(())
-    } else {
-        Err(ApiError::forbidden(
+    if actor.actor_user_id != user_id {
+        return Err(ApiError::forbidden(
             "note_actor_mismatch",
             "A note change cannot be attributed to another user",
-        ))
+        ));
+    }
+    match actor.actor_type {
+        "human" => Ok(()),
+        "model"
+            if actor
+                .actor_model_key
+                .as_deref()
+                .is_some_and(|value| !value.is_empty())
+                && actor
+                    .actor_model_name
+                    .as_deref()
+                    .is_some_and(|value| !value.is_empty())
+                && actor
+                    .source_chat_id
+                    .as_deref()
+                    .is_some_and(|value| !value.is_empty())
+                && actor
+                    .source_message_id
+                    .as_deref()
+                    .is_some_and(|value| !value.is_empty())
+                && actor
+                    .source_tool_call_id
+                    .as_deref()
+                    .is_some_and(|value| !value.is_empty()) =>
+        {
+            Ok(())
+        }
+        "model" => Err(ApiError::internal(
+            "Model note changes require complete attribution",
+        )),
+        _ => Err(ApiError::internal("Unknown note mutation actor")),
+    }
+}
+
+async fn ensure_model_note_mutation_allowed(
+    tx: &mut Transaction<'_, Sqlite>,
+    user_id: &str,
+    note_id: &str,
+    actor: &NoteMutationActor,
+    required_access: NoteAiAccess,
+) -> Result<(), ApiError> {
+    if !actor.is_model() {
+        return Ok(());
+    }
+    let model_key = actor
+        .actor_model_key
+        .as_deref()
+        .ok_or_else(|| ApiError::internal("Model note changes require a model identity"))?;
+    let row = sqlx::query(
+        r#"
+        SELECT n.ai_access,
+               n.deleted_at,
+               settings.allow_model_read,
+               settings.allow_model_edit,
+               settings.allow_model_trash,
+               n.all_models,
+               EXISTS (
+                   SELECT 1
+                   FROM note_model_scopes scopes
+                   WHERE scopes.note_id = n.id AND scopes.model_key = ?
+               ) AS model_matches
+        FROM notes n
+        JOIN user_note_settings settings ON settings.user_id = n.user_id
+        WHERE n.id = ? AND n.user_id = ?
+        "#,
+    )
+    .bind(model_key)
+    .bind(note_id)
+    .bind(user_id)
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or_else(model_note_unavailable)?;
+    let access = parse_ai_access(row.try_get::<String, _>("ai_access")?)?;
+    let operation_allowed = match required_access {
+        NoteAiAccess::Edit => row.try_get::<bool, _>("allow_model_edit")?,
+        NoteAiAccess::Manage => row.try_get::<bool, _>("allow_model_trash")?,
+        NoteAiAccess::Read => true,
+        NoteAiAccess::None => false,
+    };
+    let can_read = row.try_get::<bool, _>("allow_model_read")?;
+    let in_scope =
+        row.try_get::<bool, _>("all_models")? || row.try_get::<bool, _>("model_matches")?;
+    let active = row.try_get::<Option<i64>, _>("deleted_at")?.is_none();
+    if can_read && operation_allowed && access >= required_access && in_scope && active {
+        Ok(())
+    } else {
+        Err(model_note_unavailable())
     }
 }
 
@@ -1316,6 +1575,13 @@ async fn ensure_note_owned(
 
 fn note_not_found() -> ApiError {
     ApiError::not_found("note_not_found", "Note not found")
+}
+
+fn model_note_unavailable() -> ApiError {
+    ApiError::forbidden(
+        "note_unavailable_to_model",
+        "This note is not available to the current model",
+    )
 }
 
 #[cfg(test)]
@@ -1481,9 +1747,15 @@ mod tests {
                 .await
                 .is_err()
         );
-        trash_note(&pool, &user_id, &note.id, 1)
-            .await
-            .expect("trash note");
+        trash_note(
+            &pool,
+            &user_id,
+            &note.id,
+            1,
+            &NoteMutationActor::human(&user_id),
+        )
+        .await
+        .expect("trash note");
         let results = list_notes(
             &pool,
             &user_id,
@@ -1556,6 +1828,31 @@ mod tests {
         let pool = test_pool().await;
         let user_id = create_test_user(&pool, "note-model-scope").await;
         let model_key = "persona:test-persona";
+        update_note_settings(
+            &pool,
+            &user_id,
+            UpdateNoteSettingsRequest {
+                allow_model_read: true,
+                allow_model_create: true,
+                allow_model_edit: true,
+                allow_model_trash: false,
+                default_ai_access: NoteAiAccess::Edit,
+                default_model_scope: NoteModelScope {
+                    all_models: false,
+                    model_keys: vec![model_key.to_string()],
+                },
+            },
+        )
+        .await
+        .expect("enable model notes");
+        let actor = NoteMutationActor::model(
+            &user_id,
+            model_key,
+            "Test custom model",
+            "chat-id",
+            "message-id",
+            "tool-call-id",
+        );
         let note = create_note(
             &pool,
             &user_id,
@@ -1563,32 +1860,175 @@ mod tests {
                 title: "Scoped".to_string(),
                 content: "Only one custom model can read this.".to_string(),
                 tags: Vec::new(),
-                is_pinned: false,
-                ai_access: Some(NoteAiAccess::Edit),
-                model_scope: Some(NoteModelScope {
-                    all_models: false,
-                    model_keys: vec![model_key.to_string()],
-                }),
+                is_pinned: true,
+                ai_access: Some(NoteAiAccess::Manage),
+                model_scope: Some(NoteModelScope::default()),
             },
-            &NoteMutationActor {
-                actor_type: "model",
-                actor_user_id: user_id.clone(),
-                actor_model_key: Some(model_key.to_string()),
-                actor_model_name: Some("Test custom model".to_string()),
-                source_chat_id: Some("chat-id".to_string()),
-                source_message_id: None,
-                source_tool_call_id: Some("tool-call-id".to_string()),
-            },
+            &actor,
         )
         .await
         .expect("create model-authored note");
 
         assert!(!note.model_scope.all_models);
         assert_eq!(note.model_scope.model_keys, vec![model_key]);
+        assert_eq!(note.ai_access, NoteAiAccess::Edit);
+        assert!(!note.is_pinned);
         assert_eq!(note.current_version.actor_type, "model");
         assert_eq!(
             note.current_version.actor_model_key.as_deref(),
             Some(model_key)
+        );
+
+        assert_eq!(
+            search_notes_for_model(&pool, &user_id, model_key, "custom", 5)
+                .await
+                .expect("search in-scope notes")
+                .len(),
+            1
+        );
+        assert!(
+            search_notes_for_model(&pool, &user_id, "persona:other", "custom", 5)
+                .await
+                .expect("search out-of-scope notes")
+                .is_empty()
+        );
+
+        let updated = update_note(
+            &pool,
+            &user_id,
+            &note.id,
+            UpdateNoteRequest {
+                expected_version: 1,
+                title: None,
+                content: Some("The permitted custom model changed this.".to_string()),
+                tags: None,
+                is_pinned: None,
+                ai_access: None,
+                model_scope: None,
+            },
+            &actor,
+        )
+        .await
+        .expect("model update note");
+        assert_eq!(updated.current_version.version_number, 2);
+        assert_eq!(
+            updated.current_version.source_message_id.as_deref(),
+            Some("message-id")
+        );
+        assert_eq!(
+            updated.current_version.source_tool_call_id.as_deref(),
+            Some("tool-call-id")
+        );
+
+        let metadata_error = update_note(
+            &pool,
+            &user_id,
+            &note.id,
+            UpdateNoteRequest {
+                expected_version: 2,
+                title: None,
+                content: None,
+                tags: Some(vec!["model-added".to_string()]),
+                is_pinned: None,
+                ai_access: None,
+                model_scope: None,
+            },
+            &actor,
+        )
+        .await
+        .expect_err("models cannot change note metadata");
+        assert_eq!(metadata_error.code(), "note_model_metadata_forbidden");
+    }
+
+    #[tokio::test]
+    async fn model_trash_requires_global_and_per_note_manage_access() {
+        let pool = test_pool().await;
+        let user_id = create_test_user(&pool, "note-model-trash").await;
+        let model_key = "base:backend:model";
+        update_note_settings(
+            &pool,
+            &user_id,
+            UpdateNoteSettingsRequest {
+                allow_model_read: true,
+                allow_model_create: false,
+                allow_model_edit: false,
+                allow_model_trash: true,
+                default_ai_access: NoteAiAccess::None,
+                default_model_scope: NoteModelScope::default(),
+            },
+        )
+        .await
+        .expect("enable model trash");
+        let editable = create_note(
+            &pool,
+            &user_id,
+            CreateNoteRequest {
+                ai_access: Some(NoteAiAccess::Edit),
+                ..request("Editable", "This note cannot be trashed by a model.")
+            },
+            &NoteMutationActor::human(&user_id),
+        )
+        .await
+        .expect("create editable note");
+        let manageable = create_note(
+            &pool,
+            &user_id,
+            CreateNoteRequest {
+                ai_access: Some(NoteAiAccess::Manage),
+                ..request("Manageable", "This note can be moved to trash.")
+            },
+            &NoteMutationActor::human(&user_id),
+        )
+        .await
+        .expect("create manageable note");
+        let actor = NoteMutationActor::model(
+            &user_id,
+            model_key,
+            "Test model",
+            "chat-id",
+            "message-id",
+            "trash-call-id",
+        );
+
+        assert!(
+            trash_note(&pool, &user_id, &editable.id, 1, &actor)
+                .await
+                .is_err()
+        );
+        let trashed = trash_note(&pool, &user_id, &manageable.id, 1, &actor)
+            .await
+            .expect("trash manageable note");
+        assert!(trashed.deleted_at.is_some());
+
+        update_note_settings(
+            &pool,
+            &user_id,
+            UpdateNoteSettingsRequest {
+                allow_model_read: true,
+                allow_model_create: false,
+                allow_model_edit: false,
+                allow_model_trash: false,
+                default_ai_access: NoteAiAccess::None,
+                default_model_scope: NoteModelScope::default(),
+            },
+        )
+        .await
+        .expect("disable model trash");
+        let second = create_note(
+            &pool,
+            &user_id,
+            CreateNoteRequest {
+                ai_access: Some(NoteAiAccess::Manage),
+                ..request("Second", "Global trash is now disabled.")
+            },
+            &NoteMutationActor::human(&user_id),
+        )
+        .await
+        .expect("create second note");
+        assert!(
+            trash_note(&pool, &user_id, &second.id, 1, &actor)
+                .await
+                .is_err()
         );
     }
 }

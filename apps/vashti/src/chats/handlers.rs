@@ -15,6 +15,7 @@ use std::{
 };
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
+use uuid::Uuid;
 
 use crate::{
     app_state::{AppState, GenerationProgress},
@@ -590,6 +591,27 @@ async fn stream_generation(task: GenerationStreamTask) {
         cancellation,
     } = task;
     let assistant_message_id = prepared.assistant_message.id.clone();
+    let assistant_model_key = prepared
+        .assistant_message
+        .persona_id
+        .as_deref()
+        .map(|persona_id| format!("persona:{persona_id}"))
+        .unwrap_or_else(|| {
+            format!(
+                "base:{}:{}",
+                prepared
+                    .assistant_message
+                    .backend_id
+                    .as_deref()
+                    .unwrap_or_default(),
+                prepared.model_name
+            )
+        });
+    let assistant_model_name = prepared
+        .assistant_message
+        .persona_name_snapshot
+        .clone()
+        .unwrap_or_else(|| prepared.model_name.clone());
     let title_backend_base_url = prepared.backend_base_url.clone();
     let title_model_name = prepared.model_name.clone();
     let title_prompt_messages = prepared.prompt_messages.clone();
@@ -631,9 +653,14 @@ async fn stream_generation(task: GenerationStreamTask) {
     }
 
     let tool_settings = settings::service::get_tool_settings_private(&db).await.ok();
+    let note_settings = crate::notes::service::get_note_settings(&db, &user_id)
+        .await
+        .ok();
     let mut available_tools = tool_settings
         .as_ref()
-        .map(|settings| tools::service::chat_tools(settings, prepared.tool_selection))
+        .map(|settings| {
+            tools::service::chat_tools(settings, note_settings.as_ref(), prepared.tool_selection)
+        })
         .unwrap_or_default();
     if !available_tools.is_empty() {
         let _ = permissions::service::ensure_tool_records(&db).await;
@@ -643,9 +670,11 @@ async fn stream_generation(task: GenerationStreamTask) {
         ) {
             (Ok(user_tags), Ok(tool_tags)) => {
                 available_tools.retain(|tool| {
-                    tool_tags.get(&tool.function.name).is_some_and(|tags| {
-                        permissions::service::has_matching_tag(&user_tags, tags)
-                    })
+                    tool_tags
+                        .get(tools::service::permission_tool_id(&tool.function.name))
+                        .is_some_and(|tags| {
+                            permissions::service::has_matching_tag(&user_tags, tags)
+                        })
                 });
             }
             _ => available_tools.clear(),
@@ -884,8 +913,29 @@ async fn stream_generation(task: GenerationStreamTask) {
 
         for call in &round_tool_calls {
             let result = if available_tool_names.contains(&call.function.name) {
-                tools::service::execute_tool(&client, tool_settings, prepared.tool_selection, call)
-                    .await
+                let tool_call_id = call
+                    .id
+                    .as_deref()
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| Uuid::new_v4().to_string());
+                let context = tools::service::ToolExecutionContext {
+                    db: &db,
+                    user_id: &user_id,
+                    model_key: &assistant_model_key,
+                    model_name: &assistant_model_name,
+                    chat_id: &chat_id,
+                    message_id: &assistant_message_id,
+                    tool_call_id: &tool_call_id,
+                };
+                tools::service::execute_tool(
+                    &client,
+                    tool_settings,
+                    prepared.tool_selection,
+                    &context,
+                    call,
+                )
+                .await
             } else {
                 serde_json::json!({
                     "error": format!("{} is not available in this chat.", call.function.name)

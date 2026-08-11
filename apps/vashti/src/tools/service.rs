@@ -6,8 +6,13 @@ use std::{
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sqlx::SqlitePool;
 
 use crate::{
+    notes::{
+        models::{CreateNoteRequest, NoteSettingsResponse, UpdateNoteRequest},
+        service::{self as notes_service, NoteMutationActor},
+    },
     ollama::models::{OllamaTool, OllamaToolCall, OllamaToolFunction},
     settings::service::ToolSettingsPrivate,
 };
@@ -19,6 +24,12 @@ pub const TOOL_BRAVE_WEB_SEARCH: &str = "brave_web_search";
 pub const TOOL_OLLAMA_WEB_SEARCH: &str = "ollama_web_search";
 pub const TOOL_OLLAMA_WEB_FETCH: &str = "ollama_web_fetch";
 pub const TOOL_DIRECT_WEB_FETCH: &str = "direct_web_fetch";
+pub const TOOL_NOTES: &str = "notes";
+pub const TOOL_SEARCH_NOTES: &str = "search_notes";
+pub const TOOL_READ_NOTE: &str = "read_note";
+pub const TOOL_CREATE_NOTE: &str = "create_note";
+pub const TOOL_UPDATE_NOTE: &str = "update_note";
+pub const TOOL_TRASH_NOTE: &str = "trash_note";
 
 #[derive(Clone, Copy, Debug)]
 pub struct ToolSelection {
@@ -27,6 +38,7 @@ pub struct ToolSelection {
     pub ollama_web_search_enabled: bool,
     pub ollama_web_fetch_enabled: bool,
     pub direct_web_fetch_enabled: bool,
+    pub notes_enabled: bool,
 }
 
 impl Default for ToolSelection {
@@ -37,11 +49,16 @@ impl Default for ToolSelection {
             ollama_web_search_enabled: true,
             ollama_web_fetch_enabled: true,
             direct_web_fetch_enabled: true,
+            notes_enabled: true,
         }
     }
 }
 
-pub fn chat_tools(settings: &ToolSettingsPrivate, selection: ToolSelection) -> Vec<OllamaTool> {
+pub fn chat_tools(
+    settings: &ToolSettingsPrivate,
+    note_settings: Option<&NoteSettingsResponse>,
+    selection: ToolSelection,
+) -> Vec<OllamaTool> {
     if !settings.tools_enabled {
         return Vec::new();
     }
@@ -88,8 +105,33 @@ pub fn chat_tools(settings: &ToolSettingsPrivate, selection: ToolSelection) -> V
             &settings.web_fetch_tool_prompt,
         ));
     }
+    if selection.notes_enabled
+        && let Some(note_settings) = note_settings
+    {
+        if note_settings.allow_model_read {
+            tools.push(search_notes_tool());
+            tools.push(read_note_tool());
+        }
+        if note_settings.allow_model_create {
+            tools.push(create_note_tool());
+        }
+        if note_settings.allow_model_read && note_settings.allow_model_edit {
+            tools.push(update_note_tool());
+        }
+        if note_settings.allow_model_read && note_settings.allow_model_trash {
+            tools.push(trash_note_tool());
+        }
+    }
 
     tools
+}
+
+pub fn permission_tool_id(tool_name: &str) -> &str {
+    match tool_name {
+        TOOL_SEARCH_NOTES | TOOL_READ_NOTE | TOOL_CREATE_NOTE | TOOL_UPDATE_NOTE
+        | TOOL_TRASH_NOTE => TOOL_NOTES,
+        name => name,
+    }
 }
 
 pub fn tool_system_prompt(settings: &ToolSettingsPrivate, tools: &[OllamaTool]) -> String {
@@ -107,6 +149,11 @@ pub fn tool_system_prompt(settings: &ToolSettingsPrivate, tools: &[OllamaTool]) 
         TOOL_OLLAMA_WEB_SEARCH,
         TOOL_OLLAMA_WEB_FETCH,
         TOOL_DIRECT_WEB_FETCH,
+        TOOL_SEARCH_NOTES,
+        TOOL_READ_NOTE,
+        TOOL_CREATE_NOTE,
+        TOOL_UPDATE_NOTE,
+        TOOL_TRASH_NOTE,
     ]
     .into_iter()
     .filter(|tool_name| !available_names.contains(tool_name))
@@ -171,6 +218,98 @@ fn web_fetch_tool(name: &str, provider_description: &str, prompt: &str) -> Ollam
     }
 }
 
+fn search_notes_tool() -> OllamaTool {
+    function_tool(
+        TOOL_SEARCH_NOTES,
+        "Search the user's notes by title, tags, and Markdown content. Returns compact matches with note IDs and current version numbers. Use read_note for full content.",
+        json!({
+            "type": "object",
+            "required": ["query"],
+            "properties": {
+                "query": { "type": "string", "description": "Words or phrases to find in the user's notes." },
+                "limit": { "type": "integer", "description": "Maximum matches to return. Defaults to 5 and cannot exceed 10." }
+            }
+        }),
+    )
+}
+
+fn read_note_tool() -> OllamaTool {
+    function_tool(
+        TOOL_READ_NOTE,
+        "Read the current title and Markdown content of one note returned by search_notes.",
+        json!({
+            "type": "object",
+            "required": ["note_id"],
+            "properties": {
+                "note_id": { "type": "string", "description": "The exact note ID returned by search_notes or another notes tool." }
+            }
+        }),
+    )
+}
+
+fn create_note_tool() -> OllamaTool {
+    function_tool(
+        TOOL_CREATE_NOTE,
+        "Create a new Markdown note when the user asks to save information. The user's default note permissions and model scope are applied automatically.",
+        json!({
+            "type": "object",
+            "required": ["title", "content"],
+            "properties": {
+                "title": { "type": "string", "description": "A concise note title." },
+                "content": { "type": "string", "description": "The note body in Markdown." },
+                "tags": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Optional organizational tags."
+                }
+            }
+        }),
+    )
+}
+
+fn update_note_tool() -> OllamaTool {
+    function_tool(
+        TOOL_UPDATE_NOTE,
+        "Update the title and/or Markdown content of an existing note. Always use the current version number returned by search_notes, read_note, or another notes tool. This creates a reversible note version.",
+        json!({
+            "type": "object",
+            "required": ["note_id", "expected_version"],
+            "properties": {
+                "note_id": { "type": "string", "description": "The exact note ID." },
+                "expected_version": { "type": "integer", "description": "The current note version number." },
+                "title": { "type": "string", "description": "A replacement title. Omit to keep the current title." },
+                "content": { "type": "string", "description": "Replacement Markdown content. Omit to keep the current content." }
+            }
+        }),
+    )
+}
+
+fn trash_note_tool() -> OllamaTool {
+    function_tool(
+        TOOL_TRASH_NOTE,
+        "Move a note to trash when the user explicitly asks. This is reversible by the human owner; models cannot permanently delete notes.",
+        json!({
+            "type": "object",
+            "required": ["note_id", "expected_version"],
+            "properties": {
+                "note_id": { "type": "string", "description": "The exact note ID." },
+                "expected_version": { "type": "integer", "description": "The current note version number." }
+            }
+        }),
+    )
+}
+
+fn function_tool(name: &str, description: &str, parameters: serde_json::Value) -> OllamaTool {
+    OllamaTool {
+        kind: "function".to_string(),
+        function: OllamaToolFunction {
+            name: name.to_string(),
+            description: description.to_string(),
+            parameters,
+        },
+    }
+}
+
 fn current_date_utc() -> String {
     let now = time::OffsetDateTime::now_utc();
     format!(
@@ -185,6 +324,7 @@ pub async fn execute_tool(
     client: &reqwest::Client,
     settings: &ToolSettingsPrivate,
     selection: ToolSelection,
+    context: &ToolExecutionContext<'_>,
     call: &OllamaToolCall,
 ) -> String {
     let result = match call.function.name.as_str() {
@@ -247,12 +387,21 @@ pub async fn execute_tool(
                 Err(error) => Err(error),
             }
         }
+        TOOL_SEARCH_NOTES | TOOL_READ_NOTE | TOOL_CREATE_NOTE | TOOL_UPDATE_NOTE
+        | TOOL_TRASH_NOTE
+            if selection.tool_use_enabled && selection.notes_enabled =>
+        {
+            execute_notes_tool(context, call).await
+        }
         TOOL_BRAVE_WEB_SEARCH
         | TOOL_OLLAMA_WEB_SEARCH
         | TOOL_OLLAMA_WEB_FETCH
-        | TOOL_DIRECT_WEB_FETCH => {
-            Err(format!("{} is disabled for this chat.", call.function.name))
-        }
+        | TOOL_DIRECT_WEB_FETCH
+        | TOOL_SEARCH_NOTES
+        | TOOL_READ_NOTE
+        | TOOL_CREATE_NOTE
+        | TOOL_UPDATE_NOTE
+        | TOOL_TRASH_NOTE => Err(format!("{} is disabled for this chat.", call.function.name)),
         name => Err(format!("Unknown tool: {name}")),
     };
 
@@ -279,8 +428,223 @@ pub fn tool_summary(call: &OllamaToolCall) -> String {
             .and_then(|value| value.as_str())
             .map(|url| format!("Fetched \"{}\"", truncate_chars(url, 120)))
             .unwrap_or_else(|| "Fetched a page".to_string()),
+        TOOL_SEARCH_NOTES => call
+            .function
+            .arguments
+            .get("query")
+            .and_then(|value| value.as_str())
+            .map(|query| format!("Searched notes for \"{}\"", truncate_chars(query, 96)))
+            .unwrap_or_else(|| "Searched notes".to_string()),
+        TOOL_READ_NOTE => "Read a note".to_string(),
+        TOOL_CREATE_NOTE => call
+            .function
+            .arguments
+            .get("title")
+            .and_then(|value| value.as_str())
+            .map(|title| format!("Created note \"{}\"", truncate_chars(title, 96)))
+            .unwrap_or_else(|| "Created a note".to_string()),
+        TOOL_UPDATE_NOTE => "Updated a note".to_string(),
+        TOOL_TRASH_NOTE => "Moved a note to trash".to_string(),
         name => format!("Used {name}"),
     }
+}
+
+pub struct ToolExecutionContext<'a> {
+    pub db: &'a SqlitePool,
+    pub user_id: &'a str,
+    pub model_key: &'a str,
+    pub model_name: &'a str,
+    pub chat_id: &'a str,
+    pub message_id: &'a str,
+    pub tool_call_id: &'a str,
+}
+
+async fn execute_notes_tool(
+    context: &ToolExecutionContext<'_>,
+    call: &OllamaToolCall,
+) -> Result<String, String> {
+    let actor = NoteMutationActor::model(
+        context.user_id,
+        context.model_key,
+        context.model_name,
+        context.chat_id,
+        context.message_id,
+        context.tool_call_id,
+    );
+    let value = match call.function.name.as_str() {
+        TOOL_SEARCH_NOTES => {
+            let query = required_string(&call.function.arguments, "query")?;
+            let limit = call
+                .function
+                .arguments
+                .get("limit")
+                .and_then(|value| value.as_i64())
+                .unwrap_or(5)
+                .clamp(1, 10);
+            let notes = notes_service::search_notes_for_model(
+                context.db,
+                context.user_id,
+                context.model_key,
+                &query,
+                limit,
+            )
+            .await
+            .map_err(note_tool_error)?;
+            let results = notes
+                .into_iter()
+                .map(|note| {
+                    json!({
+                        "note_id": note.id,
+                        "title": note.title,
+                        "excerpt": note.excerpt,
+                        "tags": note.tags,
+                        "version": note.current_version_number,
+                    })
+                })
+                .collect::<Vec<_>>();
+            json!({ "query": query, "count": results.len(), "results": results })
+        }
+        TOOL_READ_NOTE => {
+            let note_id = required_string(&call.function.arguments, "note_id")?;
+            let note = notes_service::get_note_for_model(
+                context.db,
+                context.user_id,
+                &note_id,
+                context.model_key,
+            )
+            .await
+            .map_err(note_tool_error)?;
+            let original_content_chars = note.current_version.content.chars().count();
+            let content = truncate_chars(&note.current_version.content, 18_000);
+            let content_truncated = content.chars().count() < original_content_chars;
+            json!({
+                "note_id": note.id,
+                "title": note.current_version.title,
+                "content": content,
+                "content_truncated": content_truncated,
+                "tags": note.tags,
+                "version": note.current_version.version_number,
+            })
+        }
+        TOOL_CREATE_NOTE => {
+            let title = required_string(&call.function.arguments, "title")?;
+            let content = required_string(&call.function.arguments, "content")?;
+            let tags = optional_string_array(&call.function.arguments, "tags")?;
+            let note = notes_service::create_note(
+                context.db,
+                context.user_id,
+                CreateNoteRequest {
+                    title,
+                    content,
+                    tags,
+                    is_pinned: false,
+                    ai_access: None,
+                    model_scope: None,
+                },
+                &actor,
+            )
+            .await
+            .map_err(note_tool_error)?;
+            json!({
+                "note_id": note.id,
+                "title": note.current_version.title,
+                "version": note.current_version.version_number,
+                "created": true,
+            })
+        }
+        TOOL_UPDATE_NOTE => {
+            let note_id = required_string(&call.function.arguments, "note_id")?;
+            let expected_version = required_i64(&call.function.arguments, "expected_version")?;
+            let title = optional_string(&call.function.arguments, "title")?;
+            let content = optional_string(&call.function.arguments, "content")?;
+            if title.is_none() && content.is_none() {
+                return Err("update_note requires a title and/or content change.".to_string());
+            }
+            let note = notes_service::update_note(
+                context.db,
+                context.user_id,
+                &note_id,
+                UpdateNoteRequest {
+                    expected_version,
+                    title,
+                    content,
+                    tags: None,
+                    is_pinned: None,
+                    ai_access: None,
+                    model_scope: None,
+                },
+                &actor,
+            )
+            .await
+            .map_err(note_tool_error)?;
+            json!({
+                "note_id": note.id,
+                "title": note.current_version.title,
+                "version": note.current_version.version_number,
+                "updated": true,
+            })
+        }
+        TOOL_TRASH_NOTE => {
+            let note_id = required_string(&call.function.arguments, "note_id")?;
+            let expected_version = required_i64(&call.function.arguments, "expected_version")?;
+            let note = notes_service::trash_note(
+                context.db,
+                context.user_id,
+                &note_id,
+                expected_version,
+                &actor,
+            )
+            .await
+            .map_err(note_tool_error)?;
+            json!({
+                "note_id": note.id,
+                "version": note.current_version.version_number,
+                "trashed": true,
+            })
+        }
+        _ => return Err(format!("Unknown notes tool: {}", call.function.name)),
+    };
+    serde_json::to_string(&value)
+        .map_err(|error| format!("Could not serialize notes tool result: {error}"))
+}
+
+fn note_tool_error(error: crate::error::ApiError) -> String {
+    format!("{}: {}", error.code(), error.message())
+}
+
+fn required_i64(arguments: &serde_json::Value, key: &str) -> Result<i64, String> {
+    arguments
+        .get(key)
+        .and_then(|value| value.as_i64())
+        .ok_or_else(|| format!("Tool argument '{key}' must be an integer."))
+}
+
+fn optional_string(arguments: &serde_json::Value, key: &str) -> Result<Option<String>, String> {
+    match arguments.get(key) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(value) => value
+            .as_str()
+            .map(|value| Some(value.to_string()))
+            .ok_or_else(|| format!("Tool argument '{key}' must be a string.")),
+    }
+}
+
+fn optional_string_array(arguments: &serde_json::Value, key: &str) -> Result<Vec<String>, String> {
+    let Some(value) = arguments.get(key) else {
+        return Ok(Vec::new());
+    };
+    let values = value
+        .as_array()
+        .ok_or_else(|| format!("Tool argument '{key}' must be an array of strings."))?;
+    values
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .map(str::to_string)
+                .ok_or_else(|| format!("Tool argument '{key}' must contain only strings."))
+        })
+        .collect()
 }
 
 pub fn tool_usage_block(call: &OllamaToolCall, result: &str) -> String {
@@ -695,7 +1059,72 @@ struct BraveWebResult {
 mod tests {
     use std::net::IpAddr;
 
-    use super::ensure_public_ip;
+    use super::*;
+    use crate::notes::models::{NoteAiAccess, NoteModelScope};
+
+    fn disabled_web_settings() -> ToolSettingsPrivate {
+        ToolSettingsPrivate {
+            tools_enabled: true,
+            ollama_web_search_enabled: false,
+            ollama_web_fetch_enabled: false,
+            ollama_api_key: None,
+            brave_search_enabled: false,
+            brave_search_api_key: None,
+            direct_web_fetch_enabled: false,
+            tool_system_prompt: String::new(),
+            web_search_tool_prompt: String::new(),
+            web_fetch_tool_prompt: String::new(),
+        }
+    }
+
+    #[test]
+    fn notes_family_expands_only_to_personally_allowed_operations() {
+        let tools = chat_tools(
+            &disabled_web_settings(),
+            Some(&NoteSettingsResponse {
+                allow_model_read: true,
+                allow_model_create: false,
+                allow_model_edit: true,
+                allow_model_trash: false,
+                default_ai_access: NoteAiAccess::None,
+                default_model_scope: NoteModelScope::default(),
+            }),
+            ToolSelection::default(),
+        );
+        let names = tools
+            .iter()
+            .map(|tool| tool.function.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            names,
+            vec![TOOL_SEARCH_NOTES, TOOL_READ_NOTE, TOOL_UPDATE_NOTE]
+        );
+        assert!(
+            names
+                .iter()
+                .all(|name| permission_tool_id(name) == TOOL_NOTES)
+        );
+    }
+
+    #[test]
+    fn notes_family_toggle_hides_every_notes_function() {
+        let tools = chat_tools(
+            &disabled_web_settings(),
+            Some(&NoteSettingsResponse {
+                allow_model_read: true,
+                allow_model_create: true,
+                allow_model_edit: true,
+                allow_model_trash: true,
+                default_ai_access: NoteAiAccess::Manage,
+                default_model_scope: NoteModelScope::default(),
+            }),
+            ToolSelection {
+                notes_enabled: false,
+                ..ToolSelection::default()
+            },
+        );
+        assert!(tools.is_empty());
+    }
 
     #[test]
     fn direct_fetch_accepts_public_addresses() {

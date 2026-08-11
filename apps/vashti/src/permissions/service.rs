@@ -19,12 +19,13 @@ pub fn user_tag_id(user_id: &str) -> String {
     format!("user:{user_id}")
 }
 
-pub fn tool_ids() -> [&'static str; 4] {
+pub fn tool_ids() -> [&'static str; 5] {
     [
         crate::tools::service::TOOL_BRAVE_WEB_SEARCH,
         crate::tools::service::TOOL_OLLAMA_WEB_SEARCH,
         crate::tools::service::TOOL_OLLAMA_WEB_FETCH,
         crate::tools::service::TOOL_DIRECT_WEB_FETCH,
+        crate::tools::service::TOOL_NOTES,
     ]
 }
 

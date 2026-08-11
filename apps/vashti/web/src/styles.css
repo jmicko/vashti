@@ -4878,6 +4878,25 @@ textarea {
   margin: 0;
 }
 
+.tool-setting-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.tool-setting-heading svg {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+.tool-setting-heading p {
+  margin: 2px 0 0;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+}
+
 .theme-options {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
