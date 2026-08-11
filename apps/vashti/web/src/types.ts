@@ -649,7 +649,7 @@ export type FormState = {
   error: string | null;
 };
 
-export type Page = "chat" | "private-chat" | "settings";
+export type Page = "chat" | "private-chat" | "notes" | "settings";
 export type SettingsSection =
   | "profile"
   | "context"
@@ -662,6 +662,7 @@ export type NewChatMode = "standard" | "private";
 export type AppRoute =
   | { page: "chat"; chatId?: string }
   | { page: "private-chat"; chatId: string }
+  | { page: "notes" }
   | { page: "settings"; section: SettingsSection };
 export type AppSettingsGuard = {
   isDirty: boolean;

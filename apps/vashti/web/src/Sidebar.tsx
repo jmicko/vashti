@@ -10,6 +10,7 @@ import {
   Lock,
   MessageSquarePlus,
   MoreHorizontal,
+  NotebookPen,
   Pencil,
   Trash2,
   X
@@ -27,6 +28,7 @@ export function Sidebar({
   privateChats,
   currentChatId,
   currentPrivateChatId,
+  isNotesActive,
   isOpen,
   isLoading,
   isLoadingPrivateChats,
@@ -37,6 +39,7 @@ export function Sidebar({
   onDeleteChat,
   onDeletePrivateChat,
   onNewChat,
+  onOpenNotes,
   onOpenChat,
   onOpenPrivateChat,
   onRenameChat,
@@ -46,6 +49,7 @@ export function Sidebar({
   privateChats: PrivateChatSummary[];
   currentChatId: string | null;
   currentPrivateChatId: string | null;
+  isNotesActive: boolean;
   isOpen: boolean;
   isLoading: boolean;
   isLoadingPrivateChats: boolean;
@@ -56,6 +60,7 @@ export function Sidebar({
   onDeleteChat: (chat: ChatSummary) => void;
   onDeletePrivateChat: (chat: PrivateChatSummary) => void;
   onNewChat: () => void;
+  onOpenNotes: () => void;
   onOpenChat: (chatId?: string) => void;
   onOpenPrivateChat: (chatId: string) => void;
   onRenameChat: (chatId: string, title: string) => Promise<void>;
@@ -143,6 +148,20 @@ export function Sidebar({
             <X />
           </button>
         </div>
+        <nav className="sidebar-primary-nav" aria-label="Workspace">
+          <button
+            type="button"
+            className={isNotesActive ? "sidebar-section-button sidebar-section-button-active" : "sidebar-section-button"}
+            aria-current={isNotesActive ? "page" : undefined}
+            onClick={() => {
+              setOpenMenuChatId(null);
+              onOpenNotes();
+            }}
+          >
+            <NotebookPen />
+            <span>Notes</span>
+          </button>
+        </nav>
       </div>
       <div className="chat-history">
         <p className="eyebrow">Previous Chats</p>

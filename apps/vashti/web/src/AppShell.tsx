@@ -13,6 +13,7 @@ import {
   GitFork,
   LogOut,
   Menu,
+  NotebookPen,
   RefreshCw,
   Settings as SettingsIcon,
   X
@@ -117,6 +118,9 @@ const ChatView = lazy(() =>
 const PrivateChatView = lazy(() =>
   import("./PrivateChatView").then((module) => ({ default: module.PrivateChatView }))
 );
+const NotesWorkspace = lazy(() =>
+  import("./notes/NotesWorkspace").then((module) => ({ default: module.NotesWorkspace }))
+);
 
 export function AppShell({
   user,
@@ -203,6 +207,7 @@ export function AppShell({
   const isAdmin = user.role === "admin";
   const page = route.page;
   const isSettingsPage = page === "settings";
+  const isNotesPage = page === "notes";
   const settingsSection = route.page === "settings" ? route.section : "profile";
   const currentChatId = route.page === "chat" ? route.chatId ?? null : null;
   const currentPrivateChatId = route.page === "private-chat" ? route.chatId : null;
@@ -739,6 +744,10 @@ export function AppShell({
     navigate({ page: "private-chat", chatId });
   }
 
+  function openNotes() {
+    navigate({ page: "notes" });
+  }
+
   function activateSettingsControl() {
     if (isSettingsPage) {
       openChat();
@@ -1139,6 +1148,7 @@ export function AppShell({
             privateChats={privateChats}
             currentChatId={currentChatId}
             currentPrivateChatId={currentPrivateChatId}
+            isNotesActive={isNotesPage}
             isOpen={isSidebarOpen}
             isLoading={isLoadingChats}
             isLoadingPrivateChats={isLoadingPrivateChats}
@@ -1149,6 +1159,7 @@ export function AppShell({
             onDeleteChat={setChatDeleteTarget}
             onDeletePrivateChat={setPrivateChatDeleteTarget}
             onNewChat={() => openChat()}
+            onOpenNotes={openNotes}
             onOpenChat={openChat}
             onOpenPrivateChat={openPrivateChat}
             onRenameChat={renameChat}
@@ -1170,6 +1181,25 @@ export function AppShell({
                 <SettingsIcon />
                 <span>Settings</span>
               </div>
+            ) : isNotesPage ? (
+              <>
+                <button
+                  type="button"
+                  className="icon-button mobile-only"
+                  aria-label={isSidebarOpen ? "Close sidebar" : "Open sidebar"}
+                  aria-expanded={isSidebarOpen}
+                  onClick={() => {
+                    setIsSettingsMenuOpen(false);
+                    setIsSidebarOpen((open) => !open);
+                  }}
+                >
+                  <Menu />
+                </button>
+                <div className="workspace-topbar-title">
+                  <NotebookPen />
+                  <span>Notes</span>
+                </div>
+              </>
             ) : (
               <>
                 <button
@@ -1315,6 +1345,10 @@ export function AppShell({
             onUserChanged={onUserChanged}
             isAdmin={isAdmin}
           />
+        ) : page === "notes" ? (
+          <Suspense fallback={<NotesInterfaceLoader />}>
+            <NotesWorkspace modelGroups={modelGroups} personas={personas} />
+          </Suspense>
         ) : page === "private-chat" && currentPrivateChatId ? (
           <Suspense fallback={<ChatInterfaceLoader />}>
             <PrivateChatView
@@ -1437,6 +1471,16 @@ export function AppShell({
 function ChatInterfaceLoader() {
   return (
     <section className="chat-view" role="status" aria-label="Loading chat interface">
+      <div className="empty-state">
+        <RetroLoader />
+      </div>
+    </section>
+  );
+}
+
+function NotesInterfaceLoader() {
+  return (
+    <section className="notes-workspace" role="status" aria-label="Loading notes">
       <div className="empty-state">
         <RetroLoader />
       </div>

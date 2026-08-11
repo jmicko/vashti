@@ -45,6 +45,10 @@ export function routeFromLocation(): AppRoute {
     return { page: "settings", section: isSettingsSection(section) ? section : "profile" };
   }
 
+  if (path === "/app/notes" || path.startsWith("/app/notes/")) {
+    return { page: "notes" };
+  }
+
   if (path.startsWith("/app/chats/")) {
     const chatId = path.split("/")[3];
     if (chatId) {
@@ -69,6 +73,10 @@ export function pathForRoute(route: AppRoute) {
 
   if (route.page === "private-chat") {
     return `/app/private-chats/${route.chatId}`;
+  }
+
+  if (route.page === "notes") {
+    return "/app/notes";
   }
 
   if (route.chatId) {

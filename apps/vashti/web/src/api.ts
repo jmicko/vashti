@@ -7,6 +7,18 @@ type ApiError = {
   };
 };
 
+export class ApiRequestError extends Error {
+  readonly status: number;
+  readonly code: string | null;
+
+  constructor(message: string, status: number, code: string | null = null) {
+    super(message);
+    this.name = "ApiRequestError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
 type NativeHttpResponse = {
   status: number;
   headers: Record<string, string>;
@@ -44,7 +56,7 @@ export async function requestJson<T = unknown>(
       }
     });
     if (response.status < 200 || response.status >= 300) {
-      throw new Error(nativeResponseErrorMessage(response));
+      throw nativeResponseError(response);
     }
     return JSON.parse(response.body_text ?? "null") as T;
   }
@@ -59,7 +71,7 @@ export async function requestJson<T = unknown>(
   });
 
   if (!response.ok) {
-    throw new Error(await responseErrorMessage(response));
+    throw await responseError(response);
   }
 
   return response.json() as Promise<T>;
@@ -77,7 +89,7 @@ export async function requestBlob(path: string, options: RequestInit = {}) {
       }
     });
     if (response.status < 200 || response.status >= 300) {
-      throw new Error(nativeResponseErrorMessage(response));
+      throw nativeResponseError(response);
     }
     const mimeType = response.headers["content-type"] ?? "application/octet-stream";
     return new Blob([base64ToBytes(response.body_base64 ?? "")], { type: mimeType });
@@ -85,7 +97,7 @@ export async function requestBlob(path: string, options: RequestInit = {}) {
 
   const response = await fetch(path, { credentials: "include", ...options });
   if (!response.ok) {
-    throw new Error(await responseErrorMessage(response));
+    throw await responseError(response);
   }
   return response.blob();
 }
@@ -106,7 +118,7 @@ export async function requestMultipartJson<T = unknown>(
       }
     });
     if (response.status < 200 || response.status >= 300) {
-      throw new Error(nativeResponseErrorMessage(response));
+      throw nativeResponseError(response);
     }
     return JSON.parse(response.body_text ?? "null") as T;
   }
@@ -117,20 +129,26 @@ export async function requestMultipartJson<T = unknown>(
     body: formData
   });
   if (!response.ok) {
-    throw new Error(await responseErrorMessage(response));
+    throw await responseError(response);
   }
   return response.json() as Promise<T>;
 }
 
 export async function responseErrorMessage(response: Response) {
+  return (await responseError(response)).message;
+}
+
+async function responseError(response: Response) {
   let message = `Request failed with ${response.status}`;
+  let code: string | null = null;
   try {
     const payload = (await response.json()) as ApiError;
     message = payload.error?.message ?? message;
+    code = payload.error?.code ?? null;
   } catch {
     // Keep the status-derived message when the body is not JSON.
   }
-  return message;
+  return new ApiRequestError(message, response.status, code);
 }
 
 function requestBodyText(body: BodyInit | null | undefined) {
@@ -151,14 +169,17 @@ function headersRecord(headers: HeadersInit | undefined) {
   return output;
 }
 
-function nativeResponseErrorMessage(response: NativeHttpResponse) {
+function nativeResponseError(response: NativeHttpResponse) {
   let message = `Request failed with ${response.status}`;
+  let code: string | null = null;
   try {
     const payload = JSON.parse(response.body_text ?? "") as ApiError;
-    return payload.error?.message ?? message;
+    message = payload.error?.message ?? message;
+    code = payload.error?.code ?? null;
   } catch {
-    return message;
+    // Keep the status-derived message when the body is not JSON.
   }
+  return new ApiRequestError(message, response.status, code);
 }
 
 async function nativeMultipartParts(formData: FormData): Promise<NativeMultipartPart[]> {
