@@ -9,6 +9,7 @@ mod db;
 mod error;
 mod frontend;
 mod model_cache;
+mod notes;
 mod ollama;
 mod permissions;
 mod persona_avatars;
@@ -273,6 +274,33 @@ fn router(state: AppState) -> Router {
         .route(
             "/context-blocks/{block_id}/versions",
             get(context_blocks::handlers::list_block_versions),
+        )
+        .route(
+            "/notes",
+            get(notes::handlers::list_notes).post(notes::handlers::create_note),
+        )
+        .route(
+            "/notes/settings",
+            get(notes::handlers::get_settings).patch(notes::handlers::update_settings),
+        )
+        .route(
+            "/notes/{note_id}",
+            get(notes::handlers::get_note)
+                .patch(notes::handlers::update_note)
+                .delete(notes::handlers::permanently_delete_note),
+        )
+        .route("/notes/{note_id}/trash", post(notes::handlers::trash_note))
+        .route(
+            "/notes/{note_id}/restore",
+            post(notes::handlers::restore_note),
+        )
+        .route(
+            "/notes/{note_id}/versions",
+            get(notes::handlers::list_versions),
+        )
+        .route(
+            "/notes/{note_id}/versions/{version_id}/restore",
+            post(notes::handlers::restore_version),
         )
         .route(
             "/persona-avatars",
