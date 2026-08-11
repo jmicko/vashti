@@ -391,7 +391,7 @@ pub async fn execute_tool(
         | TOOL_TRASH_NOTE
             if selection.tool_use_enabled && selection.notes_enabled =>
         {
-            execute_notes_tool(context, call).await
+            execute_notes_tool(client, context, call).await
         }
         TOOL_BRAVE_WEB_SEARCH
         | TOOL_OLLAMA_WEB_SEARCH
@@ -451,6 +451,7 @@ pub fn tool_summary(call: &OllamaToolCall) -> String {
 
 pub struct ToolExecutionContext<'a> {
     pub db: &'a SqlitePool,
+    pub note_retrieval: &'a crate::notes::retrieval::NoteRetrieval,
     pub user_id: &'a str,
     pub model_key: &'a str,
     pub model_name: &'a str,
@@ -460,6 +461,7 @@ pub struct ToolExecutionContext<'a> {
 }
 
 async fn execute_notes_tool(
+    client: &reqwest::Client,
     context: &ToolExecutionContext<'_>,
     call: &OllamaToolCall,
 ) -> Result<String, String> {
@@ -481,15 +483,11 @@ async fn execute_notes_tool(
                 .and_then(|value| value.as_i64())
                 .unwrap_or(5)
                 .clamp(1, 10);
-            let notes = notes_service::search_notes_for_model(
-                context.db,
-                context.user_id,
-                context.model_key,
-                &query,
-                limit,
-            )
-            .await
-            .map_err(note_tool_error)?;
+            let notes = context
+                .note_retrieval
+                .hybrid_search(client, context.user_id, context.model_key, &query, limit)
+                .await
+                .map_err(note_tool_error)?;
             let results = notes
                 .into_iter()
                 .map(|note| {
@@ -1071,6 +1069,9 @@ mod tests {
             brave_search_enabled: false,
             brave_search_api_key: None,
             direct_web_fetch_enabled: false,
+            notes_semantic_search_enabled: false,
+            notes_embedding_backend_id: None,
+            notes_embedding_model: None,
             tool_system_prompt: String::new(),
             web_search_tool_prompt: String::new(),
             web_fetch_tool_prompt: String::new(),

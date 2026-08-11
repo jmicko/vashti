@@ -101,6 +101,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let state = AppState::new(config, db, http_client, server_instance_id);
     spawn_session_cleanup(state.db.clone());
     spawn_model_cache_refresh(state.clone());
+    spawn_note_indexing(state.clone());
     spawn_update_checks(state.clone());
     let app = router(state);
 
@@ -488,6 +489,10 @@ fn spawn_model_cache_refresh(state: AppState) {
             tokio::time::sleep(Duration::from_secs(5 * 60)).await;
         }
     });
+}
+
+fn spawn_note_indexing(state: AppState) {
+    tokio::spawn(state.note_retrieval.clone().run(state.http_client.clone()));
 }
 
 fn spawn_update_checks(state: AppState) {

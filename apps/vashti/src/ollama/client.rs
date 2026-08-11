@@ -3,8 +3,8 @@ use std::time::Duration;
 use futures_util::{StreamExt, stream};
 
 use crate::ollama::models::{
-    OllamaChatRequest, OllamaChatResponse, OllamaModel, ShowModelRequest, ShowModelResponse,
-    TagsResponse,
+    OllamaChatRequest, OllamaChatResponse, OllamaEmbedRequest, OllamaEmbedResponse, OllamaModel,
+    ShowModelRequest, ShowModelResponse, TagsResponse,
 };
 
 pub async fn is_reachable(
@@ -116,4 +116,26 @@ pub async fn model_supports_tools(
                 .any(|capability| capability.eq_ignore_ascii_case("tools"))
         })
         .unwrap_or(false)
+}
+
+pub async fn embed(
+    client: &reqwest::Client,
+    base_url: &str,
+    model_name: &str,
+    input: &[String],
+) -> Result<OllamaEmbedResponse, reqwest::Error> {
+    let url = format!("{}/api/embed", base_url.trim_end_matches('/'));
+    client
+        .post(url)
+        .timeout(Duration::from_secs(120))
+        .json(&OllamaEmbedRequest {
+            model: model_name,
+            input,
+            truncate: true,
+        })
+        .send()
+        .await?
+        .error_for_status()?
+        .json::<OllamaEmbedResponse>()
+        .await
 }

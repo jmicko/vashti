@@ -190,6 +190,19 @@ pub struct ShowModelResponse {
     pub capabilities: Vec<String>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct OllamaEmbedRequest<'a> {
+    pub model: &'a str,
+    pub input: &'a [String],
+    pub truncate: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct OllamaEmbedResponse {
+    #[serde(default)]
+    pub embeddings: Vec<Vec<f32>>,
+}
+
 impl TagsResponse {
     pub fn into_models(self) -> Vec<OllamaModel> {
         self.models

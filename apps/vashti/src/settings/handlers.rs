@@ -33,6 +33,9 @@ pub struct UpdateToolSettingsRequest {
     pub brave_search_api_key: Option<String>,
     pub clear_brave_search_api_key: Option<bool>,
     pub direct_web_fetch_enabled: Option<bool>,
+    pub notes_semantic_search_enabled: Option<bool>,
+    pub notes_embedding_backend_id: Option<String>,
+    pub notes_embedding_model: Option<String>,
     pub tool_system_prompt: Option<String>,
     pub web_search_tool_prompt: Option<String>,
     pub web_fetch_tool_prompt: Option<String>,
@@ -165,9 +168,16 @@ pub async fn update_tool_settings(
     Json(payload): Json<UpdateToolSettingsRequest>,
 ) -> Result<Json<service::ToolSettingsResponse>, ApiError> {
     auth::service::require_admin(&state.db, &jar, &state.config.session_cookie_name).await?;
-    let settings = service::update_tool_settings(&state.db, payload).await?;
+    let previous_semantic = crate::notes::retrieval::semantic_config(&state.db).await?;
+    service::update_tool_settings(&state.db, payload).await?;
+    let current_semantic = crate::notes::retrieval::semantic_config(&state.db).await?;
+    if previous_semantic != current_semantic {
+        state.note_retrieval.rebuild_all().await?;
+    } else {
+        state.note_retrieval.wake();
+    }
 
-    Ok(Json(settings))
+    Ok(Json(service::get_tool_settings(&state.db).await?))
 }
 
 pub async fn dismiss_network_recovery_notice(

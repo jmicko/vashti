@@ -15,7 +15,7 @@ import {
   ToolPromptEditor
 } from "./settingsControls";
 import { permissionTagPayload } from "./settingsModelHelpers";
-import type { PermissionTag, ToolSettings } from "./types";
+import type { AdminBackendModelGroup, AdminModelsResponse, PermissionTag, ToolSettings } from "./types";
 
 export function ToolsSettingsPanel({ onToolsChanged }: { onToolsChanged: () => Promise<void> }) {
   const [settings, setSettings] = useState<ToolSettings | null>(null);
@@ -26,6 +26,10 @@ export function ToolsSettingsPanel({ onToolsChanged }: { onToolsChanged: () => P
   const [braveSearchEnabled, setBraveSearchEnabled] = useState(false);
   const [braveApiKey, setBraveApiKey] = useState("");
   const [directFetchEnabled, setDirectFetchEnabled] = useState(false);
+  const [notesSemanticSearchEnabled, setNotesSemanticSearchEnabled] = useState(false);
+  const [notesEmbeddingBackendId, setNotesEmbeddingBackendId] = useState("");
+  const [notesEmbeddingModel, setNotesEmbeddingModel] = useState("");
+  const [embeddingBackends, setEmbeddingBackends] = useState<AdminBackendModelGroup[]>([]);
   const [toolSystemPrompt, setToolSystemPrompt] = useState("");
   const [webSearchToolPrompt, setWebSearchToolPrompt] = useState("");
   const [webFetchToolPrompt, setWebFetchToolPrompt] = useState("");
@@ -46,6 +50,9 @@ export function ToolsSettingsPanel({ onToolsChanged }: { onToolsChanged: () => P
         ollamaFetchEnabled !== settings.ollama_web_fetch_enabled ||
         braveSearchEnabled !== settings.brave_search_enabled ||
         directFetchEnabled !== settings.direct_web_fetch_enabled ||
+        notesSemanticSearchEnabled !== settings.notes_semantic_search_enabled ||
+        notesEmbeddingBackendId !== (settings.notes_embedding_backend_id ?? "") ||
+        notesEmbeddingModel !== (settings.notes_embedding_model ?? "") ||
         ollamaApiKey.trim() ||
         braveApiKey.trim() ||
         toolSystemPrompt !== settings.tool_system_prompt ||
@@ -83,6 +90,9 @@ export function ToolsSettingsPanel({ onToolsChanged }: { onToolsChanged: () => P
   const directFetchChanged = Boolean(
     settings && directFetchEnabled !== settings.direct_web_fetch_enabled
   );
+  const notesSemanticChanged = Boolean(
+    settings && notesSemanticSearchEnabled !== settings.notes_semantic_search_enabled
+  );
   const ollamaKeyChanged = Boolean(ollamaApiKey.trim());
   const braveKeyChanged = Boolean(braveApiKey.trim());
   const toolSystemPromptChanged = Boolean(
@@ -104,6 +114,9 @@ export function ToolsSettingsPanel({ onToolsChanged }: { onToolsChanged: () => P
     setBraveSearchEnabled(response.brave_search_enabled);
     setBraveApiKey("");
     setDirectFetchEnabled(response.direct_web_fetch_enabled);
+    setNotesSemanticSearchEnabled(response.notes_semantic_search_enabled);
+    setNotesEmbeddingBackendId(response.notes_embedding_backend_id ?? "");
+    setNotesEmbeddingModel(response.notes_embedding_model ?? "");
     setToolSystemPrompt(response.tool_system_prompt);
     setWebSearchToolPrompt(response.web_search_tool_prompt);
     setWebFetchToolPrompt(response.web_fetch_tool_prompt);
@@ -121,8 +134,12 @@ export function ToolsSettingsPanel({ onToolsChanged }: { onToolsChanged: () => P
     setError(null);
 
     try {
-      const response = await requestJson<ToolSettings>("/api/settings/tools");
+      const [response, models] = await Promise.all([
+        requestJson<ToolSettings>("/api/settings/tools"),
+        requestJson<AdminModelsResponse>("/api/admin/models")
+      ]);
       applyToolSettings(response);
+      setEmbeddingBackends(models.backends);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Failed to load tool settings");
     } finally {
@@ -163,6 +180,9 @@ export function ToolsSettingsPanel({ onToolsChanged }: { onToolsChanged: () => P
       brave_search_enabled: braveSearchEnabled,
       clear_brave_search_api_key: false,
       direct_web_fetch_enabled: directFetchEnabled,
+      notes_semantic_search_enabled: notesSemanticSearchEnabled,
+      notes_embedding_backend_id: notesEmbeddingBackendId || null,
+      notes_embedding_model: notesEmbeddingModel || null,
       tool_system_prompt: toolSystemPrompt,
       web_search_tool_prompt: webSearchToolPrompt,
       web_fetch_tool_prompt: webFetchToolPrompt,
@@ -219,6 +239,9 @@ export function ToolsSettingsPanel({ onToolsChanged }: { onToolsChanged: () => P
           brave_search_enabled: braveSearchEnabled,
           clear_brave_search_api_key: target === "brave",
           direct_web_fetch_enabled: directFetchEnabled,
+          notes_semantic_search_enabled: notesSemanticSearchEnabled,
+          notes_embedding_backend_id: notesEmbeddingBackendId || null,
+          notes_embedding_model: notesEmbeddingModel || null,
           tool_system_prompt: toolSystemPrompt,
           web_search_tool_prompt: webSearchToolPrompt,
           web_fetch_tool_prompt: webFetchToolPrompt,
@@ -337,6 +360,66 @@ export function ToolsSettingsPanel({ onToolsChanged }: { onToolsChanged: () => P
                 }))
               }
             />
+            <details className="tool-details">
+              <summary>Semantic search</summary>
+              <ToggleSwitch
+                icon={<Search />}
+                label="Semantic note search"
+                description="Combine exact keyword matches with meaning-based results from a local Ollama embedding model. Keyword search remains available if embedding fails."
+                checked={notesSemanticSearchEnabled}
+                isChanged={notesSemanticChanged}
+                onChange={setNotesSemanticSearchEnabled}
+              />
+              <label className="setting-field">
+                <span>Embedding backend</span>
+                <select
+                  value={notesEmbeddingBackendId}
+                  onChange={(event) => {
+                    const backendId = event.target.value;
+                    const backend = embeddingBackends.find(
+                      (candidate) => candidate.backend.id === backendId
+                    );
+                    setNotesEmbeddingBackendId(backendId);
+                    if (!backend?.models.some((model) => model.name === notesEmbeddingModel)) {
+                      setNotesEmbeddingModel(backend?.models[0]?.name ?? "");
+                    }
+                  }}
+                >
+                  <option value="">Select backend</option>
+                  {embeddingBackends.map((backend) => (
+                    <option key={backend.backend.id} value={backend.backend.id}>
+                      {backend.backend.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="setting-field">
+                <span>Embedding model</span>
+                <select
+                  value={notesEmbeddingModel}
+                  disabled={!notesEmbeddingBackendId}
+                  onChange={(event) => setNotesEmbeddingModel(event.target.value)}
+                >
+                  <option value="">Select model</option>
+                  {(embeddingBackends.find(
+                    (backend) => backend.backend.id === notesEmbeddingBackendId
+                  )?.models ?? []).map((model) => (
+                    <option key={model.name} value={model.name}>
+                      {model.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <p className="status-message">
+                {settings.notes_indexed_chunks} indexed chunks
+                {settings.notes_pending_index_count > 0
+                  ? ` · ${settings.notes_pending_index_count} notes waiting`
+                  : " · index current"}
+              </p>
+              {settings.notes_embedding_last_error && (
+                <p className="error">Last indexing error: {settings.notes_embedding_last_error}</p>
+              )}
+            </details>
           </section>
 
           <section className="settings-subsection">

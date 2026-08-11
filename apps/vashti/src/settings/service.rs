@@ -54,6 +54,12 @@ pub struct ToolSettingsResponse {
     pub brave_search_enabled: bool,
     pub brave_search_api_key_configured: bool,
     pub direct_web_fetch_enabled: bool,
+    pub notes_semantic_search_enabled: bool,
+    pub notes_embedding_backend_id: Option<String>,
+    pub notes_embedding_model: Option<String>,
+    pub notes_indexed_chunks: i64,
+    pub notes_pending_index_count: i64,
+    pub notes_embedding_last_error: Option<String>,
     pub tool_system_prompt: String,
     pub default_tool_system_prompt: &'static str,
     pub web_search_tool_prompt: String,
@@ -93,6 +99,9 @@ pub struct ToolSettingsPrivate {
     pub brave_search_enabled: bool,
     pub brave_search_api_key: Option<String>,
     pub direct_web_fetch_enabled: bool,
+    pub notes_semantic_search_enabled: bool,
+    pub notes_embedding_backend_id: Option<String>,
+    pub notes_embedding_model: Option<String>,
     pub tool_system_prompt: String,
     pub web_search_tool_prompt: String,
     pub web_fetch_tool_prompt: String,
@@ -237,6 +246,9 @@ pub async fn get_tool_settings_private(
                brave_search_enabled,
                brave_search_api_key,
                direct_web_fetch_enabled,
+               notes_semantic_search_enabled,
+               notes_embedding_backend_id,
+               notes_embedding_model,
                tool_system_prompt,
                web_search_tool_prompt,
                web_fetch_tool_prompt
@@ -280,6 +292,31 @@ pub async fn update_tool_settings(
         payload.web_fetch_tool_prompt,
         DEFAULT_WEB_FETCH_TOOL_PROMPT,
     )?;
+    let notes_semantic_search_enabled = payload
+        .notes_semantic_search_enabled
+        .unwrap_or(current.notes_semantic_search_enabled);
+    let notes_embedding_backend_id = payload
+        .notes_embedding_backend_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or(current.notes_embedding_backend_id);
+    let notes_embedding_model = payload
+        .notes_embedding_model
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or(current.notes_embedding_model);
+    if notes_semantic_search_enabled {
+        validate_embedding_selection(
+            pool,
+            notes_embedding_backend_id.as_deref(),
+            notes_embedding_model.as_deref(),
+        )
+        .await?;
+    }
 
     let row = sqlx::query(
         r#"
@@ -291,6 +328,9 @@ pub async fn update_tool_settings(
             brave_search_enabled = COALESCE(?, brave_search_enabled),
             brave_search_api_key = ?,
             direct_web_fetch_enabled = COALESCE(?, direct_web_fetch_enabled),
+            notes_semantic_search_enabled = ?,
+            notes_embedding_backend_id = ?,
+            notes_embedding_model = ?,
             tool_system_prompt = ?,
             web_search_tool_prompt = ?,
             web_fetch_tool_prompt = ?,
@@ -303,6 +343,9 @@ pub async fn update_tool_settings(
                   brave_search_enabled,
                   brave_search_api_key,
                   direct_web_fetch_enabled,
+                  notes_semantic_search_enabled,
+                  notes_embedding_backend_id,
+                  notes_embedding_model,
                   tool_system_prompt,
                   web_search_tool_prompt,
                   web_fetch_tool_prompt
@@ -315,6 +358,9 @@ pub async fn update_tool_settings(
     .bind(payload.brave_search_enabled.map(i64::from))
     .bind(brave_search_api_key)
     .bind(payload.direct_web_fetch_enabled.map(i64::from))
+    .bind(i64::from(notes_semantic_search_enabled))
+    .bind(notes_embedding_backend_id)
+    .bind(notes_embedding_model)
     .bind(tool_system_prompt)
     .bind(web_search_tool_prompt)
     .bind(web_fetch_tool_prompt)
@@ -602,6 +648,49 @@ fn validate_update_channel(value: &str) -> Result<&str, ApiError> {
     }
 }
 
+async fn validate_embedding_selection(
+    pool: &SqlitePool,
+    backend_id: Option<&str>,
+    model: Option<&str>,
+) -> Result<(), ApiError> {
+    let backend_id = backend_id.ok_or_else(|| {
+        ApiError::bad_request(
+            "notes_embedding_backend_required",
+            "Choose an enabled Ollama backend for semantic note search",
+        )
+    })?;
+    let model = model.ok_or_else(|| {
+        ApiError::bad_request(
+            "notes_embedding_model_required",
+            "Choose an embedding model for semantic note search",
+        )
+    })?;
+    let available: i64 = sqlx::query_scalar(
+        r#"
+        SELECT EXISTS(
+            SELECT 1
+            FROM ollama_backends backends
+            JOIN model_availability models ON models.backend_id = backends.id
+            WHERE backends.id = ?
+              AND backends.is_enabled = 1
+              AND models.model_name = ?
+              AND models.is_enabled = 1
+        )
+        "#,
+    )
+    .bind(backend_id)
+    .bind(model)
+    .fetch_one(pool)
+    .await?;
+    if available == 0 {
+        return Err(ApiError::bad_request(
+            "notes_embedding_model_unavailable",
+            "The selected embedding backend and model must both be enabled",
+        ));
+    }
+    Ok(())
+}
+
 fn row_to_tool_settings_private(
     row: sqlx::sqlite::SqliteRow,
 ) -> Result<ToolSettingsPrivate, sqlx::Error> {
@@ -613,6 +702,9 @@ fn row_to_tool_settings_private(
         brave_search_enabled: row.try_get::<i64, _>("brave_search_enabled")? != 0,
         brave_search_api_key: row.try_get("brave_search_api_key")?,
         direct_web_fetch_enabled: row.try_get::<i64, _>("direct_web_fetch_enabled")? != 0,
+        notes_semantic_search_enabled: row.try_get::<i64, _>("notes_semantic_search_enabled")? != 0,
+        notes_embedding_backend_id: row.try_get("notes_embedding_backend_id")?,
+        notes_embedding_model: row.try_get("notes_embedding_model")?,
         tool_system_prompt: prompt_or_default(
             row.try_get("tool_system_prompt")?,
             DEFAULT_TOOL_SYSTEM_PROMPT,
@@ -646,6 +738,8 @@ impl ToolSettingsPrivate {
                 permission_tags: permissions::tag_responses(pool, &tags).await?,
             });
         }
+        let (notes_indexed_chunks, notes_pending_index_count, notes_embedding_last_error) =
+            crate::notes::retrieval::index_status(pool).await?;
 
         Ok(ToolSettingsResponse {
             tools_enabled: self.tools_enabled,
@@ -655,6 +749,12 @@ impl ToolSettingsPrivate {
             brave_search_enabled: self.brave_search_enabled,
             brave_search_api_key_configured: self.brave_search_api_key.is_some(),
             direct_web_fetch_enabled: self.direct_web_fetch_enabled,
+            notes_semantic_search_enabled: self.notes_semantic_search_enabled,
+            notes_embedding_backend_id: self.notes_embedding_backend_id.clone(),
+            notes_embedding_model: self.notes_embedding_model.clone(),
+            notes_indexed_chunks,
+            notes_pending_index_count,
+            notes_embedding_last_error,
             tool_system_prompt: self.tool_system_prompt.clone(),
             default_tool_system_prompt: DEFAULT_TOOL_SYSTEM_PROMPT,
             web_search_tool_prompt: self.web_search_tool_prompt.clone(),

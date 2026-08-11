@@ -618,6 +618,12 @@ export type ToolSettings = {
   brave_search_enabled: boolean;
   brave_search_api_key_configured: boolean;
   direct_web_fetch_enabled: boolean;
+  notes_semantic_search_enabled: boolean;
+  notes_embedding_backend_id: string | null;
+  notes_embedding_model: string | null;
+  notes_indexed_chunks: number;
+  notes_pending_index_count: number;
+  notes_embedding_last_error: string | null;
   tool_system_prompt: string;
   default_tool_system_prompt: string;
   web_search_tool_prompt: string;

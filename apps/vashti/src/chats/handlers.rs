@@ -234,6 +234,7 @@ struct GenerationStreamTask {
     tx: mpsc::Sender<Result<Bytes, Infallible>>,
     db: sqlx::SqlitePool,
     client: reqwest::Client,
+    note_retrieval: Arc<crate::notes::retrieval::NoteRetrieval>,
     progress: GenerationProgressMap,
     user_id: String,
     chat_id: String,
@@ -590,6 +591,7 @@ async fn stream_generation(task: GenerationStreamTask) {
         tx,
         db,
         client,
+        note_retrieval,
         progress,
         user_id,
         chat_id,
@@ -927,6 +929,7 @@ async fn stream_generation(task: GenerationStreamTask) {
                     .unwrap_or_else(|| Uuid::new_v4().to_string());
                 let context = tools::service::ToolExecutionContext {
                     db: &db,
+                    note_retrieval: &note_retrieval,
                     user_id: &user_id,
                     model_key: &assistant_model_key,
                     model_name: &assistant_model_name,
@@ -1113,6 +1116,7 @@ async fn start_generation_stream(
     let (tx, rx) = mpsc::channel::<Result<Bytes, Infallible>>(32);
     let db = state.db.clone();
     let client = state.http_client.clone();
+    let note_retrieval = state.note_retrieval.clone();
     let cancellations = state.generation_cancellations.clone();
     let progress = state.generation_progress.clone();
 
@@ -1121,6 +1125,7 @@ async fn start_generation_stream(
             tx,
             db,
             client,
+            note_retrieval,
             progress,
             user_id,
             chat_id,
