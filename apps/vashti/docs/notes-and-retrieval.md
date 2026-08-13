@@ -46,11 +46,16 @@ Device notes:
 * are stored in the encrypted IndexedDB private-storage boundary
 * are available only on that device
 * may be explicitly attached to private-local messages
+* may be used by enabled Notes tools in private-local chats through the
+  authenticated client-tool bridge
 * must not leave names, IDs, content, embeddings, or usage metadata in server
   persistence
 
-Standard chats must never use device notes. Autonomous tool access to device
-notes uses the client-tool bridge described in section 8.
+Standard chats must never use device notes. Private-local tool calls execute in
+the authenticated browser session, enforce the same global, per-note, and
+per-model permissions as server notes, and return bounded results to the active
+generation without persisting note data on the server. Section 8 specifies the
+bridge boundary and replay protection.
 
 ## 3. Versioning, Trash, and Concurrency
 

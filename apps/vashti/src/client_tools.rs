@@ -251,4 +251,29 @@ mod tests {
             ResolveClientToolCall::AlreadyCompleted
         );
     }
+
+    #[tokio::test]
+    async fn completed_call_rejects_a_different_identity() {
+        let broker = ClientToolBroker::default();
+        let registered = broker.register("generation", "user", "session").await;
+        let matched = identity(&registered, "generation", "user", "session");
+
+        assert_eq!(
+            broker
+                .resolve(&matched, "result".to_string())
+                .await
+                .unwrap(),
+            ResolveClientToolCall::Accepted
+        );
+
+        let wrong_generation = identity(&registered, "other-generation", "user", "session");
+        assert_eq!(
+            broker
+                .resolve(&wrong_generation, "ignored".to_string())
+                .await
+                .unwrap_err()
+                .code(),
+            "invalid_client_tool_result"
+        );
+    }
 }

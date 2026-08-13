@@ -1004,7 +1004,6 @@ export function NotesWorkspace({
                   draft={draft}
                   tagsText={tagsText}
                   modelOptions={modelOptions}
-                  allowAiAccess
                   onDraftChange={updateDraft}
                   onTagsTextChange={setTagsText}
                   onTagsCommit={commitTags}
@@ -1059,7 +1058,6 @@ function NoteDetails({
   draft,
   tagsText,
   modelOptions,
-  allowAiAccess,
   onDraftChange,
   onTagsTextChange,
   onTagsCommit
@@ -1067,7 +1065,6 @@ function NoteDetails({
   draft: NoteDraft;
   tagsText: string;
   modelOptions: ModelOption[];
-  allowAiAccess: boolean;
   onDraftChange: (patch: Partial<NoteDraft>) => void;
   onTagsTextChange: (value: string) => void;
   onTagsCommit: () => void;
@@ -1091,24 +1088,16 @@ function NoteDetails({
         />
         <small>Separate tags with commas.</small>
       </label>
-      {allowAiAccess ? (
-        <>
-          <section className="notes-access-section">
-            <h3>AI Access</h3>
-            <p>Choose the maximum action a model may take with this note.</p>
-            <AccessLevelControl value={draft.ai_access} onChange={(ai_access) => onDraftChange({ ai_access })} />
-          </section>
-          <ModelScopeEditor
-            scope={draft.model_scope}
-            options={modelOptions}
-            onChange={(model_scope) => onDraftChange({ model_scope })}
-          />
-        </>
-      ) : (
-        <p className="notes-device-access-note">
-          Device notes can be attached to private chats. Models cannot browse or change them autonomously.
-        </p>
-      )}
+      <section className="notes-access-section">
+        <h3>AI Access</h3>
+        <p>Choose the maximum action a model may take with this note.</p>
+        <AccessLevelControl value={draft.ai_access} onChange={(ai_access) => onDraftChange({ ai_access })} />
+      </section>
+      <ModelScopeEditor
+        scope={draft.model_scope}
+        options={modelOptions}
+        onChange={(model_scope) => onDraftChange({ model_scope })}
+      />
     </div>
   );
 }
@@ -1210,6 +1199,7 @@ function NoteAccessSettings({
         <PermissionToggle label="Edit notes" checked={settings.allow_model_edit} onChange={(allow_model_edit) => onChange({ ...settings, allow_model_edit })} />
         <PermissionToggle label="Move notes to trash" checked={settings.allow_model_trash} onChange={(allow_model_trash) => onChange({ ...settings, allow_model_trash })} />
       </div>
+      <small>Edit and trash access also require Read notes.</small>
       <section className="notes-access-section">
         <h3>New Note Default</h3>
         <p>Default AI access for notes you create later.</p>
@@ -1286,6 +1276,9 @@ function ModelScopeEditor({
       <PermissionToggle label="All models" checked={scope.all_models} onChange={(all_models) => onChange({ all_models, model_keys: scope.model_keys })} />
       {!scope.all_models && (
         <>
+          {scope.model_keys.length === 0 && (
+            <p className="notes-scope-warning">No models currently have access to this note.</p>
+          )}
           <label className="notes-scope-search">
             <Search />
             <span className="visually-hidden">Search models</span>

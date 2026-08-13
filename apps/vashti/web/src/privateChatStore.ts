@@ -1362,7 +1362,8 @@ export async function listPrivateNotes({
     storedNotes.map((note) => note.current_version_id)
   );
   const versionsById = new Map(versions.map((version) => [version.id, version]));
-  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const hasQuery = query.trim().length > 0;
+  const queryTerms = noteSearchTerms(query);
   const matchingNotes = storedNotes
     .map((storedNote) => {
       const version = versionsById.get(storedNote.current_version_id);
@@ -1375,12 +1376,16 @@ export async function listPrivateNotes({
     )
     .filter(({ summary }) => (status === "trashed") === Boolean(summary.deleted_at))
     .filter(({ summary, content }) => {
-      if (!normalizedQuery) {
+      if (!hasQuery) {
         return true;
       }
-      return `${summary.title}\n${content}\n${summary.tags.join("\n")}`
-        .toLocaleLowerCase()
-        .includes(normalizedQuery);
+      if (queryTerms.length === 0) {
+        return false;
+      }
+      const searchableText = `${summary.title}\n${content}\n${summary.tags.join("\n")}`
+        .normalize("NFKC")
+        .toLocaleLowerCase();
+      return queryTerms.every((term) => searchableText.includes(term));
     })
     .map(({ summary }) => summary)
     .sort((left, right) => comparePrivateNoteSummaries(left, right, sort));
@@ -1391,6 +1396,16 @@ export async function listPrivateNotes({
     notes: matchingNotes.slice(boundedOffset, boundedOffset + boundedLimit),
     total
   };
+}
+
+function noteSearchTerms(query: string): string[] {
+  return query
+    .normalize("NFKC")
+    .toLocaleLowerCase()
+    .split(/\s+/u)
+    .slice(0, 12)
+    .map((term) => term.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ""))
+    .filter(Boolean);
 }
 
 export function defaultPrivateNoteSettings(): NoteSettings {

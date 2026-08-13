@@ -98,7 +98,7 @@ export function ChatHome({
               : "Select a model to start"
           }
           selectedModelInfo={selectedModelInfo}
-          availableTools={isPrivate ? [] : availableTools}
+          availableTools={availableTools}
           toolPreferences={toolPreferences}
           thinkingMode={thinkingMode}
           onToolPreferencesChange={setToolPreferences}

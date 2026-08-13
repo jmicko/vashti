@@ -84,6 +84,10 @@ async function executeAndDeliver(
     await deliverResult(event, existing.result, existing.error);
     return;
   }
+  if (existing) {
+    await deliverResult(event, undefined, "Device tool call identity conflict");
+    return;
+  }
 
   const handler = handlers.get(event.name);
   let result: unknown;

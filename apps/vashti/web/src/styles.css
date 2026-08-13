@@ -827,12 +827,6 @@ textarea {
   font-size: 0.8rem;
 }
 
-.notes-device-access-note {
-  margin: 0;
-  color: var(--muted);
-  line-height: 1.45;
-}
-
 .notes-list-menu-wrap,
 .notes-format-more {
   position: relative;
@@ -1258,6 +1252,12 @@ textarea {
 
 .notes-scope-search {
   margin-top: 4px;
+}
+
+.notes-scope-warning {
+  margin: 4px 0 0;
+  color: var(--warning);
+  font-size: 0.82rem;
 }
 
 .notes-model-options {
