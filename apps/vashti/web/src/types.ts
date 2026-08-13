@@ -547,6 +547,15 @@ export type GenerateEvent =
       delta: string;
     }
   | {
+      type: "client_tool_call";
+      assistant_message_id: string;
+      generation_id: string;
+      call_id: string;
+      resume_token: string;
+      name: string;
+      arguments: Record<string, unknown>;
+    }
+  | {
       type: "message_done";
       assistant_message_id: string;
       done_reason: string | null;

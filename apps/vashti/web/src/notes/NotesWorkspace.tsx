@@ -25,6 +25,11 @@ import {
 } from "lucide-react";
 import { ConfirmDialog, RetroLoader } from "../common";
 import { MarkdownContent } from "../MarkdownContent";
+import {
+  getPrivateNoteSettings,
+  savePrivateNoteSettings,
+  type PrivatePersona
+} from "../privateChatStore";
 import type { BackendModelGroup, Persona } from "../types";
 import {
   getNoteSettings,
@@ -65,10 +70,12 @@ type ModelOption = {
 
 export function NotesWorkspace({
   modelGroups,
-  personas
+  personas,
+  privatePersonas
 }: {
   modelGroups: BackendModelGroup[];
   personas: Persona[];
+  privatePersonas: PrivatePersona[];
 }) {
   const [storageMode, setStorageMode] = useState<NoteStorageMode>("server");
   const [status, setStatus] = useState<NoteListStatus>("active");
@@ -131,8 +138,15 @@ export function NotesWorkspace({
       label: persona.current_version.display_name,
       group: "Custom Models"
     }));
-    return [...customModels, ...baseModels];
-  }, [modelGroups, personas]);
+    const deviceCustomModels = privatePersonas.map((persona) => ({
+      key: `persona:${persona.id}`,
+      label: persona.current_version.display_name,
+      group: "Custom Models"
+    }));
+    return storageMode === "device"
+      ? [...deviceCustomModels, ...baseModels]
+      : [...customModels, ...baseModels];
+  }, [modelGroups, personas, privatePersonas, storageMode]);
 
   const isDirty = Boolean(note && draft && draftFingerprint(draft) !== noteFingerprint(note));
   const selectedVersion =
@@ -423,7 +437,16 @@ export function NotesWorkspace({
     setIsCreating(true);
     setListError(null);
     try {
-      const created = await repository.create({ title: "Untitled note" });
+      const defaults = storageMode === "device" ? await getPrivateNoteSettings() : null;
+      const created = await repository.create({
+        title: "Untitled note",
+        ...(defaults
+          ? {
+              ai_access: defaults.default_ai_access,
+              model_scope: defaults.default_model_scope
+            }
+          : {})
+      });
       setStatus("active");
       setSearchInput("");
       setQuery("");
@@ -572,7 +595,9 @@ export function NotesWorkspace({
     setIsLoadingSettings(true);
     setSettingsError(null);
     try {
-      const loaded = await getNoteSettings();
+      const loaded = storageMode === "device"
+        ? await getPrivateNoteSettings()
+        : await getNoteSettings();
       setSettings(loaded);
       setSettingsDraft(cloneSettings(loaded));
     } catch (error) {
@@ -589,10 +614,13 @@ export function NotesWorkspace({
     setIsSavingSettings(true);
     setSettingsError(null);
     try {
-      const updated = await updateNoteSettings({
+      const payload = {
         ...settingsDraft,
         default_model_scope: normalizeScope(settingsDraft.default_model_scope)
-      });
+      };
+      const updated = storageMode === "device"
+        ? await savePrivateNoteSettings(payload)
+        : await updateNoteSettings(payload);
       setSettings(updated);
       setSettingsDraft(cloneSettings(updated));
       setDrawer(null);
@@ -658,6 +686,9 @@ export function NotesWorkspace({
     setSaveMessage(null);
     setNoteError(null);
     setDrawer(null);
+    setSettings(null);
+    setSettingsDraft(null);
+    setSettingsError(null);
     setIsMobileEditorOpen(false);
   }
 
@@ -669,12 +700,10 @@ export function NotesWorkspace({
           <h1>Notes</h1>
         </div>
         <div className="notes-workspace-actions">
-          {storageMode === "server" && (
-            <button type="button" className="secondary-button" onClick={() => void openSettings()}>
-              <Settings2 />
-              <span>Note Access</span>
-            </button>
-          )}
+          <button type="button" className="secondary-button" onClick={() => void openSettings()}>
+            <Settings2 />
+            <span>Note Access</span>
+          </button>
           <button type="button" onClick={() => void createNewNote()} disabled={isCreating}>
             {isCreating ? <RetroLoader /> : <FilePlus2 />}
             <span>New Note</span>
@@ -890,8 +919,8 @@ export function NotesWorkspace({
                       <button
                         type="button"
                         className="icon-button"
-                        aria-label={storageMode === "server" ? "Note access and tags" : "Note tags"}
-                        title={storageMode === "server" ? "Note access and tags" : "Note tags"}
+                        aria-label="Note access and tags"
+                        title="Note access and tags"
                         onClick={() => setDrawer("details")}
                       >
                         <Settings2 />
@@ -975,7 +1004,7 @@ export function NotesWorkspace({
                   draft={draft}
                   tagsText={tagsText}
                   modelOptions={modelOptions}
-                  allowAiAccess={storageMode === "server"}
+                  allowAiAccess
                   onDraftChange={updateDraft}
                   onTagsTextChange={setTagsText}
                   onTagsCommit={commitTags}
@@ -999,6 +1028,7 @@ export function NotesWorkspace({
                   isLoading={isLoadingSettings}
                   isSaving={isSavingSettings}
                   error={settingsError}
+                  storageMode={storageMode}
                   modelOptions={modelOptions}
                   onChange={setSettingsDraft}
                   onCancel={() => setDrawer(null)}
@@ -1144,6 +1174,7 @@ function NoteAccessSettings({
   isLoading,
   isSaving,
   error,
+  storageMode,
   modelOptions,
   onChange,
   onCancel,
@@ -1153,6 +1184,7 @@ function NoteAccessSettings({
   isLoading: boolean;
   isSaving: boolean;
   error: string | null;
+  storageMode: NoteStorageMode;
   modelOptions: ModelOption[];
   onChange: (settings: NoteSettings) => void;
   onCancel: () => void;
@@ -1165,6 +1197,13 @@ function NoteAccessSettings({
   return (
     <div className="notes-drawer-content notes-settings-content">
       <p>These limits apply to every model before a note's own access setting is considered.</p>
+      {storageMode === "device" && (
+        <p>
+          Device-note tools are available only in private chats. Content a model reads is sent
+          through Vashti to that selected model for the active generation, but is not added to the
+          server note library.
+        </p>
+      )}
       <div className="notes-permission-list">
         <PermissionToggle label="Read notes" checked={settings.allow_model_read} onChange={(allow_model_read) => onChange({ ...settings, allow_model_read })} />
         <PermissionToggle label="Create notes" checked={settings.allow_model_create} onChange={(allow_model_create) => onChange({ ...settings, allow_model_create })} />
@@ -1375,9 +1414,9 @@ function errorMessage(error: unknown, fallback: string) {
 }
 
 function drawerTitle(drawer: Exclude<Drawer, null>, storageMode: NoteStorageMode) {
-  if (drawer === "details") return storageMode === "server" ? "Note Access" : "Note Details";
+  if (drawer === "details") return "Note Access";
   if (drawer === "history") return "Version History";
-  return "AI Note Defaults";
+  return storageMode === "device" ? "Device AI Note Defaults" : "AI Note Defaults";
 }
 
 function confirmTitle(action: ConfirmAction) {

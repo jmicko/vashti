@@ -1,5 +1,6 @@
 import { gcm as aesGcm } from "@noble/ciphers/aes.js";
 import type {
+  ChatToolPreferences,
   ChatInferenceSettings,
   ContextBlock,
   ContextBlockSelection,
@@ -12,11 +13,13 @@ import type {
   CustomModelType
 } from "./types";
 import { requestJson } from "./api";
+import { normalizeToolPreferences } from "./toolPreferences";
 import type {
   Note,
   NoteAiAccess,
   NoteListStatus,
   NoteModelScope,
+  NoteSettings,
   NoteSort,
   NoteSummary,
   NoteVersion
@@ -24,7 +27,7 @@ import type {
 
 const LEGACY_DB_NAME = "vashti-private-local";
 const DB_NAME_PREFIX = "vashti-private-local";
-const DB_VERSION = 8;
+const DB_VERSION = 9;
 const CHAT_STORE = "private_chats";
 const MESSAGE_STORE = "private_messages";
 const PERSONA_STORE = "private_personas";
@@ -35,12 +38,16 @@ const CONTEXT_BLOCK_STORE = "private_context_blocks";
 const CONTEXT_BLOCK_VERSION_STORE = "private_context_block_versions";
 const NOTE_STORE = "private_notes";
 const NOTE_VERSION_STORE = "private_note_versions";
+const NOTE_SETTINGS_STORE = "private_note_settings";
+const CLIENT_TOOL_RECEIPT_STORE = "private_client_tool_receipts";
 const HOSTED_CHAT_CACHE_STORE = "hosted_chat_cache";
 const HOSTED_CHAT_LIST_CACHE_STORE = "hosted_chat_list_cache";
 const HOSTED_PENDING_SEND_STORE = "hosted_pending_sends";
 const MODEL_CACHE_STORE = "model_cache";
 const MODEL_CACHE_ID = "model-picker";
 const HOSTED_CHAT_LIST_CACHE_ID = "hosted-chat-list";
+const PRIVATE_NOTE_SETTINGS_ID = "note-settings";
+const CLIENT_TOOL_RECEIPT_TTL_SECONDS = 7 * 24 * 60 * 60;
 
 export type PrivateVaultKeyResponse = {
   user_id: string;
@@ -78,6 +85,22 @@ export type PrivateNoteContextSelection = NoteContextSelection & {
   content: string;
 };
 
+export type PrivateNoteMutationActor = {
+  model_key: string;
+  model_name: string;
+  chat_id: string;
+  message_id: string;
+  tool_call_id: string;
+};
+
+export type PrivateClientToolReceipt = {
+  id: string;
+  generation_id: string;
+  result?: unknown;
+  error?: string;
+  created_at: number;
+};
+
 export type PrivateChatSummary = {
   id: string;
   title: string;
@@ -107,6 +130,7 @@ export type PrivateChatDetail = {
   persona_name?: string | null;
   system_prompt_override?: string | null;
   inference_settings?: ChatInferenceSettings;
+  tool_preferences: ChatToolPreferences;
   context_blocks: ContextBlockSelection[];
   active_root_message_id: string | null;
   created_at: number;
@@ -176,6 +200,7 @@ export type CreatePrivateChatParams = {
   personaName?: string | null;
   systemPromptOverride?: string | null;
   inferenceSettings?: ChatInferenceSettings;
+  toolPreferences?: ChatToolPreferences;
   contextBlocks?: ContextBlockSelection[];
 };
 
@@ -467,6 +492,7 @@ export async function createPrivateChat({
   personaName = null,
   systemPromptOverride = null,
   inferenceSettings = {},
+  toolPreferences,
   contextBlocks = []
 }: CreatePrivateChatParams): Promise<PrivateChatDetail> {
   const now = unixTimestamp();
@@ -481,6 +507,7 @@ export async function createPrivateChat({
     persona_name: personaName,
     system_prompt_override: systemPromptOverride,
     inference_settings: inferenceSettings,
+    tool_preferences: normalizeToolPreferences(toolPreferences),
     context_blocks: contextBlocks.map((selection, position) => ({ ...selection, position })),
     active_root_message_id: null,
     created_at: now,
@@ -1366,6 +1393,78 @@ export async function listPrivateNotes({
   };
 }
 
+export function defaultPrivateNoteSettings(): NoteSettings {
+  return {
+    allow_model_read: false,
+    allow_model_create: false,
+    allow_model_edit: false,
+    allow_model_trash: false,
+    default_ai_access: "none",
+    default_model_scope: emptyPrivateNoteModelScope()
+  };
+}
+
+export async function getPrivateNoteSettings(): Promise<NoteSettings> {
+  const db = await openPrivateDb();
+  const tx = db.transaction(NOTE_SETTINGS_STORE, "readonly");
+  const record = await requestResult<PrivateStoreRecord | (NoteSettings & { id: string }) | undefined>(
+    tx.objectStore(NOTE_SETTINGS_STORE).get(PRIVATE_NOTE_SETTINGS_ID)
+  );
+  await transactionDone(tx);
+  if (!record) {
+    return defaultPrivateNoteSettings();
+  }
+  const stored = await readPrivateRecord<NoteSettings & { id: string }>(record);
+  return normalizePrivateNoteSettings(stored);
+}
+
+export async function savePrivateNoteSettings(settings: NoteSettings): Promise<NoteSettings> {
+  const normalized = normalizePrivateNoteSettings(settings);
+  const stored = { id: PRIVATE_NOTE_SETTINGS_ID, ...normalized };
+  const record = await privateStoreRecord(stored, { updated_at: unixTimestamp() });
+  const db = await openPrivateDb();
+  const tx = db.transaction(NOTE_SETTINGS_STORE, "readwrite");
+  tx.objectStore(NOTE_SETTINGS_STORE).put(record);
+  await transactionDone(tx);
+  return normalized;
+}
+
+export async function getPrivateClientToolReceipt(
+  callId: string
+): Promise<PrivateClientToolReceipt | null> {
+  const db = await openPrivateDb();
+  const tx = db.transaction(CLIENT_TOOL_RECEIPT_STORE, "readonly");
+  const record = await requestResult<PrivateStoreRecord | PrivateClientToolReceipt | undefined>(
+    tx.objectStore(CLIENT_TOOL_RECEIPT_STORE).get(callId)
+  );
+  await transactionDone(tx);
+  return record ? readPrivateRecord<PrivateClientToolReceipt>(record) : null;
+}
+
+export async function savePrivateClientToolReceipt(
+  receipt: PrivateClientToolReceipt
+): Promise<void> {
+  const db = await openPrivateDb();
+  const record = await privateStoreRecord(receipt, { created_at: receipt.created_at });
+  const tx = db.transaction(CLIENT_TOOL_RECEIPT_STORE, "readwrite");
+  const store = tx.objectStore(CLIENT_TOOL_RECEIPT_STORE);
+  store.put(record);
+  const expiresBefore = unixTimestamp() - CLIENT_TOOL_RECEIPT_TTL_SECONDS;
+  const cursorRequest = store.openCursor();
+  cursorRequest.onsuccess = () => {
+    const cursor = cursorRequest.result;
+    if (!cursor) {
+      return;
+    }
+    const value = cursor.value as PrivateStoreRecord;
+    if ((value.created_at ?? 0) < expiresBefore) {
+      cursor.delete();
+    }
+    cursor.continue();
+  };
+  await transactionDone(tx);
+}
+
 export async function getPrivateNote(noteId: string): Promise<Note> {
   const db = await openPrivateDb();
   const tx = db.transaction(NOTE_STORE, "readonly");
@@ -1390,7 +1489,8 @@ export async function createPrivateNote({
   tags = [],
   is_pinned: isPinned = false,
   ai_access: aiAccess = "none",
-  model_scope: modelScope = emptyPrivateNoteModelScope()
+  model_scope: modelScope = emptyPrivateNoteModelScope(),
+  actor
 }: {
   title: string;
   content?: string;
@@ -1398,6 +1498,7 @@ export async function createPrivateNote({
   is_pinned?: boolean;
   ai_access?: NoteAiAccess;
   model_scope?: NoteModelScope;
+  actor?: PrivateNoteMutationActor;
 }): Promise<Note> {
   const normalizedTitle = validatePrivateNoteTitle(title);
   const normalizedContent = validatePrivateNoteContent(content);
@@ -1411,13 +1512,13 @@ export async function createPrivateNote({
     version_number: 1,
     title: normalizedTitle,
     content: normalizedContent,
-    actor_type: "human",
+    actor_type: actor ? "model" : "human",
     actor_user_id: privateStorageUserId(),
-    actor_model_key: null,
-    actor_model_name: null,
-    source_chat_id: null,
-    source_message_id: null,
-    source_tool_call_id: null,
+    actor_model_key: actor?.model_key ?? null,
+    actor_model_name: actor?.model_name ?? null,
+    source_chat_id: actor?.chat_id ?? null,
+    source_message_id: actor?.message_id ?? null,
+    source_tool_call_id: actor?.tool_call_id ?? null,
     created_at: now
   };
   const storedNote: PrivateStoredNote = {
@@ -1445,6 +1546,7 @@ export async function updatePrivateNote(
     is_pinned?: boolean;
     ai_access?: NoteAiAccess;
     model_scope?: NoteModelScope;
+    actor?: PrivateNoteMutationActor;
   }
 ): Promise<Note> {
   const current = await getPrivateNote(noteId);
@@ -1464,7 +1566,12 @@ export async function updatePrivateNote(
   const now = unixTimestamp();
   const version: NoteVersion = contentChanged
     ? {
-        ...privateHumanNoteVersion(current.id, current.current_version.version_number + 1, now),
+        ...privateNoteVersion(
+          current.id,
+          current.current_version.version_number + 1,
+          now,
+          payload.actor
+        ),
         title,
         content
       }
@@ -1562,7 +1669,7 @@ export async function restorePrivateNoteVersion(
   const versions = await listPrivateNoteVersions(noteId);
   const now = unixTimestamp();
   const version: NoteVersion = {
-    ...privateHumanNoteVersion(
+    ...privateNoteVersion(
       noteId,
       Math.max(current.current_version.version_number, ...versions.map((item) => item.version_number)) + 1,
       now
@@ -1723,20 +1830,25 @@ function privateNoteSummary(note: PrivateStoredNote, version: NoteVersion): Note
   };
 }
 
-function privateHumanNoteVersion(noteId: string, versionNumber: number, createdAt: number) {
+function privateNoteVersion(
+  noteId: string,
+  versionNumber: number,
+  createdAt: number,
+  actor?: PrivateNoteMutationActor
+) {
   return {
     id: privateId("private-note-version"),
     note_id: noteId,
     version_number: versionNumber,
     title: "",
     content: "",
-    actor_type: "human",
+    actor_type: actor ? "model" : "human",
     actor_user_id: privateStorageUserId(),
-    actor_model_key: null,
-    actor_model_name: null,
-    source_chat_id: null,
-    source_message_id: null,
-    source_tool_call_id: null,
+    actor_model_key: actor?.model_key ?? null,
+    actor_model_name: actor?.model_name ?? null,
+    source_chat_id: actor?.chat_id ?? null,
+    source_message_id: actor?.message_id ?? null,
+    source_tool_call_id: actor?.tool_call_id ?? null,
     created_at: createdAt
   } satisfies NoteVersion;
 }
@@ -1775,11 +1887,37 @@ function validatePrivateNoteTags(tags: string[]) {
 }
 
 function validatePrivateNoteModelScope(scope: NoteModelScope): NoteModelScope {
+  if (scope.all_models) {
+    return { all_models: true, model_keys: [] };
+  }
   const modelKeys = [...new Set(scope.model_keys.map((key) => key.trim()).filter(Boolean))];
   if (modelKeys.length > 64) {
     throw new Error("A note can be scoped to at most 64 models");
   }
-  return { all_models: scope.all_models, model_keys: modelKeys.sort() };
+  if (
+    modelKeys.some(
+      (key) =>
+        [...key].length > 512 || !(key.startsWith("base:") || key.startsWith("persona:"))
+    )
+  ) {
+    throw new Error("A note model scope contains an invalid model identity");
+  }
+  return { all_models: false, model_keys: modelKeys.sort() };
+}
+
+function normalizePrivateNoteSettings(settings: NoteSettings): NoteSettings {
+  return {
+    allow_model_read: Boolean(settings.allow_model_read),
+    allow_model_create: Boolean(settings.allow_model_create),
+    allow_model_edit: Boolean(settings.allow_model_edit),
+    allow_model_trash: Boolean(settings.allow_model_trash),
+    default_ai_access: ["none", "read", "edit", "manage"].includes(settings.default_ai_access)
+      ? settings.default_ai_access
+      : "none",
+    default_model_scope: validatePrivateNoteModelScope(
+      settings.default_model_scope ?? emptyPrivateNoteModelScope()
+    )
+  };
 }
 
 function ensureExpectedPrivateNoteVersion(note: Note, expectedVersion: number) {
@@ -1955,6 +2093,12 @@ function ensurePrivateStores(db: IDBDatabase) {
       keyPath: "id"
     });
     noteVersionStore.createIndex("note_id", "note_id", { unique: false });
+  }
+  if (!db.objectStoreNames.contains(NOTE_SETTINGS_STORE)) {
+    db.createObjectStore(NOTE_SETTINGS_STORE, { keyPath: "id" });
+  }
+  if (!db.objectStoreNames.contains(CLIENT_TOOL_RECEIPT_STORE)) {
+    db.createObjectStore(CLIENT_TOOL_RECEIPT_STORE, { keyPath: "id" });
   }
   if (!db.objectStoreNames.contains(HOSTED_CHAT_CACHE_STORE)) {
     db.createObjectStore(HOSTED_CHAT_CACHE_STORE, { keyPath: "id" });
@@ -2283,6 +2427,7 @@ function normalizePrivateMessage(message: PrivateChatMessage): PrivateChatMessag
 function normalizePrivateChat(chat: PrivateChatDetail): PrivateChatDetail {
   return {
     ...chat,
+    tool_preferences: normalizeToolPreferences(chat.tool_preferences),
     context_blocks: chat.context_blocks ?? []
   };
 }

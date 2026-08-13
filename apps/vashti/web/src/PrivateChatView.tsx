@@ -26,6 +26,10 @@ import {
   versionInfoForMessage
 } from "./chatMessages";
 import { ConfirmDialog, RetroLoader } from "./common";
+import {
+  dispatchClientToolCall,
+  type ClientToolCallEvent
+} from "./clientToolBridge";
 import { StartChatComposer, type GenerationNotice } from "./Composer";
 import { normalizeContextSelections } from "./contextBlocks";
 import { readGenerateEventStream } from "./generationStream";
@@ -33,6 +37,10 @@ import { MessageBubble } from "./MessageBubble";
 import { ModelBackgroundLayer, modelBackgroundContainerStyle } from "./ModelBackground";
 import { MessageTreeExplorer } from "./MessageTreeExplorer";
 import { searchDeviceNotes } from "./notes/repository";
+import {
+  DEVICE_NOTES_TOOL_ID,
+  enabledDeviceNoteToolNames
+} from "./deviceNoteTools";
 import {
   characterPersonaVersionIds,
   characterPresentationMessageIds
@@ -65,12 +73,19 @@ import {
   privatePersonaWithVersionForId,
   privatePersonaWithVersionForValue
 } from "./modelSelection";
+import {
+  defaultToolPreferences,
+  normalizeToolPreferences,
+  toolPreferenceEnabled
+} from "./toolPreferences";
 import type {
   AutoScrollMode,
+  AvailableTool,
   BackendModelGroup,
   BranchScrollAnchor,
   ChatMessage,
   ChatInferenceSettings,
+  ChatToolPreferences,
   ContextBlockSelection,
   ComposerAttachment,
   ComposerSubmitPayload,
@@ -95,6 +110,7 @@ export function PrivateChatView({
   systemPromptOverride,
   inferenceSettings,
   contextBlocks,
+  availableTools,
   isTreeOpen,
   onTreeClose,
   onChatSettingsLoaded,
@@ -116,6 +132,7 @@ export function PrivateChatView({
   systemPromptOverride: string | null;
   inferenceSettings: ChatInferenceSettings;
   contextBlocks: ContextBlockSelection[];
+  availableTools: AvailableTool[];
   isTreeOpen: boolean;
   onTreeClose: () => void;
   onChatSettingsLoaded: (
@@ -539,7 +556,7 @@ export function PrivateChatView({
     void submitPrompt(
       queuedPrompt.prompt,
       queuedPrompt.attachments,
-      undefined,
+      queuedPrompt.toolPreferences ?? chat.tool_preferences,
       queuedPrompt.thinkMode,
       queuedPrompt.systemPromptOverride !== undefined
         ? queuedPrompt.systemPromptOverride
@@ -577,7 +594,8 @@ export function PrivateChatView({
         : systemPromptOverride,
       prompt.inferenceSettings !== undefined ? prompt.inferenceSettings : inferenceSettings,
       prompt.contextBlocks !== undefined ? prompt.contextBlocks : contextBlocks,
-      prompt.notes ?? []
+      prompt.notes ?? [],
+      prompt.toolPreferences ?? chat.tool_preferences
     );
   }, [
     chat,
@@ -663,6 +681,11 @@ export function PrivateChatView({
     setMessages(nextMessages);
   }
 
+  function replacePrivateChat(nextChat: PrivateChatDetail) {
+    chatRef.current = nextChat;
+    setChat(nextChat);
+  }
+
   function queuePrivateMessageSave(message: PrivateChatMessage) {
     privateSaveChainRef.current = privateSaveChainRef.current
       .catch(() => undefined)
@@ -697,9 +720,16 @@ export function PrivateChatView({
     thinkingContentCursorRef.current.set(assistantId, 0);
 
     try {
+      const requestBody =
+        path === "/api/private/generate"
+          ? {
+              ...(body as Record<string, unknown>),
+              client_tools: await selectedDeviceToolNames()
+            }
+          : body;
       await readGenerateEventStream({
         path,
-        body,
+        body: requestBody,
         signal: controller.signal,
         onEvent: (event) => applyPrivateGenerateEvent(event, runId)
       });
@@ -751,7 +781,8 @@ export function PrivateChatView({
     promptSystemPromptOverride: string | null = systemPromptOverride,
     promptInferenceSettings: ChatInferenceSettings = inferenceSettings,
     promptContextBlocks: ContextBlockSelection[] = contextBlocks,
-    promptNotes: NoteContextSelection[] = []
+    promptNotes: NoteContextSelection[] = [],
+    promptToolPreferences: ChatToolPreferences = chat?.tool_preferences ?? defaultToolPreferences
   ) {
     if (!chat || isGenerating) {
       return;
@@ -849,6 +880,7 @@ export function PrivateChatView({
       persona_name: selectedPrivatePersona?.current_version.display_name ?? null,
       system_prompt_override: promptSystemPromptOverride,
       inference_settings: promptInferenceSettings,
+      tool_preferences: normalizeToolPreferences(promptToolPreferences),
       context_blocks: normalizedContextBlocks,
       active_root_message_id: chat.active_root_message_id ?? userMessage.id,
       updated_at: now,
@@ -872,7 +904,7 @@ export function PrivateChatView({
       return;
     }
 
-    setChat(nextChat);
+    replacePrivateChat(nextChat);
     messagesRef.current = nextMessages;
     setMessages(nextMessages);
     await Promise.all([savePrivateChat(nextChat), savePrivateMessages(nextMessages)]);
@@ -935,7 +967,7 @@ export function PrivateChatView({
     };
 
     setStreamTestStatus("Running synthetic stream test...");
-    setChat(nextChat);
+    replacePrivateChat(nextChat);
     messagesRef.current = nextMessages;
     setMessages(nextMessages);
     await Promise.all([savePrivateChat(nextChat), savePrivateMessages(nextMessages)]);
@@ -973,7 +1005,7 @@ export function PrivateChatView({
   async function submitPrompt(
     prompt: string,
     attachments: ComposerAttachment[] = [],
-    _toolPreferences?: unknown,
+    toolPreferences: ChatToolPreferences = chat?.tool_preferences ?? defaultToolPreferences,
     thinkMode: ThinkingMode = "auto",
     promptSystemPromptOverride: string | null = systemPromptOverride,
     promptInferenceSettings: ChatInferenceSettings = inferenceSettings,
@@ -984,6 +1016,7 @@ export function PrivateChatView({
       setPendingPrompt({
         prompt,
         attachments,
+        toolPreferences,
         thinkMode,
         systemPromptOverride: promptSystemPromptOverride,
         inferenceSettings: promptInferenceSettings,
@@ -1001,7 +1034,8 @@ export function PrivateChatView({
       promptSystemPromptOverride,
       promptInferenceSettings,
       promptContextBlocks,
-      notes
+      notes,
+      toolPreferences
     );
   }
 
@@ -1047,6 +1081,17 @@ export function PrivateChatView({
         appendStreamSegments(event.assistant_message_id, [{ type: "content", text: event.delta }]);
         appendMessageText(event.assistant_message_id, "content_text", event.delta);
         break;
+      case "client_tool_call":
+        void executeClientToolCall(event).catch((toolError) => {
+          if (generationRunRef.current === runId) {
+            setGenerationError(
+              toolError instanceof Error
+                ? toolError.message
+                : "Failed to run the device tool"
+            );
+          }
+        });
+        break;
       case "message_done":
         finishThinkingDuration(event.assistant_message_id);
         queueGenerationNotice(event.assistant_message_id, "complete");
@@ -1090,6 +1135,58 @@ export function PrivateChatView({
       case "message_start":
       case "chat_title":
         break;
+    }
+  }
+
+  async function selectedDeviceToolNames() {
+    const preferences = chatRef.current?.tool_preferences ?? defaultToolPreferences;
+    if (
+      !preferences.tool_use_enabled ||
+      !toolPreferenceEnabled(preferences, DEVICE_NOTES_TOOL_ID) ||
+      !availableTools.some((tool) => tool.id === DEVICE_NOTES_TOOL_ID)
+    ) {
+      return [];
+    }
+    return enabledDeviceNoteToolNames();
+  }
+
+  async function executeClientToolCall(event: ClientToolCallEvent) {
+    const message = messagesRef.current.find(
+      (current) => current.id === event.assistant_message_id
+    );
+    if (!message?.backend_id || !message.model_name) {
+      throw new Error("The device tool call did not identify its model");
+    }
+    const modelKey = message.persona_id
+      ? `persona:${message.persona_id}`
+      : `base:${message.backend_id}:${message.model_name}`;
+    await dispatchClientToolCall(event, {
+      chatId,
+      modelKey,
+      modelName: message.persona_name_snapshot ?? message.model_name
+    });
+  }
+
+  async function updatePrivateToolPreferences(preferences: ChatToolPreferences) {
+    const current = chatRef.current;
+    if (!current) {
+      return;
+    }
+    const nextChat = {
+      ...current,
+      tool_preferences: normalizeToolPreferences(preferences),
+      updated_at: unixTimestamp()
+    };
+    replacePrivateChat(nextChat);
+    try {
+      await savePrivateChat(nextChat);
+    } catch (updateError) {
+      setGenerationError(
+        updateError instanceof Error
+          ? updateError.message
+          : "Failed to update private tool settings"
+      );
+      void loadPrivateChat();
     }
   }
 
@@ -1350,7 +1447,7 @@ export function PrivateChatView({
         return;
       }
 
-      setChat(nextChat);
+      replacePrivateChat(nextChat);
       replacePrivateMessages(nextMessages);
       await privateSaveChainRef.current;
       await Promise.all([savePrivateChat(nextChat), savePrivateMessages(nextMessages)]);
@@ -1496,7 +1593,7 @@ export function PrivateChatView({
         return;
       }
 
-      setChat(nextChat);
+      replacePrivateChat(nextChat);
       replacePrivateMessages(nextMessages);
       await privateSaveChainRef.current;
       await Promise.all([savePrivateChat(nextChat), savePrivateMessages(nextMessages)]);
@@ -1619,7 +1716,7 @@ export function PrivateChatView({
         return;
       }
 
-      setChat(nextChat);
+      replacePrivateChat(nextChat);
       replacePrivateMessages(nextMessages);
       await privateSaveChainRef.current;
       await Promise.all([savePrivateChat(nextChat), savePrivateMessages(nextMessages)]);
@@ -1676,7 +1773,7 @@ export function PrivateChatView({
       updatedAt: unixTimestamp()
     });
 
-    setChat(selection.chat);
+    replacePrivateChat(selection.chat);
     replacePrivateMessages(selection.messages);
     const nextModelValue = messageModelValue(nextMessage);
     if (nextMessage.role === "assistant" && nextModelValue) {
@@ -1727,7 +1824,7 @@ export function PrivateChatView({
     setGenerationError(null);
     branchScrollAnchorRef.current = null;
     generationJumpTargetRef.current = messageId;
-    setChat(selection.chat);
+    replacePrivateChat(selection.chat);
     replacePrivateMessages(selection.messages);
 
     privateSaveChainRef.current = privateSaveChainRef.current
@@ -1937,9 +2034,12 @@ export function PrivateChatView({
               isGenerating={isGenerating}
               placeholder={selectedModel ? "Message private chat" : "Select a model to continue"}
               selectedModelInfo={selectedModelInfo}
+              availableTools={availableTools}
+              toolPreferences={chat.tool_preferences}
               thinkingMode={thinkingMode}
               warning={modelImageWarning}
               onThinkingModeChange={setThinkingMode}
+              onToolPreferencesChange={updatePrivateToolPreferences}
               onJumpToGeneration={
                 isGenerating && activeAssistantId && !isActiveGenerationVisible
                   ? jumpToActiveGeneration

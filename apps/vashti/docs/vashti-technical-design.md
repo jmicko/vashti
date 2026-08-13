@@ -2121,15 +2121,19 @@ Purpose:
 * accept transient private-local persona system prompts from the client
 * forward to chosen Ollama backend
 * stream assistant output back
+* pause for allowlisted client tool results when the selected model requests
+  an enabled device tool
 * avoid persisting content to DB or file storage
 
 Request:
 
 ```json
 {
+  "assistant_message_id": "client-assistant-uuid",
   "backend_id": "b1",
   "model_name": "gemma4",
-  "system_prompt": "You are careful, concise, and cite uncertainty.",
+  "think_mode": "auto",
+  "client_tools": ["search_notes", "read_note"],
   "messages": [
     {
       "role": "user",
@@ -2156,7 +2160,55 @@ Behavior:
 * private-local attachments are persisted only in browser IndexedDB, never in server DB or upload storage
 * text attachments are appended to transient `content_text`
 * image attachments are sent as transient Ollama `images` entries on the relevant message
-* response uses the same stream format as standard generation
+* requested client tools are server-allowlisted and checked against global and
+  tag-based permissions before their schemas reach Ollama
+* response uses the same stream format as standard generation, with an
+  additional `client_tool_call` event when browser execution is required
+
+Example client tool event:
+
+```json
+{
+  "type": "client_tool_call",
+  "assistant_message_id": "client-assistant-uuid",
+  "generation_id": "server-generation-uuid",
+  "call_id": "server-call-uuid",
+  "resume_token": "opaque-one-time-token",
+  "name": "read_note",
+  "arguments": {
+    "note_id": "client-note-uuid"
+  }
+}
+```
+
+### `POST /api/private/client-tool-result`
+
+Purpose:
+
+* return the bounded result of a client tool while private generation is open
+* authenticate the result against its user, session, generation, call ID, and
+  opaque resume token
+* resume the waiting Ollama tool round without persisting the result
+
+Request:
+
+```json
+{
+  "generation_id": "server-generation-uuid",
+  "call_id": "server-call-uuid",
+  "resume_token": "opaque-one-time-token",
+  "result": {
+    "note_id": "client-note-uuid",
+    "title": "Door repair",
+    "content": "...",
+    "version": 3
+  }
+}
+```
+
+Exactly one of `result` or `error` is required. A matching repeated submission
+is accepted as an idempotent duplicate for a short bounded interval. Unknown,
+expired, cross-session, or cross-user submissions are rejected.
 
 ### Debug-only private stream test endpoint
 
@@ -2344,6 +2396,10 @@ Store objects like:
 * `private_context_categories`
 * `private_context_blocks`
 * `private_context_block_versions`
+* `private_notes`
+* `private_note_versions`
+* `private_note_settings`
+* `private_client_tool_receipts`
 * `hosted_chat_cache`
 * `hosted_chat_list_cache`
 * `model_cache`
@@ -2364,6 +2420,12 @@ Suggested private chat shape:
   "model_name": "gemma4",
   "private_persona_id": "client-persona-uuid",
   "private_persona_version_id": "client-persona-version-uuid",
+  "tool_preferences": {
+    "tool_use_enabled": true,
+    "tools": {
+      "notes": true
+    }
+  },
   "created_at": 1710000000,
   "updated_at": 1710000100
 }
@@ -2405,6 +2467,11 @@ Suggested private message shape:
 ```
 
 Private-local storage should mirror the standard message tree shape where practical, while remaining client-owned and IndexedDB-backed.
+
+Device-note settings and client-tool receipts use the same per-user encrypted
+record envelope as private chats. Receipts contain only bounded tool results or
+errors and exist to prevent a retried stream event from repeating a local
+mutation. Old receipts are removed automatically.
 
 For MVP private-local attachments:
 

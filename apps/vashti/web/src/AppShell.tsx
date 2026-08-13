@@ -155,6 +155,7 @@ export function AppShell({
     [privatePersonaVersions]
   );
   const [availableTools, setAvailableTools] = useState<AvailableTool[]>([]);
+  const [deviceAvailableTools, setDeviceAvailableTools] = useState<AvailableTool[]>([]);
   const [selectedModel, setSelectedModel] = useState("");
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [modelError, setModelError] = useState<string | null>(null);
@@ -537,8 +538,10 @@ export function AppShell({
     try {
       const response = await requestJson<AvailableToolsResponse>("/api/tools");
       setAvailableTools(response.tools_enabled ? response.tools : []);
+      setDeviceAvailableTools(response.tools_enabled ? response.device_tools ?? [] : []);
     } catch {
       setAvailableTools([]);
+      setDeviceAvailableTools([]);
     }
   }, []);
 
@@ -989,7 +992,7 @@ export function AppShell({
   async function createPrivateChatFromPrompt(
     prompt: string,
     attachments: ComposerAttachment[] = [],
-    _toolPreferences: ChatToolPreferences = defaultToolPreferences,
+    toolPreferences: ChatToolPreferences = defaultToolPreferences,
     thinkMode: ThinkingMode = "auto",
     notes: NoteContextSelection[] = []
   ) {
@@ -1028,6 +1031,7 @@ export function AppShell({
         personaName: selectedPrivatePersona?.current_version.display_name ?? null,
         systemPromptOverride: chatSystemPromptOverride,
         inferenceSettings: chatInferenceSettings,
+        toolPreferences,
         contextBlocks: chatContextBlocks
       });
 
@@ -1036,6 +1040,7 @@ export function AppShell({
           chatId: chat.id,
           prompt,
           attachments,
+          toolPreferences,
           thinkMode,
           systemPromptOverride: chatSystemPromptOverride,
           inferenceSettings: chatInferenceSettings,
@@ -1365,7 +1370,11 @@ export function AppShell({
           />
         ) : page === "notes" ? (
           <Suspense fallback={<NotesInterfaceLoader />}>
-            <NotesWorkspace modelGroups={modelGroups} personas={personas} />
+            <NotesWorkspace
+              modelGroups={modelGroups}
+              personas={personas}
+              privatePersonas={privatePersonas}
+            />
           </Suspense>
         ) : page === "private-chat" && currentPrivateChatId ? (
           <Suspense fallback={<ChatInterfaceLoader />}>
@@ -1383,6 +1392,7 @@ export function AppShell({
               systemPromptOverride={chatSystemPromptOverride}
               inferenceSettings={chatInferenceSettings}
               contextBlocks={chatContextBlocks}
+              availableTools={deviceAvailableTools}
               isTreeOpen={isMessageTreeOpen}
               onTreeClose={() => setIsMessageTreeOpen(false)}
               onImageOpen={openImageViewer}
@@ -1429,7 +1439,9 @@ export function AppShell({
                 activeSelectedModel
               }
               selectedModelInfo={activeSelectedModel ? selectedModelInfo() : null}
-              availableTools={newChatMode === "standard" ? availableTools : []}
+              availableTools={
+                newChatMode === "standard" ? availableTools : deviceAvailableTools
+              }
               onModeChange={setNewChatMode}
               onCreateChat={createChatFromPrompt}
               onCreatePrivateChat={createPrivateChatFromPrompt}

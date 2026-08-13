@@ -50,7 +50,7 @@ Device notes:
   persistence
 
 Standard chats must never use device notes. Autonomous tool access to device
-notes requires the client-tool bridge described in section 8.
+notes uses the client-tool bridge described in section 8.
 
 ## 3. Versioning, Trash, and Concurrency
 
@@ -181,20 +181,34 @@ search is optional and must fail back to FTS5 without making notes unavailable.
 
 ## 8. Device Tool Bridge
 
-The existing generation loop executes tools on the server, which cannot access
-encrypted IndexedDB. Autonomous device-note tools therefore require a generic
-client-tool protocol:
+The server cannot directly access encrypted IndexedDB. Private generation uses
+a generic client-tool protocol for operations that must execute on the active
+device:
 
 1. the server emits a client tool-call event during private generation
-2. the frontend validates the chat and effective local permissions
+2. the frontend validates the chat, per-chat tool selection, local defaults,
+   per-note access level, and exact model scope
 3. the frontend executes the operation against encrypted IndexedDB
-4. the frontend returns a bounded result associated with the tool-call ID
+4. the frontend stores an encrypted idempotency receipt and returns a bounded
+   result associated with the tool-call ID
 5. generation resumes with that result
 
-This bridge is useful beyond Notes and should not be implemented as a
-notes-specific exception. Until it exists, device notes support human CRUD,
-keyword search, history, trash, and explicit `/notes` attachment, but are not
-advertised as autonomously available model tools.
+The server broker binds each pending call to the authenticated user, session,
+generation, opaque call ID, and one-time resume token. Results from another
+user, session, or generation are rejected. Completed calls remain briefly
+idempotent so a client retry cannot run a model round twice. Calls time out and
+generation resumes with a bounded error result rather than waiting forever.
+
+The bridge is transport only and contains no Notes-specific storage logic.
+Known client tool schemas are allowlisted on the server and checked against the
+same global and tag-based tool-family permissions as standard chats. The
+browser owns the handler registry and encrypted local permission state.
+
+Device note identities, libraries, permissions, and receipts are never written
+to server persistence. Tool arguments and results necessarily pass transiently
+through Vashti and the selected Ollama backend while that generation is active.
+This is the same disclosure boundary as explicitly attaching a device note to
+a private prompt; it is not device-local inference.
 
 ## 9. Server Data Model
 
@@ -222,7 +236,7 @@ a note ID from a tool call never substitutes for an ownership check.
 4. `/notes`, message-version attachments, and conversation-pinned notes.
 5. Optional Ollama embeddings and hybrid retrieval.
 6. Encrypted device-note workspace and explicit private-message attachment.
-7. Generic client-tool bridge and autonomous device-note tools.
+7. Generic authenticated client-tool bridge and autonomous device-note tools.
 
 Each slice must include ownership and permission tests, migration tests, Rust
 tests, TypeScript checks, and production web builds before it is committed.
