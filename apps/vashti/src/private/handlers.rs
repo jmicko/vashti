@@ -8,24 +8,33 @@ use axum::{
 use axum_extra::extract::CookieJar;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
-use std::convert::Infallible;
+use std::{collections::HashSet, convert::Infallible};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
+use uuid::Uuid;
 
 use crate::{
     app_state::AppState,
     auth, backends,
     chats::models::ChatInferenceSettings,
+    client_tools::{
+        CLIENT_TOOL_TIMEOUT, ClientToolBroker, ClientToolCallIdentity, ResolveClientToolCall,
+        session_binding,
+    },
     error::ApiError,
     ollama::{
         self,
         models::{
-            OllamaChatChunk, OllamaChatOptions, OllamaChatRequest, OllamaThink, OllamaUsageStats,
+            OllamaChatChunk, OllamaChatMessage, OllamaChatOptions, OllamaChatRequest, OllamaThink,
+            OllamaTool, OllamaToolCall, OllamaUsageStats,
         },
     },
     private::service,
-    rate_limit,
+    rate_limit, settings, tools,
 };
+
+const MAX_CLIENT_TOOLS: usize = 8;
+const MAX_CLIENT_TOOL_RESULT_CHARS: usize = 24_000;
 
 #[derive(Debug, Deserialize)]
 pub struct PrivateGenerateRequest {
@@ -35,6 +44,23 @@ pub struct PrivateGenerateRequest {
     pub think_mode: Option<String>,
     pub inference_settings: Option<ChatInferenceSettings>,
     pub messages: Vec<service::PrivateMessageInput>,
+    #[serde(default)]
+    pub client_tools: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ClientToolResultRequest {
+    pub generation_id: String,
+    pub call_id: String,
+    pub resume_token: String,
+    pub result: Option<serde_json::Value>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ClientToolResultResponse {
+    pub accepted: bool,
+    pub duplicate: bool,
 }
 
 #[cfg(debug_assertions)]
@@ -57,6 +83,14 @@ enum PrivateGenerateEvent {
         assistant_message_id: String,
         delta: String,
     },
+    ClientToolCall {
+        assistant_message_id: String,
+        generation_id: String,
+        call_id: String,
+        resume_token: String,
+        name: String,
+        arguments: serde_json::Value,
+    },
     MessageDone {
         assistant_message_id: String,
         done_reason: Option<String>,
@@ -77,6 +111,11 @@ struct PrivateGenerationTask {
     think_mode: Option<String>,
     inference_options: Option<OllamaChatOptions>,
     messages: Vec<ollama::models::OllamaChatMessage>,
+    tools: Vec<OllamaTool>,
+    broker: ClientToolBroker,
+    generation_id: String,
+    user_id: String,
+    session_binding: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -121,7 +160,31 @@ pub async fn generate(
         &model_name,
     )
     .await?;
-    let messages = service::private_prompt_messages(payload.messages)?;
+    let mut messages = service::private_prompt_messages(payload.messages)?;
+    let available_tools = allowed_client_tools(&state, &user.id, payload.client_tools).await?;
+    let available_tools = if available_tools.is_empty()
+        || ollama::client::model_supports_tools(&state.http_client, &backend.base_url, &model_name)
+            .await
+    {
+        available_tools
+    } else {
+        Vec::new()
+    };
+    if !available_tools.is_empty() {
+        let tool_settings = settings::service::get_tool_settings_private(&state.db).await?;
+        messages.insert(
+            0,
+            OllamaChatMessage {
+                role: "system".to_string(),
+                content: tools::service::tool_system_prompt(&tool_settings, &available_tools),
+                thinking: None,
+                images: None,
+                tool_name: None,
+                tool_calls: None,
+            },
+        );
+    }
+    let session_binding = request_session_binding(&state, &jar)?;
 
     Ok(start_private_stream(
         state.http_client,
@@ -133,8 +196,43 @@ pub async fn generate(
             payload.inference_settings.unwrap_or_default(),
         )),
         messages,
+        available_tools,
+        state.client_tools,
+        user.id,
+        session_binding,
     )
     .await)
+}
+
+pub async fn client_tool_result(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Json(payload): Json<ClientToolResultRequest>,
+) -> Result<Json<ClientToolResultResponse>, ApiError> {
+    let user =
+        auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
+    state
+        .rate_limiter
+        .check(
+            rate_limit::user_action_key("client-tool-result", &user.id),
+            240,
+            60,
+        )
+        .await?;
+    let result = bounded_client_tool_result(payload.result, payload.error)?;
+    let identity = ClientToolCallIdentity {
+        generation_id: payload.generation_id.trim(),
+        call_id: payload.call_id.trim(),
+        user_id: &user.id,
+        session_binding: &request_session_binding(&state, &jar)?,
+        resume_token: payload.resume_token.trim(),
+    };
+    let outcome = state.client_tools.resolve(&identity, result).await?;
+
+    Ok(Json(ClientToolResultResponse {
+        accepted: true,
+        duplicate: outcome == ResolveClientToolCall::AlreadyCompleted,
+    }))
 }
 
 #[cfg(debug_assertions)]
@@ -192,6 +290,10 @@ async fn start_private_stream(
     think_mode: Option<String>,
     inference_options: Option<OllamaChatOptions>,
     messages: Vec<ollama::models::OllamaChatMessage>,
+    tools: Vec<OllamaTool>,
+    broker: ClientToolBroker,
+    user_id: String,
+    session_binding: String,
 ) -> Response {
     let (tx, rx) = mpsc::channel::<Result<Bytes, Infallible>>(32);
 
@@ -205,6 +307,11 @@ async fn start_private_stream(
             think_mode,
             inference_options,
             messages,
+            tools,
+            broker,
+            generation_id: Uuid::new_v4().to_string(),
+            user_id,
+            session_binding,
         })
         .await;
     });
@@ -232,111 +339,177 @@ async fn stream_private_generation(task: PrivateGenerationTask) {
         assistant_message_id,
         think_mode,
         inference_options,
-        messages,
+        messages: mut prompt_messages,
+        tools: available_tools,
+        broker,
+        generation_id,
+        user_id,
+        session_binding,
     } = task;
-    let request = OllamaChatRequest {
-        model: model_name,
-        messages,
-        stream: true,
-        options: inference_options,
-        think: think_mode.as_deref().and_then(think_from_mode),
-        tools: None,
-    };
-
-    let response = match ollama::client::chat_stream(&client, &backend_base_url, &request).await {
-        Ok(response) => response,
-        Err(error) => {
-            let _ = send_event(
-                &tx,
-                &PrivateGenerateEvent::Error {
-                    assistant_message_id: Some(assistant_message_id),
-                    message: format!("Ollama request failed: {error}"),
-                },
-            )
-            .await;
-            return;
-        }
-    };
-
-    let mut stream = response.bytes_stream();
-    let mut buffer = String::new();
     let mut done_reason = None;
     let mut usage_stats: Option<OllamaUsageStats> = None;
+    let available_tool_names = available_tools
+        .iter()
+        .map(|tool| tool.function.name.clone())
+        .collect::<HashSet<_>>();
 
-    while let Some(next) = stream.next().await {
-        let bytes = match next {
-            Ok(bytes) => bytes,
+    loop {
+        let request = OllamaChatRequest {
+            model: model_name.clone(),
+            messages: prompt_messages.clone(),
+            stream: true,
+            options: inference_options.clone(),
+            think: think_mode.as_deref().and_then(think_from_mode),
+            tools: (!available_tools.is_empty()).then_some(available_tools.clone()),
+        };
+        let response = match ollama::client::chat_stream(&client, &backend_base_url, &request).await
+        {
+            Ok(response) => response,
             Err(error) => {
-                let _ = send_event(
+                send_private_error(
                     &tx,
-                    &PrivateGenerateEvent::Error {
-                        assistant_message_id: Some(assistant_message_id),
-                        message: format!("Ollama stream failed: {error}"),
-                    },
+                    &assistant_message_id,
+                    format!("Ollama request failed: {error}"),
                 )
                 .await;
                 return;
             }
         };
+        let mut stream = response.bytes_stream();
+        let mut buffer = String::new();
+        let mut round_content = String::new();
+        let mut round_thinking = String::new();
+        let mut round_tool_calls = Vec::new();
 
-        buffer.push_str(&String::from_utf8_lossy(&bytes));
-        while let Some(line_end) = buffer.find('\n') {
-            let line = buffer[..line_end].trim().to_string();
-            buffer.drain(..=line_end);
-            if line.is_empty() {
-                continue;
-            }
-
-            match handle_ollama_line(
-                &tx,
-                &assistant_message_id,
-                &line,
-                &mut done_reason,
-                &mut usage_stats,
-            )
-            .await
-            {
-                Ok(true) => {}
-                Ok(false) => return,
-                Err(message) => {
-                    let _ = send_event(
+        while let Some(next) = stream.next().await {
+            let bytes = match next {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    send_private_error(
                         &tx,
-                        &PrivateGenerateEvent::Error {
-                            assistant_message_id: Some(assistant_message_id),
-                            message,
-                        },
+                        &assistant_message_id,
+                        format!("Ollama stream failed: {error}"),
                     )
                     .await;
                     return;
                 }
+            };
+            buffer.push_str(&String::from_utf8_lossy(&bytes));
+            while let Some(line_end) = buffer.find('\n') {
+                let line = buffer[..line_end].trim().to_string();
+                buffer.drain(..=line_end);
+                if line.is_empty() {
+                    continue;
+                }
+                if let Err(message) = handle_private_tool_line(
+                    &tx,
+                    &assistant_message_id,
+                    &line,
+                    &mut done_reason,
+                    &mut usage_stats,
+                    &mut round_content,
+                    &mut round_thinking,
+                    &mut round_tool_calls,
+                )
+                .await
+                {
+                    send_private_error(&tx, &assistant_message_id, message).await;
+                    return;
+                }
             }
         }
-    }
 
-    let line = buffer.trim().to_string();
-    if !line.is_empty() {
-        match handle_ollama_line(
-            &tx,
-            &assistant_message_id,
-            &line,
-            &mut done_reason,
-            &mut usage_stats,
-        )
-        .await
+        let trailing = buffer.trim();
+        if !trailing.is_empty()
+            && let Err(message) = handle_private_tool_line(
+                &tx,
+                &assistant_message_id,
+                trailing,
+                &mut done_reason,
+                &mut usage_stats,
+                &mut round_content,
+                &mut round_thinking,
+                &mut round_tool_calls,
+            )
+            .await
         {
-            Ok(true) => {}
-            Ok(false) => return,
-            Err(message) => {
-                let _ = send_event(
+            send_private_error(&tx, &assistant_message_id, message).await;
+            return;
+        }
+        if round_tool_calls.is_empty() {
+            break;
+        }
+
+        prompt_messages.push(OllamaChatMessage {
+            role: "assistant".to_string(),
+            content: round_content,
+            thinking: (!round_thinking.trim().is_empty()).then_some(round_thinking),
+            images: None,
+            tool_name: None,
+            tool_calls: Some(normalized_tool_calls(&round_tool_calls)),
+        });
+
+        for call in &round_tool_calls {
+            let result = if available_tool_names.contains(&call.function.name) {
+                let registered = broker
+                    .register(&generation_id, &user_id, &session_binding)
+                    .await;
+                let call_id = registered.call_id.clone();
+                if !send_event(
                     &tx,
-                    &PrivateGenerateEvent::Error {
-                        assistant_message_id: Some(assistant_message_id),
-                        message,
+                    &PrivateGenerateEvent::ClientToolCall {
+                        assistant_message_id: assistant_message_id.clone(),
+                        generation_id: generation_id.clone(),
+                        call_id: call_id.clone(),
+                        resume_token: registered.resume_token,
+                        name: call.function.name.clone(),
+                        arguments: call.function.arguments.clone(),
                     },
                 )
-                .await;
-                return;
-            }
+                .await
+                {
+                    broker.cancel(&call_id).await;
+                    return;
+                }
+                let result = tokio::select! {
+                    received = registered.receiver => received.unwrap_or_else(|_| {
+                        serde_json::json!({ "error": "The device tool call was cancelled." }).to_string()
+                    }),
+                    _ = tx.closed() => {
+                        broker.cancel(&call_id).await;
+                        return;
+                    },
+                    _ = tokio::time::sleep(CLIENT_TOOL_TIMEOUT) => {
+                        broker.cancel(&call_id).await;
+                        serde_json::json!({ "error": "The device tool did not respond before the timeout." }).to_string()
+                    },
+                };
+                if !send_event(
+                    &tx,
+                    &PrivateGenerateEvent::ThinkingDelta {
+                        assistant_message_id: assistant_message_id.clone(),
+                        delta: tools::service::tool_usage_block(call, &result),
+                    },
+                )
+                .await
+                {
+                    return;
+                }
+                result
+            } else {
+                serde_json::json!({
+                    "error": format!("{} is not available in this private chat.", call.function.name)
+                })
+                .to_string()
+            };
+            prompt_messages.push(OllamaChatMessage {
+                role: "tool".to_string(),
+                content: result,
+                thinking: None,
+                images: None,
+                tool_name: Some(call.function.name.clone()),
+                tool_calls: None,
+            });
         }
     }
 
@@ -351,26 +524,55 @@ async fn stream_private_generation(task: PrivateGenerationTask) {
     .await;
 }
 
-async fn handle_ollama_line(
+fn normalized_tool_calls(calls: &[OllamaToolCall]) -> Vec<OllamaToolCall> {
+    calls
+        .iter()
+        .cloned()
+        .map(|mut call| {
+            call.kind = Some("function".to_string());
+            call
+        })
+        .collect()
+}
+
+async fn send_private_error(
+    tx: &mpsc::Sender<Result<Bytes, Infallible>>,
+    assistant_message_id: &str,
+    message: String,
+) {
+    let _ = send_event(
+        tx,
+        &PrivateGenerateEvent::Error {
+            assistant_message_id: Some(assistant_message_id.to_string()),
+            message,
+        },
+    )
+    .await;
+}
+
+async fn handle_private_tool_line(
     tx: &mpsc::Sender<Result<Bytes, Infallible>>,
     assistant_message_id: &str,
     line: &str,
     done_reason: &mut Option<String>,
     usage_stats: &mut Option<OllamaUsageStats>,
-) -> Result<bool, String> {
+    round_content: &mut String,
+    round_thinking: &mut String,
+    round_tool_calls: &mut Vec<OllamaToolCall>,
+) -> Result<(), String> {
     let chunk = serde_json::from_str::<OllamaChatChunk>(line)
         .map_err(|error| format!("Invalid Ollama stream chunk: {error}"))?;
-
     if let Some(chunk_stats) = chunk.usage_stats() {
         match usage_stats {
             Some(stats) => stats.add_assign(chunk_stats),
             None => *usage_stats = Some(chunk_stats),
         }
     }
-
     if let Some(message) = chunk.message {
-        if !message.thinking.is_empty()
-            && !send_event(
+        round_tool_calls.extend(message.tool_calls);
+        if !message.thinking.is_empty() {
+            round_thinking.push_str(&message.thinking);
+            if !send_event(
                 tx,
                 &PrivateGenerateEvent::ThinkingDelta {
                     assistant_message_id: assistant_message_id.to_string(),
@@ -378,12 +580,13 @@ async fn handle_ollama_line(
                 },
             )
             .await
-        {
-            return Ok(false);
+            {
+                return Ok(());
+            }
         }
-
-        if !message.content.is_empty()
-            && !send_event(
+        if !message.content.is_empty() {
+            round_content.push_str(&message.content);
+            if !send_event(
                 tx,
                 &PrivateGenerateEvent::ContentDelta {
                     assistant_message_id: assistant_message_id.to_string(),
@@ -391,16 +594,108 @@ async fn handle_ollama_line(
                 },
             )
             .await
-        {
-            return Ok(false);
+            {
+                return Ok(());
+            }
         }
     }
-
     if chunk.done {
         *done_reason = chunk.done_reason;
     }
+    Ok(())
+}
 
-    Ok(true)
+async fn allowed_client_tools(
+    state: &AppState,
+    user_id: &str,
+    requested_names: Vec<String>,
+) -> Result<Vec<OllamaTool>, ApiError> {
+    if requested_names.len() > MAX_CLIENT_TOOLS {
+        return Err(ApiError::bad_request(
+            "too_many_client_tools",
+            "Too many device tools were requested",
+        ));
+    }
+    let notes_allowed = settings::service::tool_is_available_for_user(
+        &state.db,
+        user_id,
+        tools::service::TOOL_NOTES,
+    )
+    .await?;
+    let mut seen = HashSet::new();
+    let mut selected = Vec::new();
+    for requested in requested_names {
+        let name = requested.trim();
+        let Some(tool) = tools::service::client_tool_schema(name) else {
+            return Err(ApiError::bad_request(
+                "unknown_client_tool",
+                format!("Unknown device tool: {name}"),
+            ));
+        };
+        if notes_allowed && seen.insert(name.to_string()) {
+            selected.push(tool);
+        }
+    }
+    Ok(selected)
+}
+
+fn bounded_client_tool_result(
+    result: Option<serde_json::Value>,
+    error: Option<String>,
+) -> Result<String, ApiError> {
+    let value = match (result, error) {
+        (Some(result), None) => result,
+        (None, Some(error)) => serde_json::json!({ "error": error.trim() }),
+        _ => {
+            return Err(ApiError::bad_request(
+                "invalid_client_tool_result",
+                "Provide exactly one of result or error",
+            ));
+        }
+    };
+    let serialized = serde_json::to_string(&value)
+        .map_err(|_| ApiError::bad_request("invalid_client_tool_result", "Invalid tool result"))?;
+    if serialized.chars().count() > MAX_CLIENT_TOOL_RESULT_CHARS {
+        return Err(ApiError::bad_request(
+            "client_tool_result_too_large",
+            "Device tool result is too large",
+        ));
+    }
+    Ok(serialized)
+}
+
+fn request_session_binding(state: &AppState, jar: &CookieJar) -> Result<String, ApiError> {
+    let session = jar
+        .get(&state.config.session_cookie_name)
+        .ok_or_else(ApiError::unauthorized)?;
+    Ok(session_binding(session.value()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn client_tool_result_requires_exactly_one_payload() {
+        assert!(bounded_client_tool_result(Some(serde_json::json!({ "ok": true })), None).is_ok());
+        assert!(bounded_client_tool_result(None, Some("failed".to_string())).is_ok());
+        assert!(bounded_client_tool_result(None, None).is_err());
+        assert!(
+            bounded_client_tool_result(
+                Some(serde_json::json!({ "ok": true })),
+                Some("failed".to_string())
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn client_tool_result_is_bounded() {
+        let oversized = "x".repeat(MAX_CLIENT_TOOL_RESULT_CHARS + 1);
+        let error = bounded_client_tool_result(Some(serde_json::json!(oversized)), None)
+            .expect_err("oversized device tool results must be rejected");
+        assert_eq!(error.code(), "client_tool_result_too_large");
+    }
 }
 
 #[cfg(debug_assertions)]

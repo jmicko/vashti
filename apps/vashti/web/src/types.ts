@@ -649,6 +649,7 @@ export type AvailableTool = {
 export type AvailableToolsResponse = {
   tools_enabled: boolean;
   tools: AvailableTool[];
+  device_tools: AvailableTool[];
 };
 
 export type VersionResponse = {

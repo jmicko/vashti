@@ -5,8 +5,8 @@ use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    config::Config, model_cache::ModelCache, notes::retrieval::NoteRetrieval,
-    rate_limit::RateLimiter, updates::UpdateManager,
+    client_tools::ClientToolBroker, config::Config, model_cache::ModelCache,
+    notes::retrieval::NoteRetrieval, rate_limit::RateLimiter, updates::UpdateManager,
 };
 
 #[derive(Clone, Debug)]
@@ -27,6 +27,7 @@ pub struct AppState {
     pub model_cache: Arc<ModelCache>,
     pub note_retrieval: Arc<NoteRetrieval>,
     pub updates: Arc<UpdateManager>,
+    pub client_tools: ClientToolBroker,
     pub generation_cancellations: Arc<Mutex<HashMap<String, CancellationToken>>>,
     pub generation_progress: Arc<Mutex<HashMap<String, GenerationProgress>>>,
 }
@@ -47,6 +48,7 @@ impl AppState {
             rate_limiter: Arc::new(RateLimiter::new()),
             model_cache: Arc::new(ModelCache::new()),
             updates: Arc::new(UpdateManager::new()),
+            client_tools: ClientToolBroker::default(),
             generation_cancellations: Arc::new(Mutex::new(HashMap::new())),
             generation_progress: Arc::new(Mutex::new(HashMap::new())),
         }

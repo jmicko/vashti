@@ -3,6 +3,7 @@ mod app_state;
 mod auth;
 mod backends;
 mod chats;
+mod client_tools;
 mod config;
 mod context_blocks;
 mod db;
@@ -374,6 +375,10 @@ fn router(state: AppState) -> Router {
             get(uploads::handlers::get_attachment).delete(uploads::handlers::delete_attachment),
         )
         .route("/private/vault-key", get(private::handlers::vault_key))
+        .route(
+            "/private/client-tool-result",
+            post(private::handlers::client_tool_result).layer(DefaultBodyLimit::max(64 * 1024)),
+        )
         .route(
             "/private/generate",
             post(private::handlers::generate)

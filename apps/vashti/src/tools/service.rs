@@ -299,6 +299,17 @@ fn trash_note_tool() -> OllamaTool {
     )
 }
 
+pub fn client_tool_schema(name: &str) -> Option<OllamaTool> {
+    match name {
+        TOOL_SEARCH_NOTES => Some(search_notes_tool()),
+        TOOL_READ_NOTE => Some(read_note_tool()),
+        TOOL_CREATE_NOTE => Some(create_note_tool()),
+        TOOL_UPDATE_NOTE => Some(update_note_tool()),
+        TOOL_TRASH_NOTE => Some(trash_note_tool()),
+        _ => None,
+    }
+}
+
 fn function_tool(name: &str, description: &str, parameters: serde_json::Value) -> OllamaTool {
     OllamaTool {
         kind: "function".to_string(),

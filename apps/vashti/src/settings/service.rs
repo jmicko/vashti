@@ -75,6 +75,7 @@ pub struct ToolSettingsResponse {
 pub struct AvailableToolsResponse {
     pub tools_enabled: bool,
     pub tools: Vec<AvailableToolResponse>,
+    pub device_tools: Vec<AvailableToolResponse>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -116,6 +117,7 @@ pub async fn get_available_tools(
     let user_tags = permissions::effective_user_tag_ids(pool, user_id).await?;
     let tool_tags = permissions::tool_tags_by_tool(pool).await?;
     let mut tools = Vec::new();
+    let mut device_tools = Vec::new();
 
     if settings.tools_enabled {
         if settings.brave_search_enabled
@@ -178,21 +180,40 @@ pub async fn get_available_tools(
         }
 
         let note_settings = notes_service::get_note_settings(pool, user_id).await?;
-        if (note_settings.allow_model_read || note_settings.allow_model_create)
-            && tool_allowed(crate::tools::service::TOOL_NOTES, &user_tags, &tool_tags)
-        {
-            tools.push(AvailableToolResponse {
+        let notes_allowed = tool_allowed(crate::tools::service::TOOL_NOTES, &user_tags, &tool_tags);
+        if notes_allowed {
+            let notes_tool = AvailableToolResponse {
                 id: crate::tools::service::TOOL_NOTES,
                 label: "Notes",
                 description: "Search and manage permitted notes with reversible changes.",
-            });
+            };
+            device_tools.push(notes_tool.clone());
+            if note_settings.allow_model_read || note_settings.allow_model_create {
+                tools.push(notes_tool);
+            }
         }
     }
 
     Ok(AvailableToolsResponse {
         tools_enabled: settings.tools_enabled,
         tools,
+        device_tools,
     })
+}
+
+pub async fn tool_is_available_for_user(
+    pool: &SqlitePool,
+    user_id: &str,
+    tool_id: &str,
+) -> Result<bool, ApiError> {
+    permissions::ensure_tool_records(pool).await?;
+    if !get_tool_settings_private(pool).await?.tools_enabled {
+        return Ok(false);
+    }
+
+    let user_tags = permissions::effective_user_tag_ids(pool, user_id).await?;
+    let tool_tags = permissions::tool_tags_by_tool(pool).await?;
+    Ok(tool_allowed(tool_id, &user_tags, &tool_tags))
 }
 
 pub async fn get_app_settings(pool: &SqlitePool) -> Result<AppSettingsResponse, sqlx::Error> {
