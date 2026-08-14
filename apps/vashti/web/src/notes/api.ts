@@ -61,6 +61,8 @@ export async function updateNote(
   noteId: string,
   payload: {
     expected_version: number;
+    expected_version_id?: string;
+    edit_session_version_id?: string;
     title?: string;
     content?: string;
     tags?: string[];

@@ -1105,6 +1105,8 @@ mod tests {
             &created.id,
             UpdateNoteRequest {
                 expected_version: 1,
+                expected_version_id: None,
+                edit_session_version_id: None,
                 title: None,
                 content: Some("Updated content".to_string()),
                 tags: None,

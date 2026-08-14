@@ -122,6 +122,10 @@ pub struct CreateNoteRequest {
 #[derive(Clone, Debug, Deserialize)]
 pub struct UpdateNoteRequest {
     pub expected_version: i64,
+    #[serde(default)]
+    pub expected_version_id: Option<String>,
+    #[serde(default)]
+    pub edit_session_version_id: Option<String>,
     pub title: Option<String>,
     pub content: Option<String>,
     pub tags: Option<Vec<String>>,

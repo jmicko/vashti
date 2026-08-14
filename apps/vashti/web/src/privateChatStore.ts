@@ -1555,6 +1555,8 @@ export async function updatePrivateNote(
   noteId: string,
   payload: {
     expected_version: number;
+    expected_version_id?: string;
+    edit_session_version_id?: string;
     title?: string;
     content?: string;
     tags?: string[];
@@ -1565,7 +1567,11 @@ export async function updatePrivateNote(
   }
 ): Promise<Note> {
   const current = await getPrivateNote(noteId);
-  ensureExpectedPrivateNoteVersion(current, payload.expected_version);
+  ensureExpectedPrivateNoteVersion(
+    current,
+    payload.expected_version,
+    payload.expected_version_id
+  );
   if (current.deleted_at) {
     throw new Error("Restore this note before editing it");
   }
@@ -1579,11 +1585,18 @@ export async function updatePrivateNote(
   const contentChanged =
     title !== current.current_version.title || content !== current.current_version.content;
   const now = unixTimestamp();
+  const replaceSessionCheckpoint =
+    contentChanged &&
+    !payload.actor &&
+    payload.edit_session_version_id === current.current_version.id &&
+    current.current_version.actor_type === "human";
   const version: NoteVersion = contentChanged
     ? {
         ...privateNoteVersion(
           current.id,
-          current.current_version.version_number + 1,
+          replaceSessionCheckpoint
+            ? current.current_version.version_number
+            : current.current_version.version_number + 1,
           now,
           payload.actor
         ),
@@ -1605,7 +1618,11 @@ export async function updatePrivateNote(
     created_at: current.created_at,
     updated_at: now
   };
-  await putPrivateNoteAndVersion(storedNote, contentChanged ? version : null);
+  await putPrivateNoteAndVersion(
+    storedNote,
+    contentChanged ? version : null,
+    replaceSessionCheckpoint ? current.current_version.id : null
+  );
   return privateNoteFromStored(storedNote, version);
 }
 
@@ -1774,7 +1791,8 @@ async function savePrivateNoteMetadata(
 
 async function putPrivateNoteAndVersion(
   note: PrivateStoredNote,
-  version: NoteVersion | null
+  version: NoteVersion | null,
+  replacedVersionId: string | null = null
 ) {
   const noteRecord = await privateStoreRecord(note, {
     created_at: note.created_at,
@@ -1793,6 +1811,9 @@ async function putPrivateNoteAndVersion(
   );
   tx.objectStore(NOTE_STORE).put(noteRecord);
   if (versionRecord) {
+    if (replacedVersionId && replacedVersionId !== version?.id) {
+      tx.objectStore(NOTE_VERSION_STORE).delete(replacedVersionId);
+    }
     tx.objectStore(NOTE_VERSION_STORE).put(versionRecord);
   }
   await transactionDone(tx);
@@ -1935,8 +1956,15 @@ function normalizePrivateNoteSettings(settings: NoteSettings): NoteSettings {
   };
 }
 
-function ensureExpectedPrivateNoteVersion(note: Note, expectedVersion: number) {
-  if (note.current_version.version_number !== expectedVersion) {
+function ensureExpectedPrivateNoteVersion(
+  note: Note,
+  expectedVersion: number,
+  expectedVersionId?: string
+) {
+  if (
+    note.current_version.version_number !== expectedVersion ||
+    (expectedVersionId !== undefined && note.current_version.id !== expectedVersionId)
+  ) {
     const error = new Error("This note changed elsewhere. Reload it before saving again.") as Error & {
       code: string;
     };

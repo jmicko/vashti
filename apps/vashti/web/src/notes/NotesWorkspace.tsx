@@ -53,6 +53,7 @@ import type {
 } from "./types";
 
 const AUTOSAVE_DELAY_MS = 700;
+const EDIT_SESSION_IDLE_MS = 10 * 60 * 1000;
 const NOTE_LIST_LIMIT = 100;
 
 type Drawer = "details" | "history" | "settings" | null;
@@ -66,6 +67,12 @@ type ModelOption = {
   key: string;
   label: string;
   group: string;
+};
+
+type NoteEditSession = {
+  noteId: string;
+  checkpointVersionId: string | null;
+  lastActivityAt: number;
 };
 
 export function NotesWorkspace({
@@ -122,6 +129,8 @@ export function NotesWorkspace({
   const activeSaveRef = useRef<Promise<Note | null> | null>(null);
   const flushDraftRef = useRef<() => Promise<boolean>>(async () => true);
   const pendingTitleFocusRef = useRef<string | null>(null);
+  const editSessionRef = useRef<NoteEditSession | null>(null);
+  const pendingEditSessionRef = useRef<NoteEditSession | null>(null);
   const savedStateTimerRef = useRef<number | null>(null);
   const repository = noteRepositoryFor(storageMode);
 
@@ -221,6 +230,7 @@ export function NotesWorkspace({
 
   useEffect(() => {
     if (!selectedNoteId) {
+      editSessionRef.current = null;
       noteRef.current = null;
       draftRef.current = null;
       setNote(null);
@@ -306,7 +316,34 @@ export function NotesWorkspace({
     setTagsText(nextNote.tags.join(", "));
     setSaveState("idle");
     setSaveMessage(null);
+    const pendingSession = pendingEditSessionRef.current;
+    editSessionRef.current = pendingSession?.noteId === nextNote.id ? pendingSession : null;
+    pendingEditSessionRef.current = null;
     upsertSummary(nextNote);
+  }
+
+  function markEditSessionActivity(noteId: string) {
+    const now = Date.now();
+    const current = editSessionRef.current;
+    if (
+      !current ||
+      current.noteId !== noteId ||
+      now - current.lastActivityAt >= EDIT_SESSION_IDLE_MS
+    ) {
+      editSessionRef.current = {
+        noteId,
+        checkpointVersionId: null,
+        lastActivityAt: now
+      };
+      return;
+    }
+    current.lastActivityAt = now;
+  }
+
+  function finishEditSession(noteId: string | null = selectedNoteIdRef.current) {
+    if (!noteId || editSessionRef.current?.noteId === noteId) {
+      editSessionRef.current = null;
+    }
   }
 
   function upsertSummary(nextNote: Note) {
@@ -355,9 +392,19 @@ export function NotesWorkspace({
   async function persistDraft(sourceNote: Note, sourceDraft: NoteDraft) {
     setSaveState("saving");
     setSaveMessage(null);
+    const contentChanged =
+      sourceDraft.title.trim() !== sourceNote.current_version.title ||
+      sourceDraft.content !== sourceNote.current_version.content;
+    const editSession = editSessionRef.current?.noteId === sourceNote.id
+      ? editSessionRef.current
+      : null;
     try {
       const updated = await repository.update(sourceNote.id, {
         expected_version: sourceNote.current_version.version_number,
+        expected_version_id: sourceNote.current_version.id,
+        ...(editSession?.checkpointVersionId
+          ? { edit_session_version_id: editSession.checkpointVersionId }
+          : {}),
         title: sourceDraft.title.trim(),
         content: sourceDraft.content,
         tags: normalizeTags(sourceDraft.tags),
@@ -365,6 +412,9 @@ export function NotesWorkspace({
         ai_access: sourceDraft.ai_access,
         model_scope: normalizeScope(sourceDraft.model_scope)
       });
+      if (contentChanged && editSessionRef.current === editSession && editSession) {
+        editSession.checkpointVersionId = updated.current_version.id;
+      }
       upsertSummary(updated);
       if (selectedNoteIdRef.current === updated.id) {
         noteRef.current = updated;
@@ -423,6 +473,7 @@ export function NotesWorkspace({
     if (!(await flushCurrentDraft())) {
       return;
     }
+    finishEditSession();
     setSelectedNoteId(noteId);
     setIsMobileEditorOpen(true);
   }
@@ -434,6 +485,7 @@ export function NotesWorkspace({
     if (!(await flushCurrentDraft())) {
       return;
     }
+    finishEditSession();
     setIsCreating(true);
     setListError(null);
     try {
@@ -453,6 +505,11 @@ export function NotesWorkspace({
       setSummaries((current) => sortSummaries([summaryFromNote(created), ...current], sort));
       setTotal((current) => current + 1);
       pendingTitleFocusRef.current = created.id;
+      pendingEditSessionRef.current = {
+        noteId: created.id,
+        checkpointVersionId: created.current_version.id,
+        lastActivityAt: Date.now()
+      };
       setSelectedNoteId(created.id);
       setIsMobileEditorOpen(true);
     } catch (error) {
@@ -491,6 +548,12 @@ export function NotesWorkspace({
       });
       setSummaries((current) => sortSummaries([summaryFromNote(created), ...current], sort));
       setTotal((current) => current + 1);
+      finishEditSession();
+      pendingEditSessionRef.current = {
+        noteId: created.id,
+        checkpointVersionId: created.current_version.id,
+        lastActivityAt: Date.now()
+      };
       setSelectedNoteId(created.id);
     } catch (error) {
       setSaveState("error");
@@ -556,6 +619,7 @@ export function NotesWorkspace({
     }
     setSummaries((current) => current.filter((candidate) => candidate.id !== note.id));
     setTotal((current) => Math.max(0, current - 1));
+    finishEditSession(note.id);
     setSelectedNoteId(null);
     setIsMobileEditorOpen(false);
     setDrawer(null);
@@ -637,6 +701,13 @@ export function NotesWorkspace({
       return;
     }
     const next = { ...current, ...patch };
+    if (
+      noteRef.current &&
+      (Object.prototype.hasOwnProperty.call(patch, "title") ||
+        Object.prototype.hasOwnProperty.call(patch, "content"))
+    ) {
+      markEditSessionActivity(noteRef.current.id);
+    }
     draftRef.current = next;
     setDraft(next);
     if (saveState === "error" && saveMessage === "A title is required") {
@@ -653,6 +724,7 @@ export function NotesWorkspace({
     if (nextStatus === status || !(await flushCurrentDraft())) {
       return;
     }
+    finishEditSession();
     setStatus(nextStatus);
     setSelectedNoteId(null);
     setIsMobileEditorOpen(false);
@@ -663,6 +735,7 @@ export function NotesWorkspace({
     if (nextMode === storageMode || !(await flushCurrentDraft())) {
       return;
     }
+    finishEditSession();
     listRequestRef.current += 1;
     noteRequestRef.current += 1;
     selectedNoteIdRef.current = null;
@@ -689,6 +762,14 @@ export function NotesWorkspace({
     setSettings(null);
     setSettingsDraft(null);
     setSettingsError(null);
+    setIsMobileEditorOpen(false);
+  }
+
+  async function closeMobileEditor() {
+    if (!(await flushCurrentDraft())) {
+      return;
+    }
+    finishEditSession();
     setIsMobileEditorOpen(false);
   }
 
@@ -876,7 +957,7 @@ export function NotesWorkspace({
                   type="button"
                   className="icon-button notes-mobile-back"
                   aria-label="Back to notes"
-                  onClick={() => setIsMobileEditorOpen(false)}
+                  onClick={() => void closeMobileEditor()}
                 >
                   <ArrowLeft />
                 </button>

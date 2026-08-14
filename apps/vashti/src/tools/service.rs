@@ -575,6 +575,8 @@ async fn execute_notes_tool(
                 &note_id,
                 UpdateNoteRequest {
                     expected_version,
+                    expected_version_id: None,
+                    edit_session_version_id: None,
                     title,
                     content,
                     tags: None,

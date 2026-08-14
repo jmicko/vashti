@@ -59,11 +59,17 @@ bridge boundary and replay protection.
 
 ## 3. Versioning, Trash, and Concurrency
 
-Every material save creates a note version. Editor saves are debounced so a
-single typing burst does not create one version per keystroke. Model changes
-always create their own version.
+Autosave preserves work frequently without turning every typing pause into a
+visible history entry. Human title/content changes made during one editing
+session are coalesced into a single checkpoint. Switching or closing the note
+ends that session, and ten minutes without an edit starts a new session when
+typing resumes. Model changes always create their own version.
 
-Each version records:
+A session checkpoint can be replaced only while it remains private to that
+note's history. Once a version is pinned to a conversation or attached to a
+message, it is immutable and the next human save creates a new checkpoint.
+
+Each retained history version records:
 
 * immutable title and Markdown content
 * monotonically increasing version number
@@ -80,8 +86,10 @@ Deleting a note moves it to trash. Models can only move notes to trash. Only
 the human owner can permanently delete a trashed note. Restoring from trash
 keeps all versions.
 
-Updates include the expected current version number. A mismatch returns a
-conflict instead of overwriting a newer human or model edit.
+Updates include the expected current version number and, for editor saves, the
+expected version ID. A mismatch returns a conflict instead of overwriting a
+newer human or model edit, including when a coalesced checkpoint still has the
+same version number.
 
 ## 4. AI Permissions
 

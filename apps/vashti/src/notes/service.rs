@@ -129,6 +129,8 @@ struct CurrentNote {
     version_number: i64,
     title: String,
     content: String,
+    actor_type: String,
+    actor_user_id: String,
     ai_access: NoteAiAccess,
     all_models: bool,
     is_pinned: bool,
@@ -803,7 +805,14 @@ pub async fn update_note(
         ));
     }
     let mut tx = pool.begin().await?;
-    acquire_expected_version(&mut tx, user_id, note_id, payload.expected_version).await?;
+    acquire_expected_version(
+        &mut tx,
+        user_id,
+        note_id,
+        payload.expected_version,
+        payload.expected_version_id.as_deref(),
+    )
+    .await?;
     let current = get_current_note_in_tx(&mut tx, user_id, note_id).await?;
     if current.deleted_at.is_some() {
         return Err(ApiError::conflict(
@@ -836,12 +845,30 @@ pub async fn update_note(
     let now = unix_timestamp();
     let next_version_id = if content_changed {
         let version_id = Uuid::new_v4().to_string();
+        let replace_session_checkpoint = can_replace_edit_session_checkpoint(
+            &mut tx,
+            &current,
+            payload.edit_session_version_id.as_deref(),
+            actor,
+        )
+        .await?;
+        if replace_session_checkpoint {
+            sqlx::query("DELETE FROM note_versions WHERE id = ? AND note_id = ?")
+                .bind(&current.current_version_id)
+                .bind(note_id)
+                .execute(&mut *tx)
+                .await?;
+        }
         insert_version(
             &mut tx,
             NewNoteVersion {
                 id: &version_id,
                 note_id,
-                number: current.version_number + 1,
+                number: if replace_session_checkpoint {
+                    current.version_number
+                } else {
+                    current.version_number + 1
+                },
                 title: &title,
                 content: &content,
                 created_at: now,
@@ -911,7 +938,7 @@ pub async fn trash_note(
 ) -> Result<NoteResponse, ApiError> {
     ensure_actor_owner(user_id, actor)?;
     let mut tx = pool.begin().await?;
-    acquire_expected_version(&mut tx, user_id, note_id, expected_version).await?;
+    acquire_expected_version(&mut tx, user_id, note_id, expected_version, None).await?;
     let current = get_current_note_in_tx(&mut tx, user_id, note_id).await?;
     if current.deleted_at.is_some() {
         return Err(ApiError::conflict(
@@ -941,7 +968,7 @@ pub async fn restore_note(
     expected_version: i64,
 ) -> Result<NoteResponse, ApiError> {
     let mut tx = pool.begin().await?;
-    acquire_expected_version(&mut tx, user_id, note_id, expected_version).await?;
+    acquire_expected_version(&mut tx, user_id, note_id, expected_version, None).await?;
     let current = get_current_note_in_tx(&mut tx, user_id, note_id).await?;
     if current.deleted_at.is_none() {
         return Err(ApiError::conflict(
@@ -1039,7 +1066,7 @@ pub async fn restore_version(
 ) -> Result<NoteResponse, ApiError> {
     ensure_actor_owner(user_id, actor)?;
     let mut tx = pool.begin().await?;
-    acquire_expected_version(&mut tx, user_id, note_id, expected_version).await?;
+    acquire_expected_version(&mut tx, user_id, note_id, expected_version, None).await?;
     let current = get_current_note_in_tx(&mut tx, user_id, note_id).await?;
     if current.deleted_at.is_some() {
         return Err(ApiError::conflict(
@@ -1340,6 +1367,7 @@ async fn acquire_expected_version(
     user_id: &str,
     note_id: &str,
     expected_version: i64,
+    expected_version_id: Option<&str>,
 ) -> Result<(), ApiError> {
     let result = sqlx::query(
         r#"
@@ -1351,12 +1379,15 @@ async fn acquire_expected_version(
               SELECT id FROM note_versions
               WHERE note_id = ? AND version_number = ?
           )
+          AND (? IS NULL OR current_version_id = ?)
         "#,
     )
     .bind(note_id)
     .bind(user_id)
     .bind(note_id)
     .bind(expected_version)
+    .bind(expected_version_id)
+    .bind(expected_version_id)
     .execute(&mut **tx)
     .await?;
     if result.rows_affected() != 0 {
@@ -1385,7 +1416,8 @@ async fn get_current_note_in_tx(
     let row = sqlx::query(
         r#"
         SELECT n.current_version_id, n.ai_access, n.all_models, n.is_pinned,
-               n.deleted_at, v.version_number, v.title, v.content
+               n.deleted_at, v.version_number, v.title, v.content,
+               v.actor_type, v.actor_user_id
         FROM notes n
         JOIN note_versions v ON v.id = n.current_version_id
         WHERE n.id = ? AND n.user_id = ?
@@ -1401,11 +1433,43 @@ async fn get_current_note_in_tx(
         version_number: row.try_get("version_number")?,
         title: row.try_get("title")?,
         content: row.try_get("content")?,
+        actor_type: row.try_get("actor_type")?,
+        actor_user_id: row.try_get("actor_user_id")?,
         ai_access: parse_ai_access(row.try_get::<String, _>("ai_access")?)?,
         all_models: row.try_get("all_models")?,
         is_pinned: row.try_get("is_pinned")?,
         deleted_at: row.try_get("deleted_at")?,
     })
+}
+
+async fn can_replace_edit_session_checkpoint(
+    tx: &mut Transaction<'_, Sqlite>,
+    current: &CurrentNote,
+    edit_session_version_id: Option<&str>,
+    actor: &NoteMutationActor,
+) -> Result<bool, ApiError> {
+    if actor.is_model()
+        || edit_session_version_id != Some(current.current_version_id.as_str())
+        || current.actor_type != "human"
+        || current.actor_user_id != actor.actor_user_id
+    {
+        return Ok(false);
+    }
+
+    let referenced: i64 = sqlx::query_scalar(
+        r#"
+        SELECT EXISTS (
+            SELECT 1 FROM chat_pinned_notes WHERE note_version_id = ?
+            UNION ALL
+            SELECT 1 FROM note_message_attachments WHERE note_version_id = ?
+        )
+        "#,
+    )
+    .bind(&current.current_version_id)
+    .bind(&current.current_version_id)
+    .fetch_one(&mut **tx)
+    .await?;
+    Ok(referenced == 0)
 }
 
 async fn insert_version(
@@ -2134,6 +2198,8 @@ mod tests {
             &note.id,
             UpdateNoteRequest {
                 expected_version: 1,
+                expected_version_id: None,
+                edit_session_version_id: None,
                 title: None,
                 content: Some("Two".to_string()),
                 tags: None,
@@ -2153,6 +2219,8 @@ mod tests {
                 &note.id,
                 UpdateNoteRequest {
                     expected_version: 1,
+                    expected_version_id: None,
+                    edit_session_version_id: None,
                     title: None,
                     content: Some("Stale".to_string()),
                     tags: None,
@@ -2172,6 +2240,190 @@ mod tests {
                 .current_version
                 .content,
             "Two"
+        );
+    }
+
+    #[tokio::test]
+    async fn human_autosaves_coalesce_within_an_edit_session() {
+        let pool = test_pool().await;
+        let user_id = create_test_user(&pool, "note-edit-session").await;
+        let note = create_note(
+            &pool,
+            &user_id,
+            request("Draft", "One"),
+            &NoteMutationActor::human(&user_id),
+        )
+        .await
+        .expect("create note");
+        let first_version_id = note.current_version.id.clone();
+
+        let first_save = update_note(
+            &pool,
+            &user_id,
+            &note.id,
+            UpdateNoteRequest {
+                expected_version: 1,
+                expected_version_id: Some(first_version_id.clone()),
+                edit_session_version_id: Some(first_version_id.clone()),
+                title: None,
+                content: Some("Two".to_string()),
+                tags: None,
+                is_pinned: None,
+                ai_access: None,
+                model_scope: None,
+            },
+            &NoteMutationActor::human(&user_id),
+        )
+        .await
+        .expect("first autosave");
+        assert_eq!(first_save.current_version.version_number, 1);
+        assert_ne!(first_save.current_version.id, first_version_id);
+
+        let second_save = update_note(
+            &pool,
+            &user_id,
+            &note.id,
+            UpdateNoteRequest {
+                expected_version: 1,
+                expected_version_id: Some(first_save.current_version.id.clone()),
+                edit_session_version_id: Some(first_save.current_version.id.clone()),
+                title: None,
+                content: Some("Three".to_string()),
+                tags: None,
+                is_pinned: None,
+                ai_access: None,
+                model_scope: None,
+            },
+            &NoteMutationActor::human(&user_id),
+        )
+        .await
+        .expect("second autosave");
+        assert_eq!(second_save.current_version.version_number, 1);
+        assert_eq!(second_save.current_version.content, "Three");
+
+        let versions = list_versions(&pool, &user_id, &note.id)
+            .await
+            .expect("list coalesced history");
+        assert_eq!(versions.len(), 1);
+        assert_eq!(versions[0].id, second_save.current_version.id);
+    }
+
+    #[tokio::test]
+    async fn replaced_checkpoint_ids_detect_stale_same_number_edits() {
+        let pool = test_pool().await;
+        let user_id = create_test_user(&pool, "note-session-stale-id").await;
+        let note = create_note(
+            &pool,
+            &user_id,
+            request("Draft", "One"),
+            &NoteMutationActor::human(&user_id),
+        )
+        .await
+        .expect("create note");
+        let original_version_id = note.current_version.id.clone();
+
+        update_note(
+            &pool,
+            &user_id,
+            &note.id,
+            UpdateNoteRequest {
+                expected_version: 1,
+                expected_version_id: Some(original_version_id.clone()),
+                edit_session_version_id: Some(original_version_id.clone()),
+                title: None,
+                content: Some("Two".to_string()),
+                tags: None,
+                is_pinned: None,
+                ai_access: None,
+                model_scope: None,
+            },
+            &NoteMutationActor::human(&user_id),
+        )
+        .await
+        .expect("replace session checkpoint");
+
+        let stale = update_note(
+            &pool,
+            &user_id,
+            &note.id,
+            UpdateNoteRequest {
+                expected_version: 1,
+                expected_version_id: Some(original_version_id),
+                edit_session_version_id: None,
+                title: None,
+                content: Some("Stale".to_string()),
+                tags: None,
+                is_pinned: None,
+                ai_access: None,
+                model_scope: None,
+            },
+            &NoteMutationActor::human(&user_id),
+        )
+        .await;
+        assert!(stale.is_err());
+        assert_eq!(
+            get_note(&pool, &user_id, &note.id)
+                .await
+                .expect("reload note")
+                .current_version
+                .content,
+            "Two"
+        );
+    }
+
+    #[tokio::test]
+    async fn referenced_edit_session_checkpoints_remain_immutable() {
+        let pool = test_pool().await;
+        let user_id = create_test_user(&pool, "note-session-reference").await;
+        let note = create_note(
+            &pool,
+            &user_id,
+            request("Draft", "Pinned snapshot"),
+            &NoteMutationActor::human(&user_id),
+        )
+        .await
+        .expect("create note");
+        let original_version_id = note.current_version.id.clone();
+        let (chat_id, _message_id) = create_test_chat_and_message(&pool, &user_id).await;
+        sqlx::query(
+            "INSERT INTO chat_pinned_notes (chat_id, note_id, note_version_id, position) VALUES (?, ?, ?, 0)",
+        )
+        .bind(&chat_id)
+        .bind(&note.id)
+        .bind(&original_version_id)
+        .execute(&pool)
+        .await
+        .expect("pin note snapshot");
+
+        let updated = update_note(
+            &pool,
+            &user_id,
+            &note.id,
+            UpdateNoteRequest {
+                expected_version: 1,
+                expected_version_id: Some(original_version_id.clone()),
+                edit_session_version_id: Some(original_version_id.clone()),
+                title: None,
+                content: Some("New content".to_string()),
+                tags: None,
+                is_pinned: None,
+                ai_access: None,
+                model_scope: None,
+            },
+            &NoteMutationActor::human(&user_id),
+        )
+        .await
+        .expect("save after snapshot reference");
+        assert_eq!(updated.current_version.version_number, 2);
+
+        let versions = list_versions(&pool, &user_id, &note.id)
+            .await
+            .expect("list immutable history");
+        assert_eq!(versions.len(), 2);
+        assert!(
+            versions
+                .iter()
+                .any(|version| version.id == original_version_id)
         );
     }
 
@@ -2236,6 +2488,8 @@ mod tests {
             &note.id,
             UpdateNoteRequest {
                 expected_version: 1,
+                expected_version_id: None,
+                edit_session_version_id: None,
                 title: None,
                 content: Some("Second".to_string()),
                 tags: None,
@@ -2344,6 +2598,8 @@ mod tests {
             &note.id,
             UpdateNoteRequest {
                 expected_version: 1,
+                expected_version_id: None,
+                edit_session_version_id: None,
                 title: None,
                 content: Some("The permitted custom model changed this.".to_string()),
                 tags: None,
@@ -2371,6 +2627,8 @@ mod tests {
             &note.id,
             UpdateNoteRequest {
                 expected_version: 2,
+                expected_version_id: None,
+                edit_session_version_id: None,
                 title: None,
                 content: None,
                 tags: Some(vec!["model-added".to_string()]),
@@ -2570,6 +2828,8 @@ mod tests {
             &note.id,
             UpdateNoteRequest {
                 expected_version: 1,
+                expected_version_id: None,
+                edit_session_version_id: None,
                 title: Some("Changed title".to_string()),
                 content: Some("Changed content".to_string()),
                 tags: None,

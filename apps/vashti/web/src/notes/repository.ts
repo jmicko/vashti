@@ -51,6 +51,8 @@ export type CreateNotePayload = {
 
 export type UpdateNotePayload = CreateNotePayload & {
   expected_version: number;
+  expected_version_id?: string;
+  edit_session_version_id?: string;
 };
 
 export type NoteSearchFunction = (
