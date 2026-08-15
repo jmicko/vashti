@@ -7376,7 +7376,7 @@ textarea {
   .topbar-left {
     flex: 1 1 auto;
     gap: 4px;
-    overflow: hidden;
+    overflow: visible;
   }
 
   .topbar-right {
