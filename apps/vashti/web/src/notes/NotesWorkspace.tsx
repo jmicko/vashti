@@ -78,13 +78,23 @@ type NoteEditSession = {
 export function NotesWorkspace({
   modelGroups,
   personas,
-  privatePersonas
+  privatePersonas,
+  initialStorageMode = "server",
+  initialNoteId = null,
+  onReturnToSource,
+  onLocationChange,
+  onEditorOpenChange
 }: {
   modelGroups: BackendModelGroup[];
   personas: Persona[];
   privatePersonas: PrivatePersona[];
+  initialStorageMode?: NoteStorageMode;
+  initialNoteId?: string | null;
+  onReturnToSource?: () => void;
+  onLocationChange?: (storageMode: NoteStorageMode, noteId: string | null) => void;
+  onEditorOpenChange?: (isOpen: boolean) => void;
 }) {
-  const [storageMode, setStorageMode] = useState<NoteStorageMode>("server");
+  const [storageMode, setStorageMode] = useState<NoteStorageMode>(initialStorageMode);
   const [status, setStatus] = useState<NoteListStatus>("active");
   const [sort, setSort] = useState<NoteSort>("updated");
   const [searchInput, setSearchInput] = useState("");
@@ -94,7 +104,7 @@ export function NotesWorkspace({
   const [isLoadingList, setIsLoadingList] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   const [listRefreshKey, setListRefreshKey] = useState(0);
-  const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
+  const [selectedNoteId, setSelectedNoteId] = useState<string | null>(initialNoteId);
   const selectedNoteIdRef = useRef<string | null>(null);
   const [note, setNote] = useState<Note | null>(null);
   const [draft, setDraft] = useState<NoteDraft | null>(null);
@@ -117,16 +127,26 @@ export function NotesWorkspace({
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
   const [isConfirming, setIsConfirming] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
-  const [isMobileEditorOpen, setIsMobileEditorOpen] = useState(false);
+  const [isEditorOpen, setIsEditorOpen] = useState(Boolean(initialNoteId));
   const [isListMenuOpen, setIsListMenuOpen] = useState(false);
+  const [isEditorMenuOpen, setIsEditorMenuOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const titleRef = useRef<HTMLInputElement>(null);
   const noteRef = useRef<Note | null>(null);
   const draftRef = useRef<NoteDraft | null>(null);
   const listMenuRef = useRef<HTMLDivElement>(null);
+  const editorMenuRef = useRef<HTMLDivElement>(null);
   const listRequestRef = useRef(0);
   const noteRequestRef = useRef(0);
   const activeSaveRef = useRef<Promise<Note | null> | null>(null);
+
+  useEffect(() => {
+    onEditorOpenChange?.(isEditorOpen);
+  }, [isEditorOpen, onEditorOpenChange]);
+
+  useEffect(() => {
+    onLocationChange?.(storageMode, selectedNoteId);
+  }, [onLocationChange, selectedNoteId, storageMode]);
   const flushDraftRef = useRef<() => Promise<boolean>>(async () => true);
   const pendingTitleFocusRef = useRef<string | null>(null);
   const editSessionRef = useRef<NoteEditSession | null>(null);
@@ -198,6 +218,31 @@ export function NotesWorkspace({
       document.removeEventListener("keydown", closeListMenuWithKeyboard);
     };
   }, [isListMenuOpen]);
+
+  useEffect(() => {
+    if (!isEditorMenuOpen) {
+      return;
+    }
+
+    function closeEditorMenu(event: PointerEvent) {
+      if (!editorMenuRef.current?.contains(event.target as Node)) {
+        setIsEditorMenuOpen(false);
+      }
+    }
+
+    function closeEditorMenuWithKeyboard(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsEditorMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("pointerdown", closeEditorMenu);
+    document.addEventListener("keydown", closeEditorMenuWithKeyboard);
+    return () => {
+      document.removeEventListener("pointerdown", closeEditorMenu);
+      document.removeEventListener("keydown", closeEditorMenuWithKeyboard);
+    };
+  }, [isEditorMenuOpen]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => setQuery(searchInput.trim()), 180);
@@ -467,7 +512,7 @@ export function NotesWorkspace({
 
   async function selectNote(noteId: string) {
     if (noteId === selectedNoteId) {
-      setIsMobileEditorOpen(true);
+      setIsEditorOpen(true);
       return;
     }
     if (!(await flushCurrentDraft())) {
@@ -475,7 +520,7 @@ export function NotesWorkspace({
     }
     finishEditSession();
     setSelectedNoteId(noteId);
-    setIsMobileEditorOpen(true);
+    setIsEditorOpen(true);
   }
 
   async function createNewNote() {
@@ -511,7 +556,7 @@ export function NotesWorkspace({
         lastActivityAt: Date.now()
       };
       setSelectedNoteId(created.id);
-      setIsMobileEditorOpen(true);
+      setIsEditorOpen(true);
     } catch (error) {
       setListError(errorMessage(error, "Failed to create note"));
     } finally {
@@ -621,7 +666,7 @@ export function NotesWorkspace({
     setTotal((current) => Math.max(0, current - 1));
     finishEditSession(note.id);
     setSelectedNoteId(null);
-    setIsMobileEditorOpen(false);
+    setIsEditorOpen(false);
     setDrawer(null);
   }
 
@@ -727,7 +772,7 @@ export function NotesWorkspace({
     finishEditSession();
     setStatus(nextStatus);
     setSelectedNoteId(null);
-    setIsMobileEditorOpen(false);
+    setIsEditorOpen(false);
     setDrawer(null);
   }
 
@@ -762,25 +807,41 @@ export function NotesWorkspace({
     setSettings(null);
     setSettingsDraft(null);
     setSettingsError(null);
-    setIsMobileEditorOpen(false);
+    setIsEditorOpen(false);
   }
 
-  async function closeMobileEditor() {
+  async function closeEditor() {
     if (!(await flushCurrentDraft())) {
       return;
     }
     finishEditSession();
-    setIsMobileEditorOpen(false);
+    setIsEditorOpen(false);
+    setIsEditorMenuOpen(false);
+  }
+
+  async function returnToSource() {
+    if (!(await flushCurrentDraft())) {
+      return;
+    }
+    finishEditSession();
+    setIsEditorMenuOpen(false);
+    onReturnToSource?.();
   }
 
   return (
-    <section className="notes-workspace">
+    <section className={isEditorOpen ? "notes-workspace notes-workspace-editor-open" : "notes-workspace"}>
       <header className="notes-workspace-header">
         <div>
           <p className="eyebrow">Personal</p>
           <h1>Notes</h1>
         </div>
         <div className="notes-workspace-actions">
+          {onReturnToSource && selectedNoteId && (
+            <button type="button" className="secondary-button" onClick={() => void returnToSource()}>
+              <ArrowLeft />
+              <span>Back to chat</span>
+            </button>
+          )}
           <button type="button" className="secondary-button" onClick={() => void openSettings()}>
             <Settings2 />
             <span>Note Access</span>
@@ -792,7 +853,7 @@ export function NotesWorkspace({
         </div>
       </header>
 
-      <div className={isMobileEditorOpen ? "notes-layout notes-mobile-editor-open" : "notes-layout"}>
+      <div className={isEditorOpen ? "notes-layout notes-editor-open" : "notes-layout"}>
         <aside className="notes-library" aria-label="Note library">
           <div className="notes-library-controls">
             <div className="segmented-control notes-storage-control" role="group" aria-label="Note storage">
@@ -955,23 +1016,26 @@ export function NotesWorkspace({
               <header className="note-editor-header">
                 <button
                   type="button"
-                  className="icon-button notes-mobile-back"
-                  aria-label="Back to notes"
-                  onClick={() => void closeMobileEditor()}
+                  className="icon-button notes-editor-back"
+                  aria-label={onReturnToSource ? "Back to chat" : "Back to notes"}
+                  title={onReturnToSource ? "Back to chat" : "Back to notes"}
+                  onClick={() => void (onReturnToSource ? returnToSource() : closeEditor())}
                 >
                   <ArrowLeft />
                 </button>
-                <input
-                  ref={titleRef}
-                  className="note-title-input"
-                  value={draft.title}
-                  aria-label="Note title"
-                  readOnly={Boolean(note.deleted_at)}
-                  onChange={(event) => updateDraft({ title: event.target.value })}
-                  onBlur={() => void flushCurrentDraft()}
-                />
-                <div className="note-save-status" role="status" aria-live="polite">
-                  {saveState === "saving" ? <><RefreshCw className="spin" /> Saving</> : saveState === "saved" ? <><Check /> Saved</> : saveState === "error" || saveState === "conflict" ? saveMessage : null}
+                <div className="note-title-wrap">
+                  <input
+                    ref={titleRef}
+                    className="note-title-input"
+                    value={draft.title}
+                    aria-label="Note title"
+                    readOnly={Boolean(note.deleted_at)}
+                    onChange={(event) => updateDraft({ title: event.target.value })}
+                    onBlur={() => void flushCurrentDraft()}
+                  />
+                  <div className="note-save-status" role="status" aria-live="polite">
+                    {saveState === "saving" ? <><RefreshCw className="spin" /> Saving</> : saveState === "saved" ? <><Check /> Saved</> : saveState === "error" || saveState === "conflict" ? saveMessage : null}
+                  </div>
                 </div>
                 <div className="note-editor-actions">
                   {note.deleted_at ? (
@@ -1011,6 +1075,121 @@ export function NotesWorkspace({
                       </button>
                     </>
                   )}
+                  <div ref={editorMenuRef} className="note-editor-more-wrap">
+                    <button
+                      type="button"
+                      className="icon-button"
+                      aria-label="Note actions"
+                      aria-expanded={isEditorMenuOpen}
+                      onClick={() => setIsEditorMenuOpen((open) => !open)}
+                    >
+                      <MoreHorizontal />
+                    </button>
+                    {isEditorMenuOpen && (
+                      <div className="note-editor-menu">
+                        <button type="button" className="menu-item" onClick={() => void closeEditor()}>
+                          <FileText />
+                          <span>Note library</span>
+                        </button>
+                        <button
+                          type="button"
+                          className="menu-item"
+                          disabled={isCreating}
+                          onClick={() => {
+                            setIsEditorMenuOpen(false);
+                            void createNewNote();
+                          }}
+                        >
+                          <FilePlus2 />
+                          <span>New note</span>
+                        </button>
+                        <button
+                          type="button"
+                          className="menu-item"
+                          onClick={() => {
+                            setIsEditorMenuOpen(false);
+                            void openSettings();
+                          }}
+                        >
+                          <Settings2 />
+                          <span>Note access defaults</span>
+                        </button>
+                        {note.deleted_at ? (
+                          <>
+                            <button
+                              type="button"
+                              className="menu-item"
+                              onClick={() => {
+                                setIsEditorMenuOpen(false);
+                                void restoreCurrentNote();
+                              }}
+                            >
+                              <Undo2 />
+                              <span>Restore note</span>
+                            </button>
+                            <button
+                              type="button"
+                              className="menu-item note-editor-menu-danger"
+                              onClick={() => {
+                                setIsEditorMenuOpen(false);
+                                setConfirmAction({ kind: "purge" });
+                              }}
+                            >
+                              <Trash2 />
+                              <span>Delete forever</span>
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              className="menu-item"
+                              onClick={() => {
+                                setIsEditorMenuOpen(false);
+                                updateDraft({ is_pinned: !draft.is_pinned });
+                              }}
+                            >
+                              {draft.is_pinned ? <PinOff /> : <Pin />}
+                              <span>{draft.is_pinned ? "Unpin note" : "Pin note"}</span>
+                            </button>
+                            <button
+                              type="button"
+                              className="menu-item"
+                              onClick={() => {
+                                setIsEditorMenuOpen(false);
+                                void openHistory();
+                              }}
+                            >
+                              <History />
+                              <span>Version history</span>
+                            </button>
+                            <button
+                              type="button"
+                              className="menu-item"
+                              onClick={() => {
+                                setIsEditorMenuOpen(false);
+                                setDrawer("details");
+                              }}
+                            >
+                              <Settings2 />
+                              <span>Access and tags</span>
+                            </button>
+                            <button
+                              type="button"
+                              className="menu-item note-editor-menu-danger"
+                              onClick={() => {
+                                setIsEditorMenuOpen(false);
+                                setConfirmAction({ kind: "trash" });
+                              }}
+                            >
+                              <Trash2 />
+                              <span>Move to trash</span>
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </header>
 

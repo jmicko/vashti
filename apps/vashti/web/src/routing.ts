@@ -46,6 +46,14 @@ export function routeFromLocation(): AppRoute {
   }
 
   if (path === "/app/notes" || path.startsWith("/app/notes/")) {
+    const params = new URLSearchParams(window.location.hash.slice(1));
+    const storageMode = params.get("mode");
+    const noteId = params.get("note")?.trim();
+    if (storageMode === "server" || storageMode === "device") {
+      return noteId
+        ? { page: "notes", storageMode, noteId }
+        : { page: "notes", storageMode };
+    }
     return { page: "notes" };
   }
 
@@ -76,7 +84,14 @@ export function pathForRoute(route: AppRoute) {
   }
 
   if (route.page === "notes") {
-    return "/app/notes";
+    if (!route.storageMode) {
+      return "/app/notes";
+    }
+    const params = new URLSearchParams({ mode: route.storageMode });
+    if (route.noteId) {
+      params.set("note", route.noteId);
+    }
+    return `/app/notes#${params.toString()}`;
   }
 
   if (route.chatId) {

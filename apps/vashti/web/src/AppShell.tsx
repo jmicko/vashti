@@ -134,6 +134,8 @@ export function AppShell({
 }) {
   const [route, setRoute] = useState<AppRoute>(() => routeFromLocation());
   const routeRef = useRef(route);
+  const [noteReturnRoute, setNoteReturnRoute] = useState<AppRoute | null>(null);
+  const [isNotesEditorOpen, setIsNotesEditorOpen] = useState(false);
   const appSettingsGuardRef = useRef<AppSettingsGuard | null>(null);
   const settingsMenuRef = useRef<HTMLDivElement>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -214,6 +216,8 @@ export function AppShell({
   const settingsSection = route.page === "settings" ? route.section : "profile";
   const currentChatId = route.page === "chat" ? route.chatId ?? null : null;
   const currentPrivateChatId = route.page === "private-chat" ? route.chatId : null;
+  const notesStorageMode = route.page === "notes" ? route.storageMode ?? "server" : "server";
+  const referencedNoteId = route.page === "notes" ? route.noteId ?? null : null;
   const isNewChatDraft = page === "chat" && !currentChatId;
   const allowPrivatePersonaSelection =
     page === "private-chat" || (page === "chat" && !currentChatId && newChatMode === "private");
@@ -659,6 +663,9 @@ export function AppShell({
       }
 
       setRoute(nextRoute);
+      if (nextRoute.page !== "notes") {
+        setNoteReturnRoute(null);
+      }
       setIsSettingsMenuOpen(false);
       setIsSidebarOpen(false);
     }
@@ -720,10 +727,14 @@ export function AppShell({
 
   function applyNavigation(nextRoute: AppRoute) {
     const nextPath = pathForRoute(nextRoute);
-    if (window.location.pathname !== nextPath) {
+    const currentPath = `${window.location.pathname}${window.location.hash}`;
+    if (currentPath !== nextPath) {
       window.history.pushState(null, "", nextPath);
     }
     setRoute(nextRoute);
+    if (nextRoute.page !== "notes") {
+      setNoteReturnRoute(null);
+    }
     setIsSettingsMenuOpen(false);
     setIsSidebarOpen(false);
   }
@@ -752,7 +763,34 @@ export function AppShell({
   }
 
   function openNotes() {
+    setNoteReturnRoute(null);
     navigate({ page: "notes" });
+  }
+
+  function openReferencedNote(storageMode: "server" | "device", noteId: string) {
+    if (route.page === "chat" || route.page === "private-chat") {
+      setNoteReturnRoute(route);
+    }
+    navigate({ page: "notes", storageMode, noteId });
+  }
+
+  function returnToReferencedChat() {
+    if (!noteReturnRoute) {
+      return;
+    }
+    const nextRoute = noteReturnRoute;
+    setNoteReturnRoute(null);
+    navigate(nextRoute);
+  }
+
+  function syncNotesLocation(storageMode: "server" | "device", noteId: string | null) {
+    const nextPath = pathForRoute(
+      noteId ? { page: "notes", storageMode, noteId } : { page: "notes", storageMode }
+    );
+    const currentPath = `${window.location.pathname}${window.location.hash}`;
+    if (currentPath !== nextPath) {
+      window.history.replaceState(null, "", nextPath);
+    }
   }
 
   function activateSettingsControl() {
@@ -1149,17 +1187,25 @@ export function AppShell({
     }
   }
 
+  const handleNotesEditorOpenChange = useCallback((isOpen: boolean) => {
+    setIsNotesEditorOpen(isOpen);
+    if (isOpen) {
+      setIsSidebarOpen(false);
+    }
+  }, []);
+
   const shellClassName = [
     "app-shell",
     isSidebarOpen ? "sidebar-open" : "",
-    isSettingsPage ? "settings-shell" : ""
+    isSettingsPage ? "settings-shell" : "",
+    isNotesPage && isNotesEditorOpen ? "notes-editor-shell" : ""
   ]
     .filter(Boolean)
     .join(" ");
 
   return (
     <main className={shellClassName}>
-      {!isSettingsPage && (
+      {!isSettingsPage && !(isNotesPage && isNotesEditorOpen) && (
         <>
           <Sidebar
             chats={chats}
@@ -1201,18 +1247,20 @@ export function AppShell({
               </div>
             ) : isNotesPage ? (
               <>
-                <button
-                  type="button"
-                  className="icon-button mobile-only"
-                  aria-label={isSidebarOpen ? "Close sidebar" : "Open sidebar"}
-                  aria-expanded={isSidebarOpen}
-                  onClick={() => {
-                    setIsSettingsMenuOpen(false);
-                    setIsSidebarOpen((open) => !open);
-                  }}
-                >
-                  <Menu />
-                </button>
+                {!isNotesEditorOpen && (
+                  <button
+                    type="button"
+                    className="icon-button mobile-only"
+                    aria-label={isSidebarOpen ? "Close sidebar" : "Open sidebar"}
+                    aria-expanded={isSidebarOpen}
+                    onClick={() => {
+                      setIsSettingsMenuOpen(false);
+                      setIsSidebarOpen((open) => !open);
+                    }}
+                  >
+                    <Menu />
+                  </button>
+                )}
                 <div className="workspace-topbar-title">
                   <NotebookPen />
                   <span>Notes</span>
@@ -1371,9 +1419,15 @@ export function AppShell({
         ) : page === "notes" ? (
           <Suspense fallback={<NotesInterfaceLoader />}>
             <NotesWorkspace
+              key={`${notesStorageMode}:${referencedNoteId ?? ""}`}
               modelGroups={modelGroups}
               personas={personas}
               privatePersonas={privatePersonas}
+              initialStorageMode={notesStorageMode}
+              initialNoteId={referencedNoteId}
+              onReturnToSource={noteReturnRoute ? returnToReferencedChat : undefined}
+              onLocationChange={syncNotesLocation}
+              onEditorOpenChange={handleNotesEditorOpenChange}
             />
           </Suspense>
         ) : page === "private-chat" && currentPrivateChatId ? (
@@ -1396,6 +1450,7 @@ export function AppShell({
               isTreeOpen={isMessageTreeOpen}
               onTreeClose={() => setIsMessageTreeOpen(false)}
               onImageOpen={openImageViewer}
+              onOpenNote={(noteId) => openReferencedNote("device", noteId)}
               onChatSettingsLoaded={handleChatSettingsLoaded}
               onModelSelected={setSelectedModel}
               onConversationSettingsSave={persistChatConversationSettings}
@@ -1425,6 +1480,7 @@ export function AppShell({
                 onConversationSettingsSave={persistChatConversationSettings}
                 onPersonaVersionsLoaded={rememberPersonaVersions}
                 onImageOpen={openImageViewer}
+                onOpenNote={(noteId) => openReferencedNote("server", noteId)}
                 onModelSelected={setSelectedModel}
                 onQueuedPromptConsumed={() => setQueuedPrompt(null)}
               />

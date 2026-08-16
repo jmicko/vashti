@@ -14,7 +14,10 @@ import {
   ToggleSwitch,
   ToolPromptEditor
 } from "./settingsControls";
-import { permissionTagPayload } from "./settingsModelHelpers";
+import {
+  permissionTagPayload,
+  permissionTagSetsEqual
+} from "./settingsModelHelpers";
 import type { AdminBackendModelGroup, AdminModelsResponse, PermissionTag, ToolSettings } from "./types";
 
 export function ToolsSettingsPanel({ onToolsChanged }: { onToolsChanged: () => Promise<void> }) {
@@ -58,24 +61,8 @@ export function ToolsSettingsPanel({ onToolsChanged }: { onToolsChanged: () => P
         toolSystemPrompt !== settings.tool_system_prompt ||
         webSearchToolPrompt !== settings.web_search_tool_prompt ||
         webFetchToolPrompt !== settings.web_fetch_tool_prompt ||
-        JSON.stringify(permissionTagPayload(defaultToolTags)) !==
-          JSON.stringify(permissionTagPayload(settings.default_tool_permission_tags)) ||
-        JSON.stringify(
-          Object.fromEntries(
-            Object.entries(toolPermissionTags).map(([toolId, tags]) => [
-              toolId,
-              permissionTagPayload(tags)
-            ])
-          )
-        ) !==
-          JSON.stringify(
-            Object.fromEntries(
-              settings.tool_permissions.map((tool) => [
-                tool.tool_id,
-                permissionTagPayload(tool.permission_tags)
-              ])
-            )
-          ))
+        !permissionTagSetsEqual(defaultToolTags, settings.default_tool_permission_tags) ||
+        !toolPermissionSetsEqual(toolPermissionTags, settings.tool_permissions))
   );
   const toolsEnabledChanged = Boolean(settings && toolsEnabled !== settings.tools_enabled);
   const ollamaSearchChanged = Boolean(
@@ -636,4 +623,20 @@ export function ToolsSettingsPanel({ onToolsChanged }: { onToolsChanged: () => P
       )}
     </SettingsPanel>
   );
+}
+
+function toolPermissionSetsEqual(
+  draft: Record<string, PermissionTag[]>,
+  saved: ToolSettings["tool_permissions"]
+) {
+  const savedByTool = new Map(saved.map((tool) => [tool.tool_id, tool.permission_tags]));
+  const toolIds = new Set([...Object.keys(draft), ...savedByTool.keys()]);
+
+  for (const toolId of toolIds) {
+    if (!permissionTagSetsEqual(draft[toolId] ?? [], savedByTool.get(toolId) ?? [])) {
+      return false;
+    }
+  }
+
+  return true;
 }

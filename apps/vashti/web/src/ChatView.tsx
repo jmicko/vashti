@@ -113,6 +113,7 @@ export function ChatView({
   onConversationSettingsSave,
   onPersonaVersionsLoaded,
   onImageOpen,
+  onOpenNote,
   onModelSelected,
   onQueuedPromptConsumed
 }: {
@@ -138,6 +139,7 @@ export function ChatView({
   onConversationSettingsSave: () => Promise<void>;
   onPersonaVersionsLoaded: (versions: PersonaVersion[]) => void;
   onImageOpen: ImageOpenHandler;
+  onOpenNote: (noteId: string) => void;
   onModelSelected: (value: string) => void;
   onQueuedPromptConsumed: () => void;
 }) {
@@ -1865,6 +1867,7 @@ export function ChatView({
                     onUploadAttachment={uploadAttachment}
                     onRegenerate={regenerateMessage}
                     onContinue={continueMessage}
+                    onOpenNote={onOpenNote}
                     selectedModelInfo={selectedModelInfo}
                     modelAvatar={hostedModelAvatarForMessage(
                       message,

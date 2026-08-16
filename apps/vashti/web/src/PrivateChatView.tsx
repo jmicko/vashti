@@ -117,6 +117,7 @@ export function PrivateChatView({
   onConversationSettingsSave,
   onPrivatePersonaVersionsLoaded,
   onImageOpen,
+  onOpenNote,
   onModelSelected,
   onPrivateChatsChanged,
   onQueuedPromptConsumed
@@ -143,6 +144,7 @@ export function PrivateChatView({
   onConversationSettingsSave: () => Promise<void>;
   onPrivatePersonaVersionsLoaded: (versions: PrivatePersonaVersion[]) => void;
   onImageOpen: ImageOpenHandler;
+  onOpenNote: (noteId: string) => void;
   onModelSelected: (value: string) => void;
   onPrivateChatsChanged: () => Promise<void>;
   onQueuedPromptConsumed: () => void;
@@ -2006,6 +2008,7 @@ export function PrivateChatView({
                   onUploadAttachment={preparePrivateAttachment}
                   onRegenerate={regenerateMessage}
                   onContinue={continueMessage}
+                  onOpenNote={onOpenNote}
                   selectedModelInfo={selectedModelInfo}
                   modelAvatar={privateModelAvatarForMessage(
                     message,

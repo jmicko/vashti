@@ -43,7 +43,9 @@ import { MarkdownContent } from "./MarkdownContent";
 import { MessageStreamContent, ThinkingContent, thinkingSummary } from "./messageContent";
 import { ModelAvatar } from "./ModelAvatar";
 import { MessageVersionCarousel } from "./MessageVersionCarousel";
+import { MessageNoteReferences } from "./notes/MessageNoteReferences";
 import { NoteContextChips } from "./notes/NoteContextChips";
+import { noteToolReferencesFromSegments } from "./notes/toolReferences";
 import type {
   ChatMessage,
   ComposerAttachment,
@@ -145,6 +147,7 @@ type MessageBubbleProps = {
   onUploadAttachment?: (file: File) => Promise<ComposerAttachment> | ComposerAttachment;
   onRegenerate: (message: ChatMessage) => Promise<void>;
   onContinue: (message: ChatMessage) => Promise<void>;
+  onOpenNote: (noteId: string) => void;
   selectedModelInfo?: ModelInfo | null;
   modelAvatar?: MessageAvatarInfo | null;
   modelAvatarForMessage?: (message: ChatMessage) => MessageAvatarInfo | null;
@@ -226,6 +229,7 @@ function MessageBubbleCard({
   onUploadAttachment,
   onRegenerate,
   onContinue,
+  onOpenNote,
   selectedModelInfo,
   modelAvatar,
   dimmedEmphasis = false,
@@ -252,6 +256,13 @@ function MessageBubbleCard({
   const shouldUseStreamSegments = message.status === "streaming" && Boolean(streamSegments?.length);
   const orderedSegments = shouldUseStreamSegments ? streamSegments ?? [] : storedOrderedSegments;
   const hasOrderedSegments = orderedSegments.length > 0;
+  const noteReferences = useMemo(
+    () =>
+      noteToolReferencesFromSegments(
+        hasOrderedSegments ? orderedSegments : parsedThinking.segments
+      ),
+    [hasOrderedSegments, orderedSegments, parsedThinking.segments]
+  );
   const attachments = activeMessageAttachments(message);
   const explicitNotes = (message.note_attachments ?? []).filter(
     (note) => note.source === "explicit"
@@ -496,6 +507,9 @@ function MessageBubbleCard({
           <CircleAlert />
           <span>{message.error_text}</span>
         </div>
+      )}
+      {!isEditing && message.role === "assistant" && (
+        <MessageNoteReferences references={noteReferences} onOpen={onOpenNote} />
       )}
       {!isEditing && (
         <>

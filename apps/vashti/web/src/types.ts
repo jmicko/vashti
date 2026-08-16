@@ -691,7 +691,7 @@ export type NewChatMode = "standard" | "private";
 export type AppRoute =
   | { page: "chat"; chatId?: string }
   | { page: "private-chat"; chatId: string }
-  | { page: "notes" }
+  | { page: "notes"; storageMode?: "server" | "device"; noteId?: string }
   | { page: "settings"; section: SettingsSection };
 export type AppSettingsGuard = {
   isDirty: boolean;
