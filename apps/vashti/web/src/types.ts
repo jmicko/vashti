@@ -653,6 +653,7 @@ export type AvailableTool = {
   id: string;
   label: string;
   description: string;
+  warning: string | null;
 };
 
 export type AvailableToolsResponse = {
@@ -682,6 +683,7 @@ export type Page = "chat" | "private-chat" | "notes" | "settings";
 export type SettingsSection =
   | "profile"
   | "context"
+  | "notes"
   | "users"
   | "models"
   | "tools"
@@ -692,8 +694,8 @@ export type AppRoute =
   | { page: "chat"; chatId?: string }
   | { page: "private-chat"; chatId: string }
   | { page: "notes"; storageMode?: "server" | "device"; noteId?: string }
-  | { page: "settings"; section: SettingsSection };
-export type AppSettingsGuard = {
+  | { page: "settings"; section: SettingsSection; storageMode?: "server" | "device" };
+export type SettingsGuard = {
   isDirty: boolean;
   save: () => Promise<boolean>;
   discard: () => void;

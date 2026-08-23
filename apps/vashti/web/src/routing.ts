@@ -6,6 +6,7 @@ const settingsSections: SettingsSection[] = [
   "backends",
   "models",
   "context",
+  "notes",
   "tools",
   "app"
 ];
@@ -42,7 +43,14 @@ export function routeFromLocation(): AppRoute {
     if (section === "personas") {
       return { page: "settings", section: "models" };
     }
-    return { page: "settings", section: isSettingsSection(section) ? section : "profile" };
+    const selectedSection = isSettingsSection(section) ? section : "profile";
+    if (selectedSection === "notes") {
+      const storageMode = new URLSearchParams(window.location.hash.slice(1)).get("mode");
+      return storageMode === "device"
+        ? { page: "settings", section: "notes", storageMode: "device" }
+        : { page: "settings", section: "notes", storageMode: "server" };
+    }
+    return { page: "settings", section: selectedSection };
   }
 
   if (path === "/app/notes" || path.startsWith("/app/notes/")) {
@@ -76,6 +84,9 @@ export function routeFromLocation(): AppRoute {
 
 export function pathForRoute(route: AppRoute) {
   if (route.page === "settings") {
+    if (route.section === "notes" && route.storageMode === "device") {
+      return "/app/settings/notes#mode=device";
+    }
     return `/app/settings/${route.section}`;
   }
 

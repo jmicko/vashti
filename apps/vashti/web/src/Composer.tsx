@@ -135,8 +135,9 @@ export function StartChatComposer({
   const currentToolPreferences = toolPreferences ?? defaultToolPreferences;
   const canUseTools =
     Boolean(onToolPreferencesChange) &&
-    availableTools.length > 0 &&
-    modelSupportsToolUse(selectedModelInfo);
+    availableTools.length > 0;
+  const selectedModelCannotUseTools =
+    Boolean(selectedModelInfo) && !modelSupportsToolUse(selectedModelInfo);
   const canControlThinking = Boolean(onThinkingModeChange && selectedModelInfo?.supports_thinking);
   const thinkingOptions = thinkingModeOptionsForModel(selectedModelInfo);
   const activeThinkingMode = normalizedThinkingModeForModel(thinkingMode, selectedModelInfo);
@@ -562,22 +563,35 @@ export function StartChatComposer({
                       : "composer-tool-list disabled"
                   }
                 >
-                  {availableTools.map((tool) => (
-                    <ToggleSwitch
-                      key={tool.id}
-                      icon={toolIcon(tool.id)}
-                      label={tool.label}
-                      description={tool.description}
-                      checked={toolPreferenceEnabled(currentToolPreferences, tool.id)}
-                      disabled={!currentToolPreferences.tool_use_enabled}
-                      compact
-                      onChange={(checked) =>
-                        updateTools(
-                          updateToolPreference(currentToolPreferences, tool.id, checked)
-                        )
-                      }
-                    />
-                  ))}
+                  {availableTools.map((tool) => {
+                    const isEnabled = toolPreferenceEnabled(currentToolPreferences, tool.id);
+                    const warning = selectedModelCannotUseTools
+                      ? "The selected model does not support tools."
+                      : tool.warning;
+                    return (
+                      <div className="composer-tool-option" key={tool.id}>
+                        <ToggleSwitch
+                          icon={toolIcon(tool.id)}
+                          label={tool.label}
+                          description={tool.description}
+                          checked={isEnabled}
+                          disabled={!currentToolPreferences.tool_use_enabled}
+                          compact
+                          onChange={(checked) =>
+                            updateTools(
+                              updateToolPreference(currentToolPreferences, tool.id, checked)
+                            )
+                          }
+                        />
+                        {currentToolPreferences.tool_use_enabled && isEnabled && warning && (
+                          <small className="composer-tool-warning" role="status">
+                            <CircleAlert aria-hidden="true" />
+                            <span>{warning}</span>
+                          </small>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}

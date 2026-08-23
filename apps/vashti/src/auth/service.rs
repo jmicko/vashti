@@ -199,6 +199,19 @@ pub async fn register_user(
     .execute(&mut *tx)
     .await?;
 
+    sqlx::query(
+        r#"
+        INSERT INTO user_note_settings (
+            user_id, allow_model_read, allow_model_create, allow_model_edit,
+            allow_model_trash, default_ai_access, default_all_models, updated_at
+        ) VALUES (?, 1, 1, 1, 1, 'manage', 1, ?)
+        "#,
+    )
+    .bind(&user.id)
+    .bind(now)
+    .execute(&mut *tx)
+    .await?;
+
     if let Some(signup_limit) = signup_limit {
         sqlx::query(
             r#"
@@ -801,6 +814,27 @@ mod tests {
                 .await
                 .is_ok()
         );
+        let note_settings = sqlx::query(
+            r#"
+            SELECT allow_model_read, allow_model_create, allow_model_edit,
+                   allow_model_trash, default_ai_access, default_all_models
+            FROM user_note_settings
+            WHERE user_id = ?
+            "#,
+        )
+        .bind(&created.id)
+        .fetch_one(&pool)
+        .await
+        .expect("load admin-created user's note defaults");
+        assert_eq!(note_settings.get::<i64, _>("allow_model_read"), 1);
+        assert_eq!(note_settings.get::<i64, _>("allow_model_create"), 1);
+        assert_eq!(note_settings.get::<i64, _>("allow_model_edit"), 1);
+        assert_eq!(note_settings.get::<i64, _>("allow_model_trash"), 1);
+        assert_eq!(
+            note_settings.get::<String, _>("default_ai_access"),
+            "manage"
+        );
+        assert_eq!(note_settings.get::<i64, _>("default_all_models"), 1);
 
         let updated = settings_service::update_user_settings(
             &pool,

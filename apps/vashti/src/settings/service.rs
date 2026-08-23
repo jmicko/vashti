@@ -83,6 +83,7 @@ pub struct AvailableToolResponse {
     pub id: &'static str,
     pub label: &'static str,
     pub description: &'static str,
+    pub warning: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -119,6 +120,34 @@ pub async fn get_available_tools(
     let mut tools = Vec::new();
     let mut device_tools = Vec::new();
 
+    let note_settings = notes_service::get_note_settings(pool, user_id).await?;
+    let notes_allowed = tool_allowed(crate::tools::service::TOOL_NOTES, &user_tags, &tool_tags);
+    let notes_base_warning = if !settings.tools_enabled {
+        Some("Notes tools are unavailable on this server. Ask an administrator.".to_string())
+    } else if !notes_allowed {
+        Some("Notes tools are unavailable for your account. Ask an administrator.".to_string())
+    } else {
+        None
+    };
+    let notes_tool = AvailableToolResponse {
+        id: crate::tools::service::TOOL_NOTES,
+        label: "Notes",
+        description: "Let this model find, use, and create notes.",
+        warning: notes_base_warning.clone().or_else(|| {
+            (!note_settings.allow_model_read && !note_settings.allow_model_create).then(|| {
+                "Notes is on, but models are not allowed to use notes. Open Settings → Notes."
+                    .to_string()
+            })
+        }),
+    };
+    tools.push(notes_tool);
+    device_tools.push(AvailableToolResponse {
+        id: crate::tools::service::TOOL_NOTES,
+        label: "Notes",
+        description: "Let this model find, use, and create notes.",
+        warning: notes_base_warning,
+    });
+
     if settings.tools_enabled {
         if settings.brave_search_enabled
             && settings.has_brave_key()
@@ -132,6 +161,7 @@ pub async fn get_available_tools(
                 id: "brave_web_search",
                 label: "Brave web search",
                 description: "Search the web with Brave Search.",
+                warning: None,
             });
         }
 
@@ -147,6 +177,7 @@ pub async fn get_available_tools(
                 id: "ollama_web_search",
                 label: "Ollama web search",
                 description: "Search the web through Ollama's hosted search API.",
+                warning: None,
             });
         }
 
@@ -162,6 +193,7 @@ pub async fn get_available_tools(
                 id: "ollama_web_fetch",
                 label: "Ollama web fetch",
                 description: "Fetch pages through Ollama's hosted fetch API.",
+                warning: None,
             });
         }
 
@@ -176,21 +208,8 @@ pub async fn get_available_tools(
                 id: "direct_web_fetch",
                 label: "Direct page fetch",
                 description: "Fetch public HTTP/HTTPS pages from the Vashti server.",
+                warning: None,
             });
-        }
-
-        let note_settings = notes_service::get_note_settings(pool, user_id).await?;
-        let notes_allowed = tool_allowed(crate::tools::service::TOOL_NOTES, &user_tags, &tool_tags);
-        if notes_allowed {
-            let notes_tool = AvailableToolResponse {
-                id: crate::tools::service::TOOL_NOTES,
-                label: "Notes",
-                description: "Search and manage permitted notes with reversible changes.",
-            };
-            device_tools.push(notes_tool.clone());
-            if note_settings.allow_model_read || note_settings.allow_model_create {
-                tools.push(notes_tool);
-            }
         }
     }
 
@@ -990,7 +1009,112 @@ fn row_to_user_settings(row: sqlx::sqlite::SqliteRow) -> Result<UserSettingsResp
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_public_base_url;
+    use sqlx::{
+        SqlitePool,
+        sqlite::{SqliteConnectOptions, SqlitePoolOptions},
+    };
+
+    use super::{get_available_tools, normalize_public_base_url};
+    use crate::{
+        auth::service::register_user,
+        notes::{
+            models::{NoteAiAccess, NoteModelScope, UpdateNoteSettingsRequest},
+            service::update_note_settings,
+        },
+        startup,
+    };
+
+    async fn test_pool() -> SqlitePool {
+        let options = SqliteConnectOptions::new()
+            .filename(":memory:")
+            .foreign_keys(true);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .expect("connect test database");
+        startup::migrations::run(&pool)
+            .await
+            .expect("run migrations");
+        startup::bootstrap::ensure_app_settings(&pool)
+            .await
+            .expect("ensure app settings");
+        pool
+    }
+
+    #[tokio::test]
+    async fn notes_stays_in_the_tool_catalog_with_an_actionable_warning() {
+        let pool = test_pool().await;
+        let user_id = register_user(
+            &pool,
+            "notes-catalog-user".to_string(),
+            None,
+            "secret-pass".to_string(),
+        )
+        .await
+        .expect("register test user")
+        .user
+        .id;
+
+        let globally_disabled = get_available_tools(&pool, &user_id)
+            .await
+            .expect("load disabled tool catalog");
+        let notes = globally_disabled
+            .tools
+            .iter()
+            .find(|tool| tool.id == "notes")
+            .expect("Notes remains in the catalog");
+        assert_eq!(
+            notes.warning.as_deref(),
+            Some("Notes tools are unavailable on this server. Ask an administrator.")
+        );
+
+        sqlx::query("UPDATE app_settings SET tools_enabled = 1 WHERE id = 1")
+            .execute(&pool)
+            .await
+            .expect("enable tools");
+        let defaults = get_available_tools(&pool, &user_id)
+            .await
+            .expect("load default tool catalog");
+        assert!(
+            defaults
+                .tools
+                .iter()
+                .find(|tool| tool.id == "notes")
+                .expect("Notes remains in the catalog")
+                .warning
+                .is_none()
+        );
+
+        update_note_settings(
+            &pool,
+            &user_id,
+            UpdateNoteSettingsRequest {
+                allow_model_read: false,
+                allow_model_create: false,
+                allow_model_edit: false,
+                allow_model_trash: false,
+                default_ai_access: NoteAiAccess::None,
+                default_model_scope: NoteModelScope::default(),
+            },
+        )
+        .await
+        .expect("disable personal Notes operations");
+        let personally_disabled = get_available_tools(&pool, &user_id)
+            .await
+            .expect("load restricted tool catalog");
+        let notes = personally_disabled
+            .tools
+            .iter()
+            .find(|tool| tool.id == "notes")
+            .expect("Notes remains in the catalog");
+        assert!(
+            notes
+                .warning
+                .as_deref()
+                .is_some_and(|warning| warning.contains("Settings → Notes"))
+        );
+    }
 
     #[test]
     fn public_base_url_is_normalized_to_an_https_origin() {

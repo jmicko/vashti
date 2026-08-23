@@ -1331,6 +1331,23 @@ textarea {
   padding: 7px 2px;
 }
 
+.notes-permission-toggle > span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.notes-permission-toggle strong {
+  font-size: 0.88rem;
+}
+
+.notes-permission-toggle small,
+.notes-model-scope-helper {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+
 .notes-permission-toggle input {
   width: 20px;
   min-width: 20px;
@@ -2987,6 +3004,13 @@ textarea {
   width: min(260px, calc(100vw - 36px));
 }
 
+.composer-tool-menu {
+  max-height: min(32rem, 50vh);
+  max-height: min(32rem, 50dvh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 .composer-thinking-option {
   min-height: 42px;
   width: 100%;
@@ -3019,6 +3043,27 @@ textarea {
 
 .composer-tool-list.disabled {
   opacity: 0.48;
+}
+
+.composer-tool-option {
+  display: grid;
+  gap: 5px;
+}
+
+.composer-tool-warning {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 6px;
+  padding: 0 8px 4px 34px;
+  color: var(--warning);
+  line-height: 1.35;
+}
+
+.composer-tool-warning svg {
+  width: 14px;
+  height: 14px;
+  margin-top: 1px;
 }
 
 .composer-model-capabilities {
@@ -4585,6 +4630,7 @@ textarea {
   width: 100%;
   justify-content: flex-start;
   border-color: transparent;
+  scroll-margin-inline: 12px;
 }
 
 .settings-nav-divider {
@@ -4636,6 +4682,7 @@ textarea {
 
 .settings-section > .settings-lead,
 .settings-section > .context-storage-switch,
+.settings-section > .notes-settings-disclosure,
 .settings-section > .context-library-toolbar,
 .settings-section > .context-category-list,
 .settings-section > .context-library-empty {
@@ -5094,6 +5141,44 @@ textarea {
 .tools-settings-form,
 .settings-form-with-banner {
   max-width: none;
+}
+
+.notes-settings-disclosure {
+  border-left: 3px solid var(--info);
+  color: var(--muted);
+  margin-top: 14px;
+  padding: 4px 0 4px 12px;
+}
+
+.notes-settings-form {
+  display: grid;
+  gap: 16px;
+}
+
+.notes-model-access-summary,
+.notes-defaults-section {
+  align-content: start;
+}
+
+.notes-model-access-summary .tool-details {
+  margin-top: 2px;
+}
+
+.notes-advanced-permissions[open] {
+  display: grid;
+  gap: 8px;
+}
+
+.notes-defaults-section .notes-access-section,
+.notes-defaults-section .notes-model-scope {
+  border-top: 1px solid var(--line-soft);
+}
+
+.notes-model-created-copy {
+  border-left: 3px solid var(--accent);
+  color: var(--muted);
+  margin: 0;
+  padding: 3px 0 3px 10px;
 }
 
 .settings-create-card {

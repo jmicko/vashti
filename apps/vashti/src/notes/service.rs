@@ -731,15 +731,25 @@ pub async fn create_note(
         ));
     }
     let ai_access = if actor.is_model() {
-        settings.default_ai_access
+        NoteAiAccess::Manage
     } else {
         payload.ai_access.unwrap_or(settings.default_ai_access)
     };
-    let scope = validate_model_scope(if actor.is_model() {
+    let mut scope = validate_model_scope(if actor.is_model() {
         settings.default_model_scope
     } else {
         payload.model_scope.unwrap_or(settings.default_model_scope)
     })?;
+    if actor.is_model() && !scope.all_models {
+        let model_key = actor
+            .actor_model_key
+            .as_ref()
+            .ok_or_else(|| ApiError::internal("Model note changes require a model identity"))?;
+        if !scope.model_keys.contains(model_key) {
+            scope.model_keys.push(model_key.clone());
+        }
+        scope = validate_model_scope(scope)?;
+    }
     let is_pinned = !actor.is_model() && payload.is_pinned;
     let note_id = Uuid::new_v4().to_string();
     let version_id = Uuid::new_v4().to_string();
@@ -1135,11 +1145,11 @@ pub async fn get_note_settings(
     .await?;
     let Some(row) = row else {
         return Ok(NoteSettingsResponse {
-            allow_model_read: false,
-            allow_model_create: false,
-            allow_model_edit: false,
-            allow_model_trash: false,
-            default_ai_access: NoteAiAccess::None,
+            allow_model_read: true,
+            allow_model_create: true,
+            allow_model_edit: true,
+            allow_model_trash: true,
+            default_ai_access: NoteAiAccess::Manage,
             default_model_scope: NoteModelScope {
                 all_models: true,
                 model_keys,
@@ -2523,6 +2533,198 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn untouched_accounts_allow_models_to_create_fully_usable_notes() {
+        let pool = test_pool().await;
+        let user_id = create_test_user(&pool, "note-model-defaults").await;
+        let model_key = "model:test-model";
+        let settings = get_note_settings(&pool, &user_id)
+            .await
+            .expect("load default note settings");
+        assert!(settings.allow_model_read);
+        assert!(settings.allow_model_create);
+        assert!(settings.allow_model_edit);
+        assert!(settings.allow_model_trash);
+        assert_eq!(settings.default_ai_access, NoteAiAccess::Manage);
+
+        let human_note = create_note(
+            &pool,
+            &user_id,
+            CreateNoteRequest {
+                title: "Human notebook".to_string(),
+                content: "New notes are model-usable by default.".to_string(),
+                tags: Vec::new(),
+                is_pinned: false,
+                ai_access: None,
+                model_scope: None,
+            },
+            &NoteMutationActor::human(&user_id),
+        )
+        .await
+        .expect("create human-authored note with defaults");
+        assert_eq!(human_note.ai_access, NoteAiAccess::Manage);
+        assert!(human_note.model_scope.all_models);
+
+        let actor = NoteMutationActor::model(
+            &user_id,
+            model_key,
+            "Test model",
+            "chat-id",
+            "message-id",
+            "tool-call-id",
+        );
+        let note = create_note(
+            &pool,
+            &user_id,
+            CreateNoteRequest {
+                title: "Model notebook".to_string(),
+                content: "A model can continue working with this note.".to_string(),
+                tags: Vec::new(),
+                is_pinned: false,
+                ai_access: None,
+                model_scope: None,
+            },
+            &actor,
+        )
+        .await
+        .expect("create model-authored note with defaults");
+        assert_eq!(note.ai_access, NoteAiAccess::Manage);
+
+        get_note_for_model(&pool, &user_id, &note.id, model_key)
+            .await
+            .expect("read model-authored note");
+        let updated = update_note(
+            &pool,
+            &user_id,
+            &note.id,
+            UpdateNoteRequest {
+                expected_version: 1,
+                expected_version_id: None,
+                edit_session_version_id: None,
+                title: None,
+                content: Some("The model revised its note.".to_string()),
+                tags: None,
+                is_pinned: None,
+                ai_access: None,
+                model_scope: None,
+            },
+            &actor,
+        )
+        .await
+        .expect("edit model-authored note");
+        trash_note(
+            &pool,
+            &user_id,
+            &note.id,
+            updated.current_version.version_number,
+            &actor,
+        )
+        .await
+        .expect("trash model-authored note");
+    }
+
+    #[tokio::test]
+    async fn model_created_note_scope_always_includes_its_creator() {
+        let pool = test_pool().await;
+        let user_id = create_test_user(&pool, "note-model-creator-scope").await;
+        update_note_settings(
+            &pool,
+            &user_id,
+            UpdateNoteSettingsRequest {
+                allow_model_read: true,
+                allow_model_create: true,
+                allow_model_edit: true,
+                allow_model_trash: true,
+                default_ai_access: NoteAiAccess::Manage,
+                default_model_scope: NoteModelScope {
+                    all_models: false,
+                    model_keys: vec!["persona:other".to_string()],
+                },
+            },
+        )
+        .await
+        .expect("save restricted defaults");
+        let actor = NoteMutationActor::model(
+            &user_id,
+            "persona:creator",
+            "Creator",
+            "chat-id",
+            "message-id",
+            "tool-call-id",
+        );
+        let note = create_note(
+            &pool,
+            &user_id,
+            CreateNoteRequest {
+                title: "Scoped model note".to_string(),
+                content: "The creating model remains in scope.".to_string(),
+                tags: Vec::new(),
+                is_pinned: false,
+                ai_access: None,
+                model_scope: None,
+            },
+            &actor,
+        )
+        .await
+        .expect("create model-authored note");
+        assert_eq!(
+            note.model_scope.model_keys,
+            vec!["persona:creator", "persona:other"]
+        );
+        get_note_for_model(&pool, &user_id, &note.id, "persona:creator")
+            .await
+            .expect("creator can read its note");
+    }
+
+    #[tokio::test]
+    async fn model_creator_scope_still_enforces_the_model_limit() {
+        let pool = test_pool().await;
+        let user_id = create_test_user(&pool, "note-model-creator-limit").await;
+        update_note_settings(
+            &pool,
+            &user_id,
+            UpdateNoteSettingsRequest {
+                allow_model_read: true,
+                allow_model_create: true,
+                allow_model_edit: true,
+                allow_model_trash: true,
+                default_ai_access: NoteAiAccess::Manage,
+                default_model_scope: NoteModelScope {
+                    all_models: false,
+                    model_keys: (0..MAX_NOTE_MODEL_SCOPES)
+                        .map(|index| format!("persona:other-{index}"))
+                        .collect(),
+                },
+            },
+        )
+        .await
+        .expect("save a full restricted scope");
+        let actor = NoteMutationActor::model(
+            &user_id,
+            "persona:creator",
+            "Creator",
+            "chat-id",
+            "message-id",
+            "tool-call-id",
+        );
+        let error = create_note(
+            &pool,
+            &user_id,
+            CreateNoteRequest {
+                title: "Overfull model note".to_string(),
+                content: "The creator cannot bypass the scope limit.".to_string(),
+                tags: Vec::new(),
+                is_pinned: false,
+                ai_access: None,
+                model_scope: None,
+            },
+            &actor,
+        )
+        .await
+        .expect_err("adding the creator must still enforce the model limit");
+        assert_eq!(error.code(), "too_many_note_models");
+    }
+
+    #[tokio::test]
     async fn model_scope_is_exact_and_model_changes_are_attributed() {
         let pool = test_pool().await;
         let user_id = create_test_user(&pool, "note-model-scope").await;
@@ -2570,7 +2772,7 @@ mod tests {
 
         assert!(!note.model_scope.all_models);
         assert_eq!(note.model_scope.model_keys, vec![model_key]);
-        assert_eq!(note.ai_access, NoteAiAccess::Edit);
+        assert_eq!(note.ai_access, NoteAiAccess::Manage);
         assert!(!note.is_pinned);
         assert_eq!(note.current_version.actor_type, "model");
         assert_eq!(

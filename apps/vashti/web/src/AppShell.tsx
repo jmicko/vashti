@@ -65,6 +65,7 @@ import {
   deletePrivateChat,
   getCachedHostedChatList,
   getCachedModelState,
+  getPrivateNoteSettings,
   getPrivateChat,
   listPrivatePersonas,
   listPrivateChats,
@@ -81,7 +82,7 @@ import {
 } from "./privateChatStore";
 import type {
   AppRoute,
-  AppSettingsGuard,
+  SettingsGuard,
   AttachmentInfo,
   AvailableTool,
   AvailableToolsResponse,
@@ -136,7 +137,7 @@ export function AppShell({
   const routeRef = useRef(route);
   const [noteReturnRoute, setNoteReturnRoute] = useState<AppRoute | null>(null);
   const [isNotesEditorOpen, setIsNotesEditorOpen] = useState(false);
-  const appSettingsGuardRef = useRef<AppSettingsGuard | null>(null);
+  const settingsGuardRef = useRef<SettingsGuard | null>(null);
   const settingsMenuRef = useRef<HTMLDivElement>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isMessageTreeOpen, setIsMessageTreeOpen] = useState(false);
@@ -214,6 +215,10 @@ export function AppShell({
   const isSettingsPage = page === "settings";
   const isNotesPage = page === "notes";
   const settingsSection = route.page === "settings" ? route.section : "profile";
+  const settingsNotesStorageMode =
+    route.page === "settings" && route.section === "notes"
+      ? route.storageMode ?? "server"
+      : "server";
   const currentChatId = route.page === "chat" ? route.chatId ?? null : null;
   const currentPrivateChatId = route.page === "private-chat" ? route.chatId : null;
   const notesStorageMode = route.page === "notes" ? route.storageMode ?? "server" : "server";
@@ -382,8 +387,8 @@ export function AppShell({
     setChatPinnedNotes([]);
   }, [route]);
 
-  const updateAppSettingsGuard = useCallback((guard: AppSettingsGuard | null) => {
-    appSettingsGuardRef.current = guard;
+  const updateSettingsGuard = useCallback((guard: SettingsGuard | null) => {
+    settingsGuardRef.current = guard;
   }, []);
 
   function setNewChatMode(mode: NewChatMode) {
@@ -541,8 +546,25 @@ export function AppShell({
   const loadAvailableTools = useCallback(async () => {
     try {
       const response = await requestJson<AvailableToolsResponse>("/api/tools");
-      setAvailableTools(response.tools_enabled ? response.tools : []);
-      setDeviceAvailableTools(response.tools_enabled ? response.device_tools ?? [] : []);
+      setAvailableTools(response.tools);
+      let deviceTools = response.device_tools ?? [];
+      try {
+        const privateNoteSettings = await getPrivateNoteSettings();
+        if (!privateNoteSettings.allow_model_read && !privateNoteSettings.allow_model_create) {
+          deviceTools = deviceTools.map((tool) =>
+            tool.id === "notes" && !tool.warning
+              ? {
+                  ...tool,
+                  warning:
+                    "Notes is on, but models are not allowed to use device notes. Open Settings → Notes."
+                }
+              : tool
+          );
+        }
+      } catch {
+        // Server-backed tool availability remains useful if private storage is unavailable.
+      }
+      setDeviceAvailableTools(deviceTools);
     } catch {
       setAvailableTools([]);
       setDeviceAvailableTools([]);
@@ -719,8 +741,7 @@ export function AppShell({
   function shouldGuardNavigation(currentRoute: AppRoute, nextRoute: AppRoute) {
     return (
       currentRoute.page === "settings" &&
-      currentRoute.section === "app" &&
-      Boolean(appSettingsGuardRef.current?.isDirty) &&
+      Boolean(settingsGuardRef.current?.isDirty) &&
       !routesEqual(currentRoute, nextRoute)
     );
   }
@@ -750,8 +771,11 @@ export function AppShell({
     applyNavigation(nextRoute);
   }
 
-  function openSettings(section: SettingsSection = "profile") {
-    navigate({ page: "settings", section });
+  function openSettings(
+    section: SettingsSection = "profile",
+    storageMode?: "server" | "device"
+  ) {
+    navigate({ page: "settings", section, ...(section === "notes" ? { storageMode } : {}) });
   }
 
   function openChat(chatId?: string) {
@@ -820,7 +844,7 @@ export function AppShell({
 
   async function saveAndContinueNavigation() {
     const nextRoute = pendingNavigation;
-    const guard = appSettingsGuardRef.current;
+    const guard = settingsGuardRef.current;
     if (!nextRoute || !guard) {
       setPendingNavigation(null);
       return;
@@ -840,7 +864,7 @@ export function AppShell({
 
   function discardAndContinueNavigation() {
     const nextRoute = pendingNavigation;
-    appSettingsGuardRef.current?.discard();
+    settingsGuardRef.current?.discard();
     setPendingNavigation(null);
 
     if (nextRoute) {
@@ -1404,7 +1428,12 @@ export function AppShell({
             onPersonasChanged={loadModels}
             onPrivatePersonasChanged={loadPrivatePersonas}
             onContextChanged={loadContextLibraries}
-            onAppSettingsGuardChange={updateAppSettingsGuard}
+            modelGroups={modelGroups}
+            personas={personas}
+            privatePersonas={privatePersonas}
+            notesStorageMode={settingsNotesStorageMode}
+            onNotesStorageModeChange={(storageMode) => openSettings("notes", storageMode)}
+            onSettingsGuardChange={updateSettingsGuard}
             updateStatus={updateStatus}
             updateStatusError={updateStatusError}
             onUpdateStatusChange={(status) => {
@@ -1428,6 +1457,7 @@ export function AppShell({
               onReturnToSource={noteReturnRoute ? returnToReferencedChat : undefined}
               onLocationChange={syncNotesLocation}
               onEditorOpenChange={handleNotesEditorOpenChange}
+              onOpenSettings={(storageMode) => openSettings("notes", storageMode)}
             />
           </Suspense>
         ) : page === "private-chat" && currentPrivateChatId ? (

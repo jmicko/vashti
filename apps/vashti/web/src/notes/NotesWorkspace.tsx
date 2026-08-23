@@ -25,16 +25,15 @@ import {
 } from "lucide-react";
 import { ConfirmDialog, RetroLoader } from "../common";
 import { MarkdownContent } from "../MarkdownContent";
-import {
-  getPrivateNoteSettings,
-  savePrivateNoteSettings,
-  type PrivatePersona
-} from "../privateChatStore";
+import { getPrivateNoteSettings, type PrivatePersona } from "../privateChatStore";
 import type { BackendModelGroup, Persona } from "../types";
 import {
-  getNoteSettings,
-  updateNoteSettings
-} from "./api";
+  NoteAccessLevelControl,
+  NoteModelScopeEditor,
+  buildNoteModelOptions,
+  normalizeNoteModelScope,
+  type NoteModelOption
+} from "./accessControls";
 import { MarkdownToolbar } from "./MarkdownToolbar";
 import {
   noteRepositoryFor,
@@ -42,11 +41,8 @@ import {
 } from "./repository";
 import type {
   Note,
-  NoteAiAccess,
   NoteDraft,
   NoteListStatus,
-  NoteModelScope,
-  NoteSettings,
   NoteSort,
   NoteSummary,
   NoteVersion
@@ -56,18 +52,12 @@ const AUTOSAVE_DELAY_MS = 700;
 const EDIT_SESSION_IDLE_MS = 10 * 60 * 1000;
 const NOTE_LIST_LIMIT = 100;
 
-type Drawer = "details" | "history" | "settings" | null;
+type Drawer = "details" | "history" | null;
 type SaveState = "idle" | "saving" | "saved" | "error" | "conflict";
 type ConfirmAction =
   | { kind: "trash" }
   | { kind: "purge" }
   | { kind: "restore-version"; version: NoteVersion };
-
-type ModelOption = {
-  key: string;
-  label: string;
-  group: string;
-};
 
 type NoteEditSession = {
   noteId: string;
@@ -83,7 +73,8 @@ export function NotesWorkspace({
   initialNoteId = null,
   onReturnToSource,
   onLocationChange,
-  onEditorOpenChange
+  onEditorOpenChange,
+  onOpenSettings
 }: {
   modelGroups: BackendModelGroup[];
   personas: Persona[];
@@ -93,6 +84,7 @@ export function NotesWorkspace({
   onReturnToSource?: () => void;
   onLocationChange?: (storageMode: NoteStorageMode, noteId: string | null) => void;
   onEditorOpenChange?: (isOpen: boolean) => void;
+  onOpenSettings?: (storageMode: NoteStorageMode) => void;
 }) {
   const [storageMode, setStorageMode] = useState<NoteStorageMode>(initialStorageMode);
   const [status, setStatus] = useState<NoteListStatus>("active");
@@ -119,11 +111,6 @@ export function NotesWorkspace({
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
   const [isLoadingVersions, setIsLoadingVersions] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
-  const [settings, setSettings] = useState<NoteSettings | null>(null);
-  const [settingsDraft, setSettingsDraft] = useState<NoteSettings | null>(null);
-  const [isLoadingSettings, setIsLoadingSettings] = useState(false);
-  const [isSavingSettings, setIsSavingSettings] = useState(false);
-  const [settingsError, setSettingsError] = useState<string | null>(null);
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
   const [isConfirming, setIsConfirming] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
@@ -154,28 +141,10 @@ export function NotesWorkspace({
   const savedStateTimerRef = useRef<number | null>(null);
   const repository = noteRepositoryFor(storageMode);
 
-  const modelOptions = useMemo<ModelOption[]>(() => {
-    const baseModels = modelGroups.flatMap((group) =>
-      group.models.map((model) => ({
-        key: `base:${group.backend.id}:${model.name}`,
-        label: model.name,
-        group: group.backend.name
-      }))
-    );
-    const customModels = personas.map((persona) => ({
-      key: `persona:${persona.id}`,
-      label: persona.current_version.display_name,
-      group: "Custom Models"
-    }));
-    const deviceCustomModels = privatePersonas.map((persona) => ({
-      key: `persona:${persona.id}`,
-      label: persona.current_version.display_name,
-      group: "Custom Models"
-    }));
-    return storageMode === "device"
-      ? [...deviceCustomModels, ...baseModels]
-      : [...customModels, ...baseModels];
-  }, [modelGroups, personas, privatePersonas, storageMode]);
+  const modelOptions = useMemo(
+    () => buildNoteModelOptions(storageMode, modelGroups, personas, privatePersonas),
+    [modelGroups, personas, privatePersonas, storageMode]
+  );
 
   const isDirty = Boolean(note && draft && draftFingerprint(draft) !== noteFingerprint(note));
   const selectedVersion =
@@ -455,7 +424,7 @@ export function NotesWorkspace({
         tags: normalizeTags(sourceDraft.tags),
         is_pinned: sourceDraft.is_pinned,
         ai_access: sourceDraft.ai_access,
-        model_scope: normalizeScope(sourceDraft.model_scope)
+        model_scope: normalizeNoteModelScope(sourceDraft.model_scope)
       });
       if (contentChanged && editSessionRef.current === editSession && editSession) {
         editSession.checkpointVersionId = updated.current_version.id;
@@ -589,7 +558,7 @@ export function NotesWorkspace({
         ...draft,
         title: `${draft.title.trim() || "Untitled note"} (conflict copy)`,
         tags: normalizeTags(draft.tags),
-        model_scope: normalizeScope(draft.model_scope)
+        model_scope: normalizeNoteModelScope(draft.model_scope)
       });
       setSummaries((current) => sortSummaries([summaryFromNote(created), ...current], sort));
       setTotal((current) => current + 1);
@@ -695,49 +664,14 @@ export function NotesWorkspace({
     void loadVersions(note.id);
   }
 
-  async function openSettings() {
-    setDrawer("settings");
-    if (settings) {
-      setSettingsDraft(cloneSettings(settings));
+  async function openNotesSettings() {
+    if (!(await flushCurrentDraft())) {
       return;
     }
-    setIsLoadingSettings(true);
-    setSettingsError(null);
-    try {
-      const loaded = storageMode === "device"
-        ? await getPrivateNoteSettings()
-        : await getNoteSettings();
-      setSettings(loaded);
-      setSettingsDraft(cloneSettings(loaded));
-    } catch (error) {
-      setSettingsError(errorMessage(error, "Failed to load note settings"));
-    } finally {
-      setIsLoadingSettings(false);
-    }
-  }
-
-  async function saveSettings() {
-    if (!settingsDraft) {
-      return;
-    }
-    setIsSavingSettings(true);
-    setSettingsError(null);
-    try {
-      const payload = {
-        ...settingsDraft,
-        default_model_scope: normalizeScope(settingsDraft.default_model_scope)
-      };
-      const updated = storageMode === "device"
-        ? await savePrivateNoteSettings(payload)
-        : await updateNoteSettings(payload);
-      setSettings(updated);
-      setSettingsDraft(cloneSettings(updated));
-      setDrawer(null);
-    } catch (error) {
-      setSettingsError(errorMessage(error, "Failed to save note settings"));
-    } finally {
-      setIsSavingSettings(false);
-    }
+    finishEditSession();
+    setIsListMenuOpen(false);
+    setIsEditorMenuOpen(false);
+    onOpenSettings?.(storageMode);
   }
 
   function updateDraft(patch: Partial<NoteDraft>) {
@@ -804,9 +738,6 @@ export function NotesWorkspace({
     setSaveMessage(null);
     setNoteError(null);
     setDrawer(null);
-    setSettings(null);
-    setSettingsDraft(null);
-    setSettingsError(null);
     setIsEditorOpen(false);
   }
 
@@ -842,9 +773,9 @@ export function NotesWorkspace({
               <span>Back to chat</span>
             </button>
           )}
-          <button type="button" className="secondary-button" onClick={() => void openSettings()}>
+          <button type="button" className="secondary-button" onClick={() => void openNotesSettings()}>
             <Settings2 />
-            <span>Note Access</span>
+            <span>Notes settings</span>
           </button>
           <button type="button" onClick={() => void createNewNote()} disabled={isCreating}>
             {isCreating ? <RetroLoader /> : <FilePlus2 />}
@@ -1064,8 +995,8 @@ export function NotesWorkspace({
                       <button
                         type="button"
                         className="icon-button"
-                        aria-label="Note access and tags"
-                        title="Note access and tags"
+                        aria-label="Note details"
+                        title="Note details"
                         onClick={() => setDrawer("details")}
                       >
                         <Settings2 />
@@ -1108,11 +1039,11 @@ export function NotesWorkspace({
                           className="menu-item"
                           onClick={() => {
                             setIsEditorMenuOpen(false);
-                            void openSettings();
+                            void openNotesSettings();
                           }}
                         >
                           <Settings2 />
-                          <span>Note access defaults</span>
+                          <span>Notes settings</span>
                         </button>
                         {note.deleted_at ? (
                           <>
@@ -1172,7 +1103,7 @@ export function NotesWorkspace({
                               }}
                             >
                               <Settings2 />
-                              <span>Access and tags</span>
+                              <span>Note details</span>
                             </button>
                             <button
                               type="button"
@@ -1251,11 +1182,11 @@ export function NotesWorkspace({
         {drawer && (
           <>
             <button type="button" className="notes-drawer-backdrop" aria-label="Close panel" onClick={() => setDrawer(null)} />
-            <aside className="notes-drawer" aria-label={drawerTitle(drawer, storageMode)}>
+            <aside className="notes-drawer" aria-label={drawerTitle(drawer)}>
               <header>
                 <div>
                   <p className="eyebrow">Notes</p>
-                  <h2>{drawerTitle(drawer, storageMode)}</h2>
+                  <h2>{drawerTitle(drawer)}</h2>
                 </div>
                 <button type="button" className="icon-button" aria-label="Close panel" onClick={() => setDrawer(null)}><X /></button>
               </header>
@@ -1279,19 +1210,6 @@ export function NotesWorkspace({
                   onRefresh={() => void loadVersions(note.id)}
                   onSelect={setSelectedVersionId}
                   onRestore={(version) => setConfirmAction({ kind: "restore-version", version })}
-                />
-              )}
-              {drawer === "settings" && (
-                <NoteAccessSettings
-                  settings={settingsDraft}
-                  isLoading={isLoadingSettings}
-                  isSaving={isSavingSettings}
-                  error={settingsError}
-                  storageMode={storageMode}
-                  modelOptions={modelOptions}
-                  onChange={setSettingsDraft}
-                  onCancel={() => setDrawer(null)}
-                  onSave={() => void saveSettings()}
                 />
               )}
             </aside>
@@ -1324,7 +1242,7 @@ function NoteDetails({
 }: {
   draft: NoteDraft;
   tagsText: string;
-  modelOptions: ModelOption[];
+  modelOptions: NoteModelOption[];
   onDraftChange: (patch: Partial<NoteDraft>) => void;
   onTagsTextChange: (value: string) => void;
   onTagsCommit: () => void;
@@ -1349,15 +1267,28 @@ function NoteDetails({
         <small>Separate tags with commas.</small>
       </label>
       <section className="notes-access-section">
-        <h3>AI Access</h3>
-        <p>Choose the maximum action a model may take with this note.</p>
-        <AccessLevelControl value={draft.ai_access} onChange={(ai_access) => onDraftChange({ ai_access })} />
+        <h3>Model access</h3>
+        <p>Choose what chat models can do with this note.</p>
+        <NoteAccessLevelControl
+          value={draft.ai_access}
+          ariaLabel="Model access for this note"
+          onChange={(ai_access) => onDraftChange({ ai_access })}
+        />
+        <small>
+          Full access means models may read, edit, and move the note to Trash. They can never
+          permanently delete it.
+        </small>
       </section>
-      <ModelScopeEditor
-        scope={draft.model_scope}
-        options={modelOptions}
-        onChange={(model_scope) => onDraftChange({ model_scope })}
-      />
+      {draft.ai_access !== "none" && (
+        <NoteModelScopeEditor
+          scope={draft.model_scope}
+          options={modelOptions}
+          onChange={(model_scope) => onDraftChange({ model_scope })}
+          title="Which models can use this note?"
+          description="Allow every model, or choose specific models."
+          emptyWarning="Choose at least one model, or this note will not be available to models."
+        />
+      )}
     </div>
   );
 }
@@ -1418,163 +1349,6 @@ function NoteHistory({
   );
 }
 
-function NoteAccessSettings({
-  settings,
-  isLoading,
-  isSaving,
-  error,
-  storageMode,
-  modelOptions,
-  onChange,
-  onCancel,
-  onSave
-}: {
-  settings: NoteSettings | null;
-  isLoading: boolean;
-  isSaving: boolean;
-  error: string | null;
-  storageMode: NoteStorageMode;
-  modelOptions: ModelOption[];
-  onChange: (settings: NoteSettings) => void;
-  onCancel: () => void;
-  onSave: () => void;
-}) {
-  if (isLoading || !settings) {
-    return <div className="notes-drawer-state">{error ? <p className="error">{error}</p> : <RetroLoader />}</div>;
-  }
-
-  return (
-    <div className="notes-drawer-content notes-settings-content">
-      <p>These limits apply to every model before a note's own access setting is considered.</p>
-      {storageMode === "device" && (
-        <p>
-          Device-note tools are available only in private chats. Content a model reads is sent
-          through Vashti to that selected model for the active generation, but is not added to the
-          server note library.
-        </p>
-      )}
-      <div className="notes-permission-list">
-        <PermissionToggle label="Read notes" checked={settings.allow_model_read} onChange={(allow_model_read) => onChange({ ...settings, allow_model_read })} />
-        <PermissionToggle label="Create notes" checked={settings.allow_model_create} onChange={(allow_model_create) => onChange({ ...settings, allow_model_create })} />
-        <PermissionToggle label="Edit notes" checked={settings.allow_model_edit} onChange={(allow_model_edit) => onChange({ ...settings, allow_model_edit })} />
-        <PermissionToggle label="Move notes to trash" checked={settings.allow_model_trash} onChange={(allow_model_trash) => onChange({ ...settings, allow_model_trash })} />
-      </div>
-      <small>Edit and trash access also require Read notes.</small>
-      <section className="notes-access-section">
-        <h3>New Note Default</h3>
-        <p>Default AI access for notes you create later.</p>
-        <AccessLevelControl value={settings.default_ai_access} onChange={(default_ai_access) => onChange({ ...settings, default_ai_access })} />
-      </section>
-      <ModelScopeEditor scope={settings.default_model_scope} options={modelOptions} onChange={(default_model_scope) => onChange({ ...settings, default_model_scope })} title="New Note Model Scope" />
-      {error && <p className="error">{error}</p>}
-      <div className="notes-drawer-actions">
-        <button type="button" className="secondary-button" disabled={isSaving} onClick={onCancel}>Cancel</button>
-        <button type="button" disabled={isSaving} onClick={onSave}>{isSaving ? <RetroLoader /> : "Save"}</button>
-      </div>
-    </div>
-  );
-}
-
-function AccessLevelControl({
-  value,
-  onChange
-}: {
-  value: NoteAiAccess;
-  onChange: (value: NoteAiAccess) => void;
-}) {
-  const levels: Array<{ value: NoteAiAccess; label: string }> = [
-    { value: "none", label: "None" },
-    { value: "read", label: "Read" },
-    { value: "edit", label: "Edit" },
-    { value: "manage", label: "Manage" }
-  ];
-  return (
-    <div className="segmented-control notes-access-control">
-      {levels.map((level) => (
-        <button type="button" key={level.value} className={value === level.value ? "active" : ""} onClick={() => onChange(level.value)}>
-          {level.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function ModelScopeEditor({
-  scope,
-  options,
-  onChange,
-  title = "Model Scope"
-}: {
-  scope: NoteModelScope;
-  options: ModelOption[];
-  onChange: (scope: NoteModelScope) => void;
-  title?: string;
-}) {
-  const [query, setQuery] = useState("");
-  const filtered = options.filter((option) => `${option.label} ${option.group}`.toLowerCase().includes(query.toLowerCase()));
-  const grouped = filtered.reduce<Map<string, ModelOption[]>>((current, option) => {
-    const group = current.get(option.group) ?? [];
-    group.push(option);
-    current.set(option.group, group);
-    return current;
-  }, new Map());
-
-  function toggleModel(key: string, checked: boolean) {
-    const next = new Set(scope.model_keys);
-    if (checked) {
-      next.add(key);
-    } else {
-      next.delete(key);
-    }
-    onChange({ all_models: false, model_keys: [...next] });
-  }
-
-  return (
-    <section className="notes-model-scope">
-      <h3>{title}</h3>
-      <p>Custom models are scoped independently from their base model.</p>
-      <PermissionToggle label="All models" checked={scope.all_models} onChange={(all_models) => onChange({ all_models, model_keys: scope.model_keys })} />
-      {!scope.all_models && (
-        <>
-          {scope.model_keys.length === 0 && (
-            <p className="notes-scope-warning">No models currently have access to this note.</p>
-          )}
-          <label className="notes-scope-search">
-            <Search />
-            <span className="visually-hidden">Search models</span>
-            <input value={query} placeholder="Search models" onChange={(event) => setQuery(event.target.value)} />
-          </label>
-          <div className="notes-model-options">
-            {[...grouped.entries()].map(([group, groupOptions]) => (
-              <section key={group}>
-                <h4>{group}</h4>
-                {groupOptions.map((option) => (
-                  <PermissionToggle
-                    key={option.key}
-                    label={option.label}
-                    checked={scope.model_keys.includes(option.key)}
-                    onChange={(checked) => toggleModel(option.key, checked)}
-                  />
-                ))}
-              </section>
-            ))}
-            {filtered.length === 0 && <p className="notes-empty-copy">No matching models.</p>}
-          </div>
-        </>
-      )}
-    </section>
-  );
-}
-
-function PermissionToggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (checked: boolean) => void }) {
-  return (
-    <label className="notes-permission-toggle">
-      <span>{label}</span>
-      <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} />
-    </label>
-  );
-}
-
 function noteToDraft(note: Note): NoteDraft {
   return {
     title: note.current_version.title,
@@ -1614,7 +1388,7 @@ function draftFingerprint(draft: NoteDraft) {
     tags: normalizeTags(draft.tags),
     is_pinned: draft.is_pinned,
     ai_access: draft.ai_access,
-    model_scope: normalizeScope(draft.model_scope)
+    model_scope: normalizeNoteModelScope(draft.model_scope)
   });
 }
 
@@ -1624,13 +1398,6 @@ function normalizeTags(tags: string[]) {
 
 function parseTags(value: string) {
   return normalizeTags(value.split(","));
-}
-
-function normalizeScope(scope: NoteModelScope): NoteModelScope {
-  return {
-    all_models: scope.all_models,
-    model_keys: [...new Set(scope.model_keys)].sort()
-  };
 }
 
 function sortSummaries(notes: NoteSummary[], sort: NoteSort) {
@@ -1666,10 +1433,8 @@ function errorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
 
-function drawerTitle(drawer: Exclude<Drawer, null>, storageMode: NoteStorageMode) {
-  if (drawer === "details") return "Note Access";
-  if (drawer === "history") return "Version History";
-  return storageMode === "device" ? "Device AI Note Defaults" : "AI Note Defaults";
+function drawerTitle(drawer: Exclude<Drawer, null>) {
+  return drawer === "details" ? "Note details" : "Version History";
 }
 
 function confirmTitle(action: ConfirmAction) {
@@ -1684,15 +1449,6 @@ function confirmMessage(action: ConfirmAction, note: Note | null) {
   return `Restore version ${action.version.version_number}? The current content will remain available in history.`;
 }
 
-function cloneSettings(settings: NoteSettings): NoteSettings {
-  return {
-    ...settings,
-    default_model_scope: {
-      ...settings.default_model_scope,
-      model_keys: [...settings.default_model_scope.model_keys]
-    }
-  };
-}
 
 function isNoteVersionConflict(error: unknown) {
   return (

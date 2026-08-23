@@ -1,7 +1,8 @@
-import { Fragment, lazy, ReactNode, Suspense } from "react";
+import { Fragment, lazy, ReactNode, Suspense, useEffect, useRef } from "react";
 import {
   Server,
   Library,
+  NotebookPen,
   SlidersHorizontal,
   Sparkles,
   UserRound,
@@ -9,8 +10,11 @@ import {
   Wrench
 } from "lucide-react";
 import { RetroLoader } from "./common";
+import type { PrivatePersona } from "./privateChatStore";
 import type {
-  AppSettingsGuard,
+  SettingsGuard,
+  BackendModelGroup,
+  Persona,
   SettingsSection,
   UpdateStatusResponse,
   User
@@ -37,6 +41,9 @@ const AdminUsersPanel = lazy(() =>
 const ContextSettingsPanel = lazy(() =>
   import("./settingsContext").then((module) => ({ default: module.ContextSettingsPanel }))
 );
+const NotesSettingsPanel = lazy(() =>
+  import("./settingsNotes").then((module) => ({ default: module.NotesSettingsPanel }))
+);
 
 export function SettingsPage({
   currentUser,
@@ -46,7 +53,12 @@ export function SettingsPage({
   onPersonasChanged,
   onPrivatePersonasChanged,
   onContextChanged,
-  onAppSettingsGuardChange,
+  modelGroups,
+  personas,
+  privatePersonas,
+  notesStorageMode,
+  onNotesStorageModeChange,
+  onSettingsGuardChange,
   updateStatus,
   updateStatusError,
   onUpdateStatusChange,
@@ -62,7 +74,12 @@ export function SettingsPage({
   onPersonasChanged: () => Promise<void>;
   onPrivatePersonasChanged: () => Promise<void>;
   onContextChanged: () => Promise<void>;
-  onAppSettingsGuardChange: (guard: AppSettingsGuard | null) => void;
+  modelGroups: BackendModelGroup[];
+  personas: Persona[];
+  privatePersonas: PrivatePersona[];
+  notesStorageMode: "server" | "device";
+  onNotesStorageModeChange: (storageMode: "server" | "device") => void;
+  onSettingsGuardChange: (guard: SettingsGuard | null) => void;
   updateStatus: UpdateStatusResponse | null;
   updateStatusError: string | null;
   onUpdateStatusChange: (status: UpdateStatusResponse) => void;
@@ -81,6 +98,7 @@ export function SettingsPage({
     { id: "profile", label: "Profile", icon: <UserRound />, group: "personal" },
     { id: "models", label: "Models", icon: <Sparkles />, group: "personal" },
     { id: "context", label: "Context", icon: <Library />, group: "personal" },
+    { id: "notes", label: "Notes", icon: <NotebookPen />, group: "personal" },
     { id: "users", label: "Users", icon: <Users />, adminOnly: true, group: "admin" },
     { id: "backends", label: "Backends", icon: <Server />, adminOnly: true, group: "admin" },
     { id: "tools", label: "Tools", icon: <Wrench />, adminOnly: true, group: "admin" },
@@ -89,6 +107,11 @@ export function SettingsPage({
   const visibleSections = sections.filter((section) => !section.adminOnly || isAdmin);
   const selectedSection =
     visibleSections.find((section) => section.id === activeSection)?.id ?? "profile";
+  const activeTabRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    activeTabRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [selectedSection]);
 
   return (
     <div className="settings-page">
@@ -99,13 +122,19 @@ export function SettingsPage({
               <div className="settings-nav-divider" />
             )}
             <button
+              ref={selectedSection === section.id ? activeTabRef : undefined}
               type="button"
               className={
                 selectedSection === section.id
                   ? "settings-tab settings-tab-active"
                   : "settings-tab"
               }
-              onClick={() => onSelectSection(section.id)}
+              aria-current={selectedSection === section.id ? "page" : undefined}
+              onClick={() => {
+                if (selectedSection !== section.id) {
+                  onSelectSection(section.id);
+                }
+              }}
             >
               {section.icon}
               <span>{section.label}</span>
@@ -140,12 +169,23 @@ export function SettingsPage({
           {selectedSection === "context" && (
             <ContextSettingsPanel onContextChanged={onContextChanged} />
           )}
+          {selectedSection === "notes" && (
+            <NotesSettingsPanel
+              modelGroups={modelGroups}
+              personas={personas}
+              privatePersonas={privatePersonas}
+              initialStorageMode={notesStorageMode}
+              onStorageModeChange={onNotesStorageModeChange}
+              onToolsChanged={onToolsChanged}
+              onGuardChange={onSettingsGuardChange}
+            />
+          )}
           {selectedSection === "tools" && isAdmin && (
             <ToolsSettingsPanel onToolsChanged={onToolsChanged} />
           )}
           {selectedSection === "app" && (
             <AppSettingsPanel
-              onGuardChange={onAppSettingsGuardChange}
+              onGuardChange={onSettingsGuardChange}
               updateStatus={updateStatus}
               updateStatusError={updateStatusError}
               onUpdateStatusChange={onUpdateStatusChange}

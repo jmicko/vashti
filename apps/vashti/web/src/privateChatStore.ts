@@ -1410,12 +1410,12 @@ function noteSearchTerms(query: string): string[] {
 
 export function defaultPrivateNoteSettings(): NoteSettings {
   return {
-    allow_model_read: false,
-    allow_model_create: false,
-    allow_model_edit: false,
-    allow_model_trash: false,
-    default_ai_access: "none",
-    default_model_scope: emptyPrivateNoteModelScope()
+    allow_model_read: true,
+    allow_model_create: true,
+    allow_model_edit: true,
+    allow_model_trash: true,
+    default_ai_access: "manage",
+    default_model_scope: { all_models: true, model_keys: [] }
   };
 }
 
@@ -1951,7 +1951,7 @@ function normalizePrivateNoteSettings(settings: NoteSettings): NoteSettings {
       ? settings.default_ai_access
       : "none",
     default_model_scope: validatePrivateNoteModelScope(
-      settings.default_model_scope ?? emptyPrivateNoteModelScope()
+      settings.default_model_scope ?? { all_models: true, model_keys: [] }
     )
   };
 }

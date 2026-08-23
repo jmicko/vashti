@@ -208,7 +208,7 @@ export function UnsavedSettingsDialog({
         aria-labelledby="unsaved-settings-title"
       >
         <h2 id="unsaved-settings-title">Unsaved Settings</h2>
-        <p>Save your app settings before leaving, or discard the unsaved changes.</p>
+        <p>Save your settings before leaving, or discard the unsaved changes.</p>
         <div className="dialog-actions">
           <button type="button" className="secondary-button" disabled={isSaving} onClick={onCancel}>
             Cancel

@@ -91,39 +91,51 @@ expected version ID. A mismatch returns a conflict instead of overwriting a
 newer human or model edit, including when a coalesced checkpoint still has the
 same version number.
 
-## 4. AI Permissions
+## 4. Model Access
 
-The Notes tool is governed by all existing tool gates:
+The user-facing controls follow four clear layers:
 
-1. the admin enables tools globally
-2. tag permissions grant the user access to the Notes tool family
-3. the user enables tool use and Notes for the chat
-4. personal Notes settings allow the requested operation
-5. the note's AI access level and model scope allow the requested operation
+1. an administrator makes the Notes tool available on the Vashti server
+2. each person chooses what models may do in **Settings → Notes**
+3. the Notes toggle turns the tool on or off for an individual chat
+4. an individual note may reduce its access level or limit which models can use it
 
-Every layer can reduce access. No layer bypasses another.
+The server continues to enforce global and tag-based policy underneath these
+controls. No personal or per-chat setting can bypass administrator policy.
 
-Per-note AI access levels are:
+The chat tool menu always lists the Notes tool family. If the selected model or
+current permissions leave it with no usable operations, the enabled toggle
+shows that limitation instead of making the tool disappear.
 
-* `none`: omitted from model search and inaccessible through tools
-* `read`: searchable and readable
-* `edit`: read access plus versioned edits
-* `manage`: edit access plus moving the note to trash
+Per-note model access levels are presented as:
+
+* **No access** (`none`): omitted from model search and inaccessible through tools
+* **Read only** (`read`): searchable and readable
+* **Read and edit** (`edit`): read access plus versioned edits
+* **Full access** (`manage`): edit access plus moving the note to Trash
 
 Note creation is a library-wide permission because no note exists yet to carry
-a per-note rule. Personal defaults define the access level and model scope for
-new human- and model-created notes.
+a per-note rule. Untouched accounts allow every Notes operation, and new notes
+default to **Full access** for **Every model**. These defaults apply only to notes
+created from then on. Existing notes keep their per-note access, so notes set to
+**No access** remain unavailable. The upgrade initializes library-wide access for
+accounts that never saved a Notes preference, while preserving explicitly saved
+personal settings.
 
-Model scope is either all models or an explicit set of selected base-model and
-custom-model identities. A custom model does not inherit note access merely
-because its underlying base model is allowed.
+A model-created note always starts with **Full access**. If the user's configured
+model list is restricted, the creating model is added to that note's scope so it
+can read and revise its own note in later turns. Personal operation permissions
+can still block those actions, and the owner can reduce access at any time.
+
+Model selection is either **Every model** or an explicit list. Custom models
+appear separately in that list, even when they use the same base model.
 
 Human owners retain full control regardless of AI permissions.
 
 ## 5. Model Tools
 
-The UI exposes one Notes tool-family toggle. The model receives narrow
-functions according to the effective permissions:
+The UI exposes one persistent Notes tool-family toggle. The model receives
+narrow functions according to the effective permissions:
 
 * `search_notes(query, limit)`
 * `read_note(note_id)`

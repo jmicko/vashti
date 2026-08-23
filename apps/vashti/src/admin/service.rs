@@ -119,6 +119,19 @@ pub async fn create_user(
     .execute(&mut *tx)
     .await?;
 
+    sqlx::query(
+        r#"
+        INSERT INTO user_note_settings (
+            user_id, allow_model_read, allow_model_create, allow_model_edit,
+            allow_model_trash, default_ai_access, default_all_models, updated_at
+        ) VALUES (?, 1, 1, 1, 1, 'manage', 1, ?)
+        "#,
+    )
+    .bind(&user_id)
+    .bind(now)
+    .execute(&mut *tx)
+    .await?;
+
     tx.commit().await?;
 
     row_to_admin_user(pool, row).await.map_err(ApiError::from)

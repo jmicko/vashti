@@ -119,12 +119,18 @@ async function createNote(
   settings: NoteSettings,
   actor: PrivateNoteMutationActor
 ) {
+  const modelScope = settings.default_model_scope.all_models
+    ? settings.default_model_scope
+    : {
+        all_models: false,
+        model_keys: [...new Set([...settings.default_model_scope.model_keys, actor.model_key])]
+      };
   const note = await createPrivateNote({
     title: requiredString(args, "title"),
     content: requiredString(args, "content"),
     tags: optionalStringArray(args, "tags"),
-    ai_access: settings.default_ai_access,
-    model_scope: settings.default_model_scope,
+    ai_access: "manage",
+    model_scope: modelScope,
     actor
   });
   return {

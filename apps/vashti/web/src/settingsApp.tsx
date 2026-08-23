@@ -11,7 +11,7 @@ import { MarkdownContent } from "./MarkdownContent";
 import { SettingsPanel, SettingsSaveBanner } from "./settingsControls";
 import type {
   AppSettings,
-  AppSettingsGuard,
+  SettingsGuard,
   UpdateStatusResponse,
   VersionResponse
 } from "./types";
@@ -23,7 +23,7 @@ export function AppSettingsPanel({
   onUpdateStatusChange,
   onRefreshUpdateStatus
 }: {
-  onGuardChange: (guard: AppSettingsGuard | null) => void;
+  onGuardChange: (guard: SettingsGuard | null) => void;
   updateStatus: UpdateStatusResponse | null;
   updateStatusError: string | null;
   onUpdateStatusChange: (status: UpdateStatusResponse) => void;

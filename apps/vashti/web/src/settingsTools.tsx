@@ -325,8 +325,8 @@ export function ToolsSettingsPanel({ onToolsChanged }: { onToolsChanged: () => P
               <p className="eyebrow">Vashti</p>
               <h2>Notes</h2>
               <p className="status-message">
-                Grants access to the Notes tool family. Each user still controls which note
-                operations and individual notes their models may use.
+                Controls who may use Notes on this server. People choose what models can do with
+                their notes in Personal → Notes.
               </p>
             </div>
             <div className="tool-setting-heading">
@@ -348,11 +348,11 @@ export function ToolsSettingsPanel({ onToolsChanged }: { onToolsChanged: () => P
               }
             />
             <details className="tool-details">
-              <summary>Semantic search</summary>
+              <summary>Meaning-based search</summary>
               <ToggleSwitch
                 icon={<Search />}
-                label="Semantic note search"
-                description="Combine exact keyword matches with meaning-based results from a local Ollama embedding model. Keyword search remains available if embedding fails."
+                label="Meaning-based note search"
+                description="Find notes that use different words but have a similar meaning. This uses a local Ollama embedding model alongside keyword search."
                 checked={notesSemanticSearchEnabled}
                 isChanged={notesSemanticChanged}
                 onChange={setNotesSemanticSearchEnabled}
