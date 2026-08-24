@@ -634,6 +634,9 @@ export type ToolSettings = {
   notes_indexed_chunks: number;
   notes_pending_index_count: number;
   notes_embedding_last_error: string | null;
+  memories_indexed_count: number;
+  memories_pending_index_count: number;
+  memories_embedding_last_error: string | null;
   tool_system_prompt: string;
   default_tool_system_prompt: string;
   web_search_tool_prompt: string;
@@ -685,6 +688,7 @@ export type SettingsSection =
   | "profile"
   | "context"
   | "notes"
+  | "memories"
   | "users"
   | "models"
   | "tools"

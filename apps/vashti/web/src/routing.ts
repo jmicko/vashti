@@ -7,6 +7,7 @@ const settingsSections: SettingsSection[] = [
   "models",
   "context",
   "notes",
+  "memories",
   "tools",
   "app"
 ];

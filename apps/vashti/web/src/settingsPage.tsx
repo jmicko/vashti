@@ -2,6 +2,7 @@ import { Fragment, lazy, ReactNode, Suspense, useEffect, useRef } from "react";
 import {
   Server,
   Library,
+  BrainCircuit,
   NotebookPen,
   SlidersHorizontal,
   Sparkles,
@@ -43,6 +44,9 @@ const ContextSettingsPanel = lazy(() =>
 );
 const NotesSettingsPanel = lazy(() =>
   import("./settingsNotes").then((module) => ({ default: module.NotesSettingsPanel }))
+);
+const MemoriesSettingsPanel = lazy(() =>
+  import("./settingsMemories").then((module) => ({ default: module.MemoriesSettingsPanel }))
 );
 
 export function SettingsPage({
@@ -99,6 +103,7 @@ export function SettingsPage({
     { id: "models", label: "Models", icon: <Sparkles />, group: "personal" },
     { id: "context", label: "Context", icon: <Library />, group: "personal" },
     { id: "notes", label: "Notes", icon: <NotebookPen />, group: "personal" },
+    { id: "memories", label: "Memories", icon: <BrainCircuit />, group: "personal" },
     { id: "users", label: "Users", icon: <Users />, adminOnly: true, group: "admin" },
     { id: "backends", label: "Backends", icon: <Server />, adminOnly: true, group: "admin" },
     { id: "tools", label: "Tools", icon: <Wrench />, adminOnly: true, group: "admin" },
@@ -176,6 +181,14 @@ export function SettingsPage({
               privatePersonas={privatePersonas}
               initialStorageMode={notesStorageMode}
               onStorageModeChange={onNotesStorageModeChange}
+              onToolsChanged={onToolsChanged}
+              onGuardChange={onSettingsGuardChange}
+            />
+          )}
+          {selectedSection === "memories" && (
+            <MemoriesSettingsPanel
+              modelGroups={modelGroups}
+              personas={personas}
               onToolsChanged={onToolsChanged}
               onGuardChange={onSettingsGuardChange}
             />

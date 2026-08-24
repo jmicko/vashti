@@ -508,12 +508,15 @@ pub async fn restore_version(
         now,
     )
     .await?;
-    sqlx::query("UPDATE memories SET current_version_id = ?, updated_at = ? WHERE id = ?")
-        .bind(next_id)
-        .bind(now)
-        .bind(memory_id)
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query(
+        "UPDATE memories SET current_version_id = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+    )
+    .bind(next_id)
+    .bind(now)
+    .bind(memory_id)
+    .bind(user_id)
+    .execute(&mut *tx)
+    .await?;
     rebuild_fts(&mut tx, user_id, memory_id, &content, true).await?;
     tx.commit().await?;
     get_memory(pool, user_id, memory_id).await

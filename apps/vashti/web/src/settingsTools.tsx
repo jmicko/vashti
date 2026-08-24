@@ -4,7 +4,7 @@ import {
   useEffect,
   useState
 } from "react";
-import { FileText, NotebookPen, Save, Search, Wrench } from "lucide-react";
+import { BrainCircuit, FileText, NotebookPen, Save, Search, Wrench } from "lucide-react";
 import { requestJson } from "./api";
 import { ConfirmDialog } from "./common";
 import { PermissionTagEditor } from "./permissionTags";
@@ -347,12 +347,52 @@ export function ToolsSettingsPanel({ onToolsChanged }: { onToolsChanged: () => P
                 }))
               }
             />
+          </section>
+
+          <section className="settings-subsection">
+            <div>
+              <p className="eyebrow">Vashti</p>
+              <h2>Memories</h2>
+              <p className="status-message">
+                Controls who may use Memories on this server. People choose the allowed memory
+                actions and model scope in Personal → Memories.
+              </p>
+            </div>
+            <div className="tool-setting-heading">
+              <BrainCircuit aria-hidden="true" />
+              <div>
+                <strong>Memory tools</strong>
+                <p>Search, read, create, update, and forget permitted memories.</p>
+              </div>
+            </div>
+            <PermissionTagEditor
+              label="Tags"
+              tags={toolPermissionTags.memories ?? []}
+              availableTags={availableTags}
+              onChange={(tags) =>
+                setToolPermissionTags((current) => ({
+                  ...current,
+                  memories: tags
+                }))
+              }
+            />
+          </section>
+
+          <section className="settings-subsection">
+            <div>
+              <p className="eyebrow">Knowledge</p>
+              <h2>Meaning-Based Search</h2>
+              <p className="status-message">
+                One local Ollama embedding model indexes both Notes and Memories. A dedicated
+                backend can keep this work away from chat inference.
+              </p>
+            </div>
             <details className="tool-details">
-              <summary>Meaning-based search</summary>
+              <summary>Embedding model and index status</summary>
               <ToggleSwitch
                 icon={<Search />}
-                label="Meaning-based note search"
-                description="Find notes that use different words but have a similar meaning. This uses a local Ollama embedding model alongside keyword search."
+                label="Meaning-based knowledge search"
+                description="Find notes and memories that use different words but have a similar meaning. Keyword search remains available alongside it."
                 checked={notesSemanticSearchEnabled}
                 isChanged={notesSemanticChanged}
                 onChange={setNotesSemanticSearchEnabled}
@@ -398,13 +438,23 @@ export function ToolsSettingsPanel({ onToolsChanged }: { onToolsChanged: () => P
                 </select>
               </label>
               <p className="status-message">
-                {settings.notes_indexed_chunks} indexed chunks
+                Notes: {settings.notes_indexed_chunks} indexed chunks
                 {settings.notes_pending_index_count > 0
-                  ? ` · ${settings.notes_pending_index_count} notes waiting`
-                  : " · index current"}
+                  ? ` · ${settings.notes_pending_index_count} waiting`
+                  : " · current"}
+                <br />
+                Memories: {settings.memories_indexed_count} indexed
+                {settings.memories_pending_index_count > 0
+                  ? ` · ${settings.memories_pending_index_count} waiting`
+                  : " · current"}
               </p>
               {settings.notes_embedding_last_error && (
-                <p className="error">Last indexing error: {settings.notes_embedding_last_error}</p>
+                <p className="error">Last Notes indexing error: {settings.notes_embedding_last_error}</p>
+              )}
+              {settings.memories_embedding_last_error && (
+                <p className="error">
+                  Last Memories indexing error: {settings.memories_embedding_last_error}
+                </p>
               )}
             </details>
           </section>
