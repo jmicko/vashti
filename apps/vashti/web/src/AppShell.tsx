@@ -59,6 +59,7 @@ import {
 import { applyTheme, normalizeTheme, storeAndApplyTheme, storedTheme } from "./theme";
 import { usePwa } from "./pwa";
 import { useModelBackgroundWarmup } from "./useModelBackgroundWarmup";
+import { useTopbarPullToRefresh } from "./useTopbarPullToRefresh";
 import {
   createPrivateChat,
   deleteCachedHostedChat,
@@ -236,6 +237,7 @@ export function AppShell({
   const [updateStatus, setUpdateStatus] = useState<UpdateStatusResponse | null>(null);
   const [updateStatusError, setUpdateStatusError] = useState<string | null>(null);
   const { reloadLatestFrontend } = usePwa();
+  const topbarPull = useTopbarPullToRefresh(reloadLatestFrontend);
   const isAdmin = user.role === "admin";
   const page = route.page;
   const isSettingsPage = page === "settings";
@@ -1291,7 +1293,29 @@ export function AppShell({
         </>
       )}
       <section className="main-pane">
-        <header className="topbar">
+        {topbarPull.isEnabled && (
+          <div
+            className={`topbar-pull-indicator topbar-pull-${topbarPull.pullState}`}
+            style={topbarPull.pullStyle}
+            role="status"
+            aria-live="polite"
+            aria-hidden={topbarPull.pullState === "idle"}
+          >
+            <RefreshCw aria-hidden="true" />
+            <span>
+              {topbarPull.pullState === "armed"
+                ? "Release to refresh"
+                : topbarPull.pullState === "refreshing"
+                  ? "Refreshing..."
+                  : "Pull to refresh"}
+            </span>
+          </div>
+        )}
+        <header
+          className={`topbar${topbarPull.isEnabled ? ` topbar-pull-${topbarPull.pullState}` : ""}`}
+          style={topbarPull.pullStyle}
+          {...topbarPull.handlers}
+        >
           <div className="topbar-left">
             {isSettingsPage ? (
               <div className="settings-topbar-title">
