@@ -195,12 +195,16 @@ pub struct OllamaEmbedRequest<'a> {
     pub model: &'a str,
     pub input: &'a [String],
     pub truncate: bool,
+    pub keep_alive: &'static str,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct OllamaEmbedResponse {
     #[serde(default)]
     pub embeddings: Vec<Vec<f32>>,
+    pub total_duration: Option<i64>,
+    pub load_duration: Option<i64>,
+    pub prompt_eval_count: Option<i64>,
 }
 
 impl TagsResponse {

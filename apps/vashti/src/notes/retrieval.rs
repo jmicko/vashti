@@ -1,12 +1,12 @@
 use std::{
-    cmp::Ordering,
     collections::{HashMap, HashSet},
+    mem::size_of,
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use sha2::{Digest, Sha256};
-use sqlx::{Row, SqlitePool};
+use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
 use tokio::sync::{Mutex, Notify};
 use uuid::Uuid;
 
@@ -14,6 +14,7 @@ use crate::{
     auth::service::unix_timestamp,
     notes::{models::NoteSummaryResponse, service as notes_service},
     ollama,
+    vector_index::{VectorIndex, normalize},
 };
 
 const CHUNKER_VERSION: i64 = 1;
@@ -22,9 +23,9 @@ const MAX_CHUNK_CHARS: usize = 2_400;
 const CHUNK_OVERLAP_CHARS: usize = 160;
 const MAX_INDEXED_NOTE_BYTES: usize = 256 * 1024;
 const EMBED_BATCH_SIZE: usize = 24;
-const MAX_CACHE_USERS: usize = 8;
-const MAX_CACHE_BYTES: usize = 64 * 1024 * 1024;
-const MAX_USER_CACHE_BYTES: usize = 16 * 1024 * 1024;
+const MIN_VECTOR_CACHE_BYTES: usize = 128 * 1024 * 1024;
+const MAX_VECTOR_CACHE_BYTES: usize = 2 * 1024 * 1024 * 1024;
+const FALLBACK_VECTOR_CACHE_BYTES: usize = 512 * 1024 * 1024;
 const FUSION_K: f64 = 60.0;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -59,9 +60,8 @@ struct IndexedChunk {
 
 #[derive(Clone, Debug)]
 struct CachedChunk {
+    chunk_id: String,
     note_id: String,
-    text: String,
-    vector: Vec<f32>,
 }
 
 #[derive(Debug)]
@@ -69,14 +69,19 @@ struct CachedUserVectors {
     revision: i64,
     backend_id: String,
     model: String,
-    chunks: Vec<CachedChunk>,
+    index: VectorIndex<CachedChunk>,
     bytes: usize,
+}
+
+#[derive(Debug)]
+struct CachedUserEntry {
+    vectors: Arc<CachedUserVectors>,
     last_used: u64,
 }
 
 #[derive(Debug, Default)]
 struct EmbeddingCache {
-    users: HashMap<String, CachedUserVectors>,
+    users: HashMap<String, CachedUserEntry>,
     total_bytes: usize,
     clock: u64,
 }
@@ -85,6 +90,12 @@ struct EmbeddingCache {
 struct SemanticMatch {
     note_id: String,
     excerpt: String,
+}
+
+#[derive(Clone, Debug)]
+struct ScoredChunk {
+    chunk_id: String,
+    note_id: String,
     score: f32,
 }
 
@@ -98,14 +109,21 @@ enum JobResult {
 pub struct NoteRetrieval {
     pool: SqlitePool,
     cache: Mutex<EmbeddingCache>,
+    cache_budget_bytes: usize,
     notify: Notify,
 }
 
 impl NoteRetrieval {
     pub fn new(pool: SqlitePool) -> Self {
+        let cache_budget_bytes = adaptive_vector_cache_bytes();
+        tracing::info!(
+            cache_budget_mib = cache_budget_bytes / (1024 * 1024),
+            "configured semantic vector cache"
+        );
         Self {
             pool,
             cache: Mutex::new(EmbeddingCache::default()),
+            cache_budget_bytes,
             notify: Notify::new(),
         }
     }
@@ -263,6 +281,7 @@ impl NoteRetrieval {
         query: &str,
         limit: usize,
     ) -> Result<Vec<SemanticMatch>, String> {
+        let search_started = Instant::now();
         let Some(config) = self.active_config().await? else {
             return Ok(Vec::new());
         };
@@ -287,42 +306,56 @@ impl NoteRetrieval {
         validate_vector(&query_vector, None)?;
 
         let revision = self.user_revision(user_id).await?;
-        self.ensure_user_cache(user_id, revision, &config).await?;
-        let mut cache = self.cache.lock().await;
-        cache.clock = cache.clock.wrapping_add(1);
-        let clock = cache.clock;
-        let Some(entry) = cache.users.get_mut(user_id) else {
-            return Ok(Vec::new());
-        };
-        entry.last_used = clock;
-        let mut by_note = HashMap::<String, SemanticMatch>::new();
-        for chunk in &entry.chunks {
-            if !allowed_note_ids.contains(&chunk.note_id) {
-                continue;
-            }
-            let Some(score) = cosine_similarity(&query_vector, &chunk.vector) else {
-                continue;
-            };
-            let candidate = SemanticMatch {
-                note_id: chunk.note_id.clone(),
-                excerpt: truncate_excerpt(&chunk.text, 420),
-                score,
-            };
-            match by_note.get(&chunk.note_id) {
-                Some(current) if current.score >= score => {}
-                _ => {
-                    by_note.insert(chunk.note_id.clone(), candidate);
+        let vectors = self.ensure_user_cache(user_id, revision, &config).await?;
+        let mut by_note = HashMap::<String, ScoredChunk>::new();
+        vectors
+            .index
+            .for_each_score(&query_vector, |_, chunk, score| {
+                if !allowed_note_ids.contains(&chunk.note_id) {
+                    return;
                 }
-            }
-        }
-        let mut matches = by_note.into_values().collect::<Vec<_>>();
-        matches.sort_by(|left, right| {
-            right
-                .score
-                .partial_cmp(&left.score)
-                .unwrap_or(Ordering::Equal)
-        });
-        matches.truncate(limit);
+                let candidate = ScoredChunk {
+                    chunk_id: chunk.chunk_id.clone(),
+                    note_id: chunk.note_id.clone(),
+                    score,
+                };
+                match by_note.get(&chunk.note_id) {
+                    Some(current) if current.score >= score => {}
+                    _ => {
+                        by_note.insert(chunk.note_id.clone(), candidate);
+                    }
+                }
+            })?;
+        let mut ranked = by_note.into_values().collect::<Vec<_>>();
+        ranked.sort_unstable_by(|left, right| right.score.total_cmp(&left.score));
+        ranked.truncate(limit);
+
+        let excerpts = self
+            .load_chunk_excerpts(
+                &ranked
+                    .iter()
+                    .map(|match_| match_.chunk_id.clone())
+                    .collect::<Vec<_>>(),
+            )
+            .await?;
+        let matches = ranked
+            .into_iter()
+            .map(|match_| SemanticMatch {
+                note_id: match_.note_id,
+                excerpt: excerpts
+                    .get(&match_.chunk_id)
+                    .map(|text| truncate_excerpt(text, 420))
+                    .unwrap_or_default(),
+            })
+            .collect::<Vec<_>>();
+        tracing::debug!(
+            user_id,
+            indexed_chunks = vectors.index.len(),
+            allowed_notes = allowed_note_ids.len(),
+            result_count = matches.len(),
+            elapsed_ms = search_started.elapsed().as_millis(),
+            "completed semantic note search"
+        );
         Ok(matches)
     }
 
@@ -331,21 +364,24 @@ impl NoteRetrieval {
         user_id: &str,
         revision: i64,
         config: &ActiveSemanticConfig,
-    ) -> Result<(), String> {
+    ) -> Result<Arc<CachedUserVectors>, String> {
         {
-            let cache = self.cache.lock().await;
-            if cache.users.get(user_id).is_some_and(|entry| {
-                entry.revision == revision
-                    && entry.backend_id == config.backend_id
-                    && entry.model == config.model
+            let mut cache = self.cache.lock().await;
+            cache.clock = cache.clock.wrapping_add(1);
+            let clock = cache.clock;
+            if let Some(entry) = cache.users.get_mut(user_id).filter(|entry| {
+                entry.vectors.revision == revision
+                    && entry.vectors.backend_id == config.backend_id
+                    && entry.vectors.model == config.model
             }) {
-                return Ok(());
+                entry.last_used = clock;
+                return Ok(Arc::clone(&entry.vectors));
             }
         }
 
         let rows = sqlx::query(
             r#"
-            SELECT chunks.note_id, chunks.chunk_text, chunks.vector
+            SELECT chunks.id, chunks.note_id, chunks.vector
             FROM note_search_chunks chunks
             JOIN notes n ON n.id = chunks.note_id
             WHERE chunks.user_id = ?
@@ -365,62 +401,103 @@ impl NoteRetrieval {
         .await
         .map_err(|error| format!("failed to load note vectors: {error}"))?;
 
-        let mut chunks = Vec::new();
-        let mut bytes = 0usize;
+        let mut entries = Vec::with_capacity(rows.len());
+        let mut metadata_bytes = 0usize;
         for row in rows {
             let vector_bytes: Vec<u8> = row
                 .try_get("vector")
                 .map_err(|error| format!("invalid stored note vector: {error}"))?;
             let vector = vector_from_bytes(&vector_bytes)?;
-            let text: String = row
-                .try_get("chunk_text")
-                .map_err(|error| format!("invalid stored note chunk: {error}"))?;
-            let chunk_bytes = vector_bytes.len().saturating_add(text.len());
-            if bytes.saturating_add(chunk_bytes) > MAX_USER_CACHE_BYTES {
-                break;
-            }
-            bytes += chunk_bytes;
-            chunks.push(CachedChunk {
-                note_id: row
-                    .try_get("note_id")
-                    .map_err(|error| format!("invalid stored note ID: {error}"))?,
-                text,
-                vector,
-            });
+            let chunk_id: String = row
+                .try_get("id")
+                .map_err(|error| format!("invalid stored chunk ID: {error}"))?;
+            let note_id: String = row
+                .try_get("note_id")
+                .map_err(|error| format!("invalid stored note ID: {error}"))?;
+            metadata_bytes = metadata_bytes
+                .saturating_add(chunk_id.capacity())
+                .saturating_add(note_id.capacity())
+                .saturating_add(size_of::<CachedChunk>());
+            entries.push((CachedChunk { chunk_id, note_id }, vector));
         }
 
+        let index = VectorIndex::build(entries)?;
+        let bytes = metadata_bytes.saturating_add(index.allocated_vector_bytes());
+        let loaded = Arc::new(CachedUserVectors {
+            revision,
+            backend_id: config.backend_id.clone(),
+            model: config.model.clone(),
+            index,
+            bytes,
+        });
+
         let mut cache = self.cache.lock().await;
-        if let Some(previous) = cache.users.remove(user_id) {
-            cache.total_bytes = cache.total_bytes.saturating_sub(previous.bytes);
-        }
         cache.clock = cache.clock.wrapping_add(1);
         let last_used = cache.clock;
+        if let Some(entry) = cache.users.get_mut(user_id).filter(|entry| {
+            entry.vectors.revision == revision
+                && entry.vectors.backend_id == config.backend_id
+                && entry.vectors.model == config.model
+        }) {
+            entry.last_used = last_used;
+            return Ok(Arc::clone(&entry.vectors));
+        }
+        if let Some(previous) = cache.users.remove(user_id) {
+            cache.total_bytes = cache.total_bytes.saturating_sub(previous.vectors.bytes);
+        }
         cache.total_bytes = cache.total_bytes.saturating_add(bytes);
         cache.users.insert(
             user_id.to_string(),
-            CachedUserVectors {
-                revision,
-                backend_id: config.backend_id.clone(),
-                model: config.model.clone(),
-                chunks,
-                bytes,
+            CachedUserEntry {
+                vectors: Arc::clone(&loaded),
                 last_used,
             },
         );
-        while cache.users.len() > MAX_CACHE_USERS || cache.total_bytes > MAX_CACHE_BYTES {
+        while cache.total_bytes > self.cache_budget_bytes && cache.users.len() > 1 {
             let Some(oldest) = cache
                 .users
                 .iter()
+                .filter(|(cached_user_id, _)| cached_user_id.as_str() != user_id)
                 .min_by_key(|(_, entry)| entry.last_used)
                 .map(|(user_id, _)| user_id.clone())
             else {
                 break;
             };
             if let Some(entry) = cache.users.remove(&oldest) {
-                cache.total_bytes = cache.total_bytes.saturating_sub(entry.bytes);
+                cache.total_bytes = cache.total_bytes.saturating_sub(entry.vectors.bytes);
             }
         }
-        Ok(())
+        Ok(loaded)
+    }
+
+    async fn load_chunk_excerpts(
+        &self,
+        chunk_ids: &[String],
+    ) -> Result<HashMap<String, String>, String> {
+        if chunk_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let mut query = QueryBuilder::<Sqlite>::new(
+            "SELECT id, chunk_text FROM note_search_chunks WHERE id IN (",
+        );
+        let mut separated = query.separated(", ");
+        for chunk_id in chunk_ids {
+            separated.push_bind(chunk_id);
+        }
+        separated.push_unseparated(")");
+        query
+            .build()
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|error| format!("failed to load note excerpts: {error}"))?
+            .into_iter()
+            .map(|row| {
+                Ok((
+                    row.try_get("id").map_err(db_value_error)?,
+                    row.try_get("chunk_text").map_err(db_value_error)?,
+                ))
+            })
+            .collect()
     }
 
     async fn allowed_note_ids(
@@ -522,8 +599,12 @@ impl NoteRetrieval {
                 self.record_failure(&job.note_id, &message).await;
                 return Err(message);
             }
-            for (text, vector) in batch.iter().zip(response.embeddings) {
+            for (text, mut vector) in batch.iter().zip(response.embeddings) {
                 if let Err(message) = validate_vector(&vector, dimensions) {
+                    self.record_failure(&job.note_id, &message).await;
+                    return Err(message);
+                }
+                if let Err(message) = normalize(&mut vector) {
                     self.record_failure(&job.note_id, &message).await;
                     return Err(message);
                 }
@@ -891,26 +972,6 @@ fn validate_vector(vector: &[f32], expected_dimensions: Option<usize>) -> Result
     Ok(())
 }
 
-fn cosine_similarity(left: &[f32], right: &[f32]) -> Option<f32> {
-    if left.len() != right.len() || left.is_empty() {
-        return None;
-    }
-    let mut dot = 0.0f64;
-    let mut left_norm = 0.0f64;
-    let mut right_norm = 0.0f64;
-    for (&left, &right) in left.iter().zip(right) {
-        let left = f64::from(left);
-        let right = f64::from(right);
-        dot += left * right;
-        left_norm += left * left;
-        right_norm += right * right;
-    }
-    if left_norm == 0.0 || right_norm == 0.0 {
-        return None;
-    }
-    Some((dot / (left_norm.sqrt() * right_norm.sqrt())) as f32)
-}
-
 fn vector_to_bytes(vector: &[f32]) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(std::mem::size_of_val(vector));
     for value in vector {
@@ -938,6 +999,31 @@ fn hex_sha256(value: &[u8]) -> String {
 
 fn db_value_error(error: sqlx::Error) -> String {
     format!("invalid note index database value: {error}")
+}
+
+fn adaptive_vector_cache_bytes() -> usize {
+    physical_memory_bytes()
+        .map(|bytes| bytes / 16)
+        .unwrap_or(FALLBACK_VECTOR_CACHE_BYTES)
+        .clamp(MIN_VECTOR_CACHE_BYTES, MAX_VECTOR_CACHE_BYTES)
+}
+
+#[cfg(unix)]
+fn physical_memory_bytes() -> Option<usize> {
+    // sysconf is process-local and does not allocate or retain an OS resource.
+    let pages = unsafe { libc::sysconf(libc::_SC_PHYS_PAGES) };
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+    if pages <= 0 || page_size <= 0 {
+        return None;
+    }
+    usize::try_from(pages)
+        .ok()?
+        .checked_mul(usize::try_from(page_size).ok()?)
+}
+
+#[cfg(not(unix))]
+fn physical_memory_bytes() -> Option<usize> {
+    None
 }
 
 #[cfg(test)]
@@ -1059,14 +1145,24 @@ mod tests {
     }
 
     #[test]
-    fn vectors_round_trip_and_cosine_is_exact() {
+    fn vectors_round_trip_and_exact_search_scores_cosine() {
         let vector = vec![0.25, -0.5, 1.0];
         assert_eq!(
             vector_from_bytes(&vector_to_bytes(&vector)).unwrap(),
             vector
         );
-        assert_eq!(cosine_similarity(&[1.0, 0.0], &[1.0, 0.0]), Some(1.0));
-        assert_eq!(cosine_similarity(&[1.0, 0.0], &[0.0, 1.0]), Some(0.0));
+        let index = VectorIndex::build(vec![
+            ("same", vec![1.0, 0.0]),
+            ("different", vec![0.0, 1.0]),
+        ])
+        .unwrap();
+        let mut hits = Vec::new();
+        index
+            .for_each_score(&[1.0, 0.0], |_, item, score| hits.push((*item, score)))
+            .unwrap();
+        hits.sort_unstable_by(|left, right| right.1.total_cmp(&left.1));
+        assert_eq!(hits[0], ("same", 1.0));
+        assert_eq!(hits[1], ("different", 0.0));
     }
 
     #[test]

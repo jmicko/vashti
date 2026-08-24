@@ -23,6 +23,7 @@ mod startup;
 mod tools;
 mod updates;
 mod uploads;
+mod vector_index;
 mod version;
 
 use std::{error::Error, net::SocketAddr, time::Duration};

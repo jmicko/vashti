@@ -125,17 +125,27 @@ pub async fn embed(
     input: &[String],
 ) -> Result<OllamaEmbedResponse, reqwest::Error> {
     let url = format!("{}/api/embed", base_url.trim_end_matches('/'));
-    client
+    let response = client
         .post(url)
         .timeout(Duration::from_secs(120))
         .json(&OllamaEmbedRequest {
             model: model_name,
             input,
             truncate: true,
+            keep_alive: "30m",
         })
         .send()
         .await?
         .error_for_status()?
         .json::<OllamaEmbedResponse>()
-        .await
+        .await?;
+    tracing::debug!(
+        model = model_name,
+        input_count = input.len(),
+        total_duration_ns = response.total_duration,
+        load_duration_ns = response.load_duration,
+        prompt_eval_count = response.prompt_eval_count,
+        "completed Ollama embedding request"
+    );
+    Ok(response)
 }
