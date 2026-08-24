@@ -9,6 +9,7 @@ mod context_blocks;
 mod db;
 mod error;
 mod frontend;
+mod memories;
 mod model_cache;
 mod model_pulls;
 mod notes;
@@ -105,6 +106,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     spawn_session_cleanup(state.db.clone());
     spawn_model_cache_refresh(state.clone());
     spawn_note_indexing(state.clone());
+    spawn_memory_indexing(state.clone());
     spawn_update_checks(state.clone());
     let app = router(state);
 
@@ -316,6 +318,36 @@ fn router(state: AppState) -> Router {
             post(notes::handlers::restore_version),
         )
         .route(
+            "/memories",
+            get(memories::handlers::list_memories).post(memories::handlers::create_memory),
+        )
+        .route(
+            "/memories/settings",
+            get(memories::handlers::get_settings).patch(memories::handlers::update_settings),
+        )
+        .route(
+            "/memories/{memory_id}",
+            get(memories::handlers::get_memory)
+                .patch(memories::handlers::update_memory)
+                .delete(memories::handlers::permanently_delete_memory),
+        )
+        .route(
+            "/memories/{memory_id}/forget",
+            post(memories::handlers::forget_memory),
+        )
+        .route(
+            "/memories/{memory_id}/restore",
+            post(memories::handlers::restore_memory),
+        )
+        .route(
+            "/memories/{memory_id}/versions",
+            get(memories::handlers::list_versions),
+        )
+        .route(
+            "/memories/{memory_id}/versions/{version_id}/restore",
+            post(memories::handlers::restore_version),
+        )
+        .route(
             "/persona-avatars",
             post(persona_avatars::handlers::upload_avatar)
                 .layer(DefaultBodyLimit::max(LARGE_REQUEST_BODY_LIMIT)),
@@ -509,6 +541,15 @@ fn spawn_model_cache_refresh(state: AppState) {
 
 fn spawn_note_indexing(state: AppState) {
     tokio::spawn(state.note_retrieval.clone().run(state.http_client.clone()));
+}
+
+fn spawn_memory_indexing(state: AppState) {
+    tokio::spawn(
+        state
+            .memory_retrieval
+            .clone()
+            .run(state.http_client.clone()),
+    );
 }
 
 fn spawn_update_checks(state: AppState) {

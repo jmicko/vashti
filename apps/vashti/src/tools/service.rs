@@ -9,6 +9,10 @@ use serde_json::json;
 use sqlx::SqlitePool;
 
 use crate::{
+    memories::{
+        models::{CreateMemoryRequest, MemorySettingsResponse, UpdateMemoryRequest},
+        service::{self as memories_service, MemoryMutationActor},
+    },
     notes::{
         models::{CreateNoteRequest, NoteSettingsResponse, UpdateNoteRequest},
         service::{self as notes_service, NoteMutationActor},
@@ -25,11 +29,17 @@ pub const TOOL_OLLAMA_WEB_SEARCH: &str = "ollama_web_search";
 pub const TOOL_OLLAMA_WEB_FETCH: &str = "ollama_web_fetch";
 pub const TOOL_DIRECT_WEB_FETCH: &str = "direct_web_fetch";
 pub const TOOL_NOTES: &str = "notes";
+pub const TOOL_MEMORIES: &str = "memories";
 pub const TOOL_SEARCH_NOTES: &str = "search_notes";
 pub const TOOL_READ_NOTE: &str = "read_note";
 pub const TOOL_CREATE_NOTE: &str = "create_note";
 pub const TOOL_UPDATE_NOTE: &str = "update_note";
 pub const TOOL_TRASH_NOTE: &str = "trash_note";
+pub const TOOL_SEARCH_MEMORIES: &str = "search_memories";
+pub const TOOL_READ_MEMORY: &str = "read_memory";
+pub const TOOL_REMEMBER: &str = "remember";
+pub const TOOL_UPDATE_MEMORY: &str = "update_memory";
+pub const TOOL_FORGET_MEMORY: &str = "forget_memory";
 
 #[derive(Clone, Copy, Debug)]
 pub struct ToolSelection {
@@ -39,6 +49,7 @@ pub struct ToolSelection {
     pub ollama_web_fetch_enabled: bool,
     pub direct_web_fetch_enabled: bool,
     pub notes_enabled: bool,
+    pub memories_enabled: bool,
 }
 
 impl Default for ToolSelection {
@@ -50,6 +61,7 @@ impl Default for ToolSelection {
             ollama_web_fetch_enabled: true,
             direct_web_fetch_enabled: true,
             notes_enabled: true,
+            memories_enabled: true,
         }
     }
 }
@@ -57,6 +69,7 @@ impl Default for ToolSelection {
 pub fn chat_tools(
     settings: &ToolSettingsPrivate,
     note_settings: Option<&NoteSettingsResponse>,
+    memory_settings: Option<&MemorySettingsResponse>,
     selection: ToolSelection,
 ) -> Vec<OllamaTool> {
     if !settings.tools_enabled {
@@ -122,6 +135,23 @@ pub fn chat_tools(
             tools.push(trash_note_tool());
         }
     }
+    if selection.memories_enabled
+        && let Some(memory_settings) = memory_settings
+    {
+        if memory_settings.allow_model_read {
+            tools.push(search_memories_tool());
+            tools.push(read_memory_tool());
+        }
+        if memory_settings.allow_model_create {
+            tools.push(remember_tool());
+        }
+        if memory_settings.allow_model_read && memory_settings.allow_model_edit {
+            tools.push(update_memory_tool());
+        }
+        if memory_settings.allow_model_read && memory_settings.allow_model_forget {
+            tools.push(forget_memory_tool());
+        }
+    }
 
     tools
 }
@@ -130,6 +160,8 @@ pub fn permission_tool_id(tool_name: &str) -> &str {
     match tool_name {
         TOOL_SEARCH_NOTES | TOOL_READ_NOTE | TOOL_CREATE_NOTE | TOOL_UPDATE_NOTE
         | TOOL_TRASH_NOTE => TOOL_NOTES,
+        TOOL_SEARCH_MEMORIES | TOOL_READ_MEMORY | TOOL_REMEMBER | TOOL_UPDATE_MEMORY
+        | TOOL_FORGET_MEMORY => TOOL_MEMORIES,
         name => name,
     }
 }
@@ -154,6 +186,11 @@ pub fn tool_system_prompt(settings: &ToolSettingsPrivate, tools: &[OllamaTool]) 
         TOOL_CREATE_NOTE,
         TOOL_UPDATE_NOTE,
         TOOL_TRASH_NOTE,
+        TOOL_SEARCH_MEMORIES,
+        TOOL_READ_MEMORY,
+        TOOL_REMEMBER,
+        TOOL_UPDATE_MEMORY,
+        TOOL_FORGET_MEMORY,
     ]
     .into_iter()
     .filter(|tool_name| !available_names.contains(tool_name))
@@ -299,6 +336,80 @@ fn trash_note_tool() -> OllamaTool {
     )
 }
 
+fn search_memories_tool() -> OllamaTool {
+    function_tool(
+        TOOL_SEARCH_MEMORIES,
+        "Search durable facts the user has allowed this model to remember. Returns compact matches with exact memory IDs and current version numbers. Use read_memory before relying on or changing a match.",
+        json!({
+            "type": "object",
+            "required": ["query"],
+            "properties": {
+                "query": { "type": "string", "description": "A short description of the fact or preference to recall." },
+                "limit": { "type": "integer", "description": "Maximum matches to return. Defaults to 5 and cannot exceed 10." }
+            }
+        }),
+    )
+}
+
+fn read_memory_tool() -> OllamaTool {
+    function_tool(
+        TOOL_READ_MEMORY,
+        "Read one current memory returned by search_memories. Use the returned version number for any later update or forget operation.",
+        json!({
+            "type": "object",
+            "required": ["memory_id"],
+            "properties": {
+                "memory_id": { "type": "string", "description": "The exact memory ID returned by a Memories tool." }
+            }
+        }),
+    )
+}
+
+fn remember_tool() -> OllamaTool {
+    function_tool(
+        TOOL_REMEMBER,
+        "Store a concise durable fact or preference only when it is useful beyond the current conversation. Do not store secrets, transient details, or guesses. Memories you create are initially available only to this model and remain visible, versioned, and removable by the user.",
+        json!({
+            "type": "object",
+            "required": ["content"],
+            "properties": {
+                "content": { "type": "string", "description": "A concise standalone fact or preference with enough context to understand later." }
+            }
+        }),
+    )
+}
+
+fn update_memory_tool() -> OllamaTool {
+    function_tool(
+        TOOL_UPDATE_MEMORY,
+        "Replace an existing memory with a corrected concise statement. Read it first and provide its current version number. The previous version remains recoverable by the user.",
+        json!({
+            "type": "object",
+            "required": ["memory_id", "expected_version", "content"],
+            "properties": {
+                "memory_id": { "type": "string", "description": "The exact memory ID." },
+                "expected_version": { "type": "integer", "description": "The current memory version number." },
+                "content": { "type": "string", "description": "The complete corrected memory statement." }
+            }
+        }),
+    )
+}
+
+fn forget_memory_tool() -> OllamaTool {
+    function_tool(
+        TOOL_FORGET_MEMORY,
+        "Move a memory to Forgotten only when the user explicitly asks to forget it or the fact is known to be obsolete. Read it first and provide its current version number. Only the human user can permanently delete it.",
+        json!({
+            "type": "object",
+            "required": ["memory_id", "expected_version"],
+            "properties": {
+                "memory_id": { "type": "string", "description": "The exact memory ID." },
+                "expected_version": { "type": "integer", "description": "The current memory version number." }
+            }
+        }),
+    )
+}
+
 pub fn client_tool_schema(name: &str) -> Option<OllamaTool> {
     match name {
         TOOL_SEARCH_NOTES => Some(search_notes_tool()),
@@ -404,6 +515,12 @@ pub async fn execute_tool(
         {
             execute_notes_tool(client, context, call).await
         }
+        TOOL_SEARCH_MEMORIES | TOOL_READ_MEMORY | TOOL_REMEMBER | TOOL_UPDATE_MEMORY
+        | TOOL_FORGET_MEMORY
+            if selection.tool_use_enabled && selection.memories_enabled =>
+        {
+            execute_memories_tool(client, context, call).await
+        }
         TOOL_BRAVE_WEB_SEARCH
         | TOOL_OLLAMA_WEB_SEARCH
         | TOOL_OLLAMA_WEB_FETCH
@@ -412,7 +529,12 @@ pub async fn execute_tool(
         | TOOL_READ_NOTE
         | TOOL_CREATE_NOTE
         | TOOL_UPDATE_NOTE
-        | TOOL_TRASH_NOTE => Err(format!("{} is disabled for this chat.", call.function.name)),
+        | TOOL_TRASH_NOTE
+        | TOOL_SEARCH_MEMORIES
+        | TOOL_READ_MEMORY
+        | TOOL_REMEMBER
+        | TOOL_UPDATE_MEMORY
+        | TOOL_FORGET_MEMORY => Err(format!("{} is disabled for this chat.", call.function.name)),
         name => Err(format!("Unknown tool: {name}")),
     };
 
@@ -456,6 +578,17 @@ pub fn tool_summary(call: &OllamaToolCall) -> String {
             .unwrap_or_else(|| "Created a note".to_string()),
         TOOL_UPDATE_NOTE => "Updated a note".to_string(),
         TOOL_TRASH_NOTE => "Moved a note to trash".to_string(),
+        TOOL_SEARCH_MEMORIES => call
+            .function
+            .arguments
+            .get("query")
+            .and_then(|value| value.as_str())
+            .map(|query| format!("Searched memories for \"{}\"", truncate_chars(query, 96)))
+            .unwrap_or_else(|| "Searched memories".to_string()),
+        TOOL_READ_MEMORY => "Recalled a memory".to_string(),
+        TOOL_REMEMBER => "Saved a memory".to_string(),
+        TOOL_UPDATE_MEMORY => "Updated a memory".to_string(),
+        TOOL_FORGET_MEMORY => "Forgot a memory".to_string(),
         name => format!("Used {name}"),
     }
 }
@@ -463,12 +596,143 @@ pub fn tool_summary(call: &OllamaToolCall) -> String {
 pub struct ToolExecutionContext<'a> {
     pub db: &'a SqlitePool,
     pub note_retrieval: &'a crate::notes::retrieval::NoteRetrieval,
+    pub memory_retrieval: &'a crate::memories::retrieval::MemoryRetrieval,
     pub user_id: &'a str,
     pub model_key: &'a str,
     pub model_name: &'a str,
     pub chat_id: &'a str,
     pub message_id: &'a str,
     pub tool_call_id: &'a str,
+}
+
+async fn execute_memories_tool(
+    client: &reqwest::Client,
+    context: &ToolExecutionContext<'_>,
+    call: &OllamaToolCall,
+) -> Result<String, String> {
+    let actor = MemoryMutationActor::model(
+        context.user_id,
+        context.model_key,
+        context.model_name,
+        context.chat_id,
+        context.message_id,
+        context.tool_call_id,
+    );
+    let value = match call.function.name.as_str() {
+        TOOL_SEARCH_MEMORIES => {
+            let query = required_string(&call.function.arguments, "query")?;
+            let limit = call
+                .function
+                .arguments
+                .get("limit")
+                .and_then(|value| value.as_i64())
+                .unwrap_or(5)
+                .clamp(1, 10);
+            let memories = context
+                .memory_retrieval
+                .hybrid_search(client, context.user_id, context.model_key, &query, limit)
+                .await
+                .map_err(memory_tool_error)?;
+            let results = memories
+                .into_iter()
+                .map(|memory| {
+                    json!({
+                        "memory_id": memory.id,
+                        "excerpt": memory.excerpt,
+                        "version": memory.current_version_number,
+                    })
+                })
+                .collect::<Vec<_>>();
+            json!({ "query": query, "count": results.len(), "results": results })
+        }
+        TOOL_READ_MEMORY => {
+            let memory_id = required_string(&call.function.arguments, "memory_id")?;
+            let memory = memories_service::get_memory_for_model(
+                context.db,
+                context.user_id,
+                &memory_id,
+                context.model_key,
+            )
+            .await
+            .map_err(memory_tool_error)?;
+            json!({
+                "memory_id": memory.id,
+                "content": memory.current_version.content,
+                "version": memory.current_version.version_number,
+            })
+        }
+        TOOL_REMEMBER => {
+            let content = required_string(&call.function.arguments, "content")?;
+            let memory = memories_service::create_memory(
+                context.db,
+                context.user_id,
+                CreateMemoryRequest {
+                    content,
+                    model_scope: None,
+                },
+                &actor,
+            )
+            .await
+            .map_err(memory_tool_error)?;
+            context.memory_retrieval.wake();
+            json!({
+                "memory_id": memory.id,
+                "content": memory.current_version.content,
+                "version": memory.current_version.version_number,
+                "created": true,
+            })
+        }
+        TOOL_UPDATE_MEMORY => {
+            let memory_id = required_string(&call.function.arguments, "memory_id")?;
+            let expected_version = required_i64(&call.function.arguments, "expected_version")?;
+            let content = required_string(&call.function.arguments, "content")?;
+            let memory = memories_service::update_memory(
+                context.db,
+                context.user_id,
+                &memory_id,
+                UpdateMemoryRequest {
+                    expected_version,
+                    content: Some(content),
+                    model_scope: None,
+                },
+                &actor,
+            )
+            .await
+            .map_err(memory_tool_error)?;
+            context.memory_retrieval.wake();
+            json!({
+                "memory_id": memory.id,
+                "content": memory.current_version.content,
+                "version": memory.current_version.version_number,
+                "updated": true,
+            })
+        }
+        TOOL_FORGET_MEMORY => {
+            let memory_id = required_string(&call.function.arguments, "memory_id")?;
+            let expected_version = required_i64(&call.function.arguments, "expected_version")?;
+            let memory = memories_service::forget_memory(
+                context.db,
+                context.user_id,
+                &memory_id,
+                expected_version,
+                &actor,
+            )
+            .await
+            .map_err(memory_tool_error)?;
+            json!({
+                "memory_id": memory.id,
+                "version": memory.current_version.version_number,
+                "forgotten": true,
+            })
+        }
+        _ => return Err(format!("Unknown Memories tool: {}", call.function.name)),
+    };
+    serde_json::to_string(&value)
+        .map_err(|error| format!("Could not serialize Memories tool result: {error}"))
+}
+
+fn memory_tool_error(error: crate::error::ApiError) -> String {
+    format!("{}: {}", error.code(), error.message())
 }
 
 async fn execute_notes_tool(
@@ -1103,6 +1367,7 @@ mod tests {
                 default_ai_access: NoteAiAccess::None,
                 default_model_scope: NoteModelScope::default(),
             }),
+            None,
             ToolSelection::default(),
         );
         let names = tools
@@ -1132,12 +1397,46 @@ mod tests {
                 default_ai_access: NoteAiAccess::Manage,
                 default_model_scope: NoteModelScope::default(),
             }),
+            None,
             ToolSelection {
                 notes_enabled: false,
                 ..ToolSelection::default()
             },
         );
         assert!(tools.is_empty());
+    }
+
+    #[test]
+    fn memories_family_expands_only_to_personally_allowed_operations() {
+        let tools = chat_tools(
+            &disabled_web_settings(),
+            None,
+            Some(&MemorySettingsResponse {
+                allow_model_read: true,
+                allow_model_create: true,
+                allow_model_edit: false,
+                allow_model_forget: true,
+            }),
+            ToolSelection::default(),
+        );
+        let names = tools
+            .iter()
+            .map(|tool| tool.function.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            names,
+            vec![
+                TOOL_SEARCH_MEMORIES,
+                TOOL_READ_MEMORY,
+                TOOL_REMEMBER,
+                TOOL_FORGET_MEMORY,
+            ]
+        );
+        assert!(
+            names
+                .iter()
+                .all(|name| permission_tool_id(name) == TOOL_MEMORIES)
+        );
     }
 
     #[test]

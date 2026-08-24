@@ -173,8 +173,10 @@ pub async fn update_tool_settings(
     let current_semantic = crate::notes::retrieval::semantic_config(&state.db).await?;
     if previous_semantic != current_semantic {
         state.note_retrieval.rebuild_all().await?;
+        state.memory_retrieval.rebuild_all().await?;
     } else {
         state.note_retrieval.wake();
+        state.memory_retrieval.wake();
     }
 
     Ok(Json(service::get_tool_settings(&state.db).await?))

@@ -235,6 +235,7 @@ struct GenerationStreamTask {
     db: sqlx::SqlitePool,
     client: reqwest::Client,
     note_retrieval: Arc<crate::notes::retrieval::NoteRetrieval>,
+    memory_retrieval: Arc<crate::memories::retrieval::MemoryRetrieval>,
     progress: GenerationProgressMap,
     user_id: String,
     chat_id: String,
@@ -592,6 +593,7 @@ async fn stream_generation(task: GenerationStreamTask) {
         db,
         client,
         note_retrieval,
+        memory_retrieval,
         progress,
         user_id,
         chat_id,
@@ -664,10 +666,18 @@ async fn stream_generation(task: GenerationStreamTask) {
     let note_settings = crate::notes::service::get_note_settings(&db, &user_id)
         .await
         .ok();
+    let memory_settings = crate::memories::service::get_memory_settings(&db, &user_id)
+        .await
+        .ok();
     let mut available_tools = tool_settings
         .as_ref()
         .map(|settings| {
-            tools::service::chat_tools(settings, note_settings.as_ref(), prepared.tool_selection)
+            tools::service::chat_tools(
+                settings,
+                note_settings.as_ref(),
+                memory_settings.as_ref(),
+                prepared.tool_selection,
+            )
         })
         .unwrap_or_default();
     if !available_tools.is_empty() {
@@ -930,6 +940,7 @@ async fn stream_generation(task: GenerationStreamTask) {
                 let context = tools::service::ToolExecutionContext {
                     db: &db,
                     note_retrieval: &note_retrieval,
+                    memory_retrieval: &memory_retrieval,
                     user_id: &user_id,
                     model_key: &assistant_model_key,
                     model_name: &assistant_model_name,
@@ -1117,6 +1128,7 @@ async fn start_generation_stream(
     let db = state.db.clone();
     let client = state.http_client.clone();
     let note_retrieval = state.note_retrieval.clone();
+    let memory_retrieval = state.memory_retrieval.clone();
     let cancellations = state.generation_cancellations.clone();
     let progress = state.generation_progress.clone();
 
@@ -1126,6 +1138,7 @@ async fn start_generation_stream(
             db,
             client,
             note_retrieval,
+            memory_retrieval,
             progress,
             user_id,
             chat_id,

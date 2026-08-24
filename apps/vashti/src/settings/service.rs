@@ -6,6 +6,7 @@ use sqlx::{Row, SqlitePool};
 use crate::{
     auth::service::{self as auth_service, unix_timestamp},
     error::ApiError,
+    memories::service as memories_service,
     notes::service as notes_service,
     permissions::service::{self as permissions, PermissionTagResponse},
     settings::handlers::{
@@ -14,7 +15,7 @@ use crate::{
     },
 };
 
-pub const DEFAULT_TOOL_SYSTEM_PROMPT: &str = "Tool behavior guidance:\n- Current date: {current_date} UTC.\n- Use an available web search tool proactively when the user asks for current, recent, latest, news, prices, schedules, releases, versions, or anything likely to have changed.\n- Use an available web fetch tool when the user provides a URL or when a search result needs more detail.\n- Treat tool results as current external data even when their dates are newer than your training cutoff.\n- Answer from the tool results and include source URLs when they are available.\n- Search or read notes when the user asks about information they may have saved.\n- Create, update, or trash notes only when the user asks you to change their notes. Never infer permission to modify notes from permission to read them.\n- Only call tools by the exact names listed as available in this chat.";
+pub const DEFAULT_TOOL_SYSTEM_PROMPT: &str = "Tool behavior guidance:\n- Current date: {current_date} UTC.\n- Use an available web search tool proactively when the user asks for current, recent, latest, news, prices, schedules, releases, versions, or anything likely to have changed.\n- Use an available web fetch tool when the user provides a URL or when a search result needs more detail.\n- Treat tool results as current external data even when their dates are newer than your training cutoff.\n- Answer from the tool results and include source URLs when they are available.\n- Search or read notes when the user asks about information they may have saved.\n- Create, update, or trash notes only when the user asks you to change their notes. Never infer permission to modify notes from permission to read them.\n- Search memories when durable user facts or preferences may help. Store or change a memory only when it is clearly useful beyond this conversation, and never store secrets, transient details, or guesses.\n- Only call tools by the exact names listed as available in this chat.";
 pub const DEFAULT_WEB_SEARCH_TOOL_PROMPT: &str = "Search the web for current public information. Returns compact result titles, URLs, and snippets. Use this for current or time-sensitive questions, latest news, recent releases, prices, schedules, or facts that may have changed.";
 pub const DEFAULT_WEB_FETCH_TOOL_PROMPT: &str = "Fetch a public HTTP or HTTPS page by URL and return readable text plus discovered links. Use this after web search when a result needs more detail, or when the user asks about a specific URL.";
 
@@ -60,6 +61,9 @@ pub struct ToolSettingsResponse {
     pub notes_indexed_chunks: i64,
     pub notes_pending_index_count: i64,
     pub notes_embedding_last_error: Option<String>,
+    pub memories_indexed_count: i64,
+    pub memories_pending_index_count: i64,
+    pub memories_embedding_last_error: Option<String>,
     pub tool_system_prompt: String,
     pub default_tool_system_prompt: &'static str,
     pub web_search_tool_prompt: String,
@@ -146,6 +150,26 @@ pub async fn get_available_tools(
         label: "Notes",
         description: "Let this model find, use, and create notes.",
         warning: notes_base_warning,
+    });
+
+    let memory_settings = memories_service::get_memory_settings(pool, user_id).await?;
+    let memories_allowed =
+        tool_allowed(crate::tools::service::TOOL_MEMORIES, &user_tags, &tool_tags);
+    let memories_warning = if !settings.tools_enabled {
+        Some("Memories tools are unavailable on this server. Ask an administrator.".to_string())
+    } else if !memories_allowed {
+        Some("Memories tools are unavailable for your account. Ask an administrator.".to_string())
+    } else {
+        (!memory_settings.allow_model_read && !memory_settings.allow_model_create).then(|| {
+            "Memories is on, but models are not allowed to use it. Open Settings → Memories."
+                .to_string()
+        })
+    };
+    tools.push(AvailableToolResponse {
+        id: crate::tools::service::TOOL_MEMORIES,
+        label: "Memories",
+        description: "Let this model recall and maintain durable facts and preferences.",
+        warning: memories_warning,
     });
 
     if settings.tools_enabled {
@@ -780,6 +804,8 @@ impl ToolSettingsPrivate {
         }
         let (notes_indexed_chunks, notes_pending_index_count, notes_embedding_last_error) =
             crate::notes::retrieval::index_status(pool).await?;
+        let (memories_indexed_count, memories_pending_index_count, memories_embedding_last_error) =
+            crate::memories::retrieval::index_status(pool).await?;
 
         Ok(ToolSettingsResponse {
             tools_enabled: self.tools_enabled,
@@ -795,6 +821,9 @@ impl ToolSettingsPrivate {
             notes_indexed_chunks,
             notes_pending_index_count,
             notes_embedding_last_error,
+            memories_indexed_count,
+            memories_pending_index_count,
+            memories_embedding_last_error,
             tool_system_prompt: self.tool_system_prompt.clone(),
             default_tool_system_prompt: DEFAULT_TOOL_SYSTEM_PROMPT,
             web_search_tool_prompt: self.web_search_tool_prompt.clone(),

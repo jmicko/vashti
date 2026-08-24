@@ -91,6 +91,7 @@ impl From<ChatToolPreferences> for ToolSelection {
             direct_web_fetch_enabled: preferences
                 .tool_enabled(tools_service::TOOL_DIRECT_WEB_FETCH),
             notes_enabled: preferences.tool_enabled(tools_service::TOOL_NOTES),
+            memories_enabled: preferences.tool_enabled(tools_service::TOOL_MEMORIES),
         }
     }
 }
