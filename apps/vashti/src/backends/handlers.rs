@@ -223,6 +223,11 @@ pub struct BulkModelAvailabilityResponse {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct PullModelRequest {
+    pub input: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct UpdateModelTagsRequest {
     pub backend_id: String,
     pub model_name: String,
@@ -501,6 +506,29 @@ pub async fn refresh_admin_models(
         .await?;
 
     Ok(Json(admin_models_response(&state, snapshot).await?))
+}
+
+pub async fn get_model_pull_status(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Path(backend_id): Path<String>,
+) -> Result<Json<crate::model_pulls::ModelPullStatus>, ApiError> {
+    auth::service::require_admin(&state.db, &jar, &state.config.session_cookie_name).await?;
+    Ok(Json(state.model_pulls.status(&backend_id).await))
+}
+
+pub async fn start_model_pull(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Path(backend_id): Path<String>,
+    Json(payload): Json<PullModelRequest>,
+) -> Result<Json<crate::model_pulls::ModelPullStatus>, ApiError> {
+    auth::service::require_admin(&state.db, &jar, &state.config.session_cookie_name).await?;
+    let status = state
+        .model_pulls
+        .start(state.clone(), backend_id, payload.input)
+        .await?;
+    Ok(Json(status))
 }
 
 async fn models_response(

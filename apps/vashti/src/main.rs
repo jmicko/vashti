@@ -10,6 +10,7 @@ mod db;
 mod error;
 mod frontend;
 mod model_cache;
+mod model_pulls;
 mod notes;
 mod ollama;
 mod permissions;
@@ -231,6 +232,11 @@ fn router(state: AppState) -> Router {
         .route(
             "/admin/models/backend",
             patch(backends::handlers::update_backend_model_availability),
+        )
+        .route(
+            "/admin/backends/{backend_id}/models/pull",
+            get(backends::handlers::get_model_pull_status)
+                .post(backends::handlers::start_model_pull),
         )
         .route(
             "/personas",

@@ -6221,6 +6221,105 @@ textarea {
   padding: 0;
 }
 
+.backend-model-pull {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.backend-model-pull-heading,
+.model-pull-progress-copy {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.backend-model-pull-heading h3,
+.backend-model-pull-heading p,
+.model-pull-progress-copy {
+  margin: 0;
+}
+
+.backend-model-pull-heading p,
+.model-pull-progress-copy {
+  color: var(--muted);
+}
+
+.backend-model-pull-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.backend-model-pull-form label,
+.backend-model-pull-form input {
+  width: 100%;
+  min-width: 0;
+}
+
+.model-pull-progress {
+  display: grid;
+  gap: 6px;
+}
+
+.model-pull-progress-copy {
+  font-size: 0.85rem;
+}
+
+.model-pull-progress-succeeded .model-pull-progress-copy {
+  color: var(--accent);
+}
+
+.model-pull-progress-failed .model-pull-progress-copy {
+  color: var(--error);
+}
+
+.model-pull-progress-track {
+  height: 0.4rem;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.model-pull-progress-track > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 180ms ease;
+}
+
+.model-pull-progress-indeterminate > span {
+  width: 35%;
+  animation: model-pull-progress 1.1s ease-in-out infinite;
+}
+
+@keyframes model-pull-progress {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(300%);
+  }
+}
+
+@media (max-width: 640px) {
+  .backend-model-pull-heading,
+  .model-pull-progress-copy {
+    align-items: flex-start;
+  }
+
+  .backend-model-pull-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .backend-model-pull-form button {
+    width: 100%;
+  }
+}
+
 .backend-model-summary {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

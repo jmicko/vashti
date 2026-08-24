@@ -8,6 +8,7 @@ import {
 } from "react";
 import {
   ChevronDown,
+  Download,
   Pencil,
   Power,
   RefreshCw,
@@ -83,6 +84,18 @@ type UserBackgroundTarget = {
 type AdminBackgroundTarget = {
   backendId: string;
   model: AdminModelInfo;
+};
+
+type ModelPullStatus = {
+  id: string | null;
+  backend_id: string;
+  model: string | null;
+  state: "idle" | "queued" | "running" | "refreshing" | "succeeded" | "failed";
+  status: string | null;
+  completed: number | null;
+  total: number | null;
+  error: string | null;
+  updated_at: number | null;
 };
 
 type UserModelAvatarResponse = {
@@ -950,6 +963,11 @@ export function AdminModelsAccessPanel({
     }
   }, [applyAdminModelsResponse]);
 
+  const handleModelPullComplete = useCallback(async () => {
+    await loadAdminModels();
+    await onModelsChanged();
+  }, [loadAdminModels, onModelsChanged]);
+
   const refreshAdminModels = useCallback(async () => {
     setIsRefreshing(true);
     setError(null);
@@ -1455,106 +1473,116 @@ export function AdminModelsAccessPanel({
               <div className="backend-model-panel">
                 {!backend.is_enabled ? (
                   <p className="status-message">Enable this backend to manage its models.</p>
-                ) : !group && isRefreshing ? (
-                  <p className="status-message">Checking Ollama for models...</p>
-                ) : !group ? (
-                  <p className="status-message">No model data loaded for this backend yet.</p>
-                ) : models.length === 0 ? (
-                  <p className="status-message">No models returned by this backend.</p>
                 ) : (
                   <>
-                    <div className="model-access-actions backend-model-bulk-actions">
-                      <button
-                        type="button"
-                        className="secondary-button"
-                        disabled={isModelsBackendBusy || models.length === 0}
-                        onClick={() => void toggleBackend(group, true)}
-                      >
-                        Enable All
-                      </button>
-                      <button
-                        type="button"
-                        className="secondary-button"
-                        disabled={isModelsBackendBusy || models.length === 0}
-                        onClick={() => void toggleBackend(group, false)}
-                      >
-                        Disable All
-                      </button>
-                    </div>
-                    <div className="model-access-models">
-                      {models.map((model) => {
-                        const key = modelValue(backend.id, model.name);
-                        const isBusy = busyModelKey === key || isModelsBackendBusy;
+                    <BackendModelPull
+                      backend={backend}
+                      onComplete={handleModelPullComplete}
+                    />
+                    {!group && isRefreshing ? (
+                      <p className="status-message">Checking Ollama for models...</p>
+                    ) : !group ? (
+                      <p className="status-message">No model data loaded for this backend yet.</p>
+                    ) : models.length === 0 ? (
+                      <p className="status-message">No models returned by this backend.</p>
+                    ) : (
+                      <>
+                        <div className="model-access-actions backend-model-bulk-actions">
+                          <button
+                            type="button"
+                            className="secondary-button"
+                            disabled={isModelsBackendBusy || models.length === 0}
+                            onClick={() => void toggleBackend(group, true)}
+                          >
+                            Enable All
+                          </button>
+                          <button
+                            type="button"
+                            className="secondary-button"
+                            disabled={isModelsBackendBusy || models.length === 0}
+                            onClick={() => void toggleBackend(group, false)}
+                          >
+                            Disable All
+                          </button>
+                        </div>
+                        <div className="model-access-models">
+                          {models.map((model) => {
+                            const key = modelValue(backend.id, model.name);
+                            const isBusy = busyModelKey === key || isModelsBackendBusy;
 
-                        return (
-                          <article key={key} className="model-access-row">
-                            <div className="model-access-leading">
-                              <button
-                                type="button"
-                                className="model-avatar-edit-button"
-                                title="Change server default profile image"
-                                aria-label={`Change server default profile image for ${compactModelName(model.name)}`}
-                                onClick={() => {
-                                  setAvatarError(null);
-                                  setAvatarTarget({
-                                    backendId: backend.id,
-                                    model
-                                  });
-                                }}
-                              >
-                                <ModelAvatar
-                                  displayName={compactModelName(model.name)}
-                                  assetId={model.avatar_asset_id}
-                                  cropX={model.avatar_crop_x}
-                                  cropY={model.avatar_crop_y}
-                                  cropSize={model.avatar_crop_size}
+                            return (
+                              <article key={key} className="model-access-row">
+                                <div className="model-access-leading">
+                                  <button
+                                    type="button"
+                                    className="model-avatar-edit-button"
+                                    title="Change server default profile image"
+                                    aria-label={`Change server default profile image for ${compactModelName(model.name)}`}
+                                    onClick={() => {
+                                      setAvatarError(null);
+                                      setAvatarTarget({
+                                        backendId: backend.id,
+                                        model
+                                      });
+                                    }}
+                                  >
+                                    <ModelAvatar
+                                      displayName={compactModelName(model.name)}
+                                      assetId={model.avatar_asset_id}
+                                      cropX={model.avatar_crop_x}
+                                      cropY={model.avatar_crop_y}
+                                      cropSize={model.avatar_crop_size}
+                                    />
+                                    <Pencil />
+                                  </button>
+                                  <ModelBackgroundButton
+                                    assetId={model.background_asset_id}
+                                    label={`Change server default chat background for ${compactModelName(model.name)}`}
+                                    onClick={() => {
+                                      setBackgroundError(null);
+                                      setBackgroundTarget({
+                                        backendId: backend.id,
+                                        model
+                                      });
+                                    }}
+                                  />
+                                </div>
+                                <span className="model-access-main">
+                                  <span className="model-name" title={model.name}>
+                                    {compactModelName(model.name)}
+                                  </span>
+                                  <ModelCapabilityBadges model={model} />
+                                  <DefaultPermissionTagControls
+                                    defaultTags={savedDefaultTags}
+                                    activeTags={model.default_permission_tags}
+                                    disabled={isBusy || isSavingModelTags}
+                                    onChange={(tags) =>
+                                      updateModelDefaultTags(backend.id, model.name, tags)
+                                    }
+                                  />
+                                  <PermissionTagEditor
+                                    tags={model.permission_tags}
+                                    availableTags={availableTags}
+                                    disabled={isBusy || isSavingModelTags}
+                                    showEmpty={false}
+                                    onChange={(tags) => updateModelTags(backend.id, model.name, tags)}
+                                  />
+                                </span>
+                                <ToggleSwitch
+                                  label={model.is_enabled ? "On" : "Off"}
+                                  checked={model.is_enabled}
+                                  disabled={isBusy}
+                                  compact
+                                  onChange={(checked) =>
+                                    void toggleModel(backend.id, model.name, checked)
+                                  }
                                 />
-                                <Pencil />
-                              </button>
-                              <ModelBackgroundButton
-                                assetId={model.background_asset_id}
-                                label={`Change server default chat background for ${compactModelName(model.name)}`}
-                                onClick={() => {
-                                  setBackgroundError(null);
-                                  setBackgroundTarget({
-                                    backendId: backend.id,
-                                    model
-                                  });
-                                }}
-                              />
-                            </div>
-                            <span className="model-access-main">
-                              <span className="model-name" title={model.name}>
-                                {compactModelName(model.name)}
-                              </span>
-                              <ModelCapabilityBadges model={model} />
-                              <DefaultPermissionTagControls
-                                defaultTags={savedDefaultTags}
-                                activeTags={model.default_permission_tags}
-                                disabled={isBusy || isSavingModelTags}
-                                onChange={(tags) =>
-                                  updateModelDefaultTags(backend.id, model.name, tags)
-                                }
-                              />
-                              <PermissionTagEditor
-                                tags={model.permission_tags}
-                                availableTags={availableTags}
-                                disabled={isBusy || isSavingModelTags}
-                                showEmpty={false}
-                                onChange={(tags) => updateModelTags(backend.id, model.name, tags)}
-                              />
-                            </span>
-                            <ToggleSwitch
-                              label={model.is_enabled ? "On" : "Off"}
-                              checked={model.is_enabled}
-                              disabled={isBusy}
-                              compact
-                              onChange={(checked) => void toggleModel(backend.id, model.name, checked)}
-                            />
-                          </article>
-                        );
-                      })}
-                    </div>
+                              </article>
+                            );
+                          })}
+                        </div>
+                      </>
+                    )}
                   </>
                 )}
               </div>
@@ -1608,6 +1636,155 @@ export function AdminModelsAccessPanel({
       )}
     </>
   );
+}
+
+function BackendModelPull({
+  backend,
+  onComplete
+}: {
+  backend: Backend;
+  onComplete: () => Promise<void>;
+}) {
+  const [input, setInput] = useState("");
+  const [pullStatus, setPullStatus] = useState<ModelPullStatus | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const applyStatus = useCallback(
+    (nextStatus: ModelPullStatus) => {
+      setPullStatus((currentStatus) => {
+        if (
+          currentStatus?.id === nextStatus.id &&
+          currentStatus.state !== "succeeded" &&
+          nextStatus.state === "succeeded"
+        ) {
+          void onComplete();
+        }
+        return nextStatus;
+      });
+    },
+    [onComplete]
+  );
+
+  const loadStatus = useCallback(async () => {
+    try {
+      const status = await requestJson<ModelPullStatus>(
+        `/api/admin/backends/${backend.id}/models/pull`
+      );
+      applyStatus(status);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Failed to check pull progress");
+    }
+  }, [applyStatus, backend.id]);
+
+  useEffect(() => {
+    void loadStatus();
+  }, [loadStatus]);
+
+  const isActive = pullStatus
+    ? ["queued", "running", "refreshing"].includes(pullStatus.state)
+    : false;
+
+  useEffect(() => {
+    if (!isActive) {
+      return;
+    }
+
+    const interval = window.setInterval(() => void loadStatus(), 750);
+    return () => window.clearInterval(interval);
+  }, [isActive, loadStatus]);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError(null);
+
+    try {
+      const status = await requestJson<ModelPullStatus>(
+        `/api/admin/backends/${backend.id}/models/pull`,
+        {
+          method: "POST",
+          body: JSON.stringify({ input })
+        }
+      );
+      setInput("");
+      applyStatus(status);
+    } catch (pullError) {
+      setError(pullError instanceof Error ? pullError.message : "Failed to start model pull");
+    }
+  }
+
+  const progress =
+    pullStatus?.completed != null && pullStatus.total != null && pullStatus.total > 0
+      ? Math.min(pullStatus.completed / pullStatus.total, 1)
+      : null;
+
+  return (
+    <section className="backend-model-pull" aria-label={`Pull a model on ${backend.name}`}>
+      <div className="backend-model-pull-heading">
+        <div>
+          <h3>Pull a Model</h3>
+          <p>Paste a model name or an Ollama pull command.</p>
+        </div>
+        {pullStatus?.state === "succeeded" && pullStatus.model && (
+          <span className="badge">{compactModelName(pullStatus.model)} ready</span>
+        )}
+      </div>
+      <form className="backend-model-pull-form" onSubmit={submit}>
+        <label>
+          <span className="visually-hidden">Model name or Ollama pull command</span>
+          <input
+            required
+            value={input}
+            disabled={isActive}
+            onChange={(event) => setInput(event.target.value)}
+            placeholder="gemma3:4b or ollama pull gemma3:4b"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+          />
+        </label>
+        <button type="submit" disabled={isActive || input.trim().length === 0}>
+          {isActive ? <RetroLoader /> : <Download />}
+          <span>{isActive ? "Pulling" : "Pull"}</span>
+        </button>
+      </form>
+      {pullStatus && pullStatus.state !== "idle" && (
+        <div className={`model-pull-progress model-pull-progress-${pullStatus.state}`}>
+          <div className="model-pull-progress-copy">
+            <span>{pullStatus.status ?? "Working"}</span>
+            {progress != null && pullStatus.completed != null && pullStatus.total != null && (
+              <span>
+                {formatModelPullBytes(pullStatus.completed)} / {formatModelPullBytes(pullStatus.total)}
+              </span>
+            )}
+          </div>
+          {isActive && (
+            <div
+              className={`model-pull-progress-track${progress == null ? " model-pull-progress-indeterminate" : ""}`}
+              role="progressbar"
+              aria-label={`Pulling ${pullStatus.model ?? "model"}`}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={progress == null ? undefined : Math.round(progress * 100)}
+            >
+              <span style={{ width: progress == null ? undefined : `${progress * 100}%` }} />
+            </div>
+          )}
+        </div>
+      )}
+      {(error || pullStatus?.error) && <p className="error">{error ?? pullStatus?.error}</p>}
+    </section>
+  );
+}
+
+function formatModelPullBytes(bytes: number) {
+  const units = ["B", "KiB", "MiB", "GiB"];
+  let value = bytes;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value.toFixed(unitIndex === 0 || value >= 10 ? 0 : 1)} ${units[unitIndex]}`;
 }
 
 function BackendEditRow({

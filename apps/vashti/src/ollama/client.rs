@@ -4,7 +4,7 @@ use futures_util::{StreamExt, stream};
 
 use crate::ollama::models::{
     OllamaChatRequest, OllamaChatResponse, OllamaEmbedRequest, OllamaEmbedResponse, OllamaModel,
-    ShowModelRequest, ShowModelResponse, TagsResponse,
+    OllamaPullRequest, ShowModelRequest, ShowModelResponse, TagsResponse,
 };
 
 pub async fn is_reachable(
@@ -148,4 +148,21 @@ pub async fn embed(
         "completed Ollama embedding request"
     );
     Ok(response)
+}
+
+pub async fn pull_model_stream(
+    client: &reqwest::Client,
+    base_url: &str,
+    model_name: &str,
+) -> Result<reqwest::Response, reqwest::Error> {
+    let url = format!("{}/api/pull", base_url.trim_end_matches('/'));
+    client
+        .post(url)
+        .json(&OllamaPullRequest {
+            model: model_name,
+            stream: true,
+        })
+        .send()
+        .await?
+        .error_for_status()
 }

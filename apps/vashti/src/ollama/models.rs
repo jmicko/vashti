@@ -207,6 +207,12 @@ pub struct OllamaEmbedResponse {
     pub prompt_eval_count: Option<i64>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct OllamaPullRequest<'a> {
+    pub model: &'a str,
+    pub stream: bool,
+}
+
 impl TagsResponse {
     pub fn into_models(self) -> Vec<OllamaModel> {
         self.models

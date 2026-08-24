@@ -381,6 +381,30 @@ pub async fn list_enabled_backends(pool: &SqlitePool) -> Result<Vec<OllamaBacken
     Ok(backends)
 }
 
+pub async fn get_enabled_backend(
+    pool: &SqlitePool,
+    backend_id: &str,
+) -> Result<Option<OllamaBackend>, sqlx::Error> {
+    sqlx::query(
+        r#"
+        SELECT id, name, base_url
+        FROM ollama_backends
+        WHERE id = ? AND is_enabled = 1
+        "#,
+    )
+    .bind(backend_id)
+    .fetch_optional(pool)
+    .await?
+    .map(|row| {
+        Ok(OllamaBackend {
+            id: row.try_get("id")?,
+            name: row.try_get("name")?,
+            base_url: row.try_get("base_url")?,
+        })
+    })
+    .transpose()
+}
+
 pub async fn model_availability_by_backend(
     pool: &SqlitePool,
     backend_id: &str,
