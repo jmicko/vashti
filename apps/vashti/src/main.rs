@@ -240,6 +240,10 @@ fn router(state: AppState) -> Router {
             patch(personas::handlers::update_persona),
         )
         .route(
+            "/personas/{persona_id}/favorite",
+            patch(personas::handlers::update_persona_favorite),
+        )
+        .route(
             "/personas/{persona_id}/copy",
             post(personas::handlers::copy_persona),
         )

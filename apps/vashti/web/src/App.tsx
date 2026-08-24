@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { requestJson } from "./api";
 import { AppShell } from "./AppShell";
 import { AuthScreen } from "./auth";
 import { BrandMark } from "./common";
 import { resetPrivateStorageUser, setPrivateStorageUser } from "./privateChatStore";
 import { markPerformance, measurePerformance } from "./performance";
+import { clearDecodedModelMediaCache } from "./modelMediaCache";
 import { useNativeConnections } from "./nativeConnections";
 import { setAssetViewer } from "./runtime";
 import type { LoadState, SessionResponse, User } from "./types";
@@ -12,6 +13,7 @@ import type { LoadState, SessionResponse, User } from "./types";
 export default function App() {
   const { activeConnection, syncActiveIdentity } = useNativeConnections();
   const [state, setState] = useState<LoadState>({ status: "loading" });
+  const mediaScopeRef = useRef<string | null>(null);
 
   const loadSession = useCallback(async () => {
     setState({ status: "loading" });
@@ -24,6 +26,13 @@ export default function App() {
       ) {
         window.location.reload();
         return;
+      }
+      const nextMediaScope = session.is_authenticated && session.user
+        ? `${activeConnection?.instance_id ?? "web"}:${session.user.id}`
+        : null;
+      if (mediaScopeRef.current !== nextMediaScope) {
+        clearDecodedModelMediaCache();
+        mediaScopeRef.current = nextMediaScope;
       }
       if (session.is_authenticated && session.user) {
         setAssetViewer(session.user.id);

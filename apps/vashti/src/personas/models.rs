@@ -10,6 +10,7 @@ pub struct PersonaResponse {
     pub current_version: PersonaVersionResponse,
     pub is_owner: bool,
     pub is_member: bool,
+    pub is_favorite: bool,
     pub created_at: i64,
     pub updated_at: i64,
 }

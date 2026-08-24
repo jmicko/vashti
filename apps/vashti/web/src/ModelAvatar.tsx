@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { avatarImageStyle, type ImageDimensions } from "./avatarCrop";
-import { getPrivatePersonaAvatar } from "./privateChatStore";
+import { avatarImageStyle } from "./avatarCrop";
+import {
+  getCachedPrivatePersonaAvatar,
+  getPrivatePersonaAvatar
+} from "./privateChatStore";
+import { useDecodedModelMedia } from "./modelMediaCache";
 import { apiAssetUrl } from "./runtime";
-
-type LoadedImage = ImageDimensions & {
-  src: string;
-};
 
 export function ModelAvatar({
   displayName,
@@ -27,15 +27,10 @@ export function ModelAvatar({
   className?: string;
 }) {
   const src = useModelAvatarSource({ assetId, privateAssetId, previewFile });
-  const [loadedImage, setLoadedImage] = useState<LoadedImage | null>(null);
-  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const media = useDecodedModelMedia(src, "avatar");
   const classes = ["model-avatar", className].filter(Boolean).join(" ");
-  const dimensions =
-    src && loadedImage?.src === src
-      ? { width: loadedImage.width, height: loadedImage.height }
-      : null;
 
-  if (!src || failedSrc === src) {
+  if (!src || !media.ready || media.failed) {
     return (
       <span className={`${classes} model-avatar-fallback`} aria-hidden="true">
         {initialFor(displayName)}
@@ -49,17 +44,9 @@ export function ModelAvatar({
         src={src}
         alt=""
         decoding="async"
-        loading="lazy"
+        loading="eager"
         draggable={false}
-        style={avatarImageStyle(dimensions, { x: cropX, y: cropY, size: cropSize })}
-        onLoad={(event) =>
-          setLoadedImage({
-            src,
-            width: event.currentTarget.naturalWidth,
-            height: event.currentTarget.naturalHeight
-          })
-        }
-        onError={() => setFailedSrc(src)}
+        style={avatarImageStyle(media.dimensions, { x: cropX, y: cropY, size: cropSize })}
       />
     </span>
   );
@@ -74,7 +61,9 @@ export function useModelAvatarSource({
   privateAssetId?: string | null;
   previewFile?: File | null;
 }) {
-  const [privateUrl, setPrivateUrl] = useState<string | null>(null);
+  const [privateUrl, setPrivateUrl] = useState<string | null>(() =>
+    privateAssetId ? getCachedPrivatePersonaAvatar(privateAssetId)?.data_url ?? null : null
+  );
   const previewUrl = useMemo(
     () => (previewFile ? URL.createObjectURL(previewFile) : null),
     [previewFile]
@@ -91,7 +80,9 @@ export function useModelAvatarSource({
 
   useEffect(() => {
     let cancelled = false;
-    setPrivateUrl(null);
+    setPrivateUrl(
+      privateAssetId ? getCachedPrivatePersonaAvatar(privateAssetId)?.data_url ?? null : null
+    );
     if (!privateAssetId) {
       return () => {
         cancelled = true;

@@ -237,6 +237,7 @@ export type Persona = {
   current_version: PersonaVersion;
   is_owner: boolean;
   is_member: boolean;
+  is_favorite: boolean;
   created_at: number;
   updated_at: number;
 };

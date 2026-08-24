@@ -36,6 +36,11 @@ pub struct PersonaDisownResponse {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct UpdatePersonaFavoriteRequest {
+    pub is_favorite: bool,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct CreatePersonaRequest {
     pub visibility: String,
     pub display_name: String,
@@ -122,6 +127,21 @@ pub async fn update_persona(
     let user =
         auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
     let persona = service::update_persona(&state.db, &user.id, &persona_id, payload).await?;
+
+    Ok(Json(PersonaMutationResponse { persona }))
+}
+
+pub async fn update_persona_favorite(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Path(persona_id): Path<String>,
+    Json(payload): Json<UpdatePersonaFavoriteRequest>,
+) -> Result<Json<PersonaMutationResponse>, ApiError> {
+    let user =
+        auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
+    let persona =
+        service::update_persona_favorite(&state.db, &user.id, &persona_id, payload.is_favorite)
+            .await?;
 
     Ok(Json(PersonaMutationResponse { persona }))
 }

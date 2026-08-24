@@ -11,6 +11,7 @@ import {
   Plus,
   RefreshCw,
   Save,
+  Star,
   Trash2,
   X
 } from "lucide-react";
@@ -37,6 +38,7 @@ import {
   getPrivatePersonaAvatar,
   listPrivatePersonas,
   savePrivatePersonaAvatar,
+  setPrivatePersonaFavorite,
   updatePrivatePersona,
   type PrivatePersona
 } from "./privateChatStore";
@@ -452,6 +454,54 @@ export function CustomModelsSection({
     }
   }
 
+  async function togglePersonaFavorite(persona: Persona) {
+    setBusyPersonaId(persona.id);
+    setError(null);
+    try {
+      const response = await requestJson<PersonaMutationResponse>(
+        `/api/personas/${persona.id}/favorite`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ is_favorite: !persona.is_favorite })
+        }
+      );
+      setPersonas((current) =>
+        current.map((candidate) =>
+          candidate.id === persona.id ? response.persona : candidate
+        )
+      );
+      await onPersonasChanged();
+    } catch (favoriteError) {
+      setError(
+        favoriteError instanceof Error
+          ? favoriteError.message
+          : "Failed to update custom model favorite"
+      );
+    } finally {
+      setBusyPersonaId(null);
+    }
+  }
+
+  async function togglePrivatePersonaFavorite(persona: PrivatePersona) {
+    setBusyPersonaId(persona.id);
+    setError(null);
+    try {
+      const updated = await setPrivatePersonaFavorite(persona.id, !persona.is_favorite);
+      setPrivatePersonas((current) =>
+        current.map((candidate) => (candidate.id === persona.id ? updated : candidate))
+      );
+      await onPrivatePersonasChanged();
+    } catch (favoriteError) {
+      setError(
+        favoriteError instanceof Error
+          ? favoriteError.message
+          : "Failed to update device custom model favorite"
+      );
+    } finally {
+      setBusyPersonaId(null);
+    }
+  }
+
   async function copyPersonaToDevice(persona: Persona) {
     const version = persona.current_version;
     setBusyPersonaId(persona.id);
@@ -781,6 +831,7 @@ export function CustomModelsSection({
                 isBusy={busyPersonaId === persona.id}
                 onDelete={() => setDeletePrivateTarget(persona)}
                 onEdit={() => startEditingPrivatePersona(persona)}
+                onFavorite={() => void togglePrivatePersonaFavorite(persona)}
               />
             ))}
             {personas.map((persona) => (
@@ -794,6 +845,7 @@ export function CustomModelsSection({
                 onCopyToDevice={() => void copyPersonaToDevice(persona)}
                 onDelete={() => setDeleteTarget(persona)}
                 onEdit={() => startEditingPersona(persona)}
+                onFavorite={() => void togglePersonaFavorite(persona)}
               />
             ))}
           </div>
@@ -861,7 +913,8 @@ function PersonaRow({
   onCopy,
   onCopyToDevice,
   onDelete,
-  onEdit
+  onEdit,
+  onFavorite
 }: {
   persona: Persona;
   backendName: string;
@@ -871,6 +924,7 @@ function PersonaRow({
   onCopyToDevice: () => void;
   onDelete: () => void;
   onEdit: () => void;
+  onFavorite: () => void;
 }) {
   const version = persona.current_version;
   return (
@@ -906,6 +960,21 @@ function PersonaRow({
         <pre>{version.system_prompt || "No system prompt."}</pre>
       </details>
       <div className="persona-actions">
+        <button
+          type="button"
+          className={
+            persona.is_favorite
+              ? "model-pref-button model-favorite-button model-pref-button-active"
+              : "model-pref-button model-favorite-button"
+          }
+          disabled={isBusy}
+          aria-pressed={persona.is_favorite}
+          aria-label={persona.is_favorite ? "Remove from favorites" : "Add to favorites"}
+          title={persona.is_favorite ? "Remove from favorites" : "Add to favorites"}
+          onClick={onFavorite}
+        >
+          <Star />
+        </button>
         {canEdit && (
           <button type="button" className="secondary-button" disabled={isBusy} onClick={onEdit}>
             <Pencil />
@@ -940,12 +1009,14 @@ function PrivatePersonaRow({
   persona,
   isBusy,
   onDelete,
-  onEdit
+  onEdit,
+  onFavorite
 }: {
   persona: PrivatePersona;
   isBusy: boolean;
   onDelete: () => void;
   onEdit: () => void;
+  onFavorite: () => void;
 }) {
   const version = persona.current_version;
   return (
@@ -978,6 +1049,21 @@ function PrivatePersonaRow({
         <pre>{version.system_prompt || "No system prompt."}</pre>
       </details>
       <div className="persona-actions">
+        <button
+          type="button"
+          className={
+            persona.is_favorite
+              ? "model-pref-button model-favorite-button model-pref-button-active"
+              : "model-pref-button model-favorite-button"
+          }
+          disabled={isBusy}
+          aria-pressed={persona.is_favorite}
+          aria-label={persona.is_favorite ? "Remove from favorites" : "Add to favorites"}
+          title={persona.is_favorite ? "Remove from favorites" : "Add to favorites"}
+          onClick={onFavorite}
+        >
+          <Star />
+        </button>
         <button type="button" className="secondary-button" disabled={isBusy} onClick={onEdit}>
           <Pencil />
           <span>Edit</span>

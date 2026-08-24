@@ -37,28 +37,21 @@ export function MessageVersionCarousel({
   versionInfo: VersionInfo;
 }) {
   const swipeEnabled = useCoarsePointer();
-  const [dragOffset, setDragOffset] = useState(0);
-  const [transitionMs, setTransitionMs] = useState(0);
-  const [isDragging, setIsDragging] = useState(false);
-  const [isSettling, setIsSettling] = useState(false);
-  const [visiblePreviewRadius, setVisiblePreviewRadius] = useState(1);
-  const [heightTargetIndex, setHeightTargetIndex] = useState<number | null>(null);
+  const carouselRef = useRef<HTMLDivElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const cardElementsRef = useRef(new Map<number, HTMLDivElement>());
-  const [cardHeights, setCardHeights] = useState<Record<number, number>>({});
+  const cardHeightsRef = useRef<Record<number, number>>({});
+  const interactionRef = useRef<"idle" | "dragging" | "settling">("idle");
   const gestureRef = useRef<GestureState | null>(null);
   const settleTimeoutRef = useRef<number | null>(null);
   const suppressClickRef = useRef(false);
   const suppressClickTimeoutRef = useRef<number | null>(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     clearSettleTimeout();
-    setDragOffset(0);
-    setTransitionMs(0);
-    setIsDragging(false);
-    setIsSettling(false);
-    setVisiblePreviewRadius(1);
-    setHeightTargetIndex(null);
+    interactionRef.current = "idle";
+    updateInteractionClasses(carouselRef.current, "idle");
+    updateCarouselPosition(viewportRef.current, 0, 0, cardHeightsRef.current[versionInfo.index]);
   }, [versionInfo.index]);
 
   useEffect(() => {
@@ -77,7 +70,7 @@ export function MessageVersionCarousel({
       .filter(
         (index) =>
           index !== versionInfo.index &&
-          Math.abs(index - versionInfo.index) <= visiblePreviewRadius
+          Math.abs(index - versionInfo.index) <= previewRadius
       )
   ];
   const renderedIndicesKey = renderedIndices.join(",");
@@ -88,21 +81,23 @@ export function MessageVersionCarousel({
     }
 
     const observer = new ResizeObserver((entries) => {
-      setCardHeights((current) => {
-        let changed = false;
-        const next = { ...current };
+      let changed = false;
+      const next = { ...cardHeightsRef.current };
 
-        for (const entry of entries) {
-          const index = Number((entry.target as HTMLElement).dataset.versionIndex);
-          const height = entry.borderBoxSize[0]?.blockSize ?? entry.contentRect.height;
-          if (Number.isFinite(index) && Math.abs((next[index] ?? 0) - height) > 0.5) {
-            next[index] = height;
-            changed = true;
-          }
+      for (const entry of entries) {
+        const index = Number((entry.target as HTMLElement).dataset.versionIndex);
+        const height = entry.borderBoxSize[0]?.blockSize ?? entry.contentRect.height;
+        if (Number.isFinite(index) && Math.abs((next[index] ?? 0) - height) > 0.5) {
+          next[index] = height;
+          changed = true;
         }
+      }
 
-        return changed ? next : current;
-      });
+      if (!changed) return;
+      cardHeightsRef.current = next;
+      if (interactionRef.current === "idle") {
+        updateCarouselPosition(viewportRef.current, 0, 0, next[versionInfo.index]);
+      }
     });
 
     for (const index of renderedIndices) {
@@ -129,7 +124,7 @@ export function MessageVersionCarousel({
   function handlePointerDown(event: ReactPointerEvent<HTMLDivElement>) {
     if (
       isBusy ||
-      isSettling ||
+      interactionRef.current === "settling" ||
       !event.isPrimary ||
       (event.pointerType === "mouse" && event.button !== 0) ||
       isInteractiveTarget(event.target) ||
@@ -148,7 +143,7 @@ export function MessageVersionCarousel({
       velocityX: 0,
       axis: null
     };
-    setTransitionMs(0);
+    updateCarouselTransition(viewportRef.current, 0);
   }
 
   function handlePointerMove(event: ReactPointerEvent<HTMLDivElement>) {
@@ -171,8 +166,8 @@ export function MessageVersionCarousel({
         return;
       }
       event.currentTarget.setPointerCapture(event.pointerId);
-      setIsDragging(true);
-      setVisiblePreviewRadius(previewRadius);
+      interactionRef.current = "dragging";
+      updateInteractionClasses(carouselRef.current, "dragging");
     }
 
     if (gesture.axis !== "horizontal") {
@@ -189,12 +184,19 @@ export function MessageVersionCarousel({
 
     const isPastStart = versionInfo.index === 0 && deltaX > 0;
     const isPastEnd = versionInfo.index === versionInfo.total - 1 && deltaX < 0;
-    setHeightTargetIndex(
+    const offset = isPastStart || isPastEnd ? deltaX * 0.18 : deltaX;
+    const targetIndex =
       isPastStart || isPastEnd
-        ? null
-        : clampIndex(versionInfo.index + (deltaX < 0 ? 1 : -1), versionInfo.total)
+        ? versionInfo.index
+        : clampIndex(versionInfo.index + (deltaX < 0 ? 1 : -1), versionInfo.total);
+    updateDragPosition(
+      viewportRef.current,
+      offset,
+      versionInfo.index,
+      targetIndex,
+      cardDistanceFor(viewportRef.current),
+      cardHeightsRef.current
     );
-    setDragOffset(isPastStart || isPastEnd ? deltaX * 0.18 : deltaX);
     if (Math.abs(deltaX) > 9) {
       suppressClickRef.current = true;
     }
@@ -261,21 +263,27 @@ export function MessageVersionCarousel({
   }
 
   function resetPosition() {
-    setIsDragging(false);
-    setIsSettling(false);
-    setTransitionMs(prefersReducedMotion() ? 0 : 180);
-    setDragOffset(0);
-    setHeightTargetIndex(null);
+    interactionRef.current = "idle";
+    updateInteractionClasses(carouselRef.current, "idle");
+    updateCarouselPosition(
+      viewportRef.current,
+      0,
+      prefersReducedMotion() ? 0 : 180,
+      cardHeightsRef.current[versionInfo.index]
+    );
   }
 
   function settleToIndex(targetIndex: number, cardDistance: number) {
     const steps = targetIndex - versionInfo.index;
     const duration = prefersReducedMotion() ? 0 : Math.min(320, 180 + Math.abs(steps) * 42);
-    setIsDragging(false);
-    setIsSettling(true);
-    setHeightTargetIndex(targetIndex);
-    setTransitionMs(duration);
-    setDragOffset(-steps * cardDistance);
+    interactionRef.current = "settling";
+    updateInteractionClasses(carouselRef.current, "settling");
+    updateCarouselPosition(
+      viewportRef.current,
+      -steps * cardDistance,
+      duration,
+      cardHeightsRef.current[targetIndex] ?? cardHeightsRef.current[versionInfo.index]
+    );
 
     clearSettleTimeout();
     if (duration === 0) {
@@ -306,28 +314,8 @@ export function MessageVersionCarousel({
     .filter(
       ({ index }) =>
         index !== versionInfo.index &&
-        Math.abs(index - versionInfo.index) <= visiblePreviewRadius
+        Math.abs(index - versionInfo.index) <= previewRadius
     );
-  const cardStyle = {
-    "--message-version-offset": `${dragOffset}px`,
-    "--message-version-transition": `${transitionMs}ms`
-  } as CSSProperties;
-  const currentHeight = cardHeights[versionInfo.index] ?? 0;
-  const targetHeight =
-    heightTargetIndex === null ? currentHeight : (cardHeights[heightTargetIndex] ?? currentHeight);
-  const cardDistance = Math.max(
-    (viewportRef.current?.clientWidth ?? 0) -
-      carouselPeekWidth(viewportRef.current) * 2 +
-      cardGap,
-    1
-  );
-  const heightProgress = isSettling
-    ? 1
-    : Math.min(Math.abs(dragOffset) / cardDistance, 1);
-  const viewportHeight =
-    currentHeight + (targetHeight - currentHeight) * heightProgress;
-  const viewportStyle = viewportHeight > 0 ? { height: `${viewportHeight}px` } : undefined;
-
   function registerCard(index: number, element: HTMLDivElement | null) {
     if (element) {
       cardElementsRef.current.set(index, element);
@@ -338,14 +326,8 @@ export function MessageVersionCarousel({
 
   return (
     <div
-      className={[
-        "message-version-carousel",
-        `message-version-carousel-${role}`,
-        isDragging ? "is-dragging" : "",
-        isSettling ? "is-settling" : ""
-      ]
-        .filter(Boolean)
-        .join(" ")}
+      className={`message-version-carousel message-version-carousel-${role}`}
+      ref={carouselRef}
       aria-label={`Message version ${versionInfo.index + 1} of ${versionInfo.total}`}
       aria-roledescription="carousel"
       role="group"
@@ -361,7 +343,6 @@ export function MessageVersionCarousel({
       <div
         className="message-version-viewport"
         ref={viewportRef}
-        style={viewportStyle}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerEnd}
@@ -373,7 +354,6 @@ export function MessageVersionCarousel({
             distance={index - versionInfo.index}
             index={index}
             ref={(element) => registerCard(index, element)}
-            style={cardStyle}
           >
             {renderVersion(version, index)}
           </VersionPreview>
@@ -382,7 +362,6 @@ export function MessageVersionCarousel({
           className="message-version-current"
           data-version-index={versionInfo.index}
           ref={(element) => registerCard(versionInfo.index, element)}
-          style={cardStyle}
         >
           {children}
         </div>
@@ -395,17 +374,14 @@ function VersionPreview({
   children,
   distance,
   index,
-  ref,
-  style
+  ref
 }: {
   children: ReactNode;
   distance: number;
   index: number;
   ref: (element: HTMLDivElement | null) => void;
-  style: CSSProperties;
 }) {
   const previewStyle = {
-    ...style,
     "--message-version-distance-percent": `${distance * 100}%`,
     "--message-version-gap-offset": `${distance * cardGap}px`
   } as CSSProperties;
@@ -459,6 +435,56 @@ function carouselPeekWidth(viewport: HTMLDivElement | null) {
     return 0;
   }
   return Number.parseFloat(window.getComputedStyle(viewport).paddingLeft) || 0;
+}
+
+function cardDistanceFor(viewport: HTMLDivElement | null) {
+  return Math.max(
+    (viewport?.clientWidth ?? 0) - carouselPeekWidth(viewport) * 2 + cardGap,
+    1
+  );
+}
+
+function updateCarouselTransition(viewport: HTMLDivElement | null, transitionMs: number) {
+  viewport?.style.setProperty("--message-version-transition", `${transitionMs}ms`);
+}
+
+function updateInteractionClasses(
+  carousel: HTMLDivElement | null,
+  interaction: "idle" | "dragging" | "settling"
+) {
+  if (!carousel) return;
+  carousel.classList.toggle("is-dragging", interaction === "dragging");
+  carousel.classList.toggle("is-settling", interaction === "settling");
+}
+
+function updateCarouselPosition(
+  viewport: HTMLDivElement | null,
+  offset: number,
+  transitionMs: number,
+  height?: number
+) {
+  if (!viewport) return;
+  viewport.style.setProperty("--message-version-offset", `${offset}px`);
+  updateCarouselTransition(viewport, transitionMs);
+  if (height && height > 0) {
+    viewport.style.height = `${height}px`;
+  }
+}
+
+function updateDragPosition(
+  viewport: HTMLDivElement | null,
+  offset: number,
+  currentIndex: number,
+  targetIndex: number,
+  cardDistance: number,
+  heights: Record<number, number>
+) {
+  if (!viewport) return;
+  const currentHeight = heights[currentIndex] ?? 0;
+  const targetHeight = heights[targetIndex] ?? currentHeight;
+  const progress = Math.min(Math.abs(offset) / cardDistance, 1);
+  const height = currentHeight + (targetHeight - currentHeight) * progress;
+  updateCarouselPosition(viewport, offset, 0, height);
 }
 
 function useCoarsePointer() {

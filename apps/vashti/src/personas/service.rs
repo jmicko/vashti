@@ -75,11 +75,14 @@ pub async fn list_personas(
                v.created_by_user_id,
                v.created_at AS version_created_at,
                CASE WHEN p.owner_user_id = ? THEN 1 ELSE 0 END AS is_owner,
-               CASE WHEN pm.user_id IS NULL THEN 0 ELSE 1 END AS is_member
+               CASE WHEN pm.user_id IS NULL THEN 0 ELSE 1 END AS is_member,
+               COALESCE(upp.is_favorite, 0) AS is_favorite
         FROM personas p
         JOIN persona_versions v ON v.id = p.current_version_id
         LEFT JOIN users u ON u.id = p.owner_user_id
         LEFT JOIN persona_members pm ON pm.persona_id = p.id AND pm.user_id = ?
+        LEFT JOIN user_persona_preferences upp
+          ON upp.persona_id = p.id AND upp.user_id = ?
         WHERE p.lifecycle_state != 'deleted'
           AND (
             p.owner_user_id = ?
@@ -89,6 +92,7 @@ pub async fn list_personas(
         ORDER BY v.display_name COLLATE NOCASE ASC, p.created_at ASC
         "#,
     )
+    .bind(user_id)
     .bind(user_id)
     .bind(user_id)
     .bind(user_id)
@@ -187,6 +191,48 @@ pub async fn create_persona(
     tx.commit().await?;
 
     get_visible_persona(pool, user_id, &persona_id).await
+}
+
+pub async fn update_persona_favorite(
+    pool: &SqlitePool,
+    user_id: &str,
+    persona_id: &str,
+    is_favorite: bool,
+) -> Result<PersonaResponse, ApiError> {
+    ensure_persona_visible(pool, user_id, persona_id).await?;
+
+    if is_favorite {
+        let now = unix_timestamp();
+        sqlx::query(
+            r#"
+            INSERT INTO user_persona_preferences (
+                user_id,
+                persona_id,
+                is_favorite,
+                created_at,
+                updated_at
+            )
+            VALUES (?, ?, 1, ?, ?)
+            ON CONFLICT(user_id, persona_id) DO UPDATE SET
+                is_favorite = 1,
+                updated_at = excluded.updated_at
+            "#,
+        )
+        .bind(user_id)
+        .bind(persona_id)
+        .bind(now)
+        .bind(now)
+        .execute(pool)
+        .await?;
+    } else {
+        sqlx::query("DELETE FROM user_persona_preferences WHERE user_id = ? AND persona_id = ?")
+            .bind(user_id)
+            .bind(persona_id)
+            .execute(pool)
+            .await?;
+    }
+
+    get_visible_persona(pool, user_id, persona_id).await
 }
 
 pub async fn update_persona(
@@ -882,11 +928,14 @@ async fn get_visible_persona(
                v.created_by_user_id,
                v.created_at AS version_created_at,
                CASE WHEN p.owner_user_id = ? THEN 1 ELSE 0 END AS is_owner,
-               CASE WHEN pm.user_id IS NULL THEN 0 ELSE 1 END AS is_member
+               CASE WHEN pm.user_id IS NULL THEN 0 ELSE 1 END AS is_member,
+               COALESCE(upp.is_favorite, 0) AS is_favorite
         FROM personas p
         JOIN persona_versions v ON v.id = p.current_version_id
         LEFT JOIN users u ON u.id = p.owner_user_id
         LEFT JOIN persona_members pm ON pm.persona_id = p.id AND pm.user_id = ?
+        LEFT JOIN user_persona_preferences upp
+          ON upp.persona_id = p.id AND upp.user_id = ?
         WHERE p.id = ?
           AND p.lifecycle_state != 'deleted'
           AND (
@@ -896,6 +945,7 @@ async fn get_visible_persona(
           )
         "#,
     )
+    .bind(user_id)
     .bind(user_id)
     .bind(user_id)
     .bind(persona_id)
@@ -1347,6 +1397,7 @@ fn row_to_persona(row: sqlx::sqlite::SqliteRow) -> Result<PersonaResponse, sqlx:
         },
         is_owner: row.try_get::<i64, _>("is_owner")? == 1,
         is_member: row.try_get::<i64, _>("is_member")? == 1,
+        is_favorite: row.try_get::<i64, _>("is_favorite")? == 1,
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
     })
@@ -1422,6 +1473,81 @@ mod tests {
         .await
         .expect("create backend")
         .id
+    }
+
+    #[tokio::test]
+    async fn persona_favorites_are_scoped_to_each_user() {
+        let pool = test_pool().await;
+        let owner = register_user(
+            &pool,
+            "favorite-owner".to_string(),
+            None,
+            "secret-pass".to_string(),
+        )
+        .await
+        .expect("register owner")
+        .user;
+        let other = register_user(
+            &pool,
+            "favorite-other".to_string(),
+            None,
+            "secret-pass".to_string(),
+        )
+        .await
+        .expect("register other user")
+        .user;
+        sqlx::query("UPDATE users SET is_disabled = 0 WHERE id = ?")
+            .bind(&other.id)
+            .execute(&pool)
+            .await
+            .expect("enable other user");
+        let backend_id = create_test_backend(&pool).await;
+        let persona = create_persona(
+            &pool,
+            &owner.id,
+            CreatePersonaRequest {
+                visibility: "public".to_string(),
+                display_name: "Favorite Helper".to_string(),
+                model_type: None,
+                avatar_asset_id: None,
+                avatar_crop_x: None,
+                avatar_crop_y: None,
+                avatar_crop_size: None,
+                background: None,
+                base_backend_id: backend_id,
+                base_model_name: "gemma4:e2b".to_string(),
+                system_prompt: "Be helpful.".to_string(),
+                tool_policy_json: None,
+            },
+        )
+        .await
+        .expect("create persona");
+
+        let favorite = update_persona_favorite(&pool, &owner.id, &persona.id, true)
+            .await
+            .expect("favorite persona");
+        assert!(favorite.is_favorite);
+
+        let owner_persona = list_personas(&pool, &owner.id)
+            .await
+            .expect("list owner personas")
+            .into_iter()
+            .find(|candidate| candidate.id == persona.id)
+            .expect("owner persona");
+        assert!(owner_persona.is_favorite);
+
+        let other_persona = list_personas(&pool, &other.id)
+            .await
+            .expect("list other personas")
+            .into_iter()
+            .find(|candidate| candidate.id == persona.id)
+            .expect("public persona visible to other user");
+        assert!(!other_persona.is_favorite);
+
+        let unfavorited = update_persona_favorite(&pool, &owner.id, &persona.id, false)
+            .await
+            .expect("remove persona favorite");
+        assert!(!unfavorited.is_favorite);
     }
 
     #[tokio::test]

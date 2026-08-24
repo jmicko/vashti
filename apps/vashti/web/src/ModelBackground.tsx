@@ -1,6 +1,7 @@
 import type { CSSProperties } from "react";
 import { Image as ImageIcon } from "lucide-react";
 import { useModelAvatarSource } from "./ModelAvatar";
+import { useDecodedModelMedia } from "./modelMediaCache";
 import type { ModelBackgroundMode, ModelBackgroundSettings } from "./types";
 
 type BackgroundLayout = {
@@ -19,7 +20,8 @@ export function ModelBackgroundLayer({
     assetId: background?.background_is_private ? null : background?.background_asset_id,
     privateAssetId: background?.background_is_private ? background?.background_asset_id : null
   });
-  if (!background?.background_asset_id || !src) return null;
+  const media = useDecodedModelMedia(src, "background");
+  if (!background?.background_asset_id || !src || !media.ready || media.failed) return null;
   return (
     <div
       className="model-background-layer"
@@ -60,9 +62,11 @@ export function ModelBackgroundPreview({
     privateAssetId,
     previewFile
   });
-  const style = src
+  const media = useDecodedModelMedia(src, "background");
+  const displaySrc = media.ready && !media.failed ? src : null;
+  const style = displaySrc
     ? {
-        backgroundImage: `url("${src}")`,
+        backgroundImage: `url("${displaySrc}")`,
         ...backgroundImageProperties(layout)
       }
     : undefined;
@@ -98,14 +102,16 @@ export function ModelBackgroundButton({
   onClick: () => void;
 }) {
   const src = useModelAvatarSource({ assetId, privateAssetId, previewFile });
+  const media = useDecodedModelMedia(src, "background");
+  const displaySrc = media.ready && !media.failed ? src : null;
   return (
     <button
       type="button"
-      className={`model-background-button${src ? " model-background-button-preview" : ""}`}
+      className={`model-background-button${displaySrc ? " model-background-button-preview" : ""}`}
       aria-label={label}
       title={label}
       onClick={onClick}
-      style={src ? { backgroundImage: `url("${src}")` } : undefined}
+      style={displaySrc ? { backgroundImage: `url("${displaySrc}")` } : undefined}
     >
       <span className="model-background-button-shade" />
       <ImageIcon />

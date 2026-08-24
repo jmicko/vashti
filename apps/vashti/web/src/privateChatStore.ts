@@ -256,6 +256,7 @@ export type PrivatePersonaVersion = {
 export type PrivatePersona = {
   id: string;
   current_version_id: string;
+  is_favorite: boolean;
   created_at: number;
   updated_at: number;
   current_version: PrivatePersonaVersion;
@@ -326,6 +327,7 @@ const privatePersonaAvatarCache = new Map<
   string,
   Promise<PrivatePersonaAvatarAsset | null>
 >();
+const resolvedPrivatePersonaAvatarCache = new Map<string, PrivatePersonaAvatarAsset>();
 
 export function setPrivateStorageUser(
   userId: string,
@@ -341,6 +343,7 @@ export function setPrivateStorageUser(
     webCryptoKeyPromise = null;
     legacyMigrationPromise = null;
     privatePersonaAvatarCache.clear();
+    resolvedPrivatePersonaAvatarCache.clear();
     if (dbPromise) {
       void dbPromise.then((db) => db.close()).catch(() => undefined);
       dbPromise = null;
@@ -365,6 +368,7 @@ export function resetPrivateStorageUser() {
   webCryptoKeyPromise = null;
   legacyMigrationPromise = null;
   privatePersonaAvatarCache.clear();
+  resolvedPrivatePersonaAvatarCache.clear();
   if (dbPromise) {
     void dbPromise.then((db) => db.close()).catch(() => undefined);
     dbPromise = null;
@@ -780,6 +784,7 @@ export async function listPrivatePersonas(): Promise<PrivatePersona[]> {
 
       return {
         ...persona,
+        is_favorite: persona.is_favorite ?? false,
         current_version: currentVersion
       };
     })
@@ -805,6 +810,7 @@ export async function createPrivatePersona(
   const persona = {
     id: personaId,
     current_version_id: versionId,
+    is_favorite: false,
     created_at: now,
     updated_at: now
   };
@@ -885,6 +891,7 @@ export async function updatePrivatePersona(
     const updatedPersona = {
       id: persona.id,
       current_version_id: persona.current_version_id,
+      is_favorite: persona.is_favorite,
       created_at: persona.created_at,
       updated_at: now
     };
@@ -917,6 +924,7 @@ export async function updatePrivatePersona(
   const updatedPersona = {
     id: persona.id,
     current_version_id: versionId,
+    is_favorite: persona.is_favorite,
     created_at: persona.created_at,
     updated_at: now
   };
@@ -939,6 +947,34 @@ export async function updatePrivatePersona(
     ...updatedPersona,
     current_version: version
   };
+}
+
+export async function setPrivatePersonaFavorite(
+  personaId: string,
+  isFavorite: boolean
+): Promise<PrivatePersona> {
+  const persona = await getPrivatePersona(personaId);
+  if (!persona) {
+    throw new Error("Private persona not found on this device");
+  }
+
+  const updatedPersona = {
+    id: persona.id,
+    current_version_id: persona.current_version_id,
+    is_favorite: isFavorite,
+    created_at: persona.created_at,
+    updated_at: persona.updated_at
+  };
+  const db = await openPrivateDb();
+  const record = await privateStoreRecord(updatedPersona, {
+    created_at: updatedPersona.created_at,
+    updated_at: updatedPersona.updated_at
+  });
+  const tx = db.transaction(PERSONA_STORE, "readwrite");
+  tx.objectStore(PERSONA_STORE).put(record);
+  await transactionDone(tx);
+
+  return { ...updatedPersona, current_version: persona.current_version };
 }
 
 export async function deletePrivatePersona(personaId: string): Promise<void> {
@@ -982,7 +1018,14 @@ export async function savePrivatePersonaAvatar(
   tx.objectStore(PERSONA_AVATAR_STORE).put(record);
   await transactionDone(tx);
   privatePersonaAvatarCache.set(asset.id, Promise.resolve(asset));
+  resolvedPrivatePersonaAvatarCache.set(asset.id, asset);
   return asset;
+}
+
+export function getCachedPrivatePersonaAvatar(
+  assetId: string
+): PrivatePersonaAvatarAsset | null {
+  return resolvedPrivatePersonaAvatarCache.get(assetId) ?? null;
 }
 
 export function getPrivatePersonaAvatar(
@@ -1010,7 +1053,11 @@ async function loadPrivatePersonaAvatar(
     tx.objectStore(PERSONA_AVATAR_STORE).get(assetId)
   );
   await transactionDone(tx);
-  return record ? readPrivateRecord<PrivatePersonaAvatarAsset>(record) : null;
+  const asset = record ? await readPrivateRecord<PrivatePersonaAvatarAsset>(record) : null;
+  if (asset) {
+    resolvedPrivatePersonaAvatarCache.set(assetId, asset);
+  }
+  return asset;
 }
 
 export async function deleteUnusedPrivatePersonaAvatar(assetId: string): Promise<void> {
@@ -1032,6 +1079,7 @@ export async function deleteUnusedPrivatePersonaAvatar(assetId: string): Promise
   tx.objectStore(PERSONA_AVATAR_STORE).delete(assetId);
   await transactionDone(tx);
   privatePersonaAvatarCache.delete(assetId);
+  resolvedPrivatePersonaAvatarCache.delete(assetId);
 }
 
 export async function getPrivatePersona(personaId: string): Promise<PrivatePersona | null> {
@@ -1055,7 +1103,9 @@ export async function getPrivatePersona(personaId: string): Promise<PrivatePerso
   const version = versionRecord
     ? normalizePrivatePersonaVersion(await readPrivateRecord<PrivatePersonaVersion>(versionRecord))
     : null;
-  return version ? { ...persona, current_version: version } : null;
+  return version
+    ? { ...persona, is_favorite: persona.is_favorite ?? false, current_version: version }
+    : null;
 }
 
 export async function listPrivatePersonaVersions(

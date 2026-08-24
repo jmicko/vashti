@@ -58,6 +58,7 @@ import {
 } from "./toolPreferences";
 import { applyTheme, normalizeTheme, storeAndApplyTheme, storedTheme } from "./theme";
 import { usePwa } from "./pwa";
+import { useModelBackgroundWarmup } from "./useModelBackgroundWarmup";
 import {
   createPrivateChat,
   deleteCachedHostedChat,
@@ -160,6 +161,31 @@ export function AppShell({
   const [availableTools, setAvailableTools] = useState<AvailableTool[]>([]);
   const [deviceAvailableTools, setDeviceAvailableTools] = useState<AvailableTool[]>([]);
   const [selectedModel, setSelectedModel] = useState("");
+  const selectedModelMediaInfo = useMemo(
+    () =>
+      modelInfoForValue(
+        modelGroups,
+        personas,
+        privatePersonas,
+        selectedModel,
+        knownPersonaVersions,
+        knownPrivatePersonaVersions
+      ),
+    [
+      knownPersonaVersions,
+      knownPrivatePersonaVersions,
+      modelGroups,
+      personas,
+      privatePersonas,
+      selectedModel
+    ]
+  );
+  useModelBackgroundWarmup({
+    groups: modelGroups,
+    personas,
+    privatePersonas,
+    selectedModelInfo: selectedModelMediaInfo
+  });
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [modelError, setModelError] = useState<string | null>(null);
   const hasHydratedModelCacheRef = useRef(false);
@@ -430,9 +456,12 @@ export function AppShell({
     (modelsResponse: ModelsResponse, personasResponse: PersonasResponse) => {
       hasModelPickerDataRef.current = true;
       const enabledValues = enabledModelValueSet(modelsResponse.backends);
-      const visiblePersonas = personasResponse.personas.filter((persona) =>
-        enabledValues.has(personaBaseModelValue(persona))
-      );
+      const visiblePersonas = personasResponse.personas
+        .filter((persona) => enabledValues.has(personaBaseModelValue(persona)))
+        .map((persona) => ({
+          ...persona,
+          is_favorite: persona.is_favorite ?? false
+        }));
       setModelGroups(modelsResponse.backends);
       setPersonas(visiblePersonas);
       rememberPersonaVersions(visiblePersonas.map((persona) => persona.current_version));

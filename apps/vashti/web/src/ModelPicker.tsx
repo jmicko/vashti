@@ -146,6 +146,18 @@ export function ModelPicker({
       (group) =>
         group.models.length > 0 || group.personas.length > 0 || group.privatePersonas.length > 0
     );
+  const favoritePrivatePersonas = filteredGroups.flatMap((group) =>
+    group.privatePersonas
+      .filter((persona) => persona.is_favorite)
+      .map((persona) => ({ backendName: group.backend.name, persona }))
+  );
+  const favoritePersonas = filteredGroups.flatMap((group) =>
+    group.personas
+      .filter((persona) => persona.is_favorite)
+      .map((persona) => ({ backendName: group.backend.name, persona }))
+  );
+  const favoriteCount =
+    favoriteModels.length + favoritePrivatePersonas.length + favoritePersonas.length;
 
   useEffect(() => {
     if (isOpen) {
@@ -234,6 +246,130 @@ export function ModelPicker({
     );
   }
 
+  function renderPrivatePersonaOption(
+    persona: PrivatePersona,
+    backendName: string,
+    keyPrefix = "private-persona"
+  ) {
+    const optionValue = privatePersonaModelValue(persona.current_version.id);
+    const baseModel = modelInfoForBase(
+      groups,
+      persona.current_version.base_backend_id,
+      persona.current_version.base_model_name
+    );
+    return (
+      <button
+        type="button"
+        key={`${keyPrefix}:${optionValue}`}
+        className={optionValue === value ? "model-option model-option-active" : "model-option"}
+        onClick={() => {
+          onChange(optionValue);
+          setIsOpen(false);
+        }}
+      >
+        <ModelAvatar
+          displayName={persona.current_version.display_name}
+          privateAssetId={persona.current_version.avatar_asset_id}
+          cropX={persona.current_version.avatar_crop_x}
+          cropY={persona.current_version.avatar_crop_y}
+          cropSize={persona.current_version.avatar_crop_size}
+          className="model-avatar-picker-option"
+        />
+        <span className="model-option-content">
+          <span className="model-option-title-row">
+            <span className="model-name">{persona.current_version.display_name}</span>
+            {persona.is_favorite && (
+              <span className="model-option-star" title="Favorite">
+                <Star />
+              </span>
+            )}
+          </span>
+          <span className="model-subtitle">
+            Device · {compactModelName(persona.current_version.base_model_name)}
+            {keyPrefix === "favorite-private-persona" ? ` · ${backendName}` : ""}
+          </span>
+          <span className="model-capabilities">
+            <span className="model-capability" title="custom model">
+              <Brain />
+              <span className="model-capability-label">custom</span>
+            </span>
+            <span className="model-capability model-capability-warning" title="device only">
+              <Lock />
+              <span className="model-capability-label">device</span>
+            </span>
+          </span>
+          {baseModel && <ModelCapabilityBadges model={baseModel} />}
+        </span>
+      </button>
+    );
+  }
+
+  function renderPersonaOption(
+    persona: Persona,
+    backendName: string,
+    keyPrefix = "persona"
+  ) {
+    const optionValue = personaModelValue(persona.current_version.id);
+    const baseModel = modelInfoForBase(
+      groups,
+      persona.current_version.base_backend_id,
+      persona.current_version.base_model_name
+    );
+    return (
+      <button
+        type="button"
+        key={`${keyPrefix}:${optionValue}`}
+        className={optionValue === value ? "model-option model-option-active" : "model-option"}
+        onClick={() => {
+          onChange(optionValue);
+          setIsOpen(false);
+        }}
+      >
+        <ModelAvatar
+          displayName={persona.current_version.display_name}
+          assetId={persona.current_version.avatar_asset_id}
+          cropX={persona.current_version.avatar_crop_x}
+          cropY={persona.current_version.avatar_crop_y}
+          cropSize={persona.current_version.avatar_crop_size}
+          className="model-avatar-picker-option"
+        />
+        <span className="model-option-content">
+          <span className="model-option-title-row">
+            <span className="model-name">{persona.current_version.display_name}</span>
+            {persona.is_favorite && (
+              <span className="model-option-star" title="Favorite">
+                <Star />
+              </span>
+            )}
+          </span>
+          <span className="model-subtitle">
+            Custom · {compactModelName(persona.current_version.base_model_name)}
+            {persona.owner_username ? ` · by ${persona.owner_username}` : ""}
+            {keyPrefix === "favorite-persona" ? ` · ${backendName}` : ""}
+          </span>
+          <span className="model-capabilities">
+            <span className="model-capability" title="custom model">
+              <Brain />
+              <span className="model-capability-label">custom</span>
+            </span>
+            <span
+              className={
+                persona.visibility === "public"
+                  ? "model-capability"
+                  : "model-capability model-capability-warning"
+              }
+              title={persona.visibility}
+            >
+              {persona.visibility === "public" ? <Users /> : <Lock />}
+              <span className="model-capability-label">{persona.visibility}</span>
+            </span>
+          </span>
+          {baseModel && <ModelCapabilityBadges model={baseModel} />}
+        </span>
+      </button>
+    );
+  }
+
   return (
     <div className="model-picker" ref={wrapRef}>
       <button
@@ -317,11 +453,11 @@ export function ModelPicker({
             />
           </label>
           <div className="model-options">
-            {filteredGroups.length === 0 && favoriteModels.length === 0 ? (
+            {filteredGroups.length === 0 && favoriteCount === 0 ? (
               <p className="model-empty">No matching models</p>
             ) : (
               <>
-                {favoriteModels.length > 0 && (
+                {favoriteCount > 0 && (
                   <section className="model-group model-group-favorites">
                     <p>
                       <Star />
@@ -335,126 +471,27 @@ export function ModelPicker({
                         "favorite"
                       )
                     )}
+                    {favoritePrivatePersonas.map(({ backendName, persona }) =>
+                      renderPrivatePersonaOption(
+                        persona,
+                        backendName,
+                        "favorite-private-persona"
+                      )
+                    )}
+                    {favoritePersonas.map(({ backendName, persona }) =>
+                      renderPersonaOption(persona, backendName, "favorite-persona")
+                    )}
                   </section>
                 )}
                 {filteredGroups.map((group) => (
                   <section key={group.backend.id} className="model-group">
                     <p>{group.backend.name}</p>
-                    {group.privatePersonas.map((persona) => {
-                      const optionValue = privatePersonaModelValue(persona.current_version.id);
-                      const baseModel = modelInfoForBase(
-                        groups,
-                        persona.current_version.base_backend_id,
-                        persona.current_version.base_model_name
-                      );
-                      return (
-                        <button
-                          type="button"
-                          key={optionValue}
-                          className={
-                            optionValue === value
-                              ? "model-option model-option-active"
-                              : "model-option"
-                          }
-                          onClick={() => {
-                            onChange(optionValue);
-                            setIsOpen(false);
-                          }}
-                        >
-                          <ModelAvatar
-                            displayName={persona.current_version.display_name}
-                            privateAssetId={persona.current_version.avatar_asset_id}
-                            cropX={persona.current_version.avatar_crop_x}
-                            cropY={persona.current_version.avatar_crop_y}
-                            cropSize={persona.current_version.avatar_crop_size}
-                            className="model-avatar-picker-option"
-                          />
-                          <span className="model-option-content">
-                            <span className="model-name">
-                              {persona.current_version.display_name}
-                            </span>
-                            <span className="model-subtitle">
-                              Device · {compactModelName(persona.current_version.base_model_name)}
-                            </span>
-                            <span className="model-capabilities">
-                              <span className="model-capability" title="custom persona">
-                                <Brain />
-                                <span className="model-capability-label">custom</span>
-                              </span>
-                              <span
-                                className="model-capability model-capability-warning"
-                                title="device only"
-                              >
-                                <Lock />
-                                <span className="model-capability-label">device</span>
-                              </span>
-                            </span>
-                            {baseModel && <ModelCapabilityBadges model={baseModel} />}
-                          </span>
-                        </button>
-                      );
-                    })}
-                    {group.personas.map((persona) => {
-                      const optionValue = personaModelValue(persona.current_version.id);
-                      const baseModel = modelInfoForBase(
-                        groups,
-                        persona.current_version.base_backend_id,
-                        persona.current_version.base_model_name
-                      );
-                      return (
-                        <button
-                          type="button"
-                          key={optionValue}
-                          className={
-                            optionValue === value
-                              ? "model-option model-option-active"
-                              : "model-option"
-                          }
-                          onClick={() => {
-                            onChange(optionValue);
-                            setIsOpen(false);
-                          }}
-                        >
-                          <ModelAvatar
-                            displayName={persona.current_version.display_name}
-                            assetId={persona.current_version.avatar_asset_id}
-                            cropX={persona.current_version.avatar_crop_x}
-                            cropY={persona.current_version.avatar_crop_y}
-                            cropSize={persona.current_version.avatar_crop_size}
-                            className="model-avatar-picker-option"
-                          />
-                          <span className="model-option-content">
-                            <span className="model-name">
-                              {persona.current_version.display_name}
-                            </span>
-                            <span className="model-subtitle">
-                              Custom · {compactModelName(persona.current_version.base_model_name)}
-                              {persona.owner_username ? ` · by ${persona.owner_username}` : ""}
-                            </span>
-                            <span className="model-capabilities">
-                              <span className="model-capability" title="custom persona">
-                                <Brain />
-                                <span className="model-capability-label">custom</span>
-                              </span>
-                              <span
-                                className={
-                                  persona.visibility === "public"
-                                    ? "model-capability"
-                                    : "model-capability model-capability-warning"
-                                }
-                                title={persona.visibility}
-                              >
-                                {persona.visibility === "public" ? <Users /> : <Lock />}
-                                <span className="model-capability-label">
-                                  {persona.visibility}
-                                </span>
-                              </span>
-                            </span>
-                            {baseModel && <ModelCapabilityBadges model={baseModel} />}
-                          </span>
-                        </button>
-                      );
-                    })}
+                    {group.privatePersonas.map((persona) =>
+                      renderPrivatePersonaOption(persona, group.backend.name)
+                    )}
+                    {group.personas.map((persona) =>
+                      renderPersonaOption(persona, group.backend.name)
+                    )}
                     {group.models.map((model) =>
                       renderModelOption(group.backend.id, group.backend.name, model)
                     )}
