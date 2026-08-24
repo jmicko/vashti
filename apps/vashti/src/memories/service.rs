@@ -537,10 +537,10 @@ pub async fn get_memory_settings(
     .await?;
     let Some(row) = row else {
         return Ok(MemorySettingsResponse {
-            allow_model_read: false,
-            allow_model_create: false,
-            allow_model_edit: false,
-            allow_model_forget: false,
+            allow_model_read: true,
+            allow_model_create: true,
+            allow_model_edit: true,
+            allow_model_forget: true,
         });
     };
     Ok(MemorySettingsResponse {
@@ -1084,9 +1084,9 @@ async fn ensure_model_mutation_allowed(
     let row = sqlx::query(
         r#"
         SELECT m.all_models, m.deleted_at,
-               COALESCE(settings.allow_model_read, 0) AS allow_model_read,
-               COALESCE(settings.allow_model_edit, 0) AS allow_model_edit,
-               COALESCE(settings.allow_model_forget, 0) AS allow_model_forget,
+               COALESCE(settings.allow_model_read, 1) AS allow_model_read,
+               COALESCE(settings.allow_model_edit, 1) AS allow_model_edit,
+               COALESCE(settings.allow_model_forget, 1) AS allow_model_forget,
                EXISTS (
                    SELECT 1 FROM memory_model_scopes scopes
                    WHERE scopes.memory_id = m.id AND scopes.model_key = ?
@@ -1186,34 +1186,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn model_access_defaults_off_and_created_memory_is_model_scoped() {
+    async fn model_access_defaults_on_and_created_memory_is_model_scoped() {
         let pool = test_pool().await;
         let user_id = user(&pool).await;
         let actor = model_actor(&user_id, "base:test:model");
-        let denied = create_memory(
-            &pool,
-            &user_id,
-            CreateMemoryRequest {
-                content: "Likes concise answers".to_string(),
-                model_scope: None,
-            },
-            &actor,
-        )
-        .await;
-        assert_eq!(denied.unwrap_err().code(), "memory_model_create_forbidden");
+        let settings = get_memory_settings(&pool, &user_id)
+            .await
+            .expect("load default memory settings");
+        assert!(settings.allow_model_read);
+        assert!(settings.allow_model_create);
+        assert!(settings.allow_model_edit);
+        assert!(settings.allow_model_forget);
 
-        update_memory_settings(
-            &pool,
-            &user_id,
-            UpdateMemorySettingsRequest {
-                allow_model_read: true,
-                allow_model_create: true,
-                allow_model_edit: true,
-                allow_model_forget: false,
-            },
-        )
-        .await
-        .expect("enable memory tools");
         let created = create_memory(
             &pool,
             &user_id,

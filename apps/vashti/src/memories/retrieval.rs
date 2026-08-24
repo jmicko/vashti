@@ -384,10 +384,10 @@ impl MemoryRetrieval {
             r#"
             SELECT m.id
             FROM memories m
-            JOIN user_memory_settings settings ON settings.user_id = m.user_id
+            LEFT JOIN user_memory_settings settings ON settings.user_id = m.user_id
             WHERE m.user_id = ?
               AND m.deleted_at IS NULL
-              AND settings.allow_model_read = 1
+              AND COALESCE(settings.allow_model_read, 1) = 1
               AND (
                   m.all_models = 1
                   OR EXISTS (
