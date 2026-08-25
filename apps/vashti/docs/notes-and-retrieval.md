@@ -6,9 +6,8 @@ Vashti provides a personal Markdown notes workspace and an optional Notes tool
 for models. Notes remain useful when tools or semantic search are unavailable.
 Model access is explicit, inspectable, scoped, versioned, and reversible.
 
-The notes workspace is not a memory system. Future memories may reuse the
-retrieval infrastructure, but memories and notes have separate ownership,
-retention, permission, and presentation rules.
+Notes, Memories, and past-chat search reuse retrieval infrastructure while
+keeping separate ownership, retention, permission, and presentation rules.
 
 ## 2. Product Rules
 
@@ -195,16 +194,47 @@ Notes become keyword-searchable immediately. Embeddings are generated in the
 background. Startup and periodic repair jobs enqueue missing or stale chunks.
 Changing the configured embedding model or chunker version schedules a rebuild.
 
-The initial semantic index stores vectors in SQLite and computes exact cosine
-similarity in Rust, with a bounded per-user memory cache. The index is derived
-and rebuildable. A future approximate index such as embedded LanceDB may replace
-the exact implementation behind a retrieval interface if corpus size requires
-it.
+The semantic indexes store vectors in SQLite and compute exact cosine similarity
+in Rust, with bounded per-user memory caches. Every index is derived and
+rebuildable. A future approximate index may replace the exact implementation
+behind the retrieval interfaces if corpus size requires it.
 
 The admin selects an enabled Ollama backend and embedding model. Semantic
 search is optional and must fail back to FTS5 without making notes unavailable.
 
-## 8. Device Tool Bridge
+## 8. Past-Chat Retrieval
+
+Completed user and assistant messages in standard server chats are indexed in
+the background. Private-local chats never enter the server index. The index
+contains only each message's current revision, but includes messages from every
+branch so selecting a different branch does not make the other history
+undiscoverable. Thinking text, system prompts, streaming output, errors, deleted
+messages, and superseded edits are excluded.
+
+Past-chat model access is off until the owner enables it in **Settings →
+Memories**. Administrator tags and the per-chat **Past chats** toggle add the
+same outer policy layers used by other tools. Search and read operations repeat
+the owner check at execution time.
+
+The model receives two read-only functions:
+
+* `search_chat_history(query, limit)` returns bounded excerpts plus exact chat
+  and message IDs
+* `read_chat_history(chat_id, message_id, limit)` returns a bounded ancestor
+  path ending at that message, preserving the branch that produced the match
+
+Historical user and assistant text is untrusted quoted data. Tool schemas,
+system guidance, and tool results explicitly mark it as untrusted and tell the
+model not to treat it as system instructions or authorization to call another
+tool.
+
+SQLite FTS5 supplies immediate keyword results. When meaning-based search is
+enabled, the same configured Ollama embedding backend also indexes bounded
+message text, and reciprocal-rank fusion combines both rankings. Source-table
+triggers update the derived documents immediately; startup and periodic repair
+remove stale rows and enqueue missing embeddings.
+
+## 9. Device Tool Bridge
 
 The server cannot directly access encrypted IndexedDB. Private generation uses
 a generic client-tool protocol for operations that must execute on the active
@@ -235,7 +265,7 @@ through Vashti and the selected Ollama backend while that generation is active.
 This is the same disclosure boundary as explicitly attaching a device note to
 a private prompt; it is not device-local inference.
 
-## 9. Server Data Model
+## 10. Server Data Model
 
 Recommended server tables:
 
@@ -249,11 +279,15 @@ Recommended server tables:
 * `note_search_chunks`: current-version chunks and embedding metadata/vectors
 * an external-content FTS5 table kept consistent transactionally with current
   note content
+* `conversation_search_documents` plus external-content FTS5 rows for current,
+  complete standard-chat messages
+* `conversation_embeddings`, a retryable embedding queue, and per-user cache
+  revision counters
 
 All IDs use UUID text values. Ownership checks occur in every query; accepting
 a note ID from a tool call never substitutes for an ownership check.
 
-## 10. Delivery Slices
+## 11. Delivery Slices
 
 1. Server schema, CRUD, version history, trash, concurrency, and keyword search.
 2. Responsive Markdown notes workspace and compact navigation.
@@ -262,6 +296,8 @@ a note ID from a tool call never substitutes for an ownership check.
 5. Optional Ollama embeddings and hybrid retrieval.
 6. Encrypted device-note workspace and explicit private-message attachment.
 7. Generic authenticated client-tool bridge and autonomous device-note tools.
+8. Owner-scoped standard-chat indexing with bounded search and branch-reading
+   tools.
 
 Each slice must include ownership and permission tests, migration tests, Rust
 tests, TypeScript checks, and production web builds before it is committed.

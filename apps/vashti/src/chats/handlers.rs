@@ -236,6 +236,7 @@ struct GenerationStreamTask {
     client: reqwest::Client,
     note_retrieval: Arc<crate::notes::retrieval::NoteRetrieval>,
     memory_retrieval: Arc<crate::memories::retrieval::MemoryRetrieval>,
+    conversation_retrieval: Arc<crate::chats::retrieval::ConversationRetrieval>,
     progress: GenerationProgressMap,
     user_id: String,
     chat_id: String,
@@ -339,6 +340,7 @@ pub async fn update_chat(
     let user =
         auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
     let chat = service::update_chat(&state.db, &user.id, &chat_id, payload).await?;
+    state.conversation_retrieval.wake();
 
     Ok(Json(ChatResponse { chat }))
 }
@@ -351,6 +353,7 @@ pub async fn delete_chat(
     let user =
         auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
     service::delete_chat(&state.db, &user.id, &chat_id).await?;
+    state.conversation_retrieval.wake();
 
     Ok(Json(DeleteChatResponse { ok: true }))
 }
@@ -382,6 +385,7 @@ pub async fn create_message(
     let user =
         auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
     let message = service::create_user_message(&state.db, &user.id, &chat_id, payload).await?;
+    state.conversation_retrieval.wake();
 
     Ok(Json(MessageResponse { message }))
 }
@@ -403,6 +407,7 @@ pub async fn edit_message(
         payload,
     )
     .await?;
+    state.conversation_retrieval.wake();
 
     Ok(Json(MessageResponse { message }))
 }
@@ -415,6 +420,7 @@ pub async fn delete_message(
     let user =
         auth::service::require_user(&state.db, &jar, &state.config.session_cookie_name).await?;
     let message = service::delete_message(&state.db, &user.id, &chat_id, &message_id).await?;
+    state.conversation_retrieval.wake();
 
     Ok(Json(MessageResponse { message }))
 }
@@ -444,6 +450,7 @@ pub async fn set_active_revision(
     let message =
         service::select_active_revision(&state.db, &user.id, &chat_id, &message_id, payload)
             .await?;
+    state.conversation_retrieval.wake();
 
     Ok(Json(MessageResponse { message }))
 }
@@ -594,6 +601,7 @@ async fn stream_generation(task: GenerationStreamTask) {
         client,
         note_retrieval,
         memory_retrieval,
+        conversation_retrieval,
         progress,
         user_id,
         chat_id,
@@ -639,6 +647,7 @@ async fn stream_generation(task: GenerationStreamTask) {
         &thinking_text,
     )
     .await;
+    conversation_retrieval.wake();
 
     if !send_event(
         &tx,
@@ -941,6 +950,7 @@ async fn stream_generation(task: GenerationStreamTask) {
                     db: &db,
                     note_retrieval: &note_retrieval,
                     memory_retrieval: &memory_retrieval,
+                    conversation_retrieval: &conversation_retrieval,
                     user_id: &user_id,
                     model_key: &assistant_model_key,
                     model_name: &assistant_model_name,
@@ -1008,6 +1018,7 @@ async fn stream_generation(task: GenerationStreamTask) {
         usage_stats.as_ref(),
     )
     .await;
+    conversation_retrieval.wake();
     let _ = send_event(
         &tx,
         &GenerateEvent::MessageDone {
@@ -1031,6 +1042,7 @@ async fn stream_generation(task: GenerationStreamTask) {
     })
     .await
     {
+        conversation_retrieval.wake();
         let _ = send_event(&tx, &GenerateEvent::ChatTitle { chat_id, title }).await;
     }
 }
@@ -1129,6 +1141,7 @@ async fn start_generation_stream(
     let client = state.http_client.clone();
     let note_retrieval = state.note_retrieval.clone();
     let memory_retrieval = state.memory_retrieval.clone();
+    let conversation_retrieval = state.conversation_retrieval.clone();
     let cancellations = state.generation_cancellations.clone();
     let progress = state.generation_progress.clone();
 
@@ -1139,6 +1152,7 @@ async fn start_generation_stream(
             client,
             note_retrieval,
             memory_retrieval,
+            conversation_retrieval,
             progress,
             user_id,
             chat_id,

@@ -107,6 +107,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     spawn_model_cache_refresh(state.clone());
     spawn_note_indexing(state.clone());
     spawn_memory_indexing(state.clone());
+    spawn_conversation_indexing(state.clone());
     spawn_update_checks(state.clone());
     let app = router(state);
 
@@ -547,6 +548,15 @@ fn spawn_memory_indexing(state: AppState) {
     tokio::spawn(
         state
             .memory_retrieval
+            .clone()
+            .run(state.http_client.clone()),
+    );
+}
+
+fn spawn_conversation_indexing(state: AppState) {
+    tokio::spawn(
+        state
+            .conversation_retrieval
             .clone()
             .run(state.http_client.clone()),
     );

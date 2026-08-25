@@ -558,6 +558,28 @@ export function MemoriesSettingsPanel({
               )}
             </section>
 
+            <section className="settings-subsection">
+              <div className="tool-setting-heading">
+                <Search aria-hidden="true" />
+                <div>
+                  <strong>Past chats</strong>
+                  <p>Let models search completed messages from your server chat history.</p>
+                </div>
+              </div>
+              <ToggleSwitch
+                label={
+                  settingsDraft.allow_model_chat_history
+                    ? "Past-chat access is on"
+                    : "Past-chat access is off"
+                }
+                description="Private chats stay on this device and are never included. Historical text is provided as quoted data, not instructions."
+                checked={settingsDraft.allow_model_chat_history}
+                onChange={(allow_model_chat_history) =>
+                  updateSettings((current) => ({ ...current, allow_model_chat_history }))
+                }
+              />
+            </section>
+
             <section className="memories-library" aria-label="Memory library">
               <div className="memories-library-toolbar">
                 <div className="segmented-control memories-status-control" role="group" aria-label="Memory status">

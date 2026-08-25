@@ -174,9 +174,11 @@ pub async fn update_tool_settings(
     if previous_semantic != current_semantic {
         state.note_retrieval.rebuild_all().await?;
         state.memory_retrieval.rebuild_all().await?;
+        state.conversation_retrieval.rebuild_all().await?;
     } else {
         state.note_retrieval.wake();
         state.memory_retrieval.wake();
+        state.conversation_retrieval.wake();
     }
 
     Ok(Json(service::get_tool_settings(&state.db).await?))

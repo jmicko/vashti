@@ -637,6 +637,9 @@ export type ToolSettings = {
   memories_indexed_count: number;
   memories_pending_index_count: number;
   memories_embedding_last_error: string | null;
+  conversations_indexed_count: number;
+  conversations_pending_index_count: number;
+  conversations_embedding_last_error: string | null;
   tool_system_prompt: string;
   default_tool_system_prompt: string;
   web_search_tool_prompt: string;

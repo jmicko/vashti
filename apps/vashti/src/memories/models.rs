@@ -78,6 +78,8 @@ pub struct UpdateMemorySettingsRequest {
     pub allow_model_create: bool,
     pub allow_model_edit: bool,
     pub allow_model_forget: bool,
+    #[serde(default)]
+    pub allow_model_chat_history: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -86,4 +88,5 @@ pub struct MemorySettingsResponse {
     pub allow_model_create: bool,
     pub allow_model_edit: bool,
     pub allow_model_forget: bool,
+    pub allow_model_chat_history: bool,
 }

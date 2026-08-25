@@ -5,9 +5,9 @@ use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    client_tools::ClientToolBroker, config::Config, memories::retrieval::MemoryRetrieval,
-    model_cache::ModelCache, model_pulls::ModelPullManager, notes::retrieval::NoteRetrieval,
-    rate_limit::RateLimiter, updates::UpdateManager,
+    chats::retrieval::ConversationRetrieval, client_tools::ClientToolBroker, config::Config,
+    memories::retrieval::MemoryRetrieval, model_cache::ModelCache, model_pulls::ModelPullManager,
+    notes::retrieval::NoteRetrieval, rate_limit::RateLimiter, updates::UpdateManager,
 };
 
 #[derive(Clone, Debug)]
@@ -29,6 +29,7 @@ pub struct AppState {
     pub model_pulls: Arc<ModelPullManager>,
     pub note_retrieval: Arc<NoteRetrieval>,
     pub memory_retrieval: Arc<MemoryRetrieval>,
+    pub conversation_retrieval: Arc<ConversationRetrieval>,
     pub updates: Arc<UpdateManager>,
     pub client_tools: ClientToolBroker,
     pub generation_cancellations: Arc<Mutex<HashMap<String, CancellationToken>>>,
@@ -46,6 +47,7 @@ impl AppState {
             config: Arc::new(config),
             note_retrieval: Arc::new(NoteRetrieval::new(db.clone())),
             memory_retrieval: Arc::new(MemoryRetrieval::new(db.clone())),
+            conversation_retrieval: Arc::new(ConversationRetrieval::new(db.clone())),
             db,
             http_client,
             server_instance_id: server_instance_id.into(),

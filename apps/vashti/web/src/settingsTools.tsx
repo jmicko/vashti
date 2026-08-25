@@ -4,7 +4,15 @@ import {
   useEffect,
   useState
 } from "react";
-import { BrainCircuit, FileText, NotebookPen, Save, Search, Wrench } from "lucide-react";
+import {
+  BrainCircuit,
+  FileText,
+  MessageSquareText,
+  NotebookPen,
+  Save,
+  Search,
+  Wrench
+} from "lucide-react";
 import { requestJson } from "./api";
 import { ConfirmDialog } from "./common";
 import { PermissionTagEditor } from "./permissionTags";
@@ -352,6 +360,35 @@ export function ToolsSettingsPanel({ onToolsChanged }: { onToolsChanged: () => P
           <section className="settings-subsection">
             <div>
               <p className="eyebrow">Vashti</p>
+              <h2>Past Chats</h2>
+              <p className="status-message">
+                Controls who may let models search their completed server chat history. Each person
+                opts in from Personal → Memories.
+              </p>
+            </div>
+            <div className="tool-setting-heading">
+              <MessageSquareText aria-hidden="true" />
+              <div>
+                <strong>Past-chat tools</strong>
+                <p>Search historical messages and read the matching branch context.</p>
+              </div>
+            </div>
+            <PermissionTagEditor
+              label="Tags"
+              tags={toolPermissionTags.chat_history ?? []}
+              availableTags={availableTags}
+              onChange={(tags) =>
+                setToolPermissionTags((current) => ({
+                  ...current,
+                  chat_history: tags
+                }))
+              }
+            />
+          </section>
+
+          <section className="settings-subsection">
+            <div>
+              <p className="eyebrow">Vashti</p>
               <h2>Memories</h2>
               <p className="status-message">
                 Controls who may use Memories on this server. People choose the allowed memory
@@ -383,8 +420,8 @@ export function ToolsSettingsPanel({ onToolsChanged }: { onToolsChanged: () => P
               <p className="eyebrow">Knowledge</p>
               <h2>Meaning-Based Search</h2>
               <p className="status-message">
-                One local Ollama embedding model indexes both Notes and Memories. A dedicated
-                backend can keep this work away from chat inference.
+                One local Ollama embedding model indexes Notes, Memories, and completed server
+                chats. A dedicated backend can keep this work away from chat inference.
               </p>
             </div>
             <details className="tool-details">
@@ -392,7 +429,7 @@ export function ToolsSettingsPanel({ onToolsChanged }: { onToolsChanged: () => P
               <ToggleSwitch
                 icon={<Search />}
                 label="Meaning-based knowledge search"
-                description="Find notes and memories that use different words but have a similar meaning. Keyword search remains available alongside it."
+                description="Find notes, memories, and past chats that use different words but have a similar meaning. Keyword search remains available alongside it."
                 checked={notesSemanticSearchEnabled}
                 isChanged={notesSemanticChanged}
                 onChange={setNotesSemanticSearchEnabled}
@@ -447,6 +484,11 @@ export function ToolsSettingsPanel({ onToolsChanged }: { onToolsChanged: () => P
                 {settings.memories_pending_index_count > 0
                   ? ` · ${settings.memories_pending_index_count} waiting`
                   : " · current"}
+                <br />
+                Past chats: {settings.conversations_indexed_count} indexed
+                {settings.conversations_pending_index_count > 0
+                  ? ` · ${settings.conversations_pending_index_count} waiting`
+                  : " · current"}
               </p>
               {settings.notes_embedding_last_error && (
                 <p className="error">Last Notes indexing error: {settings.notes_embedding_last_error}</p>
@@ -454,6 +496,11 @@ export function ToolsSettingsPanel({ onToolsChanged }: { onToolsChanged: () => P
               {settings.memories_embedding_last_error && (
                 <p className="error">
                   Last Memories indexing error: {settings.memories_embedding_last_error}
+                </p>
+              )}
+              {settings.conversations_embedding_last_error && (
+                <p className="error">
+                  Last past-chat indexing error: {settings.conversations_embedding_last_error}
                 </p>
               )}
             </details>

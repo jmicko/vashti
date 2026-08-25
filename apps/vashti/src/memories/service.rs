@@ -528,7 +528,8 @@ pub async fn get_memory_settings(
 ) -> Result<MemorySettingsResponse, ApiError> {
     let row = sqlx::query(
         r#"
-        SELECT allow_model_read, allow_model_create, allow_model_edit, allow_model_forget
+        SELECT allow_model_read, allow_model_create, allow_model_edit, allow_model_forget,
+               allow_model_chat_history
         FROM user_memory_settings WHERE user_id = ?
         "#,
     )
@@ -541,6 +542,7 @@ pub async fn get_memory_settings(
             allow_model_create: true,
             allow_model_edit: true,
             allow_model_forget: true,
+            allow_model_chat_history: false,
         });
     };
     Ok(MemorySettingsResponse {
@@ -548,6 +550,7 @@ pub async fn get_memory_settings(
         allow_model_create: row.try_get("allow_model_create")?,
         allow_model_edit: row.try_get("allow_model_edit")?,
         allow_model_forget: row.try_get("allow_model_forget")?,
+        allow_model_chat_history: row.try_get("allow_model_chat_history")?,
     })
 }
 
@@ -557,17 +560,23 @@ pub async fn update_memory_settings(
     payload: UpdateMemorySettingsRequest,
 ) -> Result<MemorySettingsResponse, ApiError> {
     let now = unix_timestamp();
+    let allow_model_chat_history = payload.allow_model_chat_history.unwrap_or(
+        get_memory_settings(pool, user_id)
+            .await?
+            .allow_model_chat_history,
+    );
     sqlx::query(
         r#"
         INSERT INTO user_memory_settings (
             user_id, allow_model_read, allow_model_create, allow_model_edit,
-            allow_model_forget, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?)
+            allow_model_forget, allow_model_chat_history, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(user_id) DO UPDATE SET
             allow_model_read = excluded.allow_model_read,
             allow_model_create = excluded.allow_model_create,
             allow_model_edit = excluded.allow_model_edit,
             allow_model_forget = excluded.allow_model_forget,
+            allow_model_chat_history = excluded.allow_model_chat_history,
             updated_at = excluded.updated_at
         "#,
     )
@@ -576,6 +585,7 @@ pub async fn update_memory_settings(
     .bind(payload.allow_model_create)
     .bind(payload.allow_model_edit)
     .bind(payload.allow_model_forget)
+    .bind(allow_model_chat_history)
     .bind(now)
     .execute(pool)
     .await?;

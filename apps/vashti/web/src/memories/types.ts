@@ -43,4 +43,5 @@ export type MemorySettings = {
   allow_model_create: boolean;
   allow_model_edit: boolean;
   allow_model_forget: boolean;
+  allow_model_chat_history: boolean;
 };

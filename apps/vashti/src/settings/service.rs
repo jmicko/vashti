@@ -64,6 +64,9 @@ pub struct ToolSettingsResponse {
     pub memories_indexed_count: i64,
     pub memories_pending_index_count: i64,
     pub memories_embedding_last_error: Option<String>,
+    pub conversations_indexed_count: i64,
+    pub conversations_pending_index_count: i64,
+    pub conversations_embedding_last_error: Option<String>,
     pub tool_system_prompt: String,
     pub default_tool_system_prompt: &'static str,
     pub web_search_tool_prompt: String,
@@ -170,6 +173,27 @@ pub async fn get_available_tools(
         label: "Memories",
         description: "Let this model recall and maintain durable facts and preferences.",
         warning: memories_warning,
+    });
+
+    let chat_history_allowed = tool_allowed(
+        crate::tools::service::TOOL_CHAT_HISTORY,
+        &user_tags,
+        &tool_tags,
+    );
+    let chat_history_warning = if !settings.tools_enabled {
+        Some("Past-chat tools are unavailable on this server. Ask an administrator.".to_string())
+    } else if !chat_history_allowed {
+        Some("Past-chat tools are unavailable for your account. Ask an administrator.".to_string())
+    } else {
+        (!memory_settings.allow_model_chat_history).then(|| {
+            "Past chats is on, but model access is disabled. Open Settings → Memories.".to_string()
+        })
+    };
+    tools.push(AvailableToolResponse {
+        id: crate::tools::service::TOOL_CHAT_HISTORY,
+        label: "Past chats",
+        description: "Let this model search completed messages from your server chat history.",
+        warning: chat_history_warning,
     });
 
     if settings.tools_enabled {
@@ -806,6 +830,11 @@ impl ToolSettingsPrivate {
             crate::notes::retrieval::index_status(pool).await?;
         let (memories_indexed_count, memories_pending_index_count, memories_embedding_last_error) =
             crate::memories::retrieval::index_status(pool).await?;
+        let (
+            conversations_indexed_count,
+            conversations_pending_index_count,
+            conversations_embedding_last_error,
+        ) = crate::chats::retrieval::index_status(pool).await?;
 
         Ok(ToolSettingsResponse {
             tools_enabled: self.tools_enabled,
@@ -824,6 +853,9 @@ impl ToolSettingsPrivate {
             memories_indexed_count,
             memories_pending_index_count,
             memories_embedding_last_error,
+            conversations_indexed_count,
+            conversations_pending_index_count,
+            conversations_embedding_last_error,
             tool_system_prompt: self.tool_system_prompt.clone(),
             default_tool_system_prompt: DEFAULT_TOOL_SYSTEM_PROMPT,
             web_search_tool_prompt: self.web_search_tool_prompt.clone(),
