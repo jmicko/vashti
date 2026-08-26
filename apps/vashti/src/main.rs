@@ -25,6 +25,7 @@ mod startup;
 mod tools;
 mod updates;
 mod uploads;
+mod user_setup;
 mod vector_index;
 mod version;
 
@@ -141,6 +142,11 @@ fn router(state: AppState) -> Router {
         .route("/auth/login", post(auth::handlers::login))
         .route("/auth/profile", patch(auth::handlers::update_profile))
         .route("/auth/logout", post(auth::handlers::logout))
+        .route(
+            "/user-setup",
+            get(user_setup::handlers::get_setup_status)
+                .patch(user_setup::handlers::update_setup_choices),
+        )
         .route(
             "/settings",
             get(settings::handlers::get_app_settings)

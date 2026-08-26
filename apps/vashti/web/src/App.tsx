@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { requestJson } from "./api";
 import { AppShell } from "./AppShell";
 import { AuthScreen } from "./auth";
@@ -9,6 +9,10 @@ import { clearDecodedModelMediaCache } from "./modelMediaCache";
 import { useNativeConnections } from "./nativeConnections";
 import { setAssetViewer } from "./runtime";
 import type { LoadState, SessionResponse, User } from "./types";
+
+const UserSetupScreen = lazy(() =>
+  import("./UserSetupScreen").then((module) => ({ default: module.UserSetupScreen }))
+);
 
 export default function App() {
   const { activeConnection, syncActiveIdentity } = useNativeConnections();
@@ -81,6 +85,13 @@ export default function App() {
     );
   }
 
+  async function signOutFromSetup() {
+    await requestJson("/api/auth/logout", { method: "POST" });
+    setAssetViewer(null);
+    resetPrivateStorageUser();
+    await loadSession();
+  }
+
   if (state.status === "loading") {
     return (
       <main className="auth-page">
@@ -113,6 +124,26 @@ export default function App() {
         canCreateAccount={state.session.can_create_account}
         onSessionChanged={loadSession}
       />
+    );
+  }
+  if (state.session.setup_pending) {
+    return (
+      <Suspense
+        fallback={
+          <main className="auth-page">
+            <section className="auth-panel">
+              <BrandMark />
+              <h1>Loading Settings</h1>
+            </section>
+          </main>
+        }
+      >
+        <UserSetupScreen
+          user={state.session.user}
+          onComplete={loadSession}
+          onSignOut={signOutFromSetup}
+        />
+      </Suspense>
     );
   }
 

@@ -11,6 +11,7 @@ use crate::{
         NoteSettingsResponse, NoteSummaryResponse, NoteVersionResponse, UpdateNoteRequest,
         UpdateNoteSettingsRequest,
     },
+    user_setup,
 };
 
 pub const MAX_NOTE_TITLE_CHARS: usize = 200;
@@ -1218,6 +1219,31 @@ pub async fn update_note_settings(
             .await?;
         }
     }
+    user_setup::service::record_boolean_decisions(
+        &mut tx,
+        user_id,
+        user_setup::service::SOURCE_SETTINGS,
+        &[
+            (
+                user_setup::service::NOTES_ALLOW_MODEL_READ,
+                payload.allow_model_read,
+            ),
+            (
+                user_setup::service::NOTES_ALLOW_MODEL_CREATE,
+                payload.allow_model_create,
+            ),
+            (
+                user_setup::service::NOTES_ALLOW_MODEL_EDIT,
+                payload.allow_model_edit,
+            ),
+            (
+                user_setup::service::NOTES_ALLOW_MODEL_TRASH,
+                payload.allow_model_trash,
+            ),
+        ],
+        now,
+    )
+    .await?;
     tx.commit().await?;
     get_note_settings(pool, user_id).await
 }

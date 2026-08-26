@@ -13,7 +13,7 @@ use crate::{
     app_state::AppState,
     auth::service::{self, UserPublic},
     error::ApiError,
-    private, rate_limit, settings,
+    private, rate_limit, settings, user_setup,
 };
 
 #[derive(Debug, Deserialize)]
@@ -46,6 +46,7 @@ pub struct SessionResponse {
     pub user: Option<UserPublic>,
     pub can_create_account: bool,
     pub private_vault_key: Option<private::handlers::PrivateVaultKeyResponse>,
+    pub setup_pending: bool,
     pub instance_id: String,
     pub api_version: u32,
 }
@@ -68,7 +69,7 @@ pub async fn session(
     let user =
         service::current_user_from_cookie(&state.db, &jar, &state.config.session_cookie_name)
             .await?;
-    let (can_create_account, private_vault_key) = tokio::try_join!(
+    let (can_create_account, private_vault_key, setup_pending) = tokio::try_join!(
         async { Ok::<_, ApiError>(service::can_create_account(&state.db).await?) },
         async {
             let Some(user) = user.as_ref() else {
@@ -80,7 +81,13 @@ pub async fn session(
                 user_id: user.id.clone(),
                 key_material: key.key_material,
             }))
-        }
+        },
+        async {
+            let Some(user) = user.as_ref() else {
+                return Ok::<_, ApiError>(false);
+            };
+            Ok(user_setup::service::has_pending_choices(&state.db, &user.id).await?)
+        },
     )?;
 
     Ok(Json(SessionResponse {
@@ -88,6 +95,7 @@ pub async fn session(
         user,
         can_create_account,
         private_vault_key,
+        setup_pending,
         instance_id: state.server_instance_id.to_string(),
         api_version: crate::version::API_VERSION,
     }))

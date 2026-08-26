@@ -11,6 +11,7 @@ use crate::{
         MemorySummaryResponse, MemoryVersionResponse, UpdateMemoryRequest,
         UpdateMemorySettingsRequest,
     },
+    user_setup,
 };
 
 pub const MAX_MEMORY_CONTENT_BYTES: usize = 32 * 1024;
@@ -560,11 +561,13 @@ pub async fn update_memory_settings(
     payload: UpdateMemorySettingsRequest,
 ) -> Result<MemorySettingsResponse, ApiError> {
     let now = unix_timestamp();
+    let chat_history_was_provided = payload.allow_model_chat_history.is_some();
     let allow_model_chat_history = payload.allow_model_chat_history.unwrap_or(
         get_memory_settings(pool, user_id)
             .await?
             .allow_model_chat_history,
     );
+    let mut tx = pool.begin().await?;
     sqlx::query(
         r#"
         INSERT INTO user_memory_settings (
@@ -587,8 +590,41 @@ pub async fn update_memory_settings(
     .bind(payload.allow_model_forget)
     .bind(allow_model_chat_history)
     .bind(now)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    let mut decisions = vec![
+        (
+            user_setup::service::MEMORIES_ALLOW_MODEL_READ,
+            payload.allow_model_read,
+        ),
+        (
+            user_setup::service::MEMORIES_ALLOW_MODEL_CREATE,
+            payload.allow_model_create,
+        ),
+        (
+            user_setup::service::MEMORIES_ALLOW_MODEL_EDIT,
+            payload.allow_model_edit,
+        ),
+        (
+            user_setup::service::MEMORIES_ALLOW_MODEL_FORGET,
+            payload.allow_model_forget,
+        ),
+    ];
+    if chat_history_was_provided {
+        decisions.push((
+            user_setup::service::CHAT_HISTORY_ALLOW_MODEL_SEARCH,
+            allow_model_chat_history,
+        ));
+    }
+    user_setup::service::record_boolean_decisions(
+        &mut tx,
+        user_id,
+        user_setup::service::SOURCE_SETTINGS,
+        &decisions,
+        now,
+    )
+    .await?;
+    tx.commit().await?;
     get_memory_settings(pool, user_id).await
 }
 

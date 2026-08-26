@@ -30,10 +30,31 @@ export type SessionResponse = {
   can_create_account: boolean;
   instance_id: string;
   api_version: number;
+  setup_pending: boolean;
   private_vault_key: {
     user_id: string;
     key_material: string;
   } | null;
+};
+
+export type SetupChoice = {
+  key: string;
+  kind: "toggle";
+  title: string;
+  description: string;
+  recommended_value: boolean;
+};
+
+export type SetupChoiceGroup = {
+  id: string;
+  title: string;
+  description: string;
+  choices: SetupChoice[];
+};
+
+export type SetupStatusResponse = {
+  pending_count: number;
+  groups: SetupChoiceGroup[];
 };
 
 export type RegisterResponse = {
