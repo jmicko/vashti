@@ -185,6 +185,7 @@ impl ConversationRetrieval {
             r#"
             INSERT INTO conversation_embedding_revisions (user_id, revision)
             SELECT DISTINCT user_id, 1 FROM conversation_search_documents
+            WHERE 1 = 1
             ON CONFLICT(user_id) DO UPDATE SET revision = revision + 1
             "#,
         )
@@ -1153,6 +1154,19 @@ mod tests {
         let input = embedding_input("A chat", "assistant", &"x".repeat(20_000));
         assert!(input.chars().count() <= MAX_EMBEDDING_CHARS + 3);
         assert!(input.starts_with("Chat: A chat\nassistant: "));
+    }
+
+    #[tokio::test]
+    async fn knowledge_rebuilds_use_valid_sqlite_upserts() {
+        let pool = test_pool().await;
+        ConversationRetrieval::new(pool.clone())
+            .rebuild_all()
+            .await
+            .expect("rebuild conversation embeddings");
+        crate::memories::retrieval::MemoryRetrieval::new(pool)
+            .rebuild_all()
+            .await
+            .expect("rebuild memory embeddings");
     }
 
     #[tokio::test]

@@ -152,6 +152,7 @@ impl MemoryRetrieval {
             r#"
             INSERT INTO memory_embedding_revisions (user_id, revision)
             SELECT DISTINCT user_id, 1 FROM memories
+            WHERE 1 = 1
             ON CONFLICT(user_id) DO UPDATE SET revision = revision + 1
             "#,
         )
