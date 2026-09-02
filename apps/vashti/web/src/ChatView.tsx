@@ -70,7 +70,8 @@ import type {
   Persona,
   PersonaVersion,
   PersonaVersionsResponse,
-  ThinkingMode
+  ThinkingMode,
+  VersionSelectionOptions
 } from "./types";
 
 type HostedVersionMutation =
@@ -1646,7 +1647,11 @@ export function ChatView({
     );
   }
 
-  async function selectVersion(currentMessage: ChatMessage, version: MessageVersion) {
+  async function selectVersion(
+    currentMessage: ChatMessage,
+    version: MessageVersion,
+    options?: VersionSelectionOptions
+  ) {
     const nextMessage = version.message;
     const nextRevision = version.revision;
     const isSameMessage = currentMessage.id === nextMessage.id;
@@ -1661,11 +1666,17 @@ export function ChatView({
     );
     const anchorElement =
       messageElement?.querySelector<HTMLElement>(".version-switcher") ?? messageElement;
-    if (list && anchorElement) {
-      branchScrollAnchorRef.current = {
-        messageId: nextMessage.id,
-        topOffset: anchorElement.getBoundingClientRect().top - list.getBoundingClientRect().top
-      };
+    if (list) {
+      const listTop = list.getBoundingClientRect().top;
+      const nextTopOffset =
+        options?.topOffset ??
+        (anchorElement ? anchorElement.getBoundingClientRect().top - listTop : undefined);
+      if (nextTopOffset !== undefined) {
+        branchScrollAnchorRef.current = {
+          messageId: nextMessage.id,
+          topOffset: nextTopOffset
+        };
+      }
     }
 
     setGenerationError(null);
@@ -1838,13 +1849,17 @@ export function ChatView({
               <>
                 {visibleMessages.map((message) => (
                   <MessageBubble
-                    key={message.id}
+                    key={
+                      message.parent_message_id
+                        ? `message-after:${message.parent_message_id}`
+                        : "root-message"
+                    }
                     message={message}
                     versionInfo={versionInfoForMessage(
                       message,
                       siblingGroups,
-                      (targetMessage, version) => {
-                        void selectVersion(targetMessage, version);
+                      (targetMessage, version, options) => {
+                        void selectVersion(targetMessage, version, options);
                       }
                     )}
                     copied={copiedMessageId === message.id}

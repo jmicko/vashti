@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { avatarImageStyle } from "./avatarCrop";
 import {
   getCachedPrivatePersonaAvatar,
@@ -7,7 +7,7 @@ import {
 import { useDecodedModelMedia } from "./modelMediaCache";
 import { apiAssetUrl } from "./runtime";
 
-export function ModelAvatar({
+export const ModelAvatar = memo(function ModelAvatar({
   displayName,
   assetId,
   privateAssetId,
@@ -50,7 +50,7 @@ export function ModelAvatar({
       />
     </span>
   );
-}
+});
 
 export function useModelAvatarSource({
   assetId,

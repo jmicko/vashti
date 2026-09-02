@@ -8,10 +8,11 @@ import {
   type ReactNode
 } from "react";
 import type { ChatMessage, MessageVersion, VersionInfo } from "./types";
+import { usesMobileInputBehavior } from "./viewport";
 
 const cardGap = 8;
-const maximumFlingSteps = 3;
-const previewRadius = 3;
+const maximumFlingSteps = 4;
+const minimumVisibleShelfHeight = 160;
 
 type GestureState = {
   pointerId: number;
@@ -24,23 +25,20 @@ type GestureState = {
 };
 
 export function MessageVersionCarousel({
-  children,
   isBusy,
   renderVersion,
   role,
   versionInfo
 }: {
-  children: ReactNode;
   isBusy: boolean;
-  renderVersion: (version: MessageVersion, index: number) => ReactNode;
+  renderVersion: (version: MessageVersion, index: number, isCurrent: boolean) => ReactNode;
   role: ChatMessage["role"];
   versionInfo: VersionInfo;
 }) {
-  const swipeEnabled = useCoarsePointer();
+  const swipeEnabled = useMobileSwipeInput();
   const carouselRef = useRef<HTMLDivElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const cardElementsRef = useRef(new Map<number, HTMLDivElement>());
-  const cardHeightsRef = useRef<Record<number, number>>({});
   const interactionRef = useRef<"idle" | "dragging" | "settling">("idle");
   const gestureRef = useRef<GestureState | null>(null);
   const settleTimeoutRef = useRef<number | null>(null);
@@ -51,7 +49,8 @@ export function MessageVersionCarousel({
     clearSettleTimeout();
     interactionRef.current = "idle";
     updateInteractionClasses(carouselRef.current, "idle");
-    updateCarouselPosition(viewportRef.current, 0, 0, cardHeightsRef.current[versionInfo.index]);
+    updateCarouselPosition(viewportRef.current, 0, 0);
+    updateShelfOffset(viewportRef.current, 0);
   }, [versionInfo.index]);
 
   useEffect(() => {
@@ -63,55 +62,11 @@ export function MessageVersionCarousel({
     };
   }, []);
 
-  const renderedIndices = [
-    versionInfo.index,
-    ...versionInfo.versions
-      .map((_, index) => index)
-      .filter(
-        (index) =>
-          index !== versionInfo.index &&
-          Math.abs(index - versionInfo.index) <= previewRadius
-      )
-  ];
-  const renderedIndicesKey = renderedIndices.join(",");
-
-  useLayoutEffect(() => {
-    if (!swipeEnabled) {
-      return;
-    }
-
-    const observer = new ResizeObserver((entries) => {
-      let changed = false;
-      const next = { ...cardHeightsRef.current };
-
-      for (const entry of entries) {
-        const index = Number((entry.target as HTMLElement).dataset.versionIndex);
-        const height = entry.borderBoxSize[0]?.blockSize ?? entry.contentRect.height;
-        if (Number.isFinite(index) && Math.abs((next[index] ?? 0) - height) > 0.5) {
-          next[index] = height;
-          changed = true;
-        }
-      }
-
-      if (!changed) return;
-      cardHeightsRef.current = next;
-      if (interactionRef.current === "idle") {
-        updateCarouselPosition(viewportRef.current, 0, 0, next[versionInfo.index]);
-      }
-    });
-
-    for (const index of renderedIndices) {
-      const element = cardElementsRef.current.get(index);
-      if (element) {
-        observer.observe(element);
-      }
-    }
-
-    return () => observer.disconnect();
-  }, [renderedIndicesKey, swipeEnabled]);
-
   if (!swipeEnabled) {
-    return children;
+    const currentVersion = versionInfo.versions[versionInfo.index];
+    return currentVersion
+      ? renderVersion(currentVersion, versionInfo.index, true)
+      : null;
   }
 
   function clearSettleTimeout() {
@@ -127,8 +82,7 @@ export function MessageVersionCarousel({
       interactionRef.current === "settling" ||
       !event.isPrimary ||
       (event.pointerType === "mouse" && event.button !== 0) ||
-      isInteractiveTarget(event.target) ||
-      (event.pointerType === "mouse" && isSelectableMessageContent(event.target))
+      isInteractiveTarget(event.target)
     ) {
       return;
     }
@@ -168,6 +122,7 @@ export function MessageVersionCarousel({
       event.currentTarget.setPointerCapture(event.pointerId);
       interactionRef.current = "dragging";
       updateInteractionClasses(carouselRef.current, "dragging");
+      updateShelfOffset(viewportRef.current, visibleShelfOffset(viewportRef.current));
     }
 
     if (gesture.axis !== "horizontal") {
@@ -178,25 +133,14 @@ export function MessageVersionCarousel({
     const timestamp = performance.now();
     const elapsed = Math.max(timestamp - gesture.lastTime, 1);
     const instantaneousVelocity = (event.clientX - gesture.lastX) / elapsed;
-    gesture.velocityX = gesture.velocityX * 0.55 + instantaneousVelocity * 0.45;
+    gesture.velocityX = gesture.velocityX * 0.58 + instantaneousVelocity * 0.42;
     gesture.lastX = event.clientX;
     gesture.lastTime = timestamp;
 
     const isPastStart = versionInfo.index === 0 && deltaX > 0;
     const isPastEnd = versionInfo.index === versionInfo.total - 1 && deltaX < 0;
     const offset = isPastStart || isPastEnd ? deltaX * 0.18 : deltaX;
-    const targetIndex =
-      isPastStart || isPastEnd
-        ? versionInfo.index
-        : clampIndex(versionInfo.index + (deltaX < 0 ? 1 : -1), versionInfo.total);
-    updateDragPosition(
-      viewportRef.current,
-      offset,
-      versionInfo.index,
-      targetIndex,
-      cardDistanceFor(viewportRef.current),
-      cardHeightsRef.current
-    );
+    updateCarouselPosition(viewportRef.current, offset, 0);
     if (Math.abs(deltaX) > 9) {
       suppressClickRef.current = true;
     }
@@ -218,12 +162,12 @@ export function MessageVersionCarousel({
       return;
     }
 
-    const deltaX = event.clientX - gesture.startX;
-    const width = viewportRef.current?.clientWidth ?? 0;
-    const cardDistance = Math.max(
-      width - carouselPeekWidth(viewportRef.current) * 2 + cardGap,
-      1
-    );
+    finishHorizontalGesture(gesture);
+  }
+
+  function finishHorizontalGesture(gesture: GestureState) {
+    const deltaX = gesture.lastX - gesture.startX;
+    const cardDistance = cardDistanceFor(viewportRef.current);
     const displacementThreshold = Math.min(72, Math.max(42, cardDistance * 0.16));
     const hasIntent =
       Math.abs(deltaX) >= displacementThreshold || Math.abs(gesture.velocityX) >= 0.52;
@@ -243,57 +187,60 @@ export function MessageVersionCarousel({
       return;
     }
 
-    const projectedDistance = Math.abs(deltaX) + Math.abs(gesture.velocityX) * 220;
-    const requestedSteps = Math.max(1, Math.round(projectedDistance / cardDistance));
+    const requestedSteps = flingStepCount(deltaX, gesture.velocityX, cardDistance);
     const steps = Math.min(requestedSteps, maximumFlingSteps, availableSteps);
     settleToIndex(versionInfo.index + indexDirection * steps, cardDistance);
     releaseClickSuppression();
   }
 
   function handlePointerCancel(event: ReactPointerEvent<HTMLDivElement>) {
-    if (gestureRef.current?.pointerId !== event.pointerId) {
+    const gesture = gestureRef.current;
+    if (!gesture || gesture.pointerId !== event.pointerId) {
       return;
     }
     gestureRef.current = null;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
-    resetPosition();
-    releaseClickSuppression();
+    if (gesture.axis === "horizontal") {
+      finishHorizontalGesture(gesture);
+    } else {
+      resetPosition();
+      releaseClickSuppression();
+    }
   }
 
   function resetPosition() {
     interactionRef.current = "idle";
     updateInteractionClasses(carouselRef.current, "idle");
-    updateCarouselPosition(
-      viewportRef.current,
-      0,
-      prefersReducedMotion() ? 0 : 180,
-      cardHeightsRef.current[versionInfo.index]
-    );
+    updateCarouselPosition(viewportRef.current, 0, prefersReducedMotion() ? 0 : 160);
+    updateShelfOffset(viewportRef.current, 0);
   }
 
   function settleToIndex(targetIndex: number, cardDistance: number) {
     const steps = targetIndex - versionInfo.index;
-    const duration = prefersReducedMotion() ? 0 : Math.min(320, 180 + Math.abs(steps) * 42);
+    const duration = prefersReducedMotion() ? 0 : Math.min(280, 150 + Math.abs(steps) * 28);
     interactionRef.current = "settling";
     updateInteractionClasses(carouselRef.current, "settling");
-    updateCarouselPosition(
-      viewportRef.current,
-      -steps * cardDistance,
-      duration,
-      cardHeightsRef.current[targetIndex] ?? cardHeightsRef.current[versionInfo.index]
-    );
+    updateCarouselPosition(viewportRef.current, -steps * cardDistance, duration);
 
     clearSettleTimeout();
+    const selectTarget = () => {
+      settleTimeoutRef.current = null;
+      const anchorTopOffset = selectionAnchorTopOffset(
+        cardElementsRef.current.get(targetIndex),
+        viewportRef.current
+      );
+      versionInfo.onSelectIndex(
+        targetIndex,
+        anchorTopOffset === undefined ? undefined : { topOffset: anchorTopOffset }
+      );
+    };
     if (duration === 0) {
-      versionInfo.onSelectIndex(targetIndex);
+      selectTarget();
       return;
     }
-    settleTimeoutRef.current = window.setTimeout(() => {
-      settleTimeoutRef.current = null;
-      versionInfo.onSelectIndex(targetIndex);
-    }, duration);
+    settleTimeoutRef.current = window.setTimeout(selectTarget, duration);
   }
 
   function releaseClickSuppression() {
@@ -309,13 +256,6 @@ export function MessageVersionCarousel({
     }, 0);
   }
 
-  const previewVersions = versionInfo.versions
-    .map((version, index) => ({ index, version }))
-    .filter(
-      ({ index }) =>
-        index !== versionInfo.index &&
-        Math.abs(index - versionInfo.index) <= previewRadius
-    );
   function registerCard(index: number, element: HTMLDivElement | null) {
     if (element) {
       cardElementsRef.current.set(index, element);
@@ -348,52 +288,55 @@ export function MessageVersionCarousel({
         onPointerUp={handlePointerEnd}
         onPointerCancel={handlePointerCancel}
       >
-        {previewVersions.map(({ index, version }) => (
-          <VersionPreview
-            key={`${version.message.id}:${version.revision.id}`}
-            distance={index - versionInfo.index}
-            index={index}
-            ref={(element) => registerCard(index, element)}
-          >
-            {renderVersion(version, index)}
-          </VersionPreview>
-        ))}
-        <div
-          className="message-version-current"
-          data-version-index={versionInfo.index}
-          ref={(element) => registerCard(versionInfo.index, element)}
-        >
-          {children}
-        </div>
+        {versionInfo.versions.map((version, index) => {
+          const isCurrent = index === versionInfo.index;
+          return (
+            <VersionCard
+              key={`${version.message.id}:${version.revision.id}`}
+              distance={index - versionInfo.index}
+              index={index}
+              isCurrent={isCurrent}
+              ref={(element) => registerCard(index, element)}
+            >
+              {renderVersion(version, index, isCurrent)}
+            </VersionCard>
+          );
+        })}
       </div>
     </div>
   );
 }
 
-function VersionPreview({
+function VersionCard({
   children,
   distance,
   index,
+  isCurrent,
   ref
 }: {
   children: ReactNode;
   distance: number;
   index: number;
+  isCurrent: boolean;
   ref: (element: HTMLDivElement | null) => void;
 }) {
-  const previewStyle = {
+  const style = {
     "--message-version-distance-percent": `${distance * 100}%`,
     "--message-version-gap-offset": `${distance * cardGap}px`
   } as CSSProperties;
 
   return (
     <div
-      className="message-version-preview"
+      className={
+        isCurrent
+          ? "message-version-card message-version-card-current"
+          : "message-version-card message-version-card-adjacent"
+      }
       data-version-index={index}
       ref={ref}
-      style={previewStyle}
-      aria-hidden="true"
-      inert
+      style={style}
+      aria-hidden={isCurrent ? undefined : "true"}
+      inert={isCurrent ? undefined : true}
     >
       {children}
     </div>
@@ -405,18 +348,7 @@ function isInteractiveTarget(target: EventTarget | null) {
     target instanceof Element &&
     Boolean(
       target.closest(
-        "button, a, input, textarea, select, summary, details, label, [contenteditable='true']"
-      )
-    )
-  );
-}
-
-function isSelectableMessageContent(target: EventTarget | null) {
-  return (
-    target instanceof Element &&
-    Boolean(
-      target.closest(
-        ".message-markdown, .message-stream-content, .message-attachments, .message-stats-panel"
+        "button, a, input, textarea, select, summary, label, [contenteditable='true']"
       )
     )
   );
@@ -424,10 +356,6 @@ function isSelectableMessageContent(target: EventTarget | null) {
 
 function prefersReducedMotion() {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-}
-
-function clampIndex(index: number, total: number) {
-  return Math.max(0, Math.min(index, total - 1));
 }
 
 function carouselPeekWidth(viewport: HTMLDivElement | null) {
@@ -442,6 +370,37 @@ function cardDistanceFor(viewport: HTMLDivElement | null) {
     (viewport?.clientWidth ?? 0) - carouselPeekWidth(viewport) * 2 + cardGap,
     1
   );
+}
+
+function flingStepCount(deltaX: number, velocityX: number, cardDistance: number) {
+  const projectedDistance =
+    Math.abs(deltaX) + Math.min(Math.abs(velocityX), 2.4) * 280;
+  return Math.max(1, Math.round(projectedDistance / Math.max(cardDistance * 0.72, 1)));
+}
+
+function visibleShelfOffset(viewport: HTMLDivElement | null) {
+  const list = viewport?.closest<HTMLElement>(".message-list");
+  if (!viewport || !list) {
+    return 0;
+  }
+
+  const viewportRect = viewport.getBoundingClientRect();
+  const listRect = list.getBoundingClientRect();
+  const desiredOffset = listRect.top + 12 - viewportRect.top;
+  const maximumOffset = Math.max(0, viewportRect.height - minimumVisibleShelfHeight);
+  return Math.max(0, Math.min(desiredOffset, maximumOffset));
+}
+
+function selectionAnchorTopOffset(
+  card: HTMLDivElement | undefined,
+  viewport: HTMLDivElement | null
+) {
+  const list = viewport?.closest<HTMLElement>(".message-list");
+  const anchor = card?.querySelector<HTMLElement>(".version-switcher") ?? card;
+  if (!list || !anchor) {
+    return undefined;
+  }
+  return anchor.getBoundingClientRect().top - list.getBoundingClientRect().top;
 }
 
 function updateCarouselTransition(viewport: HTMLDivElement | null, transitionMs: number) {
@@ -460,45 +419,38 @@ function updateInteractionClasses(
 function updateCarouselPosition(
   viewport: HTMLDivElement | null,
   offset: number,
-  transitionMs: number,
-  height?: number
+  transitionMs: number
 ) {
   if (!viewport) return;
   viewport.style.setProperty("--message-version-offset", `${offset}px`);
   updateCarouselTransition(viewport, transitionMs);
-  if (height && height > 0) {
-    viewport.style.height = `${height}px`;
-  }
 }
 
-function updateDragPosition(
-  viewport: HTMLDivElement | null,
-  offset: number,
-  currentIndex: number,
-  targetIndex: number,
-  cardDistance: number,
-  heights: Record<number, number>
-) {
-  if (!viewport) return;
-  const currentHeight = heights[currentIndex] ?? 0;
-  const targetHeight = heights[targetIndex] ?? currentHeight;
-  const progress = Math.min(Math.abs(offset) / cardDistance, 1);
-  const height = currentHeight + (targetHeight - currentHeight) * progress;
-  updateCarouselPosition(viewport, offset, 0, height);
+function updateShelfOffset(viewport: HTMLDivElement | null, offset: number) {
+  viewport?.style.setProperty("--message-version-shelf-offset", `${offset}px`);
 }
 
-function useCoarsePointer() {
-  const [isCoarsePointer, setIsCoarsePointer] = useState(() =>
-    typeof window === "undefined" ? false : window.matchMedia("(pointer: coarse)").matches
-  );
+function useMobileSwipeInput() {
+  const [isMobileInput, setIsMobileInput] = useState(usesMobileInputBehavior);
 
   useEffect(() => {
-    const query = window.matchMedia("(pointer: coarse)");
-    const update = () => setIsCoarsePointer(query.matches);
-    query.addEventListener("change", update);
+    const queries = [
+      window.matchMedia("(hover: hover) and (pointer: fine)"),
+      window.matchMedia("(hover: none) and (pointer: coarse)")
+    ];
+    const update = () => setIsMobileInput(usesMobileInputBehavior());
+    for (const query of queries) {
+      query.addEventListener("change", update);
+    }
+    window.addEventListener("resize", update);
     update();
-    return () => query.removeEventListener("change", update);
+    return () => {
+      for (const query of queries) {
+        query.removeEventListener("change", update);
+      }
+      window.removeEventListener("resize", update);
+    };
   }, []);
 
-  return isCoarsePointer;
+  return isMobileInput;
 }

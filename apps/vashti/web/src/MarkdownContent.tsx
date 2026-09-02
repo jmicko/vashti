@@ -1,5 +1,6 @@
 import {
   isValidElement,
+  memo,
   type ReactNode,
   useEffect,
   useMemo,
@@ -18,7 +19,7 @@ const markdownComponents = {
   }
 } satisfies Components;
 
-export function MarkdownContent({
+export const MarkdownContent = memo(function MarkdownContent({
   content,
   dimmedEmphasis = false
 }: {
@@ -42,7 +43,7 @@ export function MarkdownContent({
       </ReactMarkdown>
     </div>
   );
-}
+});
 
 function CodeBlock({ children }: { children: ReactNode }) {
   const [copied, setCopied] = useState(false);

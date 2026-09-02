@@ -738,13 +738,16 @@ export type MessageVersion = {
   message: ChatMessage;
   revision: ChatMessageRevision;
 };
+export type VersionSelectionOptions = {
+  topOffset?: number;
+};
 export type VersionInfo = {
   index: number;
   total: number;
   versions: MessageVersion[];
   canPrevious: boolean;
   canNext: boolean;
-  onSelectIndex: (index: number) => void;
+  onSelectIndex: (index: number, options?: VersionSelectionOptions) => void;
   onPrevious: () => void;
   onNext: () => void;
 };

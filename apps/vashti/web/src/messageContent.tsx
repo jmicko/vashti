@@ -1,4 +1,4 @@
-import type { ReactNode, SyntheticEvent } from "react";
+import { memo, type ReactNode, type SyntheticEvent } from "react";
 import { RetroLoader, ThinkingLoader } from "./common";
 import { MarkdownContent } from "./MarkdownContent";
 import { toolIcon } from "./toolUi";
@@ -65,7 +65,11 @@ export function MessageStreamContent({
   );
 }
 
-export function ThinkingContent({ segments }: { segments: ThinkingSegment[] }) {
+export const ThinkingContent = memo(function ThinkingContent({
+  segments
+}: {
+  segments: ThinkingSegment[];
+}) {
   return (
     <div className="message-thinking-content">
       {segments.map((segment, index) => (
@@ -77,9 +81,9 @@ export function ThinkingContent({ segments }: { segments: ThinkingSegment[] }) {
       ))}
     </div>
   );
-}
+});
 
-function ToolUsageCard({ usage }: { usage: ToolUsageRecord }) {
+const ToolUsageCard = memo(function ToolUsageCard({ usage }: { usage: ToolUsageRecord }) {
   return (
     <details className="message-tool-card">
       <summary>
@@ -98,7 +102,7 @@ function ToolUsageCard({ usage }: { usage: ToolUsageRecord }) {
       </div>
     </details>
   );
-}
+});
 
 function formatToolValue(value: unknown) {
   try {

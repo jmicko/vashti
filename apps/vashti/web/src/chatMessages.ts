@@ -20,7 +20,8 @@ import type {
   ThinkingSegment,
   ThinkingMode,
   ToolUsageRecord,
-  VersionInfo
+  VersionInfo,
+  VersionSelectionOptions
 } from "./types";
 
 const rootSiblingGroupKey = "__root__";
@@ -877,7 +878,11 @@ export function revisionForMessage(
 export function versionInfoForMessage(
   message: ChatMessage,
   siblingGroups: Map<string, ChatMessage[]>,
-  selectVersion: (message: ChatMessage, version: MessageVersion) => void
+  selectVersion: (
+    message: ChatMessage,
+    version: MessageVersion,
+    options?: VersionSelectionOptions
+  ) => void
 ): VersionInfo | null {
   const versions = versionsForMessage(message, siblingGroups);
   if (versions.length < 2 || !message.active_revision_id) {
@@ -901,10 +906,10 @@ export function versionInfoForMessage(
     versions,
     canPrevious: Boolean(previousVersion),
     canNext: Boolean(nextVersion),
-    onSelectIndex: (nextIndex) => {
+    onSelectIndex: (nextIndex, options) => {
       const nextVersion = versions[nextIndex];
       if (nextVersion && nextIndex !== index) {
-        selectVersion(message, nextVersion);
+        selectVersion(message, nextVersion, options);
       }
     },
     onPrevious: () => {

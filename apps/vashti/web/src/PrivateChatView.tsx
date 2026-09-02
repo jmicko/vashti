@@ -95,7 +95,8 @@ import type {
   MessageVersion,
   ModelInfo,
   NoteContextSelection,
-  ThinkingMode
+  ThinkingMode,
+  VersionSelectionOptions
 } from "./types";
 
 export function PrivateChatView({
@@ -1742,7 +1743,11 @@ export function PrivateChatView({
     }
   }
 
-  async function selectVersion(currentMessage: ChatMessage, version: MessageVersion) {
+  async function selectVersion(
+    currentMessage: ChatMessage,
+    version: MessageVersion,
+    options?: VersionSelectionOptions
+  ) {
     const nextMessage = version.message as PrivateChatMessage;
     const nextRevision = version.revision as PrivateChatMessageRevision;
     const isSameMessage = currentMessage.id === nextMessage.id;
@@ -1759,11 +1764,17 @@ export function PrivateChatView({
     );
     const anchorElement =
       messageElement?.querySelector<HTMLElement>(".version-switcher") ?? messageElement;
-    if (list && anchorElement) {
-      branchScrollAnchorRef.current = {
-        messageId: nextMessage.id,
-        topOffset: anchorElement.getBoundingClientRect().top - list.getBoundingClientRect().top
-      };
+    if (list) {
+      const listTop = list.getBoundingClientRect().top;
+      const nextTopOffset =
+        options?.topOffset ??
+        (anchorElement ? anchorElement.getBoundingClientRect().top - listTop : undefined);
+      if (nextTopOffset !== undefined) {
+        branchScrollAnchorRef.current = {
+          messageId: nextMessage.id,
+          topOffset: nextTopOffset
+        };
+      }
     }
 
     const selection = applyMessageVersionSelection({
@@ -1980,13 +1991,17 @@ export function PrivateChatView({
             ) : (
               visibleMessages.map((message) => (
                 <MessageBubble
-                  key={message.id}
+                  key={
+                    message.parent_message_id
+                      ? `message-after:${message.parent_message_id}`
+                      : "root-message"
+                  }
                   message={message}
                   versionInfo={versionInfoForMessage(
                     message,
                     siblingGroups,
-                    (targetMessage, version) => {
-                      void selectVersion(targetMessage, version);
+                    (targetMessage, version, options) => {
+                      void selectVersion(targetMessage, version, options);
                     }
                   )}
                   copied={copiedMessageId === message.id}

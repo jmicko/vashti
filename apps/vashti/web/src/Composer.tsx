@@ -118,6 +118,7 @@ export function StartChatComposer({
   const [isTextInputFocused, setIsTextInputFocused] = useState(false);
   const [isComposerExpanded, setIsComposerExpanded] = useState(false);
   const [expandedComposerFrame, setExpandedComposerFrame] = useState<{
+    top: number;
     left: number;
     right: number;
     bottom: number;
@@ -176,6 +177,7 @@ export function StartChatComposer({
   const composerStyle =
     isComposerExpanded && expandedComposerFrame
       ? ({
+          "--composer-expanded-top": `${expandedComposerFrame.top}px`,
           "--composer-expanded-left": `${expandedComposerFrame.left}px`,
           "--composer-expanded-right": `${expandedComposerFrame.right}px`,
           "--composer-expanded-bottom": `${expandedComposerFrame.bottom}px`
@@ -211,6 +213,42 @@ export function StartChatComposer({
     textarea.style.height = `${nextHeight}px`;
     textarea.style.overflowY = textarea.scrollHeight > maxHeight ? "auto" : "hidden";
   }, [prompt, isComposerExpanded]);
+
+  useLayoutEffect(() => {
+    if (!isComposerExpanded) {
+      return;
+    }
+
+    function updateExpandedFrame() {
+      const form = formRef.current;
+      if (!form) {
+        return;
+      }
+
+      const formRect = form.getBoundingClientRect();
+      const chatRect = form.closest(".chat-view")?.getBoundingClientRect();
+      const viewportWidth = document.documentElement.clientWidth;
+      const viewportHeight = document.documentElement.clientHeight;
+
+      setExpandedComposerFrame({
+        top: Math.max(28, (chatRect?.top ?? 0) + 28),
+        left: Math.max(0, formRect.left),
+        right: Math.max(0, viewportWidth - formRect.right),
+        bottom: Math.max(0, viewportHeight - formRect.bottom)
+      });
+    }
+
+    updateExpandedFrame();
+    window.addEventListener("resize", updateExpandedFrame);
+    window.visualViewport?.addEventListener("resize", updateExpandedFrame);
+    window.visualViewport?.addEventListener("scroll", updateExpandedFrame);
+
+    return () => {
+      window.removeEventListener("resize", updateExpandedFrame);
+      window.visualViewport?.removeEventListener("resize", updateExpandedFrame);
+      window.visualViewport?.removeEventListener("scroll", updateExpandedFrame);
+    };
+  }, [isComposerExpanded]);
 
   useEffect(() => {
     if (!canAttach) {
@@ -456,10 +494,12 @@ export function StartChatComposer({
               } else {
                 const formRect = formRef.current?.getBoundingClientRect();
                 if (formRect) {
+                  const chatRect = formRef.current?.closest(".chat-view")?.getBoundingClientRect();
                   setExpandedComposerFrame({
+                    top: Math.max(28, (chatRect?.top ?? 0) + 28),
                     left: Math.max(0, formRect.left),
-                    right: Math.max(0, window.innerWidth - formRect.right),
-                    bottom: Math.max(0, window.innerHeight - formRect.bottom)
+                    right: Math.max(0, document.documentElement.clientWidth - formRect.right),
+                    bottom: Math.max(0, document.documentElement.clientHeight - formRect.bottom)
                   });
                 }
                 setIsComposerExpanded(true);

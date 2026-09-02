@@ -160,10 +160,9 @@ type MessageBubbleProps = {
 
 export function MessageBubble(props: MessageBubbleProps) {
   const { message, versionInfo } = props;
-  const bubble = <MessageBubbleCard {...props} />;
 
   if (!versionInfo) {
-    return bubble;
+    return <MessageBubbleCard {...props} />;
   }
 
   return (
@@ -171,41 +170,39 @@ export function MessageBubble(props: MessageBubbleProps) {
       isBusy={props.isBusy}
       role={message.role}
       versionInfo={versionInfo}
-      renderVersion={(version, index) => {
-        const previewMessage = messageAtVersion(version);
+      renderVersion={(version, index, isCurrent) => {
+        const versionMessage = messageAtVersion(version);
 
         return (
           <MessageBubbleCard
             {...props}
-            message={previewMessage}
+            message={versionMessage}
             versionInfo={versionInfoAtIndex(versionInfo, index)}
-            copied={false}
-            isBusy={false}
-            isGenerating={previewMessage.status === "streaming"}
+            copied={isCurrent && props.copied}
+            isBusy={isCurrent && props.isBusy}
+            isGenerating={isCurrent ? props.isGenerating : versionMessage.status === "streaming"}
             streamSegments={
-              props.streamSegmentsForMessage?.(previewMessage) ??
-              (previewMessage.id === message.id ? props.streamSegments : undefined)
+              props.streamSegmentsForMessage?.(versionMessage) ??
+              (versionMessage.id === message.id ? props.streamSegments : undefined)
             }
             thinkingDurationSeconds={
-              props.thinkingDurationForMessage?.(previewMessage) ??
-              (previewMessage.id === message.id ? props.thinkingDurationSeconds : null)
+              props.thinkingDurationForMessage?.(versionMessage) ??
+              (versionMessage.id === message.id ? props.thinkingDurationSeconds : null)
             }
             modelAvatar={
               props.modelAvatarForMessage
-                ? props.modelAvatarForMessage(previewMessage)
+                ? props.modelAvatarForMessage(versionMessage)
                 : props.modelAvatar
             }
             dimmedEmphasis={
-              props.dimmedEmphasisForMessage?.(previewMessage) ??
-              (previewMessage.id === message.id ? props.dimmedEmphasis : false)
+              props.dimmedEmphasisForMessage?.(versionMessage) ??
+              (versionMessage.id === message.id ? props.dimmedEmphasis : false)
             }
-            isCarouselPreview
+            isCarouselPreview={!isCurrent}
           />
         );
       }}
-    >
-      {bubble}
-    </MessageVersionCarousel>
+    />
   );
 }
 
