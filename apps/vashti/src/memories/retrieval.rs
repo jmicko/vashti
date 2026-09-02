@@ -736,3 +736,296 @@ fn physical_memory_bytes() -> Option<usize> {
 fn physical_memory_bytes() -> Option<usize> {
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use axum::{Json, Router, routing::post};
+    use serde::Deserialize;
+    use serde_json::json;
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+
+    use super::*;
+    use crate::{
+        memories::models::{CreateMemoryRequest, MemoryModelScope, UpdateMemoryRequest},
+        startup,
+    };
+
+    async fn test_pool() -> SqlitePool {
+        let options = SqliteConnectOptions::new()
+            .filename(":memory:")
+            .foreign_keys(true);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .expect("connect test database");
+        startup::migrations::run(&pool)
+            .await
+            .expect("run migrations");
+        startup::bootstrap::ensure_app_settings(&pool)
+            .await
+            .expect("ensure app settings");
+        pool
+    }
+
+    async fn seed_user(pool: &SqlitePool, user_id: &str) {
+        sqlx::query(
+            r#"
+            INSERT INTO users (
+                id, username, password_hash, role, is_disabled, created_at, updated_at
+            ) VALUES (?, ?, 'hash', 'user', 0, 1, 1)
+            "#,
+        )
+        .bind(user_id)
+        .bind(user_id)
+        .execute(pool)
+        .await
+        .expect("insert test user");
+    }
+
+    async fn configure_embeddings(pool: &SqlitePool, base_url: &str, model: &str) {
+        sqlx::query(
+            r#"
+            INSERT INTO ollama_backends (
+                id, name, base_url, is_enabled, created_at, updated_at
+            ) VALUES ('backend', 'Fake embeddings', ?, 1, 1, 1)
+            ON CONFLICT(id) DO UPDATE SET base_url = excluded.base_url, is_enabled = 1
+            "#,
+        )
+        .bind(base_url)
+        .execute(pool)
+        .await
+        .expect("configure embedding backend");
+        sqlx::query(
+            r#"
+            UPDATE app_settings
+            SET notes_semantic_search_enabled = 1,
+                notes_embedding_backend_id = 'backend',
+                notes_embedding_model = ?
+            WHERE id = 1
+            "#,
+        )
+        .bind(model)
+        .execute(pool)
+        .await
+        .expect("enable semantic search");
+    }
+
+    fn memory_request(content: &str, scope: MemoryModelScope) -> CreateMemoryRequest {
+        CreateMemoryRequest {
+            content: content.to_string(),
+            model_scope: Some(scope),
+        }
+    }
+
+    #[derive(Deserialize)]
+    struct FakeEmbedRequest {
+        input: Vec<String>,
+    }
+
+    async fn fake_embed(Json(request): Json<FakeEmbedRequest>) -> Json<serde_json::Value> {
+        let embeddings = request
+            .input
+            .iter()
+            .map(|text| {
+                let text = text.to_ascii_lowercase();
+                if text.contains("beans") || text.contains("favorite food") {
+                    vec![1.0, 0.0, 0.0]
+                } else if text.contains("orange") || text.contains("favorite color") {
+                    vec![0.0, 1.0, 0.0]
+                } else {
+                    vec![0.0, 0.0, 1.0]
+                }
+            })
+            .collect::<Vec<_>>();
+        Json(json!({ "model": "fake-embed", "embeddings": embeddings }))
+    }
+
+    async fn fake_embedding_server() -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind fake embedding server");
+        let address = listener.local_addr().expect("read fake server address");
+        tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new().route("/api/embed", post(fake_embed)),
+            )
+            .await
+            .expect("serve fake embeddings");
+        });
+        format!("http://{address}")
+    }
+
+    async fn process_all(retrieval: &MemoryRetrieval, client: &reqwest::Client) {
+        while matches!(
+            retrieval
+                .process_next_job(client)
+                .await
+                .expect("process memory embedding"),
+            JobResult::Indexed
+        ) {}
+    }
+
+    #[tokio::test]
+    async fn lifecycle_updates_persisted_vectors_and_enforces_scope() {
+        let pool = test_pool().await;
+        seed_user(&pool, "owner").await;
+        seed_user(&pool, "other").await;
+        let base_url = fake_embedding_server().await;
+        configure_embeddings(&pool, &base_url, "fake-embed").await;
+        let actor = memory_service::MemoryMutationActor::human("owner");
+        let created = memory_service::create_memory(
+            &pool,
+            "owner",
+            memory_request("The user really loves beans.", MemoryModelScope::default()),
+            &actor,
+        )
+        .await
+        .expect("create memory");
+        let retrieval = MemoryRetrieval::new(pool.clone());
+        let client = reqwest::Client::new();
+        process_all(&retrieval, &client).await;
+
+        let cold_retrieval = MemoryRetrieval::new(pool.clone());
+        let matches = cold_retrieval
+            .hybrid_search(&client, "owner", "base:test:model-a", "favorite food", 5)
+            .await
+            .expect("search persisted vectors with a cold cache");
+        assert_eq!(
+            matches.first().map(|memory| memory.id.as_str()),
+            Some(created.id.as_str())
+        );
+        assert!(
+            cold_retrieval
+                .hybrid_search(&client, "other", "base:test:model-a", "favorite food", 5)
+                .await
+                .expect("search another user's memories")
+                .is_empty()
+        );
+
+        let updated = memory_service::update_memory(
+            &pool,
+            "owner",
+            &created.id,
+            UpdateMemoryRequest {
+                expected_version: 1,
+                content: Some("The user's favorite color is orange.".to_string()),
+                model_scope: Some(MemoryModelScope {
+                    all_models: false,
+                    model_keys: vec!["base:test:model-a".to_string()],
+                }),
+            },
+            &actor,
+        )
+        .await
+        .expect("update memory");
+        process_all(&retrieval, &client).await;
+        let stored_version: String = sqlx::query_scalar(
+            "SELECT memory_version_id FROM memory_embeddings WHERE memory_id = ?",
+        )
+        .bind(&created.id)
+        .fetch_one(&pool)
+        .await
+        .expect("read stored memory version");
+        assert_eq!(stored_version, updated.current_version.id);
+        assert_eq!(
+            retrieval
+                .hybrid_search(&client, "owner", "base:test:model-a", "favorite color", 5)
+                .await
+                .expect("search updated memory")
+                .first()
+                .map(|memory| memory.id.as_str()),
+            Some(created.id.as_str())
+        );
+        assert!(
+            retrieval
+                .hybrid_search(&client, "owner", "base:test:model-b", "favorite color", 5)
+                .await
+                .expect("search outside model scope")
+                .is_empty()
+        );
+
+        memory_service::forget_memory(&pool, "owner", &created.id, 2, &actor)
+            .await
+            .expect("forget memory");
+        let indexed: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM memory_embeddings WHERE memory_id = ?")
+                .bind(&created.id)
+                .fetch_one(&pool)
+                .await
+                .expect("count forgotten embeddings");
+        assert_eq!(indexed, 0);
+        assert!(
+            retrieval
+                .hybrid_search(&client, "owner", "base:test:model-a", "favorite color", 5)
+                .await
+                .expect("search forgotten memories")
+                .is_empty()
+        );
+
+        memory_service::restore_memory(&pool, "owner", &created.id, 2)
+            .await
+            .expect("restore memory");
+        process_all(&retrieval, &client).await;
+        assert_eq!(
+            retrieval
+                .hybrid_search(&client, "owner", "base:test:model-a", "favorite color", 5)
+                .await
+                .expect("search restored memory")
+                .first()
+                .map(|memory| memory.id.as_str()),
+            Some(created.id.as_str())
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_jobs_retry_and_model_changes_rebuild_vectors() {
+        let pool = test_pool().await;
+        seed_user(&pool, "owner").await;
+        configure_embeddings(&pool, "http://127.0.0.1:9", "fake-embed").await;
+        let actor = memory_service::MemoryMutationActor::human("owner");
+        let created = memory_service::create_memory(
+            &pool,
+            "owner",
+            memory_request("The user really loves beans.", MemoryModelScope::default()),
+            &actor,
+        )
+        .await
+        .expect("create memory");
+        let retrieval = MemoryRetrieval::new(pool.clone());
+        let client = reqwest::Client::new();
+        assert!(retrieval.process_next_job(&client).await.is_err());
+        let (indexed, pending, last_error) = index_status(&pool).await.expect("read failed status");
+        assert_eq!((indexed, pending), (0, 1));
+        assert!(last_error.is_some_and(|error| error.contains("embedding request failed")));
+
+        let base_url = fake_embedding_server().await;
+        configure_embeddings(&pool, &base_url, "fake-embed").await;
+        sqlx::query("UPDATE memory_embedding_jobs SET last_attempt_at = NULL WHERE memory_id = ?")
+            .bind(&created.id)
+            .execute(&pool)
+            .await
+            .expect("make failed job immediately retryable");
+        process_all(&retrieval, &client).await;
+        assert_eq!(
+            index_status(&pool).await.expect("read recovered status"),
+            (1, 0, None)
+        );
+
+        configure_embeddings(&pool, &base_url, "fake-embed-v2").await;
+        retrieval
+            .rebuild_all()
+            .await
+            .expect("rebuild changed model");
+        assert_eq!(index_status(&pool).await.expect("read rebuild status").0, 0);
+        process_all(&retrieval, &client).await;
+        let stored_model: String =
+            sqlx::query_scalar("SELECT embedding_model FROM memory_embeddings WHERE memory_id = ?")
+                .bind(&created.id)
+                .fetch_one(&pool)
+                .await
+                .expect("read rebuilt embedding model");
+        assert_eq!(stored_model, "fake-embed-v2");
+    }
+}
