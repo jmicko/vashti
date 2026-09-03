@@ -4929,7 +4929,12 @@ textarea {
 }
 
 .message-edit textarea {
-  min-height: 140px;
+  min-height: 240px;
+  height: clamp(240px, 38vh, 520px);
+  height: clamp(240px, 38dvh, 520px);
+  max-height: min(62vh, 720px);
+  max-height: min(62dvh, 720px);
+  line-height: 1.5;
   resize: vertical;
 }
 
@@ -8524,7 +8529,10 @@ textarea {
   }
 
   .message-edit textarea {
-    min-height: 118px;
+    min-height: 190px;
+    height: clamp(190px, 36vh, 320px);
+    height: clamp(190px, 36dvh, 320px);
+    max-height: calc(var(--app-height) - 180px);
   }
 
   .section-header,

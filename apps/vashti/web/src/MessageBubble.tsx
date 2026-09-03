@@ -454,7 +454,7 @@ function MessageBubbleCard({
               </button>
             </div>
           )}
-          <textarea value={draft} onChange={(event) => setDraft(event.target.value)} rows={5} />
+          <textarea value={draft} onChange={(event) => setDraft(event.target.value)} rows={10} />
           <div className="message-actions">
             <button
               type="button"
