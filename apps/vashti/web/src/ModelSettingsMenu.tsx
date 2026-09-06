@@ -655,6 +655,7 @@ export function ModelSettingsMenu({
           </button>
           <input
             type="number"
+            aria-label={field.label}
             inputMode={field.inputMode}
             step={field.step}
             min={field.min}

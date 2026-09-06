@@ -2086,13 +2086,14 @@ textarea {
 .model-settings-inference-grid {
   display: grid;
   gap: 10px;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
   margin-top: 10px;
 }
 
 .model-settings-number-field {
   display: grid;
+  min-width: 0;
   gap: 5px;
   grid-template-columns: minmax(0, 1fr);
 }
