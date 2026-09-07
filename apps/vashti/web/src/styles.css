@@ -2091,6 +2091,27 @@ textarea {
   margin-top: 10px;
 }
 
+.model-settings-base-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 40px;
+  align-items: start;
+  gap: 6px;
+}
+
+.model-settings-base-model .model-picker {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+}
+
+.model-settings-base-model .model-menu {
+  position: relative;
+  top: auto;
+  width: 100%;
+  margin-top: 6px;
+  box-shadow: none;
+}
+
 .model-settings-number-field {
   display: grid;
   min-width: 0;

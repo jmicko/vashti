@@ -27,6 +27,8 @@ export function ModelPicker({
   isLoading,
   error,
   value,
+  ariaLabel,
+  disabled = false,
   onChange
 }: {
   groups: BackendModelGroup[];
@@ -37,6 +39,8 @@ export function ModelPicker({
   isLoading: boolean;
   error: string | null;
   value: string;
+  ariaLabel?: string;
+  disabled?: boolean;
   onChange: (value: string) => void;
 }) {
   const [isOpen, setIsOpen] = useState(false);
@@ -375,7 +379,8 @@ export function ModelPicker({
       <button
         type="button"
         className="model-picker-button"
-        disabled={isLoading || !hasModels}
+        disabled={disabled || isLoading || !hasModels}
+        aria-label={ariaLabel}
         title={
           error ??
           selectedPrivatePersona?.current_version.base_model_name ??

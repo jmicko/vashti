@@ -222,6 +222,7 @@ export function AppShell({
     ({ chatId: string } & ComposerSubmitPayload) | null
   >(null);
   const [chatSystemPromptOverride, setChatSystemPromptOverride] = useState<string | null>(null);
+  const [chatBaseModelOverride, setChatBaseModelOverride] = useState<string | null>(null);
   const [chatInferenceSettings, setChatInferenceSettings] = useState<ChatInferenceSettings>({});
   const [chatContextBlocks, setChatContextBlocks] = useState<ContextBlockSelection[]>([]);
   const [chatPinnedNotes, setChatPinnedNotes] = useState<NoteContextSelection[]>([]);
@@ -410,6 +411,7 @@ export function AppShell({
       setNewChatMode("standard");
     }
     setChatSystemPromptOverride(null);
+    setChatBaseModelOverride(null);
     setChatInferenceSettings({});
     setChatContextBlocks([]);
     setChatPinnedNotes([]);
@@ -920,7 +922,9 @@ export function AppShell({
       personas,
       [],
       selectedModel,
-      knownPersonaVersions
+      knownPersonaVersions,
+      [],
+      chatBaseModelOverride
     );
     if (!selected) {
       setError("Select a model before starting a chat");
@@ -981,10 +985,13 @@ export function AppShell({
       selectedModel
     );
     if (selectedPrivatePersonaVersion) {
+      const override = modelParts(chatBaseModelOverride ?? "");
       return {
-        backendId: selectedPrivatePersonaVersion.base_backend_id,
-        backendName: selectedPrivatePersonaVersion.base_backend_name,
-        modelName: selectedPrivatePersonaVersion.base_model_name
+        backendId: override?.backendId ?? selectedPrivatePersonaVersion.base_backend_id,
+        backendName:
+          modelGroups.find((group) => group.backend.id === override?.backendId)?.backend.name ??
+          selectedPrivatePersonaVersion.base_backend_name,
+        modelName: override?.modelName ?? selectedPrivatePersonaVersion.base_model_name
       };
     }
 
@@ -1016,15 +1023,26 @@ export function AppShell({
       privatePersonas,
       selectedModel,
       knownPersonaVersions,
-      knownPrivatePersonaVersions
+      knownPrivatePersonaVersions,
+      chatBaseModelOverride
     );
   }
 
   async function persistChatConversationSettings() {
+    const personaVersionId = personaVersionIdFromValue(selectedModel);
+    const base = selectedModelBaseParts(
+      modelGroups, personas, privatePersonas, selectedModel,
+      knownPersonaVersions, knownPrivatePersonaVersions, chatBaseModelOverride
+    );
     if (currentChatId) {
       const response = await requestJson<ChatResponse>(`/api/chats/${currentChatId}`, {
         method: "PATCH",
         body: JSON.stringify({
+          ...(personaVersionId && base ? {
+            persona_version_id: personaVersionId,
+            default_backend_id: base.backendId,
+            default_model_name: base.modelName
+          } : {}),
           system_prompt_override: chatSystemPromptOverride,
           inference_settings: chatInferenceSettings,
           context_block_version_ids: chatContextBlocks.map(
@@ -1048,6 +1066,10 @@ export function AppShell({
 
       const nextChat = {
         ...chat,
+        ...(privatePersonaVersionIdFromValue(selectedModel) && base ? {
+          default_backend_id: base.backendId,
+          default_model_name: base.modelName
+        } : {}),
         system_prompt_override: chatSystemPromptOverride,
         inference_settings: chatInferenceSettings,
         context_blocks: chatContextBlocks.map((selection, position) => ({
@@ -1069,9 +1091,11 @@ export function AppShell({
     override: string | null | undefined,
     inferenceSettings?: ChatInferenceSettings,
     contextBlocks?: ContextBlockSelection[],
-    pinnedNotes?: NoteContextSelection[]
+    pinnedNotes?: NoteContextSelection[],
+    baseModelOverride?: string | null
   ) => {
     setChatSystemPromptOverride(override ?? null);
+    setChatBaseModelOverride(baseModelOverride ?? null);
     setChatInferenceSettings(inferenceSettings ?? {});
     setChatContextBlocks(contextBlocks ?? []);
     setChatPinnedNotes(pinnedNotes ?? []);
@@ -1366,7 +1390,10 @@ export function AppShell({
                   isLoading={isLoadingModels}
                   error={modelError}
                   value={activeSelectedModel}
-                  onChange={setSelectedModel}
+                  onChange={(value) => {
+                    setChatBaseModelOverride(null);
+                    setSelectedModel(value);
+                  }}
                 />
                 <ModelSettingsMenu
                   groups={modelGroups}
@@ -1377,6 +1404,7 @@ export function AppShell({
                   selectedModel={activeSelectedModel}
                   selectedModelInfo={activeSelectedModel ? selectedModelInfo() : null}
                   systemPromptOverride={chatSystemPromptOverride}
+                  baseModelOverride={chatBaseModelOverride}
                   inferenceSettings={chatInferenceSettings}
                   contextLibrary={
                     allowPrivatePersonaSelection ? deviceContextLibrary : serverContextLibrary
@@ -1385,11 +1413,15 @@ export function AppShell({
                   pinnedNotes={allowPrivatePersonaSelection ? [] : chatPinnedNotes}
                   canSaveConversationSettings={page === "chat" || Boolean(currentPrivateChatId)}
                   disabled={!activeSelectedModel || isLoadingModels}
-                  onModelSelected={setSelectedModel}
+                  onModelSelected={(value) => {
+                    setChatBaseModelOverride(null);
+                    setSelectedModel(value);
+                  }}
                   onCreateCustomModelFromSettings={createCustomModelFromSettings}
                   onPersonaVersionsLoaded={rememberPersonaVersions}
                   onPrivatePersonaVersionsLoaded={rememberPrivatePersonaVersions}
                   onSystemPromptOverrideChange={setChatSystemPromptOverride}
+                  onBaseModelOverrideChange={setChatBaseModelOverride}
                   onInferenceSettingsChange={setChatInferenceSettings}
                   onContextBlocksChange={setChatContextBlocks}
                   onOpenContextSettings={() => openSettings("context")}
@@ -1527,6 +1559,7 @@ export function AppShell({
               privatePersonas={privatePersonas}
               privatePersonaVersions={knownPrivatePersonaVersions}
               systemPromptOverride={chatSystemPromptOverride}
+              baseModelOverride={chatBaseModelOverride}
               inferenceSettings={chatInferenceSettings}
               contextBlocks={chatContextBlocks}
               availableTools={deviceAvailableTools}
@@ -1553,6 +1586,7 @@ export function AppShell({
                 selectedModelInfo={selectedModelInfo()}
                 modelGroups={modelGroups}
                 inferenceSettings={chatInferenceSettings}
+                baseModelOverride={chatBaseModelOverride}
                 availableTools={availableTools}
                 personas={personas}
                 personaVersions={knownPersonaVersions}

@@ -109,6 +109,7 @@ export function PrivateChatView({
   privatePersonas,
   privatePersonaVersions,
   systemPromptOverride,
+  baseModelOverride,
   inferenceSettings,
   contextBlocks,
   availableTools,
@@ -132,6 +133,7 @@ export function PrivateChatView({
   privatePersonas: PrivatePersona[];
   privatePersonaVersions: PrivatePersonaVersion[];
   systemPromptOverride: string | null;
+  baseModelOverride: string | null;
   inferenceSettings: ChatInferenceSettings;
   contextBlocks: ContextBlockSelection[];
   availableTools: AvailableTool[];
@@ -140,7 +142,9 @@ export function PrivateChatView({
   onChatSettingsLoaded: (
     override: string | null | undefined,
     inferenceSettings?: ChatInferenceSettings,
-    contextBlocks?: ContextBlockSelection[]
+    contextBlocks?: ContextBlockSelection[],
+    pinnedNotes?: NoteContextSelection[],
+    baseModelOverride?: string | null
   ) => void;
   onConversationSettingsSave: () => Promise<void>;
   onPrivatePersonaVersionsLoaded: (versions: PrivatePersonaVersion[]) => void;
@@ -275,7 +279,11 @@ export function PrivateChatView({
       onChatSettingsLoaded(
         nextChat.system_prompt_override,
         nextChat.inference_settings ?? {},
-        nextChat.context_blocks
+        nextChat.context_blocks,
+        undefined,
+        nextChat.persona_version_id
+          ? modelValue(nextChat.default_backend_id, nextChat.default_model_name)
+          : null
       );
       thinkingStartedAtRef.current.clear();
       thinkingContentCursorRef.current.clear();
@@ -810,7 +818,7 @@ export function PrivateChatView({
           )
         : null);
     const selected = selectedPrivatePersona
-      ? {
+      ? modelParts(baseModelOverride ?? "") ?? {
           backendId: selectedPrivatePersona.current_version.base_backend_id,
           modelName: selectedPrivatePersona.current_version.base_model_name
         }
@@ -1360,7 +1368,7 @@ export function PrivateChatView({
       selectedModel
     );
     const selected = selectedPrivatePersona
-      ? {
+      ? modelParts(baseModelOverride ?? "") ?? {
           backendId: selectedPrivatePersona.current_version.base_backend_id,
           modelName: selectedPrivatePersona.current_version.base_model_name
         }
@@ -1512,7 +1520,7 @@ export function PrivateChatView({
         message.persona_version_id
       );
     const selected = selectedPrivatePersona
-      ? {
+      ? modelParts(baseModelOverride ?? "") ?? {
           backendId: selectedPrivatePersona.current_version.base_backend_id,
           modelName: selectedPrivatePersona.current_version.base_model_name
         }

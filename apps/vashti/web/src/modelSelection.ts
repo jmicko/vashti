@@ -206,7 +206,8 @@ export function selectedModelBaseParts(
   privatePersonas: PrivatePersona[],
   value: string,
   personaVersions: PersonaVersion[] = [],
-  privatePersonaVersions: PrivatePersonaVersion[] = []
+  privatePersonaVersions: PrivatePersonaVersion[] = [],
+  baseModelOverride: string | null = null
 ) {
   const selectedPrivatePersonaVersion = privatePersonaVersionForValue(
     privatePersonas,
@@ -214,7 +215,7 @@ export function selectedModelBaseParts(
     value
   );
   if (selectedPrivatePersonaVersion) {
-    return {
+    return modelParts(baseModelOverride ?? "") ?? {
       backendId: selectedPrivatePersonaVersion.base_backend_id,
       modelName: selectedPrivatePersonaVersion.base_model_name
     };
@@ -222,7 +223,7 @@ export function selectedModelBaseParts(
 
   const selectedPersonaVersion = personaVersionForValue(personas, personaVersions, value);
   if (selectedPersonaVersion) {
-    return {
+    return modelParts(baseModelOverride ?? "") ?? {
       backendId: selectedPersonaVersion.base_backend_id,
       modelName: selectedPersonaVersion.base_model_name
     };
@@ -243,8 +244,10 @@ export function modelInfoForValue(
   privatePersonas: PrivatePersona[],
   value: string,
   personaVersions: PersonaVersion[] = [],
-  privatePersonaVersions: PrivatePersonaVersion[] = []
+  privatePersonaVersions: PrivatePersonaVersion[] = [],
+  baseModelOverride: string | null = null
 ) {
+  const override = modelParts(baseModelOverride ?? "");
   const selectedPrivatePersonaVersion = privatePersonaVersionForValue(
     privatePersonas,
     privatePersonaVersions,
@@ -253,8 +256,8 @@ export function modelInfoForValue(
   if (selectedPrivatePersonaVersion) {
     const base = modelInfoForBase(
       groups,
-      selectedPrivatePersonaVersion.base_backend_id,
-      selectedPrivatePersonaVersion.base_model_name
+      override?.backendId ?? selectedPrivatePersonaVersion.base_backend_id,
+      override?.modelName ?? selectedPrivatePersonaVersion.base_model_name
     );
     return personaModelInfo(base, selectedPrivatePersonaVersion, true);
   }
@@ -263,8 +266,8 @@ export function modelInfoForValue(
   if (selectedPersonaVersion) {
     const base = modelInfoForBase(
       groups,
-      selectedPersonaVersion.base_backend_id,
-      selectedPersonaVersion.base_model_name
+      override?.backendId ?? selectedPersonaVersion.base_backend_id,
+      override?.modelName ?? selectedPersonaVersion.base_model_name
     );
     return personaModelInfo(base, selectedPersonaVersion, false);
   }

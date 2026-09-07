@@ -27,6 +27,7 @@ import {
   normalizeInferenceSettings
 } from "./inferenceSettings";
 import { ModelCapabilityBadges } from "./modelCapabilities";
+import { ModelPicker } from "./ModelPicker";
 import { getNote } from "./notes/api";
 import { useNoteSearch } from "./notes/NotePicker";
 import type { Note } from "./notes/types";
@@ -191,6 +192,7 @@ export function ModelSettingsMenu({
   selectedModel,
   selectedModelInfo,
   systemPromptOverride,
+  baseModelOverride,
   inferenceSettings,
   contextLibrary,
   contextBlocks,
@@ -202,6 +204,7 @@ export function ModelSettingsMenu({
   onPersonaVersionsLoaded,
   onPrivatePersonaVersionsLoaded,
   onSystemPromptOverrideChange,
+  onBaseModelOverrideChange,
   onInferenceSettingsChange,
   onContextBlocksChange,
   onOpenContextSettings,
@@ -216,6 +219,7 @@ export function ModelSettingsMenu({
   selectedModel: string;
   selectedModelInfo: ModelInfo | null;
   systemPromptOverride?: string | null;
+  baseModelOverride?: string | null;
   inferenceSettings?: ChatInferenceSettings;
   contextLibrary: ContextLibraryResponse;
   contextBlocks: ContextBlockSelection[];
@@ -227,6 +231,7 @@ export function ModelSettingsMenu({
   onPersonaVersionsLoaded: (versions: PersonaVersion[]) => void;
   onPrivatePersonaVersionsLoaded: (versions: PrivatePersonaVersion[]) => void;
   onSystemPromptOverrideChange?: (value: string | null) => void;
+  onBaseModelOverrideChange?: (value: string | null) => void;
   onInferenceSettingsChange?: (value: ChatInferenceSettings) => void;
   onContextBlocksChange: (value: ContextBlockSelection[]) => void;
   onOpenContextSettings?: () => void;
@@ -370,24 +375,34 @@ export function ModelSettingsMenu({
     effectiveInferenceSettings
   );
   const isInferenceCustomized = hasInferenceSettings(effectiveInferenceSettings);
-  const hasConversationSettings =
-    isUsingNonDefaultVersion ||
-    isSystemPromptCustomized ||
-    isInferenceCustomized ||
-    contextBlocks.length > 0 ||
-    pinnedNotes.length > 0;
   const baseModelName =
+    (isCustomModel ? modelParts(baseModelOverride ?? "")?.modelName : null) ??
     selectedHostedVersion?.base_model_name ??
     selectedPrivateVersion?.base_model_name ??
     selectedBaseOption?.model.name ??
     null;
-  const baseModelDraftValue = selectedHostedVersion
+  const defaultBaseModelValue = selectedHostedVersion
     ? modelValue(selectedHostedVersion.base_backend_id, selectedHostedVersion.base_model_name)
     : selectedPrivateVersion
       ? modelValue(selectedPrivateVersion.base_backend_id, selectedPrivateVersion.base_model_name)
       : selectedBaseOption
         ? modelValue(selectedBaseOption.backendId, selectedBaseOption.model.name)
         : null;
+  const baseModelDraftValue = (isCustomModel ? baseModelOverride : null) ?? defaultBaseModelValue;
+  const isBaseModelCustomized = isCustomModel && baseModelDraftValue !== defaultBaseModelValue;
+  const hasConversationSettings =
+    isBaseModelCustomized ||
+    isUsingNonDefaultVersion ||
+    isSystemPromptCustomized ||
+    isInferenceCustomized ||
+    contextBlocks.length > 0 ||
+    pinnedNotes.length > 0;
+  const baseModelGroups = useMemo(() => groups.map((group) => ({
+    ...group,
+    models: group.models.filter((model) =>
+      !model.capabilities?.includes("embedding") || model.capabilities.includes("completion")
+    )
+  })), [groups]);
   const selectedVersionId = selectedHostedVersion?.id ?? selectedPrivateVersion?.id ?? "";
   const displayedVersions = selectedHostedVersion ? hostedVersions : privateVersions;
   const selectedVersion = selectedHostedVersion ?? selectedPrivateVersion;
@@ -751,7 +766,36 @@ export function ModelSettingsMenu({
             </div>
 
             {selectedModelInfo && <ModelCapabilityBadges model={selectedModelInfo} />}
-            {baseModelName && (
+            {isCustomModel && onBaseModelOverrideChange ? (
+              <div className="model-settings-field model-settings-base-model">
+                <span>Base model</span>
+                <div className="model-settings-base-row">
+                  <ModelPicker
+                    groups={baseModelGroups}
+                    personas={[]}
+                    privatePersonas={[]}
+                    isLoading={false}
+                    disabled={!canSaveConversationSettings}
+                    error={null}
+                    value={baseModelDraftValue ?? ""}
+                    ariaLabel="Choose base model"
+                    onChange={(value) =>
+                      onBaseModelOverrideChange(value === defaultBaseModelValue ? null : value)
+                    }
+                  />
+                  <button
+                    type="button"
+                    className="icon-button"
+                    aria-label="Reset base model to default"
+                    title="Reset base model to default"
+                    disabled={!canSaveConversationSettings || !isBaseModelCustomized}
+                    onClick={() => onBaseModelOverrideChange(null)}
+                  >
+                    <RotateCcw />
+                  </button>
+                </div>
+              </div>
+            ) : baseModelName && (
               <p className="model-settings-meta">
                 Base model: <span>{compactModelName(baseModelName)}</span>
               </p>

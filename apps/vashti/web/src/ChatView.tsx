@@ -104,6 +104,7 @@ export function ChatView({
   selectedModelInfo,
   modelGroups,
   inferenceSettings,
+  baseModelOverride,
   availableTools,
   personas,
   personaVersions,
@@ -125,6 +126,7 @@ export function ChatView({
   selectedModelInfo: ModelInfo | null;
   modelGroups: BackendModelGroup[];
   inferenceSettings: ChatInferenceSettings;
+  baseModelOverride: string | null;
   availableTools: AvailableTool[];
   personas: Persona[];
   personaVersions: PersonaVersion[];
@@ -135,7 +137,8 @@ export function ChatView({
     override: string | null | undefined,
     inferenceSettings?: ChatInferenceSettings,
     contextBlocks?: ContextBlockSelection[],
-    pinnedNotes?: NoteContextSelection[]
+    pinnedNotes?: NoteContextSelection[],
+    baseModelOverride?: string | null
   ) => void;
   onConversationSettingsSave: () => Promise<void>;
   onPersonaVersionsLoaded: (versions: PersonaVersion[]) => void;
@@ -319,7 +322,10 @@ export function ChatView({
         normalizedChat.system_prompt_override,
         normalizedChat.inference_settings,
         normalizedChat.context_blocks,
-        normalizedChat.pinned_notes
+        normalizedChat.pinned_notes,
+        normalizedChat.persona_version_id
+          ? modelValue(normalizedChat.default_backend_id, normalizedChat.default_model_name)
+          : null
       );
       thinkingStartedAtRef.current.clear();
       setThinkingDurations({});
@@ -473,7 +479,10 @@ export function ChatView({
           nextChat.system_prompt_override,
           nextChat.inference_settings,
           nextChat.context_blocks,
-          nextChat.pinned_notes
+          nextChat.pinned_notes,
+          nextChat.persona_version_id
+            ? modelValue(nextChat.default_backend_id, nextChat.default_model_name)
+            : null
         );
         queueHostedCacheSave({
           chat: nextChat,
@@ -609,7 +618,7 @@ export function ChatView({
       }
 
       const selected =
-        selectedModelBaseParts([], personas, [], selectedModel, personaVersions) ??
+        selectedModelBaseParts([], personas, [], selectedModel, personaVersions, [], baseModelOverride) ??
         modelParts(selectedModel);
       const personaVersionId = personaVersionIdFromValue(selectedModel);
       const requestPath = `/api/chats/${chatId}/generate`;
@@ -653,6 +662,7 @@ export function ChatView({
     [
       chat?.tool_preferences,
       inferenceSettings,
+      baseModelOverride,
       chatId,
       isGenerating,
       messages,
@@ -1446,7 +1456,7 @@ export function ChatView({
     }
 
     const selected =
-      selectedModelBaseParts([], personas, [], selectedModel, personaVersions) ??
+      selectedModelBaseParts([], personas, [], selectedModel, personaVersions, [], baseModelOverride) ??
       modelParts(selectedModel);
     const personaVersionId = personaVersionIdFromValue(selectedModel);
     if (await persistConversationSettingsForGeneration()) {
@@ -1491,7 +1501,7 @@ export function ChatView({
     }
 
     const selected =
-      selectedModelBaseParts([], personas, [], selectedModel, personaVersions) ??
+      selectedModelBaseParts([], personas, [], selectedModel, personaVersions, [], baseModelOverride) ??
       modelParts(selectedModel);
     const personaVersionId = personaVersionIdFromValue(selectedModel);
     if (await persistConversationSettingsForGeneration()) {

@@ -170,14 +170,20 @@ pub async fn create_chat(
         ),
         None => None,
     };
-    let backend_id = persona
-        .as_ref()
-        .map(|persona| persona.base_backend_id.clone())
-        .unwrap_or_else(|| payload.default_backend_id.trim().to_string());
-    let model_name = persona
-        .as_ref()
-        .map(|persona| persona.base_model_name.clone())
-        .unwrap_or_else(|| payload.default_model_name.trim().to_string());
+    let backend_id = normalize_optional_string(Some(payload.default_backend_id))
+        .or_else(|| {
+            persona
+                .as_ref()
+                .map(|persona| persona.base_backend_id.clone())
+        })
+        .unwrap_or_default();
+    let model_name = normalize_optional_string(Some(payload.default_model_name))
+        .or_else(|| {
+            persona
+                .as_ref()
+                .map(|persona| persona.base_model_name.clone())
+        })
+        .unwrap_or_default();
 
     if backend_id.is_empty() {
         return Err(ApiError::bad_request(
@@ -355,7 +361,9 @@ pub async fn update_chat(
         ),
         None => None,
     };
-    let backend_id = if let Some(persona) = &persona {
+    let backend_id = if let Some(persona) = &persona
+        && payload.default_backend_id.is_none()
+    {
         persona.base_backend_id.clone()
     } else {
         match payload.default_backend_id {
@@ -367,7 +375,9 @@ pub async fn update_chat(
             None => current.default_backend_id,
         }
     };
-    let model_name = if let Some(persona) = &persona {
+    let model_name = if let Some(persona) = &persona
+        && payload.default_model_name.is_none()
+    {
         persona.base_model_name.clone()
     } else {
         match payload.default_model_name {
@@ -1113,8 +1123,8 @@ pub async fn prepare_continuation(
         user_id,
         &chat,
         Some(&fallback_model),
-        None,
-        None,
+        target.backend_id.clone(),
+        target.model_name.clone(),
         target.persona_version_id.clone(),
     )
     .await?;
@@ -2064,7 +2074,19 @@ async fn resolve_generation_model(
     let explicit_persona_version_id = normalize_optional_string(persona_version_id);
 
     if let Some(persona_version_id) = explicit_persona_version_id {
-        return resolve_persona_generation_model(pool, user_id, &persona_version_id).await;
+        let same_persona = chat.persona_version_id.as_deref() == Some(&persona_version_id);
+        return resolve_persona_generation_model(
+            pool,
+            user_id,
+            &persona_version_id,
+            explicit_backend_id
+                .as_deref()
+                .or_else(|| same_persona.then_some(chat.default_backend_id.as_str())),
+            explicit_model_name
+                .as_deref()
+                .or_else(|| same_persona.then_some(chat.default_model_name.as_str())),
+        )
+        .await;
     }
 
     if explicit_backend_id.is_none()
@@ -2073,7 +2095,22 @@ async fn resolve_generation_model(
             .and_then(|model| model.persona_version_id.clone())
             .or_else(|| chat.persona_version_id.clone())
     {
-        return resolve_persona_generation_model(pool, user_id, &persona_version_id).await;
+        return resolve_persona_generation_model(
+            pool,
+            user_id,
+            &persona_version_id,
+            Some(
+                latest_model
+                    .map(|model| model.backend_id.as_str())
+                    .unwrap_or(&chat.default_backend_id),
+            ),
+            Some(
+                latest_model
+                    .map(|model| model.model_name.as_str())
+                    .unwrap_or(&chat.default_model_name),
+            ),
+        )
+        .await;
     }
 
     let backend_id = explicit_backend_id
@@ -2105,11 +2142,13 @@ async fn resolve_persona_generation_model(
     pool: &SqlitePool,
     user_id: &str,
     persona_version_id: &str,
+    backend_id: Option<&str>,
+    model_name: Option<&str>,
 ) -> Result<ResolvedGenerationModel, ApiError> {
     let persona =
         persona_service::resolve_persona_version_for_use(pool, user_id, persona_version_id).await?;
-    let backend = enabled_backend(pool, &persona.base_backend_id).await?;
-    let model_name = persona.base_model_name.clone();
+    let backend = enabled_backend(pool, backend_id.unwrap_or(&persona.base_backend_id)).await?;
+    let model_name = model_name.unwrap_or(&persona.base_model_name).to_string();
     if model_name.is_empty() {
         return Err(ApiError::bad_request(
             "invalid_model",
@@ -3018,6 +3057,257 @@ mod tests {
         .execute(pool)
         .await
         .expect("activate seeded tree");
+    }
+
+    async fn seed_custom_model(pool: &SqlitePool) {
+        seed_revision_tree(pool).await;
+        sqlx::query(
+            "INSERT INTO personas (id, owner_user_id, current_version_id, created_at, updated_at) VALUES ('persona', 'user', 'persona-v1', 100, 100);
+             INSERT INTO persona_versions (id, persona_id, version_number, display_name, base_backend_id, base_model_name, system_prompt, created_at) VALUES ('persona-v1', 'persona', 1, 'Helper', 'backend', 'original-model', 'Keep this custom prompt.', 100);
+             INSERT INTO ollama_backends (id, name, base_url, created_at, updated_at) VALUES ('replacement', 'Replacement', 'http://127.0.0.1:11435', 100, 100);",
+        )
+        .execute(pool)
+        .await
+        .expect("seed custom model and replacement backend");
+    }
+
+    #[tokio::test]
+    async fn custom_model_base_override_preserves_identity_and_versions() {
+        let pool = test_pool().await;
+        seed_custom_model(&pool).await;
+        let chat = super::create_chat(
+            &pool,
+            "user",
+            serde_json::from_value(serde_json::json!({
+                "title": "Override test",
+                "persona_version_id": "persona-v1",
+                "default_backend_id": "replacement",
+                "default_model_name": "replacement-model"
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(chat.default_backend_id, "replacement");
+        assert_eq!(chat.default_model_name, "replacement-model");
+        assert_eq!(chat.persona_version_id.as_deref(), Some("persona-v1"));
+
+        let resolved =
+            super::resolve_generation_model(&pool, "user", &chat, None, None, None, None)
+                .await
+                .unwrap();
+        assert_eq!(resolved.backend.id, "replacement");
+        assert_eq!(resolved.model_name, "replacement-model");
+        assert_eq!(
+            resolved.persona.unwrap().system_prompt,
+            "Keep this custom prompt."
+        );
+
+        let reset = super::update_chat(
+            &pool,
+            "user",
+            &chat.id,
+            serde_json::from_value(serde_json::json!({
+                "persona_version_id": "persona-v1",
+                "default_backend_id": "backend",
+                "default_model_name": "original-model"
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(reset.default_model_name, "original-model");
+        assert_eq!(reset.persona_version_id.as_deref(), Some("persona-v1"));
+        let explicit = super::resolve_generation_model(
+            &pool,
+            "user",
+            &reset,
+            None,
+            Some("replacement".into()),
+            Some("replacement-model".into()),
+            Some("persona-v1".into()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(explicit.backend.id, "replacement");
+        assert_eq!(explicit.persona.unwrap().persona_version_id, "persona-v1");
+
+        let original: (String, i64) = sqlx::query_as(
+            "SELECT base_model_name, (SELECT COUNT(*) FROM persona_versions) FROM persona_versions WHERE id = 'persona-v1'"
+        ).fetch_one(&pool).await.unwrap();
+        assert_eq!(original, ("original-model".into(), 1));
+
+        crate::backends::service::set_model_availability(
+            &pool,
+            "replacement",
+            "replacement-model",
+            false,
+        )
+        .await
+        .unwrap();
+        assert!(
+            super::resolve_generation_model(
+                &pool,
+                "user",
+                &reset,
+                None,
+                Some("replacement".into()),
+                Some("replacement-model".into()),
+                Some("persona-v1".into())
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            super::update_chat(
+                &pool,
+                "user",
+                &chat.id,
+                serde_json::from_value(serde_json::json!({
+                    "persona_version_id": "persona-v1",
+                    "default_backend_id": "replacement",
+                    "default_model_name": "replacement-model"
+                }))
+                .unwrap()
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            super::resolve_generation_model(
+                &pool,
+                "another-user",
+                &reset,
+                None,
+                Some("backend".into()),
+                Some("original-model".into()),
+                Some("persona-v1".into())
+            )
+            .await
+            .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn custom_model_generation_and_continuation_use_actual_base_model() {
+        let pool = test_pool().await;
+        seed_custom_model(&pool).await;
+        let prepared = super::prepare_generation(
+            &pool,
+            Path::new("/tmp"),
+            "user",
+            "chat",
+            serde_json::from_value(serde_json::json!({
+                "user_message": { "content_text": "Hello" },
+                "persona_version_id": "persona-v1",
+                "backend_id": "replacement",
+                "model_name": "replacement-model"
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(prepared.model_name, "replacement-model");
+        assert_eq!(
+            prepared.assistant_message.backend_id.as_deref(),
+            Some("replacement")
+        );
+        assert_eq!(
+            prepared.assistant_message.persona_version_id.as_deref(),
+            Some("persona-v1")
+        );
+        assert_eq!(
+            prepared.prompt_messages[0].content,
+            "Keep this custom prompt."
+        );
+        let saved = super::get_chat(&pool, "user", "chat").await.unwrap();
+        assert_eq!(saved.default_model_name, "replacement-model");
+        assert_eq!(saved.persona_version_id.as_deref(), Some("persona-v1"));
+
+        // Continue a historical response even after the conversation's model changed.
+        sqlx::query("UPDATE chat_messages SET status = 'complete' WHERE id = ?")
+            .bind(&prepared.assistant_message.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE chat_messages SET backend_id = 'backend', model_name = 'historical-model', persona_id = 'persona', persona_version_id = 'persona-v1' WHERE id = 'child-r1'")
+            .execute(&pool).await.unwrap();
+        let continued = prepare_continuation(
+            &pool,
+            Path::new("/tmp"),
+            "user",
+            "chat",
+            "child-r1",
+            ContinueMessageRequest {
+                inference_settings: None,
+                tool_preferences: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(continued.model_name, "historical-model");
+        assert_eq!(
+            continued.assistant_message.backend_id.as_deref(),
+            Some("backend")
+        );
+        assert_eq!(
+            continued.assistant_message.persona_version_id.as_deref(),
+            Some("persona-v1")
+        );
+        assert_eq!(
+            continued.prompt_messages[0].content,
+            "Keep this custom prompt."
+        );
+    }
+
+    #[tokio::test]
+    async fn custom_model_regeneration_and_branching_keep_the_override() {
+        for branch in [false, true] {
+            let pool = test_pool().await;
+            seed_custom_model(&pool).await;
+            let body = serde_json::json!({
+                "content_text": "Edited prompt",
+                "persona_version_id": "persona-v1",
+                "backend_id": "replacement",
+                "model_name": "replacement-model"
+            });
+            let prepared = if branch {
+                super::prepare_branch_generation(
+                    &pool,
+                    Path::new("/tmp"),
+                    "user",
+                    "chat",
+                    "parent",
+                    serde_json::from_value(body).unwrap(),
+                )
+                .await
+                .unwrap()
+            } else {
+                super::prepare_regeneration(
+                    &pool,
+                    Path::new("/tmp"),
+                    "user",
+                    "chat",
+                    "child-r1",
+                    serde_json::from_value(body).unwrap(),
+                )
+                .await
+                .unwrap()
+            };
+            assert_eq!(prepared.model_name, "replacement-model");
+            assert_eq!(
+                prepared.assistant_message.backend_id.as_deref(),
+                Some("replacement")
+            );
+            assert_eq!(
+                prepared.assistant_message.persona_version_id.as_deref(),
+                Some("persona-v1")
+            );
+            assert_eq!(
+                prepared.prompt_messages[0].content,
+                "Keep this custom prompt."
+            );
+        }
     }
 
     #[tokio::test]
