@@ -766,36 +766,7 @@ export function ModelSettingsMenu({
             </div>
 
             {selectedModelInfo && <ModelCapabilityBadges model={selectedModelInfo} />}
-            {isCustomModel && onBaseModelOverrideChange ? (
-              <div className="model-settings-field model-settings-base-model">
-                <span>Base model</span>
-                <div className="model-settings-base-row">
-                  <ModelPicker
-                    groups={baseModelGroups}
-                    personas={[]}
-                    privatePersonas={[]}
-                    isLoading={false}
-                    disabled={!canSaveConversationSettings}
-                    error={null}
-                    value={baseModelDraftValue ?? ""}
-                    ariaLabel="Choose base model"
-                    onChange={(value) =>
-                      onBaseModelOverrideChange(value === defaultBaseModelValue ? null : value)
-                    }
-                  />
-                  <button
-                    type="button"
-                    className="icon-button"
-                    aria-label="Reset base model to default"
-                    title="Reset base model to default"
-                    disabled={!canSaveConversationSettings || !isBaseModelCustomized}
-                    onClick={() => onBaseModelOverrideChange(null)}
-                  >
-                    <RotateCcw />
-                  </button>
-                </div>
-              </div>
-            ) : baseModelName && (
+            {!(isCustomModel && onBaseModelOverrideChange) && baseModelName && (
               <p className="model-settings-meta">
                 Base model: <span>{compactModelName(baseModelName)}</span>
               </p>
@@ -1159,9 +1130,39 @@ export function ModelSettingsMenu({
             <details className="model-settings-prompt model-settings-inference">
               <summary>
                 Inference
-                {isInferenceCustomized && <span>customized</span>}
+                {(isInferenceCustomized || isBaseModelCustomized) && <span>customized</span>}
               </summary>
               <div className="model-settings-inference-grid">
+                {isCustomModel && onBaseModelOverrideChange && (
+                  <div className="model-settings-field model-settings-base-model">
+                    <span>Base model</span>
+                    <div className="model-settings-base-row">
+                      <ModelPicker
+                        groups={baseModelGroups}
+                        personas={[]}
+                        privatePersonas={[]}
+                        isLoading={false}
+                        disabled={!canSaveConversationSettings}
+                        error={null}
+                        value={baseModelDraftValue ?? ""}
+                        ariaLabel="Choose base model"
+                        onChange={(value) =>
+                          onBaseModelOverrideChange(value === defaultBaseModelValue ? null : value)
+                        }
+                      />
+                      <button
+                        type="button"
+                        className="icon-button"
+                        aria-label="Reset base model to default"
+                        title="Reset base model to default"
+                        disabled={!canSaveConversationSettings || !isBaseModelCustomized}
+                        onClick={() => onBaseModelOverrideChange(null)}
+                      >
+                        <RotateCcw />
+                      </button>
+                    </div>
+                  </div>
+                )}
                 {inferenceFieldDefinitions.map((field) => renderInferenceField(field))}
               </div>
               <p className="model-settings-note">Blank fields use the model/backend default.</p>
