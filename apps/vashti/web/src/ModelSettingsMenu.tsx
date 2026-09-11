@@ -1137,6 +1137,18 @@ export function ModelSettingsMenu({
                   <div className="model-settings-field model-settings-base-model">
                     <span>Base model</span>
                     <div className="model-settings-base-row">
+                      <button
+                        type="button"
+                        className="model-settings-help"
+                        aria-label="Base model help"
+                      >
+                        <Info />
+                        <span className="model-settings-help-popover">
+                          The underlying model that generates replies. Changing it applies only to
+                          this conversation and keeps the custom model's prompt and appearance.
+                          Use New custom model from settings to save it as a separate custom model.
+                        </span>
+                      </button>
                       <ModelPicker
                         groups={baseModelGroups}
                         personas={[]}

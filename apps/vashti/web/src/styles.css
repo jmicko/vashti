@@ -2093,9 +2093,14 @@ textarea {
 
 .model-settings-base-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 40px;
+  grid-template-columns: 30px minmax(0, 1fr) 40px;
   align-items: start;
   gap: 6px;
+}
+
+.model-settings-base-row .model-settings-help {
+  align-self: start;
+  height: 40px;
 }
 
 .model-settings-base-model .model-picker {
