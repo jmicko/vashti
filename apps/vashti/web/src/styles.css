@@ -8497,7 +8497,7 @@ textarea {
     padding: 10px;
   }
 
-  .primary-action span {
+  .primary-action:not(.sidebar-new-chat) span {
     display: none;
   }
 
