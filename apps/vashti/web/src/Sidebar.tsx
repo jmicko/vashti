@@ -151,6 +151,17 @@ export function Sidebar({
         <nav className="sidebar-primary-nav" aria-label="Workspace">
           <button
             type="button"
+            className="primary-action sidebar-new-chat"
+            onClick={() => {
+              setOpenMenuChatId(null);
+              onNewChat();
+            }}
+          >
+            <MessageSquarePlus />
+            <span>New Chat</span>
+          </button>
+          <button
+            type="button"
             className={isNotesActive ? "sidebar-section-button sidebar-section-button-active" : "sidebar-section-button"}
             aria-current={isNotesActive ? "page" : undefined}
             onClick={() => {
@@ -249,12 +260,6 @@ export function Sidebar({
             })}
           </div>
         )}
-      </div>
-      <div className="sidebar-footer">
-        <button type="button" className="primary-action sidebar-new-chat" onClick={onNewChat}>
-          <MessageSquarePlus />
-          <span>New Chat</span>
-        </button>
       </div>
     </aside>
   );

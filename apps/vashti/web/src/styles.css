@@ -267,7 +267,7 @@ button svg {
   height: var(--app-height);
   min-height: 0;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
   background: var(--app-bg);
 }
@@ -696,6 +696,8 @@ textarea {
 }
 
 .sidebar-primary-nav {
+  display: grid;
+  gap: 8px;
   margin-top: 16px;
 }
 
@@ -733,13 +735,9 @@ textarea {
   padding: 16px 20px 20px;
 }
 
-.sidebar-footer {
-  border-top: 1px solid var(--line-soft);
-  padding: 12px 20px 16px;
-}
-
 .sidebar-new-chat {
   width: 100%;
+  justify-content: flex-start;
 }
 
 .chat-history p:last-child {
