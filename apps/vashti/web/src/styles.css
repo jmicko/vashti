@@ -701,6 +701,17 @@ textarea {
   margin-top: 16px;
 }
 
+.native-update-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.native-update-actions button {
+  max-width: 100%;
+  white-space: normal;
+}
+
 .sidebar-section-button {
   width: 100%;
   min-height: 42px;

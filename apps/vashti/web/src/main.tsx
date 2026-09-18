@@ -7,6 +7,7 @@ import { markPerformance } from "./performance";
 import { applyStoredTheme } from "./theme";
 import { installAppViewportHeightSync } from "./viewport";
 import { NativeConnectionProvider } from "./nativeConnections";
+import { NativeUpdatesProvider } from "./nativeUpdates";
 
 markPerformance("vashti:app-start");
 applyStoredTheme();
@@ -14,10 +15,12 @@ installAppViewportHeightSync();
 
 createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    <NativeConnectionProvider>
-      <PwaProvider>
-        <App />
-      </PwaProvider>
-    </NativeConnectionProvider>
+    <NativeUpdatesProvider>
+      <NativeConnectionProvider>
+        <PwaProvider>
+          <App />
+        </PwaProvider>
+      </NativeConnectionProvider>
+    </NativeUpdatesProvider>
   </React.StrictMode>
 );

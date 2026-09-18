@@ -14,6 +14,7 @@ import {
 } from "./theme";
 import type { User, UserSettings, VersionResponse } from "./types";
 import { NativeConnectionsSettings, useNativeConnections } from "./nativeConnections";
+import { NativeUpdateSettings } from "./nativeUpdates";
 
 export function ProfileSettings({
   user,
@@ -259,6 +260,7 @@ export function ProfileSettings({
         </section>
 
         <NativeConnectionsSettings />
+        <NativeUpdateSettings />
 
         {!isNative && <section className="settings-subsection pwa-install-section">
           <div>

@@ -58,6 +58,7 @@ import {
 } from "./toolPreferences";
 import { applyTheme, normalizeTheme, storeAndApplyTheme, storedTheme } from "./theme";
 import { usePwa } from "./pwa";
+import { useNativeUpdates } from "./nativeUpdates";
 import { useModelBackgroundWarmup } from "./useModelBackgroundWarmup";
 import { useTopbarPullToRefresh } from "./useTopbarPullToRefresh";
 import {
@@ -238,6 +239,7 @@ export function AppShell({
   const [updateStatus, setUpdateStatus] = useState<UpdateStatusResponse | null>(null);
   const [updateStatusError, setUpdateStatusError] = useState<string | null>(null);
   const { reloadLatestFrontend } = usePwa();
+  const nativeUpdates = useNativeUpdates();
   const topbarPull = useTopbarPullToRefresh(reloadLatestFrontend);
   const isAdmin = user.role === "admin";
   const page = route.page;
@@ -1462,16 +1464,26 @@ export function AppShell({
                       : "Open settings menu"
                 }
                 aria-expanded={isSettingsMenuOpen}
-                title={updateStatus?.available ? `${updateStatus.available.version} is available` : undefined}
+                title={nativeUpdates.available ? `Android app ${nativeUpdates.available.version} is available` : updateStatus?.available ? `${updateStatus.available.version} is available` : undefined}
                 onClick={activateSettingsControl}
               >
                 {isSettingsPage || isSettingsMenuOpen ? <X /> : <Cog />}
-                {updateStatus?.available && !isSettingsPage && (
+                {(updateStatus?.available || nativeUpdates.available) && !isSettingsPage && (
                   <span className="update-available-dot" aria-hidden="true" />
                 )}
               </button>
               {isSettingsMenuOpen && !isSettingsPage && (
                 <div className="settings-menu">
+                  {nativeUpdates.available && (
+                    <button
+                      type="button"
+                      className="menu-item update-menu-item"
+                      onClick={() => openSettings("profile")}
+                    >
+                      <Download />
+                      <span>Android app {nativeUpdates.available.version} available</span>
+                    </button>
+                  )}
                   {isAdmin && updateStatus?.available && (
                     <button
                       type="button"

@@ -133,6 +133,19 @@ After an admin promotes it, the stable Android download URL is:
 https://vashti.chat/releases/latest/vashti-android.apk
 ```
 
+## App Update Notices
+
+The Android app checks the official Hub independently of the connected server.
+Profile settings contain a device-local Stable/Prerelease channel choice and a
+manual check button. Automatic checks run shortly after launch and at most every
+six hours while visible; failed checks retry after fifteen minutes. A newer signed
+Android release adds a notice to the settings menu for all users, not just admins.
+The download action opens the version-specific APK in the system browser. It does
+not install the APK, update the server, or change the server's release channel.
+
+Test stable/prerelease switching, offline failures, app resume, and the APK browser
+handoff on a physical Android device before promoting a release with updater changes.
+
 ## Device Test Checklist
 
 Before promoting an Android prerelease:

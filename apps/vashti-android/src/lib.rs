@@ -5,6 +5,8 @@ mod secrets;
 #[cfg(target_os = "android")]
 mod transport;
 #[cfg(any(target_os = "android", test))]
+mod updates;
+#[cfg(any(target_os = "android", test))]
 mod validation;
 
 #[cfg(target_os = "android")]
@@ -13,6 +15,11 @@ pub fn run() {
     use tauri::Manager;
 
     tauri::Builder::default()
+        .plugin(
+            tauri_plugin_opener::Builder::new()
+                .open_js_links_on_click(false)
+                .build(),
+        )
         .register_asynchronous_uri_scheme_protocol("vashtiasset", |context, request, responder| {
             let app = context.app_handle().clone();
             let method = request.method().clone();
@@ -78,6 +85,8 @@ pub fn run() {
             transport::native_http_multipart,
             transport::native_http_stream,
             transport::native_cancel_request,
+            updates::native_check_app_update,
+            updates::native_open_app_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Vashti Android");
