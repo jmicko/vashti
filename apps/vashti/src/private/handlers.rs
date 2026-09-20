@@ -429,7 +429,27 @@ async fn stream_private_generation(
         });
 
         for call in &round.tool_calls {
-            let result = if available_tool_names.contains(&call.function.name) {
+            let is_available = available_tool_names.contains(&call.function.name);
+            let result = if is_available
+                && tools::service::calculator_tool_schema(&call.function.name).is_some()
+            {
+                // Stateless server-side arithmetic is never persisted in private chats.
+                let result =
+                    tools::calculator::execute(&call.function.name, &call.function.arguments)
+                        .unwrap_or_else(|error| serde_json::json!({ "error": error }).to_string());
+                if !send_event(
+                    &tx,
+                    &PrivateGenerateEvent::ThinkingDelta {
+                        assistant_message_id: assistant_message_id.clone(),
+                        delta: tools::service::tool_usage_block(call, &result),
+                    },
+                )
+                .await
+                {
+                    return;
+                }
+                result
+            } else if is_available {
                 let registered = broker
                     .register(&generation_id, &user_id, &session_binding)
                     .await;
@@ -596,7 +616,9 @@ async fn allowed_client_tools(
     let mut selected = Vec::new();
     for requested in requested_names {
         let name = requested.trim();
-        let Some(tool) = tools::service::client_tool_schema(name) else {
+        let Some(tool) = tools::service::client_tool_schema(name)
+            .or_else(|| tools::service::calculator_tool_schema(name))
+        else {
             return Err(ApiError::bad_request(
                 "unknown_client_tool",
                 format!("Unknown device tool: {name}"),

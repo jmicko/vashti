@@ -31,6 +31,9 @@ pub const TOOL_DIRECT_WEB_FETCH: &str = "direct_web_fetch";
 pub const TOOL_NOTES: &str = "notes";
 pub const TOOL_MEMORIES: &str = "memories";
 pub const TOOL_CHAT_HISTORY: &str = "chat_history";
+pub const TOOL_CALCULATOR: &str = "calculator";
+pub const TOOL_CALCULATE: &str = "calculate";
+pub const TOOL_CONVERT_UNITS: &str = "convert_units";
 pub const TOOL_SEARCH_NOTES: &str = "search_notes";
 pub const TOOL_READ_NOTE: &str = "read_note";
 pub const TOOL_CREATE_NOTE: &str = "create_note";
@@ -54,6 +57,7 @@ pub struct ToolSelection {
     pub notes_enabled: bool,
     pub memories_enabled: bool,
     pub chat_history_enabled: bool,
+    pub calculator_enabled: bool,
 }
 
 impl Default for ToolSelection {
@@ -67,6 +71,7 @@ impl Default for ToolSelection {
             notes_enabled: true,
             memories_enabled: true,
             chat_history_enabled: true,
+            calculator_enabled: true,
         }
     }
 }
@@ -85,6 +90,10 @@ pub fn chat_tools(
     }
 
     let mut tools = Vec::new();
+    if selection.calculator_enabled {
+        tools.push(calculator_tool_schema(TOOL_CALCULATE).expect("known calculator tool"));
+        tools.push(calculator_tool_schema(TOOL_CONVERT_UNITS).expect("known calculator tool"));
+    }
     if selection.brave_web_search_enabled
         && settings.brave_search_enabled
         && settings.has_brave_key()
@@ -169,6 +178,7 @@ pub fn chat_tools(
 
 pub fn permission_tool_id(tool_name: &str) -> &str {
     match tool_name {
+        TOOL_CALCULATE | TOOL_CONVERT_UNITS => TOOL_CALCULATOR,
         TOOL_SEARCH_NOTES | TOOL_READ_NOTE | TOOL_CREATE_NOTE | TOOL_UPDATE_NOTE
         | TOOL_TRASH_NOTE => TOOL_NOTES,
         TOOL_SEARCH_MEMORIES | TOOL_READ_MEMORY | TOOL_REMEMBER | TOOL_UPDATE_MEMORY
@@ -189,6 +199,8 @@ pub fn tool_system_prompt(settings: &ToolSettingsPrivate, tools: &[OllamaTool]) 
         available_names.join(", ")
     };
     let disabled = [
+        TOOL_CALCULATE,
+        TOOL_CONVERT_UNITS,
         TOOL_BRAVE_WEB_SEARCH,
         TOOL_OLLAMA_WEB_SEARCH,
         TOOL_OLLAMA_WEB_FETCH,
@@ -460,6 +472,27 @@ fn read_chat_history_tool() -> OllamaTool {
     )
 }
 
+pub fn calculator_tool_schema(name: &str) -> Option<OllamaTool> {
+    match name {
+        TOOL_CALCULATE => Some(function_tool(
+            name,
+            "Calculate a numeric expression using double-precision arithmetic. Operators: + - * / ^ and parentheses. Use percent(15) for 15%; % is not supported. Functions: sqrt, abs, min, max, round, floor, ceil, ln, log (base 10), exp, sin, cos, tan, asin, acos, atan. Trigonometry uses radians; constants pi and e are available. Unary signs bind before powers: -2^2 means (-2)^2 = 4; write -(2^2) for -4. Powers associate right: 2^3^2 = 512. No variables, scripts, or currency rates. Results may have floating-point rounding; not arbitrary-precision arithmetic.",
+            json!({ "type": "object", "required": ["expression"], "additionalProperties": false,
+                "properties": { "expression": { "type": "string", "maxLength": 1024,
+                    "description": "Arithmetic such as (125 + 75) * percent(18) or sqrt(81)." } } }),
+        )),
+        TOOL_CONVERT_UNITS => Some(function_tool(
+            name,
+            "Convert a numeric value between compatible units of length, mass, liquid volume, duration, or absolute temperature. US volume units are U.S. customary liquid measures, not imperial. oz is mass, us_fl_oz is volume. Cannot convert mass to volume without density. Temperatures cannot be below absolute zero. Uses double-precision arithmetic.",
+            json!({ "type": "object", "required": ["value", "from_unit", "to_unit"], "additionalProperties": false,
+                "properties": { "value": { "type": "number" },
+                    "from_unit": { "type": "string", "enum": super::calculator::unit_names() },
+                    "to_unit": { "type": "string", "enum": super::calculator::unit_names() } } }),
+        )),
+        _ => None,
+    }
+}
+
 pub fn client_tool_schema(name: &str) -> Option<OllamaTool> {
     match name {
         TOOL_SEARCH_NOTES => Some(search_notes_tool()),
@@ -499,7 +532,15 @@ pub async fn execute_tool(
     context: &ToolExecutionContext<'_>,
     call: &OllamaToolCall,
 ) -> String {
+    if !settings.tools_enabled {
+        return json!({ "error": "Tools are disabled on this server." }).to_string();
+    }
     let result = match call.function.name.as_str() {
+        TOOL_CALCULATE | TOOL_CONVERT_UNITS
+            if selection.tool_use_enabled && selection.calculator_enabled =>
+        {
+            super::calculator::execute(&call.function.name, &call.function.arguments)
+        }
         TOOL_BRAVE_WEB_SEARCH
             if selection.tool_use_enabled
                 && selection.brave_web_search_enabled
@@ -576,7 +617,9 @@ pub async fn execute_tool(
         {
             execute_chat_history_tool(client, context, call).await
         }
-        TOOL_BRAVE_WEB_SEARCH
+        TOOL_CALCULATE
+        | TOOL_CONVERT_UNITS
+        | TOOL_BRAVE_WEB_SEARCH
         | TOOL_OLLAMA_WEB_SEARCH
         | TOOL_OLLAMA_WEB_FETCH
         | TOOL_DIRECT_WEB_FETCH
@@ -605,6 +648,14 @@ pub async fn execute_tool(
 
 pub fn tool_summary(call: &OllamaToolCall) -> String {
     match call.function.name.as_str() {
+        TOOL_CALCULATE => call
+            .function
+            .arguments
+            .get("expression")
+            .and_then(|value| value.as_str())
+            .map(|expression| format!("Calculated {}", truncate_chars(expression, 96)))
+            .unwrap_or_else(|| "Calculated an expression".into()),
+        TOOL_CONVERT_UNITS => "Converted units".into(),
         TOOL_BRAVE_WEB_SEARCH | TOOL_OLLAMA_WEB_SEARCH => call
             .function
             .arguments
@@ -1492,7 +1543,10 @@ mod tests {
                 default_model_scope: NoteModelScope::default(),
             }),
             None,
-            ToolSelection::default(),
+            ToolSelection {
+                calculator_enabled: false,
+                ..ToolSelection::default()
+            },
         );
         let names = tools
             .iter()
@@ -1524,6 +1578,7 @@ mod tests {
             None,
             ToolSelection {
                 notes_enabled: false,
+                calculator_enabled: false,
                 ..ToolSelection::default()
             },
         );
@@ -1542,7 +1597,10 @@ mod tests {
                 allow_model_forget: true,
                 allow_model_chat_history: false,
             }),
-            ToolSelection::default(),
+            ToolSelection {
+                calculator_enabled: false,
+                ..ToolSelection::default()
+            },
         );
         let names = tools
             .iter()
@@ -1579,6 +1637,7 @@ mod tests {
             Some(&memory_settings),
             ToolSelection {
                 memories_enabled: false,
+                calculator_enabled: false,
                 ..ToolSelection::default()
             },
         );
@@ -1595,6 +1654,126 @@ mod tests {
                 .iter()
                 .all(|name| permission_tool_id(name) == TOOL_CHAT_HISTORY)
         );
+    }
+
+    #[test]
+    fn calculator_respects_global_and_chat_controls() {
+        let mut settings = disabled_web_settings();
+        let enabled = chat_tools(&settings, None, None, ToolSelection::default());
+        assert_eq!(
+            enabled
+                .iter()
+                .map(|tool| tool.function.name.as_str())
+                .collect::<Vec<_>>(),
+            vec![TOOL_CALCULATE, TOOL_CONVERT_UNITS]
+        );
+        assert!(
+            enabled
+                .iter()
+                .all(|tool| permission_tool_id(&tool.function.name) == TOOL_CALCULATOR)
+        );
+        assert!(
+            chat_tools(
+                &settings,
+                None,
+                None,
+                ToolSelection {
+                    calculator_enabled: false,
+                    ..ToolSelection::default()
+                }
+            )
+            .is_empty()
+        );
+        assert!(
+            chat_tools(
+                &settings,
+                None,
+                None,
+                ToolSelection {
+                    tool_use_enabled: false,
+                    ..ToolSelection::default()
+                }
+            )
+            .is_empty()
+        );
+        settings.tools_enabled = false;
+        assert!(chat_tools(&settings, None, None, ToolSelection::default()).is_empty());
+    }
+
+    #[tokio::test]
+    async fn calculator_execution_is_stateless_and_enforces_switches() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .connect_lazy("sqlite::memory:")
+            .unwrap();
+        let notes = crate::notes::retrieval::NoteRetrieval::new(pool.clone());
+        let memories = crate::memories::retrieval::MemoryRetrieval::new(pool.clone());
+        let conversations = crate::chats::retrieval::ConversationRetrieval::new(pool.clone());
+        // No schema or user exists: calculator execution must not need database access.
+        let context = ToolExecutionContext {
+            db: &pool,
+            note_retrieval: &notes,
+            memory_retrieval: &memories,
+            conversation_retrieval: &conversations,
+            user_id: "unused",
+            model_key: "unused",
+            model_name: "unused",
+            chat_id: "unused",
+            message_id: "unused",
+            tool_call_id: "unused",
+        };
+        let client = reqwest::Client::new();
+        let mut settings = disabled_web_settings();
+        let mut call: OllamaToolCall = serde_json::from_value(json!({
+            "function": { "name": TOOL_CALCULATE, "arguments": { "expression": "200 * percent(18)" } }
+        })).unwrap();
+        let result = execute_tool(
+            &client,
+            &settings,
+            ToolSelection::default(),
+            &context,
+            &call,
+        )
+        .await;
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&result).unwrap()["result"],
+            36.0
+        );
+        for selection in [
+            ToolSelection {
+                calculator_enabled: false,
+                ..ToolSelection::default()
+            },
+            ToolSelection {
+                tool_use_enabled: false,
+                ..ToolSelection::default()
+            },
+        ] {
+            let result = execute_tool(&client, &settings, selection, &context, &call).await;
+            assert!(
+                serde_json::from_str::<serde_json::Value>(&result).unwrap()["error"].is_string()
+            );
+        }
+        call.function.arguments = json!({ "expression": "1/0" });
+        let result = execute_tool(
+            &client,
+            &settings,
+            ToolSelection::default(),
+            &context,
+            &call,
+        )
+        .await;
+        assert!(serde_json::from_str::<serde_json::Value>(&result).unwrap()["error"].is_string());
+        settings.tools_enabled = false;
+        call.function.arguments = json!({ "expression": "1+1" });
+        let result = execute_tool(
+            &client,
+            &settings,
+            ToolSelection::default(),
+            &context,
+            &call,
+        )
+        .await;
+        assert!(result.contains("disabled on this server"));
     }
 
     #[test]

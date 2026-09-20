@@ -93,6 +93,7 @@ impl From<ChatToolPreferences> for ToolSelection {
             notes_enabled: preferences.tool_enabled(tools_service::TOOL_NOTES),
             memories_enabled: preferences.tool_enabled(tools_service::TOOL_MEMORIES),
             chat_history_enabled: preferences.tool_enabled(tools_service::TOOL_CHAT_HISTORY),
+            calculator_enabled: preferences.tool_enabled(tools_service::TOOL_CALCULATOR),
         }
     }
 }

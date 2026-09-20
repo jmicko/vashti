@@ -2,6 +2,7 @@ import { memo, type ReactNode, type SyntheticEvent } from "react";
 import { RetroLoader, ThinkingLoader } from "./common";
 import { MarkdownContent } from "./MarkdownContent";
 import { toolIcon } from "./toolUi";
+import { calculatorResult } from "./calculatorResult";
 import type { ChatMessage, MessageStreamSegment, ThinkingSegment, ToolUsageRecord } from "./types";
 
 export function MessageStreamContent({
@@ -84,11 +85,17 @@ export const ThinkingContent = memo(function ThinkingContent({
 });
 
 const ToolUsageCard = memo(function ToolUsageCard({ usage }: { usage: ToolUsageRecord }) {
+  const calculation = calculatorResult(usage);
   return (
     <details className="message-tool-card">
       <summary>
         {toolIcon(usage.name)}
-        <span>{usage.summary}</span>
+        {calculation ? (
+          <span className="message-calculation">
+            <span>{calculation.expression}</span>
+            <strong>= {calculation.result}</strong>
+          </span>
+        ) : <span>{usage.summary}</span>}
       </summary>
       <div className="message-tool-details">
         <label>

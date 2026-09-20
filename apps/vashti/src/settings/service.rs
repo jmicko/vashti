@@ -197,6 +197,20 @@ pub async fn get_available_tools(
     });
 
     if settings.tools_enabled {
+        if tool_allowed(
+            crate::tools::service::TOOL_CALCULATOR,
+            &user_tags,
+            &tool_tags,
+        ) {
+            for list in [&mut tools, &mut device_tools] {
+                list.push(AvailableToolResponse {
+                    id: crate::tools::service::TOOL_CALCULATOR,
+                    label: "Calculator",
+                    description: "Calculate expressions and convert units without external services.",
+                    warning: None,
+                });
+            }
+        }
         if settings.brave_search_enabled
             && settings.has_brave_key()
             && tool_allowed(
@@ -1101,6 +1115,53 @@ mod tests {
             .await
             .expect("ensure app settings");
         pool
+    }
+
+    #[tokio::test]
+    async fn calculator_catalog_enforces_permissions_in_both_chat_modes() {
+        let pool = test_pool().await;
+        let user_id = register_user(&pool, "calculator-user".into(), None, "secret-pass".into())
+            .await
+            .expect("register")
+            .user
+            .id;
+        let catalog = get_available_tools(&pool, &user_id).await.unwrap();
+        assert!(!catalog.tools.iter().any(|tool| tool.id == "calculator"));
+        assert!(
+            !catalog
+                .device_tools
+                .iter()
+                .any(|tool| tool.id == "calculator")
+        );
+        sqlx::query("UPDATE app_settings SET tools_enabled = 1 WHERE id = 1")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let catalog = get_available_tools(&pool, &user_id).await.unwrap();
+        assert!(catalog.tools.iter().any(|tool| tool.id == "calculator"));
+        assert!(
+            catalog
+                .device_tools
+                .iter()
+                .any(|tool| tool.id == "calculator")
+        );
+        sqlx::query("DELETE FROM tool_permission_tags WHERE tool_id = 'calculator'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let catalog = get_available_tools(&pool, &user_id).await.unwrap();
+        assert!(!catalog.tools.iter().any(|tool| tool.id == "calculator"));
+        assert!(
+            !catalog
+                .device_tools
+                .iter()
+                .any(|tool| tool.id == "calculator")
+        );
+        assert!(
+            !super::tool_is_available_for_user(&pool, &user_id, "calculator")
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]

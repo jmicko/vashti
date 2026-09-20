@@ -6,6 +6,7 @@ import {
 } from "react";
 import {
   BrainCircuit,
+  Calculator,
   FileText,
   MessageSquareText,
   NotebookPen,
@@ -326,6 +327,23 @@ export function ToolsSettingsPanel({ onToolsChanged }: { onToolsChanged: () => P
                 Reset to Default
               </button>
             </details>
+          </section>
+
+          <section className="settings-subsection">
+            <div>
+              <p className="eyebrow">Vashti</p>
+              <h2>Calculator</h2>
+            </div>
+            <div className="tool-setting-heading">
+              <Calculator aria-hidden="true" />
+              <div><strong>Calculator tools</strong><p>Arithmetic and unit conversions. No API key required.</p></div>
+            </div>
+            <PermissionTagEditor
+              label="Tags"
+              tags={toolPermissionTags.calculator ?? []}
+              availableTags={availableTags}
+              onChange={(tags) => setToolPermissionTags((current) => ({ ...current, calculator: tags }))}
+            />
           </section>
 
           <section className="settings-subsection">

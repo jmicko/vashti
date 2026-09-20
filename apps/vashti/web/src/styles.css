@@ -4817,6 +4817,21 @@ textarea {
   flex: 0 0 auto;
 }
 
+.message-calculation {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.message-calculation strong {
+  color: var(--text);
+}
+
 .message-tool-details {
   border-top: 1px solid rgba(var(--info-rgb), 0.22);
   display: grid;

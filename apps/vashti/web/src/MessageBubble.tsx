@@ -589,7 +589,7 @@ function MessageBubbleCard({
                 title={message.stats ? "Message stats" : "No stats received"}
                 aria-label={message.stats ? "Message stats" : "No stats received"}
                 aria-expanded={showStats}
-                disabled={isGenerating || message.status === "streaming"}
+                disabled={message.status === "streaming"}
                 onClick={() => setShowStats((open) => !open)}
               >
                 <Info />

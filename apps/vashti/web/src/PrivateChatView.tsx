@@ -1151,14 +1151,15 @@ export function PrivateChatView({
 
   async function selectedDeviceToolNames() {
     const preferences = chatRef.current?.tool_preferences ?? defaultToolPreferences;
-    if (
-      !preferences.tool_use_enabled ||
-      !toolPreferenceEnabled(preferences, DEVICE_NOTES_TOOL_ID) ||
-      !availableTools.some((tool) => tool.id === DEVICE_NOTES_TOOL_ID)
-    ) {
-      return [];
+    if (!preferences.tool_use_enabled) return [];
+    const names: string[] = [];
+    if (toolPreferenceEnabled(preferences, "calculator") && availableTools.some((tool) => tool.id === "calculator")) {
+      names.push("calculate", "convert_units");
     }
-    return enabledDeviceNoteToolNames();
+    if (toolPreferenceEnabled(preferences, DEVICE_NOTES_TOOL_ID) && availableTools.some((tool) => tool.id === DEVICE_NOTES_TOOL_ID)) {
+      names.push(...await enabledDeviceNoteToolNames());
+    }
+    return names;
   }
 
   async function executeClientToolCall(event: ClientToolCallEvent) {

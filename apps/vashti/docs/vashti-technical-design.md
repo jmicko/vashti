@@ -189,6 +189,30 @@ MVP tool behavior:
 * tool calls and tool results are relayed through the server during generation; final chat content remains normal assistant output
 * direct page fetch must block localhost, private networks, link-local addresses, multicast addresses, and embedded URL credentials
 
+#### Calculator
+
+The `calculator` permission family exposes `calculate` and `convert_units` in
+standard and private-local chats. It needs no API key, follows the global tool
+switch, admin permission tags, and each chat's Calculator toggle. Arithmetic runs
+on the server without external requests. In private-local chats, expressions and
+results remain transient on the server, just like the rest of the generation.
+
+Expressions use `fasteval` with a restricted arithmetic vocabulary, a 1024-byte
+limit, and a nesting limit of 32. Variables, printing, scripts, comparisons, and
+arbitrary function names are rejected. Percentages use `percent(15)` or `15/100`;
+`%` is deliberately rejected to avoid confusing percentage and remainder. Unary
+signs bind before powers: `-2^2` is `(-2)^2`; write `-(2^2)` for negative four.
+Powers associate right. Math functions and constants are listed in the tool schema.
+Calculations use double-precision floating point, not exact decimal arithmetic.
+
+Conversions support length, mass, liquid volume, duration, and absolute
+temperature, with accepted unit names supplied as schema enums. U.S. liquid
+units use explicit `us_` names rather than ambiguous cups or gallons. Conversion
+factors follow [NIST SP 811](https://www.nist.gov/pml/special-publication-811/nist-guide-si-appendix-b-conversion-factors/nist-guide-si-appendix-b8).
+Incompatible dimensions, temperatures below absolute zero, and nonfinite final
+results return errors. Chat tool activity displays the expression and result,
+with the original arguments and result available in the expandable inspector.
+
 ---
 
 ## 3. Database Design
@@ -2164,6 +2188,9 @@ Behavior:
   tag-based permissions before their schemas reach Ollama
 * response uses the same stream format as standard generation, with an
   additional `client_tool_call` event when browser execution is required
+* `client_tools` may also request `calculate` and `convert_units`; these stateless
+  functions execute on the server and return ordinary tool activity without a
+  browser round trip or any private-content database writes
 
 Example client tool event:
 

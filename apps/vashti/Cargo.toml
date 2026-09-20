@@ -9,6 +9,7 @@ axum = { version = "0.8", features = ["multipart"] }
 axum-extra = { version = "0.10", features = ["cookie"] }
 base64 = "0.22"
 futures-util = "0.3"
+fasteval = { version = "0.2.4", default-features = false }
 flate2 = "1"
 libc = "0.2"
 mime_guess = "2"
