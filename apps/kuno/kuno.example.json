@@ -1,0 +1,10 @@
+{
+  "listen": "127.0.0.1:11433",
+  "control_listen": "127.0.0.1:11432",
+  "upstream": "127.0.0.1:11434",
+  "state_dir": "apps/kuno/data",
+  "max_waiting": 32,
+  "queue_timeout_seconds": 120,
+  "response_header_timeout_seconds": 300,
+  "stream_idle_timeout_seconds": 300
+}

@@ -1,0 +1,82 @@
+use serde::{Deserialize, Serialize};
+use std::{
+    net::SocketAddr,
+    path::{Path, PathBuf},
+};
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Config {
+    pub listen: SocketAddr,
+    pub control_listen: SocketAddr,
+    /// A literal local address avoids DNS changes, proxy environment variables,
+    /// remote redirects, and arbitrary URL/path forwarding.
+    pub upstream: SocketAddr,
+    pub state_dir: PathBuf,
+    /// Managed installs remain paused until the installer activates them. On
+    /// subsequent boots this root-owned marker permits ordinary admission.
+    pub activation_file: Option<PathBuf>,
+    pub max_waiting: usize,
+    pub queue_timeout_seconds: u64,
+    pub response_header_timeout_seconds: u64,
+    pub stream_idle_timeout_seconds: u64,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            listen: "127.0.0.1:11433".parse().unwrap(),
+            control_listen: "127.0.0.1:11432".parse().unwrap(),
+            upstream: "127.0.0.1:11434".parse().unwrap(),
+            state_dir: PathBuf::from("apps/kuno/data"),
+            activation_file: None,
+            max_waiting: 32,
+            queue_timeout_seconds: 120,
+            response_header_timeout_seconds: 300,
+            stream_idle_timeout_seconds: 300,
+        }
+    }
+}
+
+impl Config {
+    pub fn read(path: &Path) -> Result<Self, &'static str> {
+        let bytes = std::fs::read(path).map_err(|_| "configuration_read_failed")?;
+        let config: Self = serde_json::from_slice(&bytes).map_err(|_| "configuration_invalid")?;
+        config.validate()?;
+        Ok(config)
+    }
+
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.state_dir.as_os_str().is_empty() {
+            return Err("state_directory_required");
+        }
+        if !self.upstream.ip().is_loopback() || !self.control_listen.ip().is_loopback() {
+            return Err("upstream_and_control_must_be_loopback");
+        }
+        // Conservatively reject same-port setups even across address families.
+        let ports = [
+            self.listen.port(),
+            self.control_listen.port(),
+            self.upstream.port(),
+        ];
+        if ports.contains(&0)
+            || ports[0] == ports[1]
+            || ports[0] == ports[2]
+            || ports[1] == ports[2]
+        {
+            return Err("ports_must_be_nonzero_and_distinct");
+        }
+        if self.max_waiting > 1024
+            || [
+                self.queue_timeout_seconds,
+                self.response_header_timeout_seconds,
+                self.stream_idle_timeout_seconds,
+            ]
+            .iter()
+            .any(|&n| n == 0 || n > 86400)
+        {
+            return Err("invalid_admission_bounds");
+        }
+        Ok(())
+    }
+}

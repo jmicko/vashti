@@ -59,9 +59,15 @@ For a release-style build with embedded frontend assets:
 ```text
 apps/vashti      Main Vashti chat application
 apps/vashti-hub  Release hosting site for vashti.chat
+apps/kuno        Inference-host gateway (in development)
 ```
 
 `vashti` is the app that users install. `vashti-hub` is the small release server used to publish builds and serve install/update metadata.
+
+The [Kuno inference host specification](docs/kuno-spec.md) describes the planned
+Ollama gateway, GPU coordination, and image-generation integration.
+The [Kuno development guide](apps/kuno/README.md) covers running the gateway on
+a separate port and the current implementation limits.
 
 ## Public Deployment
 

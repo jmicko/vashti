@@ -1,8 +1,10 @@
 [workspace]
 members = [
+    "apps/kuno",
     "apps/vashti",
     "apps/vashti-android",
     "apps/vashti-hub",
     "crates/vashti-update-manifest",
+    "crates/kuno-protocol",
 ]
 resolver = "3"

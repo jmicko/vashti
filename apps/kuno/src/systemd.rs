@@ -1,0 +1,903 @@
+//! Linux system-service adoption. Only explicit CLI installation/restore enters
+//! this module's mutation paths; the normal gateway remains unprivileged.
+use crate::{
+    config::Config,
+    deployment::{Artifact, Host, Phase, Transaction},
+    storage, takeover,
+};
+use serde::{Deserialize, Serialize};
+use std::{
+    collections::BTreeSet,
+    fs,
+    io::Read,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener},
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
+    thread,
+    time::{Duration, Instant},
+};
+
+type Result<T> = std::result::Result<T, &'static str>;
+const SETUP: &str = "/var/lib/kuno-setup";
+pub(crate) const READY: &str = "/etc/kuno/activation-ready";
+const BINARY: &str = "/usr/local/lib/kuno/kuno";
+const GATEWAY: &str = "kuno.service";
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct Settings {
+    host: Option<SocketAddr>,
+    max_loaded: Option<u32>,
+    request_logging: bool,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Installation {
+    version: u32,
+    service: String,
+    original_listen: SocketAddr,
+    original_executable: PathBuf,
+    original_settings: Settings,
+    ollama_version: String,
+    config: Config,
+    token: String,
+}
+
+#[derive(Clone, Debug)]
+struct Socket {
+    address: SocketAddr,
+    state: u8,
+    inode: u64,
+}
+
+/// No command output is logged. Bound both execution and captured bytes; never
+/// spill process environment or service diagnostics to temporary files.
+pub(crate) fn command(args: &[&str]) -> Result<String> {
+    let mut child = Command::new("/usr/bin/systemctl")
+        .args(args)
+        .env("SYSTEMD_PAGER", "")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| "systemctl_unavailable")?;
+    let stdout = child.stdout.take().ok_or("systemctl_capture_failed")?;
+    let reader = thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stdout
+            .take(1024 * 1024 + 1)
+            .read_to_end(&mut bytes)
+            .map(|_| bytes)
+    });
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let status = loop {
+        if let Some(status) = child.try_wait().map_err(|_| "systemctl_wait_failed")? {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("systemctl_timeout");
+        }
+        thread::sleep(Duration::from_millis(25));
+    };
+    let bytes = reader
+        .join()
+        .map_err(|_| "systemctl_capture_failed")?
+        .map_err(|_| "systemctl_capture_failed")?;
+    if !status.success() {
+        return Err("systemctl_failed");
+    }
+    if bytes.len() > 1024 * 1024 {
+        return Err("systemctl_output_too_large");
+    }
+    String::from_utf8(bytes).map_err(|_| "systemctl_encoding_invalid")
+}
+
+fn sockets() -> Result<Vec<Socket>> {
+    let mut sockets = Vec::new();
+    for (path, v6) in [("/proc/net/tcp", false), ("/proc/net/tcp6", true)] {
+        let text = match fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(e) if v6 && e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => return Err("socket_inventory_unavailable"),
+        };
+        for line in text.lines().skip(1) {
+            sockets.push(parse_socket(line, v6)?);
+        }
+    }
+    Ok(sockets)
+}
+
+fn parse_socket(line: &str, v6: bool) -> Result<Socket> {
+    let columns: Vec<_> = line.split_ascii_whitespace().collect();
+    if columns.len() < 10 {
+        return Err("socket_inventory_invalid");
+    }
+    let (address, port) = columns[1]
+        .split_once(':')
+        .ok_or("socket_inventory_invalid")?;
+    let mut bytes = Vec::new();
+    if address.len() != if v6 { 32 } else { 8 } {
+        return Err("socket_inventory_invalid");
+    }
+    for word in address.as_bytes().chunks(8) {
+        let word = std::str::from_utf8(word).map_err(|_| "socket_inventory_invalid")?;
+        bytes.extend(
+            u32::from_str_radix(word, 16)
+                .map_err(|_| "socket_inventory_invalid")?
+                .to_ne_bytes(),
+        );
+    }
+    let ip = if v6 {
+        IpAddr::V6(Ipv6Addr::from(
+            <[u8; 16]>::try_from(bytes).map_err(|_| "socket_inventory_invalid")?,
+        ))
+    } else {
+        IpAddr::V4(Ipv4Addr::from(
+            <[u8; 4]>::try_from(bytes).map_err(|_| "socket_inventory_invalid")?,
+        ))
+    };
+    Ok(Socket {
+        address: SocketAddr::new(
+            ip,
+            u16::from_str_radix(port, 16).map_err(|_| "socket_inventory_invalid")?,
+        ),
+        state: u8::from_str_radix(columns[3], 16).map_err(|_| "socket_inventory_invalid")?,
+        inode: columns[9].parse().map_err(|_| "socket_inventory_invalid")?,
+    })
+}
+
+pub(crate) fn observed_listener(configured: SocketAddr) -> Result<SocketAddr> {
+    let listeners: Vec<_> = sockets()?
+        .into_iter()
+        .filter(|s| s.state == 10 && s.address.port() == configured.port())
+        .collect();
+    if listeners.len() != 1 {
+        return Err("ollama_listener_missing_or_ambiguous");
+    }
+    let actual = listeners[0].address;
+    if actual == configured {
+        return Ok(actual);
+    }
+    if configured.ip().is_unspecified()
+        && actual.ip().is_unspecified()
+        && actual.is_ipv6()
+        && fs::read_to_string("/proc/sys/net/ipv6/bindv6only")
+            .map_err(|_| "dual_stack_setting_unavailable")?
+            .trim()
+            == "0"
+    {
+        return Ok(actual);
+    }
+    Err("configured_listener_does_not_match_actual_listener")
+}
+
+fn pid(service: &str) -> Result<u32> {
+    let pid = takeover::property(service, "MainPID")?
+        .trim()
+        .parse()
+        .map_err(|_| "service_pid_invalid")?;
+    if pid == 0 {
+        return Err("service_not_running");
+    }
+    Ok(pid)
+}
+
+fn owns_listener(pid: u32, address: SocketAddr) -> Result<()> {
+    let mut owned = BTreeSet::new();
+    for entry in
+        fs::read_dir(format!("/proc/{pid}/fd")).map_err(|_| "listener_ownership_requires_root")?
+    {
+        let entry = entry.map_err(|_| "process_descriptor_unreadable")?;
+        if let Ok(target) = fs::read_link(entry.path())
+            && let Some(inode) = target
+                .to_str()
+                .and_then(|s| s.strip_prefix("socket:["))
+                .and_then(|s| s.strip_suffix(']'))
+                .and_then(|s| s.parse::<u64>().ok())
+        {
+            owned.insert(inode);
+        }
+    }
+    let listeners: Vec<_> = sockets()?
+        .into_iter()
+        .filter(|s| s.state == 10 && s.address.port() == address.port())
+        .collect();
+    if listeners.len() != 1
+        || listeners[0].address != address
+        || !owned.contains(&listeners[0].inode)
+    {
+        return Err("listener_not_owned_by_expected_service");
+    }
+    Ok(())
+}
+
+fn settings(pid: u32) -> Result<Settings> {
+    let bytes = fs::read(format!("/proc/{pid}/environ"))
+        .map_err(|_| "process_environment_requires_root")?;
+    let mut settings = Settings {
+        host: None,
+        max_loaded: None,
+        request_logging: false,
+    };
+    for entry in bytes.split(|b| *b == 0) {
+        if let Some(value) = entry.strip_prefix(b"OLLAMA_HOST=") {
+            settings.host = Some(takeover::parse_listen(
+                std::str::from_utf8(value).map_err(|_| "process_host_invalid")?,
+            )?);
+        } else if let Some(value) = entry.strip_prefix(b"OLLAMA_MAX_LOADED_MODELS=") {
+            settings.max_loaded = Some(
+                std::str::from_utf8(value)
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .ok_or("process_model_limit_invalid")?,
+            );
+        } else if let Some(value) = entry.strip_prefix(b"OLLAMA_DEBUG_LOG_REQUESTS=") {
+            settings.request_logging = match value {
+                b"1" | b"true" => true,
+                b"0" | b"false" | b"" => false,
+                _ => return Err("request_logging_setting_invalid"),
+            };
+        }
+    }
+    Ok(settings)
+}
+
+fn require_root() -> Result<()> {
+    // SAFETY: geteuid has no pointer arguments or process side effects.
+    if unsafe { libc::geteuid() } != 0 {
+        return Err("root_required_run_this_command_with_sudo");
+    }
+    Ok(())
+}
+
+fn loopback(address: SocketAddr) -> SocketAddr {
+    if address.ip().is_unspecified() {
+        SocketAddr::new(
+            if address.is_ipv6() {
+                IpAddr::V6(Ipv6Addr::LOCALHOST)
+            } else {
+                IpAddr::V4(Ipv4Addr::LOCALHOST)
+            },
+            address.port(),
+        )
+    } else {
+        address
+    }
+}
+
+fn client() -> Result<reqwest::blocking::Client> {
+    reqwest::blocking::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .pool_max_idle_per_host(0)
+        .timeout(Duration::from_secs(2))
+        .build()
+        .map_err(|_| "health_client_failed")
+}
+
+fn json(
+    address: SocketAddr,
+    path: &str,
+    token: Option<&str>,
+    post: bool,
+) -> Result<serde_json::Value> {
+    let client = client()?;
+    let url = format!("http://{}{path}", loopback(address));
+    let mut request = if post {
+        client.post(url)
+    } else {
+        client.get(url)
+    };
+    if let Some(token) = token {
+        request = request.bearer_auth(token);
+    }
+    let response = request.send().map_err(|_| "health_request_failed")?;
+    if !response.status().is_success() {
+        return Err("health_response_unsuccessful");
+    }
+    let mut bytes = Vec::new();
+    response
+        .take(65537)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "health_body_failed")?;
+    if bytes.len() > 65536 {
+        return Err("health_body_too_large");
+    }
+    serde_json::from_slice(&bytes).map_err(|_| "health_json_invalid")
+}
+
+fn version(address: SocketAddr) -> Result<String> {
+    let value = json(address, "/api/version", None, false)?;
+    value
+        .get("version")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty() && s.len() <= 128)
+        .map(str::to_owned)
+        .ok_or("ollama_version_invalid")
+}
+
+fn wait(mut check: impl FnMut() -> Result<()>) -> Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(45);
+    loop {
+        match check() {
+            Ok(()) => return Ok(()),
+            Err(e) if Instant::now() >= deadline => return Err(e),
+            Err(_) => {}
+        }
+        thread::sleep(Duration::from_millis(200));
+    }
+}
+
+fn action(service: &str, verb: &str, active: bool) -> Result<()> {
+    command(&[verb, "--no-block", service])?;
+    wait(|| {
+        let state = takeover::property(service, "ActiveState")?;
+        if (active && state.trim() == "active")
+            || (!active && matches!(state.trim(), "inactive" | "failed"))
+        {
+            Ok(())
+        } else {
+            Err("service_transition_timeout")
+        }
+    })
+}
+
+fn quiet(port: u16) -> Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut clear_samples = 0;
+    while clear_samples < 3 {
+        if sockets()?
+            .iter()
+            .any(|s| s.address.port() == port && s.state != 10 && s.state != 6)
+        {
+            clear_samples = 0;
+        } else {
+            clear_samples += 1;
+        }
+        if Instant::now() >= deadline {
+            return Err("ollama_has_open_connections_close_clients_and_retry");
+        }
+        thread::sleep(Duration::from_millis(150));
+    }
+    Ok(())
+}
+
+fn trusted_file(path: &Path) -> Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    let metadata = fs::metadata(path).map_err(|_| "service_file_unavailable")?;
+    if !metadata.is_file() || metadata.uid() != 0 || metadata.mode() & 0o022 != 0 {
+        return Err("service_file_not_root_controlled");
+    }
+    Ok(())
+}
+
+fn capture(service: &str, config: &Config) -> Result<Installation> {
+    let plan = takeover::inspect(service, config)?;
+    if service == GATEWAY || plan.active_state != "active" {
+        return Err("installation_requires_running_ollama_service");
+    }
+    let process = pid(service)?;
+    owns_listener(process, plan.original_listen)?;
+    let executable = fs::read_link(format!("/proc/{process}/exe"))
+        .map_err(|_| "service_executable_unreadable")?;
+    trusted_file(&executable)?;
+    if executable.file_name().and_then(|n| n.to_str()) != Some("ollama") {
+        return Err("service_executable_is_not_ollama");
+    }
+    let arguments =
+        fs::read(format!("/proc/{process}/cmdline")).map_err(|_| "service_arguments_unreadable")?;
+    let args: Vec<_> = arguments
+        .split(|b| *b == 0)
+        .filter(|s| !s.is_empty())
+        .collect();
+    if args.len() != 2 || args[1] != b"serve" {
+        return Err("unsupported_ollama_service_command");
+    }
+    let fragment = takeover::property(service, "FragmentPath")?;
+    trusted_file(Path::new(fragment.trim()))?;
+    for path in takeover::property(service, "DropInPaths")?.split_ascii_whitespace() {
+        trusted_file(Path::new(path))?;
+    }
+    if takeover::property(service, "KillMode")?.trim() != "control-group" {
+        return Err("ollama_service_requires_control_group_kill_mode");
+    }
+    if fs::read_link(format!("/proc/{process}/ns/net")).ok()
+        != fs::read_link("/proc/self/ns/net").ok()
+    {
+        return Err("ollama_network_namespace_unsupported");
+    }
+    let original_settings = settings(process)?;
+    let env = takeover::parse_environment(&takeover::property(service, "Environment")?)?;
+    if original_settings.max_loaded
+        != env
+            .get("OLLAMA_MAX_LOADED_MODELS")
+            .map(|s| s.parse::<u32>())
+            .transpose()
+            .map_err(|_| "model_limit_invalid")?
+    {
+        return Err("ollama_effective_environment_differs_from_unit");
+    }
+    let mut random = [0u8; 32];
+    fs::File::open("/dev/urandom")
+        .and_then(|mut f| f.read_exact(&mut random))
+        .map_err(|_| "credential_generation_failed")?;
+    let mut config = plan.proposed_config;
+    config.state_dir = "/var/lib/kuno".into();
+    config.activation_file = Some(READY.into());
+    Ok(Installation {
+        version: 1,
+        service: service.into(),
+        original_listen: plan.original_listen,
+        original_executable: executable,
+        original_settings,
+        ollama_version: version(plan.original_listen)?,
+        config,
+        token: random.iter().map(|b| format!("{b:02x}")).collect(),
+    })
+}
+
+pub(crate) fn ollama_drop_in(upstream: SocketAddr) -> String {
+    format!(
+        "[Service]\nEnvironment=\"OLLAMA_HOST={}\"\nEnvironment=\"OLLAMA_DEBUG_LOG_REQUESTS=false\"\nStandardOutput=null\nStandardError=null\nLimitCORE=0\nMemorySwapMax=0\n",
+        upstream
+    )
+}
+
+fn artifacts(installation: &Installation, executable: Vec<u8>) -> Result<Vec<Artifact>> {
+    let drop_in = ollama_drop_in(installation.config.upstream);
+    Ok(vec![
+        Artifact {
+            path: "etc/kuno/config.json".into(),
+            bytes: serde_json::to_vec_pretty(&installation.config)
+                .map_err(|_| "config_encoding_failed")?,
+            mode: 0o644,
+        },
+        Artifact {
+            path: "etc/kuno/control-token".into(),
+            bytes: installation.token.as_bytes().to_vec(),
+            mode: 0o600,
+        },
+        Artifact {
+            path: "etc/systemd/system/kuno.service".into(),
+            bytes: takeover::gateway_unit(&installation.service).into_bytes(),
+            mode: 0o644,
+        },
+        Artifact {
+            path: format!(
+                "etc/systemd/system/{}.d/zzzz-kuno.conf",
+                installation.service
+            )
+            .into(),
+            bytes: drop_in.into_bytes(),
+            mode: 0o644,
+        },
+        Artifact {
+            path: BINARY.trim_start_matches('/').into(),
+            bytes: executable,
+            mode: 0o755,
+        },
+    ])
+}
+
+struct SystemdHost {
+    installation: Installation,
+    may_have_admitted_work: bool,
+}
+
+impl SystemdHost {
+    fn check_original(&self) -> Result<()> {
+        let i = &self.installation;
+        let process = pid(&i.service)?;
+        if fs::read_link(format!("/proc/{process}/exe"))
+            .map_err(|_| "service_executable_unreadable")?
+            != i.original_executable
+        {
+            return Err("ollama_executable_changed");
+        }
+        owns_listener(process, i.original_listen)?;
+        if settings(process)? != i.original_settings {
+            return Err("ollama_environment_changed");
+        }
+        Ok(())
+    }
+    fn status(&self) -> Result<serde_json::Value> {
+        json(
+            self.installation.config.control_listen,
+            "/kuno/v1/status",
+            Some(&self.installation.token),
+            false,
+        )
+    }
+}
+
+impl Host for SystemdHost {
+    fn preflight(&mut self) -> Result<()> {
+        require_root()?;
+        self.check_original()?;
+        if takeover::property(GATEWAY, "LoadState")?.trim() != "not-found" {
+            return Err("kuno_service_already_exists");
+        }
+        use std::os::unix::fs::PermissionsExt;
+        for path in ["/etc/kuno", "/usr/local/lib/kuno"] {
+            if let Ok(metadata) = fs::metadata(path)
+                && metadata.permissions().mode() & 0o005 != 0o005
+            {
+                return Err("existing_installation_directory_not_accessible_to_service");
+            }
+        }
+        for entry in
+            fs::read_dir("/etc/systemd/system").map_err(|_| "systemd_directory_unreadable")?
+        {
+            let entry = entry.map_err(|_| "systemd_directory_unreadable")?;
+            if entry
+                .file_type()
+                .map_err(|_| "systemd_directory_unreadable")?
+                .is_dir()
+                && fs::symlink_metadata(entry.path().join(GATEWAY)).is_ok()
+            {
+                return Err("preexisting_kuno_enable_link_requires_manual_review");
+            }
+        }
+        for address in [
+            self.installation.config.upstream,
+            self.installation.config.control_listen,
+        ] {
+            TcpListener::bind(address).map_err(|_| "installation_port_occupied")?;
+        }
+        if fs::symlink_metadata(READY).is_ok() {
+            return Err("activation_marker_already_exists");
+        }
+        if Path::new("/var/lib/private/kuno/upstream-in-flight").exists()
+            || Path::new("/var/lib/kuno/upstream-in-flight").exists()
+        {
+            return Err("upstream_recovery_required_before_installation");
+        }
+        quiet(self.installation.original_listen.port())
+    }
+    fn original_active(&mut self) -> Result<bool> {
+        Ok(takeover::property(&self.installation.service, "ActiveState")?.trim() == "active")
+    }
+    fn stop_original(&mut self) -> Result<()> {
+        action(&self.installation.service, "stop", false)
+    }
+    fn reload(&mut self) -> Result<()> {
+        command(&["daemon-reload"]).map(|_| ())
+    }
+    fn start_private_upstream(&mut self) -> Result<()> {
+        action(&self.installation.service, "start", true)
+    }
+    fn verify_private_upstream(&mut self) -> Result<()> {
+        wait(|| {
+            let i = &self.installation;
+            let process = pid(&i.service)?;
+            owns_listener(process, i.config.upstream)?;
+            let actual = settings(process)?;
+            if actual.host != Some(i.config.upstream)
+                || actual.max_loaded != i.original_settings.max_loaded
+                || actual.request_logging
+            {
+                return Err("private_upstream_environment_incorrect");
+            }
+            if version(i.config.upstream)? != i.ollama_version {
+                return Err("ollama_version_changed");
+            }
+            Ok(())
+        })
+    }
+    fn start_gateway(&mut self) -> Result<()> {
+        action(GATEWAY, "start", true)
+    }
+    fn verify_gateway(&mut self) -> Result<()> {
+        wait(|| {
+            let i = &self.installation;
+            let process = pid(GATEWAY)?;
+            owns_listener(process, i.config.listen)?;
+            owns_listener(process, i.config.control_listen)?;
+            let status = self.status()?;
+            if status["mode"] != "gateway_only" || status["admission"]["recovery_required"] != false
+            {
+                return Err("gateway_not_ready");
+            }
+            if version(i.config.listen)? != i.ollama_version {
+                return Err("gateway_upstream_mismatch");
+            }
+            if i.config.listen
+                == SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), i.config.listen.port())
+                && version(SocketAddr::new(
+                    IpAddr::V4(Ipv4Addr::LOCALHOST),
+                    i.config.listen.port(),
+                ))? != i.ollama_version
+            {
+                return Err("gateway_ipv4_compatibility_failed");
+            }
+            Ok(())
+        })
+    }
+    fn stop_gateway(&mut self) -> Result<()> {
+        let load = takeover::property(GATEWAY, "LoadState")?;
+        if load.trim() == "not-found" {
+            remove_activation()?;
+            return Ok(());
+        }
+        if takeover::property(GATEWAY, "FragmentPath")?.trim() != "/etc/systemd/system/kuno.service"
+            || !takeover::property(GATEWAY, "DropInPaths")?
+                .trim()
+                .is_empty()
+        {
+            return Err("gateway_service_changed_restore_refused");
+        }
+        remove_activation()?;
+        if takeover::property(GATEWAY, "ActiveState")?.trim() == "active"
+            && self.may_have_admitted_work
+        {
+            json(
+                self.installation.config.control_listen,
+                "/kuno/v1/admission/pause",
+                Some(&self.installation.token),
+                true,
+            )?;
+            wait(|| {
+                let status = self.status()?;
+                if status["admission"]["active"] == false
+                    && status["admission"]["recovery_required"] == false
+                {
+                    Ok(())
+                } else {
+                    Err("gateway_must_finish_or_recover_work_before_restore")
+                }
+            })?;
+        }
+        // An interrupted restore may already have removed the unit after
+        // disabling it. Cached systemd state can still report it as loaded.
+        if Path::new("/etc/systemd/system/kuno.service").exists() {
+            command(&["disable", GATEWAY])?;
+        }
+        action(GATEWAY, "stop", false)
+    }
+    fn restore_original(&mut self, was_active: bool) -> Result<()> {
+        if was_active {
+            action(&self.installation.service, "start", true)
+        } else {
+            action(&self.installation.service, "stop", false)
+        }
+    }
+    fn verify_original(&mut self, was_active: bool) -> Result<()> {
+        if !was_active {
+            return Ok(());
+        }
+        wait(|| {
+            self.check_original()?;
+            version(self.installation.original_listen).map(|_| ())
+        })
+    }
+    fn activate_gateway(&mut self) -> Result<()> {
+        command(&["enable", GATEWAY])?;
+        if activation_ready(Path::new(READY))? {
+            return Ok(());
+        }
+        self.may_have_admitted_work = true;
+        json(
+            self.installation.config.control_listen,
+            "/kuno/v1/admission/resume",
+            Some(&self.installation.token),
+            true,
+        )?;
+        if self.status()?["admission"]["paused"] != false {
+            return Err("gateway_activation_failed");
+        }
+        let file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(READY)
+            .map_err(|_| "activation_marker_write_failed")?;
+        file.sync_all()
+            .map_err(|_| "activation_marker_write_failed")?;
+        fs::File::open("/etc/kuno")
+            .and_then(|f| f.sync_all())
+            .map_err(|_| "activation_marker_write_failed")
+    }
+}
+
+fn remove_activation() -> Result<()> {
+    match fs::symlink_metadata(READY) {
+        Ok(m) if !m.is_file() || m.len() != 0 => Err("activation_marker_changed"),
+        Ok(_) => fs::remove_file(READY).map_err(|_| "activation_marker_remove_failed"),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(_) => Err("activation_marker_unreadable"),
+    }
+}
+
+pub fn activation_ready(path: &Path) -> Result<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(m) if m.is_file() && m.len() == 0 => Ok(true),
+        Ok(_) => Err("activation_marker_changed"),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(_) => Err("activation_marker_unreadable"),
+    }
+}
+
+fn load_installation() -> Result<Installation> {
+    let path = Path::new(SETUP).join("installation.json");
+    trusted_file(&path)?;
+    let bytes = fs::read(path).map_err(|_| "installation_record_unreadable")?;
+    let installation: Installation =
+        serde_json::from_slice(&bytes).map_err(|_| "installation_record_invalid")?;
+    installation.config.validate()?;
+    if installation.version != 1
+        || installation.service == GATEWAY
+        || !installation.service.ends_with(".service")
+        || !installation
+            .service
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"_.-@".contains(&b))
+        || installation.service.starts_with('-')
+        || installation.token.len() != 64
+        || !installation.token.bytes().all(|b| b.is_ascii_hexdigit())
+        || installation.config.activation_file.as_deref() != Some(Path::new(READY))
+    {
+        return Err("installation_record_invalid");
+    }
+    Ok(installation)
+}
+
+pub fn install(service: &str, config: &Config, quiesced: bool) -> Result<()> {
+    require_root()?;
+    if !quiesced {
+        return Err("close_inference_clients_then_pass_quiesced_for_cutover");
+    }
+    let transaction = Transaction::open(Path::new("/"), Path::new(SETUP))?;
+    let phase = transaction.phase()?;
+    if phase.is_none()
+        && (fs::symlink_metadata("/var/lib/kuno").is_ok()
+            || fs::symlink_metadata("/var/lib/private/kuno").is_ok())
+    {
+        return Err("runtime_state_exists_without_installation_record");
+    }
+    let installation = match phase {
+        Some(Phase::Complete) => load_installation()?,
+        Some(Phase::Restored) | None => {
+            let installation = capture(service, config)?;
+            storage::write_json(&Path::new(SETUP).join("installation.json"), &installation)
+                .map_err(|_| "installation_record_write_failed")?;
+            installation
+        }
+        _ => return Err("interrupted_setup_run_takeover_restore"),
+    };
+    let executable = fs::read(std::env::current_exe().map_err(|_| "executable_unavailable")?)
+        .map_err(|_| "executable_unavailable")?;
+    transaction.apply(
+        &artifacts(&installation, executable)?,
+        &mut SystemdHost {
+            installation,
+            may_have_admitted_work: phase == Some(Phase::Complete),
+        },
+    )
+}
+
+pub fn restore(quiesced: bool) -> Result<()> {
+    require_root()?;
+    if !quiesced {
+        return Err("close_inference_clients_then_pass_quiesced_for_restore");
+    }
+    let transaction = Transaction::open(Path::new("/"), Path::new(SETUP))?;
+    if matches!(transaction.phase()?, None | Some(Phase::Restored)) {
+        return Ok(());
+    }
+    transaction.restore(&mut SystemdHost {
+        installation: load_installation()?,
+        may_have_admitted_work: matches!(
+            transaction.phase()?,
+            Some(Phase::Complete | Phase::Restoring)
+        ),
+    })
+}
+
+/// Explicit operator recovery: restart only the managed runtimes, then clear
+/// their empty uncertainty marker once Ollama and its runner group have stopped.
+pub fn recover(quiesced: bool) -> Result<()> {
+    require_root()?;
+    if !quiesced {
+        return Err("close_inference_clients_then_pass_quiesced_for_recovery");
+    }
+    let transaction = Transaction::open(Path::new("/"), Path::new(SETUP))?;
+    transaction.verify_recovery_files()?;
+    let restoring = transaction.phase()? == Some(Phase::Restoring);
+    let installation = load_installation()?;
+    if takeover::property(GATEWAY, "FragmentPath")?.trim() != "/etc/systemd/system/kuno.service"
+        || !takeover::property(GATEWAY, "DropInPaths")?
+            .trim()
+            .is_empty()
+    {
+        return Err("gateway_service_changed_recovery_refused");
+    }
+    action(GATEWAY, "stop", false)?;
+    quiet(installation.config.upstream.port())?;
+    action(&installation.service, "stop", false)?;
+    let state =
+        fs::canonicalize("/var/lib/kuno").map_err(|_| "managed_state_directory_unavailable")?;
+    if state != Path::new("/var/lib/private/kuno") && state != Path::new("/var/lib/kuno") {
+        return Err("managed_state_directory_changed");
+    }
+    let marker = state.join("upstream-in-flight");
+    match fs::symlink_metadata(&marker) {
+        Ok(m) if m.is_file() && m.len() == 0 => {
+            fs::remove_file(marker).map_err(|_| "recovery_marker_remove_failed")?;
+            fs::File::open(&state)
+                .and_then(|f| f.sync_all())
+                .map_err(|_| "recovery_marker_sync_failed")?;
+        }
+        Ok(_) => return Err("recovery_marker_changed"),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => return Err("recovery_marker_unreadable"),
+    }
+    let mut host = SystemdHost {
+        installation,
+        may_have_admitted_work: false,
+    };
+    host.start_private_upstream()?;
+    host.verify_private_upstream()?;
+    host.start_gateway()?;
+    host.verify_gateway()?;
+    if restoring {
+        Ok(())
+    } else {
+        host.activate_gateway()
+    }
+}
+
+pub fn doctor(service: &str, config: &Config) -> Result<serde_json::Value> {
+    if Path::new(SETUP).join("takeover.json").exists() && require_root().is_ok() {
+        let transaction = Transaction::open(Path::new("/"), Path::new(SETUP))?;
+        let phase = transaction.phase()?;
+        if phase == Some(Phase::Complete) {
+            let mut host = SystemdHost {
+                installation: load_installation()?,
+                may_have_admitted_work: true,
+            };
+            host.verify_private_upstream()?;
+            host.verify_gateway()?;
+            return Ok(serde_json::json!({"installed":true,"phase":phase,"status":host.status()?}));
+        }
+        if !matches!(phase, None | Some(Phase::Restored)) {
+            return Ok(
+                serde_json::json!({"installed":false,"phase":phase,"restore_required":true}),
+            );
+        }
+    }
+    let plan = takeover::inspect(service, config)?;
+    let privileged = require_root().is_ok();
+    if privileged {
+        let installation = capture(service, config)?;
+        SystemdHost {
+            installation,
+            may_have_admitted_work: false,
+        }
+        .preflight()?;
+    }
+    Ok(
+        serde_json::json!({"installed":false,"service":service,"listener":plan.original_listen,"upstream_candidate":plan.proposed_config.upstream,
+        "original_loaded_model_limit":plan.original_loaded_model_limit,"privileged_checks_passed":privileged,
+        "requires_quiet_maintenance_window":true,"requires_root_for_installation":true}),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn proc_socket_addresses_preserve_ipv4_and_ipv6() {
+        let ipv4 =
+            "0: 0100007F:2CAA 00000000:0000 0A 00000000:00000000 00:00000000 00000000 1000 0 12345";
+        let socket = parse_socket(ipv4, false).unwrap();
+        assert_eq!(socket.address, "127.0.0.1:11434".parse().unwrap());
+        assert_eq!(socket.inode, 12345);
+        let ipv6 = "0: 00000000000000000000000001000000:2CAA 00000000000000000000000000000000:0000 0A 0 0 0 1000 0 12346";
+        assert_eq!(
+            parse_socket(ipv6, true).unwrap().address,
+            "[::1]:11434".parse().unwrap()
+        );
+        assert!(parse_socket("bad", false).is_err());
+    }
+}

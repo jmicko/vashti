@@ -1,0 +1,23 @@
+[package]
+name = "kuno"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+axum = "0.8"
+bytes = "1"
+http-body = "1"
+hyper = { version = "1", features = ["client", "http1"] }
+hyper-util = { version = "0.1", features = ["client-legacy", "http1", "tokio"] }
+kuno-protocol = { path = "../../crates/kuno-protocol" }
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "blocking"] }
+sha2 = "0.10"
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+
+[dev-dependencies]
+futures-util = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream"] }
+tempfile = "3"
