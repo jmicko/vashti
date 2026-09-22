@@ -14,19 +14,26 @@ Build a native release package:
 ./apps/kuno/scripts/package-release.sh
 ```
 
-Close applications making inference requests to Ollama, then run:
+Install with:
 
 ```sh
-sudo ./dist/kuno-linux-x86_64/kuno doctor
-sudo ./dist/kuno-linux-x86_64/kuno install --quiesced
-sudo /usr/local/lib/kuno/kuno doctor
+sudo ./dist/kuno-linux-x86_64/kuno install
 ```
 
-`--quiesced` acknowledges a maintenance window: the installer restarts Ollama and
-briefly interrupts its existing listener. It additionally checks open TCP
-connections, actual listener ownership, native executable identity, effective
-environment, and competing services before changing anything. It does not infer
-that requests are finished merely because `/api/ps` is empty.
+Installation warns that inference will briefly be interrupted, then waits for
+`Continue? [y/N]` before changing services. Enter or `n` cancels. Connected clients
+can reconnect afterward; you do not need to close them first. The installer checks
+actual listener ownership, native executable identity, effective environment, and
+competing services before changing anything. It stops Ollama's runner group during
+cutover rather than trying to infer idleness from open TCP connections.
+
+`install`, `recover`, and `takeover-restore` all require this confirmation.
+Unattended scripts must explicitly pass `--yes`; redirected input does not imply
+consent. The website installer should display the interruption warning and obtain
+confirmation before invoking an unattended command.
+
+Installation includes health checks. For a separate diagnostic report later, run
+`sudo /usr/local/lib/kuno/kuno doctor`.
 
 The installer preserves the actual IPv4/IPv6 listener, moves Ollama to a free
 loopback port, installs Kuno using an unprivileged systemd `DynamicUser`, and
@@ -42,10 +49,10 @@ and ambiguous listeners receive diagnostic errors. `--service NAME.service`
 selects a different native Ollama service. The current default host has a
 dual-stack `[::]:11434` listener even though `OLLAMA_HOST` says `0.0.0.0:11434`.
 
-After closing inference clients, cancellation recovery is:
+Cancellation recovery (also briefly interrupts inference):
 
 ```sh
-sudo /usr/local/lib/kuno/kuno recover --quiesced
+sudo /usr/local/lib/kuno/kuno recover
 ```
 
 This explicitly restarts the managed gateway and Ollama, clears the empty
@@ -55,22 +62,23 @@ It unloads Ollama's resident models. It never restarts unrelated GPU application
 Undo installation, or recover an interrupted installer, using the release binary:
 
 ```sh
-sudo ./dist/kuno-linux-x86_64/kuno takeover-restore --quiesced
+sudo ./dist/kuno-linux-x86_64/kuno takeover-restore
 ```
 
 Keep that release binary available in case restoration has already removed the
 installed copy. Restore disables Kuno, removes unchanged owned files, and returns
 Ollama to its original listener and active state. Usage data and the protected
-setup journal remain. If restoration stops for uncertain runtime work, `recover`
-can clear that uncertainty before retrying restore; it keeps admission paused
-while restoration is pending. Changed installed files are not overwritten.
+setup journal remain. Restore stops both services before clearing uncertain runtime
+work; clients can reconnect after Ollama returns to its original port. Changed
+installed files are not overwritten.
 Re-running the same install is idempotent; this first release uses restore/install
 for upgrades rather than overwriting a changed deployment.
 
 See [packaged installation instructions](packaging/README-install.txt) for paths
-and content-free diagnostic commands. Privileged installation and a real reboot
-still need target-host acceptance; the automated checks do not claim to replace
-that test.
+and content-free diagnostic commands. On 2026-09-22, installation and privileged
+post-install diagnostics passed on the target Linux Mint host. Both IPv4 and IPv6
+forwarding matched upstream metadata, and the service is enabled at boot. Real
+reboot, restore, and operator recovery still need live acceptance testing.
 
 ## Run alongside Ollama
 

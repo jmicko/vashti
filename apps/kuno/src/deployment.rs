@@ -1,5 +1,5 @@
 //! Recoverable installation transaction, independent of service-manager I/O.
-//! The systemd adapter verifies ownership, quiescence and readiness. Tests use
+//! The systemd adapter verifies ownership and readiness. Tests use
 //! a simulated service manager to inject crashes and startup/activation failures.
 
 use crate::{journal::Journal, storage};
@@ -51,7 +51,7 @@ struct Record {
 }
 
 /// Errors are classified codes, never raw service logs or request information.
-/// Methods must be idempotent. `preflight` includes an explicit quiescence check
+/// Methods must be idempotent. `preflight` verifies listener and service ownership
 /// and rejects an unrelated gateway service or listener before any mutation.
 pub trait Host {
     fn preflight(&mut self) -> Result<()>;

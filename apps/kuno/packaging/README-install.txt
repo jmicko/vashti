@@ -5,22 +5,20 @@ GPU placement, adaptive profiling, and image generation are not implemented yet.
 
 Installation
 ------------
-1. Close applications making inference requests to Ollama. Installation restarts
-   Ollama and briefly interrupts its existing listener. Keep them closed until
-   installation finishes. An empty /api/ps response alone does not prove idleness.
-2. From this extracted directory, inspect the host:
+From this extracted directory, install and start Kuno:
 
-     sudo ./kuno doctor
+  sudo ./kuno install
 
-3. Install and start Kuno:
+Installation warns that inference will briefly be interrupted, then waits for
+Continue? [y/N] before changing services. Enter or n cancels. You do not need to
+close connected applications; clients can reconnect after installation.
+The installer verifies service ownership, listener ownership, and health itself.
+Install, recover, and takeover-restore all prompt. Unattended scripts must pass
+--yes explicitly; noninteractive input without that flag is rejected.
 
-     sudo ./kuno install --quiesced
+For an optional diagnostic report before or after installation:
 
-   --quiesced confirms that you closed inference clients for this maintenance
-   window. The installer also checks for open connections and listener ownership.
-4. Verify:
-
-     sudo /usr/local/lib/kuno/kuno doctor
+  sudo ./kuno doctor
 
 Existing clients retain their Ollama URL. The installer discovers the actual
 listener (including dual-stack IPv6), moves Ollama to a free loopback port, and
@@ -50,9 +48,9 @@ Paths
 Cancellation recovery
 ---------------------
 Until automatic GPU/runtime reconciliation is implemented, an interrupted
-inference request blocks further admission. Close inference clients, then run:
+inference request blocks further admission. Run:
 
-  sudo /usr/local/lib/kuno/kuno recover --quiesced
+  sudo /usr/local/lib/kuno/kuno recover
 
 This restarts managed Ollama and Kuno, unloading Ollama's resident models. It
 clears the empty recovery marker only after stopping Ollama's runner group.
@@ -60,15 +58,15 @@ It retains usage history and does not touch other GPU applications.
 
 Undo installation or recover an interrupted installation
 -------------------------------------------------------
-Close inference clients, then use the original downloaded binary if the installed
-copy is missing:
+This briefly interrupts inference. Use the original downloaded binary if the
+installed copy is missing:
 
-  sudo ./kuno takeover-restore --quiesced
+  sudo ./kuno takeover-restore
 
 Restore removes unchanged Kuno-owned files, disables Kuno, and restores Ollama's
 original listener and running state. It keeps usage history and the setup journal.
 Later administrator edits to owned files cause a refusal instead of being erased.
-If ordinary runtime recovery is required, run `recover --quiesced` first.
+Restore stops both services before clearing any uncertain in-flight marker.
 
 Diagnostics
 -----------
@@ -88,7 +86,8 @@ idempotent; upgrading a changed installation requires restore followed by instal
 in this first release. Normal runtime never automatically rolls back to direct
 Ollama access.
 
-Validation limit: this package has automated proxy and transaction fault tests
-and staged systemd-unit validation. Real privileged installation and reboot must
-still be confirmed on the target host. Host-wide swap/hibernation privacy and GPU
-execution placement are not certified by this gateway release.
+Validation: automated proxy and transaction fault tests, staged systemd-unit
+validation, and real privileged installation on Linux Mint passed. Post-install
+diagnostics and IPv4/IPv6 metadata forwarding passed on 2026-09-22. Live reboot,
+restore, and operator recovery remain untested. Host-wide swap/hibernation privacy
+and GPU execution placement are not certified by this gateway release.

@@ -344,26 +344,6 @@ fn action(service: &str, verb: &str, active: bool) -> Result<()> {
     })
 }
 
-fn quiet(port: u16) -> Result<()> {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    let mut clear_samples = 0;
-    while clear_samples < 3 {
-        if sockets()?
-            .iter()
-            .any(|s| s.address.port() == port && s.state != 10 && s.state != 6)
-        {
-            clear_samples = 0;
-        } else {
-            clear_samples += 1;
-        }
-        if Instant::now() >= deadline {
-            return Err("ollama_has_open_connections_close_clients_and_retry");
-        }
-        thread::sleep(Duration::from_millis(150));
-    }
-    Ok(())
-}
-
 fn trusted_file(path: &Path) -> Result<()> {
     use std::os::unix::fs::MetadataExt;
     let metadata = fs::metadata(path).map_err(|_| "service_file_unavailable")?;
@@ -483,7 +463,6 @@ fn artifacts(installation: &Installation, executable: Vec<u8>) -> Result<Vec<Art
 
 struct SystemdHost {
     installation: Installation,
-    may_have_admitted_work: bool,
 }
 
 impl SystemdHost {
@@ -554,13 +533,14 @@ impl Host for SystemdHost {
         {
             return Err("upstream_recovery_required_before_installation");
         }
-        quiet(self.installation.original_listen.port())
+        Ok(())
     }
     fn original_active(&mut self) -> Result<bool> {
         Ok(takeover::property(&self.installation.service, "ActiveState")?.trim() == "active")
     }
     fn stop_original(&mut self) -> Result<()> {
-        action(&self.installation.service, "stop", false)
+        action(&self.installation.service, "stop", false)?;
+        clear_stopped_upstream_marker()
     }
     fn reload(&mut self) -> Result<()> {
         command(&["daemon-reload"]).map(|_| ())
@@ -629,26 +609,10 @@ impl Host for SystemdHost {
             return Err("gateway_service_changed_restore_refused");
         }
         remove_activation()?;
-        if takeover::property(GATEWAY, "ActiveState")?.trim() == "active"
-            && self.may_have_admitted_work
-        {
-            json(
-                self.installation.config.control_listen,
-                "/kuno/v1/admission/pause",
-                Some(&self.installation.token),
-                true,
-            )?;
-            wait(|| {
-                let status = self.status()?;
-                if status["admission"]["active"] == false
-                    && status["admission"]["recovery_required"] == false
-                {
-                    Ok(())
-                } else {
-                    Err("gateway_must_finish_or_recover_work_before_restore")
-                }
-            })?;
-        }
+        // systemd stops the listener even if control is unavailable. SIGTERM
+        // pauses admission and allows a bounded drain before forced shutdown.
+        // The transaction then stops Ollama's runner group before clearing any
+        // uncertain in-flight marker or reopening the original listener.
         // An interrupted restore may already have removed the unit after
         // disabling it. Cached systemd state can still report it as loaded.
         if Path::new("/etc/systemd/system/kuno.service").exists() {
@@ -677,7 +641,6 @@ impl Host for SystemdHost {
         if activation_ready(Path::new(READY))? {
             return Ok(());
         }
-        self.may_have_admitted_work = true;
         json(
             self.installation.config.control_listen,
             "/kuno/v1/admission/resume",
@@ -742,11 +705,8 @@ fn load_installation() -> Result<Installation> {
     Ok(installation)
 }
 
-pub fn install(service: &str, config: &Config, quiesced: bool) -> Result<()> {
+pub fn install(service: &str, config: &Config) -> Result<()> {
     require_root()?;
-    if !quiesced {
-        return Err("close_inference_clients_then_pass_quiesced_for_cutover");
-    }
     let transaction = Transaction::open(Path::new("/"), Path::new(SETUP))?;
     let phase = transaction.phase()?;
     if phase.is_none()
@@ -769,38 +729,25 @@ pub fn install(service: &str, config: &Config, quiesced: bool) -> Result<()> {
         .map_err(|_| "executable_unavailable")?;
     transaction.apply(
         &artifacts(&installation, executable)?,
-        &mut SystemdHost {
-            installation,
-            may_have_admitted_work: phase == Some(Phase::Complete),
-        },
+        &mut SystemdHost { installation },
     )
 }
 
-pub fn restore(quiesced: bool) -> Result<()> {
+pub fn restore() -> Result<()> {
     require_root()?;
-    if !quiesced {
-        return Err("close_inference_clients_then_pass_quiesced_for_restore");
-    }
     let transaction = Transaction::open(Path::new("/"), Path::new(SETUP))?;
     if matches!(transaction.phase()?, None | Some(Phase::Restored)) {
         return Ok(());
     }
     transaction.restore(&mut SystemdHost {
         installation: load_installation()?,
-        may_have_admitted_work: matches!(
-            transaction.phase()?,
-            Some(Phase::Complete | Phase::Restoring)
-        ),
     })
 }
 
 /// Explicit operator recovery: restart only the managed runtimes, then clear
 /// their empty uncertainty marker once Ollama and its runner group have stopped.
-pub fn recover(quiesced: bool) -> Result<()> {
+pub fn recover() -> Result<()> {
     require_root()?;
-    if !quiesced {
-        return Err("close_inference_clients_then_pass_quiesced_for_recovery");
-    }
     let transaction = Transaction::open(Path::new("/"), Path::new(SETUP))?;
     transaction.verify_recovery_files()?;
     let restoring = transaction.phase()? == Some(Phase::Restoring);
@@ -813,10 +760,28 @@ pub fn recover(quiesced: bool) -> Result<()> {
         return Err("gateway_service_changed_recovery_refused");
     }
     action(GATEWAY, "stop", false)?;
-    quiet(installation.config.upstream.port())?;
     action(&installation.service, "stop", false)?;
-    let state =
-        fs::canonicalize("/var/lib/kuno").map_err(|_| "managed_state_directory_unavailable")?;
+    clear_stopped_upstream_marker()?;
+    let mut host = SystemdHost { installation };
+    host.start_private_upstream()?;
+    host.verify_private_upstream()?;
+    host.start_gateway()?;
+    host.verify_gateway()?;
+    if restoring {
+        Ok(())
+    } else {
+        host.activate_gateway()
+    }
+}
+
+// Call only after the gateway and Ollama's runner group have stopped. An
+// interrupted request can no longer execute, so its durable marker is stale.
+fn clear_stopped_upstream_marker() -> Result<()> {
+    let state = match fs::canonicalize("/var/lib/kuno") {
+        Ok(state) => state,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(_) => return Err("managed_state_directory_unavailable"),
+    };
     if state != Path::new("/var/lib/private/kuno") && state != Path::new("/var/lib/kuno") {
         return Err("managed_state_directory_changed");
     }
@@ -832,19 +797,7 @@ pub fn recover(quiesced: bool) -> Result<()> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(_) => return Err("recovery_marker_unreadable"),
     }
-    let mut host = SystemdHost {
-        installation,
-        may_have_admitted_work: false,
-    };
-    host.start_private_upstream()?;
-    host.verify_private_upstream()?;
-    host.start_gateway()?;
-    host.verify_gateway()?;
-    if restoring {
-        Ok(())
-    } else {
-        host.activate_gateway()
-    }
+    Ok(())
 }
 
 pub fn doctor(service: &str, config: &Config) -> Result<serde_json::Value> {
@@ -854,7 +807,6 @@ pub fn doctor(service: &str, config: &Config) -> Result<serde_json::Value> {
         if phase == Some(Phase::Complete) {
             let mut host = SystemdHost {
                 installation: load_installation()?,
-                may_have_admitted_work: true,
             };
             host.verify_private_upstream()?;
             host.verify_gateway()?;
@@ -870,16 +822,12 @@ pub fn doctor(service: &str, config: &Config) -> Result<serde_json::Value> {
     let privileged = require_root().is_ok();
     if privileged {
         let installation = capture(service, config)?;
-        SystemdHost {
-            installation,
-            may_have_admitted_work: false,
-        }
-        .preflight()?;
+        SystemdHost { installation }.preflight()?;
     }
     Ok(
         serde_json::json!({"installed":false,"service":service,"listener":plan.original_listen,"upstream_candidate":plan.proposed_config.upstream,
         "original_loaded_model_limit":plan.original_loaded_model_limit,"privileged_checks_passed":privileged,
-        "requires_quiet_maintenance_window":true,"requires_root_for_installation":true}),
+        "interrupts_inference":true,"requires_root_for_installation":true}),
     )
 }
 

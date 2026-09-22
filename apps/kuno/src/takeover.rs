@@ -100,7 +100,7 @@ pub fn inspect(service: &str, config: &Config) -> Result<Plan, &'static str> {
         rollback: "Remove only the unchanged Kuno-owned drop-in; reload systemd and restore the recorded original service state. Preserve all pre-existing drop-ins.",
         remaining_checks: vec![
             "Verify the actual listener owner and process environment, including wrappers and competing overrides.",
-            "Validate the gateway separately, then quiesce real inference; /api/ps is not an active-request counter.",
+            "Installation interrupts active connections; clients can reconnect after verified cutover.",
             "Persist a protected atomic transaction journal before any service edit.",
             "Bind and health-check both services, with rollback on any failure; the proposed port is only a probe.",
             "Install the unprivileged Kuno service and verify privacy protections and boot recovery.",

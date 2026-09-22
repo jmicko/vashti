@@ -1,8 +1,9 @@
 # Kuno inference host specification
 
-Status: installable M1 gateway development release; systemd installation, restore,
-and operator recovery commands are implemented. Privileged target-host install
-and reboot acceptance remain pending.
+Status: M1 gateway development release installed on the target Linux Mint host
+(2026-09-22). Privileged installation, post-install diagnostics, IPv4/IPv6
+forwarding, and startup enablement passed. Real reboot and restore acceptance
+remain pending; operator recovery is implemented but not yet exercised live.
 Planning baseline: 2026-09-20.
 
 See [Kuno development instructions](../apps/kuno/README.md) for the implemented
@@ -144,8 +145,13 @@ neither port is assumed available.
    Ollama has several installation forms, not one universal config file.
 2. Prepare and test Kuno on a nonconflicting endpoint before changing the live
    service. Record the original configuration and service state atomically.
-3. Quiesce existing inference before cutover. `/api/ps` is not an active-request
-   count. Existing sockets cannot be transferred; a brief interruption is possible.
+3. Warn that inference will be interrupted during cutover and wait for explicit
+   confirmation before changing services. Default to cancellation; unattended
+   setup requires `--yes`. Apply the same rule to recovery and restore. Do not require users
+   to close clients or reject setup because connections remain open. Stop the
+   managed service and its runners; clients may reconnect after health checks
+   complete. Existing sockets cannot be transferred, and `/api/ps` does not
+   establish whether requests are active.
 4. Create a Kuno-owned systemd override that moves Ollama to a private loopback
    port. Preserve unrelated user settings and overrides.
 5. Restart and health-check Ollama, verifying the actual bind. A port-availability

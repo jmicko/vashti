@@ -3,7 +3,7 @@ use std::{path::Path, time::Duration};
 use tokio::net::TcpListener;
 
 const HELP: &str = "Kuno — local inference gateway (development)\n\n\
-Usage:\n  kuno serve [--config FILE]\n  kuno check [--config FILE]\n  kuno doctor [--service ollama.service]\n  kuno install --quiesced [--service ollama.service]\n  kuno recover --quiesced\n  kuno takeover-restore --quiesced\n  kuno takeover-plan [--config FILE] [--service ollama.service]\n  kuno takeover-bundle --output NEW_DIRECTORY [--config FILE] [--service ollama.service]\n\n\
+Usage:\n  kuno serve [--config FILE]\n  kuno check [--config FILE]\n  kuno doctor [--service ollama.service]\n  kuno install [--yes] [--service ollama.service]\n  kuno recover [--yes]\n  kuno takeover-restore [--yes]\n  kuno takeover-plan [--config FILE] [--service ollama.service]\n  kuno takeover-bundle --output NEW_DIRECTORY [--config FILE] [--service ollama.service]\n\n\
 serve requires KUNO_CONTROL_TOKEN or KUNO_CONTROL_TOKEN_FILE (32–256 URL-safe characters).\n\
 Default gateway: 127.0.0.1:11433; control: 127.0.0.1:11432; upstream: 127.0.0.1:11434.\n\
 takeover-plan is read-only. It never changes services, ports, or model limits.\n";
@@ -28,7 +28,7 @@ async fn run() -> Result<(), &'static str> {
     let mut config = Config::default();
     let mut service = "ollama.service".to_owned();
     let mut output = None;
-    let mut quiesced = false;
+    let mut yes = false;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--config" => {
@@ -45,10 +45,8 @@ async fn run() -> Result<(), &'static str> {
             "--output" if command == "takeover-bundle" => {
                 output = Some(args.next().ok_or("missing_output_directory")?)
             }
-            "--quiesced"
-                if matches!(command.as_str(), "install" | "takeover-restore" | "recover") =>
-            {
-                quiesced = true
+            "--yes" if matches!(command.as_str(), "install" | "takeover-restore" | "recover") => {
+                yes = true;
             }
             _ => return Err("unknown_argument"),
         }
@@ -69,14 +67,16 @@ async fn run() -> Result<(), &'static str> {
         }
         "serve" => serve(config).await,
         "install" => {
-            tokio::task::spawn_blocking(move || systemd::install(&service, &config, quiesced))
+            confirm_interruption(yes)?;
+            tokio::task::spawn_blocking(move || systemd::install(&service, &config))
                 .await
                 .map_err(|_| "installation_task_failed")??;
             println!("kuno_installed_and_active");
             Ok(())
         }
         "takeover-restore" => {
-            tokio::task::spawn_blocking(move || systemd::restore(quiesced))
+            confirm_interruption(yes)?;
+            tokio::task::spawn_blocking(systemd::restore)
                 .await
                 .map_err(|_| "restore_task_failed")??;
             println!("original_ollama_service_restored");
@@ -93,7 +93,8 @@ async fn run() -> Result<(), &'static str> {
             Ok(())
         }
         "recover" => {
-            tokio::task::spawn_blocking(move || systemd::recover(quiesced))
+            confirm_interruption(yes)?;
+            tokio::task::spawn_blocking(systemd::recover)
                 .await
                 .map_err(|_| "recovery_task_failed")??;
             println!("managed_upstream_restarted_admission_recovered");
@@ -109,10 +110,37 @@ async fn run() -> Result<(), &'static str> {
                 Path::new(&output.ok_or("output_directory_required")?),
                 &executable,
             )?;
-            println!("takeover_bundle_staged; install_with_kuno_install_quiesced");
+            println!("takeover_bundle_staged; install_with_kuno_install");
             Ok(())
         }
         _ => Err("unknown_command"),
+    }
+}
+
+fn confirm_interruption(yes: bool) -> Result<(), &'static str> {
+    use std::io::{IsTerminal, Write};
+    eprintln!(
+        "kuno: This operation briefly interrupts inference. Connected clients may need to retry."
+    );
+    if yes {
+        return Ok(());
+    }
+    // Never infer consent from a pipe or EOF. Scripts must explicitly pass --yes.
+    if !std::io::stdin().is_terminal() {
+        return Err("confirmation_required_run_interactively_or_pass_--yes");
+    }
+    eprint!("Continue? [y/N] ");
+    std::io::stderr()
+        .flush()
+        .map_err(|_| "confirmation_prompt_failed")?;
+    let mut answer = String::new();
+    std::io::stdin()
+        .read_line(&mut answer)
+        .map_err(|_| "confirmation_read_failed")?;
+    if matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
+        Ok(())
+    } else {
+        Err("cancelled_no_services_changed")
     }
 }
 
