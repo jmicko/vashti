@@ -1,5 +1,5 @@
-//! Linux system-service adoption. Only explicit CLI installation/restore enters
-//! this module's mutation paths; the normal gateway remains unprivileged.
+//! Linux service adoption and privileged, installation-scoped recovery.
+//! The normal gateway remains unprivileged.
 use crate::{
     config::Config,
     deployment::{Artifact, Host, Phase, Transaction},
@@ -22,6 +22,10 @@ const SETUP: &str = "/var/lib/kuno-setup";
 pub(crate) const READY: &str = "/etc/kuno/activation-ready";
 const BINARY: &str = "/usr/local/lib/kuno/kuno";
 const GATEWAY: &str = "kuno.service";
+const RECOVERY_TIMER: &str = "kuno-recovery.timer";
+const RECOVERY_PENDING: &str = "/var/lib/kuno-setup/auto-recovery-pending";
+const RECOVERY_SERVICE_UNIT: &str = "[Unit]\nDescription=Recover Kuno owned inference services\n[Service]\nType=oneshot\nExecStart=/usr/local/lib/kuno/kuno auto-recover\nTimeoutStartSec=360\nUMask=0077\nLimitCORE=0\n";
+const RECOVERY_TIMER_UNIT: &str = "[Unit]\nDescription=Check Kuno inference recovery\n[Timer]\nOnBootSec=30\nOnUnitInactiveSec=30\nAccuracySec=1\n[Install]\nWantedBy=timers.target\n";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct Settings {
@@ -429,6 +433,16 @@ fn artifacts(installation: &Installation, executable: Vec<u8>) -> Result<Vec<Art
     let drop_in = ollama_drop_in(installation.config.upstream);
     Ok(vec![
         Artifact {
+            path: "etc/systemd/system/kuno-recovery.service".into(),
+            bytes: RECOVERY_SERVICE_UNIT.as_bytes().to_vec(),
+            mode: 0o644,
+        },
+        Artifact {
+            path: "etc/systemd/system/kuno-recovery.timer".into(),
+            bytes: RECOVERY_TIMER_UNIT.as_bytes().to_vec(),
+            mode: 0o644,
+        },
+        Artifact {
             path: "etc/kuno/config.json".into(),
             bytes: serde_json::to_vec_pretty(&installation.config)
                 .map_err(|_| "config_encoding_failed")?,
@@ -619,6 +633,12 @@ impl Host for SystemdHost {
         {
             return Err("gateway_service_changed_restore_refused");
         }
+        // Hold the setup transaction lock while disabling the supervisor. A
+        // concurrently scheduled check cannot enter the recovery mutation path.
+        if Path::new("/etc/systemd/system/kuno-recovery.timer").exists() {
+            command(&["disable", "--now", RECOVERY_TIMER])?;
+        }
+        clear_recovery_pending()?;
         eprintln!("kuno: Stopping Kuno and its GPU workers.");
         remove_activation()?;
         // systemd stops the listener even if control is unavailable. SIGTERM
@@ -651,6 +671,9 @@ impl Host for SystemdHost {
     }
     fn activate_gateway(&mut self) -> Result<()> {
         command(&["enable", GATEWAY])?;
+        if Path::new("/etc/systemd/system/kuno-recovery.timer").exists() {
+            command(&["enable", "--now", RECOVERY_TIMER])?;
+        }
         if activation_ready(Path::new(READY))? {
             return Ok(());
         }
@@ -853,6 +876,11 @@ pub fn recover() -> Result<()> {
     require_root()?;
     let transaction = Transaction::open(Path::new("/"), Path::new(SETUP))?;
     transaction.verify_recovery_files()?;
+    recover_locked(&transaction)?;
+    clear_recovery_pending()
+}
+
+fn recover_locked(transaction: &Transaction) -> Result<()> {
     let restoring = transaction.phase()? == Some(Phase::Restoring);
     let installation = load_installation()?;
     if takeover::property(GATEWAY, "FragmentPath")?.trim() != "/etc/systemd/system/kuno.service"
@@ -862,18 +890,144 @@ pub fn recover() -> Result<()> {
     {
         return Err("gateway_service_changed_recovery_refused");
     }
-    action(GATEWAY, "stop", false)?;
-    action(&installation.service, "stop", false)?;
-    clear_stopped_upstream_marker()?;
-    let mut host = SystemdHost { installation };
-    host.start_private_upstream()?;
-    host.verify_private_upstream()?;
-    host.start_gateway()?;
-    host.verify_gateway()?;
-    if restoring {
-        Ok(())
-    } else {
-        host.activate_gateway()
+    recover_services(&mut ServiceRecovery {
+        host: SystemdHost { installation },
+        restoring,
+    })
+}
+
+trait RecoverySteps {
+    fn stop_gateway(&mut self) -> Result<()>;
+    fn stop_upstream(&mut self) -> Result<()>;
+    fn reconcile(&mut self) -> Result<()>;
+    fn start_upstream(&mut self) -> Result<()>;
+    fn start_gateway(&mut self) -> Result<()>;
+    fn activate(&mut self) -> Result<()>;
+}
+
+fn recover_services(steps: &mut impl RecoverySteps) -> Result<()> {
+    steps.stop_gateway()?;
+    steps.stop_upstream()?;
+    steps.reconcile()?;
+    steps.start_upstream()?;
+    steps.start_gateway()?;
+    steps.activate()
+}
+
+struct ServiceRecovery {
+    host: SystemdHost,
+    restoring: bool,
+}
+impl RecoverySteps for ServiceRecovery {
+    fn stop_gateway(&mut self) -> Result<()> {
+        stop_and_verify_empty(GATEWAY)
+    }
+    fn stop_upstream(&mut self) -> Result<()> {
+        stop_and_verify_empty(&self.host.installation.service)
+    }
+    fn reconcile(&mut self) -> Result<()> {
+        clear_stopped_upstream_marker()
+    }
+    fn start_upstream(&mut self) -> Result<()> {
+        self.host.start_private_upstream()?;
+        self.host.verify_private_upstream()
+    }
+    fn start_gateway(&mut self) -> Result<()> {
+        self.host.start_gateway()?;
+        self.host.verify_gateway()
+    }
+    fn activate(&mut self) -> Result<()> {
+        if self.restoring {
+            Ok(())
+        } else {
+            self.host.activate_gateway()
+        }
+    }
+}
+
+// The timer runs independently of Kuno, so a failed restart is retried even
+// while the gateway is down. The setup lock serializes installation, restore,
+// manual recovery and automatic recovery. No inference request is replayed.
+pub fn auto_recover() -> Result<()> {
+    require_root()?;
+    let transaction = Transaction::open(Path::new("/"), Path::new(SETUP))?;
+    if transaction.phase()? != Some(Phase::Complete) {
+        return Ok(());
+    }
+    let pending = activation_ready(Path::new(RECOVERY_PENDING))?;
+    if !pending {
+        // Respect an intentional systemctl stop or admission pause. A pending
+        // attempt, however, must finish even if it previously stopped Kuno.
+        if takeover::property(GATEWAY, "ActiveState")?.trim() != "active" {
+            return Ok(());
+        }
+        let host = SystemdHost {
+            installation: load_installation()?,
+        };
+        if !needs_auto_recovery(&host.status()?) {
+            return Ok(());
+        }
+    }
+    transaction.verify_recovery_files()?;
+    if !pending {
+        use std::os::unix::fs::OpenOptionsExt;
+        let file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(RECOVERY_PENDING)
+            .map_err(|_| "auto_recovery_state_write_failed")?;
+        file.sync_all()
+            .map_err(|_| "auto_recovery_state_write_failed")?;
+        fs::File::open(SETUP)
+            .and_then(|f| f.sync_all())
+            .map_err(|_| "auto_recovery_state_write_failed")?;
+    }
+    eprintln!("kuno: automatic_recovery_started");
+    recover_locked(&transaction)?;
+    clear_recovery_pending()?;
+    eprintln!("kuno: automatic_recovery_completed");
+    Ok(())
+}
+
+fn needs_auto_recovery(status: &serde_json::Value) -> bool {
+    let admission = &status["admission"];
+    admission["recovery_required"] == true
+        && admission["active"] == false
+        && admission["paused"] == false
+}
+
+fn clear_recovery_pending() -> Result<()> {
+    match fs::remove_file(RECOVERY_PENDING) {
+        Ok(()) => fs::File::open(SETUP)
+            .and_then(|f| f.sync_all())
+            .map_err(|_| "auto_recovery_state_sync_failed"),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(_) => Err("auto_recovery_state_remove_failed"),
+    }
+}
+
+fn stop_and_verify_empty(service: &str) -> Result<()> {
+    let group = takeover::property(service, "ControlGroup")?;
+    let group = group.trim();
+    let relative = group.strip_prefix('/').unwrap_or(group);
+    if !relative.is_empty()
+        && Path::new(relative)
+            .components()
+            .any(|c| !matches!(c, std::path::Component::Normal(_)))
+    {
+        return Err("service_cgroup_invalid");
+    }
+    action(service, "stop", false)?;
+    if relative.is_empty() {
+        return Ok(());
+    }
+    let directory = Path::new("/sys/fs/cgroup").join(relative);
+    let events = directory.join("cgroup.events");
+    match fs::read_to_string(events) {
+        Ok(events) if events.lines().any(|line| line == "populated 0") => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound && !directory.exists() => Ok(()),
+        _ => Err("service_cgroup_not_empty"),
     }
 }
 
@@ -949,6 +1103,100 @@ pub fn doctor(service: &str, config: &Config) -> Result<serde_json::Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn recovery_does_not_interrupt_active_paused_or_healthy_requests() {
+        for recovery in [false, true] {
+            for active in [false, true] {
+                for paused in [false, true] {
+                    let status = serde_json::json!({"admission": {
+                        "recovery_required": recovery, "active": active, "paused": paused
+                    }});
+                    assert_eq!(needs_auto_recovery(&status), recovery && !active && !paused);
+                }
+            }
+        }
+        assert!(!needs_auto_recovery(&serde_json::json!({})));
+    }
+
+    #[derive(Default)]
+    struct FakeRecovery {
+        fail: Option<&'static str>,
+        calls: Vec<&'static str>,
+    }
+    impl FakeRecovery {
+        fn step(&mut self, name: &'static str) -> Result<()> {
+            self.calls.push(name);
+            if self.fail == Some(name) {
+                Err("injected_failure")
+            } else {
+                Ok(())
+            }
+        }
+    }
+    impl RecoverySteps for FakeRecovery {
+        fn stop_gateway(&mut self) -> Result<()> {
+            self.step("stop_gateway")
+        }
+        fn stop_upstream(&mut self) -> Result<()> {
+            self.step("stop_upstream")
+        }
+        fn reconcile(&mut self) -> Result<()> {
+            self.step("reconcile")
+        }
+        fn start_upstream(&mut self) -> Result<()> {
+            self.step("start_upstream")
+        }
+        fn start_gateway(&mut self) -> Result<()> {
+            self.step("start_gateway")
+        }
+        fn activate(&mut self) -> Result<()> {
+            self.step("activate")
+        }
+    }
+    #[test]
+    fn failed_stops_never_clear_markers_and_failed_restarts_can_retry() {
+        let order = [
+            "stop_gateway",
+            "stop_upstream",
+            "reconcile",
+            "start_upstream",
+            "start_gateway",
+            "activate",
+        ];
+        for (index, fail) in order.iter().enumerate() {
+            let mut steps = FakeRecovery {
+                fail: Some(fail),
+                ..Default::default()
+            };
+            assert_eq!(recover_services(&mut steps), Err("injected_failure"));
+            assert_eq!(steps.calls, order[..=index]);
+            steps.fail = None;
+            steps.calls.clear();
+            recover_services(&mut steps).unwrap();
+            assert_eq!(steps.calls, order);
+        }
+    }
+
+    #[test]
+    fn recovery_preserves_modified_or_symlinked_uncertainty_markers() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("upstream-in-flight");
+        fs::write(&marker, "changed").unwrap();
+        assert_eq!(clear_marker_in(dir.path()), Err("recovery_marker_changed"));
+        assert!(marker.exists());
+        fs::remove_file(&marker).unwrap();
+        let target = dir.path().join("target");
+        fs::write(&target, "").unwrap();
+        std::os::unix::fs::symlink(&target, &marker).unwrap();
+        assert_eq!(clear_marker_in(dir.path()), Err("recovery_marker_changed"));
+        fs::remove_file(&marker).unwrap();
+        fs::write(&marker, "").unwrap();
+        clear_marker_in(dir.path()).unwrap();
+        clear_marker_in(dir.path()).unwrap();
+        assert!(!marker.exists());
+        assert!(target.exists());
+    }
+
     #[test]
     fn proc_socket_addresses_preserve_ipv4_and_ipv6() {
         let ipv4 =

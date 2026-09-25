@@ -189,3 +189,21 @@ fn managed_configuration_requires_explicit_mode_confirmation_and_root() {
             .contains("unknown_argument")
     );
 }
+
+#[test]
+fn automatic_recovery_is_root_only_and_takes_no_user_arguments() {
+    let bad = Command::new(env!("CARGO_BIN_EXE_kuno"))
+        .args(["auto-recover", "--yes"])
+        .output()
+        .unwrap();
+    assert!(!bad.status.success());
+    assert!(String::from_utf8_lossy(&bad.stderr).contains("unknown_argument"));
+    if unsafe { libc::geteuid() } != 0 {
+        let output = Command::new(env!("CARGO_BIN_EXE_kuno"))
+            .arg("auto-recover")
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("root_required"));
+    }
+}

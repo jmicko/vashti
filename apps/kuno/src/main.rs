@@ -72,6 +72,14 @@ async fn run() -> Result<(), &'static str> {
         print!("{HELP}");
         return Ok(());
     }
+    if command == "auto-recover" {
+        if args.next().is_some() {
+            return Err("unknown_argument");
+        }
+        return tokio::task::spawn_blocking(systemd::auto_recover)
+            .await
+            .map_err(|_| "auto_recovery_task_failed")?;
+    }
     if command == "fetch-models" {
         let id = args.next().ok_or("missing_collection_id")?;
         if args.next().as_deref() != Some("--directory") {

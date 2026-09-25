@@ -366,6 +366,39 @@ success informs admission; current resources must still be checked.
 
 ## 7. Failure diagnosis and recovery
 
+### Installed-service automatic recovery
+
+Installation and upgrade enable `kuno-recovery.timer`. Every 30 seconds after
+its previous check finishes, its root-owned oneshot checks authenticated control
+status. A recovery latch with no active request and no intentional admission
+pause triggers recovery. Healthy inference and manually stopped gateways are
+left alone. The public gateway still runs as an unprivileged service.
+
+Recovery holds the installation transaction lock, verifies installed artifacts,
+and records an empty root-owned pending marker before stopping services. It
+stops Kuno and its workers, then the private catalog Ollama, and verifies their
+cgroups are empty before clearing uncertainty markers. It restarts and verifies
+both services. A failed or interrupted attempt retains the pending marker, so
+the independent timer retries even with Kuno down. Attempts are serialized and
+service transitions are bounded; failed requests are never replayed. Requests
+can receive temporary 503s or connection failures during recovery and should
+retry. No prompt, image, response body, or summary enters recovery state or logs.
+
+Restore disables the timer. `kuno recover --yes` remains available for manual
+recovery; automatic recovery requires no interactive confirmation after the
+administrator has installed this supervisor. Modified installation artifacts or
+unproven process cleanup still prevent unsafe marker clearing. This mechanism
+does not reset GPU drivers or control unrelated GPU applications.
+
+Local acceptance, 2026-09-25: the native-image build was upgraded on the dual-GPU
+Linux host. An injected empty uncertainty marker survived a Kuno-only restart,
+then the timer recovered admission in 20 seconds. An emulated interrupted
+recovery (gateway stopped with a pending marker) recovered in 42 seconds.
+A subsequent real `lfm2.5-thinking:1.2b-bf16` generation completed, and admission
+was idle, unpaused, and free of recovery requirements. The Kuno test suite and
+strict Clippy checks passed; hardware-specific ignored tests remain separate.
+
+
 A failure begins unclassified. Do not blacklist a model combination just because
 it failed while a game or another application occupied the GPU.
 
