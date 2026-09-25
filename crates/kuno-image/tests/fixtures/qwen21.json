@@ -1,0 +1,110 @@
+{
+  "13": {
+    "inputs": {
+      "aspect_ratio": "2:3 (Portrait Photo)",
+      "megapixels": 2.0,
+      "multiple": 8
+    },
+    "class_type": "ResolutionSelector"
+  },
+  "461": {
+    "inputs": {
+      "filename_prefix": "Synthetic reference",
+      "format": "png",
+      "format.bit_depth": "16-bit",
+      "format.input_color_space": "sRGB",
+      "images": [
+        "475",
+        0
+      ]
+    },
+    "class_type": "SaveImageAdvanced"
+  },
+  "470": {
+    "inputs": {
+      "unet_name": "qwen_image_2.1_int8_convrot.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader"
+  },
+  "471": {
+    "inputs": {
+      "prompt": "Synthetic reference",
+      "negative_prompt": "",
+      "resolution": 1024,
+      "clip": [
+        "472",
+        0
+      ]
+    },
+    "class_type": "TextEncodeQwenImage21"
+  },
+  "472": {
+    "inputs": {
+      "clip_name": "qwen3vl_8b_int8_convrot.safetensors",
+      "type": "qwen_image",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader"
+  },
+  "473": {
+    "inputs": {
+      "vae_name": "qwen_image_2.1_vae_bf16.safetensors"
+    },
+    "class_type": "VAELoader"
+  },
+  "474": {
+    "inputs": {
+      "width": [
+        "13",
+        0
+      ],
+      "height": [
+        "13",
+        1
+      ],
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage"
+  },
+  "475": {
+    "inputs": {
+      "samples": [
+        "476",
+        0
+      ],
+      "vae": [
+        "473",
+        0
+      ]
+    },
+    "class_type": "VAEDecode"
+  },
+  "476": {
+    "inputs": {
+      "seed": 42,
+      "steps": 50,
+      "cfg": 1.0,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1.0,
+      "model": [
+        "470",
+        0
+      ],
+      "positive": [
+        "471",
+        0
+      ],
+      "negative": [
+        "471",
+        1
+      ],
+      "latent_image": [
+        "474",
+        0
+      ]
+    },
+    "class_type": "KSampler"
+  }
+}

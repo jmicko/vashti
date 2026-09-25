@@ -23,6 +23,15 @@ if [[ "$android_version" != "$version" ]]; then
     exit 1
 fi
 
+node - "$version" <<'JS'
+const fs = require('node:fs');
+const config = JSON.parse(fs.readFileSync('apps/vashti-android/tauri.conf.json', 'utf8'));
+if (config.version !== process.argv[2]) throw new Error('Android Tauri version does not match Cargo');
+if (!Number.isSafeInteger(config.bundle?.android?.versionCode) || config.bundle.android.versionCode <= 0) {
+    throw new Error('Set an explicit, increasing Android versionCode before packaging');
+}
+JS
+
 if [[ -f .private/android-signing.env ]]; then
     # shellcheck disable=SC1091
     source .private/android-signing.env
@@ -125,11 +134,7 @@ fi
 rm -f "$artifact.idsig"
 (
     cd "$release_dir"
-    checksum_files=(vashti-android.apk)
-    if [[ -f vashti-linux-x86_64.tar.gz ]]; then
-        checksum_files+=(vashti-linux-x86_64.tar.gz)
-    fi
-    sha256sum "${checksum_files[@]}" > SHA256SUMS
+    find . -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.apk' \) -printf '%f\n' | sort | xargs sha256sum > SHA256SUMS
 )
 printf '%s\n' "$version_label" > "$release_dir/VERSION"
 

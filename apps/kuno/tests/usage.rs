@@ -5,6 +5,8 @@ fn catalog() -> Catalog {
         models: vec![CatalogModel {
             name: "qwen:latest".into(),
             digest: "a".repeat(64),
+            remote_model: None,
+            remote_host: None,
         }],
     }
 }

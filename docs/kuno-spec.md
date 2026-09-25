@@ -2,13 +2,25 @@
 
 Status: M1 gateway development release installed on the target Linux Mint host
 (2026-09-22). Privileged installation, post-install diagnostics, IPv4/IPv6
-forwarding, and startup enablement passed. Real reboot and restore acceptance
-remain pending; operator recovery is implemented but not yet exercised live.
+forwarding, and startup enablement passed. Recovery and restore/reinstall passed on 2026-09-23, followed by remote streamed
+generation. Experimental managed GPU workers were installed and validated on
+2026-09-23: two-card text/embedding routing, a 35B model at context 128000 fully
+resident on the Arc B70, and rollback after incorrect physical-device selection.
+LAN model listing, OpenAI-compatible generation, and unload passed from Clark's
+machine. A subsequent binary upgrade preserved the managed configuration and
+both verified workers, with healthy post-upgrade diagnostics.
+Reboot reconciliation has automated coverage; a full host reboot of the managed
+configuration remains pending.
 Planning baseline: 2026-09-20.
 
 See [Kuno development instructions](../apps/kuno/README.md) for the implemented
-checkpoint and remaining M1 acceptance work. GPU placement and image generation
-are not yet implemented.
+checkpoint and remaining acceptance work. Supported inference routes now verify
+GPU placement through optional managed workers. Experimental native Qwen image
+execution is installed and has passed LLM/image handoff and client cancellation
+on the RTX 3060. The B70 requires a fresh-boot retest after Vulkan/xe failures;
+full reference fidelity and the generation UI/tool remain outstanding. See the
+[image checkpoint](kuno-images.md) for evidence and limits. Opaque fallback routes
+do not guarantee GPU-only execution.
 
 This specification defines Kuno and its integration with Vashti. It records the
 decisions from the planning discussion and the evidence required before claiming
@@ -37,8 +49,9 @@ with that goal. Dependencies requiring separate installation must be detected
 and explained, or installed through an explicit supported setup path.
 
 MVP scope excludes a node editor, arbitrary Comfy workflow execution, a general
-plugin platform, automatic GPU resets, and a new tensor engine written from
-scratch. A replaceable image backend preserves the option of a future engine.
+plugin platform, and automatic GPU resets. A native Rust inference engine is an
+approved follow-on track, beginning with Bonsai 2; it is not a prerequisite for
+the image MVP. See [Bonsai and native-engine development](kuno-bonsai.md).
 
 ## 2. Responsibilities and workspace
 
@@ -59,6 +72,7 @@ there is a concrete boundary or reuse requirement.
 | Vashti | Users, permissions, conversations, image controls, durable standard-chat jobs and artifacts, private-chat storage policy |
 | Kuno | Admission, placement, residency, runtime supervision, model collections, downloads, ephemeral execution, resource profiles |
 | Ollama adapter | Compatible inference and model APIs, loading/unloading, residency observations, assigned device visibility |
+| Kuno LLM adapter | Kuno-owned model catalog entries, compatible LLM APIs, native Rust engine execution; Prism runtime as a Bonsai reference and optional bridge |
 | Image adapter | Fixed workflow execution, component memory management, progress, cancellation, in-memory image output |
 
 All Vashti inference on a Kuno-managed host must use its gateway: normal and
@@ -122,6 +136,11 @@ existing client-owned persistence semantics: neither Vashti's server nor Kuno
 may persist private content. Mobile reconnection is handled through the relevant
 Vashti job owner while Kuno execution remains live.
 
+Persist a content-free Linux boot identity alongside the in-flight marker. A
+confirmed host reboot may clear an empty marker from an earlier boot because the
+local runtime cannot retain that work. A Kuno-only restart, a legacy marker without
+a boot identity, or invalid state cannot establish that guarantee.
+
 A Kuno restart loses in-flight work. The caller detects interruption and decides
 whether to resubmit. Do not promise exactly-once execution across restarts, or
 silently replay an operation after it may have executed or emitted output.
@@ -158,7 +177,10 @@ neither port is assumed available.
    probe has a race; handle bind failure with bounded retries or rollback.
 6. Activate Kuno at the original address, including the intended IPv4/IPv6
    behavior, and verify requests through the original endpoint.
-7. On migration failure, undo Kuno's changes and restore the recorded original
+7. Upgrade uses a single confirmation for the complete replacement. Verify owned
+   files before interruption and restore the previous artifacts on ordinary new
+   version activation failure. Interrupted processes retain a recovery journal.
+8. On migration failure, undo Kuno's changes and restore the recorded original
    configuration. Provide an idempotent uninstall/restore operation that does
    not overwrite later unrelated user edits.
 
@@ -179,8 +201,14 @@ configured upstreams, do not follow upstream redirects automatically, and
 preserve the deployment's origin/authentication behavior.
 
 Use bounded in-memory buffers and backpressure, with no payload spooling. Client
-disconnects propagate cancellation upstream. Reservations remain held until the
-upstream has actually stopped, not merely until headers arrive or a client leaves.
+disconnects request backend cancellation once its completion can be verified.
+In the M1 generic HTTP adapter, an abandoned response is instead drained and
+discarded under a bounded deadline, including disconnection before headers.
+A successful drain releases admission; a stalled or failed drain retains
+uncertainty. This avoids treating an ordinary client disconnect as permanent
+backend failure without assuming that a closed TCP connection stops GPU work.
+Reservations remain held until the upstream has actually stopped, not merely
+until headers arrive or a client leaves.
 Do not automatically retry a request that may already have executed.
 
 Classification wraps the proxy; it does not reimplement every Ollama response:
@@ -529,6 +557,10 @@ never store a sudo password or automatically upgrade drivers during inference.
 
 ## 11. Vashti experience and integration
 
+The detailed [Vashti Images design](vashti-images-spec.md) defines the chat tools,
+dedicated workspace, editing branches, gallery stacks, and job/storage behavior.
+It is a authorized integration specification before app implementation.
+
 Provide a direct image-generation form and a `generate_image` tool. A user should
 be able to generate an image without an LLM. Start with prompt, size/aspect ratio,
 and built-in recipe selection; expose supported advanced controls such as steps,
@@ -577,6 +609,35 @@ Passing proxy tests alone does not certify GPU-only placement or image generatio
 
 ### M2: Resource admission, placement, and recovery
 
+Current implementation: native NVIDIA/Intel telemetry, a backend-independent
+placement policy, durable GPU/worker reservations, and owned CUDA/Vulkan Ollama
+workers. The optional managed gateway supports native inference plus OpenAI-style
+chat/completions/embeddings, preloads, verifies digest/context
+and GPU-only residency, then forwards inference while retaining its reservation.
+Real acceptance tests passed on this host's RTX 3060 and Arc Pro B70, including
+multiple residents, eviction/recheck, cancellation recovery, text, embeddings,
+and gateway routing. Workers override the old one-model ceiling independently
+of the original catalog service.
+
+Default installation remains gateway-only. `configure-managed --workers FILE`
+now installs a configured worker pool with scoped model access, GPU discovery
+before listener activation, and transactional rollback. `--disable` restores
+gateway mode; upgrades preserve the chosen mode. The experimental route has
+RAM-only load observations, not measured inference peaks or persistent learned
+profiles. Remaining compatibility/opaque fallback is serialized and stops workers first,
+but does not enforce GPU-only execution. Independent-device request concurrency,
+external-pressure classification, durable fingerprinted learning, and automatic
+hardware selection remain before default M2 activation. Missing telemetry stays
+unknown and failures do not create combination blacklists.
+
+Initial failure evidence is now implemented: sample before cleanup, stop the
+affected owned worker, settle unloaded telemetry, and compare with a provisional
+baseline. The control API exposes bounded RAM-only observations and distinguishes
+unexplained pressure, missing/unstable telemetry, and recovered memory requiring
+controlled retest. Capacity-related failures with other residents can retry once
+in isolation before user inference is dispatched. Process attribution, controlled
+idle retests, and persistent configuration-specific exclusions remain pending.
+
 Add real telemetry, runtime/device control, residency verification, conservative
 memory estimates, and the complete failure-classification sequence. Activate
 Kuno's managed `OLLAMA_MAX_LOADED_MODELS` override so an existing one-model cap
@@ -605,6 +666,13 @@ test neutrality, bounded search, expiry/re-entry, and version-sensitive invalida
 Tests must distinguish loading, exercised workload bounds, and concurrent peaks.
 
 ### M4: Native Qwen image execution and clean comparison
+
+Development checkpoint (2026-09-23): the exact PNG recipe importer, verified
+three-file model downloader, and pinned native Vulkan worker are implemented.
+The installed NVIDIA path passes image execution, LLM eviction/reload, and
+disconnect cleanup. Vashti can inspect/export imported settings. Full reference
+execution, a fresh ComfyUI comparison, B70 reliability, and the remaining M5
+generation controls are still required; this milestone is not complete.
 
 Implement the exact first recipe and collection using the native adapter. Use a
 fresh, pinned ComfyUI environment and fresh verified model files for comparison.

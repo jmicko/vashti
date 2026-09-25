@@ -149,6 +149,8 @@ export function ChatView({
 }) {
   const [chat, setChat] = useState<ChatDetail | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [imagePreviews, setImagePreviews] = useState<Record<string, import("./images/types").Preview | null>>({});
+  useEffect(() => setImagePreviews({}), [chatId]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [generationError, setGenerationError] = useState<string | null>(null);
@@ -1157,6 +1159,12 @@ export function ChatView({
         appendStreamSegments(event.assistant_message_id, [{ type: "content", text: event.delta }]);
         appendMessageText(event.assistant_message_id, "content_text", event.delta);
         break;
+      case "image_preview":
+        setImagePreviews(current => ({ ...current, [event.assistant_message_id]:event.preview }));
+        break;
+      case "attachment_ready":
+        updateMessageList(current => current.map(message => message.id === event.assistant_message_id ? { ...message, attachments: [...message.attachments.filter(a => a.id !== event.attachment.id), event.attachment] } : message));
+        break;
       case "message_done":
         finishThinkingDuration(event.assistant_message_id);
         queueGenerationNotice(event.assistant_message_id, "complete");
@@ -1865,6 +1873,7 @@ export function ChatView({
                         : "root-message"
                     }
                     message={message}
+                    imagePreview={message.status === "streaming" ? imagePreviews[message.id] : null}
                     versionInfo={versionInfoForMessage(
                       message,
                       siblingGroups,

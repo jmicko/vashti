@@ -147,6 +147,7 @@ export type PrivateChatMessageRevision = {
 };
 
 export type PrivateChatAttachment = {
+  image_recipe?: import("./images/types").Recipe;
   id: string;
   chat_id?: string;
   message_id: string | null;

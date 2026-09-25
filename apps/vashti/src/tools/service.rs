@@ -58,6 +58,7 @@ pub struct ToolSelection {
     pub memories_enabled: bool,
     pub chat_history_enabled: bool,
     pub calculator_enabled: bool,
+    pub images_enabled: bool,
 }
 
 impl Default for ToolSelection {
@@ -72,6 +73,7 @@ impl Default for ToolSelection {
             memories_enabled: true,
             chat_history_enabled: true,
             calculator_enabled: true,
+            images_enabled: true,
         }
     }
 }
@@ -178,6 +180,7 @@ pub fn chat_tools(
 
 pub fn permission_tool_id(tool_name: &str) -> &str {
     match tool_name {
+        "generate_image" | "edit_image" => "images",
         TOOL_CALCULATE | TOOL_CONVERT_UNITS => TOOL_CALCULATOR,
         TOOL_SEARCH_NOTES | TOOL_READ_NOTE | TOOL_CREATE_NOTE | TOOL_UPDATE_NOTE
         | TOOL_TRASH_NOTE => TOOL_NOTES,

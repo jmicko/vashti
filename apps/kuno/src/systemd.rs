@@ -184,7 +184,7 @@ fn pid(service: &str) -> Result<u32> {
     Ok(pid)
 }
 
-fn owns_listener(pid: u32, address: SocketAddr) -> Result<()> {
+pub(crate) fn owns_listener(pid: u32, address: SocketAddr) -> Result<()> {
     let mut owned = BTreeSet::new();
     for entry in
         fs::read_dir(format!("/proc/{pid}/fd")).map_err(|_| "listener_ownership_requires_root")?
@@ -441,7 +441,8 @@ fn artifacts(installation: &Installation, executable: Vec<u8>) -> Result<Vec<Art
         },
         Artifact {
             path: "etc/systemd/system/kuno.service".into(),
-            bytes: takeover::gateway_unit(&installation.service).into_bytes(),
+            bytes: takeover::configured_gateway_unit(&installation.service, &installation.config)?
+                .into_bytes(),
             mode: 0o644,
         },
         Artifact {
@@ -539,6 +540,7 @@ impl Host for SystemdHost {
         Ok(takeover::property(&self.installation.service, "ActiveState")?.trim() == "active")
     }
     fn stop_original(&mut self) -> Result<()> {
+        eprintln!("kuno: Stopping Ollama and its model runners.");
         action(&self.installation.service, "stop", false)?;
         clear_stopped_upstream_marker()
     }
@@ -549,6 +551,7 @@ impl Host for SystemdHost {
         action(&self.installation.service, "start", true)
     }
     fn verify_private_upstream(&mut self) -> Result<()> {
+        eprintln!("kuno: Checking the private Ollama listener (up to 45 seconds).");
         wait(|| {
             let i = &self.installation;
             let process = pid(&i.service)?;
@@ -570,13 +573,21 @@ impl Host for SystemdHost {
         action(GATEWAY, "start", true)
     }
     fn verify_gateway(&mut self) -> Result<()> {
+        eprintln!("kuno: Checking Kuno startup and configured GPU workers (up to 45 seconds).");
         wait(|| {
             let i = &self.installation;
             let process = pid(GATEWAY)?;
             owns_listener(process, i.config.listen)?;
             owns_listener(process, i.config.control_listen)?;
             let status = self.status()?;
-            if status["mode"] != "gateway_only" || status["admission"]["recovery_required"] != false
+            let runtime_config = installed_config(&i.config)?;
+            if status["mode"]
+                != (if runtime_config.managed.is_some() {
+                    "managed_experimental"
+                } else {
+                    "gateway_only"
+                })
+                || status["admission"]["recovery_required"] != false
             {
                 return Err("gateway_not_ready");
             }
@@ -608,6 +619,7 @@ impl Host for SystemdHost {
         {
             return Err("gateway_service_changed_restore_refused");
         }
+        eprintln!("kuno: Stopping Kuno and its GPU workers.");
         remove_activation()?;
         // systemd stops the listener even if control is unavailable. SIGTERM
         // pauses admission and allows a bounded drain before forced shutdown.
@@ -621,6 +633,7 @@ impl Host for SystemdHost {
         action(GATEWAY, "stop", false)
     }
     fn restore_original(&mut self, was_active: bool) -> Result<()> {
+        eprintln!("kuno: Restoring the original Ollama service state.");
         if was_active {
             action(&self.installation.service, "start", true)
         } else {
@@ -705,6 +718,80 @@ fn load_installation() -> Result<Installation> {
     Ok(installation)
 }
 
+// The setup record preserves original service identity. The owned config is
+// the transactional source of current managed mode, including after rollback.
+fn installed_config(original: &Config) -> Result<Config> {
+    let current = Config::read(Path::new("/etc/kuno/config.json"))?;
+    let mut expected = original.clone();
+    expected.managed = None;
+    expected.image = None;
+    let mut actual = current.clone();
+    actual.managed = None;
+    actual.image = None;
+    if serde_json::to_value(expected).map_err(|_| "config_encoding_failed")?
+        != serde_json::to_value(actual).map_err(|_| "config_encoding_failed")?
+    {
+        return Err("installation_identity_changed");
+    }
+    Ok(current)
+}
+
+fn current_installation() -> Result<Installation> {
+    let mut installation = load_installation()?;
+    installation.config = installed_config(&installation.config)?;
+    Ok(installation)
+}
+
+/// Configuration is deployed with the binary/unit as one reversible file set.
+/// No configuration edit bypasses ownership checks or service health checks.
+pub fn configure_managed(mut pool: Option<crate::pool::PoolConfig>) -> Result<()> {
+    require_root()?;
+    let transaction = Transaction::open(Path::new("/"), Path::new(SETUP))?;
+    transaction.verify_installed()?;
+    let mut installation = current_installation()?;
+    if let Some(pool) = &mut pool {
+        for (index, worker) in pool.workers.iter_mut().enumerate() {
+            trusted_file(&worker.executable)?;
+            if !worker.models.is_dir() {
+                return Err("managed_models_directory_unavailable");
+            }
+            worker.home = PathBuf::from(format!("/var/lib/kuno/workers/ollama-{index}"));
+        }
+    }
+    installation.config.managed = pool;
+    installation.config.validate()?;
+    let executable = fs::read(std::env::current_exe().map_err(|_| "executable_unavailable")?)
+        .map_err(|_| "executable_unavailable")?;
+    transaction.replace(
+        &artifacts(&installation, executable)?,
+        &mut SystemdHost { installation },
+    )
+}
+
+pub fn configure_image(image: Option<crate::image_runtime::ImageConfig>) -> Result<()> {
+    require_root()?;
+    let transaction = Transaction::open(Path::new("/"), Path::new(SETUP))?;
+    transaction.verify_installed()?;
+    let mut installation = current_installation()?;
+    if let Some(image) = &image {
+        if !cfg!(feature = "native-image") {
+            return Err("image_engine_not_in_this_build");
+        }
+        image.validate()?;
+        for id in &image.collections {
+            crate::collections::verify(&image.models, id)?;
+        }
+    }
+    installation.config.image = image;
+    installation.config.validate()?;
+    let executable = fs::read(std::env::current_exe().map_err(|_| "executable_unavailable")?)
+        .map_err(|_| "executable_unavailable")?;
+    transaction.replace(
+        &artifacts(&installation, executable)?,
+        &mut SystemdHost { installation },
+    )
+}
+
 pub fn install(service: &str, config: &Config) -> Result<()> {
     require_root()?;
     let transaction = Transaction::open(Path::new("/"), Path::new(SETUP))?;
@@ -716,7 +803,7 @@ pub fn install(service: &str, config: &Config) -> Result<()> {
         return Err("runtime_state_exists_without_installation_record");
     }
     let installation = match phase {
-        Some(Phase::Complete) => load_installation()?,
+        Some(Phase::Complete) => current_installation()?,
         Some(Phase::Restored) | None => {
             let installation = capture(service, config)?;
             storage::write_json(&Path::new(SETUP).join("installation.json"), &installation)
@@ -728,6 +815,22 @@ pub fn install(service: &str, config: &Config) -> Result<()> {
     let executable = fs::read(std::env::current_exe().map_err(|_| "executable_unavailable")?)
         .map_err(|_| "executable_unavailable")?;
     transaction.apply(
+        &artifacts(&installation, executable)?,
+        &mut SystemdHost { installation },
+    )
+}
+
+pub fn upgrade() -> Result<()> {
+    require_root()?;
+    let transaction = Transaction::open(Path::new("/"), Path::new(SETUP))?;
+    transaction.verify_installed()?;
+    let installation = current_installation()?;
+    if installation.config.image.is_some() && !cfg!(feature = "native-image") {
+        return Err("image_engine_not_in_this_build");
+    }
+    let executable = fs::read(std::env::current_exe().map_err(|_| "executable_unavailable")?)
+        .map_err(|_| "executable_unavailable")?;
+    transaction.replace(
         &artifacts(&installation, executable)?,
         &mut SystemdHost { installation },
     )
@@ -785,11 +888,23 @@ fn clear_stopped_upstream_marker() -> Result<()> {
     if state != Path::new("/var/lib/private/kuno") && state != Path::new("/var/lib/kuno") {
         return Err("managed_state_directory_changed");
     }
-    let marker = state.join("upstream-in-flight");
+    clear_marker_in(&state)?;
+    let workers = state.join("gpu-reservations");
+    match fs::symlink_metadata(&workers) {
+        Ok(m) if m.is_dir() => clear_marker_in(&workers)?,
+        Ok(_) => return Err("managed_worker_state_directory_changed"),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => return Err("managed_worker_state_directory_unavailable"),
+    }
+    Ok(())
+}
+
+fn clear_marker_in(directory: &Path) -> Result<()> {
+    let marker = directory.join("upstream-in-flight");
     match fs::symlink_metadata(&marker) {
         Ok(m) if m.is_file() && m.len() == 0 => {
             fs::remove_file(marker).map_err(|_| "recovery_marker_remove_failed")?;
-            fs::File::open(&state)
+            fs::File::open(directory)
                 .and_then(|f| f.sync_all())
                 .map_err(|_| "recovery_marker_sync_failed")?;
         }

@@ -553,6 +553,8 @@ export type AttachmentResponse = {
 };
 
 export type GenerateEvent =
+  | { type: "image_preview"; assistant_message_id: string; preview: import("./images/types").Preview | null }
+  | { type: "attachment_ready"; assistant_message_id: string; attachment: AttachmentInfo }
   | {
       type: "message_start";
       user_message: ChatMessage | null;
@@ -707,7 +709,7 @@ export type FormState = {
   error: string | null;
 };
 
-export type Page = "chat" | "private-chat" | "notes" | "settings";
+export type Page = "chat" | "private-chat" | "notes" | "images" | "settings";
 export type SettingsSection =
   | "profile"
   | "context"
@@ -720,6 +722,7 @@ export type SettingsSection =
   | "backends";
 export type NewChatMode = "standard" | "private";
 export type AppRoute =
+  | { page: "images"; view?: "gallery" | "generate" | "edit"; sessionId?: string }
   | { page: "chat"; chatId?: string }
   | { page: "private-chat"; chatId: string }
   | { page: "notes"; storageMode?: "server" | "device"; noteId?: string }

@@ -20,6 +20,9 @@
 
   function artifactPresentation(artifact) {
     const target = artifact.target.toLowerCase();
+    if (target === "kuno-linux-x86_64") {
+      return { title: "Kuno inference host", detail: "Linux x86_64 · image engine included", linuxServer: false };
+    }
     if (target === "android-universal") {
       return { title: "Android app", detail: "Universal APK", linuxServer: false };
     }
@@ -160,9 +163,53 @@
       delivery.append(install);
     }
 
+    if (release.artifacts.some((artifact) => artifact.target === "kuno-linux-x86_64")) {
+      const install = document.createElement("section");
+      install.className = "release-delivery-group release-install";
+      const heading = document.createElement("h4");
+      heading.textContent = "Install Kuno on your inference machine";
+      const description = document.createElement("p");
+      description.className = "muted";
+      description.textContent = "Requires Linux with systemd and a running Ollama service. Asks before briefly interrupting inference. Image models and GPU configuration are a separate setup step.";
+      const command = document.createElement("div");
+      command.className = "command compact";
+      const code = document.createElement("code");
+      code.textContent = `curl -fsSL https://vashti.chat/install-kuno.sh | KUNO_VERSION=${release.version} sh`;
+      const copy = document.createElement("button");
+      copy.type = "button";
+      copy.textContent = "Copy";
+      copy.addEventListener("click", () => copyText(code.textContent || "", copy));
+      command.append(code, copy);
+      install.append(heading, description, command);
+      delivery.append(install);
+    }
+
     details.append(delivery);
     return details;
   }
 
-  window.VashtiReleaseUI = { createReleaseDelivery };
+  function compareVersions(left, right) {
+    const parse = (version) => {
+      const [core, ...pre] = version.replace(/^v/, "").split("-");
+      return { core: core.split("."), pre: pre.length ? pre.join("-").split(".") : [] };
+    };
+    const number = (a, b) => a.length - b.length || (a < b ? -1 : a > b ? 1 : 0);
+    const a = parse(left), b = parse(right);
+    for (let i = 0; i < 3; i++) {
+      const order = number(a.core[i], b.core[i]);
+      if (order) return order;
+    }
+    if (!a.pre.length || !b.pre.length) return Number(!a.pre.length) - Number(!b.pre.length);
+    for (let i = 0; i < Math.min(a.pre.length, b.pre.length); i++) {
+      const x = a.pre[i], y = b.pre[i];
+      if (x === y) continue;
+      const xn = /^\d+$/.test(x), yn = /^\d+$/.test(y);
+      if (xn && yn) return number(x, y);
+      if (xn !== yn) return xn ? -1 : 1;
+      return x < y ? -1 : 1;
+    }
+    return a.pre.length - b.pre.length;
+  }
+
+  window.VashtiReleaseUI = { createReleaseDelivery, compareVersions };
 })();

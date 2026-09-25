@@ -1,3 +1,4 @@
+import { executeDeviceImageTool, type DeviceImageContext } from "./images/deviceTools";
 import { requestJson } from "./api";
 import {
   DEVICE_NOTE_TOOL_NAMES,
@@ -22,6 +23,7 @@ export type ClientToolCallEvent = {
 
 export type ClientToolExecutionContext = {
   chatId: string;
+  images?: DeviceImageContext;
   modelKey: string;
   modelName: string;
 };
@@ -45,6 +47,13 @@ for (const name of DEVICE_NOTE_TOOL_NAMES) {
       modelName: context.modelName
     })
   );
+}
+
+for (const name of ["generate_image", "edit_image"]) {
+  handlers.set(name, (args, event, context) => {
+    if (!context.images) throw new Error("Private image storage is unavailable");
+    return executeDeviceImageTool(name, args, context.chatId, event.assistant_message_id, context.images);
+  });
 }
 
 export async function dispatchClientToolCall(

@@ -39,6 +39,12 @@ export function storeNewChatMode(mode: NewChatMode) {
 export function routeFromLocation(): AppRoute {
   const path = window.location.pathname;
 
+  if (path === "/app/images" || path.startsWith("/app/images/")) {
+    const view = path.split("/")[3];
+    const sessionId = new URLSearchParams(window.location.hash.slice(1)).get("session") ?? undefined;
+    return { page: "images", view: view === "generate" || view === "edit" ? view : "gallery", sessionId };
+  }
+
   if (path.startsWith("/app/settings")) {
     const section = path.split("/")[3];
     if (section === "personas") {
@@ -84,6 +90,9 @@ export function routeFromLocation(): AppRoute {
 }
 
 export function pathForRoute(route: AppRoute) {
+  if (route.page === "images") {
+    return `/app/images/${route.view ?? "gallery"}${route.sessionId ? `#session=${encodeURIComponent(route.sessionId)}` : ""}`;
+  }
   if (route.page === "settings") {
     if (route.section === "notes" && route.storageMode === "device") {
       return "/app/settings/notes#mode=device";

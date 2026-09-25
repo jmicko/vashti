@@ -67,31 +67,33 @@ version_number() {
 }
 
 compare_versions() {
-    left="$(version_number "$1")"
-    right="$(version_number "$2")"
-    left_major="$(printf '%s' "$left" | cut -d. -f1)"
-    left_minor="$(printf '%s' "$left" | cut -d. -f2)"
-    left_patch="$(printf '%s' "$left" | cut -d. -f3)"
-    right_major="$(printf '%s' "$right" | cut -d. -f1)"
-    right_minor="$(printf '%s' "$right" | cut -d. -f2)"
-    right_patch="$(printf '%s' "$right" | cut -d. -f3)"
-
-    for value in "$left_major" "$left_minor" "$left_patch" "$right_major" "$right_minor" "$right_patch"; do
-        case "$value" in
-            '' | *[!0-9]*)
-                echo "0"
-                return
-                ;;
-        esac
-    done
-
-    if [ "$left_major" -lt "$right_major" ]; then echo "-1"; return; fi
-    if [ "$left_major" -gt "$right_major" ]; then echo "1"; return; fi
-    if [ "$left_minor" -lt "$right_minor" ]; then echo "-1"; return; fi
-    if [ "$left_minor" -gt "$right_minor" ]; then echo "1"; return; fi
-    if [ "$left_patch" -lt "$right_patch" ]; then echo "-1"; return; fi
-    if [ "$left_patch" -gt "$right_patch" ]; then echo "1"; return; fi
-    echo "0"
+    # Numeric prerelease identifiers compare numerically; final beats beta/rc.
+    awk -v left="$(version_number "$1")" -v right="$(version_number "$2")" '
+    function cmpnum(a, b) {
+        if (length(a) != length(b)) return length(a) < length(b) ? -1 : 1
+        return ("x" a) < ("x" b) ? -1 : (("x" a) > ("x" b) ? 1 : 0)
+    }
+    function compare(a, b, ac, bc, ap, bp, i, n, m, x, y, c, an, bn) {
+        sub(/\+.*/, "", a); sub(/\+.*/, "", b)
+        i=index(a, "-"); ap=i ? substr(a,i+1) : ""; if(i) a=substr(a,1,i-1)
+        i=index(b, "-"); bp=i ? substr(b,i+1) : ""; if(i) b=substr(b,1,i-1)
+        if(split(a, ac, ".") != 3 || split(b, bc, ".") != 3) exit 2
+        for(i=1;i<=3;i++) {
+            if(ac[i] !~ /^[0-9]+$/ || bc[i] !~ /^[0-9]+$/) exit 2
+            c=cmpnum(ac[i],bc[i]); if(c) return c
+        }
+        if(ap == "" || bp == "") return ap == bp ? 0 : (ap == "" ? 1 : -1)
+        n=split(ap,ac,"."); m=split(bp,bc,".")
+        for(i=1;i<=n && i<=m;i++) {
+            x=ac[i]; y=bc[i]; if(("x" x) == ("x" y)) continue
+            an=x ~ /^[0-9]+$/; bn=y ~ /^[0-9]+$/
+            if(an && bn) return cmpnum(x,y)
+            if(an != bn) return an ? -1 : 1
+            return ("x" x) < ("x" y) ? -1 : 1
+        }
+        return n == m ? 0 : (n < m ? -1 : 1)
+    }
+    BEGIN { print compare(left,right) }'
 }
 
 bind_port() {

@@ -1,10 +1,22 @@
 pub mod admission;
+pub mod collections;
 pub mod config;
 pub mod deployment;
 pub mod gateway;
+pub mod image_privacy;
+pub mod image_runtime;
 mod journal;
 mod observe;
 mod storage;
 pub mod systemd;
 pub mod takeover;
 pub mod usage;
+
+mod gpu;
+pub mod learning;
+pub mod managed;
+pub mod placement;
+pub mod pool;
+pub mod reservations;
+pub mod resources;
+pub mod worker;

@@ -20,6 +20,8 @@ pub struct Config {
     pub queue_timeout_seconds: u64,
     pub response_header_timeout_seconds: u64,
     pub stream_idle_timeout_seconds: u64,
+    pub managed: Option<crate::pool::PoolConfig>,
+    pub image: Option<crate::image_runtime::ImageConfig>,
 }
 
 impl Default for Config {
@@ -34,6 +36,8 @@ impl Default for Config {
             queue_timeout_seconds: 120,
             response_header_timeout_seconds: 300,
             stream_idle_timeout_seconds: 300,
+            managed: None,
+            image: None,
         }
     }
 }
@@ -65,6 +69,15 @@ impl Config {
             || ports[1] == ports[2]
         {
             return Err("ports_must_be_nonzero_and_distinct");
+        }
+        if let Some(managed) = &self.managed {
+            managed.validate(&ports)?;
+        }
+        if let Some(image) = &self.image {
+            image.validate()?;
+            if self.managed.is_none() {
+                return Err("image_requires_managed_pool");
+            }
         }
         if self.max_waiting > 1024
             || [

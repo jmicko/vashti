@@ -122,9 +122,9 @@ Before `v1.0.0`:
 * minor versions may include migrations and feature changes
 * downgrade support is not promised
 
-Vashti Hub does not invent versions. It validates uploaded `vMAJOR.MINOR.PATCH` labels, retains
+Vashti Hub does not invent versions. It validates SemVer labels such as `v0.13.0` and `v0.13.0-beta.1`, retains
 uploads as prereleases until an admin acts on them, and serves only the admin-promoted release as
-`latest`. The prerelease update channel selects the highest available released or staged version.
+`latest`. The prerelease update channel selects the highest available released or staged version using SemVer precedence (beta.10 follows beta.2). Labels with build metadata are rejected. A suffix-bearing version cannot be promoted to stable; upload the final version without a suffix, then promote it. Its notes can roll up earlier beta releases with the same base version.
 
 ## Build Vashti
 
@@ -272,3 +272,41 @@ curl -fsSL https://vashti.chat/install.sh | sh
 ```
 
 The installer replaces the binary and restarts the systemd service without touching `/var/lib/vashti`.
+
+## Kuno distribution
+
+The Hub serves `/install-kuno.sh`. Release uploads include `kuno-linux-x86_64.tar.gz`
+with target `kuno-linux-x86_64`, alongside the Vashti server and Android artifacts.
+All artifacts must be uploaded together because published versions are immutable.
+The release page labels the Kuno download and shows a version-pinned installation command:
+
+```sh
+curl -fsSL https://vashti.chat/install-kuno.sh | KUNO_VERSION=v0.13.0-beta.1 sh
+```
+
+Without `KUNO_VERSION`, the script selects the latest stable release; until that
+release includes Kuno, use the beta command shown on the release page. The script
+verifies checksums, then runs the binary's install/upgrade transaction. It reads
+confirmation from `/dev/tty`, so piping the script does not bypass the interruption
+prompt. `KUNO_YES=1` explicitly accepts interruption for unattended installations.
+
+Package with `KUNO_SD_SOURCE_DIR` and `KUNO_SD_BUILD_DIR` pointing at the prepared
+native engine source/build, then run `apps/kuno/scripts/package-release.sh`.
+`CHECK_ONLY=1 apps/vashti/scripts/publish-release.sh` validates signatures and
+artifacts without requesting an upload key or uploading.
+
+Check both Hub and reverse-proxy request-body limits against the combined package
+size before uploading; the upload contains all three artifacts in one request.
+
+Release uploads stream to owner-only temporary files while SHA-256 is calculated,
+so native-engine package size does not determine Hub RAM usage. All signatures
+are checked before artifacts become visible. Release metadata is committed in
+one database transaction. Temporary files are removed on errors and stale upload
+files are cleaned at startup. A version directory left by a failed final storage
+operation is retained for operator inspection rather than overwritten.
+
+The packaged Hub's full three-artifact upload can be checked locally with
+`python3 apps/vashti-hub/tests/release-upload-smoke.py`. It starts an isolated Hub,
+uses the normal signing/publishing path, checks the stored hashes and prerelease
+manifest, and enforces a 96 MiB resident-memory ceiling. It never uploads to the
+live site. A 494 MiB release upload peaked at 12.8 MiB RSS on the build host.

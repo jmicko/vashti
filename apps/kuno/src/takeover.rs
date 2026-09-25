@@ -93,8 +93,8 @@ pub fn inspect(service: &str, config: &Config) -> Result<Plan, &'static str> {
         original_listen,
         proposed_drop_in_path: format!("/etc/systemd/system/{service}.d/zzzz-kuno.conf"),
         proposed_drop_in: crate::systemd::ollama_drop_in(proposed.upstream),
-        proposed_gateway_unit: gateway_unit(service),
-        proposed_config: proposed,
+        proposed_gateway_unit: configured_gateway_unit(service, &proposed)?,
+        proposed_config: proposed.clone(),
         original_loaded_model_limit: limit,
         loaded_model_limit_policy: "preserve_until_resource_scheduler_is_operational",
         rollback: "Remove only the unchanged Kuno-owned drop-in; reload systemd and restore the recorded original service state. Preserve all pre-existing drop-ins.",
@@ -109,9 +109,60 @@ pub fn inspect(service: &str, config: &Config) -> Result<Plan, &'static str> {
 }
 
 pub(crate) fn gateway_unit(service: &str) -> String {
+    // Render-node access supports native GPU telemetry without root or broad
+    // capabilities. Do not reference a missing group on NVIDIA-only/minimal hosts.
+    let render_access = std::fs::read_to_string("/etc/group")
+        .is_ok_and(|groups| groups.lines().any(|line| line.starts_with("render:")));
+    let gpu_access = if render_access {
+        "SupplementaryGroups=render\n"
+    } else {
+        ""
+    };
     format!(
-        "[Unit]\nDescription=Kuno inference gateway\nAfter=network.target {service}\nWants={service}\n\n[Service]\nType=simple\nDynamicUser=yes\nStateDirectory=kuno\nStateDirectoryMode=0700\nLoadCredential=control-token:/etc/kuno/control-token\nEnvironment=KUNO_CONTROL_TOKEN_FILE=%d/control-token\nExecStart=/usr/local/lib/kuno/kuno serve --config /etc/kuno/config.json\nRestart=on-failure\nRestartSec=3\nTimeoutStopSec=40\nNoNewPrivileges=yes\nProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\nLimitCORE=0\nMemorySwapMax=0\nUMask=0077\n\n[Install]\nWantedBy=multi-user.target\n"
+        "[Unit]\nDescription=Kuno inference gateway\nAfter=network.target {service}\nWants={service}\n\n[Service]\nType=simple\nDynamicUser=yes\n{gpu_access}StateDirectory=kuno\nStateDirectoryMode=0700\nLoadCredential=control-token:/etc/kuno/control-token\nEnvironment=KUNO_CONTROL_TOKEN_FILE=%d/control-token\nExecStart=/usr/local/lib/kuno/kuno serve --config /etc/kuno/config.json\nRestart=on-failure\nRestartSec=3\nTimeoutStopSec=40\nNoNewPrivileges=yes\nProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\nLimitCORE=0\nMemorySwapMax=0\nUMask=0077\n\n[Install]\nWantedBy=multi-user.target\n"
     )
+}
+
+/// Map the shared model store inside the service without widening host ACLs.
+/// The daemon rewrites only the worker's runtime view to this fixed mount.
+pub(crate) fn configured_gateway_unit(
+    service: &str,
+    config: &Config,
+) -> Result<String, &'static str> {
+    let mut unit = gateway_unit(service);
+    if let Some(pool) = &config.managed {
+        let source = pool
+            .workers
+            .first()
+            .ok_or("managed_pool_configuration_invalid")?
+            .models
+            .to_str()
+            .ok_or("managed_model_path_invalid")?;
+        if !source.starts_with('/') || source.chars().any(|c| c.is_control() || c == ':') {
+            return Err("managed_model_path_invalid");
+        }
+        let source = source
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('%', "%%");
+        unit.push_str(&format!(
+            "\n[Unit]\nRequiresMountsFor=\"{source}\"\n\n[Service]\nBindReadOnlyPaths=\"{source}\":/var/lib/kuno/models\n"
+        ));
+    }
+    if let Some(image) = &config.image {
+        let source = image.models.to_str().ok_or("image_model_path_invalid")?;
+        if !source.starts_with('/') || source.chars().any(|c| c.is_control() || c == ':') {
+            return Err("image_model_path_invalid");
+        }
+        let source = source
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('%', "%%");
+        unit.push_str(&format!(
+            "\n[Unit]\nRequiresMountsFor=\"{source}\"\n\n[Service]\nBindReadOnlyPaths=\"{source}\":/var/lib/kuno/image-models\nTimeoutStopSec=150\n"
+        ));
+    }
+    Ok(unit)
 }
 
 /// Generate reviewable installation inputs in a new private directory. This is
@@ -265,6 +316,133 @@ pub(crate) fn parse_environment(input: &str) -> Result<BTreeMap<String, String>,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn image_model_mount_is_read_only_and_escaped() {
+        let mut config = Config {
+            image: Some(crate::image_runtime::ImageConfig {
+                models: "/media/private/image models %n".into(),
+                pci_address: "0000:2d:00.0".into(),
+                timeout_seconds: 3600,
+                collections: vec!["qwen-image-2512-fp8".into()],
+            }),
+            ..Config::default()
+        };
+        let unit = configured_gateway_unit("ollama.service", &config).unwrap();
+        assert!(unit.contains(
+            "BindReadOnlyPaths=\"/media/private/image models %%n\":/var/lib/kuno/image-models"
+        ));
+        for bad in ["/tmp/x:y", "/tmp/x\nExecStart=bad"] {
+            config.image.as_mut().unwrap().models = bad.into();
+            assert!(configured_gateway_unit("ollama.service", &config).is_err());
+        }
+    }
+
+    #[test]
+    fn managed_model_mount_is_scoped_and_cannot_inject_unit_directives() {
+        use crate::{
+            pool::PoolConfig,
+            worker::{DeviceSelection, WorkerConfig},
+        };
+        let mut config = Config {
+            managed: Some(PoolConfig {
+                reserve_bytes: 1024u64.pow(3),
+                workers: vec![WorkerConfig {
+                    executable: "/usr/local/bin/ollama".into(),
+                    models: "/media/private/models %n".into(),
+                    home: "/var/lib/kuno/workers/ollama-0".into(),
+                    address: "127.0.0.1:11436".parse().unwrap(),
+                    device: DeviceSelection::Vulkan {
+                        index: 1,
+                        pci_address: "0000:2d:00.0".into(),
+                    },
+                    max_loaded_models: 8,
+                    context_length: 4096,
+                }],
+            }),
+            ..Config::default()
+        };
+        let unit = configured_gateway_unit("ollama.service", &config).unwrap();
+        assert!(
+            unit.contains("BindReadOnlyPaths=\"/media/private/models %%n\":/var/lib/kuno/models")
+        );
+        assert!(!unit.contains("SupplementaryGroups=jmicko"));
+        for path in ["/media/models:other", "/media/models\nExecStart=/bad"] {
+            config.managed.as_mut().unwrap().workers[0].models = path.into();
+            assert_eq!(
+                configured_gateway_unit("ollama.service", &config),
+                Err("managed_model_path_invalid")
+            );
+        }
+        config.managed = None;
+        assert!(
+            !configured_gateway_unit("ollama.service", &config)
+                .unwrap()
+                .contains("BindReadOnlyPaths")
+        );
+    }
+
+    #[test]
+    #[ignore = "requires a running user systemd manager; parses a temporary unit without starting it"]
+    fn systemd_parses_model_mount_source_and_destination_separately() {
+        use std::io::Write;
+        let runtime = std::env::var_os("XDG_RUNTIME_DIR").expect("user runtime directory");
+        let directory = std::path::PathBuf::from(runtime).join("systemd/user");
+        std::fs::create_dir_all(&directory).unwrap();
+        let mut unit = tempfile::Builder::new()
+            .prefix("kuno-mount-parser-")
+            .suffix(".service")
+            .tempfile_in(&directory)
+            .unwrap();
+        let config: Config = serde_json::from_value(serde_json::json!({"managed":{
+            "reserve_bytes":1073741824,"workers":[{
+                "executable":"/usr/local/bin/ollama","models":"/media/private/models %n",
+                "home":"/var/lib/kuno/workers/ollama-0","address":"127.0.0.1:11436",
+                "device":{"backend":"vulkan","index":1,"pci_address":"0000:2d:00.0"},
+                "max_loaded_models":8,"context_length":4096
+            }]
+        }}))
+        .unwrap();
+        unit.write_all(
+            configured_gateway_unit("ollama.service", &config)
+                .unwrap()
+                .as_bytes(),
+        )
+        .unwrap();
+        unit.flush().unwrap();
+        let name = unit
+            .path()
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let reload = || {
+            std::process::Command::new("systemctl")
+                .args(["--user", "daemon-reload"])
+                .output()
+                .unwrap()
+        };
+        assert!(reload().status.success());
+        let output = std::process::Command::new("systemctl")
+            .args([
+                "--user",
+                "show",
+                "--value",
+                "--property=BindReadOnlyPaths",
+                &name,
+            ])
+            .output()
+            .unwrap();
+        // Unlink and reload before assertions, including a failing parse check.
+        drop(unit);
+        assert!(reload().status.success());
+        assert!(output.status.success());
+        assert_eq!(
+            String::from_utf8(output.stdout).unwrap().trim(),
+            "/media/private/models %n:/var/lib/kuno/models:rbind"
+        );
+    }
 
     #[test]
     fn discovery_only_retains_allowlisted_settings() {

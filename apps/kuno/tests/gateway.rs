@@ -39,6 +39,14 @@ impl Drop for Fixture {
 
 impl Fixture {
     async fn new(upstream: Router, max_waiting: usize) -> Self {
+        Self::configured(upstream, max_waiting, None).await
+    }
+
+    async fn configured(
+        upstream: Router,
+        max_waiting: usize,
+        managed: Option<kuno::pool::PoolConfig>,
+    ) -> Self {
         let upstream_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let control_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -52,6 +60,8 @@ impl Fixture {
             stream_idle_timeout_seconds: 1,
             response_header_timeout_seconds: 1,
             queue_timeout_seconds: 1,
+            managed,
+            image: None,
         };
         let base = format!("http://{}", config.listen);
         let control = format!("http://{}", config.control_listen);
@@ -243,6 +253,15 @@ async fn streams_before_completion_holds_lease_and_keeps_metadata_available() {
 #[tokio::test]
 async fn paused_gate_blocks_inference_and_unknown_routes_without_blocking_metadata() {
     let f = Fixture::new(Router::new().fallback(|| async { "upstream" }), 1).await;
+    assert_eq!(
+        f.client
+            .get(format!("{}/kuno/v1/resources", f.control))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
     let pause = format!("{}/kuno/v1/admission/pause", f.control);
     assert_eq!(
         f.client.post(&pause).send().await.unwrap().status(),
@@ -554,9 +573,23 @@ async fn binary_writes_only_content_free_state_and_diagnostics() {
         .unwrap()
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
-    assert_eq!(files.len(), 1);
-    assert_eq!(files[0].file_name(), "instance.lock");
-    assert!(std::fs::read(files[0].path()).unwrap().is_empty());
+    assert_eq!(files.len(), 2);
+    for file in files {
+        match file.file_name().to_str().unwrap() {
+            "instance.lock" => assert!(std::fs::read(file.path()).unwrap().is_empty()),
+            "host-boot.json" => {
+                let boot: String =
+                    serde_json::from_slice(&std::fs::read(file.path()).unwrap()).unwrap();
+                assert_eq!(
+                    boot,
+                    std::fs::read_to_string("/proc/sys/kernel/random/boot_id")
+                        .unwrap()
+                        .trim()
+                );
+            }
+            other => panic!("unexpected persisted file: {other}"),
+        }
+    }
 }
 
 #[tokio::test]
@@ -724,4 +757,220 @@ fn configuration_prevents_loops_and_remote_control() {
     config.control_listen = "127.0.0.1:11432".parse().unwrap();
     config.upstream = "10.0.0.1:11434".parse().unwrap();
     assert!(config.validate().is_err());
+}
+
+#[tokio::test]
+async fn client_disconnects_before_or_after_headers_drain_without_poisoning_admission() {
+    for before_headers in [false, true] {
+        let (tx, rx) = mpsc::channel::<Result<&'static str, std::io::Error>>(2);
+        tx.send(Ok("first chunk")).await.unwrap();
+        let receiver = Arc::new(tokio::sync::Mutex::new(Some(rx)));
+        let started = Arc::new(Notify::new());
+        let release_headers = Arc::new(Notify::new());
+        let upstream = Router::new().fallback({
+            let started = started.clone();
+            let release_headers = release_headers.clone();
+            move || {
+                let receiver = receiver.clone();
+                let started = started.clone();
+                let release_headers = release_headers.clone();
+                async move {
+                    let Some(rx) = receiver.lock().await.take() else {
+                        return Response::new(Body::from("next request completed"));
+                    };
+                    started.notify_one();
+                    if before_headers {
+                        release_headers.notified().await;
+                    }
+                    Response::new(Body::from_stream(futures_util::stream::unfold(
+                        rx,
+                        |mut rx| async move { rx.recv().await.map(|value| (value, rx)) },
+                    )))
+                }
+            }
+        });
+        let f = Fixture::new(upstream, 1).await;
+        let client = f.client.clone();
+        let url = format!("{}/api/generate", f.base);
+        let first = tokio::spawn(async move { client.post(url).send().await.unwrap() });
+        started.notified().await;
+        if before_headers {
+            first.abort();
+            let _ = first.await;
+            release_headers.notify_one();
+        } else {
+            let mut response = first.await.unwrap();
+            assert!(response.chunk().await.unwrap().is_some());
+            drop(response);
+        }
+        let client = f.client.clone();
+        let url = format!("{}/api/generate", f.base);
+        let next =
+            tokio::spawn(
+                async move { client.post(url).send().await.unwrap().text().await.unwrap() },
+            );
+        until(|| f.gateway.admission.status().waiting == 1).await;
+        assert!(f.gateway.admission.status().active);
+        assert!(!f.gateway.admission.status().recovery_required);
+        tx.send(Ok("discard this, do not store it")).await.unwrap();
+        drop(tx);
+        assert_eq!(next.await.unwrap(), "next request completed");
+        until(|| f.gateway.admission.status().completed == 2).await;
+        assert!(!f.gateway.admission.status().recovery_required);
+    }
+}
+
+#[tokio::test]
+async fn managed_cloud_routes_to_catalog_without_starting_local_worker() {
+    use kuno::{
+        pool::PoolConfig,
+        worker::{DeviceSelection, WorkerConfig},
+    };
+    let upstream = Router::new().fallback(|request: Request| async move {
+        match request.uri().path() {
+            "/api/tags" => axum::Json(serde_json::json!({"models":[{
+                "name":"cloud-model:cloud", "digest":"a".repeat(64),
+                "remote_model":"cloud-model", "remote_host":"https://ollama.com"
+            }]}))
+            .into_response(),
+            "/api/chat" => {
+                let bytes = to_bytes(request.into_body(), 4096).await.unwrap();
+                let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(value["messages"][0]["content"], "transient test input");
+                assert!(value.get("options").is_none());
+                axum::Json(serde_json::json!({"done":true})).into_response()
+            }
+            _ => panic!("unexpected cloud routing endpoint"),
+        }
+    });
+    use axum::response::IntoResponse;
+    let dir = tempfile::tempdir().unwrap();
+    let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let managed = PoolConfig {
+        reserve_bytes: 1024u64.pow(3),
+        workers: vec![WorkerConfig {
+            executable: dir.path().join("must-not-start"),
+            models: dir.path().into(),
+            home: dir.path().into(),
+            address: port.local_addr().unwrap(),
+            device: DeviceSelection::Vulkan {
+                index: 1,
+                pci_address: "0000:2d:00.0".into(),
+            },
+            max_loaded_models: 8,
+            context_length: 4096,
+        }],
+    };
+    let fixture = Fixture::configured(upstream, 2, Some(managed)).await;
+    let response = fixture.client.post(format!("{}/api/chat",fixture.base))
+        .json(&serde_json::json!({"model":"cloud-model:cloud","messages":[{"role":"user","content":"transient test input"}]}))
+        .send().await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.json::<serde_json::Value>().await.unwrap()["done"],
+        true
+    );
+    assert!(!fixture.gateway.admission.status().recovery_required);
+}
+
+#[tokio::test]
+async fn persistent_gpu_uncertainty_is_visible_in_status_and_cannot_be_resumed_away() {
+    use kuno::{
+        pool::PoolConfig,
+        worker::{DeviceSelection, WorkerConfig},
+    };
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("gpu-reservations")).unwrap();
+    std::fs::write(dir.path().join("gpu-reservations/upstream-in-flight"), []).unwrap();
+    let control = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let public = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let upstream = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let worker = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let config = Config {
+        listen: public.local_addr().unwrap(),
+        upstream: upstream.local_addr().unwrap(),
+        control_listen: control.local_addr().unwrap(),
+        state_dir: dir.path().into(),
+        managed: Some(PoolConfig {
+            reserve_bytes: 1024u64.pow(3),
+            workers: vec![WorkerConfig {
+                executable: dir.path().join("must-not-start"),
+                models: dir.path().into(),
+                home: dir.path().into(),
+                address: worker.local_addr().unwrap(),
+                device: DeviceSelection::Vulkan {
+                    index: 0,
+                    pci_address: "0000:01:00.0".into(),
+                },
+                max_loaded_models: 8,
+                context_length: 4096,
+            }],
+        }),
+        ..Config::default()
+    };
+    let base = format!("http://{}", config.control_listen);
+    let gateway = Gateway::persistent(config, TOKEN).unwrap();
+    assert!(!gateway.admission.status().recovery_required);
+    let app = gateway.control();
+    let server = tokio::spawn(async move {
+        axum::serve(control, app).await.unwrap();
+    });
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    for path in ["/kuno/v1/status", "/kuno/v1/admission/resume"] {
+        let request = if path.ends_with("resume") {
+            client.post(format!("{base}{path}"))
+        } else {
+            client.get(format!("{base}{path}"))
+        };
+        let response = request.bearer_auth(TOKEN).send().await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let status: serde_json::Value = response.json().await.unwrap();
+        assert_eq!(status["mode"], "managed_experimental");
+        assert_eq!(status["admission"]["recovery_required"], true);
+    }
+    server.abort();
+}
+
+#[tokio::test]
+async fn learning_diagnostics_require_auth_and_do_not_start_workers() {
+    let worker = kuno::worker::WorkerConfig {
+        executable: "/nonexistent/runtime".into(),
+        models: "/nonexistent/models".into(),
+        home: "/nonexistent/home".into(),
+        address: "127.0.0.1:39001".parse().unwrap(),
+        device: kuno::worker::DeviceSelection::Vulkan {
+            index: 1,
+            pci_address: "0000:2d:00.0".into(),
+        },
+        max_loaded_models: 8,
+        context_length: 4096,
+    };
+    for managed in [
+        None,
+        Some(kuno::pool::PoolConfig {
+            workers: vec![worker],
+            reserve_bytes: 1024u64.pow(3),
+        }),
+    ] {
+        let enabled = managed.is_some();
+        let f = Fixture::configured(Router::new(), 8, managed).await;
+        let url = format!("{}/kuno/v1/learning", f.control);
+        assert_eq!(
+            f.client.get(&url).send().await.unwrap().status(),
+            StatusCode::UNAUTHORIZED
+        );
+        let response = f.client.get(url).bearer_auth(TOKEN).send().await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value = response.json().await.unwrap();
+        assert_eq!(body["persistent"], false);
+        assert_eq!(body["blacklisting_enabled"], false);
+        assert_eq!(
+            body["workers"].as_array().unwrap().len(),
+            usize::from(enabled)
+        );
+        if enabled {
+            assert_eq!(body["workers"][0]["evidence"]["failure_count"], 0);
+            assert!(body["workers"][0]["evidence"]["provisional_unloaded_baseline"].is_null());
+        }
+    }
 }

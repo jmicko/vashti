@@ -20,6 +20,11 @@ if [[ -n "${ARTIFACT:-}" ]]; then
 else
     linux_artifact="apps/vashti/dist/release/$version/vashti-linux-x86_64.tar.gz"
     android_artifact="apps/vashti/dist/release/$version/vashti-android.apk"
+    kuno_artifact="apps/vashti/dist/release/$version/kuno-linux-x86_64.tar.gz"
+    if [[ -f "$kuno_artifact" ]]; then
+        targets+=("kuno-linux-x86_64")
+        artifacts+=("$kuno_artifact")
+    fi
     if [[ -f "$linux_artifact" ]]; then
         targets+=("linux-x86_64")
         artifacts+=("$linux_artifact")
@@ -30,6 +35,19 @@ else
     fi
 fi
 
+if [[ "${REQUIRE_COMPLETE_RELEASE:-0}" == 1 ]]; then
+    for required in linux-x86_64 android-universal kuno-linux-x86_64; do
+        present=0
+        for target in "${targets[@]}"; do
+            if [[ "$target" == "$required" ]]; then present=1; fi
+        done
+        if [[ "$present" != 1 ]]; then
+            echo "missing required release target: $required" >&2
+            exit 1
+        fi
+    done
+fi
+
 if [[ -z "$notes" && -z "$notes_file" ]]; then
     versioned_notes_file="apps/vashti/release-notes/$version.md"
     latest_notes_file="apps/vashti/release-notes-latest.md"
@@ -38,24 +56,6 @@ if [[ -z "$notes" && -z "$notes_file" ]]; then
     elif [[ -f "$latest_notes_file" ]]; then
         notes_file="$latest_notes_file"
     fi
-fi
-
-upload_key="${VASHTI_HUB_UPLOAD_KEY:-${VASHTI_HUB_TOKEN:-}}"
-if [[ -z "$upload_key" ]]; then
-    if [[ -t 0 ]]; then
-        read -r -s -p "One-time Hub upload key (hidden; press Enter after paste): " upload_key
-        echo
-        if [[ -z "$upload_key" ]]; then
-            echo "upload key cannot be empty" >&2
-            exit 1
-        fi
-        echo "Upload key received. Publishing..."
-    else
-        echo "missing one-time hub upload key: set VASHTI_HUB_UPLOAD_KEY" >&2
-        exit 1
-    fi
-else
-    echo "Using upload key from environment. Publishing..."
 fi
 
 if (( ${#artifacts[@]} == 0 )); then
@@ -124,9 +124,36 @@ for index in "${!artifacts[@]}"; do
     )")
 done
 
+if [[ "${CHECK_ONLY:-0}" == 1 ]]; then
+    printf 'Validated signatures for %s (%s artifacts). No upload attempted.\n' "$version" "${#artifacts[@]}"
+    exit 0
+fi
+
+upload_key="${VASHTI_HUB_UPLOAD_KEY:-${VASHTI_HUB_TOKEN:-}}"
+if [[ -z "$upload_key" ]]; then
+    if [[ -t 0 ]]; then
+        read -r -s -p "One-time Hub upload key (hidden; press Enter after paste): " upload_key
+        echo
+        if [[ -z "$upload_key" ]]; then
+            echo "upload key cannot be empty" >&2
+            exit 1
+        fi
+        echo "Upload key received. Publishing..."
+    else
+        echo "missing one-time hub upload key: set VASHTI_HUB_UPLOAD_KEY" >&2
+        exit 1
+    fi
+else
+    echo "Using upload key from environment. Publishing..."
+fi
+
+case "$upload_key" in
+    *$'\r'*|*$'\n'*) echo 'Invalid upload key' >&2; exit 1 ;;
+esac
+
 curl_args=(
     -fsS
-    -H "Authorization: Bearer $upload_key"
+    -H @-
     -F "version=$version"
 )
 if [[ -n "$notes_file" ]]; then
@@ -143,7 +170,7 @@ for index in "${!artifacts[@]}"; do
 done
 curl_args+=("$hub_url/api/releases")
 
-curl "${curl_args[@]}" >/dev/null
+curl "${curl_args[@]}" <<<"Authorization: Bearer $upload_key" >/dev/null
 
 echo
 latest="$(curl -fsS "$hub_url/releases/latest/VERSION" | tr -d '[:space:]')"

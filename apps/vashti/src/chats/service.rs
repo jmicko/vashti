@@ -94,6 +94,7 @@ impl From<ChatToolPreferences> for ToolSelection {
             memories_enabled: preferences.tool_enabled(tools_service::TOOL_MEMORIES),
             chat_history_enabled: preferences.tool_enabled(tools_service::TOOL_CHAT_HISTORY),
             calculator_enabled: preferences.tool_enabled(tools_service::TOOL_CALCULATOR),
+            images_enabled: preferences.tool_enabled("images"),
         }
     }
 }

@@ -37,8 +37,8 @@ pub struct AppUpdate {
 fn download_path(version: &str) -> Result<String, String> {
     let parsed = semver::Version::parse(version.strip_prefix('v').unwrap_or(version))
         .map_err(|_| "Invalid app version".to_string())?;
-    // Hub versions use three numeric components, with the channel stored separately.
-    if !parsed.pre.is_empty() || !parsed.build.is_empty() {
+    // Hub accepts SemVer prereleases but not build metadata.
+    if !parsed.build.is_empty() {
         return Err("Invalid app version".into());
     }
     Ok(format!("/releases/v{parsed}/vashti-android.apk"))
@@ -149,7 +149,7 @@ mod tests {
             "https://evil.test",
             "1.2.3/evil",
             "1.2.3+evil",
-            "1.2.3-beta",
+            "1.2.3-beta/evil",
         ] {
             assert!(download_path(value).is_err());
         }
@@ -193,5 +193,14 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+    #[test]
+    fn beta_download_paths_are_supported_without_allowing_path_injection() {
+        assert_eq!(
+            download_path("v0.13.0-beta.1").unwrap(),
+            "/releases/v0.13.0-beta.1/vashti-android.apk"
+        );
+        assert!(download_path("v0.13.0+build.1").is_err());
+        assert!(download_path("../0.13.0-beta.1").is_err());
     }
 }

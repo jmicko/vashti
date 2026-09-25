@@ -367,3 +367,104 @@ fn symlink_parents_and_traversal_are_rejected() {
     );
     assert!(host.events.is_empty());
 }
+
+#[test]
+fn upgrade_replaces_artifacts_once_and_rolls_back_failed_activation() {
+    for fail in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let state = tempfile::tempdir().unwrap();
+        let original = unchanged_user_override(root.path());
+        let before = std::fs::read(&original).unwrap();
+        let transaction = Transaction::open(root.path(), state.path()).unwrap();
+        let mut host = FakeHost {
+            active: true,
+            ..Default::default()
+        };
+        let old = artifacts();
+        transaction.apply(&old, &mut host).unwrap();
+        let mut new = old.clone();
+        new[2].bytes = b"updated executable".to_vec();
+        if fail {
+            host.fail_at = Some("activate_gateway");
+        }
+        let result = transaction.replace(&new, &mut host);
+        if fail {
+            assert_eq!(result, Err("upgrade_failed_previous_version_restored"));
+        } else {
+            result.unwrap();
+            let events = host.events.len();
+            transaction.replace(&new, &mut host).unwrap();
+            assert_eq!(
+                &host.events[events..],
+                &["verify_private", "verify_gateway", "activate_gateway"]
+            );
+        }
+        assert!(host.active && host.gateway && host.private);
+        transaction.verify_installed().unwrap();
+        assert_eq!(
+            std::fs::read(root.path().join(&old[2].path)).unwrap(),
+            if fail { &old[2].bytes } else { &new[2].bytes }.to_vec()
+        );
+        assert_eq!(std::fs::read(&original).unwrap(), before);
+        std::fs::write(root.path().join(&old[2].path), "admin edit").unwrap();
+        let events = host.events.len();
+        assert!(transaction.replace(&new, &mut host).is_err());
+        assert_eq!(
+            host.events.len(),
+            events,
+            "edited files must prevent service changes"
+        );
+    }
+}
+
+#[test]
+fn configuration_and_model_mount_roll_back_as_one_file_set() {
+    let root = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    let transaction = Transaction::open(root.path(), state.path()).unwrap();
+    let mut host = FakeHost {
+        active: true,
+        ..Default::default()
+    };
+    let mut old = artifacts();
+    old.push(Artifact {
+        path: "etc/kuno/config.json".into(),
+        bytes: br#"{"managed":null}"#.to_vec(),
+        mode: 0o644,
+    });
+    old.push(Artifact {
+        path: "etc/systemd/system/kuno.service".into(),
+        bytes: b"[Service]\nDynamicUser=yes\n".to_vec(),
+        mode: 0o644,
+    });
+    transaction.apply(&old, &mut host).unwrap();
+    let mut new = old.clone();
+    new[3].bytes = br#"{"managed":{"workers":["gpu"]}}"#.to_vec();
+    new[4]
+        .bytes
+        .extend_from_slice(b"BindReadOnlyPaths=/models:/var/lib/kuno/models\n");
+    for failure in ["start_gateway", "verify_gateway", "activate_gateway"] {
+        host.fail_at = Some(failure);
+        assert_eq!(
+            transaction.replace(&new, &mut host),
+            Err("upgrade_failed_previous_version_restored")
+        );
+        transaction.verify_installed().unwrap();
+        for file in &old {
+            assert_eq!(
+                std::fs::read(root.path().join(&file.path)).unwrap(),
+                file.bytes
+            );
+        }
+        assert!(host.active && host.gateway && host.private);
+    }
+    transaction.replace(&new, &mut host).unwrap();
+    transaction.replace(&old, &mut host).unwrap();
+    transaction.verify_installed().unwrap();
+    for file in &old {
+        assert_eq!(
+            std::fs::read(root.path().join(&file.path)).unwrap(),
+            file.bytes
+        );
+    }
+}

@@ -120,6 +120,7 @@ type MessageAvatarInfo = {
 };
 
 type MessageBubbleProps = {
+  imagePreview?: import("./images/types").Preview | null;
   message: ChatMessage;
   versionInfo: VersionInfo | null;
   copied: boolean;
@@ -177,6 +178,7 @@ export function MessageBubble(props: MessageBubbleProps) {
           <MessageBubbleCard
             {...props}
             message={versionMessage}
+            imagePreview={versionMessage.id === message.id ? props.imagePreview : null}
             versionInfo={versionInfoAtIndex(versionInfo, index)}
             copied={isCurrent && props.copied}
             isBusy={isCurrent && props.isBusy}
@@ -207,6 +209,7 @@ export function MessageBubble(props: MessageBubbleProps) {
 }
 
 function MessageBubbleCard({
+  imagePreview,
   message,
   versionInfo,
   copied,
@@ -416,6 +419,7 @@ function MessageBubbleCard({
           <ThinkingContent segments={parsedThinking.segments} />
         </details>
       )}
+      {!isEditing && !message.is_deleted && imagePreview && <figure className="message-image-preview"><img src={`data:image/png;base64,${imagePreview.png_base64}`} alt="Approximate image being generated" /><figcaption>Preview · step {imagePreview.step} of {imagePreview.steps}</figcaption></figure>}
       {!isEditing && !message.is_deleted && attachments.length > 0 && (
         <MessageAttachments attachments={attachments} onImageOpen={onImageOpen} />
       )}

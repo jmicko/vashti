@@ -1,7 +1,11 @@
-Kuno 0.1.0 — Linux systemd inference gateway
+Kuno — Linux systemd inference gateway and native image engine
 
-This development release provides the Ollama gateway and usage tracking.
-GPU placement, adaptive profiling, and image generation are not implemented yet.
+This development release provides the Ollama gateway, usage tracking, and
+optional managed GPU workers. Adaptive idle profiling is still pending.
+This package includes the experimental native image engine. Model weights and
+GPU configuration are separate setup steps; see docs/kuno-images.md. CUDA and
+Vulkan need working host GPU drivers. No Python image server is required.
+The VERSION file identifies the coordinated Vashti release containing this build.
 
 Installation
 ------------
@@ -13,7 +17,7 @@ Installation warns that inference will briefly be interrupted, then waits for
 Continue? [y/N] before changing services. Enter or n cancels. You do not need to
 close connected applications; clients can reconnect after installation.
 The installer verifies service ownership, listener ownership, and health itself.
-Install, recover, and takeover-restore all prompt. Unattended scripts must pass
+Install, upgrade, recover, and takeover-restore all prompt. Unattended scripts must pass
 --yes explicitly; noninteractive input without that flag is rejected.
 
 For an optional diagnostic report before or after installation:
@@ -26,7 +30,7 @@ starts Kuno on the original listener. Kuno is enabled at system startup and runs
 without root using systemd DynamicUser. Installation alone requires sudo.
 
 The installer preserves OLLAMA_MAX_LOADED_MODELS, including an existing value of 1.
-Kuno will manage that ceiling when the GPU scheduler is implemented. It disables
+Optional managed workers use their own model limits and GPU selection. It disables
 Ollama request logging and raw stdout/stderr in its own removable service drop-in.
 No model files are downloaded, moved, or deleted.
 
@@ -47,14 +51,17 @@ Paths
 
 Cancellation recovery
 ---------------------
-Until automatic GPU/runtime reconciliation is implemented, an interrupted
-inference request blocks further admission. Run:
+Kuno drains abandoned responses without saving their contents, releasing
+admission when upstream completion is confirmed. Transport failures or responses
+that fail to finish within the drain deadline still block inference. To recover:
 
   sudo /usr/local/lib/kuno/kuno recover
 
 This restarts managed Ollama and Kuno, unloading Ollama's resident models. It
 clears the empty recovery marker only after stopping Ollama's runner group.
-It retains usage history and does not touch other GPU applications.
+It retains usage history and does not touch other GPU applications. A confirmed
+host reboot also clears uncertainty recorded under a previous Linux boot ID.
+Restarting only Kuno does not; legacy markers need this explicit recovery once.
 
 Undo installation or recover an interrupted installation
 -------------------------------------------------------
@@ -70,6 +77,15 @@ Restore stops both services before clearing any uncertain in-flight marker.
 
 Diagnostics
 -----------
+`resources` returns a read-only GPU-memory and loaded-model report:
+  ./kuno resources
+
+It automatically uses the installed configuration when present. Intel queries
+use DRM render nodes, NVIDIA queries use the installed NVML library. Generated
+services join the existing render group when available. Missing or restricted
+measurements remain unknown; no model is loaded or unloaded. Ollama's reported
+VRAM allocation is not a physical GPU-assignment guarantee.
+
 `doctor` returns content-free JSON. Without sudo, only unprivileged discovery is
 verified. Privileged installation and post-install checks verify actual processes,
 listeners, effective model limits, and both sides of the proxy.
@@ -82,12 +98,30 @@ Kuno's own classified diagnostics:
   sudo journalctl -u kuno.service -n 50 --no-pager
 
 Keep this binary for restoration. Re-running install with the same binary is
-idempotent; upgrading a changed installation requires restore followed by install
-in this first release. Normal runtime never automatically rolls back to direct
-Ollama access.
+idempotent. Upgrade using the newly downloaded binary:
+
+  sudo ./kuno upgrade
+
+This asks once before replacing the installation and restores the previous files
+if the new version fails activation. Interrupted upgrade processes use the same
+restore journal described above. Normal runtime never automatically rolls back to
+direct Ollama access.
 
 Validation: automated proxy and transaction fault tests, staged systemd-unit
 validation, and real privileged installation on Linux Mint passed. Post-install
-diagnostics and IPv4/IPv6 metadata forwarding passed on 2026-09-22. Live reboot,
-restore, and operator recovery remain untested. Host-wide swap/hibernation privacy
+diagnostics and IPv4/IPv6 metadata forwarding passed on 2026-09-22. Live reboot
+remains untested. Single-command upgrade, recovery, restore/reinstall, and
+remote streamed generation and cancellation passed on 2026-09-23. Host-wide swap/hibernation privacy
 and GPU execution placement are not certified by this gateway release.
+
+Experimental managed GPU workers:
+  sudo ./kuno configure-managed --workers /absolute/path/to/workers.json
+  sudo ./kuno configure-managed --disable
+
+The workers file is a PoolConfig JSON object with reserve_bytes and workers.
+See apps/kuno/README.md for its schema and current endpoint coverage. This mode
+requires explicit device selection. The installer supplies private worker homes
+and a read-only model mount; worker discovery verifies GPU identity before
+activation. Failed activation restores the prior configuration/unit/binary.
+Like install/upgrade, these commands wait for interruption confirmation unless
+--yes is explicitly supplied. Ordinary upgrades preserve the managed setting.

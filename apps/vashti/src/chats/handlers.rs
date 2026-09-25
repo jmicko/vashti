@@ -212,6 +212,14 @@ enum GenerateEvent {
         assistant_message_id: String,
         delta: String,
     },
+    ImagePreview {
+        assistant_message_id: String,
+        preview: Option<kuno_image::preview::Preview>,
+    },
+    AttachmentReady {
+        assistant_message_id: String,
+        attachment: crate::uploads::models::Attachment,
+    },
     MessageDone {
         assistant_message_id: String,
         done_reason: Option<String>,
@@ -231,6 +239,7 @@ enum GenerateEvent {
 }
 
 struct GenerationStreamTask {
+    image_state: AppState,
     tx: mpsc::Sender<Result<Bytes, Infallible>>,
     db: sqlx::SqlitePool,
     client: reqwest::Client,
@@ -596,6 +605,7 @@ pub async fn stop_generation(
 
 async fn stream_generation(task: GenerationStreamTask) {
     let GenerationStreamTask {
+        image_state,
         tx,
         db,
         client,
@@ -608,6 +618,11 @@ async fn stream_generation(task: GenerationStreamTask) {
         prepared,
         cancellation,
     } = task;
+    let assistant_revision_id = prepared
+        .assistant_message
+        .active_revision_id
+        .clone()
+        .unwrap_or_default();
     let assistant_message_id = prepared.assistant_message.id.clone();
     let assistant_model_key = prepared
         .assistant_message
@@ -689,6 +704,15 @@ async fn stream_generation(task: GenerationStreamTask) {
             )
         })
         .unwrap_or_default();
+    if prepared.tool_selection.tool_use_enabled
+        && prepared.tool_selection.images_enabled
+        && tool_settings
+            .as_ref()
+            .is_some_and(|settings| settings.tools_enabled)
+        && let Ok(image_tools) = crate::images::chat::schemas(&image_state, &user_id).await
+    {
+        available_tools.extend(image_tools);
+    }
     if !available_tools.is_empty() {
         let _ = permissions::service::ensure_tool_records(&db).await;
         match (
@@ -718,6 +742,13 @@ async fn stream_generation(task: GenerationStreamTask) {
         available_tools.clear();
     }
     let mut prompt_messages = prepared.prompt_messages;
+    ollama::client::filter_unsupported_images(
+        &client,
+        &prepared.backend_base_url,
+        &prepared.model_name,
+        &mut prompt_messages,
+    )
+    .await;
     if !available_tools.is_empty()
         && let Some(tool_settings) = tool_settings.as_ref()
     {
@@ -911,6 +942,7 @@ async fn stream_generation(task: GenerationStreamTask) {
             return;
         }
 
+        drop(stream);
         if round_tool_calls.is_empty() {
             break;
         }
@@ -958,20 +990,90 @@ async fn stream_generation(task: GenerationStreamTask) {
                     message_id: &assistant_message_id,
                     tool_call_id: &tool_call_id,
                 };
-                tools::service::execute_tool(
-                    &client,
-                    tool_settings,
-                    prepared.tool_selection,
-                    &context,
-                    call,
-                )
-                .await
+                if crate::images::chat::is_image_tool(&call.function.name) {
+                    let (previews, mut preview_rx) = tokio::sync::watch::channel(None);
+                    let image_work = crate::images::chat::execute(crate::images::chat::Context {
+                        state: &image_state,
+                        user: &user_id,
+                        target: crate::images::models::ChatTarget {
+                            chat_id: chat_id.clone(),
+                            message_id: assistant_message_id.clone(),
+                            revision_id: assistant_revision_id.clone(),
+                        },
+                        call,
+                        cancel: &cancellation,
+                        previews: &previews,
+                    });
+                    tokio::pin!(image_work);
+                    let outcome = loop {
+                        tokio::select! {
+                            outcome = &mut image_work => break outcome,
+                            changed = preview_rx.changed() => {
+                                if changed.is_ok() {
+                                    let preview = preview_rx.borrow_and_update().clone();
+                                    let _ = send_event(&tx, &GenerateEvent::ImagePreview { assistant_message_id: assistant_message_id.clone(), preview }).await;
+                                }
+                            }
+                        }
+                    };
+                    let _ = send_event(
+                        &tx,
+                        &GenerateEvent::ImagePreview {
+                            assistant_message_id: assistant_message_id.clone(),
+                            preview: None,
+                        },
+                    )
+                    .await;
+                    match outcome {
+                        Ok(outcome) => {
+                            let _ = send_event(
+                                &tx,
+                                &GenerateEvent::AttachmentReady {
+                                    assistant_message_id: assistant_message_id.clone(),
+                                    attachment: outcome.attachment,
+                                },
+                            )
+                            .await;
+                            outcome.text
+                        }
+                        Err(error) => serde_json::json!({"error": error.message()}).to_string(),
+                    }
+                } else {
+                    tools::service::execute_tool(
+                        &client,
+                        tool_settings,
+                        prepared.tool_selection,
+                        &context,
+                        call,
+                    )
+                    .await
+                }
             } else {
                 serde_json::json!({
                     "error": format!("{} is not available in this chat.", call.function.name)
                 })
                 .to_string()
             };
+            if cancellation.is_cancelled() {
+                let _ = service::stop_generation(
+                    &db,
+                    &user_id,
+                    &chat_id,
+                    &assistant_message_id,
+                    &content_text,
+                    &thinking_text,
+                )
+                .await;
+                let _ = send_event(
+                    &tx,
+                    &GenerateEvent::MessageStopped {
+                        assistant_message_id: assistant_message_id.clone(),
+                    },
+                )
+                .await;
+                clear_generation_progress(&progress, &assistant_message_id).await;
+                return;
+            }
             if available_tool_names.contains(&call.function.name) {
                 let usage_block = tools::service::tool_usage_block(call, &result);
                 let usage_delta = append_ordered_thinking_delta(
@@ -1147,6 +1249,7 @@ async fn start_generation_stream(
 
     tokio::spawn(async move {
         stream_generation(GenerationStreamTask {
+            image_state: state.clone(),
             tx,
             db,
             client,

@@ -3,19 +3,66 @@ use std::{path::Path, time::Duration};
 use tokio::net::TcpListener;
 
 const HELP: &str = "Kuno — local inference gateway (development)\n\n\
-Usage:\n  kuno serve [--config FILE]\n  kuno check [--config FILE]\n  kuno doctor [--service ollama.service]\n  kuno install [--yes] [--service ollama.service]\n  kuno recover [--yes]\n  kuno takeover-restore [--yes]\n  kuno takeover-plan [--config FILE] [--service ollama.service]\n  kuno takeover-bundle --output NEW_DIRECTORY [--config FILE] [--service ollama.service]\n\n\
+Usage:\n  kuno fetch-models COLLECTION --directory ABSOLUTE_DIRECTORY\n  kuno serve [--config FILE]\n  kuno resources [--config FILE]\n  kuno check [--config FILE]\n  kuno doctor [--service ollama.service]\n  kuno install [--yes] [--service ollama.service]\n  kuno upgrade [--yes]\n  kuno configure-managed (--workers FILE | --disable) [--yes]\n  kuno configure-image (--settings FILE | --disable) [--yes]\n  kuno recover [--yes]\n  kuno takeover-restore [--yes]\n  kuno takeover-plan [--config FILE] [--service ollama.service]\n  kuno takeover-bundle --output NEW_DIRECTORY [--config FILE] [--service ollama.service]\n\n\
 serve requires KUNO_CONTROL_TOKEN or KUNO_CONTROL_TOKEN_FILE (32–256 URL-safe characters).\n\
 Default gateway: 127.0.0.1:11433; control: 127.0.0.1:11432; upstream: 127.0.0.1:11434.\n\
 takeover-plan is read-only. It never changes services, ports, or model limits.\n";
 
-#[tokio::main]
-async fn main() {
-    if let Err(code) = run().await {
-        // Only fixed error codes reach diagnostics. Never emit backend errors,
-        // request URLs, configuration contents, tokens, or inference payloads.
+fn main() {
+    // Enter the private worker before creating any Tokio threads. All native
+    // threads must inherit its filesystem policy from this initial thread.
+    let result = if std::env::args().nth(1).as_deref() == Some("image-worker") {
+        run_image_worker()
+    } else {
+        match tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(runtime) => runtime.block_on(run()),
+            Err(_) => Err("runtime_initialization_failed"),
+        }
+    };
+    if let Err(code) = result {
         eprintln!("kuno: {code}");
         std::process::exit(1);
     }
+}
+
+#[cfg(not(feature = "native-image"))]
+fn run_image_worker() -> Result<(), &'static str> {
+    Err("image_engine_not_in_this_build")
+}
+
+#[cfg(feature = "native-image")]
+fn run_image_worker() -> Result<(), &'static str> {
+    let mut args = std::env::args().skip(2);
+    use std::io::{Read, Write};
+    disable_core_dumps()?;
+    kuno::image_privacy::require_no_swap()?;
+    kuno::image_privacy::restrict_filesystem()?;
+    let directory = args.next().ok_or("missing_image_models")?;
+    let pci = args.next().ok_or("missing_image_device")?;
+    if args.next().is_some() {
+        return Err("unknown_argument");
+    }
+    let mut bytes = Vec::new();
+    std::io::stdin()
+        .take(kuno_protocol::MAX_IMAGE_REQUEST_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "image_request_read_failed")?;
+    if bytes.len() > kuno_protocol::MAX_IMAGE_REQUEST_BYTES {
+        return Err("image_request_too_large");
+    }
+    let recipe = serde_json::from_slice(&bytes).map_err(|_| "image_request_invalid")?;
+    let previews = std::env::var_os("KUNO_IMAGE_PREVIEWS").is_some();
+    let png = kuno_image::native::generate(Path::new(&directory), &pci, &recipe, previews)?;
+    if previews {
+        return kuno_image::preview::write_frame(2, &png).map_err(|_| "image_output_failed");
+    }
+    std::io::stdout()
+        .write_all(&png)
+        .map_err(|_| "image_output_failed")?;
+    Ok(())
 }
 
 async fn run() -> Result<(), &'static str> {
@@ -25,14 +72,74 @@ async fn run() -> Result<(), &'static str> {
         print!("{HELP}");
         return Ok(());
     }
+    if command == "fetch-models" {
+        let id = args.next().ok_or("missing_collection_id")?;
+        if args.next().as_deref() != Some("--directory") {
+            return Err("missing_model_directory");
+        }
+        let directory = args.next().ok_or("missing_model_directory")?;
+        if args.next().is_some() {
+            return Err("unknown_argument");
+        }
+        tokio::task::spawn_blocking(move || kuno::collections::fetch(&id, Path::new(&directory)))
+            .await
+            .map_err(|_| "model_download_task_failed")??;
+        println!("model_collection_ready");
+        return Ok(());
+    }
+    if command == "configure-image" {
+        let action = args.next().ok_or("missing_image_configuration")?;
+        let image = match action.as_str() {
+            "--disable" => None,
+            "--settings" => {
+                let path = args.next().ok_or("missing_image_configuration")?;
+                let bytes = std::fs::read(path).map_err(|_| "image_configuration_read_failed")?;
+                Some(serde_json::from_slice(&bytes).map_err(|_| "image_configuration_invalid")?)
+            }
+            _ => return Err("unknown_argument"),
+        };
+        let yes = match args.next().as_deref() {
+            Some("--yes") => true,
+            None => false,
+            _ => return Err("unknown_argument"),
+        };
+        if args.next().is_some() {
+            return Err("unknown_argument");
+        }
+        confirm_interruption(yes)?;
+        tokio::task::spawn_blocking(move || systemd::configure_image(image))
+            .await
+            .map_err(|_| "image_configuration_task_failed")??;
+        println!("image_configuration_active");
+        return Ok(());
+    }
     let mut config = Config::default();
+    let mut explicit_config = false;
     let mut service = "ollama.service".to_owned();
     let mut output = None;
     let mut yes = false;
+    let mut workers_file = None;
+    let mut disable_managed = false;
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--config" => {
-                config = Config::read(Path::new(&args.next().ok_or("missing_config_path")?))?
+            "--workers" if command == "configure-managed" => {
+                workers_file = Some(args.next().ok_or("missing_workers_path")?);
+            }
+            "--disable" if command == "configure-managed" => disable_managed = true,
+            "--config"
+                if matches!(
+                    command.as_str(),
+                    "serve"
+                        | "resources"
+                        | "check"
+                        | "install"
+                        | "doctor"
+                        | "takeover-plan"
+                        | "takeover-bundle"
+                ) =>
+            {
+                config = Config::read(Path::new(&args.next().ok_or("missing_config_path")?))?;
+                explicit_config = true;
             }
             "--service"
                 if matches!(
@@ -45,7 +152,12 @@ async fn run() -> Result<(), &'static str> {
             "--output" if command == "takeover-bundle" => {
                 output = Some(args.next().ok_or("missing_output_directory")?)
             }
-            "--yes" if matches!(command.as_str(), "install" | "takeover-restore" | "recover") => {
+            "--yes"
+                if matches!(
+                    command.as_str(),
+                    "install" | "upgrade" | "takeover-restore" | "recover" | "configure-managed"
+                ) =>
+            {
                 yes = true;
             }
             _ => return Err("unknown_argument"),
@@ -53,6 +165,18 @@ async fn run() -> Result<(), &'static str> {
     }
     config.validate()?;
     match command.as_str() {
+        "resources" => {
+            if !explicit_config && Path::new("/etc/kuno/config.json").exists() {
+                config = Config::read(Path::new("/etc/kuno/config.json"))?;
+            }
+            let report = kuno::resources::snapshot(config.upstream).await;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&report)
+                    .map_err(|_| "resource_report_encoding_failed")?
+            );
+            Ok(())
+        }
         "check" => {
             println!("configuration_valid");
             Ok(())
@@ -72,6 +196,42 @@ async fn run() -> Result<(), &'static str> {
                 .await
                 .map_err(|_| "installation_task_failed")??;
             println!("kuno_installed_and_active");
+            Ok(())
+        }
+        "upgrade" => {
+            confirm_interruption(yes)?;
+            tokio::task::spawn_blocking(systemd::upgrade)
+                .await
+                .map_err(|_| "upgrade_task_failed")??;
+            println!("kuno_upgraded_and_active");
+            Ok(())
+        }
+        "configure-managed" => {
+            if workers_file.is_some() == disable_managed {
+                return Err("choose_workers_file_or_disable");
+            }
+            let pool = if let Some(path) = workers_file {
+                if std::fs::metadata(&path)
+                    .map_err(|_| "workers_file_unavailable")?
+                    .len()
+                    > 1024 * 1024
+                {
+                    return Err("workers_file_too_large");
+                }
+                Some(
+                    serde_json::from_slice(
+                        &std::fs::read(path).map_err(|_| "workers_file_unavailable")?,
+                    )
+                    .map_err(|_| "workers_configuration_invalid")?,
+                )
+            } else {
+                None
+            };
+            confirm_interruption(yes)?;
+            tokio::task::spawn_blocking(move || systemd::configure_managed(pool))
+                .await
+                .map_err(|_| "managed_configuration_task_failed")??;
+            println!("kuno_managed_configuration_active");
             Ok(())
         }
         "takeover-restore" => {
@@ -155,6 +315,17 @@ async fn serve(mut config: Config) -> Result<(), &'static str> {
             config.state_dir = std::fs::canonicalize(&config.state_dir)
                 .map_err(|_| "managed_state_directory_unavailable")?;
         }
+        if let Some(pool) = &mut config.managed {
+            // The generated unit exposes only the configured shared store at
+            // this service-private read-only mount. Keep its host path in the
+            // owned config for repeatable upgrades and rollback.
+            for worker in &mut pool.workers {
+                worker.models = config.state_dir.join("models");
+            }
+        }
+        if let Some(image) = &mut config.image {
+            image.models = config.state_dir.join("image-models");
+        }
         let client = reqwest::Client::builder()
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
@@ -178,6 +349,7 @@ async fn serve(mut config: Config) -> Result<(), &'static str> {
         }
     }
     let gateway = Gateway::persistent(config.clone(), &token)?;
+    gateway.initialize_workers().await?;
     if let Some(path) = &config.activation_file {
         gateway.admission.pause(!systemd::activation_ready(path)?);
     }
@@ -189,7 +361,13 @@ async fn serve(mut config: Config) -> Result<(), &'static str> {
     let control = TcpListener::bind(config.control_listen)
         .await
         .map_err(|_| "control_bind_failed")?;
-    eprintln!("kuno: gateway_only; GPU placement and host memory privacy are not yet verified");
+    if config.managed.is_some() {
+        eprintln!(
+            "kuno: managed_experimental; supported inference routes use verified GPU workers; opaque fallback remains unmanaged"
+        );
+    } else {
+        eprintln!("kuno: gateway_only; GPU placement and host memory privacy are not yet verified");
+    }
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let shutdown = move || {
         let mut rx = shutdown_rx.clone();
@@ -208,8 +386,20 @@ async fn serve(mut config: Config) -> Result<(), &'static str> {
         result = &mut both => result,
         _ = shutdown_signal() => {
             gateway.admission.pause(true);
+            gateway.stop_images();
             let _ = shutdown_tx.send(true);
-            match tokio::time::timeout(Duration::from_secs(30), both).await {
+            let grace = if config.image.is_some() { 120 } else { 30 };
+            let cleanup = async {
+                both.await?;
+                // A disconnected HTTP request can leave a detached supervisor
+                // draining GPU work. Keep the runtime alive until its lease is
+                // released, even when both listeners have already drained.
+                while gateway.admission.status().active {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+                Ok(())
+            };
+            match tokio::time::timeout(Duration::from_secs(grace), cleanup).await {
                 Ok(result) => result,
                 Err(_) => Err("shutdown_interrupted_upstream_verify_before_restart"),
             }

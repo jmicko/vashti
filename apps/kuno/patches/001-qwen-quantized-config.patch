@@ -1,0 +1,572 @@
+diff --git a/src/core/ggml_extend.cpp b/src/core/ggml_extend.cpp
+index 7432416..0326f64 100644
+--- a/src/core/ggml_extend.cpp
++++ b/src/core/ggml_extend.cpp
+@@ -254,6 +254,12 @@ ggml_tensor* ggml_ext_linear_i8_tensorwise(ggml_context* ctx,
+         x = ggml_ext_scale(ctx, x, scale);
+     }
+ 
++    // Scaled attention projections still need the packed ConvRot activation
++    // path. Otherwise Vulkan rejects the F32 input and falls back to a scalar
++    // CPU GEMM. Preserve input scaling and undo it below, before adding bias.
++    if (x->type == GGML_TYPE_F32 && convrot_group_size > 0) {
++        x = ggml_quantize_i8_convrot(ctx, x, convrot_group_size);
++    }
+     ggml_tensor* fused_bias = scale == 1.f ? b : nullptr;
+     if (x->ne[2] * x->ne[3] > 1024) {
+         int64_t ne2 = x->ne[2];
+diff --git a/src/core/ggml_runner.cpp b/src/core/ggml_runner.cpp
+index 5957321..2799cf1 100644
+--- a/src/core/ggml_runner.cpp
++++ b/src/core/ggml_runner.cpp
+@@ -239,6 +239,7 @@ size_t GGMLRunner::retained_runtime_buffer_bytes(ggml_backend_t backend) const {
+     backend      = backend == nullptr ? runtime_backend : backend;
+     size_t bytes = workspace_.bytes(backend);
+     if (backend == runtime_backend) {
++        bytes = cache_staging_bytes_ > SIZE_MAX - bytes ? SIZE_MAX : bytes + cache_staging_bytes_;
+         const size_t cache_bytes = cache_.resident_bytes(ggml_backend_get_device(backend));
+         bytes                    = cache_bytes > SIZE_MAX - bytes ? SIZE_MAX : bytes + cache_bytes;
+         const size_t cut_bytes   = cut_cache_.resident_bytes(ggml_backend_get_device(backend));
+@@ -530,7 +531,7 @@ GGMLRunnerContext GGMLRunner::get_context() {
+     runner_ctx.weight_adapter        = weight_adapter;
+     runner_ctx.debug_tensors         = &debug_tensors;
+     runner_ctx.get_cache_tensor      = [this](const std::string& name) {
+-        return this->get_cache_tensor_by_name(name);
++        return this->to_backend(this->get_cache_tensor_by_name(name));
+     };
+     runner_ctx.cache_tensor = [this](const std::string& name, ggml_tensor* tensor) {
+         this->cache(name, tensor);
+@@ -832,10 +833,14 @@ std::optional<Tensor<float>> GGMLRunner::execute_graph(ggml_cgraph* graph, int n
+         return std::nullopt;
+     }
+     auto manager         = residency_manager.lock();
+-    const bool segmented = !is_multi_device() && !sd_backend_is_cpu(runtime_backend) &&
+-                           manager != nullptr && manager->segmented_compute_enabled() &&
+-                           cached_plan.valid && cached_plan.has_cuts && cached_plan.segments.size() > 1 &&
+-                           !fits(memory_requests(full_measurement.buffers, cache_.pending_bytes(graph)), params);
++    const bool can_segment = !is_multi_device() && !sd_backend_is_cpu(runtime_backend) &&
++                             manager != nullptr && manager->segmented_compute_enabled() &&
++                             cached_plan.valid && cached_plan.has_cuts && cached_plan.segments.size() > 1;
++    HostCachePipeline host_cache(runtime_backend, cache_, graph, cached_plan,
++                                 backend_tensor_data_map, cache_staging_bytes_, max_graph_vram_bytes, can_segment);
++    const bool segmented = can_segment && (host_cache.enabled() ||
++                           !fits(memory_requests(full_measurement.buffers, cache_.pending_bytes(graph)), params));
++    if (host_cache.enabled()) LOG_VERBOSE("host prefix cache pipeline active (%zu staging bytes)", cache_staging_bytes_);
+     ggml_graph_cut::Plan monolithic_plan;
+     if (!segmented) {
+         monolithic_plan.segments.emplace_back();
+@@ -961,7 +966,9 @@ std::optional<Tensor<float>> GGMLRunner::execute_graph(ggml_cgraph* graph, int n
+         if (!ensure_capacity()) {
+             return fail_segment("allocated capacity check");
+         }
++        host_cache.wait(index);
+         copy_data_to_backend_tensor(segment_graph, false);
++        host_cache.enqueue(index + 1);
+         auto prefetch_requests = memory_requests(measurement.buffers, new_cache_bytes);
+         if (!prefetch_requests.empty()) {
+             weights.enqueue_next(index, prefetch_requests.front());
+diff --git a/src/core/ggml_runner.h b/src/core/ggml_runner.h
+index 9084db1..1390b78 100644
+--- a/src/core/ggml_runner.h
++++ b/src/core/ggml_runner.h
+@@ -150,6 +150,7 @@ protected:
+     ggml_context* params_ctx = nullptr;
+ 
+     sd::RunnerCache cache_;
++    size_t cache_staging_bytes_ = 0;
+     sd::GraphCutTensorCache cut_cache_;
+     sd::ComputeWorkspace workspace_;
+     ggml_context* compute_ctx = nullptr;
+diff --git a/src/core/runner_cache.cpp b/src/core/runner_cache.cpp
+index b640bb4..193511a 100644
+--- a/src/core/runner_cache.cpp
++++ b/src/core/runner_cache.cpp
+@@ -6,6 +6,7 @@
+ 
+ #include "core/ggml_graph_cut.h"
+ #include "core/util.h"
++#include "ggml-cpu.h"
+ 
+ namespace sd {
+     static std::unordered_set<const ggml_tensor*> cache_graph_tensors(ggml_cgraph* graph) {
+@@ -27,7 +28,8 @@ namespace sd {
+     std::unique_ptr<CachedTensor> CachedTensor::copy(ggml_backend_t backend,
+                                                      const std::string& name,
+                                                      ggml_tensor* source,
+-                                                     ggml_status& status) {
++                                                     ggml_status& status,
++                                                     bool host_storage) {
+         status = GGML_STATUS_FAILED;
+         if (ggml_graph_cut::tensor_buffer(source) == nullptr) {
+             return nullptr;
+@@ -42,7 +44,10 @@ namespace sd {
+         // Cut views are rebound with their original strides and offsets.
+         std::copy(std::begin(source->nb), std::end(source->nb), std::begin(entry->tensor->nb));
+         ggml_set_name(entry->tensor, name.c_str());
+-        entry->buffer = ggml_backend_alloc_ctx_tensors(entry->context, backend);
++        auto host_type = ggml_backend_dev_host_buffer_type(ggml_backend_get_device(backend));
++        entry->buffer = host_storage
++                            ? ggml_backend_alloc_ctx_tensors_from_buft(entry->context, host_type != nullptr ? host_type : ggml_backend_cpu_buffer_type())
++                            : ggml_backend_alloc_ctx_tensors(entry->context, backend);
+         if (entry->buffer == nullptr) {
+             return nullptr;
+         }
+@@ -75,6 +80,109 @@ namespace sd {
+         return bytes;
+     }
+ 
++    ggml_tensor* RunnerCache::host_source(const void* data) const {
++        if (!host_storage_) return nullptr;
++        for (const auto& entry : committed_) {
++            if (entry.second->tensor->data == data) return entry.second->tensor;
++        }
++        return nullptr;
++    }
++
++    HostCachePipeline::HostCachePipeline(ggml_backend_t backend, const RunnerCache& cache,
++                                         ggml_cgraph* graph, const ggml_graph_cut::Plan& plan,
++                                         std::map<ggml_tensor*, const void*>& uploads,
++                                         size_t& resident_bytes, size_t budget, bool eligible)
++        : compute_(backend), uploads_(uploads), resident_bytes_(resident_bytes) {
++        auto device = ggml_backend_get_device(backend);
++        ggml_backend_dev_props props{};
++        ggml_backend_dev_get_props(device, &props);
++        if (!eligible || !props.name || std::string(props.name).find("CUDA") != 0 ||
++            !props.caps.async || !props.caps.events || !props.caps.host_buffer) return;
++        auto host_type = ggml_backend_dev_host_buffer_type(device);
++        auto buffer_type = ggml_backend_get_default_buffer_type(backend);
++        const size_t alignment = ggml_backend_buft_get_alignment(buffer_type);
++        inputs_.resize(plan.segments.size());
++        queued_.resize(plan.segments.size(), false);
++        std::unordered_set<ggml_tensor*> seen;
++        size_t maximum = 0;
++        for (size_t i = 0; i < plan.segments.size(); ++i) {
++            size_t bytes = 0;
++            for (const auto& ref : plan.segments[i].input_refs) {
++                auto tensor = ggml_graph_cut::input_tensor(graph, ref);
++                auto upload = uploads.find(tensor);
++                if (upload == uploads.end()) continue;
++                auto source = cache.host_source(upload->second);
++                if (!source) continue;
++                // A cache input must belong to exactly one layer. Pinned allocation
++                // can fall back to pageable RAM; keep the synchronous path then.
++                if (!seen.insert(tensor).second || !ggml_is_contiguous(source) ||
++                    tensor->buffer || tensor->view_src || !source->buffer ||
++                    ggml_backend_buffer_get_type(source->buffer) != host_type) return;
++                const size_t size = GGML_PAD(ggml_backend_buft_get_alloc_size(buffer_type, tensor), alignment);
++                if (size > SIZE_MAX - bytes) return;
++                inputs_[i].push_back({tensor, upload->second, bytes});
++                bytes += size;
++            }
++            maximum = std::max(maximum, bytes);
++        }
++        constexpr size_t reserve = 256ull * 1024 * 1024;
++        if (!maximum || maximum > 256ull * 1024 * 1024 ||
++            (budget && maximum * 2 > budget / 8) ||
++            props.memory_free < reserve || maximum * 2 > props.memory_free - reserve) return;
++        transfer_ = ggml_backend_dev_init(device, nullptr);
++        if (!transfer_) return;
++        for (int slot = 0; slot < 2; ++slot) {
++            ready_[slot] = ggml_backend_event_new(device);
++            buffers_[slot] = ggml_backend_buft_alloc_buffer(buffer_type, maximum);
++            if (!ready_[slot] || !buffers_[slot]) return;
++        }
++        // External bindings survive graph allocation; each layer uses only its
++        // slot. The previous layer has completed before that slot is reused.
++        for (size_t i = 0; i < inputs_.size(); ++i) for (auto& input : inputs_[i]) {
++            auto buffer = buffers_[i % 2];
++            auto address = static_cast<char*>(ggml_backend_buffer_get_base(buffer)) + input.offset;
++            auto status = ggml_backend_tensor_alloc(buffer, input.tensor, address);
++            GGML_ASSERT(status == GGML_STATUS_SUCCESS);
++            uploads_.erase(input.tensor);
++        }
++        resident_bytes_ = ggml_backend_buffer_get_size(buffers_[0]) + ggml_backend_buffer_get_size(buffers_[1]);
++        enabled_ = true;
++    }
++
++    HostCachePipeline::~HostCachePipeline() {
++        if (transfer_) ggml_backend_synchronize(transfer_);
++        if (enabled_) {
++            ggml_backend_synchronize(compute_);
++            for (auto& segment : inputs_) for (auto& input : segment) {
++                input.tensor->buffer = nullptr;
++                input.tensor->data = nullptr;
++                input.tensor->extra = nullptr;
++                uploads_[input.tensor] = input.source;
++            }
++        }
++        for (int slot = 0; slot < 2; ++slot) {
++            if (ready_[slot]) ggml_backend_event_free(ready_[slot]);
++            ggml_backend_buffer_free(buffers_[slot]);
++        }
++        if (transfer_) ggml_backend_free(transfer_);
++        resident_bytes_ = 0;
++    }
++
++    void HostCachePipeline::enqueue(size_t index) {
++        if (!enabled_ || index >= inputs_.size() || queued_[index]) return;
++        for (const auto& input : inputs_[index]) {
++            ggml_backend_tensor_set_async(transfer_, input.tensor, input.source, 0, ggml_nbytes(input.tensor));
++        }
++        ggml_backend_event_record(ready_[index % 2], transfer_);
++        queued_[index] = true;
++    }
++
++    void HostCachePipeline::wait(size_t index) {
++        if (!enabled_) return;
++        enqueue(index);
++        ggml_backend_event_wait(compute_, ready_[index % 2]);
++    }
++
+     ggml_tensor* RunnerCache::get(const std::string& name) const {
+         return cached_tensor(committed_, name);
+     }
+@@ -87,7 +195,7 @@ namespace sd {
+     }
+ 
+     size_t RunnerCache::pending_bytes(ggml_cgraph* graph) const {
+-        if (outputs_.empty()) {
++        if (outputs_.empty() || host_storage_) {
+             return 0;
+         }
+         auto tensors = cache_graph_tensors(graph);
+@@ -121,7 +229,7 @@ namespace sd {
+             }
+             GGML_ASSERT(ggml_is_contiguous(output.second));
+             ggml_status status;
+-            auto entry = CachedTensor::copy(backend_, output.first, output.second, status);
++            auto entry = CachedTensor::copy(backend_, output.first, output.second, status, host_storage_);
+             if (entry == nullptr) {
+                 return status;
+             }
+diff --git a/src/core/runner_cache.h b/src/core/runner_cache.h
+index f1b5cf9..2c052bb 100644
+--- a/src/core/runner_cache.h
++++ b/src/core/runner_cache.h
+@@ -5,6 +5,8 @@
+ #include <memory>
+ #include <string>
+ #include <unordered_set>
++#include <vector>
++#include "core/ggml_graph_cut.h"
+ 
+ #include "ggml-backend.h"
+ 
+@@ -21,7 +23,8 @@ namespace sd {
+         static std::unique_ptr<CachedTensor> copy(ggml_backend_t backend,
+                                                   const std::string& name,
+                                                   ggml_tensor* source,
+-                                                  ggml_status& status);
++                                                  ggml_status& status,
++                                                  bool host_storage = false);
+     };
+     using CachedTensors = std::map<std::string, std::unique_ptr<CachedTensor>>;
+ 
+@@ -30,13 +33,16 @@ namespace sd {
+         CachedTensors committed_;
+         CachedTensors pending_;
+         std::map<std::string, ggml_tensor*> outputs_;
++        bool host_storage_ = false;
+ 
+     public:
+         explicit RunnerCache(ggml_backend_t backend)
+             : backend_(backend) {}
++        void set_host_storage(bool enabled) { clear(); host_storage_ = enabled; }
+         RunnerCache(const RunnerCache&)            = delete;
+         RunnerCache& operator=(const RunnerCache&) = delete;
+ 
++        ggml_tensor* host_source(const void* data) const;
+         ggml_tensor* get(const std::string& name) const;
+         void stage(const std::string& name, ggml_tensor* tensor);
+         const std::map<std::string, ggml_tensor*>& outputs() const { return outputs_; }
+@@ -48,6 +54,35 @@ namespace sd {
+         void clear();
+     };
+ 
++    class HostCachePipeline {
++        struct Input {
++            ggml_tensor* tensor;
++            const void* source;
++            size_t offset;
++        };
++        ggml_backend_t transfer_ = nullptr;
++        ggml_backend_t compute_ = nullptr;
++        ggml_backend_buffer_t buffers_[2] = {};
++        ggml_backend_event_t ready_[2] = {};
++        std::vector<std::vector<Input>> inputs_;
++        std::vector<bool> queued_;
++        std::map<ggml_tensor*, const void*>& uploads_;
++        size_t& resident_bytes_;
++        bool enabled_ = false;
++
++    public:
++        HostCachePipeline(ggml_backend_t backend, const RunnerCache& cache,
++                          ggml_cgraph* graph, const ggml_graph_cut::Plan& plan,
++                          std::map<ggml_tensor*, const void*>& uploads,
++                          size_t& resident_bytes, size_t budget, bool eligible);
++        ~HostCachePipeline();
++        HostCachePipeline(const HostCachePipeline&) = delete;
++        HostCachePipeline& operator=(const HostCachePipeline&) = delete;
++        bool enabled() const { return enabled_; }
++        void enqueue(size_t index);
++        void wait(size_t index);
++    };
++
+     class GraphCutTensorCache {
+         ggml_backend_t backend_;
+         CachedTensors tensors_;
+diff --git a/src/model/common/ggml_block.hpp b/src/model/common/ggml_block.hpp
+index 991b88f..dc6596e 100644
+--- a/src/model/common/ggml_block.hpp
++++ b/src/model/common/ggml_block.hpp
+@@ -335,15 +335,69 @@ class Embedding : public UnaryBlock {
+ protected:
+     int64_t embedding_dim;
+     int64_t num_embeddings;
++    int int8_group_size = 0;
++    bool int8_embedding = false;
++
++    static void gather_int8(ggml_tensor* dst, int ith, int nth, void* userdata) {
++        const auto* self = static_cast<const Embedding*>(userdata);
++        const auto* weight = dst->src[0];
++        const auto* ids = dst->src[1];
++        const auto* scales = dst->src[2];
++        GGML_ASSERT(ggml_is_contiguous(weight) && ggml_is_contiguous(ids) && ggml_is_contiguous(scales));
++        const int group = self->int8_group_size;
++        for (int64_t i = ith; i < ggml_nelements(ids); i += nth) {
++            const int32_t row = static_cast<const int32_t*>(ids->data)[i];
++            GGML_ASSERT(row >= 0 && row < weight->ne[1]);
++            const float scale = static_cast<const float*>(scales->data)[ggml_nelements(scales) == 1 ? 0 : row];
++            const auto* input = static_cast<const int8_t*>(weight->data) + row * weight->ne[0];
++            auto* output = static_cast<float*>(dst->data) + i * weight->ne[0];
++            for (int64_t k = 0; k < weight->ne[0]; ++k) output[k] = input[k] * scale;
++            // Invert the normalized regular Hadamard rotation, H4 tensor powers.
++            // H is symmetric and H*H=I. Gather first: never expand the vocabulary table.
++            if (group) {
++                for (int64_t base = 0; base < weight->ne[0]; base += group) {
++                    for (int stride = 1; stride < group; stride *= 4) {
++                        for (int block = 0; block < group; block += 4 * stride) {
++                            for (int k = 0; k < stride; ++k) {
++                                float* v = output + base + block + k;
++                                const float a=v[0], b=v[stride], c=v[2*stride], d=v[3*stride];
++                                v[0] = (a+b+c-d)*0.5f;
++                                v[stride] = (a+b-c+d)*0.5f;
++                                v[2*stride] = (a-b+c+d)*0.5f;
++                                v[3*stride] = (-a+b+c+d)*0.5f;
++                            }
++                        }
++                    }
++                }
++            }
++        }
++    }
+     void init_params(ggml_context* ctx, const String2TensorStorage& tensor_storage_map, const std::string prefix = "") override {
+         enum ggml_type wtype = get_type(prefix + "weight", tensor_storage_map, GGML_TYPE_F32);
+-        if (!support_get_rows(wtype)) {
++        const auto storage = tensor_storage_map.find(prefix + "weight");
++        int8_embedding = storage != tensor_storage_map.end() && storage->second.is_int8_tensorwise;
++        int8_group_size = 0;
++        if (int8_embedding) {
++            GGML_ASSERT(wtype == GGML_TYPE_I8);
++            const auto scale = tensor_storage_map.find(prefix + "weight_scale");
++            GGML_ASSERT(scale != tensor_storage_map.end());
++            const auto count = scale->second.nelements();
++            GGML_ASSERT(count == 1 || count == num_embeddings);
++            params["weight_scale"] = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, count);
++            if (storage->second.int8_convrot) {
++                int8_group_size = storage->second.int8_convrot_group_size;
++                int power = int8_group_size;
++                while (power > 1 && power % 4 == 0) power /= 4;
++                GGML_ASSERT(int8_group_size >= 4 && power == 1 && embedding_dim % int8_group_size == 0);
++            }
++        } else if (!support_get_rows(wtype)) {
+             wtype = GGML_TYPE_F32;
+         }
+         params["weight"] = ggml_new_tensor_2d(ctx, wtype, embedding_dim, num_embeddings);
+     }
+ 
+     enum ggml_op param_usage_op(const std::string& name) const override {
++        if (int8_embedding) return GGML_OP_CUSTOM;
+         return name == "weight" ? GGML_OP_GET_ROWS : GGML_OP_NONE;
+     }
+ 
+@@ -364,7 +418,15 @@ public:
+         input_ids = ggml_reshape_1d(ctx->ggml_ctx, input_ids, input_ids->ne[0] * input_ids->ne[1]);
+ 
+         input_ids      = ggml_reshape_3d(ctx->ggml_ctx, input_ids, input_ids->ne[0], 1, input_ids->ne[1]);
+-        auto embedding = ggml_get_rows(ctx->ggml_ctx, weight, input_ids);
++        ggml_tensor* embedding;
++        if (int8_embedding) {
++            ggml_tensor* args[] = {weight, input_ids, params["weight_scale"]};
++            embedding = ggml_custom_4d(ctx->ggml_ctx, GGML_TYPE_F32, embedding_dim,
++                                       ggml_nelements(input_ids), 1, 1, args, 3,
++                                       gather_int8, GGML_N_TASKS_MAX, this);
++        } else {
++            embedding = ggml_get_rows(ctx->ggml_ctx, weight, input_ids);
++        }
+         embedding      = ggml_reshape_3d(ctx->ggml_ctx, embedding, embedding->ne[0], embedding->ne[1] / n, n);
+ 
+         // [N, n_token, embedding_dim]
+diff --git a/src/model/diffusion/qwen_image_2_1.hpp b/src/model/diffusion/qwen_image_2_1.hpp
+index 9884325..58ee07a 100644
+--- a/src/model/diffusion/qwen_image_2_1.hpp
++++ b/src/model/diffusion/qwen_image_2_1.hpp
+@@ -134,6 +134,7 @@ namespace Qwen {
+         std::string name;
+         std::string cut_group;
+         int64_t prefix_length = 0;
++        ggml_type storage_type = GGML_TYPE_F32;
+     };
+ 
+     class QwenImage21ZeroCenterRMSNorm : public RMSNorm {
+@@ -191,7 +192,7 @@ namespace Qwen {
+             if (cache.mode == QwenImage21PrefixCache::Mode::STORE) {
+                 auto persist = [&](ggml_tensor* tensor, int axis, const char* name) {
+                     auto part = ggml_ext_slice(ctx->ggml_ctx, tensor, axis, 0, cache.prefix_length);
+-                    auto copy = ggml_new_tensor(ctx->ggml_ctx, GGML_TYPE_F32, 4, part->ne);
++                    auto copy = ggml_new_tensor(ctx->ggml_ctx, cache.storage_type, 4, part->ne);
+                     copy      = ggml_cpy(ctx->ggml_ctx, part, copy);
+                     // Keep the copy in this layer's segment so graph cuts do not
+                     // retain or recompute the full-sequence K/V in the final segment.
+@@ -206,6 +207,16 @@ namespace Qwen {
+                 auto prefix_k = ctx->load_cache_tensor(cache.name + ".k");
+                 auto prefix_v = ctx->load_cache_tensor(cache.name + ".v");
+                 GGML_ASSERT(prefix_k != nullptr && prefix_v != nullptr);
++                if (ctx->flash_attn_enabled && sd_backend_is(ctx->backend, "CUDA") &&
++                    prefix_k->type == GGML_TYPE_F16 && prefix_v->type == GGML_TYPE_F16) {
++                    // CUDA flash attention consumes FP16 K/V. Concatenate in that
++                    // format instead of expanding the cache and rounding it again.
++                    k = ggml_cast(ctx->ggml_ctx, k, GGML_TYPE_F16);
++                    v = ggml_cast(ctx->ggml_ctx, v, GGML_TYPE_F16);
++                } else {
++                    prefix_k = ggml_cast(ctx->ggml_ctx, prefix_k, k->type);
++                    prefix_v = ggml_cast(ctx->ggml_ctx, prefix_v, v->type);
++                }
+                 k      = ggml_concat(ctx->ggml_ctx, prefix_k, k, 1);
+                 v      = ggml_concat(ctx->ggml_ctx, prefix_v, v, 2);
+                 result = ggml_ext_attention_ext(ctx, q, k, v, heads, nullptr, true, ctx->flash_attn_enabled);
+@@ -248,10 +259,10 @@ namespace Qwen {
+                 row = gate ? ggml_tanh(ctx, row) : ggml_scale_bias(ctx, row, 1.f, 1.f);
+                 return ggml_mul(ctx, part, row);
+             };
+-            auto target = apply(ggml_ext_slice(ctx, x, 1, prefix_length, x->ne[1]), rows[0]);
+             if (prefix_length == 0) {
+-                return target;
++                return apply(x, rows[0]);
+             }
++            auto target = apply(ggml_ext_slice(ctx, x, 1, prefix_length, x->ne[1]), rows[0]);
+             auto prefix = apply(ggml_ext_slice(ctx, x, 1, 0, prefix_length), rows[1]);
+             return ggml_concat(ctx, prefix, target, 1);
+         }
+@@ -264,18 +275,21 @@ namespace Qwen {
+             x                           = ggml_add(ctx->ggml_ctx, x, modulate(ctx->ggml_ctx, h, modulation[1], prefix_length, true));
+             h                           = std::dynamic_pointer_cast<LayerNorm>(blocks["img_norm2"])->forward(ctx, x);
+             h                           = modulate(ctx->ggml_ctx, h, modulation[2], prefix_length);
+-            ggml_tensor* gate;
+             auto fused = blocks.find("img_mlp.gate_up");
+             if (fused != blocks.end()) {
+                 auto gate_up = std::dynamic_pointer_cast<Linear>(fused->second)->forward(ctx, h);
+-                auto parts   = ggml_ext_chunk(ctx->ggml_ctx, gate_up, 2, 0);
+-                gate         = parts[0];
+-                h            = parts[1];
++                auto activated = ggml_swiglu(ctx->ggml_ctx, gate_up);
++                if (ggml_backend_supports_op(ctx->backend, activated)) {
++                    h = activated;
++                } else {
++                    auto parts = ggml_ext_chunk(ctx->ggml_ctx, gate_up, 2, 0);
++                    h = ggml_mul(ctx->ggml_ctx, parts[1], ggml_silu(ctx->ggml_ctx, parts[0]));
++                }
+             } else {
+-                gate = std::dynamic_pointer_cast<Linear>(blocks["img_mlp.gate_layer"])->forward(ctx, h);
++                auto gate = std::dynamic_pointer_cast<Linear>(blocks["img_mlp.gate_layer"])->forward(ctx, h);
+                 h    = std::dynamic_pointer_cast<Linear>(blocks["img_mlp.proj"])->forward(ctx, h);
++                h = ggml_mul(ctx->ggml_ctx, h, ggml_silu(ctx->ggml_ctx, gate));
+             }
+-            h = ggml_mul(ctx->ggml_ctx, h, ggml_silu(ctx->ggml_ctx, gate));
+             h = std::dynamic_pointer_cast<Linear>(blocks["img_mlp.out"])->forward(ctx, h);
+             return ggml_add(ctx->ggml_ctx, x, modulate(ctx->ggml_ctx, h, modulation[3], prefix_length, true));
+         }
+@@ -353,16 +367,25 @@ namespace Qwen {
+         std::vector<sd::Tensor<float>> mask_data;
+         bool prefix_cache_enabled  = true;
+         bool prefix_cache_disabled = false;
++        bool prefix_cache_f16 = false;
+ 
+         QwenImage21Runner(ggml_backend_t backend, const String2TensorStorage& weights, const std::string& prefix, std::shared_ptr<RunnerWeightManager> weight_manager = nullptr, const char* model_args = nullptr)
+             : DiffusionModelRunner(backend, prefix, weight_manager),
+               config(QwenImage21Config::detect_from_weights(weights, prefix)),
+               model(config) {
++            bool prefix_cache_cpu = false;
+             for (const auto& [key, value] : parse_key_value_args(model_args, "model arg")) {
+                 if (key == "qwen_image_2_1_prefix_cache" && !parse_strict_bool(value, prefix_cache_enabled)) {
+                     LOG_WARN("ignoring invalid Qwen Image 2.1 model arg '%s=%s'", key.c_str(), value.c_str());
+                 }
++                if (key == "qwen_image_2_1_prefix_cache_f16" && !parse_strict_bool(value, prefix_cache_f16)) {
++                    LOG_WARN("ignoring invalid Qwen Image 2.1 model arg '%s=%s'", key.c_str(), value.c_str());
++                }
++                if (key == "qwen_image_2_1_prefix_cache_cpu" && !parse_strict_bool(value, prefix_cache_cpu)) {
++                    LOG_WARN("ignoring invalid Qwen Image 2.1 model arg '%s=%s'", key.c_str(), value.c_str());
++                }
+             }
++            cache_.set_host_storage(prefix_cache_cpu);
+             model.init(params_ctx, weights, prefix);
+         }
+ 
+@@ -377,7 +400,7 @@ namespace Qwen {
+                 const auto name = cache.name + "." + std::to_string(i);
+                 auto k          = get_cache_tensor_by_name(name + ".k");
+                 auto v          = get_cache_tensor_by_name(name + ".v");
+-                if (k == nullptr || v == nullptr || k->type != GGML_TYPE_F32 || v->type != GGML_TYPE_F32 ||
++                if (k == nullptr || v == nullptr || k->type != cache.storage_type || v->type != cache.storage_type ||
+                     k->ne[0] != config.head_dim || k->ne[1] != cache.prefix_length ||
+                     k->ne[2] != config.hidden_size / config.head_dim || k->ne[3] != 1 ||
+                     v->ne[0] != config.head_dim || v->ne[1] != config.hidden_size / config.head_dim ||
+@@ -420,6 +443,7 @@ namespace Qwen {
+                 prefix_cache_disabled = false;
+             }
+             QwenImage21PrefixCache cache;
++            cache.storage_type = prefix_cache_f16 && get_context().flash_attn_enabled ? GGML_TYPE_F16 : GGML_TYPE_F32;
+             if (prefix_cache_enabled && !prefix_cache_disabled && extra != nullptr && extra->prefix_id != 0 && layout.prefix_length > 0) {
+                 cache.name = "qwen_image_2_1.prefix." + std::to_string(extra->prefix_id) +
+                              ".circular." + std::to_string(circular_x_enabled) + std::to_string(circular_y_enabled);
+diff --git a/src/model/te/llm.hpp b/src/model/te/llm.hpp
+index da59cfa..f75d580 100644
+--- a/src/model/te/llm.hpp
++++ b/src/model/te/llm.hpp
+@@ -332,7 +332,7 @@ namespace LLM {
+                         }
+                     }
+                 }
+-                if (contains(name, "embed_tokens.weight")) {
++                if (ends_with(name, "embed_tokens.weight")) {
+                     config.hidden_size = tensor_storage.ne[0];
+                     config.vocab_size  = tensor_storage.ne[1];
+                 }
+diff --git a/src/pipeline/diffusion_engine.cpp b/src/pipeline/diffusion_engine.cpp
+index 0220939..1cd7966 100644
+--- a/src/pipeline/diffusion_engine.cpp
++++ b/src/pipeline/diffusion_engine.cpp
+@@ -2691,7 +2691,7 @@ int StableDiffusionGGML::get_diffusion_model_down_factor() {
+     if (sd_version_is_dit(version)) {
+         if (sd_version_is_sensenova_u1(version)) {
+             down_factor = 32;
+-        } else if (version == VERSION_QWEN_IMAGE_2_1 || sd_version_is_wan(version) || sd_version_is_lingbot_video(version) || sd_version_is_minimax_h3(version)) {
++        } else if (sd_version_is_wan(version) || sd_version_is_lingbot_video(version) || sd_version_is_minimax_h3(version)) {
+             down_factor = 2;
+         } else {
+             down_factor = 1;
+@@ -2829,6 +2829,14 @@ sd::Tensor<float> StableDiffusionGGML::decode_first_stage(const sd::Tensor<float
+     while (decoded.empty() &&
+            sd::backend_fit::prepare_vae_decode_retry_tiling(vae_tiling_params, prefer_temporal_tiling,
+                                                             first_stage_model->last_compute_status())) {
++        if (version == VERSION_QWEN_IMAGE_2_1 && vae_tiling_params.enabled) {
++            // Half-image tiles can meet with no overlap, exposing the RGBA VAE's
++            // padded edges. Use bounded latent tiles with context to blend.
++            vae_tiling_params.rel_size_x = 0.f;
++            vae_tiling_params.rel_size_y = 0.f;
++            vae_tiling_params.tile_size_x = 32;
++            vae_tiling_params.tile_size_y = 32;
++        }
+         decoded = first_stage_model->decode(n_threads, latents, vae_tiling_params, decode_video, circular_x, circular_y);
+     }
+     return decoded;

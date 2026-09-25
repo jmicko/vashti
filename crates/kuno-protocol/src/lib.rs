@@ -23,3 +23,9 @@ pub struct AdmissionStatus {
     pub completed: u64,
     pub rejected: u64,
 }
+
+mod resources;
+pub use resources::*;
+
+mod image;
+pub use image::*;

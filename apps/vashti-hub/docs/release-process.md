@@ -5,7 +5,12 @@ prereleases until an admin promotes or deletes them.
 
 ## Normal Release Flow
 
-1. Update `apps/vashti/Cargo.toml` to the next version.
+1. Set the same version in `apps/vashti/Cargo.toml`, `apps/vashti-android/Cargo.toml`,
+   and `apps/vashti-android/tauri.conf.json`, then refresh Cargo.lock. Beta labels such as
+   `0.13.0-beta.1` are supported. Increment `bundle.android.versionCode` for every
+   published APK, including beta-to-beta and beta-to-final upgrades. It is an independent
+   monotonically increasing integer: 0.12.0 used 12000; 0.13.0-beta.1 uses 13001.
+   Keep the explicit override in future versions; never reset it to Tauri's derived default.
 2. Write release notes while working in:
 
    ```txt
@@ -30,7 +35,10 @@ prereleases until an admin promotes or deletes them.
    ./apps/vashti/scripts/package-android-release.sh
    ```
 
-6. Open the Hub admin page and create a one-time upload key.
+6. Build the Kuno package with `apps/kuno/scripts/package-release.sh`, pointing
+   `KUNO_SD_SOURCE_DIR` and `KUNO_SD_BUILD_DIR` at the prepared native engine build.
+   Verify all three packages are present, then run `CHECK_ONLY=1 apps/vashti/scripts/publish-release.sh`.
+   Only then open the Hub admin page and create a one-time upload key.
 7. Publish all artifacts found for that version:
 
    ```sh
@@ -40,12 +48,14 @@ prereleases until an admin promotes or deletes them.
    The script automatically uses the versioned notes file if it exists, otherwise it falls back to
    `release-notes-latest.md`.
 
-   Linux and Android are uploaded in one request and belong to the same staged release. A one-time
+   Linux, Android, and Kuno are uploaded in one request and belong to the same staged release. A one-time
    key cannot be reused to add a second artifact later.
 
 8. Test the staged prerelease from the Releases page using the version-specific install command and
    APK download.
-9. If both artifacts work, promote the release to latest from the Hub admin page.
+9. After physical Android and packaged Linux/Kuno validation, upload a final version without
+   the beta suffix and promote it to latest. Suffix-bearing beta versions remain on the
+   prerelease channel and cannot be promoted.
 
 ## Release Signing Key
 

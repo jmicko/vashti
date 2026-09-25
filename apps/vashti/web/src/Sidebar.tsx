@@ -11,6 +11,7 @@ import {
   MessageSquarePlus,
   MoreHorizontal,
   NotebookPen,
+  Images,
   Pencil,
   Trash2,
   X
@@ -29,6 +30,7 @@ export function Sidebar({
   currentChatId,
   currentPrivateChatId,
   isNotesActive,
+  isImagesActive,
   isOpen,
   isLoading,
   isLoadingPrivateChats,
@@ -40,6 +42,7 @@ export function Sidebar({
   onDeletePrivateChat,
   onNewChat,
   onOpenNotes,
+  onOpenImages,
   onOpenChat,
   onOpenPrivateChat,
   onRenameChat,
@@ -50,6 +53,7 @@ export function Sidebar({
   currentChatId: string | null;
   currentPrivateChatId: string | null;
   isNotesActive: boolean;
+  isImagesActive: boolean;
   isOpen: boolean;
   isLoading: boolean;
   isLoadingPrivateChats: boolean;
@@ -61,6 +65,7 @@ export function Sidebar({
   onDeletePrivateChat: (chat: PrivateChatSummary) => void;
   onNewChat: () => void;
   onOpenNotes: () => void;
+  onOpenImages: () => void;
   onOpenChat: (chatId?: string) => void;
   onOpenPrivateChat: (chatId: string) => void;
   onRenameChat: (chatId: string, title: string) => Promise<void>;
@@ -160,6 +165,7 @@ export function Sidebar({
             <MessageSquarePlus />
             <span>New Chat</span>
           </button>
+          <button type="button" className={isImagesActive ? "sidebar-section-button sidebar-section-button-active" : "sidebar-section-button"} aria-current={isImagesActive ? "page" : undefined} onClick={() => { setOpenMenuChatId(null); onOpenImages(); }}><Images /><span>Images</span></button>
           <button
             type="button"
             className={isNotesActive ? "sidebar-section-button sidebar-section-button-active" : "sidebar-section-button"}

@@ -23,7 +23,7 @@ case "$target" in
         ;;
 esac
 
-cargo_args=(build -p vashti --release)
+cargo_args=(build --locked -p vashti --release)
 if [[ -n "${TARGET:-}" ]]; then
     cargo_args+=(--target "$target")
 fi
@@ -52,7 +52,7 @@ archive_name="vashti-${os}-${arch}.tar.gz"
 version_label="v${version}"
 release_dir="$dist_dir/$version_label"
 
-rm -rf "$package_dir" "$release_dir"
+rm -rf "$package_dir"
 mkdir -p "$package_dir"
 
 cp "$binary_path" "$package_dir/vashti"
@@ -64,7 +64,7 @@ tar -C "$work_dir" -czf "$release_dir/$archive_name" "$package_name"
 
 (
     cd "$release_dir"
-    sha256sum "$archive_name" > SHA256SUMS
+    find . -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.apk' \) -printf '%f\n' | sort | xargs sha256sum > SHA256SUMS
 )
 
 printf '%s\n' "$version_label" > "$release_dir/VERSION"

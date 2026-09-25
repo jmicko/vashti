@@ -9,6 +9,7 @@ mod context_blocks;
 mod db;
 mod error;
 mod frontend;
+mod images;
 mod memories;
 mod model_cache;
 mod model_pulls;
@@ -84,6 +85,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let db = db::connect(&config).await?;
     startup::secure_data_files(&config).await?;
     startup::migrations::run(&db).await?;
+    images::service::recover(&db).await?;
     let interrupted_generations = chats::service::recover_interrupted_generations(&db).await?;
     if interrupted_generations > 0 {
         tracing::warn!(
@@ -127,6 +129,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
 fn router(state: AppState) -> Router {
     let api = Router::new()
+        .nest("/images", images::handlers::router())
         .route("/version", get(version::get_version))
         .route("/admin/update", get(updates::handlers::get_update_status))
         .route(
@@ -423,6 +426,10 @@ fn router(state: AppState) -> Router {
         .route(
             "/attachments/{attachment_id}",
             get(uploads::handlers::get_attachment).delete(uploads::handlers::delete_attachment),
+        )
+        .route(
+            "/attachments/{attachment_id}/image-settings",
+            get(uploads::image_settings::get),
         )
         .route("/private/vault-key", get(private::handlers::vault_key))
         .route(

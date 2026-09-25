@@ -103,6 +103,28 @@ pub async fn model_capabilities(
     Ok(response.capabilities)
 }
 
+/// Image IDs remain in the text so text-only models can still invoke editing.
+/// Do not attach pixels to a backend that explicitly reports no vision support.
+pub async fn filter_unsupported_images(
+    client: &reqwest::Client,
+    base_url: &str,
+    model_name: &str,
+    messages: &mut [super::models::OllamaChatMessage],
+) {
+    if messages
+        .iter()
+        .any(|m| m.images.as_ref().is_some_and(|v| !v.is_empty()))
+        && let Ok(capabilities) = model_capabilities(client, base_url, model_name).await
+        && !capabilities
+            .iter()
+            .any(|c| c.eq_ignore_ascii_case("vision"))
+    {
+        for message in messages {
+            message.images = None;
+        }
+    }
+}
+
 pub async fn model_supports_tools(
     client: &reqwest::Client,
     base_url: &str,

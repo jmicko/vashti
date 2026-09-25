@@ -9,6 +9,7 @@ import {
 import { ChevronLeft, ChevronRight, FileText, Image as ImageIcon, X } from "lucide-react";
 import { requestMultipartJson } from "./api";
 import { RetroLoader } from "./common";
+import { ImageGenerationSettings } from "./ImageGenerationSettings";
 import { unixTimestamp } from "./privateChatStore";
 import { apiAssetUrl } from "./runtime";
 import type {
@@ -354,6 +355,8 @@ export function ImageViewer({
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
         onClose();
+      } else if (event.target instanceof HTMLElement && event.target.closest("input, textarea, select")) {
+        return;
       } else if (event.key === "ArrowLeft" && canPrevious) {
         onIndexChange(index - 1);
       } else if (event.key === "ArrowRight" && canNext) {
@@ -376,6 +379,9 @@ export function ImageViewer({
   return (
     <div className="image-viewer-backdrop" role="presentation" onClick={closeViewer}>
       <div className="image-viewer-top">
+        {attachment.mime_type === "image/png" && !attachment.data_url && (
+          <ImageGenerationSettings key={attachment.id} attachmentId={attachment.id} />
+        )}
         {attachments.length > 1 && (
           <span className="image-viewer-count">
             {index + 1}/{attachments.length}

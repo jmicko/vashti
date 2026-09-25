@@ -7,7 +7,7 @@ use crate::{
 use axum::{
     Json, Router,
     body::Body,
-    extract::{Request, State},
+    extract::{Path, Request, State},
     http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
@@ -86,6 +86,15 @@ pub struct Gateway {
     token: Vec<u8>,
     pub usage: Usage,
     catalog: tokio::sync::Mutex<Option<(std::time::Instant, Catalog)>>,
+    managed: Option<crate::pool::Pool>,
+    image_shutdown: tokio::sync::watch::Sender<bool>,
+    image_requests: Arc<tokio::sync::Semaphore>,
+    image_previews: Mutex<
+        std::collections::HashMap<
+            String,
+            tokio::sync::watch::Sender<Option<kuno_image::preview::Preview>>,
+        >,
+    >,
 }
 
 impl Gateway {
@@ -132,6 +141,19 @@ impl Gateway {
             .pool_max_idle_per_host(0)
             .build(connector);
         let usage = Usage::open(persistent.then_some(config.state_dir.as_path()))?;
+        let managed = config
+            .managed
+            .clone()
+            .map(|managed| {
+                crate::pool::Pool::new(
+                    managed,
+                    config.upstream,
+                    persistent.then_some(config.state_dir.as_path()),
+                    config.max_waiting,
+                    Duration::from_secs(config.queue_timeout_seconds),
+                )
+            })
+            .transpose()?;
         Ok(Arc::new(Self {
             config,
             client,
@@ -139,17 +161,51 @@ impl Gateway {
             token: format!("Bearer {token}").into_bytes(),
             usage,
             catalog: tokio::sync::Mutex::new(None),
+            managed,
+            image_shutdown: tokio::sync::watch::channel(false).0,
+            image_requests: Arc::new(tokio::sync::Semaphore::new(2)),
+            image_previews: Mutex::new(Default::default()),
         }))
     }
 
+    pub async fn initialize_workers(&self) -> Result<(), &'static str> {
+        if let Some(image) = &self.config.image {
+            if !cfg!(feature = "native-image") {
+                return Err("image_engine_not_in_this_build");
+            }
+            crate::image_privacy::require_no_swap()?;
+            crate::image_privacy::require_landlock()?;
+            for id in &image.collections {
+                crate::collections::ready(&image.models, id)?;
+            }
+        }
+        if let Some(pool) = &self.managed {
+            pool.initialize().await?;
+        }
+        Ok(())
+    }
+    pub fn stop_images(&self) {
+        self.image_shutdown.send_replace(true);
+    }
+
     pub fn compatibility(self: &Arc<Self>) -> Router {
-        Router::new().fallback(proxy).with_state(self.clone())
+        // Kuno's content endpoint is authenticated even on the compatibility
+        // listener. Existing Ollama routes retain their original semantics.
+        let images = Router::new()
+            .route("/kuno/v1/images/generate", post(generate_image))
+            .route("/kuno/v1/images/previews/{id}", get(image_preview))
+            .layer(middleware::from_fn_with_state(self.clone(), authenticate));
+        images.fallback(proxy).with_state(self.clone())
     }
 
     pub fn control(self: &Arc<Self>) -> Router {
         Router::new()
             .route("/kuno/v1/status", get(status))
             .route("/kuno/v1/usage", get(usage))
+            .route("/kuno/v1/resources", get(resources))
+            .route("/kuno/v1/learning", get(learning))
+            .route("/kuno/v1/images/generate", post(generate_image))
+            .route("/kuno/v1/images/previews/{id}", get(image_preview))
             .route("/kuno/v1/admission/pause", post(pause))
             .route("/kuno/v1/admission/resume", post(resume))
             .fallback(|| async { error(StatusCode::NOT_FOUND, "unknown_control_route") })
@@ -187,6 +243,21 @@ impl Gateway {
     }
 }
 
+async fn resources(
+    State(gateway): State<Arc<Gateway>>,
+) -> Json<crate::resources::ResourceSnapshot> {
+    Json(crate::resources::snapshot(gateway.config.upstream).await)
+}
+
+async fn learning(State(gateway): State<Arc<Gateway>>) -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "api_version": API_VERSION,
+        "persistent": false,
+        "blacklisting_enabled": false,
+        "workers": gateway.managed.as_ref().map(|p| p.learning()).unwrap_or_default(),
+    }))
+}
+
 async fn usage(State(gateway): State<Arc<Gateway>>) -> Json<UsageSnapshot> {
     Json(gateway.usage.snapshot())
 }
@@ -216,13 +287,188 @@ async fn authenticate(
 }
 
 async fn status(State(gateway): State<Arc<Gateway>>) -> Json<Status> {
+    let mut admission = gateway.admission.status();
+    admission.recovery_required |= gateway
+        .managed
+        .as_ref()
+        .is_some_and(|p| p.recovery_required());
     Json(Status {
         api_version: API_VERSION,
-        mode: "gateway_only".into(),
-        admission: gateway.admission.status(),
+        mode: if gateway.managed.is_some() {
+            "managed_experimental"
+        } else {
+            "gateway_only"
+        }
+        .into(),
+        admission,
         gpu_placement_verified: false,
-        image_generation: false,
+        image_generation: cfg!(feature = "native-image") && gateway.config.image.is_some(),
     })
+}
+
+// Keys are random, per-call capabilities supplied over authenticated transport.
+// Entries and their sole latest frame disappear when the request ends.
+struct PreviewScope {
+    gateway: Arc<Gateway>,
+    id: String,
+}
+impl Drop for PreviewScope {
+    fn drop(&mut self) {
+        if let Ok(mut entries) = self.gateway.image_previews.lock() {
+            entries.remove(&self.id);
+        }
+    }
+}
+async fn image_preview(State(gateway): State<Arc<Gateway>>, Path(id): Path<String>) -> Response {
+    let frame = gateway
+        .image_previews
+        .lock()
+        .ok()
+        .and_then(|entries| entries.get(&id).map(|sender| sender.borrow().clone()));
+    match frame {
+        Some(frame) => ([(header::CACHE_CONTROL, "no-store")], Json(frame)).into_response(),
+        None => error(StatusCode::NOT_FOUND, "image_preview_unavailable"),
+    }
+}
+
+async fn generate_image(State(gateway): State<Arc<Gateway>>, request: Request) -> Response {
+    let Some(config) = gateway
+        .config
+        .image
+        .clone()
+        .filter(|_| cfg!(feature = "native-image"))
+    else {
+        return error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "image_generation_not_configured",
+        );
+    };
+    // Bound content-bearing memory before reading large multi-image requests.
+    let slot = match gateway.image_requests.clone().try_acquire_owned() {
+        Ok(slot) => slot,
+        Err(_) => return error(StatusCode::SERVICE_UNAVAILABLE, "image_queue_full"),
+    };
+    let preview_id = match request.headers().get("x-kuno-image-preview-id") {
+        None => None,
+        Some(value) => match value.to_str() {
+            Ok(id) if id.len() == 64 && id.bytes().all(|b| b.is_ascii_hexdigit()) => {
+                Some(id.to_owned())
+            }
+            _ => return error(StatusCode::BAD_REQUEST, "image_preview_id_invalid"),
+        },
+    };
+    let bytes = match tokio::time::timeout(
+        Duration::from_secs(60),
+        axum::body::to_bytes(request.into_body(), kuno_protocol::MAX_IMAGE_REQUEST_BYTES),
+    )
+    .await
+    {
+        Ok(Ok(bytes)) => bytes,
+        Ok(Err(_)) => return error(StatusCode::PAYLOAD_TOO_LARGE, "image_request_too_large"),
+        Err(_) => return error(StatusCode::REQUEST_TIMEOUT, "image_request_timeout"),
+    };
+    let recipe: kuno_protocol::ImageRecipe = match serde_json::from_slice(&bytes) {
+        Ok(recipe) => recipe,
+        Err(_) => return error(StatusCode::BAD_REQUEST, "image_request_invalid"),
+    };
+    drop(bytes);
+    if let Err(code) = recipe.validate_execution() {
+        return error(StatusCode::BAD_REQUEST, code);
+    }
+    if !config
+        .collections
+        .iter()
+        .any(|id| id == recipe.collection_id())
+    {
+        return error(StatusCode::BAD_REQUEST, "image_collection_not_enabled");
+    }
+    if recipe.seed.parse::<i64>().is_err() {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "native_image_seed_range_unsupported",
+        );
+    }
+    let mut lease = match gateway.admission.acquire().await {
+        Ok(lease) => lease,
+        Err(code) => return error(StatusCode::SERVICE_UNAVAILABLE, code),
+    };
+    let (preview_scope, previews) = if let Some(id) = preview_id {
+        let mut entries = gateway.image_previews.lock().unwrap();
+        if entries.contains_key(&id) {
+            return error(StatusCode::CONFLICT, "image_preview_id_in_use");
+        }
+        let sender = tokio::sync::watch::channel(None).0;
+        entries.insert(id.clone(), sender.clone());
+        (
+            Some(PreviewScope {
+                gateway: gateway.clone(),
+                id,
+            }),
+            Some(sender),
+        )
+    } else {
+        (None, None)
+    };
+    let (mut send, receive) = tokio::sync::oneshot::channel();
+    // The task owns cleanup even when HTTP drops the waiting handler. No next
+    // model may enter until the native process is reaped, or recovery is set.
+    tokio::spawn(async move {
+        let _request_slot = slot;
+        let _preview_scope = preview_scope;
+        let result = async {
+            if send.is_closed() {
+                return Err("image_cancelled");
+            }
+            lease.dispatched()?;
+            let pool = gateway
+                .managed
+                .as_ref()
+                .ok_or("image_requires_managed_pool")?;
+            pool.prepare_image(&config.pci_address).await?;
+            let executable = std::env::current_exe().map_err(|_| "executable_unavailable")?;
+            let finished = crate::image_runtime::run_with_previews(
+                &executable,
+                &config,
+                recipe,
+                &mut send,
+                Some(gateway.image_shutdown.subscribe()),
+                previews,
+            )
+            .await;
+            if finished.reaped
+                && !finished.forced
+                && !matches!(finished.output, Err("image_vulkan_device_lost"))
+            {
+                lease.complete();
+            }
+            finished.output
+        }
+        .await;
+        drop(lease);
+        let _ = send.send(result);
+    });
+    match receive.await {
+        Ok(Ok(png)) => (
+            [
+                (header::CONTENT_TYPE, "image/png"),
+                (header::CACHE_CONTROL, "no-store"),
+            ],
+            png,
+        )
+            .into_response(),
+        Ok(Err(code)) => error(
+            if code.starts_with("image_reference_") {
+                StatusCode::BAD_REQUEST
+            } else {
+                StatusCode::SERVICE_UNAVAILABLE
+            },
+            code,
+        ),
+        Err(_) => error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "image_worker_supervisor_failed",
+        ),
+    }
 }
 
 async fn pause(State(gateway): State<Arc<Gateway>>) -> Json<Status> {
@@ -270,7 +516,16 @@ async fn proxy(State(gateway): State<Arc<Gateway>>, request: Request) -> Respons
         return error(StatusCode::NOT_IMPLEMENTED, "protocol_upgrade_unsupported");
     }
     let class = classify(request.method(), request.uri().path());
-    let mut lease = if class != RequestClass::Metadata {
+    if request.method() == Method::GET
+        && request.uri().path() == "/api/ps"
+        && let Some(pool) = &gateway.managed
+    {
+        return match pool.running().await {
+            Ok(report) => Json(report).into_response(),
+            Err(code) => error(StatusCode::SERVICE_UNAVAILABLE, code),
+        };
+    }
+    let lease = if class != RequestClass::Metadata {
         match gateway.admission.acquire().await {
             Ok(lease) => Some(lease),
             Err(code) => return error(StatusCode::SERVICE_UNAVAILABLE, code),
@@ -279,7 +534,83 @@ async fn proxy(State(gateway): State<Arc<Gateway>>, request: Request) -> Respons
         None
     };
 
-    let (mut parts, body) = request.into_parts();
+    // Once admitted, keep ownership until the upstream response completes even
+    // if the downstream disconnects before receiving headers. The body wrapper
+    // drains abandoned responses without retaining their contents.
+    tokio::spawn(forward(gateway, request, class, lease))
+        .await
+        .unwrap_or_else(|_| error(StatusCode::BAD_GATEWAY, "upstream_task_failed"))
+}
+
+async fn forward(
+    gateway: Arc<Gateway>,
+    request: Request,
+    class: RequestClass,
+    mut lease: Option<Lease>,
+) -> Response {
+    let (mut parts, mut body) = request.into_parts();
+    let mut managed_job = None;
+    let mut address = gateway.config.upstream;
+    if let Some(pool) = &gateway.managed {
+        if class == RequestClass::Inference && crate::pool::Pool::supports(parts.uri.path()) {
+            let bytes = match tokio::time::timeout(
+                Duration::from_secs(gateway.config.response_header_timeout_seconds),
+                axum::body::to_bytes(body, 64 * 1024 * 1024),
+            )
+            .await
+            {
+                Ok(Ok(bytes)) => bytes,
+                _ => {
+                    return error(
+                        StatusCode::BAD_REQUEST,
+                        "managed_request_body_unavailable_or_too_large",
+                    );
+                }
+            };
+            let mut value: serde_json::Value = match serde_json::from_slice(&bytes) {
+                Ok(value) => value,
+                Err(_) => return error(StatusCode::BAD_REQUEST, "managed_request_json_invalid"),
+            };
+            let model = value
+                .get("model")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned);
+            let unload = value.get("keep_alive").and_then(serde_json::Value::as_i64) == Some(0)
+                && value.get("prompt").is_none_or(|v| v.as_str() == Some(""))
+                && value
+                    .get("messages")
+                    .is_none_or(|v| v.as_array().is_some_and(|a| a.is_empty()))
+                && value.get("input").is_none();
+            if !unload
+                && let Some(name) = model
+                && let Some(model) = gateway.catalog_model(&name).await
+                && !model.is_remote()
+            {
+                match pool
+                    .prepare(parts.uri.path(), &mut value, &model.name, &model.digest)
+                    .await
+                {
+                    Ok(job) => {
+                        address = job.address();
+                        managed_job = Some(job);
+                    }
+                    Err(code) => return error(StatusCode::SERVICE_UNAVAILABLE, code),
+                }
+            } else if let Err(code) = pool.stop_all().await {
+                return error(StatusCode::SERVICE_UNAVAILABLE, code);
+            }
+            let encoded = match serde_json::to_vec(&value) {
+                Ok(bytes) => bytes,
+                Err(_) => return error(StatusCode::BAD_REQUEST, "managed_request_json_invalid"),
+            };
+            parts.headers.remove(header::CONTENT_LENGTH);
+            body = Body::from(encoded);
+        } else if class != RequestClass::Metadata
+            && let Err(code) = pool.stop_all().await
+        {
+            return error(StatusCode::SERVICE_UNAVAILABLE, code);
+        }
+    }
     let observation =
         (class == RequestClass::Inference).then(|| Arc::new(Mutex::new(Observer::default())));
     let body = if let Some(observation) = &observation {
@@ -295,14 +626,14 @@ async fn proxy(State(gateway): State<Arc<Gateway>>, request: Request) -> Respons
         .path_and_query()
         .map(|p| p.as_str())
         .unwrap_or("/");
-    parts.uri = match format!("http://{}{path}", gateway.config.upstream).parse() {
+    parts.uri = match format!("http://{address}{path}").parse() {
         Ok(uri) => uri,
         Err(_) => return error(StatusCode::BAD_REQUEST, "invalid_request_target"),
     };
     strip_hop_headers(&mut parts.headers);
     parts.headers.insert(
         header::HOST,
-        HeaderValue::from_str(&gateway.config.upstream.to_string()).unwrap(),
+        HeaderValue::from_str(&address.to_string()).unwrap(),
     );
     if let Some(lease) = &mut lease
         && let Err(code) = lease.dispatched()
@@ -337,8 +668,9 @@ async fn proxy(State(gateway): State<Arc<Gateway>>, request: Request) -> Respons
     strip_hop_headers(&mut parts.headers);
     let idle = Duration::from_secs(gateway.config.stream_idle_timeout_seconds);
     let body = LeasedBody {
-        inner: body,
+        inner: Some(body),
         lease,
+        managed_job,
         idle,
         timer: Box::pin(tokio::time::sleep(idle)),
     };
@@ -376,14 +708,18 @@ impl HttpBody for ObservedBody {
 /// Ties admission to the upstream body's lifetime, not the response headers.
 /// Interrupted bodies mark the upstream uncertain before releasing the permit.
 struct LeasedBody {
-    inner: Incoming,
+    inner: Option<Incoming>,
     lease: Option<Lease>,
+    managed_job: Option<crate::managed::Job>,
     idle: Duration,
     timer: Pin<Box<Sleep>>,
 }
 
 impl LeasedBody {
     fn finish(&mut self) {
+        if let Some(job) = self.managed_job.take() {
+            job.complete();
+        }
         if let Some(mut lease) = self.lease.take() {
             lease.complete();
         }
@@ -398,7 +734,7 @@ impl HttpBody for LeasedBody {
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<Frame<Bytes>, Self::Error>>> {
-        match Pin::new(&mut self.inner).poll_frame(cx) {
+        match Pin::new(self.inner.as_mut().expect("response body present")).poll_frame(cx) {
             Poll::Ready(None) => {
                 self.finish();
                 Poll::Ready(None)
@@ -406,18 +742,20 @@ impl HttpBody for LeasedBody {
             Poll::Ready(Some(Ok(frame))) => {
                 let next = tokio::time::Instant::now() + self.idle;
                 self.timer.as_mut().reset(next);
-                if self.inner.is_end_stream() {
+                if self.inner.as_ref().is_none_or(HttpBody::is_end_stream) {
                     self.finish();
                 }
                 Poll::Ready(Some(Ok(frame)))
             }
             Poll::Ready(Some(Err(_))) => {
                 self.lease.take();
+                self.managed_job.take();
                 Poll::Ready(Some(Err(std::io::Error::other("upstream_body_failed"))))
             }
             Poll::Pending => {
                 if self.timer.as_mut().poll(cx).is_ready() {
                     self.lease.take();
+                    self.managed_job.take();
                     Poll::Ready(Some(Err(std::io::Error::new(
                         std::io::ErrorKind::TimedOut,
                         "upstream_body_timeout",
@@ -430,17 +768,55 @@ impl HttpBody for LeasedBody {
     }
 
     fn is_end_stream(&self) -> bool {
-        self.inner.is_end_stream()
+        self.inner.as_ref().is_none_or(HttpBody::is_end_stream)
     }
     fn size_hint(&self) -> SizeHint {
-        self.inner.size_hint()
+        self.inner
+            .as_ref()
+            .map(HttpBody::size_hint)
+            .unwrap_or_default()
     }
 }
 
 impl Drop for LeasedBody {
     fn drop(&mut self) {
-        if self.inner.is_end_stream() {
+        if self.inner.as_ref().is_none_or(HttpBody::is_end_stream) {
             self.finish();
+            return;
         }
+        let Some(mut lease) = self.lease.take() else {
+            return;
+        };
+        let Some(mut body) = self.inner.take() else {
+            return;
+        };
+        let managed_job = self.managed_job.take();
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let limit = self.idle;
+        runtime.spawn(async move {
+            // A bounded discard proves ordinary generation finished without
+            // persisting or replaying content. Errors, stalls, and process exit
+            // retain the recovery requirement because completion is uncertain.
+            let completed = tokio::time::timeout(limit, async {
+                while let Some(frame) =
+                    std::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await
+                {
+                    if frame.is_err() {
+                        return false;
+                    }
+                }
+                true
+            })
+            .await
+            .unwrap_or(false);
+            if completed {
+                lease.complete();
+                if let Some(job) = managed_job {
+                    job.complete();
+                }
+            }
+        });
     }
 }

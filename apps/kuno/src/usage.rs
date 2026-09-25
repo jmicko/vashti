@@ -14,6 +14,14 @@ const WEEK: u64 = 7 * 86400;
 pub struct CatalogModel {
     pub name: String,
     pub digest: String,
+    pub remote_model: Option<String>,
+    pub remote_host: Option<String>,
+}
+
+impl CatalogModel {
+    pub fn is_remote(&self) -> bool {
+        self.remote_model.is_some() || self.remote_host.is_some()
+    }
 }
 #[derive(Default, Deserialize)]
 pub struct Catalog {

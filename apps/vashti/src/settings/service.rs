@@ -211,6 +211,16 @@ pub async fn get_available_tools(
                 });
             }
         }
+        if tool_allowed("images", &user_tags, &tool_tags) {
+            for list in [&mut tools, &mut device_tools] {
+                list.push(AvailableToolResponse {
+                    id: "images",
+                    label: "Images",
+                    description: "Generate images and edit images supplied in this chat.",
+                    warning: None,
+                });
+            }
+        }
         if settings.brave_search_enabled
             && settings.has_brave_key()
             && tool_allowed(

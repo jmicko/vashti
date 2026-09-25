@@ -32,6 +32,7 @@ use sqlx::{
     Row, SqlitePool,
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
 };
+use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 use tokio::{fs, signal};
 use tokio_util::io::ReaderStream;
@@ -52,6 +53,12 @@ const SITEMAP_XML: &str = include_str!("../static/sitemap.xml");
 const LLMS_TXT: &str = include_str!("../static/llms.txt");
 const FAVICON_PNG: &[u8] = include_bytes!("../static/favicon.png");
 const LOGO_PNG: &[u8] = include_bytes!("../static/logo.png");
+const KUNO_GUIDE: &str = concat!(
+    include_str!("../../kuno/README.md"),
+    "\n\n",
+    include_str!("../../../docs/kuno-images.md")
+);
+const KUNO_INSTALL_SH: &str = include_str!("../../kuno/packaging/install.sh");
 const INSTALL_SH: &str = include_str!("../../vashti/packaging/install.sh");
 const AUTHORIZATION: HeaderName = HeaderName::from_static("authorization");
 const X_FORWARDED_FOR: HeaderName = HeaderName::from_static("x-forwarded-for");
@@ -430,7 +437,8 @@ struct ParsedArtifactUpload {
     target: String,
     filename: String,
     content_type: String,
-    bytes: Vec<u8>,
+    file: tempfile::NamedTempFile,
+    size_bytes: i64,
     sha256: String,
     signature: String,
 }
@@ -469,6 +477,7 @@ async fn main() -> Result<(), AppError> {
             AppError::internal("Database migration failed")
         })?;
 
+    cleanup_upload_files(&config.artifact_dir).await?;
     ensure_settings(&db).await?;
     ensure_admin_setup_key(&db, &config).await?;
     clear_legacy_upload_token(&db, &config).await?;
@@ -509,6 +518,8 @@ fn router(state: AppState) -> Router {
         .route("/sitemap.xml", get(sitemap_xml))
         .route("/llms.txt", get(llms_txt))
         .route("/install.sh", get(install_script))
+        .route("/install-kuno.sh", get(kuno_install_script))
+        .route("/kuno-setup.txt", get(kuno_setup_guide))
         .route("/api/admin/status", get(admin_status))
         .route("/api/admin/setup", post(setup_admin))
         .route("/api/admin/login", post(login_admin))
@@ -715,6 +726,33 @@ async fn install_script(
             ),
         ],
         INSTALL_SH,
+    ))
+}
+
+async fn kuno_setup_guide() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+        KUNO_GUIDE,
+    )
+}
+
+async fn kuno_install_script(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    ConnectInfo(remote_addr): ConnectInfo<SocketAddr>,
+    jar: CookieJar,
+) -> Result<impl IntoResponse, AppError> {
+    require_claimed(&state.db).await?;
+    record_page_hit_best_effort(&state, &headers, remote_addr, &jar, "/install-kuno.sh").await;
+    Ok((
+        [
+            (header::CONTENT_TYPE, "text/x-shellscript; charset=utf-8"),
+            (
+                header::CONTENT_DISPOSITION,
+                "attachment; filename=\"install-kuno.sh\"",
+            ),
+        ],
+        KUNO_INSTALL_SH,
     ))
 }
 
@@ -1008,14 +1046,13 @@ async fn promote_release(
         ));
     }
 
-    let target_parts = (
-        target.try_get::<i64, _>("version_major")?,
-        target.try_get::<i64, _>("version_minor")?,
-        target.try_get::<i64, _>("version_patch")?,
-    );
-    if latest_released_parts(&state.db)
+    require_stable_version(&version)?;
+    let target_version = release_version(&version)?;
+    if newest_version(&state.db, "stable")
         .await?
-        .is_some_and(|latest| target_parts <= latest)
+        .map(|latest| release_version(&latest))
+        .transpose()?
+        .is_some_and(|latest| target_version <= latest)
     {
         return Err(AppError::conflict(
             "release_not_newer",
@@ -1023,12 +1060,11 @@ async fn promote_release(
         ));
     }
     let target_notes: Option<String> = target.try_get("notes")?;
-    let mut incorporated = if request.rollup_previous_prereleases {
-        previous_prereleases_for_rollup(&state.db, &version, target_parts).await?
+    let incorporated = if request.rollup_previous_prereleases {
+        previous_prereleases_for_rollup(&state.db, &version).await?
     } else {
         Vec::new()
     };
-    incorporated.sort_by_key(|release| std::cmp::Reverse(release.parts));
     let incorporated_versions = incorporated
         .iter()
         .map(|release| release.version.clone())
@@ -1147,7 +1183,7 @@ async fn upload_release(
 ) -> Result<Json<UploadResponse>, AppError> {
     require_claimed(&state.db).await?;
     consume_upload_key(&state, &headers).await?;
-    let upload = parse_upload(multipart).await?;
+    let upload = parse_upload(multipart, &state.config.artifact_dir).await?;
     let release_exists: bool =
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM releases WHERE version = ?)")
             .bind(&upload.version)
@@ -1160,7 +1196,18 @@ async fn upload_release(
         ));
     }
     let artifact_dir = state.config.artifact_dir.join(&upload.version);
-    fs::create_dir_all(&artifact_dir).await?;
+    // Never overwrite an existing version directory, including an interrupted upload.
+    fs::create_dir(&artifact_dir).await.map_err(|error| {
+        if error.kind() == std::io::ErrorKind::AlreadyExists {
+            AppError::conflict(
+                "release_directory_exists",
+                "Release directory already exists; inspect the interrupted upload before retrying",
+            )
+        } else {
+            error.into()
+        }
+    })?;
+    let mut transaction = state.db.begin().await?;
     let now = unix_timestamp();
     sqlx::query(
         r#"
@@ -1174,12 +1221,14 @@ async fn upload_release(
     .bind(upload.patch)
     .bind(&upload.notes)
     .bind(now)
-    .execute(&state.db)
+    .execute(&mut *transaction)
     .await?;
 
     for artifact in &upload.artifacts {
         let storage_path = artifact_dir.join(&artifact.filename);
-        fs::write(&storage_path, &artifact.bytes).await?;
+        // The verified temporary file is on the same filesystem. Linking is
+        // constant-memory and cannot overwrite an existing file.
+        fs::hard_link(artifact.file.path(), &storage_path).await?;
         sqlx::query(
             r#"
             INSERT INTO release_artifacts
@@ -1192,14 +1241,16 @@ async fn upload_release(
         .bind(&artifact.target)
         .bind(&artifact.filename)
         .bind(&artifact.content_type)
-        .bind(artifact.bytes.len() as i64)
+        .bind(artifact.size_bytes)
         .bind(&artifact.sha256)
         .bind(storage_path.to_string_lossy().to_string())
         .bind(&artifact.signature)
         .bind(now)
-        .execute(&state.db)
+        .execute(&mut *transaction)
         .await?;
     }
+
+    transaction.commit().await?;
 
     Ok(Json(UploadResponse {
         release: load_release(&state.db, &upload.version).await?,
@@ -1348,53 +1399,102 @@ fn counts_as_download(method: &Method) -> bool {
     method == Method::GET
 }
 
-async fn parse_upload(mut multipart: Multipart) -> Result<ParsedUpload, AppError> {
+// Called before accepting requests, so only files from interrupted processes remain.
+async fn cleanup_upload_files(directory: &Path) -> Result<(), AppError> {
+    let mut entries = fs::read_dir(directory).await?;
+    while let Some(entry) = entries.next_entry().await? {
+        if entry.file_name().to_string_lossy().starts_with(".upload-")
+            && entry.file_type().await?.is_file()
+        {
+            fs::remove_file(entry.path()).await?;
+        }
+    }
+    Ok(())
+}
+
+async fn parse_upload(
+    mut multipart: Multipart,
+    directory: &Path,
+) -> Result<ParsedUpload, AppError> {
     let mut version = None;
     let mut targets = Vec::new();
     let mut signatures = Vec::new();
     let mut notes = None;
     let mut uploaded_artifacts = Vec::new();
-
-    while let Some(field) = multipart
+    let mut fields = 0;
+    while let Some(mut field) = multipart
         .next_field()
         .await
         .map_err(|_| AppError::bad_request("invalid_multipart", "Invalid multipart upload"))?
     {
+        fields += 1;
+        if fields > 50 {
+            return Err(AppError::bad_request(
+                "too_many_fields",
+                "At most 16 artifacts may be uploaded together",
+            ));
+        }
         let name = field.name().unwrap_or_default().to_string();
-        let filename = field.file_name().map(safe_filename);
-        let content_type = field
-            .content_type()
-            .map(str::to_string)
-            .unwrap_or_else(|| "application/octet-stream".to_string());
-        let bytes = field
-            .bytes()
+        if name == "artifact" {
+            let filename = field.file_name().map(safe_filename).ok_or_else(|| {
+                AppError::bad_request("missing_filename", "Artifact filename is required")
+            })?;
+            let content_type = field
+                .content_type()
+                .unwrap_or("application/octet-stream")
+                .to_string();
+            let file = tempfile::Builder::new()
+                .prefix(".upload-")
+                .tempfile_in(directory)?;
+            let mut writer = fs::File::from_std(file.reopen()?);
+            let mut hasher = Sha256::new();
+            let mut size_bytes = 0_i64;
+            while let Some(chunk) = field.chunk().await.map_err(|_| {
+                AppError::bad_request("invalid_multipart", "Incomplete artifact upload")
+            })? {
+                hasher.update(&chunk);
+                size_bytes += chunk.len() as i64;
+                writer.write_all(&chunk).await?;
+            }
+            writer.sync_all().await?;
+            drop(writer);
+            uploaded_artifacts.push(UploadedArtifact {
+                filename,
+                content_type,
+                file,
+                size_bytes,
+                sha256: hex::encode(hasher.finalize()),
+            });
+            continue;
+        }
+        if !matches!(name.as_str(), "version" | "target" | "signature" | "notes") {
+            return Err(AppError::bad_request(
+                "unknown_field",
+                "Unsupported upload field",
+            ));
+        }
+        let limit = if name == "notes" { 1024 * 1024 } else { 4096 };
+        let mut bytes = Vec::new();
+        while let Some(chunk) = field
+            .chunk()
             .await
-            .map_err(|_| AppError::bad_request("invalid_multipart", "Invalid multipart field"))?;
-
-        match name.as_str() {
-            "version" => {
-                version = Some(text_field(bytes.as_ref())?);
-            }
-            "target" => {
-                targets.push(validate_target(&text_field(bytes.as_ref())?)?);
-            }
-            "signature" => {
-                signatures.push(text_field(bytes.as_ref())?);
-            }
-            "notes" => {
-                let value = text_field(bytes.as_ref())?;
-                notes = (!value.trim().is_empty()).then_some(value);
-            }
-            "artifact" => {
-                uploaded_artifacts.push((
-                    filename.ok_or_else(|| {
-                        AppError::bad_request("missing_filename", "Artifact filename is required")
-                    })?,
-                    content_type,
-                    bytes.to_vec(),
+            .map_err(|_| AppError::bad_request("invalid_multipart", "Invalid multipart field"))?
+        {
+            if bytes.len() + chunk.len() > limit {
+                return Err(AppError::bad_request(
+                    "field_too_large",
+                    "Upload metadata field is too large",
                 ));
             }
-            _ => {}
+            bytes.extend_from_slice(&chunk);
+        }
+        let value = text_field(&bytes)?;
+        match name.as_str() {
+            "version" => version = Some(value),
+            "target" => targets.push(validate_target(&value)?),
+            "signature" => signatures.push(value),
+            "notes" => notes = (!value.trim().is_empty()).then_some(value),
+            _ => unreachable!(),
         }
     }
 
@@ -1414,7 +1514,13 @@ async fn parse_upload(mut multipart: Multipart) -> Result<ParsedUpload, AppError
     })
 }
 
-type UploadedArtifact = (String, String, Vec<u8>);
+struct UploadedArtifact {
+    filename: String,
+    content_type: String,
+    file: tempfile::NamedTempFile,
+    size_bytes: i64,
+    sha256: String,
+}
 
 fn assemble_artifact_uploads(
     targets: Vec<String>,
@@ -1437,10 +1543,17 @@ fn assemble_artifact_uploads(
     let mut seen_targets = std::collections::HashSet::new();
     let mut seen_filenames = std::collections::HashSet::new();
     let mut artifacts = Vec::with_capacity(targets.len());
-    for ((target, (filename, content_type, bytes)), signature) in
+    for ((target, uploaded), signature) in
         targets.into_iter().zip(uploaded_artifacts).zip(signatures)
     {
-        if bytes.is_empty() {
+        let UploadedArtifact {
+            filename,
+            content_type,
+            file,
+            size_bytes,
+            sha256,
+        } = uploaded;
+        if size_bytes == 0 {
             return Err(AppError::bad_request(
                 "empty_artifact",
                 "Artifact cannot be empty",
@@ -1458,12 +1571,12 @@ fn assemble_artifact_uploads(
                 "Each release artifact filename must be unique",
             ));
         }
-        let sha256 = sha256_hex(&bytes);
         artifacts.push(ParsedArtifactUpload {
             target,
             filename,
             content_type,
-            bytes,
+            file,
+            size_bytes,
             sha256,
             signature,
         });
@@ -1482,7 +1595,7 @@ fn validate_upload_signatures(
             target: artifact.target.clone(),
             filename: artifact.filename.clone(),
             sha256: artifact.sha256.clone(),
-            size_bytes: artifact.bytes.len() as i64,
+            size_bytes: artifact.size_bytes,
         };
         verify_release_signature(&signed_artifact, &artifact.signature).map_err(|_| {
             AppError::bad_request(
@@ -1504,21 +1617,25 @@ fn validate_update_channel(channel: &str) -> Result<&str, AppError> {
     }
 }
 
+async fn newest_version(db: &SqlitePool, channel: &str) -> Result<Option<String>, AppError> {
+    let versions = sqlx::query_scalar::<_, String>(
+        "SELECT version FROM releases WHERE release_status = 'released' OR (? = 'prerelease' AND release_status = 'prerelease')",
+    ).bind(channel).fetch_all(db).await?;
+    let mut candidates = Vec::with_capacity(versions.len());
+    for label in versions {
+        let version = release_version(&label)?;
+        if channel == "prerelease" || version.pre.is_empty() {
+            candidates.push((version, label));
+        }
+    }
+    Ok(candidates
+        .into_iter()
+        .max_by(|a, b| a.0.cmp(&b.0))
+        .map(|(_, label)| label))
+}
+
 async fn update_version_for_channel(db: &SqlitePool, channel: &str) -> Result<String, AppError> {
-    sqlx::query_scalar(
-        r#"
-        SELECT version
-        FROM releases
-        WHERE release_status = 'released'
-           OR (? = 'prerelease' AND release_status = 'prerelease')
-        ORDER BY version_major DESC, version_minor DESC, version_patch DESC
-        LIMIT 1
-        "#,
-    )
-    .bind(channel)
-    .fetch_optional(db)
-    .await?
-    .ok_or_else(|| {
+    newest_version(db, channel).await?.ok_or_else(|| {
         AppError::not_found(
             "update_not_found",
             "No release is available for this update channel",
@@ -1530,74 +1647,39 @@ async fn update_version_for_channel(db: &SqlitePool, channel: &str) -> Result<St
 struct PrereleaseRollup {
     version: String,
     notes: Option<String>,
-    parts: (i64, i64, i64),
 }
 
 async fn previous_prereleases_for_rollup(
     db: &SqlitePool,
     target_version: &str,
-    target_parts: (i64, i64, i64),
 ) -> Result<Vec<PrereleaseRollup>, AppError> {
-    let latest_parts = latest_released_parts(db).await?;
-
+    let latest = newest_version(db, "stable")
+        .await?
+        .map(|v| release_version(&v))
+        .transpose()?;
+    let target = release_version(target_version)?;
     let rows = sqlx::query(
-        r#"
-        SELECT version, notes, version_major, version_minor, version_patch
-        FROM releases
-        WHERE release_status = 'prerelease' AND version != ?
-        "#,
+        "SELECT version, notes FROM releases WHERE release_status = 'prerelease' AND version != ?",
     )
     .bind(target_version)
     .fetch_all(db)
     .await?;
-
-    rows.into_iter()
-        .map(|row| {
-            let parts = (
-                row.try_get::<i64, _>("version_major")?,
-                row.try_get::<i64, _>("version_minor")?,
-                row.try_get::<i64, _>("version_patch")?,
-            );
-            Ok(PrereleaseRollup {
-                version: row.try_get("version")?,
-                notes: row.try_get("notes")?,
-                parts,
-            })
-        })
-        .collect::<Result<Vec<_>, sqlx::Error>>()
-        .map(|releases| {
-            releases
-                .into_iter()
-                .filter(|release| {
-                    release.parts < target_parts
-                        && latest_parts.is_none_or(|latest| release.parts > latest)
-                })
-                .collect()
-        })
-        .map_err(AppError::from)
-}
-
-async fn latest_released_parts(db: &SqlitePool) -> Result<Option<(i64, i64, i64)>, AppError> {
-    sqlx::query(
-        r#"
-        SELECT version_major, version_minor, version_patch
-        FROM releases
-        WHERE release_status = 'released'
-        ORDER BY version_major DESC, version_minor DESC, version_patch DESC
-        LIMIT 1
-        "#,
-    )
-    .fetch_optional(db)
-    .await?
-    .map(|row| {
-        Ok::<_, sqlx::Error>((
-            row.try_get::<i64, _>("version_major")?,
-            row.try_get::<i64, _>("version_minor")?,
-            row.try_get::<i64, _>("version_patch")?,
-        ))
-    })
-    .transpose()
-    .map_err(AppError::from)
+    let mut releases = Vec::new();
+    for row in rows {
+        let version: String = row.try_get("version")?;
+        let parsed = release_version(&version)?;
+        if parsed < target && latest.as_ref().is_none_or(|latest| &parsed > latest) {
+            releases.push((
+                parsed,
+                PrereleaseRollup {
+                    version,
+                    notes: row.try_get("notes")?,
+                },
+            ));
+        }
+    }
+    releases.sort_by(|a, b| b.0.cmp(&a.0));
+    Ok(releases.into_iter().map(|(_, release)| release).collect())
 }
 
 fn merge_release_notes(
@@ -1667,6 +1749,13 @@ async fn load_releases(db: &SqlitePool) -> Result<Vec<ReleaseResponse>, AppError
         });
     }
 
+    // All stored labels are validated on upload. SemVer orders beta.10 after beta.2.
+    releases.sort_by_cached_key(|release| {
+        (
+            !release.is_prerelease,
+            std::cmp::Reverse(release_version(&release.version).ok()),
+        )
+    });
     Ok(releases)
 }
 
@@ -2033,17 +2122,7 @@ async fn clear_legacy_upload_token(db: &SqlitePool, config: &Config) -> Result<(
 }
 
 async fn update_latest_version(db: &SqlitePool) -> Result<(), AppError> {
-    let latest = sqlx::query_scalar::<_, String>(
-        r#"
-        SELECT version
-        FROM releases
-        WHERE release_status = 'released'
-        ORDER BY version_major DESC, version_minor DESC, version_patch DESC
-        LIMIT 1
-        "#,
-    )
-    .fetch_optional(db)
-    .await?;
+    let latest = newest_version(db, "stable").await?;
 
     sqlx::query("UPDATE release_settings SET latest_version = ?, updated_at = ? WHERE id = 1")
         .bind(latest)
@@ -2340,40 +2419,46 @@ fn header_text<'a>(headers: &'a HeaderMap, name: &HeaderName) -> Option<&'a str>
     headers.get(name).and_then(|value| value.to_str().ok())
 }
 
-fn normalize_version_label(value: &str) -> Result<(String, i64, i64, i64), AppError> {
-    let trimmed = value.trim();
-    let bare = trimmed.strip_prefix('v').unwrap_or(trimmed);
-    let parts = bare.split('.').collect::<Vec<_>>();
-    if parts.len() != 3 {
+fn release_version(value: &str) -> Result<semver::Version, AppError> {
+    let bare = value.trim().strip_prefix('v').unwrap_or(value.trim());
+    let version = semver::Version::parse(bare).map_err(|_| {
+        AppError::bad_request(
+            "invalid_version",
+            "Use a version such as v0.13.0 or v0.13.0-beta.1",
+        )
+    })?;
+    if bare.len() > 96 || !version.build.is_empty() {
         return Err(AppError::bad_request(
             "invalid_version",
-            "Version must look like v0.1.0",
+            "Version must be at most 96 characters, without build metadata",
         ));
     }
+    Ok(version)
+}
 
-    let major = parse_version_part(parts[0])?;
-    let minor = parse_version_part(parts[1])?;
-    let patch = parse_version_part(parts[2])?;
-
+fn normalize_version_label(value: &str) -> Result<(String, i64, i64, i64), AppError> {
+    let version = release_version(value)?;
+    let part = |value| {
+        i64::try_from(value).map_err(|_| {
+            AppError::bad_request("invalid_version", "Version number is too large to store")
+        })
+    };
     Ok((
-        format!("v{}.{}.{}", major, minor, patch),
-        major,
-        minor,
-        patch,
+        format!("v{version}"),
+        part(version.major)?,
+        part(version.minor)?,
+        part(version.patch)?,
     ))
 }
 
-fn parse_version_part(value: &str) -> Result<i64, AppError> {
-    if value.is_empty() || !value.chars().all(|character| character.is_ascii_digit()) {
+fn require_stable_version(version: &str) -> Result<(), AppError> {
+    if !release_version(version)?.pre.is_empty() {
         return Err(AppError::bad_request(
-            "invalid_version",
-            "Version must look like v0.1.0",
+            "prerelease_version",
+            "Upload a version without a prerelease suffix before promoting to stable",
         ));
     }
-
-    value.parse().map_err(|_| {
-        AppError::bad_request("invalid_version", "Version number is too large to store")
-    })
+    Ok(())
 }
 
 fn validate_target(value: &str) -> Result<String, AppError> {
@@ -2523,6 +2608,9 @@ mod tests {
             .run(&db)
             .await
             .expect("Hub migrations should run");
+        ensure_settings(&db)
+            .await
+            .expect("settings should initialize");
         db
     }
 
@@ -2547,11 +2635,15 @@ mod tests {
     }
 
     fn artifact(filename: &str, bytes: &[u8]) -> UploadedArtifact {
-        (
-            filename.to_string(),
-            "application/octet-stream".to_string(),
-            bytes.to_vec(),
-        )
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), bytes).unwrap();
+        UploadedArtifact {
+            filename: filename.into(),
+            content_type: "application/octet-stream".into(),
+            file,
+            size_bytes: bytes.len() as i64,
+            sha256: sha256_hex(bytes),
+        }
     }
 
     #[test]
@@ -2652,12 +2744,10 @@ mod tests {
             PrereleaseRollup {
                 version: "v0.9.1".to_string(),
                 notes: Some("# v0.9.1\n\nFirst staged change.".to_string()),
-                parts: (0, 9, 1),
             },
             PrereleaseRollup {
                 version: "v0.9.0".to_string(),
                 notes: Some("Second staged change.".to_string()),
-                parts: (0, 9, 0),
             },
         ];
 
@@ -2700,7 +2790,7 @@ mod tests {
             "v0.9.3"
         );
 
-        let candidates = previous_prereleases_for_rollup(&db, "v0.9.2", (0, 9, 2))
+        let candidates = previous_prereleases_for_rollup(&db, "v0.9.2")
             .await
             .expect("rollup candidates should load");
         assert_eq!(
@@ -2710,5 +2800,149 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["v0.9.1"]
         );
+    }
+    #[test]
+    fn prerelease_labels_are_canonical_and_cannot_be_promoted() {
+        assert_eq!(
+            normalize_version_label("0.13.0-beta.1").unwrap(),
+            ("v0.13.0-beta.1".into(), 0, 13, 0)
+        );
+        for invalid in [
+            "0.13.0-beta.01",
+            "0.13.0+build.1",
+            "0.13",
+            "../0.13.0",
+            "00.13.0",
+        ] {
+            assert!(normalize_version_label(invalid).is_err(), "{invalid}");
+        }
+        assert!(require_stable_version("v0.13.0-beta.1").is_err());
+        assert!(require_stable_version("v0.13.0").is_ok());
+    }
+
+    #[tokio::test]
+    async fn semver_channels_listing_and_rollup_order_beta_versions() {
+        let db = release_test_db().await;
+        insert_test_release(&db, "v0.12.0", "released").await;
+        for version in ["v0.13.0-beta.10", "v0.13.0-beta.1", "v0.13.0-beta.2"] {
+            insert_test_release(&db, version, "prerelease").await;
+        }
+        update_latest_version(&db).await.unwrap();
+        assert_eq!(latest_version(&db).await.unwrap(), "v0.12.0");
+        assert_eq!(
+            update_version_for_channel(&db, "prerelease").await.unwrap(),
+            "v0.13.0-beta.10"
+        );
+        let expected = ["v0.13.0-beta.10", "v0.13.0-beta.2", "v0.13.0-beta.1"];
+        let candidates = previous_prereleases_for_rollup(&db, "v0.13.0")
+            .await
+            .unwrap();
+        assert_eq!(
+            candidates
+                .iter()
+                .map(|r| r.version.as_str())
+                .collect::<Vec<_>>(),
+            expected
+        );
+        let releases = load_releases(&db).await.unwrap();
+        assert_eq!(
+            releases[..3]
+                .iter()
+                .map(|r| r.version.as_str())
+                .collect::<Vec<_>>(),
+            expected
+        );
+        insert_test_release(&db, "v0.13.0", "prerelease").await;
+        assert_eq!(
+            update_version_for_channel(&db, "prerelease").await.unwrap(),
+            "v0.13.0"
+        );
+        // Defense in depth: even an incorrectly marked beta cannot enter stable.
+        insert_test_release(&db, "v0.14.0-beta.1", "released").await;
+        assert_eq!(
+            update_version_for_channel(&db, "stable").await.unwrap(),
+            "v0.12.0"
+        );
+    }
+
+    #[test]
+    fn accepts_signed_kuno_artifact_metadata_alongside_vashti() {
+        let artifacts = assemble_artifact_uploads(
+            vec!["linux-x86_64".into(), "kuno-linux-x86_64".into()],
+            vec![
+                artifact("vashti-linux-x86_64.tar.gz", b"server"),
+                artifact("kuno-linux-x86_64.tar.gz", b"inference"),
+            ],
+            vec!["server-signature".into(), "kuno-signature".into()],
+        )
+        .unwrap();
+        assert_eq!(artifacts[1].target, "kuno-linux-x86_64");
+    }
+    #[tokio::test]
+    async fn streamed_upload_failures_remove_temporary_files() {
+        use axum::{
+            body::{Bytes, to_bytes},
+            http::Request,
+        };
+        use tower::ServiceExt;
+        for (name, suffix, expected) in [
+            (
+                "artifact",
+                "\r\n--boundary--\r\n",
+                "invalid_update_signature",
+            ),
+            ("artifact", "", "invalid_multipart"),
+            ("notes", "\r\n--boundary--\r\n", "field_too_large"),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().to_path_buf();
+            let app = Router::new()
+                .route(
+                    "/",
+                    post(move |multipart: Multipart| async move {
+                        parse_upload(multipart, &path).await.map(|_| StatusCode::OK)
+                    }),
+                )
+                .layer(DefaultBodyLimit::max(16 * 1024 * 1024));
+            let header = format!(
+                "--boundary\r\nContent-Disposition: form-data; name=\"version\"\r\n\r\nv0.13.0-beta.1\r\n--boundary\r\nContent-Disposition: form-data; name=\"target\"\r\n\r\nkuno-linux-x86_64\r\n--boundary\r\nContent-Disposition: form-data; name=\"signature\"\r\n\r\ninvalid\r\n--boundary\r\nContent-Disposition: form-data; name=\"{name}\"; filename=\"kuno.tar.gz\"\r\n\r\n"
+            );
+            let chunk = Bytes::from(vec![42; 64 * 1024]);
+            let chunks = std::iter::once(Ok::<_, std::io::Error>(Bytes::from(header)))
+                .chain((0..128).map(move |_| Ok(chunk.clone())))
+                .chain(std::iter::once(Ok(Bytes::from_static(suffix.as_bytes()))));
+            let request = Request::builder()
+                .method("POST")
+                .uri("/")
+                .header(
+                    header::CONTENT_TYPE,
+                    "multipart/form-data; boundary=boundary",
+                )
+                .body(Body::from_stream(futures_util::stream::iter(chunks)))
+                .unwrap();
+            let response = app.oneshot(request).await.unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            let body = to_bytes(response.into_body(), 4096).await.unwrap();
+            assert!(String::from_utf8_lossy(&body).contains(expected));
+            assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn startup_only_removes_owned_interrupted_upload_files() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(directory.path().join(".upload-aborted"), b"temporary")
+            .await
+            .unwrap();
+        fs::write(directory.path().join("keep.txt"), b"keep")
+            .await
+            .unwrap();
+        fs::create_dir(directory.path().join("v0.13.0-beta.1"))
+            .await
+            .unwrap();
+        cleanup_upload_files(directory.path()).await.unwrap();
+        assert!(!directory.path().join(".upload-aborted").exists());
+        assert!(directory.path().join("keep.txt").exists());
+        assert!(directory.path().join("v0.13.0-beta.1").exists());
     }
 }

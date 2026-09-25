@@ -159,6 +159,7 @@ pub async fn get_attachment_file(
                revision_id,
                original_filename,
                storage_path,
+               image_asset_id,
                mime_type,
                size_bytes,
                attachment_kind,
@@ -175,7 +176,12 @@ pub async fn get_attachment_file(
     .ok_or_else(|| ApiError::not_found("attachment_not_found", "Attachment not found"))?;
 
     let storage_path: String = row.try_get("storage_path")?;
+    let image_asset_id: Option<String> = row.try_get("image_asset_id")?;
     let attachment = row_to_attachment(row)?;
+    if let Some(asset_id) = image_asset_id {
+        let (_, bytes) = crate::images::service::asset(pool, user_id, &asset_id).await?;
+        return Ok((attachment, bytes));
+    }
     let bytes = fs::read(uploads_dir.join(storage_path))
         .await
         .map_err(|error| {
@@ -262,6 +268,7 @@ pub async fn attach_referenced_attachments(
                    revision_id,
                    original_filename,
                    storage_path,
+                   image_asset_id,
                    mime_type,
                    size_bytes,
                    attachment_kind
@@ -312,6 +319,12 @@ pub async fn attach_referenced_attachments(
             continue;
         }
 
+        if let Some(asset_id) = row.try_get::<Option<String>, _>("image_asset_id")? {
+            let new_id = Uuid::new_v4().to_string();
+            sqlx::query("INSERT INTO attachments (id,user_id,chat_id,message_id,revision_id,original_filename,storage_path,mime_type,size_bytes,attachment_kind,created_at,image_asset_id) SELECT ?,user_id,chat_id,?,?,original_filename,?,mime_type,size_bytes,attachment_kind,?,image_asset_id FROM attachments WHERE id=? AND user_id=? AND image_asset_id=?")
+                .bind(&new_id).bind(message_id).bind(revision_id).bind(format!("image-assets/{new_id}")).bind(unix_timestamp()).bind(attachment_id).bind(user_id).bind(asset_id).execute(&mut **tx).await?;
+            continue;
+        }
         let source_storage_path: String = row.try_get("storage_path")?;
         let cloned_attachment_id = Uuid::new_v4().to_string();
         let cloned_storage_path = format!("{chat_id}/{cloned_attachment_id}");
@@ -418,8 +431,9 @@ pub async fn prompt_attachment_payload(
 ) -> Result<(String, Vec<String>), ApiError> {
     let rows = sqlx::query(
         r#"
-        SELECT original_filename,
+        SELECT id, original_filename,
                storage_path,
+               image_asset_id,
                attachment_kind
         FROM attachments
         WHERE user_id = ?
@@ -443,14 +457,24 @@ pub async fn prompt_attachment_payload(
         let original_filename: String = row.try_get("original_filename")?;
         let storage_path: String = row.try_get("storage_path")?;
         let attachment_kind: String = row.try_get("attachment_kind")?;
-        let bytes = fs::read(uploads_dir.join(storage_path))
-            .await
-            .map_err(|error| {
-                tracing::error!(?error, "failed to read prompt attachment");
-                ApiError::internal("Failed to read attachment")
-            })?;
+        let bytes = if let Some(asset_id) = row.try_get::<Option<String>, _>("image_asset_id")? {
+            crate::images::service::asset(pool, user_id, &asset_id)
+                .await?
+                .1
+        } else {
+            fs::read(uploads_dir.join(storage_path))
+                .await
+                .map_err(|error| {
+                    tracing::error!(?error, "failed to read prompt attachment");
+                    ApiError::internal("Failed to read attachment")
+                })?
+        };
 
         if attachment_kind == "image" {
+            text_payload.push_str(&format!(
+                "\nAvailable image ID: {}\n",
+                row.try_get::<String, _>("id")?
+            ));
             images.push(STANDARD.encode(bytes));
             continue;
         }

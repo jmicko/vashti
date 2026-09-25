@@ -463,6 +463,7 @@ function privateAttachmentPromptPayload(attachments: AttachmentInfo[]) {
 
   for (const attachment of attachments) {
     if (isImageAttachment(attachment)) {
+      textParts.push(`Available image ID: ${attachment.id}`);
       const imageBase64 = imageBase64FromDataUrl(attachment.data_url);
       if (imageBase64) {
         images.push(imageBase64);

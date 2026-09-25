@@ -21,9 +21,20 @@ async fn uncertainty_survives_restart_and_does_not_store_content() {
         let entry = entry.unwrap();
         assert!(matches!(
             entry.file_name().to_str().unwrap(),
-            "instance.lock" | "upstream-in-flight"
+            "instance.lock" | "upstream-in-flight" | "host-boot.json"
         ));
-        assert!(std::fs::read(entry.path()).unwrap().is_empty());
+        if entry.file_name() == "host-boot.json" {
+            let saved: String =
+                serde_json::from_slice(&std::fs::read(entry.path()).unwrap()).unwrap();
+            assert_eq!(
+                saved,
+                std::fs::read_to_string("/proc/sys/kernel/random/boot_id")
+                    .unwrap()
+                    .trim()
+            );
+        } else {
+            assert!(std::fs::read(entry.path()).unwrap().is_empty());
+        }
     }
 }
 

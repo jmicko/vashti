@@ -1,3 +1,4 @@
+import { cancelDeviceImages } from "./images/deviceTools";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Lock } from "lucide-react";
 import { isImageAttachment, preparePrivateAttachment } from "./attachments";
@@ -156,6 +157,8 @@ export function PrivateChatView({
 }) {
   const [chat, setChat] = useState<PrivateChatDetail | null>(null);
   const [messages, setMessages] = useState<PrivateChatMessage[]>([]);
+  const [imagePreviews, setImagePreviews] = useState<Record<string, import("./images/types").Preview | null>>({});
+  useEffect(() => setImagePreviews({}), [chatId]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [generationError, setGenerationError] = useState<string | null>(null);
@@ -1051,6 +1054,7 @@ export function PrivateChatView({
   }
 
   async function stopGeneration() {
+    cancelDeviceImages(chatId);
     const assistantId = activeAssistantId;
     generationRunRef.current += 1;
     abortRef.current?.abort();
@@ -1159,6 +1163,7 @@ export function PrivateChatView({
     if (toolPreferenceEnabled(preferences, DEVICE_NOTES_TOOL_ID) && availableTools.some((tool) => tool.id === DEVICE_NOTES_TOOL_ID)) {
       names.push(...await enabledDeviceNoteToolNames());
     }
+    if (toolPreferenceEnabled(preferences, "images") && availableTools.some(tool => tool.id === "images")) names.push("generate_image", "edit_image");
     return names;
   }
 
@@ -1175,7 +1180,20 @@ export function PrivateChatView({
     await dispatchClientToolCall(event, {
       chatId,
       modelKey,
-      modelName: message.persona_name_snapshot ?? message.model_name
+      modelName: message.persona_name_snapshot ?? message.model_name,
+      images: {
+        preview: frame => setImagePreviews(current => ({ ...current, [event.assistant_message_id]:frame })),
+        messages: () => messagesRef.current,
+        save: async (attachment) => {
+          await privateSaveChainRef.current;
+          const current = messagesRef.current.find(m => m.id === event.assistant_message_id);
+          if (!current || current.status === "stopped") throw new Error("Private image generation stopped");
+          const next = { ...current, attachments:[...current.attachments, attachment], updated_at:unixTimestamp() };
+          // Persist in the encrypted device vault before acknowledging the tool.
+          await savePrivateMessage(next);
+          updateMessage(current.id, latest => ({ ...latest, attachments:[...latest.attachments, attachment] }));
+        }
+      }
     });
   }
 
@@ -2006,6 +2024,7 @@ export function PrivateChatView({
                       : "root-message"
                   }
                   message={message}
+                  imagePreview={message.status === "streaming" ? imagePreviews[message.id] : null}
                   versionInfo={versionInfoForMessage(
                     message,
                     siblingGroups,

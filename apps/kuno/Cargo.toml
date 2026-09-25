@@ -3,7 +3,11 @@ name = "kuno"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+native-image = ["kuno-image/native-sd"]
+
 [dependencies]
+kuno-image = { path = "../../crates/kuno-image" }
 axum = "0.8"
 bytes = "1"
 http-body = "1"
@@ -13,11 +17,12 @@ kuno-protocol = { path = "../../crates/kuno-protocol" }
 libc = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-reqwest = { version = "0.12", default-features = false, features = ["json", "blocking"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "blocking", "rustls-tls"] }
 sha2 = "0.10"
-tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 
 [dev-dependencies]
+tokio = { version = "1", features = ["test-util"] }
 futures-util = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream"] }
 tempfile = "3"

@@ -33,7 +33,7 @@ use crate::{
     rate_limit, settings, tools,
 };
 
-const MAX_CLIENT_TOOLS: usize = 8;
+const MAX_CLIENT_TOOLS: usize = 10;
 const MAX_CLIENT_TOOL_RESULT_CHARS: usize = 24_000;
 
 #[derive(Debug, Deserialize)]
@@ -173,6 +173,13 @@ pub async fn generate(
     )
     .await?;
     let mut messages = service::private_prompt_messages(payload.messages)?;
+    ollama::client::filter_unsupported_images(
+        &state.http_client,
+        &backend.base_url,
+        &model_name,
+        &mut messages,
+    )
+    .await;
     let available_tools = allowed_client_tools(&state, &user.id, payload.client_tools).await?;
     let available_tools = if available_tools.is_empty()
         || ollama::client::model_supports_tools(&state.http_client, &backend.base_url, &model_name)
@@ -415,6 +422,7 @@ async fn stream_private_generation(
             send_private_error(&tx, &assistant_message_id, message).await;
             return;
         }
+        drop(stream);
         if round.tool_calls.is_empty() {
             break;
         }
@@ -614,10 +622,17 @@ async fn allowed_client_tools(
     }
     let mut seen = HashSet::new();
     let mut selected = Vec::new();
+    let image_tools = crate::images::chat::schemas(state, user_id).await?;
     for requested in requested_names {
         let name = requested.trim();
         let Some(tool) = tools::service::client_tool_schema(name)
             .or_else(|| tools::service::calculator_tool_schema(name))
+            .or_else(|| {
+                image_tools
+                    .iter()
+                    .find(|tool| tool.function.name == name)
+                    .cloned()
+            })
         else {
             return Err(ApiError::bad_request(
                 "unknown_client_tool",

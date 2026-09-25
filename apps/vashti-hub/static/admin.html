@@ -147,7 +147,7 @@
         <section class="admin-tool">
           <h2>Release History</h2>
           <p class="muted">
-            Uploads remain staged until promoted or deleted. Promote a tested prerelease to make it
+            Uploads remain staged until promoted or deleted. Versions with a beta or other prerelease suffix cannot become stable; upload the final version without the suffix first. Promote a tested prerelease to make it
             the latest stable install.
           </p>
           <div id="release-list" class="release-list">
@@ -358,7 +358,7 @@
 
           const actions = document.createElement("div");
           actions.className = "release-actions";
-          if (release.is_prerelease) {
+          if (release.is_prerelease && !release.version.includes("-")) {
             const promoteButton = document.createElement("button");
             promoteButton.type = "button";
             promoteButton.dataset.promoteVersion = release.version;
@@ -390,20 +390,7 @@
         }
       }
 
-      function versionParts(version) {
-        return version.replace(/^v/, "").split(".").map(Number);
-      }
-
-      function compareVersions(left, right) {
-        const leftParts = versionParts(left);
-        const rightParts = versionParts(right);
-        for (let index = 0; index < 3; index += 1) {
-          if (leftParts[index] !== rightParts[index]) {
-            return leftParts[index] - rightParts[index];
-          }
-        }
-        return 0;
-      }
+      const compareVersions = VashtiReleaseUI.compareVersions;
 
       function rollupCandidatesFor(version) {
         const latest = loadedReleases.find((release) => release.is_latest);

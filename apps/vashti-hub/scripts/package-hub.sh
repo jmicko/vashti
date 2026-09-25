@@ -7,7 +7,7 @@ cd "$repo_root"
 target="${TARGET:-$(rustc -vV | sed -n 's/^host: //p')}"
 dist_dir="${DIST_DIR:-apps/vashti-hub/dist/hub}"
 
-cargo_args=(build -p vashti-hub --release)
+cargo_args=(build --locked -p vashti-hub --release)
 if [[ -n "${TARGET:-}" ]]; then
     cargo_args+=(--target "$target")
 fi

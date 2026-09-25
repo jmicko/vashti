@@ -3,7 +3,9 @@
 Kuno's first implementation provides a local Ollama reverse proxy, conservative
 request admission, an authenticated control listener, persistent usage counts,
 and an installable systemd gateway with reversible Ollama port takeover. This
-development release does not yet provide GPU placement or image generation.
+default service remains in gateway-only mode. An opt-in native Ollama GPU-worker
+path is implemented and hardware-tested. An optional experimental native Qwen image
+path is under validation; see [image development](../../docs/kuno-images.md).
 The [specification](../../docs/kuno-spec.md) defines the full product and milestones.
 
 ## Install on this Linux host
@@ -27,7 +29,7 @@ actual listener ownership, native executable identity, effective environment, an
 competing services before changing anything. It stops Ollama's runner group during
 cutover rather than trying to infer idleness from open TCP connections.
 
-`install`, `recover`, and `takeover-restore` all require this confirmation.
+`install`, `upgrade`, `configure-managed`, `recover`, and `takeover-restore` all require this confirmation.
 Unattended scripts must explicitly pass `--yes`; redirected input does not imply
 consent. The website installer should display the interruption warning and obtain
 confirmation before invoking an unattended command.
@@ -40,7 +42,8 @@ loopback port, installs Kuno using an unprivileged systemd `DynamicUser`, and
 enables Kuno at boot. Kuno starts paused; only after both listeners and upstream
 health are verified does installation activate admission. Subsequent boots wait
 for upstream health and use a root-controlled activation marker. The original
-loaded-model ceiling remains effective until M2 supplies the GPU scheduler.
+loaded-model ceiling remains effective for the original Ollama service. Optional
+managed workers use Kuno's separate ceiling and GPU admission checks.
 
 Install/restore require sudo; serving inference does not. Supported installations
 use a running native `ollama serve` systemd service with root-controlled unit and
@@ -71,14 +74,191 @@ Ollama to its original listener and active state. Usage data and the protected
 setup journal remain. Restore stops both services before clearing uncertain runtime
 work; clients can reconnect after Ollama returns to its original port. Changed
 installed files are not overwritten.
-Re-running the same install is idempotent; this first release uses restore/install
-for upgrades rather than overwriting a changed deployment.
+Re-running the same install is idempotent. To update, run the new downloaded
+binary with `sudo ./kuno upgrade`. It asks once for the whole replacement, verifies
+the existing owned files, preserves configuration and usage history, and restores
+the previous artifacts if the new version fails activation. A process crash still
+uses the existing recoverable restore journal; keep a release binary available.
 
 See [packaged installation instructions](packaging/README-install.txt) for paths
 and content-free diagnostic commands. On 2026-09-22, installation and privileged
 post-install diagnostics passed on the target Linux Mint host. Both IPv4 and IPv6
-forwarding matched upstream metadata, and the service is enabled at boot. Real
-reboot, restore, and operator recovery still need live acceptance testing.
+forwarding matched upstream metadata, and the service is enabled at boot. Operator
+recovery and restore/reinstall also passed on 2026-09-23. The original IP binding
+was verified remotely from 192.168.1.74, including streamed generation after
+recovery and successful admission after cancelling a live generation. The installed fix drains cancelled responses and records boot identity;
+its reboot handling has automated coverage. Live upgrades preserving managed
+GPU configuration have also passed; a full managed-service reboot test remains.
+
+## Resource observations (M2 foundation)
+
+The new binary provides a read-only snapshot:
+
+```sh
+./dist/kuno-linux-x86_64/kuno resources
+```
+
+It uses the installed `/etc/kuno/config.json` when present, or accepts an explicit
+`--config FILE`. The authenticated control API exposes the same report at
+`GET /kuno/v1/resources`. Monitoring does not change usage eligibility or load,
+unload, or generate with models. The report is not persisted.
+
+PCI addresses identify physical device locations, with a NVIDIA UUID when exposed.
+Intel Xe VRAM uses the same read-only DRM memory-region query proven in the local
+itop project. Ambiguous zero usage is reported as unavailable, never free memory.
+NVIDIA uses its installed NVML driver library directly, preferring the v2 counters
+that distinguish used, reserved, and free memory. The v1 fallback explicitly marks
+that used memory includes driver reservations. AMD sysfs support is implemented
+but has not been validated on AMD hardware. No monitoring CLI or new runtime
+package is required on the tested NVIDIA/Intel host.
+
+Generated service units include the existing `render` group when available so an
+unprivileged Kuno process can query DRM render nodes. This grants no root or
+performance-monitoring capability. Missing permissions, restricted counters,
+unsupported drivers, and failed probes remain explicit errors; their capacities
+are not guessed. A native probe has a three-second response deadline and a single
+in-flight probe limit. A timed-out probe retains its slot until it exits, so
+repeated monitoring cannot accumulate blocked driver threads. Probes use a
+standalone thread so runtime shutdown does not wait for that worker.
+
+Validated on the development host with the Arc Pro B70 (`xe`) and RTX 3060
+(NVML), including the Intel memory query inside a transient service using
+`DynamicUser=yes`, `SupplementaryGroups=render`, and the gateway's sandbox
+settings. The check does not require restarting the installed gateway or Ollama.
+
+Ollama `/api/ps` reports are classified as GPU-resident, partially offloaded,
+CPU-resident, or unknown **according to Ollama's byte counters**. They do not prove
+which physical GPU holds a model or where every computation executes. No external
+GPU consumer is blamed or blacklisted based on these observations. The default
+installation keeps scheduling disabled and preserves the original Ollama limit.
+
+The internal `placement` module now plans across backend-managed workers: exact
+warm reuse, another available GPU, then LRU eviction of idle verified loads.
+Plans account for peak workspace, headroom, external allocations, runtime/driver
+and settings identity, and every GPU/worker touched by a split-model eviction.
+Unknown telemetry is not capacity. Eviction always requires a fresh measurement
+before loading. The opt-in `managed` configuration now executes single-device
+plans through owned Ollama workers and durable GPU/worker reservations.
+
+### Experimental managed inference
+
+A configuration may include `managed: {"reserve_bytes":1073741824,"workers":[...]}`.
+Each worker has absolute `executable`, shared `models`, private writable `home`,
+a unique loopback `address`, `max_loaded_models`, `context_length`, and a `device`:
+`{"backend":"cuda","uuid":"GPU-...","pci_address":"0000:04:00.0"}` or
+`{"backend":"vulkan","index":1,"pci_address":"0000:2d:00.0"}`. Device indexes
+are host-specific. Startup verifies Ollama's discovered PCI identity, and CUDA
+UUID, before loading. A changed enumeration fails closed. This is currently a
+development configuration. Installed services can apply it transactionally with
+`sudo kuno configure-managed --workers /absolute/path/to/workers.json`. That file
+contains the `PoolConfig` object (`reserve_bytes` and `workers`), not the full
+gateway configuration. `sudo kuno configure-managed --disable` restores gateway
+mode. Both commands warn and wait for confirmation, or accept an explicit
+`--yes` for an already-authorized unattended invocation. They preserve the
+listener, upstream, credentials, original Ollama settings, and gateway limits.
+
+The installer assigns worker homes within Kuno's private state directory and
+generates a scoped read-only model mount. Serving uses that mount instead of
+requiring access through a user's private parent directories. Each worker must
+verify its physical GPU during startup before the gateway opens its listeners.
+Failed configuration activation rolls back the unit, configuration, and binary
+together. Later upgrades retain the current managed configuration. Hardware
+selection remains explicit until automatic discovery/configuration is ready.
+
+Native `/api/chat`, `/api/generate`, `/api/embed`, and `/api/embeddings`, plus
+`/v1/chat/completions`, `/v1/completions`, and `/v1/embeddings`, use the workers.
+Ollama performs its existing compatibility conversion and SSE formatting. Those
+compatibility endpoints use worker/model context defaults, as Ollama does; native
+`options` supplied to a compatibility request do not influence admission. Verified
+cloud tags use the original Ollama. Unknown models, other compatibility APIs,
+and opaque operations use the original gateway path
+after stopping owned workers; those fallback paths do **not** guarantee GPU-only
+execution. Global admission still serializes inference across both cards.
+`/api/ps` aggregates worker residency. Status reports
+`managed_experimental`; the global GPU-placement guarantee remains false.
+
+Workers set their own finite loaded-model ceiling (tested with eight), independent
+of the catalog owner's original one-model limit. Preloading verifies the artifact
+digest, context, and full GPU residency before sending user input. Unsupported
+memory-affecting request overrides are rejected. First use isolates a workload;
+subsequent requests can use a RAM-only load-footprint observation plus workspace
+allowance and headroom. This is not a measured inference-peak profile or a learned
+safe-combination database. Unknown/external memory is not credited or blacklisted.
+
+The returned job retains reservations through response completion, including
+bounded draining on client disconnect. Uncertain completion quarantines its
+worker; reconciliation stops and reaps the owned runtime before reuse. Durable
+uncertainty after process restart requires `kuno recover`, which stops the service
+and backend before clearing both admission and GPU-reservation markers. Systemd
+owns the worker process tree. Request bodies and engine stderr are not persisted.
+
+Failed placement now captures memory before cleanup, stops only the affected
+owned worker, and waits up to three seconds for a stable window of three unloaded
+readings. The lowest observed unloaded memory use is a **provisional** baseline:
+it includes desktop usage and may include unknown applications. Memory still
+above that baseline is classified as unexplained pressure; missing or unstable
+telemetry remains inconclusive. A return to baseline requires a controlled retest
+before blaming a combination, since an external allocation could have disappeared.
+No outcome creates a blacklist.
+
+For capacity/estimate failures with existing residents, a recovered baseline
+allows one isolated retry after cleanup. No useful inference has been dispatched
+at that point. Runtime/verification failures, unexplained pressure, and failed
+isolated attempts do not trigger that retry. The pool may still try another GPU.
+The authenticated `/kuno/v1/learning` endpoint exposes at most 64 failure records
+per worker, including artifact digests, context sizes, co-resident workloads,
+memory observations, and classified outcomes. This evidence stays in RAM and
+does not yet provide persistent profiles, idle retesting, or process attribution.
+Hardware tests on both CUDA/RTX 3060 and Vulkan/Arc Pro B70 verify pre-cleanup
+evidence, delayed memory release, one isolated retry, and successful loading with
+a corrected estimate. A separate test runtime holding GPU memory stays alive and
+loaded while Kuno classifies the remaining allocation as unexplained pressure.
+
+Hardware acceptance on this host passed for CUDA/RTX 3060 and Vulkan/Arc Pro B70:
+physical-device selection, two GPU-resident models, actual text and embeddings,
+eviction followed by memory remeasurement, abandoned-job recovery, and full
+native gateway routing with warm reuse and unload. A two-card gateway run also
+verified that a cold workload uses the empty alternate GPU while preserving the
+first model for warm reuse. Both GPU paths also passed generation, embedding,
+multiple-residency, and unload checks inside a restricted `DynamicUser` service.
+On this host, `/media/jmicko` grants traversal to the original `ollama` user but
+not the dynamic account. The acceptance service exposes only the shared model
+directory through `BindReadOnlyPaths` at a service-private path. Parent directory
+permissions were not widened. Installed managed deployment provides the same scoped
+access; joining the user's personal group is not required. Models were
+`lfm2.5-thinking:1.2b-bf16` at context 4096 and `embeddinggemma:latest` at 2048.
+A two-card development gateway additionally passed OpenAI-style chat, completions,
+embeddings, SSE completion, and draining an abandoned compatibility stream.
+The installed service passed generation and embedding across both GPUs and
+`ornith-1.5:35b` generation at context 128000 with full GPU residency on the Arc.
+An intentionally incorrect Vulkan index failed physical-device verification and
+restored the previous binary, unit, and configuration byte-for-byte. A parser
+regression test checks the model mount with a real user systemd manager without
+starting the temporary unit (`cargo test -p kuno --lib systemd_parses_model_mount
+-- --ignored`). The source and destination must be quoted separately so systemd
+does not interpret their separator as part of the source path.
+Tests emit no inference content. Set `KUNO_TEST_SECOND_WORKER_CONFIG` to a second
+worker JSON to exercise both cards in the gateway test. To repeat with an idle
+explicitly assigned GPU:
+
+```sh
+KUNO_TEST_WORKER_CONFIG=/absolute/path/to/worker.json \
+  cargo test -p kuno --test worker_live -- --ignored --test-threads=1
+```
+
+Remaining before default activation: compatibility-path enforcement, durable
+versioned profiles, inference peak measurement, external-pressure classification,
+automatic system discovery, and independent-GPU request
+concurrency. Idle profiling remains a later milestone; experimental image execution
+is described in [image development](../../docs/kuno-images.md).
+
+[Bonsai 2 and native Rust engine development](../../docs/kuno-bonsai.md) records
+the additional engine track and its Ollama model-list/API compatibility contract.
+
+Driver/API references:
+[NVIDIA NVML](https://docs.nvidia.com/deploy/nvml-api/api/group__nvmlDeviceQueries.html),
+[Linux Xe UAPI](https://github.com/torvalds/linux/blob/master/include/uapi/drm/xe_drm.h),
+[Ollama running models](https://docs.ollama.com/api/ps).
 
 ## Run alongside Ollama
 
@@ -130,8 +310,15 @@ on restarts. Each state directory permits one Kuno process at a time.
 - A separate bearer-authenticated control surface with status and pause/resume.
   The compatibility listener does not expose Kuno control handlers.
 - A fixed, empty in-flight marker written durably before dispatch. Normal upstream
-  completion clears it; uncertain cancellation or a crash leaves it in place.
-  Restarting Kuno does not bypass a retained recovery requirement.
+  completion clears it. On client disconnect (including before response headers),
+  Kuno retains the reservation and discards the remaining response in memory.
+  This drain is bounded by the configured stream idle timeout as a total deadline;
+  it does not replay requests. Stalls, transport failures, or crashes still require
+  recovery when backend completion cannot be established.
+- A saved Linux boot identity clears an old empty marker after a confirmed host
+  reboot, when the local upstream cannot retain prior work. Restarting only Kuno
+  preserves uncertainty. Legacy markers without a boot record and corrupted
+  state remain subject to explicit recovery.
 - Read-only systemd discovery that proposes a private upstream port and a
   Kuno-owned drop-in, while preserving the current loaded-model cap.
 - Persistent real-use counts and timestamps for catalog-verified model digests.
@@ -151,13 +338,17 @@ All routes below are available only on the control listener and require
 | Method | Route | Behavior |
 | --- | --- | --- |
 | GET | `/kuno/v1/status` | Version, mode, admission state, and capability flags |
+| GET | `/kuno/v1/resources` | Native GPU memory observations and Ollama-reported residency |
+| GET | `/kuno/v1/learning` | Bounded placement-failure evidence and provisional unloaded baselines |
 | GET | `/kuno/v1/usage` | Aggregate model calls, last-use times, and persistence health |
 | POST | `/kuno/v1/admission/pause` | Reject new managed work; let active work finish |
 | POST | `/kuno/v1/admission/resume` | Resume admission unless upstream recovery is required |
 
 Pausing is not an immediate GPU reservation. Wait until `active` is false, and
 ensure `recovery_required` is false, before treating the upstream as quiescent.
-Loaded models may still occupy GPU memory. No image worker is implemented yet.
+Loaded models may still occupy GPU memory. The optional native image worker has
+a separate authenticated generation route and reserves admission through cleanup;
+see [image API and lifecycle](../../docs/kuno-images.md#api-and-lifecycle).
 
 Cancellation closes the upstream HTTP connection, but Kuno cannot yet verify
 that Ollama has stopped computing. A dropped or failed managed response therefore
@@ -237,10 +428,10 @@ staging files can be recovered; a torn or edited staging file requires manual
 review. Existing Ollama overrides are retained, including the one-model setting.
 Tests simulate service failures/crashes and preserve the original active state.
 
-The existing `OLLAMA_MAX_LOADED_MODELS=1` workaround stays effective in this
-checkpoint. M2 will replace it with Kuno's managed ceiling once memory admission
-and placement verification can safely replace the workaround. Three is the idle
-profiling limit, not the future production residency limit.
+The existing `OLLAMA_MAX_LOADED_MODELS=1` workaround stays effective for the
+original catalog service. Managed workers override it independently, allowing
+multiple models when admission and residency checks pass. Three is the planned
+idle profiling limit, not the production residency limit.
 
 ## Privacy and remaining work
 
@@ -255,12 +446,15 @@ drop-in disables request logging and raw stdout/stderr; Kuno supplies classified
 diagnostics. Host-wide swap/hibernation privacy is not certified. Running the
 uninstalled development gateway does not alter existing Ollama logging settings.
 
-M1's remaining acceptance work includes a privileged target-host installation,
-reboot/restore verification, remaining request-format usage coverage, and real
-client inference through the adopted listener. GPU placement, CPU-spill recovery,
-learned profiles, model-limit overrides, image execution, model downloads, and
-Vashti image UI are later milestones. No GPU-placement or image support is
-advertised by the current status API.
+Privileged installation and real client inference through the adopted listener
+have been tested on this host. Remaining work includes full reboot/restore
+acceptance and request-format usage coverage. Experimental managed workers provide
+placement verification, CPU-spill rejection, and model-limit overrides as described
+above. Idle profiling, a Vashti generation form/chat tool, and full image workflow
+fidelity validation remain outstanding. Curated Qwen downloads, an experimental
+native image worker, and Vashti metadata inspection are available as described
+in [image development](../../docs/kuno-images.md). The status API does not claim
+a global GPU-placement guarantee.
 
 ## Validation
 

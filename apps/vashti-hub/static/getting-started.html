@@ -113,6 +113,25 @@
             and restarts the service without deleting your data.
           </p>
         </section>
+        <section class="doc-section" id="kuno">
+          <h2>Kuno: the inference host</h2>
+          <p>Install Kuno on the Linux machine that runs your models. Vashti can run on another
+            machine. Kuno takes over Ollama’s existing address so connected apps keep their settings,
+            and coordinates model use on the inference machine.</p>
+          <p>Kuno is currently available in beta releases. Open <a href="/releases">Releases</a>,
+            expand “Install &amp; download” for a version containing Kuno, and copy its Kuno command.
+            It downloads and verifies the package, then asks before interrupting inference.
+            Run the same version’s command again to upgrade an existing installation.</p>
+          <p>The image engine is included. Model weights are downloaded separately, and image
+            generation needs an explicit GPU configuration. Start with the
+            <a href="/kuno-setup.txt">image setup guide</a>.
+            This beta has been tested on the RTX 3060; Intel image performance is still experimental.</p>
+          <p>Kuno requires Linux x86_64, systemd, a running native Ollama service, and working GPU
+            drivers. It does not store image prompts, reference images, generated images, or previews.
+            Vashti handles your image library and private-chat storage.</p>
+          <p>For diagnostics, run <code>sudo /usr/local/lib/kuno/kuno doctor</code>.
+            Model and driver downloads are not included in the installer.</p>
+        </section>
       </article>
 
       <footer class="footer">

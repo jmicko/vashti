@@ -34,3 +34,12 @@ curl -fsSL https://vashti.chat/install.sh | sh
 - Ollama UI without Docker
 - local AI chat UI for Ollama
 - small alternative to heavy Ollama web interfaces
+
+## Kuno
+
+Kuno runs on the inference machine and coordinates Ollama and native image generation.
+Linux x86_64 beta packages appear alongside Vashti on /releases.
+Use the version-specific Kuno command from a release containing a Kuno artifact.
+The installer is /install-kuno.sh and accepts KUNO_VERSION=v0.13.0-beta.1.
+Installation asks before interrupting inference. Model downloads and GPU setup are separate.
+SemVer prerelease versions never become stable; the stable installer stays on the promoted final release.

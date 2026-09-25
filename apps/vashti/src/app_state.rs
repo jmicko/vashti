@@ -32,6 +32,7 @@ pub struct AppState {
     pub conversation_retrieval: Arc<ConversationRetrieval>,
     pub updates: Arc<UpdateManager>,
     pub client_tools: ClientToolBroker,
+    pub image_jobs: Arc<crate::images::service::ImageJobs>,
     pub generation_cancellations: Arc<Mutex<HashMap<String, CancellationToken>>>,
     pub generation_progress: Arc<Mutex<HashMap<String, GenerationProgress>>>,
 }
@@ -56,6 +57,7 @@ impl AppState {
             model_pulls: Arc::new(ModelPullManager::new()),
             updates: Arc::new(UpdateManager::new()),
             client_tools: ClientToolBroker::default(),
+            image_jobs: Arc::new(crate::images::service::ImageJobs::default()),
             generation_cancellations: Arc::new(Mutex::new(HashMap::new())),
             generation_progress: Arc::new(Mutex::new(HashMap::new())),
         }

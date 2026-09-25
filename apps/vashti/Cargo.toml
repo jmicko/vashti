@@ -1,9 +1,11 @@
 [package]
 name = "vashti"
-version = "0.12.0"
+version = "0.13.0-beta.1"
 edition = "2024"
 
 [dependencies]
+kuno-image = { path = "../../crates/kuno-image" }
+kuno-protocol = { path = "../../crates/kuno-protocol" }
 argon2 = "0.5"
 axum = { version = "0.8", features = ["multipart"] }
 axum-extra = { version = "0.10", features = ["cookie"] }

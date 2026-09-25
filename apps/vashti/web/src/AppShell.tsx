@@ -14,6 +14,7 @@ import {
   LogOut,
   Menu,
   NotebookPen,
+  Images as ImagesIcon,
   RefreshCw,
   Settings as SettingsIcon,
   X
@@ -123,6 +124,7 @@ const ChatView = lazy(() =>
 const PrivateChatView = lazy(() =>
   import("./PrivateChatView").then((module) => ({ default: module.PrivateChatView }))
 );
+const ImagesWorkspace = lazy(() => import("./images/ImagesWorkspace").then(module => ({ default: module.ImagesWorkspace })));
 const NotesWorkspace = lazy(() =>
   import("./notes/NotesWorkspace").then((module) => ({ default: module.NotesWorkspace }))
 );
@@ -245,6 +247,7 @@ export function AppShell({
   const page = route.page;
   const isSettingsPage = page === "settings";
   const isNotesPage = page === "notes";
+  const isImagesPage = page === "images";
   const settingsSection = route.page === "settings" ? route.section : "profile";
   const settingsNotesStorageMode =
     route.page === "settings" && route.section === "notes"
@@ -1294,6 +1297,7 @@ export function AppShell({
             currentChatId={currentChatId}
             currentPrivateChatId={currentPrivateChatId}
             isNotesActive={isNotesPage}
+            isImagesActive={isImagesPage}
             isOpen={isSidebarOpen}
             isLoading={isLoadingChats}
             isLoadingPrivateChats={isLoadingPrivateChats}
@@ -1305,6 +1309,7 @@ export function AppShell({
             onDeletePrivateChat={setPrivateChatDeleteTarget}
             onNewChat={() => openChat()}
             onOpenNotes={openNotes}
+            onOpenImages={() => { navigate({ page: "images", view: "gallery" }); setIsSidebarOpen(false); }}
             onOpenChat={openChat}
             onOpenPrivateChat={openPrivateChat}
             onRenameChat={renameChat}
@@ -1348,7 +1353,7 @@ export function AppShell({
                 <SettingsIcon />
                 <span>Settings</span>
               </div>
-            ) : isNotesPage ? (
+            ) : isNotesPage || isImagesPage ? (
               <>
                 {!isNotesEditorOpen && (
                   <button
@@ -1365,8 +1370,8 @@ export function AppShell({
                   </button>
                 )}
                 <div className="workspace-topbar-title">
-                  <NotebookPen />
-                  <span>Notes</span>
+                  {isImagesPage ? <ImagesIcon /> : <NotebookPen />}
+                  <span>{isImagesPage ? "Images" : "Notes"}</span>
                 </div>
               </>
             ) : (
@@ -1542,6 +1547,8 @@ export function AppShell({
             onUserChanged={onUserChanged}
             isAdmin={isAdmin}
           />
+        ) : route.page === "images" ? (
+          <Suspense fallback={<p role="status">Loading images…</p>}><ImagesWorkspace view={route.view ?? "gallery"} sessionId={route.sessionId} isAdmin={isAdmin} modelGroups={modelGroups} onNavigate={(view, sessionId) => navigate({ page: "images", view, sessionId })} /></Suspense>
         ) : page === "notes" ? (
           <Suspense fallback={<NotesInterfaceLoader />}>
             <NotesWorkspace

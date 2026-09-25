@@ -6,7 +6,7 @@ fn installation_requires_root_before_any_mutation() {
     if unsafe { libc::geteuid() } == 0 {
         return;
     }
-    for command in ["install", "takeover-restore", "recover"] {
+    for command in ["install", "upgrade", "takeover-restore", "recover"] {
         let output = Command::new(env!("CARGO_BIN_EXE_kuno"))
             .args([command, "--yes"])
             .output()
@@ -36,8 +36,25 @@ fn activation_requires_an_unchanged_regular_empty_marker() {
 }
 
 #[test]
+fn image_configuration_requires_confirmation_before_privileged_work() {
+    let output = Command::new(env!("CARGO_BIN_EXE_kuno"))
+        .args(["configure-image", "--disable"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("confirmation_required"));
+    if unsafe { libc::geteuid() } != 0 {
+        let output = Command::new(env!("CARGO_BIN_EXE_kuno"))
+            .args(["configure-image", "--disable", "--yes"])
+            .output()
+            .unwrap();
+        assert!(String::from_utf8_lossy(&output.stderr).contains("root_required"));
+    }
+}
+
+#[test]
 fn unattended_commands_require_explicit_yes_before_mutation() {
-    for command in ["install", "takeover-restore", "recover"] {
+    for command in ["install", "upgrade", "takeover-restore", "recover"] {
         let output = Command::new(env!("CARGO_BIN_EXE_kuno"))
             .arg(command)
             .output()
@@ -58,7 +75,7 @@ fn interactive_commands_wait_and_default_to_cancellation() {
         process::Stdio,
         time::{Duration, Instant},
     };
-    for command in ["install", "takeover-restore", "recover"] {
+    for command in ["install", "upgrade", "takeover-restore", "recover"] {
         for answer in ["\n", "n\n", "yes\n"] {
             // Confirmed root commands would operate on the real host.
             if answer == "yes\n" && unsafe { libc::geteuid() } == 0 {
@@ -113,6 +130,7 @@ fn interactive_commands_wait_and_default_to_cancellation() {
                 std::thread::sleep(Duration::from_millis(10));
             }
             let error = std::fs::read_to_string(output.path()).unwrap();
+            assert_eq!(error.matches("Continue? [y/N]").count(), 1);
             assert!(
                 error.contains(if answer == "yes\n" {
                     "root_required_run_this_command_with_sudo"
@@ -123,4 +141,51 @@ fn interactive_commands_wait_and_default_to_cancellation() {
             );
         }
     }
+}
+
+#[test]
+fn managed_configuration_requires_explicit_mode_confirmation_and_root() {
+    let binary = env!("CARGO_BIN_EXE_kuno");
+    let output = Command::new(binary)
+        .arg("configure-managed")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("choose_workers_file_or_disable")
+    );
+    let output = Command::new(binary)
+        .args(["configure-managed", "--disable"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("confirmation_required")
+    );
+    if unsafe { libc::geteuid() } != 0 {
+        let output = Command::new(binary)
+            .args(["configure-managed", "--disable", "--yes"])
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8(output.stderr)
+                .unwrap()
+                .contains("root_required_run_this_command_with_sudo")
+        );
+    }
+    // Never silently ignore a configuration supplied to an upgrade.
+    let output = Command::new(binary)
+        .args(["upgrade", "--config", "unused"])
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("unknown_argument")
+    );
 }

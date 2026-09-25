@@ -170,6 +170,49 @@ impl Transaction {
         Ok(())
     }
 
+    /// Replace a complete installation under the existing exclusive setup lock.
+    /// Ordinary activation failure restores the exact previous artifacts. A
+    /// process crash retains the normal recoverable restore journal.
+    pub fn replace(&self, artifacts: &[Artifact], host: &mut impl Host) -> Result<()> {
+        let record = self.load()?.ok_or("installation_not_found")?;
+        if record.phase != Phase::Complete {
+            return Err("interrupted_setup_restore_required");
+        }
+        self.check_files(&record.files, false)?;
+        if artifacts.is_empty() {
+            return Err("empty_deployment");
+        }
+        let files = self.describe(artifacts)?;
+        if same_files(&record.files, &files) {
+            return self.apply(artifacts, host);
+        }
+        let previous = record
+            .files
+            .iter()
+            .map(|file| {
+                Ok(Artifact {
+                    path: file.path.clone(),
+                    mode: file.mode,
+                    bytes: fs::read(self.checked_path(&file.path)?)
+                        .map_err(|_| "previous_installation_read_failed")?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        // Recheck the snapshot before removing any installed files.
+        if !same_files(&record.files, &self.describe(&previous)?) {
+            return Err("owned_file_changed_restore_refused");
+        }
+        self.restore(host)?;
+        if self.apply(artifacts, host).is_err() {
+            return if self.apply(&previous, host).is_ok() {
+                Err("upgrade_failed_previous_version_restored")
+            } else {
+                Err("upgrade_failed_restore_required")
+            };
+        }
+        Ok(())
+    }
+
     /// Used both for failed installation recovery and explicit uninstall.
     /// Compare every existing owned file before stopping anything. Never remove
     /// an administrator's subsequent edit or follow a replaced parent symlink.

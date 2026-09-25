@@ -1,0 +1,20 @@
+[package]
+name = "kuno-image"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+kuno-protocol = { path = "../kuno-protocol" }
+serde = "1"
+serde_json = "1"
+flate2 = "1"
+crc32fast = "1"
+png = "0.18"
+base64 = "0.22"
+image = { version = "0.25", default-features = false, features = ["jpeg", "webp"] }
+
+[features]
+native-sd = ["dep:cc"]
+
+[build-dependencies]
+cc = { version = "1", optional = true }
