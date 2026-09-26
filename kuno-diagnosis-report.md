@@ -219,3 +219,25 @@ The immediate 503 is a deliberately persisted `upstream_recovery_required` state
 The highest-value fix is not “clear the marker automatically.” It is to make upstream cancellation and worker shutdown observable and provable, then automatically recover when proof succeeds while preserving fail-closed behavior for genuinely uncertain GPU work.
 
 **Changes made while producing this report:** only this report was added. Kuno was not restarted, reconfigured, or otherwise modified.
+
+## Follow-up implemented (2026-09-26)
+
+Recommendations 1, 3, 4, 5, and 6 are now implemented, with the safety rules intact:
+
+- A managed request that cannot prove upstream completion stops its owned worker
+  process group and proves that group empty before the worker/device scope is
+  released. A group that cannot be proven empty keeps its scope quarantined
+  instead of reusing a device a runner may still hold.
+- The automatic supervisor has a bounded budget: five attempts per episode and
+  per boot with escalating backoff from 30 seconds to 30 minutes, recorded in the
+  content-free `/var/lib/kuno-setup/auto-recovery.json`. It stops instead of
+  restarting a failing gateway indefinitely, and `kuno recover` resets it.
+- Automatic attempts are justified only by latched uncertainty or by an earlier
+  interrupted attempt; a manual `systemctl stop` is never undone.
+- `kuno doctor` reports the budget mode, remaining attempts, next retry, and
+  whether an attempt is pending.
+
+Still open: request correlation IDs, structured error propagation in Vashti
+(`upstream_recovery_required` is currently flattened to a generic message), the
+separate `faststore` startup failure, and the remaining image-API items. No live
+host acceptance of the bounded supervisor has been performed yet.

@@ -368,27 +368,47 @@ success informs admission; current resources must still be checked.
 
 ### Installed-service automatic recovery
 
-Installation and upgrade enable `kuno-recovery.timer`. Every 30 seconds after
-its previous check finishes, its root-owned oneshot checks authenticated control
-status. A recovery latch with no active request and no intentional admission
-pause triggers recovery. Healthy inference and manually stopped gateways are
-left alone. The public gateway still runs as an unprivileged service.
+Installation and upgrade enable `kuno-recovery.timer`. Roughly every 30 seconds
+after its previous check finishes, its root-owned oneshot inspects the gateway
+state and, when it is reachable, its authenticated control status. Only latched
+upstream uncertainty with no active request and no intentional admission pause
+triggers recovery, as does an earlier interrupted attempt that already stopped
+the gateway. Healthy inference, manually stopped gateways, and starts still in
+progress are left alone. The public gateway still runs as an unprivileged service.
 
 Recovery holds the installation transaction lock, verifies installed artifacts,
-and records an empty root-owned pending marker before stopping services. It
-stops Kuno and its workers, then the private catalog Ollama, and verifies their
-cgroups are empty before clearing uncertainty markers. It restarts and verifies
-both services. A failed or interrupted attempt retains the pending marker, so
-the independent timer retries even with Kuno down. Attempts are serialized and
-service transitions are bounded; failed requests are never replayed. Requests
-can receive temporary 503s or connection failures during recovery and should
-retry. No prompt, image, response body, or summary enters recovery state or logs.
+charges one attempt against a bounded budget, and records an empty root-owned
+pending marker before stopping services. It stops Kuno and its workers, then the
+private catalog Ollama, and verifies their cgroups are empty before clearing
+uncertainty markers. It restarts and verifies both services. A failed or
+interrupted attempt retains the pending marker, so the independent timer retries
+even with Kuno down, and is charged again. Attempts are serialized and service
+transitions are bounded; failed requests are never replayed. Requests can receive
+temporary 503s or connection failures during recovery and should retry.
 
-Restore disables the timer. `kuno recover --yes` remains available for manual
-recovery; automatic recovery requires no interactive confirmation after the
-administrator has installed this supervisor. Modified installation artifacts or
-unproven process cleanup still prevent unsafe marker clearing. This mechanism
-does not reset GPU drivers or control unrelated GPU applications.
+An episode is bounded: at most five automatic attempts, with escalating backoff
+from 30 seconds to 30 minutes. A success resets the episode while a per-boot
+counter still bounds repeated episodes within one boot, and a confirmed host
+reboot restores both budgets because no previous process can have survived.
+Reaching the bound stops automatic attempts instead of looping; the state
+records only bounded counters, host boot identity, and allowlisted failure
+categories. No prompt, image, response body, summary, client identifier, request
+path, or backend text enters recovery state or logs.
+
+A managed request that cannot prove upstream completion stops its owned worker
+process group and proves that group empty before releasing the worker and device
+scope. A group that cannot be proven empty keeps its scope quarantined, so no
+device is reused while a runner may survive; the installed supervisor then stops
+the service instead of clearing uncertainty. Ordinary drained completion, by
+contrast, releases admission without any restart.
+
+Restore disables the timer and clears the budget. `kuno recover --yes` remains
+available for manual recovery and is the documented way out of an exhausted or
+unusable budget, even when the budget record itself cannot be interpreted;
+automatic recovery requires no interactive confirmation after the administrator
+has installed this supervisor. Modified installation artifacts or unproven
+process cleanup still prevent unsafe marker clearing. This mechanism does not
+reset GPU drivers or control unrelated GPU applications.
 
 Local acceptance, 2026-09-25: the native-image build was upgraded on the dual-GPU
 Linux host. An injected empty uncertainty marker survived a Kuno-only restart,
@@ -397,6 +417,12 @@ recovery (gateway stopped with a pending marker) recovered in 42 seconds.
 A subsequent real `lfm2.5-thinking:1.2b-bf16` generation completed, and admission
 was idle, unpaused, and free of recovery requirements. The Kuno test suite and
 strict Clippy checks passed; hardware-specific ignored tests remain separate.
+
+The episode budget, the proof-before-release rule, and the recovery-decision
+table are covered by automated tests. Live acceptance of the bounded supervisor
+on the dual-GPU host is still pending: the earlier observation there was a
+supervisor without a budget restarting a failing gateway about every twenty
+minutes, which is the behavior the bound now prevents.
 
 
 A failure begins unclassified. Do not blacklist a model combination just because

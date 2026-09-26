@@ -24,8 +24,9 @@ const BINARY: &str = "/usr/local/lib/kuno/kuno";
 const GATEWAY: &str = "kuno.service";
 const RECOVERY_TIMER: &str = "kuno-recovery.timer";
 const RECOVERY_PENDING: &str = "/var/lib/kuno-setup/auto-recovery-pending";
+const RECOVERY_STATE: &str = crate::recovery::STATE_FILE;
 const RECOVERY_SERVICE_UNIT: &str = "[Unit]\nDescription=Recover Kuno owned inference services\n[Service]\nType=oneshot\nExecStart=/usr/local/lib/kuno/kuno auto-recover\nTimeoutStartSec=360\nUMask=0077\nLimitCORE=0\n";
-const RECOVERY_TIMER_UNIT: &str = "[Unit]\nDescription=Check Kuno inference recovery\n[Timer]\nOnBootSec=30\nOnUnitInactiveSec=30\nAccuracySec=1\n[Install]\nWantedBy=timers.target\n";
+const RECOVERY_TIMER_UNIT: &str = "[Unit]\nDescription=Check Kuno inference recovery\n[Timer]\nOnActiveSec=30\nOnUnitInactiveSec=30\nRandomizedDelaySec=5\nAccuracySec=1\n[Install]\nWantedBy=timers.target\n";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct Settings {
@@ -622,23 +623,27 @@ impl Host for SystemdHost {
     }
     fn stop_gateway(&mut self) -> Result<()> {
         let load = takeover::property(GATEWAY, "LoadState")?;
+        if load.trim() != "not-found"
+            && (takeover::property(GATEWAY, "FragmentPath")?.trim()
+                != "/etc/systemd/system/kuno.service"
+                || !takeover::property(GATEWAY, "DropInPaths")?
+                    .trim()
+                    .is_empty())
+        {
+            return Err("gateway_service_changed_restore_refused");
+        }
+        if Path::new("/etc/systemd/system/kuno-recovery.timer").exists() {
+            // Hold the setup transaction lock while disabling the supervisor.
+            // A concurrently scheduled check cannot enter the recovery mutation
+            // path, and its budget is discarded with the installation.
+            command(&["disable", "--now", RECOVERY_TIMER])?;
+        }
+        clear_recovery_pending()?;
+        clear_recovery_state()?;
         if load.trim() == "not-found" {
             remove_activation()?;
             return Ok(());
         }
-        if takeover::property(GATEWAY, "FragmentPath")?.trim() != "/etc/systemd/system/kuno.service"
-            || !takeover::property(GATEWAY, "DropInPaths")?
-                .trim()
-                .is_empty()
-        {
-            return Err("gateway_service_changed_restore_refused");
-        }
-        // Hold the setup transaction lock while disabling the supervisor. A
-        // concurrently scheduled check cannot enter the recovery mutation path.
-        if Path::new("/etc/systemd/system/kuno-recovery.timer").exists() {
-            command(&["disable", "--now", RECOVERY_TIMER])?;
-        }
-        clear_recovery_pending()?;
         eprintln!("kuno: Stopping Kuno and its GPU workers.");
         remove_activation()?;
         // systemd stops the listener even if control is unavailable. SIGTERM
@@ -872,12 +877,17 @@ pub fn restore() -> Result<()> {
 
 /// Explicit operator recovery: restart only the managed runtimes, then clear
 /// their empty uncertainty marker once Ollama and its runner group have stopped.
+/// This is also the documented way out of an exhausted or unusable automatic
+/// recovery budget.
 pub fn recover() -> Result<()> {
     require_root()?;
     let transaction = Transaction::open(Path::new("/"), Path::new(SETUP))?;
     transaction.verify_recovery_files()?;
+    let mut state = crate::recovery::reset_for_manual(Path::new(RECOVERY_STATE))?;
     recover_locked(&transaction)?;
-    clear_recovery_pending()
+    clear_recovery_pending()?;
+    state.record_success();
+    crate::recovery::save(Path::new(RECOVERY_STATE), &state)
 }
 
 fn recover_locked(transaction: &Transaction) -> Result<()> {
@@ -947,47 +957,112 @@ impl RecoverySteps for ServiceRecovery {
 
 // The timer runs independently of Kuno, so a failed restart is retried even
 // while the gateway is down. The setup lock serializes installation, restore,
-// manual recovery and automatic recovery. No inference request is replayed.
+// manual recovery and automatic recovery. No inference request is replayed, and
+// a bounded budget stops an unsatisfiable recovery episode from becoming an
+// endless restart loop.
 pub fn auto_recover() -> Result<()> {
     require_root()?;
     let transaction = Transaction::open(Path::new("/"), Path::new(SETUP))?;
     if transaction.phase()? != Some(Phase::Complete) {
         return Ok(());
     }
+    let mut state = crate::recovery::load_or_init(Path::new(RECOVERY_STATE))?;
     let pending = activation_ready(Path::new(RECOVERY_PENDING))?;
-    if !pending {
-        // Respect an intentional systemctl stop or admission pause. A pending
-        // attempt, however, must finish even if it previously stopped Kuno.
-        if takeover::property(GATEWAY, "ActiveState")?.trim() != "active" {
-            return Ok(());
+    let active_state = takeover::property(GATEWAY, "ActiveState")?
+        .trim()
+        .to_owned();
+    let latched = match active_state.as_str() {
+        // A failed unit has no reachable control status, so the latched marker
+        // itself decides whether recovery is warranted.
+        "failed" => uncertainty_latched()?,
+        "active" => {
+            let host = SystemdHost {
+                installation: load_installation()?,
+            };
+            needs_auto_recovery(&host.status()?)
         }
-        let host = SystemdHost {
-            installation: load_installation()?,
-        };
-        if !needs_auto_recovery(&host.status()?) {
-            return Ok(());
-        }
+        // An intentional stop, or a start still in progress, is not an incident.
+        _ => false,
+    };
+    if !recovery_needed(pending, &active_state, latched)?
+        || !state.should_attempt(crate::recovery::now())
+    {
+        return Ok(());
     }
     transaction.verify_recovery_files()?;
-    if !pending {
-        use std::os::unix::fs::OpenOptionsExt;
-        let file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(RECOVERY_PENDING)
-            .map_err(|_| "auto_recovery_state_write_failed")?;
-        file.sync_all()
-            .map_err(|_| "auto_recovery_state_write_failed")?;
-        fs::File::open(SETUP)
-            .and_then(|f| f.sync_all())
-            .map_err(|_| "auto_recovery_state_write_failed")?;
+    state
+        .record_attempt(crate::recovery::now())
+        .map_err(|_| "auto_recovery_budget_exhausted")?;
+    crate::recovery::save(Path::new(RECOVERY_STATE), &state)?;
+    if !pending && create_recovery_pending().is_err() {
+        state.record_failure("auto_recovery_state_write_failed", crate::recovery::now());
+        crate::recovery::save(Path::new(RECOVERY_STATE), &state)?;
+        return Err("auto_recovery_state_write_failed");
     }
     eprintln!("kuno: automatic_recovery_started");
-    recover_locked(&transaction)?;
-    clear_recovery_pending()?;
-    eprintln!("kuno: automatic_recovery_completed");
-    Ok(())
+    match recover_locked(&transaction) {
+        Ok(()) => {
+            if let Err(code) = clear_recovery_pending() {
+                state.record_failure("auto_recovery_state_remove_failed", crate::recovery::now());
+                crate::recovery::save(Path::new(RECOVERY_STATE), &state)?;
+                return Err(code);
+            }
+            state.record_success();
+            crate::recovery::save(Path::new(RECOVERY_STATE), &state)?;
+            eprintln!("kuno: automatic_recovery_completed");
+            Ok(())
+        }
+        Err(code) => {
+            state.record_failure(code, crate::recovery::now());
+            crate::recovery::save(Path::new(RECOVERY_STATE), &state)?;
+            // Only the allowlisted category is ever printed.
+            eprintln!(
+                "kuno: automatic_recovery_failed {}",
+                crate::recovery::classify(code)
+            );
+            Err(code)
+        }
+    }
+}
+
+/// An automatic attempt is justified only by latched upstream uncertainty or by
+/// an earlier interrupted attempt that already stopped the gateway.
+fn recovery_needed(pending: bool, active_state: &str, latched: bool) -> Result<bool> {
+    if pending {
+        // A previous attempt recorded its pending marker before stopping Kuno.
+        // It must finish even though the service is not active.
+        return Ok(true);
+    }
+    match active_state {
+        "inactive" | "activating" => Ok(false),
+        "failed" => Ok(latched),
+        "active" => Ok(latched),
+        _ => Err("gateway_state_unknown"),
+    }
+}
+
+fn create_recovery_pending() -> Result<()> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(RECOVERY_PENDING)
+        .map_err(|_| "auto_recovery_state_write_failed")?;
+    file.sync_all()
+        .map_err(|_| "auto_recovery_state_write_failed")?;
+    fs::File::open(SETUP)
+        .and_then(|file| file.sync_all())
+        .map_err(|_| "auto_recovery_state_write_failed")
+}
+
+/// A failed unit has no reachable control status, so the latched marker itself
+/// decides whether recovery is warranted.
+fn uncertainty_latched() -> Result<bool> {
+    let state =
+        fs::canonicalize("/var/lib/kuno").map_err(|_| "managed_state_directory_unavailable")?;
+    Ok(state.join("upstream-in-flight").exists()
+        || state.join("gpu-reservations/upstream-in-flight").exists())
 }
 
 fn needs_auto_recovery(status: &serde_json::Value) -> bool {
@@ -999,6 +1074,16 @@ fn needs_auto_recovery(status: &serde_json::Value) -> bool {
 
 fn clear_recovery_pending() -> Result<()> {
     match fs::remove_file(RECOVERY_PENDING) {
+        Ok(()) => fs::File::open(SETUP)
+            .and_then(|f| f.sync_all())
+            .map_err(|_| "auto_recovery_state_sync_failed"),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(_) => Err("auto_recovery_state_remove_failed"),
+    }
+}
+
+fn clear_recovery_state() -> Result<()> {
+    match fs::remove_file(RECOVERY_STATE) {
         Ok(()) => fs::File::open(SETUP)
             .and_then(|f| f.sync_all())
             .map_err(|_| "auto_recovery_state_sync_failed"),
@@ -1069,6 +1154,24 @@ fn clear_marker_in(directory: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Content-free supervisor budget for diagnostics. An unreadable record is
+/// itself the answer, so it never fails the report.
+fn recovery_budget() -> serde_json::Value {
+    match crate::recovery::load(Path::new(RECOVERY_STATE)) {
+        Ok(Some(state)) => serde_json::json!({
+            "mode": state.mode,
+            "attempts": state.attempts,
+            "attempts_this_boot": state.attempts_this_boot,
+            "next_retry_in_seconds": state
+                .next_eligible_unix
+                .saturating_sub(crate::recovery::now()),
+            "last_failure": state.last_failure,
+        }),
+        Ok(None) => serde_json::json!({"mode":"unrecorded"}),
+        Err(_) => serde_json::json!({"mode":"unreadable"}),
+    }
+}
+
 pub fn doctor(service: &str, config: &Config) -> Result<serde_json::Value> {
     if Path::new(SETUP).join("takeover.json").exists() && require_root().is_ok() {
         let transaction = Transaction::open(Path::new("/"), Path::new(SETUP))?;
@@ -1079,7 +1182,11 @@ pub fn doctor(service: &str, config: &Config) -> Result<serde_json::Value> {
             };
             host.verify_private_upstream()?;
             host.verify_gateway()?;
-            return Ok(serde_json::json!({"installed":true,"phase":phase,"status":host.status()?}));
+            return Ok(
+                serde_json::json!({"installed":true,"phase":phase,"status":host.status()?,
+            "recovery_pending":matches!(activation_ready(Path::new(RECOVERY_PENDING)),Ok(true)),
+            "recovery_budget":recovery_budget()}),
+            );
         }
         if !matches!(phase, None | Some(Phase::Restored)) {
             return Ok(
@@ -1210,5 +1317,30 @@ mod tests {
             "[::1]:11434".parse().unwrap()
         );
         assert!(parse_socket("bad", false).is_err());
+    }
+
+    #[test]
+    fn only_latched_uncertainty_or_an_interrupted_attempt_justifies_recovery() {
+        for (pending, state, latched, expected) in [
+            (true, "inactive", false, true),
+            (true, "failed", false, true),
+            (true, "active", false, true),
+            (false, "inactive", false, false),
+            (false, "activating", false, false),
+            (false, "active", true, true),
+            (false, "active", false, false),
+            (false, "failed", true, true),
+            (false, "failed", false, false),
+        ] {
+            assert_eq!(
+                recovery_needed(pending, state, latched),
+                Ok(expected),
+                "pending={pending} state={state} latched={latched}"
+            );
+        }
+        assert_eq!(
+            recovery_needed(false, "deactivating", false),
+            Err("gateway_state_unknown")
+        );
     }
 }

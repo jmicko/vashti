@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
+    fs,
     net::SocketAddr,
     path::PathBuf,
     process::Stdio,
@@ -16,6 +17,11 @@ use tokio::{
 };
 
 type Result<T> = std::result::Result<T, &'static str>;
+
+/// Bounds how long a stopped worker may delay its own scope release while a
+/// killed runner is still visible to the kernel.
+const GROUP_EXIT_PROBES: u32 = 60;
+const GROUP_EXIT_INTERVAL: Duration = Duration::from_millis(50);
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "backend", rename_all = "snake_case", deny_unknown_fields)]
@@ -533,18 +539,81 @@ impl Worker {
         Ok(()) // Scheduler must still observe actual VRAM release.
     }
 
+    /// Stops the owned process group and proves it is empty before the leader
+    /// PID is released. Every caller either completes the worker/device
+    /// reservation or lets it quarantine, so an unproven group must fail:
+    /// a stale runner can still hold the device this scope reserved.
     pub async fn stop(&mut self) -> Result<()> {
-        if let Some(pid) = self.child.id() {
-            // SAFETY: the child created its own process group and has not been
-            // reaped. Only that owned group is signalled.
-            unsafe {
-                libc::kill(-(pid as i32), libc::SIGKILL);
-            }
-            self.child.wait().await.map_err(|_| "worker_reap_failed")?;
+        let Some(pid) = self.child.id() else {
+            // The leader is reaped only after its group was proven empty, so a
+            // missing handle is itself the proof.
+            self.drain.abort();
+            return Ok(());
+        };
+        // SAFETY: the child created its own process group and this handle is
+        // still unreaped, so the PID cannot have been recycled.
+        let signalled = unsafe { libc::kill(-(pid as i32), libc::SIGKILL) };
+        if signalled != 0 && std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH) {
+            return Err("worker_group_signal_failed");
         }
+        if !wait_for_group_exit(pid).await {
+            // The leader stays unreaped so a later attempt can re-prove this
+            // same group. Clearing the reservation now would be a guess.
+            return Err("worker_group_not_empty");
+        }
+        self.child.wait().await.map_err(|_| "worker_reap_failed")?;
         self.drain.abort();
         Ok(())
     }
+}
+
+/// A killed process group can stay visible while a runner drains out of an
+/// uninterruptible driver call. Zombies hold no device, so they count as gone.
+async fn wait_for_group_exit(pgid: u32) -> bool {
+    for _ in 0..GROUP_EXIT_PROBES {
+        if process_group_empty(pgid) {
+            return true;
+        }
+        tokio::time::sleep(GROUP_EXIT_INTERVAL).await;
+    }
+    false
+}
+
+fn process_group_empty(pgid: u32) -> bool {
+    let Ok(entries) = fs::read_dir("/proc") else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        let stat = match fs::read_to_string(format!("/proc/{pid}/stat")) {
+            Ok(stat) => stat,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => return false,
+        };
+        let Some((_, rest)) = stat.rsplit_once(')') else {
+            return false;
+        };
+        let mut fields = rest.split_whitespace();
+        let Some(state) = fields.next() else {
+            return false;
+        };
+        let Some(_ppid) = fields.next() else {
+            return false;
+        };
+        let Some(group) = fields.next() else {
+            return false;
+        };
+        if state != "Z" && group.parse::<u32>().is_ok_and(|group| group == pgid) {
+            return false;
+        }
+    }
+    true
 }
 
 impl Drop for Worker {
@@ -640,5 +709,26 @@ mod tests {
         d.observe(b"msg=\"inference compute\" library=CUDA id=a id=b pci_id=04:00.0");
         assert!(d.invalid);
         assert!(!d.verified(&config().device));
+    }
+
+    #[test]
+    fn process_group_probe_fails_closed_for_a_live_group() {
+        let pgid = unsafe { libc::getpgrp() as u32 };
+        assert!(!process_group_empty(pgid));
+    }
+
+    #[tokio::test]
+    async fn a_killed_owned_group_is_proven_empty_before_it_is_released() {
+        use std::os::unix::process::CommandExt;
+        let mut command = std::process::Command::new("/bin/sleep");
+        command.arg("30").process_group(0);
+        let mut child = command.spawn().expect("sleep");
+        let pgid = child.id();
+        assert!(!process_group_empty(pgid));
+        // SAFETY: the child created its own process group and is still running.
+        assert_eq!(unsafe { libc::kill(-(pgid as i32), libc::SIGKILL) }, 0);
+        assert!(wait_for_group_exit(pgid).await);
+        assert!(process_group_empty(u32::MAX));
+        child.wait().unwrap();
     }
 }

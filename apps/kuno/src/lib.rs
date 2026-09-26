@@ -17,6 +17,7 @@ pub mod learning;
 pub mod managed;
 pub mod placement;
 pub mod pool;
+pub mod recovery;
 pub mod reservations;
 pub mod resources;
 pub mod worker;

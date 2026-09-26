@@ -61,6 +61,8 @@ sudo /usr/local/lib/kuno/kuno recover
 This explicitly restarts the managed gateway and Ollama, clears the empty
 in-flight marker only after Ollama's runner group stops, and retains usage data.
 It unloads Ollama's resident models. It never restarts unrelated GPU applications.
+It also resets the automatic recovery budget, so it is the way out of an exhausted
+budget or a budget record that cannot be read.
 
 Undo installation, or recover an interrupted installer, using the release binary:
 
@@ -186,11 +188,15 @@ allowance and headroom. This is not a measured inference-peak profile or a learn
 safe-combination database. Unknown/external memory is not credited or blacklisted.
 
 The returned job retains reservations through response completion, including
-bounded draining on client disconnect. Uncertain completion quarantines its
-worker; reconciliation stops and reaps the owned runtime before reuse. Durable
-uncertainty after process restart requires `kuno recover`, which stops the service
-and backend before clearing both admission and GPU-reservation markers. Systemd
-owns the worker process tree. Request bodies and engine stderr are not persisted.
+bounded draining on client disconnect. Uncertain completion stops the owned
+worker process group and proves that group empty before the worker and device
+scope are released, including on a header timeout, a transport failure, or a
+service shutdown. A group that cannot be proven empty keeps its scope
+quarantined, so no device is reused while a runner may survive; reconciliation
+repeats the same proof before reopening the scope. Durable uncertainty after
+process restart requires `kuno recover`, which stops the service and backend
+before clearing both admission and GPU-reservation markers. Systemd owns the
+worker process tree. Request bodies and engine stderr are not persisted.
 
 Failed placement now captures memory before cleanup, stops only the affected
 owned worker, and waits up to three seconds for a stable window of three unloaded
@@ -365,6 +371,17 @@ or deleting a marker without establishing upstream completion defeats the guard.
 SIGINT/SIGTERM stops new admission and allows up to 30 seconds for draining. A
 forced interruption retains the marker. The currently active model may remain
 resident in Ollama; resident models are not the same as active requests.
+
+An installed gateway checks itself with `kuno-recovery.timer` roughly every 30
+seconds. It acts only on latched upstream uncertainty while idle and unpaused, or
+on an earlier attempt that was interrupted after stopping the gateway; a manual
+`systemctl stop` is never undone. Each attempt is charged to a bounded budget of
+five tries with backoff from 30 seconds to 30 minutes, so a failing gateway stops
+being restarted instead of looping. The budget survives in
+`/var/lib/kuno-setup/auto-recovery.json` and holds only counters, host boot
+identity, and allowlisted failure categories. A confirmed host reboot restores the
+budget, and `kuno recover` resets it on demand. `sudo kuno doctor` reports the
+budget mode, used attempts, next retry, and whether an attempt is still pending.
 
 ## Usage tracking
 

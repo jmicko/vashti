@@ -95,6 +95,8 @@ impl ManagedWorker {
 
     /// Stops a quarantined owned worker before reopening its reservation. Does
     /// not affect other workers or infer that failed combinations are unsafe.
+    /// The reservation stays quarantined unless the worker's process group is
+    /// proven empty; a later attempt can retry the same proof.
     pub async fn recover(&self) -> Result<()> {
         let mut state = self.state.lock().await;
         if !self
@@ -177,7 +179,8 @@ impl ManagedWorker {
                     return Ok(Job {
                         address,
                         lease,
-                        _state: state,
+                        owner: self.clone(),
+                        state,
                     });
                 }
                 Err(error) => {
@@ -489,6 +492,7 @@ impl ManagedWorker {
     }
 
     /// Stops only this owned worker after all jobs release their reservation.
+    /// The reservation completes only after the process group is proven empty.
     pub async fn stop(&self) -> Result<()> {
         let mut lease = self.reservations.acquire(self.scope()).await?;
         let mut state = self.state.lock().await;
@@ -563,14 +567,79 @@ impl ManagedWorker {
 pub struct Job {
     address: SocketAddr,
     lease: Reservation,
+    owner: Arc<ManagedWorker>,
     // Prevents runtime state changes until upstream execution has ended.
-    _state: OwnedMutexGuard<State>,
+    state: OwnedMutexGuard<State>,
 }
 impl Job {
     pub fn address(&self) -> SocketAddr {
         self.address
     }
-    pub fn complete(mut self) {
-        self.lease.complete();
+    pub fn complete(self) {
+        let Self {
+            mut lease, state, ..
+        } = self;
+        lease.complete();
+        drop(state);
+    }
+    /// A managed request that cannot prove upstream completion stops the owned
+    /// worker group before its scope is released. An unproven group keeps the
+    /// scope quarantined, so no device is reused while a runner may survive.
+    pub async fn abort(self) -> Result<()> {
+        let Self {
+            address: _,
+            mut lease,
+            owner,
+            mut state,
+        } = self;
+        if let Some(worker) = &mut state.worker {
+            worker.stop().await?;
+        }
+        state.worker = None;
+        owner.pid.store(0, Ordering::Release);
+        state.records.clear();
+        lease.complete();
+        drop(state);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::worker::DeviceSelection;
+
+    fn config() -> WorkerConfig {
+        WorkerConfig {
+            executable: "/usr/local/bin/ollama".into(),
+            models: "/models".into(),
+            home: "/worker-home".into(),
+            address: "127.0.0.1:19101".parse().unwrap(),
+            device: DeviceSelection::Cuda {
+                uuid: "GPU-59ee3c71-80be-a06f-8d84-4a2d172d589c".into(),
+                pci_address: "0000:04:00.0".into(),
+            },
+            max_loaded_models: 8,
+            context_length: 4096,
+        }
+    }
+
+    #[tokio::test]
+    async fn proven_abort_releases_the_scope_without_content() {
+        let reservations = Reservations::new(4, Duration::from_secs(1));
+        let worker =
+            ManagedWorker::new(config(), "test-worker".into(), 1, reservations.clone()).unwrap();
+        let mut lease = reservations.acquire(worker.scope()).await.unwrap();
+        lease.dispatched().unwrap();
+        let state = worker.state.clone().lock_owned().await;
+        let job = Job {
+            address: "127.0.0.1:19101".parse().unwrap(),
+            lease,
+            owner: worker,
+            state,
+        };
+        job.abort().await.unwrap();
+        assert!(!reservations.recovery_required());
+        assert!(reservations.quarantined().is_empty());
     }
 }

@@ -485,6 +485,18 @@ pub fn error(status: StatusCode, code: &'static str) -> Response {
     (status, Json(serde_json::json!({"error": code}))).into_response()
 }
 
+/// Releases admission only when a managed job proved its worker group is gone.
+/// An unproven group keeps the reservation quarantined and the upstream
+/// uncertain, so the installed supervisor stops the service instead.
+async fn finish_uncertain(lease: Option<Lease>, job: Option<crate::managed::Job>) {
+    if let Some(job) = job
+        && job.abort().await.is_ok()
+        && let Some(mut lease) = lease
+    {
+        lease.complete();
+    }
+}
+
 fn strip_hop_headers(headers: &mut HeaderMap) {
     let nominated: Vec<HeaderName> = headers
         .get_all(header::CONNECTION)
@@ -647,8 +659,16 @@ async fn forward(
     .await
     {
         Ok(Ok(response)) => response,
-        Ok(Err(_)) => return error(StatusCode::BAD_GATEWAY, "upstream_transport_failed"),
-        Err(_) => return error(StatusCode::GATEWAY_TIMEOUT, "upstream_headers_timeout"),
+        // The request may already have reached the upstream. A managed worker
+        // can prove that it stopped; an opaque upstream stays uncertain.
+        Ok(Err(_)) => {
+            finish_uncertain(lease, managed_job).await;
+            return error(StatusCode::BAD_GATEWAY, "upstream_transport_failed");
+        }
+        Err(_) => {
+            finish_uncertain(lease, managed_job).await;
+            return error(StatusCode::GATEWAY_TIMEOUT, "upstream_headers_timeout");
+        }
     };
     let (mut parts, body) = upstream.into_parts();
     if parts.status.is_success()
@@ -673,6 +693,8 @@ async fn forward(
         managed_job,
         idle,
         timer: Box::pin(tokio::time::sleep(idle)),
+        settled: false,
+        uncertain: false,
     };
     Response::from_parts(parts, Body::new(body))
 }
@@ -713,10 +735,16 @@ struct LeasedBody {
     managed_job: Option<crate::managed::Job>,
     idle: Duration,
     timer: Pin<Box<Sleep>>,
+    settled: bool,
+    uncertain: bool,
 }
 
 impl LeasedBody {
     fn finish(&mut self) {
+        if self.settled {
+            return;
+        }
+        self.settled = true;
         if let Some(job) = self.managed_job.take() {
             job.complete();
         }
@@ -736,26 +764,26 @@ impl HttpBody for LeasedBody {
     ) -> Poll<Option<Result<Frame<Bytes>, Self::Error>>> {
         match Pin::new(self.inner.as_mut().expect("response body present")).poll_frame(cx) {
             Poll::Ready(None) => {
-                self.finish();
+                if !self.uncertain {
+                    self.finish();
+                }
                 Poll::Ready(None)
             }
             Poll::Ready(Some(Ok(frame))) => {
                 let next = tokio::time::Instant::now() + self.idle;
                 self.timer.as_mut().reset(next);
-                if self.inner.as_ref().is_none_or(HttpBody::is_end_stream) {
+                if !self.uncertain && self.inner.as_ref().is_none_or(HttpBody::is_end_stream) {
                     self.finish();
                 }
                 Poll::Ready(Some(Ok(frame)))
             }
             Poll::Ready(Some(Err(_))) => {
-                self.lease.take();
-                self.managed_job.take();
+                self.uncertain = true;
                 Poll::Ready(Some(Err(std::io::Error::other("upstream_body_failed"))))
             }
             Poll::Pending => {
                 if self.timer.as_mut().poll(cx).is_ready() {
-                    self.lease.take();
-                    self.managed_job.take();
+                    self.uncertain = true;
                     Poll::Ready(Some(Err(std::io::Error::new(
                         std::io::ErrorKind::TimedOut,
                         "upstream_body_timeout",
@@ -780,42 +808,60 @@ impl HttpBody for LeasedBody {
 
 impl Drop for LeasedBody {
     fn drop(&mut self) {
-        if self.inner.as_ref().is_none_or(HttpBody::is_end_stream) {
+        if self.settled {
+            return;
+        }
+        if !self.uncertain && self.inner.as_ref().is_none_or(HttpBody::is_end_stream) {
             self.finish();
             return;
         }
+        self.settled = true;
         let Some(mut lease) = self.lease.take() else {
             return;
         };
-        let Some(mut body) = self.inner.take() else {
-            return;
+        let job = self.managed_job.take();
+        let body = if self.uncertain {
+            None
+        } else {
+            self.inner.take()
         };
-        let managed_job = self.managed_job.take();
+        let uncertain = self.uncertain;
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
             return;
         };
         let limit = self.idle;
         runtime.spawn(async move {
-            // A bounded discard proves ordinary generation finished without
-            // persisting or replaying content. Errors, stalls, and process exit
-            // retain the recovery requirement because completion is uncertain.
-            let completed = tokio::time::timeout(limit, async {
-                while let Some(frame) =
-                    std::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await
-                {
-                    if frame.is_err() {
-                        return false;
+            let completed = if uncertain {
+                false
+            } else if let Some(mut body) = body {
+                // A bounded discard proves ordinary generation finished without
+                // persisting or replaying content. Errors, stalls, and process
+                // exit retain the recovery requirement because completion is
+                // uncertain.
+                tokio::time::timeout(limit, async {
+                    while let Some(frame) =
+                        std::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await
+                    {
+                        if frame.is_err() {
+                            return false;
+                        }
                     }
-                }
-                true
-            })
-            .await
-            .unwrap_or(false);
+                    true
+                })
+                .await
+                .unwrap_or(false)
+            } else {
+                false
+            };
             if completed {
                 lease.complete();
-                if let Some(job) = managed_job {
+                if let Some(job) = job {
                     job.complete();
                 }
+            } else if let Some(job) = job
+                && job.abort().await.is_ok()
+            {
+                lease.complete();
             }
         });
     }
