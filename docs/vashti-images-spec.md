@@ -216,12 +216,13 @@ with each result. A late suggestion cannot overwrite a newer draft without a
 fresh acceptance. For edits, assistance should preserve the requested change
 rather than rewrite the whole scene unnecessarily.
 
-An explicit, off-by-default **Improve on every Send** setting opts into automatic
-improvement. Each Send improves the current prompt once using the current guidance,
-then generates with that improved prompt. A finite batch or endless run keeps
-that prompt for the whole run; it does not silently improve once per output.
-Preserve both input and improved wording in prompt history, display the effective
-prompt, and adopt it for future sends unless the draft changed in the meantime.
+An explicit, off-by-default **Improve each image's prompt** setting opts into
+automatic improvement. Every output, including each candidate in a finite batch
+or endless run, independently improves the original submitted prompt using the
+submitted guidance. Never feed an improvement back into the next improvement.
+Preserve both input and improved wording in prompt history and retain the exact
+effective prompt with each result. Leave the working draft unchanged; only
+explicitly accepting a manual suggestion or restoring history replaces it.
 Stop cancels the improvement stage as well as image generation. If improvement
 fails, report it and do not silently generate with a different prompt. Manual
 Retry repeats the recorded recipe without another improvement.

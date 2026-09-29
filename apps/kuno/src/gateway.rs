@@ -1,6 +1,7 @@
 use crate::{
     admission::{Admission, Lease},
     config::Config,
+    lifecycle::{Outcome, Span, Stage},
     observe::Observer,
     usage::{Catalog, CatalogModel, Usage, UsageSnapshot},
 };
@@ -497,6 +498,20 @@ async fn finish_uncertain(lease: Option<Lease>, job: Option<crate::managed::Job>
     }
 }
 
+fn response_deadline(seconds: u64) -> Option<Duration> {
+    (seconds != 0).then(|| Duration::from_secs(seconds))
+}
+
+async fn optional_timeout<F: std::future::Future>(
+    limit: Option<Duration>,
+    future: F,
+) -> Result<F::Output, tokio::time::error::Elapsed> {
+    match limit {
+        Some(limit) => tokio::time::timeout(limit, future).await,
+        None => Ok(future.await),
+    }
+}
+
 fn strip_hop_headers(headers: &mut HeaderMap) {
     let nominated: Vec<HeaderName> = headers
         .get_all(header::CONNECTION)
@@ -566,7 +581,10 @@ async fn forward(
     if let Some(pool) = &gateway.managed {
         if class == RequestClass::Inference && crate::pool::Pool::supports(parts.uri.path()) {
             let bytes = match tokio::time::timeout(
-                Duration::from_secs(gateway.config.response_header_timeout_seconds),
+                // Bound receiving the request separately from inference. A
+                // disabled response deadline must not mean an immediate
+                // upload timeout, or change the existing upload allowance.
+                Duration::from_secs(300),
                 axum::body::to_bytes(body, 64 * 1024 * 1024),
             )
             .await
@@ -652,20 +670,37 @@ async fn forward(
     {
         return error(StatusCode::SERVICE_UNAVAILABLE, code);
     }
-    let upstream = match tokio::time::timeout(
-        Duration::from_secs(gateway.config.response_header_timeout_seconds),
+    let headers =
+        (class != RequestClass::Metadata).then(|| Span::new(Stage::UpstreamHeaders, None, None));
+    let upstream = match optional_timeout(
+        response_deadline(gateway.config.response_header_timeout_seconds),
         gateway.client.request(Request::from_parts(parts, body)),
     )
     .await
     {
-        Ok(Ok(response)) => response,
+        Ok(Ok(response)) => {
+            if let Some(span) = headers {
+                span.finish(if response.status().is_success() {
+                    Outcome::Success
+                } else {
+                    Outcome::Rejected
+                });
+            }
+            response
+        }
         // The request may already have reached the upstream. A managed worker
         // can prove that it stopped; an opaque upstream stays uncertain.
         Ok(Err(_)) => {
+            if let Some(span) = headers {
+                span.finish(Outcome::TransportError);
+            }
             finish_uncertain(lease, managed_job).await;
             return error(StatusCode::BAD_GATEWAY, "upstream_transport_failed");
         }
         Err(_) => {
+            if let Some(span) = headers {
+                span.finish(Outcome::Timeout);
+            }
             finish_uncertain(lease, managed_job).await;
             return error(StatusCode::GATEWAY_TIMEOUT, "upstream_headers_timeout");
         }
@@ -686,15 +721,17 @@ async fn forward(
         *gateway.catalog.lock().await = None;
     }
     strip_hop_headers(&mut parts.headers);
-    let idle = Duration::from_secs(gateway.config.stream_idle_timeout_seconds);
+    let idle = response_deadline(gateway.config.stream_idle_timeout_seconds);
     let body = LeasedBody {
         inner: Some(body),
         lease,
         managed_job,
         idle,
-        timer: Box::pin(tokio::time::sleep(idle)),
+        timer: idle.map(|limit| Box::pin(tokio::time::sleep(limit))),
         settled: false,
         uncertain: false,
+        lifecycle: (class != RequestClass::Metadata)
+            .then(|| Span::new(Stage::UpstreamBody, None, None)),
     };
     Response::from_parts(parts, Body::new(body))
 }
@@ -733,18 +770,26 @@ struct LeasedBody {
     inner: Option<Incoming>,
     lease: Option<Lease>,
     managed_job: Option<crate::managed::Job>,
-    idle: Duration,
-    timer: Pin<Box<Sleep>>,
+    idle: Option<Duration>,
+    timer: Option<Pin<Box<Sleep>>>,
     settled: bool,
     uncertain: bool,
+    lifecycle: Option<Span>,
 }
 
 impl LeasedBody {
+    fn observed(&mut self, outcome: Outcome) {
+        if let Some(span) = self.lifecycle.take() {
+            span.finish(outcome);
+        }
+    }
+
     fn finish(&mut self) {
         if self.settled {
             return;
         }
         self.settled = true;
+        self.observed(Outcome::Success);
         if let Some(job) = self.managed_job.take() {
             job.complete();
         }
@@ -770,8 +815,11 @@ impl HttpBody for LeasedBody {
                 Poll::Ready(None)
             }
             Poll::Ready(Some(Ok(frame))) => {
-                let next = tokio::time::Instant::now() + self.idle;
-                self.timer.as_mut().reset(next);
+                if let Some(idle) = self.idle
+                    && let Some(timer) = self.timer.as_mut()
+                {
+                    timer.as_mut().reset(tokio::time::Instant::now() + idle);
+                }
                 if !self.uncertain && self.inner.as_ref().is_none_or(HttpBody::is_end_stream) {
                     self.finish();
                 }
@@ -779,11 +827,17 @@ impl HttpBody for LeasedBody {
             }
             Poll::Ready(Some(Err(_))) => {
                 self.uncertain = true;
+                self.observed(Outcome::BodyError);
                 Poll::Ready(Some(Err(std::io::Error::other("upstream_body_failed"))))
             }
             Poll::Pending => {
-                if self.timer.as_mut().poll(cx).is_ready() {
+                if self
+                    .timer
+                    .as_mut()
+                    .is_some_and(|timer| timer.as_mut().poll(cx).is_ready())
+                {
                     self.uncertain = true;
+                    self.observed(Outcome::Timeout);
                     Poll::Ready(Some(Err(std::io::Error::new(
                         std::io::ErrorKind::TimedOut,
                         "upstream_body_timeout",
@@ -816,6 +870,7 @@ impl Drop for LeasedBody {
             return;
         }
         self.settled = true;
+        self.observed(Outcome::Cancelled);
         let Some(mut lease) = self.lease.take() else {
             return;
         };
@@ -834,22 +889,30 @@ impl Drop for LeasedBody {
             let completed = if uncertain {
                 false
             } else if let Some(mut body) = body {
-                // A bounded discard proves ordinary generation finished without
-                // persisting or replaying content. Errors, stalls, and process
-                // exit retain the recovery requirement because completion is
-                // uncertain.
-                tokio::time::timeout(limit, async {
-                    while let Some(frame) =
-                        std::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await
+                let drain = Span::new(Stage::UpstreamDrain, None, None);
+                // Discarding until EOF proves completion without retaining or
+                // replaying content. Only an explicitly configured idle limit
+                // applies; continuing response progress resets that limit.
+                let result = async {
+                    while let Some(frame) = optional_timeout(
+                        limit,
+                        std::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)),
+                    )
+                    .await?
                     {
                         if frame.is_err() {
-                            return false;
+                            return Ok::<_, tokio::time::error::Elapsed>(false);
                         }
                     }
-                    true
-                })
-                .await
-                .unwrap_or(false)
+                    Ok(true)
+                }
+                .await;
+                drain.finish(match result {
+                    Ok(true) => Outcome::Success,
+                    Ok(false) => Outcome::BodyError,
+                    Err(_) => Outcome::Timeout,
+                });
+                result.unwrap_or(false)
             } else {
                 false
             };
@@ -864,5 +927,33 @@ impl Drop for LeasedBody {
                 lease.complete();
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod response_deadline_tests {
+    use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn disabled_deadline_allows_long_work_and_preserves_backend_errors() {
+        let future = async {
+            tokio::time::sleep(Duration::from_secs(3_600)).await;
+            Err::<(), _>("backend_failed")
+        };
+        assert_eq!(
+            optional_timeout(response_deadline(0), future)
+                .await
+                .unwrap(),
+            Err("backend_failed")
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn explicit_deadline_still_expires() {
+        assert!(
+            optional_timeout(response_deadline(300), std::future::pending::<()>())
+                .await
+                .is_err()
+        );
     }
 }

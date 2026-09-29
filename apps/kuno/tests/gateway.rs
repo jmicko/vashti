@@ -47,6 +47,20 @@ impl Fixture {
         max_waiting: usize,
         managed: Option<kuno::pool::PoolConfig>,
     ) -> Self {
+        Self::with_response_deadlines(upstream, max_waiting, managed, 1, 1).await
+    }
+
+    async fn without_response_deadlines(upstream: Router) -> Self {
+        Self::with_response_deadlines(upstream, 1, None, 0, 0).await
+    }
+
+    async fn with_response_deadlines(
+        upstream: Router,
+        max_waiting: usize,
+        managed: Option<kuno::pool::PoolConfig>,
+        response_header_timeout_seconds: u64,
+        stream_idle_timeout_seconds: u64,
+    ) -> Self {
         let upstream_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let control_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -57,8 +71,8 @@ impl Fixture {
             state_dir: "unused-in-memory-fixture".into(),
             activation_file: None,
             max_waiting,
-            stream_idle_timeout_seconds: 1,
-            response_header_timeout_seconds: 1,
+            stream_idle_timeout_seconds,
+            response_header_timeout_seconds,
             queue_timeout_seconds: 1,
             managed,
             image: None,
@@ -455,6 +469,184 @@ async fn stalled_response_body_quarantines_the_upstream() {
     assert!(!f.gateway.admission.status().active);
 }
 
+// Existing deadline tests use one second. These real-network tests deliberately
+// cross that boundary with zero configured; pure deadline tests cover much
+// longer virtual durations without depending on paused socket I/O.
+#[tokio::test]
+async fn zero_response_deadlines_allow_delayed_buffered_and_streamed_headers() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    for streamed in [false, true] {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let started = Arc::new(Notify::new());
+        let release = Arc::new(Notify::new());
+        let upstream = Router::new().fallback({
+            let calls = calls.clone();
+            let started = started.clone();
+            let release = release.clone();
+            move || {
+                let calls = calls.clone();
+                let started = started.clone();
+                let release = release.clone();
+                async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    started.notify_one();
+                    release.notified().await;
+                    if streamed {
+                        Response::new(Body::from_stream(futures_util::stream::iter([
+                            Ok::<_, std::io::Error>("first "),
+                            Ok("last"),
+                        ])))
+                    } else {
+                        Response::new(Body::from("first last"))
+                    }
+                }
+            }
+        });
+        let f = Fixture::without_response_deadlines(upstream).await;
+        let client = f.client.clone();
+        let url = format!("{}/api/chat", f.base);
+        let request = tokio::spawn(async move {
+            let response = client.post(url).send().await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            response.text().await.unwrap()
+        });
+        tokio::time::timeout(Duration::from_secs(3), started.notified())
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(1100)).await;
+        assert!(!request.is_finished());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(f.gateway.admission.status().active);
+        assert!(!f.gateway.admission.status().recovery_required);
+        release.notify_one();
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(3), request)
+                .await
+                .unwrap()
+                .unwrap(),
+            "first last"
+        );
+        until(|| !f.gateway.admission.status().active).await;
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(f.gateway.admission.status().completed, 1);
+        assert!(!f.gateway.admission.status().recovery_required);
+    }
+}
+
+#[tokio::test]
+async fn zero_response_deadlines_allow_a_long_gap_between_stream_chunks() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let calls = Arc::new(AtomicUsize::new(0));
+    let (tx, rx) = mpsc::channel::<Result<&'static str, std::io::Error>>(2);
+    tx.send(Ok("first chunk")).await.unwrap();
+    let receiver = Arc::new(tokio::sync::Mutex::new(Some(rx)));
+    let upstream = Router::new().fallback({
+        let calls = calls.clone();
+        move || {
+            let calls = calls.clone();
+            let receiver = receiver.clone();
+            async move {
+                calls.fetch_add(1, Ordering::SeqCst);
+                let rx = receiver.lock().await.take().unwrap();
+                Response::new(Body::from_stream(futures_util::stream::unfold(
+                    rx,
+                    |mut rx| async move { rx.recv().await.map(|value| (value, rx)) },
+                )))
+            }
+        }
+    });
+    let f = Fixture::without_response_deadlines(upstream).await;
+    let mut response = f
+        .client
+        .post(format!("{}/api/generate", f.base))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.chunk().await.unwrap().unwrap(), "first chunk");
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    assert!(f.gateway.admission.status().active);
+    assert!(!f.gateway.admission.status().recovery_required);
+    tx.send(Ok("last chunk")).await.unwrap();
+    drop(tx);
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(3), response.text())
+            .await
+            .unwrap()
+            .unwrap(),
+        "last chunk"
+    );
+    until(|| !f.gateway.admission.status().active).await;
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(f.gateway.admission.status().completed, 1);
+    assert!(!f.gateway.admission.status().recovery_required);
+}
+
+#[tokio::test]
+async fn zero_response_deadlines_keep_disconnected_drain_owned_until_eof() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let calls = Arc::new(AtomicUsize::new(0));
+    let (tx, rx) = mpsc::channel::<Result<&'static str, std::io::Error>>(2);
+    tx.send(Ok("first chunk")).await.unwrap();
+    let receiver = Arc::new(tokio::sync::Mutex::new(Some(rx)));
+    let upstream = Router::new().fallback({
+        let calls = calls.clone();
+        move || {
+            let calls = calls.clone();
+            let receiver = receiver.clone();
+            async move {
+                calls.fetch_add(1, Ordering::SeqCst);
+                let Some(rx) = receiver.lock().await.take() else {
+                    return Response::new(Body::from("next request completed"));
+                };
+                Response::new(Body::from_stream(futures_util::stream::unfold(
+                    rx,
+                    |mut rx| async move { rx.recv().await.map(|value| (value, rx)) },
+                )))
+            }
+        }
+    });
+    let f = Fixture::without_response_deadlines(upstream).await;
+    let mut response = f
+        .client
+        .post(format!("{}/api/generate", f.base))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.chunk().await.unwrap().unwrap(), "first chunk");
+    drop(response);
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    assert!(f.gateway.admission.status().active);
+    assert!(!f.gateway.admission.status().recovery_required);
+    assert_eq!(f.gateway.admission.status().completed, 0);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert!(!tx.is_closed());
+
+    // A new request must wait until discard reaches EOF, and must then work.
+    let client = f.client.clone();
+    let url = format!("{}/api/generate", f.base);
+    let next = tokio::spawn(async move {
+        let response = client.post(url).send().await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        response.text().await.unwrap()
+    });
+    until(|| f.gateway.admission.status().waiting == 1).await;
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    tx.send(Ok("discard without retaining")).await.unwrap();
+    drop(tx);
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(3), next)
+            .await
+            .unwrap()
+            .unwrap(),
+        "next request completed"
+    );
+    until(|| f.gateway.admission.status().completed == 2).await;
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert!(!f.gateway.admission.status().active);
+    assert!(!f.gateway.admission.status().recovery_required);
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn binary_writes_only_content_free_state_and_diagnostics() {
@@ -524,7 +716,7 @@ async fn binary_writes_only_content_free_state_and_diagnostics() {
     })
     .await
     .unwrap();
-    let sensitive = "synthetic-private-body-DO-NOT-PERSIST";
+    let sensitive = r#"{"model":"private-model-DO-NOT-PERSIST","messages":[{"role":"user","content":"private-prompt-DO-NOT-PERSIST","images":["private-image-DO-NOT-PERSIST"]}],"stream":false}"#;
     let blocked = client
         .post(format!("http://{}/api/chat", config.listen))
         .body(sensitive)
@@ -551,6 +743,7 @@ async fn binary_writes_only_content_free_state_and_diagnostics() {
             "http://{}/api/chat?private_query=DO-NOT-PERSIST",
             config.listen
         ))
+        .header("x-private-header", "private-header-DO-NOT-PERSIST")
         .body(sensitive)
         .send()
         .await
@@ -569,12 +762,37 @@ async fn binary_writes_only_content_free_state_and_diagnostics() {
     let output = String::from_utf8(output).unwrap();
     assert!(!output.contains("DO-NOT-PERSIST"));
     assert!(!output.contains(TOKEN));
+    let events: Vec<serde_json::Value> = output
+        .lines()
+        .filter_map(|line| line.strip_prefix("kuno_lifecycle "))
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(
+        events.len(),
+        4,
+        "only admitted inference emits header/body events"
+    );
+    for (event, (stage, outcome)) in events.iter().zip([
+        ("upstream_headers", "begin"),
+        ("upstream_headers", "success"),
+        ("upstream_body", "begin"),
+        ("upstream_body", "success"),
+    ]) {
+        assert_eq!(event["schema"], 1);
+        assert_eq!(event["stage"], stage);
+        assert_eq!(event["outcome"], outcome);
+        assert!(event["elapsed_ms"].is_u64());
+        assert_eq!(event.as_object().unwrap().len(), 4);
+    }
     let files = std::fs::read_dir(&config.state_dir)
         .unwrap()
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
-    assert_eq!(files.len(), 2);
+    assert_eq!(files.len(), 3);
     for file in files {
+        let persisted = std::fs::read(file.path()).unwrap();
+        assert!(!String::from_utf8_lossy(&persisted).contains("DO-NOT-PERSIST"));
+        assert!(!String::from_utf8_lossy(&persisted).contains(TOKEN));
         match file.file_name().to_str().unwrap() {
             "instance.lock" => assert!(std::fs::read(file.path()).unwrap().is_empty()),
             "host-boot.json" => {
@@ -586,6 +804,11 @@ async fn binary_writes_only_content_free_state_and_diagnostics() {
                         .unwrap()
                         .trim()
                 );
+            }
+            "usage.json" => {
+                let usage: serde_json::Value = serde_json::from_slice(&persisted).unwrap();
+                assert_eq!(usage["unattributed_calls"], 1);
+                assert_eq!(usage["models"], serde_json::json!([]));
             }
             other => panic!("unexpected persisted file: {other}"),
         }

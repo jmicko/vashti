@@ -1,5 +1,8 @@
 //! Conservative single-upstream admission, separate from future GPU placement.
-use crate::journal::Journal;
+use crate::{
+    journal::Journal,
+    lifecycle::{Outcome, Span, Stage},
+};
 use kuno_protocol::AdmissionStatus;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -45,6 +48,9 @@ impl Admission {
         let recovery_required = journal
             .uncertain()
             .map_err(|_| "admission_state_unreadable")?;
+        if recovery_required {
+            Span::event(Stage::AdmissionRecovery, Outcome::Required, None, None);
+        }
         Ok(Arc::new(Self {
             state: Mutex::new(State {
                 recovery_required,
@@ -147,7 +153,11 @@ impl Lease {
         if let Some(journal) = &self.admission.journal
             && journal.begin().is_err()
         {
-            self.admission.state.lock().unwrap().recovery_required = true;
+            let mut state = self.admission.state.lock().unwrap();
+            if !state.recovery_required {
+                Span::event(Stage::AdmissionRecovery, Outcome::Required, None, None);
+            }
+            state.recovery_required = true;
             return Err("admission_state_write_failed");
         }
         self.dispatched = true;
@@ -161,6 +171,7 @@ impl Lease {
 impl Drop for Lease {
     fn drop(&mut self) {
         let mut s = self.admission.state.lock().unwrap();
+        let was_recovery_required = s.recovery_required;
         s.active = false;
         if self.dispatched && !self.complete {
             s.recovery_required = true;
@@ -174,6 +185,9 @@ impl Drop for Lease {
         }
         if self.complete {
             s.completed += 1;
+        }
+        if s.recovery_required && !was_recovery_required {
+            Span::event(Stage::AdmissionRecovery, Outcome::Required, None, None);
         }
     }
 }

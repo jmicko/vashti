@@ -12,8 +12,9 @@ use std::{
 
 pub const STATE_FILE: &str = "/var/lib/kuno-setup/auto-recovery.json";
 const MAX_STATE_BYTES: u64 = 4096;
-const MAX_ATTEMPTS: u32 = 5;
-const MAX_BOOT_ATTEMPTS: u32 = 5;
+const MAX_ATTEMPTS_PER_WINDOW: u32 = 5;
+const ATTEMPT_WINDOW_SECONDS: u64 = 30 * 60;
+const MAX_COUNTER: u32 = 1000;
 const BACKOFF_SECONDS: [u64; 6] = [30, 60, 120, 240, 480, 1800];
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -27,6 +28,10 @@ pub struct State {
     pub last_failure: Option<String>,
     pub next_eligible_unix: u64,
     pub boot_id: String,
+    #[serde(default)]
+    pub attempt_window_started_unix: Option<u64>,
+    #[serde(default)]
+    pub attempts_in_window: u32,
 }
 
 pub fn now() -> u64 {
@@ -57,8 +62,9 @@ pub fn load(path: &Path) -> Result<Option<State>, &'static str> {
         return Err("recovery_state_invalid");
     }
     let bytes = fs::read(path).map_err(|_| "recovery_state_unreadable")?;
-    let state: State = serde_json::from_slice(&bytes).map_err(|_| "recovery_state_invalid")?;
+    let mut state: State = serde_json::from_slice(&bytes).map_err(|_| "recovery_state_invalid")?;
     state.validate()?;
+    state.migrate();
     Ok(Some(state))
 }
 
@@ -103,7 +109,7 @@ pub fn clear(path: &Path) -> Result<(), &'static str> {
 
 fn fresh(boot: &str) -> State {
     State {
-        version: 1,
+        version: 2,
         mode: "auto".into(),
         attempts: 0,
         attempts_this_boot: 0,
@@ -111,6 +117,8 @@ fn fresh(boot: &str) -> State {
         last_failure: None,
         next_eligible_unix: 0,
         boot_id: boot.into(),
+        attempt_window_started_unix: None,
+        attempts_in_window: 0,
     }
 }
 
@@ -126,11 +134,14 @@ pub fn save(path: &Path, state: &State) -> Result<(), &'static str> {
 
 impl State {
     pub fn validate(&self) -> Result<(), &'static str> {
-        if self.version != 1
+        if !matches!(self.version, 1 | 2)
             || !matches!(self.mode.as_str(), "auto" | "backoff" | "manual_required")
-            || self.attempts > 1000
-            || self.attempts_this_boot > 1000
-            || self.consecutive_failures > 1000
+            || (self.version == 2 && self.mode == "manual_required")
+            || self.attempts > MAX_COUNTER
+            || self.attempts_this_boot > MAX_COUNTER
+            || self.consecutive_failures > MAX_COUNTER
+            || self.attempts_in_window > MAX_ATTEMPTS_PER_WINDOW
+            || (self.attempts_in_window > 0 && self.attempt_window_started_unix.is_none())
             || !valid_boot_id(&self.boot_id)
             || self
                 .last_failure
@@ -140,6 +151,20 @@ impl State {
             return Err("recovery_state_invalid");
         }
         Ok(())
+    }
+
+    fn migrate(&mut self) {
+        if self.version == 1 {
+            self.version = 2;
+            // The old per-boot counter could lock out even a healthy host
+            // after five successful recoveries. Keep its diagnostic count and
+            // any existing finite backoff, but start a renewable budget.
+            self.attempt_window_started_unix = None;
+            self.attempts_in_window = 0;
+            if self.mode == "manual_required" {
+                self.mode = "backoff".into();
+            }
+        }
     }
 
     /// A changed boot identity proves that no process from the previous boot
@@ -152,44 +177,74 @@ impl State {
     }
 
     pub fn should_attempt(&self, now: u64) -> bool {
-        self.mode != "manual_required"
-            && self.next_eligible_unix <= now
-            && self.attempts < MAX_ATTEMPTS
-            && self.attempts_this_boot < MAX_BOOT_ATTEMPTS
+        self.next_eligible_unix <= now
+            && (self.attempts_in_window < MAX_ATTEMPTS_PER_WINDOW || self.window_expired(now))
+    }
+
+    fn window_expired(&self, now: u64) -> bool {
+        self.attempt_window_started_unix
+            .is_none_or(|start| now >= start.saturating_add(ATTEMPT_WINDOW_SECONDS))
+    }
+
+    fn window_budget_deadline(&self) -> u64 {
+        if self.attempts_in_window >= MAX_ATTEMPTS_PER_WINDOW {
+            self.attempt_window_started_unix
+                .unwrap_or_default()
+                .saturating_add(ATTEMPT_WINDOW_SECONDS)
+        } else {
+            0
+        }
     }
 
     pub fn record_attempt(&mut self, now: u64) -> Result<(), &'static str> {
         if !self.should_attempt(now) {
             return Err("recovery_budget_exhausted");
         }
-        self.attempts = self.attempts.saturating_add(1);
-        self.attempts_this_boot = self.attempts_this_boot.saturating_add(1);
+        self.migrate();
+        if self.window_expired(now) {
+            self.attempt_window_started_unix = Some(now);
+            self.attempts_in_window = 0;
+        }
+        self.attempts_in_window += 1;
+        self.attempts = self.attempts.saturating_add(1).min(MAX_COUNTER);
+        self.attempts_this_boot = self.attempts_this_boot.saturating_add(1).min(MAX_COUNTER);
         self.mode = "backoff".into();
-        self.next_eligible_unix = now.saturating_add(BACKOFF_SECONDS[0]);
+        // Persist the budget before touching services, so a killed recovery
+        // helper also consumes an attempt and cannot cause a restart loop.
+        self.next_eligible_unix = now
+            .saturating_add(BACKOFF_SECONDS[0])
+            .max(self.window_budget_deadline());
         Ok(())
     }
 
     pub fn record_success(&mut self) {
-        self.mode = "auto".into();
+        self.migrate();
         self.attempts = 0;
         self.consecutive_failures = 0;
         self.last_failure = None;
-        self.next_eligible_unix = 0;
+        self.next_eligible_unix = self.window_budget_deadline();
+        self.mode = if self.next_eligible_unix == 0 {
+            "auto"
+        } else {
+            "backoff"
+        }
+        .into();
     }
 
     pub fn record_failure(&mut self, code: &'static str, now: u64) {
-        self.consecutive_failures = self.consecutive_failures.saturating_add(1);
+        self.migrate();
+        self.consecutive_failures = self.consecutive_failures.saturating_add(1).min(MAX_COUNTER);
         self.last_failure = Some(classify(code).into());
-        self.next_eligible_unix = now.saturating_add(backoff_seconds(self.consecutive_failures));
-        if self.attempts >= MAX_ATTEMPTS || self.attempts_this_boot >= MAX_BOOT_ATTEMPTS {
-            self.mode = "manual_required".into();
-        } else {
-            self.mode = "backoff".into();
-        }
+        self.next_eligible_unix = now
+            .saturating_add(backoff_seconds(self.consecutive_failures))
+            .max(self.window_budget_deadline());
+        self.mode = "backoff".into();
     }
 
     pub fn reset_for_manual(&mut self) {
         self.attempts_this_boot = 0;
+        self.attempt_window_started_unix = None;
+        self.attempts_in_window = 0;
         self.record_success();
     }
 }
@@ -248,48 +303,129 @@ mod tests {
     use super::*;
 
     fn state() -> State {
-        State {
-            version: 1,
-            mode: "auto".into(),
-            attempts: 0,
-            attempts_this_boot: 0,
-            consecutive_failures: 0,
-            last_failure: None,
-            next_eligible_unix: 0,
-            boot_id: "11111111-1111-4111-8111-111111111111".into(),
-        }
+        fresh("11111111-1111-4111-8111-111111111111")
     }
 
     #[test]
-    fn recovery_budget_and_backoff_are_bounded() {
+    fn failed_recoveries_are_bounded_but_the_budget_renews_without_an_operator() {
         let mut state = state();
-        for attempt in 0..MAX_ATTEMPTS {
+        for _ in 0..MAX_ATTEMPTS_PER_WINDOW {
             let now = state.next_eligible_unix;
             state.record_attempt(now).unwrap();
             state.record_failure("recovery_step_failed", now);
-            if attempt + 1 < MAX_ATTEMPTS {
-                assert!(!state.should_attempt(now));
-            }
+            assert!(!state.should_attempt(now));
         }
-        assert_eq!(state.mode, "manual_required");
-        assert!(!state.should_attempt(u64::MAX));
+        assert_eq!(state.mode, "backoff");
+        assert_eq!(state.next_eligible_unix, ATTEMPT_WINDOW_SECONDS);
+        assert!(!state.should_attempt(ATTEMPT_WINDOW_SECONDS - 1));
+        assert!(state.should_attempt(ATTEMPT_WINDOW_SECONDS));
+        state.record_attempt(ATTEMPT_WINDOW_SECONDS).unwrap();
+        assert_eq!(state.attempts_in_window, 1);
+        state.record_failure("recovery_step_failed", ATTEMPT_WINDOW_SECONDS);
+        // Persistent failures continue at a bounded cadence after the first
+        // burst instead of repeatedly getting the shorter initial backoff.
+        assert_eq!(state.next_eligible_unix, ATTEMPT_WINDOW_SECONDS + 1800);
         assert_eq!(backoff_seconds(1), 30);
         assert_eq!(backoff_seconds(5), 480);
         assert_eq!(backoff_seconds(6), 1800);
     }
 
     #[test]
-    fn successful_recovery_resets_the_episode_but_not_the_boot_budget() {
+    fn successful_recoveries_preserve_burst_limits_without_a_per_boot_lockout() {
         let mut state = state();
-        for _ in 0..MAX_BOOT_ATTEMPTS {
+        for _ in 0..MAX_ATTEMPTS_PER_WINDOW {
             state.record_attempt(0).unwrap();
             state.record_success();
         }
         assert_eq!(state.attempts, 0);
-        assert_eq!(state.attempts_this_boot, MAX_BOOT_ATTEMPTS);
-        assert!(!state.should_attempt(u64::MAX));
+        assert_eq!(state.attempts_this_boot, MAX_ATTEMPTS_PER_WINDOW);
+        assert!(!state.should_attempt(ATTEMPT_WINDOW_SECONDS - 1));
+        state.record_attempt(ATTEMPT_WINDOW_SECONDS).unwrap();
+        state.record_success();
+        assert_eq!(state.attempts_this_boot, MAX_ATTEMPTS_PER_WINDOW + 1);
+        assert_eq!(state.attempts_in_window, 1);
+        assert!(state.should_attempt(ATTEMPT_WINDOW_SECONDS));
         state.reset_for_manual();
         assert!(state.should_attempt(0));
+        assert_eq!(state.attempts_in_window, 0);
+    }
+
+    #[test]
+    fn spaced_out_successful_recoveries_never_exhaust_the_budget() {
+        let mut state = state();
+        for window in 0..100 {
+            state
+                .record_attempt(window * ATTEMPT_WINDOW_SECONDS)
+                .unwrap();
+            state.record_success();
+            assert_eq!(state.attempts_in_window, 1);
+        }
+        assert_eq!(state.attempts_this_boot, 100);
+    }
+
+    #[test]
+    fn interrupted_attempts_keep_the_persisted_burst_budget() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("state.json");
+        let mut state = state();
+        for _ in 0..MAX_ATTEMPTS_PER_WINDOW {
+            state.record_attempt(state.next_eligible_unix).unwrap();
+            // Simulate the helper exiting before reporting success/failure.
+            save(&path, &state).unwrap();
+            state = load(&path).unwrap().unwrap();
+        }
+        assert_eq!(state.next_eligible_unix, ATTEMPT_WINDOW_SECONDS);
+        assert!(!state.should_attempt(ATTEMPT_WINDOW_SECONDS - 1));
+        state.record_attempt(ATTEMPT_WINDOW_SECONDS).unwrap();
+        assert_eq!(state.attempts_in_window, 1);
+    }
+
+    #[test]
+    fn v1_manual_required_and_successful_boot_lockouts_migrate_to_renewable_budgets() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("state.json");
+        for mode in ["manual_required", "auto"] {
+            let failed = mode == "manual_required";
+            let old = serde_json::json!({
+                "version": 1,
+                "mode": mode,
+                "attempts": if failed { 5 } else { 0 },
+                "attempts_this_boot": 5,
+                "consecutive_failures": if failed { 5 } else { 0 },
+                "last_failure": if failed { Some("recovery_step_failed") } else { None },
+                "next_eligible_unix": if failed { 1000 } else { 0 },
+                "boot_id": state().boot_id,
+            });
+            fs::write(&path, serde_json::to_vec(&old).unwrap()).unwrap();
+            let mut migrated = load(&path).unwrap().unwrap();
+            assert_eq!(migrated.version, 2);
+            assert_ne!(migrated.mode, "manual_required");
+            assert_eq!(migrated.attempts_this_boot, 5);
+            assert_eq!(migrated.attempts_in_window, 0);
+            if failed {
+                assert!(!migrated.should_attempt(999));
+            } else {
+                assert!(migrated.should_attempt(0));
+            }
+            migrated.record_attempt(1000).unwrap();
+            save(&path, &migrated).unwrap();
+            assert_eq!(load(&path).unwrap().unwrap(), migrated);
+        }
+    }
+
+    #[test]
+    fn long_running_failure_counters_saturate_and_remain_valid() {
+        let mut state = state();
+        for _ in 0..(MAX_COUNTER + 50) {
+            let now = state.next_eligible_unix;
+            state.record_attempt(now).unwrap();
+            state.record_failure("recovery_step_failed", now);
+            state.validate().unwrap();
+        }
+        assert_eq!(state.attempts, MAX_COUNTER);
+        assert_eq!(state.attempts_this_boot, MAX_COUNTER);
+        assert_eq!(state.consecutive_failures, MAX_COUNTER);
+        assert!(state.should_attempt(state.next_eligible_unix));
     }
 
     #[test]
@@ -331,12 +467,12 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("state.json");
         let mut value = state();
-        for _ in 0..MAX_BOOT_ATTEMPTS {
+        for _ in 0..MAX_ATTEMPTS_PER_WINDOW {
             let now = value.next_eligible_unix;
             value.record_attempt(now).unwrap();
             value.record_failure("recovery_step_failed", now);
         }
-        assert_eq!(value.mode, "manual_required");
+        assert_eq!(value.mode, "backoff");
         save(&path, &value).unwrap();
         // A reboot proves no previous process survived, so the episode budget
         // starts again rather than leaving the host without supervision.

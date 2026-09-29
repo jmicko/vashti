@@ -756,47 +756,16 @@ async fn execute(
     request: RunRequest,
     cancel: &CancellationToken,
 ) -> Result<(), ApiError> {
-    let mut recipe = request.draft.recipe.clone();
     let version = remember_prompt(
         &state.db,
         user,
         session,
         request.draft.prompt_version_id.as_deref(),
-        &recipe.prompt,
+        &request.draft.recipe.prompt,
         "written",
         None,
     )
     .await?;
-    let mut effective_version = version;
-    if request.draft.auto_improve || request.improve_only {
-        phase(&state.db, run, "improving").await?;
-        let _slot = tokio::select! {_ = cancel.cancelled()=>return Err(invalid("Stopped")),slot=state.image_jobs.slots.clone().acquire_owned()=>slot.map_err(|_|invalid("Image service is stopping"))?};
-        let help = request
-            .draft
-            .prompt_help
-            .as_ref()
-            .ok_or_else(|| invalid("Choose a prompt model"))?;
-        recipe.prompt = tokio::select! {_ = cancel.cancelled()=>return Err(invalid("Stopped")),value=improve(state,user,&recipe,help)=>value?};
-        effective_version = remember_prompt(
-            &state.db,
-            user,
-            session,
-            Some(&effective_version),
-            &recipe.prompt,
-            "improved",
-            Some(help),
-        )
-        .await?;
-    }
-    sqlx::query("UPDATE image_runs SET effective_prompt=?,prompt_version_id=? WHERE id=?")
-        .bind(&recipe.prompt)
-        .bind(effective_version)
-        .bind(run)
-        .execute(&state.db)
-        .await?;
-    if request.improve_only {
-        return Ok(());
-    }
     let mut index = 0u32;
     loop {
         if cancel.is_cancelled() {
@@ -807,6 +776,40 @@ async fn execute(
         }
         phase(&state.db, run, "queued").await?;
         let slot = tokio::select! {_ = cancel.cancelled()=>return Err(invalid("Stopped")),slot=state.image_jobs.slots.clone().acquire_owned()=>slot.map_err(|_|invalid("Image service is stopping"))?};
+        // Every candidate starts from the submitted source, never a previous improvement.
+        let mut recipe = request.draft.recipe.clone();
+        let mut effective_version = version.clone();
+        if request.draft.auto_improve || request.improve_only {
+            phase(&state.db, run, "improving").await?;
+            let help = request
+                .draft
+                .prompt_help
+                .as_ref()
+                .ok_or_else(|| invalid("Choose a prompt model"))?;
+            recipe.prompt = tokio::select! {
+                _ = cancel.cancelled() => return Err(invalid("Stopped")),
+                value = improve(state, user, &recipe, help) => value?
+            };
+            effective_version = remember_prompt(
+                &state.db,
+                user,
+                session,
+                Some(&version),
+                &recipe.prompt,
+                "improved",
+                Some(help),
+            )
+            .await?;
+        }
+        sqlx::query("UPDATE image_runs SET effective_prompt=?,prompt_version_id=? WHERE id=?")
+            .bind(&recipe.prompt)
+            .bind(effective_version)
+            .bind(run)
+            .execute(&state.db)
+            .await?;
+        if request.improve_only {
+            return Ok(());
+        }
         let mut quota = state.db.begin().await?;
         check_quota(&mut quota, user, MAX_IMAGE_BYTES).await?;
         quota.rollback().await?;

@@ -207,3 +207,74 @@ fn automatic_recovery_is_root_only_and_takes_no_user_arguments() {
         assert!(String::from_utf8_lossy(&output.stderr).contains("root_required"));
     }
 }
+
+#[test]
+fn timeout_configuration_validates_arguments_before_confirmation_or_privileged_work() {
+    let binary = env!("CARGO_BIN_EXE_kuno");
+    for (args, expected) in [
+        (vec![], "missing_timeout_configuration"),
+        (
+            vec!["--response-headers"],
+            "missing_response_header_timeout",
+        ),
+        (vec!["--stream-idle"], "missing_stream_idle_timeout"),
+        (
+            vec!["--response-headers", "abc"],
+            "response_header_timeout_invalid",
+        ),
+        (vec!["--stream-idle", "-1"], "stream_idle_timeout_invalid"),
+        (
+            vec!["--response-headers", "86401"],
+            "invalid_admission_bounds",
+        ),
+        (vec!["--stream-idle", "86401"], "invalid_admission_bounds"),
+        (
+            vec!["--response-headers", "0", "--response-headers", "300"],
+            "duplicate_response_header_timeout",
+        ),
+        (
+            vec!["--stream-idle", "0", "--stream-idle", "300"],
+            "duplicate_stream_idle_timeout",
+        ),
+        (vec!["--config", "unused"], "unknown_argument"),
+    ] {
+        let output = Command::new(binary)
+            .arg("configure-timeouts")
+            .args(&args)
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        let error = String::from_utf8(output.stderr).unwrap();
+        assert!(error.contains(expected), "{args:?}: {error}");
+        assert!(!error.contains("briefly interrupts inference"));
+    }
+    for args in [
+        vec!["--response-headers", "0"],
+        vec!["--stream-idle", "0"],
+        vec!["--response-headers", "0", "--stream-idle", "0"],
+        vec!["--stream-idle", "86400", "--response-headers", "86400"],
+    ] {
+        let output = Command::new(binary)
+            .arg("configure-timeouts")
+            .args(&args)
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("confirmation_required"));
+        if unsafe { libc::geteuid() } != 0 {
+            let output = Command::new(binary)
+                .arg("configure-timeouts")
+                .args(&args)
+                .arg("--yes")
+                .output()
+                .unwrap();
+            assert!(!output.status.success());
+            assert!(String::from_utf8_lossy(&output.stderr).contains("root_required"));
+        }
+    }
+    let output = Command::new(binary)
+        .args(["upgrade", "--response-headers", "0"])
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&output.stderr).contains("unknown_argument"));
+}

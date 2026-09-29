@@ -203,9 +203,13 @@ preserve the deployment's origin/authentication behavior.
 Use bounded in-memory buffers and backpressure, with no payload spooling. Client
 disconnects request backend cancellation once its completion can be verified.
 In the M1 generic HTTP adapter, an abandoned response is instead drained and
-discarded under a bounded deadline, including disconnection before headers.
-A successful drain releases admission; a stalled or failed drain retains
-uncertainty. This avoids treating an ordinary client disconnect as permanent
+discarded, including disconnection before headers. There is no default
+inference response-header or stream-idle deadline; a long prefill or silent
+thinking phase is not a failure. Optional administrator limits use `0` for
+disabled. An enabled stream-idle limit also applies to draining and resets on
+every received frame, rather than limiting total generation time.
+A successful drain releases admission; a failed or explicitly timed-out drain
+retains uncertainty. This avoids treating an ordinary client disconnect as permanent
 backend failure without assuming that a closed TCP connection stops GPU work.
 Reservations remain held until the upstream has actually stopped, not merely
 until headers arrive or a client leaves.
@@ -317,6 +321,18 @@ model; do not assume freeing space migrates existing CPU allocations.
 Queues and retries are bounded. Use fair admission and reload-cost awareness to
 avoid starvation and repeated model swapping. Existing clients can have their
 own timeouts; Kuno must preserve cancellation and meaningful resource errors.
+Any future automatic stall detector must consider backend progress, GPU/CPU
+activity, and loading/I/O evidence. Missing telemetry or a quiet GPU alone must
+not authorize stopping a request. The optional response deadlines are explicit
+operator policy, not a claim that elapsed time proves a backend is stuck.
+On the observed Ollama v0.34.2/llama.cpp b10969 runtime, the owned runner's
+`/slots` endpoint exposes increasing prompt-processing counters during long
+prefill. Any future adapter must validate listener ownership, bound the response,
+and extract only allowlisted numeric/boolean fields in memory: the complete slot
+response can contain prompt data. Compare counters only within the same runner
+and slot/task; resets and missing samples mean unknown. A flat counter during a
+single expensive batch is not conclusive failure. Until such a detector is
+implemented and validated, response deadlines remain disabled by default.
 
 ### LLM tools and image handoff
 
@@ -370,7 +386,7 @@ success informs admission; current resources must still be checked.
 
 Installation and upgrade enable `kuno-recovery.timer`. Roughly every 30 seconds
 after its previous check finishes, its root-owned oneshot inspects the gateway
-state and, when it is reachable, its authenticated control status. Only latched
+state and, when it is reachable, its authenticated control status. Latched
 upstream uncertainty with no active request and no intentional admission pause
 triggers recovery, as does an earlier interrupted attempt that already stopped
 the gateway. Healthy inference, manually stopped gateways, and starts still in
@@ -386,14 +402,19 @@ even with Kuno down, and is charged again. Attempts are serialized and service
 transitions are bounded; failed requests are never replayed. Requests can receive
 temporary 503s or connection failures during recovery and should retry.
 
-An episode is bounded: at most five automatic attempts, with escalating backoff
-from 30 seconds to 30 minutes. A success resets the episode while a per-boot
-counter still bounds repeated episodes within one boot, and a confirmed host
-reboot restores both budgets because no previous process can have survived.
-Reaching the bound stops automatic attempts instead of looping; the state
-records only bounded counters, host boot identity, and allowlisted failure
-categories. No prompt, image, response body, summary, client identifier, request
-path, or backend text enters recovery state or logs.
+Automatic attempts are rate-limited to five starts per renewable 30-minute
+window. Failed attempts back off from 30 seconds to 30 minutes. Success clears
+failure counters but retains the window budget; the boot counter is diagnostic
+only. Expired windows renew automatically, including migration of legacy
+`manual_required` records. No finite number of successful recoveries permanently
+disables supervision. State holds only bounded counters, deadlines, host boot
+identity, and allowlisted failure categories, never request content.
+
+Three consecutive failed control-health checks for the same running service PID
+also justify recovery. A healthy response clears that evidence; a new process
+starts the count over. Pending recovery bypasses the control check, so an
+unreachable replacement gateway cannot prevent a scheduled retry. Cleanup still
+requires the same process-group proof before any uncertainty is cleared.
 
 A managed request that cannot prove upstream completion stops its owned worker
 process group and proves that group empty before releasing the worker and device
@@ -403,8 +424,8 @@ the service instead of clearing uncertainty. Ordinary drained completion, by
 contrast, releases admission without any restart.
 
 Restore disables the timer and clears the budget. `kuno recover --yes` remains
-available for manual recovery and is the documented way out of an exhausted or
-unusable budget, even when the budget record itself cannot be interpreted;
+available for immediate manual recovery, including when a budget record cannot
+be interpreted;
 automatic recovery requires no interactive confirmation after the administrator
 has installed this supervisor. Modified installation artifacts or unproven
 process cleanup still prevent unsafe marker clearing. This mechanism does not

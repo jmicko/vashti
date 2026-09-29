@@ -3,6 +3,7 @@
 //! is separate from the legacy opaque gateway until routing is fully integrated.
 use crate::{
     learning::{Failure, FailureKind, History, MemorySample, Outcome, ResidentWorkload},
+    lifecycle::{Outcome as EventOutcome, Span, Stage},
     placement::{self, Candidate, Decision, Device, Requirement, Resident, Snapshot, Workload},
     reservations::{Reservation, Reservations, Resource, Scope},
     worker::{Worker, WorkerConfig},
@@ -169,11 +170,18 @@ impl ManagedWorker {
         // requires supervisor reconciliation before this scope is reused.
         lease.dispatched()?;
         for attempt in 0..2 {
+            let attempt_span = Span::new(
+                Stage::ManagedPrepare,
+                state.worker.as_ref().and_then(Worker::process_id),
+                Some(self.config.device.pci_address()),
+            );
             if let Err(error) = self.spawn_locked(&mut state).await {
+                attempt_span.finish(EventOutcome::Failed);
                 lease.complete();
                 return Err(error);
             }
             let result = self.prepare_locked(&mut state, &request).await;
+            attempt_span.result(&result);
             match result {
                 Ok(address) => {
                     return Ok(Job {
@@ -257,9 +265,21 @@ impl ManagedWorker {
                 .profiles
                 .get(&(request.digest.clone(), request.context))
             {
+                Span::event(
+                    Stage::ManagedProfile,
+                    EventOutcome::Cached,
+                    state.worker.as_ref().and_then(Worker::process_id),
+                    Some(self.config.device.pci_address()),
+                );
                 request.resident_bytes = resident;
                 request.peak_bytes = peak;
             } else {
+                Span::event(
+                    Stage::ManagedProfile,
+                    EventOutcome::IsolatedProbe,
+                    state.worker.as_ref().and_then(Worker::process_id),
+                    Some(self.config.device.pci_address()),
+                );
                 // First use is an isolated load probe, never a file-size guess.
                 let snapshot = self.snapshot(state).await?;
                 for resident in snapshot.residents {
@@ -279,6 +299,13 @@ impl ManagedWorker {
                     .ok_or("managed_capacity_unavailable")?;
                 request.resident_bytes = 1;
             }
+        } else {
+            Span::event(
+                Stage::ManagedProfile,
+                EventOutcome::Supplied,
+                state.worker.as_ref().and_then(Worker::process_id),
+                Some(self.config.device.pci_address()),
+            );
         }
         // Fingerprints are only in-process here; persistent learned profiles
         // need pinned runtime/driver/artifact fingerprints before reuse.
@@ -350,6 +377,16 @@ impl ManagedWorker {
             }
             Decision::Unavailable(_) => return Err("managed_capacity_unavailable"),
         };
+        Span::event(
+            Stage::ManagedPlacement,
+            if plan.reuse.is_some() {
+                EventOutcome::Reuse
+            } else {
+                EventOutcome::Preload
+            },
+            state.worker.as_ref().and_then(Worker::process_id),
+            Some(self.config.device.pci_address()),
+        );
         if plan.reuse.is_none() {
             state
                 .worker
@@ -592,15 +629,25 @@ impl Job {
             owner,
             mut state,
         } = self;
-        if let Some(worker) = &mut state.worker {
-            worker.stop().await?;
+        let span = Span::new(
+            Stage::ManagedAbort,
+            state.worker.as_ref().and_then(Worker::process_id),
+            Some(owner.config.device.pci_address()),
+        );
+        let result = async {
+            if let Some(worker) = &mut state.worker {
+                worker.stop().await?;
+            }
+            state.worker = None;
+            owner.pid.store(0, Ordering::Release);
+            state.records.clear();
+            lease.complete();
+            drop(state);
+            Ok(())
         }
-        state.worker = None;
-        owner.pid.store(0, Ordering::Release);
-        state.records.clear();
-        lease.complete();
-        drop(state);
-        Ok(())
+        .await;
+        span.result(&result);
+        result
     }
 }
 

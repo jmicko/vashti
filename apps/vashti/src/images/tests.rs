@@ -13,6 +13,7 @@ use uuid::Uuid;
 #[derive(Default)]
 struct Mock {
     requests: Mutex<Vec<Value>>,
+    prompt_requests: Mutex<Vec<Value>>,
     hang: bool,
 }
 async fn image(
@@ -28,16 +29,18 @@ async fn image(
         include_bytes!("fixtures/64.png").as_slice(),
     )
 }
-async fn llm(Json(value): Json<Value>) -> String {
+async fn llm(State(mock): State<Arc<Mock>>, Json(value): Json<Value>) -> String {
     assert!(
         value["messages"][1]["content"]
             .as_str()
             .unwrap()
             .contains("blue")
     );
+    let mut prompts = mock.prompt_requests.lock().await;
+    prompts.push(value);
     format!(
         "{}\n",
-        json!({"message":{"content":"A white weasel in neutral daylight."},"done":true})
+        json!({"message":{"content":format!("A white weasel in neutral daylight. Variation {}.", prompts.len())},"done":true})
     )
 }
 async fn setup(hang: bool) -> (AppState, Arc<Mock>, tokio::task::JoinHandle<()>) {
@@ -235,7 +238,7 @@ async fn batches_are_independent_retries_stack_and_inputs_are_owner_scoped() {
     server.abort();
 }
 #[tokio::test]
-async fn auto_improvement_runs_once_per_batch_and_preserves_original_guidance() {
+async fn auto_improvement_uses_original_for_each_image_and_preserves_guidance() {
     let (state, mock, server) = setup(false).await;
     crate::backends::service::ensure_model_record(&state.db, "backend", "model")
         .await
@@ -251,7 +254,7 @@ async fn auto_improvement_runs_once_per_batch_and_preserves_original_guidance() 
     let session = service::create_session(&state.db, "alice", "Prompt test", "generate", d.clone())
         .await
         .unwrap();
-    let run = service::submit(&state, "alice", &session.id, request(d))
+    let run = service::submit(&state, "alice", &session.id, request(d.clone()))
         .await
         .unwrap();
     let done = completed(&state, &run.id).await;
@@ -259,20 +262,45 @@ async fn auto_improvement_runs_once_per_batch_and_preserves_original_guidance() 
     let versions = service::history(&state.db, "alice", &session.id)
         .await
         .unwrap();
-    assert_eq!(versions.len(), 2);
+    assert_eq!(versions.len(), 3);
     assert_eq!(versions[0].source, "improved");
-    assert_eq!(versions[1].prompt, "a weasel");
+    assert_eq!(versions[2].prompt, "a weasel");
     assert_eq!(
         versions[0].parent_id.as_deref(),
-        Some(versions[1].id.as_str())
+        Some(versions[2].id.as_str())
     );
+    assert_eq!(versions[1].parent_id, versions[0].parent_id);
     assert!(versions[0].guidance.contains("blue"));
-    assert!(
-        mock.requests
-            .lock()
-            .await
-            .iter()
-            .all(|r| r["prompt"] == "A white weasel in neutral daylight.")
+    {
+        let images = mock.requests.lock().await;
+        assert_eq!(images.len(), 2);
+        assert_ne!(images[0]["prompt"], images[1]["prompt"]);
+    }
+    // Another Send starts from the same source; Retry repeats the recorded recipe.
+    let next = service::submit(&state, "alice", &session.id, request(d.clone()))
+        .await
+        .unwrap();
+    assert_eq!(completed(&state, &next.id).await.status, "complete");
+    let results = service::results(&state.db, "alice", &session.id, 0)
+        .await
+        .unwrap();
+    let mut retry = request(d);
+    retry.retry_result_id = Some(results[0].id.clone());
+    let retry = service::submit(&state, "alice", &session.id, retry)
+        .await
+        .unwrap();
+    assert_eq!(completed(&state, &retry.id).await.status, "complete");
+    let prompts = mock.prompt_requests.lock().await;
+    assert_eq!(prompts.len(), 4);
+    for prompt in prompts.iter() {
+        let input: Value =
+            serde_json::from_str(prompt["messages"][1]["content"].as_str().unwrap()).unwrap();
+        assert_eq!(input["prompt"], "a weasel");
+        assert!(input["guidance"].as_str().unwrap().contains("blue"));
+    }
+    assert_eq!(
+        mock.requests.lock().await.last().unwrap()["prompt"],
+        results[0].recipe.prompt
     );
     // A suggestion never changes the user's draft on the server without acceptance.
     assert_eq!(

@@ -92,10 +92,24 @@ impl Pool {
 
     pub async fn initialize(&self) -> Result<()> {
         for (worker, config) in self.workers.iter().zip(&self.config.workers) {
-            std::fs::create_dir_all(&config.home).map_err(|_| "managed_worker_home_unavailable")?;
-            if let Err(error) = worker.initialize().await {
-                self.stop_all().await?;
-                return Err(error);
+            let initialized = match std::fs::create_dir_all(&config.home) {
+                Ok(()) => worker.initialize().await,
+                Err(_) => Err("managed_worker_home_unavailable"),
+            };
+            if let Err(error) = initialized {
+                // One unavailable GPU must not take down the public/control
+                // listeners or healthy workers. Continue only after this owned
+                // process group is proven stopped; uncertainty still fails
+                // startup and remains visible to the recovery supervisor.
+                match worker.stop().await {
+                    Ok(()) => {}
+                    Err("resource_recovery_required") => worker.recover().await?,
+                    Err(error) => return Err(error),
+                }
+                eprintln!(
+                    "kuno: managed_worker_startup_unavailable device={} reason={error}",
+                    config.device.pci_address()
+                );
             }
         }
         Ok(())
@@ -384,6 +398,122 @@ fn request_context(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn failed_startup_is_reaped_without_stopping_healthy_workers() {
+        use crate::worker::DeviceSelection;
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let executable = directory.path().join("fake-ollama");
+        std::fs::write(
+            &executable,
+            r#"#!/usr/bin/python3
+import http.server, json, os, sys
+if os.environ['HOME'].endswith('unavailable'):
+ sys.exit(1)
+class Handler(http.server.BaseHTTPRequestHandler):
+ def log_message(self, *args): pass
+ def do_GET(self):
+  data = json.dumps({'models':[]} if self.path == '/api/ps' else {'version':'test'}).encode()
+  self.send_response(200); self.send_header('Content-Length', str(len(data))); self.end_headers(); self.wfile.write(data)
+host, port = os.environ['OLLAMA_HOST'].split(':')
+server = http.server.HTTPServer((host, int(port)), Handler)
+print('level=INFO msg="inference compute" library=CUDA id=0 filter_id=GPU-59ee3c71-80be-a06f-8d84-4a2d172d589c pci_id=0000:04:00.0', file=sys.stderr, flush=True)
+server.serve_forever()
+"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let healthy_port = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let failed_port = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let healthy = WorkerConfig {
+            executable,
+            models: directory.path().into(),
+            home: directory.path().join("healthy"),
+            address: healthy_port.local_addr().unwrap(),
+            device: DeviceSelection::Cuda {
+                uuid: "GPU-59ee3c71-80be-a06f-8d84-4a2d172d589c".into(),
+                pci_address: "0000:04:00.0".into(),
+            },
+            max_loaded_models: 8,
+            context_length: 4096,
+        };
+        let mut unavailable = healthy.clone();
+        unavailable.home = directory.path().join("unavailable");
+        unavailable.address = failed_port.local_addr().unwrap();
+        unavailable.device = DeviceSelection::Cuda {
+            uuid: "GPU-59ee3c71-80be-a06f-8d84-4a2d172d589d".into(),
+            pci_address: "0000:05:00.0".into(),
+        };
+        drop((healthy_port, failed_port));
+        for workers in [
+            vec![healthy.clone(), unavailable.clone()],
+            vec![unavailable.clone(), healthy.clone()],
+            vec![unavailable.clone()],
+        ] {
+            let has_healthy = workers.len() == 2;
+            let pool = Pool::new(
+                PoolConfig {
+                    workers,
+                    reserve_bytes: 256 * 1024 * 1024,
+                },
+                "127.0.0.1:1".parse().unwrap(),
+                None,
+                4,
+                Duration::from_secs(1),
+            )
+            .unwrap();
+            pool.initialize().await.unwrap();
+            assert!(!pool.recovery_required());
+            assert!(std::net::TcpListener::bind(unavailable.address).is_ok());
+            if has_healthy {
+                assert!(std::net::TcpListener::bind(healthy.address).is_err());
+                assert_eq!(
+                    pool.workers[usize::from(pool.config.workers[0].home == unavailable.home)]
+                        .running_json()
+                        .await
+                        .unwrap(),
+                    json!({"models":[]})
+                );
+            }
+            pool.stop_all().await.unwrap();
+            assert!(std::net::TcpListener::bind(healthy.address).is_ok());
+        }
+
+        // Unknown work from a previous process is different from a worker we
+        // just proved reaped. Degraded startup must not erase that uncertainty.
+        let journal_path = directory.path().join("gpu-reservations");
+        let reservations =
+            Reservations::persistent(&journal_path, 4, Duration::from_secs(1)).unwrap();
+        let mut lease = reservations
+            .acquire(
+                [crate::reservations::Resource::Worker(
+                    "prior-process".into(),
+                )]
+                .into(),
+            )
+            .await
+            .unwrap();
+        lease.dispatched().unwrap();
+        drop(lease);
+        drop(reservations);
+        let pool = Pool::new(
+            PoolConfig {
+                workers: vec![healthy],
+                reserve_bytes: 256 * 1024 * 1024,
+            },
+            "127.0.0.1:1".parse().unwrap(),
+            Some(directory.path()),
+            4,
+            Duration::from_secs(1),
+        )
+        .unwrap();
+        assert!(pool.initialize().await.is_err());
+        assert!(pool.recovery_required());
+        assert!(journal_path.join("upstream-in-flight").exists());
+    }
+
     #[test]
     fn compatibility_uses_actual_backend_defaults_without_rewriting_payload() {
         let show = json!({"model_info":{"general.architecture":"test","test.context_length":2048}});

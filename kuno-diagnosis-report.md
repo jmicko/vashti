@@ -241,3 +241,46 @@ Still open: request correlation IDs, structured error propagation in Vashti
 (`upstream_recovery_required` is currently flattened to a generic message), the
 separate `faststore` startup failure, and the remaining image-API items. No live
 host acceptance of the bounded supervisor has been performed yet.
+
+
+## Follow-up incident: 2026-09-26
+
+The live gateway reached 1,022 file descriptors with a soft limit of 1,024.
+Metadata requests alternated between 502 responses and timeouts, and the control
+listener also became intermittently unreachable. Direct catalog Ollama remained
+responsive. An isolated regression using actual Kuno telemetry established that
+repeated NVML load/init/shutdown/unload cycles leaked one eventfd per sample on
+this host's NVIDIA driver: 14 to 214 descriptors across 200 samples. Keeping one
+initialized, serialized NVML session for the process lifetime held descriptors
+at 17 to 17, with valid memory readings throughout. The installed updated gateway
+also passed 200 probes (30 to 31 descriptors during a concurrent inference test).
+
+The recovery budget had reached its fifth attempt during this investigation.
+It now uses a renewable five-start/30-minute window and finite failure backoff;
+boot totals cannot permanently disable recovery. Three failed control-health
+checks for the same running PID also justify proof-based recovery. Pending
+recovery no longer depends on a responsive control endpoint.
+
+A separate Intel failure was confirmed in kernel logs: repeated compute-engine
+resets during the morning, GuC scheduling timeouts around noon, then a wedged
+B70 with ioctl/execution disabled. Vulkan enumeration consequently exposed the
+RTX 3060 and llvmpipe, not the B70. Kuno's PCI identity check correctly rejected
+the configured Intel worker; the previous startup policy unnecessarily took down
+all gateway listeners. Startup now continues after proving the failed worker
+stopped, retaining healthy workers. Unknown prior-process work still fails closed.
+
+The trigger for the Intel driver failure is unresolved. Kuno's forced worker
+termination is a plausible trigger to investigate, but no captured evidence ties
+a specific stop to the first GPU hang. SIGKILL-based worker cleanup predates
+commit 6993a25; that commit routes additional uncertain-response paths into it.
+Xorg and OpenCode held the Intel device open during investigation, so no live
+driver rebind or GPU reset was attempted. These fixes do not repair a wedged GPU.
+
+Local acceptance after installation: a real generation from Clark through the
+LAN gateway using `lfm2.5-thinking:1.2b-bf16` completed in 45.3 seconds on the
+remaining healthy GPU path. The unavailable Intel worker adds its existing
+startup/discovery timeout before fallback. The original 35B workload is not
+claimed restored while the B70 is wedged. The full Kuno suite and strict Clippy
+passed, plus focused degraded-startup and real NVIDIA FD regression tests.
+Installed binary SHA256:
+`fd707c9d2da7ffc900dc1ce4d6aeb3f0950e80061650713185e3113523d52087`.

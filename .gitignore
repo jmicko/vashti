@@ -11,3 +11,5 @@
 /apps/vashti/web/dist
 /apps/vashti/web/dist-native
 upload_key.txt
+# Machine-specific agent config (absolute paths and a Demons scope UUID).
+opencode.json

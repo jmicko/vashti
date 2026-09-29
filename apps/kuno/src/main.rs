@@ -3,8 +3,9 @@ use std::{path::Path, time::Duration};
 use tokio::net::TcpListener;
 
 const HELP: &str = "Kuno — local inference gateway (development)\n\n\
-Usage:\n  kuno fetch-models COLLECTION --directory ABSOLUTE_DIRECTORY\n  kuno serve [--config FILE]\n  kuno resources [--config FILE]\n  kuno check [--config FILE]\n  kuno doctor [--service ollama.service]\n  kuno install [--yes] [--service ollama.service]\n  kuno upgrade [--yes]\n  kuno configure-managed (--workers FILE | --disable) [--yes]\n  kuno configure-image (--settings FILE | --disable) [--yes]\n  kuno recover [--yes]\n  kuno takeover-restore [--yes]\n  kuno takeover-plan [--config FILE] [--service ollama.service]\n  kuno takeover-bundle --output NEW_DIRECTORY [--config FILE] [--service ollama.service]\n\n\
+Usage:\n  kuno fetch-models COLLECTION --directory ABSOLUTE_DIRECTORY\n  kuno serve [--config FILE]\n  kuno resources [--config FILE]\n  kuno check [--config FILE]\n  kuno doctor [--service ollama.service]\n  kuno install [--yes] [--service ollama.service]\n  kuno upgrade [--yes]\n  kuno configure-managed (--workers FILE | --disable) [--yes]\n  kuno configure-image (--settings FILE | --disable) [--yes]\n  kuno configure-timeouts [--response-headers SECONDS] [--stream-idle SECONDS] [--yes]\n  kuno recover [--yes]\n  kuno takeover-restore [--yes]\n  kuno takeover-plan [--config FILE] [--service ollama.service]\n  kuno takeover-bundle --output NEW_DIRECTORY [--config FILE] [--service ollama.service]\n\n\
 serve requires KUNO_CONTROL_TOKEN or KUNO_CONTROL_TOKEN_FILE (32–256 URL-safe characters).\n\
+configure-timeouts requires at least one timeout; 0 disables that inference deadline.\n\
 Default gateway: 127.0.0.1:11433; control: 127.0.0.1:11432; upstream: 127.0.0.1:11434.\n\
 takeover-plan is read-only. It never changes services, ports, or model limits.\n";
 
@@ -128,8 +129,34 @@ async fn run() -> Result<(), &'static str> {
     let mut yes = false;
     let mut workers_file = None;
     let mut disable_managed = false;
+    let mut response_headers = None;
+    let mut stream_idle = None;
     while let Some(arg) = args.next() {
         match arg.as_str() {
+            "--response-headers" if command == "configure-timeouts" => {
+                if response_headers.is_some() {
+                    return Err("duplicate_response_header_timeout");
+                }
+                let seconds = args
+                    .next()
+                    .ok_or("missing_response_header_timeout")?
+                    .parse::<u64>()
+                    .map_err(|_| "response_header_timeout_invalid")?;
+                config.response_header_timeout_seconds = seconds;
+                response_headers = Some(seconds);
+            }
+            "--stream-idle" if command == "configure-timeouts" => {
+                if stream_idle.is_some() {
+                    return Err("duplicate_stream_idle_timeout");
+                }
+                let seconds = args
+                    .next()
+                    .ok_or("missing_stream_idle_timeout")?
+                    .parse::<u64>()
+                    .map_err(|_| "stream_idle_timeout_invalid")?;
+                config.stream_idle_timeout_seconds = seconds;
+                stream_idle = Some(seconds);
+            }
             "--workers" if command == "configure-managed" => {
                 workers_file = Some(args.next().ok_or("missing_workers_path")?);
             }
@@ -163,7 +190,12 @@ async fn run() -> Result<(), &'static str> {
             "--yes"
                 if matches!(
                     command.as_str(),
-                    "install" | "upgrade" | "takeover-restore" | "recover" | "configure-managed"
+                    "install"
+                        | "upgrade"
+                        | "takeover-restore"
+                        | "recover"
+                        | "configure-managed"
+                        | "configure-timeouts"
                 ) =>
             {
                 yes = true;
@@ -240,6 +272,19 @@ async fn run() -> Result<(), &'static str> {
                 .await
                 .map_err(|_| "managed_configuration_task_failed")??;
             println!("kuno_managed_configuration_active");
+            Ok(())
+        }
+        "configure-timeouts" => {
+            if response_headers.is_none() && stream_idle.is_none() {
+                return Err("missing_timeout_configuration");
+            }
+            confirm_interruption(yes)?;
+            tokio::task::spawn_blocking(move || {
+                systemd::configure_timeouts(response_headers, stream_idle)
+            })
+            .await
+            .map_err(|_| "timeout_configuration_task_failed")??;
+            println!("kuno_timeout_configuration_active");
             Ok(())
         }
         "takeover-restore" => {

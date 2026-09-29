@@ -25,6 +25,7 @@ const GATEWAY: &str = "kuno.service";
 const RECOVERY_TIMER: &str = "kuno-recovery.timer";
 const RECOVERY_PENDING: &str = "/var/lib/kuno-setup/auto-recovery-pending";
 const RECOVERY_STATE: &str = crate::recovery::STATE_FILE;
+const CONTROL_HEALTH: &str = "/var/lib/kuno-setup/control-health.json";
 const RECOVERY_SERVICE_UNIT: &str = "[Unit]\nDescription=Recover Kuno owned inference services\n[Service]\nType=oneshot\nExecStart=/usr/local/lib/kuno/kuno auto-recover\nTimeoutStartSec=360\nUMask=0077\nLimitCORE=0\n";
 const RECOVERY_TIMER_UNIT: &str = "[Unit]\nDescription=Check Kuno inference recovery\n[Timer]\nOnActiveSec=30\nOnUnitInactiveSec=30\nRandomizedDelaySec=5\nAccuracySec=1\n[Install]\nWantedBy=timers.target\n";
 
@@ -747,12 +748,19 @@ fn load_installation() -> Result<Installation> {
 }
 
 // The setup record preserves original service identity. The owned config is
-// the transactional source of current managed mode, including after rollback.
+// the transactional source of mutable settings, including after rollback.
 fn installed_config(original: &Config) -> Result<Config> {
     let current = Config::read(Path::new("/etc/kuno/config.json"))?;
+    validate_installed_config(original, &current)?;
+    Ok(current)
+}
+
+fn validate_installed_config(original: &Config, current: &Config) -> Result<()> {
     let mut expected = original.clone();
     expected.managed = None;
     expected.image = None;
+    expected.response_header_timeout_seconds = current.response_header_timeout_seconds;
+    expected.stream_idle_timeout_seconds = current.stream_idle_timeout_seconds;
     let mut actual = current.clone();
     actual.managed = None;
     actual.image = None;
@@ -761,7 +769,7 @@ fn installed_config(original: &Config) -> Result<Config> {
     {
         return Err("installation_identity_changed");
     }
-    Ok(current)
+    Ok(())
 }
 
 fn current_installation() -> Result<Installation> {
@@ -812,6 +820,44 @@ pub fn configure_image(image: Option<crate::image_runtime::ImageConfig>) -> Resu
     }
     installation.config.image = image;
     installation.config.validate()?;
+    let executable = fs::read(std::env::current_exe().map_err(|_| "executable_unavailable")?)
+        .map_err(|_| "executable_unavailable")?;
+    transaction.replace(
+        &artifacts(&installation, executable)?,
+        &mut SystemdHost { installation },
+    )
+}
+
+fn timeout_config(
+    current: &Config,
+    response_headers: Option<u64>,
+    stream_idle: Option<u64>,
+) -> Result<Config> {
+    if response_headers.is_none() && stream_idle.is_none() {
+        return Err("missing_timeout_configuration");
+    }
+    let mut config = current.clone();
+    if let Some(seconds) = response_headers {
+        config.response_header_timeout_seconds = seconds;
+    }
+    if let Some(seconds) = stream_idle {
+        config.stream_idle_timeout_seconds = seconds;
+    }
+    config.validate()?;
+    Ok(config)
+}
+
+/// Explicitly change inference deadlines without replacing other settings.
+/// Zero disables a deadline; upgrades retain installed values unchanged.
+pub fn configure_timeouts(response_headers: Option<u64>, stream_idle: Option<u64>) -> Result<()> {
+    require_root()?;
+    let transaction = Transaction::open(Path::new("/"), Path::new(SETUP))?;
+    transaction.verify_installed()?;
+    let mut installation = current_installation()?;
+    if installation.config.image.is_some() && !cfg!(feature = "native-image") {
+        return Err("image_engine_not_in_this_build");
+    }
+    installation.config = timeout_config(&installation.config, response_headers, stream_idle)?;
     let executable = fs::read(std::env::current_exe().map_err(|_| "executable_unavailable")?)
         .map_err(|_| "executable_unavailable")?;
     transaction.replace(
@@ -971,18 +1017,36 @@ pub fn auto_recover() -> Result<()> {
     let active_state = takeover::property(GATEWAY, "ActiveState")?
         .trim()
         .to_owned();
-    let latched = match active_state.as_str() {
-        // A failed unit has no reachable control status, so the latched marker
-        // itself decides whether recovery is warranted.
-        "failed" => uncertainty_latched()?,
-        "active" => {
-            let host = SystemdHost {
-                installation: load_installation()?,
-            };
-            needs_auto_recovery(&host.status()?)
+    let latched = if pending {
+        true
+    } else {
+        match active_state.as_str() {
+            // A failed unit has no reachable control status, so the latched marker
+            // itself decides whether recovery is warranted.
+            "failed" => uncertainty_latched()?,
+            "active" => {
+                let host = SystemdHost {
+                    installation: load_installation()?,
+                };
+                match host.status() {
+                    Ok(status) => {
+                        clear_control_health()?;
+                        needs_auto_recovery(&status)
+                    }
+                    Err(_) => {
+                        // A starved/dead control listener cannot report its latch.
+                        // Require three failed checks of the SAME service process
+                        // before using the normal stop/prove-empty recovery path.
+                        control_unresponsive(Path::new(CONTROL_HEALTH), pid(GATEWAY)?)?
+                    }
+                }
+            }
+            // An intentional stop, or a start still in progress, is not an incident.
+            _ => {
+                clear_control_health()?;
+                false
+            }
         }
-        // An intentional stop, or a start still in progress, is not an incident.
-        _ => false,
     };
     if !recovery_needed(pending, &active_state, latched)?
         || !state.should_attempt(crate::recovery::now())
@@ -1007,6 +1071,7 @@ pub fn auto_recover() -> Result<()> {
                 crate::recovery::save(Path::new(RECOVERY_STATE), &state)?;
                 return Err(code);
             }
+            clear_control_health()?;
             state.record_success();
             crate::recovery::save(Path::new(RECOVERY_STATE), &state)?;
             eprintln!("kuno: automatic_recovery_completed");
@@ -1025,7 +1090,46 @@ pub fn auto_recover() -> Result<()> {
     }
 }
 
-/// An automatic attempt is justified only by latched upstream uncertainty or by
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ControlFailures {
+    pid: u32,
+    failures: u8,
+}
+
+fn control_unresponsive(path: &Path, process: u32) -> Result<bool> {
+    let mut previous = match fs::symlink_metadata(path) {
+        Ok(meta) if meta.is_file() && meta.len() <= 128 => {
+            let bytes = fs::read(path).map_err(|_| "control_health_unreadable")?;
+            serde_json::from_slice::<ControlFailures>(&bytes)
+                .map_err(|_| "control_health_invalid")?
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => ControlFailures {
+            pid: process,
+            failures: 0,
+        },
+        _ => return Err("control_health_invalid"),
+    };
+    if previous.pid != process {
+        previous = ControlFailures {
+            pid: process,
+            failures: 0,
+        };
+    }
+    previous.failures = previous.failures.saturating_add(1).min(3);
+    storage::write_json(path, &previous).map_err(|_| "control_health_write_failed")?;
+    Ok(previous.failures == 3)
+}
+
+fn clear_control_health() -> Result<()> {
+    match fs::remove_file(CONTROL_HEALTH) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(_) => Err("control_health_remove_failed"),
+    }
+}
+
+/// Recovery requires latched uncertainty, repeated control-health failure, or
 /// an earlier interrupted attempt that already stopped the gateway.
 fn recovery_needed(pending: bool, active_state: &str, latched: bool) -> Result<bool> {
     if pending {
@@ -1083,6 +1187,7 @@ fn clear_recovery_pending() -> Result<()> {
 }
 
 fn clear_recovery_state() -> Result<()> {
+    clear_control_health()?;
     match fs::remove_file(RECOVERY_STATE) {
         Ok(()) => fs::File::open(SETUP)
             .and_then(|f| f.sync_all())
@@ -1210,6 +1315,126 @@ pub fn doctor(service: &str, config: &Config) -> Result<serde_json::Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn configured_installation() -> Config {
+        Config {
+            listen: "[::]:11434".parse().unwrap(),
+            control_listen: "127.0.0.1:11432".parse().unwrap(),
+            upstream: "127.0.0.1:11435".parse().unwrap(),
+            state_dir: "/var/lib/kuno".into(),
+            activation_file: Some(READY.into()),
+            max_waiting: 17,
+            queue_timeout_seconds: 57,
+            response_header_timeout_seconds: 300,
+            stream_idle_timeout_seconds: 600,
+            managed: Some(crate::pool::PoolConfig {
+                workers: vec![crate::worker::WorkerConfig {
+                    executable: "/usr/local/bin/ollama".into(),
+                    models: "/models/ollama".into(),
+                    home: "/var/lib/kuno/workers/ollama-0".into(),
+                    address: "127.0.0.1:11436".parse().unwrap(),
+                    device: crate::worker::DeviceSelection::Vulkan {
+                        index: 1,
+                        pci_address: "0000:2d:00.0".into(),
+                    },
+                    max_loaded_models: 8,
+                    context_length: 4096,
+                }],
+                reserve_bytes: 512 * 1024 * 1024,
+            }),
+            image: Some(crate::image_runtime::ImageConfig {
+                models: "/models/image".into(),
+                pci_address: "0000:04:00.0".into(),
+                timeout_seconds: 300,
+                collections: vec!["qwen-image-2512-fp8".into()],
+            }),
+        }
+    }
+
+    #[test]
+    fn timeout_configuration_preserves_unselected_settings_and_rejects_invalid_updates() {
+        let original = configured_installation();
+        original.validate().unwrap();
+        let original_json = serde_json::to_value(&original).unwrap();
+        for (headers, idle) in [(Some(0), None), (None, Some(0)), (Some(0), Some(86400))] {
+            let configured = timeout_config(&original, headers, idle).unwrap();
+            let mut expected = original_json.clone();
+            if let Some(seconds) = headers {
+                expected["response_header_timeout_seconds"] = seconds.into();
+            }
+            if let Some(seconds) = idle {
+                expected["stream_idle_timeout_seconds"] = seconds.into();
+            }
+            assert_eq!(serde_json::to_value(&configured).unwrap(), expected);
+            validate_installed_config(&original, &configured).unwrap();
+        }
+        for (headers, idle, error) in [
+            (None, None, "missing_timeout_configuration"),
+            (Some(86401), None, "invalid_admission_bounds"),
+            (None, Some(86401), "invalid_admission_bounds"),
+            (Some(0), Some(u64::MAX), "invalid_admission_bounds"),
+        ] {
+            assert_eq!(timeout_config(&original, headers, idle).unwrap_err(), error);
+            assert_eq!(serde_json::to_value(&original).unwrap(), original_json);
+        }
+        let invalid_queue = Config {
+            queue_timeout_seconds: 0,
+            ..original
+        };
+        assert_eq!(
+            timeout_config(&invalid_queue, Some(0), Some(0)).unwrap_err(),
+            "invalid_admission_bounds"
+        );
+    }
+
+    #[test]
+    fn mutable_timeouts_do_not_relax_other_installation_identity_checks() {
+        let original = configured_installation();
+        let current = timeout_config(&original, Some(0), Some(0)).unwrap();
+        validate_installed_config(&original, &current).unwrap();
+        for changed in [
+            Config {
+                listen: "127.0.0.1:11434".parse().unwrap(),
+                ..current.clone()
+            },
+            Config {
+                queue_timeout_seconds: 120,
+                ..current.clone()
+            },
+            Config {
+                state_dir: "/different-state".into(),
+                ..current.clone()
+            },
+        ] {
+            assert_eq!(
+                validate_installed_config(&original, &changed),
+                Err("installation_identity_changed")
+            );
+        }
+        // A new default never replaces an explicitly configured installed value.
+        validate_installed_config(&current, &original).unwrap();
+        assert_eq!(original.response_header_timeout_seconds, 300);
+        assert_eq!(original.stream_idle_timeout_seconds, 600);
+    }
+
+    #[test]
+    fn unreachable_control_needs_three_checks_and_resets_for_a_new_process() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("health.json");
+        assert!(!control_unresponsive(&path, 123).unwrap());
+        assert!(!control_unresponsive(&path, 123).unwrap());
+        assert!(!control_unresponsive(&path, 124).unwrap());
+        assert!(!control_unresponsive(&path, 124).unwrap());
+        assert!(control_unresponsive(&path, 124).unwrap());
+        fs::remove_file(&path).unwrap();
+        assert!(!control_unresponsive(&path, 124).unwrap());
+        fs::write(&path, "corrupt").unwrap();
+        assert_eq!(
+            control_unresponsive(&path, 124),
+            Err("control_health_invalid")
+        );
+    }
+
     #[test]
     fn recovery_does_not_interrupt_active_paused_or_healthy_requests() {
         for recovery in [false, true] {

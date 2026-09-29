@@ -6,6 +6,7 @@ pub mod gateway;
 pub mod image_privacy;
 pub mod image_runtime;
 mod journal;
+mod lifecycle;
 mod observe;
 mod storage;
 pub mod systemd;

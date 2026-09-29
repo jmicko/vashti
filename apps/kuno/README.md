@@ -29,13 +29,30 @@ actual listener ownership, native executable identity, effective environment, an
 competing services before changing anything. It stops Ollama's runner group during
 cutover rather than trying to infer idleness from open TCP connections.
 
-`install`, `upgrade`, `configure-managed`, `recover`, and `takeover-restore` all require this confirmation.
+`install`, `upgrade`, `configure-managed`, `configure-timeouts`, `recover`, and
+`takeover-restore` all require this confirmation.
 Unattended scripts must explicitly pass `--yes`; redirected input does not imply
 consent. The website installer should display the interruption warning and obtain
 confirmation before invoking an unattended command.
 
 Installation includes health checks. For a separate diagnostic report later, run
 `sudo /usr/local/lib/kuno/kuno doctor`.
+
+New configurations have no inference response deadline. To remove the old
+five-minute limits from an existing installation, deploy a current release with:
+
+```sh
+sudo ./kuno configure-timeouts --response-headers 0 --stream-idle 0
+```
+
+This updates the owned configuration and executable transactionally, with the
+same interruption confirmation, health checks, and rollback as an upgrade.
+Ordinary upgrades preserve explicit installed values. Either setting can instead
+be set to a positive number of seconds (maximum 86,400). These are opt-in hard
+limits, not progress-aware stall detection. A missing response alone is not proof
+of a stalled GPU. Backend failure handling, finite connection establishment, and
+admission queue limits remain active. The managed request-upload allowance is
+separate from the inference deadline.
 
 The installer preserves the actual IPv4/IPv6 listener, moves Ollama to a free
 loopback port, installs Kuno using an unprivileged systemd `DynamicUser`, and
@@ -61,8 +78,8 @@ sudo /usr/local/lib/kuno/kuno recover
 This explicitly restarts the managed gateway and Ollama, clears the empty
 in-flight marker only after Ollama's runner group stops, and retains usage data.
 It unloads Ollama's resident models. It never restarts unrelated GPU applications.
-It also resets the automatic recovery budget, so it is the way out of an exhausted
-budget or a budget record that cannot be read.
+It also resets the automatic recovery cooldown or replaces an unreadable budget
+record. Normal cooldowns expire automatically.
 
 Undo installation, or recover an interrupted installer, using the release binary:
 
@@ -188,9 +205,9 @@ allowance and headroom. This is not a measured inference-peak profile or a learn
 safe-combination database. Unknown/external memory is not credited or blacklisted.
 
 The returned job retains reservations through response completion, including
-bounded draining on client disconnect. Uncertain completion stops the owned
+draining on client disconnect. Uncertain completion stops the owned
 worker process group and proves that group empty before the worker and device
-scope are released, including on a header timeout, a transport failure, or a
+scope are released, including on an explicitly enabled response timeout, a transport failure, or a
 service shutdown. A group that cannot be proven empty keeps its scope
 quarantined, so no device is reused while a runner may survive; reconciliation
 repeats the same proof before reopening the scope. Durable uncertainty after
@@ -310,17 +327,21 @@ on restarts. Each state directory permits one Kuno process at a time.
 - Exact metadata-route exemptions; other requests share one exclusive admission
   lease through upstream body completion. Catalog changes and unknown routes
   use the same gate. This is host-wide serialization, not GPU-aware scheduling.
-- Bounded waiting, queue/header/stream-idle timeouts, and content-free errors.
-  Stream idle timeouts apply when polling upstream; downstream backpressure can
-  retain a lease longer. HTTP protocol upgrades/CONNECT are explicitly unsupported.
+- Bounded queues and connection establishment, with content-free errors.
+  Response-header and stream-idle deadlines are disabled by default (`0`), so
+  long prompt processing, thinking, and buffered responses are not cut off.
+  Administrators may explicitly enable either deadline. Stream idle limits apply
+  when polling upstream; downstream backpressure can retain a lease longer.
+  HTTP protocol upgrades/CONNECT are explicitly unsupported.
 - A separate bearer-authenticated control surface with status and pause/resume.
   The compatibility listener does not expose Kuno control handlers.
 - A fixed, empty in-flight marker written durably before dispatch. Normal upstream
   completion clears it. On client disconnect (including before response headers),
   Kuno retains the reservation and discards the remaining response in memory.
-  This drain is bounded by the configured stream idle timeout as a total deadline;
-  it does not replay requests. Stalls, transport failures, or crashes still require
-  recovery when backend completion cannot be established.
+  The drain has no default time limit and never replays a request. If configured,
+  the stream idle limit resets on each received frame; it is not a total-duration
+  limit. Transport failures or explicit timeouts still require recovery when
+  backend completion cannot be established.
 - A saved Linux boot identity clears an old empty marker after a confirmed host
   reboot, when the local upstream cannot retain prior work. Restarting only Kuno
   preserves uncertainty. Legacy markers without a boot record and corrupted
@@ -373,15 +394,17 @@ forced interruption retains the marker. The currently active model may remain
 resident in Ollama; resident models are not the same as active requests.
 
 An installed gateway checks itself with `kuno-recovery.timer` roughly every 30
-seconds. It acts only on latched upstream uncertainty while idle and unpaused, or
-on an earlier attempt that was interrupted after stopping the gateway; a manual
-`systemctl stop` is never undone. Each attempt is charged to a bounded budget of
-five tries with backoff from 30 seconds to 30 minutes, so a failing gateway stops
-being restarted instead of looping. The budget survives in
-`/var/lib/kuno-setup/auto-recovery.json` and holds only counters, host boot
-identity, and allowlisted failure categories. A confirmed host reboot restores the
-budget, and `kuno recover` resets it on demand. `sudo kuno doctor` reports the
-budget mode, used attempts, next retry, and whether an attempt is still pending.
+seconds. It acts on latched upstream uncertainty while idle and unpaused,
+repeated control-health failure, or an interrupted recovery attempt. A manual
+`systemctl stop` is never undone. Each attempt is charged before services are touched: at most
+five starts per renewable 30-minute window, with failure backoff from 30 seconds
+to 30 minutes. Cooldowns expire automatically; successful recoveries never
+permanently exhaust a boot-wide allowance. Three failed control-health checks
+for the same running PID also trigger recovery, while an already pending attempt
+continues even if control is unreachable. The records under
+`/var/lib/kuno-setup` hold only counters, deadlines, process/boot identity, and
+allowlisted failure categories. `sudo kuno doctor` reports the budget and pending
+state, and `kuno recover` resets cooldowns on demand.
 
 ## Usage tracking
 
@@ -462,6 +485,30 @@ Managed units set `MemorySwapMax=0` and disable core files. The removable Ollama
 drop-in disables request logging and raw stdout/stderr; Kuno supplies classified
 diagnostics. Host-wide swap/hibernation privacy is not certified. Running the
 uninstalled development gateway does not alter existing Ollama logging settings.
+
+Kuno emits `kuno_lifecycle` JSON events to the service journal for managed-worker
+startup, profiling/reuse, preload, response headers/body, cancellation draining,
+forced shutdown, and recovery-required transitions. The schema allows only fixed
+stage/outcome names, monotonic elapsed milliseconds, worker PID, and validated PCI
+address. It excludes model names/digests, prompts, images, responses, request IDs,
+client addresses, URLs, headers, and backend error text. Metadata polling and
+individual generated tokens do not emit these events. Observation itself does
+not stop workers or change scheduling.
+
+To correlate a failure with Intel driver events on an installed Linux host:
+
+```sh
+sudo journalctl -b -f -o short-monotonic \
+  _SYSTEMD_UNIT=kuno.service + _SYSTEMD_UNIT=kuno-recovery.service + _TRANSPORT=kernel \
+  --grep='kuno_lifecycle|automatic_recovery|xe.*(reset|wedg|timeout|fault|GuC|guc)'
+```
+
+`worker_load_headers` and `worker_load_body` measure the preload request;
+`upstream_headers` starts after placement/preloading. A `worker_signal` with
+`sigkill` is emitted immediately before the existing signal syscall. Successful
+`worker_group_exit` and `worker_reap` events establish cleanup completion;
+`worker_drop_signal` alone does not establish completion. Journal timestamps
+allow comparison with kernel resets without retaining inference content.
 
 Privileged installation and real client inference through the adopted listener
 have been tested on this host. Remaining work includes full reboot/restore

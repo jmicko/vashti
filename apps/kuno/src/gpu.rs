@@ -4,6 +4,7 @@ use std::{
     ffi::{CStr, CString, c_char, c_void},
     fs,
     path::Path,
+    sync::{Mutex, OnceLock},
 };
 type Result<T> = std::result::Result<T, &'static str>;
 
@@ -248,8 +249,16 @@ type ReadString = unsafe extern "C" fn(Device, *mut c_char, u32) -> u32;
 
 struct Nvml {
     library: *mut c_void,
+    init: Init,
     shutdown: Init,
+    initialized: bool,
 }
+
+// SAFETY: the loaded library and NVML telemetry API are usable across threads.
+// The process-wide mutex serializes initialization and every symbol/driver call;
+// no pointer escapes the locked session and the library outlives its symbols.
+unsafe impl Send for Nvml {}
+
 impl Nvml {
     fn open() -> Result<Self> {
         // SAFETY: fixed system driver library, RTLD_LOCAL, valid NUL-terminated
@@ -262,26 +271,43 @@ impl Nvml {
             if library.is_null() {
                 return Err("nvml_library_unavailable");
             }
-            let initialized = (|| {
+            let loaded = (|| {
                 let init: Init = symbol(library, c"nvmlInit_v2")?;
                 let shutdown: Init = symbol(library, c"nvmlShutdown")?;
-                if init() != 0 {
-                    return Err("nvml_initialization_failed");
-                }
-                Ok(Self { library, shutdown })
+                Ok(Self {
+                    library,
+                    init,
+                    shutdown,
+                    initialized: false,
+                })
             })();
-            if initialized.is_err() {
+            if loaded.is_err() {
                 libc::dlclose(library);
             }
-            initialized
+            loaded
         }
+    }
+
+    fn initialize(&mut self) -> Result<()> {
+        if !self.initialized {
+            // SAFETY: the init symbol belongs to the live library and callers
+            // hold the process-wide mutex. A failed init can be retried later.
+            if unsafe { (self.init)() } != 0 {
+                return Err("nvml_initialization_failed");
+            }
+            self.initialized = true;
+        }
+        Ok(())
     }
 }
 impl Drop for Nvml {
     fn drop(&mut self) {
-        // SAFETY: successfully initialized NVML; library outlives every symbol.
+        // SAFETY: shutdown only follows successful initialization; the library
+        // outlives every symbol. The static production session lives until exit.
         unsafe {
-            (self.shutdown)();
+            if self.initialized {
+                (self.shutdown)();
+            }
             libc::dlclose(self.library);
         }
     }
@@ -298,7 +324,21 @@ unsafe fn symbol<T: Copy>(library: *mut c_void, name: &CStr) -> Result<T> {
 }
 
 fn nvidia(gpu: &mut Gpu) -> Result<()> {
-    let nvml = Nvml::open()?;
+    // Some NVIDIA driver versions leak an eventfd each time NVML is unloaded
+    // and loaded again. Keep one initialized session for the process lifetime,
+    // including across the fresh threads used for bounded hardware probes.
+    // Preserve the loaded library after failed initialization so transient
+    // driver failures remain retryable without repeating its loader lifecycle.
+    static SESSION: OnceLock<Mutex<Option<Nvml>>> = OnceLock::new();
+    let mut session = SESSION
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .map_err(|_| "nvml_session_unavailable")?;
+    if session.is_none() {
+        *session = Some(Nvml::open()?);
+    }
+    let nvml = session.as_mut().expect("NVML library loaded");
+    nvml.initialize()?;
     let pci = CString::new(gpu.pci_address.as_str()).map_err(|_| "pci_identity_invalid")?;
     // SAFETY: all functions use the documented NVML ABI. The handle is obtained
     // by physical PCI address, not an enumeration index that can change order.
@@ -379,6 +419,71 @@ fn nvidia(gpu: &mut Gpu) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nvml_retries_failed_initialization_and_reuses_a_successful_session() {
+        use std::{
+            mem::ManuallyDrop,
+            sync::atomic::{AtomicUsize, Ordering},
+        };
+        static ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
+        unsafe extern "C" fn initialize() -> u32 {
+            u32::from(ATTEMPTS.fetch_add(1, Ordering::SeqCst) == 0)
+        }
+        unsafe extern "C" fn shutdown() -> u32 {
+            panic!("mock session must not invoke driver shutdown");
+        }
+        // No real library is owned in this test; suppress its resource destructor.
+        let mut nvml = ManuallyDrop::new(Nvml {
+            library: std::ptr::null_mut(),
+            init: initialize,
+            shutdown,
+            initialized: false,
+        });
+        assert_eq!(nvml.initialize(), Err("nvml_initialization_failed"));
+        assert!(!nvml.initialized);
+        nvml.initialize().unwrap();
+        nvml.initialize().unwrap();
+        assert!(nvml.initialized);
+        assert_eq!(ATTEMPTS.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    #[ignore = "requires an accessible NVIDIA GPU and driver; run alone for FD accounting"]
+    fn repeated_nvidia_telemetry_does_not_leak_file_descriptors() {
+        fn sample() {
+            // Production probes run on a fresh thread so a stuck driver cannot
+            // block runtime shutdown. Exercise the same lifecycle here.
+            let gpus = std::thread::spawn(collect).join().unwrap().unwrap();
+            let gpu = gpus
+                .iter()
+                .find(|gpu| gpu.driver.as_deref() == Some("nvidia"))
+                .expect("NVIDIA GPU required");
+            assert!(gpu.errors.is_empty(), "{:?}", gpu.errors);
+            assert!(
+                gpu.memory.as_ref().is_some_and(|memory| {
+                    memory.total_bytes > 0 && memory.free_bytes.is_some()
+                })
+            );
+        }
+        fn descriptors() -> usize {
+            fs::read_dir("/proc/self/fd").unwrap().count()
+        }
+        for _ in 0..5 {
+            sample();
+        }
+        let before = descriptors();
+        for _ in 0..200 {
+            sample();
+        }
+        let after = descriptors();
+        eprintln!("NVIDIA telemetry FD count: {before} before, {after} after 200 samples");
+        assert!(
+            after <= before + 2,
+            "repeated telemetry leaked descriptors: {before} -> {after}"
+        );
+    }
+
     fn reply(regions: &[(u16, u16, u64, u64)]) -> Vec<u8> {
         let mut bytes = vec![0; 8 + regions.len() * 88];
         bytes[..4].copy_from_slice(&(regions.len() as u32).to_ne_bytes());

@@ -1,5 +1,6 @@
 //! Owned Ollama workers. No inherited inference environment, content logs, or
 //! adoption of an arbitrary listener. Startup verifies the selected physical GPU.
+use crate::lifecycle::{Outcome, Span, Stage};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
@@ -264,98 +265,108 @@ impl Worker {
     // retain this handle before waiting for discovery, including cancellation.
     pub(crate) fn spawn(config: WorkerConfig) -> Result<Self> {
         config.validate()?;
-        if !config.models.is_dir() {
-            return Err("worker_models_directory_unavailable");
-        }
-        if !config.home.is_dir() {
-            return Err("worker_home_directory_unavailable");
-        }
-        if !config.executable.is_file() {
-            return Err("worker_executable_unavailable");
-        }
-        let client = reqwest::Client::builder()
-            .no_proxy()
-            .redirect(reqwest::redirect::Policy::none())
-            .pool_max_idle_per_host(0)
-            .timeout(Duration::from_secs(300))
-            .build()
-            .map_err(|_| "worker_client_failed")?;
-        // Do not disturb another listener. Ownership is checked again after
-        // spawn, since this preflight alone cannot exclude a port race.
-        let probe =
-            std::net::TcpListener::bind(config.address).map_err(|_| "worker_port_unavailable")?;
-        let mut command = Command::new(&config.executable);
-        command
-            .arg("serve")
-            .env_clear()
-            .envs(config.environment())
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
-        command.process_group(0);
-        let parent_pid = std::process::id();
-        // SAFETY: only async-signal-safe syscalls in the forked child. The
-        // systemd service's cgroup additionally owns all runner descendants.
-        unsafe {
-            command.pre_exec(move || {
-                let limit = libc::rlimit {
-                    rlim_cur: 0,
-                    rlim_max: 0,
-                };
-                if libc::setrlimit(libc::RLIMIT_CORE, &limit) != 0
-                    || libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0
-                {
-                    return Err(std::io::Error::last_os_error());
-                }
-                if libc::getppid() != parent_pid as i32 {
-                    libc::_exit(1);
-                }
-                Ok(())
-            });
-        }
-        drop(probe);
-        let mut child = command.spawn().map_err(|_| "worker_spawn_failed")?;
-        let mut stderr = child
-            .stderr
-            .take()
-            .ok_or("worker_diagnostics_unavailable")?;
-        let diagnostics = Arc::new(Mutex::new(Diagnostics::default()));
-        let sink = diagnostics.clone();
-        let drain = tokio::spawn(async move {
-            let mut bytes = [0; 4096];
-            let mut line = Vec::with_capacity(4096);
-            let mut overflow = false;
-            while let Ok(n) = stderr.read(&mut bytes).await {
-                if n == 0 {
-                    break;
-                }
-                for &byte in &bytes[..n] {
-                    if byte == b'\n' {
-                        if !overflow {
-                            sink.lock().unwrap().observe(&line);
+        let observed = Span::new(Stage::WorkerSpawn, None, Some(config.device.pci_address()));
+        let result = (|| {
+            if !config.models.is_dir() {
+                return Err("worker_models_directory_unavailable");
+            }
+            if !config.home.is_dir() {
+                return Err("worker_home_directory_unavailable");
+            }
+            if !config.executable.is_file() {
+                return Err("worker_executable_unavailable");
+            }
+            let client = reqwest::Client::builder()
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
+                .pool_max_idle_per_host(0)
+                .timeout(Duration::from_secs(300))
+                .build()
+                .map_err(|_| "worker_client_failed")?;
+            // Do not disturb another listener. Ownership is checked again after
+            // spawn, since this preflight alone cannot exclude a port race.
+            let probe = std::net::TcpListener::bind(config.address)
+                .map_err(|_| "worker_port_unavailable")?;
+            let mut command = Command::new(&config.executable);
+            command
+                .arg("serve")
+                .env_clear()
+                .envs(config.environment())
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true);
+            command.process_group(0);
+            let parent_pid = std::process::id();
+            // SAFETY: only async-signal-safe syscalls in the forked child. The
+            // systemd service's cgroup additionally owns all runner descendants.
+            unsafe {
+                command.pre_exec(move || {
+                    let limit = libc::rlimit {
+                        rlim_cur: 0,
+                        rlim_max: 0,
+                    };
+                    if libc::setrlimit(libc::RLIMIT_CORE, &limit) != 0
+                        || libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0
+                    {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    if libc::getppid() != parent_pid as i32 {
+                        libc::_exit(1);
+                    }
+                    Ok(())
+                });
+            }
+            drop(probe);
+            let mut child = command.spawn().map_err(|_| "worker_spawn_failed")?;
+            let mut stderr = child
+                .stderr
+                .take()
+                .ok_or("worker_diagnostics_unavailable")?;
+            let diagnostics = Arc::new(Mutex::new(Diagnostics::default()));
+            let sink = diagnostics.clone();
+            let drain = tokio::spawn(async move {
+                let mut bytes = [0; 4096];
+                let mut line = Vec::with_capacity(4096);
+                let mut overflow = false;
+                while let Ok(n) = stderr.read(&mut bytes).await {
+                    if n == 0 {
+                        break;
+                    }
+                    for &byte in &bytes[..n] {
+                        if byte == b'\n' {
+                            if !overflow {
+                                sink.lock().unwrap().observe(&line);
+                            }
+                            line.clear();
+                            overflow = false;
+                        } else if line.len() < 16384 && !overflow {
+                            line.push(byte);
+                        } else {
+                            overflow = true;
+                            line.clear();
                         }
-                        line.clear();
-                        overflow = false;
-                    } else if line.len() < 16384 && !overflow {
-                        line.push(byte);
-                    } else {
-                        overflow = true;
-                        line.clear();
                     }
                 }
-            }
-        });
-        Ok(Self {
-            config,
-            child,
-            diagnostics,
-            drain,
-            client,
-        })
+            });
+            Ok(Self {
+                config,
+                child,
+                diagnostics,
+                drain,
+                client,
+            })
+        })();
+        observed.result(&result);
+        result
     }
 
     pub(crate) async fn ready(&mut self) -> Result<()> {
+        let observed = Span::new(
+            Stage::WorkerReady,
+            self.child.id(),
+            Some(self.config.device.pci_address()),
+        );
         let ready = tokio::time::timeout(Duration::from_secs(30), async {
             loop {
                 if self.exited()? {
@@ -377,8 +388,17 @@ impl Worker {
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
         })
-        .await
-        .unwrap_or(Err("worker_startup_or_device_verification_failed"));
+        .await;
+        let ready = match ready {
+            Ok(result) => {
+                observed.result(&result);
+                result
+            }
+            Err(_) => {
+                observed.finish(Outcome::Timeout);
+                Err("worker_startup_or_device_verification_failed")
+            }
+        };
         if let Err(mut e) = ready {
             if e == "worker_startup_or_device_verification_failed" {
                 let d = self.diagnostics.lock().unwrap();
@@ -485,58 +505,121 @@ impl Worker {
         digest: &str,
         context: u32,
     ) -> Result<()> {
-        self.verify_alive()?;
-        if model.is_empty()
-            || model.len() > 512
-            || model.chars().any(char::is_control)
-            || digest.len() != 64
-            || !digest.bytes().all(|c| c.is_ascii_hexdigit())
-            || !(512..=1_048_576).contains(&context)
-        {
-            return Err("worker_load_identity_invalid");
-        }
-        let response = self.client.post(format!("http://{}/api/embeddings", self.config.address))
-                .json(&json!({"model":model,"prompt":"","stream":false,"keep_alive":-1,"options":{"num_ctx":context}}))
-                .send().await.map_err(|_| "worker_load_failed")?;
-        let value = bounded_json(response).await?;
-        // Empty legacy embedding requests load without imposing either
-        // completion or embedding capability on the selected model.
-        if value
-            .get("embedding")
-            .and_then(Value::as_array)
-            .is_none_or(|a| !a.is_empty())
-        {
-            return Err("worker_load_incomplete");
-        }
-        let state = self.running().await?;
-        let loaded = state
-            .models
-            .iter()
-            .find(|m| m.digest.as_deref() == Some(digest))
-            .ok_or("worker_loaded_identity_mismatch")?;
-        if loaded.residency != crate::resources::ReportedResidency::GpuReported {
-            return Err("worker_cpu_spill_detected");
-        }
-        if loaded.context_length != Some(u64::from(context)) {
-            return Err("worker_context_mismatch");
-        }
-        Ok(())
+        let observed = Span::new(
+            Stage::WorkerLoad,
+            self.child.id(),
+            Some(self.config.device.pci_address()),
+        );
+        let result = async {
+            self.verify_alive()?;
+            if model.is_empty()
+                || model.len() > 512
+                || model.chars().any(char::is_control)
+                || digest.len() != 64
+                || !digest.bytes().all(|c| c.is_ascii_hexdigit())
+                || !(512..=1_048_576).contains(&context)
+            {
+                return Err("worker_load_identity_invalid");
+            }
+            let headers = Span::new(
+                Stage::WorkerLoadHeaders,
+                self.child.id(),
+                Some(self.config.device.pci_address()),
+            );
+            let response = self.client.post(format!("http://{}/api/embeddings", self.config.address))
+                    .json(&json!({"model":model,"prompt":"","stream":false,"keep_alive":-1,"options":{"num_ctx":context}}))
+                    .send().await;
+            let response = match response {
+                Ok(response) => {
+                    headers.finish(Outcome::Success);
+                    response
+                }
+                Err(error) => {
+                    headers.finish(transport_outcome(&error));
+                    return Err("worker_load_failed");
+                }
+            };
+            let value = bounded_json_observed(
+                response,
+                Some(Span::new(
+                    Stage::WorkerLoadBody,
+                    self.child.id(),
+                    Some(self.config.device.pci_address()),
+                )),
+            ).await?;
+            // Empty legacy embedding requests load without imposing either
+            // completion or embedding capability on the selected model.
+            if value
+                .get("embedding")
+                .and_then(Value::as_array)
+                .is_none_or(|a| !a.is_empty())
+            {
+                return Err("worker_load_incomplete");
+            }
+            let state = self.running().await?;
+            let loaded = state
+                .models
+                .iter()
+                .find(|m| m.digest.as_deref() == Some(digest))
+                .ok_or("worker_loaded_identity_mismatch")?;
+            if loaded.residency != crate::resources::ReportedResidency::GpuReported {
+                return Err("worker_cpu_spill_detected");
+            }
+            if loaded.context_length != Some(u64::from(context)) {
+                return Err("worker_context_mismatch");
+            }
+            Ok(())
+        }.await;
+        observed.result(&result);
+        result
     }
 
     pub async fn unload(&mut self, model: &str) -> Result<()> {
-        self.verify_alive()?;
-        let response = self
-            .client
-            .post(format!("http://{}/api/generate", self.config.address))
-            .json(&json!({"model":model,"keep_alive":0,"stream":false}))
-            .send()
-            .await
-            .map_err(|_| "worker_unload_failed")?;
-        let value = bounded_json(response).await?;
-        if value.get("done").and_then(Value::as_bool) != Some(true) {
-            return Err("worker_unload_incomplete");
+        let observed = Span::new(
+            Stage::WorkerUnload,
+            self.child.id(),
+            Some(self.config.device.pci_address()),
+        );
+        let result = async {
+            self.verify_alive()?;
+            let headers = Span::new(
+                Stage::WorkerUnloadHeaders,
+                self.child.id(),
+                Some(self.config.device.pci_address()),
+            );
+            let response = self
+                .client
+                .post(format!("http://{}/api/generate", self.config.address))
+                .json(&json!({"model":model,"keep_alive":0,"stream":false}))
+                .send()
+                .await;
+            let response = match response {
+                Ok(response) => {
+                    headers.finish(Outcome::Success);
+                    response
+                }
+                Err(error) => {
+                    headers.finish(transport_outcome(&error));
+                    return Err("worker_unload_failed");
+                }
+            };
+            let value = bounded_json_observed(
+                response,
+                Some(Span::new(
+                    Stage::WorkerResponseBody,
+                    self.child.id(),
+                    Some(self.config.device.pci_address()),
+                )),
+            )
+            .await?;
+            if value.get("done").and_then(Value::as_bool) != Some(true) {
+                return Err("worker_unload_incomplete");
+            }
+            Ok(()) // Scheduler must still observe actual VRAM release.
         }
-        Ok(()) // Scheduler must still observe actual VRAM release.
+        .await;
+        observed.result(&result);
+        result
     }
 
     /// Stops the owned process group and proves it is empty before the leader
@@ -544,26 +627,64 @@ impl Worker {
     /// reservation or lets it quarantine, so an unproven group must fail:
     /// a stale runner can still hold the device this scope reserved.
     pub async fn stop(&mut self) -> Result<()> {
+        let observed = Span::new(
+            Stage::WorkerStop,
+            self.child.id(),
+            Some(self.config.device.pci_address()),
+        );
         let Some(pid) = self.child.id() else {
             // The leader is reaped only after its group was proven empty, so a
             // missing handle is itself the proof.
             self.drain.abort();
+            observed.finish(Outcome::AlreadyStopped);
             return Ok(());
         };
-        // SAFETY: the child created its own process group and this handle is
-        // still unreaped, so the PID cannot have been recycled.
-        let signalled = unsafe { libc::kill(-(pid as i32), libc::SIGKILL) };
-        if signalled != 0 && std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH) {
-            return Err("worker_group_signal_failed");
+        let result = async {
+            Span::event(
+                Stage::WorkerSignal,
+                Outcome::Sigkill,
+                Some(pid),
+                Some(self.config.device.pci_address()),
+            );
+            // SAFETY: the child created its own process group and this handle is
+            // still unreaped, so the PID cannot have been recycled.
+            let signalled = unsafe { libc::kill(-(pid as i32), libc::SIGKILL) };
+            if signalled != 0 && std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+            {
+                Span::event(
+                    Stage::WorkerSignal,
+                    Outcome::Failed,
+                    Some(pid),
+                    Some(self.config.device.pci_address()),
+                );
+                return Err("worker_group_signal_failed");
+            }
+            let group = Span::new(
+                Stage::WorkerGroupExit,
+                Some(pid),
+                Some(self.config.device.pci_address()),
+            );
+            if !wait_for_group_exit(pid).await {
+                group.finish(Outcome::Timeout);
+                // The leader stays unreaped so a later attempt can re-prove this
+                // same group. Clearing the reservation now would be a guess.
+                return Err("worker_group_not_empty");
+            }
+            group.finish(Outcome::Success);
+            let reap = Span::new(
+                Stage::WorkerReap,
+                Some(pid),
+                Some(self.config.device.pci_address()),
+            );
+            let reaped = self.child.wait().await.map_err(|_| "worker_reap_failed");
+            reap.result(&reaped);
+            reaped?;
+            self.drain.abort();
+            Ok(())
         }
-        if !wait_for_group_exit(pid).await {
-            // The leader stays unreaped so a later attempt can re-prove this
-            // same group. Clearing the reservation now would be a guess.
-            return Err("worker_group_not_empty");
-        }
-        self.child.wait().await.map_err(|_| "worker_reap_failed")?;
-        self.drain.abort();
-        Ok(())
+        .await;
+        observed.result(&result);
+        result
     }
 }
 
@@ -619,6 +740,12 @@ fn process_group_empty(pgid: u32) -> bool {
 impl Drop for Worker {
     fn drop(&mut self) {
         if let Some(pid) = self.child.id() {
+            Span::event(
+                Stage::WorkerDropSignal,
+                Outcome::Sigkill,
+                Some(pid),
+                Some(self.config.device.pci_address()),
+            );
             // SAFETY: same owned process-group boundary as stop().
             unsafe {
                 libc::kill(-(pid as i32), libc::SIGKILL);
@@ -628,27 +755,124 @@ impl Drop for Worker {
     }
 }
 
-async fn bounded_json(mut response: reqwest::Response) -> Result<Value> {
-    if !response.status().is_success() {
-        return Err("worker_request_rejected");
+fn transport_outcome(error: &reqwest::Error) -> Outcome {
+    if error.is_timeout() {
+        Outcome::Timeout
+    } else {
+        Outcome::TransportError
     }
-    let mut bytes = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|_| "worker_response_failed")?
-    {
-        if bytes.len() + chunk.len() > 2 * 1024 * 1024 {
-            return Err("worker_response_too_large");
+}
+
+async fn bounded_json(response: reqwest::Response) -> Result<Value> {
+    bounded_json_observed(response, None).await
+}
+
+async fn bounded_json_observed(
+    mut response: reqwest::Response,
+    observed: Option<Span>,
+) -> Result<Value> {
+    let mut outcome = Outcome::Success;
+    let result = async {
+        if !response.status().is_success() {
+            outcome = Outcome::Rejected;
+            return Err("worker_request_rejected");
         }
-        bytes.extend_from_slice(&chunk);
+        let mut bytes = Vec::new();
+        loop {
+            let chunk = match response.chunk().await {
+                Ok(Some(chunk)) => chunk,
+                Ok(None) => break,
+                Err(error) => {
+                    outcome = if error.is_timeout() {
+                        Outcome::Timeout
+                    } else {
+                        Outcome::BodyError
+                    };
+                    return Err("worker_response_failed");
+                }
+            };
+            if bytes.len() + chunk.len() > 2 * 1024 * 1024 {
+                outcome = Outcome::InvalidResponse;
+                return Err("worker_response_too_large");
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        serde_json::from_slice(&bytes).map_err(|_| {
+            outcome = Outcome::InvalidResponse;
+            "worker_response_invalid"
+        })
     }
-    serde_json::from_slice(&bytes).map_err(|_| "worker_response_invalid")
+    .await;
+    if let Some(observed) = observed {
+        observed.finish(outcome);
+    }
+    result
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn observed_body_preserves_validation_errors_without_echoing_content() {
+        for (status, body, expected) in [
+            (503, "PRIVATE-UPSTREAM-ERROR", "worker_request_rejected"),
+            (200, "PRIVATE-INVALID-JSON", "worker_response_invalid"),
+        ] {
+            let response = axum::http::Response::builder()
+                .status(status)
+                .body(body)
+                .unwrap();
+            let result = bounded_json_observed(
+                reqwest::Response::from(response),
+                Some(Span::new(
+                    Stage::WorkerLoadBody,
+                    Some(42),
+                    Some("0000:2d:00.0"),
+                )),
+            )
+            .await;
+            assert_eq!(result, Err(expected));
+        }
+    }
+
+    #[tokio::test]
+    async fn preload_body_timeout_remains_a_response_failure() {
+        use tokio::io::AsyncWriteExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0; 1024];
+            assert!(socket.read(&mut request).await.unwrap() > 0);
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 32\r\n\r\n{")
+                .await
+                .unwrap();
+            std::future::pending::<()>().await;
+        });
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_millis(100))
+            .build()
+            .unwrap();
+        let response = client
+            .get(format!("http://{address}/"))
+            .send()
+            .await
+            .unwrap();
+        let result = bounded_json_observed(
+            response,
+            Some(Span::new(
+                Stage::WorkerLoadBody,
+                Some(42),
+                Some("0000:2d:00.0"),
+            )),
+        )
+        .await;
+        server.abort();
+        assert_eq!(result, Err("worker_response_failed"));
+    }
 
     fn config() -> WorkerConfig {
         WorkerConfig {
