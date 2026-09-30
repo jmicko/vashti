@@ -408,7 +408,7 @@ index 991b88f..dc6596e 100644
  
          // [N, n_token, embedding_dim]
 diff --git a/src/model/diffusion/qwen_image_2_1.hpp b/src/model/diffusion/qwen_image_2_1.hpp
-index 9884325..58ee07a 100644
+index 9884325..16b978b 100644
 --- a/src/model/diffusion/qwen_image_2_1.hpp
 +++ b/src/model/diffusion/qwen_image_2_1.hpp
 @@ -134,6 +134,7 @@ namespace Qwen {
@@ -428,14 +428,15 @@ index 9884325..58ee07a 100644
                      copy      = ggml_cpy(ctx->ggml_ctx, part, copy);
                      // Keep the copy in this layer's segment so graph cuts do not
                      // retain or recompute the full-sequence K/V in the final segment.
-@@ -206,6 +207,16 @@ namespace Qwen {
+@@ -206,6 +207,17 @@ namespace Qwen {
                  auto prefix_k = ctx->load_cache_tensor(cache.name + ".k");
                  auto prefix_v = ctx->load_cache_tensor(cache.name + ".v");
                  GGML_ASSERT(prefix_k != nullptr && prefix_v != nullptr);
-+                if (ctx->flash_attn_enabled && sd_backend_is(ctx->backend, "CUDA") &&
++                if (ctx->flash_attn_enabled &&
++                    (sd_backend_is(ctx->backend, "CUDA") || sd_backend_is(ctx->backend, "Vulkan")) &&
 +                    prefix_k->type == GGML_TYPE_F16 && prefix_v->type == GGML_TYPE_F16) {
-+                    // CUDA flash attention consumes FP16 K/V. Concatenate in that
-+                    // format instead of expanding the cache and rounding it again.
++                    // CUDA and Vulkan flash attention consume FP16 K/V. Join in
++                    // that format instead of expanding and rounding the cache again.
 +                    k = ggml_cast(ctx->ggml_ctx, k, GGML_TYPE_F16);
 +                    v = ggml_cast(ctx->ggml_ctx, v, GGML_TYPE_F16);
 +                } else {
@@ -445,7 +446,7 @@ index 9884325..58ee07a 100644
                  k      = ggml_concat(ctx->ggml_ctx, prefix_k, k, 1);
                  v      = ggml_concat(ctx->ggml_ctx, prefix_v, v, 2);
                  result = ggml_ext_attention_ext(ctx, q, k, v, heads, nullptr, true, ctx->flash_attn_enabled);
-@@ -248,10 +259,10 @@ namespace Qwen {
+@@ -248,10 +260,10 @@ namespace Qwen {
                  row = gate ? ggml_tanh(ctx, row) : ggml_scale_bias(ctx, row, 1.f, 1.f);
                  return ggml_mul(ctx, part, row);
              };
@@ -458,7 +459,7 @@ index 9884325..58ee07a 100644
              auto prefix = apply(ggml_ext_slice(ctx, x, 1, 0, prefix_length), rows[1]);
              return ggml_concat(ctx, prefix, target, 1);
          }
-@@ -264,18 +275,21 @@ namespace Qwen {
+@@ -264,18 +276,21 @@ namespace Qwen {
              x                           = ggml_add(ctx->ggml_ctx, x, modulate(ctx->ggml_ctx, h, modulation[1], prefix_length, true));
              h                           = std::dynamic_pointer_cast<LayerNorm>(blocks["img_norm2"])->forward(ctx, x);
              h                           = modulate(ctx->ggml_ctx, h, modulation[2], prefix_length);
@@ -486,7 +487,7 @@ index 9884325..58ee07a 100644
              h = std::dynamic_pointer_cast<Linear>(blocks["img_mlp.out"])->forward(ctx, h);
              return ggml_add(ctx->ggml_ctx, x, modulate(ctx->ggml_ctx, h, modulation[3], prefix_length, true));
          }
-@@ -353,16 +367,25 @@ namespace Qwen {
+@@ -353,16 +368,25 @@ namespace Qwen {
          std::vector<sd::Tensor<float>> mask_data;
          bool prefix_cache_enabled  = true;
          bool prefix_cache_disabled = false;
@@ -512,7 +513,7 @@ index 9884325..58ee07a 100644
              model.init(params_ctx, weights, prefix);
          }
  
-@@ -377,7 +400,7 @@ namespace Qwen {
+@@ -377,7 +401,7 @@ namespace Qwen {
                  const auto name = cache.name + "." + std::to_string(i);
                  auto k          = get_cache_tensor_by_name(name + ".k");
                  auto v          = get_cache_tensor_by_name(name + ".v");
@@ -521,7 +522,7 @@ index 9884325..58ee07a 100644
                      k->ne[0] != config.head_dim || k->ne[1] != cache.prefix_length ||
                      k->ne[2] != config.hidden_size / config.head_dim || k->ne[3] != 1 ||
                      v->ne[0] != config.head_dim || v->ne[1] != config.hidden_size / config.head_dim ||
-@@ -420,6 +443,7 @@ namespace Qwen {
+@@ -420,6 +444,7 @@ namespace Qwen {
                  prefix_cache_disabled = false;
              }
              QwenImage21PrefixCache cache;

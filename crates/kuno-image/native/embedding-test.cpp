@@ -43,9 +43,19 @@ int main() {
     assert(kuno_qwen_prefix_cache_fits(29*gib,1024*1024,100,true));
     assert(!kuno_qwen_prefix_cache_fits(29*gib,4*1024*1024,100,true));
     assert(!kuno_qwen_prefix_cache_fits(11*gib,0,32768,true));
-    assert(kuno_qwen_prefix_cache_fits(10*gib,1024*1024,100,true,true));
-    assert(!kuno_qwen_prefix_cache_fits(10*gib,2*1024*1024,100,true,true));
-    assert(!kuno_qwen_prefix_cache_fits(2*gib,0,0,false,true));
+    assert(kuno_qwen_prefix_cache_fits(10*gib,1024*1024,100,true,true,3*gib));
+    assert(!kuno_qwen_prefix_cache_fits(10*gib,2*1024*1024,100,true,true,3*gib));
+    assert(!kuno_qwen_prefix_cache_fits(2*gib,0,0,false,true,3*gib));
+    // Vulkan keeps its full-weight reserve even with half-precision cache.
+    // A two-reference guided edit fits FP16 on a free B70 but not FP32.
+    assert(kuno_qwen_prefix_cache_fits(20*gib,2*1024*1024,100,true,true));
+    assert(!kuno_qwen_prefix_cache_fits(20*gib,2*1024*1024,100,true,false));
+    assert(!kuno_qwen_prefix_cache_fits(10*gib,1024*1024,100,true,true));
+    assert(!kuno_qwen_prefix_cache_fits(8*gib,0,0,false,true));
+    const auto cache_bytes = kuno_qwen_prefix_cache_bytes(1024*1024,100,true,true);
+    assert(kuno_qwen_prefix_cache_fits(9*gib+cache_bytes,1024*1024,100,true,true));
+    assert(!kuno_qwen_prefix_cache_fits(9*gib+cache_bytes-1,1024*1024,100,true,true));
+    assert(kuno_qwen_prefix_cache_bytes(1024*1024,100,true,false) == 2*cache_bytes);
     assert(kuno_qwen_host_prefix_cache_fits(10*gib,32*gib,1024*1024,100,true));
     assert(!kuno_qwen_host_prefix_cache_fits(10*gib,28*gib,1024*1024,100,true));
     assert(!kuno_qwen_host_prefix_cache_fits(10*gib,0,1024*1024,100,true));

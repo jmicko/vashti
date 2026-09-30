@@ -103,13 +103,17 @@ extern "C" int kuno_qwen_generate(const char* directory,const char* pci,const ch
         context.backend=backend.c_str();context.params_backend="cpu";context.max_vram=budget.c_str();
         uint64_t reference_pixels = 0;
         for (int i=0; i<reference_count; ++i) reference_pixels += uint64_t(references[i].width) * references[i].height;
-        const bool fp16_cache = version && backend.compare(0, 4, "CUDA") == 0;
-        if (fp16_cache && kuno_qwen_host_prefix_cache_fits(budget_bytes, host_available,
+        const bool cuda_backend = backend.compare(0, 4, "CUDA") == 0;
+        const bool fp16_cache = version && (cuda_backend || backend.compare(0, 6, "Vulkan") == 0);
+        const uint64_t working_reserve = (cuda_backend ? 3ull : 9ull) * 1024 * 1024 * 1024;
+        // Host-cache overlap is validated only on CUDA. Vulkan uses a resident
+        // FP16 cache when the full-weight budget fits, otherwise disables it.
+        if (version && cuda_backend && kuno_qwen_host_prefix_cache_fits(budget_bytes, host_available,
                 reference_pixels, std::strlen(prompt) + std::strlen(negative), cfg != 1.f)) {
             context.model_args="qwen_image_2_1_prefix_cache_f16=true,qwen_image_2_1_prefix_cache_cpu=true";
             std::fprintf(stderr,"kuno-image: prefix cache in bounded system RAM\n");
         } else if (version && !kuno_qwen_prefix_cache_fits(budget_bytes, reference_pixels,
-                std::strlen(prompt) + std::strlen(negative), cfg != 1.f, fp16_cache)) {
+                std::strlen(prompt) + std::strlen(negative), cfg != 1.f, fp16_cache, working_reserve)) {
             context.model_args="qwen_image_2_1_prefix_cache=false";
             std::fprintf(stderr,"kuno-image: prefix cache disabled for memory budget\n");
         } else if (fp16_cache) {
