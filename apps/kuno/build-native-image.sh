@@ -3,8 +3,15 @@
 # installed users need Vulkan drivers, not Python, CMake, or a C++ compiler.
 set -euo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
-source_dir="$root/target/kuno-sd-source-88411ef"
-build_dir="$root/target/kuno-sd-build-88411ef-int8"
+patch_file="$root/apps/kuno/patches/001-qwen-quantized-config.patch"
+ggml_patch="$root/apps/kuno/patches/002-vulkan-flash-shapes.patch"
+# A reviewed patch update gets a fresh dependency checkout/build. Keep older
+# builds and unknown local edits intact, and never reuse their stale objects.
+patch_bundle=$(cat -- "$patch_file" "$ggml_patch" | sha256sum)
+patch_bundle=${patch_bundle%% *}
+patch_bundle=${patch_bundle:0:16}
+source_dir="$root/target/kuno-sd-source-88411ef-$patch_bundle"
+build_dir="$root/target/kuno-sd-build-88411ef-$patch_bundle-int8"
 cuda_options=(-DSD_CUDA=OFF)
 cuda_libraries=()
 case ${KUNO_IMAGE_CUDA:-0} in
@@ -15,7 +22,7 @@ case ${KUNO_IMAGE_CUDA:-0} in
             echo 'KUNO_CUDA_ROOT must contain bin/nvcc.' >&2
             exit 1
         fi
-        build_dir="$root/target/kuno-sd-build-88411ef-cuda"
+        build_dir="$root/target/kuno-sd-build-88411ef-$patch_bundle-cuda"
         cuda_options=(-DSD_CUDA=ON -DGGML_STATIC=ON
             "-DCUDAToolkit_ROOT=$KUNO_CUDA_ROOT"
             "-DCMAKE_CUDA_COMPILER=$KUNO_CUDA_ROOT/bin/nvcc"
@@ -54,8 +61,6 @@ if [[ $(git -C "$source_dir/ggml" rev-parse HEAD) != "$ggml_revision" ]]; then
     echo 'GGML source is not the pinned revision; preserving the existing directory.' >&2
     exit 1
 fi
-patch_file="$root/apps/kuno/patches/001-qwen-quantized-config.patch"
-ggml_patch="$root/apps/kuno/patches/002-vulkan-flash-shapes.patch"
 if git -C "$source_dir" diff --quiet HEAD -- . ':(exclude)ggml'; then
     git -C "$source_dir" apply --check "$patch_file"
     git -C "$source_dir" apply "$patch_file"

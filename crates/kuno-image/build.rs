@@ -109,6 +109,7 @@ fn main() {
             "src/ggml-vulkan/vulkan-shaders/CMakeLists.txt",
             "src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp",
             "src/ggml-vulkan/vulkan-shaders/flash_attn_cm1_m8.comp",
+            "src/ggml-vulkan/vulkan-shaders/mul_mat_i8_tensorwise_m8_cm1.comp",
         ] {
             println!("cargo:rerun-if-changed={}", ggml.join(file).display());
         }
