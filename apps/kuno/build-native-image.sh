@@ -88,6 +88,12 @@ fi
 # Empty unified-patch context lines are intentional; validate source whitespace.
 git -C "$source_dir" diff --check -- . ':(exclude)ggml'
 git -C "$source_dir/ggml" diff --check
+# Reject malformed/unbounded internal tile values before compiling GPU code.
+mkdir -p -- "$build_dir"
+c++ -std=c++17 -O2 -I "$source_dir/ggml/src/ggml-vulkan" \
+    "$root/crates/kuno-image/native/int8-m8-tuning-test.cpp" \
+    -o "$build_dir/kuno-int8-m8-tuning-test"
+"$build_dir/kuno-int8-m8-tuning-test"
 vulkan_options=()
 if [[ -n ${VULKAN_SDK:-} ]]; then
     glslc_path="$VULKAN_SDK/bin/glslc"

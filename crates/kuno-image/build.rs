@@ -105,6 +105,7 @@ fn main() {
         );
         for file in [
             "src/ggml-vulkan/ggml-vulkan.cpp",
+            "src/ggml-vulkan/vulkan-int8-m8-tuning.h",
             "src/ggml-vulkan/CMakeLists.txt",
             "src/ggml-vulkan/vulkan-shaders/CMakeLists.txt",
             "src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp",
