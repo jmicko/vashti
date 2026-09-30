@@ -1,5 +1,5 @@
 diff --git a/src/core/ggml_extend.cpp b/src/core/ggml_extend.cpp
-index 7432416..0326f64 100644
+index 7432416..c149352 100644
 --- a/src/core/ggml_extend.cpp
 +++ b/src/core/ggml_extend.cpp
 @@ -254,6 +254,12 @@ ggml_tensor* ggml_ext_linear_i8_tensorwise(ggml_context* ctx,
@@ -15,6 +15,51 @@ index 7432416..0326f64 100644
      ggml_tensor* fused_bias = scale == 1.f ? b : nullptr;
      if (x->ne[2] * x->ne[3] > 1024) {
          int64_t ne2 = x->ne[2];
+@@ -672,17 +678,29 @@ ggml_tensor* ggml_ext_attention_ext(ggml_context* ctx,
+         if (kv_scale != 1.0f) {
+             k_in = ggml_ext_scale(ctx, k_in, kv_scale);
+         }
+-        k_in = ggml_cast(ctx, k_in, GGML_TYPE_F16);
++        if (k_in->type != GGML_TYPE_F16) {
++            k_in = ggml_cast(ctx, k_in, GGML_TYPE_F16);
++        }
+ 
+-        v_in = ggml_ext_cont(ctx, ggml_permute(ctx, v_in, 0, 2, 1, 3));
+-        v_in = ggml_reshape_3d(ctx, v_in, d_head, L_k, n_kv_head * N);
++        // CUDA FA reads the token/head strides explicitly. For batch-one FP16
++        // K/V, preserve the permuted view instead of copying the entire V cache.
++        // Other shapes/types keep the established contiguous layout.
++        const bool strided_v = N == 1 && v_in->type == GGML_TYPE_F16 &&
++                               !pad_head && kv_scale == 1.0f && sd_backend_is(backend, "CUDA");
++        v_in = ggml_permute(ctx, v_in, 0, 2, 1, 3);
++        if (!strided_v) {
++            v_in = ggml_ext_cont(ctx, v_in);
++            v_in = ggml_reshape_3d(ctx, v_in, d_head, L_k, n_kv_head * N);
++        }
+         if (pad_head) {
+             v_in = ggml_pad(ctx, v_in, 64 - d_head, 0, 0, 0);
+         }
+         if (kv_scale != 1.0f) {
+             v_in = ggml_ext_scale(ctx, v_in, kv_scale);
+         }
+-        v_in = ggml_cast(ctx, v_in, GGML_TYPE_F16);
++        if (v_in->type != GGML_TYPE_F16) {
++            v_in = ggml_cast(ctx, v_in, GGML_TYPE_F16);
++        }
+ 
+         if (mask_in != nullptr) {
+             // ggml_flash_attn_ext expects the mask as a contiguous F16 tensor shaped
+@@ -733,7 +751,9 @@ ggml_tensor* ggml_ext_attention_ext(ggml_context* ctx,
+             k_in = ggml_ext_scale(ctx, k_in, kv_scale);
+             v_in = ggml_ext_scale(ctx, v_in, kv_scale);
+         }
+-        v_in     = ggml_cast(ctx, v_in, GGML_TYPE_F16);
++        if (v_in->type != GGML_TYPE_F16) {
++            v_in = ggml_cast(ctx, v_in, GGML_TYPE_F16);
++        }
+         auto out = ggml_sage_attn(ctx, q_in, k_in, v_in, scale / kv_scale, GGML_SAGE_ATTN_AUTO);
+         if (ggml_backend_supports_op(backend, out)) {
+             kqv = kv_scale != 1.0f ? ggml_ext_scale(ctx, out, 1.0f / kv_scale) : out;
 diff --git a/src/core/ggml_runner.cpp b/src/core/ggml_runner.cpp
 index 5957321..2799cf1 100644
 --- a/src/core/ggml_runner.cpp
@@ -408,7 +453,7 @@ index 991b88f..dc6596e 100644
  
          // [N, n_token, embedding_dim]
 diff --git a/src/model/diffusion/qwen_image_2_1.hpp b/src/model/diffusion/qwen_image_2_1.hpp
-index 9884325..16b978b 100644
+index 9884325..d43110d 100644
 --- a/src/model/diffusion/qwen_image_2_1.hpp
 +++ b/src/model/diffusion/qwen_image_2_1.hpp
 @@ -134,6 +134,7 @@ namespace Qwen {
@@ -419,7 +464,38 @@ index 9884325..16b978b 100644
      };
  
      class QwenImage21ZeroCenterRMSNorm : public RMSNorm {
-@@ -191,7 +192,7 @@ namespace Qwen {
+@@ -168,6 +169,30 @@ namespace Qwen {
+ 
+     class QwenImage21Attention : public QwenImageAttention {
+     public:
++        static std::pair<ggml_tensor*, ggml_tensor*> concat_cached_kv(
++            GGMLRunnerContext* ctx, ggml_tensor* k, ggml_tensor* v,
++            ggml_tensor* prefix_k, ggml_tensor* prefix_v) {
++            GGML_ASSERT(prefix_k != nullptr && prefix_v != nullptr);
++            if (ctx->flash_attn_enabled &&
++                (sd_backend_is(ctx->backend, "CUDA") || sd_backend_is(ctx->backend, "Vulkan")) &&
++                prefix_k->type == GGML_TYPE_F16 && prefix_v->type == GGML_TYPE_F16) {
++                // Sage consumes FP32 K. Expand only the stored prefix and keep
++                // live K in FP32, avoiding its FP16 round-trip. Standard FA still
++                // concatenates FP16 K/V without expanding the stored cache.
++                if (ctx->sage_attn_enabled) {
++                    prefix_k = ggml_cast(ctx->ggml_ctx, prefix_k, k->type);
++                } else {
++                    k = ggml_cast(ctx->ggml_ctx, k, GGML_TYPE_F16);
++                }
++                v = ggml_cast(ctx->ggml_ctx, v, GGML_TYPE_F16);
++            } else {
++                prefix_k = ggml_cast(ctx->ggml_ctx, prefix_k, k->type);
++                prefix_v = ggml_cast(ctx->ggml_ctx, prefix_v, v->type);
++            }
++            return {ggml_concat(ctx->ggml_ctx, prefix_k, k, 1),
++                    ggml_concat(ctx->ggml_ctx, prefix_v, v, 2)};
++        }
++
+         QwenImage21Attention(const QwenImage21Config& config)
+             : QwenImageAttention(config.hidden_size, config.head_dim, config.hidden_size / config.head_dim, 0, 0, false, false) {
+             for (const auto* name : {"add_q_proj", "add_k_proj", "add_v_proj", "norm_added_q", "norm_added_k", "to_add_out"}) {
+@@ -191,7 +216,7 @@ namespace Qwen {
              if (cache.mode == QwenImage21PrefixCache::Mode::STORE) {
                  auto persist = [&](ggml_tensor* tensor, int axis, const char* name) {
                      auto part = ggml_ext_slice(ctx->ggml_ctx, tensor, axis, 0, cache.prefix_length);
@@ -428,25 +504,20 @@ index 9884325..16b978b 100644
                      copy      = ggml_cpy(ctx->ggml_ctx, part, copy);
                      // Keep the copy in this layer's segment so graph cuts do not
                      // retain or recompute the full-sequence K/V in the final segment.
-@@ -206,6 +207,17 @@ namespace Qwen {
+@@ -205,9 +230,9 @@ namespace Qwen {
+             if (cache.mode == QwenImage21PrefixCache::Mode::REUSE) {
                  auto prefix_k = ctx->load_cache_tensor(cache.name + ".k");
                  auto prefix_v = ctx->load_cache_tensor(cache.name + ".v");
-                 GGML_ASSERT(prefix_k != nullptr && prefix_v != nullptr);
-+                if (ctx->flash_attn_enabled &&
-+                    (sd_backend_is(ctx->backend, "CUDA") || sd_backend_is(ctx->backend, "Vulkan")) &&
-+                    prefix_k->type == GGML_TYPE_F16 && prefix_v->type == GGML_TYPE_F16) {
-+                    // CUDA and Vulkan flash attention consume FP16 K/V. Join in
-+                    // that format instead of expanding and rounding the cache again.
-+                    k = ggml_cast(ctx->ggml_ctx, k, GGML_TYPE_F16);
-+                    v = ggml_cast(ctx->ggml_ctx, v, GGML_TYPE_F16);
-+                } else {
-+                    prefix_k = ggml_cast(ctx->ggml_ctx, prefix_k, k->type);
-+                    prefix_v = ggml_cast(ctx->ggml_ctx, prefix_v, v->type);
-+                }
-                 k      = ggml_concat(ctx->ggml_ctx, prefix_k, k, 1);
-                 v      = ggml_concat(ctx->ggml_ctx, prefix_v, v, 2);
+-                GGML_ASSERT(prefix_k != nullptr && prefix_v != nullptr);
+-                k      = ggml_concat(ctx->ggml_ctx, prefix_k, k, 1);
+-                v      = ggml_concat(ctx->ggml_ctx, prefix_v, v, 2);
++                auto cached_kv = concat_cached_kv(ctx, k, v, prefix_k, prefix_v);
++                k = cached_kv.first;
++                v = cached_kv.second;
                  result = ggml_ext_attention_ext(ctx, q, k, v, heads, nullptr, true, ctx->flash_attn_enabled);
-@@ -248,10 +260,10 @@ namespace Qwen {
+             } else {
+                 for (size_t i = 0; i < segments.size(); ++i) {
+@@ -248,10 +273,10 @@ namespace Qwen {
                  row = gate ? ggml_tanh(ctx, row) : ggml_scale_bias(ctx, row, 1.f, 1.f);
                  return ggml_mul(ctx, part, row);
              };
@@ -459,7 +530,7 @@ index 9884325..16b978b 100644
              auto prefix = apply(ggml_ext_slice(ctx, x, 1, 0, prefix_length), rows[1]);
              return ggml_concat(ctx, prefix, target, 1);
          }
-@@ -264,18 +276,21 @@ namespace Qwen {
+@@ -264,18 +289,21 @@ namespace Qwen {
              x                           = ggml_add(ctx->ggml_ctx, x, modulate(ctx->ggml_ctx, h, modulation[1], prefix_length, true));
              h                           = std::dynamic_pointer_cast<LayerNorm>(blocks["img_norm2"])->forward(ctx, x);
              h                           = modulate(ctx->ggml_ctx, h, modulation[2], prefix_length);
@@ -487,7 +558,7 @@ index 9884325..16b978b 100644
              h = std::dynamic_pointer_cast<Linear>(blocks["img_mlp.out"])->forward(ctx, h);
              return ggml_add(ctx->ggml_ctx, x, modulate(ctx->ggml_ctx, h, modulation[3], prefix_length, true));
          }
-@@ -353,16 +368,25 @@ namespace Qwen {
+@@ -353,16 +381,25 @@ namespace Qwen {
          std::vector<sd::Tensor<float>> mask_data;
          bool prefix_cache_enabled  = true;
          bool prefix_cache_disabled = false;
@@ -513,7 +584,7 @@ index 9884325..16b978b 100644
              model.init(params_ctx, weights, prefix);
          }
  
-@@ -377,7 +401,7 @@ namespace Qwen {
+@@ -377,7 +414,7 @@ namespace Qwen {
                  const auto name = cache.name + "." + std::to_string(i);
                  auto k          = get_cache_tensor_by_name(name + ".k");
                  auto v          = get_cache_tensor_by_name(name + ".v");
@@ -522,7 +593,7 @@ index 9884325..16b978b 100644
                      k->ne[0] != config.head_dim || k->ne[1] != cache.prefix_length ||
                      k->ne[2] != config.hidden_size / config.head_dim || k->ne[3] != 1 ||
                      v->ne[0] != config.head_dim || v->ne[1] != config.hidden_size / config.head_dim ||
-@@ -420,6 +444,7 @@ namespace Qwen {
+@@ -420,6 +457,7 @@ namespace Qwen {
                  prefix_cache_disabled = false;
              }
              QwenImage21PrefixCache cache;

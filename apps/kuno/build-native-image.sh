@@ -92,6 +92,16 @@ c++ -std=c++17 -O2 -DGGML_MAX_NAME=160 \
     "${cuda_libraries[@]}" \
     -Wl,--end-group -lgomp -lvulkan -o "$build_dir/kuno-embedding-test"
 "$build_dir/kuno-embedding-test"
+# Synthetic CPU oracle/fallback regression; optional device acceptance is run
+# separately with kuno-attention-layout-test --device CUDA <PCI address>.
+c++ -std=c++17 -O2 -DGGML_MAX_NAME=160 \
+    -I "$source_dir/src" -I "$source_dir/ggml/include" -I "$source_dir/include" \
+    "$root/crates/kuno-image/native/attention-layout-test.cpp" \
+    -Wl,--start-group "$build_dir/libstable-diffusion.a" \
+    "$build_dir"/ggml/src/libggml*.a "$build_dir/ggml/src/ggml-vulkan/libggml-vulkan.a" \
+    "${cuda_libraries[@]}" \
+    -Wl,--end-group -lgomp -lvulkan -o "$build_dir/kuno-attention-layout-test"
+"$build_dir/kuno-attention-layout-test"
 cd -- "$root"
 KUNO_SD_SOURCE_DIR="$source_dir" KUNO_SD_BUILD_DIR="$build_dir" \
     cargo build --locked -p kuno --release --features native-image
