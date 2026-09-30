@@ -10,6 +10,8 @@ native-image = ["kuno-image/native-sd"]
 kuno-image = { path = "../../crates/kuno-image" }
 axum = "0.8"
 bytes = "1"
+base64 = "0.22"
+futures-util = "0.3"
 http-body = "1"
 hyper = { version = "1", features = ["client", "http1"] }
 hyper-util = { version = "0.1", features = ["client-legacy", "http1", "tokio"] }
@@ -23,6 +25,5 @@ tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util"] }
-futures-util = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream"] }
 tempfile = "3"

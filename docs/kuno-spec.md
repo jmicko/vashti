@@ -243,6 +243,10 @@ default upstream for opaque requests. Do not broadcast mutations to all workers.
 Kuno's privileged control API is separate from the compatibility surface and
 requires authentication. Preserving an existing Ollama client connection must
 not grant access to service installation, runtime updates, or host configuration.
+Inference on the trusted-LAN compatibility listener is keyless, including image
+generation and capability discovery. Images use a single transient NDJSON
+response carrying previews and final output; see the
+[image API contract](kuno-images.md#inference-access-discovery-and-streaming-2026-09-30).
 
 Port takeover covers clients using that endpoint. Separate servers, direct
 native inference, games, and local clients deliberately using a private upstream

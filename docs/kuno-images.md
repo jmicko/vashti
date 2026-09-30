@@ -164,7 +164,8 @@ Ollama management, use `configure-image --disable`. Upgrades must retain the
 ## API and lifecycle
 
 `POST /kuno/v1/images/generate` is available on the public compatibility listener
-and the local control listener. Both require the Kuno bearer token. It accepts:
+for keyless trusted-LAN inference. Privileged control operations remain separate.
+See [discovery and response streaming](#inference-access-discovery-and-streaming-2026-09-30). It accepts:
 
 ```json
 {
@@ -180,8 +181,10 @@ and the local control listener. Both require the Kuno bearer token. It accepts:
 }
 ```
 
-The successful response is `image/png` with `Cache-Control: no-store` and no
-embedded generation metadata. Vashti owns any eventual output/provenance storage.
+The successful response is a single `application/x-ndjson` stream with
+`Cache-Control: no-store`: acceptance, previews, then a terminal result or error.
+The result contains a base64 PNG with no embedded generation metadata. Vashti
+owns any eventual output/provenance storage.
 Model downloads and operational state are separate from inference content.
 
 The first scheduler implementation holds the same exclusive admission lease as
@@ -216,7 +219,7 @@ headroom but is not a hard device-wide allocation limit.
 
 Automated checks cover active-graph import, duplicate JSON keys, PNG checksums,
 compressed metadata bounds, large seeds, worker cancellation/deadlines/output
-bounds, authenticated routing, and filesystem write denial. Committed tests use
+bounds, inference/control routing separation, and filesystem write denial. Committed tests use
 synthetic metadata; the local reference image remains outside the build inputs.
 
 On the target Arc Pro B70, a standalone 512×512, four-step synthetic generation
@@ -470,11 +473,16 @@ answered after cancellation, and was then unloaded. The service is active and
 unpaused with no recovery requirement or new kernel errors.
 
 
-### Transient previews (development)
+### Transient previews (historical beta implementation)
+
+The following records the earlier polling implementation and smoke results.
+It is superseded by the single response stream specified below; the new API
+does not accept preview identifiers or expose polling routes.
 
 The PNG generation endpoint accepts optional `x-kuno-image-preview-id`: 64 random
-hex characters supplied by the authenticated caller. While that request is
-active, authenticated `GET /kuno/v1/images/previews/{id}` returns null or the
+hex characters supplied by the caller. While that request is
+active, keyless `GET /kuno/v1/images/previews/{id}` on the compatibility listener
+returns null or the
 latest `{step, steps, width, height, png_base64}` projection preview, with
 `Cache-Control: no-store`. The identifier is per request and must never be put
 in persistent job recipes. The entry is removed after worker cleanup, including
@@ -493,3 +501,219 @@ one 32-square RGBA preview per step and the final PNG in 11.05 seconds. The test
 consumed all image bytes in RAM and saved no images. This is a transport smoke
 test, not a quality or comparable full-workflow performance benchmark; preview
 overhead on the normal 50-step workflow and Intel still needs measurement.
+
+## Inference access, discovery, and streaming (2026-09-30)
+
+**Implemented and source-tested Kuno contract; Vashti integration pending.**
+Baseline `d117295`.
+The user clarified that Kuno serves a trusted local network: all inference,
+including image generation and previews, requires no Kuno authentication key.
+This supersedes the earlier pending proposal for optional inference bearer
+credentials, legacy access modes, and an explicit image-access migration.
+See [the active handoff](kuno-vashti-coordination.md).
+
+### Inference versus control
+
+The compatibility listener exposes keyless image inference and discovery to the
+same machines using Ollama through Kuno. There is no new authentication setting
+or image credential. Existing installed configurations need no migration;
+upgrading applies this policy. Old image bearer headers are ignored on these
+routes. Normal Ollama proxy headers, upstream authentication/origin behavior,
+request/response formats, and long inference semantics remain unchanged.
+
+Privileged status, resource/learning reports, and admission pause/resume remain
+on the loopback control listener and require its existing control credential.
+Image generation is an inference operation and is not exposed on the control
+listener. Public `/kuno/` routes cannot reach privileged controls: unknown
+routes return 404 `unknown_inference_route` instead of proxying to Ollama.
+Installation and updates remain local administrative commands.
+
+Kuno-owned public inference routes grant no browser CORS access and reject any
+`Origin` header with 403 `inference_origin_forbidden`. Vashti connects from Rust
+server-to-server without that header. Image POST requires `application/json`
+(optional charset accepted), otherwise 415 `image_content_type_required`.
+This does not change ordinary Ollama origin handling. An external reverse proxy,
+if deliberately configured, may impose its own access policy: a client must not
+bypass a 401/403 by retrying anonymously. Kuno does not add a public/cloud hosting
+or authenticated inference feature in this change.
+
+### Discovery
+
+`GET /kuno/v1/capabilities` returns HTTP 200 and `Cache-Control: no-store`.
+Example with one enabled collection on a configured CUDA image device:
+
+```json
+{
+  "service": "kuno",
+  "discovery_version": 1,
+  "version": "0.1.0",
+  "inference_auth": "none",
+  "images": {
+    "api_version": 1,
+    "access": "inference",
+    "state": "ready",
+    "reason": null,
+    "generate_path": "/kuno/v1/images/generate",
+    "response_formats": ["application/x-ndjson"],
+    "workflows": [
+      {
+        "id": "qwen-image-2.1-text-to-image/v1",
+        "state": "ready",
+        "reason": null,
+        "reference_images_min": 0,
+        "reference_images_max": 0,
+        "attention": ["standard", "fast"]
+      },
+      {
+        "id": "qwen-image-2.1-edit/v1",
+        "state": "ready",
+        "reason": null,
+        "reference_images_min": 1,
+        "reference_images_max": 10,
+        "attention": ["standard", "fast"]
+      }
+    ]
+  }
+}
+```
+
+`version` identifies the running Kuno package, independently of discovery/API
+versions. `inference_auth: "none"` describes Kuno itself, not an external proxy.
+Image states are `disabled` (not configured), `unsupported` (configured engine
+absent from the build), `unavailable` (no enabled workflow usable), `partial`
+(some usable), and `ready` (all usable). Workflow states are `ready` and
+`unavailable`. Reasons are fixed public codes: `image_generation_not_configured`,
+`image_engine_not_in_this_build`, `image_models_unavailable`,
+`image_privacy_unavailable`, and `image_runtime_unavailable`. Partial state has a
+null overall reason; per-workflow reasons explain unavailable workflows.
+No paths, private model inventory, jobs, history, credentials, or GPU processes
+are exposed. Only enabled built-in workflow IDs appear. Qwen 2512 supports
+standard attention. Qwen 2.1 advertises fast attention only when the native build
+includes CUDA and a configured CUDA worker identifies that image PCI device;
+otherwise it advertises standard only. Unsupported fast requests are rejected
+before dispatch with 400 `image_attention_unsupported`. Reference bounds are 0/0
+for generation and 1/10 for edit. Existing recipe versions retain numeric
+settings limits. Native seeds are decimal strings in 0..9223372036854775807.
+
+Discovery never enters admission, loads/unloads models, contacts a GPU worker,
+hashes weights, or downloads files. Prerequisite snapshots refresh on demand
+at most once every five seconds, with one outstanding blocking probe per gateway.
+A discovery request waits at most one second for a new snapshot, then returns
+the previous snapshot (initially unavailable if configured). A slow probe can
+continue in the background; readiness remains advisory. Checks inspect only
+curated artifact existence/size and image privacy prerequisites.
+
+Missing image prerequisites do not fail the entire gateway's startup. Generation
+checks privacy prerequisites before reading/parsing image content and rechecks
+model prerequisites before GPU preparation; cached readiness is neither a reservation
+nor a VRAM guarantee. Existing queue/runtime errors stay distinct. Invalid
+configuration still fails validation. GPU load does not itself mark the image
+service unsupported. Artifact/prerequisite repair is recognized on the next
+successful refresh or generation attempt, without restarting Kuno.
+
+Vashti probes server-side at the configured inference base URL, preserving any
+path prefix, with a two-second discovery deadline, a 64 KiB response limit, and
+no redirects. These limits apply only to discovery. Validate the service marker
+and supported discovery version; ignore additive unknown fields. Advertised
+paths must remain on the same inference host/base path, never the control port.
+
+- 404: no discovery support. Continue ordinary Ollama chat behavior. Old Kuno and
+  plain Ollama cannot be distinguished by this result alone.
+- Connection failure/timeout: discovery unknown/unreachable; do not remove chat
+  configuration or claim the host is definitely plain Ollama.
+- 401/403: an access failure; do not bypass it or downgrade to anonymous access.
+- Malformed/unsupported version: discovery unavailable; leave chat configured.
+- 200: use actual image availability; partial state permits its ready workflows.
+
+### A single streamed generation response
+
+Send the existing recipe to `POST /kuno/v1/images/generate`. Its successful
+response is always `application/x-ndjson`; no Accept negotiation, preview
+identifier, polling, or WebSocket upgrade is required. Headers include
+`Cache-Control: no-store` and `X-Accel-Buffering: no` (a proxy hint, not a
+buffering guarantee). Ordinary Ollama streaming remains unchanged.
+
+Each UTF-8 JSON event is newline-terminated. An illustrative stream:
+
+```json
+{"type":"started"}
+{"type":"preview","step":1,"steps":50,"width":64,"height":64,"png_base64":"<PNG base64>"}
+{"type":"result","mime_type":"image/png","png_base64":"<final PNG base64>"}
+```
+
+`started` means admission accepted the request, not that sampling has begun.
+Preview fields retain their existing meanings and bounds. Frames may be skipped
+for slow clients: only the latest preview is held, not an ever-growing queue.
+The terminal event is exactly one `result` or `error`, followed by EOF. Example:
+
+```json
+{"type":"error","error":"image_generation_failed"}
+```
+
+Validation/prerequisite/admission errors before streaming starts use the existing
+non-2xx JSON HTTP error surface. Once streaming starts, HTTP status is 200 and
+worker errors are terminal error events with fixed codes. EOF without a terminal
+event is interrupted delivery, not success. Final PNG bytes are validated and
+worker cleanup completes before a result is emitted. PNG/preview limits remain
+20 MiB final PNG and 1 MiB preview pipe payload; base64 adds roughly one third.
+Consumers must parse incrementally across arbitrary network chunk boundaries
+and bound event/decoded-image sizes, rather than reading unlimited NDJSON.
+
+The body owns the supervisor result receiver: closing it cancels inference.
+The supervisor retains admission through worker cleanup; uncertain/forced/device
+loss cleanup retains existing recovery behavior. A separate content-capacity
+permit is shared by the body and supervisor, bounding slow completed responses
+as well as active requests. Preview-channel closure does not terminate the final
+result. No reconnection/replay, persisted jobs, or new response deadlines are
+introduced. The existing configured image-worker deadline remains unchanged.
+
+There is no separate preview lookup, enumeration, reconnect, or replay endpoint.
+Previews belong to the initiating response only. The prior beta PNG-only response
+and polling route are removed. A supplied old preview-ID header has no effect.
+Previews/recipes/results remain transient and unlogged; closing or completing
+the response releases its content. Vashti owns permissions and user-content
+storage. Native-worker preview framing itself remains unchanged.
+
+### Required Vashti changes and compatibility
+
+Vashti should discover capabilities on the chosen existing inference backend,
+remove the separate image-token readiness check/form/header, and use the
+advertised ready workflows. Delete obsolete stored image credentials through a
+forward migration; do not expose or repurpose them. No image credential
+keep/clear workflow is needed after migration.
+
+Kuno has only shipped in beta; compatibility with the old Vashti image connector
+is deliberately not retained. Update that connector alongside this Kuno API.
+Older Kuno lacks discovery and expects a control key for images: report that
+images require a Kuno upgrade instead of restoring manual key setup. Plain
+Ollama chat continues working when image discovery is unsupported.
+
+Vashti's Rust connector should incrementally parse NDJSON, process previews,
+validate/decode the final image, surface terminal errors, and cancel by dropping
+the upstream response/request. EOF without a terminal event is a failure. Do
+not retry/replay a possibly dispatched generation automatically. Rust
+authorization/storage and mobile/desktop UI changes remain entirely in the
+Vashti task. The browser receives its own authorized Vashti events, never a
+Kuno control credential. Existing jobs must be quiescent before coordinated
+installation; this handoff does not itself authorize deployment.
+
+### Verification receipt
+
+Backend verification on 2026-09-30:
+
+- `cargo test -p kuno -p kuno-protocol -p kuno-image`: 171 passed, nine ignored
+  hardware/native-environment checks; no failures.
+- `cargo clippy -p kuno -p kuno-protocol -p kuno-image --all-targets -- -D warnings`:
+  passed.
+- `KUNO_SD_SOURCE_DIR=/home/jmicko/dev/vashti/target/kuno-sd-source-88411ef KUNO_SD_BUILD_DIR=/home/jmicko/dev/vashti/target/kuno-sd-build-88411ef-cuda cargo check -p kuno --features native-image --all-targets`:
+  passed against the pinned CUDA/Vulkan static engine.
+- Formatting and `git diff --check`: passed.
+
+Synthetic checks include real HTTP preview delivery before completion,
+disconnect propagation, exact final PNG decoding, terminal error/EOF ordering,
+latest-only backpressure, retained content/admission permits, uncertain cleanup,
+privacy rejection before body polling, keyless discovery/inference, control
+separation, preserved Ollama headers/origins, degraded startup, and conditional
+attention capabilities. No installed-service, live-GPU, end-to-end Vashti, or
+mobile verification is claimed. Exact changed commits and consumer requirements
+are recorded in [the coordination guide](kuno-vashti-coordination.md).

@@ -1,4 +1,5 @@
 fn main() {
+    println!("cargo:rustc-check-cfg=cfg(kuno_native_cuda)");
     println!("cargo:rerun-if-env-changed=KUNO_SD_SOURCE_DIR");
     println!("cargo:rerun-if-env-changed=KUNO_SD_BUILD_DIR");
     println!("cargo:rerun-if-changed=native/shim.cpp");
@@ -121,6 +122,7 @@ fn main() {
             println!("cargo:rustc-link-lib={name}");
         }
         if cache.lines().any(|line| line == "SD_CUDA:BOOL=ON") {
+            println!("cargo:rustc-cfg=kuno_native_cuda");
             assert!(
                 cache.lines().any(|line| line == "GGML_STATIC:BOOL=ON"),
                 "CUDA image builds must statically link the CUDA runtime and BLAS libraries"

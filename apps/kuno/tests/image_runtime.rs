@@ -171,7 +171,7 @@ async fn device_loss_survives_cancellation_and_later_generic_diagnostics() {
     assert_eq!(finished.output.unwrap_err(), "image_vulkan_device_lost");
 }
 #[tokio::test]
-async fn public_image_route_is_authenticated_and_disabled_by_default() {
+async fn public_image_route_is_keyless_and_disabled_by_default() {
     let gateway = Gateway::new(
         Config::default(),
         "image-test-token-with-at-least-32-characters",
@@ -196,11 +196,11 @@ async fn public_image_route_is_authenticated_and_disabled_by_default() {
             .await
             .unwrap()
             .status(),
-        401
+        503
     );
     let response = client
         .post(&url)
-        .bearer_auth("image-test-token-with-at-least-32-characters")
+        .bearer_auth("obsolete-or-incorrect-image-key")
         .json(&recipe())
         .send()
         .await

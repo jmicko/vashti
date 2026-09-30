@@ -374,8 +374,16 @@ All routes below are available only on the control listener and require
 Pausing is not an immediate GPU reservation. Wait until `active` is false, and
 ensure `recovery_required` is false, before treating the upstream as quiescent.
 Loaded models may still occupy GPU memory. The optional native image worker has
-a separate authenticated generation route and reserves admission through cleanup;
+a keyless generation route on the inference listener and reserves admission through cleanup;
 see [image API and lifecycle](../../docs/kuno-images.md#api-and-lifecycle).
+
+`GET /kuno/v1/capabilities` discovers image availability on that same inference
+listener without a control key. `POST /kuno/v1/images/generate` accepts the
+existing JSON recipe and streams NDJSON: acceptance, latest previews, then a
+final base64 PNG or fixed error code. Dropping the response cancels generation;
+cleanup retains admission. There is no image polling endpoint or separate image
+credential. Existing beta Vashti connectors require an update to consume this
+stream. This API does not change ordinary Ollama routes.
 
 Cancellation closes the upstream HTTP connection, but Kuno cannot yet verify
 that Ollama has stopped computing. A dropped or failed managed response therefore

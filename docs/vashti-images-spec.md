@@ -285,10 +285,12 @@ through the transient image response, not through its bounded text-result field.
 Propagate Stop through tool execution as well as through the LLM request, and
 do not start a follow-up LLM request after cancellation.
 
-The current Kuno API returns one PNG and has a basic enabled flag, not complete
-capability/progress discovery. Add bounded, versioned capability discovery for
+The baseline beta Kuno API returned one PNG and a basic enabled flag. The
+[current Kuno contract](kuno-images.md#inference-access-discovery-and-streaming-2026-09-30)
+supersedes that transport with keyless discovery and NDJSON previews/results;
+Vashti connector integration is pending. Consume bounded capability discovery for
 supported workflows, readiness, settings/ranges, reference limits, and optional
-attention modes. Vashti connects server-to-server with configured credentials;
+attention modes. Vashti connects server-to-server without an image credential;
 do not expose privileged Kuno configuration/control tokens to browsers. Missing
 models should lead admins to the curated collection download/status controls.
 Readiness errors should be actionable for ordinary users.
@@ -442,6 +444,9 @@ release. Collect feedback without implementing it in the meantime.
   `vashti-0.13.0-beta.1.apk`. The app already has an internal version/versionCode;
   the shared `vashti-android.apk` filename makes the browser ask to download it
   again even when it is a new release. Update download links and manifests together.
+
+**Historical beta.1 instructions, superseded by the keyless Kuno contract.**
+The updated Vashti connector must remove this workflow.
 
 For beta.1 testing, the installed inference host's current access token is stored
 at `/etc/kuno/control-token` (root-readable). Retrieve it locally with

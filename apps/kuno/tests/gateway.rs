@@ -117,6 +117,171 @@ async fn until(mut condition: impl FnMut() -> bool) {
     .expect("condition timed out");
 }
 
+#[tokio::test]
+async fn discovery_and_images_are_keyless_while_controls_and_origins_remain_separate() {
+    let upstream = Router::new().fallback(any(|request: Request| async move {
+        axum::Json(serde_json::json!({
+            "authorization": request.headers().get("authorization").and_then(|v| v.to_str().ok()),
+            "origin": request.headers().get("origin").and_then(|v| v.to_str().ok()),
+        }))
+    }));
+    let f = Fixture::new(upstream, 2).await;
+    f.gateway.admission.pause(true);
+    for token in [None, Some("obsolete-token"), Some(TOKEN)] {
+        let mut request = f.client.get(format!("{}/kuno/v1/capabilities", f.base));
+        if let Some(token) = token {
+            request = request.bearer_auth(token);
+        }
+        let response = request.send().await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        let value: serde_json::Value = response.json().await.unwrap();
+        assert_eq!(value["service"], "kuno");
+        assert_eq!(value["discovery_version"], 1);
+        assert_eq!(value["inference_auth"], "none");
+        assert_eq!(value["images"]["state"], "disabled");
+        assert_eq!(value["images"]["access"], "inference");
+        assert_eq!(
+            value["images"]["response_formats"],
+            serde_json::json!(["application/x-ndjson"])
+        );
+        assert!(!value.to_string().contains("token"));
+        let _: kuno_protocol::Capabilities = serde_json::from_value(value).unwrap();
+        let mut request = f
+            .client
+            .post(format!("{}/kuno/v1/images/generate", f.base))
+            .header("accept", "application/x-ndjson")
+            .json(&serde_json::json!({}));
+        if let Some(token) = token {
+            request = request.bearer_auth(token);
+        }
+        let response = request.send().await.unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            response.json::<serde_json::Value>().await.unwrap()["error"],
+            "image_generation_not_configured"
+        );
+        let mut request = f.client.get(format!(
+            "{}/kuno/v1/images/previews/{}",
+            f.base,
+            "a".repeat(64)
+        ));
+        if let Some(token) = token {
+            request = request.bearer_auth(token);
+        }
+        assert_eq!(
+            request.send().await.unwrap().status(),
+            StatusCode::NOT_FOUND
+        );
+    }
+    for path in ["status", "resources", "learning", "usage"] {
+        assert_eq!(
+            f.client
+                .get(format!("{}/kuno/v1/{path}", f.control))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            f.client
+                .get(format!("{}/kuno/v1/{path}", f.base))
+                .bearer_auth(TOKEN)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::NOT_FOUND
+        );
+    }
+    assert_eq!(
+        f.client
+            .post(format!("{}/kuno/v1/images/generate", f.control))
+            .json(&serde_json::json!({}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        f.client
+            .post(format!("{}/kuno/v1/images/generate", f.base))
+            .body("{}")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNSUPPORTED_MEDIA_TYPE
+    );
+    assert_eq!(
+        f.client
+            .get(format!("{}/kuno/v1/capabilities", f.base))
+            .header("origin", "https://example.invalid")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    let response = f
+        .client
+        .get(format!("{}/api/tags", f.base))
+        .bearer_auth("upstream-credential")
+        .header("origin", "https://example.invalid")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let value: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(value["authorization"], "Bearer upstream-credential");
+    assert_eq!(value["origin"], "https://example.invalid");
+    assert!(f.gateway.admission.status().paused);
+    assert_eq!(f.gateway.admission.status().completed, 0);
+}
+
+#[tokio::test]
+async fn configured_missing_images_do_not_stop_gateway_startup() {
+    use kuno::{
+        image_runtime::ImageConfig,
+        pool::PoolConfig,
+        worker::{DeviceSelection, WorkerConfig},
+    };
+    let directory = tempfile::tempdir().unwrap();
+    let config = Config {
+        managed: Some(PoolConfig {
+            reserve_bytes: 1024 * 1024 * 1024,
+            workers: vec![WorkerConfig {
+                executable: "/bin/false".into(),
+                models: directory.path().into(),
+                home: directory.path().join("home"),
+                address: "127.0.0.1:44322".parse().unwrap(),
+                device: DeviceSelection::Vulkan {
+                    index: 0,
+                    pci_address: "0000:01:00.0".into(),
+                },
+                max_loaded_models: 3,
+                context_length: 4096,
+            }],
+        }),
+        image: Some(ImageConfig {
+            models: directory.path().join("missing-private-model-directory"),
+            pci_address: "0000:01:00.0".into(),
+            timeout_seconds: 60,
+            collections: vec!["qwen-image-2.1-int8".into()],
+        }),
+        ..Config::default()
+    };
+    let gateway = Gateway::new(config, TOKEN).unwrap();
+    // Only /bin/false is launched; no installed worker, model, or GPU is used.
+    tokio::time::timeout(Duration::from_secs(10), gateway.initialize_workers())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!gateway.admission.status().recovery_required);
+}
+
 #[test]
 fn exact_routes_and_methods_cannot_bypass_admission() {
     for path in [
@@ -292,12 +457,7 @@ async fn paused_gate_blocks_inference_and_unknown_routes_without_blocking_metada
             .status(),
         StatusCode::OK
     );
-    for path in [
-        "/api/chat",
-        "/api/create",
-        "/future",
-        "/kuno/v1/admission/resume",
-    ] {
+    for path in ["/api/chat", "/api/create", "/future"] {
         assert_eq!(
             f.client
                 .post(format!("{}{path}", f.base))
@@ -308,6 +468,15 @@ async fn paused_gate_blocks_inference_and_unknown_routes_without_blocking_metada
             StatusCode::SERVICE_UNAVAILABLE
         );
     }
+    assert_eq!(
+        f.client
+            .post(format!("{}/kuno/v1/admission/resume", f.base))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NOT_FOUND
+    );
     assert_eq!(
         f.client
             .get(format!("{}/api/tags", f.base))

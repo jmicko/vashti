@@ -3,6 +3,28 @@ use serde::{Deserialize, Serialize};
 pub const QWEN21_RECIPE: &str = "qwen-image-2.1-text-to-image/v1";
 pub const QWEN21_EDIT_RECIPE: &str = "qwen-image-2.1-edit/v1";
 pub const MAX_IMAGE_REQUEST_BYTES: usize = 64 * 1024 * 1024;
+pub const IMAGE_STREAM_MEDIA_TYPE: &str = "application/x-ndjson";
+
+/// Transient HTTP response content. Never log or persist these events in Kuno.
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ImageStreamEvent {
+    Started,
+    Preview {
+        step: u32,
+        steps: u32,
+        width: u32,
+        height: u32,
+        png_base64: String,
+    },
+    Result {
+        mime_type: String,
+        png_base64: String,
+    },
+    Error {
+        error: String,
+    },
+}
 pub const QWEN_RECIPE: &str = "qwen-image-2512-text-to-image/v1";
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

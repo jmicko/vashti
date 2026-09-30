@@ -11,6 +11,8 @@ use kuno_protocol::{ImageRecipe, ImportedImageRecipe, QWEN_RECIPE};
 use serde_json::{Map, Value};
 use std::collections::BTreeSet;
 pub const MAX_PNG_BYTES: usize = 64 * 1024 * 1024;
+/// Whether the embedded native engine was built with its CUDA backend.
+pub const NATIVE_CUDA_ENABLED: bool = cfg!(kuno_native_cuda);
 pub const MAX_METADATA_BYTES: usize = 1024 * 1024;
 type Result<T> = std::result::Result<T, &'static str>;
 

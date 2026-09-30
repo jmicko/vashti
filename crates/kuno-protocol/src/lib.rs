@@ -1,4 +1,5 @@
-//! Versioned, content-free Kuno control responses. Ollama traffic stays opaque.
+//! Versioned Kuno contracts. Discovery/control are content-free; image events
+//! contain transient inference content and must never enter diagnostics/storage.
 
 use serde::{Deserialize, Serialize};
 
@@ -29,3 +30,6 @@ pub use resources::*;
 
 mod image;
 pub use image::*;
+
+mod capabilities;
+pub use capabilities::*;

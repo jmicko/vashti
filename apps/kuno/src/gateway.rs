@@ -8,7 +8,7 @@ use crate::{
 use axum::{
     Json, Router,
     body::Body,
-    extract::{Path, Request, State},
+    extract::{Request, State},
     http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
@@ -90,12 +90,8 @@ pub struct Gateway {
     managed: Option<crate::pool::Pool>,
     image_shutdown: tokio::sync::watch::Sender<bool>,
     image_requests: Arc<tokio::sync::Semaphore>,
-    image_previews: Mutex<
-        std::collections::HashMap<
-            String,
-            tokio::sync::watch::Sender<Option<kuno_image::preview::Preview>>,
-        >,
-    >,
+    image_readiness: Arc<crate::image_access::ImageReadiness>,
+    image_fast_attention: bool,
 }
 
 impl Gateway {
@@ -155,6 +151,20 @@ impl Gateway {
                 )
             })
             .transpose()?;
+        let image_fast_attention = kuno_image::NATIVE_CUDA_ENABLED
+            && config.image.as_ref().is_some_and(|image| {
+                config.managed.as_ref().is_some_and(|pool| {
+                    pool.workers.iter().any(|worker| {
+                        matches!(worker.device, crate::worker::DeviceSelection::Cuda { .. })
+                            && worker
+                                .device
+                                .pci_address()
+                                .eq_ignore_ascii_case(&image.pci_address)
+                    })
+                })
+            });
+        let image_readiness =
+            crate::image_access::ImageReadiness::new(config.image.as_ref(), image_fast_attention);
         Ok(Arc::new(Self {
             config,
             client,
@@ -165,21 +175,17 @@ impl Gateway {
             managed,
             image_shutdown: tokio::sync::watch::channel(false).0,
             image_requests: Arc::new(tokio::sync::Semaphore::new(2)),
-            image_previews: Mutex::new(Default::default()),
+            image_readiness,
+            image_fast_attention,
         }))
     }
 
     pub async fn initialize_workers(&self) -> Result<(), &'static str> {
-        if let Some(image) = &self.config.image {
-            if !cfg!(feature = "native-image") {
-                return Err("image_engine_not_in_this_build");
-            }
-            crate::image_privacy::require_no_swap()?;
-            crate::image_privacy::require_landlock()?;
-            for id in &image.collections {
-                crate::collections::ready(&image.models, id)?;
-            }
-        }
+        // Image prerequisites affect image availability, never healthy Ollama
+        // forwarding. Generation checks them again before touching inference.
+        self.image_readiness
+            .snapshot(self.config.image.clone())
+            .await;
         if let Some(pool) = &self.managed {
             pool.initialize().await?;
         }
@@ -190,13 +196,15 @@ impl Gateway {
     }
 
     pub fn compatibility(self: &Arc<Self>) -> Router {
-        // Kuno's content endpoint is authenticated even on the compatibility
-        // listener. Existing Ollama routes retain their original semantics.
+        // Trusted-LAN inference is keyless, including images and discovery.
+        // Local privileged controls retain their separate authentication.
         let images = Router::new()
+            .route("/kuno/v1/capabilities", get(capabilities))
             .route("/kuno/v1/images/generate", post(generate_image))
-            .route("/kuno/v1/images/previews/{id}", get(image_preview))
-            .layer(middleware::from_fn_with_state(self.clone(), authenticate));
-        images.fallback(proxy).with_state(self.clone())
+            .layer(middleware::from_fn(inference_guard));
+        images
+            .fallback(compatibility_fallback)
+            .with_state(self.clone())
     }
 
     pub fn control(self: &Arc<Self>) -> Router {
@@ -205,8 +213,6 @@ impl Gateway {
             .route("/kuno/v1/usage", get(usage))
             .route("/kuno/v1/resources", get(resources))
             .route("/kuno/v1/learning", get(learning))
-            .route("/kuno/v1/images/generate", post(generate_image))
-            .route("/kuno/v1/images/previews/{id}", get(image_preview))
             .route("/kuno/v1/admission/pause", post(pause))
             .route("/kuno/v1/admission/resume", post(resume))
             .fallback(|| async { error(StatusCode::NOT_FOUND, "unknown_control_route") })
@@ -307,57 +313,61 @@ async fn status(State(gateway): State<Arc<Gateway>>) -> Json<Status> {
     })
 }
 
-// Keys are random, per-call capabilities supplied over authenticated transport.
-// Entries and their sole latest frame disappear when the request ends.
-struct PreviewScope {
-    gateway: Arc<Gateway>,
-    id: String,
-}
-impl Drop for PreviewScope {
-    fn drop(&mut self) {
-        if let Ok(mut entries) = self.gateway.image_previews.lock() {
-            entries.remove(&self.id);
-        }
-    }
-}
-async fn image_preview(State(gateway): State<Arc<Gateway>>, Path(id): Path<String>) -> Response {
-    let frame = gateway
-        .image_previews
-        .lock()
-        .ok()
-        .and_then(|entries| entries.get(&id).map(|sender| sender.borrow().clone()));
-    match frame {
-        Some(frame) => ([(header::CACHE_CONTROL, "no-store")], Json(frame)).into_response(),
-        None => error(StatusCode::NOT_FOUND, "image_preview_unavailable"),
-    }
+async fn capabilities(State(gateway): State<Arc<Gateway>>) -> Response {
+    let images = gateway
+        .image_readiness
+        .snapshot(gateway.config.image.clone())
+        .await;
+    (
+        [(header::CACHE_CONTROL, "no-store")],
+        Json(kuno_protocol::Capabilities {
+            service: "kuno".into(),
+            discovery_version: 1,
+            version: env!("CARGO_PKG_VERSION").into(),
+            inference_auth: "none".into(),
+            images,
+        }),
+    )
+        .into_response()
 }
 
-async fn generate_image(State(gateway): State<Arc<Gateway>>, request: Request) -> Response {
-    let Some(config) = gateway
-        .config
-        .image
-        .clone()
-        .filter(|_| cfg!(feature = "native-image"))
-    else {
-        return error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "image_generation_not_configured",
-        );
-    };
-    // Bound content-bearing memory before reading large multi-image requests.
-    let slot = match gateway.image_requests.clone().try_acquire_owned() {
-        Ok(slot) => slot,
-        Err(_) => return error(StatusCode::SERVICE_UNAVAILABLE, "image_queue_full"),
-    };
-    let preview_id = match request.headers().get("x-kuno-image-preview-id") {
-        None => None,
-        Some(value) => match value.to_str() {
-            Ok(id) if id.len() == 64 && id.bytes().all(|b| b.is_ascii_hexdigit()) => {
-                Some(id.to_owned())
-            }
-            _ => return error(StatusCode::BAD_REQUEST, "image_preview_id_invalid"),
-        },
-    };
+async fn inference_guard(request: Request, next: Next) -> Response {
+    // Vashti connects server-to-server. Do not grant cross-origin browser access
+    // to keyless Kuno-owned routes; leave Ollama's origin policy untouched.
+    if request.headers().contains_key(header::ORIGIN) {
+        return error(StatusCode::FORBIDDEN, "inference_origin_forbidden");
+    }
+    if request.method() == Method::POST {
+        let json = request
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.split(';').next())
+            .is_some_and(|v| v.trim().eq_ignore_ascii_case("application/json"));
+        if !json {
+            return error(
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                "image_content_type_required",
+            );
+        }
+    }
+    next.run(request).await
+}
+
+async fn compatibility_fallback(State(gateway): State<Arc<Gateway>>, request: Request) -> Response {
+    if request.uri().path() == "/kuno" || request.uri().path().starts_with("/kuno/") {
+        return error(StatusCode::NOT_FOUND, "unknown_inference_route");
+    }
+    proxy(State(gateway), request).await
+}
+
+async fn image_recipe(
+    request: Request,
+    privacy: impl std::future::Future<Output = Result<(), &'static str>>,
+) -> Result<kuno_protocol::ImageRecipe, (StatusCode, &'static str)> {
+    privacy
+        .await
+        .map_err(|code| (StatusCode::SERVICE_UNAVAILABLE, code))?;
     let bytes = match tokio::time::timeout(
         Duration::from_secs(60),
         axum::body::to_bytes(request.into_body(), kuno_protocol::MAX_IMAGE_REQUEST_BYTES),
@@ -365,16 +375,39 @@ async fn generate_image(State(gateway): State<Arc<Gateway>>, request: Request) -
     .await
     {
         Ok(Ok(bytes)) => bytes,
-        Ok(Err(_)) => return error(StatusCode::PAYLOAD_TOO_LARGE, "image_request_too_large"),
-        Err(_) => return error(StatusCode::REQUEST_TIMEOUT, "image_request_timeout"),
+        Ok(Err(_)) => return Err((StatusCode::PAYLOAD_TOO_LARGE, "image_request_too_large")),
+        Err(_) => return Err((StatusCode::REQUEST_TIMEOUT, "image_request_timeout")),
     };
-    let recipe: kuno_protocol::ImageRecipe = match serde_json::from_slice(&bytes) {
+    serde_json::from_slice(&bytes).map_err(|_| (StatusCode::BAD_REQUEST, "image_request_invalid"))
+}
+
+async fn generate_image(State(gateway): State<Arc<Gateway>>, request: Request) -> Response {
+    let Some(config) = gateway.config.image.clone() else {
+        return error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "image_generation_not_configured",
+        );
+    };
+    if !cfg!(feature = "native-image") {
+        return error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "image_engine_not_in_this_build",
+        );
+    }
+    // Bound content-bearing memory before reading large multi-image requests.
+    let slot = match gateway.image_requests.clone().try_acquire_owned() {
+        Ok(slot) => Arc::new(slot),
+        Err(_) => return error(StatusCode::SERVICE_UNAVAILABLE, "image_queue_full"),
+    };
+    let recipe = match image_recipe(request, crate::image_access::require_privacy()).await {
         Ok(recipe) => recipe,
-        Err(_) => return error(StatusCode::BAD_REQUEST, "image_request_invalid"),
+        Err((status, code)) => return error(status, code),
     };
-    drop(bytes);
     if let Err(code) = recipe.validate_execution() {
         return error(StatusCode::BAD_REQUEST, code);
+    }
+    if recipe.attention == kuno_protocol::ImageAttention::Fast && !gateway.image_fast_attention {
+        return error(StatusCode::BAD_REQUEST, "image_attention_unsupported");
     }
     if !config
         .collections
@@ -389,33 +422,26 @@ async fn generate_image(State(gateway): State<Arc<Gateway>>, request: Request) -
             "native_image_seed_range_unsupported",
         );
     }
+    if let Err(code) = crate::image_access::require_workflow(
+        config.clone(),
+        &recipe.workflow,
+        gateway.image_fast_attention,
+    )
+    .await
+    {
+        return error(StatusCode::SERVICE_UNAVAILABLE, code);
+    }
     let mut lease = match gateway.admission.acquire().await {
         Ok(lease) => lease,
         Err(code) => return error(StatusCode::SERVICE_UNAVAILABLE, code),
     };
-    let (preview_scope, previews) = if let Some(id) = preview_id {
-        let mut entries = gateway.image_previews.lock().unwrap();
-        if entries.contains_key(&id) {
-            return error(StatusCode::CONFLICT, "image_preview_id_in_use");
-        }
-        let sender = tokio::sync::watch::channel(None).0;
-        entries.insert(id.clone(), sender.clone());
-        (
-            Some(PreviewScope {
-                gateway: gateway.clone(),
-                id,
-            }),
-            Some(sender),
-        )
-    } else {
-        (None, None)
-    };
+    let (previews, stream_previews) = tokio::sync::watch::channel(None);
     let (mut send, receive) = tokio::sync::oneshot::channel();
+    let task_slot = slot.clone();
     // The task owns cleanup even when HTTP drops the waiting handler. No next
     // model may enter until the native process is reaped, or recovery is set.
     tokio::spawn(async move {
-        let _request_slot = slot;
-        let _preview_scope = preview_scope;
+        let _request_slot = task_slot;
         let result = async {
             if send.is_closed() {
                 return Err("image_cancelled");
@@ -433,7 +459,7 @@ async fn generate_image(State(gateway): State<Arc<Gateway>>, request: Request) -
                 recipe,
                 &mut send,
                 Some(gateway.image_shutdown.subscribe()),
-                previews,
+                Some(previews),
             )
             .await;
             if finished.reaped
@@ -448,28 +474,7 @@ async fn generate_image(State(gateway): State<Arc<Gateway>>, request: Request) -
         drop(lease);
         let _ = send.send(result);
     });
-    match receive.await {
-        Ok(Ok(png)) => (
-            [
-                (header::CONTENT_TYPE, "image/png"),
-                (header::CACHE_CONTROL, "no-store"),
-            ],
-            png,
-        )
-            .into_response(),
-        Ok(Err(code)) => error(
-            if code.starts_with("image_reference_") {
-                StatusCode::BAD_REQUEST
-            } else {
-                StatusCode::SERVICE_UNAVAILABLE
-            },
-            code,
-        ),
-        Err(_) => error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "image_worker_supervisor_failed",
-        ),
-    }
+    crate::image_stream::response(receive, stream_previews, slot)
 }
 
 async fn pause(State(gateway): State<Arc<Gateway>>) -> Json<Status> {
@@ -933,6 +938,25 @@ impl Drop for LeasedBody {
 #[cfg(test)]
 mod response_deadline_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn privacy_failure_never_polls_the_content_body() {
+        let polls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let seen = polls.clone();
+        let body = Body::from_stream(futures_util::stream::poll_fn(move |_| {
+            seen.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Poll::Ready(Some(Ok::<_, std::convert::Infallible>(Bytes::from_static(
+                b"{}",
+            ))))
+        }));
+        let request = Request::builder().body(body).unwrap();
+        let result = image_recipe(request, async { Err("image_privacy_unavailable") }).await;
+        assert_eq!(
+            result.err(),
+            Some((StatusCode::SERVICE_UNAVAILABLE, "image_privacy_unavailable"))
+        );
+        assert_eq!(polls.load(std::sync::atomic::Ordering::Relaxed), 0);
+    }
 
     #[tokio::test(start_paused = true)]
     async fn disabled_deadline_allows_long_work_and_preserves_backend_errors() {
