@@ -1,5 +1,5 @@
 diff --git a/src/ggml-vulkan/ggml-vulkan.cpp b/src/ggml-vulkan/ggml-vulkan.cpp
-index 96b541d..b589dd2 100644
+index 96b541d..59b645f 100644
 --- a/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/src/ggml-vulkan/ggml-vulkan.cpp
 @@ -1,4 +1,5 @@
@@ -25,7 +25,7 @@ index 96b541d..b589dd2 100644
      bool coopmat1_fa_support {};
      uint32_t coopmat_m;
      uint32_t coopmat_n;
-@@ -852,6 +856,10 @@ struct vk_device_struct {
+@@ -852,6 +856,11 @@ struct vk_device_struct {
      uint32_t coopmat_int_m;
      uint32_t coopmat_int_n;
      uint32_t coopmat_int_k;
@@ -33,10 +33,11 @@ index 96b541d..b589dd2 100644
 +    uint32_t int8_m8_tile_n {};
 +    uint32_t int8_m8_subgroup {};
 +    uint32_t fa_m8_query_tile = 16;
++    uint32_t fa_m8_key_tile = 32;
  
      bool coopmat2;
      bool coopmat2_bf16_support {};
-@@ -914,6 +922,7 @@ struct vk_device_struct {
+@@ -914,6 +923,7 @@ struct vk_device_struct {
      vk_pipeline pipeline_quantize_i8_convrot;
      vk_pipeline pipeline_mul_mat_i8_tensorwise;
      vk_pipeline pipeline_mul_mat_i8_tensorwise_cm1;
@@ -44,7 +45,7 @@ index 96b541d..b589dd2 100644
  
      vk_pipeline pipeline_dequant[GGML_TYPE_COUNT];
      vk_pipeline pipeline_dequant_mul_mat_vec_f32_f32[DMMV_WG_SIZE_COUNT][GGML_TYPE_COUNT][mul_mat_vec_max_cols];
-@@ -3873,7 +3882,19 @@ static vk_fa_tuning_params get_fa_tuning_params(const vk_device& device, uint32_
+@@ -3873,7 +3883,19 @@ static vk_fa_tuning_params get_fa_tuning_params(const vk_device& device, uint32_
      if (path == FA_COOPMAT1) {
          bool shape_ok = (f32acc && device->coopmat_support_16x16x16_f32acc) ||
                          (!f32acc && device->coopmat_support_16x16x16_f16acc);
@@ -58,14 +59,14 @@ index 96b541d..b589dd2 100644
 +            device->coopmat_support_8x16x16_f16acc &&
 +            (!f32acc || device->coopmat_support_8x16x16_f32acc)) {
 +            path = params.path = FA_COOPMAT1_M8;
-+            params.block_rows = device->fa_m8_query_tile;
-+            params.block_cols = 32;
++            params.block_rows = device->fa_m8_key_tile == 32 ? device->fa_m8_query_tile : 16;
++            params.block_cols = device->fa_m8_key_tile;
 +            shape_ok = true;
 +        }
          bool shmem_ok = ggml_vk_flash_attn_coopmat_shmem_support(device, params, hsk, hsv, f32acc, k_type, v_type);
  
          if (!shape_ok || !shmem_ok) {
-@@ -3882,7 +3903,7 @@ static vk_fa_tuning_params get_fa_tuning_params(const vk_device& device, uint32_
+@@ -3882,7 +3904,7 @@ static vk_fa_tuning_params get_fa_tuning_params(const vk_device& device, uint32_
      }
  
      // scalar is faster than coopmat when N==1
@@ -74,21 +75,21 @@ index 96b541d..b589dd2 100644
          path = FA_SCALAR;
      }
  
-@@ -3891,6 +3912,13 @@ static vk_fa_tuning_params get_fa_tuning_params(const vk_device& device, uint32_
+@@ -3891,6 +3913,13 @@ static vk_fa_tuning_params get_fa_tuning_params(const vk_device& device, uint32_
          return get_fa_tuning_params_scalar(device, hsk, hsv, n_rows, n_kv, k_type, v_type, f32acc);
      case FA_COOPMAT1:
          return get_fa_tuning_params_coopmat1(device, hsk, hsv, n_rows, n_kv, k_type, v_type, f32acc);
 +    case FA_COOPMAT1_M8: {
 +        auto params = get_fa_tuning_params_coopmat1(device, hsk, hsv, n_rows, n_kv, k_type, v_type, f32acc);
 +        params.path = FA_COOPMAT1_M8;
-+        params.block_rows = device->fa_m8_query_tile;
-+        params.block_cols = 32;
++        params.block_rows = device->fa_m8_key_tile == 32 ? device->fa_m8_query_tile : 16;
++        params.block_cols = device->fa_m8_key_tile;
 +        return params;
 +    }
      case FA_COOPMAT2:
          return get_fa_tuning_params_coopmat2(device, hsk, hsv, n_rows, n_kv, k_type, v_type, f32acc);
      default:
-@@ -4523,7 +4551,7 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+@@ -4523,7 +4552,7 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
  #if defined(VK_KHR_cooperative_matrix) && defined(GGML_VULKAN_COOPMAT_GLSLC_SUPPORT)
      if (device->coopmat1_fa_support) {
          for (auto &fa : device->pipeline_flash_attn_f32_f16) {
@@ -97,7 +98,7 @@ index 96b541d..b589dd2 100644
              const uint32_t Br = fa.first.Br;
              const uint32_t Bc = fa.first.Bc;
              const bool aligned = fa.first.aligned;
-@@ -4536,7 +4564,12 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+@@ -4536,7 +4565,12 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
              const void * spv_data;
              size_t spv_size;
              const char *name;
@@ -111,7 +112,7 @@ index 96b541d..b589dd2 100644
  #if defined(VK_KHR_shader_bfloat16) && defined(GGML_VULKAN_BFLOAT16_GLSLC_SUPPORT)
                  if (!device->coopmat_bf16_support) continue;
                  spv_data = flash_attn_f32_f16_bf16_cm1_data;
-@@ -5478,6 +5511,14 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+@@ -5478,6 +5512,14 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
  #if defined(GGML_VULKAN_COOPMAT_GLSLC_SUPPORT)
          if (device->coopmat_int_support) {
              ggml_vk_create_pipeline(device, device->pipeline_mul_mat_i8_tensorwise_cm1, "mul_mat_i8_tensorwise_cm1", mul_mat_i8_tensorwise_cm1_len, mul_mat_i8_tensorwise_cm1_data, "main", 6, sizeof(vk_mul_mat_i8_tensorwise_push_constants), {4 * device->coopmat_int_n, 4 * device->coopmat_int_m, 1}, {device->subgroup_size, device->coopmat_int_m, device->coopmat_int_n, device->coopmat_int_k}, 1, true, true, device->subgroup_size);
@@ -126,7 +127,7 @@ index 96b541d..b589dd2 100644
          }
  #endif
      }
-@@ -6870,6 +6911,9 @@ static vk_device ggml_vk_get_device(size_t idx) {
+@@ -6870,6 +6912,9 @@ static vk_device ggml_vk_get_device(size_t idx) {
                          if (prop.MSize == 16 && prop.NSize == 16 && prop.KSize == 16) {
                              device->coopmat_support_16x16x16_f32acc = true;
                          }
@@ -136,7 +137,7 @@ index 96b541d..b589dd2 100644
                      } else if ((vk::ComponentTypeKHR)prop.CType == vk::ComponentTypeKHR::eFloat16 &&
                                 (vk::ComponentTypeKHR)prop.ResultType == vk::ComponentTypeKHR::eFloat16) {
                          // coopmat sizes not set yet
-@@ -6885,6 +6929,9 @@ static vk_device ggml_vk_get_device(size_t idx) {
+@@ -6885,6 +6930,9 @@ static vk_device ggml_vk_get_device(size_t idx) {
                          if (prop.MSize == 16 && prop.NSize == 16 && prop.KSize == 16) {
                              device->coopmat_support_16x16x16_f16acc = true;
                          }
@@ -146,7 +147,7 @@ index 96b541d..b589dd2 100644
                      }
                  } else if ((vk::ComponentTypeKHR)prop.AType      == vk::ComponentTypeKHR::eSint8 &&
                             (vk::ComponentTypeKHR)prop.BType      == vk::ComponentTypeKHR::eSint8 &&
-@@ -6937,6 +6984,36 @@ static vk_device ggml_vk_get_device(size_t idx) {
+@@ -6937,6 +6985,42 @@ static vk_device ggml_vk_get_device(size_t idx) {
              device_extensions.push_back("VK_KHR_shader_bfloat16");
          }
  #endif
@@ -176,14 +177,20 @@ index 96b541d..b589dd2 100644
 +        const char * fa_query_tile = getenv("GGML_VK_FA_M8_QUERY_TILE");
 +        const uint32_t query_tile = fa_query_tile && strcmp(fa_query_tile, "32") == 0 ? 32 :
 +                                    fa_query_tile && strcmp(fa_query_tile, "64") == 0 ? 64 : 16;
++        // Key reuse is a separate experiment with Br fixed at 16. Keep four
++        // subgroups; each subgroup computes 2/4 adjacent M8 key fragments.
++        const char * fa_key_tile = getenv("GGML_VK_FA_M8_KEY_TILE");
++        const uint32_t key_tile = fa_key_tile && strcmp(fa_key_tile, "64") == 0 ? 64 :
++                                  fa_key_tile && strcmp(fa_key_tile, "128") == 0 ? 128 : 32;
 +        if (device->architecture == vk_device_architecture::INTEL_XE2 &&
 +            device->coopmat_support_8x16x16_f16acc && device->coopmat_support_8x16x16_f32acc) {
 +            device->fa_m8_query_tile = query_tile;
++            device->fa_m8_key_tile = key_tile;
 +        }
  #endif
          device->name = GGML_VK_NAME + std::to_string(idx);
  
-@@ -10116,12 +10193,16 @@ static void ggml_vk_mul_mat_i8_tensorwise(
+@@ -10116,12 +10200,16 @@ static void ggml_vk_mul_mat_i8_tensorwise(
      GGML_ASSERT(ggml_vk_can_use_mul_mat_i8_tensorwise(ctx->device, dst));
      const uint32_t rows = (uint32_t) ggml_nrows(dst);
      uint32_t coop_rows = 0;
@@ -202,7 +209,7 @@ index 96b541d..b589dd2 100644
      }
  #endif
  
-@@ -10161,7 +10242,7 @@ static void ggml_vk_mul_mat_i8_tensorwise(
+@@ -10161,7 +10249,7 @@ static void ggml_vk_mul_mat_i8_tensorwise(
      };
  
      if (coop_rows > 0) {
@@ -211,7 +218,7 @@ index 96b541d..b589dd2 100644
      }
      dispatch(ctx->device->pipeline_mul_mat_i8_tensorwise, coop_rows, rows - coop_rows);
  }
-@@ -10889,7 +10970,8 @@ static bool ggml_vk_flash_attn_coopmat_shmem_support(const vk_device& device, co
+@@ -10889,9 +10977,10 @@ static bool ggml_vk_flash_attn_coopmat_shmem_support(const vk_device& device, co
      const uint32_t Br = params.block_rows;
      const uint32_t Bc = params.block_cols;
  
@@ -219,9 +226,21 @@ index 96b541d..b589dd2 100644
 +    const bool m8 = params.path == FA_COOPMAT1_M8;
 +    const uint32_t MatBr = 16, MatBc = m8 ? 8 : 16;
  
-     const uint32_t row_split = Bc / MatBc;
+-    const uint32_t row_split = Bc / MatBc;
++    const uint32_t row_split = m8 ? params.row_split : Bc / MatBc;
  
-@@ -10918,8 +11000,8 @@ static bool ggml_vk_flash_attn_coopmat_shmem_support(const vk_device& device, co
+     const uint32_t hsk_pad = ROUNDUP_POW2(hsk, 16);
+     const uint32_t hsv_pad = ROUNDUP_POW2(hsv, 16);
+@@ -10899,7 +10988,7 @@ static bool ggml_vk_flash_attn_coopmat_shmem_support(const vk_device& device, co
+     const uint32_t acctype = f32acc ? 4 : 2;
+     const uint32_t f16vec4 = 8;
+ 
+-    const uint32_t tmpsh = (Bc / MatBc) * sizeof(float);
++    const uint32_t tmpsh = row_split * sizeof(float);
+     // DATA_A_IQ4_NL is compiled into the FA shaders unconditionally, so its shared table is always allocated.
+     const uint32_t iq_shmem = 16 * sizeof(ggml_fp16_t);
+ 
+@@ -10918,8 +11007,8 @@ static bool ggml_vk_flash_attn_coopmat_shmem_support(const vk_device& device, co
  
      // BF16 PVMat accumulator is f32 (no bf16 accumulator support), so pvsh is vec4 (16 bytes)
      const uint32_t pvsh_elem_size = (k_type == GGML_TYPE_BF16) ? 16u : f16vec4;
@@ -261,10 +280,10 @@ index 0000000..0a60953
 +}
 diff --git a/src/ggml-vulkan/vulkan-shaders/flash_attn_cm1_m8.comp b/src/ggml-vulkan/vulkan-shaders/flash_attn_cm1_m8.comp
 new file mode 100644
-index 0000000..d564437
+index 0000000..086462c
 --- /dev/null
 +++ b/src/ggml-vulkan/vulkan-shaders/flash_attn_cm1_m8.comp
-@@ -0,0 +1,670 @@
+@@ -0,0 +1,685 @@
 +#version 450
 +
 +#extension GL_EXT_control_flow_attributes : enable
@@ -298,6 +317,9 @@ index 0000000..d564437
 +// Query tiling keeps the device-supported M8/N16/K16 fragments unchanged.
 +// Br is 16 normally, or 32/64 only under the bounded backend experiment gate.
 +const uint32_t query_tiles = (Br + MatBr - 1) / MatBr;
++// Four subgroups cover 32 keys per cooperative fragment set. Bc can contain
++// 2/4 sets under the separate key-reuse experiment without changing its shapes.
++const uint32_t key_tiles = (Bc + row_split * MatBc - 1) / (row_split * MatBc);
 +
 +const uint32_t rows_per_thread = Br / row_split;
 +const uint32_t cols_per_iter = gl_WorkGroupSize.x / row_split;
@@ -525,13 +547,16 @@ index 0000000..d564437
 +        }
 +
 +        // K * Q^T -> S^T: Bc x HSK_pad * HSK_pad x Br -> Bc x Br
-+        // Bc is split across four subgroups: M8/N16/K16.
-+        coopmat<ACC_TYPE, gl_ScopeSubgroup, MatBc, MatBr, gl_MatrixUseAccumulator> SfMat[query_tiles];
++        // Four subgroups cover 32 keys; larger Bc keeps another accumulator
++        // per key fragment set, reusing a Q load across those sets.
++        coopmat<ACC_TYPE, gl_ScopeSubgroup, MatBc, MatBr, gl_MatrixUseAccumulator> SfMat[query_tiles * key_tiles];
 +        [[unroll]] for (uint32_t qt = 0; qt < query_tiles; ++qt) {
-+            SfMat[qt] = coopmat<ACC_TYPE, gl_ScopeSubgroup, MatBc, MatBr, gl_MatrixUseAccumulator>(0);
++            [[unroll]] for (uint32_t kt = 0; kt < key_tiles; ++kt) {
++                SfMat[qt * key_tiles + kt] = coopmat<ACC_TYPE, gl_ScopeSubgroup, MatBc, MatBr, gl_MatrixUseAccumulator>(0);
++            }
 +        }
 +        coopmat<FLOAT_TYPE, gl_ScopeSubgroup, MatBc, 16, gl_MatrixUseA> KMat;
-+        coopmat<FLOAT_TYPE, gl_ScopeSubgroup, 16, MatBr, gl_MatrixUseB> QMat;
++        coopmat<FLOAT_TYPE, gl_ScopeSubgroup, 16, MatBr, gl_MatrixUseB> QMat[query_tiles];
 +
 +        [[unroll]] for (uint32_t d = 0; d < HSK_pad / 16; ++d) {
 +            // If SHMEM_STAGING is set, a Bc * HSK_pad size tile of K is loaded to shmem
@@ -569,29 +594,38 @@ index 0000000..d564437
 +                barrier();
 +            }
 +
-+            if (stage_k) {
-+                uint coord = (gl_SubgroupID * MatBc) * kvsh_stride;
-+                coopMatLoad(KMat, kvsh, coord, kvsh_stride, gl_CooperativeMatrixLayoutRowMajor);
-+            } else {
-+                const uint coord = k_offset / 4 + (j * Bc + gl_SubgroupID * MatBc) * k_stride / 4 + d * 16 / 4;
-+                coopMatLoad(KMat, data_kv4, coord, k_stride / 4, gl_CooperativeMatrixLayoutRowMajor);
-+            }
-+            } else {
-+                uint coord = (gl_SubgroupID * MatBc) * kvsh_stride + d * 16 / 4;
-+                coopMatLoad(KMat, kvsh, coord, kvsh_stride, gl_CooperativeMatrixLayoutRowMajor);
 +            }
 +
-+            // Reuse each K fragment across every 16-query fragment in Br.
++            // Reuse each 16-query fragment across every key fragment set.
 +            [[unroll]] for (uint32_t qt = 0; qt < query_tiles; ++qt) {
 +                const uint q_coord = qt * MatBr * qstride + d * 16 / 4;
-+                coopMatLoad(QMat, Qf, q_coord, qstride, gl_CooperativeMatrixLayoutColumnMajor);
-+                SfMat[qt] = coopMatMulAdd(KMat, QMat, SfMat[qt]);
++                coopMatLoad(QMat[qt], Qf, q_coord, qstride, gl_CooperativeMatrixLayoutColumnMajor);
++            }
++            [[unroll]] for (uint32_t kt = 0; kt < key_tiles; ++kt) {
++                const uint key_row = (kt * row_split + gl_SubgroupID) * MatBc;
++                if (SHMEM_STAGING != 0) {
++                    const uint coord = key_row * kvsh_stride + d * 16 / 4;
++                    coopMatLoad(KMat, kvsh, coord, kvsh_stride, gl_CooperativeMatrixLayoutRowMajor);
++                } else if (USE_DECODE_K || KV_bounds_check || d * 16 + 16 > HSK) {
++                    const uint coord = key_row * kvsh_stride;
++                    coopMatLoad(KMat, kvsh, coord, kvsh_stride, gl_CooperativeMatrixLayoutRowMajor);
++                } else {
++                    const uint coord = k_offset / 4 + (j * Bc + key_row) * k_stride / 4 + d * 16 / 4;
++                    coopMatLoad(KMat, data_kv4, coord, k_stride / 4, gl_CooperativeMatrixLayoutRowMajor);
++                }
++                [[unroll]] for (uint32_t qt = 0; qt < query_tiles; ++qt) {
++                    const uint acc = qt * key_tiles + kt;
++                    SfMat[acc] = coopMatMulAdd(KMat, QMat[qt], SfMat[acc]);
++                }
 +            }
 +        }
 +
 +        [[unroll]] for (uint32_t qt = 0; qt < query_tiles; ++qt) {
-+            const uint coord = gl_SubgroupID * MatBc * sfshstride + qt * MatBr / 4;
-+            coopMatStore(SfMat[qt], sfsh, coord, sfshstride, gl_CooperativeMatrixLayoutRowMajor);
++            [[unroll]] for (uint32_t kt = 0; kt < key_tiles; ++kt) {
++                const uint key_row = (kt * row_split + gl_SubgroupID) * MatBc;
++                const uint coord = key_row * sfshstride + qt * MatBr / 4;
++                coopMatStore(SfMat[qt * key_tiles + kt], sfsh, coord, sfshstride, gl_CooperativeMatrixLayoutRowMajor);
++            }
 +        }
 +        barrier();
 +
@@ -778,8 +812,8 @@ index 0000000..d564437
 +                    // Reuse the value fragment across every query fragment.
 +                    [[unroll]] for (uint32_t qt = 0; qt < query_tiles; ++qt) {
 +                        const uint p_coord = bc_chunk * 16 * psh_stride + qt * MatBr / 4;
-+                        coopMatLoad(QMat, Psh, p_coord, psh_stride, gl_CooperativeMatrixLayoutRowMajor);
-+                        PVMat[qt] = coopMatMulAdd(KMat, QMat, PVMat[qt]);
++                        coopMatLoad(QMat[qt], Psh, p_coord, psh_stride, gl_CooperativeMatrixLayoutRowMajor);
++                        PVMat[qt] = coopMatMulAdd(KMat, QMat[qt], PVMat[qt]);
 +                    }
 +                }
 +
