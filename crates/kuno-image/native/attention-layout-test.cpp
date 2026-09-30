@@ -1,10 +1,12 @@
 // Synthetic, content-free regression for the pinned attention/cache adapter.
 // Default: CPU oracle/fallback checks. Optional: --device CUDA <PCI address>.
+// Large graph timing only: --benchmark CUDA|Vulkan <PCI address> [4|16 heads].
 #ifdef NDEBUG
 #undef NDEBUG
 #endif
 #include <algorithm>
 #include <cassert>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -16,6 +18,7 @@
 #include "ggml-alloc.h"
 #include "ggml-cpu.h"
 #include "model/diffusion/qwen_image_2_1.hpp"
+#include "stable-diffusion.h"
 
 static std::vector<float> read_floats(ggml_tensor* tensor) {
     const size_t count = ggml_nelements(tensor);
@@ -170,12 +173,133 @@ static void attention_case(ggml_backend_t backend, int batch, bool masked, bool 
     ggml_gallocr_free(allocator); ggml_backend_buffer_free(inputs); ggml_free(ctx);
 }
 
+// Deliberately separate from the dense oracle above: that oracle is quadratic
+// in sequence length and unsuitable for the full-sized graph used here. Small
+// regression cases establish accuracy; this opt-in path measures graph compute
+// and checks finite output only. Upload, allocation, and readback are not timed.
+static int attention_benchmark(ggml_backend_t backend, int heads) {
+    constexpr int dim = 128, rows = 4056, keys = 8192;
+    const size_t query_bytes = size_t(dim) * rows * heads * sizeof(float);
+    const size_t cache_bytes = size_t(dim) * keys * heads * sizeof(ggml_fp16_t);
+    const size_t input_bytes = query_bytes + 2 * cache_bytes;
+    // Leave room for attention scratch, transposed V in the baseline layout,
+    // and the output. This is an admission guard, not a workspace estimate.
+    constexpr size_t minimum_free_bytes = 1024ull * 1024 * 1024;
+    ggml_backend_dev_props props{};
+    ggml_backend_dev_get_props(ggml_backend_get_device(backend), &props);
+    if (props.type != GGML_BACKEND_DEVICE_TYPE_GPU || props.memory_free < minimum_free_bytes) {
+        std::printf("attention_benchmark_error phase=0 available_bytes=%zu required_bytes=%zu\n",
+                    props.memory_free, minimum_free_bytes);
+        return 1;
+    }
+    struct Resources {
+        ggml_context* context = nullptr;
+        ggml_backend_buffer_t inputs = nullptr;
+        ggml_gallocr_t allocator = nullptr;
+        ~Resources() {
+            ggml_gallocr_free(allocator);
+            ggml_backend_buffer_free(inputs);
+            ggml_free(context);
+        }
+    } resources;
+    resources.context = ggml_init({8 * 1024 * 1024, nullptr, true});
+    if (!resources.context) {
+        std::puts("attention_benchmark_error phase=1 status=1");
+        return 1;
+    }
+    auto ctx = resources.context;
+    auto q = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, dim, rows, heads);
+    auto k = ggml_new_tensor_3d(ctx, GGML_TYPE_F16, dim, keys, heads);
+    auto v = ggml_new_tensor_4d(ctx, GGML_TYPE_F16, dim, heads, keys, 1);
+    resources.inputs = ggml_backend_alloc_ctx_tensors(ctx, backend);
+    if (!resources.inputs) {
+        std::puts("attention_benchmark_error phase=2 status=1");
+        return 1;
+    }
+    std::mt19937 rng(73);
+    std::uniform_real_distribution<float> random(-0.7f, 0.7f);
+    for (auto tensor : {q, k, v}) {
+        // One temporary at a time bounds host scratch even with 16 heads.
+        std::vector<float> values(ggml_nelements(tensor));
+        for (auto& value : values) value = random(rng);
+        upload(tensor, values);
+    }
+    auto output = ggml_ext_attention_ext(ctx, backend, q, k, v, heads,
+                                         nullptr, true, true, 1.f, false);
+    auto graph = ggml_new_graph(ctx);
+    ggml_build_forward_expand(graph, output);
+    ggml_tensor* flash = nullptr;
+    for (int i = 0; i < ggml_graph_n_nodes(graph); ++i) {
+        auto node = ggml_graph_node(graph, i);
+        if (node->op == GGML_OP_FLASH_ATTN_EXT) flash = node;
+        if (!ggml_backend_supports_op(backend, node)) {
+            std::puts("attention_benchmark_error phase=3 status=1");
+            return 1;
+        }
+    }
+    if (!flash || flash->src[1]->type != GGML_TYPE_F16 || flash->src[2]->type != GGML_TYPE_F16) {
+        std::puts("attention_benchmark_error phase=3 status=2");
+        return 1;
+    }
+    resources.allocator = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
+    if (!resources.allocator || !ggml_gallocr_alloc_graph(resources.allocator, graph)) {
+        std::puts("attention_benchmark_error phase=4 status=1");
+        return 1;
+    }
+    const size_t workspace_bytes = ggml_gallocr_get_buffer_size(resources.allocator, 0);
+    const int backend_id = std::strncmp(ggml_backend_name(backend), "CUDA", 4) == 0 ? 1 : 2;
+    std::printf("attention_benchmark backend=%d queries=%d keys=%d dim=%d heads=%d batch=1 kv_f16=1 "
+                "input_bytes=%zu output_bytes=%zu workspace_bytes=%zu graph_nodes=%d\n",
+                backend_id, rows, keys, dim, heads, input_bytes, ggml_nbytes(output), workspace_bytes,
+                ggml_graph_n_nodes(graph));
+    std::fflush(stdout);
+    // One warm evaluation followed by exactly three measured evaluations.
+    // Synchronization is part of each complete graph evaluation; no operation
+    // callback or extra per-node synchronization is installed.
+    for (int iteration = 0; iteration < 4; ++iteration) {
+        const auto started = std::chrono::steady_clock::now();
+        auto status = ggml_backend_graph_compute(backend, graph);
+        ggml_backend_synchronize(backend);
+        if (status != GGML_STATUS_SUCCESS) {
+            std::printf("attention_benchmark_error phase=5 status=%d\n", int(status));
+            return 1;
+        }
+        const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+        std::printf("attention_benchmark iteration=%d measured=%d seconds=%.8f\n",
+                    iteration, iteration != 0, seconds);
+        std::fflush(stdout);
+    }
+    auto actual = read_floats(output);
+    for (float value : actual) {
+        if (!std::isfinite(value)) {
+            std::puts("attention_benchmark_error phase=6 status=1");
+            return 1;
+        }
+    }
+    std::puts("attention_benchmark_passed finite=1");
+    return 0;
+}
+
 int main(int argc, char** argv) {
     rlimit no_core{0, 0}; assert(setrlimit(RLIMIT_CORE, &no_core) == 0);
+    const bool benchmark = argc > 1 && std::strcmp(argv[1], "--benchmark") == 0;
+    int benchmark_heads = 16;
+    if (benchmark) {
+        // Reject large CPU runs and unbounded sizes before initializing backends.
+        if ((argc != 4 && argc != 5) ||
+            (std::strcmp(argv[2], "CUDA") != 0 && std::strcmp(argv[2], "Vulkan") != 0) ||
+            (argc == 5 && std::strcmp(argv[4], "4") != 0 && std::strcmp(argv[4], "16") != 0)) {
+            std::fputs("attention_benchmark_error phase=7 status=1\n", stderr);
+            return 2;
+        }
+        if (argc == 5 && std::strcmp(argv[4], "4") == 0) benchmark_heads = 4;
+        ggml_log_set([](enum ggml_log_level, const char*, void*) {}, nullptr);
+        sd_set_log_callback([](enum sd_log_level_t, const char*, void*) {}, nullptr);
+    }
     ggml_backend_t backend = nullptr;
     if (argc == 1) backend = ggml_backend_cpu_init();
     else {
-        assert(argc == 4 && std::strcmp(argv[1], "--device") == 0);
+        assert(benchmark || (argc == 4 && std::strcmp(argv[1], "--device") == 0));
         ggml_backend_load_all();
         for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
             auto device = ggml_backend_dev_get(i); ggml_backend_dev_props props{};
@@ -185,6 +309,15 @@ int main(int argc, char** argv) {
                 assert(backend == nullptr); backend = ggml_backend_dev_init(device, nullptr);
             }
         }
+    }
+    if (benchmark) {
+        if (!backend) {
+            std::puts("attention_benchmark_error phase=8 status=1");
+            return 1;
+        }
+        const int status = attention_benchmark(backend, benchmark_heads);
+        ggml_backend_free(backend);
+        return status;
     }
     assert(backend != nullptr);
     if (std::strncmp(ggml_backend_name(backend), "CPU", 3) == 0) ggml_backend_cpu_set_n_threads(backend, 2);
