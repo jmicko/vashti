@@ -361,10 +361,35 @@ index f1b5cf9..2c052bb 100644
          ggml_backend_t backend_;
          CachedTensors tensors_;
 diff --git a/src/model/common/ggml_block.hpp b/src/model/common/ggml_block.hpp
-index 991b88f..dc6596e 100644
+index 991b88f..9fc0c7d 100644
 --- a/src/model/common/ggml_block.hpp
 +++ b/src/model/common/ggml_block.hpp
-@@ -335,15 +335,69 @@ class Embedding : public UnaryBlock {
+@@ -14,6 +14,7 @@
+ #include "core/ggml_extend.h"
+ #include "core/ggml_runner.h"
+ #include "model.h"
++#include "model_io/int8_dense.h"
+ 
+ class GGMLBlock {
+ protected:
+@@ -166,9 +167,14 @@ protected:
+             params["bias"]       = ggml_new_tensor_1d(ctx, wtype, out_features);
+         }
+         auto weight_storage           = tensor_storage_map.find(prefix + "weight");
+-        const bool is_int8_tensorwise = weight_storage != tensor_storage_map.end() && weight_storage->second.is_int8_tensorwise;
++        const bool converted_int8 = weight_storage != tensor_storage_map.end() && qwen_mlp_f16_selected(weight_storage->second);
++        const bool is_int8_tensorwise = weight_storage != tensor_storage_map.end() && weight_storage->second.is_int8_tensorwise && !converted_int8;
++        // Match the bounded dense-GEMM oracle: accumulate selected F16 MLPs
++        // in FP32, rather than depending on a backend's default precision.
++        if (converted_int8) force_prec_f32 = true;
+         auto weight_scale_storage     = tensor_storage_map.find(prefix + "weight_scale");
+-        if (weight_scale_storage != tensor_storage_map.end()) {
++        // Converted weights already include their scale and inverse rotation.
++        if (!converted_int8 && weight_scale_storage != tensor_storage_map.end()) {
+             const int64_t scale_nelements = weight_scale_storage->second.nelements();
+             GGML_ASSERT(scale_nelements == 1 || scale_nelements == out_features);
+             params["weight_scale"] = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, scale_nelements);
+@@ -335,15 +341,69 @@ class Embedding : public UnaryBlock {
  protected:
      int64_t embedding_dim;
      int64_t num_embeddings;
@@ -435,7 +460,7 @@ index 991b88f..dc6596e 100644
          return name == "weight" ? GGML_OP_GET_ROWS : GGML_OP_NONE;
      }
  
-@@ -364,7 +418,15 @@ public:
+@@ -364,7 +424,15 @@ public:
          input_ids = ggml_reshape_1d(ctx->ggml_ctx, input_ids, input_ids->ne[0] * input_ids->ne[1]);
  
          input_ids      = ggml_reshape_3d(ctx->ggml_ctx, input_ids, input_ids->ne[0], 1, input_ids->ne[1]);
@@ -614,6 +639,275 @@ index da59cfa..f75d580 100644
                      config.hidden_size = tensor_storage.ne[0];
                      config.vocab_size  = tensor_storage.ne[1];
                  }
+diff --git a/src/model_io/int8_dense.h b/src/model_io/int8_dense.h
+new file mode 100644
+index 0000000..b7a7378
+--- /dev/null
++++ b/src/model_io/int8_dense.h
+@@ -0,0 +1,80 @@
++#ifndef SD_INT8_DENSE_H
++#define SD_INT8_DENSE_H
++
++#include <cmath>
++#include <cstdlib>
++#include <cstring>
++#include <vector>
++
++#include "model_io/tensor_storage.h"
++
++// Internal experiment only. Never infer this policy from the global wtype.
++inline bool qwen_mlp_f16_experiment_enabled() {
++    const char* value = std::getenv("KUNO_EXPERIMENTAL_QWEN_MLP_F16");
++    return value != nullptr && std::strcmp(value, "1") == 0;
++}
++
++inline bool qwen_mlp_f16_name(const std::string& name) {
++    const std::string prefix = "model.diffusion_model.transformer_blocks.";
++    if (name.compare(0, prefix.size(), prefix) != 0) return false;
++    size_t i = prefix.size(), begin = i;
++    while (i < name.size() && name[i] >= '0' && name[i] <= '9') ++i;
++    return i > begin && (name.substr(i) == ".img_mlp.gate_up.weight" ||
++                        name.substr(i) == ".img_mlp.out.weight");
++}
++
++inline bool qwen_mlp_f16_selected(const TensorStorage& storage) {
++    return storage.type == GGML_TYPE_I8 && storage.is_int8_tensorwise &&
++           storage.expected_type == GGML_TYPE_F16 && qwen_mlp_f16_name(storage.name);
++}
++
++inline bool int8_dense_shape_valid(const TensorStorage& storage) {
++    if (storage.type != GGML_TYPE_I8 || !storage.is_int8_tensorwise ||
++        !storage.int8_convrot || storage.n_dims != 2 || storage.ne[0] <= 0 || storage.ne[1] <= 0 ||
++        storage.ne[2] != 1 || storage.ne[3] != 1 || storage.ne[4] != 1) return false;
++    int group = storage.int8_convrot_group_size;
++    if (group < 4 || group > storage.ne[0] || storage.ne[0] % group != 0) return false;
++    while (group > 1 && group % 4 == 0) group /= 4;
++    return group == 1 && static_cast<uint64_t>(storage.ne[0]) <=
++                            SIZE_MAX / sizeof(ggml_fp16_t) / static_cast<uint64_t>(storage.ne[1]);
++}
++
++inline bool int8_dense_scales_valid(const std::vector<float>& scales, int64_t rows) {
++    if (rows <= 0 || (scales.size() != 1 && scales.size() != static_cast<uint64_t>(rows))) return false;
++    for (float scale : scales) if (!std::isfinite(scale) || scale < 0.f) return false;
++    return true;
++}
++
++// Fold each row's scale, then invert the symmetric normalized H4 tensor powers.
++// Only one FP32 row is temporary; never expand the complete weight to FP32.
++inline bool dequantize_int8_convrot_f16(const TensorStorage& storage, const int8_t* input,
++                                      ggml_fp16_t* output, const std::vector<float>& scales) {
++    if (!input || !output || !int8_dense_shape_valid(storage) ||
++        !int8_dense_scales_valid(scales, storage.ne[1])) return false;
++    const int64_t columns = storage.ne[0];
++    const int group = storage.int8_convrot_group_size;
++    std::vector<float> row(static_cast<size_t>(columns));
++    for (int64_t r = 0; r < storage.ne[1]; ++r) {
++        const float scale = scales[scales.size() == 1 ? 0 : r];
++        for (int64_t k = 0; k < columns; ++k) row[k] = input[r * columns + k] * scale;
++        for (int64_t base = 0; base < columns; base += group) {
++            for (int64_t stride = 1; stride < group; stride *= 4) {
++                for (int64_t block = 0; block < group; block += 4 * stride) {
++                    for (int64_t k = 0; k < stride; ++k) {
++                        float* v = row.data() + base + block + k;
++                        const float a = v[0], b = v[stride], c = v[2 * stride], d = v[3 * stride];
++                        v[0] = (a + b + c - d) * .5f;
++                        v[stride] = (a + b - c + d) * .5f;
++                        v[2 * stride] = (a - b + c + d) * .5f;
++                        v[3 * stride] = (-a + b + c + d) * .5f;
++                    }
++                }
++            }
++        }
++        for (float value : row) if (!std::isfinite(value) || std::fabs(value) > 65504.f) return false;
++        ggml_fp32_to_fp16_row(row.data(), output + r * columns, columns);
++    }
++    return true;
++}
++
++#endif
+diff --git a/src/model_loader.cpp b/src/model_loader.cpp
+index 2bd9261..c971dc4 100644
+--- a/src/model_loader.cpp
++++ b/src/model_loader.cpp
+@@ -21,6 +21,7 @@
+ #include "model_io/torch_legacy_io.h"
+ #include "model_io/torch_zip_io.h"
+ #include "model_loader.h"
++#include "model_io/int8_dense.h"
+ #include "runtime/imatrix.h"
+ #include "stable-diffusion.h"
+ 
+@@ -793,20 +794,27 @@ void ModelLoader::set_wtype_override(ggml_type wtype, std::string tensor_type_ru
+     for (auto& [name, tensor_storage] : tensor_storage_map) {
+         tensor_storage.expected_type = GGML_TYPE_COUNT;
+         ggml_type dst_type           = wtype;
++        bool matched_rule            = false;
+         for (const auto& tensor_type_rule : map_rules) {
+             std::regex pattern(tensor_type_rule.first);
+             if (std::regex_search(name, pattern)) {
+                 dst_type = tensor_type_rule.second;
++                matched_rule = true;
+                 break;
+             }
+         }
+         if (dst_type == GGML_TYPE_COUNT) {
+             continue;
+         }
+-        if (!tensor_should_be_converted(tensor_storage, dst_type)) {
+-            continue;
++        // INT8 requires a metadata-aware converter. Opt in only through an
++        // explicit rule for diffusion MLP weights; the global wtype stays inert.
++        if (matched_rule && dst_type == GGML_TYPE_F16 && qwen_mlp_f16_experiment_enabled() &&
++            tensor_storage.is_int8_tensorwise && tensor_storage.type == GGML_TYPE_I8 &&
++            qwen_mlp_f16_name(name)) {
++            tensor_storage.expected_type = GGML_TYPE_F16;
++        } else if (tensor_should_be_converted(tensor_storage, dst_type)) {
++            tensor_storage.expected_type = dst_type;
+         }
+-        tensor_storage.expected_type = dst_type;
+     }
+     invalidate_file_data();
+     ++revision_;
+@@ -1028,6 +1036,33 @@ bool ModelLoader::load_tensors(on_new_tensor_cb_t on_new_tensor_cb,
+     }
+     process_model_files(enable_mmap, false);
+ 
++    // Resolve scales before starting workers. Recursive reads inside workers
++    // would race loader/file state; only small scale arrays are retained here.
++    std::map<std::string, std::vector<float>> dense_scales;
++    std::set<std::string> conversion_sources;
++    if (target_tensor_names != nullptr) conversion_sources = *target_tensor_names;
++    for (const auto& [name, storage] : tensor_storage_map) {
++        if (!qwen_mlp_f16_selected(storage) ||
++            (target_tensor_names != nullptr && target_tensor_names->count(name) == 0)) continue;
++        const std::string scale_name = name.substr(0, name.size() - 6) + "weight_scale";
++        auto found = tensor_storage_map.find(scale_name);
++        if (!int8_dense_shape_valid(storage) || found == tensor_storage_map.end() ||
++            found->second.file_id != storage.file_id ||
++            found->second.n_dims < 1 || found->second.n_dims > 2 ||
++            (found->second.ne[0] != 1 && found->second.ne[1] != 1) ||
++            (found->second.type != GGML_TYPE_F32 && found->second.type != GGML_TYPE_F16 &&
++             found->second.type != GGML_TYPE_BF16) ||
++            (found->second.nelements() != 1 && found->second.nelements() != storage.ne[1])) return false;
++        auto& scales = dense_scales[name];
++        if (!load_float_tensor(scale_name, scales, 0, enable_mmap) ||
++            !int8_dense_scales_valid(scales, storage.ne[1])) return false;
++        conversion_sources.insert(name);
++        conversion_sources.insert(scale_name);
++    }
++    const auto* validated_sources = dense_scales.empty() || target_tensor_names == nullptr ?
++                                    target_tensor_names : &conversion_sources;
++    if (!validate_sources(validated_sources)) return false;
++
+     std::atomic<int64_t> read_time_ms(0);
+     std::atomic<int64_t> memcpy_time_ms(0);
+     std::atomic<int64_t> copy_to_backend_time_ms(0);
+@@ -1097,6 +1132,9 @@ bool ModelLoader::load_tensors(on_new_tensor_cb_t on_new_tensor_cb,
+         if (n_threads < 1) {
+             n_threads = 1;
+         }
++        // The largest converted MLP source is 96 MiB. Bound concurrent
++        // whole-source buffers while retaining only one FP32 row per worker.
++        if (!dense_scales.empty()) n_threads = std::min(n_threads, 4);
+         last_n_threads = n_threads;
+ 
+         std::atomic<size_t> tensor_idx(0);
+@@ -1146,6 +1184,17 @@ bool ModelLoader::load_tensors(on_new_tensor_cb_t on_new_tensor_cb,
+                         break;
+                     }
+ 
++                    if (dst_tensor != nullptr && qwen_mlp_f16_selected(tensor_storage) && dst_tensor->type != GGML_TYPE_F16) {
++                        failed = true;
++                        break;
++                    }
++                    if (dst_tensor != nullptr && tensor_storage.is_int8_tensorwise && dst_tensor->type == GGML_TYPE_F16 &&
++                        (!qwen_mlp_f16_selected(tensor_storage) || !ggml_is_contiguous(dst_tensor) ||
++                         dst_tensor->ne[0] != tensor_storage.ne[0] || dst_tensor->ne[1] != tensor_storage.ne[1] ||
++                         ggml_nelements(dst_tensor) != tensor_storage.nelements())) {
++                        failed = true;
++                        break;
++                    }
+                     if (dst_tensor == nullptr) {
+                         t1 = ggml_time_ms();
+                         read_time_ms.fetch_add(t1 - t0);
+@@ -1282,15 +1331,28 @@ bool ModelLoader::load_tensors(on_new_tensor_cb_t on_new_tensor_cb,
+                             failed = true;
+                             return;
+                         }
+-                        std::string processed_name = convert_tensor_name(tensor_storage.name, imatrix_version);
+-                        std::vector<float> imatrix = get_imatrix_collector().get_values(processed_name);
+-                        convert_tensor((void*)target_buf,
+-                                       tensor_storage.type,
+-                                       convert_buf,
+-                                       dst_tensor->type,
+-                                       (int)tensor_storage.nelements() / (int)tensor_storage.ne[0],
+-                                       (int)tensor_storage.ne[0],
+-                                       std::move(imatrix));
++                        if (tensor_storage.is_int8_tensorwise && dst_tensor->type == GGML_TYPE_F16) {
++                            auto found = dense_scales.find(tensor_storage.name);
++                            if (!qwen_mlp_f16_selected(tensor_storage) || found == dense_scales.end() ||
++                                dst_tensor->ne[0] != tensor_storage.ne[0] || dst_tensor->ne[1] != tensor_storage.ne[1] ||
++                                ggml_nelements(dst_tensor) != tensor_storage.nelements() ||
++                                !dequantize_int8_convrot_f16(tensor_storage,
++                                    reinterpret_cast<const int8_t*>(target_buf),
++                                    reinterpret_cast<ggml_fp16_t*>(convert_buf), found->second)) {
++                                failed = true;
++                                break;
++                            }
++                        } else {
++                            std::string processed_name = convert_tensor_name(tensor_storage.name, imatrix_version);
++                            std::vector<float> imatrix = get_imatrix_collector().get_values(processed_name);
++                            convert_tensor((void*)target_buf,
++                                           tensor_storage.type,
++                                           convert_buf,
++                                           dst_tensor->type,
++                                           (int)tensor_storage.nelements() / (int)tensor_storage.ne[0],
++                                           (int)tensor_storage.ne[0],
++                                           std::move(imatrix));
++                        }
+                     } else {
+                         convert_buf = read_buf;
+                     }
+@@ -1360,7 +1422,7 @@ bool ModelLoader::load_tensors(on_new_tensor_cb_t on_new_tensor_cb,
+                  (convert_time_ms.load() / (float)last_n_threads) / 1000.f,
+                  (copy_to_backend_time_ms.load() / (float)last_n_threads) / 1000.f);
+     }
+-    return success && validate_sources(target_tensor_names);
++    return success && validate_sources(validated_sources);
+ }
+ 
+ bool ModelLoader::load_tensor(const TensorStorage& tensor_storage, ggml_tensor* dst_tensor) {
+@@ -1609,7 +1671,9 @@ int64_t ModelLoader::get_params_mem_size(ggml_backend_t backend, ggml_type type)
+     int64_t mem_size = 0;
+     std::vector<TensorStorage> processed_tensor_storages;
+     for (auto [name, tensor_storage] : tensor_storage_map) {
+-        if (tensor_should_be_converted(tensor_storage, type)) {
++        if (tensor_storage.expected_type != GGML_TYPE_COUNT) {
++            tensor_storage.type = tensor_storage.expected_type;
++        } else if (tensor_should_be_converted(tensor_storage, type)) {
+             tensor_storage.type = type;
+         }
+         mem_size += tensor_storage.nbytes() + alignment;
+diff --git a/src/model_loader_files.cpp b/src/model_loader_files.cpp
+index 8e838b1..6ec08c7 100644
+--- a/src/model_loader_files.cpp
++++ b/src/model_loader_files.cpp
+@@ -1,4 +1,5 @@
+ #include "model_loader.h"
++#include "model_io/int8_dense.h"
+ 
+ #include <algorithm>
+ #include <atomic>
+@@ -313,6 +314,9 @@ ModelLoader ModelLoader::file_reader(FileId id, SDVersion version) const {
+     reader.n_threads_       = n_threads_;
+     reader.version_         = version;
+     reader.names_converted_ = true;
++    if (qwen_mlp_f16_experiment_enabled()) {
++        reader.tensor_type_rules_ = tensor_type_rules_;
++    }
+     for (const auto& file : files_) {
+         if (file.id == id) {
+             reader.files_.push_back(file);
 diff --git a/src/pipeline/diffusion_engine.cpp b/src/pipeline/diffusion_engine.cpp
 index 0220939..1cd7966 100644
 --- a/src/pipeline/diffusion_engine.cpp

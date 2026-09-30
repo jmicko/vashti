@@ -2,6 +2,7 @@
 #include "ggml-backend.h"
 #include "ggml.h"
 #include "cache-budget.h"
+#include "experimental-precision.h"
 #include "backend-choice.h"
 #include <cstring>
 #include <cstdio>
@@ -104,8 +105,15 @@ extern "C" int kuno_qwen_generate(const char* directory,const char* pci,const ch
         uint64_t reference_pixels = 0;
         for (int i=0; i<reference_count; ++i) reference_pixels += uint64_t(references[i].width) * references[i].height;
         const bool cuda_backend = backend.compare(0, 4, "CUDA") == 0;
-        const bool fp16_cache = version && (cuda_backend || backend.compare(0, 6, "Vulkan") == 0);
-        const uint64_t working_reserve = (cuda_backend ? 3ull : 9ull) * 1024 * 1024 * 1024;
+        const bool vulkan_backend = backend.compare(0, 6, "Vulkan") == 0;
+        const bool mlp_f16 = kuno_qwen_mlp_f16_experiment(version != 0, vulkan_backend);
+        const bool fp16_cache = version && (cuda_backend || vulkan_backend);
+        const uint64_t working_reserve = kuno_qwen_working_reserve(cuda_backend, mlp_f16);
+        if (mlp_f16) {
+            if (budget_bytes < working_reserve || !kuno_qwen_mlp_f16_host_fits(host_available)) return 6;
+            context.tensor_type_rules = "^model\\.diffusion_model\\.transformer_blocks\\.[0-9]+\\.img_mlp\\.(gate_up|out)\\.weight$=f16";
+            std::fprintf(stderr,"kuno-image: experimental dense MLP enabled\n");
+        }
         // Host-cache overlap is validated only on CUDA. Vulkan uses a resident
         // FP16 cache when the full-weight budget fits, otherwise disables it.
         if (version && cuda_backend && kuno_qwen_host_prefix_cache_fits(budget_bytes, host_available,
@@ -121,7 +129,7 @@ extern "C" int kuno_qwen_generate(const char* directory,const char* pci,const ch
         }
         context.sage_attn=fast_attention != 0;
         if (fast_attention) std::fprintf(stderr,"kuno-image: fast attention enabled\n");
-        context.n_threads=8;context.diffusion_flash_attn=true;context.enable_mmap=true;
+        context.n_threads=mlp_f16 ? 4 : 8;context.diffusion_flash_attn=true;context.enable_mmap=true;
         context.rng_type=CPU_RNG;context.sampler_rng_type=CPU_RNG;
         std::fprintf(stderr,"kuno-image: loading models\n");
         std::unique_ptr<sd_ctx_t,decltype(&free_sd_ctx)> ctx(new_sd_ctx(&context),free_sd_ctx);
