@@ -238,7 +238,8 @@ int main(int argc, char ** argv) {
     }
     assert(backend != nullptr);
     if (argc == 1) ggml_backend_cpu_set_n_threads(backend, 2);
-    for (const auto shape : {std::vector<int>{3,256,64}, {31,512,65}, {33,256,64}, {35,512,128}})
+    for (const auto shape : {std::vector<int>{3,256,64}, {17,256,32}, {31,512,64},
+                            {31,512,65}, {33,256,64}, {35,512,128}})
         run_case(backend, shape[0], shape[1], shape[2], 0, true, true);
     if (argc == 7) {
         assert(std::strcmp(argv[4], "--benchmark") == 0);

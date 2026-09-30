@@ -1,5 +1,5 @@
 diff --git a/src/ggml-vulkan/ggml-vulkan.cpp b/src/ggml-vulkan/ggml-vulkan.cpp
-index 96b541d..d9acac3 100644
+index 96b541d..181c165 100644
 --- a/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/src/ggml-vulkan/ggml-vulkan.cpp
 @@ -553,6 +553,7 @@ enum FaCodePath {
@@ -19,7 +19,24 @@ index 96b541d..d9acac3 100644
      bool coopmat1_fa_support {};
      uint32_t coopmat_m;
      uint32_t coopmat_n;
-@@ -3873,7 +3876,18 @@ static vk_fa_tuning_params get_fa_tuning_params(const vk_device& device, uint32_
+@@ -852,6 +855,8 @@ struct vk_device_struct {
+     uint32_t coopmat_int_m;
+     uint32_t coopmat_int_n;
+     uint32_t coopmat_int_k;
++    uint32_t int8_m8_tile {};
++    uint32_t int8_m8_subgroup {};
+ 
+     bool coopmat2;
+     bool coopmat2_bf16_support {};
+@@ -914,6 +919,7 @@ struct vk_device_struct {
+     vk_pipeline pipeline_quantize_i8_convrot;
+     vk_pipeline pipeline_mul_mat_i8_tensorwise;
+     vk_pipeline pipeline_mul_mat_i8_tensorwise_cm1;
++    vk_pipeline pipeline_mul_mat_i8_tensorwise_m8_cm1;
+ 
+     vk_pipeline pipeline_dequant[GGML_TYPE_COUNT];
+     vk_pipeline pipeline_dequant_mul_mat_vec_f32_f32[DMMV_WG_SIZE_COUNT][GGML_TYPE_COUNT][mul_mat_vec_max_cols];
+@@ -3873,7 +3879,18 @@ static vk_fa_tuning_params get_fa_tuning_params(const vk_device& device, uint32_
      if (path == FA_COOPMAT1) {
          bool shape_ok = (f32acc && device->coopmat_support_16x16x16_f32acc) ||
                          (!f32acc && device->coopmat_support_16x16x16_f16acc);
@@ -39,7 +56,7 @@ index 96b541d..d9acac3 100644
          bool shmem_ok = ggml_vk_flash_attn_coopmat_shmem_support(device, params, hsk, hsv, f32acc, k_type, v_type);
  
          if (!shape_ok || !shmem_ok) {
-@@ -3882,7 +3896,7 @@ static vk_fa_tuning_params get_fa_tuning_params(const vk_device& device, uint32_
+@@ -3882,7 +3899,7 @@ static vk_fa_tuning_params get_fa_tuning_params(const vk_device& device, uint32_
      }
  
      // scalar is faster than coopmat when N==1
@@ -48,7 +65,7 @@ index 96b541d..d9acac3 100644
          path = FA_SCALAR;
      }
  
-@@ -3891,6 +3905,12 @@ static vk_fa_tuning_params get_fa_tuning_params(const vk_device& device, uint32_
+@@ -3891,6 +3908,12 @@ static vk_fa_tuning_params get_fa_tuning_params(const vk_device& device, uint32_
          return get_fa_tuning_params_scalar(device, hsk, hsv, n_rows, n_kv, k_type, v_type, f32acc);
      case FA_COOPMAT1:
          return get_fa_tuning_params_coopmat1(device, hsk, hsv, n_rows, n_kv, k_type, v_type, f32acc);
@@ -61,7 +78,7 @@ index 96b541d..d9acac3 100644
      case FA_COOPMAT2:
          return get_fa_tuning_params_coopmat2(device, hsk, hsv, n_rows, n_kv, k_type, v_type, f32acc);
      default:
-@@ -4523,7 +4543,7 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+@@ -4523,7 +4546,7 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
  #if defined(VK_KHR_cooperative_matrix) && defined(GGML_VULKAN_COOPMAT_GLSLC_SUPPORT)
      if (device->coopmat1_fa_support) {
          for (auto &fa : device->pipeline_flash_attn_f32_f16) {
@@ -70,7 +87,7 @@ index 96b541d..d9acac3 100644
              const uint32_t Br = fa.first.Br;
              const uint32_t Bc = fa.first.Bc;
              const bool aligned = fa.first.aligned;
-@@ -4536,7 +4556,12 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+@@ -4536,7 +4559,12 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
              const void * spv_data;
              size_t spv_size;
              const char *name;
@@ -84,7 +101,22 @@ index 96b541d..d9acac3 100644
  #if defined(VK_KHR_shader_bfloat16) && defined(GGML_VULKAN_BFLOAT16_GLSLC_SUPPORT)
                  if (!device->coopmat_bf16_support) continue;
                  spv_data = flash_attn_f32_f16_bf16_cm1_data;
-@@ -6870,6 +6895,9 @@ static vk_device ggml_vk_get_device(size_t idx) {
+@@ -5478,6 +5506,14 @@ static void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
+ #if defined(GGML_VULKAN_COOPMAT_GLSLC_SUPPORT)
+         if (device->coopmat_int_support) {
+             ggml_vk_create_pipeline(device, device->pipeline_mul_mat_i8_tensorwise_cm1, "mul_mat_i8_tensorwise_cm1", mul_mat_i8_tensorwise_cm1_len, mul_mat_i8_tensorwise_cm1_data, "main", 6, sizeof(vk_mul_mat_i8_tensorwise_push_constants), {4 * device->coopmat_int_n, 4 * device->coopmat_int_m, 1}, {device->subgroup_size, device->coopmat_int_m, device->coopmat_int_n, device->coopmat_int_k}, 1, true, true, device->subgroup_size);
++            if (device->int8_m8_tile != 0) {
++                ggml_vk_create_pipeline(device, device->pipeline_mul_mat_i8_tensorwise_m8_cm1,
++                    "mul_mat_i8_tensorwise_m8_cm1", mul_mat_i8_tensorwise_m8_cm1_len, mul_mat_i8_tensorwise_m8_cm1_data,
++                    "main", 6, sizeof(vk_mul_mat_i8_tensorwise_push_constants),
++                    {device->int8_m8_tile * 16, device->int8_m8_tile * 8, 1},
++                    {device->int8_m8_subgroup, 8, 16, 32, device->int8_m8_tile, device->int8_m8_tile},
++                    1, true, true, device->int8_m8_subgroup);
++            }
+         }
+ #endif
+     }
+@@ -6870,6 +6906,9 @@ static vk_device ggml_vk_get_device(size_t idx) {
                          if (prop.MSize == 16 && prop.NSize == 16 && prop.KSize == 16) {
                              device->coopmat_support_16x16x16_f32acc = true;
                          }
@@ -94,7 +126,7 @@ index 96b541d..d9acac3 100644
                      } else if ((vk::ComponentTypeKHR)prop.CType == vk::ComponentTypeKHR::eFloat16 &&
                                 (vk::ComponentTypeKHR)prop.ResultType == vk::ComponentTypeKHR::eFloat16) {
                          // coopmat sizes not set yet
-@@ -6885,6 +6913,9 @@ static vk_device ggml_vk_get_device(size_t idx) {
+@@ -6885,6 +6924,9 @@ static vk_device ggml_vk_get_device(size_t idx) {
                          if (prop.MSize == 16 && prop.NSize == 16 && prop.KSize == 16) {
                              device->coopmat_support_16x16x16_f16acc = true;
                          }
@@ -104,7 +136,60 @@ index 96b541d..d9acac3 100644
                      }
                  } else if ((vk::ComponentTypeKHR)prop.AType      == vk::ComponentTypeKHR::eSint8 &&
                             (vk::ComponentTypeKHR)prop.BType      == vk::ComponentTypeKHR::eSint8 &&
-@@ -10889,7 +10920,8 @@ static bool ggml_vk_flash_attn_coopmat_shmem_support(const vk_device& device, co
+@@ -6937,6 +6979,25 @@ static vk_device ggml_vk_get_device(size_t idx) {
+             device_extensions.push_back("VK_KHR_shader_bfloat16");
+         }
+ #endif
++#endif
++#if defined(GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT) && defined(GGML_VULKAN_COOPMAT_GLSLC_SUPPORT)
++        // Opt-in bounded tuning experiment. Absent/invalid settings retain the
++        // legacy kernel; only Xe2's exact signed INT8 shape and a supported
++        // required subgroup size may select the separate shader.
++        const char * m8_tile = getenv("GGML_VK_INT8_M8_TILE");
++        const char * m8_subgroup = getenv("GGML_VK_INT8_M8_SUBGROUP");
++        const uint32_t tile = m8_tile && strcmp(m8_tile, "2") == 0 ? 2 :
++                              m8_tile && strcmp(m8_tile, "4") == 0 ? 4 : 0;
++        const uint32_t subgroup = !m8_subgroup || strcmp(m8_subgroup, "32") == 0 ? 32 :
++                                  strcmp(m8_subgroup, "16") == 0 ? 16 : 0;
++        if (tile != 0 && subgroup != 0 && device->architecture == vk_device_architecture::INTEL_XE2 &&
++            device->integer_dot_product && device->coopmat_int_support &&
++            device->coopmat_int_m == 8 && device->coopmat_int_n == 16 && device->coopmat_int_k == 32 &&
++            device->subgroup_size_control && device->subgroup_require_full_support &&
++            subgroup >= device->subgroup_min_size && subgroup <= device->subgroup_max_size) {
++            device->int8_m8_tile = tile;
++            device->int8_m8_subgroup = subgroup;
++        }
+ #endif
+         device->name = GGML_VK_NAME + std::to_string(idx);
+ 
+@@ -10116,12 +10177,15 @@ static void ggml_vk_mul_mat_i8_tensorwise(
+     GGML_ASSERT(ggml_vk_can_use_mul_mat_i8_tensorwise(ctx->device, dst));
+     const uint32_t rows = (uint32_t) ggml_nrows(dst);
+     uint32_t coop_rows = 0;
++    vk_pipeline cooperative = ctx->device->pipeline_mul_mat_i8_tensorwise_cm1;
+ #if defined(GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT) && defined(GGML_VULKAN_COOPMAT_GLSLC_SUPPORT)
++    const uint32_t tiles = ctx->device->int8_m8_tile != 0 ? ctx->device->int8_m8_tile : 4;
+     if (ctx->device->coopmat_int_support &&
+         weight->ne[0] % ctx->device->coopmat_int_k == 0 &&
+-        weight->ne[1] % (4 * ctx->device->coopmat_int_n) == 0) {
+-        const uint32_t tile_rows = 4 * ctx->device->coopmat_int_m;
++        weight->ne[1] % (tiles * ctx->device->coopmat_int_n) == 0) {
++        const uint32_t tile_rows = tiles * ctx->device->coopmat_int_m;
+         coop_rows = rows / tile_rows * tile_rows;
++        if (ctx->device->int8_m8_tile != 0) cooperative = ctx->device->pipeline_mul_mat_i8_tensorwise_m8_cm1;
+     }
+ #endif
+ 
+@@ -10161,7 +10225,7 @@ static void ggml_vk_mul_mat_i8_tensorwise(
+     };
+ 
+     if (coop_rows > 0) {
+-        dispatch(ctx->device->pipeline_mul_mat_i8_tensorwise_cm1, 0, coop_rows);
++        dispatch(cooperative, 0, coop_rows);
+     }
+     dispatch(ctx->device->pipeline_mul_mat_i8_tensorwise, coop_rows, rows - coop_rows);
+ }
+@@ -10889,7 +10953,8 @@ static bool ggml_vk_flash_attn_coopmat_shmem_support(const vk_device& device, co
      const uint32_t Br = params.block_rows;
      const uint32_t Bc = params.block_cols;
  
@@ -114,7 +199,7 @@ index 96b541d..d9acac3 100644
  
      const uint32_t row_split = Bc / MatBc;
  
-@@ -10918,8 +10950,8 @@ static bool ggml_vk_flash_attn_coopmat_shmem_support(const vk_device& device, co
+@@ -10918,8 +10983,8 @@ static bool ggml_vk_flash_attn_coopmat_shmem_support(const vk_device& device, co
  
      // BF16 PVMat accumulator is f32 (no bf16 accumulator support), so pvsh is vec4 (16 bytes)
      const uint32_t pvsh_elem_size = (k_type == GGML_TYPE_BF16) ? 16u : f16vec4;
@@ -781,8 +866,109 @@ index 0000000..43c932d
 +        }
 +    }
 +}
+diff --git a/src/ggml-vulkan/vulkan-shaders/mul_mat_i8_tensorwise_m8_cm1.comp b/src/ggml-vulkan/vulkan-shaders/mul_mat_i8_tensorwise_m8_cm1.comp
+new file mode 100644
+index 0000000..65866ed
+--- /dev/null
++++ b/src/ggml-vulkan/vulkan-shaders/mul_mat_i8_tensorwise_m8_cm1.comp
+@@ -0,0 +1,95 @@
++#version 460
++
++#extension GL_EXT_control_flow_attributes : require
++#extension GL_EXT_shader_8bit_storage : require
++#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
++#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require
++#extension GL_KHR_cooperative_matrix : require
++#extension GL_KHR_memory_scope_semantics : require
++#extension GL_KHR_shader_subgroup_basic : require
++
++layout(constant_id = 0) const uint BLOCK_SIZE = 32;
++layout(constant_id = 1) const uint CM_M = 8;
++layout(constant_id = 2) const uint CM_N = 16;
++layout(constant_id = 3) const uint CM_K = 32;
++layout(constant_id = 4) const uint TILE_M = 2;
++layout(constant_id = 5) const uint TILE_N = 2;
++
++layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
++
++layout(push_constant) uniform parameter
++{
++    uint n;
++    uint rows;
++    uint k;
++    uint has_bias;
++    uint row_offset;
++} p;
++
++layout(binding = 0, std430) readonly buffer W { int8_t data_w[]; };
++layout(binding = 1, std430) readonly buffer A { int8_t data_a[]; };
++layout(binding = 2, std430) readonly buffer WS { float data_ws[]; };
++layout(binding = 3, std430) readonly buffer AS { float data_as[]; };
++layout(binding = 4, std430) readonly buffer B { float data_b[]; };
++layout(binding = 5, std430) writeonly buffer D { float data_d[]; };
++
++// Store one cooperative fragment at a time, not the entire output tile.
++shared int32_t accumulators[CM_M * CM_N];
++
++void main() {
++    const uint output_base = gl_WorkGroupID.x * CM_N * TILE_N;
++    const uint row_base = gl_WorkGroupID.y * CM_M * TILE_M;
++    coopmat<int32_t, gl_ScopeSubgroup, CM_M, CM_N, gl_MatrixUseAccumulator> sums[TILE_M * TILE_N];
++    [[unroll]]
++    for (uint i = 0; i < TILE_M * TILE_N; ++i) {
++        sums[i] = coopmat<int32_t, gl_ScopeSubgroup, CM_M, CM_N, gl_MatrixUseAccumulator>(0);
++    }
++
++    for (uint k_base = 0; k_base < p.k; k_base += CM_K) {
++        coopmat<int8_t, gl_ScopeSubgroup, CM_M, CM_K, gl_MatrixUseA> activations[TILE_M];
++        coopmat<int8_t, gl_ScopeSubgroup, CM_K, CM_N, gl_MatrixUseB> weights[TILE_N];
++        [[unroll]]
++        for (uint tile_m = 0; tile_m < TILE_M; ++tile_m) {
++            coopMatLoad(activations[tile_m], data_a,
++                        (row_base + tile_m * CM_M) * p.k + k_base,
++                        p.k, gl_CooperativeMatrixLayoutRowMajor);
++        }
++        [[unroll]]
++        for (uint tile_n = 0; tile_n < TILE_N; ++tile_n) {
++            coopMatLoad(weights[tile_n], data_w,
++                        (output_base + tile_n * CM_N) * p.k + k_base,
++                        p.k, gl_CooperativeMatrixLayoutColumnMajor);
++        }
++        [[unroll]]
++        for (uint tile_m = 0; tile_m < TILE_M; ++tile_m) {
++            [[unroll]]
++            for (uint tile_n = 0; tile_n < TILE_N; ++tile_n) {
++                const uint index = tile_m * TILE_N + tile_n;
++                sums[index] = coopMatMulAdd(activations[tile_m], weights[tile_n], sums[index]);
++            }
++        }
++    }
++
++    [[unroll]]
++    for (uint tile_m = 0; tile_m < TILE_M; ++tile_m) {
++        [[unroll]]
++        for (uint tile_n = 0; tile_n < TILE_N; ++tile_n) {
++            coopMatStore(sums[tile_m * TILE_N + tile_n], accumulators,
++                         0, CM_N, gl_CooperativeMatrixLayoutRowMajor);
++            controlBarrier(gl_ScopeSubgroup, gl_ScopeSubgroup,
++                           gl_StorageSemanticsShared, gl_SemanticsAcquireRelease);
++
++            for (uint index = gl_SubgroupInvocationID; index < CM_M * CM_N; index += gl_SubgroupSize) {
++                const uint row = row_base + tile_m * CM_M + index / CM_N;
++                const uint output_index = output_base + tile_n * CM_N + index % CM_N;
++                float value = float(accumulators[index]) * data_as[row] * data_ws[output_index];
++                if (p.has_bias != 0) {
++                    value += data_b[output_index];
++                }
++                data_d[row * p.n + output_index] = value;
++            }
++            controlBarrier(gl_ScopeSubgroup, gl_ScopeSubgroup,
++                           gl_StorageSemanticsShared, gl_SemanticsAcquireRelease);
++        }
++    }
++}
 diff --git a/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp b/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
-index 9d917f5..c6adf4b 100644
+index 9d917f5..ce3d890 100644
 --- a/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
 +++ b/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
 @@ -688,6 +688,8 @@ void process_shaders() {
@@ -793,4 +979,12 @@ index 9d917f5..c6adf4b 100644
 +                    merge_maps(fa_base_dict, {{"Q_TYPE", "float"}, {"D_TYPE", "float"}, {"D_TYPEV4", "vec4"}, {"COOPMAT", "1"}}), fp16, true, false, f16acc);
  #endif
              }
+ 
+@@ -889,6 +891,7 @@ void process_shaders() {
+     string_to_spv("mul_mat_i8_tensorwise", "mul_mat_i8_tensorwise.comp", {});
+ #if defined(GGML_VULKAN_COOPMAT_GLSLC_SUPPORT)
+     string_to_spv("mul_mat_i8_tensorwise", "mul_mat_i8_tensorwise_cm1.comp", {}, true, true);
++    string_to_spv("mul_mat_i8_tensorwise_m8", "mul_mat_i8_tensorwise_m8_cm1.comp", {}, true, true);
+ #endif
+ #endif
  
