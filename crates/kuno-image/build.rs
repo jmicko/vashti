@@ -30,7 +30,16 @@ fn main() {
         let patch = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap())
             .join("../../apps/kuno/patches/001-qwen-quantized-config.patch");
         let diff = Command::new("git")
-            .args(["diff", "--no-color", "--no-ext-diff", "--binary", "HEAD"])
+            .args([
+                "diff",
+                "--no-color",
+                "--no-ext-diff",
+                "--binary",
+                "HEAD",
+                "--",
+                ".",
+                ":(exclude)ggml",
+            ])
             .current_dir(&source)
             .output()
             .expect("read native patch");
@@ -69,6 +78,40 @@ fn main() {
             diff.status.success() && diff.stdout == expected,
             "native source must contain exactly the pinned Kuno patch"
         );
+        let ggml = source.join("ggml");
+        let ggml_revision = Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(&ggml)
+            .output()
+            .expect("read GGML revision");
+        assert!(ggml_revision.status.success());
+        assert_eq!(
+            String::from_utf8(ggml_revision.stdout).unwrap().trim(),
+            "4bf5f6000653b7881d00963cd6ddb665ccd62a8d",
+            "unsupported GGML revision"
+        );
+        let ggml_patch = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap())
+            .join("../../apps/kuno/patches/002-vulkan-flash-shapes.patch");
+        println!("cargo:rerun-if-changed={}", ggml_patch.display());
+        let ggml_diff = Command::new("git")
+            .args(["diff", "--no-color", "--no-ext-diff", "--binary", "HEAD"])
+            .current_dir(&ggml)
+            .output()
+            .expect("read GGML patch");
+        assert!(
+            ggml_diff.status.success()
+                && ggml_diff.stdout == std::fs::read(ggml_patch).expect("GGML compatibility patch"),
+            "GGML source must contain exactly the pinned Kuno patch"
+        );
+        for file in [
+            "src/ggml-vulkan/ggml-vulkan.cpp",
+            "src/ggml-vulkan/CMakeLists.txt",
+            "src/ggml-vulkan/vulkan-shaders/CMakeLists.txt",
+            "src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp",
+            "src/ggml-vulkan/vulkan-shaders/flash_attn_cm1_m8.comp",
+        ] {
+            println!("cargo:rerun-if-changed={}", ggml.join(file).display());
+        }
         let cache =
             std::fs::read_to_string(build.join("CMakeCache.txt")).expect("native build cache");
         println!(

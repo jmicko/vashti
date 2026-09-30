@@ -29,6 +29,7 @@ case ${KUNO_IMAGE_CUDA:-0} in
     *) echo 'KUNO_IMAGE_CUDA must be 0 or 1.' >&2; exit 1 ;;
 esac
 revision=88411ef1e0688ff2df1010aeeb5d92b2d8cea2be
+ggml_revision=4bf5f6000653b7881d00963cd6ddb665ccd62a8d
 for command in git cmake ninja cargo c++; do
     if ! command -v "$command" >/dev/null; then
         echo "Missing build tool: $command" >&2
@@ -49,16 +50,39 @@ if [[ $(git -C "$source_dir" rev-parse HEAD) != "$revision" ]]; then
     echo 'Native source is not the pinned revision; preserving the existing directory.' >&2
     exit 1
 fi
+if [[ $(git -C "$source_dir/ggml" rev-parse HEAD) != "$ggml_revision" ]]; then
+    echo 'GGML source is not the pinned revision; preserving the existing directory.' >&2
+    exit 1
+fi
 patch_file="$root/apps/kuno/patches/001-qwen-quantized-config.patch"
-if [[ -z $(git -C "$source_dir" status --porcelain --untracked-files=no) ]]; then
+ggml_patch="$root/apps/kuno/patches/002-vulkan-flash-shapes.patch"
+if git -C "$source_dir" diff --quiet HEAD -- . ':(exclude)ggml'; then
     git -C "$source_dir" apply --check "$patch_file"
     git -C "$source_dir" apply "$patch_file"
 fi
-# Require exactly our reviewed patch; never overwrite local dependency edits.
-if ! git -C "$source_dir" diff --no-color --no-ext-diff --binary HEAD | cmp -s "$patch_file" -; then
+# Validate the engine and its submodule independently. Never overwrite local edits.
+if ! git -C "$source_dir" diff --no-color --no-ext-diff --binary HEAD -- . ':(exclude)ggml' | cmp -s "$patch_file" -; then
     echo 'Native source has changes beyond the pinned Kuno patch; preserving them.' >&2
     exit 1
 fi
+if git -C "$source_dir/ggml" diff --quiet HEAD; then
+    git -C "$source_dir/ggml" apply --check "$ggml_patch"
+    git -C "$source_dir/ggml" apply "$ggml_patch"
+fi
+# Include new shader files in the exact diff without committing the dependency.
+# --intent-to-add makes reviewed additions visible; unknown files remain untouched.
+while IFS= read -r new_file; do
+    if [[ -e "$source_dir/ggml/$new_file" ]]; then
+        git -C "$source_dir/ggml" add --intent-to-add -- "$new_file"
+    fi
+done < <(sed -n 's/^+++ b\///p' "$ggml_patch")
+if ! git -C "$source_dir/ggml" diff --no-color --no-ext-diff --binary HEAD | cmp -s "$ggml_patch" -; then
+    echo 'GGML source has changes beyond the pinned Kuno patch; preserving them.' >&2
+    exit 1
+fi
+# Empty unified-patch context lines are intentional; validate source whitespace.
+git -C "$source_dir" diff --check -- . ':(exclude)ggml'
+git -C "$source_dir/ggml" diff --check
 vulkan_options=()
 if [[ -n ${VULKAN_SDK:-} ]]; then
     glslc_path="$VULKAN_SDK/bin/glslc"

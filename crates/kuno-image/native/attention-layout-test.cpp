@@ -95,8 +95,8 @@ static void cache_case(ggml_backend_t backend, bool sage) {
     ggml_gallocr_free(allocator); ggml_backend_buffer_free(inputs); ggml_free(ctx);
 }
 
-static void attention_case(ggml_backend_t backend, int batch, bool masked, bool sage, float kv_scale, ggml_type v_type) {
-    constexpr int dim = 128, rows = 33, keys = 65, heads = 2;
+static void attention_case(ggml_backend_t backend, int batch, bool masked, bool sage, float kv_scale, ggml_type v_type,
+                           int dim = 128, int rows = 33, int keys = 65, int heads = 2, bool f32_precision = false) {
     auto ctx = ggml_init({8 * 1024 * 1024, nullptr, true});
     auto q = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, dim, rows, heads * batch);
     auto k = ggml_new_tensor_3d(ctx, sage || kv_scale != 1.f ? GGML_TYPE_F32 : GGML_TYPE_F16, dim, keys, heads * batch);
@@ -127,8 +127,9 @@ static void attention_case(ggml_backend_t backend, int batch, bool masked, bool 
         if (node->op == GGML_OP_CPY && node != output) assert(node->src[0]->type != node->type);
     }
     if (masked) assert(sage_op == nullptr);
+    if (flash) ggml_flash_attn_ext_set_prec(flash, f32_precision ? GGML_PREC_F32 : GGML_PREC_DEFAULT);
     const bool cuda = std::strncmp(ggml_backend_name(backend), "CUDA", 4) == 0;
-    if (cuda && !sage && batch == 1 && kv_scale == 1.f && v_type == GGML_TYPE_F16) {
+    if (cuda && !sage && dim >= 64 && batch == 1 && kv_scale == 1.f && v_type == GGML_TYPE_F16) {
         assert(flash != nullptr && flash->src[2]->op == GGML_OP_PERMUTE);
         assert(flash->src[2]->src[0] == v && !ggml_is_contiguous(flash->src[2]));
     }
@@ -167,16 +168,12 @@ static void attention_case(ggml_backend_t backend, int batch, bool masked, bool 
         }
     }
     const double relative = std::sqrt(error / std::max(power, 1e-30));
-    std::printf("attention_layout batch=%d masked=%d sage=%d kv_scale=%.1f v_f16=%d relative_l2=%.8f max_error=%.8f\n",
-                batch, masked, sage_op != nullptr, kv_scale, v_type == GGML_TYPE_F16, relative, maximum_error);
+    std::printf("attention_layout dim=%d rows=%d keys=%d heads=%d batch=%d masked=%d sage=%d kv_scale=%.1f v_f16=%d f32_precision=%d relative_l2=%.8f max_error=%.8f\n",
+                dim, rows, keys, heads, batch, masked, sage_op != nullptr, kv_scale, v_type == GGML_TYPE_F16, f32_precision, relative, maximum_error);
     assert(relative < (sage_op ? 0.05 : 0.003));
     ggml_gallocr_free(allocator); ggml_backend_buffer_free(inputs); ggml_free(ctx);
 }
 
-// Deliberately separate from the dense oracle above: that oracle is quadratic
-// in sequence length and unsuitable for the full-sized graph used here. Small
-// regression cases establish accuracy; this opt-in path measures graph compute
-// and checks finite output only. Upload, allocation, and readback are not timed.
 static int attention_benchmark(ggml_backend_t backend, int heads) {
     constexpr int dim = 128, rows = 4056, keys = 8192;
     const size_t query_bytes = size_t(dim) * rows * heads * sizeof(float);
@@ -329,6 +326,20 @@ int main(int argc, char** argv) {
     attention_case(backend, 1, false, false, 1, GGML_TYPE_F32);
     attention_case(backend, 1, false, true, 1, GGML_TYPE_F16);
     attention_case(backend, 1, true, true, 1, GGML_TYPE_F16);
+    // Every side of query, key, and head fragment boundaries. The 65x1025
+    // case also activates mask optimization. Each has an independent dense
+    // oracle, with F16 and F32 QK accumulators and causal/unmasked variants.
+    struct shape { int dim, rows, keys; };
+    const shape shapes[] = {
+        {8, 2, 1}, {24, 15, 7}, {64, 16, 8}, {72, 17, 15},
+        {128, 31, 16}, {128, 32, 17}, {128, 33, 31}, {128, 47, 32},
+        {128, 65, 33}, {128, 15, 63}, {128, 16, 64}, {128, 17, 65},
+        {72, 33, 127}, {256, 17, 33}, {128, 65, 1025},
+    };
+    for (const auto& test : shapes) for (bool masked : {false, true}) for (bool f32 : {false, true}) {
+        attention_case(backend, 1, masked, false, 1, GGML_TYPE_F16,
+                       test.dim, test.rows, test.keys, 2, f32);
+    }
     ggml_backend_free(backend);
     std::puts("attention_layout_passed");
 }

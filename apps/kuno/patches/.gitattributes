@@ -1,0 +1,3 @@
+# Unified patch context uses a single space for empty source lines.
+# Check source whitespace in the patched native checkout instead.
+*.patch -whitespace
