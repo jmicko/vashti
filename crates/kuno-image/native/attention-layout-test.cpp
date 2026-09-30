@@ -67,10 +67,11 @@ static void cache_case(ggml_backend_t backend, bool sage) {
     context.backend = backend; context.ggml_ctx = ctx;
     context.flash_attn_enabled = true; context.sage_attn_enabled = sage;
     auto output = Qwen::QwenImage21Attention::concat_cached_kv(&context, k, v, pk, pv);
-    const bool cuda = std::strncmp(ggml_backend_name(backend), "CUDA", 4) == 0;
-    assert(output.first->type == (cuda && !sage ? GGML_TYPE_F16 : GGML_TYPE_F32));
-    assert(output.second->type == (cuda ? GGML_TYPE_F16 : GGML_TYPE_F32));
-    if (cuda && sage) assert(output.first->src[1] == k);
+    const bool half_cache = std::strncmp(ggml_backend_name(backend), "CUDA", 4) == 0 ||
+                            std::strncmp(ggml_backend_name(backend), "Vulkan", 6) == 0;
+    assert(output.first->type == (half_cache && !sage ? GGML_TYPE_F16 : GGML_TYPE_F32));
+    assert(output.second->type == (half_cache ? GGML_TYPE_F16 : GGML_TYPE_F32));
+    if (half_cache && sage) assert(output.first->src[1] == k);
     auto graph = ggml_new_graph(ctx);
     ggml_build_forward_expand(graph, output.first);
     ggml_build_forward_expand(graph, output.second);
