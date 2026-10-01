@@ -129,7 +129,7 @@ extern "C" int kuno_qwen_generate(const char* directory,const char* pci,const ch
         }
         context.sage_attn=fast_attention != 0;
         if (fast_attention) std::fprintf(stderr,"kuno-image: fast attention enabled\n");
-        context.n_threads=mlp_f16 ? 4 : 8;context.diffusion_flash_attn=true;context.enable_mmap=true;
+        context.n_threads=8;context.diffusion_flash_attn=true;context.enable_mmap=true;
         context.rng_type=CPU_RNG;context.sampler_rng_type=CPU_RNG;
         std::fprintf(stderr,"kuno-image: loading models\n");
         std::unique_ptr<sd_ctx_t,decltype(&free_sd_ctx)> ctx(new_sd_ctx(&context),free_sd_ctx);
