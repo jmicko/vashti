@@ -84,15 +84,18 @@ static void run(ggml_backend_t backend,int id,const Shape & s) {
     printf("im2col_pass shape=%d checks=%zu ms=%.6f\n",id,checks.size(),ms);fflush(stdout);
     ggml_gallocr_free(alloc);ggml_backend_buffer_free(inputs);ggml_free(ctx);
 }
-static void run3d(ggml_backend_t backend,ggml_type type) {
-    constexpr int w=7,h=5,d=3,c=2,n=2,kw=3,kh=2,kd=2;
+static void run3d(ggml_backend_t backend,ggml_type type,bool tall=false) {
+    const int w=tall?1:7,h=tall?65536:5,d=tall?1:3,c=tall?1:2,n=2;
+    const int kw=tall?1:3,kh=tall?1:2,kd=tall?1:2;
+    const int sx=tall?1:2,px=tall?0:2,py=tall?0:1,pz=tall?0:1;
+    const int dx=tall?1:2,dy=tall?1:2;
     auto ctx=ggml_init({4*1024*1024,nullptr,true});assert(ctx);
     auto input=ggml_new_tensor_4d(ctx,GGML_TYPE_F32,w,h,d,c*n);
     auto weight=ggml_new_tensor_4d(ctx,GGML_TYPE_F16,kw,kh,kd,c);
     auto inputs=ggml_backend_alloc_ctx_tensors(ctx,backend);assert(inputs);
     std::vector<float> source(ggml_nelements(input));for(size_t i=0;i<source.size();++i)source[i]=value(i);
     ggml_backend_tensor_set(input,source.data(),0,source.size()*4);
-    auto out=ggml_im2col_3d(ctx,weight,input,c,2,1,1,2,1,1,2,2,1,type);
+    auto out=ggml_im2col_3d(ctx,weight,input,c,sx,1,1,px,py,pz,dx,dy,1,type);
     assert(ggml_backend_supports_op(backend,out));
     auto graph=ggml_new_graph(ctx);ggml_build_forward_expand(graph,out);
     auto alloc=ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));assert(ggml_gallocr_alloc_graph(alloc,graph));
@@ -104,11 +107,11 @@ static void run3d(ggml_backend_t backend,ggml_type type) {
     for(size_t i=0;i<total;++i) {
         const int ic=(i%(c*kd*kh*kw))/(kd*kh*kw),z=(i%(kd*kh*kw))/(kh*kw),y=(i%(kh*kw))/kw,x=i%kw;
         const size_t pixel=i/(c*kd*kh*kw);const int ox=pixel%ow,oy=(pixel/ow)%oh,oz=(pixel/(ow*oh))%od,batch=pixel/(ow*oh*od);
-        const int ix=ox*2+x*2-2,iy=oy+y*2-1,iz=oz+z-1;
+        const int ix=ox*sx+x*dx-px,iy=oy+y*dy-py,iz=oz+z-pz;
         const float wanted=(ix<0||ix>=w||iy<0||iy>=h||iz<0||iz>=d)?0.f:value((((uint64_t(batch)*c+ic)*d+iz)*h+iy)*w+ix);
         assert((type==GGML_TYPE_F16?ggml_fp16_to_fp32(half[i]):actual[i])==wanted);
     }
-    printf("im2col_3d_pass type=%d checks=%zu\n",int(type),total);fflush(stdout);
+    printf("im2col_3d_pass type=%d tall=%d checks=%zu\n",int(type),int(tall),total);fflush(stdout);
     ggml_gallocr_free(alloc);ggml_backend_buffer_free(inputs);ggml_free(ctx);
 }
 static void policy() {
@@ -154,6 +157,7 @@ int main(int argc,char**argv) {
         run(backend,3,{5,3,2,1,1,1,1,1,0,0,1,1,GGML_TYPE_F16});
         run(backend,7,{1,65536,1,2,1,1,1,1,0,0,1,1,GGML_TYPE_F16});
         run3d(backend,GGML_TYPE_F16);run3d(backend,GGML_TYPE_F32);
+        run3d(backend,GGML_TYPE_F16,true);
     } else if(!strcmp(argv[4],"2")) run(backend,4,{78,52,1152,1,3,3,1,1,1,1,1,1,GGML_TYPE_F16});
     else if(!strcmp(argv[4],"3")) run(backend,5,{1248,832,144,1,3,3,1,1,1,1,1,1,GGML_TYPE_F16});
     else if(!strcmp(argv[4],"4")) run(backend,6,{1248,832,288,1,3,3,1,1,1,1,1,1,GGML_TYPE_F16});

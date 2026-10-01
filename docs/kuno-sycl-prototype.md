@@ -116,10 +116,10 @@ supported launch envelope and is rejected before submission.
 `crates/kuno-image/native/sycl-im2col-test.cpp` is an independent numeric-only
 oracle. Compile it with the pinned `icpx -fsycl`, GGML_MAX_NAME=160, and the
 patched GGML include/library paths. With no arguments it uses only the CPU
-backend. It passes 141,632 exact values across odd 2D shapes, F16/F32 output,
-batch two, padding/stride/dilation, a 65,536-row batch boundary, and 3D F16/F32
-shapes. Its direct SDK regression rejects the original global range and accepts
-seven bounded ranges with exact contiguous row coverage. The helper also checks
+backend. It passes 272,704 exact values across odd 2D shapes, F16/F32 output,
+batch two, padding/stride/dilation, 2D and 3D 65,536-row batch boundaries,
+and small 3D F16/F32 shapes. Its direct SDK regression rejects the original
+global range and accepts seven bounded ranges with exact contiguous row coverage. The helper also checks
 zero/negative dimensions and signed-product boundaries.
 
 The root task controls explicit GPU execution under Landlock and zero swap:
@@ -129,5 +129,13 @@ Mode 1 runs the tiny and row/batch/3D cases; mode 2 checks a 78x52,
 144 and 288 channels. Large tests stage input in 1 MiB host chunks and read back
 bounded independent output samples, including offsets around 2 GiB and 4 GiB.
 No model, prompt, image or output file is involved. Large CPU/GPU buffers remain
-subject to the enclosing memory policy. GPU acceptance, full decoder execution,
-and whole-workflow timing for this candidate are pending.
+subject to the enclosing memory policy.
+
+The root task accepted GPU modes 1 through 4 using frozen candidate libraries.
+The first mode passed 141,632 exact values; the added tall 3D case passes another
+131,072 CPU values and remains pending on GPU. Large modes passed 240, 243 and
+246 independent exact samples respectively. The full 288-channel output was
+written and samples crossed both 2 GiB and 4 GiB byte offsets. That test peaked
+at approximately 6.735 GB of device memory with zero swap. Its timing overlapped
+compilation and is functional evidence, not a performance comparison. Full
+decoder execution and whole-workflow timing for this candidate remain pending.
