@@ -36,6 +36,19 @@ by one row. This differs from the already accepted edit output, which crosses
 4 GiB of bytes but stays below UINT32_MAX elements. The maximum destination
 index in mode 6 is 5,450,416,127 and is valid in signed 64-bit arithmetic.
 
+## Compiled addressing audit
+
+An independent read-only extraction checked the actual failed worker with
+SHA256 `8a6d07e18aefdc77fdbbbfface1e87085132378b82c6d8a06c11a7e7fdfb1a70`.
+Its embedded F16 IM2COL SPIR-V uses Physical64 addressing. All 24 integer
+multiply/add/subtract instructions in the 2D kernel and all 40 in the 3D kernel
+use 64-bit integer types; destination pointer-access-chain indices are 64-bit,
+with no narrowing conversions in either kernel. The binary also embeds the
+`-ze-intel-greater-than-4GB-buffer-required` compile option. This excludes a
+demonstrated source/SPIR-V UINT32 offset wrap in those kernels. It does not
+establish final driver machine-code correctness, safe full-decoder residency,
+or the cause of the asynchronous device loss.
+
 ## Independent oracle extension
 
 The existing `sycl-im2col-test.cpp` now samples around 2, 4 and 8 GiB byte offsets,
