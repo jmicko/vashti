@@ -11,6 +11,7 @@
 #include <sys/resource.h>
 #include <vector>
 #include "ggml.h"
+static_assert(GGML_MAX_NAME == 160, "Use the image engine GGML_MAX_NAME=160 ABI");
 #include "ggml-alloc.h"
 #include "ggml-backend.h"
 #include "ggml-cpu.h"

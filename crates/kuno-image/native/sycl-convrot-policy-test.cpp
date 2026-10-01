@@ -5,6 +5,7 @@
 #include <cassert>
 #include <cstdio>
 #include "ggml.h"
+static_assert(GGML_MAX_NAME == 160, "Use the image engine GGML_MAX_NAME=160 ABI");
 #include "convrot-policy.hpp"
 #include "pci-address.hpp"
 

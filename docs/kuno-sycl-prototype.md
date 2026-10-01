@@ -59,7 +59,9 @@ bytes and does not supply that missing config. No system package is installed.
 prototype worktree preserve the exact initial shared-build recipe. These are
 private experiments, not installer inputs. The compiler-generated shared
 backend embeds SYCL device images. PIC object archives can be reused for a
-static native engine, but its final link must use `icpx -fsycl`. Generated
+static native engine, but its final link must use `icpx -fsycl`. Compile all
+GGML C and C++ objects and oracle headers with `GGML_MAX_NAME=160`, matching
+the image engine; standalone GGML's default 64 is an incompatible ABI. Generated
 OpenMP dependencies use `iomp5`; do not add a second GNU OpenMP runtime.
 
 Root schedules all GPU executions. The arithmetic test's explicit GPU command
