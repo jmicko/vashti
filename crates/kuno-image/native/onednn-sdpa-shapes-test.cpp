@@ -59,6 +59,16 @@ int main() {
     reject([](Shape &s) { s.dst->src[4] = s.q; });
     reject([](Shape &s) { s.dst->type = GGML_TYPE_F16; });
     reject([](Shape &s) { s.dst->nb[1] += 4; });
+    // Keep invalid outputs contiguous so each independent dimension gate is
+    // exercised rather than rejected accidentally by the stride precondition.
+    for (int axis = 0; axis < 4; ++axis) for (bool masked : {false, true}) {
+        reject([=](Shape &s) {
+            ++s.dst->ne[axis];
+            s.dst->nb[0] = sizeof(float);
+            for (int d = 1; d < 4; ++d) s.dst->nb[d] = s.dst->nb[d - 1] * s.dst->ne[d - 1];
+            assert(ggml_is_contiguous(s.dst));
+        }, masked);
+    }
     reject([](Shape &s) { s.dst->op_params[3] = 17; });
     reject([](Shape &s) { s.q->ne[1] = int64_t(std::numeric_limits<int>::max()) + 1; });
     for (float scale : {0.0f, -1.0f, std::numeric_limits<float>::infinity(),

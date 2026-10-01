@@ -190,10 +190,10 @@ index 0000000..48818e7
 +void ggml_sycl_mul_mat_i8_convrot(ggml_backend_sycl_context & ctx, ggml_tensor * dst);
 diff --git a/src/ggml-sycl/fattn-onednn-shapes.hpp b/src/ggml-sycl/fattn-onednn-shapes.hpp
 new file mode 100644
-index 0000000..0b81ddd
+index 0000000..bb91537
 --- /dev/null
 +++ b/src/ggml-sycl/fattn-onednn-shapes.hpp
-@@ -0,0 +1,66 @@
+@@ -0,0 +1,71 @@
 +#pragma once
 +
 +#include "ggml.h"
@@ -228,6 +228,11 @@ index 0000000..0b81ddd
 +        Q->ne[2] % K->ne[2] != 0 || Q->ne[1] < 32) {
 +        return false;
 +    }
++    // FLASH_ATTN_EXT stores [value channels, query heads, query rows, batch].
++    // Require that exact output extent before staging writes H * Q * D values.
++    // Contiguity alone can also describe a smaller malformed destination.
++    if (dst->ne[0] != V->ne[0] || dst->ne[1] != Q->ne[2] ||
++        dst->ne[2] != Q->ne[1] || dst->ne[3] != Q->ne[3]) return false;
 +    // The new unmasked path targets Qwen MHA at head dimension 128. Other
 +    // unmasked shapes remain native until separately validated on Xe2.
 +    if (!mask && (K->ne[0] != 128 || Q->ne[2] != K->ne[2])) return false;

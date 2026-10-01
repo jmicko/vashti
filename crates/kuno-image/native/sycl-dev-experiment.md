@@ -49,9 +49,10 @@ the CPU eligibility helper does not establish any GPU correctness or speed.
 ## Offline validation completed
 
 `onednn-sdpa-shapes-test.cpp` tests the actual hardware-independent helper using
-GGML metadata only. It passed 199 accepted layouts/scales and 39 rejected cases,
+GGML metadata only. It passed 199 accepted layouts/scales and 47 rejected cases,
 including token/head-transposed V, padded strides, mask dimensions, masked GQA,
-nonfinite/underflow/overflow scales, and unsupported precision/types. It does
+nonfinite/underflow/overflow scales, unsupported precision/types, and independently
+contiguous malformed output extents on all four axes in masked/unmasked graphs. It does
 not enumerate devices or load any model.
 
 Compile it against the pinned base archive, for example:
@@ -68,7 +69,11 @@ c++ -std=c++17 -O2 -DGGML_MAX_NAME=160 \
 The modified translation unit passed `icpx -fsycl -std=c++17 -fsyntax-only`
 with the bundled oneDNN/MKL include paths, `GGML_SYCL_DNNL=1`,
 `GGML_SYCL_WARP_SIZE=16` and `GGML_MAX_NAME=160`. The compiler emitted one existing
-`dpct/helper.hpp` return-path warning. No GPU execution or full build occurred.
+`dpct/helper.hpp` return-path warning. That translation-unit check involved no GPU execution or full build. A later
+genuine static parent-engine configuration compiled all 57 C++ translation units
+and 15 third-party C units with the current exact 001 and the same 160-byte name
+ABI, then archived their 72 objects. This does not establish a complete linked
+SYCL worker or GPU acceptance.
 
 ## Development bridge and remaining build requirements
 
@@ -90,10 +95,10 @@ existing public child environment does not forward this flag. SYCL reports its
 own backend label and CUDA Fast/Sage attention remains unsupported on SYCL.
 
 The shim requests resident FP16 prefix storage with the same conservative
-9 GiB reserve as Vulkan. The current model concat helper still recognizes only
-CUDA/Vulkan for preserving the cache's FP16 layout during reuse; SYCL therefore
-requires a separate reviewed 001 extension and cache oracle to avoid redundant
-FP32 expansion. This bridge alone does not establish optimized cache execution.
+9 GiB reserve as Vulkan. The current 001 model concat change now recognizes
+SYCL alongside CUDA/Vulkan and preserves the cache's FP16 layout during reuse.
+The cache oracle covers this backend; GPU numerical and performance acceptance
+remain separate from this static source/build proof.
 
 CPU backend-choice tests passed with and without the compile gate. A native
 feature build-script test passed the exact build-flag parser; both shim variants
@@ -139,6 +144,53 @@ CARGO_TARGET_DIR="$PRIVATE_CARGO_TARGET" \
 RUSTFLAGS="-Clinker=$ONEAPI/compiler/2026.1/bin/icpx -Clink-arg=-fsycl" \
 cargo build --locked -p kuno --release --features native-image
 ```
+
+The genuine private CMake configuration uses these settings in addition to the
+explicit compiler/package roots described above:
+
+```bash
+cmake -G Ninja -S "$SOURCE" -B "$BUILD" \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_C_COMPILER="$ONEAPI/compiler/2026.1/bin/icx" \
+  -DCMAKE_CXX_COMPILER="$ONEAPI/compiler/2026.1/bin/icpx" \
+  -DCMAKE_C_FLAGS=-DGGML_MAX_NAME=160 \
+  -DCMAKE_CXX_FLAGS=-DGGML_MAX_NAME=160 \
+  -DSD_SYCL=ON -DSD_CUDA=OFF -DSD_VULKAN=OFF -DSD_METAL=OFF \
+  -DSD_BUILD_SHARED_LIBS=OFF -DSD_BUILD_SHARED_GGML_LIB=OFF \
+  -DSD_USE_UPSTREAM_GGML=OFF -DSD_BUILD_EXAMPLES=OFF -DSD_WEBP=OFF -DSD_WEBM=OFF \
+  -DBUILD_SHARED_LIBS=OFF -DGGML_STATIC=ON -DGGML_BACKEND_DL=OFF \
+  -DGGML_SYCL=ON -DGGML_SYCL_F16=ON -DGGML_SYCL_DNN=ON \
+  -DGGML_SYCL_GRAPH=OFF -DGGML_SYCL_HOST_MEM_FALLBACK=OFF -DGGML_NATIVE=OFF \
+  -DGGML_BUILD_TESTS=OFF -DGGML_BUILD_EXAMPLES=OFF \
+  -DOpenMP_CXX_FLAGS=-fiopenmp '-DOpenMP_CXX_LIB_NAMES=iomp5;pthread' \
+  -DOpenMP_iomp5_LIBRARY="$ONEAPI/compiler/2026.1/lib/libiomp5.so" \
+  -DOpenMP_pthread_LIBRARY=/lib/x86_64-linux-gnu/libpthread.a \
+  -DMKL_DIR="$PRIVATE_MKL_CONFIG" \
+  "-DCMAKE_PREFIX_PATH=$ONEAPI/compiler/2026.1;$ONEAPI/dnnl/2026.0;$ONEAPI/tbb/2023.1"
+```
+
+Supply the reviewed bundle's explicit library directories to the configure and
+build processes. `GGML_STATIC` adds `-static` to GGML's CMake link probes; the
+parent's global `-fsycl` makes automatic C++ OpenMP detection fail with that
+static probe. The explicit `-fiopenmp`/`iomp5` paths above configure the actual
+compiler/link target, and a separate dynamic CPU-only link probe verifies them.
+Do not edit cache text to bypass this failure.
+
+Final Rust linking must remain dynamic for the vendor runtime even though the
+engine/GGML archives are static. A private linker wrapper can invoke the exact
+`icpx -fsycl -Xs -ze-intel-greater-than-4GB-buffer-required` driver and supply its
+explicit compiler/MKL/TBB/oneDNN/UMF/TCM library paths. Do not propagate CMake's
+global `-static` into that link. A CPU-only wrapper probe linked successfully and
+its ELF dependencies included `libsycl.so.9` and `libiomp5.so`; this does not
+validate SYCL device images or a runtime launch.
+
+Reusing completed PIC GGML objects is a development optimization only. Require
+exact 002/003 source diffs, `GGML_MAX_NAME=160`, matching ISA/FP16/oneDNN/OpenMP
+flags, disabled graph/host fallback, and finalized archive hashes before reuse.
+Linux shared-export visibility and PIC differences must be recorded explicitly;
+64-name objects are incompatible. The native parent objects must still be built
+from its genuine configuration and exact current 001. Never copy mutable peer
+build output or claim that copied archives were compiled by the static config.
 
 The CMake OpenMP configuration must use the reviewed `iomp5` runtime for private
 SYCL; normal builds retain GNU OpenMP. The standalone launcher needs explicit
