@@ -7,6 +7,21 @@ use std::{
     os::unix::fs::OpenOptionsExt,
 };
 
+/// Also used before exec of optional workers, covering vendor constructors.
+pub fn protect_process() -> Result<(), &'static str> {
+    let limit = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    if unsafe { libc::setrlimit(libc::RLIMIT_CORE, &limit) } != 0 {
+        return Err("disable_core_dumps_failed");
+    }
+    if unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0) } != 0 {
+        return Err("disable_dumpable_failed");
+    }
+    Ok(())
+}
+
 /// Require an effective no-swap cgroup (or a host with swap disabled). This is
 /// checked before reading the recipe. An ordinary shell is not sufficient.
 pub fn require_no_swap() -> Result<(), &'static str> {

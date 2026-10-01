@@ -324,6 +324,8 @@ mod tests {
                 models: "/media/private/image models %n".into(),
                 pci_address: "0000:2d:00.0".into(),
                 timeout_seconds: 3600,
+                engine: Default::default(),
+                runtime: None,
                 collections: vec!["qwen-image-2512-fp8".into()],
             }),
             ..Config::default()

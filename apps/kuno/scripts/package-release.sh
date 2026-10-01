@@ -3,6 +3,10 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 cd "$repo_root"
+if [[ "${KUNO_DEV_SYCL_BUILD:-0}" != 0 ]]; then
+  echo 'Do not publish the development SYCL-linked worker as the standard Kuno executable.' >&2
+  exit 1
+fi
 case "$(rustc -vV | sed -n 's/^host: //p')" in
   x86_64-unknown-linux-gnu) arch=x86_64 ;;
   *) echo "The distributed Kuno image engine currently requires Linux x86_64 GNU" >&2; exit 1 ;;

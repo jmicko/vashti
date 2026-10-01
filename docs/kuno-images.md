@@ -14,6 +14,11 @@ it can change output pixels and is not supported for Qwen 2512 or Vulkan.
 Unsupported choices return `image_attention_unsupported`. No Python engine or
 additional runtime installation is needed.
 
+The optional [managed SYCL worker](kuno-managed-sycl.md) adds development support
+for a Kuno-only Qwen 2.1 runtime on Intel hardware. Its libraries are
+separate from the standard executable; embedded CUDA/Vulkan remains the default,
+and Qwen 2512 retains its native route. This runtime does not change the image API.
+
 Large Qwen 2.1 edit caches can use bounded pinned host memory. On CUDA, capable
 workers stage the current and next layer through two GPU buffers, overlapping
 transfers with computation. Staging counts toward VRAM reservations, and pending

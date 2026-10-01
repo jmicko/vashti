@@ -69,20 +69,75 @@ impl ImageReadiness {
 }
 
 fn probe(config: Option<&ImageConfig>, fast_attention: bool) -> ImageCapabilities {
-    let privacy = if cfg!(feature = "native-image") && config.is_some() {
+    let managed = config.is_some_and(|c| c.engine == crate::image_engine::ImageEngine::ManagedSycl);
+    let privacy = if (cfg!(feature = "native-image") || managed) && config.is_some() {
         (crate::image_privacy::require_no_swap().is_err()
             || crate::image_privacy::require_landlock().is_err())
         .then_some("image_privacy_unavailable")
     } else {
         None
     };
-    describe(
+    let mut images = describe(
         config,
-        cfg!(feature = "native-image"),
+        cfg!(feature = "native-image") || managed,
         fast_attention,
         privacy,
         |id| config.is_some_and(|c| crate::collections::ready(&c.models, id).is_ok()),
-    )
+    );
+    if let Some(config) = config.filter(|_| managed) {
+        let runtime = config
+            .runtime
+            .as_deref()
+            .ok_or("image_managed_runtime_incompatible")
+            .and_then(crate::image_engine::VerifiedRuntime::load);
+        apply_runtime_status(
+            &mut images,
+            config,
+            runtime.err(),
+            cfg!(feature = "native-image"),
+        );
+    }
+    images
+}
+
+fn apply_runtime_status(
+    images: &mut ImageCapabilities,
+    config: &ImageConfig,
+    runtime_error: Option<&str>,
+    native: bool,
+) {
+    for workflow in &mut images.workflows {
+        let reason = if config.uses_sycl(&workflow.id) {
+            workflow.attention = vec!["standard".into()];
+            runtime_error
+        } else if !native {
+            Some("image_engine_not_in_this_build")
+        } else {
+            None
+        };
+        if let Some(reason) = reason {
+            workflow.state = "unavailable".into();
+            workflow.reason = Some(reason.into());
+        }
+    }
+    let available = images
+        .workflows
+        .iter()
+        .filter(|w| w.state == "ready")
+        .count();
+    images.state = if available == 0 {
+        "unavailable"
+    } else if available < images.workflows.len() {
+        "partial"
+    } else {
+        "ready"
+    }
+    .into();
+    images.reason = if available == 0 {
+        images.workflows.first().and_then(|w| w.reason.clone())
+    } else {
+        None
+    };
 }
 
 /// Degraded gateway startup must not let an unsafe parent accept image content.
@@ -192,7 +247,15 @@ pub(crate) async fn require_workflow(
         Some(w) if w.reason.as_deref() == Some("image_models_unavailable") => {
             Err("image_models_unavailable")
         }
-        Some(_) => Err("image_privacy_unavailable"),
+        Some(w) => match w.reason.as_deref() {
+            Some("image_managed_runtime_unavailable") => Err("image_managed_runtime_unavailable"),
+            Some("image_managed_runtime_invalid") => Err("image_managed_runtime_invalid"),
+            Some("image_managed_runtime_incompatible") => Err("image_managed_runtime_incompatible"),
+            Some("image_managed_runtime_untrusted") => Err("image_managed_runtime_untrusted"),
+            Some("image_managed_runtime_corrupt") => Err("image_managed_runtime_corrupt"),
+            Some("image_engine_not_in_this_build") => Err("image_engine_not_in_this_build"),
+            _ => Err("image_privacy_unavailable"),
+        },
         None => Err("image_engine_not_in_this_build"),
     }
 }
@@ -205,8 +268,33 @@ mod tests {
             models: "/synthetic/models".into(),
             pci_address: "0000:01:00.0".into(),
             timeout_seconds: 60,
+            engine: Default::default(),
+            runtime: None,
             collections: vec!["qwen-image-2512-fp8".into(), "qwen-image-2.1-int8".into()],
         }
+    }
+    #[test]
+    fn managed_runtime_failure_preserves_old_collection_and_fast_is_unsupported() {
+        let mut c = config();
+        c.engine = crate::image_engine::ImageEngine::ManagedSycl;
+        c.runtime = Some(crate::image_engine::SYCL_RUNTIME.into());
+        let mut images = describe(Some(&c), true, true, None, |_| true);
+        apply_runtime_status(&mut images, &c, Some("image_managed_runtime_corrupt"), true);
+        assert_eq!(images.state, "partial");
+        assert_eq!(images.workflows[0].state, "ready");
+        assert_eq!(
+            images.workflows[1].reason.as_deref(),
+            Some("image_managed_runtime_corrupt")
+        );
+        assert_eq!(images.workflows[1].attention, ["standard"]);
+        let mut images = describe(Some(&c), true, true, None, |_| true);
+        apply_runtime_status(&mut images, &c, None, false);
+        assert_eq!(images.state, "partial");
+        assert_eq!(
+            images.workflows[0].reason.as_deref(),
+            Some("image_engine_not_in_this_build")
+        );
+        assert_eq!(images.workflows[1].state, "ready");
     }
     #[test]
     fn missing_collection_does_not_hide_other_workflows_and_recovers() {

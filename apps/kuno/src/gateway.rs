@@ -309,7 +309,10 @@ async fn status(State(gateway): State<Arc<Gateway>>) -> Json<Status> {
         .into(),
         admission,
         gpu_placement_verified: false,
-        image_generation: cfg!(feature = "native-image") && gateway.config.image.is_some(),
+        image_generation: gateway.config.image.as_ref().is_some_and(|image| {
+            cfg!(feature = "native-image")
+                || image.engine == crate::image_engine::ImageEngine::ManagedSycl
+        }),
     })
 }
 
@@ -388,7 +391,8 @@ async fn generate_image(State(gateway): State<Arc<Gateway>>, request: Request) -
             "image_generation_not_configured",
         );
     };
-    if !cfg!(feature = "native-image") {
+    if !cfg!(feature = "native-image") && config.engine == crate::image_engine::ImageEngine::Native
+    {
         return error(
             StatusCode::SERVICE_UNAVAILABLE,
             "image_engine_not_in_this_build",
@@ -406,7 +410,9 @@ async fn generate_image(State(gateway): State<Arc<Gateway>>, request: Request) -
     if let Err(code) = recipe.validate_execution() {
         return error(StatusCode::BAD_REQUEST, code);
     }
-    if recipe.attention == kuno_protocol::ImageAttention::Fast && !gateway.image_fast_attention {
+    if recipe.attention == kuno_protocol::ImageAttention::Fast
+        && (!gateway.image_fast_attention || config.uses_sycl(&recipe.workflow))
+    {
         return error(StatusCode::BAD_REQUEST, "image_attention_unsupported");
     }
     if !config
