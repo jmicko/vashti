@@ -21,12 +21,29 @@ pub struct ImageConfig {
     pub timeout_seconds: u64,
     #[serde(default = "default_collections")]
     pub collections: Vec<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::image_engine::ImageEngine::is_native"
+    )]
+    pub engine: crate::image_engine::ImageEngine,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<String>,
 }
 fn default_collections() -> Vec<String> {
     vec!["qwen-image-2512-fp8".into()]
 }
 impl ImageConfig {
     pub fn validate(&self) -> Result<(), &'static str> {
+        use crate::image_engine::{ImageEngine, SYCL_RUNTIME};
+        match self.engine {
+            ImageEngine::Native if self.runtime.is_some() => {
+                return Err("image_runtime_configuration_invalid");
+            }
+            ImageEngine::ManagedSycl if self.runtime.as_deref() != Some(SYCL_RUNTIME) => {
+                return Err("image_runtime_configuration_invalid");
+            }
+            _ => {}
+        }
         if self.collections.is_empty()
             || self.collections.len() > 2
             || self
@@ -50,6 +67,10 @@ impl ImageConfig {
             return Err("image_configuration_invalid");
         }
         Ok(())
+    }
+    pub fn uses_sycl(&self, workflow: &str) -> bool {
+        self.engine == crate::image_engine::ImageEngine::ManagedSycl
+            && workflow != kuno_protocol::QWEN_RECIPE
     }
 }
 pub type Output = Result<Vec<u8>, &'static str>;
@@ -90,6 +111,12 @@ async fn diagnostics(mut stderr: tokio::process::ChildStderr) -> Option<&'static
         "image_requires_cgroup_v2_no_swap",
         "image_swap_status_unavailable",
         "image_cgroup_unavailable",
+        "image_managed_runtime_unavailable",
+        "image_managed_runtime_invalid",
+        "image_managed_runtime_incompatible",
+        "image_managed_runtime_untrusted",
+        "image_managed_runtime_corrupt",
+        "image_managed_runtime_exec_failed",
     ];
     let mut buffer = [0; 1024];
     let mut line = Vec::with_capacity(128);
@@ -179,12 +206,25 @@ pub async fn run_with_previews(
         return fail("image_cancelled");
     }
     let mut command = Command::new(executable);
-    command
-        .args([
+    if config.uses_sycl(&recipe.workflow) {
+        let id = config.runtime.as_deref().unwrap();
+        if let Err(code) = crate::image_engine::VerifiedRuntime::load(id) {
+            return fail(code);
+        }
+        command.args([
+            "image-worker-launch",
+            id,
+            config.models.to_str().unwrap(),
+            &config.pci_address,
+        ]);
+    } else {
+        command.args([
             "image-worker",
             config.models.to_str().unwrap(),
             &config.pci_address,
-        ])
+        ]);
+    }
+    command
         .env_clear()
         .env("PATH", "/usr/bin:/bin")
         .env("HOME", "/nonexistent")

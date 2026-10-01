@@ -1,10 +1,16 @@
 Kuno — Linux systemd inference gateway and native image engine
 
-This development release provides the Ollama gateway, usage tracking, and
+This beta release provides the Ollama gateway, usage tracking, and
 optional managed GPU workers. Adaptive idle profiling is still pending.
 This package includes the experimental native image engine. Model weights and
 GPU configuration are separate setup steps; see docs/kuno-images.md. CUDA and
-Vulkan need working host GPU drivers. No Python image server is required.
+Vulkan need working host GPU drivers. The CUDA-enabled package requires the
+NVIDIA driver library libcuda.so.1 even when using another GPU for images.
+The optional Intel SYCL worker is a separate verified runtime, installed with
+install-image-runtime and selected using configure-image. See
+docs/kuno-managed-sycl.md and docs/kuno-release-handoff.md for the exact bundle
+checksum, install commands and tested platform limits. No Python image server
+is required; Python packaging helpers are only used by release developers.
 The VERSION file identifies the coordinated Vashti release containing this build.
 
 Installation
@@ -52,8 +58,12 @@ Paths
 Cancellation recovery
 ---------------------
 Kuno drains abandoned responses without saving their contents, releasing
-admission when upstream completion is confirmed. Transport failures or responses
-that fail to finish within the drain deadline still block inference. To recover:
+admission when upstream completion is confirmed. Inference and drain deadlines
+are disabled by default, preserving long Ollama requests. Uncertain upstream
+completion can temporarily block admission. The installed recovery timer checks
+roughly every 30 seconds, with a renewable attempt budget and failure backoff;
+it never treats a long active request alone as a reason to restart.
+For explicit recovery:
 
   sudo /usr/local/lib/kuno/kuno recover
 

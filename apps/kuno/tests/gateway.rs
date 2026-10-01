@@ -61,6 +61,25 @@ impl Fixture {
         response_header_timeout_seconds: u64,
         stream_idle_timeout_seconds: u64,
     ) -> Self {
+        Self::with_image(
+            upstream,
+            max_waiting,
+            managed,
+            response_header_timeout_seconds,
+            stream_idle_timeout_seconds,
+            None,
+        )
+        .await
+    }
+
+    async fn with_image(
+        upstream: Router,
+        max_waiting: usize,
+        managed: Option<kuno::pool::PoolConfig>,
+        response_header_timeout_seconds: u64,
+        stream_idle_timeout_seconds: u64,
+        image: Option<kuno::image_runtime::ImageConfig>,
+    ) -> Self {
         let upstream_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let control_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -75,7 +94,7 @@ impl Fixture {
             response_header_timeout_seconds,
             queue_timeout_seconds: 1,
             managed,
-            image: None,
+            image,
         };
         let base = format!("http://{}", config.listen);
         let control = format!("http://{}", config.control_listen);
@@ -105,6 +124,56 @@ impl Fixture {
                 .unwrap(),
         }
     }
+}
+
+#[tokio::test]
+async fn optional_managed_image_runtime_does_not_gate_ordinary_ollama_startup() {
+    use kuno::{
+        image_engine::{ImageEngine, SYCL_RUNTIME},
+        image_runtime::ImageConfig,
+        pool::PoolConfig,
+        worker::{DeviceSelection, WorkerConfig},
+    };
+    let directory = tempfile::tempdir().unwrap();
+    let image = ImageConfig {
+        models: directory.path().join("absent-public-models"),
+        pci_address: "0000:01:00.0".into(),
+        timeout_seconds: 60,
+        collections: vec!["qwen-image-2.1-int8".into()],
+        engine: ImageEngine::ManagedSycl,
+        runtime: Some(SYCL_RUNTIME.into()),
+    };
+    let managed = PoolConfig {
+        reserve_bytes: 1024 * 1024 * 1024,
+        workers: vec![WorkerConfig {
+            executable: "/bin/false".into(),
+            models: directory.path().into(),
+            home: directory.path().join("home"),
+            address: "127.0.0.1:44324".parse().unwrap(),
+            device: DeviceSelection::Vulkan {
+                index: 0,
+                pci_address: "0000:01:00.0".into(),
+            },
+            max_loaded_models: 3,
+            context_length: 4096,
+        }],
+    };
+    let upstream = Router::new().fallback(any(|| async {
+        axum::Json(serde_json::json!({"models": []}))
+    }));
+    let f = Fixture::with_image(upstream, 1, Some(managed), 0, 0, Some(image)).await;
+    let response = f
+        .client
+        .get(format!("{}/api/tags", f.base))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.json::<serde_json::Value>().await.unwrap()["models"],
+        serde_json::json!([])
+    );
+    assert!(!f.gateway.admission.status().recovery_required);
 }
 
 async fn until(mut condition: impl FnMut() -> bool) {
@@ -269,6 +338,8 @@ async fn configured_missing_images_do_not_stop_gateway_startup() {
             models: directory.path().join("missing-private-model-directory"),
             pci_address: "0000:01:00.0".into(),
             timeout_seconds: 60,
+            engine: Default::default(),
+            runtime: None,
             collections: vec!["qwen-image-2.1-int8".into()],
         }),
         ..Config::default()

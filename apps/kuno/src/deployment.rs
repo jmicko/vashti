@@ -13,6 +13,11 @@ use std::{
 
 type Result<T> = std::result::Result<T, &'static str>;
 
+/// Seven gateway artifacts plus a manifest and up to 96 optional-runtime
+/// members fit within this bound. Writers and readers must share the limit so
+/// a successful transaction can always be reopened and rolled back.
+pub const MAX_DEPLOYMENT_FILES: usize = 128;
+
 #[derive(Clone)]
 pub struct Artifact {
     /// Relative to the installation root; parents must be real directories.
@@ -262,6 +267,9 @@ impl Transaction {
     }
 
     fn describe(&self, artifacts: &[Artifact]) -> Result<Vec<OwnedFile>> {
+        if artifacts.len() > MAX_DEPLOYMENT_FILES {
+            return Err("deployment_artifact_limit_exceeded");
+        }
         let mut files = Vec::new();
         for artifact in artifacts {
             self.checked_path(&artifact.path)?;
@@ -393,7 +401,7 @@ impl Transaction {
         if record.version != 1
             || record.root != self.root
             || record.files.is_empty()
-            || record.files.len() > 32
+            || record.files.len() > MAX_DEPLOYMENT_FILES
             || record
                 .files
                 .iter()

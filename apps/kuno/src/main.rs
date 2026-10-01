@@ -3,7 +3,7 @@ use std::{path::Path, time::Duration};
 use tokio::net::TcpListener;
 
 const HELP: &str = "Kuno — local inference gateway (development)\n\n\
-Usage:\n  kuno fetch-models COLLECTION --directory ABSOLUTE_DIRECTORY\n  kuno serve [--config FILE]\n  kuno resources [--config FILE]\n  kuno check [--config FILE]\n  kuno doctor [--service ollama.service]\n  kuno install [--yes] [--service ollama.service]\n  kuno upgrade [--yes]\n  kuno configure-managed (--workers FILE | --disable) [--yes]\n  kuno configure-image (--settings FILE | --disable) [--yes]\n  kuno configure-timeouts [--response-headers SECONDS] [--stream-idle SECONDS] [--yes]\n  kuno recover [--yes]\n  kuno takeover-restore [--yes]\n  kuno takeover-plan [--config FILE] [--service ollama.service]\n  kuno takeover-bundle --output NEW_DIRECTORY [--config FILE] [--service ollama.service]\n\n\
+Usage:\n  kuno fetch-models COLLECTION --directory ABSOLUTE_DIRECTORY\n  kuno serve [--config FILE]\n  kuno resources [--config FILE]\n  kuno check [--config FILE]\n  kuno doctor [--service ollama.service]\n  kuno install [--yes] [--service ollama.service]\n  kuno upgrade [--yes]\n  kuno configure-managed (--workers FILE | --disable) [--yes]\n  kuno configure-image (--settings FILE | --disable) [--yes]\n  kuno install-image-runtime --directory ABSOLUTE_DIRECTORY --manifest-sha256 SHA256 [--yes]\n  kuno configure-timeouts [--response-headers SECONDS] [--stream-idle SECONDS] [--yes]\n  kuno recover [--yes]\n  kuno takeover-restore [--yes]\n  kuno takeover-plan [--config FILE] [--service ollama.service]\n  kuno takeover-bundle --output NEW_DIRECTORY [--config FILE] [--service ollama.service]\n\n\
 serve requires KUNO_CONTROL_TOKEN or KUNO_CONTROL_TOKEN_FILE (32–256 URL-safe characters).\n\
 configure-timeouts requires at least one timeout; 0 disables that inference deadline.\n\
 Default gateway: 127.0.0.1:11433; control: 127.0.0.1:11432; upstream: 127.0.0.1:11434.\n\
@@ -12,7 +12,9 @@ takeover-plan is read-only. It never changes services, ports, or model limits.\n
 fn main() {
     // Enter the private worker before creating any Tokio threads. All native
     // threads must inherit its filesystem policy from this initial thread.
-    let result = if std::env::args().nth(1).as_deref() == Some("image-worker") {
+    let result = if std::env::args().nth(1).as_deref() == Some("image-worker-launch") {
+        run_image_launcher()
+    } else if std::env::args().nth(1).as_deref() == Some("image-worker") {
         run_image_worker()
     } else {
         match tokio::runtime::Builder::new_multi_thread()
@@ -27,6 +29,22 @@ fn main() {
         eprintln!("kuno: {code}");
         std::process::exit(1);
     }
+}
+
+fn run_image_launcher() -> Result<(), &'static str> {
+    let mut args = std::env::args().skip(2);
+    let id = args.next().ok_or("missing_image_runtime")?;
+    let models = args.next().ok_or("missing_image_models")?;
+    let pci = args.next().ok_or("missing_image_device")?;
+    if args.next().is_some() {
+        return Err("unknown_argument");
+    }
+    kuno::image_engine::launch(
+        &id,
+        &models,
+        &pci,
+        std::env::var_os("KUNO_IMAGE_PREVIEWS").is_some(),
+    )
 }
 
 #[cfg(not(feature = "native-image"))]
@@ -120,6 +138,32 @@ async fn run() -> Result<(), &'static str> {
             .await
             .map_err(|_| "image_configuration_task_failed")??;
         println!("image_configuration_active");
+        return Ok(());
+    }
+    if command == "install-image-runtime" {
+        if args.next().as_deref() != Some("--directory") {
+            return Err("missing_runtime_directory");
+        }
+        let directory = args.next().ok_or("missing_runtime_directory")?;
+        if args.next().as_deref() != Some("--manifest-sha256") {
+            return Err("missing_runtime_manifest_checksum");
+        }
+        let checksum = args.next().ok_or("missing_runtime_manifest_checksum")?;
+        let yes = match args.next().as_deref() {
+            Some("--yes") => true,
+            None => false,
+            _ => return Err("unknown_argument"),
+        };
+        if args.next().is_some() {
+            return Err("unknown_argument");
+        }
+        confirm_interruption(yes)?;
+        tokio::task::spawn_blocking(move || {
+            systemd::install_image_runtime(Path::new(&directory), &checksum)
+        })
+        .await
+        .map_err(|_| "image_runtime_install_task_failed")??;
+        println!("kuno_image_runtime_installed");
         return Ok(());
     }
     let mut config = Config::default();

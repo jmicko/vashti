@@ -3,8 +3,15 @@
 # installed users need Vulkan drivers, not Python, CMake, or a C++ compiler.
 set -euo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
-source_dir="$root/target/kuno-sd-source-88411ef"
-build_dir="$root/target/kuno-sd-build-88411ef-int8"
+patch_file="$root/apps/kuno/patches/001-qwen-quantized-config.patch"
+ggml_patch="$root/apps/kuno/patches/002-vulkan-flash-shapes.patch"
+# A reviewed patch update gets a fresh dependency checkout/build. Keep older
+# builds and unknown local edits intact, and never reuse their stale objects.
+patch_bundle=$(cat -- "$patch_file" "$ggml_patch" | sha256sum)
+patch_bundle=${patch_bundle%% *}
+patch_bundle=${patch_bundle:0:16}
+source_dir="$root/target/kuno-sd-source-88411ef-$patch_bundle"
+build_dir="$root/target/kuno-sd-build-88411ef-$patch_bundle-int8"
 cuda_options=(-DSD_CUDA=OFF)
 cuda_libraries=()
 case ${KUNO_IMAGE_CUDA:-0} in
@@ -15,7 +22,7 @@ case ${KUNO_IMAGE_CUDA:-0} in
             echo 'KUNO_CUDA_ROOT must contain bin/nvcc.' >&2
             exit 1
         fi
-        build_dir="$root/target/kuno-sd-build-88411ef-cuda"
+        build_dir="$root/target/kuno-sd-build-88411ef-$patch_bundle-cuda"
         cuda_options=(-DSD_CUDA=ON -DGGML_STATIC=ON
             "-DCUDAToolkit_ROOT=$KUNO_CUDA_ROOT"
             "-DCMAKE_CUDA_COMPILER=$KUNO_CUDA_ROOT/bin/nvcc"
@@ -29,6 +36,7 @@ case ${KUNO_IMAGE_CUDA:-0} in
     *) echo 'KUNO_IMAGE_CUDA must be 0 or 1.' >&2; exit 1 ;;
 esac
 revision=88411ef1e0688ff2df1010aeeb5d92b2d8cea2be
+ggml_revision=4bf5f6000653b7881d00963cd6ddb665ccd62a8d
 for command in git cmake ninja cargo c++; do
     if ! command -v "$command" >/dev/null; then
         echo "Missing build tool: $command" >&2
@@ -49,16 +57,55 @@ if [[ $(git -C "$source_dir" rev-parse HEAD) != "$revision" ]]; then
     echo 'Native source is not the pinned revision; preserving the existing directory.' >&2
     exit 1
 fi
-patch_file="$root/apps/kuno/patches/001-qwen-quantized-config.patch"
-if [[ -z $(git -C "$source_dir" status --porcelain --untracked-files=no) ]]; then
+if [[ $(git -C "$source_dir/ggml" rev-parse HEAD) != "$ggml_revision" ]]; then
+    echo 'GGML source is not the pinned revision; preserving the existing directory.' >&2
+    exit 1
+fi
+if git -C "$source_dir" diff --quiet HEAD -- . ':(exclude)ggml'; then
     git -C "$source_dir" apply --check "$patch_file"
     git -C "$source_dir" apply "$patch_file"
 fi
-# Require exactly our reviewed patch; never overwrite local dependency edits.
-if ! git -C "$source_dir" diff --no-color --no-ext-diff --binary HEAD | cmp -s "$patch_file" -; then
+# Validate the engine and its submodule independently. Never overwrite local edits.
+while IFS= read -r new_file; do
+    if [[ -e "$source_dir/$new_file" ]]; then
+        git -C "$source_dir" add --intent-to-add -- "$new_file"
+    fi
+done < <(sed -n 's/^+++ b\///p' "$patch_file")
+if ! git -C "$source_dir" diff --no-color --no-ext-diff --binary HEAD -- . ':(exclude)ggml' | cmp -s "$patch_file" -; then
     echo 'Native source has changes beyond the pinned Kuno patch; preserving them.' >&2
     exit 1
 fi
+if git -C "$source_dir/ggml" diff --quiet HEAD; then
+    git -C "$source_dir/ggml" apply --check "$ggml_patch"
+    git -C "$source_dir/ggml" apply "$ggml_patch"
+fi
+# Include new shader files in the exact diff without committing the dependency.
+# --intent-to-add makes reviewed additions visible; unknown files remain untouched.
+while IFS= read -r new_file; do
+    if [[ -e "$source_dir/ggml/$new_file" ]]; then
+        git -C "$source_dir/ggml" add --intent-to-add -- "$new_file"
+    fi
+done < <(sed -n 's/^+++ b\///p' "$ggml_patch")
+if ! git -C "$source_dir/ggml" diff --no-color --no-ext-diff --binary HEAD | cmp -s "$ggml_patch" -; then
+    echo 'GGML source has changes beyond the pinned Kuno patch; preserving them.' >&2
+    exit 1
+fi
+# Empty unified-patch context lines are intentional; validate source whitespace.
+git -C "$source_dir" diff --check -- . ':(exclude)ggml'
+git -C "$source_dir/ggml" diff --check
+# Reject malformed/unbounded internal tile values before compiling GPU code.
+mkdir -p -- "$build_dir"
+c++ -std=c++17 -O2 -I "$source_dir/ggml/src/ggml-vulkan" \
+    "$root/crates/kuno-image/native/int8-m8-tuning-test.cpp" \
+    -o "$build_dir/kuno-int8-m8-tuning-test"
+"$build_dir/kuno-int8-m8-tuning-test"
+# Buffer selection must not initialize an unrelated GPU or use Vulkan's
+# device-zero host provider for parameters configured to live on the CPU.
+c++ -std=c++17 -O2 -I "$source_dir/src" -I "$source_dir/ggml/include" \
+    -I "$source_dir/ggml/src" \
+    "$root/crates/kuno-image/native/params-buffer-type-test.cpp" \
+    -o "$build_dir/kuno-params-buffer-type-test"
+"$build_dir/kuno-params-buffer-type-test"
 vulkan_options=()
 if [[ -n ${VULKAN_SDK:-} ]]; then
     glslc_path="$VULKAN_SDK/bin/glslc"
@@ -92,6 +139,27 @@ c++ -std=c++17 -O2 -DGGML_MAX_NAME=160 \
     "${cuda_libraries[@]}" \
     -Wl,--end-group -lgomp -lvulkan -o "$build_dir/kuno-embedding-test"
 "$build_dir/kuno-embedding-test"
+# Synthetic CPU oracle/fallback regression; optional device acceptance is run
+# separately with kuno-attention-layout-test --device CUDA <PCI address>.
+c++ -std=c++17 -O2 -DGGML_MAX_NAME=160 \
+    -I "$source_dir/src" -I "$source_dir/ggml/include" -I "$source_dir/include" \
+    "$root/crates/kuno-image/native/attention-layout-test.cpp" \
+    -Wl,--start-group "$build_dir/libstable-diffusion.a" \
+    "$build_dir"/ggml/src/libggml*.a "$build_dir/ggml/src/ggml-vulkan/libggml-vulkan.a" \
+    "${cuda_libraries[@]}" \
+    -Wl,--end-group -lgomp -lvulkan -o "$build_dir/kuno-attention-layout-test"
+"$build_dir/kuno-attention-layout-test"
+# Metadata-aware dense conversion is opt-in; validate the real loader and
+# Linear with tiny synthetic files before linking the distributed worker.
+c++ -std=c++17 -O2 -DGGML_MAX_NAME=160 \
+    -I "$source_dir/src" -I "$source_dir/ggml/include" -I "$source_dir/include" \
+    -I "$source_dir/thirdparty" \
+    "$root/crates/kuno-image/native/mlp-f16-loader-test.cpp" \
+    -Wl,--start-group "$build_dir/libstable-diffusion.a" \
+    "$build_dir"/ggml/src/libggml*.a "$build_dir/ggml/src/ggml-vulkan/libggml-vulkan.a" \
+    "${cuda_libraries[@]}" \
+    -Wl,--end-group -lgomp -lvulkan -o "$build_dir/kuno-mlp-f16-loader-test"
+"$build_dir/kuno-mlp-f16-loader-test"
 cd -- "$root"
 KUNO_SD_SOURCE_DIR="$source_dir" KUNO_SD_BUILD_DIR="$build_dir" \
     cargo build --locked -p kuno --release --features native-image

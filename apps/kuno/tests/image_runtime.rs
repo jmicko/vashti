@@ -31,8 +31,30 @@ fn config(path: &std::path::Path) -> ImageConfig {
         models: path.into(),
         pci_address: "0000:2d:00.0".into(),
         timeout_seconds: 5,
+        engine: Default::default(),
+        runtime: None,
         collections: vec!["qwen-image-2512-fp8".into()],
     }
+}
+
+#[test]
+fn image_engine_configuration_preserves_legacy_defaults_and_old_workflow() {
+    use kuno::image_engine::{ImageEngine, SYCL_RUNTIME};
+    let legacy = serde_json::json!({"models":"/models","pci_address":"0000:2d:00.0","timeout_seconds":60,
+        "collections":["qwen-image-2512-fp8","qwen-image-2.1-int8"]});
+    let mut image: ImageConfig = serde_json::from_value(legacy.clone()).unwrap();
+    image.validate().unwrap();
+    assert_eq!(image.engine, ImageEngine::Native);
+    assert_eq!(serde_json::to_value(&image).unwrap(), legacy);
+    image.engine = ImageEngine::ManagedSycl;
+    assert!(image.validate().is_err());
+    image.runtime = Some("../../other".into());
+    assert!(image.validate().is_err());
+    image.runtime = Some(SYCL_RUNTIME.into());
+    image.validate().unwrap();
+    assert!(!image.uses_sycl(kuno_protocol::QWEN_RECIPE));
+    assert!(image.uses_sycl(kuno_protocol::QWEN21_RECIPE));
+    assert!(image.uses_sycl(kuno_protocol::QWEN21_EDIT_RECIPE));
 }
 #[tokio::test]
 async fn bounded_output_success_failure_and_deadline() {

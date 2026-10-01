@@ -11,8 +11,13 @@ collection picker remains future work. This is an experimental beta.
 Requests may set `"attention": "fast"` for the Qwen 2.1 CUDA backend. The default
 is `"standard"`. Fast attention uses the native SageAttention implementation;
 it can change output pixels and is not supported for Qwen 2512 or Vulkan.
-Unsupported choices return `image_attention_unsupported`. No Python engine or
-additional runtime installation is needed.
+Unsupported choices return `image_attention_unsupported`. The embedded
+CUDA/Vulkan path needs no Python engine or additional runtime installation.
+
+The [optional managed SYCL worker](kuno-managed-sycl.md) adds Qwen 2.1 execution
+on Intel hardware, accepted locally on the B70. Its libraries are
+separate from the standard executable; embedded CUDA/Vulkan remains the default,
+and Qwen 2512 retains its native route. This runtime does not change the image API.
 
 Large Qwen 2.1 edit caches can use bounded pinned host memory. On CUDA, capable
 workers stage the current and next layer through two GPU buffers, overlapping
@@ -62,9 +67,11 @@ reference is resized with Lanczos to approximately 1024 squared pixels, preservi
 aspect ratio and rounding dimensions to multiples of 32, matching the supplied
 ComfyUI encoder's resolution rule. Reference order and alpha are retained.
 
-The Vulkan prefix cache uses about 1 MiB per prefix token per condition. The
-optional CUDA build stores it in FP16 (half the memory), matching the K/V
-precision supplied to flash attention. Kuno estimates the cache from reference
+Both Vulkan and CUDA store Qwen 2.1 prefix K/V in FP16, about 512 KiB per prefix
+token per condition, matching the precision supplied to flash attention. Cache
+precision is separate from the working-memory reserve: Vulkan conservatively
+reserves 9 GiB for full weights and workspace, while CUDA keeps its segment
+reserve and bounded host-cache policy. Kuno estimates the cache from reference
 dimensions and a conservative text-token bound. The CUDA policy reserves working
 space for a segment and allows the engine to stream weights; Vulkan budgets full
 diffusion weights. It disables caching when the estimate exceeds the available
