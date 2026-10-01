@@ -57,6 +57,7 @@ fn fail(output: &mut impl Write, code: &'static str) -> Result<(), &'static str>
         | "image_native_runtime_failed"
         | "image_native_output_invalid"
         | "image_worker_output_invalid"
+        | "image_request_cleanup_failed"
         | "image_encoding_failed"
         | "image_generation_failed"
         | "image_engine_unavailable" => code,
