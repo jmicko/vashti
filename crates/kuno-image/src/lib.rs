@@ -7,6 +7,7 @@ mod png;
 pub mod preview;
 mod qwen21;
 pub mod references;
+pub mod worker_protocol;
 use kuno_protocol::{ImageRecipe, ImportedImageRecipe, QWEN_RECIPE};
 use serde_json::{Map, Value};
 use std::collections::BTreeSet;

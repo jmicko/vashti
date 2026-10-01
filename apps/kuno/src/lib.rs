@@ -9,6 +9,7 @@ pub mod image_privacy;
 pub mod image_residency;
 pub mod image_runtime;
 mod image_stream;
+pub mod image_worker;
 mod journal;
 mod lifecycle;
 mod observe;
