@@ -149,6 +149,8 @@ fn main() {
                 "convrot.hpp",
                 "convrot-policy.hpp",
                 "pci-address.hpp",
+                "im2col.cpp",
+                "im2col-launch-policy.hpp",
                 "fattn-onednn.cpp",
                 "fattn-onednn-shapes.hpp",
             ] {
