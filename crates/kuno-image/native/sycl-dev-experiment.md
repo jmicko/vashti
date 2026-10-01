@@ -112,11 +112,14 @@ remain unverified. The following requirements still apply:
 - The private build script links the static GGML SYCL archive and reviewed
   dynamic vendor closure, preserving the normal CUDA/Vulkan path. Its final link needs
   the `icpx -fsycl` driver to process SYCL device images; a normal GNU linker
-  command alone is insufficient. Use a separate Cargo target directory.
+  command alone is insufficient. The private wrapper adds `-fPIC` and an
+  explicit trailing `-lsycl` because Rust supplies `-nodefaultlibs`. Use a separate Cargo target directory.
 - A development CMake configuration uses the exact private `icpx` and `icx`,
   `SD_SYCL=ON`, static engine/GGML, no examples/WebP/WebM, the existing patched
-  GGML, and explicit oneDNN/TBB/MKL package roots. Initially disable SYCL graph
-  replay, host-memory fallback and system-USM fallback; do not change driver or
+  GGML, and explicit oneDNN/TBB/MKL package roots. Set `CMAKE_POSITION_INDEPENDENT_CODE=ON` for the engine objects used by
+  Rust's PIE executable. Pass OpenMP C++ flags/library names as typed CMake
+  `STRING` values, preserving the exact configuration validation. Initially
+  disable SYCL graph replay, host-memory fallback and system-USM fallback; do not change driver or
   VMM behavior without measurement. Keeping Vulkan enabled satisfies the
   existing baseline adapter; the explicit development build gate also permits
   a SYCL-only private engine with Vulkan disabled.
@@ -215,8 +218,11 @@ filesystem exception should be added for oneAPI. Suppress all raw library logs
 and exception text through the worker's existing pipe/filter policy.
 
 For a clean environment set `HOME=/nonexistent`,
-`SYCL_CACHE_PERSISTENT=0`, `SYCL_DUMP_IMAGES=0`, `SYCL_UR_TRACE=0`,
-`SYCL_CACHE_TRACE=0`, vendor verbose/JIT dump/profiling off, and preserve the
+`SYCL_CACHE_PERSISTENT=0`, `SYCL_UR_TRACE=0`, and leave
+`SYCL_DUMP_IMAGES` and `SYCL_CACHE_TRACE` unset in the cleared environment.
+Setting `SYCL_DUMP_IMAGES=0` still activates dumping in the tested runtime;
+Landlock rejected the attempted SPIR-V file write during synthetic initialization.
+Keep vendor verbose/JIT dump/profiling off, and preserve the
 existing CUDA/Mesa cache-disable settings. Keep SYCL's in-memory compiled-code
 cache available; it is transient within the worker. The deprecated
 `SYCL_CACHE_DISABLE_PERSISTENT` has no effect according to
