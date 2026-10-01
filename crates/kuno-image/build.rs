@@ -5,6 +5,7 @@ fn main() {
     println!("cargo:rerun-if-changed=native/shim.cpp");
     println!("cargo:rerun-if-changed=native/cache-budget.h");
     println!("cargo:rerun-if-changed=native/backend-choice.h");
+    println!("cargo:rerun-if-changed=native/experimental-precision.h");
     #[cfg(feature = "native-sd")]
     {
         use std::{path::PathBuf, process::Command};
@@ -64,6 +65,10 @@ fn main() {
             "src/core/runner_cache.h",
             "src/core/runner_cache.cpp",
             "src/core/ggml_runner.cpp",
+            "src/model_loader.cpp",
+            "src/model_loader.h",
+            "src/model_loader_files.cpp",
+            "src/model_io/int8_dense.h",
         ] {
             println!("cargo:rerun-if-changed={}", source.join(file).display());
         }

@@ -66,6 +66,11 @@ if git -C "$source_dir" diff --quiet HEAD -- . ':(exclude)ggml'; then
     git -C "$source_dir" apply "$patch_file"
 fi
 # Validate the engine and its submodule independently. Never overwrite local edits.
+while IFS= read -r new_file; do
+    if [[ -e "$source_dir/$new_file" ]]; then
+        git -C "$source_dir" add --intent-to-add -- "$new_file"
+    fi
+done < <(sed -n 's/^+++ b\///p' "$patch_file")
 if ! git -C "$source_dir" diff --no-color --no-ext-diff --binary HEAD -- . ':(exclude)ggml' | cmp -s "$patch_file" -; then
     echo 'Native source has changes beyond the pinned Kuno patch; preserving them.' >&2
     exit 1
@@ -137,6 +142,17 @@ c++ -std=c++17 -O2 -DGGML_MAX_NAME=160 \
     "${cuda_libraries[@]}" \
     -Wl,--end-group -lgomp -lvulkan -o "$build_dir/kuno-attention-layout-test"
 "$build_dir/kuno-attention-layout-test"
+# Metadata-aware dense conversion is opt-in; validate the real loader and
+# Linear with tiny synthetic files before linking the distributed worker.
+c++ -std=c++17 -O2 -DGGML_MAX_NAME=160 \
+    -I "$source_dir/src" -I "$source_dir/ggml/include" -I "$source_dir/include" \
+    -I "$source_dir/thirdparty" \
+    "$root/crates/kuno-image/native/mlp-f16-loader-test.cpp" \
+    -Wl,--start-group "$build_dir/libstable-diffusion.a" \
+    "$build_dir"/ggml/src/libggml*.a "$build_dir/ggml/src/ggml-vulkan/libggml-vulkan.a" \
+    "${cuda_libraries[@]}" \
+    -Wl,--end-group -lgomp -lvulkan -o "$build_dir/kuno-mlp-f16-loader-test"
+"$build_dir/kuno-mlp-f16-loader-test"
 cd -- "$root"
 KUNO_SD_SOURCE_DIR="$source_dir" KUNO_SD_BUILD_DIR="$build_dir" \
     cargo build --locked -p kuno --release --features native-image
