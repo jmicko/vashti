@@ -50,13 +50,14 @@ index 0000000..7899841
 +}
 diff --git a/src/ggml-sycl/convrot.cpp b/src/ggml-sycl/convrot.cpp
 new file mode 100644
-index 0000000..96f7ed5
+index 0000000..4465487
 --- /dev/null
 +++ b/src/ggml-sycl/convrot.cpp
-@@ -0,0 +1,121 @@
+@@ -0,0 +1,126 @@
 +// Experimental native signed INT8 tensorwise GEMM for Qwen ConvRot weights.
 +#include "convrot.hpp"
 +#include <oneapi/mkl/blas.hpp>
++#include <sycl/ext/intel/math/imf_rounding_math.hpp>
 +
 +bool ggml_sycl_convrot_device_supported(const sycl::device & d) {
 +    return d.is_gpu() && d.get_backend() == sycl::backend::ext_oneapi_level_zero &&
@@ -102,12 +103,16 @@ index 0000000..96f7ed5
 +                if (tid < stride) maxima[tid] = sycl::fmax(maxima[tid], maxima[tid+stride]);
 +                it.barrier(sycl::access::fence_space::local_space);
 +            }
-+            const float scale = maxima[0] / 127.f;
++            // Preserve each FP32 rounding before nearest-even integer rounding.
++            // SYCL's ordinary division permits error that can turn an exact
++            // half tie (e.g. .40625 with max .8125) into 63.499996 instead of
++            // 63.5, changing an INT8 byte and therefore the exact integer dot.
++            const float scale = sycl::ext::intel::math::fdiv_rn(maxima[0], 127.f);
 +            if (tid == 0) scales[row] = scale;
-+            const float inverse = scale == 0.f ? 0.f : 1.f / scale;
++            const float inverse = scale == 0.f ? 0.f : sycl::ext::intel::math::fdiv_rn(1.f, scale);
 +            auto rounded = [&](float value) {
 +                if (scale == 0.f) return int8_t(0);
-+                const float scaled = value * inverse;
++                const float scaled = sycl::ext::intel::math::fmul_rn(value, inverse);
 +                // Nonfinite activations have no usable row scale. Avoid a
 +                // float-to-integer UB; ordinary finite rows retain ties-even.
 +                if (!sycl::isfinite(scaled)) return int8_t(0);

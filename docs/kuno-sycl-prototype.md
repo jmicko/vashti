@@ -40,10 +40,20 @@ requirements. Its helper test is in the separate SDPA review commit.
 
 - The CPU-only geometry/PCI test passes 40 cases, including K overflow,
   malformed packing/scales/strides/batches and strict BDF rejection.
-- The independent arithmetic test passes 27 CPU cases: plain and rotated
+- The independent arithmetic test passes 30 CPU cases: plain and rotated
   direct input, packed rotation, odd rows/N, flattened batches, bias/no bias,
   zero rows, -128/+127 weights, exact quantized bytes and deliberate rounding
   ties. It uses a dense H4 tensor-product oracle, not backend transform code.
+  A direct batched GPU case exposed a one-byte quantization error at a half tie:
+  with row maximum `.8125`, FP32 scale then FP32 reciprocal then FP32 multiply
+  maps `.40625` to exactly `63.5`, which must round to 64. Ordinary device
+  division can shift that product below the tie. The quantizer now uses explicit
+  Intel IMF nearest-even FP32 division and multiplication at all three
+  boundaries, then the existing `rint`; the oracle tolerance is unchanged.
+  Added fractional tie cases cover positive/negative ties, direct and packed
+  H4 input, and flattened batches. The CPU oracle explicitly selects
+  `FE_TONEAREST`. GPU acceptance of this fix remains pending.
+  See the [Intel IMF device-library contract](https://www.intel.com/content/www/us/en/docs/dpcpp-cpp-compiler/developer-guide-reference/2024-2/imf-device-library.html).
 - `icpx -fsycl` compiled the new kernels; the full private SYCL backend builds.
 - GPU tests and full image inference have not been accepted by this commit.
 
