@@ -87,3 +87,47 @@ worker output, source pins, managed-runtime packaging, physical selection,
 model-loading ownership, full masked/unmasked numerical attention, image
 quality, complete workflow timing and host/GPU high-water memory. The current
 service and public backend preference remain unchanged.
+
+
+## Bounded IM2COL launch experiment
+
+The pinned compiler defaults to `__SYCL_ID_QUERIES_FIT_IN_INT__=1`.
+Its host-side `sycl::detail::checkValueRange(nd_range)` checks the product of
+all global dimensions against signed INT32. The full-resolution 288-channel,
+3x3, 1248x832 decoder patch launch is `(832,1248,2816)`, or 2,923,954,176
+work-items. A CPU-only call to this actual SDK helper rejects that range with
+`sycl::errc::nd_range`; it does not initialize a queue or enumerate a device.
+This explains a pre-submit failure independently of GPU memory availability.
+A final-link large-buffer option does not change the host range check.
+
+Patch 003 now slices 2D and 3D IM2COL dispatch rows into disjoint ranges capped
+at both 65,535 rows and INT32_MAX total work-items. The pure helper checks
+`width * padded_channels` before multiplying, rejects impossible single-row
+ranges, and computes the remaining row bound. For the failing geometry, the
+ranges cover rows `[0,611)` and `[611,832)`. Both pass the pinned SDK check.
+Kernel indices add the row offset before the existing batch, depth, height,
+stride, dilation and padding calculations. Tensor and pointer arithmetic remain
+64-bit; convolution math, packing, numerical precision and output allocation
+are unchanged. The worker still needs the full 5,382,733,824-byte output tensor.
+Row slicing is not a memory-saving decode implementation. A single row whose
+width times padded channels exceeds INT32_MAX remains outside this prototype's
+supported launch envelope and is rejected before submission.
+
+`crates/kuno-image/native/sycl-im2col-test.cpp` is an independent numeric-only
+oracle. Compile it with the pinned `icpx -fsycl`, GGML_MAX_NAME=160, and the
+patched GGML include/library paths. With no arguments it uses only the CPU
+backend. It passes 141,632 exact values across odd 2D shapes, F16/F32 output,
+batch two, padding/stride/dilation, a 65,536-row batch boundary, and 3D F16/F32
+shapes. Its direct SDK regression rejects the original global range and accepts
+seven bounded ranges with exact contiguous row coverage. The helper also checks
+zero/negative dimensions and signed-product boundaries.
+
+The root task controls explicit GPU execution under Landlock and zero swap:
+`sycl-im2col-test --device SYCL <physical PCI address> <mode>`.
+Mode 1 runs the tiny and row/batch/3D cases; mode 2 checks a 78x52,
+1152-channel decoder stage; modes 3 and 4 check full 1248x832 stages with
+144 and 288 channels. Large tests stage input in 1 MiB host chunks and read back
+bounded independent output samples, including offsets around 2 GiB and 4 GiB.
+No model, prompt, image or output file is involved. Large CPU/GPU buffers remain
+subject to the enclosing memory policy. GPU acceptance, full decoder execution,
+and whole-workflow timing for this candidate are pending.

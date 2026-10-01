@@ -578,6 +578,141 @@ index 18d5878..b081ccc 100644
                  dev_ctx->description = prop.get_name();
                  dev_ctx->op_offload_min_batch_size = min_batch_size;
  
+diff --git a/src/ggml-sycl/im2col-launch-policy.hpp b/src/ggml-sycl/im2col-launch-policy.hpp
+new file mode 100644
+index 0000000..9735cbf
+--- /dev/null
++++ b/src/ggml-sycl/im2col-launch-policy.hpp
+@@ -0,0 +1,12 @@
++#pragma once
++#include <cstdint>
++#include <algorithm>
++#include <limits>
++
++// Keep each dispatch's total work-item count inside the signed 32-bit envelope.
++// Tensor/address arithmetic remains 64-bit; no output-sized host staging.
++inline int64_t ggml_sycl_im2col_rows_per_launch(int64_t padded_channels, int64_t width) {
++    constexpr int64_t max_work_items = std::numeric_limits<int32_t>::max();
++    if (padded_channels <= 0 || width <= 0 || padded_channels > max_work_items / width) return 0;
++    return std::min<int64_t>(65535, max_work_items / (padded_channels * width));
++}
+diff --git a/src/ggml-sycl/im2col.cpp b/src/ggml-sycl/im2col.cpp
+index 7bf3584..f48b102 100644
+--- a/src/ggml-sycl/im2col.cpp
++++ b/src/ggml-sycl/im2col.cpp
+@@ -11,6 +11,7 @@
+ //
+ 
+ #include "im2col.hpp"
++#include "im2col-launch-policy.hpp"
+ 
+ #define MAX_GRIDDIM_Z 65535
+ 
+@@ -18,7 +19,7 @@ template <typename T>
+ static  void im2col_kernel(
+         const float * x, T * dst,
+         int64_t IC, int64_t IW, int64_t IH, int64_t OH, int64_t OW, int64_t KW, int64_t KH,
+-        int64_t IC_IH_IW, int64_t IH_IW, int64_t N_OH, int64_t KH_KW, int64_t IC_KH_KW,
++        int64_t IC_IH_IW, int64_t IH_IW, int64_t row_begin, int64_t row_end, int64_t KH_KW, int64_t IC_KH_KW,
+         int s0, int s1, int p0, int p1, int d0, int d1) {
+     auto          item_ct1 = sycl::ext::oneapi::this_work_item::get_nd_item<3>();
+     const int64_t i        = item_ct1.get_local_id(2) + item_ct1.get_group(2) * item_ct1.get_local_range(2);
+@@ -32,7 +33,7 @@ static  void im2col_kernel(
+     const int64_t ikw = rem - ikh * KW;
+ 
+     const int64_t iow = item_ct1.get_group(1);
+-    for (int64_t iz = item_ct1.get_group(0); iz < N_OH; iz += MAX_GRIDDIM_Z) {
++    for (int64_t iz = row_begin + item_ct1.get_group(0); iz < row_end; iz += MAX_GRIDDIM_Z) {
+         const int64_t  in = iz / OH;
+         const int64_t  ioh = iz - in * OH;
+ 
+@@ -79,16 +80,22 @@ static void im2col_sycl(const float *   x,
+     const int64_t num_blocks = (IC_KH_KW + SYCL_IM2COL_BLOCK_SIZE - 1) / SYCL_IM2COL_BLOCK_SIZE;
+     const int64_t N_OH = N * OH;
+     const int64_t KH_KW = KW*KH;
+-    dpct::dim3    block_nums(num_blocks, OW, MIN(N_OH, MAX_GRIDDIM_Z));
+-    /*
+-    DPCT1049:73: The work-group size passed to the SYCL kernel may exceed the limit. To get the device limit, query info::device::max_work_group_size. Adjust the work-group size if needed.
+-    */
+-    stream->parallel_for(sycl::nd_range<3>(block_nums * sycl::range<3>(1, 1, MIN(IC_KH_KW, SYCL_IM2COL_BLOCK_SIZE)),
+-                                           sycl::range<3>(1, 1, MIN(IC_KH_KW, SYCL_IM2COL_BLOCK_SIZE))),
+-                         [=](sycl::nd_item<3> item_ct1) {
+-                             im2col_kernel(x, dst, IC, IW, IH, OH, OW, KW, KH, IC_IH_IW, IH_IW, N_OH, KH_KW, IC_KH_KW,
+-                                           s0, s1, p0, p1, d0, d1);
+-                         });
++    const int64_t local_size = MIN(IC_KH_KW, SYCL_IM2COL_BLOCK_SIZE);
++    const int64_t rows_per_launch = ggml_sycl_im2col_rows_per_launch(num_blocks * local_size, OW);
++    GGML_ASSERT(rows_per_launch > 0);
++    // Full-resolution VAE patches can exceed INT32_MAX work-items. Slice only
++    // launch rows; destination offsets and batch/height addressing are unchanged.
++    for (int64_t row_begin = 0; row_begin < N_OH; row_begin += rows_per_launch) {
++        const int64_t row_end = std::min(N_OH, row_begin + rows_per_launch);
++        dpct::dim3 block_nums(num_blocks, OW, row_end - row_begin);
++        const sycl::range<3> local(1, 1, local_size);
++        stream->parallel_for(sycl::nd_range<3>(block_nums * local, local),
++                             [=](sycl::nd_item<3> item_ct1) {
++                                 im2col_kernel(x, dst, IC, IW, IH, OH, OW, KW, KH,
++                                               IC_IH_IW, IH_IW, row_begin, row_end, KH_KW, IC_KH_KW,
++                                               s0, s1, p0, p1, d0, d1);
++                             });
++    }
+ }
+ 
+ static void im2col_sycl_f16(const float *   x,
+@@ -184,7 +191,7 @@ static  void im2col_3d_kernel(
+         int64_t KD, int64_t KH, int64_t KW, int64_t OD, int64_t OH, int64_t OW,
+         int64_t OH_OW, int64_t KD_KH_KW, int64_t ID_IH_IW, int64_t KH_KW, int64_t IH_IW, int64_t IC_ID_IH_IW,
+         int64_t IC_KD_KH_KW, int64_t OW_KD_KH_KW, int64_t OD_OH_OW_IC_KD_KH_KW, int64_t OH_OW_IC_KD_KH_KW,
+-        int64_t OW_IC_KD_KH_KW, int64_t N_OD_OH, int64_t OD_OH,
++        int64_t OW_IC_KD_KH_KW, int64_t row_begin, int64_t row_end, int64_t OD_OH,
+         int64_t stride_q, int64_t stride_z, int64_t stride_y, int64_t stride_x,
+         int s0, int s1, int s2, int p0, int p1, int p2, int d0, int d1, int d2) {
+     auto          item_ct1 = sycl::ext::oneapi::this_work_item::get_nd_item<3>();
+@@ -201,7 +208,7 @@ static  void im2col_3d_kernel(
+     const int64_t ikw = i % KW;
+ 
+     const int64_t iow = item_ct1.get_group(1);
+-    for (int64_t iz = item_ct1.get_group(0); iz < N_OD_OH; iz += MAX_GRIDDIM_Z) {
++    for (int64_t iz = row_begin + item_ct1.get_group(0); iz < row_end; iz += MAX_GRIDDIM_Z) {
+         const int64_t in  = iz / OD_OH;
+         const int64_t iod = (iz - in*OD_OH) / OH;
+         const int64_t ioh = iz % OH;
+@@ -265,19 +272,22 @@ static void im2col_3d_sycl(const float *   src,
+     const int64_t OH_OW_IC_KD_KH_KW = OH*OW*IC*KD*KH*KW;
+     const int64_t OW_IC_KD_KH_KW = OW*IC*KD*KH*KW;
+     const int64_t num_blocks = (IC_KD_KH_KW + SYCL_IM2COL_BLOCK_SIZE - 1) / SYCL_IM2COL_BLOCK_SIZE;
+-    dpct::dim3    block_nums(num_blocks, OW, MIN(N_OD_OH, MAX_GRIDDIM_Z));
+-    /*
+-    DPCT1049:74: The work-group size passed to the SYCL kernel may exceed the limit. To get the device limit, query info::device::max_work_group_size. Adjust the work-group size if needed.
+-    */
+-    stream->parallel_for(sycl::nd_range<3>(block_nums * sycl::range<3>(1, 1, MIN(IC_KD_KH_KW, SYCL_IM2COL_BLOCK_SIZE)),
+-                                           sycl::range<3>(1, 1, MIN(IC_KD_KH_KW, SYCL_IM2COL_BLOCK_SIZE))),
+-                         [=](sycl::nd_item<3> item_ct1) {
+-                             im2col_3d_kernel(src, dst, N, IC, ID, IH, IW, OC, KD, KH, KW, OD, OH, OW, OH_OW, KD_KH_KW,
+-                                              ID_IH_IW, KH_KW, IH_IW, IC_ID_IH_IW, IC_KD_KH_KW, OW_KD_KH_KW,
+-                                              OD_OH_OW_IC_KD_KH_KW, OH_OW_IC_KD_KH_KW, OW_IC_KD_KH_KW, N_OD_OH, OD_OH,
+-                                              stride_q, stride_z, stride_y, stride_x, s0, s1, s2, p0, p1, p2, d0, d1,
+-                                              d2);
+-                         });
++    const int64_t local_size = MIN(IC_KD_KH_KW, SYCL_IM2COL_BLOCK_SIZE);
++    const int64_t rows_per_launch = ggml_sycl_im2col_rows_per_launch(num_blocks * local_size, OW);
++    GGML_ASSERT(rows_per_launch > 0);
++    for (int64_t row_begin = 0; row_begin < N_OD_OH; row_begin += rows_per_launch) {
++        const int64_t row_end = std::min(N_OD_OH, row_begin + rows_per_launch);
++        dpct::dim3 block_nums(num_blocks, OW, row_end - row_begin);
++        const sycl::range<3> local(1, 1, local_size);
++        stream->parallel_for(sycl::nd_range<3>(block_nums * local, local),
++                             [=](sycl::nd_item<3> item_ct1) {
++                                 im2col_3d_kernel(src, dst, N, IC, ID, IH, IW, OC, KD, KH, KW, OD, OH, OW, OH_OW, KD_KH_KW,
++                                                  ID_IH_IW, KH_KW, IH_IW, IC_ID_IH_IW, IC_KD_KH_KW, OW_KD_KH_KW,
++                                                  OD_OH_OW_IC_KD_KH_KW, OH_OW_IC_KD_KH_KW, OW_IC_KD_KH_KW,
++                                                  row_begin, row_end, OD_OH,
++                                                  stride_q, stride_z, stride_y, stride_x, s0, s1, s2, p0, p1, p2, d0, d1, d2);
++                             });
++    }
+ }
+ 
+ static void im2col_3d_sycl_f16(const float *   src,
 diff --git a/src/ggml-sycl/pci-address.hpp b/src/ggml-sycl/pci-address.hpp
 new file mode 100644
 index 0000000..9907438
