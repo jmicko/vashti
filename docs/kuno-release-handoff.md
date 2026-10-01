@@ -20,9 +20,9 @@ Vashti and Android `0.13.0-beta.2` (APK code
 and validated by the four-artifact signing dry run. Packaged Linux served the
 expected version and final embedded frontend from a fresh data directory. Live
 browser acceptance against installed Kuno is recorded in the coordination guide.
-No upload or deployment has occurred. The complete upload is approximately
-644 MiB; the live Hub's verified request limit is 536870912 bytes. Raise the Hub
-and any proxy body limits to at least 1 GiB before generating an upload key.
+No artifact upload or binary deployment has occurred. The complete upload is
+approximately 644 MiB. On 2026-10-01, the authorized live Hub and nginx upload
+limits were raised to 1 GiB and verified; the upload-size gate is cleared.
 Physical Android testing remains outstanding; no device was attached.
 
 ## Source and ownership

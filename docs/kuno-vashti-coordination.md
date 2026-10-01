@@ -77,8 +77,8 @@ authorizes it.
 
 **Latest application acceptance:** see the beta.2 integration receipt at the end
 of this guide. Kuno's handoff is merged into the normal project checkout; all four
-release artifacts are built and signing-validated, but not published. The live
-Hub upload limit must be raised before publication. Physical Android acceptance
+release artifacts are built and signing-validated, but not published. Live Hub
+and nginx upload limits are now verified at 1 GiB. Physical Android acceptance
 is still outstanding.
 
 **Status:** Kuno backend, Vashti connector, and conversational image flows are
@@ -594,3 +594,22 @@ browser download completion, other-system portability, overnight soak, and
 ComfyUI parity remain unverified. Native/optional runtime platform restrictions
 and installation instructions are in the versioned release notes and backend
 handoff; source/browser results are not a substitute for those remaining checks.
+
+### Live upload-size gate cleared (2026-10-01)
+
+At the user's request, the live Hub request limit is now 1073741824 bytes,
+set in `/etc/systemd/system/vashti-hub.service.d/90-upload-limit.conf`. The original
+unit and installed binary are unchanged (their before/after hashes match). The
+Hub restarted successfully and its running process environment contains the new
+limit. The separate nginx site configuration now sets `client_max_body_size 1G`;
+only that value changed, the prior configuration was backed up on the proxy host,
+`nginx -t` passed, and nginx reloaded without a restart. Sudo authorization for
+both changes was entered by the user in the shared Demons shell, not chat.
+
+Header-only HTTPS probes with no key or artifact data verified the boundary:
+declared Content-Length 1073741824 reaches the Hub and returns authentication 401;
+1073741825 is rejected by nginx with 413. The public website returns 200. This
+establishes the configured request-size gate, not a completed artifact upload.
+No key was requested/consumed, no release was uploaded, and the physical Android
+and portability limitations above remain unchanged. The earlier 512/500 MiB
+limits in the historical receipt no longer block the beta.2 upload.
