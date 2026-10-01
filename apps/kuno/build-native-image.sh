@@ -99,6 +99,13 @@ c++ -std=c++17 -O2 -I "$source_dir/ggml/src/ggml-vulkan" \
     "$root/crates/kuno-image/native/int8-m8-tuning-test.cpp" \
     -o "$build_dir/kuno-int8-m8-tuning-test"
 "$build_dir/kuno-int8-m8-tuning-test"
+# Buffer selection must not initialize an unrelated GPU or use Vulkan's
+# device-zero host provider for parameters configured to live on the CPU.
+c++ -std=c++17 -O2 -I "$source_dir/src" -I "$source_dir/ggml/include" \
+    -I "$source_dir/ggml/src" \
+    "$root/crates/kuno-image/native/params-buffer-type-test.cpp" \
+    -o "$build_dir/kuno-params-buffer-type-test"
+"$build_dir/kuno-params-buffer-type-test"
 vulkan_options=()
 if [[ -n ${VULKAN_SDK:-} ]]; then
     glslc_path="$VULKAN_SDK/bin/glslc"

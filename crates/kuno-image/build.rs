@@ -65,6 +65,8 @@ fn main() {
             "src/core/runner_cache.h",
             "src/core/runner_cache.cpp",
             "src/core/ggml_runner.cpp",
+            "src/core/params_buffer_type.h",
+            "src/model_manager.cpp",
             "src/model_loader.cpp",
             "src/model_loader.h",
             "src/model_loader_files.cpp",

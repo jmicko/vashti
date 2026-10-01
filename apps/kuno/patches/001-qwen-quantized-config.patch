@@ -122,6 +122,45 @@ index 9084db1..1390b78 100644
      sd::GraphCutTensorCache cut_cache_;
      sd::ComputeWorkspace workspace_;
      ggml_context* compute_ctx = nullptr;
+diff --git a/src/core/params_buffer_type.h b/src/core/params_buffer_type.h
+new file mode 100644
+index 0000000..5034739
+--- /dev/null
++++ b/src/core/params_buffer_type.h
+@@ -0,0 +1,33 @@
++#pragma once
++
++#include <cstring>
++
++#include "ggml-backend.h"
++
++// Select storage without allocating it or initializing another backend. Keep
++// this policy separate from operation compatibility and compute staging.
++inline ggml_backend_buffer_type_t sd_params_buffer_type(ggml_backend_t compute_backend,
++                                                       ggml_backend_t params_backend,
++                                                       ggml_backend_buffer_type_t split_buffer_type) {
++    if (params_backend == nullptr) return nullptr;
++
++    ggml_backend_buffer_type_t result = nullptr;
++    if (compute_backend != nullptr && params_backend != compute_backend) {
++        auto compute_device = ggml_backend_get_device(compute_backend);
++        auto params_device = ggml_backend_get_device(params_backend);
++        auto compute_registry = compute_device != nullptr ? ggml_backend_dev_backend_reg(compute_device) : nullptr;
++        const char* compute_registry_name = compute_registry != nullptr ? ggml_backend_reg_name(compute_registry) : nullptr;
++        if (params_device != nullptr && ggml_backend_dev_type(params_device) == GGML_BACKEND_DEVICE_TYPE_CPU &&
++            compute_registry_name != nullptr && std::strcmp(compute_registry_name, "Vulkan") == 0) {
++            // Vulkan_Host uses Vulkan device zero and can select host-visible
++            // device-local memory. CPU params must use ordinary RAM, separate
++            // from the explicitly budgeted Vulkan compute staging buffers.
++            result = ggml_backend_cpu_buffer_type();
++        } else if (compute_device != nullptr) {
++            result = ggml_backend_dev_host_buffer_type(compute_device);
++        }
++    } else if (params_backend == compute_backend) {
++        result = split_buffer_type;
++    }
++    return result != nullptr ? result : ggml_backend_get_default_buffer_type(params_backend);
++}
 diff --git a/src/core/runner_cache.cpp b/src/core/runner_cache.cpp
 index b640bb4..193511a 100644
 --- a/src/core/runner_cache.cpp
@@ -908,6 +947,40 @@ index 8e838b1..6ec08c7 100644
      for (const auto& file : files_) {
          if (file.id == id) {
              reader.files_.push_back(file);
+diff --git a/src/model_manager.cpp b/src/model_manager.cpp
+index 5bdf59c..d705e04 100644
+--- a/src/model_manager.cpp
++++ b/src/model_manager.cpp
+@@ -8,6 +8,7 @@
+ #include <unordered_set>
+ 
+ #include "core/ggml_extend_backend.h"
++#include "core/params_buffer_type.h"
+ #include "core/util.h"
+ #include "model/adapter/lora.hpp"
+ 
+@@ -1000,18 +1001,9 @@ ggml_backend_buffer_type_t ModelManager::params_buffer_type_for(const TensorStat
+         LOG_ERROR("model manager params backend is null for tensor '%s'", state.name.c_str());
+         return nullptr;
+     }
+-    ggml_backend_buffer_type_t params_buft = nullptr;
+-    if (state.compute_backend != nullptr && state.params_backend != state.compute_backend) {
+-        ggml_backend_dev_t compute_dev = ggml_backend_get_device(state.compute_backend);
+-        if (compute_dev != nullptr) {
+-            params_buft = ggml_backend_dev_host_buffer_type(compute_dev);
+-        }
+-    } else if (state.params_backend == state.compute_backend) {
+-        params_buft = split_buffer_type_for(state);
+-    }
+-    if (params_buft == nullptr) {
+-        params_buft = ggml_backend_get_default_buffer_type(state.params_backend);
+-    }
++    ggml_backend_buffer_type_t params_buft = sd_params_buffer_type(
++        state.compute_backend, state.params_backend,
++        state.params_backend == state.compute_backend ? split_buffer_type_for(state) : nullptr);
+     if (state.usage_op != GGML_OP_NONE &&
+         state.compute_backend != nullptr) {
+         ggml_backend_dev_t compute_dev = ggml_backend_get_device(state.compute_backend);
 diff --git a/src/pipeline/diffusion_engine.cpp b/src/pipeline/diffusion_engine.cpp
 index 0220939..1cd7966 100644
 --- a/src/pipeline/diffusion_engine.cpp
