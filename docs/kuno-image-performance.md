@@ -412,3 +412,45 @@ metadata absence passed. Client and worker used zero-swap cgroups; image bytes
 stayed in RAM and were discarded. This is installed transport acceptance, not
 a clean performance or physical Android test. Admission is temporarily paused
 for the remaining exclusive GPU experiments and must be resumed afterward.
+
+### Restricted SYCL kernel acceptance (2026-09-30)
+
+The private ABI-160 SYCL prototype now supplies native ConvRot INT8 operations
+and an opt-in unmasked oneDNN SDPA path. It is not installed in the public Kuno
+binary. The initial independent GPU arithmetic test found an approximate
+reciprocal changing a rounding tie from byte 64 to 63. Explicit nearest-even
+FP32 division/multiplication fixed it; all 30 expanded arithmetic GPU cases
+passed unchanged tolerance (maximum absolute error 0.0000022885). CPU policy,
+arithmetic, malformed-shape and strict verbose-parser regressions also passed.
+
+Both 67-case GPU attention/cache suites passed under inherited Landlock write
+denial and zero-swap cgroups. Maximum relative L2 error was 0.00170402 with the
+no-mask path off and 0.00125530 with it on. These tests cover masked/unmasked,
+partial sequences, padded heads, batches, accumulator precision and cache reuse.
+
+A fresh isolated 4056-query/8192-key/head-128/32-head graph passed finite-output
+checks with 200,671,232 input bytes, 66,453,504 output bytes and 133,562,368 graph
+workspace bytes. Warm execution was about 9.77 ms. The strict oneDNN 3.11.4
+counter classifier found four strict GPU SDP graph executions, one nested
+`ocl:micro:reusable` SDPA creation, and zero decomposition/reference/unknown,
+MatMul, Softmax, malformed or filtered records. This establishes optimized-path
+evidence for that isolated graph, together with numeric/device-wait checks and
+Xe peak 687,726,592 bytes (637,038,592 delta), rather than inferring fusion from
+a supported partition alone. Cgroup peak was 319,651,840 bytes and swap zero.
+
+The actual GGML ConvRot large-MLP graph (4056 rows, K4096/N24576) passed its
+seven tiny independent cases and large-shape checks. Warm quantization was
+2.290–2.299 ms, INT8 GEMM 4.247–4.314 ms, combined graph 5.054–5.079 ms. Its
+different-precision dense comparison remained separate (relative L2 0.008677).
+Xe peak was 1,827,667,968 bytes and cgroup peak 1,264,758,784 bytes, swap zero.
+These are synthetic kernel results, not whole-image speed acceptance.
+
+The private runtime environment must leave `SYCL_DUMP_IMAGES` unset: the bundled
+2026.1 runtime still attempted to dump SPIR-V when it was set to `0`, despite
+newer upstream documentation describing zero as disabled. Landlock denied that
+write; omitting the setting fixed initialization without relaxing restrictions.
+Dynamic vendor constructors also run before the worker's own privacy setup, so
+tests apply restrictions before `exec` and the worker rechecks before input.
+The first image launch exposed an omitted MKL dependency under Rust's
+`--as-needed`; ELF startup validation is required in addition to a passing link.
+No full SYCL image generation has been accepted yet.
