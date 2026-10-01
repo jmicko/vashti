@@ -7,8 +7,11 @@ cancellation, PCI selection and HTTP API. No Vashti consumer change is required.
 GPU, performance and installed-service acceptance are separate from source tests.
 This support is a draft: the private SYCL engine is not accepted for installation
 or enablement. During root's 2026-10-01 UTC acceptance, the original edit recipe
-failed before sampling and the kernel reported additional Xe reset events.
-Do not enable this route until that failure is resolved and revalidated.
+finished all sampling steps but failed during VAE decoding. The fixed error
+classification identifies SYCL IM2COL; its cause remains under investigation.
+Two Xe reset entries preceded those full-edit tests, so they must be diagnosed
+separately rather than attributed to this decode failure. Do not enable this
+route until full-workflow and stability acceptance pass.
 
 ## Configuration
 

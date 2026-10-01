@@ -47,9 +47,9 @@ No Vashti consumer changes are required for these internal optimizations.
 
 The current host reports kernel 7.0.0-34 and Mesa Vulkan 26.2.3 with Intel
 cooperative-matrix and integer-dot-product capabilities. This is discovery,
-not evidence of the cause of previous GPU resets. SYCL still
-lacks this engine's ConvRot operations; enabling it alone would not implement
-the Qwen 2.1 workflow.
+not evidence of the cause of previous GPU resets. The initial pinned SYCL backend lacked this engine's ConvRot operations; the
+later private prototype adds them. The development results below supersede
+that initial limitation, but do not yet establish full-workflow acceptance.
 
 ### Intel rectangular matrix attention
 
@@ -453,4 +453,56 @@ Dynamic vendor constructors also run before the worker's own privacy setup, so
 tests apply restrictions before `exec` and the worker rechecks before input.
 The first image launch exposed an omitted MKL dependency under Rust's
 `--as-needed`; ELF startup validation is required in addition to a passing link.
-No full SYCL image generation has been accepted yet.
+The small-image acceptance and full-edit decode failure are recorded below;
+no full reference recipe has been accepted on SYCL yet.
+
+
+### Private SYCL image acceptance and decode diagnosis (2026-10-01 UTC)
+
+The private executable SHA-256 is
+`643d56a8271429baa70948c72802c34ff647b39536c8955cb26e8be2715d68d7`.
+It uses the exact ABI-160 static engine/GGML and reviewed dynamic vendor closure;
+it is never installed as the standard gateway executable. Full tests omit
+vendor verbose data, use write restrictions before exec, disable core dumps,
+check no swap before input, and retain all content-bearing bytes only in RAM.
+
+A synthetic 512×512/four-step/CFG1 text generation passed in 39.305 s with all
+four previews and a metadata-free RGBA result. Sampling step one completed at
+36.774 s and step four at 37.512 s. Xe peak was 8,882,982,912 bytes, cgroup peak
+1,315,393,536 bytes, swap zero. This includes cold initialization/JIT and is not
+a full-workflow performance claim; the generated pixels were discarded.
+
+The original 1248×832/25-step/CFG4 edit completed all sampling steps at
+105.482 s, then exited 1 at 107.518 s before final delivery. Xe peak was
+24,754,106,368 bytes, cgroup peak 1,921,179,648 bytes, swap zero. Two reduced
+same-size/two-step reproductions failed at 52.582/52.603 s after sampling ended
+at 50.560/50.564 s. The latter's bounded numeric/static filter identifies
+`ggml-sycl.cpp:5276`, the compute-forward SYCL exception handler, and opcode
+`IM2COL`. This narrows the failure to VAE decoding without recording raw exception
+text. It does not establish OOM or a driver defect. The pinned handler exits
+rather than returning a recoverable GGML status, so VAE allocation fallback and
+the shim's ordinary error mapping cannot handle it.
+
+A synthetic two-reference test was cooperatively cancelled at sampling step
+one while investigating the kernel history; it reported `image_cancelled`,
+exited without forced termination and released the worker. Its Xe peak was
+31,528,890,368 bytes, cgroup peak 1,962,901,504 bytes, swap zero. It is cancellation
+evidence only, not successful multi-reference acceptance.
+
+The kernel has six reset entries this boot: four historical entries on Sep 27
+and two at 2026-10-01 01:23:16.258/01:24:11.366 UTC. Those two preceded the accepted
+arithmetic/attention kernels and full-edit tests. No further entry appeared
+after the reduced decode reproduction. Their originating operation is not yet
+established; they are not evidence that the later full edit wedged the device.
+The optional managed route remains disabled pending both decoding and stability
+acceptance. The installed standard gateway was resumed and remained healthy;
+exclusive test windows pause admission temporarily and must always resume it.
+
+Source-only managed-runtime support is in `9a51d46`, with installer/environment
+review fixes in `7fe6283`. It preserves default native routing and old collections,
+restricts vendor initialization before input, and degrades images without
+preventing ordinary Ollama startup if the optional runtime is absent. The full
+source suite before the review fix passed 182 tests with nine hardware-dependent
+ignores; the review fix passed 19 focused runtime/deployment tests and Clippy.
+These do not prove relocated vendor-library, live managed cancellation or
+installed-service acceptance. See [the optional runtime contract](kuno-managed-sycl.md).
