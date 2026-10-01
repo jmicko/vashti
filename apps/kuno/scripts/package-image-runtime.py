@@ -19,11 +19,11 @@ import tempfile
 
 
 PINS = {
-    "version": 1, "id": "qwen21-sycl-2026.1-v1", "worker_abi": 1,
+    "version": 1, "id": "qwen21-sycl-2026.1-v1", "worker_abi": 2,
     "ggml_max_name": 160,
     "engine_revision": "88411ef1e0688ff2df1010aeeb5d92b2d8cea2be",
     "ggml_revision": "4bf5f6000653b7881d00963cd6ddb665ccd62a8d",
-    "engine_patch_sha256": "50941bef18b1c1e415a055e7ef89706d4e68a726db1bcf1d43adacde94cd4504",
+    "engine_patch_sha256": "ac51db708fef026fe7abab850774309e4f1f439a05c56d06ff33e49fcc290584",
     "ggml_patch_sha256": "7298590faed44cad4733c78f6f6c2bf261b647712b5ec5f75840da450f0067dc",
     "sycl_patch_sha256": "7f6a75c75544c0e3776d780b0710cab2fabb94ddfe57eeb436dff02891bd4771",
 }

@@ -484,6 +484,8 @@ mod tests {
         assert!(m.validate().is_err());
         let mut m = manifest();
         m.worker_abi = 2;
+        assert!(m.validate().is_ok());
+        m.worker_abi = 3;
         assert!(m.validate().is_err());
         let mut m = manifest();
         m.ggml_max_name = 64;

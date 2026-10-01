@@ -26,7 +26,7 @@ struct Identity {
 struct Worker {
     identity: Identity,
     child: Child,
-    input: ChildStdin,
+    input: Option<ChildStdin>,
     output: ChildStdout,
     diagnostic: JoinHandle<Option<&'static str>>,
 }
@@ -141,6 +141,7 @@ impl ImageRuntime {
                     .map(|member| member.sha256.clone())
             }),
         };
+        let recipe = kuno_image::worker_protocol::TransientRecipe::from(recipe);
         let replace = state.as_mut().is_some_and(|worker| {
             worker.identity != identity || !matches!(worker.child.try_wait(), Ok(None))
         });
@@ -171,9 +172,10 @@ impl ImageRuntime {
             };
         }
         let mut terminal_error = false;
+        let mut cleanup_ack = false;
         let work = async {
             let mut payload =
-                Payload(serde_json::to_vec(&recipe).map_err(|_| "image_request_encoding_failed")?);
+                Payload(serde_json::to_vec(&*recipe).map_err(|_| "image_request_encoding_failed")?);
             if payload.0.len() > kuno_protocol::MAX_IMAGE_REQUEST_BYTES {
                 return Err("image_request_too_large");
             }
@@ -181,16 +183,22 @@ impl ImageRuntime {
             header[5..9].copy_from_slice(&(payload.0.len() as u32).to_be_bytes());
             worker
                 .input
+                .as_mut()
+                .unwrap()
                 .write_all(&header)
                 .await
                 .map_err(|_| "image_worker_input_failed")?;
             worker
                 .input
+                .as_mut()
+                .unwrap()
                 .write_all(&payload.0)
                 .await
                 .map_err(|_| "image_worker_input_failed")?;
             worker
                 .input
+                .as_mut()
+                .unwrap()
                 .flush()
                 .await
                 .map_err(|_| "image_worker_input_failed")?;
@@ -200,6 +208,7 @@ impl ImageRuntime {
                 &previews,
                 recipe.steps,
                 &mut terminal_error,
+                &mut cleanup_ack,
             )
             .await?;
             kuno_image::validate_output(&png, recipe.width, recipe.height)?;
@@ -220,7 +229,8 @@ impl ImageRuntime {
             };
         }
         let mut worker = state.take().unwrap();
-        let (settled, forced, diagnostic) = stop(&mut worker, !terminal_error).await;
+        let (settled, forced, diagnostic) =
+            stop(&mut worker, !terminal_error && !cleanup_ack).await;
         let output = if diagnostic == Some("image_vulkan_device_lost") {
             Err("image_vulkan_device_lost")
         } else {
@@ -237,12 +247,7 @@ impl ImageRuntime {
 struct Payload(Vec<u8>);
 impl Payload {
     fn clear(&mut self) {
-        for byte in &mut self.0 {
-            unsafe {
-                std::ptr::write_volatile(byte, 0);
-            }
-        }
-        self.0.clear();
+        kuno_image::worker_protocol::clear_bytes(&mut self.0);
     }
 }
 impl Drop for Payload {
@@ -304,7 +309,7 @@ async fn spawn(
     let mut worker = Worker {
         identity,
         child,
-        input,
+        input: Some(input),
         output,
         diagnostic,
     };
@@ -324,14 +329,18 @@ async fn spawn(
 async fn stop(worker: &mut Worker, active: bool) -> (bool, bool, Option<&'static str>) {
     if !active {
         // Orderly idle shutdown runs the native context destructor; avoid signals.
-        let _ = worker.input.write_all(b"KIR2\x02\0\0\0\0").await;
-        let _ = worker.input.shutdown().await;
+        if let Some(input) = &mut worker.input {
+            let _ = input.write_all(b"KIR2\x02\0\0\0\0").await;
+        }
     } else if let Some(pid) = worker.child.id() {
         unsafe {
             libc::kill(pid as i32, libc::SIGTERM);
         }
     }
-    let (settled, forced) =
+    // Unix ChildStdin::shutdown is a no-op: close the actual pipe. This also
+    // wakes a worker cancelled during a partially written request or after CLEAN.
+    drop(worker.input.take());
+    let cleanup = async {
         match tokio::time::timeout(Duration::from_secs(90), worker.child.wait()).await {
             Ok(Ok(status)) => {
                 use std::os::unix::process::ExitStatusExt;
@@ -343,7 +352,24 @@ async fn stop(worker: &mut Worker, active: bool) -> (bool, bool, Option<&'static
                     .is_ok_and(|result| result.is_ok()),
                 true,
             ),
-        };
+        }
+    };
+    // A native final/preview write may already be blocked when HTTP disconnects.
+    // Drain into a fixed-size discard buffer so cancellation can reach cleanup.
+    let drain = async {
+        let mut discarded = [0u8; 8192];
+        loop {
+            match worker.output.read(&mut discarded).await {
+                Ok(0) | Err(_) => break,
+                Ok(_) => discarded.fill(0),
+            }
+        }
+    };
+    tokio::pin!(cleanup, drain);
+    let (settled, forced) = tokio::select! {
+        result = &mut cleanup => result,
+        _ = &mut drain => cleanup.await,
+    };
     let diagnostic = tokio::time::timeout(Duration::from_secs(1), &mut worker.diagnostic)
         .await
         .ok()
@@ -384,6 +410,7 @@ async fn read_result<R: tokio::io::AsyncRead + Unpin>(
     previews: &watch::Sender<Option<kuno_image::preview::Preview>>,
     steps: u32,
     terminal_error: &mut bool,
+    cleanup_ack: &mut bool,
 ) -> Output {
     let mut result = None;
     let mut count = 0;
@@ -402,7 +429,10 @@ async fn read_result<R: tokio::io::AsyncRead + Unpin>(
                 previews.send_replace(Some(preview));
             }
             2 if result.is_none() => result = Some(bytes),
-            3 if result.is_some() && bytes.is_empty() => return Ok(result.unwrap()),
+            3 if result.is_some() && bytes.is_empty() => {
+                *cleanup_ack = true;
+                return Ok(result.unwrap());
+            }
             5 => {
                 *terminal_error = true;
                 return Err(match bytes.as_slice() {
@@ -412,6 +442,7 @@ async fn read_result<R: tokio::io::AsyncRead + Unpin>(
                     b"image_gpu_memory_unavailable" => "image_gpu_memory_unavailable",
                     b"image_generation_failed" => "image_generation_failed",
                     b"image_attention_unsupported" => "image_attention_unsupported",
+                    b"image_request_cleanup_failed" => "image_request_cleanup_failed",
                     _ => "image_worker_failed",
                 });
             }
