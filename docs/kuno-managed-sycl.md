@@ -226,8 +226,10 @@ service shutdown release it. Global admission still serializes execution.
 ABI 2 source implementation is separate from the historical acceptance below.
 The existing ABI 1 timings and bundle checksums do not prove persistent model
 reuse, cleanup acknowledgements, or speed improvements. New native and managed
-ABI 2 workers need their own hardware/service acceptance receipt; none is
-claimed by this contract update.
+ABI 2 hardware/service acceptance is recorded separately in the
+[resident-image coordination receipt](kuno-vashti-coordination.md#resident-image-backend-receipt-2026-10-01)
+and [exact build receipt](kuno-image-residency-build.json). Historical ABI 1
+receipts below retain their original scope.
 
 ### Historical ABI 1 source receipts
 

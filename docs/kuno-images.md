@@ -240,6 +240,15 @@ one-request-per-process path and unloads after each request. Retaining the Intel
 image context requires an ABI 2 optional runtime; upgrading the gateway alone
 does not give an old worker this capability. The public HTTP API is unchanged.
 
+The installed ABI 2 residency smoke and exact artifacts are recorded in the
+[coordination receipt](kuno-vashti-coordination.md#resident-image-backend-receipt-2026-10-01)
+and [build/acceptance receipt](kuno-image-residency-build.json). It verifies
+native CUDA retention and installed Intel generation/editing, model handoff,
+and cancellation. Small synthetic timings do not establish full-workflow
+performance or ComfyUI parity. The tested Intel repeat differed by at most one
+8-bit channel level, including an immediate identical repeat; bitwise output
+reproducibility is not guaranteed.
+
 The worker reads recipes through stdin and returns PNG bytes through stdout.
 It enters its restrictions before any async runtime threads are created.
 It refuses to read content unless swap is disabled for its cgroup (or the host).

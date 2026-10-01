@@ -27,6 +27,48 @@ live Vashti/Kuno binary deployment was performed. The approximately 644 MiB
 upload used the authorized, verified 1 GiB Hub/nginx limits on 2026-10-01.
 Physical Android testing remains outstanding; no device was attached.
 
+## Resident image update
+
+**Newer installed candidate, 2026-10-01:** `codex/kuno-image-residency`, based on
+`4f9b465`, supersedes the one-shot image behavior and artifacts below for the
+next beta. The published beta.2 receipts remain historical. Integrate the
+complete resident branch; behavior ends at `4fb4e58`, build/source receipt is
+`418569e`, and its newest receipt records installed hardware acceptance. The
+main coordination guide points to the final commit. No Vashti API/UI changes
+are required, but actual application/release validation still belongs to the
+release task.
+
+Artifacts live in `/home/jmicko/.codex/worktrees/kuno-image-residency/vashti`:
+
+| Artifact | SHA-256 |
+| --- | --- |
+| Standard gateway `target/standard-cargo/release/kuno` (725,284,384 bytes) | `49115713860d966212ca09112f5166b126950c6b50e162e0fc4eb0a542fb9488` |
+| Runtime `target/inference-tests/kuno-sycl-resident.tar.gz` (156,230,608 bytes) | `ee9c3e9caaf813a07d430e20598622f05b976e552390afe307bc5109a9a21ec1` |
+| Manifest `target/inference-tests/runtime-flat-resident/manifest.json` | `12a901d727193a8419a318d17839396f50ada76195c5fda36f5cfd9e0ef76947` |
+| Worker in that flat directory (135,499,920 bytes) | `5c1ea8f46669f5f1ea411134c6a30185fc0517b574d0996cea7eee14bad7a225` |
+
+The exact [build and installed acceptance receipt](kuno-image-residency-build.json)
+records pinned engine/patch/archive provenance and limitations. All 63 vendor
+library/notice members remain byte-identical; both native engines and Rust
+workers were rebuilt. Standard CUDA and installed private Intel ABI 2 retention
+pass. New gateway accepts ABI 1 via one-shot fallback, but image retention on
+Intel requires this ABI 2 bundle; do not reuse beta.2's runtime. Never ship the
+private SYCL worker as the ordinary gateway.
+
+Authorized local installation preserved configuration byte for byte. Installed
+Intel generation/edit, previews, model handoff, cancellation/reload, idle service
+teardown, legacy-family reuse and privacy/service checks pass. Service is
+unpaused with Qwen 2.1 loaded. Small smoke timings do not establish ComfyUI
+parity; Intel repeats have rounding-scale pixel drift, and no overnight soak or
+new Android/Vashti acceptance is claimed. No next beta upload, merge or push was
+performed. Keep this worktree/artifacts until the release task copies them and
+runs its usual complete checks.
+
+The sections below preserve the pre-beta.2 backend handoff. Their checkout,
+artifact and release-action details are historical; the published beta.2
+checkpoint and newer resident-image update above supersede them. Use the current
+publisher and complete four-artifact checks for the next release.
+
 ## Source and ownership
 
 Kuno worktree: `/home/jmicko/.codex/worktrees/kuno-image-performance/vashti`, branch
@@ -199,9 +241,10 @@ Detailed hardware evidence is in [kuno-image-performance.md](kuno-image-performa
    above is evidence, not the checksum of the future versioned release package.
 3. To ship Intel support, add the separate runtime artifact to the publisher's
    artifact list and host its approved manifest checksum/install instructions.
-   Current publisher assumes Vashti Linux/Android/Kuno standard only; the website
-   installer currently extracts only the standard binary. Existing generic Hub
-   artifact storage is not proof the runtime is discoverable/installable.
+   Before beta.2, the publisher assumed Vashti Linux/Android/Kuno standard only.
+   The separate runtime publication was completed for beta.2 as recorded above.
+   Existing generic Hub artifact storage alone is not proof the runtime is
+   discoverable/installable.
    Keep inference API unchanged and make optional runtime selection explicit.
 4. Test Vashti discovery, Generate/Edit, previews, Stop, multi-reference flow,
    saved Fast recipes on Standard-only discovery, and storage behavior against

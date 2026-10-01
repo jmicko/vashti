@@ -59,7 +59,7 @@
   "native_build_script_sha256": "54007dcd89ba6bb278bf2bdb03f888e83f9d8500892105dc326aa98f8b12c331",
   "historical_vendor_closure_provenance": "kuno-sycl-runtime-provenance.json",
   "vendor_closure_delta": "All63 library and license/notice members unchanged; native engine and Rust worker rebuilt.",
-  "acceptance": "source and CUDA resident-worker smoke passed; installed ABI2 SYCL acceptance pending sudo",
+  "acceptance": "source, native CUDA resident-worker smoke, and installed ABI2 SYCL generation/edit/LLM handoff/cancellation/family switching/service/privacy checks passed",
   "checks": {
     "source_passed": 205,
     "source_ignored": 9,
@@ -71,7 +71,11 @@
   "limitations": [
     "Producer evidence is not a reproducible-build guarantee.",
     "All57 C++ engine units rebuilt for each backend; unchanged15 C third-party objects and GGMLbackend archives reused with recorded checksums.",
-    "The archive is a local candidate; this does not authorize publication."
+    "The archive is a local candidate; this does not authorize publication.",
+    "Live small-model LLM coexistence and conservative same-GPU eviction do not certify arbitrary concurrent inference peaks. Useful execution remains serialized.",
+    "Native cleanup removes reusable request state; it is not a forensic zeroization guarantee for all third-party freed allocations.",
+    "No overnight residency soak or new physical Android/application acceptance was performed.",
+    "Four classified image_backend_failure diagnostics appeared during the initial legacy Vulkan run; successful previews/final PNGs, later reuse, and family replacement passed, with no admission latch or new kernel reset. Underlying internal warning cause is unproven."
   ],
   "cuda_acceptance": {
     "pci_address": "0000:04:00.0",
@@ -95,5 +99,97 @@
     "images_saved": 0,
     "prompts_saved": 0,
     "caveat": "Process-cold, page cache not controlled; transport/residency smoke, not a ComfyUI or full-workflow comparison."
+  },
+  "sycl_acceptance": {
+    "pci_address": "0000:2d:00.0",
+    "installed_worker_abi": 2,
+    "width": 512,
+    "height": 512,
+    "steps": 4,
+    "process_cold_seconds": 40.604,
+    "warm_seconds": 2.241,
+    "two_reference_edit_seconds": 25.329,
+    "two_reference_edit_steps": 2,
+    "two_reference_edit_cfg": 4.0,
+    "changed_geometry": [
+      640,
+      384
+    ],
+    "changed_geometry_cfg": 4.0,
+    "changed_geometry_seconds": 2.864,
+    "repeat_after_edits_seconds": 2.202,
+    "immediate_repeat_seconds": 2.248,
+    "resident_vram_bytes_initial": 15620767744,
+    "resident_vram_bytes_after_edits": 20326215680,
+    "generation_and_edit_same_process": true,
+    "metadata_preserves_image": true,
+    "other_gpu_llm_preserves_image": true,
+    "other_gpu_llm_pci_address": "0000:04:00.0",
+    "other_gpu_llm_reported_vram_bytes": 2427128381,
+    "same_gpu_llm_evicts_image_before_load": true,
+    "same_gpu_llm_reported_vram_bytes": 2156354599,
+    "reload_after_llm_seconds": 40.163,
+    "cancel_and_reap_seconds": 1.756,
+    "recovery_after_cancel_seconds": 40.1,
+    "idle_worker_released_on_service_restart": true,
+    "development_sdk_inaccessible_during_jobs": true,
+    "private_flat_vendor_closure_verified": true,
+    "swap_bytes": 0,
+    "images_saved": 0,
+    "prompts_saved": 0,
+    "repeat_after_edits_pixels_match": false,
+    "repeat_after_edits_max_channel_delta": 1,
+    "repeat_after_edits_mean_channel_delta": 0.003344,
+    "immediate_repeat_pixels_match": false,
+    "immediate_repeat_max_channel_delta": 1,
+    "immediate_repeat_mean_channel_delta": 0.003307,
+    "caveat": "Small synthetic transport/residency smoke; process-cold and uncontrolled page cache. Not a ComfyUI comparison, useful edit-quality acceptance, or full-workflow speed guarantee. Pixel tolerance measured for these requests only; no universal determinism guarantee.",
+    "final_resident_vram_bytes": 15620767744
+  },
+  "installation": {
+    "gateway_path": "/usr/local/lib/kuno/kuno",
+    "optional_runtime_path": "/usr/local/lib/kuno/runtimes/qwen21-sycl-2026.1-v1",
+    "configuration_byte_for_byte_preserved": true,
+    "authorized_installation": true
+  },
+  "final_installed_checks": {
+    "installed_final_audit": true,
+    "service_active": true,
+    "automatic_restarts": 0,
+    "retained_image_workers": 1,
+    "admission_paused": false,
+    "recovery_required": false,
+    "public_ipv4_ipv6_lan": true,
+    "discovery_ready": true,
+    "control_unauthenticated_status": 401,
+    "zero_swap": true,
+    "worker_core_dump_limit_zero": true,
+    "worker_no_new_privileges": true,
+    "worker_writable_regular_files": 0,
+    "journal_content_checks_passed": true,
+    "new_xe_kernel_events": 0,
+    "development_sdk_restored": true,
+    "ollama_inference_deadlines_disabled": true
+  },
+  "legacy_2512_acceptance": {
+    "backend": "embedded Vulkan",
+    "width": 512,
+    "height": 512,
+    "steps": 2,
+    "cfg": 5.0,
+    "flow_shift": 3.1,
+    "same_process": true,
+    "warm_seconds": [
+      8.691,
+      8.562
+    ],
+    "resident_vram_bytes": [
+      23828717568,
+      24159232000
+    ],
+    "family_switch_both_directions": true,
+    "images_saved": 0,
+    "prompts_saved": 0,
+    "caveat": "Both reported runs reused the already loaded legacy context; the initial family-switch generation preceded correction of a zero-valued/unitless fdinfo parser assertion and is not timed here."
   }
 }

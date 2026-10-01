@@ -83,8 +83,9 @@ is still outstanding.
 
 **New Kuno backend work:** model-only image residency is implemented on
 `codex/kuno-image-residency`, based on `4f9b465`. See the resident-image receipt
-below. CUDA/source checks pass; installed Intel/runtime acceptance is pending
-sudo. This backend-only change needs no Vashti connector or UI change. Do not
+below. Source, CUDA and installed Intel/runtime acceptance pass; the new
+gateway/runtime is installed on this host. This backend-only change needs no
+Vashti connector or UI change. Do not
 treat the published ABI 1 beta.2 runtime as the new resident worker.
 
 **Status:** Kuno backend, Vashti connector, and conversational image flows are
@@ -643,7 +644,7 @@ The prerelease channel now returns beta.2; stable remains `v0.12.0`, with no
 promotion, main-branch merge, Git push, or live Vashti/Kuno installation. The
 physical Android and platform/runtime limits in the acceptance receipts remain.
 
-### Resident image backend receipt (2026-10-01, installation pending)
+### Resident image backend receipt (2026-10-01)
 
 The user approved retaining image models after generation. Implementation lives
 on `codex/kuno-image-residency`, based on `4f9b465`, in the managed worktree
@@ -686,10 +687,69 @@ approved beta.2 closure. Never package the private SYCL worker as the standard
 gateway. Existing ABI 1 installs use the one-shot fallback until the optional
 runtime is upgraded; ABI 2 requires the new gateway.
 
-**Still pending:** sudo installation, live Intel warm generation/edit/CFG/resize
-cleanup, installed LLM coexistence/eviction, disconnect recovery and idle service
-shutdown, and a final content-free journal/kernel audit. A sudo prompt is waiting
-in the Demons `shell` panel. No installed service/configuration has been changed
-in this resident work. No merge, push, publication, or release acceptance is
-claimed. Resume with the prepared `target/inference-tests/install-resident.py`
-and RAM-only `resident-http.py` harnesses; inspect live admission/GPU state first.
+**Installed acceptance:** the prepared standard gateway and ABI 2 runtime were
+installed transactionally through `install-image-runtime --yes` with the user's
+sudo authorization. Configuration was preserved byte for byte: B70 image PCI,
+model store/collections, Ollama workers/listeners and disabled inference deadlines
+are unchanged. Installed hashes match the build receipt; all 63 vendor
+libraries/notices are unchanged from beta.2. Tests used swap-disabled transient
+clients and the installed no-swap service, with the development SDK hidden.
+Live commands from the resident worktree were `sudo -n /usr/bin/python3 target/inference-tests/install-resident.py`, `run-resident-http.py` and
+`run-resident-final.py` (the latter two with the same interpreter/prefix and
+`target/inference-tests/` path). The wrappers run private clients in collected
+systemd units with `MemorySwapMax=0` and `LimitCORE=0`; final audit is
+`resident-audit.py`. Harnesses and safe numeric receipts remain in that ignored
+directory for operator reproduction.
+
+- Intel 512-square/four-step Qwen 2.1 generation retained one process and about
+  15.62 GB VRAM: 40.604 seconds including initial load, then 2.241 seconds warm.
+  Two-reference editing (CFG 4, two steps) reused it in 25.329 seconds; changing
+  to 640x384/CFG 4 and back to the original recipe also reused it. Editing
+  increased model allocations to about 20.33 GB. Previews and bounded PNGs
+  passed integrity/dimensions/no-metadata checks; outputs remained in RAM.
+- Metadata and a small LLM on the 3060 preserved the image process. The LLM's
+  matching digest was resident on the configured 3060 worker, reporting
+  2,427,128,381 VRAM bytes equal to its runtime size. A different LLM that could
+  not be prepared on that alternate worker evicted the image before B70 load;
+  it reported 2,156,354,599 VRAM bytes equal to runtime size. Both returned
+  successful inference. Catalog file size is not proof of loaded footprint.
+- Reload after LLM handoff passed. Disconnect after a live preview cancelled and
+  reaped the image worker in 1.756 seconds; a new request loaded successfully
+  in 40.100 seconds without recovery intervention. Repeating cancellation
+  passed. Restarting the service with an idle model proved its old PID gone.
+- Switching to native Qwen 2512 and back replaced the old processes normally.
+  Two 512-square/two-step/CFG 5/shift 3.1 legacy requests reused one Vulkan
+  process in 8.691 and 8.562 seconds, retaining about 23.8–24.2 GB VRAM.
+- Final service is active, unpaused, with one idle Qwen 2.1 worker retaining
+  15,620,767,744 VRAM bytes, zero automatic restarts and no recovery latch.
+  IPv4/IPv6/LAN version/discovery pass; keyless image readiness is `ready`,
+  unauthenticated controls remain 401. No new Xe reset/wedge/hang events appeared.
+- Content-free final audit verified zero swap, core limit zero, worker
+  `NoNewPrivs`, no writable regular-file handles, no test prompts/images,
+  control credential or catalog model names/digests in Kuno's journal since the
+  install window. The private SDK is restored; tests retain no images/prompts.
+
+**Limitations:** this is small synthetic residency/transport acceptance, not a
+new ComfyUI/full-workflow performance comparison, useful edit-quality result,
+overnight soak or arbitrary two-model inference-peak guarantee. Intel repeated
+pixels differed by at most one 8-bit channel level: mean 0.003344 after mixed
+jobs versus 0.003307 for an immediate repeat (about 0.33% of channels). This
+supports rounding-scale nondeterminism in these samples, not a universal
+fidelity/tolerance guarantee or proof of its specific kernel. CUDA smoke was
+bitwise repeatable. Native cleanup removes reusable request state, without
+claiming forensic zeroization of every third-party freed allocation.
+Four classified backend diagnostics occurred during the initial legacy Vulkan
+run even though generation/reuse/family switching passed; their internal cause
+is unproven. Harness assertions for the wrong DRM counter name, changing
+KiB/MiB units and unitless zero were corrected; they did not require backend
+changes. Actual per-client GPU allocations and device totals agree.
+
+**Release handoff:** integrate the complete branch range from `4f9b465`, including
+behavior through `4fb4e58`, source/build receipt `418569e` and this installed
+receipt. The main checkout retains an uncommitted pointer to the final receipt
+commit. The new standard binary and ABI 2 runtime must be packaged together;
+see [the release handoff](kuno-release-handoff.md#resident-image-update).
+No public contract or Vashti connector/UI changes are required. This receipt
+records authorized local installation, not publication or application/Android
+acceptance. No merge, push, release or task message was performed. Preserve the
+worktree and ignored producer artifacts until next-release integration.
