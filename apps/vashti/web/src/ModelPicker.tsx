@@ -29,6 +29,9 @@ export function ModelPicker({
   value,
   ariaLabel,
   disabled = false,
+  modelLabel = compactModelName,
+  modelUnavailable,
+  emptyLabel = "No models",
   onChange
 }: {
   groups: BackendModelGroup[];
@@ -41,6 +44,9 @@ export function ModelPicker({
   value: string;
   ariaLabel?: string;
   disabled?: boolean;
+  modelLabel?: (name: string) => string;
+  modelUnavailable?: (backendId: string, name: string) => string | undefined;
+  emptyLabel?: string;
   onChange: (value: string) => void;
 }) {
   const [isOpen, setIsOpen] = useState(false);
@@ -86,6 +92,7 @@ export function ModelPicker({
 
       return (
         option.model.name.toLocaleLowerCase().includes(normalizedQuery) ||
+        modelLabel(option.model.name).toLocaleLowerCase().includes(normalizedQuery) ||
         compactModelName(option.model.name).toLocaleLowerCase().includes(normalizedQuery) ||
         option.backend.name.toLocaleLowerCase().includes(normalizedQuery)
       );
@@ -100,6 +107,7 @@ export function ModelPicker({
 
         return (
           model.name.toLocaleLowerCase().includes(normalizedQuery) ||
+          modelLabel(model.name).toLocaleLowerCase().includes(normalizedQuery) ||
           compactModelName(model.name).toLocaleLowerCase().includes(normalizedQuery) ||
           group.backend.name.toLocaleLowerCase().includes(normalizedQuery)
         );
@@ -192,7 +200,7 @@ export function ModelPicker({
     }
 
     if (!hasModels) {
-      return "No models";
+      return emptyLabel;
     }
 
     return selectedPrivatePersona
@@ -204,7 +212,7 @@ export function ModelPicker({
         : selectedPersonaVersion
           ? selectedPersonaVersion.display_name
         : selected
-          ? compactModelName(selected.model.name)
+          ? modelLabel(selected.model.name)
           : "Select model";
   }
 
@@ -220,14 +228,18 @@ export function ModelPicker({
         type="button"
         key={`${keyPrefix}:${optionValue}`}
         className={optionValue === value ? "model-option model-option-active" : "model-option"}
-        title={model.name}
+        title={
+          modelUnavailable?.(backendId, model.name) ??
+          (modelLabel === compactModelName ? model.name : modelLabel(model.name))
+        }
+        disabled={Boolean(modelUnavailable?.(backendId, model.name))}
         onClick={() => {
           onChange(optionValue);
           setIsOpen(false);
         }}
       >
         <ModelAvatar
-          displayName={compactModelName(model.name)}
+          displayName={modelLabel(model.name)}
           assetId={model.avatar_asset_id}
           cropX={model.avatar_crop_x}
           cropY={model.avatar_crop_y}
@@ -236,7 +248,7 @@ export function ModelPicker({
         />
         <span className="model-option-content">
           <span className="model-option-title-row">
-            <span className="model-name">{compactModelName(model.name)}</span>
+            <span className="model-name">{modelLabel(model.name)}</span>
             {model.is_favorite && (
               <span className="model-option-star" title="Favorite">
                 <Star />
@@ -431,7 +443,7 @@ export function ModelPicker({
           />
         ) : selected ? (
           <ModelAvatar
-            displayName={compactModelName(selected.model.name)}
+            displayName={modelLabel(selected.model.name)}
             assetId={selected.model.avatar_asset_id}
             cropX={selected.model.avatar_crop_x}
             cropY={selected.model.avatar_crop_y}

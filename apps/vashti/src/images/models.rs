@@ -43,12 +43,12 @@ impl Default for Preferences {
         Self {
             generate: Profile {
                 recipe,
-                seed_mode: SeedMode::Random,
+                seed_mode: SeedMode::Increment,
                 model_may_change: BTreeSet::from(["size".into()]),
             },
             edit: Profile {
                 recipe: edit,
-                seed_mode: SeedMode::Random,
+                seed_mode: SeedMode::Increment,
                 model_may_change: BTreeSet::new(),
             },
             hidden_controls: BTreeSet::new(),
@@ -59,8 +59,8 @@ impl Default for Preferences {
 #[derive(Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum SeedMode {
-    #[default]
     Random,
+    #[default]
     Increment,
     Fixed,
 }
@@ -77,6 +77,8 @@ pub struct PromptHelp {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Draft {
+    #[serde(default)]
+    pub backend_id: Option<String>,
     pub recipe: ImageRecipe,
     #[serde(default)]
     pub input_ids: Vec<String>,
@@ -113,6 +115,7 @@ pub struct Session {
     pub draft: Draft,
     pub revision: i64,
     pub updated_at: i64,
+    pub active_result_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -126,10 +129,12 @@ pub struct Run {
     pub prompt_version_id: Option<String>,
     pub error: Option<String>,
     pub request: RunRequest,
+    pub created_at: i64,
 }
 
 #[derive(Serialize)]
 pub struct ImageResult {
+    pub origin_run_id: String,
     pub id: String,
     pub run_id: String,
     pub session_id: String,

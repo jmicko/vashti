@@ -16,7 +16,8 @@ import {
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
-  type WheelEvent as ReactWheelEvent
+  type WheelEvent as ReactWheelEvent,
+  type ReactNode
 } from "react";
 import { activePathMessages, revisionsForMessage } from "./chatMessages";
 import { MarkdownContent } from "./MarkdownContent";
@@ -91,13 +92,19 @@ export function MessageTreeExplorer({
   messages,
   onClose,
   onOpenBranch,
-  dimmedEmphasisForMessage
+  dimmedEmphasisForMessage,
+  title = "Message Tree",
+  renderNodePreview,
+  renderFocusedContent
 }: {
   activeRootMessageId: string | null;
   messages: ChatMessage[];
   onClose: () => void;
   onOpenBranch: (messageId: string, revisionId: string) => void;
   dimmedEmphasisForMessage?: (message: ChatMessage) => boolean;
+  title?: string;
+  renderNodePreview?: (message: ChatMessage) => ReactNode;
+  renderFocusedContent?: (message: ChatMessage) => ReactNode;
 }) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const pointersRef = useRef(new Map<number, PointerPosition>());
@@ -376,7 +383,7 @@ export function MessageTreeExplorer({
     <section className="message-tree-explorer" aria-label="Message tree explorer">
       <header className="message-tree-toolbar">
         <div>
-          <strong>Message Tree</strong>
+          <strong>{title}</strong>
           <small>
             {tree.nodes.length} {tree.nodes.length === 1 ? "version" : "versions"}
           </small>
@@ -518,7 +525,7 @@ export function MessageTreeExplorer({
                           <small>edit {node.revisionNumber}</small>
                         )}
                       </header>
-                      <p>{treeNodePreview(node)}</p>
+                      {renderNodePreview ? <div className="message-tree-custom-preview">{renderNodePreview(node.message)}</div> : <p>{treeNodePreview(node)}</p>}
                       <footer>
                         <span>{node.message.status}</span>
                       </footer>
@@ -560,10 +567,10 @@ export function MessageTreeExplorer({
                 </button>
                 <div>
                   <strong>{treeNodeLabel(focusedNode)}</strong>
-                  <small>
+                  {!renderFocusedContent && <small>
                     Edit {focusedNode.revisionNumber} of{" "}
                     {Math.max(1, focusedNode.message.revisions.length)}
-                  </small>
+                  </small>}
                 </div>
               </header>
               <div className="message-tree-focus-content">
@@ -573,7 +580,7 @@ export function MessageTreeExplorer({
                     <MarkdownContent content={focusedNode.revision.thinking_text} />
                   </details>
                 )}
-                {focusedNode.revision.content_text ? (
+                {renderFocusedContent ? renderFocusedContent(focusedNode.message) : focusedNode.revision.content_text ? (
                   <MarkdownContent
                     content={focusedNode.revision.content_text}
                     dimmedEmphasis={

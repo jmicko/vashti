@@ -42,7 +42,7 @@ export function routeFromLocation(): AppRoute {
   if (path === "/app/images" || path.startsWith("/app/images/")) {
     const view = path.split("/")[3];
     const sessionId = new URLSearchParams(window.location.hash.slice(1)).get("session") ?? undefined;
-    return { page: "images", view: view === "generate" || view === "edit" ? view : "gallery", sessionId };
+    return { page: "images", view: view === "generate" || view === "edit" || view === "gallery" || view === "flow" ? view : "home", sessionId };
   }
 
   if (path.startsWith("/app/settings")) {
@@ -91,7 +91,7 @@ export function routeFromLocation(): AppRoute {
 
 export function pathForRoute(route: AppRoute) {
   if (route.page === "images") {
-    return `/app/images/${route.view ?? "gallery"}${route.sessionId ? `#session=${encodeURIComponent(route.sessionId)}` : ""}`;
+    return `/app/images${!route.view || route.view === "home" ? "" : `/${route.view}`}${route.sessionId ? `#session=${encodeURIComponent(route.sessionId)}` : ""}`;
   }
   if (route.page === "settings") {
     if (route.section === "notes" && route.storageMode === "device") {

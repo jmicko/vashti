@@ -504,7 +504,9 @@ overhead on the normal 50-step workflow and Intel still needs measurement.
 
 ## Inference access, discovery, and streaming (2026-09-30)
 
-**Implemented and source-tested Kuno contract; Vashti integration pending.**
+**Implemented and source-tested Kuno contract; Vashti integration and synthetic
+application checks complete. Installed-service and real-engine acceptance remain
+separate; see the coordination receipts.**
 Baseline `d117295`.
 The user clarified that Kuno serves a trusted local network: all inference,
 including image generation and previews, requires no Kuno authentication key.

@@ -722,7 +722,7 @@ export type SettingsSection =
   | "backends";
 export type NewChatMode = "standard" | "private";
 export type AppRoute =
-  | { page: "images"; view?: "gallery" | "generate" | "edit"; sessionId?: string }
+  | { page: "images"; view?: import("./images/types").ImageView; sessionId?: string }
   | { page: "chat"; chatId?: string }
   | { page: "private-chat"; chatId: string }
   | { page: "notes"; storageMode?: "server" | "device"; noteId?: string }

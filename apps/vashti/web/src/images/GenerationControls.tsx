@@ -3,22 +3,23 @@ import { Scan } from "lucide-react";
 import { ImageAsset } from "./ImageAsset";
 import { NumberField } from "./controls";
 import { aspectRatios, aspectSize, closestAspect } from "./aspectRatio";
-import type { Draft, Recipe } from "./types";
+import { type Draft, type Recipe, type ImageWorkflow } from "./types";
 
 export const imageControls = [["negative_prompt", "Negative prompt"], ["size", "Image size"], ["steps", "Steps"], ["cfg", "CFG"], ["seed", "Seed"], ["count", "Image count"], ["attention", "Attention"]] as const;
 
-export function GenerationControls({ draft, hidden, patchRecipe, patchDraft }: {
-  draft: Draft; hidden: string[]; patchRecipe: (patch: Partial<Recipe>) => void; patchDraft: (patch: Partial<Draft>) => void;
+export function GenerationControls({ draft, hidden, workflows, editing, patchRecipe, patchDraft }: {
+  draft: Draft; hidden: string[]; workflows: ImageWorkflow[]; editing: boolean; patchRecipe: (patch: Partial<Recipe>) => void; patchDraft: (patch: Partial<Draft>) => void;
 }) {
   const [source, setSource] = useState<{ id: string; width: number; height: number } | null>(null);
   const original = draft.original_input_ids[0];
   const recipe = draft.recipe;
+  const supportedAttention = workflows.find(w => w.id === recipe.workflow && w.state === "ready")?.attention ?? [];
   function chooseRatio(width: number, height: number) {
     patchRecipe(aspectSize(width, height, recipe.width * recipe.height));
   }
   return <div className="images-controls">
     {!hidden.includes("size") && <fieldset className="images-wide images-size">
-      <legend>Aspect ratio <span>{closestAspect(recipe.width, recipe.height)} · {recipe.width} × {recipe.height}</span></legend>
+      <legend>{editing ? "Output aspect ratio" : "Aspect ratio"} <span>{closestAspect(recipe.width, recipe.height)} · {recipe.width} × {recipe.height}</span></legend>
       <div className="images-ratios">{aspectRatios.map(ratio => {
         const [width, height] = ratio.split(":").map(Number);
         return <button type="button" key={ratio} aria-pressed={closestAspect(recipe.width, recipe.height) === ratio}
@@ -39,6 +40,6 @@ export function GenerationControls({ draft, hidden, patchRecipe, patchDraft }: {
     {!hidden.includes("seed") && <><fieldset className="images-wide"><legend>Seed</legend><div className="images-segments">{(["random", "increment", "fixed"] as const).map(value => <button type="button" key={value} aria-pressed={draft.seed_mode === value} onClick={() => patchDraft({ seed_mode: value })}>{value[0].toUpperCase() + value.slice(1)}</button>)}</div></fieldset>
       {draft.seed_mode !== "random" && <label className="images-wide">Starting seed<input inputMode="numeric" value={recipe.seed} onChange={e => patchRecipe({ seed: e.target.value })} /></label>}</>}
     {!hidden.includes("count") && <><label className="images-check"><input type="checkbox" checked={draft.count === null} onChange={e => patchDraft({ count: e.target.checked ? null : 1 })} />Until stopped</label>{draft.count !== null && <NumberField label="Images" min={1} max={100} value={draft.count} onChange={count => patchDraft({ count })} />}</>}
-    {!hidden.includes("attention") && <fieldset className="images-wide"><legend>Attention</legend><div className="images-segments">{(["standard", "fast"] as const).map(attention => <button type="button" key={attention} aria-pressed={recipe.attention === attention} title={attention === "fast" ? "Qwen 2.1 on CUDA" : "Standard attention"} onClick={() => patchRecipe({ attention })}>{attention === "fast" ? "Fast" : "Standard"}</button>)}</div></fieldset>}
+    {!hidden.includes("attention") && <fieldset className="images-wide"><legend>Attention</legend><div className="images-segments">{(["standard", "fast"] as const).map(attention => <button type="button" key={attention} disabled={!supportedAttention.includes(attention)} aria-pressed={recipe.attention === attention} title={!supportedAttention.includes(attention) ? "Unavailable on the selected image host" : attention === "fast" ? "Qwen 2.1 on CUDA" : "Standard attention"} onClick={() => patchRecipe({ attention })}>{attention === "fast" ? "Fast" : "Standard"}</button>)}</div></fieldset>}
   </div>;
 }

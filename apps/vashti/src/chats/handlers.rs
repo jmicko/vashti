@@ -1343,7 +1343,7 @@ async fn maybe_generate_chat_title(request: TitleGenerationRequest<'_>) -> Optio
     Some(updated.title)
 }
 
-async fn request_generated_title(
+pub(crate) async fn request_generated_title(
     client: &reqwest::Client,
     backend_base_url: &str,
     model_name: &str,
@@ -1387,7 +1387,7 @@ async fn request_generated_title(
     response.message.map(|message| message.content)
 }
 
-fn validated_title(raw_title: &str) -> Option<String> {
+pub(crate) fn validated_title(raw_title: &str) -> Option<String> {
     let mut title = raw_title
         .lines()
         .find(|line| !line.trim().is_empty())

@@ -16,16 +16,9 @@ pub fn is_image_tool(name: &str) -> bool {
     matches!(name, GENERATE | EDIT)
 }
 pub async fn schemas(state: &AppState, user: &str) -> Result<Vec<OllamaTool>, ApiError> {
-    let ready: bool = sqlx::query_scalar(
-        "SELECT backend_id IS NOT NULL AND token!='' FROM image_service_settings WHERE id=1",
-    )
-    .fetch_one(&state.db)
-    .await?;
-    if !ready {
-        return Ok(vec![]);
-    }
+    let discovery = service::discovery(state, None).await?;
     let p = service::preferences(&state.db, user).await?;
-    Ok([(GENERATE,&p.generate),(EDIT,&p.edit)].into_iter().map(|(name,profile)|{
+    Ok([(GENERATE,&p.generate),(EDIT,&p.edit)].into_iter().filter(|(_,profile)| discovery.workflow(&profile.recipe.workflow).is_some()).map(|(name,profile)|{
         let properties=json!({"prompt":{"type":"string","description":"The complete positive prompt, or instructions describing the edit."},"image_ids":{"type":"array","items":{"type":"string"},"maxItems":10,"description":"For editing only: ordered image IDs supplied in this chat or returned by previous image tools."},"settings":{"type":"object","description":"Optional overrides. Only allowed fields can change; omitted values use the user's defaults.","properties":{"width":{"type":"integer"},"height":{"type":"integer"},"steps":{"type":"integer"},"cfg":{"type":"number"},"seed":{"type":"string"},"negative_prompt":{"type":"string"},"attention":{"type":"string","enum":["standard","fast"]},"flow_shift":{"type":"number"}},"additionalProperties":false}});
         OllamaTool{kind:"function".into(),function:OllamaToolFunction{name:name.into(),description:format!("{}. Returns an image displayed directly to the user and an image ID for further editing. User defaults and override permissions: {}. Never claim to have visually inspected an image unless pixels were supplied to you.",if name==EDIT{"Edit one or more images available in this conversation"}else{"Generate an image from a written prompt"},serde_json::to_string(profile).unwrap_or_default()),parameters:json!({"type":"object","properties":properties,"required":if name==EDIT{vec!["prompt","image_ids"]}else{vec!["prompt"]},"additionalProperties":false})}}
     }).collect())
@@ -107,6 +100,7 @@ pub async fn execute(context: Context<'_>) -> Result<Outcome, ApiError> {
     let explicit_seed =
         profile.model_may_change.contains("seed") && overrides.get("seed").is_some();
     let draft = Draft {
+        backend_id: None,
         recipe,
         input_ids: input_ids.clone(),
         original_input_ids: input_ids,

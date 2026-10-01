@@ -18,13 +18,20 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .merge(super::transient::router())
         .route("/settings", get(get_settings).put(put_settings))
+        .route("/capabilities", get(capabilities))
+        .route("/hosts", get(hosts))
         .route("/preferences", get(get_preferences).put(put_preferences))
         .route("/sessions", get(list_sessions).post(create_session))
-        .route("/sessions/{id}", get(get_session).put(update_session))
+        .route(
+            "/sessions/{id}",
+            get(get_session).put(update_session).delete(archive_session),
+        )
+        .route("/sessions/{id}/title", axum::routing::patch(rename_session))
         .route("/sessions/{id}/history", get(history))
         .route("/sessions/{id}/results", get(results))
         .route("/sessions/{id}/runs", get(runs).post(submit))
         .route("/runs/{id}", get(run))
+        .route("/runs/active", get(active_runs))
         .route("/runs/{id}/stop", post(stop))
         .route("/results/{id}/select", post(select))
         .route("/gallery", get(gallery))
@@ -62,7 +69,7 @@ struct Page {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SessionInput {
-    title: String,
+    title: Option<String>,
     mode: String,
     draft: Draft,
     revision: Option<i64>,
@@ -86,7 +93,14 @@ async fn create_session(
         .check(rate_limit::user_action_key("image-session", &u), 60, 60)
         .await?;
     Ok(Json(
-        service::create_session(&state.db, &u, &input.title, &input.mode, input.draft).await?,
+        service::create_session(
+            &state.db,
+            &u,
+            input.title.as_deref().unwrap_or("New images"),
+            &input.mode,
+            input.draft,
+        )
+        .await?,
     ))
 }
 async fn get_session(
@@ -112,7 +126,7 @@ async fn update_session(
             input.revision.ok_or_else(|| {
                 ApiError::bad_request("revision_required", "A draft version is required")
             })?,
-            &input.title,
+            input.title.as_deref(),
             &input.mode,
             input.draft,
         )
@@ -142,9 +156,10 @@ async fn runs(
     State(state): State<AppState>,
     jar: CookieJar,
     Path(id): Path<String>,
+    Query(page): Query<Page>,
 ) -> Result<Json<Vec<Run>>, ApiError> {
     let u = user(&state, &jar).await?;
-    let mut runs = service::runs(&state.db, &u, &id).await?;
+    let mut runs = service::runs(&state.db, &u, &id, page.offset).await?;
     for run in &mut runs {
         run.preview = service::preview(&state, &run.id);
     }
@@ -172,6 +187,19 @@ async fn run(
     let mut run = service::get_run(&state.db, &u, &id).await?;
     run.preview = service::preview(&state, &id);
     Ok(Json(run))
+}
+async fn active_runs(
+    State(state): State<AppState>,
+    jar: CookieJar,
+) -> Result<Json<Vec<Run>>, ApiError> {
+    let u = user(&state, &jar).await?;
+    let ids: Vec<String> = sqlx::query_scalar("SELECT r.id FROM image_runs r JOIN image_sessions s ON s.id=r.session_id WHERE r.user_id=? AND s.chat_id IS NULL AND r.status IN ('queued','improving','generating','saving','stopping') ORDER BY r.created_at LIMIT 2")
+        .bind(&u).fetch_all(&state.db).await?;
+    let mut runs = Vec::with_capacity(ids.len());
+    for id in ids {
+        runs.push(service::get_run(&state.db, &u, &id).await?);
+    }
+    Ok(Json(runs))
 }
 async fn stop(
     State(state): State<AppState>,
@@ -298,14 +326,92 @@ async fn put_preferences(
 #[serde(deny_unknown_fields)]
 struct ServiceSettings {
     backend_id: Option<String>,
-    token: Option<String>,
     max_user_bytes: i64,
 }
 async fn settings(state: &AppState) -> Result<Json<Value>, ApiError> {
-    let r=sqlx::query("SELECT backend_id,token!='' AS token_configured,max_user_bytes FROM image_service_settings WHERE id=1").fetch_one(&state.db).await?;
+    let r = sqlx::query("SELECT backend_id,max_user_bytes FROM image_service_settings WHERE id=1")
+        .fetch_one(&state.db)
+        .await?;
+    let discovery = service::discovery(state, None).await?;
     Ok(Json(
-        json!({"backend_id":r.try_get::<Option<String>,_>("backend_id")?,"token_configured":r.try_get::<bool,_>("token_configured")?,"max_user_bytes":r.try_get::<i64,_>("max_user_bytes")?}),
+        json!({"backend_id":r.try_get::<Option<String>,_>("backend_id")?,"max_user_bytes":r.try_get::<i64,_>("max_user_bytes")?,"service":discovery}),
     ))
+}
+#[derive(Deserialize)]
+struct CapabilityQuery {
+    backend_id: Option<String>,
+}
+async fn capabilities(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Query(query): Query<CapabilityQuery>,
+) -> Result<Json<super::kuno::Discovery>, ApiError> {
+    let u = user(&state, &jar).await?;
+    state
+        .rate_limiter
+        .check(rate_limit::user_action_key("image-discovery", &u), 60, 60)
+        .await?;
+    Ok(Json(
+        service::discovery(&state, query.backend_id.as_deref()).await?,
+    ))
+}
+async fn hosts(
+    State(state): State<AppState>,
+    jar: CookieJar,
+) -> Result<Json<Vec<service::ImageHost>>, ApiError> {
+    let u = user(&state, &jar).await?;
+    state
+        .rate_limiter
+        .check(rate_limit::user_action_key("image-discovery", &u), 60, 60)
+        .await?;
+    Ok(Json(service::image_hosts(&state).await?))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TitleInput {
+    title: String,
+}
+async fn rename_session(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Path(id): Path<String>,
+    Json(input): Json<TitleInput>,
+) -> Result<Json<Session>, ApiError> {
+    let u = user(&state, &jar).await?;
+    service::get_session(&state.db, &u, &id).await?;
+    if input.title.trim().is_empty() || input.title.len() > 200 {
+        return Err(ApiError::bad_request(
+            "image_title_invalid",
+            "Enter a title of at most 200 characters",
+        ));
+    }
+    sqlx::query(
+        "UPDATE image_sessions SET title=?,title_generated=2,updated_at=? WHERE id=? AND user_id=?",
+    )
+    .bind(input.title.trim())
+    .bind(auth::service::unix_timestamp())
+    .bind(&id)
+    .bind(&u)
+    .execute(&state.db)
+    .await?;
+    Ok(Json(service::get_session(&state.db, &u, &id).await?))
+}
+async fn archive_session(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    let u = user(&state, &jar).await?;
+    service::get_session(&state.db, &u, &id).await?;
+    let changed = sqlx::query("UPDATE image_sessions SET is_archived=1 WHERE id=? AND user_id=? AND NOT EXISTS (SELECT 1 FROM image_runs WHERE session_id=? AND status IN ('queued','improving','generating','saving','stopping'))")
+        .bind(&id).bind(u).bind(&id).execute(&state.db).await?;
+    if changed.rows_affected() == 0 {
+        return Err(ApiError::conflict(
+            "image_session_busy",
+            "Stop generation before removing this flow",
+        ));
+    }
+    Ok(Json(json!({"ok":true})))
 }
 async fn get_settings(
     State(state): State<AppState>,
@@ -336,18 +442,10 @@ async fn put_settings(
             "Choose an enabled backend",
         ));
     }
-    if let Some(token) = &input.token
-        && !token.is_empty()
-        && (!(32..=256).contains(&token.len())
-            || !token
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'))
-    {
-        return Err(ApiError::bad_request(
-            "image_token_invalid",
-            "Enter the Kuno access token",
-        ));
-    }
-    sqlx::query("UPDATE image_service_settings SET backend_id=?,token=COALESCE(?,token),max_user_bytes=? WHERE id=1").bind(input.backend_id).bind(input.token).bind(input.max_user_bytes).execute(&state.db).await?;
+    sqlx::query("UPDATE image_service_settings SET backend_id=?,max_user_bytes=? WHERE id=1")
+        .bind(input.backend_id)
+        .bind(input.max_user_bytes)
+        .execute(&state.db)
+        .await?;
     settings(&state).await
 }

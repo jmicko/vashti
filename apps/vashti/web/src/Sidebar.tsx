@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { BrandMark } from "./common";
 import { ModelAvatar } from "./ModelAvatar";
+import { ImageFlowHistory } from "./images/ImageFlowHistory";
 import type {
   PrivateChatSummary,
   PrivatePersonaVersion
@@ -31,6 +32,9 @@ export function Sidebar({
   currentPrivateChatId,
   isNotesActive,
   isImagesActive,
+  currentImageFlowId,
+  onOpenImageFlow,
+  onRemoveImageFlow,
   isOpen,
   isLoading,
   isLoadingPrivateChats,
@@ -54,6 +58,9 @@ export function Sidebar({
   currentPrivateChatId: string | null;
   isNotesActive: boolean;
   isImagesActive: boolean;
+  currentImageFlowId?: string;
+  onOpenImageFlow: (id: string) => void;
+  onRemoveImageFlow: (id: string) => void;
   isOpen: boolean;
   isLoading: boolean;
   isLoadingPrivateChats: boolean;
@@ -163,7 +170,7 @@ export function Sidebar({
             }}
           >
             <MessageSquarePlus />
-            <span>New Chat</span>
+            <span>{isImagesActive ? "New Flow" : "New Chat"}</span>
           </button>
           <button type="button" className={isImagesActive ? "sidebar-section-button sidebar-section-button-active" : "sidebar-section-button"} aria-current={isImagesActive ? "page" : undefined} onClick={() => { setOpenMenuChatId(null); onOpenImages(); }}><Images /><span>Images</span></button>
           <button
@@ -181,6 +188,7 @@ export function Sidebar({
         </nav>
       </div>
       <div className="chat-history">
+        {isImagesActive ? <ImageFlowHistory currentId={currentImageFlowId} onOpen={onOpenImageFlow} onRemoved={onRemoveImageFlow} /> : <>
         <p className="eyebrow">Previous Chats</p>
         {isLoadingAnyChats && combinedChats.length === 0 ? (
           <p>Loading chats...</p>
@@ -266,6 +274,7 @@ export function Sidebar({
             })}
           </div>
         )}
+        </>}
       </div>
     </aside>
   );

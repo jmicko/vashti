@@ -23,6 +23,7 @@ pub struct ImageJobs {
     pub cancellations: Mutex<HashMap<String, CancellationToken>>,
     pub(super) slots: Arc<Semaphore>,
     pub(super) private: super::transient::Jobs,
+    pub(super) kuno: super::kuno::KunoClient,
     previews: std::sync::Mutex<HashMap<String, kuno_image::preview::Preview>>,
 }
 impl Default for ImageJobs {
@@ -31,6 +32,7 @@ impl Default for ImageJobs {
             cancellations: Mutex::new(HashMap::new()),
             slots: Arc::new(Semaphore::new(1)),
             private: Default::default(),
+            kuno: Default::default(),
             previews: Default::default(),
         }
     }
@@ -66,6 +68,13 @@ pub fn validate_recipe(recipe: &ImageRecipe) -> Result<(), ApiError> {
 }
 pub fn validate_draft(draft: &Draft) -> Result<(), ApiError> {
     validate_recipe(&draft.recipe)?;
+    if draft
+        .backend_id
+        .as_ref()
+        .is_some_and(|id| id.is_empty() || id.len() > 128)
+    {
+        return Err(invalid("Invalid inference host"));
+    }
     if draft.input_ids.len() > 10
         || draft.original_input_ids.len() > 10
         || draft.count.is_some_and(|n| n == 0 || n > 100)
@@ -188,9 +197,6 @@ fn validate_session(mode: &str, title: &str, draft: &Draft) -> Result<(), ApiErr
     {
         return Err(invalid("Invalid image session title or mode"));
     }
-    if (mode == "generate") == (draft.recipe.workflow == QWEN21_EDIT_RECIPE) {
-        return Err(invalid("Choose a workflow matching this session"));
-    }
     validate_draft(draft)
 }
 fn session_row(row: SqliteRow) -> Result<Session, ApiError> {
@@ -201,6 +207,7 @@ fn session_row(row: SqliteRow) -> Result<Session, ApiError> {
         draft: decode(&row.try_get::<String, _>("draft_json")?)?,
         revision: row.try_get("revision")?,
         updated_at: row.try_get("updated_at")?,
+        active_result_id: row.try_get("active_result_id")?,
     })
 }
 pub async fn get_session(
@@ -222,7 +229,7 @@ pub async fn sessions(
     user: &str,
     offset: i64,
 ) -> Result<Vec<Session>, ApiError> {
-    sqlx::query("SELECT * FROM image_sessions WHERE user_id=? AND chat_id IS NULL ORDER BY updated_at DESC,id LIMIT 50 OFFSET ?")
+    sqlx::query("SELECT * FROM image_sessions WHERE user_id=? AND chat_id IS NULL AND is_archived=0 ORDER BY updated_at DESC,id LIMIT 50 OFFSET ?")
         .bind(user).bind(offset.max(0)).fetch_all(pool).await?.into_iter().map(session_row).collect()
 }
 pub async fn update_session(
@@ -230,16 +237,16 @@ pub async fn update_session(
     user: &str,
     session: &str,
     revision: i64,
-    title: &str,
+    title: Option<&str>,
     mode: &str,
     mut draft: Draft,
 ) -> Result<Session, ApiError> {
-    validate_session(mode, title, &draft)?;
     let previous = get_session(pool, user, session).await?;
+    validate_session(mode, title.unwrap_or(&previous.title), &draft)?;
     validate_links(pool, user, Some(session), &draft).await?;
     let mut tx = pool.begin().await?;
-    let changed = sqlx::query("UPDATE image_sessions SET title=?,mode=?,draft_json=?,revision=revision+1,updated_at=? WHERE id=? AND user_id=? AND revision=?")
-        .bind(title.trim()).bind(mode).bind(encode(&draft)?).bind(unix_timestamp()).bind(session).bind(user).bind(revision).execute(&mut *tx).await?;
+    let changed = sqlx::query("UPDATE image_sessions SET title_generated=CASE WHEN ? IS NOT NULL AND title!=? THEN 2 ELSE title_generated END,title=COALESCE(?,title),mode=?,draft_json=?,revision=revision+1,updated_at=? WHERE id=? AND user_id=? AND revision=?")
+        .bind(title).bind(title.map(str::trim)).bind(title.map(str::trim)).bind(mode).bind(encode(&draft)?).bind(unix_timestamp()).bind(session).bind(user).bind(revision).execute(&mut *tx).await?;
     if changed.rows_affected() != 1 {
         return Err(ApiError::conflict(
             "image_draft_changed",
@@ -440,6 +447,7 @@ async fn remember_prompt(
 }
 fn result_row(r: SqliteRow) -> Result<ImageResult, ApiError> {
     Ok(ImageResult {
+        origin_run_id: r.try_get("origin_run_id")?,
         id: r.try_get("id")?,
         run_id: r.try_get("run_id")?,
         session_id: r.try_get("session_id")?,
@@ -453,7 +461,7 @@ fn result_row(r: SqliteRow) -> Result<ImageResult, ApiError> {
         selected: r.try_get("selected")?,
     })
 }
-const RESULT_COLUMNS: &str = "r.*, (g.selected_result_id=r.id) AS selected";
+const RESULT_COLUMNS: &str = "r.*, (g.selected_result_id=r.id) AS selected, (SELECT first.run_id FROM image_results first WHERE first.group_id=r.group_id ORDER BY first.created_at,first.rowid LIMIT 1) AS origin_run_id";
 pub async fn get_result(
     pool: &SqlitePool,
     user: &str,
@@ -474,12 +482,18 @@ pub async fn results(
 }
 pub async fn select_result(pool: &SqlitePool, user: &str, result: &str) -> Result<(), ApiError> {
     let result = get_result(pool, user, result).await?;
-    sqlx::query("UPDATE image_result_groups SET selected_result_id=? WHERE id=? AND user_id=?")
-        .bind(&result.id)
-        .bind(&result.group_id)
-        .bind(user)
-        .execute(pool)
+    let mut tx = pool.begin().await?;
+    sqlx::query("WITH RECURSIVE branch(id,group_id,parent_result_id) AS (SELECT id,group_id,parent_result_id FROM image_results WHERE id=? AND user_id=? UNION SELECT r.id,r.group_id,r.parent_result_id FROM image_results r JOIN branch b ON r.id=b.parent_result_id WHERE r.user_id=?) UPDATE image_result_groups SET selected_result_id=(SELECT id FROM branch WHERE branch.group_id=image_result_groups.id) WHERE user_id=? AND id IN (SELECT group_id FROM branch)")
+        .bind(&result.id).bind(user).bind(user).bind(user)
+        .execute(&mut *tx)
         .await?;
+    sqlx::query("UPDATE image_sessions SET active_result_id=? WHERE id=? AND user_id=?")
+        .bind(&result.id)
+        .bind(&result.session_id)
+        .bind(user)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
     Ok(())
 }
 pub async fn gallery(
@@ -524,6 +538,7 @@ fn run_row(r: SqliteRow) -> Result<Run, ApiError> {
         prompt_version_id: r.try_get("prompt_version_id")?,
         error: r.try_get("error")?,
         request: decode(&r.try_get::<String, _>("request_json")?)?,
+        created_at: r.try_get("created_at")?,
     })
 }
 pub async fn get_run(pool: &SqlitePool, user: &str, run: &str) -> Result<Run, ApiError> {
@@ -536,9 +551,14 @@ pub async fn get_run(pool: &SqlitePool, user: &str, run: &str) -> Result<Run, Ap
             .ok_or_else(missing)?,
     )
 }
-pub async fn runs(pool: &SqlitePool, user: &str, session: &str) -> Result<Vec<Run>, ApiError> {
+pub async fn runs(
+    pool: &SqlitePool,
+    user: &str,
+    session: &str,
+    offset: i64,
+) -> Result<Vec<Run>, ApiError> {
     get_session(pool, user, session).await?;
-    sqlx::query("SELECT * FROM image_runs WHERE user_id=? AND session_id=? ORDER BY created_at DESC,rowid DESC LIMIT 20").bind(user).bind(session).fetch_all(pool).await?.into_iter().map(run_row).collect()
+    sqlx::query("SELECT * FROM image_runs WHERE user_id=? AND session_id=? ORDER BY created_at DESC,rowid DESC LIMIT 100 OFFSET ?").bind(user).bind(session).bind(offset.max(0)).fetch_all(pool).await?.into_iter().map(run_row).collect()
 }
 pub async fn recover(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     sqlx::query(&format!("UPDATE image_runs SET status='interrupted',error='Generation was interrupted by a server restart. Saved images are still available.' WHERE status IN {ACTIVE}" )).execute(pool).await?;
@@ -566,26 +586,42 @@ pub async fn submit(
     if Uuid::parse_str(&request.client_request_id).is_err() {
         return Err(invalid("A unique submission ID is required"));
     }
+    let submission = encode(&request)?;
+    if let Some(existing) = existing_submission(
+        &state.db,
+        user,
+        session,
+        &request.client_request_id,
+        &submission,
+    )
+    .await?
+    {
+        return Ok(existing);
+    }
+    let mut regenerate_group = None;
     if let Some(retry) = &request.retry_result_id {
         let result = get_result(&state.db, user, retry).await?;
         if result.session_id != session {
             return Err(invalid("Retry belongs to another session"));
         }
+        let original = get_run(&state.db, user, &result.run_id).await?;
+        request.draft.backend_id = original.request.draft.backend_id;
         request.draft.recipe = result.recipe;
         request.draft.input_ids = result.input_ids;
         request.draft.parent_result_id = result.parent_result_id;
         request.draft.auto_improve = false;
         request.improve_only = false;
-        request.draft.seed_mode = SeedMode::Random;
+        // Regeneration never repeats a seed, including when normal sends use Fixed.
+        if request.draft.seed_mode != SeedMode::Random {
+            regenerate_group = Some(result.group_id);
+            request.draft.seed_mode = SeedMode::Increment;
+        }
         request.draft.count = Some(1);
     }
     validate_draft(&request.draft)?;
     validate_links(&state.db, user, Some(session), &request.draft).await?;
     if request.draft.recipe.prompt.trim().is_empty() {
         return Err(invalid("Enter a prompt first"));
-    }
-    if (stored.mode == "generate") == (request.draft.recipe.workflow == QWEN21_EDIT_RECIPE) {
-        return Err(invalid("Workflow does not match the session"));
     }
     if request.retry_result_id.is_none() && request.draft.recipe.workflow == QWEN21_EDIT_RECIPE {
         if stored.mode == "original" {
@@ -631,24 +667,26 @@ pub async fn submit(
         .await?;
     }
     if !request.improve_only {
-        endpoint(&state.db).await?;
-    }
-    let serialized = encode(&request)?;
-    let mut jobs = state.image_jobs.cancellations.lock().await;
-    if let Some(row) =
-        sqlx::query("SELECT * FROM image_runs WHERE user_id=? AND client_request_id=?")
-            .bind(user)
-            .bind(&request.client_request_id)
-            .fetch_optional(&state.db)
+        request.draft.backend_id = Some(
+            resolve_backend(
+                state,
+                request.draft.backend_id.as_deref(),
+                &request.draft.recipe.workflow,
+            )
             .await?
+            .id,
+        );
+    }
+    let mut jobs = state.image_jobs.cancellations.lock().await;
+    if let Some(existing) = existing_submission(
+        &state.db,
+        user,
+        session,
+        &request.client_request_id,
+        &submission,
+    )
+    .await?
     {
-        let existing = run_row(row)?;
-        if existing.session_id != session || encode(&existing.request)? != serialized {
-            return Err(ApiError::conflict(
-                "image_submission_conflict",
-                "This submission ID was already used for different settings",
-            ));
-        }
         return Ok(existing);
     }
     if jobs.len() >= 32 {
@@ -681,10 +719,20 @@ pub async fn submit(
             "This session already has a running job",
         ));
     }
+    // Allocate after admission is serialized so simultaneous requests cannot reuse a seed.
+    if let Some(group) = regenerate_group {
+        let maximum: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(CAST(json_extract(recipe_json,'$.seed') AS INTEGER)),0) FROM image_results WHERE group_id=? AND user_id=?")
+            .bind(group).bind(user).fetch_one(&state.db).await?;
+        request.draft.recipe.seed = maximum
+            .checked_add(1)
+            .ok_or_else(|| invalid("Seed range exhausted. Choose Random to regenerate."))?
+            .to_string();
+    }
+    let serialized = encode(&request)?;
     let run = id();
     let now = unix_timestamp();
-    sqlx::query("INSERT INTO image_runs (id,user_id,session_id,client_request_id,request_json,status,created_at,updated_at) VALUES (?,?,?,?,?,'queued',?,?)")
-        .bind(&run).bind(user).bind(session).bind(&request.client_request_id).bind(serialized).bind(now).bind(now).execute(&state.db).await?;
+    sqlx::query("INSERT INTO image_runs (id,user_id,session_id,client_request_id,request_json,submission_json,status,created_at,updated_at) VALUES (?,?,?,?,?,?,'queued',?,?)")
+        .bind(&run).bind(user).bind(session).bind(&request.client_request_id).bind(serialized).bind(submission).bind(now).bind(now).execute(&state.db).await?;
     let cancel = CancellationToken::new();
     jobs.insert(run.clone(), cancel.clone());
     drop(jobs);
@@ -719,8 +767,39 @@ pub async fn submit(
             .lock()
             .await
             .remove(&task_run);
+        if status == "complete" {
+            let title_state = task_state.clone();
+            tokio::spawn(async move {
+                let _ = title_flow(&title_state, &task_user, &task_session, &task_run).await;
+            });
+        }
     });
     get_run(&state.db, user, &run).await
+}
+async fn existing_submission(
+    pool: &SqlitePool,
+    user: &str,
+    session: &str,
+    id: &str,
+    submitted: &str,
+) -> Result<Option<Run>, ApiError> {
+    let Some(row) = sqlx::query("SELECT * FROM image_runs WHERE user_id=? AND client_request_id=?")
+        .bind(user)
+        .bind(id)
+        .fetch_optional(pool)
+        .await?
+    else {
+        return Ok(None);
+    };
+    let fingerprint: String = row.try_get("submission_json")?;
+    let existing = run_row(row)?;
+    if existing.session_id != session || fingerprint != submitted {
+        return Err(ApiError::conflict(
+            "image_submission_conflict",
+            "This submission ID was already used for different settings",
+        ));
+    }
+    Ok(Some(existing))
 }
 async fn phase(pool: &SqlitePool, run: &str, status: &str) -> Result<(), ApiError> {
     let result=sqlx::query("UPDATE image_runs SET status=?,updated_at=? WHERE id=? AND status IN ('queued','improving','generating','saving')")
@@ -824,7 +903,7 @@ async fn execute(
             .map_err(|_| invalid("The image settings or references are not supported"))?;
         phase(&state.db, run, "generating").await?;
         let start = Instant::now();
-        let bytes = tokio::select! {_ = cancel.cancelled()=>return Err(invalid("Stopped")),value=generate(state,&execution,run)=>value?};
+        let bytes = tokio::select! {_ = cancel.cancelled()=>return Err(invalid("Stopped")),value=generate_on(state,&execution,run,request.draft.backend_id.as_deref())=>value?};
         phase(&state.db, run, "saving").await?;
         save_result(
             state,
@@ -921,10 +1000,12 @@ async fn save_result(
     if request.retry_result_id.is_some() {
         sqlx::query("UPDATE image_result_groups SET selected_result_id=? WHERE id=?")
             .bind(&result)
-            .bind(group)
+            .bind(&group)
             .execute(&mut *tx)
             .await?;
     }
+    sqlx::query("UPDATE image_sessions SET active_result_id=CASE WHEN active_result_id IS NULL OR active_result_id=? OR (? IS NOT NULL AND active_result_id IN (SELECT id FROM image_results WHERE group_id=?)) THEN ? ELSE active_result_id END,updated_at=? WHERE id=? AND user_id=?")
+        .bind(&request.draft.parent_result_id).bind(&request.retry_result_id).bind(&group).bind(&result).bind(now).bind(session).bind(user).execute(&mut *tx).await?;
     if let Some(target) = &request.chat_target {
         let attachment = id();
         sqlx::query("INSERT INTO attachments (id,user_id,chat_id,message_id,revision_id,original_filename,storage_path,mime_type,size_bytes,attachment_kind,created_at,image_asset_id) VALUES (?,?,?,?,?,?,?,'image/png',?,'image',?,?)")
@@ -934,34 +1015,217 @@ async fn save_result(
     tx.commit().await?;
     Ok(())
 }
-async fn endpoint(pool: &SqlitePool) -> Result<(String, String), ApiError> {
-    let row=sqlx::query("SELECT b.base_url,s.token FROM image_service_settings s JOIN ollama_backends b ON b.id=s.backend_id WHERE s.id=1 AND b.is_enabled=1").fetch_optional(pool).await?
-        .ok_or_else(||ApiError::conflict("image_service_not_configured","An administrator needs to connect Kuno in Images settings"))?;
-    let token: String = row.try_get("token")?;
-    if token.is_empty() {
-        return Err(ApiError::conflict(
-            "image_token_missing",
-            "An administrator needs to add the Kuno access token",
-        ));
+async fn resolve_backend(
+    state: &AppState,
+    selected: Option<&str>,
+    workflow: &str,
+) -> Result<backends::service::OllamaBackend, ApiError> {
+    if let Some(id) = selected {
+        return backends::service::get_enabled_backend(&state.db, id)
+            .await?
+            .ok_or_else(|| {
+                ApiError::conflict(
+                    "image_host_unavailable",
+                    "This inference host is unavailable. Choose another image model.",
+                )
+            });
     }
-    Ok((row.try_get("base_url")?, token))
-}
-async fn bounded(mut response: reqwest::Response, limit: usize) -> Result<Vec<u8>, ApiError> {
-    if response.content_length().is_some_and(|n| n > limit as u64) {
-        return Err(invalid("Image service response was too large"));
-    }
-    let mut bytes = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|_| ApiError::internal("Image service disconnected"))?
-    {
-        if bytes.len() + chunk.len() > limit {
-            return Err(invalid("Image service response was too large"));
+    let hosts = sqlx::query("SELECT b.id,b.name,b.base_url FROM ollama_backends b WHERE b.is_enabled=1 ORDER BY (b.id=(SELECT backend_id FROM image_service_settings WHERE id=1)) DESC,b.name,b.id")
+        .fetch_all(&state.db).await?;
+    for row in hosts {
+        let backend = backends::service::OllamaBackend {
+            id: row.try_get("id")?,
+            name: row.try_get("name")?,
+            base_url: row.try_get("base_url")?,
+        };
+        if state
+            .image_jobs
+            .kuno
+            .discover(&backend.base_url)
+            .await
+            .workflow(workflow)
+            .is_some()
+        {
+            return Ok(backend);
         }
-        bytes.extend_from_slice(&chunk);
     }
-    Ok(bytes)
+    Err(ApiError::conflict(
+        "image_service_not_configured",
+        "No connected inference host provides this image model. Connect or upgrade Kuno in Backends.",
+    ))
+}
+pub(super) async fn discovery(
+    state: &AppState,
+    backend_id: Option<&str>,
+) -> Result<super::kuno::Discovery, ApiError> {
+    let selected: Option<String> = match backend_id {
+        Some(id) => Some(id.into()),
+        None => {
+            sqlx::query_scalar("SELECT backend_id FROM image_service_settings WHERE id=1")
+                .fetch_one(&state.db)
+                .await?
+        }
+    };
+    let Some(id) = selected else {
+        let hosts = image_hosts(state).await?;
+        return Ok(hosts
+            .into_iter()
+            .find(|host| matches!(host.service.state, "ready" | "partial"))
+            .map(|host| host.service)
+            .unwrap_or_else(super::kuno::Discovery::not_configured));
+    };
+    let Some(backend) = backends::service::get_enabled_backend(&state.db, &id).await? else {
+        return Ok(super::kuno::Discovery::disabled_host());
+    };
+    Ok(state.image_jobs.kuno.discover(&backend.base_url).await)
+}
+async fn title_flow(
+    state: &AppState,
+    user: &str,
+    session: &str,
+    run: &str,
+) -> Result<(), ApiError> {
+    let recorded = get_run(&state.db, user, run).await?;
+    if recorded.request.improve_only
+        || recorded.completed_count == 0
+        || recorded.request.retry_result_id.is_some()
+    {
+        return Ok(());
+    }
+    let first: String = sqlx::query_scalar("SELECT id FROM image_runs WHERE session_id=? AND completed_count>0 AND json_extract(request_json,'$.improve_only')=0 AND json_extract(request_json,'$.retry_result_id') IS NULL ORDER BY created_at,rowid LIMIT 1")
+        .bind(session).fetch_optional(&state.db).await?.unwrap_or_default();
+    if !first.is_empty() && first != run {
+        return Ok(());
+    }
+    let original = get_session(&state.db, user, session).await?;
+    if original.title != "New images" && original.title != "Image edit" {
+        return Ok(());
+    }
+    let prompt = &recorded.request.draft.recipe.prompt;
+    let fallback = prompt
+        .split_whitespace()
+        .take(9)
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(64)
+        .collect::<String>();
+    let changed = sqlx::query("UPDATE image_sessions SET title=?,title_generated=1 WHERE id=? AND user_id=? AND title=? AND title_generated=0")
+        .bind(&fallback).bind(session).bind(user).bind(&original.title).execute(&state.db).await?;
+    if changed.rows_affected() == 0 {
+        return Ok(());
+    }
+    let mut helper = recorded.request.draft.prompt_help.clone();
+    if helper.is_none() {
+        let preferred: Option<(String,String)> = sqlx::query_as("SELECT backend_id,model_name FROM user_model_preferences WHERE user_id=? AND is_default=1 AND is_visible=1 LIMIT 1")
+            .bind(user).fetch_optional(&state.db).await?;
+        helper = preferred.map(|(backend_id, model_name)| PromptHelp {
+            backend_id,
+            model_name,
+            guidance: String::new(),
+        });
+    }
+    if helper.is_none() {
+        let snapshot = state.model_cache.snapshot().await;
+        for backend in backends::service::list_enabled_backends(&state.db).await? {
+            if let Some(models) = snapshot.backends.get(&backend.id) {
+                for model in &models.models {
+                    if model
+                        .capabilities
+                        .iter()
+                        .any(|capability| capability == "completion")
+                        && backends::service::ensure_model_enabled_for_user(
+                            &state.db,
+                            user,
+                            &backend.id,
+                            &model.name,
+                        )
+                        .await
+                        .is_ok()
+                    {
+                        helper = Some(PromptHelp {
+                            backend_id: backend.id.clone(),
+                            model_name: model.name.clone(),
+                            guidance: String::new(),
+                        });
+                        break;
+                    }
+                }
+            }
+            if helper.is_some() {
+                break;
+            }
+        }
+    }
+    let Some(helper) = helper else {
+        return Ok(());
+    };
+    if backends::service::ensure_model_enabled_for_user(
+        &state.db,
+        user,
+        &helper.backend_id,
+        &helper.model_name,
+    )
+    .await
+    .is_err()
+    {
+        return Ok(());
+    }
+    let Some(backend) =
+        backends::service::get_enabled_backend(&state.db, &helper.backend_id).await?
+    else {
+        return Ok(());
+    };
+    let generated = tokio::time::timeout(
+        Duration::from_secs(45),
+        crate::chats::handlers::request_generated_title(
+            &state.http_client,
+            &backend.base_url,
+            &helper.model_name,
+            prompt,
+            "An image generated from this prompt.",
+        ),
+    )
+    .await
+    .ok()
+    .flatten()
+    .and_then(|title| crate::chats::handlers::validated_title(&title));
+    if let Some(title) = generated {
+        sqlx::query("UPDATE image_sessions SET title=? WHERE id=? AND user_id=? AND title=? AND title_generated=1")
+            .bind(title).bind(session).bind(user).bind(fallback).execute(&state.db).await?;
+    }
+    Ok(())
+}
+#[derive(serde::Serialize)]
+pub(super) struct ImageHost {
+    pub backend: ImageHostIdentity,
+    pub service: super::kuno::Discovery,
+}
+#[derive(serde::Serialize)]
+pub(super) struct ImageHostIdentity {
+    pub id: String,
+    pub name: String,
+}
+pub(super) async fn image_hosts(state: &AppState) -> Result<Vec<ImageHost>, ApiError> {
+    let rows = sqlx::query(
+        "SELECT id,name,base_url FROM ollama_backends WHERE is_enabled=1 ORDER BY name,id",
+    )
+    .fetch_all(&state.db)
+    .await?;
+    let hosts = futures_util::stream::iter(rows.into_iter().map(|row| async move {
+        let url: String = row.try_get("base_url")?;
+        Ok(ImageHost {
+            backend: ImageHostIdentity {
+                id: row.try_get("id")?,
+                name: row.try_get("name")?,
+            },
+            service: state.image_jobs.kuno.discover(&url).await,
+        })
+    }))
+    .buffered(4)
+    .collect::<Vec<Result<ImageHost, ApiError>>>()
+    .await;
+    hosts.into_iter().collect()
 }
 pub(super) fn preview(state: &AppState, id: &str) -> Option<kuno_image::preview::Preview> {
     state.image_jobs.previews.lock().ok()?.get(id).cloned()
@@ -982,68 +1246,28 @@ pub(super) async fn generate(
     recipe: &ImageRecipe,
     job: &str,
 ) -> Result<Vec<u8>, ApiError> {
+    generate_on(state, recipe, job, None).await
+}
+async fn generate_on(
+    state: &AppState,
+    recipe: &ImageRecipe,
+    job: &str,
+    backend_id: Option<&str>,
+) -> Result<Vec<u8>, ApiError> {
     let _scope = PreviewScope {
         jobs: state.image_jobs.clone(),
         id: job.into(),
     };
-    let preview_id = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
-    let (url, token) = endpoint(&state.db).await?;
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .connect_timeout(Duration::from_secs(10))
-        .build()
-        .map_err(|_| ApiError::internal("Could not connect to Kuno"))?;
-    let request = client
-        .post(format!(
-            "{}/kuno/v1/images/generate",
-            url.trim_end_matches('/')
-        ))
-        .bearer_auth(&token)
-        .header("x-kuno-image-preview-id", &preview_id)
-        .json(recipe)
-        .timeout(Duration::from_secs(3600))
-        .send();
-    tokio::pin!(request);
-    let mut interval = tokio::time::interval(Duration::from_secs(1));
-    let response = loop {
-        tokio::select! {
-            result = &mut request => break result,
-            _ = interval.tick() => {
-                let response = client.get(format!("{}/kuno/v1/images/previews/{}",url.trim_end_matches('/'),preview_id)).bearer_auth(&token).timeout(Duration::from_secs(2)).send().await;
-                if let Ok(response) = response
-                    && response.status().is_success()
-                    && let Ok(bytes) = bounded(response, 1500000).await
-                    && let Ok(Some(frame)) = serde_json::from_slice::<Option<kuno_image::preview::Preview>>(&bytes)
-                    && frame.steps == recipe.steps && frame.step <= frame.steps
-                    && frame.width > 0 && frame.height > 0 && frame.width <= 512 && frame.height <= 512
-                    && let Ok(png) = STANDARD.decode(&frame.png_base64)
-                    && kuno_image::validate_output(&png,frame.width,frame.height).is_ok()
-                    && let Ok(mut previews) = state.image_jobs.previews.lock() { previews.insert(job.into(),frame); }
+    let backend = resolve_backend(state, backend_id, &recipe.workflow).await?;
+    state
+        .image_jobs
+        .kuno
+        .generate(&backend.base_url, recipe, |frame| {
+            if let Ok(mut previews) = state.image_jobs.previews.lock() {
+                previews.insert(job.into(), frame);
             }
-        }
-    }.map_err(|_| {
-            ApiError::internal(
-                "Kuno disconnected or generation timed out. Check the inference host.",
-            )
-        })?;
-    if !response.status().is_success() {
-        return Err(ApiError::conflict(
-            "image_inference_failed",
-            format!(
-                "Kuno could not generate this image (HTTP {}). Check model readiness and image settings.",
-                response.status().as_u16()
-            ),
-        ));
-    }
-    let bytes = bounded(response, MAX_IMAGE_BYTES).await?;
-    let (width, height) = (recipe.width, recipe.height);
-    tokio::task::spawn_blocking(move || {
-        kuno_image::validate_output(&bytes, width, height)
-            .map_err(|_| ApiError::internal("Kuno returned an invalid image"))?;
-        Ok(bytes)
-    })
-    .await
-    .map_err(|_| ApiError::internal("Could not validate generated image"))?
+        })
+        .await
 }
 async fn improve(
     state: &AppState,

@@ -68,6 +68,8 @@ The [Kuno inference host specification](docs/kuno-spec.md) describes the planned
 Ollama gateway, GPU coordination, and image-generation integration.
 The [Kuno development guide](apps/kuno/README.md) covers running the gateway on
 a separate port and the current implementation limits.
+The [Kuno/Vashti coordination guide](docs/kuno-vashti-coordination.md) records
+development ownership, shared API decisions, and the current integration handoff.
 
 ## Public Deployment
 

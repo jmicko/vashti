@@ -11,12 +11,23 @@ Provide two ways to use the same image service:
 
 1. An **Images** tool group in ordinary chats, containing `generate_image` and
    `edit_image`. The LLM chooses prompts and which operation to use.
-2. An **Images** workspace alongside Chats and Notes, with **Gallery**, **Generate**,
-   and **Edit** views. Direct generation/editing does not require an LLM.
+2. An **Images** launcher alongside Chats and Notes, with icon entries for
+   **Create**, **Edit**, and **Gallery**. Create and Edit open conversational image
+   flows. Direct generation/editing does not require an LLM.
 
 Place Images below New Chat and above Notes in the sidebar. Support deep links
 to sessions and gallery items, browser Back, and reopening previous sessions.
-Generate and Edit are persistent working histories, not disposable forms.
+Image flows are persistent working histories, not disposable forms. Within Images,
+the sidebar shows previous image flows instead of previous chats, with a New Flow
+action. Preserve legacy session deep links and existing saved results.
+
+Discover each connected, enabled inference host through the existing keyless
+`/kuno/v1/capabilities` endpoint. The model picker follows chat's host-grouped,
+searchable picker, showing only models/workflows the host actually reports.
+Regular Ollama remains available for chat; unsupported or old Kuno hosts get
+actionable diagnostics. No separate image host connection form is required.
+Host and workflow are per-flow selections captured in immutable run snapshots;
+the administrator's existing service selection is only an optional tool default.
 
 Qwen Image 2.1 generation and multi-image editing are the initial workflows.
 Keep the older supported Qwen workflow available. Built-in workflows determine
@@ -86,9 +97,14 @@ entries. **Never stack images across ordinary chat regenerations.**
 
 ## Generate and Edit workspace
 
-Use one vertical scrolling surface: existing results, then the prompt, then its
-settings. Results appear immediately above the composer. Preserve the prompt and
-settings after Send so Send again produces another image without retyping.
+Use chat's layout: one scrolling conversation above a bottom composer. Attach
+images and enter the positive prompt in the minimal composer. Expand settings to
+access the negative prompt and inference controls; the collapse control stays
+reachable in short/mobile viewports. Sending records a compact prompt bubble
+(first two lines, expandable to the full prompt and exact submitted settings),
+followed by image response bubbles. Stream previews inside the response bubble,
+not in a separate page section. Clear only the submitted prompt after acceptance;
+preserve unsent changes and recoverable drafts on failure.
 
 Show positive and negative prompts, steps, CFG, aspect ratio/dimensions, seed
 mode, image count, and applicable advanced controls. A visible **Customize
@@ -107,9 +123,11 @@ hidden fields, so changes made while a job runs only affect a future submission.
 
 Seed modes are **Random**, **Increment**, and **Fixed**. Resolve and record the
 actual seed for each output. Use decimal strings end to end; never JavaScript
-floating-point numbers for seeds. Increment within the supported range and stop
+floating-point numbers for seeds. Increment is the default for new profiles.
+Increment within the supported range and stop
 with a clear message at exhaustion instead of silently wrapping. New sessions
-default to changing seeds. A Retry explicitly requests a different seed without
+default to changing seeds. A Retry uses the next unused seed in its response
+stack, or a random seed when Random is selected, without
 silently changing the session's saved seed policy; details show the seed used.
 
 Offer a finite image count and **Endless**. Generate serially, committing each
@@ -120,7 +138,8 @@ settings will generally reproduce the same image. One confirmation applies to
 that run; changing relevant settings requires a new confirmation next time.
 
 Each output offers Edit, Retry with a new seed, reuse settings, download, and
-generation details. Edit starts an editing session using the selected image.
+generation details. Edit continues the current flow from the selected image,
+using an available edit model on that host; editing from Gallery opens a new flow.
 Normal Send and finite-count outputs are separate gallery items. Explicit Retry
 creates a variant in the original image's stack; identical prompts alone do not
 make a stack.
@@ -167,8 +186,9 @@ Disable conflicting submissions in the same session while a run is active;
 users can inspect history and prepare the next draft without changing that run.
 
 Reuse the existing conversation tree's navigation and interaction conventions,
-with image-specific records. Do not force image operations into artificial
-user/assistant message pairs or an LLM-specific chat schema.
+with image-specific records. Present prompt/response pairs in the UI, but do not
+store them in the LLM chat schema. Preserve exact image lineage, immutable
+settings, failed/stopped submissions, and variant selection across reloads.
 
 ## Gallery and fullscreen viewing
 
@@ -288,12 +308,33 @@ do not start a follow-up LLM request after cancellation.
 The baseline beta Kuno API returned one PNG and a basic enabled flag. The
 [current Kuno contract](kuno-images.md#inference-access-discovery-and-streaming-2026-09-30)
 supersedes that transport with keyless discovery and NDJSON previews/results;
-Vashti connector integration is pending. Consume bounded capability discovery for
+Vashti consumes that contract. Consume bounded capability discovery for
 supported workflows, readiness, settings/ranges, reference limits, and optional
 attention modes. Vashti connects server-to-server without an image credential;
 do not expose privileged Kuno configuration/control tokens to browsers. Missing
 models should lead admins to the curated collection download/status controls.
 Readiness errors should be actionable for ordinary users.
+
+Select a host and workflow in the conversational model picker; connections remain
+in Backends and no image key is required. Image preferences expose host diagnostics
+and an optional administrative default for chat tools, not a separate connection
+form. Probe discovery server-to-server with a two-second deadline, a 64 KiB
+response limit, no redirects, and a short, per-host cache. Distinguish disabled,
+unsupported, unavailable, partial, unreachable, and access-denied states. Show
+the host's workflow and attention support, not credential presence. An old Kuno
+or ordinary Ollama host without discovery receives image upgrade guidance;
+ordinary Ollama chat remains unchanged. Adding or changing connections remains
+admin-only; individual image flows can select an existing enabled host.
+
+The generation connection incrementally supplies validated, bounded PNG preview
+and result events. Retain only the latest preview and save a final image only
+after a valid terminal result and clean end of stream. Truncated, duplicate,
+invalid, or out-of-order delivery fails without saving an incomplete image or
+automatically replaying a dispatched job. Stop drops the upstream stream and
+clears the preview; private outputs remain transient. There is no arbitrary
+generation response deadline and no separate preview identifier or upstream
+preview polling. The legacy stored image credential is removed by a forward
+migration. Upgrade Kuno and Vashti together for this breaking beta transport.
 
 Initially display only states actually known: queued, generating, saving,
 complete, stopping, stopped, interrupted, or failed. More detailed Kuno phases
@@ -315,7 +356,9 @@ support continue to return final images without fabricated progress.
 
 On mobile, image cards nearly fill the content width. Desktop cards respect both
 available width and viewport height, preserving the entire image without crop.
-Settings share the page's vertical scroll; avoid a second tall scrolling panel.
+The conversation scrolls independently of the fixed composer, just as in chat.
+Expanded composer settings are bounded by available height, with their own
+intentional settings scroll and a permanently reachable collapse control.
 Retain scroll position when results arrive while the user inspects old images;
 provide a new-result indicator instead of forcing them to the bottom. When
 following generation at the bottom, keep the new result/input naturally visible.

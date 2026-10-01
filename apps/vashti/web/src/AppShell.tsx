@@ -142,6 +142,10 @@ export function AppShell({
   const routeRef = useRef(route);
   const [noteReturnRoute, setNoteReturnRoute] = useState<AppRoute | null>(null);
   const [isNotesEditorOpen, setIsNotesEditorOpen] = useState(false);
+  const [imageHeaderTarget, setImageHeaderTarget] = useState<HTMLDivElement | null>(
+    null
+  );
+  const [newImageFlowKey, setNewImageFlowKey] = useState(0);
   const settingsGuardRef = useRef<SettingsGuard | null>(null);
   const settingsMenuRef = useRef<HTMLDivElement>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -1298,6 +1302,16 @@ export function AppShell({
             currentPrivateChatId={currentPrivateChatId}
             isNotesActive={isNotesPage}
             isImagesActive={isImagesPage}
+            currentImageFlowId={route.page === "images" ? route.sessionId : undefined}
+            onOpenImageFlow={(id) => {
+              navigate({ page: "images", view: "flow", sessionId: id });
+              setIsSidebarOpen(false);
+            }}
+            onRemoveImageFlow={(id) => {
+              if (route.page === "images" && route.sessionId === id) {
+                navigate({ page: "images", view: "home" });
+              }
+            }}
             isOpen={isSidebarOpen}
             isLoading={isLoadingChats}
             isLoadingPrivateChats={isLoadingPrivateChats}
@@ -1307,9 +1321,20 @@ export function AppShell({
             onClose={() => setIsSidebarOpen(false)}
             onDeleteChat={setChatDeleteTarget}
             onDeletePrivateChat={setPrivateChatDeleteTarget}
-            onNewChat={() => openChat()}
+            onNewChat={() => {
+              if (isImagesPage) {
+                setNewImageFlowKey(value => value + 1);
+                navigate({ page: "images", view: "flow" });
+                setIsSidebarOpen(false);
+              } else {
+                openChat();
+              }
+            }}
             onOpenNotes={openNotes}
-            onOpenImages={() => { navigate({ page: "images", view: "gallery" }); setIsSidebarOpen(false); }}
+            onOpenImages={() => {
+              navigate({ page: "images", view: "home" });
+              setIsSidebarOpen(false);
+            }}
             onOpenChat={openChat}
             onOpenPrivateChat={openPrivateChat}
             onRenameChat={renameChat}
@@ -1369,10 +1394,14 @@ export function AppShell({
                     <Menu />
                   </button>
                 )}
-                <div className="workspace-topbar-title">
-                  {isImagesPage ? <ImagesIcon /> : <NotebookPen />}
-                  <span>{isImagesPage ? "Images" : "Notes"}</span>
-                </div>
+                {isImagesPage && route.page === "images" && route.view !== "home" && route.view !== "gallery" ? (
+                  <div className="image-flow-header-slot" ref={setImageHeaderTarget} />
+                ) : (
+                  <div className="workspace-topbar-title">
+                    {isImagesPage ? <ImagesIcon /> : <NotebookPen />}
+                    <span>{isImagesPage ? "Images" : "Notes"}</span>
+                  </div>
+                )}
               </>
             ) : (
               <>
@@ -1548,7 +1577,23 @@ export function AppShell({
             isAdmin={isAdmin}
           />
         ) : route.page === "images" ? (
-          <Suspense fallback={<p role="status">Loading images…</p>}><ImagesWorkspace view={route.view ?? "gallery"} sessionId={route.sessionId} isAdmin={isAdmin} modelGroups={modelGroups} onNavigate={(view, sessionId) => navigate({ page: "images", view, sessionId })} /></Suspense>
+          <Suspense fallback={<p role="status">Loading images...</p>}>
+            <ImagesWorkspace
+              view={route.view ?? "home"}
+              sessionId={route.sessionId}
+              newFlowKey={newImageFlowKey}
+              headerTarget={imageHeaderTarget}
+              isAdmin={isAdmin}
+              modelGroups={modelGroups}
+              onNavigate={(view, sessionId) => {
+                if (!sessionId && view !== "home" && view !== "gallery") {
+                  setNewImageFlowKey(value => value + 1);
+                }
+                navigate({ page: "images", view, sessionId });
+              }}
+              onOpenBackends={() => navigate({ page: "settings", section: "backends" })}
+            />
+          </Suspense>
         ) : page === "notes" ? (
           <Suspense fallback={<NotesInterfaceLoader />}>
             <NotesWorkspace
