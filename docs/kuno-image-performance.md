@@ -8,8 +8,8 @@ implementation; the later measurements also retain earlier experimental history.
 ## Native optimization candidate (2026-09-30)
 
 Work starts from installed backend `f6f6c22` in a separate Kuno worktree;
-the concurrent Vashti application changes are preserved. This candidate is
-**not installed**. Full Intel edit execution and synthetic GPU numerical checks
+the concurrent Vashti application changes are preserved. The validated standard candidate through `eee97c8` was installed on this host;
+later SYCL development changes remain separate. Full Intel edit execution and synthetic GPU numerical checks
 have passed; performance is still below the supplied ComfyUI baseline. The clean
 CUDA edit and subsequent full generation acceptance are recorded below.
 
@@ -391,3 +391,24 @@ multiple references, metadata-free output, and the no-disk/no-swap inference
 boundary. Compare complete original cabbage and weasel recipes on each claimed
 device with idle hardware and matched settings. Short synthetic tests or a fast
 attention kernel alone cannot establish that the full speed gap is closed.
+
+## Installed standard candidate receipt (2026-09-30)
+
+The authorized transactional upgrade installed the tested CUDA/Vulkan binary
+from this worktree through `eee97c8`, SHA-256
+`bbd27f1f6cc9d35ecdb24ab32f274f46e8add649896753298fa2b9fb80d345cf`.
+Configuration remained byte-for-byte unchanged: the public listener and
+loopback upstream/control ports, RTX 3060 image selection, model collections,
+and disabled LLM response/idle deadlines were preserved. Experimental dense
+MLP/tile flags are not forwarded by the public worker; the later private SYCL
+prototype is not in this installation.
+
+The running service was active/running with zero restarts. Keyless discovery
+and Ollama version passed on IPv4 loopback, IPv6 loopback and LAN; unauthenticated
+control returned 401. A native keyless two-step 512×512 Qwen 2.1 generation
+returned acceptance, both previews and one final PNG in 11.994 seconds, first
+preview at 9.126 seconds. PNG dimensions, chunk checksums, terminal order and
+metadata absence passed. Client and worker used zero-swap cgroups; image bytes
+stayed in RAM and were discarded. This is installed transport acceptance, not
+a clean performance or physical Android test. Admission is temporarily paused
+for the remaining exclusive GPU experiments and must be resumed afterward.
