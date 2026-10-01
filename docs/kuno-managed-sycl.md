@@ -109,6 +109,10 @@ when the selected engine is native. Restore removes only journal-owned unchanged
 files. Runtime artifacts are public code, with no prompts/images in the journal.
 The installer currently reads replacement and rollback artifacts into RAM;
 large bundles therefore need additional host memory during installation.
+The transaction journal accepts at most 128 files, covering the gateway's seven
+artifacts plus the runtime manifest and its 96-member bound. Oversized file sets
+are rejected before creating a deployment journal or changing services; journal
+writers/readers use the same bound so accepted installations remain recoverable.
 
 The website installer still downloads/extracts only the standard Kuno binary.
 Automatic optional-runtime download/publishing is not implemented here. Do not
@@ -128,7 +132,9 @@ No additional writable filesystem exception is granted.
 
 The worker receives a cleared environment with a fixed private library directory,
 `HOME=/nonexistent`, existing CUDA/Mesa cache suppression,
-`SYCL_CACHE_PERSISTENT=0`, `SYCL_UR_TRACE=0`,
+`SYCL_CACHE_PERSISTENT=0`, `NEO_CACHE_PERSISTENT=0`, `SYCL_UR_TRACE=0`,
+`GGML_SYCL_ENABLE_GRAPH=0`, `GGML_SYCL_USM_SYSTEM=0`,
+`ONEDNN_VERBOSE=0`, `DNNL_VERBOSE=0`, `MKL_VERBOSE=0`, `XPTI_TRACE_ENABLE=0`,
 `ONEAPI_DEVICE_SELECTOR=level_zero:gpu`,
 `KUNO_EXPERIMENTAL_QWEN_SYCL=1` and `GGML_SYCL_FA_ONEDNN_NO_MASK=1`.
 Preview framing is enabled only when the parent asks. `SYCL_DUMP_IMAGES`,
@@ -163,3 +169,11 @@ The ordinary native-image all-target check passed against the performance
 worktree's pinned `target/native-source` / `target/native-build`; no GPU was used.
 Formatting and whitespace checks passed. No services, runtimes or GPU workloads
 were installed, started or changed by this task.
+
+Review-fix receipt (2026-10-01 UTC): all seven `image_engine::tests` unit checks
+and all 12 deployment integration checks passed serially, including a 43-file
+runtime installation/rollback/restore and oversized initial/replacement sets
+rejected without service or deployment-file changes. The exact worker
+environment allowlist is asserted. Nonnative all-target Clippy with warnings
+denied, formatting and whitespace checks passed. These are synthetic source
+checks; the live SYCL acceptance block above remains unresolved.

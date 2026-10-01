@@ -1,4 +1,4 @@
-use kuno::deployment::{Artifact, Host, Phase, Transaction};
+use kuno::deployment::{Artifact, Host, MAX_DEPLOYMENT_FILES, Phase, Transaction};
 use std::path::Path;
 
 #[derive(Default)]
@@ -465,6 +465,52 @@ fn configuration_and_model_mount_roll_back_as_one_file_set() {
         assert_eq!(
             std::fs::read(root.path().join(&file.path)).unwrap(),
             file.bytes
+        );
+    }
+}
+
+#[test]
+fn oversized_file_sets_are_rejected_before_deployment_or_service_changes() {
+    let root = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    let transaction = Transaction::open(root.path(), state.path()).unwrap();
+    let mut host = FakeHost {
+        active: true,
+        ..Default::default()
+    };
+    let oversized: Vec<_> = (0..=MAX_DEPLOYMENT_FILES)
+        .map(|index| Artifact {
+            path: format!("usr/local/lib/kuno/runtimes/test/lib{index}.so").into(),
+            bytes: b"public runtime fixture".to_vec(),
+            mode: 0o644,
+        })
+        .collect();
+    assert_eq!(
+        transaction.apply(&oversized, &mut host),
+        Err("deployment_artifact_limit_exceeded")
+    );
+    assert!(host.events.is_empty());
+    assert!(!state.path().join("takeover.json").exists());
+    assert!(!root.path().join("usr").exists());
+
+    let old = artifacts();
+    transaction.apply(&old, &mut host).unwrap();
+    let journal = std::fs::read(state.path().join("takeover.json")).unwrap();
+    host.events.clear();
+    assert_eq!(
+        transaction.replace(&oversized, &mut host),
+        Err("deployment_artifact_limit_exceeded")
+    );
+    assert!(host.events.is_empty());
+    assert_eq!(
+        std::fs::read(state.path().join("takeover.json")).unwrap(),
+        journal
+    );
+    transaction.verify_installed().unwrap();
+    for artifact in old {
+        assert_eq!(
+            std::fs::read(root.path().join(artifact.path)).unwrap(),
+            artifact.bytes
         );
     }
 }

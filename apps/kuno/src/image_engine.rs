@@ -370,7 +370,14 @@ pub fn sycl_command(
         .env("__GL_SHADER_DISK_CACHE", "0")
         .env("CUDA_CACHE_DISABLE", "1")
         .env("SYCL_CACHE_PERSISTENT", "0")
+        .env("NEO_CACHE_PERSISTENT", "0")
         .env("SYCL_UR_TRACE", "0")
+        .env("GGML_SYCL_ENABLE_GRAPH", "0")
+        .env("GGML_SYCL_USM_SYSTEM", "0")
+        .env("ONEDNN_VERBOSE", "0")
+        .env("DNNL_VERBOSE", "0")
+        .env("MKL_VERBOSE", "0")
+        .env("XPTI_TRACE_ENABLE", "0")
         .env("ONEAPI_DEVICE_SELECTOR", "level_zero:gpu")
         .env("KUNO_EXPERIMENTAL_QWEN_SYCL", "1")
         .env("GGML_SYCL_FA_ONEDNN_NO_MASK", "1");
@@ -564,12 +571,34 @@ mod tests {
             }
         }
         let bundle = bundle();
+        // A real runtime includes versioned and SONAME library aliases. Their
+        // inventory exceeds the gateway's former 32-file journal bound.
+        let mut manifest = manifest();
+        for index in 0..20 {
+            for suffix in ["so.1", "so.1.0"] {
+                let name = format!("libclosure{index}.{suffix}");
+                fs::write(bundle.path().join(&name), b"public library fixture").unwrap();
+                fs::set_permissions(bundle.path().join(&name), fs::Permissions::from_mode(0o644))
+                    .unwrap();
+                manifest.files.push(RuntimeMember {
+                    name,
+                    bytes: 22,
+                    sha256: format!("{:x}", Sha256::digest(b"public library fixture")),
+                });
+            }
+        }
+        fs::write(
+            bundle.path().join("manifest.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
         let destination = tempfile::tempdir().unwrap();
         let digest = format!(
             "{:x}",
             Sha256::digest(fs::read(bundle.path().join("manifest.json")).unwrap())
         );
         let artifacts = bundle_artifacts(bundle.path(), &digest).unwrap();
+        assert!(artifacts.len() > 32);
         let transaction =
             Transaction::open(destination.path(), &destination.path().join("setup")).unwrap();
         let mut host = Simulated { fail_once: false };
@@ -582,11 +611,29 @@ mod tests {
             Err("upgrade_failed_previous_version_restored")
         );
         transaction.verify_installed().unwrap();
-        for artifact in artifacts {
+        for artifact in &artifacts {
             assert_eq!(
-                fs::read(destination.path().join(artifact.path)).unwrap(),
+                fs::read(destination.path().join(&artifact.path)).unwrap(),
                 artifact.bytes
             );
+        }
+        let installed_directory = destination
+            .path()
+            .join(Path::new(RUNTIME_ROOT).strip_prefix("/").unwrap())
+            .join(SYCL_RUNTIME);
+        VerifiedRuntime::load_at(&installed_directory, unsafe { libc::geteuid() }).unwrap();
+        assert_ne!(
+            fs::metadata(installed_directory.join("libclosure0.so.1"))
+                .unwrap()
+                .ino(),
+            fs::metadata(installed_directory.join("libclosure0.so.1.0"))
+                .unwrap()
+                .ino(),
+            "installed aliases must be separate regular files"
+        );
+        transaction.restore(&mut host).unwrap();
+        for artifact in artifacts {
+            assert!(!destination.path().join(artifact.path).exists());
         }
     }
     #[test]
@@ -637,16 +684,34 @@ mod tests {
         };
         let c = sycl_command(&runtime, "/models", "0000:2d:00.0", true);
         let env: std::collections::BTreeMap<_, _> = c.get_envs().collect();
-        assert_eq!(
-            env.get(std::ffi::OsStr::new("SYCL_CACHE_PERSISTENT"))
-                .unwrap()
-                .unwrap(),
-            "0"
-        );
+        let expected: std::collections::BTreeMap<_, _> = [
+            ("PATH", "/usr/bin:/bin"),
+            ("HOME", "/nonexistent"),
+            ("LD_LIBRARY_PATH", "/synthetic/runtime"),
+            ("MESA_SHADER_CACHE_DISABLE", "true"),
+            ("__GL_SHADER_DISK_CACHE", "0"),
+            ("CUDA_CACHE_DISABLE", "1"),
+            ("SYCL_CACHE_PERSISTENT", "0"),
+            ("NEO_CACHE_PERSISTENT", "0"),
+            ("SYCL_UR_TRACE", "0"),
+            ("GGML_SYCL_ENABLE_GRAPH", "0"),
+            ("GGML_SYCL_USM_SYSTEM", "0"),
+            ("ONEDNN_VERBOSE", "0"),
+            ("DNNL_VERBOSE", "0"),
+            ("MKL_VERBOSE", "0"),
+            ("XPTI_TRACE_ENABLE", "0"),
+            ("ONEAPI_DEVICE_SELECTOR", "level_zero:gpu"),
+            ("KUNO_EXPERIMENTAL_QWEN_SYCL", "1"),
+            ("GGML_SYCL_FA_ONEDNN_NO_MASK", "1"),
+            ("KUNO_IMAGE_PREVIEWS", "1"),
+        ]
+        .into_iter()
+        .map(|(key, value)| (std::ffi::OsStr::new(key), Some(std::ffi::OsStr::new(value))))
+        .collect();
+        assert_eq!(env, expected);
         for forbidden in [
             "SYCL_DUMP_IMAGES",
             "SYCL_CACHE_TRACE",
-            "DNNL_VERBOSE",
             "LD_PRELOAD",
             "KUNO_CONTROL_TOKEN",
         ] {
