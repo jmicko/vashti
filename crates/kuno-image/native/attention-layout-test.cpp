@@ -1,6 +1,6 @@
 // Synthetic, content-free regression for the pinned attention/cache adapter.
 // Default: CPU oracle/fallback checks. Optional: --device CUDA <PCI address>.
-// Large graph timing only: --benchmark CUDA|Vulkan <PCI address> [4|16 heads].
+// Large graph timing only: --benchmark CUDA|Vulkan|SYCL <PCI address> [4|16|32 heads].
 #ifdef NDEBUG
 #undef NDEBUG
 #endif
@@ -71,7 +71,8 @@ static void cache_case(ggml_backend_t backend, bool sage) {
     context.flash_attn_enabled = true; context.sage_attn_enabled = sage;
     auto output = Qwen::QwenImage21Attention::concat_cached_kv(&context, k, v, pk, pv);
     const bool half_cache = std::strncmp(ggml_backend_name(backend), "CUDA", 4) == 0 ||
-                            std::strncmp(ggml_backend_name(backend), "Vulkan", 6) == 0;
+                            std::strncmp(ggml_backend_name(backend), "Vulkan", 6) == 0 ||
+                            std::strncmp(ggml_backend_name(backend), "SYCL", 4) == 0;
     assert(output.first->type == (half_cache && !sage ? GGML_TYPE_F16 : GGML_TYPE_F32));
     assert(output.second->type == (half_cache ? GGML_TYPE_F16 : GGML_TYPE_F32));
     if (half_cache && sage) assert(output.first->src[1] == k);
@@ -244,7 +245,8 @@ static int attention_benchmark(ggml_backend_t backend, int heads) {
         return 1;
     }
     const size_t workspace_bytes = ggml_gallocr_get_buffer_size(resources.allocator, 0);
-    const int backend_id = std::strncmp(ggml_backend_name(backend), "CUDA", 4) == 0 ? 1 : 2;
+    const int backend_id = std::strncmp(ggml_backend_name(backend), "CUDA", 4) == 0 ? 1 :
+                           std::strncmp(ggml_backend_name(backend), "SYCL", 4) == 0 ? 3 : 2;
     std::printf("attention_benchmark backend=%d queries=%d keys=%d dim=%d heads=%d batch=1 kv_f16=1 "
                 "input_bytes=%zu output_bytes=%zu workspace_bytes=%zu graph_nodes=%d\n",
                 backend_id, rows, keys, dim, heads, input_bytes, ggml_nbytes(output), workspace_bytes,
@@ -284,12 +286,15 @@ int main(int argc, char** argv) {
     if (benchmark) {
         // Reject large CPU runs and unbounded sizes before initializing backends.
         if ((argc != 4 && argc != 5) ||
-            (std::strcmp(argv[2], "CUDA") != 0 && std::strcmp(argv[2], "Vulkan") != 0) ||
-            (argc == 5 && std::strcmp(argv[4], "4") != 0 && std::strcmp(argv[4], "16") != 0)) {
+            (std::strcmp(argv[2], "CUDA") != 0 && std::strcmp(argv[2], "Vulkan") != 0 &&
+             std::strcmp(argv[2], "SYCL") != 0) ||
+            (argc == 5 && std::strcmp(argv[4], "4") != 0 && std::strcmp(argv[4], "16") != 0 &&
+             std::strcmp(argv[4], "32") != 0)) {
             std::fputs("attention_benchmark_error phase=7 status=1\n", stderr);
             return 2;
         }
-        if (argc == 5 && std::strcmp(argv[4], "4") == 0) benchmark_heads = 4;
+        if (argc == 5) benchmark_heads = std::strcmp(argv[4], "4") == 0 ? 4 :
+                                        std::strcmp(argv[4], "32") == 0 ? 32 : 16;
         ggml_log_set([](enum ggml_log_level, const char*, void*) {}, nullptr);
         sd_set_log_callback([](enum sd_log_level_t, const char*, void*) {}, nullptr);
     }

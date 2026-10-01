@@ -517,7 +517,7 @@ index 991b88f..9fc0c7d 100644
  
          // [N, n_token, embedding_dim]
 diff --git a/src/model/diffusion/qwen_image_2_1.hpp b/src/model/diffusion/qwen_image_2_1.hpp
-index 9884325..d43110d 100644
+index 9884325..a18b06f 100644
 --- a/src/model/diffusion/qwen_image_2_1.hpp
 +++ b/src/model/diffusion/qwen_image_2_1.hpp
 @@ -134,6 +134,7 @@ namespace Qwen {
@@ -528,7 +528,7 @@ index 9884325..d43110d 100644
      };
  
      class QwenImage21ZeroCenterRMSNorm : public RMSNorm {
-@@ -168,6 +169,30 @@ namespace Qwen {
+@@ -168,6 +169,31 @@ namespace Qwen {
  
      class QwenImage21Attention : public QwenImageAttention {
      public:
@@ -537,7 +537,8 @@ index 9884325..d43110d 100644
 +            ggml_tensor* prefix_k, ggml_tensor* prefix_v) {
 +            GGML_ASSERT(prefix_k != nullptr && prefix_v != nullptr);
 +            if (ctx->flash_attn_enabled &&
-+                (sd_backend_is(ctx->backend, "CUDA") || sd_backend_is(ctx->backend, "Vulkan")) &&
++                (sd_backend_is(ctx->backend, "CUDA") || sd_backend_is(ctx->backend, "Vulkan") ||
++                 sd_backend_is(ctx->backend, "SYCL")) &&
 +                prefix_k->type == GGML_TYPE_F16 && prefix_v->type == GGML_TYPE_F16) {
 +                // Sage consumes FP32 K. Expand only the stored prefix and keep
 +                // live K in FP32, avoiding its FP16 round-trip. Standard FA still
@@ -559,7 +560,7 @@ index 9884325..d43110d 100644
          QwenImage21Attention(const QwenImage21Config& config)
              : QwenImageAttention(config.hidden_size, config.head_dim, config.hidden_size / config.head_dim, 0, 0, false, false) {
              for (const auto* name : {"add_q_proj", "add_k_proj", "add_v_proj", "norm_added_q", "norm_added_k", "to_add_out"}) {
-@@ -191,7 +216,7 @@ namespace Qwen {
+@@ -191,7 +217,7 @@ namespace Qwen {
              if (cache.mode == QwenImage21PrefixCache::Mode::STORE) {
                  auto persist = [&](ggml_tensor* tensor, int axis, const char* name) {
                      auto part = ggml_ext_slice(ctx->ggml_ctx, tensor, axis, 0, cache.prefix_length);
@@ -568,7 +569,7 @@ index 9884325..d43110d 100644
                      copy      = ggml_cpy(ctx->ggml_ctx, part, copy);
                      // Keep the copy in this layer's segment so graph cuts do not
                      // retain or recompute the full-sequence K/V in the final segment.
-@@ -205,9 +230,9 @@ namespace Qwen {
+@@ -205,9 +231,9 @@ namespace Qwen {
              if (cache.mode == QwenImage21PrefixCache::Mode::REUSE) {
                  auto prefix_k = ctx->load_cache_tensor(cache.name + ".k");
                  auto prefix_v = ctx->load_cache_tensor(cache.name + ".v");
@@ -581,7 +582,7 @@ index 9884325..d43110d 100644
                  result = ggml_ext_attention_ext(ctx, q, k, v, heads, nullptr, true, ctx->flash_attn_enabled);
              } else {
                  for (size_t i = 0; i < segments.size(); ++i) {
-@@ -248,10 +273,10 @@ namespace Qwen {
+@@ -248,10 +274,10 @@ namespace Qwen {
                  row = gate ? ggml_tanh(ctx, row) : ggml_scale_bias(ctx, row, 1.f, 1.f);
                  return ggml_mul(ctx, part, row);
              };
@@ -594,7 +595,7 @@ index 9884325..d43110d 100644
              auto prefix = apply(ggml_ext_slice(ctx, x, 1, 0, prefix_length), rows[1]);
              return ggml_concat(ctx, prefix, target, 1);
          }
-@@ -264,18 +289,21 @@ namespace Qwen {
+@@ -264,18 +290,21 @@ namespace Qwen {
              x                           = ggml_add(ctx->ggml_ctx, x, modulate(ctx->ggml_ctx, h, modulation[1], prefix_length, true));
              h                           = std::dynamic_pointer_cast<LayerNorm>(blocks["img_norm2"])->forward(ctx, x);
              h                           = modulate(ctx->ggml_ctx, h, modulation[2], prefix_length);
@@ -622,7 +623,7 @@ index 9884325..d43110d 100644
              h = std::dynamic_pointer_cast<Linear>(blocks["img_mlp.out"])->forward(ctx, h);
              return ggml_add(ctx->ggml_ctx, x, modulate(ctx->ggml_ctx, h, modulation[3], prefix_length, true));
          }
-@@ -353,16 +381,25 @@ namespace Qwen {
+@@ -353,16 +382,25 @@ namespace Qwen {
          std::vector<sd::Tensor<float>> mask_data;
          bool prefix_cache_enabled  = true;
          bool prefix_cache_disabled = false;
@@ -648,7 +649,7 @@ index 9884325..d43110d 100644
              model.init(params_ctx, weights, prefix);
          }
  
-@@ -377,7 +414,7 @@ namespace Qwen {
+@@ -377,7 +415,7 @@ namespace Qwen {
                  const auto name = cache.name + "." + std::to_string(i);
                  auto k          = get_cache_tensor_by_name(name + ".k");
                  auto v          = get_cache_tensor_by_name(name + ".v");
@@ -657,7 +658,7 @@ index 9884325..d43110d 100644
                      k->ne[0] != config.head_dim || k->ne[1] != cache.prefix_length ||
                      k->ne[2] != config.hidden_size / config.head_dim || k->ne[3] != 1 ||
                      v->ne[0] != config.head_dim || v->ne[1] != config.hidden_size / config.head_dim ||
-@@ -420,6 +457,7 @@ namespace Qwen {
+@@ -420,6 +458,7 @@ namespace Qwen {
                  prefix_cache_disabled = false;
              }
              QwenImage21PrefixCache cache;
