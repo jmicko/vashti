@@ -1,0 +1,1267 @@
+{
+  "format_version": 1,
+  "behavior_source_commit": "c5b45be7301209091cdd8387633fd1b837e290bf",
+  "integration_base": "f6f6c22",
+  "cargo_lock_sha256": "3eb6db1d7466c72cf5a7ec3139b85ec9f2bf91f4ae36ef664a531191be494cc6",
+  "worker_sha256": "414b86a3c498c0f848321766e99784a8d5d7fd7f3984c1bf35796f6b5b14796b",
+  "previous_hardware_accepted_manifest_sha256": "94daf0ed8e7cd57ae861a0213c1ef5751a0261b7d2ee9d04bcd47d682941b59a",
+  "release_manifest_sha256": "bf31edfe7c9630b6b6b367c98831aa7d4e931a797fcf29d519b00d7843413a99",
+  "release_delta": "Ten extra native license/notice files only; all previous 54 members unchanged.",
+  "sdk_packages": {
+    "source": "https://apt.repos.intel.com/oneapi/",
+    "inrelease_sha256": "cf05a9059ee9675c0ad48cad887bcd23e8b6a4112350a257d60e25c77ebee387",
+    "private_extraction_not_apt_install": true,
+    "omitted_packages": [
+      "intel-oneapi-compiler-dpcpp-cpp-2026.1",
+      "intel-oneapi-compiler-dpcpp-eclipse-cfg-2026.1",
+      "intel-oneapi-compiler-cpp-eclipse-cfg-2026.1",
+      "intel-oneapi-icc-eclipse-plugin-cpp-2026.1",
+      "intel-oneapi-dpcpp-debugger-2026.1",
+      "intel-oneapi-dev-utilities-2026.0",
+      "intel-oneapi-dev-utilities-eclipse-cfg-2026.0"
+    ],
+    "packages": [
+      {
+        "Package": "intel-oneapi-dpcpp-cpp-2026.1",
+        "Version": "2026.1.1-325",
+        "Filename": "pool/main/intel-oneapi-dpcpp-cpp-2026.1-2026.1.1-325_amd64.deb",
+        "Size": "157991970",
+        "Installed-Size": "725373",
+        "SHA256": "fa97aac3f6ef43b0966f736dc47ebd4c97bddc709c80cba0fec0e1a1f36f9662",
+        "url": "https://apt.repos.intel.com/oneapi/pool/main/intel-oneapi-dpcpp-cpp-2026.1-2026.1.1-325_amd64.deb"
+      },
+      {
+        "Package": "intel-oneapi-compiler-dpcpp-cpp-common-2026.1",
+        "Version": "2026.1.1-325",
+        "Filename": "pool/main/intel-oneapi-compiler-dpcpp-cpp-common-2026.1-2026.1.1-325_all.deb",
+        "Size": "1715704",
+        "Installed-Size": "16017",
+        "SHA256": "d26bef9048fd2f9ff9cc8a0443f41766ef3ff0682d6847f3d60f496f3fdd4d26",
+        "url": "https://apt.repos.intel.com/oneapi/pool/main/intel-oneapi-compiler-dpcpp-cpp-common-2026.1-2026.1.1-325_all.deb"
+      },
+      {
+        "Package": "intel-oneapi-common-vars",
+        "Version": "2026.0.0-235",
+        "Filename": "pool/main/intel-oneapi-common-vars-2026.0.0-235_all.deb",
+        "Size": "12694",
+        "Installed-Size": "58",
+        "SHA256": "f04ac260f028dccb67c6d7a87e660b42247c7464fa4126ee8c07359ce527de80",
+        "url": "https://apt.repos.intel.com/oneapi/pool/main/intel-oneapi-common-vars-2026.0.0-235_all.deb"
+      },
+      {
+        "Package": "intel-oneapi-common-licensing-2026.0",
+        "Version": "2026.0.0-235",
+        "Filename": "pool/main/intel-oneapi-common-licensing-2026.0-2026.0.0-235_all.deb",
+        "Size": "30702",
+        "Installed-Size": "139",
+        "SHA256": "6f85b5c530236545cce55fdf8eef38249c03a3e529252208d60c4627417fac85",
+        "url": "https://apt.repos.intel.com/oneapi/pool/main/intel-oneapi-common-licensing-2026.0-2026.0.0-235_all.deb"
+      },
+      {
+        "Package": "intel-oneapi-common-oneapi-vars-2026.0",
+        "Version": "2026.0.0-235",
+        "Filename": "pool/main/intel-oneapi-common-oneapi-vars-2026.0-2026.0.0-235_all.deb",
+        "Size": "10630",
+        "Installed-Size": "53",
+        "SHA256": "0b4a4c82f3517004d7608a743c67689e71dee1c0706f73fb7f74c78aa6999013",
+        "url": "https://apt.repos.intel.com/oneapi/pool/main/intel-oneapi-common-oneapi-vars-2026.0-2026.0.0-235_all.deb"
+      },
+      {
+        "Package": "intel-oneapi-compiler-dpcpp-cpp-runtime-2026.1",
+        "Version": "2026.1.1-325",
+        "Filename": "pool/main/intel-oneapi-compiler-dpcpp-cpp-runtime-2026.1-2026.1.1-325_amd64.deb",
+        "Size": "84983254",
+        "Installed-Size": "436084",
+        "SHA256": "df0413d57cff5a9c67bd02c1e958d7e0512f77878bbcf976c9e08af7c0b1069c",
+        "url": "https://apt.repos.intel.com/oneapi/pool/main/intel-oneapi-compiler-dpcpp-cpp-runtime-2026.1-2026.1.1-325_amd64.deb"
+      },
+      {
+        "Package": "intel-oneapi-compiler-shared-runtime-2026.1",
+        "Version": "2026.1.1-325",
+        "Filename": "pool/main/intel-oneapi-compiler-shared-runtime-2026.1-2026.1.1-325_amd64.deb",
+        "Size": "96698830",
+        "Installed-Size": "467090",
+        "SHA256": "c0c77700243af0413f7fbefd26649943c4959171ead91b6ace36ef0c8dfb2630",
+        "url": "https://apt.repos.intel.com/oneapi/pool/main/intel-oneapi-compiler-shared-runtime-2026.1-2026.1.1-325_amd64.deb"
+      },
+      {
+        "Package": "intel-oneapi-openmp-2026.1",
+        "Version": "2026.1.1-325",
+        "Filename": "pool/main/intel-oneapi-openmp-2026.1-2026.1.1-325_amd64.deb",
+        "Size": "69930442",
+        "Installed-Size": "384267",
+        "SHA256": "89fdf95c72613ae1a7fb0834c7b8ccd4c2460fc68e37643b2bbe44c37678bd02",
+        "url": "https://apt.repos.intel.com/oneapi/pool/main/intel-oneapi-openmp-2026.1-2026.1.1-325_amd64.deb"
+      },
+      {
+        "Package": "intel-oneapi-openmp-common-2026.1",
+        "Version": "2026.1.1-325",
+        "Filename": "pool/main/intel-oneapi-openmp-common-2026.1-2026.1.1-325_all.deb",
+        "Size": "16958",
+        "Installed-Size": "136",
+        "SHA256": "431b70bf1fb9ce58b392eb85110506c78c536f80f4d995c5080b1011e063b810",
+        "url": "https://apt.repos.intel.com/oneapi/pool/main/intel-oneapi-openmp-common-2026.1-2026.1.1-325_all.deb"
+      },
+      {
+        "Package": "intel-oneapi-umf-1.1",
+        "Version": "1.1.0-340",
+        "Filename": "pool/main/intel-oneapi-umf-1.1-1.1.0-340_amd64.deb",
+        "Size": "130996",
+        "Installed-Size": "588",
+        "SHA256": "8705a997042c76f67228b4135184754e1cd3f8f68b6629bcb261c1d5b958ce78",
+        "url": "https://apt.repos.intel.com/oneapi/pool/main/intel-oneapi-umf-1.1-1.1.0-340_amd64.deb"
+      },
+      {
+        "Package": "intel-oneapi-tcm-1.5",
+        "Version": "1.5.0-489",
+        "Filename": "pool/main/intel-oneapi-tcm-1.5-1.5.0-489_amd64.deb",
+        "Size": "677272",
+        "Installed-Size": "3676",
+        "SHA256": "7122ed7748d54342b24f0a2838a64f24b54e430ac4d06b2961a8eefee4ffb089",
+        "url": "https://apt.repos.intel.com/oneapi/pool/main/intel-oneapi-tcm-1.5-1.5.0-489_amd64.deb"
+      },
+      {
+        "Package": "intel-oneapi-tbb-2023.1",
+        "Version": "2023.1.0-151",
+        "Filename": "pool/main/intel-oneapi-tbb-2023.1-2023.1.0-151_amd64.deb",
+        "Size": "1443780",
+        "Installed-Size": "6807",
+        "SHA256": "f6e4ae469436a8c5ee2250203268344164c9ff455a2207219c75c463aab99a8b",
+        "url": "https://apt.repos.intel.com/oneapi/pool/main/intel-oneapi-tbb-2023.1-2023.1.0-151_amd64.deb"
+      },
+      {
+        "Package": "intel-oneapi-compiler-shared-2026.1",
+        "Version": "2026.1.1-325",
+        "Filename": "pool/main/intel-oneapi-compiler-shared-2026.1-2026.1.1-325_amd64.deb",
+        "Size": "14466662",
+        "Installed-Size": "111870",
+        "SHA256": "87039478855d1b7ce08c5a30456e360158cdf45a6fb6a791083651ec340c5e99",
+        "url": "https://apt.repos.intel.com/oneapi/pool/main/intel-oneapi-compiler-shared-2026.1-2026.1.1-325_amd64.deb"
+      },
+      {
+        "Package": "intel-oneapi-compiler-shared-common-2026.1",
+        "Version": "2026.1.1-325",
+        "Filename": "pool/main/intel-oneapi-compiler-shared-common-2026.1-2026.1.1-325_all.deb",
+        "Size": "71241522",
+        "Installed-Size": "308629",
+        "SHA256": "283b675d295c9da38902edbc936980cde6b85d835480269f87559e5c59236591",
+        "url": "https://apt.repos.intel.com/oneapi/pool/main/intel-oneapi-compiler-shared-common-2026.1-2026.1.1-325_all.deb"
+      },
+      {
+        "Package": "intel-oneapi-tbb-devel-2023.1",
+        "Version": "2023.1.0-151",
+        "Filename": "pool/main/intel-oneapi-tbb-devel-2023.1-2023.1.0-151_amd64.deb",
+        "Size": "1590760",
+        "Installed-Size": "8011",
+        "SHA256": "f56474678ecf588da4a3ac5342bcffdfd001dfad78bb432a5eb19765f7f6e512",
+        "url": "https://apt.repos.intel.com/oneapi/pool/main/intel-oneapi-tbb-devel-2023.1-2023.1.0-151_amd64.deb"
+      },
+      {
+        "Package": "intel-oneapi-libdpstd-devel-2022.13",
+        "Version": "2022.13.0-107",
+        "Filename": "pool/main/intel-oneapi-libdpstd-devel-2022.13-2022.13.0-107_amd64.deb",
+        "Size": "350052",
+        "Installed-Size": "3480",
+        "SHA256": "ecf6f345e4fdef992d9127ccc9e7708f36f613398f95f075565e94bf53028835",
+        "url": "https://apt.repos.intel.com/oneapi/pool/main/intel-oneapi-libdpstd-devel-2022.13-2022.13.0-107_amd64.deb"
+      },
+      {
+        "Package": "intel-oneapi-mkl-sycl-blas-2026.1",
+        "Version": "2026.1.0-236",
+        "Filename": "pool/main/intel-oneapi-mkl-sycl-blas-2026.1-2026.1.0-236_amd64.deb",
+        "Size": "11639462",
+        "Installed-Size": "73724",
+        "SHA256": "9668d51a7cf68ae4b8944a8cdaa24f6d4ef72604c048f68fd8603b2b792bd783",
+        "url": "https://apt.repos.intel.com/oneapi/pool/main/intel-oneapi-mkl-sycl-blas-2026.1-2026.1.0-236_amd64.deb"
+      },
+      {
+        "Package": "intel-oneapi-mkl-core-2026.1",
+        "Version": "2026.1.0-236",
+        "Filename": "pool/main/intel-oneapi-mkl-core-2026.1-2026.1.0-236_amd64.deb",
+        "Size": "126239806",
+        "Installed-Size": "672354",
+        "SHA256": "3b230c02fc0ac44f8f71062c20cd883b37c6c1e00940dc0a7f13b02d9c47bd93",
+        "url": "https://apt.repos.intel.com/oneapi/pool/main/intel-oneapi-mkl-core-2026.1-2026.1.0-236_amd64.deb"
+      },
+      {
+        "Package": "intel-oneapi-mkl-sycl-include-2026.1",
+        "Version": "2026.1.0-236",
+        "Filename": "pool/main/intel-oneapi-mkl-sycl-include-2026.1-2026.1.0-236_amd64.deb",
+        "Size": "130664",
+        "Installed-Size": "2347",
+        "SHA256": "3dc8777afea889fe2e9fa09352c998771adf23a99ca9fbb3e7e1c93a00c5cf4d",
+        "url": "https://apt.repos.intel.com/oneapi/pool/main/intel-oneapi-mkl-sycl-include-2026.1-2026.1.0-236_amd64.deb"
+      },
+      {
+        "Package": "intel-oneapi-mkl-classic-include-2026.1",
+        "Version": "2026.1.0-236",
+        "Filename": "pool/main/intel-oneapi-mkl-classic-include-2026.1-2026.1.0-236_amd64.deb",
+        "Size": "659080",
+        "Installed-Size": "18664",
+        "SHA256": "509a3737d8f38339dffa35c26ce8c01857787d0fcadb3daacb188efc2caa3483",
+        "url": "https://apt.repos.intel.com/oneapi/pool/main/intel-oneapi-mkl-classic-include-2026.1-2026.1.0-236_amd64.deb"
+      },
+      {
+        "Package": "intel-oneapi-dnnl-devel-2026.0",
+        "Version": "2026.0.2-40",
+        "Filename": "pool/main/intel-oneapi-dnnl-devel-2026.0-2026.0.2-40_amd64.deb",
+        "Size": "185700",
+        "Installed-Size": "1946",
+        "SHA256": "13fa29f4e3d6fd7f48dd26e97d40509f69d7ace7756def0af344cbbbb709503f",
+        "url": "https://apt.repos.intel.com/oneapi/pool/main/intel-oneapi-dnnl-devel-2026.0-2026.0.2-40_amd64.deb"
+      },
+      {
+        "Package": "intel-oneapi-dnnl-2026.0",
+        "Version": "2026.0.2-40",
+        "Filename": "pool/main/intel-oneapi-dnnl-2026.0-2026.0.2-40_amd64.deb",
+        "Size": "16574086",
+        "Installed-Size": "105721",
+        "SHA256": "4b0f7e23415a695f204f8080328977225759534158d813c2225403f8851433e8",
+        "url": "https://apt.repos.intel.com/oneapi/pool/main/intel-oneapi-dnnl-2026.0-2026.0.2-40_amd64.deb"
+      }
+    ],
+    "repository_key_fingerprints": [
+      "BF4385F91CA5FC005AB39E1C1A8497B11911E097",
+      "52ABD6E87E421793971873FFACFA9FC57E6C5DBE",
+      "E1BA4ECEFB0656C61BF9794936B9569B3F1A1BC7",
+      "6113D31362A0D280FC025AAB640736427872A220",
+      "E9BF0AFC46D6E8B7DA5882F1BAC6F0C353D04109"
+    ],
+    "download_bytes": 656721026,
+    "installed_size_kib": 3347034
+  },
+  "final_copy_artifacts": {
+    "max_name": 160,
+    "graph": false,
+    "host_memory_fallback": false,
+    "patch_003_sha256": "7f6a75c75544c0e3776d780b0710cab2fabb94ddfe57eeb436dff02891bd4771",
+    "reused_peer_manifest": "${COPY_WORKTREE}/target/copy-peer-manifest.json",
+    "replaced_object": {
+      "path": "${COPY_WORKTREE}/target/cpy.cpp.o",
+      "sha256": "fa6f7b1708fe929576038b98afd370623531580774a7539d07361317ea11cbd1"
+    },
+    "objects_manifest": "${COPY_WORKTREE}/target/copy-link-object-hashes.json",
+    "compile_command": "${COPY_WORKTREE}/target/cpy-compile-command.json",
+    "shared_link_command": "${COPY_WORKTREE}/target/copy-shared-link-command.json",
+    "archives": [
+      {
+        "path": "${COPY_WORKTREE}/target/copy-static/libggml-base.a",
+        "bytes": 1534982,
+        "sha256": "fb0824f0c4712365a155cb822adf6d8e29772bd17a80ab5d8d7d6156ef35e5ba"
+      },
+      {
+        "path": "${COPY_WORKTREE}/target/copy-static/libggml-cpu.a",
+        "bytes": 2057644,
+        "sha256": "a2da220df6dd9a1aa73b3e23a1b6d0bbf2fc865b47338c5cd4401e45c804c18b"
+      },
+      {
+        "path": "${COPY_WORKTREE}/target/copy-static/libggml-sycl.a",
+        "bytes": 78959608,
+        "sha256": "ced54b15ea0137ceee4e3580968443d0212195a745342d984070bdea17f7d867"
+      },
+      {
+        "path": "${COPY_WORKTREE}/target/copy-static/libggml.a",
+        "bytes": 54438,
+        "sha256": "9c5ffaa51ba89bd9c19b6adf8b6713091ed105662ecdc2bb30275cb921894798"
+      }
+    ],
+    "shared_libraries": [
+      {
+        "path": "${COPY_WORKTREE}/target/copy-runtime/libggml-base.so.0.19.0",
+        "bytes": 1051784,
+        "sha256": "9685c3cc54f3d189f638784a2751ad0334f9b0b2b31599a8d6ac0e3914c26047"
+      },
+      {
+        "path": "${COPY_WORKTREE}/target/copy-runtime/libggml-cpu.so.0.19.0",
+        "bytes": 1588256,
+        "sha256": "584837515f831545f9c2f4787427a9979d184bd3803d6381b3d8a9e51405b2e9"
+      },
+      {
+        "path": "${COPY_WORKTREE}/target/copy-runtime/libggml-sycl.so.0.19.0",
+        "bytes": 84709120,
+        "sha256": "29123df1ce18c4f55cb6e5e71607b94d12367ba228032c569257bc73e4bb9ff1"
+      },
+      {
+        "path": "${COPY_WORKTREE}/target/copy-runtime/libggml.so.0.19.0",
+        "bytes": 50912,
+        "sha256": "1f60b844755c7d1c8b6936636c1d97c6f0ee5b9944b6fc93bf8b54d649b12afa"
+      }
+    ],
+    "gpu_execution": false
+  },
+  "object_hashes": [
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/ggml-sycl.cpp.o",
+      "sha256": "f05878464d69e8c8be4b1c9e13b493005541e9cc5a02e2b9c51059a47dd05e35"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/add-id.cpp.o",
+      "sha256": "9e38615c71be62ccd91a2b7e09ffeb0b919ea8a3321041f4091a0d5e233bf5ca"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/binbcast.cpp.o",
+      "sha256": "995f37d533c985d51ea5f48aabcc55fc289805f7accf063fa8b0d5496b1ffebf"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/col2im-1d.cpp.o",
+      "sha256": "abd7a90a5a956c837afcaf00a0769ff6fd5f6513711b782c49ef255a330f0e68"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/common.cpp.o",
+      "sha256": "9905a46f5e110e369dc0a5a4d91c5baa8818e7ce0797604b12b7db53e95c55e2"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/concat.cpp.o",
+      "sha256": "f2b20e2a28d70f5d3d5811286ea3075092b38d616af0534cc352b088fb76c4ec"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/conv.cpp.o",
+      "sha256": "1428342a2732091a170d5790b1e786f98f637e206b5c443d631df17eb086b2cf"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/conv2d-dw.cpp.o",
+      "sha256": "9dd22bd229b0cfd74aa58bb59f565021db963018473d5082fcee014b00fba9eb"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/conv2d-transpose.cpp.o",
+      "sha256": "4482c2ae9249d6ea47ef5f741c5894b492a7bc82b1bf2544379d66829fe3d911"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/conv2d.cpp.o",
+      "sha256": "45d5ec6af29c70dbfc2c69cf094bb6873bf02da217b8de0970f5ca2a9ed4f91c"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/conv3d.cpp.o",
+      "sha256": "f3e6b15d8305780a18616ce1116cbdcb8e47f3ff92858a89f81bdb3edc588595"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/convert.cpp.o",
+      "sha256": "1a687073a6beacee4e117cf2284db1e0260e62226353c0f06222fd62ea46e905"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/convrot.cpp.o",
+      "sha256": "30785e16a6e7904f03b847ebb1980cc5a72f5b5ae3f0c5b587e0fb10f4bc5c59"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/count-equal.cpp.o",
+      "sha256": "19627c5eac1086d5e46203bb091192f09e1c7b8559878bc61185c1c7dafa299d"
+    },
+    {
+      "path": "${COPY_WORKTREE}/target/cpy.cpp.o",
+      "sha256": "fa6f7b1708fe929576038b98afd370623531580774a7539d07361317ea11cbd1"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/cross_entropy_loss.cpp.o",
+      "sha256": "29e6bb68f63a0b86d57ce0c48054ffafa21e5d450417c4484771c384e8e96b3f"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/cumsum.cpp.o",
+      "sha256": "555c4c17e66c94cb1b2dad86ceb2667fa444cdac9e7d6b568e88e6071cb96752"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/diag.cpp.o",
+      "sha256": "59f95f10fc97165beead42de1ea6ab156334890067df6ddaec15e20b5f39d031"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/dmmv.cpp.o",
+      "sha256": "42ed32ffa6c980701702bd7685b1dbf8ac8e97a7292cc098ed596e3eb6ad277f"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/dsv4-hc.cpp.o",
+      "sha256": "fec94bc463a178698ed9bf9177f8ec265169161149672a458cf8f49cf4b695c1"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/element_wise.cpp.o",
+      "sha256": "02ee98301e74a2d8b905303d98a886e23c775deca7c497f518b613f5933a2f3e"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/fattn-buffers.cpp.o",
+      "sha256": "9f059dfe0b8cdb6e54744d044860dc3d0faa493d8c59c833ef10cfc42db4830a"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/fattn-mkl.cpp.o",
+      "sha256": "37f68879b86ecfbd57d8e4259fc027a48b67511195ea64fab3af81fbfc5e4369"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/fattn-onednn.cpp.o",
+      "sha256": "73b3542f461bc01f5cec5a187b60b4ea5548fed845e29a0441b3a0bd88ee0dfb"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/fattn-tile.cpp.o",
+      "sha256": "096ad0cd9f290e248f1c37847d35271fbfe0d7c122fa6efe91a56c3bb1e52cc3"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/fattn.cpp.o",
+      "sha256": "cc49f69aafc9e29b275d5d6530f7f9738416c263edf3994b729fcdce7c2fdc8c"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/fill.cpp.o",
+      "sha256": "1c3c3ae61df5a51fb11ebc991aaf346104583871dd87e90be3d9042d8810b93a"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/fusion.cpp.o",
+      "sha256": "31dec94ad86e154be2f564e4dabd2cf615b4e49f0b701a109638d85415cf7499"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/gated_delta_net.cpp.o",
+      "sha256": "bca5e31ebb7f9b5162152de88f328a4e7f5d4b6a01582831c2da24f5eaca5b12"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/getrows.cpp.o",
+      "sha256": "6ec51a41f5ead59d63b5625e063e33dafb08838557380b502710061a42f4e2de"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/gla.cpp.o",
+      "sha256": "75319f8f640733f4fd0563e8e5bc48dbd6c3f4735d40103845f451b686683635"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/im2col.cpp.o",
+      "sha256": "eaef2322b89f739d44a7311f52521c5eb184155bfda12384a147f2e6088075e5"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/lightning-indexer.cpp.o",
+      "sha256": "fb5965ab281430fe032cf1fa970b5e6b8274eba5417c78024a4e54f9f009ae36"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/mmq.cpp.o",
+      "sha256": "af0930381423d7581fc52c37480a0f9860d165af06dc52d8464c08988b5054b2"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/mmvq.cpp.o",
+      "sha256": "222f319d071f682a94f9fb5306a1e91e5fa4d0d9c1298ec59d48b5ad085c7741"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/norm.cpp.o",
+      "sha256": "863f2e94d44f946d1ddb497a434f008eb141b2ecc3bdb2ee49f68cd784c1173b"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/outprod.cpp.o",
+      "sha256": "124e0309065881587c372732cc534a914885512cdc937ec0846f71eb141609c7"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/pad.cpp.o",
+      "sha256": "a2b4ccca4db543e41260d164c5881ec39830a3f71d4fa4d0c2e311e8dca4ac61"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/pad_reflect_1d.cpp.o",
+      "sha256": "5deea0e4fb7b7ae68cda0a75e1e54b8226cefd357438e091e05ce9d3016aad4e"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/pool.cpp.o",
+      "sha256": "df001a7906bd824a5fb45c63078ec2d3a813e65072677f2591031d33e6d95a59"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/repeat_back.cpp.o",
+      "sha256": "adf653dde5a8102afd5f990cab2c7c3c9076d8d3ccd81bdeaad4a90669898cfc"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/roll.cpp.o",
+      "sha256": "19362c649d3a841754983d6ba311e699db7351fd16c642934441de28176bd043"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/rope.cpp.o",
+      "sha256": "e2741d1bfcac9ac7a48197c9fc81ece87fb59e82147bcd0941babd15dc91a598"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/set.cpp.o",
+      "sha256": "fadec84439d39a0fdfcfd97034d98c65c4ee40603574dbb1ab65e2abd7d5c9ff"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/set_rows.cpp.o",
+      "sha256": "594f1971a559d0dd916c63166d18a7b93c59abcf577cd9753d32d8189ddc0b4c"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/softmax.cpp.o",
+      "sha256": "c12490aacda6d02bc7b931b8278641aa9def16c30b13cb9138a464b297d2aa32"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/solve_tri.cpp.o",
+      "sha256": "d61a2ac946f6022d98e160a4abc6df9c212fdeebade3c9ddca1ee3b9cc548f04"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/ssm_conv.cpp.o",
+      "sha256": "b2e5b4c02094beba689b1a14ec6ecfcc23b0e60313410fe9635e43be6b7b367d"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/ssm_scan.cpp.o",
+      "sha256": "af51f46af271d1c4f3e9b2439a7156c49952fb94d91d7adc2782b0e597b8e01f"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/sycl_hw.cpp.o",
+      "sha256": "3834366e322da44a547200dc249bce7fdcb6ec27740fe0a22b86c9082cadd1ac"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/topk-moe.cpp.o",
+      "sha256": "20bb7a88910cce1c24bb6f7e22720e63b9186c4beaff5ac68b6802acfe334735"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/tsembd.cpp.o",
+      "sha256": "b9b5f362d8bd4e47d3fc13223f55f3d97d2ea57f9075052f20edec52597964d0"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/upscale.cpp.o",
+      "sha256": "ae3391ea9b092b6b759fcffacef83700ca2a6539db9c0d2e651e033ed02c03a8"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/wkv.cpp.o",
+      "sha256": "53fde2300a3706482fc5faea1c956e085e3d4b8b1a12f561544c22bdc63f0df0"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-tile-instance-dkq112-dv112.cpp.o",
+      "sha256": "903fc9c0453225df632bc7aab8d544df0040e7937a7ef83384acce93ed57ea28"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-tile-instance-dkq128-dv128.cpp.o",
+      "sha256": "23ea81cf7868f1d94b05d4b170f61589430b7e54e416b146fb9fb5d00f74d773"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-tile-instance-dkq256-dv256.cpp.o",
+      "sha256": "2cfe3379f874705803387ef13d6ad329880d3db7995c6deb796f05675c1f4f41"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-tile-instance-dkq40-dv40.cpp.o",
+      "sha256": "75d7542868fc5d1f187542b7581b03435101bb37d0e0fef92fba3f6bf397ae77"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-tile-instance-dkq512-dv512.cpp.o",
+      "sha256": "c903deb6c09a14c28eef656efcbd31c935f1d06eff4d75e39d1a01f6dd2d9218"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-tile-instance-dkq576-dv512.cpp.o",
+      "sha256": "eeb55a98bf1aa7d8159e7aea0f8196116e6c925ea7d9acdadb2e0ddcf373f86f"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-tile-instance-dkq64-dv64.cpp.o",
+      "sha256": "f514ac08c7404c30786be35194183cad2e89b54ddb64ae886bec0e20b4abbb87"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-tile-instance-dkq72-dv72.cpp.o",
+      "sha256": "3722380fa58b83509e7d94fc8c9cba38cdc66a2b511f96bc07c8af5ad3044636"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-tile-instance-dkq80-dv80.cpp.o",
+      "sha256": "6b4cd07845f168b27d3c21fdde33cb61dade9c9e28364839284a6d882d8c7cf3"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-tile-instance-dkq96-dv96.cpp.o",
+      "sha256": "f5a56b565e3b8b54718a5bf2585603ce49d4b3369173f5dd37c037e5c1af6f6b"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-f16-f16.cpp.o",
+      "sha256": "b4711b5b46f12cb22d76c8b8f35dc768f8ef270cb3ab48752cd7cbff2046e451"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-f16-q4_0.cpp.o",
+      "sha256": "e95ab6fb7bcd51835cda6527594e9703ff121b2b82971b98193b69bb24a18973"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-f16-q4_1.cpp.o",
+      "sha256": "48b8780ad09a577c1afee7fa5c94263c3a17b7d53b911f73de642e60ddba085f"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-f16-q5_0.cpp.o",
+      "sha256": "f2bf76e6be057b9b98146502df183af129ae52b28598f91b3780834caca4d556"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-f16-q5_1.cpp.o",
+      "sha256": "b425a606c4a37047b02a60923659786bc3c682c85e52e76c8a1bf29869742fe9"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-f16-q8_0.cpp.o",
+      "sha256": "579ef83b525376328c527f41b8eeb3f8f9c189b36d0b5d86df62b3026d7d6405"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q4_0-f16.cpp.o",
+      "sha256": "a7d3968c44bd354888dc6acb22f441767b6fdf9fdd3d644a2e12b9104f28a9a2"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q4_0-q4_0.cpp.o",
+      "sha256": "f75f147ad73df2eb6668ac53769b969f0a208c69641add180c456e0d017dbfc8"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q4_0-q4_1.cpp.o",
+      "sha256": "9008619cf9f33dffd22d4cd248523b8cd4b15f972a875446e503e0d129639e3d"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q4_0-q5_0.cpp.o",
+      "sha256": "23ece9d90dcf8c4045c92b595cbde2d8305095a22182529c99cc99072f9097ba"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q4_0-q5_1.cpp.o",
+      "sha256": "0602990a6b42c2f6dd4e415b42a978591c8875e200a1537bc8cc3044cdd94226"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q4_0-q8_0.cpp.o",
+      "sha256": "2520b52318fbaa4565df2fd980246ac4e607f8851845c9c2b8d215d61f6bdf3d"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q4_1-f16.cpp.o",
+      "sha256": "34fa8ded5927f6de9379e5a262f596ea0350c81411c3b8878b1a68e74988a236"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q4_1-q4_0.cpp.o",
+      "sha256": "10f8233b407e1a5aba1bbeaffc9579110ed8d5301b431d178907f0db2230c079"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q4_1-q4_1.cpp.o",
+      "sha256": "06e244e36a7a9b2b663264f8cb71b2e1ac0488db4402423eb4673fd74867507e"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q4_1-q5_0.cpp.o",
+      "sha256": "e663e8dafdb32b55632b03ec05c92f879270f4c73f13a5f57fe3d0cf92215b84"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q4_1-q5_1.cpp.o",
+      "sha256": "ebb8326ad4a9796e5211914a2fb88f8c1f9ee4c707904f1a5cb074b6395d8a24"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q4_1-q8_0.cpp.o",
+      "sha256": "877dbe676ca00c06edbf908f1223bdab47cd071a8932d580a2a96fa0d36339d6"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q5_0-f16.cpp.o",
+      "sha256": "d18dbe5f0c71a1594b5de68498c712b5e2b14152c700320c4a004bafb3b3b354"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q5_0-q4_0.cpp.o",
+      "sha256": "2c9c82fa89cd78b8b98b1a65b891b670590c4b8f6f4c4c4717855f9a894672f5"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q5_0-q4_1.cpp.o",
+      "sha256": "c6876f4e9db530f60278c021be853ac3d08c5943eaef1484d7e517efa291a269"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q5_0-q5_0.cpp.o",
+      "sha256": "eb695692bff2923a9eb113ccd87535c6e2864a29b67a3707a0e5861b064596da"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q5_0-q5_1.cpp.o",
+      "sha256": "e404228c3b840e85c6cd0dc666a9b403aa9e97298fd10f9561bab068f90c5358"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q5_0-q8_0.cpp.o",
+      "sha256": "5ae0d6a1c6f9fc7b1c9c98979abc514be5cd7746f34afd7bf5605b97946c4a61"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q5_1-f16.cpp.o",
+      "sha256": "4db26ab6d99b39c1a79c9d00f6f4df634f215d1460faf60f792d3cf0a6a04d85"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q5_1-q4_0.cpp.o",
+      "sha256": "0d91de2db7d786f057104f278756b83c708fb0bdb9a9a8083a722571d5e631d1"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q5_1-q4_1.cpp.o",
+      "sha256": "42c8b522705194ee1944249160bb2582bcb468ffe801dde1264174a7ef759c48"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q5_1-q5_0.cpp.o",
+      "sha256": "4cb15033e26a075f7e3f750ced683c107a40eb3014b72a1da0c930edcada2965"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q5_1-q5_1.cpp.o",
+      "sha256": "3796303471814c5cff6c308a4aed48a60802e3a495ed0d59c763a02f75d6f828"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q5_1-q8_0.cpp.o",
+      "sha256": "09c7857adb7a1c337dd466c52d1a6b1d988bcfb567e0321173d98739eadb175b"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q8_0-f16.cpp.o",
+      "sha256": "b266c577a56bcc05853e856d3ebf7959736363b9670198a91755a35733def0a0"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q8_0-q4_0.cpp.o",
+      "sha256": "245d6ab4f6f726b8b1e3de84bccfee89b9b834979a58a776d70b89d54359b9bc"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q8_0-q4_1.cpp.o",
+      "sha256": "14fd949fb64bc6ec3d950e33f08f2079d98c87aed9dd8dbebfebdab73df5507d"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q8_0-q5_0.cpp.o",
+      "sha256": "e193876883f04e0d7db4969762b917eb9f639ccdce3ef4d3bb958f77441dbd32"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q8_0-q5_1.cpp.o",
+      "sha256": "cb819a6cbf167ae8a6a3049f6f5a143488426dcdeb86dd1d2fcd83b4d97ec45e"
+    },
+    {
+      "path": "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q8_0-q8_0.cpp.o",
+      "sha256": "acd8919be982501398c16cd50b566cd47d787fda32dbf1b1a99819dcab704528"
+    }
+  ],
+  "copy_compile_command": [
+    "${ONEAPI}/compiler/2026.1/bin/icpx",
+    "-DGGML_BACKEND_BUILD",
+    "-DGGML_BACKEND_SHARED",
+    "-DGGML_SCHED_MAX_COPIES=4",
+    "-DGGML_SHARED",
+    "-DGGML_SYCL_DNNL=1",
+    "-DGGML_SYCL_F16",
+    "-DGGML_SYCL_WARP_SIZE=16",
+    "-DMKL_ILP64",
+    "-D_GNU_SOURCE",
+    "-D_XOPEN_SOURCE=600",
+    "-Dggml_sycl_EXPORTS",
+    "-I${COPY_WORKTREE}/target/ggml-copy-source/src/ggml-sycl/..",
+    "-I${COPY_WORKTREE}/target/ggml-copy-source/src/../include",
+    "-isystem",
+    "${ONEAPI}/compiler/2026.1/include",
+    "-isystem",
+    "${ONEAPI}/dnnl/2026.0/include",
+    "-isystem",
+    "${ONEAPI}/tbb/2023.1/include",
+    "-isystem",
+    "${ONEAPI}/mkl/2026.1/include",
+    "-DGGML_MAX_NAME=160",
+    "-O3",
+    "-DNDEBUG",
+    "-std=gnu++17",
+    "-fPIC",
+    "-Wmissing-declarations",
+    "-Wmissing-noreturn",
+    "-Wall",
+    "-Wextra",
+    "-Wpedantic",
+    "-Wcast-qual",
+    "-Wno-unused-function",
+    "-Wno-narrowing",
+    "-fsycl",
+    "-o",
+    "${COPY_WORKTREE}/target/cpy.cpp.o",
+    "-c",
+    "${COPY_WORKTREE}/target/ggml-copy-source/src/ggml-sycl/cpy.cpp"
+  ],
+  "shared_device_link_command": [
+    "${ENGINE_WORKTREE}/target/sycl-linker.sh",
+    "-fPIC",
+    "-DGGML_MAX_NAME=160",
+    "-O3",
+    "-DNDEBUG",
+    "-Xs",
+    "-ze-intel-greater-than-4GB-buffer-required",
+    "-fsycl",
+    "-shared",
+    "-Wl,-soname,libggml-sycl.so.0",
+    "-o",
+    "${COPY_WORKTREE}/target/copy-runtime/libggml-sycl.so.0.19.0",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/ggml-sycl.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/add-id.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/binbcast.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/col2im-1d.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/common.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/concat.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/conv.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/conv2d-dw.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/conv2d-transpose.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/conv2d.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/conv3d.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/convert.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/convrot.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/count-equal.cpp.o",
+    "${COPY_WORKTREE}/target/cpy.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/cross_entropy_loss.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/cumsum.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/diag.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/dmmv.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/dsv4-hc.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/element_wise.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/fattn-buffers.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/fattn-mkl.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/fattn-onednn.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/fattn-tile.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/fattn.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/fill.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/fusion.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/gated_delta_net.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/getrows.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/gla.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/im2col.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/lightning-indexer.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/mmq.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/mmvq.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/norm.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/outprod.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/pad.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/pad_reflect_1d.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/pool.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/repeat_back.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/roll.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/rope.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/set.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/set_rows.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/softmax.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/solve_tri.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/ssm_conv.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/ssm_scan.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/sycl_hw.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/topk-moe.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/tsembd.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/upscale.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/wkv.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-tile-instance-dkq112-dv112.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-tile-instance-dkq128-dv128.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-tile-instance-dkq256-dv256.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-tile-instance-dkq40-dv40.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-tile-instance-dkq512-dv512.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-tile-instance-dkq576-dv512.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-tile-instance-dkq64-dv64.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-tile-instance-dkq72-dv72.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-tile-instance-dkq80-dv80.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-tile-instance-dkq96-dv96.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-f16-f16.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-f16-q4_0.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-f16-q4_1.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-f16-q5_0.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-f16-q5_1.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-f16-q8_0.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q4_0-f16.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q4_0-q4_0.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q4_0-q4_1.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q4_0-q5_0.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q4_0-q5_1.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q4_0-q8_0.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q4_1-f16.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q4_1-q4_0.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q4_1-q4_1.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q4_1-q5_0.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q4_1-q5_1.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q4_1-q8_0.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q5_0-f16.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q5_0-q4_0.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q5_0-q4_1.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q5_0-q5_0.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q5_0-q5_1.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q5_0-q8_0.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q5_1-f16.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q5_1-q4_0.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q5_1-q4_1.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q5_1-q5_0.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q5_1-q5_1.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q5_1-q8_0.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q8_0-f16.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q8_0-q4_0.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q8_0-q4_1.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q8_0-q5_0.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q8_0-q5_1.cpp.o",
+    "${REUSED_WORKTREE}/target/sycl-build/src/ggml-sycl/CMakeFiles/ggml-sycl.dir/template-instances/fattn-vec-instance-q8_0-q8_0.cpp.o",
+    "-Wl,-rpath,${COPY_WORKTREE}/target/copy-runtime:${ONEAPI}/dnnl/2026.0/lib:${ONEAPI}/tbb/2023.1/lib/intel64/gcc4.8:${ONEAPI}/mkl/2026.1/lib:",
+    "${COPY_WORKTREE}/target/copy-runtime/libggml-base.so.0.19.0",
+    "${ONEAPI}/dnnl/2026.0/lib/libdnnl.so.3.11",
+    "${ONEAPI}/compiler/2026.1/lib/libsycl.so",
+    "-lpthread",
+    "${ONEAPI}/tbb/2023.1/lib/intel64/gcc4.8/libtbb.so.12",
+    "${ONEAPI}/mkl/2026.1/lib/libmkl_sycl_blas.so",
+    "${ONEAPI}/mkl/2026.1/lib/libmkl_intel_ilp64.so",
+    "${ONEAPI}/mkl/2026.1/lib/libmkl_sequential.so",
+    "${ONEAPI}/mkl/2026.1/lib/libmkl_core.so",
+    "-lpthread",
+    "-ldl",
+    "-lm"
+  ],
+  "rust_build_command": [
+    "cargo",
+    "build",
+    "--offline",
+    "--locked",
+    "-p",
+    "kuno",
+    "--release",
+    "--features",
+    "native-image"
+  ],
+  "rust_build_environment": {
+    "KUNO_DEV_SYCL_BUILD": "1",
+    "KUNO_ONEAPI_ROOT": "${ONEAPI}",
+    "KUNO_SD_SOURCE_DIR": "${ENGINE_WORKTREE}/target/sycl-native-source",
+    "KUNO_SD_BUILD_DIR": "${ENGINE_WORKTREE}/target/sycl-engine-build",
+    "CARGO_TARGET_DIR": "${ENGINE_WORKTREE}/target/sycl-cargo",
+    "RUSTFLAGS": "-Clinker=${ENGINE_WORKTREE}/target/sycl-linker.sh",
+    "CARGO_BUILD_JOBS": "2",
+    "LD_LIBRARY_PATH": "${ONEAPI}/compiler/2026.1/lib:${ONEAPI}/mkl/2026.1/lib:${ONEAPI}/tbb/2023.1/lib:${ONEAPI}/dnnl/2026.0/lib:${ONEAPI}/umf/1.1/lib:${ONEAPI}/tcm/1.5/lib"
+  },
+  "reused_object_configuration": {
+    "max_name": 160,
+    "host_memory_fallback": false,
+    "graph": false,
+    "object_reuse": "HOST_MEM_FALLBACK referenced only in ggml-sycl.cpp; recompiled that object OFF, all other160 objects unchanged",
+    "archives": [
+      {
+        "path": "${REUSED_WORKTREE}/target/sycl-static/libggml-base.a",
+        "bytes": 1534982,
+        "sha256": "fb0824f0c4712365a155cb822adf6d8e29772bd17a80ab5d8d7d6156ef35e5ba"
+      },
+      {
+        "path": "${REUSED_WORKTREE}/target/sycl-static/libggml-cpu.a",
+        "bytes": 2057644,
+        "sha256": "a2da220df6dd9a1aa73b3e23a1b6d0bbf2fc865b47338c5cd4401e45c804c18b"
+      },
+      {
+        "path": "${REUSED_WORKTREE}/target/sycl-static/libggml-sycl.a",
+        "bytes": 78963800,
+        "sha256": "85a7d897fc2c6eb3557d1711e0e06268ab4ba89be7ff7be7805619a6d938281b"
+      },
+      {
+        "path": "${REUSED_WORKTREE}/target/sycl-static/libggml.a",
+        "bytes": 54438,
+        "sha256": "9c5ffaa51ba89bd9c19b6adf8b6713091ed105662ecdc2bb30275cb921894798"
+      }
+    ],
+    "main_compile_command": "${ONEAPI}/compiler/2026.1/bin/icpx -DGGML_BACKEND_BUILD -DGGML_BACKEND_SHARED -DGGML_SCHED_MAX_COPIES=4 -DGGML_SHARED -DGGML_SYCL_DNNL=1 -DGGML_SYCL_F16 -DGGML_SYCL_WARP_SIZE=16 -DMKL_ILP64 -D_GNU_SOURCE -D_XOPEN_SOURCE=600 -Dggml_sycl_EXPORTS -I${REUSED_WORKTREE}/target/native-source/ggml/src/ggml-sycl/.. -I${REUSED_WORKTREE}/target/native-source/ggml/src/../include -isystem ${ONEAPI}/compiler/2026.1/include -isystem ${ONEAPI}/dnnl/2026.0/include -isystem ${ONEAPI}/tbb/2023.1/include -isystem ${ONEAPI}/mkl/2026.1/include -DGGML_MAX_NAME=160 -O3 -DNDEBUG -std=gnu++17 -fPIC -Wmissing-declarations -Wmissing-noreturn -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wno-narrowing -fsycl -o CMakeFiles/ggml-sycl.dir/ggml-sycl.cpp.o -c ${REUSED_WORKTREE}/target/native-source/ggml/src/ggml-sycl/ggml-sycl.cpp",
+    "base_compile_command": "${ONEAPI}/compiler/2026.1/bin/icx -DGGML_BUILD -DGGML_COMMIT=\\\"4bf5f60-dirty\\\" -DGGML_SCHED_MAX_COPIES=4 -DGGML_SHARED -DGGML_USE_OPENMP -DGGML_VERSION=\\\"0.19.0\\\" -D_GNU_SOURCE -D_XOPEN_SOURCE=600 -Dggml_base_EXPORTS -I${REUSED_WORKTREE}/target/native-source/ggml/src/. -I${REUSED_WORKTREE}/target/native-source/ggml/src/../include -DGGML_MAX_NAME=160 -O3 -DNDEBUG -std=gnu11 -fPIC -Wshadow -Wstrict-prototypes -Wpointer-arith -Wmissing-prototypes -Werror=implicit-int -Werror=implicit-function-declaration -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -fiopenmp -o CMakeFiles/ggml-base.dir/ggml.c.o -c ${REUSED_WORKTREE}/target/native-source/ggml/src/ggml.c",
+    "sdpa_compile_command": "${ONEAPI}/compiler/2026.1/bin/icpx -DGGML_BACKEND_BUILD -DGGML_BACKEND_SHARED -DGGML_SCHED_MAX_COPIES=4 -DGGML_SHARED -DGGML_SYCL_DNNL=1 -DGGML_SYCL_F16 -DGGML_SYCL_WARP_SIZE=16 -DMKL_ILP64 -D_GNU_SOURCE -D_XOPEN_SOURCE=600 -Dggml_sycl_EXPORTS -I${REUSED_WORKTREE}/target/native-source/ggml/src/ggml-sycl/.. -I${REUSED_WORKTREE}/target/native-source/ggml/src/../include -isystem ${ONEAPI}/compiler/2026.1/include -isystem ${ONEAPI}/dnnl/2026.0/include -isystem ${ONEAPI}/tbb/2023.1/include -isystem ${ONEAPI}/mkl/2026.1/include -DGGML_MAX_NAME=160 -O3 -DNDEBUG -std=gnu++17 -fPIC -Wmissing-declarations -Wmissing-noreturn -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wno-narrowing -fsycl -o CMakeFiles/ggml-sycl.dir/fattn-onednn.cpp.o -c ${REUSED_WORKTREE}/target/native-source/ggml/src/ggml-sycl/fattn-onednn.cpp",
+    "patch_003_sha256": "c60d71b5af2a4e7f904a921b0317a28b3dc1f2f54639c41163e3d998e0f3d090",
+    "convrot_compile_command": "${ONEAPI}/compiler/2026.1/bin/icpx -DGGML_BACKEND_BUILD -DGGML_BACKEND_SHARED -DGGML_SCHED_MAX_COPIES=4 -DGGML_SHARED -DGGML_SYCL_DNNL=1 -DGGML_SYCL_F16 -DGGML_SYCL_WARP_SIZE=16 -DMKL_ILP64 -D_GNU_SOURCE -D_XOPEN_SOURCE=600 -Dggml_sycl_EXPORTS -I${REUSED_WORKTREE}/target/native-source/ggml/src/ggml-sycl/.. -I${REUSED_WORKTREE}/target/native-source/ggml/src/../include -isystem ${ONEAPI}/compiler/2026.1/include -isystem ${ONEAPI}/dnnl/2026.0/include -isystem ${ONEAPI}/tbb/2023.1/include -isystem ${ONEAPI}/mkl/2026.1/include -DGGML_MAX_NAME=160 -O3 -DNDEBUG -std=gnu++17 -fPIC -Wmissing-declarations -Wmissing-noreturn -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wno-narrowing -fsycl -o CMakeFiles/ggml-sycl.dir/convrot.cpp.o -c ${REUSED_WORKTREE}/target/native-source/ggml/src/ggml-sycl/convrot.cpp",
+    "im2col_compile_command": "${ONEAPI}/compiler/2026.1/bin/icpx -DGGML_BACKEND_BUILD -DGGML_BACKEND_SHARED -DGGML_SCHED_MAX_COPIES=4 -DGGML_SHARED -DGGML_SYCL_DNNL=1 -DGGML_SYCL_F16 -DGGML_SYCL_WARP_SIZE=16 -DMKL_ILP64 -D_GNU_SOURCE -D_XOPEN_SOURCE=600 -Dggml_sycl_EXPORTS -I${REUSED_WORKTREE}/target/native-source/ggml/src/ggml-sycl/.. -I${REUSED_WORKTREE}/target/native-source/ggml/src/../include -isystem ${ONEAPI}/compiler/2026.1/include -isystem ${ONEAPI}/dnnl/2026.0/include -isystem ${ONEAPI}/tbb/2023.1/include -isystem ${ONEAPI}/mkl/2026.1/include -DGGML_MAX_NAME=160 -O3 -DNDEBUG -std=gnu++17 -fPIC -Wmissing-declarations -Wmissing-noreturn -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wno-narrowing -fsycl -o CMakeFiles/ggml-sycl.dir/im2col.cpp.o -c ${REUSED_WORKTREE}/target/native-source/ggml/src/ggml-sycl/im2col.cpp",
+    "source_commit": "aea7c84",
+    "im2col_test_cpu_exact_values": 141632,
+    "im2col_test_cpu_sdk_ranges_accepted": 7,
+    "gpu_acceptance": "pending_root_only"
+  },
+  "native_engine_archive_sha256": "c4e786f5b8987bbfbc009d7016a5757db58f21c2ebcb3521383e90ec486eed4f",
+  "limits": [
+    "This is recorded producer evidence, not a reproducible-build guarantee.",
+    "The reused-object receipt is historical; final copy artifact receipt and all three current source patch pins supersede its older patch003 value.",
+    "Do not run development build commands for the standard gateway.",
+    "Actual flat closure was accepted with the SDK hidden; rebuilds must repeat that acceptance."
+  ],
+  "release_archive": {
+    "name": "kuno-sycl-linux-x86_64.tar.gz",
+    "bytes": 156166814,
+    "sha256": "d242d7628ccb6c6048e7bdb7edca04d1c2e7453404e68667e829aff61b5ddd2f"
+  },
+  "runtime_manifest": {
+    "version": 1,
+    "id": "qwen21-sycl-2026.1-v1",
+    "worker_abi": 1,
+    "ggml_max_name": 160,
+    "engine_revision": "88411ef1e0688ff2df1010aeeb5d92b2d8cea2be",
+    "ggml_revision": "4bf5f6000653b7881d00963cd6ddb665ccd62a8d",
+    "engine_patch_sha256": "50941bef18b1c1e415a055e7ef89706d4e68a726db1bcf1d43adacde94cd4504",
+    "ggml_patch_sha256": "7298590faed44cad4733c78f6f6c2bf261b647712b5ec5f75840da450f0067dc",
+    "sycl_patch_sha256": "7f6a75c75544c0e3776d780b0710cab2fabb94ddfe57eeb436dff02891bd4771",
+    "files": [
+      {
+        "name": "LICENSE-compiler-LICENSE.txt",
+        "bytes": 25224,
+        "sha256": "febfb69a5b058f55892dc7f341108a9ca29d50e9fe85723a57eebbb826436958"
+      },
+      {
+        "name": "LICENSE-darts-clone.txt",
+        "bytes": 1481,
+        "sha256": "155f59997298ee336602c49f9c1110f268ac394ca2197eb02647a3555935ad52"
+      },
+      {
+        "name": "LICENSE-dnnl-LICENSE.txt",
+        "bytes": 11607,
+        "sha256": "e9fc874fc09801b9acf3411ba72394098473704d832d713404b6c4861a086318"
+      },
+      {
+        "name": "LICENSE-dpl-license-txt.txt",
+        "bytes": 12262,
+        "sha256": "9e45e856bedccee9f67254082ca11851d954de2fed7448c4bed19ad9aab99a91"
+      },
+      {
+        "name": "LICENSE-ggml.txt",
+        "bytes": 1078,
+        "sha256": "94f29bbed6a22c35b992c5c6ebf0e7c92f13b836b90f36f461c9cf2f0f1d010d"
+      },
+      {
+        "name": "LICENSE-json.txt",
+        "bytes": 1318,
+        "sha256": "9b5a8b531dc8f27d59b19d801c4ec64c496df3d163a3133e4f206e1184562646"
+      },
+      {
+        "name": "LICENSE-kuno.txt",
+        "bytes": 11341,
+        "sha256": "34d5f0f2e17bea474f353243bd19615e95a0c011ee96482dec42869cc2848456"
+      },
+      {
+        "name": "LICENSE-licensing-license-htm.txt",
+        "bytes": 104970,
+        "sha256": "9bca3c7ee7f60640b15f9c19c8813f123944d2054ff43a542584a5df45f43b6c"
+      },
+      {
+        "name": "LICENSE-mkl-license-txt.txt",
+        "bytes": 4246,
+        "sha256": "c182e56595e59c88a2561ca442f7cb088cab5575a3f1c9fdebc09688d0748bd2"
+      },
+      {
+        "name": "LICENSE-oniguruma.txt",
+        "bytes": 1366,
+        "sha256": "0dff717fb611b9c9bd9776a5df9c4e029030f8dbc023b77f3678cf495495b933"
+      },
+      {
+        "name": "LICENSE-sageattention.txt",
+        "bytes": 11357,
+        "sha256": "178f46f58127373d449565589a32c2b5b60c082934618c17b7ce6890c61ef394"
+      },
+      {
+        "name": "LICENSE-stable-diffusion-cpp.txt",
+        "bytes": 1062,
+        "sha256": "b53fa08f515cb5a6fff7b9fd8fcd0961a4b80df29d74372d25e1f9171aa042ee"
+      },
+      {
+        "name": "LICENSE-tbb-license-txt.txt",
+        "bytes": 4180,
+        "sha256": "4229ebf297195a64279a99566431731c411f744a34e1213a5b1e69a8fa286ea1"
+      },
+      {
+        "name": "LICENSE-tcm-license-txt.txt",
+        "bytes": 4090,
+        "sha256": "6c00ae54b2a610ea009e0f5c5d3aa79023eb694c7fb72857654c53c6e99d7c97"
+      },
+      {
+        "name": "LICENSE-umf-LICENSE-TXT.txt",
+        "bytes": 13187,
+        "sha256": "8e10a337d86f516fb49730c26995cf0215ebb39340b82c65e0246441a82da64b"
+      },
+      {
+        "name": "LICENSE-utf8proc.txt",
+        "bytes": 5218,
+        "sha256": "767edbcafb23016d7f203aaf2cbdef5690ad58bcede52ee241427dcb816cd644"
+      },
+      {
+        "name": "NOTICE-compiler-credist-txt.txt",
+        "bytes": 17731,
+        "sha256": "d9dc00825f43051068acdb2fe0880a55c029a9a52c8c084d4c27e0bb8c600103"
+      },
+      {
+        "name": "NOTICE-compiler-openmp-third-party-programs-txt.txt",
+        "bytes": 31578,
+        "sha256": "f8ce918fe7311ce279e68380a2e233f8a42b1cd3dda8f4c48d6de97a0255c1d7"
+      },
+      {
+        "name": "NOTICE-compiler-third-party-programs-txt.txt",
+        "bytes": 36937,
+        "sha256": "a81491a0243fa1d072aa636c890a6dd082ca403aca4681672cf6f69d3d516f79"
+      },
+      {
+        "name": "NOTICE-dnnl-THIRD-PARTY-PROGRAMS.txt",
+        "bytes": 44015,
+        "sha256": "2567c1c5cab0ed7709dac7ac0d0aea504f6fb8bb4bd221ef8718defadecf0fa3"
+      },
+      {
+        "name": "NOTICE-dpl-third-party-programs-txt.txt",
+        "bytes": 34040,
+        "sha256": "1a2ac39206702f0c78794b4ba6fcd9d1c03dde21581a6b8c01f6ce02037763ec"
+      },
+      {
+        "name": "NOTICE-httplib-source.txt",
+        "bytes": 458597,
+        "sha256": "97e06056511a6712d7bab1848a9068eabb80d96de4bd8237083c8089584881a8"
+      },
+      {
+        "name": "NOTICE-json-source.txt",
+        "bytes": 907858,
+        "sha256": "665fa14b8af3837966949e8eb0052d583e2ac105d3438baba9951785512cf921"
+      },
+      {
+        "name": "NOTICE-miniz-source.txt",
+        "bytes": 395897,
+        "sha256": "530061101f19852ddcb1384259a3301c9764be59414c17a4d245c09b96d21383"
+      },
+      {
+        "name": "NOTICE-mkl-third-party-programs-IntelMPI-txt.txt",
+        "bytes": 77510,
+        "sha256": "82fa46762c37662a52ab9df58781813c1dc6c268ae2b6f9cf2d83183e706aa09"
+      },
+      {
+        "name": "NOTICE-mkl-third-party-programs-benchmarks-txt.txt",
+        "bytes": 5234,
+        "sha256": "1f1224af12a7d3e51150ce6f762e32472076a31f6e44db41d3b651a7fa20f2f5"
+      },
+      {
+        "name": "NOTICE-mkl-third-party-programs-level-zero-txt.txt",
+        "bytes": 1124,
+        "sha256": "cfe7d2ba4b4cd53271c7f91937e906256c0f14ea62ba33ffb556664b8d39aa59"
+      },
+      {
+        "name": "NOTICE-mkl-third-party-programs-oneMath-txt.txt",
+        "bytes": 6777,
+        "sha256": "2ba4e9858c253331691370f4e8e3899ca6a5baa20907f189f5970635870b860d"
+      },
+      {
+        "name": "NOTICE-mkl-third-party-programs-oneTBB-txt.txt",
+        "bytes": 19504,
+        "sha256": "d507da4fffae647ebc1bbb7e12cc5cca8087d36b0d78cc75caa96cae37688cb1"
+      },
+      {
+        "name": "NOTICE-mkl-third-party-programs-openmp-txt.txt",
+        "bytes": 31028,
+        "sha256": "8fdfbbdfed13bca3641da35182e7ee1bb92a99f302ce8b0deb981ac1f18adee2"
+      },
+      {
+        "name": "NOTICE-mkl-third-party-programs-safestring-txt.txt",
+        "bytes": 2448,
+        "sha256": "415000d1887939ffc6826e0ed3f099cebcab6aaeda2da0acb017110a456b3d42"
+      },
+      {
+        "name": "NOTICE-mkl-third-party-programs-txt.txt",
+        "bytes": 64052,
+        "sha256": "a38d77d3d57579b827e3ac86cafdb71f1461a24fbd6f224e7f40e19c1bd0ea3a"
+      },
+      {
+        "name": "NOTICE-stb-image-resize-source.txt",
+        "bytes": 113565,
+        "sha256": "8b430895b231a541c234cb7441756e9f4c857ea140dbf3275dfdf12f92b83082"
+      },
+      {
+        "name": "NOTICE-stb-image-source.txt",
+        "bytes": 284733,
+        "sha256": "38e08c1c5ab8869ae8d605ddaefa85ad3fea24a2964fd63a099c0c0f79c70bcc"
+      },
+      {
+        "name": "NOTICE-stb-image-write-source.txt",
+        "bytes": 72926,
+        "sha256": "683e15c6dfdc2d57b06b9e166ba27665328e0854a9c1130c2ba9958afaf2f8da"
+      },
+      {
+        "name": "NOTICE-tbb-third-party-programs-txt.txt",
+        "bytes": 19503,
+        "sha256": "1f6de0bd498c04c9283c6306379e2db2492e1c4e7d2b248c8de0e8fe9124cd03"
+      },
+      {
+        "name": "NOTICE-tcm-third-party-programs-txt.txt",
+        "bytes": 14689,
+        "sha256": "0c359ebe1a1c58c3bb42eb228b6c3310361fe75d99ddb2fa29c536bf2a290955"
+      },
+      {
+        "name": "NOTICE-umf-third-party-programs-txt.txt",
+        "bytes": 45927,
+        "sha256": "06666bca406e03627c81c1287678880801f717aa867ecb71cc39afd787a06e64"
+      },
+      {
+        "name": "NOTICE-zip-c-source.txt",
+        "bytes": 58771,
+        "sha256": "4c6de45d7ffbebadd70f468f5892ff380cea6d997e6deb910b65c04654e74d90"
+      },
+      {
+        "name": "NOTICE-zip-h-source.txt",
+        "bytes": 16651,
+        "sha256": "8ede649cf053c54c5fd86c7311122db3afe990f1a102ffaf3b2a0aa5c575708d"
+      },
+      {
+        "name": "libOpenCL.so.1",
+        "bytes": 94848,
+        "sha256": "4d7dc0d09f8623a02ecf5cd06c21790f8ec2f8f971bad1a45c10c158079b1028"
+      },
+      {
+        "name": "libarcher.so",
+        "bytes": 1153336,
+        "sha256": "41c1429db35e648880a5d474706b6b3cff0c9297d9120ac717b96200b111dad3"
+      },
+      {
+        "name": "libdnnl.so.3",
+        "bytes": 108119536,
+        "sha256": "3add4417acc7093ccdcc0dfe7f20d19cded96073f4bafd65a704ef2e72aafd19"
+      },
+      {
+        "name": "libhwloc.so.15",
+        "bytes": 433120,
+        "sha256": "34e1ad15a2d207dc116d9f88fbf5f9ab97cc5ce5e6a704e54a587e8bc7ddefff"
+      },
+      {
+        "name": "libimf.so",
+        "bytes": 4865192,
+        "sha256": "67a4b6c27002f59f26c411f4ec384300d781365af19d6a2eb9f0dd94d2a0f470"
+      },
+      {
+        "name": "libintlc.so.5",
+        "bytes": 415824,
+        "sha256": "612ab119242ccda945de6eb354369b5bee6a158bc9724e4da5e466cb0ad630db"
+      },
+      {
+        "name": "libiomp5.so",
+        "bytes": 2763824,
+        "sha256": "19cd02fbb18d948db4c4936afc5e07929ef16d676f72d0e76e9e853e665b5146"
+      },
+      {
+        "name": "libirng.so",
+        "bytes": 1100272,
+        "sha256": "2cd4057ba6bcd9235685597098c3bdc9811e1de0a457f7a0a2aa47ce691995c7"
+      },
+      {
+        "name": "libmkl_core.so.3",
+        "bytes": 76168096,
+        "sha256": "b4f086651ee5a8471140d53fedfdbbaba606287784763b0739f282872c31aa9b"
+      },
+      {
+        "name": "libmkl_intel_ilp64.so.3",
+        "bytes": 17488464,
+        "sha256": "ffbbeff402fdf09baa53f8226b86f27046592d984ae2916b1bbc2e59132c7c89"
+      },
+      {
+        "name": "libmkl_sequential.so.3",
+        "bytes": 25021272,
+        "sha256": "4e7ff529bec90a1b0ce70299258a64a2ebae7a5a6f3ec031306a6ddb39b5a650"
+      },
+      {
+        "name": "libmkl_sycl_blas.so.6",
+        "bytes": 75459712,
+        "sha256": "51d6c16990701a5aaf9fbbde5d86f5a7197b81357b66b19cbb912206564cf4ee"
+      },
+      {
+        "name": "libsvml.so",
+        "bytes": 28103240,
+        "sha256": "a6dbbc425c8270c3485e40ef0924ef38ed89ced4026056fd3f1f529774c4f86c"
+      },
+      {
+        "name": "libsycl.so.9",
+        "bytes": 11686656,
+        "sha256": "d769a71f2c71530e59a5ba22831ec5a82edcde718076d2663772255498c8e053"
+      },
+      {
+        "name": "libtbb.so.12",
+        "bytes": 4462408,
+        "sha256": "2c1fcbc65a33771a5e02a201734774252528e10f57cef9e2f902fe209c0319e1"
+      },
+      {
+        "name": "libtbbmalloc.so.2",
+        "bytes": 1184544,
+        "sha256": "74410b8566ecedac338f072662272a970bb0230870c0a6ce964042bf9a26fbbb"
+      },
+      {
+        "name": "libtcm.so",
+        "bytes": 1512952,
+        "sha256": "e0918ba252cb705c20e68ac01e1fbdb026107c63fc71ae5980e7e658733962da"
+      },
+      {
+        "name": "libtcm.so.1",
+        "bytes": 1512952,
+        "sha256": "e0918ba252cb705c20e68ac01e1fbdb026107c63fc71ae5980e7e658733962da"
+      },
+      {
+        "name": "libumf.so",
+        "bytes": 321648,
+        "sha256": "c74cfea0360d09b5072a8227efbc830db36bd57669ca22d190d0fb31fe8e3425"
+      },
+      {
+        "name": "libumf.so.1",
+        "bytes": 321648,
+        "sha256": "c74cfea0360d09b5072a8227efbc830db36bd57669ca22d190d0fb31fe8e3425"
+      },
+      {
+        "name": "libur_adapter_level_zero.so.0",
+        "bytes": 4173744,
+        "sha256": "ec3e2a2672db65f99c0d55b233f42602a8415ab19c177c4330f2e5ed5a78eedf"
+      },
+      {
+        "name": "libur_adapter_level_zero_v2.so.0",
+        "bytes": 4025040,
+        "sha256": "bfdc0f26bf88bd0bccd66fc25302a4b22559f8fe30e499be18529be3ed610e60"
+      },
+      {
+        "name": "libur_loader.so.0",
+        "bytes": 25026736,
+        "sha256": "5338c03524f6d3fdd7d6067e5a3f84315e36e11fe1f526d5bbd02d0c88f82a32"
+      },
+      {
+        "name": "worker",
+        "bytes": 135348896,
+        "sha256": "414b86a3c498c0f848321766e99784a8d5d7fd7f3984c1bf35796f6b5b14796b"
+      }
+    ]
+  }
+}

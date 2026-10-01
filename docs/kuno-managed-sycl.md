@@ -122,6 +122,17 @@ publish the development SYCL-linked executable as the main Kuno binary: its
 eager vendor dependencies would make ordinary gateway/upgrade commands require
 oneAPI on every machine.
 
+Release developers can produce a deterministic flat archive using
+`apps/kuno/scripts/package-image-runtime.py --directory BUNDLE
+--manifest-sha256 APPROVED_SHA256 --output ARCHIVE`. It verifies the exact pinned
+schema, inventory, sizes and streamed hashes; rejects links/nonregular members;
+and emits regular-file aliases, fixed permissions and zero archive timestamps.
+It never overwrites an existing archive. The manifest checksum must already be
+approved independently; packaging does not establish GPU correctness or source
+provenance. No Python dependency is added to the installed service.
+Native notice collection, prepared artifacts and release-owner steps are in
+[kuno-release-handoff.md](kuno-release-handoff.md).
+
 ## Worker privacy and errors
 
 The standard executable's hidden `image-worker-launch` entrypoint runs before

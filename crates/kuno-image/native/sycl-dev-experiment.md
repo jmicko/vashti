@@ -102,8 +102,10 @@ remain separate from this static source/build proof.
 
 CPU backend-choice tests passed with and without the compile gate. A native
 feature build-script test passed the exact build-flag parser; both shim variants
-passed C++ syntax checks. The full development engine link and GPU execution
-remain unverified. The following requirements still apply:
+passed C++ syntax checks. At this historical checkpoint the full development
+engine link and GPU execution remained unverified. Final managed-runtime
+acceptance is recorded in [kuno-managed-sycl.md](../../../docs/kuno-managed-sycl.md).
+The following source/build requirements still apply:
 
 - Validate the engine revision and exact 001 diff independently of the GGML
   revision and exact combined 002 plus development SYCL diff. Include new files
@@ -236,8 +238,11 @@ do not prove that a runtime will launch with the privacy restrictions applied.
 
 Private linking requires the bundle's compiler, MKL, oneDNN, TBB, UMF and TCM
 library directories. Keep them in a reviewed explicit `LD_LIBRARY_PATH` only
-for the standalone development worker. The installed worker's `env_clear()`
-currently removes that path and all experimental flags. Do not widen inherited
+for the standalone development worker. At this historical checkpoint the
+installed worker's `env_clear()` removed that path and all experimental flags.
+The accepted managed launcher now supplies an exact verified library directory
+and fixed environment allowlist; see the managed-runtime specification.
+Do not widen inherited
 environment variables or alter the public service to make the experiment work.
 Use `readelf`/`ldd` and a synthetic launch under the actual restrictions to
 check both direct dependencies and vendor libraries loaded later with `dlopen`.
