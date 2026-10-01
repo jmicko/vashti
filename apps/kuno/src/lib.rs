@@ -6,6 +6,7 @@ pub mod gateway;
 mod image_access;
 pub mod image_engine;
 pub mod image_privacy;
+pub mod image_residency;
 pub mod image_runtime;
 mod image_stream;
 mod journal;

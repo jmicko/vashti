@@ -92,6 +92,7 @@ pub struct Gateway {
     image_requests: Arc<tokio::sync::Semaphore>,
     image_readiness: Arc<crate::image_access::ImageReadiness>,
     image_fast_attention: bool,
+    image_runtime: crate::image_residency::ImageRuntime,
 }
 
 impl Gateway {
@@ -177,6 +178,7 @@ impl Gateway {
             image_requests: Arc::new(tokio::sync::Semaphore::new(2)),
             image_readiness,
             image_fast_attention,
+            image_runtime: Default::default(),
         }))
     }
 
@@ -193,6 +195,9 @@ impl Gateway {
     }
     pub fn stop_images(&self) {
         self.image_shutdown.send_replace(true);
+    }
+    pub async fn evict_images(&self) -> Result<(), &'static str> {
+        self.image_runtime.evict().await
     }
 
     pub fn compatibility(self: &Arc<Self>) -> Router {
@@ -459,16 +464,18 @@ async fn generate_image(State(gateway): State<Arc<Gateway>>, request: Request) -
                 .ok_or("image_requires_managed_pool")?;
             pool.prepare_image(&config.pci_address).await?;
             let executable = std::env::current_exe().map_err(|_| "executable_unavailable")?;
-            let finished = crate::image_runtime::run_with_previews(
-                &executable,
-                &config,
-                recipe,
-                &mut send,
-                Some(gateway.image_shutdown.subscribe()),
-                Some(previews),
-            )
-            .await;
-            if finished.reaped
+            let finished = gateway
+                .image_runtime
+                .run(
+                    &executable,
+                    &config,
+                    recipe,
+                    &mut send,
+                    gateway.image_shutdown.subscribe(),
+                    previews,
+                )
+                .await;
+            if finished.settled
                 && !finished.forced
                 && !matches!(finished.output, Err("image_vulkan_device_lost"))
             {
@@ -627,18 +634,51 @@ async fn forward(
                 && let Some(model) = gateway.catalog_model(&name).await
                 && !model.is_remote()
             {
-                match pool
-                    .prepare(parts.uri.path(), &mut value, &model.name, &model.digest)
-                    .await
-                {
+                let resident_device = gateway.image_runtime.resident_device().await;
+                let prepared = if let Some(pci) = resident_device {
+                    match pool
+                        .prepare_with_resident_image(
+                            parts.uri.path(),
+                            &mut value,
+                            &model.name,
+                            &model.digest,
+                            &pci,
+                        )
+                        .await
+                    {
+                        Err("image_resident_needs_eviction") => {
+                            if let Err(code) = gateway.evict_images().await {
+                                if let Some(lease) = &mut lease {
+                                    let _ = lease.dispatched();
+                                }
+                                return error(StatusCode::SERVICE_UNAVAILABLE, code);
+                            }
+                            pool.prepare(parts.uri.path(), &mut value, &model.name, &model.digest)
+                                .await
+                        }
+                        result => result,
+                    }
+                } else {
+                    pool.prepare(parts.uri.path(), &mut value, &model.name, &model.digest)
+                        .await
+                };
+                match prepared {
                     Ok(job) => {
                         address = job.address();
                         managed_job = Some(job);
                     }
                     Err(code) => return error(StatusCode::SERVICE_UNAVAILABLE, code),
                 }
-            } else if let Err(code) = pool.stop_all().await {
-                return error(StatusCode::SERVICE_UNAVAILABLE, code);
+            } else {
+                if let Err(code) = gateway.evict_images().await {
+                    if let Some(lease) = &mut lease {
+                        let _ = lease.dispatched();
+                    }
+                    return error(StatusCode::SERVICE_UNAVAILABLE, code);
+                }
+                if let Err(code) = pool.stop_all().await {
+                    return error(StatusCode::SERVICE_UNAVAILABLE, code);
+                }
             }
             let encoded = match serde_json::to_vec(&value) {
                 Ok(bytes) => bytes,
@@ -646,11 +686,24 @@ async fn forward(
             };
             parts.headers.remove(header::CONTENT_LENGTH);
             body = Body::from(encoded);
-        } else if class != RequestClass::Metadata
-            && let Err(code) = pool.stop_all().await
-        {
-            return error(StatusCode::SERVICE_UNAVAILABLE, code);
+        } else if class != RequestClass::Metadata {
+            if let Err(code) = gateway.evict_images().await {
+                if let Some(lease) = &mut lease {
+                    let _ = lease.dispatched();
+                }
+                return error(StatusCode::SERVICE_UNAVAILABLE, code);
+            }
+            if let Err(code) = pool.stop_all().await {
+                return error(StatusCode::SERVICE_UNAVAILABLE, code);
+            }
         }
+    } else if class != RequestClass::Metadata
+        && let Err(code) = gateway.evict_images().await
+    {
+        if let Some(lease) = &mut lease {
+            let _ = lease.dispatched();
+        }
+        return error(StatusCode::SERVICE_UNAVAILABLE, code);
     }
     let observation =
         (class == RequestClass::Inference).then(|| Arc::new(Mutex::new(Observer::default())));

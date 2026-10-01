@@ -82,7 +82,7 @@ pub struct Finished {
     pub forced: bool,
 }
 
-async fn diagnostics(mut stderr: tokio::process::ChildStderr) -> Option<&'static str> {
+pub(crate) async fn diagnostics(mut stderr: tokio::process::ChildStderr) -> Option<&'static str> {
     // Raw backend text never reaches logs, errors, or persistent state. Keep
     // only a fixed error vocabulary emitted by our private worker entrypoint.
     const CODES: &[&str] = &[
