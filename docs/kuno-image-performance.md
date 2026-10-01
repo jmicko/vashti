@@ -506,3 +506,41 @@ source suite before the review fix passed 182 tests with nine hardware-dependent
 ignores; the review fix passed 19 focused runtime/deployment tests and Clippy.
 These do not prove relocated vendor-library, live managed cancellation or
 installed-service acceptance. See [the optional runtime contract](kuno-managed-sycl.md).
+
+
+## SYCL full decode and larger-copy boundary (2026-10-01 UTC)
+
+The bounded IM2COL candidate worker SHA-256 is
+`8a6d07e18aefdc77fdbbbfface1e87085132378b82c6d8a06c11a7e7fdfb1a70`.
+The full original 1248x832, 25-step, CFG4 edit passed in **109.624 s**, with all
+25 previews, metadata-free RGBA final output and alpha range247-255. The final
+image was reviewed through a RAM-only, no-store loopback server and discarded;
+no image file was saved. Step1 was at48.373 s and step25 at105.771 s, about2.39 s
+per subsequent step. Xe peak was24,754,114,560 bytes, cgroup RAM peak1,930,915,840
+bytes and swap0. This was a clean run without native compilation. The equivalent
+accepted CUDA edit is160.702 s; user ComfyUI Intel cold/warm baselines are78.25 /
+64.48 s. SYCL is substantially faster than Kuno's earlier paths but does not yet
+match the user's ComfyUI timing.
+
+The original 1184x1776, 50-step, CFG1 generation completed sampling at136.939 s
+but exited-6 at140.988 s during decode, with the fixed
+`UR_RESULT_ERROR_DEVICE_LOST` classification. Xe peak was22,143,942,656 bytes,
+cgroup RAM peak1,328,771,072 bytes, swap0. One new Xe engine-reset entry at
+02:52:56.688688 UTC raised the boot count from6 to7. This reset matches the
+large-generation test window; the earlier two entries remain separate. No
+production configuration or worker was changed. Admission was resumed afterward.
+
+Independent IM2COL modes5-8 pass on the B70, including the exact large geometry,
+10,900,832,256-byte output, samples across2/4/8GiB and INT32/UINT32 element
+boundaries, and bounded-launch chunk boundaries. All runs used Landlock and
+zero-swap cgroups; no further Xe reset appeared. Exact-case C144/C288 modes
+passed249/255 samples; the UINT32-bracketing cases passed252/255 samples.
+Embedded worker SPIR-V also retains64-bit offsets/access-chain indices. These
+results do not reproduce other asynchronous VAE operations.
+
+The actual CPU-only VAE graph has seven non-contiguous F32 CONT operations
+crossing signed-int byte offsets in the larger workflow, versus zero in the
+passing edit. The legacy SYCL copy path narrows byte strides/offsets toint; a
+separate focused fix and independent copy-boundary tests are in progress. The
+optional managed runtime therefore remains uninstalled and unaccepted. The
+standard installed CUDA/Vulkan service remains the user-facing image engine.

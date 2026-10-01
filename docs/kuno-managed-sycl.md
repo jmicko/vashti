@@ -6,12 +6,13 @@ The optional Intel worker uses the same request pipes, preview framing,
 cancellation, PCI selection and HTTP API. No Vashti consumer change is required.
 GPU, performance and installed-service acceptance are separate from source tests.
 This support is a draft: the private SYCL engine is not accepted for installation
-or enablement. During root's 2026-10-01 UTC acceptance, the original edit recipe
-finished all sampling steps but failed during VAE decoding. The fixed error
-classification identifies SYCL IM2COL; its cause remains under investigation.
-Two Xe reset entries preceded those full-edit tests, so they must be diagnosed
-separately rather than attributed to this decode failure. Do not enable this
-route until full-workflow and stability acceptance pass.
+or enablement. Bounded IM2COL dispatch fixed a proven host-side signed-int range
+rejection. The original 1248x832 edit now passes all 25 steps, previews and final
+decode in 109.624 seconds. The larger 1184x1776 generation finishes sampling but
+then triggers a device-lost error and a new Xe reset during decoding. A separate
+source proof identifies seven non-contiguous F32 decoder copies whose byte
+offsets exceed the legacy signed-int kernel envelope. That fix and full-workflow
+revalidation remain pending. Do not enable this route until they pass.
 
 ## Configuration
 
