@@ -114,7 +114,23 @@ pub async fn save_preferences(
     value: Preferences,
 ) -> Result<Preferences, ApiError> {
     for profile in [&value.generate, &value.edit] {
-        validate_recipe(&profile.recipe)?;
+        validate_draft(&Draft {
+            backend_id: profile.backend_id.clone(),
+            recipe: profile.recipe.clone(),
+            input_ids: vec![],
+            original_input_ids: vec![],
+            parent_result_id: None,
+            prompt_version_id: None,
+            seed_mode: profile.seed_mode,
+            count: profile.count,
+            auto_improve: profile.auto_improve,
+            prompt_help: profile.prompt_help.clone(),
+        })?;
+        if profile.auto_improve && profile.prompt_help.is_none() {
+            return Err(invalid(
+                "Choose a prompt helper before enabling automatic improvement",
+            ));
+        }
         if profile.model_may_change.iter().any(|k| {
             ![
                 "size",
@@ -731,8 +747,19 @@ pub async fn submit(
     let serialized = encode(&request)?;
     let run = id();
     let now = unix_timestamp();
+    let mut transaction = state.db.begin().await?;
     sqlx::query("INSERT INTO image_runs (id,user_id,session_id,client_request_id,request_json,submission_json,status,created_at,updated_at) VALUES (?,?,?,?,?,?,'queued',?,?)")
-        .bind(&run).bind(user).bind(session).bind(&request.client_request_id).bind(serialized).bind(submission).bind(now).bind(now).execute(&state.db).await?;
+        .bind(&run).bind(user).bind(session).bind(&request.client_request_id).bind(serialized).bind(submission).bind(now).bind(now).execute(&mut *transaction).await?;
+    if !request.improve_only {
+        // Anchor the submitted branch before output arrives; later navigation still wins.
+        sqlx::query("UPDATE image_sessions SET active_result_id=? WHERE id=? AND user_id=?")
+            .bind(&request.draft.parent_result_id)
+            .bind(session)
+            .bind(user)
+            .execute(&mut *transaction)
+            .await?;
+    }
+    transaction.commit().await?;
     let cancel = CancellationToken::new();
     jobs.insert(run.clone(), cancel.clone());
     drop(jobs);

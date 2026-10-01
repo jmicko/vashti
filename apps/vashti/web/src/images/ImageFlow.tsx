@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ChevronUp,
   Copy,
+  CopyPlus,
   Download,
   GitBranch,
   ImagePlus,
@@ -39,6 +40,9 @@ import { imagePath, writeImage } from "./api";
 import {
   activeRun,
   canGenerate,
+  newFlowWithSettings,
+  profileFromDraft,
+  resetDraftSettings,
   workflowLabel,
   type Draft,
   type ImageHost,
@@ -63,6 +67,10 @@ type Props = {
   onRefreshHosts: () => Promise<void>;
   onPreferencesOpen: () => void;
   onNavigate: (view: ImageView, id?: string) => void;
+  onNewFlow: (
+    draft: Draft,
+    mode: "generate" | "iterative" | "original",
+  ) => Promise<void>;
   isAdmin: boolean;
   onOpenBackends: () => void;
 };
@@ -78,6 +86,7 @@ export function ImageFlow({
   onRefreshHosts,
   onPreferencesOpen,
   onNavigate,
+  onNewFlow,
   isAdmin,
   onOpenBackends,
 }: Props) {
@@ -88,6 +97,8 @@ export function ImageFlow({
       onNavigate("flow", flow.session.id);
   }, [flow.session?.id, sessionId, busy, flow.loaded]);
   const [expanded, setExpanded] = useState(false);
+  const [defaultsSaved, setDefaultsSaved] = useState(false);
+  useEffect(() => setDefaultsSaved(false), [draft]);
   const [treeOpen, setTreeOpen] = useState(false);
   const [confirmEndless, setConfirmEndless] = useState(false);
   const [viewer, setViewer] = useState<{ ids: string[]; index: number } | null>(
@@ -174,8 +185,6 @@ export function ImageFlow({
             workflowId === "qwen-image-2512-text-to-image/v1" ? 3.1 : null,
         }
       : { ...draft.recipe };
-    if (!workflow?.attention.includes(recipe.attention))
-      recipe.attention = "standard";
     flow.patch({
       backend_id: backendId,
       recipe,
@@ -436,6 +445,11 @@ export function ImageFlow({
   const noModels = !groups.some((group) =>
     group.models.some((model) => !unavailable(group.backend.id, model.name)),
   );
+  const unsupportedAttention = Boolean(
+    draft &&
+      selectedWorkflow?.state === "ready" &&
+      !selectedWorkflow.attention.includes(draft.recipe.attention),
+  );
   const notice =
     checking && !hosts.length
       ? "Checking inference hosts..."
@@ -445,13 +459,15 @@ export function ImageFlow({
           ? "Choose an image model."
           : draft && unavailable(draft.backend_id ?? "", draft.recipe.workflow)
             ? selectedHost?.service.message
-            : draft && !ready
-              ? selectedWorkflow?.reference_images_min
-                ? "Add a reference image for this edit model."
-                : draft.input_ids.length
-                  ? "Choose an edit model to use reference images."
-                  : "These settings are not supported by the selected model."
-              : "";
+            : unsupportedAttention
+              ? "This host does not support the saved attention mode. Select Standard to continue."
+              : draft && !ready
+                ? selectedWorkflow?.reference_images_min
+                  ? "Add a reference image for this edit model."
+                  : draft.input_ids.length
+                    ? "Choose an edit model to use reference images."
+                    : "These settings are not supported by the selected model."
+                : "";
 
   return (
     <div className="image-flow">
@@ -840,7 +856,11 @@ export function ImageFlow({
                   const target =
                     flow.notice ??
                     (active ? active.request.draft.parent_result_id : leaf);
-                  flow.chooseLeaf(target);
+                  const result =
+                    flow.notice && results.find((value) => value.id === target);
+                  if (result) void flow.select(result, result.id);
+                  else if (active) flow.followRun(active);
+                  else flow.chooseLeaf(target);
                   flow.setNotice(null);
                   setUnseen(false);
                   following.current = true;
@@ -875,6 +895,15 @@ export function ImageFlow({
               {notice && (
                 <div className="image-connection-notice" role="status">
                   <span>{notice}</span>
+                  {unsupportedAttention &&
+                    selectedWorkflow?.attention.includes("standard") && (
+                      <button
+                        type="button"
+                        onClick={() => patchRecipe({ attention: "standard" })}
+                      >
+                        Use Standard
+                      </button>
+                    )}
                   <button
                     type="button"
                     className="message-tool-button"
@@ -1155,11 +1184,11 @@ export function ImageFlow({
                               const operation = editing ? "edit" : "generate";
                               const value = {
                                 ...preferences,
-                                [operation]: {
-                                  ...preferences[operation],
-                                  recipe: { ...draft.recipe, prompt: "" },
-                                  seed_mode: draft.seed_mode,
-                                },
+                                [operation]: profileFromDraft(
+                                  preferences[operation],
+                                  draft,
+                                  flow.editMode,
+                                ),
                               };
                               onPreferences(
                                 await writeImage<Preferences>(
@@ -1168,35 +1197,48 @@ export function ImageFlow({
                                   "PUT",
                                 ),
                               );
+                              setDefaultsSaved(true);
                             })
                           }
                         >
-                          Save as defaults
+                          Save as account defaults
                         </button>
                         <button
                           type="button"
+                          disabled={busy}
                           onClick={() => {
                             const profile = editing
                               ? preferences.edit
                               : preferences.generate;
-                            flow.patch({
-                              recipe: {
-                                ...profile.recipe,
-                                workflow: draft.recipe.workflow,
-                                prompt: draft.recipe.prompt,
-                                flow_shift:
-                                  draft.recipe.workflow ===
-                                  "qwen-image-2512-text-to-image/v1"
-                                    ? 3.1
-                                    : null,
-                              },
-                              seed_mode: profile.seed_mode ?? "increment",
-                              count: 1,
-                            });
+                            if (editing)
+                              flow.setEditMode(profile.edit_mode ?? "iterative");
+                            flow.patch(resetDraftSettings(flow.getDraft()!, profile));
                           }}
                         >
-                          Reset settings
+                          Reset to account defaults
                         </button>
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() =>
+                            void flow.guard(async () => {
+                              const current = flow.getDraft();
+                              if (!current) return;
+                              const next = newFlowWithSettings(current);
+                              await flow.save();
+                              await onNewFlow(
+                                next,
+                                editing ? flow.editMode : "generate",
+                              );
+                            })
+                          }
+                        >
+                          <CopyPlus size={18} />
+                          New flow with these settings
+                        </button>
+                        {defaultsSaved && (
+                          <span role="status">Account defaults saved.</span>
+                        )}
                       </div>
                     </div>
                   )}

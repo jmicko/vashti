@@ -7,9 +7,31 @@ use std::collections::BTreeSet;
 pub struct Profile {
     pub recipe: ImageRecipe,
     #[serde(default)]
+    pub backend_id: Option<String>,
+    #[serde(default)]
     pub model_may_change: BTreeSet<String>,
     #[serde(default)]
     pub seed_mode: SeedMode,
+    #[serde(default = "default_image_count")]
+    pub count: Option<u32>,
+    #[serde(default)]
+    pub auto_improve: bool,
+    #[serde(default)]
+    pub prompt_help: Option<PromptHelp>,
+    #[serde(default)]
+    pub edit_mode: EditMode,
+}
+
+fn default_image_count() -> Option<u32> {
+    Some(1)
+}
+
+#[derive(Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EditMode {
+    #[default]
+    Iterative,
+    Original,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -43,12 +65,22 @@ impl Default for Preferences {
         Self {
             generate: Profile {
                 recipe,
+                backend_id: None,
                 seed_mode: SeedMode::Increment,
+                count: default_image_count(),
+                auto_improve: false,
+                prompt_help: None,
+                edit_mode: EditMode::Iterative,
                 model_may_change: BTreeSet::from(["size".into()]),
             },
             edit: Profile {
                 recipe: edit,
+                backend_id: None,
                 seed_mode: SeedMode::Increment,
+                count: default_image_count(),
+                auto_improve: false,
+                prompt_help: None,
+                edit_mode: EditMode::Iterative,
                 model_may_change: BTreeSet::new(),
             },
             hidden_controls: BTreeSet::new(),

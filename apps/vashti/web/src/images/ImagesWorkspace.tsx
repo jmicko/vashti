@@ -14,12 +14,13 @@ import type { BackendModelGroup } from "../types";
 import { ImageAssetProvider } from "./ImageAsset";
 import { ImagePanel, NumberField } from "./controls";
 import { imageControls } from "./GenerationControls";
-import { imageError, imagePath, writeImage } from "./api";
+import { imageError, imagePath, notifyImageFlows, writeImage } from "./api";
 import { ImageFlow } from "./ImageFlow";
 import { ImageGallery } from "./ImageGallery";
 import { workflowLabel, type Run } from "./types";
 import type {
   ImageHost,
+  ImageSession,
   ImageView,
   Preferences,
   ServiceSettings,
@@ -277,6 +278,15 @@ function Workspace({
             if (!sessionId && next === "flow" && id)
               setCreatedFlow({ id, key: `new:${newFlowKey}` });
             onNavigate(next, id);
+          }}
+          onNewFlow={async (draft, mode) => {
+            const next = await writeImage<ImageSession>(
+              `${imagePath}/sessions`,
+              { draft, mode },
+            );
+            setCreatedFlow(null);
+            notifyImageFlows();
+            onNavigate("flow", next.id);
           }}
           isAdmin={isAdmin}
           onOpenBackends={onOpenBackends}

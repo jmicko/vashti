@@ -116,9 +116,16 @@ Start from curated workflow defaults, rather than sharing one set between all
 models. Using imported settings preserves their supported values exactly.
 
 The positive prompt remains reachable and editable even in the minimal view.
-Explicit **Save as default** updates defaults; adjusting the current session does
-not unexpectedly change chat tool defaults or other sessions. Provide a clear
-reset to workflow defaults. Capture effective settings at submission, including
+New flows start from the account's saved generate or edit defaults. Changes in
+a flow persist only in that flow; its next submission uses those changes.
+Explicit **Save as account defaults** updates the selected profile, including
+host/model, seed policy, image count, edit source mode, and prompt-helper settings. It does not
+rewrite existing flows or tool override permissions. **Reset to account defaults**
+restores all of those settings while retaining the current positive prompt and,
+for edits, reference images. **New flow with these settings** copies the current
+setup into a separate flow without changing account defaults; it starts with an
+empty prompt, no references, and no inherited history. Capture effective settings
+at submission, including
 hidden fields, so changes made while a job runs only affect a future submission.
 
 Seed modes are **Random**, **Increment**, and **Fixed**. Resolve and record the

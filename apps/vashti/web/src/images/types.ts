@@ -3,7 +3,11 @@ export type Recipe = {
   width: number; height: number; steps: number; cfg: number;
   attention: "standard" | "fast"; flow_shift?: number | null;
 };
-export type Profile = { recipe: Recipe; model_may_change: string[]; seed_mode?: "random" | "increment" | "fixed" };
+export type Profile = {
+  recipe: Recipe; model_may_change: string[]; seed_mode?: "random" | "increment" | "fixed";
+  backend_id?: string | null; count?: number | null; auto_improve?: boolean; prompt_help?: PromptHelp | null;
+  edit_mode?: "iterative" | "original";
+};
 export type Preferences = { generate: Profile; edit: Profile; hidden_controls: string[] };
 export type PromptHelp = { backend_id: string; model_name: string; guidance: string };
 export type Draft = {
@@ -38,8 +42,26 @@ export function canGenerate(service: ImageService | undefined, recipe: Recipe, r
 }
 export const activeRun = (run: Run) => ["queued", "improving", "generating", "saving", "stopping"].includes(run.status);
 export function newDraft(profile: Profile): Draft {
-  return { recipe: { ...profile.recipe }, input_ids: [], original_input_ids: [], parent_result_id: null,
-    backend_id: null, prompt_version_id: null, seed_mode: profile.seed_mode ?? "increment", count: 1, auto_improve: false, prompt_help: null };
+  return { recipe: { ...profile.recipe, prompt: "" }, input_ids: [], original_input_ids: [], parent_result_id: null,
+    backend_id: profile.backend_id ?? null, prompt_version_id: null, seed_mode: profile.seed_mode ?? "increment",
+    count: profile.count === undefined ? 1 : profile.count, auto_improve: profile.auto_improve ?? false,
+    prompt_help: profile.prompt_help ? { ...profile.prompt_help } : null };
+}
+export function profileFromDraft(profile: Profile, draft: Draft, editMode: "iterative" | "original" = "iterative"): Profile {
+  return { ...profile, recipe: { ...draft.recipe, prompt: "" }, backend_id: draft.backend_id ?? null,
+    seed_mode: draft.seed_mode, count: draft.count, auto_improve: draft.auto_improve,
+    prompt_help: draft.prompt_help ? { ...draft.prompt_help } : null, edit_mode: editMode };
+}
+export function resetDraftSettings(draft: Draft, profile: Profile): Draft {
+  const defaults = newDraft(profile);
+  const editing = defaults.recipe.workflow === "qwen-image-2.1-edit/v1";
+  return { ...draft, ...defaults, recipe: { ...defaults.recipe, prompt: draft.recipe.prompt },
+    input_ids: editing ? [...draft.input_ids] : [], original_input_ids: editing ? [...draft.original_input_ids] : [],
+    parent_result_id: draft.parent_result_id, prompt_version_id: draft.prompt_version_id };
+}
+export function newFlowWithSettings(draft: Draft): Draft {
+  return { ...structuredClone(draft), recipe: { ...draft.recipe, prompt: "" }, input_ids: [], original_input_ids: [],
+    parent_result_id: null, prompt_version_id: null };
 }
 /** Exact parent result IDs preserve branches when a different retry is selected. */
 export function imageLineage(results: ImageResult[], leaf: string | null): ImageResult[] {

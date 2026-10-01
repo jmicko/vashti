@@ -72,6 +72,10 @@ export function useImageFlow(
     leafRef.current = id;
     setLeaf(id);
   }
+  function followRun(run: Run) {
+    chooseLeaf(run.request.draft.parent_result_id);
+    watching.current.set(run.id, selectionEpoch.current);
+  }
   function setEditMode(mode: "iterative" | "original") {
     modeRef.current = mode;
     setEditModeState(mode);
@@ -190,6 +194,8 @@ export function useImageFlow(
         setDraft(value);
         signature.current = JSON.stringify(value);
         setPersisted(signature.current);
+        modeRef.current = preferences.edit.edit_mode ?? "iterative";
+        setEditModeState(modeRef.current);
       }
       if (mounted) setLoaded(true);
     }
@@ -583,6 +589,7 @@ export function useImageFlow(
     select,
     stop,
     chooseLeaf,
+    followRun,
     setNotice,
     setError,
     loadOlder: () =>

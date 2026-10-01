@@ -32,6 +32,7 @@ struct Mock {
     prompt_requests: Mutex<Vec<Value>>,
     hang: bool,
     disconnected: AtomicBool,
+    response_gate: Mutex<Option<Arc<tokio::sync::Notify>>>,
 }
 struct ImageBody {
     chunks: VecDeque<Vec<u8>>,
@@ -63,6 +64,10 @@ async fn image(
     assert!(!headers.contains_key("x-kuno-image-preview-id"));
     let steps = request["steps"].as_u64().unwrap();
     mock.requests.lock().await.push(request);
+    let gate = mock.response_gate.lock().await.clone();
+    if let Some(gate) = gate {
+        gate.notified().await;
+    }
     let mut chunks = VecDeque::from([
         b"{\"type\":\"started\"}\n".to_vec(),
         format!("{}\n",json!({"type":"preview","step":1,"steps":steps,"width":64,"height":64,"png_base64":STANDARD.encode(include_bytes!("fixtures/64.png"))})).into_bytes(),
@@ -164,6 +169,104 @@ fn request(draft: Draft) -> RunRequest {
         retry_result_id: None,
         fixed_endless_confirmed: false,
     }
+}
+
+#[tokio::test]
+async fn account_defaults_are_explicit_owner_scoped_and_backward_compatible() {
+    let (state, _, server) = setup(false).await;
+    let mut legacy = serde_json::to_value(Preferences::default()).unwrap();
+    for operation in ["generate", "edit"] {
+        let profile = legacy[operation].as_object_mut().unwrap();
+        for key in [
+            "backend_id",
+            "count",
+            "auto_improve",
+            "prompt_help",
+            "edit_mode",
+        ] {
+            profile.remove(key);
+        }
+    }
+    sqlx::query("INSERT INTO image_preferences VALUES ('alice', ?)")
+        .bind(legacy.to_string())
+        .execute(&state.db)
+        .await
+        .unwrap();
+    let mut preferences = service::preferences(&state.db, "alice").await.unwrap();
+    assert_eq!(preferences.generate.count, Some(1));
+    assert!(!preferences.generate.auto_improve);
+    assert!(preferences.edit.edit_mode == EditMode::Iterative);
+
+    let session = service::create_session(&state.db, "alice", "Test defaults", "generate", draft())
+        .await
+        .unwrap();
+    assert_eq!(
+        service::preferences(&state.db, "alice")
+            .await
+            .unwrap()
+            .generate
+            .recipe
+            .steps,
+        50
+    );
+    preferences.generate.count = Some(3);
+    preferences.generate.recipe.steps = 40;
+    preferences.generate.backend_id = Some("backend".into());
+    preferences.generate.auto_improve = true;
+    preferences.edit.edit_mode = EditMode::Original;
+    preferences.generate.prompt_help = Some(PromptHelp {
+        backend_id: "backend".into(),
+        model_name: "helper".into(),
+        guidance: "Add detail".into(),
+    });
+    service::save_preferences(&state.db, "alice", preferences.clone())
+        .await
+        .unwrap();
+    let saved = service::preferences(&state.db, "alice").await.unwrap();
+    assert_eq!(saved.generate.count, Some(3));
+    assert_eq!(saved.generate.recipe.steps, 40);
+    assert!(saved.edit.edit_mode == EditMode::Original);
+    assert_eq!(saved.generate.prompt_help.unwrap().guidance, "Add detail");
+    assert_eq!(
+        service::preferences(&state.db, "bob")
+            .await
+            .unwrap()
+            .generate
+            .recipe
+            .steps,
+        50
+    );
+    assert_eq!(
+        service::get_session(&state.db, "alice", &session.id)
+            .await
+            .unwrap()
+            .draft
+            .recipe
+            .steps,
+        1
+    );
+
+    for count in [Some(0), Some(101)] {
+        preferences.generate.count = count;
+        assert!(
+            service::save_preferences(&state.db, "alice", preferences.clone())
+                .await
+                .is_err()
+        );
+    }
+    preferences.generate.count = None;
+    assert!(
+        service::save_preferences(&state.db, "alice", preferences.clone())
+            .await
+            .is_ok()
+    );
+    preferences.generate.prompt_help = None;
+    assert!(
+        service::save_preferences(&state.db, "alice", preferences)
+            .await
+            .is_err()
+    );
+    server.abort();
 }
 async fn completed(state: &AppState, run: &str) -> Run {
     tokio::time::timeout(Duration::from_secs(5), async {
@@ -278,6 +381,98 @@ async fn flows_capture_hosts_allocate_new_seeds_and_replay_submissions_exactly()
         .await
         .unwrap();
     assert_eq!(completed(&state, &run.id).await.status, "complete");
+    server.abort();
+}
+
+#[tokio::test]
+async fn new_branches_persist_selection_without_stealing_later_navigation() {
+    let (state, mock, server) = setup(false).await;
+    let d = draft();
+    let session = service::create_session(&state.db, "alice", "Branches", "generate", d.clone())
+        .await
+        .unwrap();
+    let first_run = service::submit(&state, "alice", &session.id, request(d.clone()))
+        .await
+        .unwrap();
+    assert_eq!(completed(&state, &first_run.id).await.status, "complete");
+    let first = service::results(&state.db, "alice", &session.id, 0)
+        .await
+        .unwrap()
+        .remove(0);
+    let gate = Arc::new(tokio::sync::Notify::new());
+    *mock.response_gate.lock().await = Some(gate.clone());
+    let submission = request(d.clone());
+    let next = service::submit(&state, "alice", &session.id, submission.clone())
+        .await
+        .unwrap();
+    assert!(
+        service::get_session(&state.db, "alice", &session.id)
+            .await
+            .unwrap()
+            .active_result_id
+            .is_none()
+    );
+    service::select_result(&state.db, "alice", &first.id)
+        .await
+        .unwrap();
+    assert_eq!(
+        service::submit(&state, "alice", &session.id, submission)
+            .await
+            .unwrap()
+            .id,
+        next.id
+    );
+    gate.notify_one();
+    assert_eq!(completed(&state, &next.id).await.status, "complete");
+    assert_eq!(
+        service::get_session(&state.db, "alice", &session.id)
+            .await
+            .unwrap()
+            .active_result_id
+            .as_deref(),
+        Some(first.id.as_str())
+    );
+    *mock.response_gate.lock().await = None;
+    let third = service::submit(&state, "alice", &session.id, request(d))
+        .await
+        .unwrap();
+    assert_eq!(completed(&state, &third.id).await.status, "complete");
+    let result = service::results(&state.db, "alice", &session.id, 0)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|result| result.run_id == third.id)
+        .unwrap();
+    assert_eq!(
+        service::get_session(&state.db, "alice", &session.id)
+            .await
+            .unwrap()
+            .active_result_id
+            .as_deref(),
+        Some(result.id.as_str())
+    );
+    let mut edit = draft();
+    edit.recipe.workflow = kuno_protocol::QWEN21_EDIT_RECIPE.into();
+    edit.parent_result_id = Some(first.id);
+    edit.input_ids = vec![first.asset_id];
+    let edit_run = service::submit(&state, "alice", &session.id, request(edit))
+        .await
+        .unwrap();
+    assert_eq!(completed(&state, &edit_run.id).await.status, "complete");
+    let result = service::results(&state.db, "alice", &session.id, 0)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|result| result.run_id == edit_run.id)
+        .unwrap();
+    assert_eq!(
+        service::get_session(&state.db, "alice", &session.id)
+            .await
+            .unwrap()
+            .active_result_id
+            .as_deref(),
+        Some(result.id.as_str())
+    );
     server.abort();
 }
 
