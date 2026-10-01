@@ -112,8 +112,9 @@ remain unverified. The following requirements still apply:
 - The private build script links the static GGML SYCL archive and reviewed
   dynamic vendor closure, preserving the normal CUDA/Vulkan path. Its final link needs
   the `icpx -fsycl` driver to process SYCL device images; a normal GNU linker
-  command alone is insufficient. The private wrapper adds `-fPIC` and an
-  explicit trailing `-lsycl` because Rust supplies `-nodefaultlibs`. Use a separate Cargo target directory.
+  command alone is insufficient. The private wrapper adds `-fPIC`, the Intel compiler runtime libraries, and
+  the complete retained MKL closure because Rust supplies `-nodefaultlibs` and
+  `--as-needed`. Use a separate Cargo target directory.
 - A development CMake configuration uses the exact private `icpx` and `icx`,
   `SD_SYCL=ON`, static engine/GGML, no examples/WebP/WebM, the existing patched
   GGML, and explicit oneDNN/TBB/MKL package roots. Set `CMAKE_POSITION_INDEPENDENT_CODE=ON` for the engine objects used by
@@ -138,15 +139,46 @@ remain unverified. The following requirements still apply:
   silently fall back to a different card/CPU, or expose CUDA Sage attention as a
   supported SYCL choice.
 
-Use the private compiler's final-link driver and a separate Cargo target:
+Use the tested private final-link wrapper and a separate Cargo target. Set
+`kuno_sdk_root` to the reviewed bundle's absolute path when creating this
+executable wrapper; do not rely on inherited compiler search paths:
+
+```sh
+#!/bin/sh
+set -eu
+kuno_sdk_root='/absolute/path/to/reviewed/opt/intel/oneapi'
+ONEAPI_ROOT="$kuno_sdk_root"
+LD_LIBRARY_PATH="$kuno_sdk_root/compiler/2026.1/lib:$kuno_sdk_root/mkl/2026.1/lib:$kuno_sdk_root/tbb/2023.1/lib:$kuno_sdk_root/dnnl/2026.0/lib:$kuno_sdk_root/umf/1.1/lib:$kuno_sdk_root/tcm/1.5/lib"
+export ONEAPI_ROOT LD_LIBRARY_PATH
+exec "$kuno_sdk_root/compiler/2026.1/bin/icpx" \
+  -fsycl -fPIC -shared-intel \
+  -Xs -ze-intel-greater-than-4GB-buffer-required "$@" \
+  -L"$kuno_sdk_root/compiler/2026.1/lib" \
+  -lsycl -lsvml -lirng -limf -lintlc -lirc \
+  -L"$kuno_sdk_root/mkl/2026.1/lib" \
+  -Wl,--no-as-needed \
+  -lmkl_sycl_blas -lmkl_intel_ilp64 -lmkl_sequential -lmkl_core \
+  -Wl,--as-needed
+```
 
 ```bash
 KUNO_DEV_SYCL_BUILD=1 KUNO_ONEAPI_ROOT="$ONEAPI" \
 KUNO_SD_SOURCE_DIR="$SOURCE" KUNO_SD_BUILD_DIR="$BUILD" \
 CARGO_TARGET_DIR="$PRIVATE_CARGO_TARGET" \
-RUSTFLAGS="-Clinker=$ONEAPI/compiler/2026.1/bin/icpx -Clink-arg=-fsycl" \
+RUSTFLAGS="-Clinker=$PRIVATE_SYCL_LINKER" \
 cargo build --locked -p kuno --release --features native-image
 ```
+
+The trailing `--no-as-needed` scope is required: the initial Rust link stripped
+`libmkl_intel_ilp64`, `libmkl_sequential` and `libmkl_core`, so the ELF failed at
+startup with an unresolved `mkl_serv_strnlen_s` despite `ldd` finding every
+listed library. Restore `--as-needed` after this reviewed closure. Verify these
+three libraries, `libmkl_sycl_blas`, `libsycl`, `libdnnl` and `libiomp5` in
+`readelf -d` output. The corrected executable passed CPU-only `--help` startup
+with a cleared environment, reviewed library directories and `LD_BIND_NOW=1`.
+Do not use `LD_PRELOAD` to substitute for the correct link. The wrapper's
+`LD_LIBRARY_PATH` applies to compilation/linking; a standalone launcher must
+separately supply the reviewed runtime paths.
 
 The genuine private CMake configuration uses these settings in addition to the
 explicit compiler/package roots described above:
