@@ -20,9 +20,11 @@ Vashti and Android `0.13.0-beta.2` (APK code
 and validated by the four-artifact signing dry run. Packaged Linux served the
 expected version and final embedded frontend from a fresh data directory. Live
 browser acceptance against installed Kuno is recorded in the coordination guide.
-No artifact upload or binary deployment has occurred. The complete upload is
-approximately 644 MiB. On 2026-10-01, the authorized live Hub and nginx upload
-limits were raised to 1 GiB and verified; the upload-size gate is cleared.
+All four artifacts are published as `v0.13.0-beta.2` on the Hub and their full
+public downloads, SHA-256 checksums, Ed25519 signatures, and prerelease update
+manifests have been verified. Stable remains `v0.12.0`; no stable promotion or
+live Vashti/Kuno binary deployment was performed. The approximately 644 MiB
+upload used the authorized, verified 1 GiB Hub/nginx limits on 2026-10-01.
 Physical Android testing remains outstanding; no device was attached.
 
 ## Source and ownership

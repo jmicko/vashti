@@ -77,7 +77,7 @@ authorizes it.
 
 **Latest application acceptance:** see the beta.2 integration receipt at the end
 of this guide. Kuno's handoff is merged into the normal project checkout; all four
-release artifacts are built and signing-validated, but not published. Live Hub
+beta.2 artifacts are published and full-download/signature verified. Live Hub
 and nginx upload limits are now verified at 1 GiB. Physical Android acceptance
 is still outstanding.
 
@@ -613,3 +613,26 @@ establishes the configured request-size gate, not a completed artifact upload.
 No key was requested/consumed, no release was uploaded, and the physical Android
 and portability limitations above remain unchanged. The earlier 512/500 MiB
 limits in the historical receipt no longer block the beta.2 upload.
+
+### Beta.2 publication receipt (2026-10-01)
+
+Published `v0.13.0-beta.2` using the normal signed, four-artifact multipart path
+and the user-supplied one-time key. The credential was entered through the
+publisher's hidden prompt and was not saved to a file or handoff. The Hub accepted
+the complete request; no subsequent artifact was added to the immutable version.
+
+Public verification covered the release database entry/status, exact release
+notes, SHA256SUMS, all four prerelease manifests, their Ed25519 signatures against
+the repository's compiled public key, artifact filenames/sizes, and full streamed
+downloads whose SHA-256 hashes match the local release files:
+
+| Target | Bytes | SHA-256 |
+| --- | ---: | --- |
+| linux-x86_64 | 9840548 | `bdc8eeffdadf0ab97efa9acc2c1d1625c50f444de396c00b12b29844c5efb577` |
+| android-universal | 52023257 | `e3202deffa2604977961e7df7e1e2d5b94bba69d5eeb85a74bf41e0b69ba3f8d` |
+| kuno-linux-x86_64 | 456424687 | `b74938ea3d4f1b44626ed295680db85ebe051d5ac398593cdf77b1889d27d126` |
+| kuno-sycl-linux-x86_64 | 156166814 | `d242d7628ccb6c6048e7bdb7edca04d1c2e7453404e68667e829aff61b5ddd2f` |
+
+The prerelease channel now returns beta.2; stable remains `v0.12.0`, with no
+promotion, main-branch merge, Git push, or live Vashti/Kuno installation. The
+physical Android and platform/runtime limits in the acceptance receipts remain.
