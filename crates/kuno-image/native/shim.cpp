@@ -62,102 +62,193 @@ static void progress(int step, int steps, float, void* data) {
     if (cancelled && state->context) sd_cancel_generation(state->context,SD_CANCEL_ALL);
     std::fprintf(stderr,"kuno-image: progress %d/%d\n",step,steps);
 }
-extern "C" int kuno_qwen_generate(const char* directory,const char* pci,const char* prompt,const char* negative,
-    int width,int height,int steps,float cfg,float shift,int64_t seed,int version,sd_image_t* references,int reference_count,uint64_t host_available,int fast_attention,
-    void (*receive)(const uint8_t*,size_t,uint32_t,void*),PreviewReceiver preview_receiver,void* userdata) {
+struct KunoQwenSession {
+    std::string directory, pci, backend;
+    std::unique_ptr<sd_ctx_t, decltype(&free_sd_ctx)> context{nullptr, free_sd_ctx};
+    int version = -1;
+    bool fast = false, mlp_f16 = false;
+    uint64_t budget_bytes = 0;
+    KunoQwenSession(const char* directory, const char* pci) : directory(directory), pci(pci) {}
+};
+
+struct CallbackScope {
+    CallbackScope(Progress& state, bool previews) {
+        sd_set_preview_callback(previews ? preview : nullptr, PREVIEW_PROJ, 1, true, false, &state);
+        sd_set_log_callback(discard_sd, nullptr);
+        ggml_log_set(discard_ggml, nullptr);
+        sd_set_progress_callback(progress, &state);
+        sd_set_backend_eval_callback(nullptr, nullptr);
+    }
+    ~CallbackScope() {
+        sd_set_preview_callback(nullptr, PREVIEW_PROJ, 1, true, false, nullptr);
+        sd_set_progress_callback(nullptr, nullptr);
+        sd_set_backend_eval_callback(nullptr, nullptr);
+        // Content-discarding log callbacks have no request-owned userdata.
+    }
+};
+
+extern "C" int kuno_qwen_session_new(const char* directory, const char* pci, void** out) {
+    if (!directory || !pci || !out) return 5;
+    *out = nullptr;
     try {
-        cancelled=0; device_lost.store(false);
-        SignalScope signals; Progress state; state.preview=preview_receiver; state.userdata=userdata;
-        sd_set_preview_callback(preview_receiver ? preview : nullptr, PREVIEW_PROJ, 1, true, false, &state);
-        sd_set_log_callback(discard_sd,nullptr);ggml_log_set(discard_ggml,nullptr);sd_set_progress_callback(progress,&state);
+        *out = new KunoQwenSession(directory, pci);
+        return 0;
+    } catch (...) { return 5; }
+}
+
+extern "C" void kuno_qwen_session_free(void* session) {
+    delete static_cast<KunoQwenSession*>(session);
+}
+
+extern "C" int kuno_qwen_session_generate(void* opaque, const char* prompt, const char* negative,
+    int width, int height, int steps, float cfg, float shift, int64_t seed, int version,
+    sd_image_t* references, int reference_count, uint64_t host_available, int fast_attention,
+    void (*receive)(const uint8_t*,size_t,uint32_t,void*), PreviewReceiver preview_receiver, void* userdata) {
+    auto* session = static_cast<KunoQwenSession*>(opaque);
+    if (!session || !prompt || !negative || !receive) return 5;
+    cancelled = false;
+    device_lost = false;
+    SignalScope signals;
+    Progress state;
+    state.preview = preview_receiver;
+    state.userdata = userdata;
+    CallbackScope callbacks(state, preview_receiver != nullptr);
+    int result = 5;
+    bool request_prepared = false;
+    try {
         ggml_backend_load_all();
-        std::string backend;
-        std::string budget;
-        uint64_t budget_bytes = 0;
         std::vector<KunoImageBackend> candidates;
-        for (size_t i=0;i<ggml_backend_dev_count();++i) {
-            ggml_backend_dev_props props{};ggml_backend_dev_get_props(ggml_backend_dev_get(i),&props);
+        for (size_t i=0; i<ggml_backend_dev_count(); ++i) {
+            ggml_backend_dev_props props{};
+            ggml_backend_dev_get_props(ggml_backend_dev_get(i), &props);
             candidates.push_back({props.device_id, props.name, props.type==GGML_BACKEND_DEVICE_TYPE_GPU});
         }
-        const int selected = kuno_choose_image_backend(candidates, pci);
+        const int selected = kuno_choose_image_backend(candidates, session->pci.c_str());
         if (selected < 0) return 2;
-        {
-            const auto device = ggml_backend_dev_get(selected);
-            ggml_backend_dev_props props{};ggml_backend_dev_get_props(device,&props);
-            if (version && !supports_qwen_int8(device)) return 9;
-            const size_t reserve=std::max<size_t>(1024ull*1024*1024,props.memory_total/10);
-            if (props.memory_free<=reserve) return 6;
-            budget_bytes=props.memory_free-reserve;
-            budget=std::to_string(double(budget_bytes)/(1024.0*1024*1024));
-            backend=props.name;
-        }
-        if (backend.empty()) return 2;
-        if (fast_attention && (!version || backend.compare(0,4,"CUDA") != 0)) return 10;
-        std::fprintf(stderr,"kuno-image: physical GPU verified\n");
-        const bool sycl_backend = backend.compare(0, 4, "SYCL") == 0;
-        if (sycl_backend && !kuno_image_sycl_experiment_enabled()) return 2;
-        if (sycl_backend && !version) return 9;
-        std::fprintf(stderr,"kuno-image: backend %s\n", backend.compare(0,4,"CUDA")==0 ? "CUDA" : sycl_backend ? "SYCL" : "Vulkan");
-        const std::string base(directory);
-        const auto diffusion=base+(version ? "/qwen_image_2.1_int8_convrot.safetensors" : "/qwen_image_2512_fp8_e4m3fn.safetensors");
-        const auto encoder=base+(version ? "/qwen3vl_8b_int8_convrot.safetensors" : "/qwen_2.5_vl_7b_fp8_scaled.safetensors");
-        const auto vae=base+(version ? "/qwen_image_2.1_vae_bf16.safetensors" : "/qwen_image_vae.safetensors");
-        sd_ctx_params_t context;sd_ctx_params_init(&context);
-        context.diffusion_model_path=diffusion.c_str();context.llm_path=encoder.c_str();context.vae_path=vae.c_str();
-        context.backend=backend.c_str();context.params_backend="cpu";context.max_vram=budget.c_str();
-        uint64_t reference_pixels = 0;
-        for (int i=0; i<reference_count; ++i) reference_pixels += uint64_t(references[i].width) * references[i].height;
+        const auto device = ggml_backend_dev_get(selected);
+        ggml_backend_dev_props props{};
+        ggml_backend_dev_get_props(device, &props);
+        const std::string backend(props.name ? props.name : "");
         const bool cuda_backend = backend.compare(0, 4, "CUDA") == 0;
         const bool vulkan_backend = backend.compare(0, 6, "Vulkan") == 0;
+        const bool sycl_backend = backend.compare(0, 4, "SYCL") == 0;
+        if (backend.empty() || (sycl_backend && !kuno_image_sycl_experiment_enabled())) return 2;
+        if (version && !supports_qwen_int8(device)) return 9;
+        if (sycl_backend && !version) return 9;
+        if (fast_attention && (!version || !cuda_backend)) return 10;
         const bool mlp_f16 = kuno_qwen_mlp_f16_experiment(version != 0, vulkan_backend);
         const bool fp16_cache = version && (cuda_backend || vulkan_backend || sycl_backend);
         const uint64_t working_reserve = kuno_qwen_working_reserve(cuda_backend, mlp_f16);
-        if (mlp_f16) {
-            if (budget_bytes < working_reserve || !kuno_qwen_mlp_f16_host_fits(host_available)) return 6;
-            context.tensor_type_rules = "^model\\.diffusion_model\\.transformer_blocks\\.[0-9]+\\.img_mlp\\.(gate_up|out)\\.weight$=f16";
-            std::fprintf(stderr,"kuno-image: experimental dense MLP enabled\n");
+        if (mlp_f16 && !kuno_qwen_mlp_f16_host_fits(host_available)) return 6;
+
+        // Context identity contains only public model/backend configuration.
+        // Dynamic free VRAM excludes our retained weights; keep the original
+        // explicit budget and let the residency manager reclaim its own params.
+        if (!session->context || session->version != version || session->fast != (fast_attention != 0) ||
+            session->mlp_f16 != mlp_f16 || session->backend != backend) {
+            session->context.reset();
+            ggml_backend_dev_get_props(device, &props);
+            const size_t reserve = std::max<size_t>(1024ull*1024*1024, props.memory_total/10);
+            if (props.memory_free <= reserve) return 6;
+            session->budget_bytes = props.memory_free - reserve;
+            if (mlp_f16 && session->budget_bytes < working_reserve) return 6;
+            const std::string budget = std::to_string(double(session->budget_bytes)/(1024.0*1024*1024));
+            const auto diffusion = session->directory + (version ? "/qwen_image_2.1_int8_convrot.safetensors" : "/qwen_image_2512_fp8_e4m3fn.safetensors");
+            const auto encoder = session->directory + (version ? "/qwen3vl_8b_int8_convrot.safetensors" : "/qwen_2.5_vl_7b_fp8_scaled.safetensors");
+            const auto vae = session->directory + (version ? "/qwen_image_2.1_vae_bf16.safetensors" : "/qwen_image_vae.safetensors");
+            sd_ctx_params_t context;
+            sd_ctx_params_init(&context);
+            context.diffusion_model_path = diffusion.c_str();
+            context.llm_path = encoder.c_str();
+            context.vae_path = vae.c_str();
+            context.backend = backend.c_str();
+            context.params_backend = "cpu";
+            context.max_vram = budget.c_str();
+            context.conditioning_cache_size = 0;
+            if (mlp_f16) context.tensor_type_rules = "^model\\.diffusion_model\\.transformer_blocks\\.[0-9]+\\.img_mlp\\.(gate_up|out)\\.weight$=f16";
+            context.sage_attn = fast_attention != 0;
+            context.n_threads = 8;
+            context.diffusion_flash_attn = true;
+            context.enable_mmap = true;
+            context.rng_type = CPU_RNG;
+            context.sampler_rng_type = CPU_RNG;
+            std::fprintf(stderr, "kuno-image: physical GPU verified\n");
+            std::fprintf(stderr, "kuno-image: backend %s\n", cuda_backend ? "CUDA" : sycl_backend ? "SYCL" : "Vulkan");
+            std::fprintf(stderr, "kuno-image: loading models\n");
+            session->context.reset(new_sd_ctx(&context));
+            if (!session->context) return device_lost.load() ? 8 : 3;
+            session->version = version;
+            session->fast = fast_attention != 0;
+            session->mlp_f16 = mlp_f16;
+            session->backend = backend;
+        } else {
+            std::fprintf(stderr, "kuno-image: reusing resident models\n");
         }
-        // Host-cache overlap is validated only on CUDA. Vulkan/SYCL use a resident
-        // FP16 cache when the full-weight budget fits, otherwise disables it.
-        if (version && cuda_backend && kuno_qwen_host_prefix_cache_fits(budget_bytes, host_available,
-                reference_pixels, std::strlen(prompt) + std::strlen(negative), cfg != 1.f)) {
-            context.model_args="qwen_image_2_1_prefix_cache_f16=true,qwen_image_2_1_prefix_cache_cpu=true";
-            std::fprintf(stderr,"kuno-image: prefix cache in bounded system RAM\n");
-        } else if (version && !kuno_qwen_prefix_cache_fits(budget_bytes, reference_pixels,
-                std::strlen(prompt) + std::strlen(negative), cfg != 1.f, fp16_cache, working_reserve)) {
-            context.model_args="qwen_image_2_1_prefix_cache=false";
-            std::fprintf(stderr,"kuno-image: prefix cache disabled for memory budget\n");
-        } else if (fp16_cache) {
-            context.model_args="qwen_image_2_1_prefix_cache_f16=true";
+        state.context = session->context.get();
+        uint64_t reference_pixels = 0;
+        for (int i=0; i<reference_count; ++i) reference_pixels += uint64_t(references[i].width) * references[i].height;
+        // Prompt, reference shape, CFG and host memory are evaluated anew. No
+        // request content enters the context key or survives the cleanup API.
+        const bool host_cache = version && cuda_backend && kuno_qwen_host_prefix_cache_fits(
+            session->budget_bytes, host_available, reference_pixels,
+            std::strlen(prompt) + std::strlen(negative), cfg != 1.f);
+        const bool prefix_cache = version && (host_cache || kuno_qwen_prefix_cache_fits(
+            session->budget_bytes, reference_pixels, std::strlen(prompt) + std::strlen(negative),
+            cfg != 1.f, fp16_cache, working_reserve));
+        if (!sd_kuno_prepare_image_request(state.context, prefix_cache, fp16_cache, host_cache)) {
+            session->context.reset();
+            return 11;
         }
-        context.sage_attn=fast_attention != 0;
-        if (fast_attention) std::fprintf(stderr,"kuno-image: fast attention enabled\n");
-        context.n_threads=8;context.diffusion_flash_attn=true;context.enable_mmap=true;
-        context.rng_type=CPU_RNG;context.sampler_rng_type=CPU_RNG;
-        std::fprintf(stderr,"kuno-image: loading models\n");
-        std::unique_ptr<sd_ctx_t,decltype(&free_sd_ctx)> ctx(new_sd_ctx(&context),free_sd_ctx);
-        if (!ctx) return device_lost.load() ? 8 : 3;
-        if (cancelled) return device_lost.load() ? 8 : 7;
-        state.context=ctx.get();
-        sd_img_gen_params_t request;sd_img_gen_params_init(&request);
-        request.prompt=prompt;request.negative_prompt=negative;request.width=width;request.height=height;request.batch_count=1;
-        request.seed=seed;request.strength=1.0f;request.sample_params.sample_steps=steps;
-        request.sample_params.sample_method=EULER_SAMPLE_METHOD;request.sample_params.scheduler=version ? FLUX_SCHEDULER : SIMPLE_SCHEDULER;
-        request.sample_params.guidance.txt_cfg=cfg;if (!version) request.sample_params.flow_shift=shift;
-        request.ref_images=references;request.ref_images_count=reference_count;
-        if (version) request.ref_image_args="resize_before_vae=false";
-        sd_image_t* images=nullptr;int count=0;
-        std::fprintf(stderr,"kuno-image: generating\n");
-        bool ok=generate_image(ctx.get(),&request,&images,&count);
-        if (cancelled) { if (images) free_sd_images(images,count); return device_lost.load() ? 8 : 7; }
-        if (!ok || !images || count!=1 || images[0].width!=(uint32_t)width || images[0].height!=(uint32_t)height || (images[0].channel!=3 && images[0].channel!=4) || !images[0].data) {
-            if (images) free_sd_images(images,count);
-            return device_lost.load() ? 8 : 4;
+        request_prepared = true;
+        if (host_cache) std::fprintf(stderr, "kuno-image: prefix cache in bounded system RAM\n");
+        else if (version && !prefix_cache) std::fprintf(stderr, "kuno-image: prefix cache disabled for memory budget\n");
+        if (cancelled) result = device_lost.load() ? 8 : 7;
+        else {
+            sd_img_gen_params_t request;
+            sd_img_gen_params_init(&request);
+            request.prompt = prompt;
+            request.negative_prompt = negative;
+            request.width = width;
+            request.height = height;
+            request.batch_count = 1;
+            request.seed = seed;
+            request.strength = 1.0f;
+            request.sample_params.sample_steps = steps;
+            request.sample_params.sample_method = EULER_SAMPLE_METHOD;
+            request.sample_params.scheduler = version ? FLUX_SCHEDULER : SIMPLE_SCHEDULER;
+            request.sample_params.guidance.txt_cfg = cfg;
+            if (!version) request.sample_params.flow_shift = shift;
+            request.ref_images = references;
+            request.ref_images_count = reference_count;
+            if (version) request.ref_image_args = "resize_before_vae=false";
+            struct Images {
+                sd_image_t* data = nullptr;
+                int count = 0;
+                ~Images() { if (data) free_sd_images(data, count); }
+            } images;
+            std::fprintf(stderr, "kuno-image: generating\n");
+            const bool ok = generate_image(state.context, &request, &images.data, &images.count);
+            if (cancelled) result = device_lost.load() ? 8 : 7;
+            else if (!ok || !images.data || images.count != 1 || images.data[0].width != (uint32_t)width ||
+                images.data[0].height != (uint32_t)height || (images.data[0].channel != 3 && images.data[0].channel != 4) || !images.data[0].data) {
+                result = device_lost.load() ? 8 : 4;
+            } else {
+                receive(images.data[0].data, (size_t)width*height*images.data[0].channel, images.data[0].channel, userdata);
+                result = 0;
+            }
         }
-        receive(images[0].data,(size_t)width*height*images[0].channel,images[0].channel,userdata);
-        free_sd_images(images,count);
-        return 0;
     } catch (const std::exception& error) {
-        return device_lost.load() || std::strstr(error.what(),"ErrorDeviceLost") ? 8 : 5;
-    } catch (...) { return device_lost.load() ? 8 : 5; }
+        result = device_lost.load() || std::strstr(error.what(), "ErrorDeviceLost") ? 8 : 5;
+    } catch (...) { result = device_lost.load() ? 8 : 5; }
+    // A successful result is not acknowledged until cleanup is synchronized.
+    // Any uncertainty destroys the complete context before returning to Rust.
+    bool cleared = !request_prepared;
+    try {
+        if (request_prepared && session->context) cleared = sd_kuno_clear_image_request(session->context.get());
+    } catch (...) { cleared = false; }
+    state.context = nullptr;
+    if (!cleared) result = device_lost.load() ? 8 : 11;
+    if (result != 0) session->context.reset();
+    if (cleared && request_prepared) std::fprintf(stderr, "kuno-image: request content cleared\n");
+    return result;
 }

@@ -4,6 +4,7 @@ use kuno_protocol::ImageRecipe;
 use std::{
     ffi::{CString, c_char, c_void},
     path::Path,
+    ptr::NonNull,
 };
 #[repr(C)]
 struct NativeImage {
@@ -13,9 +14,14 @@ struct NativeImage {
     data: *mut u8,
 }
 unsafe extern "C" {
-    fn kuno_qwen_generate(
+    fn kuno_qwen_session_new(
         directory: *const c_char,
         pci: *const c_char,
+        session: *mut *mut c_void,
+    ) -> i32;
+    fn kuno_qwen_session_free(session: *mut c_void);
+    fn kuno_qwen_session_generate(
+        session: *mut c_void,
         prompt: *const c_char,
         negative: *const c_char,
         width: i32,
@@ -94,92 +100,137 @@ extern "C" fn preview(
     frame.extend_from_slice(&png);
     let _ = crate::preview::write_frame(1, &frame);
 }
-/// Call once in an isolated worker with core dumps/swap disabled. No file or
-/// logging output contains inference content. The result is an in-memory PNG.
+static ENGINE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Public model context owned by one private worker. Calls are serialized and
+/// request-derived native state is synchronously cleared before returning.
+/// Creation is lazy: the first recipe selects the model version and attention.
+/// Keep the session on its worker thread; callbacks are process-global.
+pub struct Session {
+    native: NonNull<c_void>,
+}
+
+impl Session {
+    pub fn new(directory: &Path, pci: &str) -> Result<Self, &'static str> {
+        let directory = CString::new(directory.to_str().ok_or("image_model_directory_invalid")?)
+            .map_err(|_| "native_image_string_invalid")?;
+        let pci = CString::new(pci).map_err(|_| "native_image_string_invalid")?;
+        let mut native = std::ptr::null_mut();
+        // SAFETY: the shim copies both strings and only returns an owned pointer.
+        let code = unsafe { kuno_qwen_session_new(directory.as_ptr(), pci.as_ptr(), &mut native) };
+        if code != 0 {
+            return Err("image_engine_unavailable");
+        }
+        Ok(Self {
+            native: NonNull::new(native).ok_or("image_engine_unavailable")?,
+        })
+    }
+
+    /// Generate in a worker with core dumps/swap disabled. Only public weights
+    /// remain resident after success; prompts, references, latents and caches
+    /// are freed before the in-memory PNG is returned.
+    pub fn generate(
+        &mut self,
+        recipe: &ImageRecipe,
+        previews: bool,
+    ) -> Result<Vec<u8>, &'static str> {
+        let _exclusive = ENGINE.lock().map_err(|_| "image_engine_unavailable")?;
+        recipe.validate_execution()?;
+        let seed = recipe
+            .seed
+            .parse::<i64>()
+            .map_err(|_| "native_image_seed_range_unsupported")?;
+        let c = |s: &str| CString::new(s).map_err(|_| "native_image_string_invalid");
+        let prompt = c(&recipe.prompt)?;
+        let negative = c(&recipe.negative_prompt)?;
+        let mut decoded = crate::references::decode(&recipe.reference_images)?;
+        crate::references::resize_for_qwen21(&mut decoded)?;
+        let mut references: Vec<NativeImage> = decoded
+            .iter_mut()
+            .map(|p| NativeImage {
+                width: p.width,
+                height: p.height,
+                channel: 4,
+                data: p.rgba.as_mut_ptr(),
+            })
+            .collect();
+        let mut pixels = (Vec::<u8>::new(), 0u32, recipe.steps);
+        let code = unsafe {
+            kuno_qwen_session_generate(
+                self.native.as_ptr(),
+                prompt.as_ptr(),
+                negative.as_ptr(),
+                recipe.width as i32,
+                recipe.height as i32,
+                recipe.steps as i32,
+                recipe.cfg as f32,
+                recipe.flow_shift.unwrap_or(0.0) as f32,
+                seed,
+                i32::from(recipe.workflow != kuno_protocol::QWEN_RECIPE),
+                references.as_mut_ptr(),
+                references.len() as i32,
+                crate::host_memory::available(),
+                i32::from(recipe.attention == kuno_protocol::ImageAttention::Fast),
+                receive,
+                previews.then_some(preview),
+                &mut pixels as *mut _ as *mut c_void,
+            )
+        };
+        match code {
+            0 => (),
+            2 => return Err("image_physical_gpu_not_found"),
+            3 => return Err("image_model_load_failed"),
+            4 => return Err("image_generation_failed"),
+            6 => return Err("image_gpu_memory_unavailable"),
+            7 => return Err("image_cancelled"),
+            8 => return Err("image_vulkan_device_lost"),
+            9 => return Err("image_gpu_int8_unsupported"),
+            10 => return Err("image_attention_unsupported"),
+            11 => return Err("image_request_cleanup_failed"),
+            _ => return Err("image_native_runtime_failed"),
+        }
+        if !matches!(pixels.1, 3 | 4)
+            || pixels.0.len() != recipe.width as usize * recipe.height as usize * pixels.1 as usize
+        {
+            return Err("image_native_output_invalid");
+        }
+        let mut out = Vec::new();
+        {
+            let mut encoder = png::Encoder::new(&mut out, recipe.width, recipe.height);
+            encoder.set_color(if pixels.1 == 4 {
+                png::ColorType::Rgba
+            } else {
+                png::ColorType::Rgb
+            });
+            encoder.set_depth(png::BitDepth::Eight);
+            let mut writer = encoder
+                .write_header()
+                .map_err(|_| "image_encoding_failed")?;
+            writer
+                .write_image_data(&pixels.0)
+                .map_err(|_| "image_encoding_failed")?;
+        }
+        Ok(out)
+    }
+}
+
+impl Drop for Session {
+    fn drop(&mut self) {
+        let _exclusive = ENGINE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        // SAFETY: this is the sole owner and no synchronous generate is active.
+        unsafe { kuno_qwen_session_free(self.native.as_ptr()) };
+    }
+}
+
+/// Compatibility entry for direct one-shot callers. The context is destroyed
+/// immediately afterward; the gateway's resident worker owns a `Session`.
 pub fn generate(
     directory: &Path,
     pci: &str,
     recipe: &ImageRecipe,
     previews: bool,
 ) -> Result<Vec<u8>, &'static str> {
-    static ENGINE: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    let _exclusive = ENGINE.lock().map_err(|_| "image_engine_unavailable")?;
-    recipe.validate_execution()?;
-    let seed = recipe
-        .seed
-        .parse::<i64>()
-        .map_err(|_| "native_image_seed_range_unsupported")?;
-    let c = |s: &str| CString::new(s).map_err(|_| "native_image_string_invalid");
-    let directory = c(directory.to_str().ok_or("image_model_directory_invalid")?)?;
-    let pci = c(pci)?;
-    let prompt = c(&recipe.prompt)?;
-    let negative = c(&recipe.negative_prompt)?;
-    let mut decoded = crate::references::decode(&recipe.reference_images)?;
-    crate::references::resize_for_qwen21(&mut decoded)?;
-    let mut references: Vec<NativeImage> = decoded
-        .iter_mut()
-        .map(|p| NativeImage {
-            width: p.width,
-            height: p.height,
-            channel: 4,
-            data: p.rgba.as_mut_ptr(),
-        })
-        .collect();
-    let mut pixels = (Vec::<u8>::new(), 0u32, recipe.steps);
-    let code = unsafe {
-        kuno_qwen_generate(
-            directory.as_ptr(),
-            pci.as_ptr(),
-            prompt.as_ptr(),
-            negative.as_ptr(),
-            recipe.width as i32,
-            recipe.height as i32,
-            recipe.steps as i32,
-            recipe.cfg as f32,
-            recipe.flow_shift.unwrap_or(0.0) as f32,
-            seed,
-            i32::from(recipe.workflow != kuno_protocol::QWEN_RECIPE),
-            references.as_mut_ptr(),
-            references.len() as i32,
-            crate::host_memory::available(),
-            i32::from(recipe.attention == kuno_protocol::ImageAttention::Fast),
-            receive,
-            previews.then_some(preview),
-            &mut pixels as *mut _ as *mut c_void,
-        )
-    };
-    match code {
-        0 => (),
-        2 => return Err("image_physical_gpu_not_found"),
-        3 => return Err("image_model_load_failed"),
-        4 => return Err("image_generation_failed"),
-        6 => return Err("image_gpu_memory_unavailable"),
-        7 => return Err("image_cancelled"),
-        8 => return Err("image_vulkan_device_lost"),
-        9 => return Err("image_gpu_int8_unsupported"),
-        10 => return Err("image_attention_unsupported"),
-        _ => return Err("image_native_runtime_failed"),
-    }
-    if !matches!(pixels.1, 3 | 4)
-        || pixels.0.len() != recipe.width as usize * recipe.height as usize * pixels.1 as usize
-    {
-        return Err("image_native_output_invalid");
-    }
-    let mut out = Vec::new();
-    {
-        let mut encoder = png::Encoder::new(&mut out, recipe.width, recipe.height);
-        encoder.set_color(if pixels.1 == 4 {
-            png::ColorType::Rgba
-        } else {
-            png::ColorType::Rgb
-        });
-        encoder.set_depth(png::BitDepth::Eight);
-        let mut writer = encoder
-            .write_header()
-            .map_err(|_| "image_encoding_failed")?;
-        writer
-            .write_image_data(&pixels.0)
-            .map_err(|_| "image_encoding_failed")?;
-    }
-    Ok(out)
+    Session::new(directory, pci)?.generate(recipe, previews)
 }
