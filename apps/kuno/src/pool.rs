@@ -149,16 +149,59 @@ impl Pool {
         model: &str,
         digest: &str,
     ) -> Result<Job> {
+        self.prepare_inner(path, body, model, digest, None).await
+    }
+
+    /// Preserve an idle image runtime whenever a different physical GPU can
+    /// serve the request. Sharing its GPU requires an exact prior load profile
+    /// and the normal live-memory placement check; image allocations already
+    /// reduce physical free memory and must not be charged a second time.
+    ///
+    /// The gateway may handle `image_resident_needs_eviction` by proving the
+    /// image process reaped, then calling ordinary `prepare` once. No useful
+    /// inference payload has been sent by either preparation operation.
+    pub async fn prepare_with_resident_image(
+        &self,
+        path: &str,
+        body: &mut Value,
+        model: &str,
+        digest: &str,
+        image_pci: &str,
+    ) -> Result<Job> {
+        self.prepare_inner(path, body, model, digest, Some(image_pci))
+            .await
+    }
+
+    async fn prepare_inner(
+        &self,
+        path: &str,
+        body: &mut Value,
+        model: &str,
+        digest: &str,
+        image_pci: Option<&str>,
+    ) -> Result<Job> {
         let show = self
             .post_metadata("/api/show", &json!({"model":model}))
             .await?;
         let context = request_context(self.config.workers[0].context_length, path, body, &show)?;
         self.release_catalog_residents().await?;
-        let mut order = Vec::new();
+        let mut candidates = Vec::new();
         for (i, worker) in self.workers.iter().enumerate() {
-            order.push((worker.preference(digest, context).await, i));
+            let shared = image_pci.is_some_and(|pci| {
+                self.config.workers[i]
+                    .device
+                    .pci_address()
+                    .eq_ignore_ascii_case(pci)
+            });
+            candidates.push(WorkerCandidate {
+                index: i,
+                preference: worker.preference(digest, context).await,
+                shared,
+                eligible: !shared || worker.resident_image_eligible(digest, context).await,
+            });
         }
-        order.sort();
+        let has_shared_worker = candidates.iter().any(|candidate| candidate.shared);
+        let order = preparation_order(candidates);
         let request = LoadRequest {
             model: model.into(),
             digest: digest.into(),
@@ -167,15 +210,33 @@ impl Pool {
             peak_bytes: 0,
         };
         let mut last_error = "managed_no_worker_available";
-        for (_, i) in order {
+        for candidate in order {
+            let i = candidate.index;
             // Paths are administrator configuration, never request fields.
-            std::fs::create_dir_all(&self.config.workers[i].home)
-                .map_err(|_| "managed_worker_home_unavailable")?;
-            match self.workers[i].prepare(request.clone()).await {
+            if std::fs::create_dir_all(&self.config.workers[i].home).is_err() {
+                if image_pci.is_none() {
+                    return Err("managed_worker_home_unavailable");
+                }
+                last_error = "managed_worker_home_unavailable";
+                continue;
+            }
+            let result = if candidate.shared {
+                self.workers[i]
+                    .prepare_with_resident_image(request.clone())
+                    .await
+            } else {
+                self.workers[i].prepare(request.clone()).await
+            };
+            match result {
                 Ok(job) => return Ok(job),
                 Err(error) => {
                     last_error = error;
                     if error == "resource_recovery_required" {
+                        if candidate.shared {
+                            // Recovery spawns/loads only after the gateway has
+                            // released the image and proved its process gone.
+                            return Err("image_resident_needs_eviction");
+                        }
                         self.workers[i].recover().await?;
                         match self.workers[i].prepare(request.clone()).await {
                             Ok(job) => return Ok(job),
@@ -185,7 +246,11 @@ impl Pool {
                 }
             }
         }
-        Err(last_error)
+        if has_shared_worker {
+            Err("image_resident_needs_eviction")
+        } else {
+            Err(last_error)
+        }
     }
 
     /// Caller holds the gateway-wide lease for catalog/opaque operations.
@@ -297,6 +362,19 @@ impl Pool {
     }
 }
 
+struct WorkerCandidate {
+    index: usize,
+    preference: u8,
+    shared: bool,
+    eligible: bool,
+}
+
+fn preparation_order(mut candidates: Vec<WorkerCandidate>) -> Vec<WorkerCandidate> {
+    candidates.retain(|candidate| candidate.eligible);
+    candidates.sort_by_key(|candidate| (candidate.shared, candidate.preference, candidate.index));
+    candidates
+}
+
 async fn read_metadata(mut response: reqwest::Response) -> Result<Value> {
     if !response.status().is_success() {
         return Err("managed_model_metadata_unavailable");
@@ -398,6 +476,89 @@ fn request_context(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resident_image_routes_other_gpu_first_and_excludes_unprofiled_shared_loads() {
+        let order = preparation_order(vec![
+            WorkerCandidate {
+                index: 0,
+                preference: 0,
+                shared: true,
+                eligible: true,
+            },
+            WorkerCandidate {
+                index: 1,
+                preference: 3,
+                shared: false,
+                eligible: true,
+            },
+            WorkerCandidate {
+                index: 2,
+                preference: 1,
+                shared: false,
+                eligible: true,
+            },
+            WorkerCandidate {
+                index: 3,
+                preference: 0,
+                shared: true,
+                eligible: false,
+            },
+        ]);
+        assert_eq!(
+            order
+                .into_iter()
+                .map(|candidate| candidate.index)
+                .collect::<Vec<_>>(),
+            [2, 1, 0]
+        );
+    }
+
+    #[test]
+    fn shared_image_allocations_use_physical_free_memory_without_double_counting() {
+        use crate::placement::{Candidate, Decision, Device, Requirement, Snapshot, Workload};
+        use std::time::Instant;
+        let gib = 1024 * 1024 * 1024;
+        // Six GiB of live free memory already reflects a 24 GiB image on this
+        // 32 GiB GPU. A five GiB known LLM peak and one GiB reserve fit exactly.
+        let mut snapshot = Snapshot {
+            sampled_at: Instant::now(),
+            devices: vec![Device {
+                id: "gpu".into(),
+                total_bytes: 32 * gib,
+                free_bytes: Some(6 * gib),
+                reserve_bytes: gib,
+            }],
+            residents: vec![],
+            busy_devices: Default::default(),
+            busy_workers: Default::default(),
+        };
+        let candidate = Candidate {
+            worker: "llm".into(),
+            workload: Workload {
+                model_digest: "a".repeat(64),
+                runtime_fingerprint: "owned-runtime".into(),
+                settings_fingerprint: "context:4096".into(),
+            },
+            memory: vec![Requirement {
+                device: "gpu".into(),
+                resident_bytes: 4 * gib,
+                peak_bytes: 5 * gib,
+            }],
+            device_control_verified: true,
+        };
+        let decide = |snapshot: &Snapshot| {
+            crate::placement::plan(
+                snapshot,
+                std::slice::from_ref(&candidate),
+                Instant::now(),
+                Duration::from_secs(1),
+            )
+        };
+        assert!(matches!(decide(&snapshot), Decision::Ready(_)));
+        snapshot.devices[0].free_bytes = Some(6 * gib - 1);
+        assert!(matches!(decide(&snapshot), Decision::Unavailable(_)));
+    }
 
     #[tokio::test]
     async fn failed_startup_is_reaped_without_stopping_healthy_workers() {

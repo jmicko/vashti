@@ -116,10 +116,13 @@ impl ManagedWorker {
         self.reservations.reconciled(&self.scope())
     }
 
-    async fn spawn_locked(&self, state: &mut State) -> Result<()> {
+    async fn spawn_locked(&self, state: &mut State, image_resident: bool) -> Result<()> {
         if state.worker.is_none() {
-            let samples = self.unloaded_samples().await;
-            self.history.lock().unwrap().calibrate(&samples);
+            if !image_resident {
+                let samples = self.unloaded_samples().await;
+                self.history.lock().unwrap().calibrate(&samples);
+                state.profiles.clear();
+            }
             let worker = Worker::spawn(self.config.clone())?;
             self.pid.store(
                 worker.process_id().ok_or("worker_pid_unavailable")?,
@@ -127,7 +130,6 @@ impl ManagedWorker {
             );
             state.worker = Some(worker);
             state.records.clear();
-            state.profiles.clear();
         }
         Ok(())
     }
@@ -138,7 +140,7 @@ impl ManagedWorker {
         let mut lease = self.reservations.acquire(self.scope()).await?;
         let mut state = self.state.lock().await;
         lease.dispatched()?;
-        if let Err(error) = self.spawn_locked(&mut state).await {
+        if let Err(error) = self.spawn_locked(&mut state, false).await {
             lease.complete();
             return Err(error);
         }
@@ -153,6 +155,29 @@ impl ManagedWorker {
     }
 
     pub async fn prepare(self: &Arc<Self>, request: LoadRequest) -> Result<Job> {
+        self.prepare_inner(request, false).await
+    }
+
+    /// Shared-device preparation may only use a profile learned before the
+    /// image was retained. An isolated probe while image weights are resident
+    /// would both risk CPU spill and mistake those allocations for a baseline.
+    pub async fn prepare_with_resident_image(
+        self: &Arc<Self>,
+        request: LoadRequest,
+    ) -> Result<Job> {
+        self.prepare_inner(request, true).await
+    }
+
+    pub async fn resident_image_eligible(&self, digest: &str, context: u32) -> bool {
+        let state = self.state.lock().await;
+        state.profiles.contains_key(&(digest.to_owned(), context))
+    }
+
+    async fn prepare_inner(
+        self: &Arc<Self>,
+        request: LoadRequest,
+        image_resident: bool,
+    ) -> Result<Job> {
         if request.model.is_empty()
             || request.model.len() > 512
             || request.model.chars().any(char::is_control)
@@ -166,6 +191,16 @@ impl ManagedWorker {
         }
         let mut lease = self.reservations.acquire(self.scope()).await?;
         let mut state = self.state.clone().lock_owned().await;
+        // Recheck under the actual job lock; ordering is advisory. Do not
+        // dispatch, spawn, calibrate or probe an unprofiled shared-device load.
+        if image_resident
+            && !state
+                .profiles
+                .contains_key(&(request.digest.clone(), request.context))
+        {
+            lease.complete();
+            return Err("image_resident_needs_eviction");
+        }
         // Startup itself allocates driver resources, so even cancellation here
         // requires supervisor reconciliation before this scope is reused.
         lease.dispatched()?;
@@ -175,12 +210,14 @@ impl ManagedWorker {
                 state.worker.as_ref().and_then(Worker::process_id),
                 Some(self.config.device.pci_address()),
             );
-            if let Err(error) = self.spawn_locked(&mut state).await {
+            if let Err(error) = self.spawn_locked(&mut state, image_resident).await {
                 attempt_span.finish(EventOutcome::Failed);
                 lease.complete();
                 return Err(error);
             }
-            let result = self.prepare_locked(&mut state, &request).await;
+            let result = self
+                .prepare_locked(&mut state, &request, image_resident)
+                .await;
             attempt_span.result(&result);
             match result {
                 Ok(address) => {
@@ -192,6 +229,17 @@ impl ManagedWorker {
                     });
                 }
                 Err(error) => {
+                    if image_resident {
+                        // This device's unloaded baseline still contains the
+                        // image. Reap our failed LLM worker, but neither learn
+                        // a bad combination nor retry an isolated load here.
+                        state.worker.as_mut().unwrap().stop().await?;
+                        state.worker = None;
+                        self.pid.store(0, Ordering::Release);
+                        state.records.clear();
+                        lease.complete();
+                        return Err("image_resident_needs_eviction");
+                    }
                     let previous_residents = state.records.len();
                     let resident_workloads = state
                         .records
@@ -255,12 +303,17 @@ impl ManagedWorker {
         crate::learning::settle(|| self.memory_sample(), baseline).await
     }
 
-    async fn prepare_locked(&self, state: &mut State, request: &LoadRequest) -> Result<SocketAddr> {
+    async fn prepare_locked(
+        &self,
+        state: &mut State,
+        request: &LoadRequest,
+        image_resident: bool,
+    ) -> Result<SocketAddr> {
         // The state already owns the process: cancellation during discovery or
         // loading cannot lose the handle needed to stop and reap it.
         state.worker.as_mut().unwrap().ready().await?;
         let mut request = request.clone();
-        if request.peak_bytes == 0 {
+        if request.peak_bytes == 0 || image_resident {
             if let Some(&(resident, peak)) = state
                 .profiles
                 .get(&(request.digest.clone(), request.context))
@@ -274,6 +327,9 @@ impl ManagedWorker {
                 request.resident_bytes = resident;
                 request.peak_bytes = peak;
             } else {
+                if image_resident {
+                    return Err("image_resident_needs_eviction");
+                }
                 Span::event(
                     Stage::ManagedProfile,
                     EventOutcome::IsolatedProbe,
@@ -669,6 +725,122 @@ mod tests {
             max_loaded_models: 8,
             context_length: 4096,
         }
+    }
+
+    #[tokio::test]
+    async fn resident_image_refuses_first_use_without_spawning_or_learning() {
+        let reservations = Reservations::new(4, Duration::from_secs(1));
+        let mut config = config();
+        // If the protected path attempted to spawn, it would fail with a
+        // worker error rather than the eviction signal. No GPU is touched.
+        config.executable = "/kuno-test-missing-ollama".into();
+        let worker =
+            ManagedWorker::new(config, "test-worker".into(), 1, reservations.clone()).unwrap();
+        let digest = "a".repeat(64);
+        let history_before = serde_json::to_value(worker.learning()).unwrap();
+        assert!(!worker.resident_image_eligible(&digest, 4096).await);
+        let request = LoadRequest {
+            model: "synthetic".into(),
+            digest: digest.clone(),
+            context: 4096,
+            resident_bytes: 0,
+            peak_bytes: 0,
+        };
+        assert!(matches!(
+            worker.prepare_with_resident_image(request.clone()).await,
+            Err("image_resident_needs_eviction")
+        ));
+        assert!(worker.state.lock().await.worker.is_none());
+        assert_eq!(worker.pid.load(Ordering::Acquire), 0);
+        assert_eq!(
+            serde_json::to_value(worker.learning()).unwrap(),
+            history_before
+        );
+        assert!(!reservations.recovery_required());
+        assert!(reservations.quarantined().is_empty());
+
+        // Image admission stopped the previous LLM process, but its exact
+        // same-backend profile remains usable in RAM. Different context/model
+        // workloads must still trigger eviction rather than an isolated probe.
+        worker
+            .state
+            .lock()
+            .await
+            .profiles
+            .insert((digest.clone(), 4096), (1024 * 1024, 2 * 1024 * 1024));
+        assert!(worker.resident_image_eligible(&digest, 4096).await);
+        assert!(!worker.resident_image_eligible(&digest, 8192).await);
+        assert!(!worker.resident_image_eligible(&"b".repeat(64), 4096).await);
+        let mut request = request;
+        request.context = 8192;
+        assert!(matches!(
+            worker.prepare_with_resident_image(request).await,
+            Err("image_resident_needs_eviction")
+        ));
+        assert!(!reservations.recovery_required());
+        assert_eq!(
+            serde_json::to_value(worker.learning()).unwrap(),
+            history_before
+        );
+    }
+
+    #[tokio::test]
+    async fn resident_image_failed_known_load_reaps_without_calibration_or_retry() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let executable = directory.path().join("failed-ollama");
+        std::fs::write(
+            &executable,
+            "#!/bin/sh\necho x >> \"$HOME/spawns\"\nexit 1\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut config = config();
+        config.executable = executable;
+        config.models = directory.path().into();
+        config.home = directory.path().into();
+        config.address = port.local_addr().unwrap();
+        drop(port);
+        let reservations = Reservations::new(4, Duration::from_secs(1));
+        let worker =
+            ManagedWorker::new(config, "test-worker".into(), 1, reservations.clone()).unwrap();
+        let digest = "a".repeat(64);
+        worker
+            .state
+            .lock()
+            .await
+            .profiles
+            .insert((digest.clone(), 4096), (1024 * 1024, 2 * 1024 * 1024));
+        worker.history.lock().unwrap().provisional_unloaded_baseline =
+            MemorySample::new(32 * 1024 * 1024 * 1024, 31 * 1024 * 1024 * 1024);
+        let history_before = serde_json::to_value(worker.learning()).unwrap();
+        assert!(matches!(
+            worker
+                .prepare_with_resident_image(LoadRequest {
+                    model: "synthetic".into(),
+                    digest: digest.clone(),
+                    context: 4096,
+                    resident_bytes: 0,
+                    peak_bytes: 0,
+                })
+                .await,
+            Err("image_resident_needs_eviction")
+        ));
+        assert_eq!(
+            std::fs::read_to_string(directory.path().join("spawns")).unwrap(),
+            "x\n"
+        );
+        assert!(worker.state.lock().await.worker.is_none());
+        assert_eq!(worker.pid.load(Ordering::Acquire), 0);
+        assert_eq!(
+            serde_json::to_value(worker.learning()).unwrap(),
+            history_before
+        );
+        assert!(worker.resident_image_eligible(&digest, 4096).await);
+        assert!(!reservations.recovery_required());
+        assert!(reservations.quarantined().is_empty());
     }
 
     #[tokio::test]
