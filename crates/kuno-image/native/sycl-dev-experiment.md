@@ -70,15 +70,42 @@ with the bundled oneDNN/MKL include paths, `GGML_SYCL_DNNL=1`,
 `GGML_SYCL_WARP_SIZE=16` and `GGML_MAX_NAME=160`. The compiler emitted one existing
 `dpct/helper.hpp` return-path warning. No GPU execution or full build occurred.
 
-## Build and routing blockers to resolve
+## Development bridge and remaining build requirements
+
+The Rust bridge now requires `KUNO_DEV_SYCL_BUILD=1` and an explicit absolute
+`KUNO_ONEAPI_ROOT`. It pins 001 independently, then pins 002 outside the SYCL
+directory and `003-sycl-convrot.patch` inside that directory. New files must be
+intent-to-add for the exact diff. Ordinary builds still require Vulkan and the
+unmodified 002 source contract. The private gate additionally requires actual
+`SD_SYCL=ON`, `GGML_STATIC=ON`, static engine configuration, and an explicit
+`-DGGML_MAX_NAME=160` in both CMake C/C++ flags. The initial standalone GGML
+build used its default name size 64 and must not be mixed with engine headers.
+
+Only the development shim is compiled with `KUNO_NATIVE_SYCL_DEV`. A standalone
+Qwen 2.1 worker then requires exact `KUNO_EXPERIMENTAL_QWEN_SYCL=1` to select
+SYCL. This request requires one matching physical PCI identity; absent or
+duplicate SYCL candidates fail, and it does not benchmark a fallback backend.
+Without the runtime flag, ordinary CUDA/Vulkan preference is preserved. The
+existing public child environment does not forward this flag. SYCL reports its
+own backend label and CUDA Fast/Sage attention remains unsupported on SYCL.
+
+The shim requests resident FP16 prefix storage with the same conservative
+9 GiB reserve as Vulkan. The current model concat helper still recognizes only
+CUDA/Vulkan for preserving the cache's FP16 layout during reuse; SYCL therefore
+requires a separate reviewed 001 extension and cache oracle to avoid redundant
+FP32 expansion. This bridge alone does not establish optimized cache execution.
+
+CPU backend-choice tests passed with and without the compile gate. A native
+feature build-script test passed the exact build-flag parser; both shim variants
+passed C++ syntax checks. The full development engine link and GPU execution
+remain unverified. The following requirements still apply:
 
 - Validate the engine revision and exact 001 diff independently of the GGML
   revision and exact combined 002 plus development SYCL diff. Include new files
   with intent-to-add; never bypass the existing exact-source check. Content
   address a fresh build directory with the complete patch bundle.
-- The current Rust build script links Vulkan and optional CUDA only. A private
-  opt-in must additionally link the static GGML SYCL archive and dynamic vendor
-  closure, while preserving the normal build path. Its final native link needs
+- The private build script links the static GGML SYCL archive and reviewed
+  dynamic vendor closure, preserving the normal CUDA/Vulkan path. Its final link needs
   the `icpx -fsycl` driver to process SYCL device images; a normal GNU linker
   command alone is insufficient. Use a separate Cargo target directory.
 - A development CMake configuration uses the exact private `icpx` and `icx`,
@@ -86,14 +113,15 @@ with the bundled oneDNN/MKL include paths, `GGML_SYCL_DNNL=1`,
   GGML, and explicit oneDNN/TBB/MKL package roots. Initially disable SYCL graph
   replay, host-memory fallback and system-USM fallback; do not change driver or
   VMM behavior without measurement. Keeping Vulkan enabled satisfies the
-  existing baseline adapter, but its exact SYCL linking still needs an opt-in.
+  existing baseline adapter; the explicit development build gate also permits
+  a SYCL-only private engine with Vulkan disabled.
 - The extracted MKL directory currently contains headers/libraries but no
   `MKLConfig.cmake`; the pinned CMake requires `MKL::MKL_SYCL::BLAS`. Obtain the
   matching private config package or provide a reviewed private imported target
   with the verified dynamic closure. Do not let CMake silently find another MKL.
   The oneDNN package config exists and uses the private TBB config.
-- The current shim ranks only physical-PCI-matched CUDA/Vulkan backends; the
-  pinned SYCL properties do not set `device_id`. Publish a stable normalized BDF
+- The pinned SYCL properties originally did not set `device_id`. The 003 patch
+  must publish a stable normalized BDF
   from `sycl::ext::intel::info::device::pci_address`, retain it in device context,
   and require a unique exact match. `ONEAPI_DEVICE_SELECTOR=level_zero:gpu` limits
   the backend but is not physical identity. Never select device zero by assumption.
@@ -101,6 +129,21 @@ with the bundled oneDNN/MKL include paths, `GGML_SYCL_DNNL=1`,
   deliberate validation. Do not label a SYCL route as Vulkan in diagnostics,
   silently fall back to a different card/CPU, or expose CUDA Sage attention as a
   supported SYCL choice.
+
+Use the private compiler's final-link driver and a separate Cargo target:
+
+```bash
+KUNO_DEV_SYCL_BUILD=1 KUNO_ONEAPI_ROOT="$ONEAPI" \
+KUNO_SD_SOURCE_DIR="$SOURCE" KUNO_SD_BUILD_DIR="$BUILD" \
+CARGO_TARGET_DIR="$PRIVATE_CARGO_TARGET" \
+RUSTFLAGS="-Clinker=$ONEAPI/compiler/2026.1/bin/icpx -Clink-arg=-fsycl" \
+cargo build --locked -p kuno --release --features native-image
+```
+
+The CMake OpenMP configuration must use the reviewed `iomp5` runtime for private
+SYCL; normal builds retain GNU OpenMP. The standalone launcher needs explicit
+library paths for direct and `dlopen` dependencies. Compilation and final link
+do not prove that a runtime will launch with the privacy restrictions applied.
 
 ## Privacy and dynamic runtime
 

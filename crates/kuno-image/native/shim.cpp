@@ -94,7 +94,10 @@ extern "C" int kuno_qwen_generate(const char* directory,const char* pci,const ch
         if (backend.empty()) return 2;
         if (fast_attention && (!version || backend.compare(0,4,"CUDA") != 0)) return 10;
         std::fprintf(stderr,"kuno-image: physical GPU verified\n");
-        std::fprintf(stderr,"kuno-image: backend %s\n", backend.compare(0,4,"CUDA")==0 ? "CUDA" : "Vulkan");
+        const bool sycl_backend = backend.compare(0, 4, "SYCL") == 0;
+        if (sycl_backend && !kuno_image_sycl_experiment_enabled()) return 2;
+        if (sycl_backend && !version) return 9;
+        std::fprintf(stderr,"kuno-image: backend %s\n", backend.compare(0,4,"CUDA")==0 ? "CUDA" : sycl_backend ? "SYCL" : "Vulkan");
         const std::string base(directory);
         const auto diffusion=base+(version ? "/qwen_image_2.1_int8_convrot.safetensors" : "/qwen_image_2512_fp8_e4m3fn.safetensors");
         const auto encoder=base+(version ? "/qwen3vl_8b_int8_convrot.safetensors" : "/qwen_2.5_vl_7b_fp8_scaled.safetensors");
@@ -107,14 +110,14 @@ extern "C" int kuno_qwen_generate(const char* directory,const char* pci,const ch
         const bool cuda_backend = backend.compare(0, 4, "CUDA") == 0;
         const bool vulkan_backend = backend.compare(0, 6, "Vulkan") == 0;
         const bool mlp_f16 = kuno_qwen_mlp_f16_experiment(version != 0, vulkan_backend);
-        const bool fp16_cache = version && (cuda_backend || vulkan_backend);
+        const bool fp16_cache = version && (cuda_backend || vulkan_backend || sycl_backend);
         const uint64_t working_reserve = kuno_qwen_working_reserve(cuda_backend, mlp_f16);
         if (mlp_f16) {
             if (budget_bytes < working_reserve || !kuno_qwen_mlp_f16_host_fits(host_available)) return 6;
             context.tensor_type_rules = "^model\\.diffusion_model\\.transformer_blocks\\.[0-9]+\\.img_mlp\\.(gate_up|out)\\.weight$=f16";
             std::fprintf(stderr,"kuno-image: experimental dense MLP enabled\n");
         }
-        // Host-cache overlap is validated only on CUDA. Vulkan uses a resident
+        // Host-cache overlap is validated only on CUDA. Vulkan/SYCL use a resident
         // FP16 cache when the full-weight budget fits, otherwise disables it.
         if (version && cuda_backend && kuno_qwen_host_prefix_cache_fits(budget_bytes, host_available,
                 reference_pixels, std::strlen(prompt) + std::strlen(negative), cfg != 1.f)) {
