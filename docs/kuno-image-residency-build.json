@@ -1,0 +1,99 @@
+{
+  "gateway_sha256": "49115713860d966212ca09112f5166b126950c6b50e162e0fc4eb0a542fb9488",
+  "gateway_bytes": 725284384,
+  "worker_sha256": "5c1ea8f46669f5f1ea411134c6a30185fc0517b574d0996cea7eee14bad7a225",
+  "worker_bytes": 135499920,
+  "manifest_sha256": "12a901d727193a8419a318d17839396f50ada76195c5fda36f5cfd9e0ef76947",
+  "files": 64,
+  "source_commit": "4fb4e58e413ca92d1bc368a3cff40df41b7ce19d",
+  "unchanged_libraries_and_notices": 63,
+  "format_version": 1,
+  "integration_base": "4f9b465",
+  "cargo_lock_sha256": "b680a386b1352c17f5848b2784e4c0ef15ededa6fa0a24ff6ca47c712483a54a",
+  "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+  "cargo": "cargo 1.95.0 (f2d3ce0bd 2026-03-21)",
+  "worker_abi": 2,
+  "runtime_id": "qwen21-sycl-2026.1-v1",
+  "archive_sha256": "ee9c3e9caaf813a07d430e20598622f05b976e552390afe307bc5109a9a21ec1",
+  "archive_bytes": 156230608,
+  "engine_revision": "88411ef1e0688ff2df1010aeeb5d92b2d8cea2be",
+  "ggml_revision": "4bf5f6000653b7881d00963cd6ddb665ccd62a8d",
+  "patches": {
+    "001-qwen-quantized-config.patch": "ac51db708fef026fe7abab850774309e4f1f439a05c56d06ff33e49fcc290584",
+    "002-vulkan-flash-shapes.patch": "7298590faed44cad4733c78f6f6c2bf261b647712b5ec5f75840da450f0067dc",
+    "003-sycl-convrot.patch": "7f6a75c75544c0e3776d780b0710cab2fabb94ddfe57eeb436dff02891bd4771"
+  },
+  "engine_builds": [
+    {
+      "mode": "standard",
+      "provenance": "/tmp/kuno-image-resident-native-v1/build-standard/build-provenance.json",
+      "provenance_sha256": "3c070d6b683cf7691d6c65f958ab2ab4d3fcf1b910b9e95936a5b64f0e9b5261",
+      "archive": {
+        "path": "/tmp/kuno-image-resident-native-v1/build-standard/libstable-diffusion.a",
+        "bytes": 50551516,
+        "sha256": "12d7448e9027d8c844ed36679b1fea226fee776872e7c05e4e4380adb8d46dea",
+        "members": 72,
+        "cpp_fresh": 57,
+        "c_unchanged": 15
+      },
+      "cache_sha256": "09b9943318097c042c1dc2219d7dba4d17068a7cf15cfde5e4ab064f33cbeb9b",
+      "compiler": "c++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0"
+    },
+    {
+      "mode": "sycl",
+      "provenance": "/tmp/kuno-image-resident-native-v1/build-sycl/build-provenance.json",
+      "provenance_sha256": "54111f603ec4e247c11bbda0494813d772a356eaeb9727bf039dc4a0536d77bc",
+      "archive": {
+        "path": "/tmp/kuno-image-resident-native-v1/build-sycl/libstable-diffusion.a",
+        "bytes": 49987970,
+        "sha256": "f7d702eedfa0856e1adcf944ef2d02b16cedca64dd38cfd6b088786501355d0c",
+        "members": 72,
+        "cpp_fresh": 57,
+        "c_unchanged": 15
+      },
+      "cache_sha256": "cd1779dc63a1b67f27891e0c493d027a1df24452ce6d7bf62cb3adeca0a6c81c",
+      "compiler": "Intel(R) oneAPI DPC++/C++ Compiler 2026.1.1 (2026.1.1.20260724)"
+    }
+  ],
+  "native_build_manifest_sha256": "b8c4c1fedbb3c7ae33bf153114b62a72cc93a96add2f46dfbd745088697c3fbf",
+  "native_build_script_sha256": "54007dcd89ba6bb278bf2bdb03f888e83f9d8500892105dc326aa98f8b12c331",
+  "historical_vendor_closure_provenance": "kuno-sycl-runtime-provenance.json",
+  "vendor_closure_delta": "All63 library and license/notice members unchanged; native engine and Rust worker rebuilt.",
+  "acceptance": "source and CUDA resident-worker smoke passed; installed ABI2 SYCL acceptance pending sudo",
+  "checks": {
+    "source_passed": 205,
+    "source_ignored": 9,
+    "release_packaging_passed": 8,
+    "clippy_all_targets": true,
+    "native_clippy_all_targets": true,
+    "formatting": true
+  },
+  "limitations": [
+    "Producer evidence is not a reproducible-build guarantee.",
+    "All57 C++ engine units rebuilt for each backend; unchanged15 C third-party objects and GGMLbackend archives reused with recorded checksums.",
+    "The archive is a local candidate; this does not authorize publication."
+  ],
+  "cuda_acceptance": {
+    "pci_address": "0000:04:00.0",
+    "width": 512,
+    "height": 512,
+    "steps": 2,
+    "sequential_seconds": [
+      11.979,
+      7.977,
+      7.772
+    ],
+    "resident_vram_bytes": [
+      7694450688,
+      8225030144,
+      8201961472
+    ],
+    "same_process": true,
+    "repeat_pixels_match": true,
+    "idle_shutdown_reaped": true,
+    "systemd_user_memory_swap_max": 0,
+    "images_saved": 0,
+    "prompts_saved": 0,
+    "caveat": "Process-cold, page cache not controlled; transport/residency smoke, not a ComfyUI or full-workflow comparison."
+  }
+}

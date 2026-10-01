@@ -81,6 +81,12 @@ beta.2 artifacts are published and full-download/signature verified. Live Hub
 and nginx upload limits are now verified at 1 GiB. Physical Android acceptance
 is still outstanding.
 
+**New Kuno backend work:** model-only image residency is implemented on
+`codex/kuno-image-residency`, based on `4f9b465`. See the resident-image receipt
+below. CUDA/source checks pass; installed Intel/runtime acceptance is pending
+sudo. This backend-only change needs no Vashti connector or UI change. Do not
+treat the published ABI 1 beta.2 runtime as the new resident worker.
+
 **Status:** Kuno backend, Vashti connector, and conversational image flows are
 implemented and source-tested. Synthetic application flows and installed native
 generation, regeneration, editing, previews, and cancellation have been verified
@@ -636,3 +642,54 @@ downloads whose SHA-256 hashes match the local release files:
 The prerelease channel now returns beta.2; stable remains `v0.12.0`, with no
 promotion, main-branch merge, Git push, or live Vashti/Kuno installation. The
 physical Android and platform/runtime limits in the acceptance receipts remain.
+
+### Resident image backend receipt (2026-10-01, installation pending)
+
+The user approved retaining image models after generation. Implementation lives
+on `codex/kuno-image-residency`, based on `4f9b465`, in the managed worktree
+`/home/jmicko/.codex/worktrees/kuno-image-residency/vashti`. Backend changes through
+`4fb4e58` add the persistent supervisor, private worker ABI 2, native request
+cleanup, retained GPU parameters, cancellation safety, and managed LLM placement.
+See the normative [image residency contract](kuno-images.md#api-and-lifecycle)
+and [private worker ABI](kuno-managed-sycl.md#resident-worker-abi-2).
+
+The public image/discovery API and Vashti storage contracts are unchanged.
+No code in `apps/vashti` or the Hub changed. Metadata keeps the image worker;
+managed inference prefers another GPU and evicts images before unknown or
+unsafe same-device loads. There is one compatible image context, with no idle
+expiry. Cancellation and failure conservatively unload it; useful inference is
+still serialized. This is not an arbitrary workload-sharing guarantee.
+
+**Verified source:** `cargo test --offline --locked -p kuno -p kuno-image -p
+kuno-protocol -- --test-threads=1` passed 205 tests, nine ignored.
+Clippy all targets with warnings denied passed both default and standard
+native-image builds. Formatting/diff checks and eight CPU packaging regressions
+passed. The nine new supervisor tests cover repeated PID, CLEAN gating,
+cancellation/input/output backpressure, malformed output, replacement, and idle
+exit recovery. Both native engine archives rebuild all 57 C++ units; the fresh
+standard archive passes the actual CPU cache/request-cleanup regression.
+
+**Verified CUDA smoke:** in a swap-disabled user service, three 512-square,
+two-step Qwen 2.1 requests reused one process and retained 7.69–8.23 GB in VRAM.
+Times were 11.979, 7.977, and 7.772 seconds. A changed seed changed pixels;
+returning to the original seed reproduced them. Idle shutdown exited normally.
+No images or request content were saved. This is a process-cold smoke with an
+uncontrolled file cache, not a full-workflow/ComfyUI benchmark.
+
+**Prepared artifacts:** exact source/build pins and checksums are in
+[`kuno-image-residency-build.json`](kuno-image-residency-build.json).
+The standard gateway is `target/standard-cargo/release/kuno`; the new ABI 2 flat
+runtime is `target/inference-tests/runtime-flat-resident`, and its verified
+archive is `target/inference-tests/kuno-sycl-resident.tar.gz`, all within the
+resident worktree. All 63 vendor library/license members are unchanged from the
+approved beta.2 closure. Never package the private SYCL worker as the standard
+gateway. Existing ABI 1 installs use the one-shot fallback until the optional
+runtime is upgraded; ABI 2 requires the new gateway.
+
+**Still pending:** sudo installation, live Intel warm generation/edit/CFG/resize
+cleanup, installed LLM coexistence/eviction, disconnect recovery and idle service
+shutdown, and a final content-free journal/kernel audit. A sudo prompt is waiting
+in the Demons `shell` panel. No installed service/configuration has been changed
+in this resident work. No merge, push, publication, or release acceptance is
+claimed. Resume with the prepared `target/inference-tests/install-resident.py`
+and RAM-only `resident-http.py` harnesses; inspect live admission/GPU state first.
