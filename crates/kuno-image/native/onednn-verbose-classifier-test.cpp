@@ -21,7 +21,7 @@ static int stdin_counters(bool complete, bool isolated) {
         if (std::cin.fail() && !std::cin.eof()) {
             ++value.malformed; std::cin.clear();
             std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-        } else if (size) value.consume(std::string_view(buffer.data(), std::strlen(buffer.data())));
+        } else if (size) value.consume(std::string_view(buffer.data(), size - (std::cin.eof() ? 0 : 1)));
         if (std::cin.eof()) break;
     }
     std::cout << "{\"version_3_11_4\":" << value.version_3_11_4
@@ -94,5 +94,7 @@ int main(int argc, char **argv) {
     counts no_graph; no_graph.consume(version); no_graph.consume(nested);
     assert(!no_graph.optimized_graph_evidence(true, true));
     assert(classify(std::string("onednn_verbose,") + std::string(17000, 'x')) == record::malformed);
+    auto embedded_zero = std::string(graph) + '\0' + "unchecked_suffix";
+    assert(classify(embedded_zero) == record::malformed);
     std::cout << "onednn_verbose_classifier status=passed\n";
 }

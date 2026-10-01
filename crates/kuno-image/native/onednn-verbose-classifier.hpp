@@ -35,7 +35,7 @@ inline bool nested_creation(std::string_view op) {
 inline record classify(std::string_view line) {
     if (line.substr(0, 15) != "onednn_verbose,") return record::ignored;
     // Fixed bounded views, with empty fields preserved. No raw record storage.
-    if (line.size() > 16384) return record::malformed;
+    if (line.size() > 16384 || line.find('\0') != std::string_view::npos) return record::malformed;
     while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) line.remove_suffix(1);
     std::array<std::string_view, 16> fields{};
     size_t count = 0, first = 0;
