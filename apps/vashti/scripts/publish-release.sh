@@ -19,8 +19,12 @@ if [[ -n "${ARTIFACT:-}" ]]; then
     artifacts+=("$ARTIFACT")
 else
     linux_artifact="apps/vashti/dist/release/$version/vashti-linux-x86_64.tar.gz"
-    android_artifact="apps/vashti/dist/release/$version/vashti-android.apk"
+    android_artifact="apps/vashti/dist/release/$version/vashti-${version#v}.apk"
+    if [[ ! -f "$android_artifact" ]]; then
+        android_artifact="apps/vashti/dist/release/$version/vashti-android.apk"
+    fi
     kuno_artifact="apps/vashti/dist/release/$version/kuno-linux-x86_64.tar.gz"
+    runtime_artifact="apps/vashti/dist/release/$version/kuno-sycl-linux-x86_64.tar.gz"
     if [[ -f "$kuno_artifact" ]]; then
         targets+=("kuno-linux-x86_64")
         artifacts+=("$kuno_artifact")
@@ -33,20 +37,29 @@ else
         targets+=("android-universal")
         artifacts+=("$android_artifact")
     fi
+    if [[ -f "$runtime_artifact" ]]; then
+        targets+=("kuno-sycl-linux-x86_64")
+        artifacts+=("$runtime_artifact")
+    fi
 fi
 
+required_targets=()
 if [[ "${REQUIRE_COMPLETE_RELEASE:-0}" == 1 ]]; then
-    for required in linux-x86_64 android-universal kuno-linux-x86_64; do
-        present=0
-        for target in "${targets[@]}"; do
-            if [[ "$target" == "$required" ]]; then present=1; fi
-        done
-        if [[ "$present" != 1 ]]; then
-            echo "missing required release target: $required" >&2
-            exit 1
-        fi
-    done
+    required_targets+=(linux-x86_64 android-universal kuno-linux-x86_64)
 fi
+if [[ "${REQUIRE_KUNO_SYCL_RUNTIME:-0}" == 1 ]]; then
+    required_targets+=(kuno-sycl-linux-x86_64)
+fi
+for required in "${required_targets[@]}"; do
+    present=0
+    for target in "${targets[@]}"; do
+        if [[ "$target" == "$required" ]]; then present=1; fi
+    done
+    if [[ "$present" != 1 ]]; then
+        echo "missing required release target: $required" >&2
+        exit 1
+    fi
+done
 
 if [[ -z "$notes" && -z "$notes_file" ]]; then
     versioned_notes_file="apps/vashti/release-notes/$version.md"

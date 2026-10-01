@@ -75,6 +75,12 @@ authorizes it.
 
 ## Active Handoff: Image Access Without Manual Key Setup
 
+**Latest application acceptance:** see the beta.2 integration receipt at the end
+of this guide. Kuno's handoff is merged into the normal project checkout; all four
+release artifacts are built and signing-validated, but not published. The live
+Hub upload limit must be raised before publication. Physical Android acceptance
+is still outstanding.
+
 **Status:** Kuno backend, Vashti connector, and conversational image flows are
 implemented and source-tested. Synthetic application flows and installed native
 generation, regeneration, editing, previews, and cancellation have been verified
@@ -530,3 +536,61 @@ optional runtime/checksum/install instructions and the final coordinated build
 remain release-task work. Prepare every intended artifact before consuming the
 one-time upload key because published Hub versions are immutable. Source and
 packaging checks are not proof of full Vashti/Android release acceptance.
+
+### Vashti beta.2 integration receipt (2026-10-01 UTC / 2026-09-30 local)
+
+**Source and Git:** earlier application changes preserved in `c6109d4`; the full
+Kuno handoff through `83ec03f` is merged as `63ce405` on `codex/vashti-images`.
+The application defaults/selection fixes and regressions are committed as `20d2c0f`.
+The normal checkout contains `docs/kuno-release-handoff.md`. Keep the Kuno
+worktree: its ignored native build inputs are still used for release packaging.
+No Kuno service configuration or production inference implementation was changed
+by this application acceptance pass. No merge to main, push, or publication.
+
+**Account settings contract:** generate/edit preference profiles add optional
+host, image count, automatic improvement, prompt-helper configuration, and edit
+source mode. Absent legacy fields preserve existing defaults; explicit null count
+means endless generation. Settings remain owner-scoped. Flow changes persist in
+the flow without rewriting account preferences. Explicit Save updates the selected
+account profile; Reset restores all settings while retaining the current prompt
+and appropriate edit references. New flow with these settings starts a separate
+flow without copying positive prompts, references, or branch ancestry. Existing
+flows and model-tool override permissions are unchanged. These are additive JSON
+fields; no deployed migration was rewritten and Kuno's API is unchanged.
+
+**Consumer fixes:** unsupported saved Fast attention is shown explicitly and
+requires Use Standard rather than silently changing the recipe. Submission
+transactionally anchors the selected image branch before output arrives; later
+manual navigation still wins. Returning to an active generation resumes following
+its completion, and returning to completed output persists the selected result.
+
+**Live acceptance:** installed Standard-only Kuno discovery, 512-square/30-step
+generation, 25-step editing with two ordered references, streamed previews,
+regeneration with a new seed, Stop, Retry, persisted branch selection after
+reopening history, and explicit Fast-to-Standard recovery passed in the browser.
+The two references were copies of the same synthetic test image; this verifies
+transport, not arbitrary multi-image semantic quality. The earlier two-step image
+was intentionally a transport smoke test, not a quality sample. Responsive
+390x844 settings checks covered Save, Reset, new-flow copying, subsequent fresh
+flow defaults, and original/iterative edit mode. Test account preferences were
+restored afterward. No inference job remains active.
+
+**Source/package checks:** full locked workspace tests passed serially; Clippy
+all targets with warnings denied, formatting, frontend helper tests, web/native
+frontend builds, release packaging regressions, and Kuno's eight CPU packaging
+tests passed. A 100 ms Kuno preload-body-timeout fixture failed once under heavy
+parallel build/GPU load, then passed individually and in the full serial suite;
+no inference deadline or test behavior was changed. Packaged Linux starts against
+a fresh data directory and serves beta.2 plus the exact final frontend assets.
+The universal signed APK has version code 13002 and four ABIs. All four release
+artifacts pass checksum and signing dry-run validation, including the unchanged
+approved optional runtime archive.
+
+**Release gate and limits:** complete multipart upload is approximately 644 MiB,
+but the live Hub currently sets `VASHTI_HUB_MAX_UPLOAD_BYTES=536870912`. Raise it
+and any proxy limit to at least 1 GiB before requesting/using a one-time key.
+No live Hub change or upload was made. Physical Android installation/export,
+browser download completion, other-system portability, overnight soak, and
+ComfyUI parity remain unverified. Native/optional runtime platform restrictions
+and installation instructions are in the versioned release notes and backend
+handoff; source/browser results are not a substitute for those remaining checks.

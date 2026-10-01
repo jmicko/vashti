@@ -46,7 +46,9 @@ Hub-specific environment variables:
 * `VASHTI_HUB_DATA_DIR`: data directory, default `apps/vashti-hub/data` from the workspace root
 * `VASHTI_HUB_COOKIE_SECURE`: set to `true` when the browser reaches Hub through HTTPS
 * `VASHTI_HUB_TRUST_PROXY_HEADERS`: set to `true` only when Hub is reachable only through a trusted reverse proxy
-* `VASHTI_HUB_MAX_UPLOAD_BYTES`: maximum release artifact upload size
+* `VASHTI_HUB_MAX_UPLOAD_BYTES`: maximum complete multipart release upload size
+  (all artifacts, signatures, and notes together), default 536870912 bytes.
+  Increase this and any reverse-proxy body limit before publishing larger releases.
 
 For production, run it behind nginx or Caddy. If nginx reaches Hub over WireGuard, bind Hub to
 the WireGuard IP, for example `VASHTI_HUB_BIND=10.8.0.2:7781`, and firewall the host so the raw

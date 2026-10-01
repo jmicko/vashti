@@ -16,7 +16,7 @@ version="${VERSION:-$(sed -n 's/^version = "\(.*\)"/\1/p' apps/vashti/Cargo.toml
 android_version="$(sed -n 's/^version = "\(.*\)"/\1/p' apps/vashti-android/Cargo.toml | head -n 1)"
 version_label="v${version}"
 release_dir="${DIST_DIR:-apps/vashti/dist/release}/$version_label"
-artifact="$release_dir/vashti-android.apk"
+artifact="$release_dir/vashti-${version}.apk"
 
 if [[ "$android_version" != "$version" ]]; then
     echo "version mismatch: vashti is $version but vashti-android is $android_version" >&2

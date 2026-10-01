@@ -5,6 +5,26 @@ integration.** Overnight soak, ComfyUI parity and support on every Linux/GPU
 combination are not requirements for this beta and are not claimed. Publication
 and application acceptance belong to the Vashti release task.
 
+**Integration update:** the main checkout is now on `codex/vashti-images` with
+Vashti's earlier changes committed as `c6109d4` and the complete Kuno handoff
+merged as `63ce405`. This handoff is available at
+`/home/jmicko/dev/vashti/docs/kuno-release-handoff.md`; the historical checkout
+state below describes the backend handoff before that integration. The verified
+optional runtime archive has been copied to the main checkout's beta.2 release
+directory. The source/build artifacts in the Kuno worktree are still needed and
+have not been removed.
+
+**Application release checkpoint:** flow/default fixes are committed as `20d2c0f`.
+Vashti and Android `0.13.0-beta.2` (APK code
+13002), standard Kuno, and the optional runtime have been built, checksum-checked,
+and validated by the four-artifact signing dry run. Packaged Linux served the
+expected version and final embedded frontend from a fresh data directory. Live
+browser acceptance against installed Kuno is recorded in the coordination guide.
+No upload or deployment has occurred. The complete upload is approximately
+644 MiB; the live Hub's verified request limit is 536870912 bytes. Raise the Hub
+and any proxy body limits to at least 1 GiB before generating an upload key.
+Physical Android testing remains outstanding; no device was attached.
+
 ## Source and ownership
 
 Kuno worktree: `/home/jmicko/.codex/worktrees/kuno-image-performance/vashti`, branch

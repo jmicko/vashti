@@ -1,6 +1,7 @@
-# Unreleased
+# v0.13.0-beta.2
 
-Track user-facing changes here while working on the next Vashti release.
+Persistent conversational image flows, explicit account defaults, branch
+selection fixes, keyless Kuno integration, and the optional Intel image runtime.
 
-Before publishing, either leave this file in place and let `publish-release.sh` use it, or copy it
-to `apps/vashti/release-notes/vX.Y.Z.md` once the version number is final.
+The complete release notes and runtime installation requirements are in
+[v0.13.0-beta.2.md](release-notes/v0.13.0-beta.2.md).

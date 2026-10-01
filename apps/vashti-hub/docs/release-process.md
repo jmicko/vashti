@@ -37,8 +37,21 @@ prereleases until an admin promotes or deletes them.
 
 6. Build the Kuno package with `apps/kuno/scripts/package-release.sh`, pointing
    `KUNO_SD_SOURCE_DIR` and `KUNO_SD_BUILD_DIR` at the prepared native engine build.
-   Verify all three packages are present, then run `CHECK_ONLY=1 apps/vashti/scripts/publish-release.sh`.
+   APK filenames include the version (`vashti-0.13.0-beta.2.apk`); older releases
+   with `vashti-android.apk` remain supported. When shipping the optional Intel
+   runtime, verify its approved archive and manifest hashes from the Kuno release
+   handoff, then copy `kuno-sycl-linux-x86_64.tar.gz` into the same release directory.
+   It is signed and uploaded separately from standard Kuno; installation and
+   runtime selection remain explicit. Include its exact manifest checksum and
+   installation instructions in the release notes.
+   Verify every intended package is present, then run
+   `REQUIRE_COMPLETE_RELEASE=1 CHECK_ONLY=1 apps/vashti/scripts/publish-release.sh`
+   (also `REQUIRE_KUNO_SYCL_RUNTIME=1` when shipping Intel support).
    Only then open the Hub admin page and create a one-time upload key.
+   Check the complete upload against `VASHTI_HUB_MAX_UPLOAD_BYTES` and any reverse-proxy
+   body limit. The beta.2 Linux/Android/Kuno/Intel-runtime bundle is approximately
+   644 MiB, exceeding the default 512 MiB request limit; allow at least 1 GiB
+   before attempting that upload.
 7. Publish all artifacts found for that version:
 
    ```sh
@@ -48,7 +61,7 @@ prereleases until an admin promotes or deletes them.
    The script automatically uses the versioned notes file if it exists, otherwise it falls back to
    `release-notes-latest.md`.
 
-   Linux, Android, and Kuno are uploaded in one request and belong to the same staged release. A one-time
+   Linux, Android, Kuno, and any optional runtime are uploaded in one request and belong to the same staged release. A one-time
    key cannot be reused to add a second artifact later.
 
 8. Test the staged prerelease from the Releases page using the version-specific install command and
