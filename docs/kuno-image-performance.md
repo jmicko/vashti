@@ -1,16 +1,18 @@
 # Qwen 2.1 performance follow-up
 
 This records the remaining performance work after the seam and dimension fixes.
-The installed engine is still slower than the supplied ComfyUI workflows. The
-speed goal is not complete. The integration checkpoint describes the current
-implementation; the later measurements also retain earlier experimental history.
+The optional Intel SYCL engine is now installed on this host and passes the
+original full generation/edit workflows. It remains slower than the supplied
+ComfyUI workflows; the speed goal is not complete. The latest receipt describes the installed
+implementation; earlier measurements remain as experimental history.
 
 ## Native optimization candidate (2026-09-30)
 
 Work starts from installed backend `f6f6c22` in a separate Kuno worktree;
-the concurrent Vashti application changes are preserved. The validated standard candidate through `eee97c8` was installed on this host;
-later SYCL development changes remain separate. Full Intel edit execution and synthetic GPU numerical checks
-have passed; performance is still below the supplied ComfyUI baseline. The clean
+the concurrent Vashti application changes are preserved. The standard candidate through `eee97c8` was initially installed on this host;
+the optional SYCL runtime was subsequently accepted and installed as recorded
+in the final receipt below. Full Intel edit execution and synthetic GPU numerical
+checks have passed; performance is still below the supplied ComfyUI baseline. The clean
 CUDA edit and subsequent full generation acceptance are recorded below.
 
 - Vulkan Qwen 2.1 can retain FP16 prefix K/V on the GPU, halving cache storage.
@@ -516,8 +518,8 @@ The full original 1248x832, 25-step, CFG4 edit passed in **109.624 s**, with all
 25 previews, metadata-free RGBA final output and alpha range247-255. The final
 image was reviewed through a RAM-only, no-store loopback server and discarded;
 no image file was saved. Step1 was at48.373 s and step25 at105.771 s, about2.39 s
-per subsequent step. Xe peak was24,754,114,560 bytes, cgroup RAM peak1,930,915,840
-bytes and swap0. This was a clean run without native compilation. The equivalent
+per subsequent step. Xe peak was 24,754,114,560 bytes, cgroup RAM peak1,930,915,840
+bytes and swap 0. This was a clean run without native compilation. The equivalent
 accepted CUDA edit is160.702 s; user ComfyUI Intel cold/warm baselines are78.25 /
 64.48 s. SYCL is substantially faster than Kuno's earlier paths but does not yet
 match the user's ComfyUI timing.
@@ -525,12 +527,12 @@ match the user's ComfyUI timing.
 The original 1184x1776, 50-step, CFG1 generation completed sampling at136.939 s
 but exited-6 at140.988 s during decode, with the fixed
 `UR_RESULT_ERROR_DEVICE_LOST` classification. Xe peak was22,143,942,656 bytes,
-cgroup RAM peak1,328,771,072 bytes, swap0. One new Xe engine-reset entry at
+cgroup RAM peak1,328,771,072 bytes, swap 0. One new Xe engine-reset entry at
 02:52:56.688688 UTC raised the boot count from6 to7. This reset matches the
 large-generation test window; the earlier two entries remain separate. No
 production configuration or worker was changed. Admission was resumed afterward.
 
-Independent IM2COL modes5-8 pass on the B70, including the exact large geometry,
+Independent IM2COL modes 5–8 pass on the B70, including the exact large geometry,
 10,900,832,256-byte output, samples across2/4/8GiB and INT32/UINT32 element
 boundaries, and bounded-launch chunk boundaries. All runs used Landlock and
 zero-swap cgroups; no further Xe reset appeared. Exact-case C144/C288 modes
@@ -540,7 +542,120 @@ results do not reproduce other asynchronous VAE operations.
 
 The actual CPU-only VAE graph has seven non-contiguous F32 CONT operations
 crossing signed-int byte offsets in the larger workflow, versus zero in the
-passing edit. The legacy SYCL copy path narrows byte strides/offsets toint; a
-separate focused fix and independent copy-boundary tests are in progress. The
-optional managed runtime therefore remains uninstalled and unaccepted. The
-standard installed CUDA/Vulkan service remains the user-facing image engine.
+passing edit. At this historical pre-copy-fix checkpoint, the legacy SYCL copy path narrowed
+byte strides/offsets to int, and focused copy-boundary validation was pending.
+The optional runtime was then uninstalled and unaccepted. The following final
+wide-copy and installed receipts supersede that status.
+
+
+## Wide-copy fix and packaged Intel acceptance (2026-10-01 UTC)
+
+Commit `30cebda` widens SYCL copy dimensions, indices, byte strides and offsets
+through every wrapper/kernel. The independent actual-VAE graph has seven
+noncontiguous F32 CONT nodes crossing signed 32-bit byte offsets at 1184x1776;
+the largest has 605,601,792 scalar elements (within the work-item bound) but
+2,422,407,164-byte last offsets. The passing edit has no such wide CONT node.
+Copy scalar conversion and quantization math/routing are unchanged. Combined
+with bounded IM2COL in `46cbd5c`, this removes both demonstrated decoder limits.
+The old device-lost/reset receipt above remains historical evidence; it does
+not establish that every possible driver fault has been fixed.
+
+Independent copy acceptance passed 5,785 CPU offset checks and 630 CPU numerical
+checks. B70 GPU mode 1 passed all 630 checks. Modes 2/3 passed eight source,
+destination and conversion cases with ten checks each around byte strides
+2,147,483,712 and 4,294,967,360, including untouched canaries. GPU peaks were
+2,299,695,104 /4,448,436,224 bytes and swap 0. BF16 numerical GPU coverage and
+arbitrary copies above INT32_MAX work-items remain unverified.
+
+The final worker SHA256 is
+`414b86a3c498c0f848321766e99784a8d5d7fd7f3984c1bf35796f6b5b14796b`.
+Its flat runtime manifest SHA256 is
+`94daf0ed8e7cd57ae861a0213c1ef5751a0261b7d2ee9d04bcd47d682941b59a`:
+54 regular members, 531,417,369 bytes (worker, 23 library/alias names and
+30 exact license/notice files). Patch003 SHA256 is
+`7f6a75c75544c0e3776d780b0710cab2fabb94ddfe57eeb436dff02891bd4771`.
+ABI160 and engine/GGML pins remain unchanged. The standard gateway does not link
+the vendor runtime. Its tested SHA256 is
+`d2a7a293bb021daebb1dda2c8b21a67443881a10ce0787dbd4b7ae2c4946d8dc`.
+
+All following final-worker tests hid the entire SDK extraction using systemd
+InaccessiblePaths, loaded only the flat regular-file runtime, restricted writes
+before exec, disabled core dumps and used zero-swap cgroups. All 21 observed
+vendor library families loaded one distinct inode each; no SDK fallback or
+concurrent heavy compilation/inference occurred. Each request used a fresh
+worker, so these are process-fresh timings, not a persistent warm-model claim.
+OS file caches and prior generic GPU initialization were not flushed.
+
+| Accepted workload | Total | GPU peak bytes | Cgroup RAM peak bytes |
+| --- | ---: | ---: | ---: |
+| Original generation, 1184x1776, 50 steps, CFG1 | 153.950 s | 22,144,405,504 | 1,240,580,096 |
+| Original edit, 1248x832, 25 steps, CFG4 | 115.513 s | 24,754,569,216 | 1,961,013,248 |
+| Two synthetic references, 512x512, 4 steps, CFG4 | 61.282 s | 31,394,676,736 | 2,040,250,368 |
+
+Every result passed PNG framing, dimensions and metadata checks, including
+50/25/4 previews respectively. Generation alpha was 251-255, edit 249-255,
+two-reference 242-255. The two original final images were visually inspected
+through a RAM-only no-store loopback server, with no visible decoder seams,
+then discarded. A reduced two-step original generation passed first in 31.471 s.
+Full-size edit cancellation at step 3 exited 1 with the fixed `image_cancelled`
+label, reaped cooperatively in 3.061 s, and used no forced termination. Its GPU
+peak was 24,754,556,928 bytes, cgroup RAM 1,603,768,320 bytes, swap 0.
+
+Kernel event count remained 7 after all final-worker GPU tests: no further reset
+beyond the earlier failed decode. This bounds the observed acceptance window;
+it does not prove indefinite driver stability. ComfyUI user-supplied Intel
+cold/warm baselines remain 132.06/100.65 s generation and 78.25/64.48 s editing.
+The final SYCL edit is much faster than Kuno Vulkan 558.176 s and CUDA 160.702 s,
+but neither accepted full SYCL workflow reaches ComfyUI parity.
+
+
+## Installed service acceptance (2026-10-01 UTC)
+
+The standard gateway and final flat runtime above were installed through the
+owned-file systemd transaction. Runtime installation preserved the configuration
+byte for byte; explicit image configuration changed only engine, runtime and PCI
+to B70. Collections, model store, listener addresses/ports, Ollama workers and
+zero LLM response/idle deadlines were preserved. The global engine default
+remains native; this is an explicit local SYCL selection, not a release.
+
+Installed checks passed:
+
+- Keyless Qwen 2.1 512x512/two-step NDJSON: started, two valid metadata-free PNG
+  previews, final result; first preview 38.865 s, total 41.067 s. Discovery/version
+  work through IPv4, IPv6 and LAN; unauthenticated control returns 401.
+- All three workflows report ready and standard attention only; explicit fast
+  receives 400 `image_attention_unsupported` before inference.
+- Native Qwen 2512 on the newly selected B70: 512x512, two steps, CFG1, shift 3.1;
+  two previews and final PNG passed in 27.328 s. This verifies routing, not the
+  original 100-step 2512 quality/performance recipe.
+- Ordinary Ollama generation after images passed in 1.077 s. A separate 20-step
+  image stream was disconnected after the first preview; child cleanup/admission
+  completed in 1.003 s without recovery quarantine. The immediate next Ollama
+  generation passed in 0.935 s. These one-token compatibility probes do not
+  replace earlier long-context/deadline acceptance.
+- Temporarily hiding only the optional runtime made Qwen 2.1 workflows unavailable
+  and generation return 503 `image_managed_runtime_unavailable`; ordinary Ollama
+  version stayed 200 and native 2512 stayed ready. Restoring the directory restored
+  all workflows without service restart. Synthetic source tests cover corruption
+  and activation rollback; no live corrupt binary or new driver fault was induced.
+
+The initial cancellation observer expected a nonexistent recovery_pending field
+under admission; correcting that harness assumption and repeating cancellation
+plus the following LLM request passed. The final health observer also accounts
+for managed Ollama workers legitimately stopping while idle. These were test
+harness corrections, not production failures.
+
+Final installed checks: active/running, NRestarts 0, MemorySwapMax 0, admission
+unpaused, active false, waiting 0, recovery_required false, no image worker left.
+The reachable backend has no resident models; inactive managed backends refuse
+connections as expected. Xe kernel event count remains 7. Known synthetic request
+text, encoded-image field names/data prefixes and the control credential are
+absent from the service journal during installed acceptance. Temporary image
+settings and test runtime renames are removed. Content-bearing clients/workers
+used zero-swap cgroups; no generated image, reference copy or prompt was saved.
+This is a bounded privacy check, not a forensic guarantee for unrelated software.
+
+The API/discovery shapes and Vashti connector/UI are unchanged. Existing saved
+CUDA fast recipes must select standard for this Intel route. Source remains on
+codex/kuno-image-performance; concurrent Vashti/untracked coordination work is
+preserved. No merge, push, application deployment or public release occurred.

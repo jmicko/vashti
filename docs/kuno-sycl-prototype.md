@@ -36,7 +36,7 @@ validates partition ports. Masked attention retains its graph. Fused-kernel
 selection, numerical error and workspace/peak memory remain GPU acceptance
 requirements. Its helper test is in the separate SDPA review commit.
 
-## Local validation
+## Initial source validation (historical)
 
 - The CPU-only geometry/PCI test passes 40 cases, including K overflow,
   malformed packing/scales/strides/batches and strict BDF rejection.
@@ -52,7 +52,8 @@ requirements. Its helper test is in the separate SDPA review commit.
   boundaries, then the existing `rint`; the oracle tolerance is unchanged.
   Added fractional tie cases cover positive/negative ties, direct and packed
   H4 input, and flattened batches. The CPU oracle explicitly selects
-  `FE_TONEAREST`. GPU acceptance of this fix remains pending.
+  `FE_TONEAREST`. Later B70 GPU acceptance passes all 30 cases with unchanged tolerance; see
+  the final performance receipt.
   See the [Intel IMF device-library contract](https://www.intel.com/content/www/us/en/docs/dpcpp-cpp-compiler/developer-guide-reference/2024-2/imf-device-library.html).
 - `icpx -fsycl` compiled the new kernels; the full private SYCL backend builds.
 - GPU tests and full image inference have not been accepted by this commit.
@@ -85,8 +86,8 @@ Do not infer whole-image speed from GEMM timing alone.
 Before any production adoption, validate cancellation/drain, privacy-safe
 worker output, source pins, managed-runtime packaging, physical selection,
 model-loading ownership, full masked/unmasked numerical attention, image
-quality, complete workflow timing and host/GPU high-water memory. The current
-service and public backend preference remain unchanged.
+quality, complete workflow timing and host/GPU high-water memory. Later local installed acceptance is recorded in the managed-runtime and
+performance guides; the public default remains native.
 
 
 ## Bounded IM2COL launch experiment
@@ -132,10 +133,10 @@ No model, prompt, image or output file is involved. Large CPU/GPU buffers remain
 subject to the enclosing memory policy.
 
 The root task accepted GPU modes 1 through 4 using frozen candidate libraries.
-The first mode passed 141,632 exact values; the added tall 3D case passes another
-131,072 CPU values and remains pending on GPU. Large modes passed 240, 243 and
+The final first mode passed all 272,704 exact values, including the added tall
+3D row/batch-boundary cases. Large modes passed 240, 243 and
 246 independent exact samples respectively. The full 288-channel output was
 written and samples crossed both 2 GiB and 4 GiB byte offsets. That test peaked
 at approximately 6.735 GB of device memory with zero swap. Its timing overlapped
-compilation and is functional evidence, not a performance comparison. Full
-decoder execution and whole-workflow timing for this candidate remain pending.
+compilation and is functional evidence, not a performance comparison. Later modes 5–8 and the final complete decoder/workflow acceptance are recorded
+in [kuno-image-performance.md](kuno-image-performance.md).

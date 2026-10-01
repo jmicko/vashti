@@ -2,7 +2,7 @@
 
 This is a backend-only development diagnostic. It changes only the numeric
 oracle, not patch 003, production selection, inference policy or services.
-The existing native patch remains `c60d71b5af2a4e7f904a921b0317a28b3dc1f2f54639c41163e3d998e0f3d090`.
+The audited historical worker used patch `c60d71b5af2a4e7f904a921b0317a28b3dc1f2f54639c41163e3d998e0f3d090`.
 
 The coordinating task reported a successful 1248x832 full edit after bounded
 launches, followed by a device-lost failure during 1184x1776 decoding. The latter
@@ -61,7 +61,11 @@ large GPU diagnostics, never part of the default CPU invocation.
 Default CPU acceptance passes 272,704 exact values. Direct calls to the pinned
 SDK host range helper accept 18 bounded ranges with complete row coverage,
 including all four new geometries. It still rejects the original unbounded edit
-range. GPU runs of the new modes remain scheduled and recorded by the root task:
+range. The root task subsequently accepted GPU modes 5–8:249/255/252/255 independent
+exact samples respectively, including the 10,900,832,256-byte output and
+INT32/UINT32 element,2/4/8GiB byte and bounded-launch boundaries. Swap was zero,
+with no additional reset. The final wide-copy worker also completes the full
+original generation/edit workflows; see the performance guide. Explicit commands:
 
 ```
 sycl-im2col-test --device SYCL <physical PCI address> 5

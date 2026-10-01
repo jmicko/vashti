@@ -5,14 +5,12 @@ independent of oneAPI, and its default image engine remains embedded CUDA/Vulkan
 The optional Intel worker uses the same request pipes, preview framing,
 cancellation, PCI selection and HTTP API. No Vashti consumer change is required.
 GPU, performance and installed-service acceptance are separate from source tests.
-This support is a draft: the private SYCL engine is not accepted for installation
-or enablement. Bounded IM2COL dispatch fixed a proven host-side signed-int range
-rejection. The original 1248x832 edit now passes all 25 steps, previews and final
-decode in 109.624 seconds. The larger 1184x1776 generation finishes sampling but
-then triggers a device-lost error and a new Xe reset during decoding. A separate
-source proof identifies seven non-contiguous F32 decoder copies whose byte
-offsets exceed the legacy signed-int kernel envelope. That fix and full-workflow
-revalidation remain pending. Do not enable this route until they pass.
+This runtime is accepted locally for the original B70 generation and edit
+workflows after bounded IM2COL dispatch and wide copy addressing fixes. The
+large-decode installation block is superseded by the exact hardware receipts in
+[kuno-image-performance.md](kuno-image-performance.md). It is an explicit optional
+runtime, not a new default or a published website download. Acceptance on other
+GPUs, drivers or Linux baselines is not established.
 
 ## Configuration
 
@@ -171,8 +169,8 @@ checks ignored. Nonnative and ordinary native-image Clippy with all targets and
 warnings denied passed.
 The ordinary native-image all-target check passed against the performance
 worktree's pinned `target/native-source` / `target/native-build`; no GPU was used.
-Formatting and whitespace checks passed. No services, runtimes or GPU workloads
-were installed, started or changed by this task.
+Formatting and whitespace checks passed. That source-only subtask made no
+service/runtime/GPU changes; later coordinating-task installation is below.
 
 Review-fix receipt (2026-10-01 UTC): all seven `image_engine::tests` unit checks
 and all 12 deployment integration checks passed serially, including a 43-file
@@ -180,4 +178,53 @@ runtime installation/rollback/restore and oversized initial/replacement sets
 rejected without service or deployment-file changes. The exact worker
 environment allowlist is asserted. Nonnative all-target Clippy with warnings
 denied, formatting and whitespace checks passed. These are synthetic source
-checks; the live SYCL acceptance block above remains unresolved.
+checks; later live acceptance is recorded separately below.
+
+
+## Local acceptance and operational limits (2026-10-01 UTC)
+
+The final verified bundle has 54 regular members, 531,417,369 bytes, manifest
+SHA256 `94daf0ed8e7cd57ae861a0213c1ef5751a0261b7d2ee9d04bcd47d682941b59a`
+and worker SHA256 `414b86a3c498c0f848321766e99784a8d5d7fd7f3984c1bf35796f6b5b14796b`.
+Original full generation/edit, previews, two-reference editing and cooperative
+cancellation pass with the complete SDK extraction inaccessible and only the
+flat bundle libraries visible. See the performance receipt for exact geometry,
+timings, memory peaks, copy/kernel proofs and remaining speed gap.
+
+The ordinary CUDA/Vulkan gateway and this runtime were installed transactionally
+with user authorization. The runtime installation preserved configuration byte
+for byte. Explicit local configuration changed only image engine/runtime/PCI
+selection to B70; collections, model store, listeners, Ollama settings and disabled
+LLM response/idle deadlines were preserved. Global defaults stay native. The
+first installed keyless 512x512/two-step stream passed two previews, final PNG,
+IPv4/IPv6/LAN discovery/version and unauthenticated-control 401. Additional
+installed service acceptance is recorded in the final performance receipt.
+
+Changing image.pci_address also selects the native 2512 fallback's GPU; it is not
+a per-workflow second-GPU policy. SYCL accepts standard attention only. Saved
+recipes explicitly choosing CUDA fast must select standard; unsupported settings
+are rejected rather than silently changing their requested computation. The
+API permits up to ten references, but local final-worker acceptance covers two;
+other counts/shapes must obey the existing bounds and are not proven to fit.
+
+The current runtime is tested against this host's GLIBC 2.39 baseline only.
+It is not a portability claim for older Linux versions. No driver/kernel was
+changed for these fixes. New arbitrary GPU faults and indefinite stability are
+not certified; ordinary device-loss/forced-exit handling retains existing
+reservation/recovery semantics, and raw vendor exceptions remain filtered.
+
+Transaction health checks establish gateway/admission service readiness, not
+image execution, so installed image acceptance remains mandatory. Rollback
+snapshots are in RAM during the transaction. Corrupted/missing journal-owned
+runtime files cause configure/upgrade/recover ownership verification to refuse
+before interruption; those artifacts require manual repair. Missing runtime at
+gateway startup degrades affected images while preserving ordinary Ollama access.
+
+
+Installed service acceptance also passed native Qwen 2512 on the B70, ordinary
+Ollama generation, image-stream disconnect followed by immediate LLM inference,
+and missing-runtime degradation/restoration without restart. Final admission is
+resumed, service active/running, NRestarts 0, MemorySwapMax 0, no image worker or
+recovery quarantine. No additional reset appeared during final acceptance.
+Exact tests/timings and the bounded journal privacy check are in the installed
+service section of [the performance receipt](kuno-image-performance.md).

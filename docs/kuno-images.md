@@ -11,11 +11,11 @@ collection picker remains future work. This is an experimental beta.
 Requests may set `"attention": "fast"` for the Qwen 2.1 CUDA backend. The default
 is `"standard"`. Fast attention uses the native SageAttention implementation;
 it can change output pixels and is not supported for Qwen 2512 or Vulkan.
-Unsupported choices return `image_attention_unsupported`. No Python engine or
-additional runtime installation is needed.
+Unsupported choices return `image_attention_unsupported`. The embedded
+CUDA/Vulkan path needs no Python engine or additional runtime installation.
 
-The optional [managed SYCL worker](kuno-managed-sycl.md) adds development support
-for a Kuno-only Qwen 2.1 runtime on Intel hardware. Its libraries are
+The [optional managed SYCL worker](kuno-managed-sycl.md) adds Qwen 2.1 execution
+on Intel hardware, accepted locally on the B70. Its libraries are
 separate from the standard executable; embedded CUDA/Vulkan remains the default,
 and Qwen 2512 retains its native route. This runtime does not change the image API.
 
