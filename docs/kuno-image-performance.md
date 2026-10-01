@@ -5,6 +5,254 @@ The installed engine is still slower than the supplied ComfyUI workflows. The
 speed goal is not complete. The integration checkpoint describes the current
 implementation; the later measurements also retain earlier experimental history.
 
+## Native optimization candidate (2026-09-30)
+
+Work starts from installed backend `f6f6c22` in a separate Kuno worktree;
+the concurrent Vashti application changes are preserved. This candidate is
+**not installed**. Full Intel edit execution and synthetic GPU numerical checks
+have passed; performance is still below the supplied ComfyUI baseline. The clean
+CUDA edit and subsequent full generation acceptance are recorded below.
+
+- Vulkan Qwen 2.1 can retain FP16 prefix K/V on the GPU, halving cache storage.
+  Cache precision and working-memory reserve are now separate: Vulkan still
+  reserves 9 GiB for weights/work, while CUDA retains its 3 GiB reserve and
+  existing bounded host-cache policy. Vulkan does not use the CUDA host pipeline.
+  Insufficient memory still disables prefix caching explicitly.
+- Both CUDA and Vulkan concatenate supported resident FP16 caches directly.
+  Native flash attention already consumes FP16 K/V. The adapter avoids copies
+  whose only operation was casting an already-FP16 tensor to FP16 again.
+- Batch-one CUDA flash attention can read a permuted FP16 V view without a full
+  contiguous transpose copy. Other backends, batches, scaling, and padded heads
+  keep the established layout.
+- Opt-in fast attention keeps newly computed K in FP32 for Sage instead of
+  rounding it to FP16 and expanding it again. The stored prefix remains FP16.
+  This can change fast-attention pixels; standard attention does not take that
+  path. Masked attention retains the supported fallback.
+
+Added `attention-layout-test.cpp` with an independent double-precision dense
+attention oracle, odd sequence lengths, batch and mask cases, scaling, both
+input precisions, and exact prefix/live concatenation checks. Combined CPU
+attention and embedding/rotation/dimension/memory-policy regressions passed.
+CPU oracle relative L2 error was 0.000525–0.001196. The expanded 67-case GPU
+oracle passed on both cards: maximum relative L2 error was 0.00069327 on Intel
+and 0.00125529 on CUDA. It exercises partial query/key blocks, head padding,
+masks, batching, and FP16/FP32 QK accumulation; both cache concatenation checks
+also passed. The development build runs CPU regressions; explicit `--device
+CUDA PCI` / `--device Vulkan PCI` acceptance requires an idle GPU.
+
+`cargo test --locked -p kuno -p kuno-image -p kuno-protocol` passed; hardware
+checks remain ignored. No image API, discovery, ordinary Ollama routing,
+generation deadlines, preview transport, or content-persistence behavior changed.
+No Vashti consumer changes are required for these internal optimizations.
+
+The current host reports kernel 7.0.0-34 and Mesa Vulkan 26.2.3 with Intel
+cooperative-matrix and integer-dot-product capabilities. This is discovery,
+not evidence of the cause of previous GPU resets. SYCL still
+lacks this engine's ConvRot operations; enabling it alone would not implement
+the Qwen 2.1 workflow.
+
+### Intel rectangular matrix attention
+
+Live cooperative-matrix discovery reports FP16 M8/N16/K16 (FP16 and FP32
+accumulation), not the square M16/N16/K16 shape required by the pinned attention
+kernel. This sent Intel attention through the scalar fallback. Patch
+`002-vulkan-flash-shapes.patch` adds a separate transposed-PV M8 shader, gated by
+Xe2, the exact reported shapes, input types, accumulator support, and shared
+memory. The legacy square shader remains unchanged. GGML is separately pinned
+to `4bf5f6000653b7881d00963cd6ddb665ccd62a8d`; the engine and GGML diffs are checked
+independently. Both new shader variants compiled and passed SPIR-V validation.
+
+A synthetic warmed attention graph with 4056 queries, 8192 keys, 128 channels,
+and 16 heads took 0.0830–0.0834 s with the scalar kernel and 0.0319–0.0326 s with
+M8, about 2.6 times faster. These are representative sequence sizes, not an
+end-to-end image result. GPU execution was isolated from other inference and
+heavy compilation; upload, allocation, and readback were outside the timing.
+
+The original Intel edit (25 steps, CFG 4, 1248×832, standard attention, previews)
+took **733.826 s** with the FP16-cache/layout candidate before M8 and **558.176 s**
+with M8. The first diagnostic had a 0.18 s feature-query compilation overlapping;
+the M8 run had no heavy compilation or competing inference. Both produced valid
+metadata-free RGBA images and all 25 previews. Images were inspected in RAM and
+discarded. The M8 image had alpha 249–255 and no visible seam. The kernel reset
+count stayed at its pre-test four entries, and memory was released after worker
+exit. This is a 24% improvement but remains far above ComfyUI's 78.25 s cold edit;
+Intel speed acceptance is **not complete**.
+
+### Remaining Intel matrix bottleneck
+
+A bounded synthetic harness compares ConvRot quantization, packed INT8 GEMM,
+combined execution, and dense FP16 GEMM with FP32 accumulation. Dense weights
+are dequantized and inverse-rotated from the same synthetic source weights;
+its output intentionally differs by activation quantization and FP16 rounding
+(relative L2 about 0.009). Upload and final readback are unmeasured. The first
+invocation is reported separately; earlier tiny validation has already warmed
+some generic pipelines, so it is not a process-cold claim.
+
+| Matrix shape (4056 rows) | Quantization | Packed INT8 GEMM | Dense FP16 GEMM |
+| --- | --- | --- | --- |
+| 4096 → 4096 | 1.3–1.4 ms | 11.8 ms | 9.2–10.2 ms |
+| 4096 → 24576 | 0.9–1.4 ms | 96.1–97.1 ms | 30.8–32.3 ms |
+| 12288 → 4096 | 3.7 ms | 55.9–56.4 ms | 16.3–19.1 ms |
+
+The large MLP INT8 kernel is about three times slower than the dense path.
+Quantizer barriers are not the dominant cost in these measurements. The controlled tile and selective dense-weight experiments below are implemented
+for development, but no new precision policy is accepted for deployment.
+
+### Whole-pipeline timing and CUDA repeat
+
+Private instrumentation closes a fixed numeric window after two warm steps;
+no prompts, tensors, images, or raw backend diagnostics are recorded. Intel's
+next two edit steps took 40.516 s, of which 40.469 s was GPU execution. No prefix
+cache bytes were uploaded or cut back in this resident-cache window. This rules
+out host-pipeline setup or repeated weight transfers as the main warm bottleneck.
+
+CUDA's next four fast-attention steps took 20.105 s, with 18.845 s in GPU execution
+and 0.881 s in upload submission. The window transferred 17,085,497,344 cache bytes
+and cut back 17,543,725,056 bytes. Host resource creation/destruction took 0.019 s;
+graph building took 0.013 s. These are inclusive phases, not additive operation
+profiles. The instrumented binary is private and must not be installed.
+
+A clean CUDA repeat of the original edit (25 steps, CFG 4, fast attention,
+1248×832, previews) took **160.702 s**, versus the earlier 169.25 s. All 25 previews
+and a valid metadata-free RGBA result were returned; alpha was 249–255. Visual
+inspection found no central seam. Output stayed in RAM and was discarded. Heavy
+compilation and other inference were excluded. ComfyUI's user-supplied cold
+126.14 s remains faster. This worker uses the previously recorded standard
+candidate SHA-256 `2a09a1276b76968a8bdd6185cffe00ea32f6a29738b63548232920db9b917820`.
+
+### Controlled kernel experiments
+
+All tuning flags are internal, opt-in development probes. The public worker
+clears its environment, so these experiments cannot be enabled accidentally by
+a service environment. Default query/key tiles remain Br16/Bc32 and the legacy
+INT8 tile remains unchanged.
+
+- INT8 4096→24576: legacy 96.3–97.0 ms; 4×4/subgroup16 83.8–84.7 ms;
+  2×2/subgroup16/32 118.2/118.6 ms; 4×8, 8×4, and 8×8/subgroup16
+  343.5–345.6, 147–148.4, and 273.5–274.3 ms respectively. Larger tiles
+  regress, despite identical integer math. Seven tiny independent integer
+  cases plus the full graph passed each candidate (maximum GEMM relative L2
+  0.0000010354). Dense FP16 remained 30–32 ms for that shape.
+- Attention query Br32/64: all 67 oracle cases passed; maximum relative L2
+  0.00060391/0.00060201. Warm representative graph 36.8/105.5 ms, versus
+  33.0–33.4 ms at Br16. Neither is adopted.
+- Attention key Bc64/128 with Br16: all 67 oracle cases passed; maximum relative
+  L2 0.00062896/0.00062197. Warm graph 30.81–31.03/31.21–31.51 ms, versus
+  33.5–33.7 ms at Bc32. These small graph gains are not whole-image acceptance.
+  Shared-memory checks retain fallbacks, and query/key experiments cannot combine.
+
+Frozen query and key shader variants passed SPIR-V validation. Strict CPU tile
+parser tests reject malformed/unbounded settings. The development script now
+content-addresses native source/build directories by the complete two-patch
+bundle; old native checkouts and unknown local modifications are preserved.
+
+### Selective dense MLP experiment
+
+`KUNO_EXPERIMENTAL_QWEN_MLP_F16=1` reconstructs only Qwen 2.1 Vulkan diffusion MLP
+weights at load time. Other weights stay INT8. It remains disabled by default;
+see [memory and precision contract](../crates/kuno-image/native/mlp-f16-experiment.md).
+The real ModelLoader/Linear CPU regression covers independent H4 reconstruction,
+scale types/shapes, indexed shards, destination bounds, and rejection cases.
+All engine C++ translation units were rebuilt to avoid stale inline Linear code.
+Loading workers are capped at four; inference still uses eight compute threads.
+
+A four-step original edit took 103.798 s: first step 47.454 s, final sampling
+86.318 s, and decode/delivery 17.480 s. Warm sampling is about 12.96 s/step,
+versus 20.23 s/step with INT8 MLP. An earlier 133.798 s run incorrectly used four
+compute threads; its longer decoding phase is not an accepted speed comparison.
+
+The full original 25-step Intel edit took **376.803 s**, with all 25 previews,
+1248×832 metadata-free RGBA output, alpha 247–255, and no visible central seam.
+Heavy compilation and competing inference were excluded. Output was inspected
+only in RAM and discarded; the zero-swap test cgroup reported zero swap bytes.
+Kernel reset entries stayed at the four-entry pre-test baseline. This is 32.5%
+less time than the M8/INT8 candidate, and 48.7% less than the pre-M8 candidate,
+but still 4.8 times ComfyUI's 78.25 s cold edit. **Speed acceptance remains open.**
+
+Xe reported a 50,688,000-byte idle baseline and 27,356,573,696-byte peak
+(27,305,885,696-byte delta). The worker's reported VmHWM was 40,322,760,704 bytes,
+including 39,300,001,792 RssFile and 1,190,039,552 RssAnon. The test cgroup peak
+was 1,338,941,440 bytes. RSS includes mapped model/driver/device pages and the
+cgroup may not own all previously charged mappings; these are separate observed
+counters, **not a claim of 37.6 GiB physical host RAM**. A later source review found that Vulkan's host-buffer provider is globally tied
+to Vulkan device zero and can select host-visible device-local memory. The
+candidate now uses ordinary CPU buffers for CPU-owned Vulkan parameters,
+preserving CUDA pinned storage and operation validation. The 16-case fake-backend
+regression checks provider calls and requires zero driver initializations or
+allocations; reverting the selection fails the regression.
+
+A post-fix four-step dense edit passed all four previews. GPU peak remained
+exactly 27,356,573,696 bytes, so this run does **not** establish a GPU memory
+reduction or earlier duplicated local-memory allocation. VmHWM was
+40,335,425,536 bytes; RssAnon rose to 11,407,409,152 and RssFile fell to
+28,919,529,472. Cgroup peak rose to 11,547,480,064 bytes with zero swap. This
+confirms anonymous CPU ownership and improves accounting, without interpreting
+RSS as physical RAM. The 109.140 s elapsed time overlapped native compilation
+and is a correctness/memory test, not a clean speed comparison.
+
+### Private Intel vendor-library probe
+
+A signed-repository-verified private oneAPI bundle was unpacked under ignored
+build output, without installing system packages, drivers, repositories, or
+services. Compiler 2026.1.1-325 and MKL 2026.1.0-236 ran a physical-BDF-selected
+Level Zero synthetic probe. Four tiny signed/padded/zero-control cases compare
+every output against independent CPU dot products; the full MLP shape adds 64
+CPU spot checks and compares every I8-I32 result against same-number F16-F32.
+All checks passed, with zero output differences and checked asynchronous errors.
+
+At rows4056/K4096/N24576, MKL signed I8 GEMM warmed at 2.714–2.736 ms
+(median 2.729 ms), and mixed F16→F32 at 4.827–4.862 ms (median 4.862 ms).
+Explicit device buffers total 1,149,272,064 bytes, excluding vendor workspace.
+This suggests a useful alternate kernel path; it is **not whole-image inference
+or deployment acceptance**. The pinned SYCL backend still needs Qwen ConvRot/I8
+support and suitable unmasked MHA attention. oneMKL SYCL requires dynamic runtime
+libraries; the ordinary CUDA/Vulkan release build does not acquire this dependency.
+
+### Cache-precision compatibility check
+
+A two-reference 512×512/four-step synthetic edit produced byte-identical RGBA
+with the installed FP32 Vulkan prefix cache and the FP16/layout candidate before
+M8 (zero RMS and maximum pixel delta). This isolates cache precision/layout;
+it does not establish byte equivalence of M8 attention or dense MLP math. Both
+results were kept in RAM and discarded.
+
+CUDA cancellation during sampling passed with 6.655 s cooperative cleanup,
+followed by a two-reference four-step fast-attention edit returning four previews
+and metadata-free RGBA. No forced termination was used. These tests overlapped
+builds and establish correctness/cleanup, not benchmark speed.
+
+Intel dense-path cancellation after step three completed cooperatively in
+14.407 s, without forced termination, and the test cgroup used zero swap.
+The next default-precision two-reference 512×512/four-step edit passed, returning
+all four previews and metadata-free RGBA. Xe peak was 20,572,209,152 bytes,
+cgroup RAM peak 2,015,928,320 bytes and swap zero. Compilation overlapped, so
+85.893 s is correctness/cleanup evidence rather than clean speed acceptance.
+
+The fresh, content-addressed Vulkan native build script completed, including CPU
+embedding/rotation, 67 attention/cache oracle cases, strict tile parser, 16 buffer
+policy cases and real dense-loader regression. The dual CUDA/Vulkan standard
+candidate was separately linked from freshly rebuilt engine C++ objects and the
+new Vulkan shaders; CUDA libraries were unchanged. Rust checks passed with 171
+tests, nine hardware tests ignored, Clippy warnings denied and formatting. An
+initial parallel gateway run had two timing-sensitive failures; the complete
+serial suite then passed. No arbitrary inference deadlines changed.
+
+The standard dual-backend candidate's original CUDA 50-step generation also
+passed: 1184×1776 metadata-free RGBA, all 50 previews, alpha 247–255 and no
+visible central seam. The elapsed 248.820 s overlapped private SYCL compilation,
+so this is functional acceptance, not a clean speed comparison. Output stayed
+in RAM and was discarded. The candidate SHA-256 is
+`bbd27f1f6cc9d35ecdb24ab32f274f46e8add649896753298fa2b9fb80d345cf`.
+
+Intel default-precision text-to-image also passed at 512×512/four steps, with
+all four previews and metadata-free RGBA (alpha 246–255). Xe peak was
+8,803,368,960 bytes, cgroup RAM peak 1,266,565,120 bytes and swap zero.
+The 18.595 s elapsed time overlaps compilation and is a smoke test.
+
+Pending acceptance includes installed-service verification. CUDA graphs are disabled by the pinned upstream default; graph
+capture is not an explanation for current performance without a separate
+controlled experiment.
+
 ## Integration checkpoint
 
 The bounded layer-by-layer cache pipeline and redundant modulation-copy removal

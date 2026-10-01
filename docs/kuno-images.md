@@ -62,9 +62,11 @@ reference is resized with Lanczos to approximately 1024 squared pixels, preservi
 aspect ratio and rounding dimensions to multiples of 32, matching the supplied
 ComfyUI encoder's resolution rule. Reference order and alpha are retained.
 
-The Vulkan prefix cache uses about 1 MiB per prefix token per condition. The
-optional CUDA build stores it in FP16 (half the memory), matching the K/V
-precision supplied to flash attention. Kuno estimates the cache from reference
+Both Vulkan and CUDA store Qwen 2.1 prefix K/V in FP16, about 512 KiB per prefix
+token per condition, matching the precision supplied to flash attention. Cache
+precision is separate from the working-memory reserve: Vulkan conservatively
+reserves 9 GiB for full weights and workspace, while CUDA keeps its segment
+reserve and bounded host-cache policy. Kuno estimates the cache from reference
 dimensions and a conservative text-token bound. The CUDA policy reserves working
 space for a segment and allows the engine to stream weights; Vulkan budgets full
 diffusion weights. It disables caching when the estimate exceeds the available
