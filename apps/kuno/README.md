@@ -385,6 +385,24 @@ cleanup retains admission. There is no image polling endpoint or separate image
 credential. Existing beta Vashti connectors require an update to consume this
 stream. This API does not change ordinary Ollama routes.
 
+After a successful request, Kuno retains one compatible image model context in
+the private worker. Prompts, reference images, latents, conditioning/prefix
+caches, previews, and results are removed from reusable worker state before its
+cleanup acknowledgement. Subsequent generation/editing can reuse Qwen 2.1
+weights. Model/attention or runtime configuration changes replace the context.
+Cancellation, failure, recovery and service shutdown release it; there is no
+automatic idle expiry.
+
+Managed LLM requests try other GPUs first. A known model/context profile may
+share the image GPU when live headroom permits; an unknown shared workload
+requires orderly image eviction before loading/profiling. Opaque/catalog and
+unverified-placement fallback also release it, while metadata/discovery do not.
+Global admission still serializes useful inference. This does not certify every
+shared-model combination or retain several image models. Existing optional
+SYCL ABI 1 bundles still work but unload after each request; install an approved
+ABI 2 bundle for Intel model reuse. See the
+[worker lifecycle and ABI](../../docs/kuno-managed-sycl.md#resident-worker-abi-2).
+
 Cancellation closes the upstream HTTP connection, but Kuno cannot yet verify
 that Ollama has stopped computing. A dropped or failed managed response therefore
 sets `recovery_required`. Further managed requests receive HTTP 503; metadata
@@ -397,8 +415,9 @@ reset an actively used Ollama instance merely to clear this marker. Automated
 runtime reconciliation and safe recovery belong to M2. Changing state directories
 or deleting a marker without establishing upstream completion defeats the guard.
 
-SIGINT/SIGTERM stops new admission and allows up to 30 seconds for draining. A
-forced interruption retains the marker. The currently active model may remain
+SIGINT/SIGTERM stops new admission and allows up to 30 seconds for draining
+(120 seconds with images configured), then shuts down an idle image worker. A
+forced interruption retains the marker. An Ollama model may remain
 resident in Ollama; resident models are not the same as active requests.
 
 An installed gateway checks itself with `kuno-recovery.timer` roughly every 30

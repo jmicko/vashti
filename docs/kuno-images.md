@@ -194,16 +194,53 @@ The result contains a base64 PNG with no embedded generation metadata. Vashti
 owns any eventual output/provenance storage.
 Model downloads and operational state are separate from inference content.
 
-The first scheduler implementation holds the same exclusive admission lease as
-LLM inference, stops managed Ollama workers on the image GPU, and releases canonical Ollama's
-resident models. Verified managed workers on other GPUs remain resident. The image runs in a short-lived child process selected by the
-physical GPU PCI address. Following LLM requests can start workers again. Child
-cancellation, output limits, and deadlines retain admission through process
-cleanup; uncertain cleanup requires recovery instead of admitting competing work.
-The global admission lease still serializes useful LLM/image execution; retaining
-a model on the other GPU does not yet imply simultaneous inference.
+Image execution holds the same exclusive admission lease as LLM inference. It
+stops managed Ollama workers on the image GPU and releases canonical Ollama's
+resident models before starting image work. Verified managed workers on other
+GPUs remain resident. The private image process is selected by physical GPU PCI
+address and retains one compatible model context after a successful request.
+It becomes idle only after acknowledging request cleanup; successful completion
+does not unload its model weights. There is no automatic idle-expiry policy.
 
-The worker reads its recipe through stdin and returns PNG bytes through stdout.
+The retained context contains model parameters, not prompts, negative prompts,
+reference images, latents, conditioning or prefix caches, generated images, or
+previews. Native cleanup synchronizes the backend and releases request-derived
+state; worker-owned Rust request/result allocations are cleared before the
+cleanup acknowledgement. Gateway delivery buffers remain transient and bounded
+until the response completes or closes.
+
+A later compatible request reuses the context. Generation and editing with the
+same Qwen 2.1 model and attention mode can reuse it even when prompts, seeds,
+dimensions, steps, CFG, and reference images differ. Switching the model family,
+attention mode, configured model directory, PCI device, executable, or verified
+optional worker replaces the retained process. Only one image context is kept;
+this does not create a pool of loaded image models.
+
+LLM admission first tries workers on other GPUs. Sharing the image GPU requires
+an exact prior in-process model/context load profile and sufficient live memory
+headroom under the existing placement checks. Physical free-memory readings
+already exclude the retained image allocations. An unknown workload is not
+probed on that GPU while image weights remain loaded. If other GPUs cannot serve
+and safe sharing is unavailable, Kuno orderly stops and reaps the image worker,
+then rechecks/prepares the LLM once before forwarding useful inference. These
+profiles measure load footprint plus a workspace allowance, not every inference
+peak; arbitrary shared-workload combinations are not certified.
+
+Metadata/discovery requests do not evict the image model. Opaque, catalog-changing,
+remote-model, or explicit unload operations that cannot use managed placement
+release it before forwarding. Cancellation, request failure, timeout, device loss,
+recovery, and service shutdown also release the worker. Cancellation retains
+admission through cleanup; uncertain or forced cleanup requires recovery instead
+of admitting competing work. Useful LLM/image execution remains serialized by
+the global admission lease, even when models on both GPUs remain loaded.
+
+Native workers use the private [ABI 2 request/response pipes](kuno-managed-sycl.md#resident-worker-abi-2).
+An already installed managed SYCL ABI 1 worker remains usable through the former
+one-request-per-process path and unloads after each request. Retaining the Intel
+image context requires an ABI 2 optional runtime; upgrading the gateway alone
+does not give an old worker this capability. The public HTTP API is unchanged.
+
+The worker reads recipes through stdin and returns PNG bytes through stdout.
 It enters its restrictions before any async runtime threads are created.
 It refuses to read content unless swap is disabled for its cgroup (or the host).
 Core dumps are disabled. Linux Landlock ABI 3 or newer denies filesystem content
@@ -663,13 +700,16 @@ Validation/prerequisite/admission errors before streaming starts use the existin
 non-2xx JSON HTTP error surface. Once streaming starts, HTTP status is 200 and
 worker errors are terminal error events with fixed codes. EOF without a terminal
 event is interrupted delivery, not success. Final PNG bytes are validated and
-worker cleanup completes before a result is emitted. PNG/preview limits remain
+request cleanup is acknowledged before a result is emitted, or a legacy ABI 1
+worker is reaped. A successful resident worker remains idle with model weights
+loaded. PNG/preview limits remain
 20 MiB final PNG and 1 MiB preview pipe payload; base64 adds roughly one third.
 Consumers must parse incrementally across arbitrary network chunk boundaries
 and bound event/decoded-image sizes, rather than reading unlimited NDJSON.
 
 The body owns the supervisor result receiver: closing it cancels inference.
-The supervisor retains admission through worker cleanup; uncertain/forced/device
+The supervisor retains admission through request cleanup or worker termination;
+uncertain/forced/device
 loss cleanup retains existing recovery behavior. A separate content-capacity
 permit is shared by the body and supervisor, bounding slow completed responses
 as well as active requests. Preview-channel closure does not terminate the final
@@ -681,7 +721,9 @@ Previews belong to the initiating response only. The prior beta PNG-only respons
 and polling route are removed. A supplied old preview-ID header has no effect.
 Previews/recipes/results remain transient and unlogged; closing or completing
 the response releases its content. Vashti owns permissions and user-content
-storage. Native-worker preview framing itself remains unchanged.
+storage. Preview and final payload formats are unchanged; private ABI 2 adds
+readiness, request-cleanup acknowledgement, and classified-error frames to make
+model-only reuse safe.
 
 ### Required Vashti changes and compatibility
 
