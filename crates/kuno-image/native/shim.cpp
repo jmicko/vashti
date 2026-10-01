@@ -27,6 +27,13 @@ static bool supports_qwen_int8(ggml_backend_dev_t device) {
 static std::atomic<bool> cancelled{false};
 static_assert(std::atomic<bool>::is_always_lock_free);
 static void request_cancel(int) { cancelled.store(true,std::memory_order_relaxed); }
+static bool begin_request() {
+    // SIGTERM can arrive while Rust is decoding references before entering the
+    // shim. A cancelled worker is reaped, so never erase its pending shutdown.
+    if (cancelled.load(std::memory_order_relaxed)) return false;
+    device_lost = false;
+    return true;
+}
 struct SignalScope {
     decltype(std::signal(SIGTERM,request_cancel)) term;
     decltype(std::signal(SIGINT,request_cancel)) interrupt;
@@ -94,6 +101,8 @@ struct CallbackScope {
 extern "C" int kuno_qwen_session_new(const char* directory, const char* pci, void** out) {
     if (!directory || !pci || !out) return 5;
     *out = nullptr;
+    // Initialize only before this session installs cooperative signal handlers.
+    cancelled = false;
     try {
         *out = new KunoQwenSession(directory, pci);
         return 0;
@@ -110,8 +119,7 @@ extern "C" int kuno_qwen_session_generate(void* opaque, const char* prompt, cons
     void (*receive)(const uint8_t*,size_t,uint32_t,void*), PreviewReceiver preview_receiver, void* userdata) {
     auto* session = static_cast<KunoQwenSession*>(opaque);
     if (!session || !prompt || !negative || !receive) return 5;
-    cancelled = false;
-    device_lost = false;
+    if (!begin_request()) return 7;
     Progress state;
     state.preview = preview_receiver;
     state.userdata = userdata;

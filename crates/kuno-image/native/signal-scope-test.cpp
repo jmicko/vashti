@@ -26,6 +26,8 @@ int main() {
     cancelled = false;
     std::raise(SIGTERM); // Idle between requests must not terminate the process.
     assert(cancelled.load() && term_calls == 0);
+    assert(!begin_request()); // Cancellation during Rust input preparation wins.
+    assert(cancelled.load()); // Request entry must never erase a pending signal.
     cancelled = false;
     std::raise(SIGINT); // Handler also covers Rust encoding/output after generate.
     assert(cancelled.load() && int_calls == 0);
