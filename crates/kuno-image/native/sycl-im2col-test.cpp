@@ -68,8 +68,18 @@ static void run(ggml_backend_t backend,int id,const Shape & s) {
         if(s.type==GGML_TYPE_F16){all_half.resize(total);ggml_backend_tensor_get(output,all_half.data(),0,total*2);}
         else{all_float.resize(total);ggml_backend_tensor_get(output,all_float.data(),0,total*4);}
     } else {
-        for(uint64_t boundary:{uint64_t(1)<<31,uint64_t(1)<<32}) {
+        for(uint64_t boundary:{uint64_t(1)<<31,uint64_t(1)<<32,uint64_t(1)<<33}) {
             const uint64_t index=boundary/ggml_element_size(output);
+            for(uint64_t i=index-1;i<=index+1;++i)if(i<total)checks.insert(i);
+        }
+        // Element indices themselves cross signed/unsigned 32-bit boundaries.
+        for(uint64_t index:{uint64_t(1)<<31,uint64_t(1)<<32})
+            for(uint64_t i=index-1;i<=index+1;++i)if(i<total)checks.insert(i);
+        const int64_t local=std::min<int64_t>(k,256),blocks=(k+255)/256;
+        const int64_t rows=ggml_sycl_im2col_rows_per_launch(blocks*local,ow);
+        assert(rows>0);
+        for(uint64_t row=rows;row<uint64_t(s.n)*oh;row+=rows) {
+            const uint64_t index=row*ow*k;
             for(uint64_t i=index-1;i<=index+1;++i)if(i<total)checks.insert(i);
         }
     }
@@ -122,6 +132,8 @@ static void policy() {
     try{sycl::detail::checkValueRange(original);}catch(const sycl::exception&e){rejected=e.code()==sycl::make_error_code(sycl::errc::nd_range);}
     assert(rejected);
     assert(ggml_sycl_im2col_rows_per_launch(2816,1248)==611);
+    assert(ggml_sycl_im2col_rows_per_launch(2816,1184)==644);
+    assert(ggml_sycl_im2col_rows_per_launch(1536,1184)==1180);
     assert(ggml_sycl_im2col_rows_per_launch(1,1)==65535);
     assert(ggml_sycl_im2col_rows_per_launch(0,1)==0);
     assert(ggml_sycl_im2col_rows_per_launch(1,0)==0);
@@ -133,7 +145,7 @@ static void policy() {
     assert(ggml_sycl_im2col_rows_per_launch(INT64_MAX,INT64_MAX)==0);
     assert(ggml_sycl_im2col_rows_per_launch(INT32_MAX,2)==0);
     int accepted=0;
-    for(auto shape:std::initializer_list<std::vector<int64_t>>{{2816,1248,832},{1536,1248,832},{10496,78,52},{1,1,131072}}) {
+    for(auto shape:std::initializer_list<std::vector<int64_t>>{{2816,1248,832},{1536,1248,832},{10496,78,52},{1,1,131072},{1536,1184,1776},{2816,1184,1776},{2816,1184,1399},{2816,1184,1400}}) {
         const int64_t rows=ggml_sycl_im2col_rows_per_launch(shape[0],shape[1]);assert(rows>0);
         int64_t visited=0;
         for(int64_t begin=0;begin<shape[2];begin+=rows){const int64_t end=std::min(shape[2],begin+rows);sycl::detail::checkValueRange(sycl::range<3>(end-begin,shape[1],shape[0]));visited+=end-begin;++accepted;}
@@ -161,6 +173,10 @@ int main(int argc,char**argv) {
     } else if(!strcmp(argv[4],"2")) run(backend,4,{78,52,1152,1,3,3,1,1,1,1,1,1,GGML_TYPE_F16});
     else if(!strcmp(argv[4],"3")) run(backend,5,{1248,832,144,1,3,3,1,1,1,1,1,1,GGML_TYPE_F16});
     else if(!strcmp(argv[4],"4")) run(backend,6,{1248,832,288,1,3,3,1,1,1,1,1,1,GGML_TYPE_F16});
+    else if(!strcmp(argv[4],"5")) run(backend,8,{1184,1776,144,1,3,3,1,1,1,1,1,1,GGML_TYPE_F16});
+    else if(!strcmp(argv[4],"6")) run(backend,9,{1184,1776,288,1,3,3,1,1,1,1,1,1,GGML_TYPE_F16});
+    else if(!strcmp(argv[4],"7")) run(backend,10,{1184,1399,288,1,3,3,1,1,1,1,1,1,GGML_TYPE_F16});
+    else if(!strcmp(argv[4],"8")) run(backend,11,{1184,1400,288,1,3,3,1,1,1,1,1,1,GGML_TYPE_F16});
     else assert(false);
     ggml_backend_free(backend);puts("im2col_acceptance_passed");
 }
