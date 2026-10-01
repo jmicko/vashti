@@ -63,6 +63,10 @@ static void progress(int step, int steps, float, void* data) {
     std::fprintf(stderr,"kuno-image: progress %d/%d\n",step,steps);
 }
 struct KunoQwenSession {
+    // Declared first so handlers outlive both output delivery and model/context
+    // destruction. SIGTERM while idle requests cooperative worker shutdown;
+    // the supervisor closes stdin rather than forcing default-signal exit.
+    SignalScope signals;
     std::string directory, pci, backend;
     std::unique_ptr<sd_ctx_t, decltype(&free_sd_ctx)> context{nullptr, free_sd_ctx};
     int version = -1;
@@ -108,7 +112,6 @@ extern "C" int kuno_qwen_session_generate(void* opaque, const char* prompt, cons
     if (!session || !prompt || !negative || !receive) return 5;
     cancelled = false;
     device_lost = false;
-    SignalScope signals;
     Progress state;
     state.preview = preview_receiver;
     state.userdata = userdata;
