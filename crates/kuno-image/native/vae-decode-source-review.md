@@ -113,6 +113,63 @@ system libraries, with no SYCL, MKL or oneDNN dependency. Supply only the review
 compiler library directory to its standalone CPU launch. It emitted the two
 numeric table rows above and `device_execution=false`.
 
+## Separate wide-byte copy defect (original generation size)
+
+After bounding IM2COL submission, the coordinating task's original 1184 x 1776
+generation completed 50 sampling steps, then reported device loss during VAE
+decode with a corresponding GPU reset. That observation does not establish OOM
+or identify which kernel failed. The independently extended metadata test
+confirms a different concrete arithmetic defect in the unchanged legacy SYCL
+copy implementation.
+
+At 1184 x 1776 the actual decoder has **seven** non-contiguous F32 CONT nodes
+whose source or destination byte offset exceeds `INT32_MAX`. Six contain
+605,601,792 scalar elements and have final offset 2,422,407,164 bytes. A sliced
+view contains only 302,800,896 elements but still reaches source offset
+2,420,304,380 bytes. All logical element indices fit signed32. At 1248 x 832
+there are zero such nodes; the largest CONT byte offset is 1,196,163,068.
+The metadata test allocates no tensor data, backend, device or model.
+
+`GGML_OP_CONT` dispatches to `ggml_sycl_dup`, then `ggml_sycl_cpy`. The old
+non-contiguous F32/F16/BF16 and legacy quantized paths narrowed GGML's byte
+strides to `int` in their launch wrappers and computed signed-int byte offsets.
+The copy fix carries `size_t` byte strides through every wrapper and kernel,
+uses a shared wide offset helper, and preserves `int64_t` scalar counts and
+dimensions. Conversion bodies, packed-block arithmetic, launch geometry,
+queue ordering and the same-type contiguous memcpy fast path are unchanged.
+This is an internal development-SYCL fix; ordinary CUDA/Vulkan and API contracts
+are unaffected. It is a proven invalid-address source bug, but its role in the
+observed reset remains unverified until independent GPU tests and full decode.
+
+`sycl-copy-offset-test.cpp` independently enumerates coordinates to check the
+helper against padded strides, all 24 four-axis permutations, >2/>4/>8 GiB
+offsets, multiple packed blocks of width32/256, and the exact large activation's
+signed32 boundary and last index. **5,785 CPU checks passed** with GNU C++ and
+warnings denied. The modified actual `cpy.cpp` compiled offline with the exact
+2026.1 SDK, MAX_NAME160/F16/DNNL configuration; it retains two existing warnings
+in `dpct/helper.hpp` and has no new warning.
+
+`sycl-copy-test.cpp` is a standalone numeric oracle. Its default CPU mode
+passed **630** exact checks: F32/F16 non-contiguous CONT, padded Q8_0 block
+copy/dequantization, and all eight source/destination-strided F32/F16 copy and
+conversion directions with write canaries. Explicit GPU mode2 uses a stride
+`2^31+64`; mode3 uses `2^32+64`. Each large case has only six logical elements,
+initializes and checks all accessed bytes, touches no giant host array, and
+allocates one large backend-owned buffer to isolate pointer addressing from
+large launch counts. Run only in the coordinating task's cleared-environment,
+Landlock, no-swap cgroup with a unique physical BDF. No GPU test was executed by
+this source review. BF16 and other quantized formats share the widened helper
+but do not yet have numerical device acceptance from this oracle.
+
+The exact oneDNN3.11.4 source does account for large GEMM buffers:
+`jit/gen_kernel.cpp` computes A/B/C byte spans and requests A64 whenever any
+span exceeds `UINT32_MAX`; reference MatMul requests stateless addressing for
+large buffers. The narrower Xe systolic implementation explicitly refuses
+buffers above `INT32_MAX`. This does not prove which implementation executed
+the failing decode. `gemm.hpp::row_gemm` still computes `k*m` as signed int
+before conversion to a batch stride; for batch1 that stride may be unused,
+but it is a separate source issue to investigate. No GEMM behavior changed here.
+
 ## Reproduce the CPU range proof
 
 `sycl-range-limit-test.cpp` calls the actual host header helper directly, without

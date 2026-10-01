@@ -151,6 +151,8 @@ fn main() {
                 "pci-address.hpp",
                 "im2col.cpp",
                 "im2col-launch-policy.hpp",
+                "cpy.cpp",
+                "cpy-offset.hpp",
                 "fattn-onednn.cpp",
                 "fattn-onednn-shapes.hpp",
             ] {

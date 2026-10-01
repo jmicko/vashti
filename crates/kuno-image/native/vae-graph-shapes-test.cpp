@@ -47,11 +47,35 @@ static void check_graph(int width, int height, uint64_t expected_largest) {
         assert(output->ne[2] == 1 && output->ne[3] == 4);
         uint64_t largest = 0, work_items = 0, largest_kernel_entries = 0;
         int im2col_count = 0, over_4_gib = 0;
+        int wide_cont_count = 0;
+        uint64_t largest_cont_offset = 0;
         for (int i = 0; i < ggml_graph_n_nodes(graph); ++i) {
             const ggml_tensor * node = ggml_graph_node(graph, i);
             assert(node->data == nullptr && node->buffer == nullptr);
             for (const ggml_tensor * source : node->src) {
                 if (source != nullptr) assert(source->data == nullptr && source->buffer == nullptr);
+            }
+            if (node->op == GGML_OP_CONT && node->type == GGML_TYPE_F32 &&
+                node->src[0]->type == GGML_TYPE_F32 &&
+                !ggml_is_contiguous(node->src[0])) {
+                uint64_t source_offset = 0, destination_offset = 0;
+                for (int axis = 0; axis < 4; ++axis) {
+                    source_offset += uint64_t(node->src[0]->ne[axis] - 1) * node->src[0]->nb[axis];
+                    destination_offset += uint64_t(node->ne[axis] - 1) * node->nb[axis];
+                }
+                const uint64_t max_offset = std::max(source_offset, destination_offset);
+                largest_cont_offset = std::max(largest_cont_offset, max_offset);
+                if (max_offset > INT32_MAX) {
+                    ++wide_cont_count;
+                    // The old signed element index fits, but byte offsets do not.
+                    assert(ggml_nelements(node) <= INT32_MAX);
+                    std::printf("{\"width\":%d,\"height\":%d,\"wide_cont_node\":%d,"
+                                "\"elements\":%lld,\"source_last_byte_offset\":%llu,"
+                                "\"destination_last_byte_offset\":%llu,\"device_execution\":false}\n",
+                                width, height, i, (long long)ggml_nelements(node),
+                                (unsigned long long)source_offset,
+                                (unsigned long long)destination_offset);
+                }
             }
             if (node->op != GGML_OP_IM2COL) continue;
             ++im2col_count;
@@ -73,14 +97,19 @@ static void check_graph(int width, int height, uint64_t expected_largest) {
         assert(largest == expected_largest);
         assert(largest_kernel_entries == 288 * 3 * 3);
         if (width == 512) assert(over_4_gib == 0 && work_items == 738197504);
-        else assert(over_4_gib > 0 && work_items == 2923954176);
+        else if (width == 1248) assert(over_4_gib > 0 && work_items == 2923954176);
+        else assert(width == 1184 && height == 1776 && over_4_gib > 0 && work_items == 5921439744);
+        if (width == 1184) assert(wide_cont_count > 0 && largest_cont_offset == 2422407164);
+        else assert(wide_cont_count == 0 && largest_cont_offset <= INT32_MAX);
         std::printf("{\"width\":%d,\"height\":%d,\"graph_nodes\":%d,"
                     "\"im2col_nodes\":%d,\"over_4_gib\":%d,"
                     "\"largest_im2col_bytes\":%llu,\"legacy_work_items\":%llu,"
+                    "\"wide_cont_nodes\":%d,\"largest_cont_byte_offset\":%llu,"
                     "\"device_execution\":false}\n", width, height,
                     ggml_graph_n_nodes(graph), im2col_count, over_4_gib,
                     static_cast<unsigned long long>(largest),
-                    static_cast<unsigned long long>(work_items));
+                    static_cast<unsigned long long>(work_items), wide_cont_count,
+                    static_cast<unsigned long long>(largest_cont_offset));
     }
     ggml_free(ctx);
     ggml_free(params);
@@ -90,4 +119,5 @@ int main() {
     static_assert(sizeof(size_t) >= 8, "large graph metadata requires a 64-bit host");
     check_graph(512, 512, UINT64_C(1358954496));
     check_graph(1248, 832, UINT64_C(5382733824));
+    check_graph(1184, 1776, UINT64_C(10900832256));
 }
