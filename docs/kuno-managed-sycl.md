@@ -239,3 +239,21 @@ resumed, service active/running, NRestarts 0, MemorySwapMax 0, no image worker o
 recovery quarantine. No additional reset appeared during final acceptance.
 Exact tests/timings and the bounded journal privacy check are in the installed
 service section of [the performance receipt](kuno-image-performance.md).
+
+## Prepared beta distribution receipt (2026-10-01 UTC)
+
+The release archive is a notice-only superset of the hardware-tested installed
+bundle: 64 members, 533,739,042 bytes, approved manifest SHA256
+`bf31edfe7c9630b6b6b367c98831aa7d4e931a797fcf29d519b00d7843413a99`.
+All previous 54 member bytes/hashes, including worker and vendor libraries,
+remain unchanged. Ten additional native license/notice files complete the
+identified embedded-source notices. The installed bundle and its historical
+manifest checksum above were not changed. No release or runtime reinstall was
+performed by this packaging work.
+
+Prepared archive SHA256
+`d242d7628ccb6c6048e7bdb7edca04d1c2e7453404e68667e829aff61b5ddd2f`,
+156,166,814 bytes. Eight CPU packaging regressions and full archive read-back
+passed. The release task must host the separate artifact and checksum before
+advertising its download. Exact paths, source range, provenance, tested platform
+limits and consumer/release steps are in [the beta handoff](kuno-release-handoff.md).

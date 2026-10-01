@@ -611,6 +611,15 @@ but neither accepted full SYCL workflow reaches ComfyUI parity.
 
 ## Installed service acceptance (2026-10-01 UTC)
 
+Release follow-up: after idle, a fresh installed 512x512/two-step keyless stream
+passed two previews/final in 40.870 s (first preview 38.327 s), plus IPv4/IPv6/LAN
+and control 401. Client ran in a zero-swap user cgroup. Service remains
+active/running with NRestarts 0 and MemorySwapMax 0; kernel Xe event count remains
+seven, with no new reset. Release packaging adds notices only; executable/library
+bytes are unchanged. Exact new archive/manifest hashes and integration steps are
+in [kuno-release-handoff.md](kuno-release-handoff.md). Beta readiness does not
+claim overnight/indefinite stability or ComfyUI parity.
+
 The standard gateway and final flat runtime above were installed through the
 owned-file systemd transaction. Runtime installation preserved the configuration
 byte for byte; explicit image configuration changed only engine, runtime and PCI
