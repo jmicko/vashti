@@ -259,6 +259,30 @@ struct BackendError {
     int phase;
 };
 
+static void backend_same(const std::vector<float>& a, const std::vector<float>& b, int phase) {
+    if (a.size() != b.size() || std::memcmp(a.data(), b.data(), a.size() * sizeof(float)) != 0) {
+        throw BackendError{phase};
+    }
+}
+
+static void backend_sync_noexcept(ggml_backend_t backend) noexcept {
+    try {
+        ggml_backend_synchronize(backend);
+    } catch (...) {
+        // Best-effort teardown must not replace the numerical failure being
+        // unwound. Synchronization orders work; it is not an async-error oracle.
+    }
+}
+
+static void backend_free_noexcept(ggml_backend_t backend) noexcept {
+    if (!backend) return;
+    backend_sync_noexcept(backend);
+    try {
+        ggml_backend_free(backend);
+    } catch (...) {
+    }
+}
+
 static BackendOutputs backend_variant(ggml_backend_t backend, int dim, int rows,
                                       int heads, int batch, bool interleaved,
                                       const std::vector<float>& qd, const std::vector<float>& kd,
@@ -270,10 +294,16 @@ static BackendOutputs backend_variant(ggml_backend_t backend, int dim, int rows,
         ggml_context* ctx = nullptr;
         ggml_backend_buffer_t inputs = nullptr;
         ggml_gallocr_t allocator = nullptr;
-        ~Resources() {
-            ggml_backend_synchronize(backend);
-            ggml_gallocr_free(allocator);
-            ggml_backend_buffer_free(inputs);
+        ~Resources() noexcept {
+            backend_sync_noexcept(backend);
+            try {
+                ggml_gallocr_free(allocator);
+            } catch (...) {
+            }
+            try {
+                ggml_backend_buffer_free(inputs);
+            } catch (...) {
+            }
             ggml_free(ctx);
         }
     } resources;
@@ -312,7 +342,7 @@ static BackendOutputs backend_variant(ggml_backend_t backend, int dim, int rows,
     auto graph = ggml_new_graph(ctx);
     ggml_build_forward_expand(graph, qo);
     ggml_build_forward_expand(graph, ko);
-    assert(pe_copies(graph, pe) == (shared ? 1 : 2));
+    if (pe_copies(graph, pe) != (shared ? 1 : 2)) throw BackendError{9};
     for (int i = 0; i < ggml_graph_n_nodes(graph); ++i) {
         if (!ggml_backend_supports_op(backend, ggml_graph_node(graph, i))) {
             throw BackendError{4};
@@ -336,9 +366,9 @@ static BackendOutputs backend_variant(ggml_backend_t backend, int dim, int rows,
     auto status = ggml_backend_graph_compute(backend, graph);
     ggml_backend_synchronize(backend);
     if (status != GGML_STATUS_SUCCESS) throw BackendError{8};
-    same(values(pe), pd);
-    same(values(q), qd);
-    same(values(k), kd);
+    backend_same(values(pe), pd, 10);
+    backend_same(values(q), qd, 11);
+    backend_same(values(k), kd, 12);
     if (prepared) {
         // Independent physical permutation: raw [2,2,D/2,L] -> [2,D/2,L,2].
         std::vector<float> expected(pd.size());
@@ -348,7 +378,7 @@ static BackendOutputs backend_variant(ggml_backend_t backend, int dim, int rows,
                     pd[component + 2 * (result + 2 * (pair + (dim / 2) * row))];
             }
         }
-        same(values(prepared), expected);
+        backend_same(values(prepared), expected, 13);
     }
     return {values(qo), values(ko)};
 }
@@ -365,11 +395,11 @@ static void backend_case(ggml_backend_t backend, int dim, int rows, int heads,
     // Only one variant's device workspace is live; comparisons stay in RAM.
     auto legacy = backend_variant(backend, dim, rows, heads, batch, interleaved, qd, kd, pd, false);
     auto shared = backend_variant(backend, dim, rows, heads, batch, interleaved, qd, kd, pd, true);
-    same(legacy.q, shared.q);
-    same(legacy.k, shared.k);
+    backend_same(legacy.q, shared.q, 14);
+    backend_same(legacy.k, shared.k, 15);
     if (scalar_check) {
-        same(legacy.q, oracle(qd, pd, dim, heads, rows, batch, interleaved));
-        same(legacy.k, oracle(kd, pd, dim, heads, rows, batch, interleaved));
+        backend_same(legacy.q, oracle(qd, pd, dim, heads, rows, batch, interleaved), 16);
+        backend_same(legacy.k, oracle(kd, pd, dim, heads, rows, batch, interleaved), 17);
     }
 }
 
@@ -446,7 +476,7 @@ int main(int argc, char** argv) {
             std::fputs("rope_device_error phase=3\n", stderr);
             return 2;
         }
-        std::unique_ptr<ggml_backend, decltype(&ggml_backend_free)> backend(ggml_backend_dev_init(selected, nullptr), ggml_backend_free);
+        std::unique_ptr<ggml_backend, decltype(&backend_free_noexcept)> backend(ggml_backend_dev_init(selected, nullptr), backend_free_noexcept);
         if (!backend) {
             std::fputs("rope_device_error phase=4\n", stderr);
             return 2;
@@ -494,6 +524,14 @@ int main(int argc, char** argv) {
     for (auto mode : {Qwen::QwenImage21PrefixCache::Mode::NONE, Qwen::QwenImage21PrefixCache::Mode::STORE, Qwen::QwenImage21PrefixCache::Mode::REUSE}) model_topology(cpu.get(), mode);
     segmented_case(cpu.get(), 0);
     segmented_case(cpu.get(), 1); // Fresh graph with different coefficients after cleanup.
-    backend_cases(cpu.get(), false); // Exercises the device-buffer API without loading GPUs.
+    try {
+        backend_cases(cpu.get(), false); // Exercises the device-buffer API without loading GPUs.
+    } catch (const BackendError& error) {
+        std::fprintf(stderr, "rope_backend_error phase=%d\n", error.phase);
+        return 1;
+    } catch (...) {
+        std::fputs("rope_backend_error phase=18\n", stderr);
+        return 1;
+    }
     std::puts("RoPE scalar oracle, exact sharing, Qwen prefix layouts and segmented lifetime passed");
 }
