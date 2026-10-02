@@ -1,0 +1,120 @@
+{
+  "status": "experimental_not_accepted_do_not_install_or_release",
+  "source_baseline": "fb2d1d0e367d4d53054bf8de63f49b316046d704",
+  "combined_source_commit": "f6aa88055488328665edd0c0445a3fe3c64becae",
+  "combined_source_tree": "a1c14daaf7a1357770d3bacc0df359f23a7b3b8d",
+  "source_check_commit": "400e1eb59a6c8106f5f8c5b468b8eeb0e51a501d",
+  "source_checks": {
+    "passed": 205,
+    "failed": 0,
+    "ignored": 9,
+    "clippy_all_targets_warnings_denied": true,
+    "format_check": true
+  },
+  "source_pins": {
+    "version": 1,
+    "id": "qwen21-sycl-2026.1-v1",
+    "worker_abi": 2,
+    "ggml_max_name": 160,
+    "engine_revision": "88411ef1e0688ff2df1010aeeb5d92b2d8cea2be",
+    "ggml_revision": "4bf5f6000653b7881d00963cd6ddb665ccd62a8d",
+    "engine_patch_sha256": "ed75739ccb193099f23d4600cc4a8846f9d17fe6c2cec7591a7c9cb30c2d0134",
+    "ggml_patch_sha256": "7298590faed44cad4733c78f6f6c2bf261b647712b5ec5f75840da450f0067dc",
+    "sycl_patch_sha256": "f97db2f0851df733e202fb7e65f6d98b75eee3d8b1e212299bde8ddf484c7b7b"
+  },
+  "private_runtime": {
+    "archive": "/home/jmicko/.codex/worktrees/kuno-image-speed/vashti/target/contiguous-kv/candidate-runtime.tar.gz",
+    "archive_sha256": "bb0772fda11344e169ff8efac0e03316c8a0933c2dc8de177d6abfc3a048bb17",
+    "archive_bytes": 156232239,
+    "manifest_sha256": "fefd1433dddda684357fe47acfb0b0e43ba0c8bf916a5c225b1719c2a3f3fdb3",
+    "worker_sha256": "db8c2368b5f4b4a31f8f0b25a513de2e9291b0302c43a55a41d9a8d33e7dc50d",
+    "members": 64,
+    "unchanged_members": 63,
+    "worker_abi": 2,
+    "producer_receipts": {
+      "source-receipt.json": "9e8837d34a79531348b967cbba36a31467f71176699f99b50fb610d83b2d7506",
+      "build-mini/build-receipt.json": "628b00a2e25402cdc2c9d185ff2f60e43eefc432dc6257db1a198080ac8672ec",
+      "worker-native-build/engine-build-receipt.json": "e0b40a39d6074a0150bc713cb75bb31b712dace8ea72e89be487a9ae6888a9d9",
+      "worker-build-receipt.json": "3ea862e6988ebb15847bbd61b8cd26186f5a2ff1b6b7a23e3ed98c18441823d7"
+    }
+  },
+  "private_package_receipt_sha256": "f71481cf14a09f4b5d07559a66c4d146854b0730935cb355fd6356568bfd01be",
+  "standard_build": {
+    "source_commit": "734bd110cb894b720ce7a98e44af7a6802c8a933",
+    "source_patches": {
+      "001-qwen-quantized-config.patch": "ed75739ccb193099f23d4600cc4a8846f9d17fe6c2cec7591a7c9cb30c2d0134",
+      "002-vulkan-flash-shapes.patch": "7298590faed44cad4733c78f6f6c2bf261b647712b5ec5f75840da450f0067dc"
+    },
+    "receipt_path": "/tmp/kuno-image-shared-rope-standard-v1/build-provenance.json",
+    "receipt_sha256": "400412832440122e1ebdc7b5b2f77d9fd768336f75032e190bb427325efd8d9b",
+    "archive": {
+      "path": "/tmp/kuno-image-shared-rope-standard-v1/build/libstable-diffusion.a",
+      "sha256": "f0bae1e12938bcd9bf926f1973d20bd703c946e11a2a07de569fcd661eb72c9f",
+      "bytes": 50551390,
+      "cpp_fresh": 57,
+      "c_unchanged": 15
+    },
+    "gateway": {
+      "path": "/tmp/kuno-image-shared-rope-standard-v1/cargo-target/release/kuno",
+      "bytes": 725280480,
+      "sha256": "6c6409189ee4edd740095776d5df8d9dfa9645dfa95736f1c97b65b15f676938"
+    },
+    "gpu_execution": false
+  },
+  "baseline_metrics_path": "target/inference-tests/baseline-full-resident-metrics.json",
+  "baseline_metrics_sha256": "48b891acbb36d7e7d754b5ec8c0d4c4577c44382641f40e8895de5a3312b253b",
+  "final_audit": {
+    "service_active": true,
+    "service_pid": 2432555,
+    "service_automatic_restarts": 0,
+    "service_swap_limit_zero": true,
+    "service_swap_current_bytes": 0,
+    "admission_paused": false,
+    "active_requests": false,
+    "waiting_requests": 0,
+    "recovery_required": false,
+    "installed_gateway_matches_accepted": true,
+    "installed_manifest_matches_accepted": true,
+    "installed_runtime_members_verified": true,
+    "image_workers_remaining": 0,
+    "benchmark_unit_active": false
+  },
+  "acceptance": {
+    "candidate_gpu_correctness": false,
+    "candidate_full_workflow_speed": false,
+    "candidate_protected_runtime": false,
+    "candidate_cancellation_reuse": false,
+    "installed_changes": false
+  },
+  "limitations": [
+    "Only original installed resident workflow was benchmarked successfully.",
+    "New Intel kernel timeouts/reset events occurred during later experimental attention tests; root cause is not proven.",
+    "Guarded candidate was not executed after the expanded unchanged baseline aborted before its first reported case.",
+    "Default source tests do not validate native GPU changes.",
+    "Standard and private binaries were produced at the listed commits; later test/docs changes do not change their production source.",
+    "Candidate runtime uses a local packaging pin override; production packaging pins remain at the accepted residency build.",
+    "No prompts, seeds, reference image paths, generated pixels, raw backend errors or inference payloads are included."
+  ],
+  "later_recovery_checks": {
+    "cuda_rope_oracle": {
+      "cuda_rope_oracle_passed": true,
+      "exit_code": 0,
+      "cases_completed": 40,
+      "fixed_errors": [],
+      "seconds": 5.309,
+      "synthetic_data_only": true,
+      "candidate_product_patches": [
+        "001"
+      ],
+      "binary_sha256": "cb036f946845446dc750cfd62d46351f12231de4d8b09001d78f6fbf56d036c8"
+    },
+    "xe_device_query_succeeded": true,
+    "accepted_sycl_smoke": {
+      "completed": false,
+      "test_timeout_seconds": 45,
+      "new_classified_job_timeouts": 93,
+      "candidate_archive_used": false
+    },
+    "card_recovery": "User authorized targeted B70 rebind with FLR only; preparing attempt, not yet hardware acceptance."
+  }
+}
