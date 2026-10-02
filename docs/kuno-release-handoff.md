@@ -64,6 +64,19 @@ new Android/Vashti acceptance is claimed. No next beta upload, merge or push was
 performed. Keep this worktree/artifacts until the release task copies them and
 runs its usual complete checks.
 
+## Experimental performance candidates
+
+The later graph-local RoPE and aligned contiguous-F16 K/V source candidates are
+**experimental and excluded from release selection**. Their controlled resident
+baseline, CPU checks, failed/pending GPU oracles and kernel-event boundary are in
+[the performance appendix](kuno-image-performance.md#resident-full-workflow-baseline-and-experimental-speed-candidates).
+The installed runtime/configuration and historical artifact receipts are unchanged.
+Keep the packaging helper's current accepted pins until device recovery and
+successful GPU numerical/full-workflow benchmarks, protected runtime/privacy,
+and cancellation/reuse acceptance. A candidate build or passing source suite
+does not authorize repackaging, installation or publication. No Vashti code/API
+change or frontend integration is required for these internal candidates.
+
 The sections below preserve the pre-beta.2 backend handoff. Their checkout,
 artifact and release-action details are historical; the published beta.2
 checkpoint and newer resident-image update above supersede them. Use the current

@@ -668,3 +668,115 @@ The API/discovery shapes and Vashti connector/UI are unchanged. Existing saved
 CUDA fast recipes must select standard for this Intel route. Source remains on
 codex/kuno-image-performance; concurrent Vashti/untracked coordination work is
 preserved. No merge, push, application deployment or public release occurred.
+
+
+## Resident full-workflow baseline and experimental speed candidates
+
+This checkpoint measures the accepted installed ABI 2 resident worker from
+[`kuno-image-residency-build.json`](kuno-image-residency-build.json), before the
+experimental source changes below. Original B70 workloads retained their requested
+dimensions, steps and CFG. The benchmark ran without concurrent heavy compilation
+or inference; one worker PID served all four requests. Process-cold includes worker
+initialization/model load, with OS file caches uncontrolled. The first edit reused
+loaded image models but was the first vision/edit request in that process; it is
+not a process-cold edit measurement.
+
+| Original workload | First request | Resident repeat | User-reported ComfyUI warm |
+| --- | ---: | ---: | ---: |
+| Generation, 1184x1776, 50 steps, CFG1 | 157.208 s, process-cold | 135.547 s | 100.65 s |
+| Edit, 1248x832, 25 steps, CFG4 | 101.958 s, model-warm/vision-first | 76.952 s | 64.48 s |
+
+| Resident repeat | First-to-last preview span | Last preview through decode/cleanup |
+| --- | ---: | ---: |
+| Generation | 125.142 s | 5.852 s |
+| Edit | 63.003 s | 2.864 s |
+
+The preview span excludes work before the first preview; it is not a complete
+sampling-stage profile. All four requests delivered the expected final dimensions
+and all 50/25 previews per generation/edit request. Private input/output/comparison bytes stayed in RAM,
+no prompt/reference/generated-image files were saved, and swap remained zero.
+The kernel event count was seven before and after the full baseline. These
+resident timings supersede the earlier small-image smoke as the full-workflow
+baseline, without invalidating historical fresh-process receipts. Both warm
+workflows remain slower than the user's ComfyUI measurements. The ComfyUI values
+are user-reported comparison points, not a matched runtime/precision/cache
+experiment or a parity claim.
+
+### Experimental source and CPU validation
+
+The combined candidate tree is `f6aa880`; the isolated source-check tree
+`400e1eb59a6c8106f5f8c5b468b8eeb0e51a501d` matches it exactly. Candidate patch
+checksums are:
+
+- `001-qwen-quantized-config.patch`:
+  `ed75739ccb193099f23d4600cc4a8846f9d17fe6c2cec7591a7c9cb30c2d0134`.
+- `003-sycl-convrot.patch`:
+  `f97db2f0851df733e202fb7e65f6d98b75eee3d8b1e212299bde8ddf484c7b7b`.
+
+Patch 001 shares the already permuted positional matrix within one Qwen 2.1
+compute graph, removing 63 repeated materializations. It retains no positional
+tensor across steps or requests; see the
+[graph-local sharing test and lifetime notes](../crates/kuno-image/native/rope-sharing.md).
+Patch 003 skips F16 K/V packing independently only when the input is contiguous,
+non-null and aligned to the backend's 128-byte `SYCL_BUFFER_ALIGNMENT`. Strided,
+unaligned and other-type inputs retain their previous packing/conversion paths.
+That alignment is a conservative fast-path policy, not a claimed universal
+oneDNN requirement. Requested arithmetic, resolution, steps and CFG are unchanged.
+
+Default `cargo test --offline --locked -p kuno -p kuno-image -p kuno-protocol --
+--test-threads=1` passed 205 tests, zero failed, nine ignored. Default all-target
+Clippy with warnings denied, formatting and diff checks passed. Rust/Cargo are
+1.95.0. The expanded attention oracle passed 101 CPU cases plus two exact cache
+checks, maximum relative L2 0.00170561. Twelve CPU pointer-policy cases cover
+null/aligned/unaligned inputs and independent K/V eligibility; the shape envelope
+also passed 199 accepted and 47 rejected cases. Direct attention cases include
+34-byte and 128-byte F16 view offsets with independent dense/strided K/V layouts.
+These source/CPU results do not establish B70 correctness or a speed improvement.
+
+The private SYCL worker build at `f6aa880` completed without GPU invocation.
+Its SHA-256 is
+`db8c2368b5f4b4a31f8f0b25a513de2e9291b0302c43a55a41d9a8d33e7dc50d`
+(135,504,672 bytes); the rebuilt engine archive SHA-256 is
+`56fc04019678ae50f35407d6b0891bdc1882720ac2041d667e6b1001e3be4e6e`.
+These identify unaccepted candidate build artifacts, not an installed runtime,
+approved release package or successful hardware execution.
+
+### GPU failure boundary and pending acceptance
+
+The initial matched 85-case GPU oracle passed against the unchanged accepted
+SYCL archive, maximum relative L2 0.0012553. The original candidate, which allowed
+unaligned contiguous F16 aliases, then failed the direct SDPA offset-layout
+numerical assertion at test line 269, exit -6. Output buffering prevented exact
+identification of the failing offset/layout combination. This supports restricting
+the fast path, but does not prove alignment is the sole cause.
+
+The guarded 101-case oracle has line-buffered, flushed numeric results. Its
+unchanged baseline aborted before the first reported case during the subsequent
+test window. The alignment guard therefore remains unvalidated on hardware;
+there is no accepted candidate speed result or valid matched GPU timing here.
+
+| Kernel observation | `engine_reset` | `job_timeout` | Total |
+| --- | ---: | ---: | ---: |
+| Before and after the controlled full baseline | 7 | 0 | 7 |
+| After the later oracle diagnostic window | 10 | 93 | 103 |
+
+The new events are associated in time with the experimental test window. These
+counts do not establish which operation caused them, whether an assertion/context
+exit contributed, or the underlying driver/kernel cause. Numerical assertions
+abort without normal test teardown, and the existing SYCL backend uses `wait()`
+rather than `wait_and_throw()` for synchronization, limiting deferred-error
+diagnosis. Rejected and guarded binaries, archives and content-free numerical
+receipts are preserved; GPU testing is paused pending B70 recovery.
+
+The owning task is preparing a reboot/recovery checkpoint rather than another
+GPU retry. Building or packaging the candidate does not clear that boundary.
+
+The installed runtime and configuration remain unchanged. Standard/private
+candidate build receipts are separate from hardware acceptance. Complete device
+recovery, numerical and original-workflow cold/warm comparisons, protected
+runtime/privacy checks and cancellation/reuse acceptance before selecting either
+source optimization. Do not include these candidates in a release or advance
+the packaging helper's current accepted pins yet. Historical build/manifest
+receipts retain their original checksums. No Vashti code or API change is involved;
+the [release handoff](kuno-release-handoff.md#experimental-performance-candidates)
+records this pending boundary.

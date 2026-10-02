@@ -88,6 +88,16 @@ gateway/runtime is installed on this host. This backend-only change needs no
 Vashti connector or UI change. Do not
 treat the published ABI 1 beta.2 runtime as the new resident worker.
 
+**Experimental performance follow-up:** the original resident B70 full-workflow
+baseline and pending graph-local RoPE/aligned K/V candidates are recorded in
+[the performance appendix](kuno-image-performance.md#resident-full-workflow-baseline-and-experimental-speed-candidates).
+CPU checks pass, but GPU acceptance is paused pending device recovery after
+oracle failures and new kernel events. Installed runtime/configuration are
+unchanged. Exclude these candidates from releases until numerical, benchmark,
+privacy and cancellation/reuse acceptance pass; see
+[the release warning](kuno-release-handoff.md#experimental-performance-candidates).
+There is no API or Vashti code change and no frontend integration handoff needed.
+
 **Status:** Kuno backend, Vashti connector, and conversational image flows are
 implemented and source-tested. Synthetic application flows and installed native
 generation, regeneration, editing, previews, and cancellation have been verified
