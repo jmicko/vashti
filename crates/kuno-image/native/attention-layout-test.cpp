@@ -175,6 +175,101 @@ static void attention_case(ggml_backend_t backend, int batch, bool masked, bool 
     ggml_gallocr_free(allocator); ggml_backend_buffer_free(inputs); ggml_free(ctx);
 }
 
+// Exercise the actual FLASH_ATTN_EXT inputs directly: the model adapter packs
+// V before attention, which otherwise hides the independent strided-V branch.
+// Nonzero view offsets and padding canaries catch aliasing the backing buffer
+// instead of the logical input, or mistaking a padded view for dense storage.
+static void sdpa_layout_case(ggml_backend_t backend, bool strided_k, bool strided_v,
+                             bool masked, bool f32_precision, ggml_type kv_type = GGML_TYPE_F16,
+                             int keys = 65) {
+    constexpr int dim = 128, rows = 33, heads = 2, lead = 17, tail = 19;
+    const int k_pitch = dim + (strided_k ? 8 : 0), v_pitch = dim + (strided_v ? 16 : 0);
+    const size_t element_bytes = ggml_type_size(kv_type);
+    auto ctx = ggml_init({8 * 1024 * 1024, nullptr, true});
+    auto q = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, dim, rows, heads, 1);
+    auto k_storage = ggml_new_tensor_1d(ctx, kv_type, lead + heads * keys * k_pitch + tail);
+    auto v_storage = ggml_new_tensor_1d(ctx, kv_type, lead + heads * keys * v_pitch + tail);
+    auto view = [&](ggml_tensor* storage, int pitch) {
+        return ggml_view_4d(ctx, storage, dim, keys, heads, 1,
+                            pitch * element_bytes, keys * pitch * element_bytes,
+                            heads * keys * pitch * element_bytes, lead * element_bytes);
+    };
+    auto k = view(k_storage, k_pitch), v = view(v_storage, v_pitch);
+    assert(ggml_is_contiguous(k) == !strided_k);
+    assert(ggml_is_contiguous(v) == !strided_v);
+    auto mask = masked ? ggml_new_tensor_2d(ctx, GGML_TYPE_F16, keys, rows) : nullptr;
+    auto inputs = ggml_backend_alloc_ctx_tensors(ctx, backend);
+    assert(inputs != nullptr);
+    assert(static_cast<const char*>(k->data) == static_cast<const char*>(k_storage->data) + lead * element_bytes);
+    assert(static_cast<const char*>(v->data) == static_cast<const char*>(v_storage->data) + lead * element_bytes);
+    std::mt19937 rng(211);
+    std::uniform_real_distribution<float> random(-0.7f, 0.7f);
+    std::vector<float> qd(ggml_nelements(q)), kd(dim * keys * heads), vd(kd.size()), md(keys * rows);
+    for (float& value : qd) value = random(rng);
+    for (float& value : kd) value = random(rng);
+    for (float& value : vd) value = random(rng);
+    upload(q, qd);
+    auto upload_view = [&](ggml_tensor* storage, int pitch, std::vector<float>& logical) {
+        std::vector<float> data(ggml_nelements(storage), 42.f);
+        for (int h = 0; h < heads; ++h) for (int t = 0; t < keys; ++t) for (int d = 0; d < dim; ++d) {
+            data[lead + (h * keys + t) * pitch + d] = logical[(h * keys + t) * dim + d];
+        }
+        upload(storage, data);
+        data = read_floats(storage);
+        for (int h = 0; h < heads; ++h) for (int t = 0; t < keys; ++t) for (int d = 0; d < dim; ++d) {
+            logical[(h * keys + t) * dim + d] = data[lead + (h * keys + t) * pitch + d];
+        }
+    };
+    upload_view(k_storage, k_pitch, kd); upload_view(v_storage, v_pitch, vd);
+    if (mask) {
+        for (int r = 0; r < rows; ++r) for (int t = 0; t < keys; ++t) md[r * keys + t] = t <= r + 1 ? 0.f : -INFINITY;
+        upload(mask, md);
+    }
+    auto output = ggml_flash_attn_ext(ctx, q, k, v, mask, 1.f / std::sqrt(float(dim)), 0, 0);
+    ggml_flash_attn_ext_set_prec(output, f32_precision ? GGML_PREC_F32 : GGML_PREC_DEFAULT);
+    assert(ggml_backend_supports_op(backend, output));
+    auto graph = ggml_new_graph(ctx); ggml_build_forward_expand(graph, output);
+    auto allocator = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
+    assert(ggml_gallocr_alloc_graph(allocator, graph));
+    assert(ggml_backend_graph_compute(backend, graph) == GGML_STATUS_SUCCESS);
+    ggml_backend_synchronize(backend);
+    auto actual = read_floats(output);
+    double error = 0, power = 0, maximum_error = 0;
+    for (int r = 0; r < rows; ++r) for (int h = 0; h < heads; ++h) {
+        std::vector<double> logits(keys);
+        double maximum = -INFINITY, sum = 0;
+        for (int t = 0; t < keys; ++t) {
+            double dot = 0;
+            for (int d = 0; d < dim; ++d) {
+                const float key = ggml_fp16_to_fp32(ggml_fp32_to_fp16(kd[(h * keys + t) * dim + d]));
+                dot += qd[(h * rows + r) * dim + d] * double(key);
+            }
+            logits[t] = dot / std::sqrt(double(dim)) + (masked ? md[r * keys + t] : 0);
+            maximum = std::max(maximum, logits[t]);
+        }
+        for (double& value : logits) { value = std::exp(value - maximum); sum += value; }
+        for (int d = 0; d < dim; ++d) {
+            double expected = 0;
+            for (int t = 0; t < keys; ++t) {
+                const float value = ggml_fp16_to_fp32(ggml_fp32_to_fp16(vd[(h * keys + t) * dim + d]));
+                expected += logits[t] * value / sum;
+            }
+            const float observed = actual[(r * heads + h) * dim + d];
+            assert(std::isfinite(observed));
+            const double delta = observed - expected;
+            error += delta * delta; power += expected * expected;
+            maximum_error = std::max(maximum_error, std::abs(delta));
+        }
+    }
+    const double relative = std::sqrt(error / std::max(power, 1e-30));
+    std::printf("sdpa_layout strided_k=%d strided_v=%d masked=%d f32_precision=%d kv_f16=%d keys=%d "
+                "offset_bytes=%zu relative_l2=%.8f max_error=%.8f\n",
+                strided_k, strided_v, masked, f32_precision, kv_type == GGML_TYPE_F16,
+                keys, lead * element_bytes, relative, maximum_error);
+    assert(relative < 0.003);
+    ggml_gallocr_free(allocator); ggml_backend_buffer_free(inputs); ggml_free(ctx);
+}
+
 static int attention_benchmark(ggml_backend_t backend, int heads) {
     constexpr int dim = 128, rows = 4056, keys = 8192;
     const size_t query_bytes = size_t(dim) * rows * heads * sizeof(float);
@@ -344,6 +439,14 @@ int main(int argc, char** argv) {
     for (const auto& test : shapes) for (bool masked : {false, true}) for (bool f32 : {false, true}) {
         attention_case(backend, 1, masked, false, 1, GGML_TYPE_F16,
                        test.dim, test.rows, test.keys, 2, f32);
+    }
+    for (bool strided_k : {false, true}) for (bool strided_v : {false, true})
+        for (bool masked : {false, true}) for (bool f32 : {false, true}) {
+            sdpa_layout_case(backend, strided_k, strided_v, masked, f32);
+        }
+    // Preserve the existing F32-to-F16 staging path at supported prefill sizes.
+    for (bool masked : {false, true}) {
+        sdpa_layout_case(backend, true, true, masked, true, GGML_TYPE_F32, 1025);
     }
     ggml_backend_free(backend);
     std::puts("attention_layout_passed");

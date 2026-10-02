@@ -1262,10 +1262,10 @@ index 55e0761..ae47990 100644
                            sycl::range<3>(1, 1, SYCL_CPY_BLOCK_SIZE)),
 diff --git a/src/ggml-sycl/fattn-onednn-shapes.hpp b/src/ggml-sycl/fattn-onednn-shapes.hpp
 new file mode 100644
-index 0000000..bb91537
+index 0000000..6ff610b
 --- /dev/null
 +++ b/src/ggml-sycl/fattn-onednn-shapes.hpp
-@@ -0,0 +1,71 @@
+@@ -0,0 +1,78 @@
 +#pragma once
 +
 +#include "ggml.h"
@@ -1273,6 +1273,13 @@ index 0000000..bb91537
 +#include <cstring>
 +#include <initializer_list>
 +#include <limits>
++
++// The SDPA descriptors below use dense [batch, head, token, channel] inputs.
++// A dense F16 view already has that byte layout, including its data offset;
++// other layouts/types must retain the existing packing/conversion kernels.
++inline bool ggml_sycl_onednn_sdpa_alias_f16(const ggml_tensor * tensor) {
++    return tensor && tensor->type == GGML_TYPE_F16 && ggml_is_contiguous(tensor);
++}
 +
 +// Hardware-independent envelope for the strided staging kernels and the
 +// contiguous oneDNN SDPA graph. Unsupported layouts retain native attention.
@@ -1338,7 +1345,7 @@ index 0000000..bb91537
 +    return precision == GGML_PREC_DEFAULT || precision == GGML_PREC_F32;
 +}
 diff --git a/src/ggml-sycl/fattn-onednn.cpp b/src/ggml-sycl/fattn-onednn.cpp
-index fd17a25..11d174d 100644
+index fd17a25..c10de42 100644
 --- a/src/ggml-sycl/fattn-onednn.cpp
 +++ b/src/ggml-sycl/fattn-onednn.cpp
 @@ -1,4 +1,5 @@
@@ -1501,7 +1508,45 @@ index fd17a25..11d174d 100644
      E.cp       = parts[0].compile(E.ins, {E.out}, eng);
      E.out      = E.cp.query_logical_tensor(E.out.get_id());
      E.id_q     = query.get_id(); E.id_k = key.get_id(); E.id_v = value.get_id();
-@@ -341,23 +298,26 @@ void ggml_sycl_flash_attn_ext_onednn(ggml_backend_sycl_context & ctx, ggml_tenso
+@@ -231,19 +188,30 @@ void ggml_sycl_flash_attn_ext_onednn(ggml_backend_sycl_context & ctx, ggml_tenso
+     ggml_sycl_pool_alloc<sycl::half> Qf(ctx.pool(), (size_t) H * q * d);
+     cont_to_f16_sycl<float>((const char *) Q->data, Qf.get(), d, q, H, mb, Q->nb[1], Q->nb[2], Q->nb[3], stream);
+ 
+-    // K/V: use pool-alloc for both F16 and dequant paths.
++    // K/V: dense F16 inputs already match the compiled SDPA descriptors.
++    // Alias each independently; packing remains necessary for strided views.
+     sycl::half * K_ptr = nullptr;
+     sycl::half * V_ptr = nullptr;
+     std::optional<ggml_sycl_pool_alloc<sycl::half>> Kf_pool;
+     std::optional<ggml_sycl_pool_alloc<sycl::half>> Vf_pool;
+ 
+     if (K->type == GGML_TYPE_F16 && V->type == GGML_TYPE_F16) {
+-        Kf_pool.emplace(ctx.pool(), (size_t) Hkv * seq * d);
+-        Vf_pool.emplace(ctx.pool(), (size_t) Hkv * seq * d);
+-        cont_to_f16_sycl<sycl::half>((const char *) K->data, Kf_pool->get(), d, seq, Hkv, mb, K->nb[1], K->nb[2], K->nb[3], stream);
+-        cont_to_f16_sycl<sycl::half>((const char *) V->data, Vf_pool->get(), d, seq, Hkv, mb, V->nb[1], V->nb[2], V->nb[3], stream);
+-        K_ptr = Kf_pool->get();
+-        V_ptr = Vf_pool->get();
++        if (ggml_sycl_onednn_sdpa_alias_f16(K)) {
++            K_ptr = static_cast<sycl::half *>(K->data);
++        } else {
++            Kf_pool.emplace(ctx.pool(), (size_t) Hkv * seq * d);
++            cont_to_f16_sycl<sycl::half>((const char *) K->data, Kf_pool->get(), d, seq, Hkv, mb, K->nb[1], K->nb[2], K->nb[3], stream);
++            K_ptr = Kf_pool->get();
++        }
++        if (ggml_sycl_onednn_sdpa_alias_f16(V)) {
++            V_ptr = static_cast<sycl::half *>(V->data);
++        } else {
++            Vf_pool.emplace(ctx.pool(), (size_t) Hkv * seq * d);
++            cont_to_f16_sycl<sycl::half>((const char *) V->data, Vf_pool->get(), d, seq, Hkv, mb, V->nb[1], V->nb[2], V->nb[3], stream);
++            V_ptr = Vf_pool->get();
++        }
++        // GGML owns these inputs until graph completion. SDPA and subsequent
++        // workspace reuse execute on the same in-order queue used for packing.
+     } else if (ggml_is_quantized(K->type)) {
+         // Quantized K/V: dequant to dense F16 using pool, same lifetime as F16 path.
+         Kf_pool.emplace(ctx.pool(), ggml_nelements(K));
+@@ -341,23 +309,26 @@ void ggml_sycl_flash_attn_ext_onednn(ggml_backend_sycl_context & ctx, ggml_tenso
      // compile once per (device, shape), reuse across layers/calls.
      static std::unordered_map<std::string, sdpa_partition> cache;
      char keyb[96];

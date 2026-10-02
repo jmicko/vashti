@@ -26,6 +26,28 @@ struct Shape {
 
 int main() {
     int accepted = 0, rejected = 0;
+    int alias_cases = 0;
+    for (bool strided_k : {false, true}) for (bool strided_v : {false, true}) {
+        Shape s;
+        if (strided_k) s.k->nb[1] += sizeof(ggml_fp16_t) * 8;
+        if (strided_v) s.v->nb[1] += sizeof(ggml_fp16_t) * 16;
+        assert(ggml_sycl_onednn_sdpa_shape_supported(s.dst));
+        assert(ggml_sycl_onednn_sdpa_alias_f16(s.k) == !strided_k);
+        assert(ggml_sycl_onednn_sdpa_alias_f16(s.v) == !strided_v);
+        ++alias_cases;
+    }
+    // A dense offset view aliases its logical data, never the buffer's start.
+    { Shape s;
+      auto storage = ggml_new_tensor_1d(s.ctx, GGML_TYPE_F16, ggml_nelements(s.k) + 17);
+      auto view = ggml_view_4d(s.ctx, storage, s.k->ne[0], s.k->ne[1], s.k->ne[2], 1,
+                               s.k->nb[1], s.k->nb[2], s.k->nb[3], 17 * sizeof(ggml_fp16_t));
+      assert(ggml_sycl_onednn_sdpa_alias_f16(view)); ++alias_cases; }
+    { Shape s; s.k->type = GGML_TYPE_F32;
+      s.k->nb[0] = sizeof(float);
+      for (int d = 1; d < 4; ++d) s.k->nb[d] = s.k->nb[d - 1] * s.k->ne[d - 1];
+      assert(ggml_is_contiguous(s.k));
+      assert(!ggml_sycl_onednn_sdpa_alias_f16(s.k)); ++alias_cases; }
+    assert(!ggml_sycl_onednn_sdpa_alias_f16(nullptr)); ++alias_cases;
     for (int rows : {32, 33, 65, 67}) for (int keys : {65, 128, 257})
         for (int heads : {2, 32}) for (bool masked : {false, true}) for (bool f32 : {false, true}) {
             Shape s(rows, keys, heads, masked, 128, f32);
@@ -104,5 +126,5 @@ int main() {
     reject([](Shape &s) { s.k->ne[2] = s.v->ne[2] = 1; });
     reject([](Shape &s) { s.q->ne[0] = s.k->ne[0] = s.v->ne[0] = 64; });
     assert(!ggml_sycl_onednn_sdpa_shape_supported(nullptr)); ++rejected;
-    std::printf("onednn_sdpa_shape accepted=%d rejected=%d status=passed\n", accepted, rejected);
+    std::printf("onednn_sdpa_shape accepted=%d rejected=%d alias_cases=%d status=passed\n", accepted, rejected, alias_cases);
 }
