@@ -88,22 +88,26 @@ gateway/runtime is installed on this host. This backend-only change needs no
 Vashti connector or UI change. Do not
 treat the published ABI 1 beta.2 runtime as the new resident worker.
 
-**Experimental performance follow-up:** the original resident B70 full-workflow
-baseline and pending graph-local RoPE/aligned K/V candidates are recorded in
-[the performance appendix](kuno-image-performance.md#resident-full-workflow-baseline-and-experimental-speed-candidates).
-After a user reboot, guarded Intel attention numerical checks pass on the new
-kernel without new classified faults. Matched full workflows and protected
-runtime/privacy checks pass with modest gains. Full-step controls reveal
-existing edit variability and unresolved candidate generation differences;
-output equivalence and cancellation acceptance remain pending; see the appendix for the earlier
-oracle failures and kernel events. Installed runtime/configuration are
-unchanged. Exclude these candidates from releases until numerical, benchmark,
-privacy and cancellation/reuse acceptance pass; see
-[the release warning](kuno-release-handoff.md#experimental-performance-candidates).
-GPU work stopped at the user's request after the final control. Both benchmark
-cards are released and installed Kuno is unchanged. Fusion/profiling prototypes
-remain unselected. There is no API or Vashti code change and no frontend
-integration handoff needed.
+**Experimental performance follow-up:** ongoing controlled Intel work is in
+[the performance appendix](kuno-image-performance.md#continued-bounded-intel-investigations-2026-10-02)
+and its numeric/source receipt. The user renewed exclusive GPU/sudo access and
+requested no action requiring a restart. The installed accepted ABI2 gateway,
+runtime and configuration are unchanged; no service/driver reset or reboot is
+performed. Private test units use zero swap/core and keep content in RAM only.
+
+A new accepted-RoPE/guarded-attention/residual-first closure at `d476407`
+(documentation `dde33b6`) passes original full generation/edit, protected
+runtime/privacy, PID reuse, normal shutdown, cancellation and fresh-worker
+recovery on B70/kernel38, with no new classified Xe fault. Warm times in one
+compiler-idle pair improve from 137.345 to 130.801 seconds for generation and
+76.870 to 73.187 seconds for editing.
+Inter-process pixel variation also exists with identical accepted workers;
+no bitwise pipeline equivalence, validated tolerance or ComfyUI parity is
+claimed. This bundle remains unselected/uninstalled while a broader default-off
+RoPE prototype is investigated. Keep existing release/runtime pins until the
+final owner receipt explicitly selects a closure. No public API, Vashti code or
+frontend integration change is required. Preserve the main checkout's unrelated
+uncommitted coordination/application work when copying this backend handoff.
 
 **Status:** Kuno backend, Vashti connector, and conversational image flows are
 implemented and source-tested. Synthetic application flows and installed native

@@ -2266,7 +2266,7 @@
       }
     ],
     "residual_first_fusion_private_runtime": {
-      "status": "strict20_and_full_workflow_and_cancellation_passed_expanded_finite_controls_pending",
+      "status": "strict48_and_full_workflow_and_cancellation_passed_modest_gain_not_installed",
       "source_commit": "7579f98",
       "source_checkpoint_commit": "bf6487e",
       "source_tree_sha256": "3124d322455368c532abdfde4af98a74091a1d088d184739b5f66d1bf4539141",
@@ -4627,6 +4627,2998 @@
       "full_workflow_performance": false,
       "device_exception_unwind_safety_blocker": true,
       "followup_oracle_pending": true
+    },
+    "residual_finite_expansion_v4": {
+      "source_commit": "d261245",
+      "receipt_path": "target/inference-tests/gpu-synthetic-fusion-finite-v4-metrics.json",
+      "receipt_sha256": "316bbe28fdaf171a208059e0d23994b126b8ddc5f1d961c2bf557a8bb0512931",
+      "metrics": {
+        "synthetic_oracle_passed": true,
+        "kind": "fusion",
+        "cases": [
+          {
+            "index": 1,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 0
+          },
+          {
+            "index": 2,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 1
+          },
+          {
+            "index": 3,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 2
+          },
+          {
+            "index": 4,
+            "columns": 4096,
+            "rows": 9,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 0
+          },
+          {
+            "index": 5,
+            "columns": 23,
+            "rows": 65,
+            "controls": 1,
+            "product_first": 0,
+            "alias": 0
+          },
+          {
+            "index": 6,
+            "columns": 23,
+            "rows": 65,
+            "controls": 1,
+            "product_first": 0,
+            "alias": 1
+          },
+          {
+            "index": 7,
+            "columns": 23,
+            "rows": 65,
+            "controls": 1,
+            "product_first": 0,
+            "alias": 2
+          },
+          {
+            "index": 8,
+            "columns": 4096,
+            "rows": 9,
+            "controls": 1,
+            "product_first": 0,
+            "alias": 0
+          },
+          {
+            "index": 9,
+            "columns": 4096,
+            "rows": 4056,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 0
+          },
+          {
+            "index": 10,
+            "columns": 4096,
+            "rows": 8214,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 0
+          },
+          {
+            "index": 11,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 0
+          },
+          {
+            "index": 12,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 1
+          },
+          {
+            "index": 13,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 2
+          },
+          {
+            "index": 14,
+            "columns": 4096,
+            "rows": 9,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 0
+          },
+          {
+            "index": 15,
+            "columns": 23,
+            "rows": 65,
+            "controls": 1,
+            "product_first": 1,
+            "alias": 0
+          },
+          {
+            "index": 16,
+            "columns": 23,
+            "rows": 65,
+            "controls": 1,
+            "product_first": 1,
+            "alias": 1
+          },
+          {
+            "index": 17,
+            "columns": 23,
+            "rows": 65,
+            "controls": 1,
+            "product_first": 1,
+            "alias": 2
+          },
+          {
+            "index": 18,
+            "columns": 4096,
+            "rows": 9,
+            "controls": 1,
+            "product_first": 1,
+            "alias": 0
+          },
+          {
+            "index": 19,
+            "columns": 4096,
+            "rows": 4056,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 0
+          },
+          {
+            "index": 20,
+            "columns": 4096,
+            "rows": 8214,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 0
+          },
+          {
+            "index": 21,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 0,
+            "family": 2
+          },
+          {
+            "index": 22,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 1,
+            "family": 2
+          },
+          {
+            "index": 23,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 2,
+            "family": 2
+          },
+          {
+            "index": 24,
+            "columns": 4096,
+            "rows": 9,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 0,
+            "family": 2
+          },
+          {
+            "index": 25,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 0,
+            "family": 2
+          },
+          {
+            "index": 26,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 1,
+            "family": 2
+          },
+          {
+            "index": 27,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 2,
+            "family": 2
+          },
+          {
+            "index": 28,
+            "columns": 4096,
+            "rows": 9,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 0,
+            "family": 2
+          },
+          {
+            "index": 29,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 0,
+            "family": 3
+          },
+          {
+            "index": 30,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 1,
+            "family": 3
+          },
+          {
+            "index": 31,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 2,
+            "family": 3
+          },
+          {
+            "index": 32,
+            "columns": 4096,
+            "rows": 9,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 0,
+            "family": 3
+          },
+          {
+            "index": 33,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 0,
+            "family": 3
+          },
+          {
+            "index": 34,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 1,
+            "family": 3
+          },
+          {
+            "index": 35,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 2,
+            "family": 3
+          },
+          {
+            "index": 36,
+            "columns": 4096,
+            "rows": 9,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 0,
+            "family": 3
+          },
+          {
+            "index": 37,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 0,
+            "family": 4
+          },
+          {
+            "index": 38,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 1,
+            "family": 4
+          },
+          {
+            "index": 39,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 2,
+            "family": 4
+          },
+          {
+            "index": 40,
+            "columns": 4096,
+            "rows": 9,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 0,
+            "family": 4
+          },
+          {
+            "index": 41,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 0,
+            "family": 4
+          },
+          {
+            "index": 42,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 1,
+            "family": 4
+          },
+          {
+            "index": 43,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 2,
+            "family": 4
+          },
+          {
+            "index": 44,
+            "columns": 4096,
+            "rows": 9,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 0,
+            "family": 4
+          },
+          {
+            "index": 45,
+            "columns": 4096,
+            "rows": 4056,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 0,
+            "family": 2
+          },
+          {
+            "index": 46,
+            "columns": 4096,
+            "rows": 8214,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 0,
+            "family": 2
+          },
+          {
+            "index": 47,
+            "columns": 4096,
+            "rows": 4056,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 0,
+            "family": 2
+          },
+          {
+            "index": 48,
+            "columns": 4096,
+            "rows": 8214,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 0,
+            "family": 2
+          }
+        ],
+        "fixed_errors": [],
+        "exit_code": 0,
+        "seconds": 13.677,
+        "timeout": false,
+        "cleanup_uncertain": false,
+        "kernel_event_delta": 0,
+        "synthetic_data_only": true,
+        "binary_sha256": "0c14bc167c347149740ff670c2a1a0dc34200ef808722ad97c58c292551c1760",
+        "op_profile": [],
+        "op_profile_unavailable": false,
+        "device_caps": null,
+        "mismatch_categories": [],
+        "host_controls": [
+          {
+            "stage": 0,
+            "zero": 1,
+            "positive": 1,
+            "fma_distinct": 1,
+            "nearest": 1,
+            "mxcsr_supported": 1,
+            "ftz": 0,
+            "daz": 0
+          }
+        ],
+        "pair_rows": [],
+        "pair_bitwise_equal": false,
+        "pair_completed_cases": 0,
+        "quant_rows": [],
+        "quant_timing": [],
+        "repeat_rows": [],
+        "repeat_comparisons": 0,
+        "repeat_timings": []
+      },
+      "device_exception_unwind_safety_blocker": true,
+      "oracle_v5_pending": true
+    },
+    "sdpa_only_preflight": {
+      "receipt_path": "target/inference-tests/full-resident-sdpa-only-preflight-v1-metrics.json",
+      "receipt_sha256": "6cbf7e39b165e4acca080db8e548d031d1cdac4552fb77965138619027b72d07",
+      "metrics": {
+        "full_resident_benchmark_passed": true,
+        "measurements": [
+          {
+            "label": "baseline:generate_first",
+            "pci": "0000:2d:00.0",
+            "pid": 354257,
+            "width": 1184,
+            "height": 1776,
+            "steps": 2,
+            "cfg": 1.0,
+            "seconds": 31.257,
+            "first_preview_seconds": 22.197,
+            "sampling_after_first_seconds": 2.532,
+            "after_last_preview_seconds": 6.529,
+            "result_before_cleanup_seconds": 31.221,
+            "resident_vram_bytes": 11019259904,
+            "privacy_checks_passed": true,
+            "phases": [
+              {
+                "stage": "model_load",
+                "seconds": 0.093
+              },
+              {
+                "stage": "generation_begin",
+                "seconds": 0.314
+              },
+              {
+                "stage": "cleanup",
+                "seconds": 30.696
+              }
+            ],
+            "images_saved": 0,
+            "prompts_saved": 0
+          },
+          {
+            "label": "baseline:generate_warm",
+            "pci": "0000:2d:00.0",
+            "pid": 354257,
+            "width": 1184,
+            "height": 1776,
+            "steps": 2,
+            "cfg": 1.0,
+            "seconds": 12.831,
+            "first_preview_seconds": 4.524,
+            "sampling_after_first_seconds": 2.533,
+            "after_last_preview_seconds": 5.774,
+            "result_before_cleanup_seconds": 12.797,
+            "resident_vram_bytes": 11021561856,
+            "privacy_checks_passed": true,
+            "phases": [
+              {
+                "stage": "model_reuse",
+                "seconds": 0.002
+              },
+              {
+                "stage": "generation_begin",
+                "seconds": 0.002
+              },
+              {
+                "stage": "cleanup",
+                "seconds": 12.287
+              }
+            ],
+            "images_saved": 0,
+            "prompts_saved": 0
+          },
+          {
+            "label": "candidate:generate_first",
+            "pci": "0000:2d:00.0",
+            "pid": 354746,
+            "width": 1184,
+            "height": 1776,
+            "steps": 2,
+            "cfg": 1.0,
+            "seconds": 31.367,
+            "first_preview_seconds": 22.34,
+            "sampling_after_first_seconds": 2.481,
+            "after_last_preview_seconds": 6.546,
+            "result_before_cleanup_seconds": 31.331,
+            "resident_vram_bytes": 11019264000,
+            "privacy_checks_passed": true,
+            "phases": [
+              {
+                "stage": "model_load",
+                "seconds": 0.055
+              },
+              {
+                "stage": "generation_begin",
+                "seconds": 0.321
+              },
+              {
+                "stage": "cleanup",
+                "seconds": 30.792
+              }
+            ],
+            "images_saved": 0,
+            "prompts_saved": 0
+          },
+          {
+            "label": "candidate:generate_warm",
+            "pci": "0000:2d:00.0",
+            "pid": 354746,
+            "width": 1184,
+            "height": 1776,
+            "steps": 2,
+            "cfg": 1.0,
+            "seconds": 12.761,
+            "first_preview_seconds": 4.488,
+            "sampling_after_first_seconds": 2.482,
+            "after_last_preview_seconds": 5.791,
+            "result_before_cleanup_seconds": 12.73,
+            "resident_vram_bytes": 11021893632,
+            "privacy_checks_passed": true,
+            "phases": [
+              {
+                "stage": "model_reuse",
+                "seconds": 0.002
+              },
+              {
+                "stage": "generation_begin",
+                "seconds": 0.002
+              },
+              {
+                "stage": "cleanup",
+                "seconds": 12.205
+              }
+            ],
+            "images_saved": 0,
+            "prompts_saved": 0
+          }
+        ],
+        "pixel_comparisons": [
+          {
+            "label": "generate_first",
+            "max_channel_difference": 1,
+            "mean_absolute_channel_difference": 9.392310384709033e-06,
+            "changed_channel_fraction": 9.392310384709033e-06
+          },
+          {
+            "label": "generate_warm",
+            "max_channel_difference": 1,
+            "mean_absolute_channel_difference": 7.608960311663014e-06,
+            "changed_channel_fraction": 7.608960311663014e-06
+          }
+        ],
+        "same_seed_control": false,
+        "normal_idle_shutdown": true,
+        "kernel_event_delta": 0,
+        "op_profile": [],
+        "op_profile_unavailable": false,
+        "images_saved": 0,
+        "prompts_saved": 0
+      },
+      "performance_claim": false
+    },
+    "repeat_mul_corrected_device_v4": {
+      "source_commit": "f484871b7854142feb72ef02c7019c82d8c0bf87",
+      "receipt_path": "target/inference-tests/gpu-synthetic-repeat-mul-v4-metrics.json",
+      "receipt_sha256": "ff01cf248c5d6971d6a26e0ccd4130a2189e02f64c4379102fd3150b42212147",
+      "metrics": {
+        "synthetic_oracle_passed": true,
+        "kind": "repeat",
+        "cases": [],
+        "fixed_errors": [],
+        "exit_code": 0,
+        "seconds": 3.364,
+        "timeout": false,
+        "cleanup_uncertain": false,
+        "kernel_event_delta": 0,
+        "synthetic_data_only": true,
+        "binary_sha256": "7cf98c6d73ed37b8a240927de8da9f98b4b4ba153006930a905e0d524e5d9f5d",
+        "op_profile": [],
+        "op_profile_unavailable": false,
+        "device_caps": null,
+        "mismatch_categories": [],
+        "host_controls": [],
+        "pair_rows": [],
+        "pair_bitwise_equal": false,
+        "pair_completed_cases": 50,
+        "quant_rows": [],
+        "quant_timing": [],
+        "repeat_rows": [
+          {
+            "index": 1,
+            "real": 0,
+            "special": 0,
+            "escape": 0,
+            "eligible": 1,
+            "exact_reuse": 1,
+            "attempts": 1,
+            "bypassed": 1,
+            "shape": 0,
+            "use": 0,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 1,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 0,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 1,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 2,
+            "real": 0,
+            "special": 0,
+            "escape": 1,
+            "eligible": 0,
+            "exact_reuse": 0,
+            "attempts": 1,
+            "bypassed": 0,
+            "shape": 1,
+            "use": 0,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 1,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 1,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 0,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 3,
+            "real": 0,
+            "special": 0,
+            "escape": 2,
+            "eligible": 0,
+            "exact_reuse": 0,
+            "attempts": 1,
+            "bypassed": 0,
+            "shape": 1,
+            "use": 0,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 1,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 1,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 0,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 4,
+            "real": 0,
+            "special": 0,
+            "escape": 3,
+            "eligible": 0,
+            "exact_reuse": 0,
+            "attempts": 1,
+            "bypassed": 0,
+            "shape": 0,
+            "use": 1,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 1,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 1,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 0,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 5,
+            "real": 0,
+            "special": 1,
+            "escape": 0,
+            "eligible": 1,
+            "exact_reuse": 1,
+            "attempts": 1,
+            "bypassed": 1,
+            "shape": 0,
+            "use": 0,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 1,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 0,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 1,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 6,
+            "real": 0,
+            "special": 1,
+            "escape": 1,
+            "eligible": 0,
+            "exact_reuse": 0,
+            "attempts": 1,
+            "bypassed": 0,
+            "shape": 1,
+            "use": 0,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 1,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 1,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 0,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 7,
+            "real": 0,
+            "special": 1,
+            "escape": 2,
+            "eligible": 0,
+            "exact_reuse": 0,
+            "attempts": 1,
+            "bypassed": 0,
+            "shape": 1,
+            "use": 0,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 1,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 1,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 0,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 8,
+            "real": 0,
+            "special": 1,
+            "escape": 3,
+            "eligible": 0,
+            "exact_reuse": 0,
+            "attempts": 1,
+            "bypassed": 0,
+            "shape": 0,
+            "use": 1,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 1,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 1,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 0,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 9,
+            "real": 0,
+            "special": 0,
+            "escape": 0,
+            "eligible": 1,
+            "exact_reuse": 1,
+            "attempts": 1,
+            "bypassed": 1,
+            "shape": 0,
+            "use": 0,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 1,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 0,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 1,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 10,
+            "real": 0,
+            "special": 0,
+            "escape": 1,
+            "eligible": 0,
+            "exact_reuse": 0,
+            "attempts": 1,
+            "bypassed": 0,
+            "shape": 1,
+            "use": 0,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 1,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 1,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 0,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 11,
+            "real": 0,
+            "special": 0,
+            "escape": 2,
+            "eligible": 0,
+            "exact_reuse": 0,
+            "attempts": 1,
+            "bypassed": 0,
+            "shape": 1,
+            "use": 0,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 1,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 1,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 0,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 12,
+            "real": 0,
+            "special": 0,
+            "escape": 3,
+            "eligible": 0,
+            "exact_reuse": 0,
+            "attempts": 1,
+            "bypassed": 0,
+            "shape": 0,
+            "use": 1,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 1,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 1,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 0,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 13,
+            "real": 0,
+            "special": 1,
+            "escape": 0,
+            "eligible": 1,
+            "exact_reuse": 1,
+            "attempts": 1,
+            "bypassed": 1,
+            "shape": 0,
+            "use": 0,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 1,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 0,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 1,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 14,
+            "real": 0,
+            "special": 1,
+            "escape": 1,
+            "eligible": 0,
+            "exact_reuse": 0,
+            "attempts": 1,
+            "bypassed": 0,
+            "shape": 1,
+            "use": 0,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 1,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 1,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 0,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 15,
+            "real": 0,
+            "special": 1,
+            "escape": 2,
+            "eligible": 0,
+            "exact_reuse": 0,
+            "attempts": 1,
+            "bypassed": 0,
+            "shape": 1,
+            "use": 0,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 1,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 1,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 0,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 16,
+            "real": 0,
+            "special": 1,
+            "escape": 3,
+            "eligible": 0,
+            "exact_reuse": 0,
+            "attempts": 1,
+            "bypassed": 0,
+            "shape": 0,
+            "use": 1,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 1,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 1,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 0,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 17,
+            "real": 0,
+            "special": 0,
+            "escape": 0,
+            "eligible": 1,
+            "exact_reuse": 1,
+            "attempts": 1,
+            "bypassed": 1,
+            "shape": 0,
+            "use": 0,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 1,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 0,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 1,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 18,
+            "real": 0,
+            "special": 0,
+            "escape": 1,
+            "eligible": 0,
+            "exact_reuse": 0,
+            "attempts": 1,
+            "bypassed": 0,
+            "shape": 1,
+            "use": 0,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 1,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 1,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 0,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 19,
+            "real": 0,
+            "special": 0,
+            "escape": 2,
+            "eligible": 0,
+            "exact_reuse": 0,
+            "attempts": 1,
+            "bypassed": 0,
+            "shape": 1,
+            "use": 0,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 1,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 1,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 0,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 20,
+            "real": 0,
+            "special": 0,
+            "escape": 3,
+            "eligible": 0,
+            "exact_reuse": 0,
+            "attempts": 1,
+            "bypassed": 0,
+            "shape": 0,
+            "use": 1,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 1,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 1,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 0,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 21,
+            "real": 0,
+            "special": 1,
+            "escape": 0,
+            "eligible": 1,
+            "exact_reuse": 1,
+            "attempts": 1,
+            "bypassed": 1,
+            "shape": 0,
+            "use": 0,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 1,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 0,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 1,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 22,
+            "real": 0,
+            "special": 1,
+            "escape": 1,
+            "eligible": 0,
+            "exact_reuse": 0,
+            "attempts": 1,
+            "bypassed": 0,
+            "shape": 1,
+            "use": 0,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 1,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 1,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 0,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 23,
+            "real": 0,
+            "special": 1,
+            "escape": 2,
+            "eligible": 0,
+            "exact_reuse": 0,
+            "attempts": 1,
+            "bypassed": 0,
+            "shape": 1,
+            "use": 0,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 1,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 1,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 0,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 24,
+            "real": 0,
+            "special": 1,
+            "escape": 3,
+            "eligible": 0,
+            "exact_reuse": 0,
+            "attempts": 1,
+            "bypassed": 0,
+            "shape": 0,
+            "use": 1,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 1,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 1,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 0,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 25,
+            "real": 0,
+            "special": 0,
+            "escape": 0,
+            "eligible": 1,
+            "exact_reuse": 1,
+            "attempts": 1,
+            "bypassed": 1,
+            "shape": 0,
+            "use": 0,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 1,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 0,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 1,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 26,
+            "real": 0,
+            "special": 0,
+            "escape": 1,
+            "eligible": 0,
+            "exact_reuse": 0,
+            "attempts": 1,
+            "bypassed": 0,
+            "shape": 1,
+            "use": 0,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 1,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 1,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 0,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 27,
+            "real": 0,
+            "special": 0,
+            "escape": 2,
+            "eligible": 0,
+            "exact_reuse": 0,
+            "attempts": 1,
+            "bypassed": 0,
+            "shape": 1,
+            "use": 0,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 1,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 1,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 0,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 28,
+            "real": 0,
+            "special": 0,
+            "escape": 3,
+            "eligible": 0,
+            "exact_reuse": 0,
+            "attempts": 1,
+            "bypassed": 0,
+            "shape": 0,
+            "use": 1,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 1,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 1,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 0,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 29,
+            "real": 0,
+            "special": 1,
+            "escape": 0,
+            "eligible": 1,
+            "exact_reuse": 1,
+            "attempts": 1,
+            "bypassed": 1,
+            "shape": 0,
+            "use": 0,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 1,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 0,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 1,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 30,
+            "real": 0,
+            "special": 1,
+            "escape": 1,
+            "eligible": 0,
+            "exact_reuse": 0,
+            "attempts": 1,
+            "bypassed": 0,
+            "shape": 1,
+            "use": 0,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 1,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 1,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 0,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 31,
+            "real": 0,
+            "special": 1,
+            "escape": 2,
+            "eligible": 0,
+            "exact_reuse": 0,
+            "attempts": 1,
+            "bypassed": 0,
+            "shape": 1,
+            "use": 0,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 1,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 1,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 0,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 32,
+            "real": 0,
+            "special": 1,
+            "escape": 3,
+            "eligible": 0,
+            "exact_reuse": 0,
+            "attempts": 1,
+            "bypassed": 0,
+            "shape": 0,
+            "use": 1,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 1,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 1,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 0,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 33,
+            "real": 1,
+            "special": 0,
+            "escape": 0,
+            "eligible": 4,
+            "exact_reuse": 4,
+            "attempts": 4,
+            "bypassed": 4,
+            "shape": 0,
+            "use": 0,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 4,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 0,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 4,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 34,
+            "real": 1,
+            "special": 0,
+            "escape": 0,
+            "eligible": 4,
+            "exact_reuse": 4,
+            "attempts": 4,
+            "bypassed": 4,
+            "shape": 0,
+            "use": 0,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 4,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 0,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 4,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 35,
+            "real": 1,
+            "special": 1,
+            "escape": 0,
+            "eligible": 4,
+            "exact_reuse": 4,
+            "attempts": 4,
+            "bypassed": 4,
+            "shape": 0,
+            "use": 0,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 4,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 0,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 4,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 36,
+            "real": 1,
+            "special": 1,
+            "escape": 0,
+            "eligible": 4,
+            "exact_reuse": 4,
+            "attempts": 4,
+            "bypassed": 4,
+            "shape": 0,
+            "use": 0,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 4,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 0,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 4,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 37,
+            "real": 1,
+            "special": 0,
+            "escape": 0,
+            "eligible": 4,
+            "exact_reuse": 4,
+            "attempts": 4,
+            "bypassed": 4,
+            "shape": 0,
+            "use": 0,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 4,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 0,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 4,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 38,
+            "real": 1,
+            "special": 0,
+            "escape": 0,
+            "eligible": 4,
+            "exact_reuse": 4,
+            "attempts": 4,
+            "bypassed": 4,
+            "shape": 0,
+            "use": 0,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 4,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 0,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 4,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 39,
+            "real": 1,
+            "special": 1,
+            "escape": 0,
+            "eligible": 4,
+            "exact_reuse": 4,
+            "attempts": 4,
+            "bypassed": 4,
+            "shape": 0,
+            "use": 0,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 4,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 0,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 4,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 40,
+            "real": 1,
+            "special": 1,
+            "escape": 0,
+            "eligible": 4,
+            "exact_reuse": 4,
+            "attempts": 4,
+            "bypassed": 4,
+            "shape": 0,
+            "use": 0,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 4,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 0,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 4,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 41,
+            "real": 1,
+            "special": 0,
+            "escape": 0,
+            "eligible": 4,
+            "exact_reuse": 4,
+            "attempts": 4,
+            "bypassed": 4,
+            "shape": 0,
+            "use": 0,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 4,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 0,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 4,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 42,
+            "real": 1,
+            "special": 0,
+            "escape": 0,
+            "eligible": 4,
+            "exact_reuse": 4,
+            "attempts": 4,
+            "bypassed": 4,
+            "shape": 0,
+            "use": 0,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 4,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 0,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 4,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 43,
+            "real": 1,
+            "special": 1,
+            "escape": 0,
+            "eligible": 4,
+            "exact_reuse": 4,
+            "attempts": 4,
+            "bypassed": 4,
+            "shape": 0,
+            "use": 0,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 4,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 0,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 4,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 44,
+            "real": 1,
+            "special": 1,
+            "escape": 0,
+            "eligible": 4,
+            "exact_reuse": 4,
+            "attempts": 4,
+            "bypassed": 4,
+            "shape": 0,
+            "use": 0,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 4,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 0,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 4,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 45,
+            "real": 1,
+            "special": 0,
+            "escape": 0,
+            "eligible": 4,
+            "exact_reuse": 4,
+            "attempts": 4,
+            "bypassed": 4,
+            "shape": 0,
+            "use": 0,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 4,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 0,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 4,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 46,
+            "real": 1,
+            "special": 0,
+            "escape": 0,
+            "eligible": 4,
+            "exact_reuse": 4,
+            "attempts": 4,
+            "bypassed": 4,
+            "shape": 0,
+            "use": 0,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 4,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 0,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 4,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 47,
+            "real": 1,
+            "special": 1,
+            "escape": 0,
+            "eligible": 4,
+            "exact_reuse": 4,
+            "attempts": 4,
+            "bypassed": 4,
+            "shape": 0,
+            "use": 0,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 4,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 0,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 4,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 48,
+            "real": 1,
+            "special": 1,
+            "escape": 0,
+            "eligible": 4,
+            "exact_reuse": 4,
+            "attempts": 4,
+            "bypassed": 4,
+            "shape": 0,
+            "use": 0,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 4,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 0,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 4,
+            "bypass_unravel": 0
+          },
+          {
+            "index": 49,
+            "real": 0,
+            "special": 0,
+            "escape": 0,
+            "eligible": 1,
+            "exact_reuse": 1,
+            "attempts": 1,
+            "bypassed": 1,
+            "shape": 0,
+            "use": 0,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 1,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 0,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 0,
+            "bypass_unravel": 1
+          },
+          {
+            "index": 50,
+            "real": 0,
+            "special": 1,
+            "escape": 0,
+            "eligible": 1,
+            "exact_reuse": 1,
+            "attempts": 1,
+            "bypassed": 1,
+            "shape": 0,
+            "use": 0,
+            "overlap": 0,
+            "graph": 0,
+            "legacy_general": 1,
+            "legacy_unravel": 0,
+            "candidate_legacy_general": 0,
+            "candidate_legacy_unravel": 0,
+            "bypass_general": 0,
+            "bypass_unravel": 1
+          }
+        ],
+        "repeat_comparisons": 528,
+        "repeat_timings": []
+      },
+      "default_off": true,
+      "production_worker_built": false
+    },
+    "residual_finite_corrected_device_v5": {
+      "source_commit": "56986ab",
+      "receipt_path": "target/inference-tests/gpu-synthetic-fusion-finite-safe-v5-metrics.json",
+      "receipt_sha256": "240d3449025ce2d2cc87784910aad513d657dc73df0360628944412c9338aa7d",
+      "metrics": {
+        "synthetic_oracle_passed": true,
+        "kind": "fusion",
+        "cases": [
+          {
+            "index": 1,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 0
+          },
+          {
+            "index": 2,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 1
+          },
+          {
+            "index": 3,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 2
+          },
+          {
+            "index": 4,
+            "columns": 4096,
+            "rows": 9,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 0
+          },
+          {
+            "index": 5,
+            "columns": 23,
+            "rows": 65,
+            "controls": 1,
+            "product_first": 0,
+            "alias": 0
+          },
+          {
+            "index": 6,
+            "columns": 23,
+            "rows": 65,
+            "controls": 1,
+            "product_first": 0,
+            "alias": 1
+          },
+          {
+            "index": 7,
+            "columns": 23,
+            "rows": 65,
+            "controls": 1,
+            "product_first": 0,
+            "alias": 2
+          },
+          {
+            "index": 8,
+            "columns": 4096,
+            "rows": 9,
+            "controls": 1,
+            "product_first": 0,
+            "alias": 0
+          },
+          {
+            "index": 9,
+            "columns": 4096,
+            "rows": 4056,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 0
+          },
+          {
+            "index": 10,
+            "columns": 4096,
+            "rows": 8214,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 0
+          },
+          {
+            "index": 11,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 0
+          },
+          {
+            "index": 12,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 1
+          },
+          {
+            "index": 13,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 2
+          },
+          {
+            "index": 14,
+            "columns": 4096,
+            "rows": 9,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 0
+          },
+          {
+            "index": 15,
+            "columns": 23,
+            "rows": 65,
+            "controls": 1,
+            "product_first": 1,
+            "alias": 0
+          },
+          {
+            "index": 16,
+            "columns": 23,
+            "rows": 65,
+            "controls": 1,
+            "product_first": 1,
+            "alias": 1
+          },
+          {
+            "index": 17,
+            "columns": 23,
+            "rows": 65,
+            "controls": 1,
+            "product_first": 1,
+            "alias": 2
+          },
+          {
+            "index": 18,
+            "columns": 4096,
+            "rows": 9,
+            "controls": 1,
+            "product_first": 1,
+            "alias": 0
+          },
+          {
+            "index": 19,
+            "columns": 4096,
+            "rows": 4056,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 0
+          },
+          {
+            "index": 20,
+            "columns": 4096,
+            "rows": 8214,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 0
+          },
+          {
+            "index": 21,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 0,
+            "family": 2
+          },
+          {
+            "index": 22,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 1,
+            "family": 2
+          },
+          {
+            "index": 23,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 2,
+            "family": 2
+          },
+          {
+            "index": 24,
+            "columns": 4096,
+            "rows": 9,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 0,
+            "family": 2
+          },
+          {
+            "index": 25,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 0,
+            "family": 2
+          },
+          {
+            "index": 26,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 1,
+            "family": 2
+          },
+          {
+            "index": 27,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 2,
+            "family": 2
+          },
+          {
+            "index": 28,
+            "columns": 4096,
+            "rows": 9,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 0,
+            "family": 2
+          },
+          {
+            "index": 29,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 0,
+            "family": 3
+          },
+          {
+            "index": 30,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 1,
+            "family": 3
+          },
+          {
+            "index": 31,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 2,
+            "family": 3
+          },
+          {
+            "index": 32,
+            "columns": 4096,
+            "rows": 9,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 0,
+            "family": 3
+          },
+          {
+            "index": 33,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 0,
+            "family": 3
+          },
+          {
+            "index": 34,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 1,
+            "family": 3
+          },
+          {
+            "index": 35,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 2,
+            "family": 3
+          },
+          {
+            "index": 36,
+            "columns": 4096,
+            "rows": 9,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 0,
+            "family": 3
+          },
+          {
+            "index": 37,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 0,
+            "family": 4
+          },
+          {
+            "index": 38,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 1,
+            "family": 4
+          },
+          {
+            "index": 39,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 2,
+            "family": 4
+          },
+          {
+            "index": 40,
+            "columns": 4096,
+            "rows": 9,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 0,
+            "family": 4
+          },
+          {
+            "index": 41,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 0,
+            "family": 4
+          },
+          {
+            "index": 42,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 1,
+            "family": 4
+          },
+          {
+            "index": 43,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 2,
+            "family": 4
+          },
+          {
+            "index": 44,
+            "columns": 4096,
+            "rows": 9,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 0,
+            "family": 4
+          },
+          {
+            "index": 45,
+            "columns": 4096,
+            "rows": 4056,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 0,
+            "family": 2
+          },
+          {
+            "index": 46,
+            "columns": 4096,
+            "rows": 8214,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 0,
+            "family": 2
+          },
+          {
+            "index": 47,
+            "columns": 4096,
+            "rows": 4056,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 0,
+            "family": 2
+          },
+          {
+            "index": 48,
+            "columns": 4096,
+            "rows": 8214,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 0,
+            "family": 2
+          }
+        ],
+        "fixed_errors": [],
+        "exit_code": 0,
+        "seconds": 13.326,
+        "timeout": false,
+        "cleanup_uncertain": false,
+        "kernel_event_delta": 0,
+        "synthetic_data_only": true,
+        "binary_sha256": "99fe242e0c31e2407eb274e3123132cd640c2c5e0b09f15b45c4b126b848d4a3",
+        "op_profile": [],
+        "op_profile_unavailable": false,
+        "device_caps": null,
+        "mismatch_categories": [],
+        "host_controls": [
+          {
+            "stage": 0,
+            "zero": 1,
+            "positive": 1,
+            "fma_distinct": 1,
+            "nearest": 1,
+            "mxcsr_supported": 1,
+            "ftz": 0,
+            "daz": 0
+          }
+        ],
+        "pair_rows": [],
+        "pair_bitwise_equal": false,
+        "pair_completed_cases": 0,
+        "quant_rows": [],
+        "quant_timing": [],
+        "repeat_rows": [],
+        "repeat_comparisons": 0,
+        "repeat_timings": []
+      },
+      "independent_fatal_boundary_and_integer_reference_review": true
+    },
+    "sdpa_only_full_generate": {
+      "source_commit": "d3814f3",
+      "receipt_path": "target/inference-tests/full-resident-sdpa-only-full-v1-metrics.json",
+      "receipt_sha256": "4f7449ebb83e619acfb3f660e7459e47fbadeb42c560733c0337df7eb1b1dfb2",
+      "metrics": {
+        "full_resident_benchmark_passed": true,
+        "measurements": [
+          {
+            "label": "baseline:generate_first",
+            "pci": "0000:2d:00.0",
+            "pid": 363002,
+            "width": 1184,
+            "height": 1776,
+            "steps": 50,
+            "cfg": 1.0,
+            "seconds": 153.423,
+            "first_preview_seconds": 22.085,
+            "sampling_after_first_seconds": 124.75,
+            "after_last_preview_seconds": 6.587,
+            "result_before_cleanup_seconds": 153.378,
+            "resident_vram_bytes": 11019259904,
+            "privacy_checks_passed": true,
+            "phases": [
+              {
+                "stage": "model_load",
+                "seconds": 0.093
+              },
+              {
+                "stage": "generation_begin",
+                "seconds": 0.314
+              },
+              {
+                "stage": "cleanup",
+                "seconds": 152.789
+              }
+            ],
+            "images_saved": 0,
+            "prompts_saved": 0
+          },
+          {
+            "label": "baseline:generate_warm",
+            "pci": "0000:2d:00.0",
+            "pid": 363002,
+            "width": 1184,
+            "height": 1776,
+            "steps": 50,
+            "cfg": 1.0,
+            "seconds": 135.547,
+            "first_preview_seconds": 4.609,
+            "sampling_after_first_seconds": 125.09,
+            "after_last_preview_seconds": 5.848,
+            "result_before_cleanup_seconds": 135.5,
+            "resident_vram_bytes": 11021889536,
+            "privacy_checks_passed": true,
+            "phases": [
+              {
+                "stage": "model_reuse",
+                "seconds": 0.002
+              },
+              {
+                "stage": "generation_begin",
+                "seconds": 0.002
+              },
+              {
+                "stage": "cleanup",
+                "seconds": 134.924
+              }
+            ],
+            "images_saved": 0,
+            "prompts_saved": 0
+          },
+          {
+            "label": "candidate:generate_first",
+            "pci": "0000:2d:00.0",
+            "pid": 365794,
+            "width": 1184,
+            "height": 1776,
+            "steps": 50,
+            "cfg": 1.0,
+            "seconds": 151.022,
+            "first_preview_seconds": 22.142,
+            "sampling_after_first_seconds": 122.268,
+            "after_last_preview_seconds": 6.612,
+            "result_before_cleanup_seconds": 150.98,
+            "resident_vram_bytes": 11019264000,
+            "privacy_checks_passed": true,
+            "phases": [
+              {
+                "stage": "model_load",
+                "seconds": 0.064
+              },
+              {
+                "stage": "generation_begin",
+                "seconds": 0.318
+              },
+              {
+                "stage": "cleanup",
+                "seconds": 150.381
+              }
+            ],
+            "images_saved": 0,
+            "prompts_saved": 0
+          },
+          {
+            "label": "candidate:generate_warm",
+            "pci": "0000:2d:00.0",
+            "pid": 365794,
+            "width": 1184,
+            "height": 1776,
+            "steps": 50,
+            "cfg": 1.0,
+            "seconds": 134.718,
+            "first_preview_seconds": 6.551,
+            "sampling_after_first_seconds": 122.294,
+            "after_last_preview_seconds": 5.872,
+            "result_before_cleanup_seconds": 134.678,
+            "resident_vram_bytes": 11021897728,
+            "privacy_checks_passed": true,
+            "phases": [
+              {
+                "stage": "model_reuse",
+                "seconds": 0.002
+              },
+              {
+                "stage": "generation_begin",
+                "seconds": 0.002
+              },
+              {
+                "stage": "cleanup",
+                "seconds": 134.086
+              }
+            ],
+            "images_saved": 0,
+            "prompts_saved": 0
+          }
+        ],
+        "pixel_comparisons": [
+          {
+            "label": "generate_first",
+            "max_channel_difference": 32,
+            "mean_absolute_channel_difference": 0.14486984873386902,
+            "changed_channel_fraction": 0.13275174720751157
+          },
+          {
+            "label": "generate_warm",
+            "max_channel_difference": 57,
+            "mean_absolute_channel_difference": 0.1459795680393231,
+            "changed_channel_fraction": 0.12855493003560994
+          }
+        ],
+        "same_seed_control": false,
+        "normal_idle_shutdown": true,
+        "kernel_event_delta": 0,
+        "op_profile": [],
+        "op_profile_unavailable": false,
+        "images_saved": 0,
+        "prompts_saved": 0
+      },
+      "compilers_idle": true,
+      "selected": false,
+      "installed": false
+    },
+    "accepted_rope_sdpa_residual_closure": {
+      "status": "protected_workflow_and_cancellation_passed_unselected",
+      "source_commit": "d476407",
+      "documentation_commit": "dde33b6",
+      "worker_sha256": "0e901b95fa5d396b361bc0965e09106c53196796fbbacb0de8c3936bc8ce694e",
+      "manifest_sha256": "65c41346795d3a7d4667340c26bdc7e5df7d3ff54289abd99e7b7b0844ccec62",
+      "archive_sha256": "8e9e89b230e9778f950015cd847830c012b676fa92b11d6c4ea53ef0465db93b",
+      "archive_bytes": 156237899,
+      "engine_archive_sha256": "f900c54ef095ae2f5899d03e7241befba9bc069320e8c5501d7050024249e607",
+      "sycl_archive_sha256": "8670c65bd2489294eba9b84604edf5285987b08a744837c2441ed1366bcb8fed",
+      "vendor_members_unchanged": 63,
+      "selected": false,
+      "installed": false,
+      "source_review": {
+        "receipt_path": "/home/jmicko/.codex/worktrees/kuno-convrot-local-review/vashti/target/accepted-rope-residual-source-review-v1.json",
+        "receipt_sha256": "a821be239961feec003ea0fb92ea010277c6e7307021cc12e245b8cf8132078d"
+      }
+    },
+    "accepted_rope_sdpa_residual_preflight": {
+      "receipt_path": "target/inference-tests/full-resident-accepted-rope-fusion-preflight-v1-metrics.json",
+      "receipt_sha256": "0f57b964776b3bb22f9e315218bf276d98eacf266dc3206e00798f9968fb1be4",
+      "metrics": {
+        "full_resident_benchmark_passed": true,
+        "measurements": [
+          {
+            "label": "baseline:generate_first",
+            "pci": "0000:2d:00.0",
+            "pid": 379520,
+            "width": 1184,
+            "height": 1776,
+            "steps": 2,
+            "cfg": 1.0,
+            "seconds": 31.503,
+            "first_preview_seconds": 22.42,
+            "sampling_after_first_seconds": 2.529,
+            "after_last_preview_seconds": 6.555,
+            "result_before_cleanup_seconds": 31.468,
+            "resident_vram_bytes": 11019264000,
+            "privacy_checks_passed": true,
+            "phases": [
+              {
+                "stage": "model_load",
+                "seconds": 0.108
+              },
+              {
+                "stage": "generation_begin",
+                "seconds": 0.366
+              },
+              {
+                "stage": "cleanup",
+                "seconds": 30.931
+              }
+            ],
+            "images_saved": 0,
+            "prompts_saved": 0
+          },
+          {
+            "label": "baseline:generate_warm",
+            "pci": "0000:2d:00.0",
+            "pid": 379520,
+            "width": 1184,
+            "height": 1776,
+            "steps": 2,
+            "cfg": 1.0,
+            "seconds": 12.864,
+            "first_preview_seconds": 4.556,
+            "sampling_after_first_seconds": 2.533,
+            "after_last_preview_seconds": 5.774,
+            "result_before_cleanup_seconds": 12.83,
+            "resident_vram_bytes": 11021565952,
+            "privacy_checks_passed": true,
+            "phases": [
+              {
+                "stage": "model_reuse",
+                "seconds": 0.002
+              },
+              {
+                "stage": "generation_begin",
+                "seconds": 0.002
+              },
+              {
+                "stage": "cleanup",
+                "seconds": 12.317
+              }
+            ],
+            "images_saved": 0,
+            "prompts_saved": 0
+          },
+          {
+            "label": "baseline:edit_first",
+            "pci": "0000:2d:00.0",
+            "pid": 379520,
+            "width": 1248,
+            "height": 832,
+            "steps": 2,
+            "cfg": 4.0,
+            "seconds": 41.681,
+            "first_preview_seconds": 36.233,
+            "sampling_after_first_seconds": 2.606,
+            "after_last_preview_seconds": 2.841,
+            "result_before_cleanup_seconds": 41.66,
+            "resident_vram_bytes": 20272267264,
+            "privacy_checks_passed": true,
+            "phases": [
+              {
+                "stage": "model_reuse",
+                "seconds": 0.033
+              },
+              {
+                "stage": "generation_begin",
+                "seconds": 0.033
+              },
+              {
+                "stage": "cleanup",
+                "seconds": 41.353
+              }
+            ],
+            "images_saved": 0,
+            "prompts_saved": 0
+          },
+          {
+            "label": "baseline:edit_warm",
+            "pci": "0000:2d:00.0",
+            "pid": 379520,
+            "width": 1248,
+            "height": 832,
+            "steps": 2,
+            "cfg": 4.0,
+            "seconds": 16.594,
+            "first_preview_seconds": 11.143,
+            "sampling_after_first_seconds": 2.61,
+            "after_last_preview_seconds": 2.841,
+            "result_before_cleanup_seconds": 16.57,
+            "resident_vram_bytes": 20272283648,
+            "privacy_checks_passed": true,
+            "phases": [
+              {
+                "stage": "model_reuse",
+                "seconds": 0.033
+              },
+              {
+                "stage": "generation_begin",
+                "seconds": 0.033
+              },
+              {
+                "stage": "cleanup",
+                "seconds": 16.264
+              }
+            ],
+            "images_saved": 0,
+            "prompts_saved": 0
+          },
+          {
+            "label": "candidate:generate_first",
+            "pci": "0000:2d:00.0",
+            "pid": 380416,
+            "width": 1184,
+            "height": 1776,
+            "steps": 2,
+            "cfg": 1.0,
+            "seconds": 31.189,
+            "first_preview_seconds": 22.217,
+            "sampling_after_first_seconds": 2.44,
+            "after_last_preview_seconds": 6.532,
+            "result_before_cleanup_seconds": 31.153,
+            "resident_vram_bytes": 11019259904,
+            "privacy_checks_passed": true,
+            "phases": [
+              {
+                "stage": "model_load",
+                "seconds": 0.051
+              },
+              {
+                "stage": "generation_begin",
+                "seconds": 0.3
+              },
+              {
+                "stage": "cleanup",
+                "seconds": 30.627
+              }
+            ],
+            "images_saved": 0,
+            "prompts_saved": 0
+          },
+          {
+            "label": "candidate:generate_warm",
+            "pci": "0000:2d:00.0",
+            "pid": 380416,
+            "width": 1184,
+            "height": 1776,
+            "steps": 2,
+            "cfg": 1.0,
+            "seconds": 14.67,
+            "first_preview_seconds": 6.452,
+            "sampling_after_first_seconds": 2.446,
+            "after_last_preview_seconds": 5.772,
+            "result_before_cleanup_seconds": 14.639,
+            "resident_vram_bytes": 11021889536,
+            "privacy_checks_passed": true,
+            "phases": [
+              {
+                "stage": "model_reuse",
+                "seconds": 0.002
+              },
+              {
+                "stage": "generation_begin",
+                "seconds": 0.002
+              },
+              {
+                "stage": "cleanup",
+                "seconds": 14.133
+              }
+            ],
+            "images_saved": 0,
+            "prompts_saved": 0
+          },
+          {
+            "label": "candidate:edit_first",
+            "pci": "0000:2d:00.0",
+            "pid": 380416,
+            "width": 1248,
+            "height": 832,
+            "steps": 2,
+            "cfg": 4.0,
+            "seconds": 40.972,
+            "first_preview_seconds": 35.666,
+            "sampling_after_first_seconds": 2.454,
+            "after_last_preview_seconds": 2.852,
+            "result_before_cleanup_seconds": 40.952,
+            "resident_vram_bytes": 20272590848,
+            "privacy_checks_passed": true,
+            "phases": [
+              {
+                "stage": "model_reuse",
+                "seconds": 0.032
+              },
+              {
+                "stage": "generation_begin",
+                "seconds": 0.032
+              },
+              {
+                "stage": "cleanup",
+                "seconds": 40.639
+              }
+            ],
+            "images_saved": 0,
+            "prompts_saved": 0
+          },
+          {
+            "label": "candidate:edit_warm",
+            "pci": "0000:2d:00.0",
+            "pid": 380416,
+            "width": 1248,
+            "height": 832,
+            "steps": 2,
+            "cfg": 4.0,
+            "seconds": 16.213,
+            "first_preview_seconds": 10.907,
+            "sampling_after_first_seconds": 2.459,
+            "after_last_preview_seconds": 2.847,
+            "result_before_cleanup_seconds": 16.189,
+            "resident_vram_bytes": 20272607232,
+            "privacy_checks_passed": true,
+            "phases": [
+              {
+                "stage": "model_reuse",
+                "seconds": 0.033
+              },
+              {
+                "stage": "generation_begin",
+                "seconds": 0.033
+              },
+              {
+                "stage": "cleanup",
+                "seconds": 15.881
+              }
+            ],
+            "images_saved": 0,
+            "prompts_saved": 0
+          }
+        ],
+        "pixel_comparisons": [
+          {
+            "label": "generate_first",
+            "max_channel_difference": 1,
+            "mean_absolute_channel_difference": 0.0026216434973825174,
+            "changed_channel_fraction": 0.0026216434973825174
+          },
+          {
+            "label": "generate_warm",
+            "max_channel_difference": 1,
+            "mean_absolute_channel_difference": 8.203410336011688e-06,
+            "changed_channel_fraction": 8.203410336011688e-06
+          },
+          {
+            "label": "edit_first",
+            "max_channel_difference": 255,
+            "mean_absolute_channel_difference": 1.2396401550172584,
+            "changed_channel_fraction": 0.5133576703494822
+          },
+          {
+            "label": "edit_warm",
+            "max_channel_difference": 246,
+            "mean_absolute_channel_difference": 1.4564919255424063,
+            "changed_channel_fraction": 0.5540872607710798
+          }
+        ],
+        "same_seed_control": false,
+        "normal_idle_shutdown": true,
+        "kernel_event_delta": 0,
+        "op_profile": [],
+        "op_profile_unavailable": false,
+        "images_saved": 0,
+        "prompts_saved": 0
+      },
+      "performance_claim": false
+    },
+    "accepted_rope_sdpa_residual_full": {
+      "receipt_path": "target/inference-tests/full-resident-accepted-rope-fusion-full-v1-metrics.json",
+      "receipt_sha256": "ea2f3f74d1379249fcb67742a204ca9d88109432682932c70061b83994edbb0f",
+      "metrics": {
+        "full_resident_benchmark_passed": true,
+        "measurements": [
+          {
+            "label": "baseline:generate_first",
+            "pci": "0000:2d:00.0",
+            "pid": 382307,
+            "width": 1184,
+            "height": 1776,
+            "steps": 50,
+            "cfg": 1.0,
+            "seconds": 153.707,
+            "first_preview_seconds": 22.29,
+            "sampling_after_first_seconds": 124.807,
+            "after_last_preview_seconds": 6.61,
+            "result_before_cleanup_seconds": 153.663,
+            "resident_vram_bytes": 11019255808,
+            "privacy_checks_passed": true,
+            "phases": [
+              {
+                "stage": "model_load",
+                "seconds": 0.092
+              },
+              {
+                "stage": "generation_begin",
+                "seconds": 0.31
+              },
+              {
+                "stage": "cleanup",
+                "seconds": 153.071
+              }
+            ],
+            "images_saved": 0,
+            "prompts_saved": 0
+          },
+          {
+            "label": "baseline:generate_warm",
+            "pci": "0000:2d:00.0",
+            "pid": 382307,
+            "width": 1184,
+            "height": 1776,
+            "steps": 50,
+            "cfg": 1.0,
+            "seconds": 137.345,
+            "first_preview_seconds": 6.413,
+            "sampling_after_first_seconds": 125.073,
+            "after_last_preview_seconds": 5.859,
+            "result_before_cleanup_seconds": 137.302,
+            "resident_vram_bytes": 11021885440,
+            "privacy_checks_passed": true,
+            "phases": [
+              {
+                "stage": "model_reuse",
+                "seconds": 0.002
+              },
+              {
+                "stage": "generation_begin",
+                "seconds": 0.002
+              },
+              {
+                "stage": "cleanup",
+                "seconds": 136.723
+              }
+            ],
+            "images_saved": 0,
+            "prompts_saved": 0
+          },
+          {
+            "label": "baseline:edit_first",
+            "pci": "0000:2d:00.0",
+            "pid": 382307,
+            "width": 1248,
+            "height": 832,
+            "steps": 25,
+            "cfg": 4.0,
+            "seconds": 101.868,
+            "first_preview_seconds": 36.156,
+            "sampling_after_first_seconds": 62.831,
+            "after_last_preview_seconds": 2.881,
+            "result_before_cleanup_seconds": 101.848,
+            "resident_vram_bytes": 20258586624,
+            "privacy_checks_passed": true,
+            "phases": [
+              {
+                "stage": "model_reuse",
+                "seconds": 0.033
+              },
+              {
+                "stage": "generation_begin",
+                "seconds": 0.033
+              },
+              {
+                "stage": "cleanup",
+                "seconds": 101.5
+              }
+            ],
+            "images_saved": 0,
+            "prompts_saved": 0
+          },
+          {
+            "label": "baseline:edit_warm",
+            "pci": "0000:2d:00.0",
+            "pid": 382307,
+            "width": 1248,
+            "height": 832,
+            "steps": 25,
+            "cfg": 4.0,
+            "seconds": 76.87,
+            "first_preview_seconds": 11.071,
+            "sampling_after_first_seconds": 62.935,
+            "after_last_preview_seconds": 2.863,
+            "result_before_cleanup_seconds": 76.85,
+            "resident_vram_bytes": 20258586624,
+            "privacy_checks_passed": true,
+            "phases": [
+              {
+                "stage": "model_reuse",
+                "seconds": 0.032
+              },
+              {
+                "stage": "generation_begin",
+                "seconds": 0.032
+              },
+              {
+                "stage": "cleanup",
+                "seconds": 76.505
+              }
+            ],
+            "images_saved": 0,
+            "prompts_saved": 0
+          },
+          {
+            "label": "candidate:generate_first",
+            "pci": "0000:2d:00.0",
+            "pid": 385512,
+            "width": 1184,
+            "height": 1776,
+            "steps": 50,
+            "cfg": 1.0,
+            "seconds": 149.311,
+            "first_preview_seconds": 22.334,
+            "sampling_after_first_seconds": 120.362,
+            "after_last_preview_seconds": 6.614,
+            "result_before_cleanup_seconds": 149.269,
+            "resident_vram_bytes": 11019247616,
+            "privacy_checks_passed": true,
+            "phases": [
+              {
+                "stage": "model_load",
+                "seconds": 0.066
+              },
+              {
+                "stage": "generation_begin",
+                "seconds": 0.318
+              },
+              {
+                "stage": "cleanup",
+                "seconds": 148.681
+              }
+            ],
+            "images_saved": 0,
+            "prompts_saved": 0
+          },
+          {
+            "label": "candidate:generate_warm",
+            "pci": "0000:2d:00.0",
+            "pid": 385512,
+            "width": 1184,
+            "height": 1776,
+            "steps": 50,
+            "cfg": 1.0,
+            "seconds": 130.801,
+            "first_preview_seconds": 4.508,
+            "sampling_after_first_seconds": 120.432,
+            "after_last_preview_seconds": 5.861,
+            "result_before_cleanup_seconds": 130.762,
+            "resident_vram_bytes": 11021877248,
+            "privacy_checks_passed": true,
+            "phases": [
+              {
+                "stage": "model_reuse",
+                "seconds": 0.002
+              },
+              {
+                "stage": "generation_begin",
+                "seconds": 0.002
+              },
+              {
+                "stage": "cleanup",
+                "seconds": 130.18
+              }
+            ],
+            "images_saved": 0,
+            "prompts_saved": 0
+          },
+          {
+            "label": "candidate:edit_first",
+            "pci": "0000:2d:00.0",
+            "pid": 385512,
+            "width": 1248,
+            "height": 832,
+            "steps": 25,
+            "cfg": 4.0,
+            "seconds": 97.779,
+            "first_preview_seconds": 35.701,
+            "sampling_after_first_seconds": 59.191,
+            "after_last_preview_seconds": 2.887,
+            "result_before_cleanup_seconds": 97.759,
+            "resident_vram_bytes": 20258578432,
+            "privacy_checks_passed": true,
+            "phases": [
+              {
+                "stage": "model_reuse",
+                "seconds": 0.032
+              },
+              {
+                "stage": "generation_begin",
+                "seconds": 0.032
+              },
+              {
+                "stage": "cleanup",
+                "seconds": 97.406
+              }
+            ],
+            "images_saved": 0,
+            "prompts_saved": 0
+          },
+          {
+            "label": "candidate:edit_warm",
+            "pci": "0000:2d:00.0",
+            "pid": 385512,
+            "width": 1248,
+            "height": 832,
+            "steps": 25,
+            "cfg": 4.0,
+            "seconds": 73.187,
+            "first_preview_seconds": 11.054,
+            "sampling_after_first_seconds": 59.253,
+            "after_last_preview_seconds": 2.879,
+            "result_before_cleanup_seconds": 73.167,
+            "resident_vram_bytes": 20258578432,
+            "privacy_checks_passed": true,
+            "phases": [
+              {
+                "stage": "model_reuse",
+                "seconds": 0.033
+              },
+              {
+                "stage": "generation_begin",
+                "seconds": 0.033
+              },
+              {
+                "stage": "cleanup",
+                "seconds": 72.82
+              }
+            ],
+            "images_saved": 0,
+            "prompts_saved": 0
+          }
+        ],
+        "pixel_comparisons": [
+          {
+            "label": "generate_first",
+            "max_channel_difference": 59,
+            "mean_absolute_channel_difference": 0.14559067883339422,
+            "changed_channel_fraction": 0.1328674271822498
+          },
+          {
+            "label": "generate_warm",
+            "max_channel_difference": 44,
+            "mean_absolute_channel_difference": 0.14757649858473337,
+            "changed_channel_fraction": 0.12949071326393963
+          },
+          {
+            "label": "edit_first",
+            "max_channel_difference": 206,
+            "mean_absolute_channel_difference": 1.4228366347694774,
+            "changed_channel_fraction": 0.5066608978211292
+          },
+          {
+            "label": "edit_warm",
+            "max_channel_difference": 250,
+            "mean_absolute_channel_difference": 2.025358361840483,
+            "changed_channel_fraction": 0.4954374113966962
+          }
+        ],
+        "same_seed_control": false,
+        "normal_idle_shutdown": true,
+        "kernel_event_delta": 0,
+        "op_profile": [],
+        "op_profile_unavailable": false,
+        "images_saved": 0,
+        "prompts_saved": 0
+      },
+      "compilers_idle": true,
+      "selected": false,
+      "installed": false
+    },
+    "accepted_rope_sdpa_residual_cancellation": {
+      "receipt_path": "target/inference-tests/full-resident-accepted-rope-fusion-cancel-v1-metrics.json",
+      "receipt_sha256": "17fd3001d67ef24d6f495f577a4fa4d2571133a493102b4a7a45b7bb9c007271",
+      "metrics": {
+        "full_resident_benchmark_passed": true,
+        "measurements": [
+          {
+            "label": "baseline:edit_cancel",
+            "pid": 389470,
+            "cancellation_passed": true,
+            "cancellation_seconds": 3.084,
+            "exit_code": 1,
+            "forced_stop": false,
+            "privacy_checks_passed": true,
+            "resident_vram_before_cancel": 25868558336,
+            "images_saved": 0,
+            "prompts_saved": 0
+          },
+          {
+            "label": "baseline:edit_recovery",
+            "pci": "0000:2d:00.0",
+            "pid": 389870,
+            "width": 1248,
+            "height": 832,
+            "steps": 2,
+            "cfg": 4.0,
+            "seconds": 55.07,
+            "first_preview_seconds": 49.08,
+            "sampling_after_first_seconds": 2.612,
+            "after_last_preview_seconds": 3.378,
+            "result_before_cleanup_seconds": 55.047,
+            "resident_vram_bytes": 20201689088,
+            "privacy_checks_passed": true,
+            "phases": [
+              {
+                "stage": "model_load",
+                "seconds": 0.09
+              },
+              {
+                "stage": "generation_begin",
+                "seconds": 0.33
+              },
+              {
+                "stage": "cleanup",
+                "seconds": 54.735
+              }
+            ],
+            "images_saved": 0,
+            "prompts_saved": 0
+          },
+          {
+            "label": "candidate:edit_cancel",
+            "pid": 390367,
+            "cancellation_passed": true,
+            "cancellation_seconds": 2.905,
+            "exit_code": 1,
+            "forced_stop": false,
+            "privacy_checks_passed": true,
+            "resident_vram_before_cancel": 25868566528,
+            "images_saved": 0,
+            "prompts_saved": 0
+          },
+          {
+            "label": "candidate:edit_recovery",
+            "pci": "0000:2d:00.0",
+            "pid": 390799,
+            "width": 1248,
+            "height": 832,
+            "steps": 2,
+            "cfg": 4.0,
+            "seconds": 55.34,
+            "first_preview_seconds": 49.461,
+            "sampling_after_first_seconds": 2.467,
+            "after_last_preview_seconds": 3.412,
+            "result_before_cleanup_seconds": 55.318,
+            "resident_vram_bytes": 20201684992,
+            "privacy_checks_passed": true,
+            "phases": [
+              {
+                "stage": "model_load",
+                "seconds": 0.086
+              },
+              {
+                "stage": "generation_begin",
+                "seconds": 0.324
+              },
+              {
+                "stage": "cleanup",
+                "seconds": 55.0
+              }
+            ],
+            "images_saved": 0,
+            "prompts_saved": 0
+          }
+        ],
+        "pixel_comparisons": [],
+        "same_seed_control": false,
+        "normal_idle_shutdown": true,
+        "kernel_event_delta": 0,
+        "op_profile": [],
+        "op_profile_unavailable": false,
+        "images_saved": 0,
+        "prompts_saved": 0
+      },
+      "performance_claim": false
     }
   }
 }

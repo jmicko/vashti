@@ -1123,3 +1123,93 @@ a failure status in the test executable. No such failure occurred in either run;
 these are clean-path receipts only. A new test-only fatal-boundary revision is
 required before further GPU use. Device resources alone do not protect host DMA
 buffers; preserve process lifetime or exit without C++ unwinding on uncertainty.
+
+### Corrected arithmetic boundaries and attention-only full generation
+
+The residual oracle expanded to 48 exact device cases. New finite families use
+full mantissas, all finite exponent encodings, rounding ties and cancellation;
+large 4056/8214 cases and both operand orders are retained. CPU coverage passes
+20 graph cases, 58 known rounding fixtures and 250,000 strict-host cross-checks
+against an independently reviewed integer binary32 nearest-even reference.
+The corrected v5 device-boundary oracle at `56986ab` passes all 48 in 13.326 s.
+Its22CPU failure/generator fixtures include nine no-unwind witnesses: uncertain
+backend exceptions/statuses now exit at the call boundary before host DMA
+vectors can unwind. The production archive is unchanged. The repeat oracle's
+same correction at `f484871` also passes 50/528 in 3.364 s. Earlier clean v3/v4
+results remain historical numerical receipts, not failed-path safety claims.
+The underlying backend wait() can still omit deferred device errors; kernel
+monitoring supplements it without claiming every possible driver fault detected.
+
+The attention-only control restores the accepted engine001 patch and combines
+it with the unchanged guarded-SDPA003 backend. Its source/build proof at
+`d3814f3` rebuilds all 57 engine C++ units, retains 15 C objects and matches all 63
+vendor members. It first passed a four-request two-step original-resolution
+preflight (max channel difference1). Full 50-step generation then passed with
+all compilers, package work and other inference idle:
+
+| Generation | Accepted engine | Attention-only |
+| --- | ---: | ---: |
+| First request | 153.423 s | 151.022 s |
+| Warm request | 135.547 s | 134.718 s |
+| Warm first preview | 4.609 s | 6.551 s |
+| Warm span after first preview | 125.090 s | 122.294 s |
+
+The total warm gain is 0.829 s (0.61%). Sampling saves 2.796 s but first-preview
+overhead adds 1.942 s in this one pair. No cause or distribution for that startup
+difference is established. Generation mean channel differences 0.1448698/
+0.1459796, maxima 32/57 and changed fractions 0.1327517/0.1285549 resemble the
+identical-runtime inter-process controls. They do not establish pixel equality
+or a validated tolerance. All previews, dimensions, PNG/privacy, PID reuse,
+normal shutdown and zero new Xe events passed. There is no new full edit
+comparison for this attention-only closure, and it remains uninstalled.
+
+Source-only work on a broader, default-off whole-RoPE fusion continues in the
+repeat producer worktree. It must preserve two separately rounded products
+and ADD order, validate a bounded exact graph window, decline input-owner
+overlap/intermediate escapes/capture, and prove produced-input lifetime with
+actual allocator/segmented graphs. No speed or production acceptance is claimed
+for that unfinished prototype.
+
+
+### Accepted RoPE with guarded attention and residual fusion
+
+A new closure at `d476407` (documentation `dde33b6`) restores the accepted
+engine001 RoPE patch and combines the guarded attention backend with narrowed
+residual-first fusion. It does not inherit the shared-RoPE engine experiment.
+The normal source verifier checks this closure; no build-verification bypass,
+test counters, profiler or linker wrappers are present in the worker. An
+independent review verifies all 57 C++ units' 211 public dependencies, the GGML
+headers and all six native archive hashes. All 63 vendor members match the
+installed accepted bundle. Actual-engine CPU request cleanup passes with the
+CPU-only registry, without initializing a GPU.
+
+The isolated ABI 2 bundle is in the Comfy review worktree's
+`target/accepted-rope-sdpa-residual-v1/runtime-flat`; the protected test copy is
+`/usr/local/lib/kuno-test/qwen21-accepted-rope-fusion-v1`. The installed bundle,
+configuration and gateway are unchanged. An eight-request two-step preflight
+passes original-resolution generation/edit, previews, PNG validation, privacy,
+PID reuse and normal shutdown with zero new Xe events. Generation differs by at
+most one channel level in these shortened samples; editing remains variable.
+The full 50/25-step compiler-idle pair subsequently passes all eight requests:
+
+| Workload | Accepted first | Candidate first | Accepted warm | Candidate warm |
+| --- | ---: | ---: | ---: | ---: |
+| Generate, 50 steps/1184x1776/CFG1 | 153.707 s | 149.311 s | 137.345 s | 130.801 s |
+| Edit, 25 steps/1248x832/CFG4 | 101.868 s | 97.779 s | 76.870 s | 73.187 s |
+
+Warm reductions are 6.544 s (4.76%) and 3.683 s (4.79%) in this single pair.
+The generation span after its first preview saves 4.641 s; first-preview timing
+also differs by 1.905 s, without an established cause/distribution. Generation
+first/warm mean channel differences are 0.1455907/0.1475765, maxima 59/44 and
+changed fractions 0.1328674/0.1294907. Edit means are 1.4228366/2.0253584, maxima
+206/250 and changed fractions 0.5066609/0.4954374. These resemble the measured
+accepted inter-process generation and edit controls; they are not bitwise
+pipeline equality or a validated tolerance. PNG/privacy/PID reuse, request
+cleanup, normal idle shutdown and zero new Xe events pass. Cancellation of this
+exact closure also passes: first original edit preview followed by SIGTERM
+returns `image_cancelled` and normal status1 in 2.905 s, without forced stop.
+A fresh worker completes the two-step original edit and normal idle shutdown;
+privacy checks and zero new Xe events pass. The installed control passes the
+same sequence (3.084 s cancellation). Recovery timings are not performance
+evidence. Source/build receipts are recorded in the JSON appendix. The bundle stays unselected and uninstalled; no ComfyUI parity,
+performance distribution or indefinite stability is claimed.
