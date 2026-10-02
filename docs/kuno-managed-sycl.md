@@ -77,11 +77,13 @@ manifest checksum; they do
 not independently prove how the compiled worker was built. GPU/source acceptance
 must record that separate evidence.
 
-The resident engine's checked-in
+The selected engine's checked-in
 `apps/kuno/patches/001-qwen-quantized-config.patch` source checksum is
-`ac51db708fef026fe7abab850774309e4f1f439a05c56d06ff33e49fcc290584`.
-This is a source-patch checksum, not an approved runtime manifest or worker
-artifact checksum. Historical ABI 1 receipts below retain their original hashes.
+`ed75739ccb193099f23d4600cc4a8846f9d17fe6c2cec7591a7c9cb30c2d0134`;
+patch003 is `3d1191da4eb004a25c52116fa30421c3a7b617fc4e854d416248b2d7b0070794`.
+These are source-patch checksums, not approved manifest or worker checksums.
+The earlier residency engine001 was `ac51db70...`; historical receipts retain
+their original hashes. See the selected runtime receipt below.
 
 Every member is a root-owned regular file, with no group/world write or set-ID
 bits. The worker must be executable and have a 64-bit little-endian x86-64 ELF
@@ -128,7 +130,8 @@ are rejected before creating a deployment journal or changing services; journal
 writers/readers use the same bound so accepted installations remain recoverable.
 
 The website installer still downloads/extracts only the standard Kuno binary.
-Automatic optional-runtime download/publishing is not implemented here. Do not
+Optional runtime artifacts are published separately, as recorded for beta.2 in
+the release handoff; this backend update adds no automatic runtime download. Do not
 publish the development SYCL-linked executable as the main Kuno binary: its
 eager vendor dependencies would make ordinary gateway/upgrade commands require
 oneAPI on every machine.
@@ -143,6 +146,29 @@ approved independently; packaging does not establish GPU correctness or source
 provenance. No Python dependency is added to the installed service.
 Native notice collection, prepared artifacts and release-owner steps are in
 [kuno-release-handoff.md](kuno-release-handoff.md).
+
+## Selected ABI2 runtime and developer build (2026-10-02)
+
+The selected whole-RoPE/residual runtime retains model-only residency, per-request
+content clearing, the existing image API and the same runtime family/ABI2. Its
+exact approved manifest checksum is
+`fc169dd2bf4418c2770940c85ec570f5b0a8c5ddaa21e32176cf839b36c88baa`;
+normal archive SHA256 is
+`85d7aecb92e9e27af85f56bf5569d31feffd63d37955e7549ac081ab3e3e54a3`.
+It is installed and tested on the B70/kernel38 host. Existing managed-SYCL
+configuration can install this bundle without a configure-image step or frontend
+change. New hosts still select the optional runtime explicitly as above.
+Hardware, cancellation, privacy and performance limits are in the
+[release handoff](kuno-release-handoff.md#selected-intel-performance-update-2026-10-02).
+
+Developers can use [the managed build recipe](../apps/kuno/scripts/README-managed-sycl-build.md).
+It verifies selected sources, rejects extra tracked/untracked/ignored build input,
+uses a fresh output and explicitly selects whole ON; the native source default
+stays OFF. It does not change the standard CUDA/Vulkan builder. The exact tested
+worker was built with verified archive reuse and normal Cargo source checks.
+A fresh CMake/oneAPI build still needs a reviewed MKL configuration and acceptance
+of the resulting binary. Installed users need the verified flat bundle, no
+compiler or development SDK. Do not represent a plan-only check as a fresh build.
 
 ## Worker privacy and errors
 

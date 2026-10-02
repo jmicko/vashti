@@ -88,26 +88,44 @@ gateway/runtime is installed on this host. This backend-only change needs no
 Vashti connector or UI change. Do not
 treat the published ABI 1 beta.2 runtime as the new resident worker.
 
-**Experimental performance follow-up:** ongoing controlled Intel work is in
-[the performance appendix](kuno-image-performance.md#continued-bounded-intel-investigations-2026-10-02)
-and its numeric/source receipt. The user renewed exclusive GPU/sudo access and
-requested no action requiring a restart. The installed accepted ABI2 gateway,
-runtime and configuration are unchanged; no service/driver reset or reboot is
-performed. Private test units use zero swap/core and keep content in RAM only.
+**Selected image performance follow-up (2026-10-02):** the user authorized
+installation of the tested Intel closure and release preparation. Whole-RoPE
+plus the residual-first kernel is selected from production `230d15b`; public
+package pins/build selection are `5351f63`, strict builder validation is `bde8cd0`,
+and the owner source/test integration is `05a95fc`. The exact tested flat runtime
+is now installed
+on this host through `install-image-runtime`. Its manifest is
+`fc169dd2bf4418c2770940c85ec570f5b0a8c5ddaa21e32176cf839b36c88baa`;
+normal archive SHA256 is
+`85d7aecb92e9e27af85f56bf5569d31feffd63d37955e7549ac081ab3e3e54a3`.
 
-A new accepted-RoPE/guarded-attention/residual-first closure at `d476407`
-(documentation `dde33b6`) passes original full generation/edit, protected
-runtime/privacy, PID reuse, normal shutdown, cancellation and fresh-worker
-recovery on B70/kernel38, with no new classified Xe fault. Warm times in one
-compiler-idle pair improve from 137.345 to 130.801 seconds for generation and
-76.870 to 73.187 seconds for editing.
-Inter-process pixel variation also exists with identical accepted workers;
-no bitwise pipeline equivalence, validated tolerance or ComfyUI parity is
-claimed. This bundle remains unselected/uninstalled while a broader default-off
-RoPE prototype is investigated. Keep existing release/runtime pins until the
-final owner receipt explicitly selects a closure. No public API, Vashti code or
-frontend integration change is required. Preserve the main checkout's unrelated
-uncommitted coordination/application work when copying this backend handoff.
+A counter-free, compiler-idle eight-request comparison passes full original
+50-step generation/25-step editing on B70/kernel38: warm generation
+132.893→106.523 s (19.84% faster), edit 72.769→61.831 s (15.03% faster).
+Exact native tests, protected SDK-hidden full requests, previews/PNG/privacy,
+resident PID reuse, normal shutdown, cancellation and fresh-worker recovery pass
+with no new classified Xe fault. Installed keyless HTTP generation/edit pass,
+including streamed previews and reuse of one retained worker. The gateway binary,
+Ollama routing, inference deadlines and image API are unchanged; no Vashti
+connector/UI changes are required.
+
+See [the performance receipt](kuno-image-performance.md#whole-rope-combined-worker-and-full-workflow-comparison)
+and [the release handoff](kuno-release-handoff.md). Historical ComfyUI times are
+not a new matched benchmark. Pixel-level equivalence/quality tolerance and
+indefinite stability are not established; identical-runtime edit variation is
+also measured. The exact frozen runtime has been tested and can be packaged
+normally. A future fresh managed CMake rebuild needs a reviewed MKL configuration
+and acceptance of the resulting binary. Standard native inputs and a fresh
+normal gateway build/check/Clippy pass, as do 40 exact CUDA and 40 exact Vulkan
+math cases on the 3060. Four original-resolution two-step
+CUDA generation/edit requests pass previews/PNG/privacy, resident PID reuse and
+normal shutdown. Live Vulkan image acceptance is not claimed for this update; the shared engine patch affects both backends.
+
+Integrate the owner branch's final reviewed backend source and tests, preserving
+this checkout's newer application/coordination work. Do not replace the standard
+gateway with the SYCL-linked worker or reuse the published ABI1 beta.2 runtime.
+No model/content storage, API, frontend, public release or driver/reset/reboot
+change is part of this performance handoff.
 
 **Status:** Kuno backend, Vashti connector, and conversational image flows are
 implemented and source-tested. Synthetic application flows and installed native

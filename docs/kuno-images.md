@@ -18,6 +18,10 @@ The [optional managed SYCL worker](kuno-managed-sycl.md) adds Qwen 2.1 execution
 on Intel hardware, accepted locally on the B70. Its libraries are
 separate from the standard executable; embedded CUDA/Vulkan remains the default,
 and Qwen 2512 retains its native route. This runtime does not change the image API.
+The selected ABI2 Intel runtime keeps model-only residency and uses guarded
+whole-RoPE/residual execution for Qwen 2.1. See the
+[managed runtime receipt](kuno-managed-sycl.md#selected-abi2-runtime-and-developer-build-2026-10-02)
+for exact artifacts, installation, measured performance and acceptance limits.
 
 Large Qwen 2.1 edit caches can use bounded pinned host memory. On CUDA, capable
 workers stage the current and next layer through two GPU buffers, overlapping

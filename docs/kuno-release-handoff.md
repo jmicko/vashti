@@ -64,9 +64,95 @@ new Android/Vashti acceptance is claimed. No next beta upload, merge or push was
 performed. Keep this worktree/artifacts until the release task copies them and
 runs its usual complete checks.
 
-## Experimental performance candidates
+## Selected Intel performance update (2026-10-02)
 
-The later graph-local RoPE and aligned contiguous-F16 K/V source candidates are
+The owning Kuno task is preparing the tested whole-RoPE/residual closure for the
+next beta on `codex/kuno-image-speed`, preserving the separate Vashti task's
+uncommitted work. The performance and coordination receipts above the historical
+sections are authoritative. No public release is made here.
+
+| Exact tested managed artifact | SHA-256 |
+| --- | --- |
+| Normal packaged archive, 156,247,147 bytes | `85d7aecb92e9e27af85f56bf5569d31feffd63d37955e7549ac081ab3e3e54a3` |
+| Installed manifest | `fc169dd2bf4418c2770940c85ec570f5b0a8c5ddaa21e32176cf839b36c88baa` |
+| Installed worker, 135,560,512 bytes | `4deb9a1bcd7108be8d22b56e8cc8958cb52458a56361c3b19c2b193012e679a3` |
+
+Archive: `/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/whole-rope-residual-v1/public-selection-v1/normal-pins-runtime.tar.gz`.
+Production checkpoint `230d15b`, initial public build/package selection
+`5351f63`, strict builder guard `bde8cd0` and owner source integration
+`05a95fc`. The final documentation commit completes this owner handoff.
+Preserve the complete final backend/test tree rather than
+blindly combining overlapping experimental patch commits. Only Kuno/native
+source/build and backend documentation are changed; the API is unchanged.
+
+The exact bundle is **installed and accepted** on this host. Installation kept
+the existing standard gateway (`49115713...`), inference/control listeners,
+configured image GPU and disabled Ollama inference deadlines. An independently
+verified old-runtime copy remains at
+`/usr/local/lib/kuno-test/qwen21-residency-rollback-v1`; it is a rollback copy,
+not the selected release artifact. The transactional installer verified startup.
+
+Acceptance: native whole86/1400 and residual48 exact cases; eight original-size
+full requests with streamed previews, PNG/privacy, model reuse and normal
+shutdown; cancellation/fresh recovery; installed keyless HTTP generation/edit
+with previews and retained PID; IPv4/IPv6/LAN discovery and Ollama model listing.
+All report zero new classified Xe events on the rebooted kernel38 host.
+Warm generation is **106.523 s**, down from 132.893 s; warm edit is **61.831 s**,
+down from 72.769 s. Historical ComfyUI warm results are 100.65/64.48 s; these
+are not a new matched ComfyUI distribution. No bitwise full-image equality,
+validated quality tolerance, ten-reference matrix or indefinite stability claim.
+
+Normal public packaging accepts the exact closure without a pin override and
+reproduces the tested archive byte for byte. The managed builder explicitly
+selects whole ON while the source CMake default stays OFF. The frozen worker
+uses proved native archive reuse and the ordinary Cargo source verifier; a new
+fresh oneAPI/CMake build requires a reviewed MKLConfig.cmake and acceptance of
+its resulting binary. This missing developer input does not prevent shipping
+the existing tested runtime. SDKs/drivers/system packages were not installed or
+upgraded; no GPU reset/rebind or computer reboot was performed for this update.
+
+Generic shared-PE patch001 also affects standard CUDA/Vulkan. A preserved v2
+standard source/archive closure was found after the original `/tmp` build was
+lost. Revalidation of its native inputs, a fresh normal standard Cargo
+build/check/Clippy and 40 exact CUDA plus 40 exact Vulkan oracle cases on the
+3060 pass. Four original-resolution two-step CUDA generation/edit requests pass
+previews/PNG/privacy, resident PID reuse and normal shutdown. Live Vulkan image
+acceptance is not claimed for this update. Keep normal release packaging and
+its Intel linkage/RPATH
+guard. Never substitute the SYCL-linked worker for the standard gateway.
+
+The newly validated standard gateway is
+`/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/standard-release-readiness-v1/cargo-target/release/kuno`,
+SHA256 `9865c0d4f075b3f7eab05c4907f9da0c4c68d49ab06f539c4f05b0814061b557`.
+It is prepared for the versioned release; the installed gateway remains
+`49115713...`. Standard pinned source/build directories are
+`target/shared-rope-standard-v2/source` and `target/shared-rope-standard-v2/build`
+in that worktree. The exact clean-environment Cargo/package replay is in
+`target/standard-release-readiness-v1/standard-replay.md`; source/archive/header
+provenance and checksums are also retained in the tracked
+[kuno-image-speed-candidate-build.json](kuno-image-speed-candidate-build.json).
+Use the normal `package-release.sh` with that verified native closure and the
+next release version; don't publish this unversioned test binary directly.
+
+The owner source suite passes 205 tests (nine environment-dependent ignored),
+Clippy with warnings denied, formatting and whitespace checks. Packaging eight,
+installer four and managed-builder six CPU tests pass. Final service audit:
+active, no automatic restarts/recovery, unpaused with no queued/active requests,
+zero swap, all installed members verified, both inference deadlines zero, no
+benchmark workers/units, and zero classified Xe/NVIDIA Xid events. GPUs are free.
+
+The Vashti release task still selects the next unused beta version, integrates
+this final backend branch while preserving newer application/specification work,
+builds/signs all four artifacts, and performs its application checks/publication.
+No frontend changes are required by this optimization. Use the selected runtime
+above rather than the original residency archive or ABI1 beta.2 bundle.
+
+## Historical unselected performance candidates
+
+The earlier checkpoint below is superseded for the selected closure by the
+performance update above. Other rejected/diagnostic candidates remain excluded.
+
+At that earlier checkpoint, graph-local RoPE and aligned contiguous-F16 K/V candidates were
 **experimental and excluded from release selection**. Their controlled resident
 baseline, CPU checks, historical GPU failures, post-reboot passing oracles and
 matched full-workflow results are in

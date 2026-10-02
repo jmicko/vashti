@@ -1213,3 +1213,200 @@ privacy checks and zero new Xe events pass. The installed control passes the
 same sequence (3.084 s cancellation). Recovery timings are not performance
 evidence. Source/build receipts are recorded in the JSON appendix. The bundle stays unselected and uninstalled; no ComfyUI parity,
 performance distribution or indefinite stability is claimed.
+
+
+### Whole-RoPE exact synthetic execution and isolated timing
+
+The default-off whole-RoPE source at `cc028e5` (receipt notes `a5032ef`)
+recognizes a bounded exact seventeen-node subtree and seven-compute window,
+then submits one strict F32 kernel at the terminal ADD. It preserves two
+separately rounded products and ADD operand order. Input/PE full owners must
+remain disjoint from the destination, and intermediate escapes/protected cuts,
+unsupported layouts/devices/capture and oversized/overlapping plan sets retain
+the original path. The inclusive 64-plan cap fits the observed 32-layer Qwen2.1
+Q/K graph; the 65th eligible plan discards the entire set before any launch.
+Host plan storage stays below 4 KiB and does not persist across calls.
+
+System and strict Intel CPU validation pass 78 cases/1368 output comparisons,
+134 policy graphs/4,227,553 checks, 64 real allocation graphs/2130 checks and nine
+failure fixtures. The native test starts from the guarded-attention archive 0887,
+with only the whole feature/test flags enabled; repeat/residual bypass flags
+remain off so the reference executes all seven original operations. It replaces
+one backend member, adds the strict kernel member and preserves 99 others.
+Independent source/fatal-boundary reviews are linked in the JSON receipt.
+
+Owner B70 execution passes 84 cases/1392 all-bit output comparisons in 11.100 s.
+Wide finite exponents, public multi-axis PE, NaN payload/class, infinities,
+signed zeros, subnormals, producer lifetime, changed PE and distinct live PE
+pointers pass, including repeat execution. Routing counts prove 125 plans/launches,
+32 produced-input cases and three wide cases. The 64-plan graph runs 64 launches;
+65/128-plan graphs fall back completely. No fixed error, uncertain cleanup or
+new Xe event occurs. Compiler flags alone are not device arithmetic proof;
+Intel's strict-host floating-point support warning remains documented.
+
+With all compilers/package/inference work idle, the same binary also passes
+its 84/1392 checks and grouped-mode microbenchmark in 11.449 s. Each mode uses
+three warm-ups and five trials of four evaluations:
+
+| Public-PE graph | Legacy median/four | Whole median/four | Reduction |
+| --- | ---: | ---: | ---: |
+| L4096 | 17.952428 ms | 2.649538 ms | 85.24% |
+| L8214 | 35.730032 ms | 5.270405 ms | 85.25% |
+
+These intervals include host planning/submission and synchronization. Modes are
+grouped rather than alternated; this is an isolated graph improvement, not a
+whole-image estimate/distribution or ComfyUI comparison.
+
+**Engine constraint:** this matcher requires the f6 shared, earlier prepared-PE
+engine001/56fc. Ordinary accepted001/f900 creates PE inside the closed window
+and falls back; no useful whole routing is claimed for that engine. A combined
+f6/shared-RoPE + residual + whole source is prepared at `230d15b` (oracle
+documentation `12d3687`). Its independently reviewed native test closure passes
+86 cases/1400 comparisons in 13.087 s, including two actual in-place RMS/MUL
+ownership cases: both select and launch the kernel. It records 127 launches,
+34 produced-input cases and two complete capacity fallbacks. The merged
+48-case residual arithmetic oracle also passes in 13.267 s. Both exit normally
+with no fixed error, uncertain cleanup or new classified Xe event.
+
+The 64-plan limit applies per graph computation; conditional/unconditional edit
+sampling uses separate computations. Shared-PE construction does not guarantee
+that its first monolithic window qualifies: depth-first scheduling can put PE
+preparation inside that window. Later windows or bound segmented-prelude PE may
+qualify, while ownership/escape guards still decide each actual allocation.
+These checks establish bounded examples, not universal full-model routing.
+
+### Whole-RoPE combined worker and full workflow comparison
+
+The counter-free ABI2 worker at `230d15b` (build notes `0c646fe`, release
+checklist `1c3c238`) uses shared-PE engine56fc, guarded attention, the exact
+residual-first kernel and whole-RoPE. Independent source, dependency, archive,
+worker and streamed-package reviews pass. The new archive replaces only the
+backend member and adds the whole kernel, preserving the other 99 members,
+including the residual kernels. All 63 vendor/license members are unchanged.
+The normal Cargo source verifier passes; no TEST, profiler, repeat bypass,
+counter or linker wrapper is compiled into the worker. It has no RPATH/RUNPATH.
+Whole activation is an explicit ordinary CMake ON option; the source default
+remains OFF. Public package pins and the managed build recipe are now selected
+at `5351f63`, with the later builder verification guard recorded below.
+
+The protected runtime is `/usr/local/lib/kuno-test/qwen21-whole-rope-residual-v1`.
+An eight-request two-step preflight passes original-resolution generation/edit,
+all previews/PNG/privacy checks, resident PID reuse and normal shutdown with no
+new classified Xe event. A temporary main-thread-only perf entry counter proves
+126 whole-kernel calls in each generation and 254 in each edit. It records no
+arguments, samples or event file, and is closed after the diagnostic. Its CPU
+fixture validates main-thread counts and excludes other threads; an earlier
+inherited-counter fixture prevented thread creation, so inheritance is disabled.
+These instrumented preflight durations are not performance evidence.
+
+With all compilers, packaging and review hashing idle, a separate uninstrumented
+eight-request full comparison passes against the existing f6/residual
+`qwen21-fusion-order-v3` closure:
+
+| Workload | Baseline first | Whole first | Baseline warm | Whole warm |
+| --- | ---: | ---: | ---: | ---: |
+| Generate, 50 steps/1184x1776/CFG1 | 149.031 s | 125.142 s | 132.893 s | 106.523 s |
+| Edit, 25 steps/1248x832/CFG4 | 97.463 s | 86.391 s | 72.769 s | 61.831 s |
+
+Warm reductions are 26.370 s (19.84%) and 10.938 s (15.03%) in this one paired
+run. The generation span after its first preview falls from 120.003 to 96.713 s;
+editing falls from 59.029 to 49.100 s. First-preview timing also varies, so the
+entire gain is not attributed to the isolated kernel microbenchmark. All eight
+requests validate every preview, final dimensions/PNG, cleanup, privacy, PID
+reuse and normal shutdown with no new classified Xe event. The developer SDK is
+inaccessible inside the unit; memory swap and core dumps are disabled.
+
+Your historical ComfyUI warm timings are 100.65/64.48 s, versus 106.523/61.831 s
+here. This substantially narrows the reported gap, but is not a fresh matched
+ComfyUI benchmark or a performance distribution. Generation first/warm mean
+channel differences are 0.1424282/0.1364353 (maxima 30/45), similar to the earlier
+identical-runtime generation controls. Edit means are 3.1707658/1.6650222
+(maxima 254/234); no bitwise pipeline equality or validated image-quality
+tolerance is claimed. A separate four-request identical-f6 edit control passes
+normal shutdown/privacy with no new Xe event: first/warm means are
+1.1163759/0.9485032, maxima 230/202. This shows variation without whole-RoPE; it
+does not fully explain the larger candidate difference or establish a quality
+tolerance.
+
+Cancellation after the first edit preview passes for both closures: baseline
+2.859 s, whole 2.567 s, normal cancellation status with no forced stop. Fresh
+two-step edit recovery passes in 54.176/52.971 s, followed by normal idle SHUTDOWN.
+All four requests pass privacy checks with zero new classified Xe events.
+
+The user authorized installation after those tests. The existing transactional
+installer backed by a separately verified old-runtime copy installs the frozen
+whole closure successfully. Installed runtime manifest is
+`fc169dd2bf4418c2770940c85ec570f5b0a8c5ddaa21e32176cf839b36c88baa`, worker
+`4deb9a1bcd7108be8d22b56e8cc8958cb52458a56361c3b19c2b193012e679a3`.
+The gateway binary remains `49115713...`; its configured GPU, Ollama listeners,
+privileged control and disabled inference deadlines retain their roles.
+
+Installed keyless HTTP acceptance passes original-resolution two-step generation
+and editing with two previews each (31.022/39.403 s), the same retained worker PID,
+final PNG/privacy checks and zero new classified Xe events. The client has its
+SDK path hidden and zero swap/core; the worker uses the already accepted flat
+closure and its installed zero-swap service. The earlier protected full tests
+hide the SDK from the worker as well. Test inputs/results remain in RAM only.
+
+Normal selected packaging produces archive
+`85d7aecb92e9e27af85f56bf5569d31feffd63d37955e7549ac081ab3e3e54a3`
+(156,247,147 bytes), identical to the tested archive without a pin override.
+The release handoff distinguishes this frozen tested closure from a future
+fresh oneAPI/CMake rebuild, which requires a reviewed MKL configuration and
+renewed acceptance. There is no API or Vashti consumer change.
+
+The original standard gateway/engine under `/tmp` is gone. A persistent v2
+standard closure was subsequently found; its complete source/archive verification
+are recorded in [the source/build receipt](kuno-image-speed-candidate-build.json)
+under `2026_10_02_continued_testing`. Final CUDA workflow acceptance is recorded
+separately; live Vulkan image acceptance is not claimed for this update. Generic
+patch001 also affects CUDA/Vulkan, so source equality alone is insufficient.
+
+
+### Selected standard build and final backend release checks
+
+The persistent standard v2 source/cache/native closure is reverified: 57 C++
+objects, 15 unchanged C members, five GGML archives, four CUDA static producers,
+211 native dependencies and complete pinned source diffs. A fresh normal
+native-image Cargo release build, all-target check and all-target Clippy with
+warnings denied pass. The new standard gateway is byte-identical to v2,
+`9865c0d4f075b3f7eab05c4907f9da0c4c68d49ab06f539c4f05b0814061b557`,
+without private Intel dependencies or RPATH. Verified native archives were reused;
+this is not a fresh full CMake/GGML compilation.
+
+The current safer RoPE oracle and failure fixture compile against that closure.
+CPU arithmetic/topology and failure/cleanup checks pass. The GPU oracle passes
+40 exact legacy/prepared comparisons and input-immutability cases each on
+CUDA and Vulkan/3060 (5.021/6.635 s).
+Four original-resolution two-step CUDA generation/edit requests pass every
+preview, PNG/dimensions, per-request privacy, same resident PID and normal idle
+SHUTDOWN with no new classified Xe event (36.700/35.021 s generation,
+52.498/50.169 s edit). These short durations are functional receipts, not a
+full-step NVIDIA performance comparison or ComfyUI parity claim.
+
+The first CUDA workflow attempt stopped at an overbroad test assertion against
+a writable regular handle. A synthetic-only follow-up identifies an unlinked
+anonymous memfd on tmpfs, not disk storage. Four CPU classification fixtures pass;
+the protected harness permits only that in-memory class with zero swap/core and
+still rejects writable disk-backed regular handles. Production code is unchanged.
+The corrected four-request test passes. No private inputs/results are persisted.
+
+Owner source integration is `05a95fc` (public selection `5351f63` and strict
+builder guard `bde8cd0`). Root source checks pass 205 tests, nine ignored,
+Clippy with warnings denied, formatting and whitespace checks. Packaging eight,
+installer four and managed-builder six CPU checks pass. The normal root packager
+reproduces the tested 156,247,147-byte archive `85d7aecb...` without overrides.
+The final numeric/source evidence is in `selected_release` and
+`2026_10_02_continued_testing` in
+[the build receipt](kuno-image-speed-candidate-build.json). Live Vulkan image
+workflows, a new full CUDA timing pair, output-quality tolerance and indefinite
+stability remain outside this beta acceptance. Application/versioned release
+packaging and publication belong to the Vashti release task.
+
+Final installed-service audit: active, no automatic restarts, zero swap, admission
+unpaused, zero active/waiting requests, no recovery required, all runtime members
+verified, original gateway checksum/installation identity preserved, and both
+Ollama inference deadlines remain zero. All benchmark workers are stopped and the
+benchmark unit is inactive. Classified Xe fault and NVIDIA Xid counts are zero
+for this boot. Both GPUs are released. No new prompts/images/previews, raw errors
+or content digests are saved by the test clients or Kuno.

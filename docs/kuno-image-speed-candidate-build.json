@@ -1,5 +1,5 @@
 {
-  "status": "experimental_not_accepted_do_not_install_or_release",
+  "status": "historical candidate provenance retained; use selected_release and 2026_10_02_continued_testing for current accepted artifacts",
   "source_baseline": "fb2d1d0e367d4d53054bf8de63f49b316046d704",
   "combined_source_commit": "f6aa88055488328665edd0c0445a3fe3c64becae",
   "combined_source_tree": "a1c14daaf7a1357770d3bacc0df359f23a7b3b8d",
@@ -893,11 +893,11 @@
     }
   },
   "2026_10_02_continued_testing": {
-    "status": "in_progress_no_candidate_selected",
+    "status": "selected frozen Intel runtime installed and accepted; Kuno backend ready for versioned beta release integration",
     "root_test_directory": "/home/jmicko/.codex/worktrees/kuno-image-speed/vashti/target/inference-tests",
     "user_exclusive_gpu_authorization": true,
     "driver_reset_rebind_reboot_performed": false,
-    "installed_runtime_changed": false,
+    "installed_runtime_changed": true,
     "private_content_saved": false,
     "profiling_intervals_are_pure_kernel_times": false,
     "compilers_idle_for_profile_and_quant_timing": true,
@@ -7619,6 +7619,5747 @@
         "prompts_saved": 0
       },
       "performance_claim": false
+    },
+    "whole_rope_prototype": {
+      "status": "synthetic_device_exact_and_isolated_timing_passed_private_worker_pending",
+      "source_commit": "cc028e57cd55982d2dd5e6bdffab65128e6c0014",
+      "sycl_patch_sha256": "a8eeb888fe211e53aaefa0002dce98a2f555f347484311532763ea0ea17189f9",
+      "default_off": true,
+      "max_plans": 64,
+      "requires_shared_prepared_pe_engine": true,
+      "ordinary_accepted_rope_graphs_fall_back": true,
+      "cpu_checks": "system_and_strict_intel_78_cases_1368_output_comparisons_9_failure_fixtures",
+      "native_expected_cases": 84,
+      "native_expected_comparisons": 1392,
+      "native_enabled_features": [
+        "whole_rope_bypass",
+        "whole_rope_test"
+      ],
+      "repeat_bypass_enabled": false,
+      "residual_fusion_enabled_in_oracle": false,
+      "cpu_receipts": [
+        {
+          "path": "/home/jmicko/.codex/worktrees/kuno-image-gap-review/vashti/target/sycl-whole-rope-v1/cpu-wide-boundary-receipt-v13.json",
+          "sha256": "2669bd419ea6a2038867fbcb4c3aa2fb18d0667be1b21151613adfbe09067297"
+        }
+      ],
+      "independent_review_path": "/home/jmicko/.codex/worktrees/kuno-convrot-local-review/vashti/target/whole-rope-oracle-source-review-v13.json",
+      "independent_review_sha256": "a638faab3b0615509e22b7cfd5039f74f1a7a39ad969ac97a95bc370c0dd5af0",
+      "production_worker_built": false,
+      "selected": false,
+      "installed": false,
+      "source_documentation_commit": "a5032ef6ed4c7fab40d2d6c8cf789d414ba0df8e",
+      "native_build_receipt_path": "/home/jmicko/.codex/worktrees/kuno-image-gap-review/vashti/target/sycl-whole-rope-v1/native-build-receipt-v1.json",
+      "native_build_receipt_sha256": "363546c65b4383e5b7263ef11cf28000ac0724646703554614f7e33c036c5383",
+      "native_binary_sha256": "f4de597c6c17888858b9b3128fe45c36fdebc7f59b7e9c1679dbf41964292b4f",
+      "sycl_test_archive_sha256": "ddeaaa6c47aa75b6de81129463ffec90e550ade7b37265ff98980a74ce7a66be"
+    },
+    "whole_rope_device_exact": {
+      "receipt_path": "target/inference-tests/gpu-synthetic-whole-rope-exact-v1-metrics.json",
+      "receipt_sha256": "e1234a63f84aa373c572611e189d10df7e2ea5a0dca7b8f242a42d972a40abe3",
+      "metrics": {
+        "synthetic_oracle_passed": true,
+        "kind": "whole",
+        "cases": [],
+        "fixed_errors": [],
+        "exit_code": 0,
+        "seconds": 11.1,
+        "timeout": false,
+        "cleanup_uncertain": false,
+        "kernel_event_delta": 0,
+        "synthetic_data_only": true,
+        "binary_sha256": "f4de597c6c17888858b9b3128fe45c36fdebc7f59b7e9c1679dbf41964292b4f",
+        "op_profile": [],
+        "op_profile_unavailable": false,
+        "device_caps": null,
+        "mismatch_categories": [],
+        "host_controls": [],
+        "pair_rows": [],
+        "pair_bitwise_equal": false,
+        "pair_completed_cases": 84,
+        "quant_rows": [],
+        "quant_timing": [],
+        "repeat_rows": [],
+        "repeat_comparisons": 0,
+        "repeat_timings": [],
+        "whole_rows": [
+          {
+            "index": 1,
+            "kind": 0,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 2,
+            "kind": 0,
+            "produced": 1,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 3,
+            "kind": 0,
+            "produced": 2,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 4,
+            "kind": 1,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 5,
+            "kind": 1,
+            "produced": 1,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 6,
+            "kind": 1,
+            "produced": 2,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 7,
+            "kind": 2,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 8,
+            "kind": 2,
+            "produced": 1,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 9,
+            "kind": 2,
+            "produced": 2,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 10,
+            "kind": 0,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 11,
+            "kind": 0,
+            "produced": 1,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 12,
+            "kind": 0,
+            "produced": 2,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 13,
+            "kind": 1,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 14,
+            "kind": 1,
+            "produced": 1,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 15,
+            "kind": 1,
+            "produced": 2,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 16,
+            "kind": 2,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 17,
+            "kind": 2,
+            "produced": 1,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 18,
+            "kind": 2,
+            "produced": 2,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 19,
+            "kind": 0,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 20,
+            "kind": 0,
+            "produced": 1,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 21,
+            "kind": 0,
+            "produced": 2,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 22,
+            "kind": 1,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 23,
+            "kind": 1,
+            "produced": 1,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 24,
+            "kind": 1,
+            "produced": 2,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 25,
+            "kind": 2,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 26,
+            "kind": 2,
+            "produced": 1,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 27,
+            "kind": 2,
+            "produced": 2,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 28,
+            "kind": 0,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 29,
+            "kind": 0,
+            "produced": 1,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 30,
+            "kind": 0,
+            "produced": 2,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 31,
+            "kind": 1,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 32,
+            "kind": 1,
+            "produced": 1,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 33,
+            "kind": 1,
+            "produced": 2,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 34,
+            "kind": 2,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 35,
+            "kind": 2,
+            "produced": 1,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 36,
+            "kind": 2,
+            "produced": 2,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 37,
+            "kind": 2,
+            "produced": 3,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 38,
+            "kind": 2,
+            "produced": 4,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 39,
+            "kind": 2,
+            "produced": 3,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 40,
+            "kind": 2,
+            "produced": 4,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 41,
+            "kind": 2,
+            "produced": 3,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 42,
+            "kind": 2,
+            "produced": 4,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 43,
+            "kind": 2,
+            "produced": 3,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 44,
+            "kind": 2,
+            "produced": 4,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 45,
+            "kind": 0,
+            "produced": 0,
+            "escape": 1,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 46,
+            "kind": 1,
+            "produced": 0,
+            "escape": 1,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 47,
+            "kind": 0,
+            "produced": 0,
+            "escape": 2,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 48,
+            "kind": 1,
+            "produced": 0,
+            "escape": 2,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 49,
+            "kind": 0,
+            "produced": 0,
+            "escape": 3,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 50,
+            "kind": 1,
+            "produced": 0,
+            "escape": 3,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 51,
+            "kind": 0,
+            "produced": 0,
+            "escape": 4,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 52,
+            "kind": 1,
+            "produced": 0,
+            "escape": 4,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 53,
+            "kind": 0,
+            "produced": 0,
+            "escape": 5,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 54,
+            "kind": 1,
+            "produced": 0,
+            "escape": 5,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 55,
+            "kind": 0,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 56,
+            "kind": 1,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 57,
+            "kind": 0,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 58,
+            "kind": 1,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 59,
+            "kind": 0,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 60,
+            "kind": 1,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 61,
+            "kind": 0,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 62,
+            "kind": 1,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 63,
+            "kind": 0,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 64,
+            "kind": 1,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 65,
+            "kind": 2,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 66,
+            "kind": 0,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 67,
+            "kind": 1,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 68,
+            "kind": 2,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 69,
+            "kind": 0,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 70,
+            "kind": 1,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 71,
+            "kind": 2,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 72,
+            "kind": 0,
+            "produced": 0,
+            "escape": 6,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 73,
+            "kind": 1,
+            "produced": 0,
+            "escape": 6,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 74,
+            "kind": 2,
+            "produced": 0,
+            "escape": 0,
+            "branches": 64,
+            "eligible": 64,
+            "attempts": 64,
+            "selected": 64,
+            "launches": 64,
+            "fallback": 0
+          },
+          {
+            "index": 75,
+            "kind": 2,
+            "produced": 0,
+            "escape": 0,
+            "branches": 65,
+            "eligible": 65,
+            "attempts": 65,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 1
+          },
+          {
+            "index": 76,
+            "kind": 2,
+            "produced": 0,
+            "escape": 0,
+            "branches": 128,
+            "eligible": 128,
+            "attempts": 65,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 1
+          },
+          {
+            "index": 77,
+            "kind": 3,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 78,
+            "kind": 4,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 79,
+            "kind": 0,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 80,
+            "kind": 1,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 81,
+            "kind": 2,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 82,
+            "kind": 0,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 83,
+            "kind": 2,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 84,
+            "kind": 3,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          }
+        ],
+        "whole_comparisons": 1392,
+        "whole_timings": []
+      },
+      "full_workflow_performance": false
+    },
+    "whole_rope_isolated_timing": {
+      "receipt_path": "target/inference-tests/gpu-synthetic-whole-rope-timing-v1-metrics.json",
+      "receipt_sha256": "3be21d30a96f47a334bf9ee80e71b9a8f82ddc430d2b5a348debbf6a2179145d",
+      "metrics": {
+        "synthetic_oracle_passed": true,
+        "kind": "whole-timing",
+        "cases": [],
+        "fixed_errors": [],
+        "exit_code": 0,
+        "seconds": 11.449,
+        "timeout": false,
+        "cleanup_uncertain": false,
+        "kernel_event_delta": 0,
+        "synthetic_data_only": true,
+        "binary_sha256": "f4de597c6c17888858b9b3128fe45c36fdebc7f59b7e9c1679dbf41964292b4f",
+        "op_profile": [],
+        "op_profile_unavailable": false,
+        "device_caps": null,
+        "mismatch_categories": [],
+        "host_controls": [],
+        "pair_rows": [],
+        "pair_bitwise_equal": false,
+        "pair_completed_cases": 84,
+        "quant_rows": [],
+        "quant_timing": [],
+        "repeat_rows": [],
+        "repeat_comparisons": 0,
+        "repeat_timings": [],
+        "whole_rows": [
+          {
+            "index": 1,
+            "kind": 0,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 2,
+            "kind": 0,
+            "produced": 1,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 3,
+            "kind": 0,
+            "produced": 2,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 4,
+            "kind": 1,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 5,
+            "kind": 1,
+            "produced": 1,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 6,
+            "kind": 1,
+            "produced": 2,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 7,
+            "kind": 2,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 8,
+            "kind": 2,
+            "produced": 1,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 9,
+            "kind": 2,
+            "produced": 2,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 10,
+            "kind": 0,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 11,
+            "kind": 0,
+            "produced": 1,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 12,
+            "kind": 0,
+            "produced": 2,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 13,
+            "kind": 1,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 14,
+            "kind": 1,
+            "produced": 1,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 15,
+            "kind": 1,
+            "produced": 2,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 16,
+            "kind": 2,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 17,
+            "kind": 2,
+            "produced": 1,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 18,
+            "kind": 2,
+            "produced": 2,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 19,
+            "kind": 0,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 20,
+            "kind": 0,
+            "produced": 1,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 21,
+            "kind": 0,
+            "produced": 2,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 22,
+            "kind": 1,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 23,
+            "kind": 1,
+            "produced": 1,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 24,
+            "kind": 1,
+            "produced": 2,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 25,
+            "kind": 2,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 26,
+            "kind": 2,
+            "produced": 1,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 27,
+            "kind": 2,
+            "produced": 2,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 28,
+            "kind": 0,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 29,
+            "kind": 0,
+            "produced": 1,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 30,
+            "kind": 0,
+            "produced": 2,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 31,
+            "kind": 1,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 32,
+            "kind": 1,
+            "produced": 1,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 33,
+            "kind": 1,
+            "produced": 2,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 34,
+            "kind": 2,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 35,
+            "kind": 2,
+            "produced": 1,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 36,
+            "kind": 2,
+            "produced": 2,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 37,
+            "kind": 2,
+            "produced": 3,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 38,
+            "kind": 2,
+            "produced": 4,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 39,
+            "kind": 2,
+            "produced": 3,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 40,
+            "kind": 2,
+            "produced": 4,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 41,
+            "kind": 2,
+            "produced": 3,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 42,
+            "kind": 2,
+            "produced": 4,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 43,
+            "kind": 2,
+            "produced": 3,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 44,
+            "kind": 2,
+            "produced": 4,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 45,
+            "kind": 0,
+            "produced": 0,
+            "escape": 1,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 46,
+            "kind": 1,
+            "produced": 0,
+            "escape": 1,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 47,
+            "kind": 0,
+            "produced": 0,
+            "escape": 2,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 48,
+            "kind": 1,
+            "produced": 0,
+            "escape": 2,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 49,
+            "kind": 0,
+            "produced": 0,
+            "escape": 3,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 50,
+            "kind": 1,
+            "produced": 0,
+            "escape": 3,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 51,
+            "kind": 0,
+            "produced": 0,
+            "escape": 4,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 52,
+            "kind": 1,
+            "produced": 0,
+            "escape": 4,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 53,
+            "kind": 0,
+            "produced": 0,
+            "escape": 5,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 54,
+            "kind": 1,
+            "produced": 0,
+            "escape": 5,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 55,
+            "kind": 0,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 56,
+            "kind": 1,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 57,
+            "kind": 0,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 58,
+            "kind": 1,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 59,
+            "kind": 0,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 60,
+            "kind": 1,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 61,
+            "kind": 0,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 62,
+            "kind": 1,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 63,
+            "kind": 0,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 64,
+            "kind": 1,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 65,
+            "kind": 2,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 66,
+            "kind": 0,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 67,
+            "kind": 1,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 68,
+            "kind": 2,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 69,
+            "kind": 0,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 70,
+            "kind": 1,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 71,
+            "kind": 2,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 72,
+            "kind": 0,
+            "produced": 0,
+            "escape": 6,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 73,
+            "kind": 1,
+            "produced": 0,
+            "escape": 6,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 74,
+            "kind": 2,
+            "produced": 0,
+            "escape": 0,
+            "branches": 64,
+            "eligible": 64,
+            "attempts": 64,
+            "selected": 64,
+            "launches": 64,
+            "fallback": 0
+          },
+          {
+            "index": 75,
+            "kind": 2,
+            "produced": 0,
+            "escape": 0,
+            "branches": 65,
+            "eligible": 65,
+            "attempts": 65,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 1
+          },
+          {
+            "index": 76,
+            "kind": 2,
+            "produced": 0,
+            "escape": 0,
+            "branches": 128,
+            "eligible": 128,
+            "attempts": 65,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 1
+          },
+          {
+            "index": 77,
+            "kind": 3,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 78,
+            "kind": 4,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 79,
+            "kind": 0,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 80,
+            "kind": 1,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 81,
+            "kind": 2,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 82,
+            "kind": 0,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 83,
+            "kind": 2,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 84,
+            "kind": 3,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          }
+        ],
+        "whole_comparisons": 1392,
+        "whole_timings": [
+          {
+            "case": 81,
+            "mode": 0,
+            "trial": 0,
+            "nanoseconds": 17952428
+          },
+          {
+            "case": 81,
+            "mode": 0,
+            "trial": 1,
+            "nanoseconds": 17962788
+          },
+          {
+            "case": 81,
+            "mode": 0,
+            "trial": 2,
+            "nanoseconds": 17961617
+          },
+          {
+            "case": 81,
+            "mode": 0,
+            "trial": 3,
+            "nanoseconds": 17937338
+          },
+          {
+            "case": 81,
+            "mode": 0,
+            "trial": 4,
+            "nanoseconds": 17940137
+          },
+          {
+            "case": 81,
+            "mode": 1,
+            "trial": 0,
+            "nanoseconds": 2649538
+          },
+          {
+            "case": 81,
+            "mode": 1,
+            "trial": 1,
+            "nanoseconds": 2651088
+          },
+          {
+            "case": 81,
+            "mode": 1,
+            "trial": 2,
+            "nanoseconds": 2646767
+          },
+          {
+            "case": 81,
+            "mode": 1,
+            "trial": 3,
+            "nanoseconds": 2649388
+          },
+          {
+            "case": 81,
+            "mode": 1,
+            "trial": 4,
+            "nanoseconds": 2667398
+          },
+          {
+            "case": 83,
+            "mode": 0,
+            "trial": 0,
+            "nanoseconds": 36274619
+          },
+          {
+            "case": 83,
+            "mode": 0,
+            "trial": 1,
+            "nanoseconds": 35623852
+          },
+          {
+            "case": 83,
+            "mode": 0,
+            "trial": 2,
+            "nanoseconds": 35641692
+          },
+          {
+            "case": 83,
+            "mode": 0,
+            "trial": 3,
+            "nanoseconds": 35730032
+          },
+          {
+            "case": 83,
+            "mode": 0,
+            "trial": 4,
+            "nanoseconds": 35745013
+          },
+          {
+            "case": 83,
+            "mode": 1,
+            "trial": 0,
+            "nanoseconds": 5266115
+          },
+          {
+            "case": 83,
+            "mode": 1,
+            "trial": 1,
+            "nanoseconds": 5274865
+          },
+          {
+            "case": 83,
+            "mode": 1,
+            "trial": 2,
+            "nanoseconds": 5273515
+          },
+          {
+            "case": 83,
+            "mode": 1,
+            "trial": 3,
+            "nanoseconds": 5264835
+          },
+          {
+            "case": 83,
+            "mode": 1,
+            "trial": 4,
+            "nanoseconds": 5270405
+          }
+        ]
+      },
+      "full_workflow_performance": false,
+      "compilers_idle": true
+    },
+    "whole_rope_residual_merged_device": {
+      "source_commit": "230d15ba3156eef237cd99017f4ad203e296c9bb",
+      "receipt_path": "/home/jmicko/.codex/worktrees/kuno-image-speed/vashti/target/inference-tests/gpu-synthetic-merged-whole-rope-v1-metrics.json",
+      "receipt_sha256": "b03733803fac504242fc125b0f195e5c314e060a7671c82a91d6c5be1e8d9f84",
+      "metrics": {
+        "synthetic_oracle_passed": true,
+        "kind": "whole",
+        "cases": [],
+        "fixed_errors": [],
+        "exit_code": 0,
+        "seconds": 13.087,
+        "timeout": false,
+        "cleanup_uncertain": false,
+        "kernel_event_delta": 0,
+        "synthetic_data_only": true,
+        "binary_sha256": "075623cb6dca957c1a330b47dbd3cb42d034de614cc8c49c8cd18977e591e500",
+        "op_profile": [],
+        "op_profile_unavailable": false,
+        "device_caps": null,
+        "mismatch_categories": [],
+        "host_controls": [],
+        "pair_rows": [],
+        "pair_bitwise_equal": false,
+        "pair_completed_cases": 86,
+        "quant_rows": [],
+        "quant_timing": [],
+        "repeat_rows": [],
+        "repeat_comparisons": 0,
+        "repeat_timings": [],
+        "whole_rows": [
+          {
+            "index": 1,
+            "kind": 0,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 2,
+            "kind": 0,
+            "produced": 1,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 3,
+            "kind": 0,
+            "produced": 2,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 4,
+            "kind": 1,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 5,
+            "kind": 1,
+            "produced": 1,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 6,
+            "kind": 1,
+            "produced": 2,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 7,
+            "kind": 2,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 8,
+            "kind": 2,
+            "produced": 1,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 9,
+            "kind": 2,
+            "produced": 2,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 10,
+            "kind": 0,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 11,
+            "kind": 0,
+            "produced": 1,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 12,
+            "kind": 0,
+            "produced": 2,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 13,
+            "kind": 1,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 14,
+            "kind": 1,
+            "produced": 1,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 15,
+            "kind": 1,
+            "produced": 2,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 16,
+            "kind": 2,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 17,
+            "kind": 2,
+            "produced": 1,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 18,
+            "kind": 2,
+            "produced": 2,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 19,
+            "kind": 0,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 20,
+            "kind": 0,
+            "produced": 1,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 21,
+            "kind": 0,
+            "produced": 2,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 22,
+            "kind": 1,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 23,
+            "kind": 1,
+            "produced": 1,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 24,
+            "kind": 1,
+            "produced": 2,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 25,
+            "kind": 2,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 26,
+            "kind": 2,
+            "produced": 1,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 27,
+            "kind": 2,
+            "produced": 2,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 28,
+            "kind": 0,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 29,
+            "kind": 0,
+            "produced": 1,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 30,
+            "kind": 0,
+            "produced": 2,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 31,
+            "kind": 1,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 32,
+            "kind": 1,
+            "produced": 1,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 33,
+            "kind": 1,
+            "produced": 2,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 34,
+            "kind": 2,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 35,
+            "kind": 2,
+            "produced": 1,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 36,
+            "kind": 2,
+            "produced": 2,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 37,
+            "kind": 2,
+            "produced": 3,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 38,
+            "kind": 2,
+            "produced": 4,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 39,
+            "kind": 2,
+            "produced": 3,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 40,
+            "kind": 2,
+            "produced": 4,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 41,
+            "kind": 2,
+            "produced": 3,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 42,
+            "kind": 2,
+            "produced": 4,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 43,
+            "kind": 2,
+            "produced": 3,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 44,
+            "kind": 2,
+            "produced": 4,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 45,
+            "kind": 0,
+            "produced": 0,
+            "escape": 1,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 46,
+            "kind": 1,
+            "produced": 0,
+            "escape": 1,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 47,
+            "kind": 0,
+            "produced": 0,
+            "escape": 2,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 48,
+            "kind": 1,
+            "produced": 0,
+            "escape": 2,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 49,
+            "kind": 0,
+            "produced": 0,
+            "escape": 3,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 50,
+            "kind": 1,
+            "produced": 0,
+            "escape": 3,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 51,
+            "kind": 0,
+            "produced": 0,
+            "escape": 4,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 52,
+            "kind": 1,
+            "produced": 0,
+            "escape": 4,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 53,
+            "kind": 0,
+            "produced": 0,
+            "escape": 5,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 54,
+            "kind": 1,
+            "produced": 0,
+            "escape": 5,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 55,
+            "kind": 0,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 56,
+            "kind": 1,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 57,
+            "kind": 0,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 58,
+            "kind": 1,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 59,
+            "kind": 0,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 60,
+            "kind": 1,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 61,
+            "kind": 0,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 62,
+            "kind": 1,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 63,
+            "kind": 0,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 64,
+            "kind": 1,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 65,
+            "kind": 2,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 66,
+            "kind": 0,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 67,
+            "kind": 1,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 68,
+            "kind": 2,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 69,
+            "kind": 0,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 70,
+            "kind": 1,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 71,
+            "kind": 2,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 72,
+            "kind": 0,
+            "produced": 0,
+            "escape": 6,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 73,
+            "kind": 1,
+            "produced": 0,
+            "escape": 6,
+            "branches": 1,
+            "eligible": 0,
+            "attempts": 1,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 0
+          },
+          {
+            "index": 74,
+            "kind": 2,
+            "produced": 0,
+            "escape": 0,
+            "branches": 64,
+            "eligible": 64,
+            "attempts": 64,
+            "selected": 64,
+            "launches": 64,
+            "fallback": 0
+          },
+          {
+            "index": 75,
+            "kind": 2,
+            "produced": 0,
+            "escape": 0,
+            "branches": 65,
+            "eligible": 65,
+            "attempts": 65,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 1
+          },
+          {
+            "index": 76,
+            "kind": 2,
+            "produced": 0,
+            "escape": 0,
+            "branches": 128,
+            "eligible": 128,
+            "attempts": 65,
+            "selected": 0,
+            "launches": 0,
+            "fallback": 1
+          },
+          {
+            "index": 77,
+            "kind": 3,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 78,
+            "kind": 4,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 79,
+            "kind": 0,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 80,
+            "kind": 1,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 81,
+            "kind": 2,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 82,
+            "kind": 0,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 83,
+            "kind": 2,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 84,
+            "kind": 3,
+            "produced": 0,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 85,
+            "kind": 2,
+            "produced": 5,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          },
+          {
+            "index": 86,
+            "kind": 2,
+            "produced": 5,
+            "escape": 0,
+            "branches": 1,
+            "eligible": 1,
+            "attempts": 1,
+            "selected": 1,
+            "launches": 1,
+            "fallback": 0
+          }
+        ],
+        "whole_comparisons": 1400,
+        "whole_timings": []
+      },
+      "full_workflow_performance": false
+    },
+    "whole_rope_residual_merged_arithmetic": {
+      "source_commit": "230d15ba3156eef237cd99017f4ad203e296c9bb",
+      "receipt_path": "/home/jmicko/.codex/worktrees/kuno-image-speed/vashti/target/inference-tests/gpu-synthetic-merged-whole-residual-v1-metrics.json",
+      "receipt_sha256": "5058125f0c115b1741b90712a64e16258e307b2e91acd53d67d00ec6a83f6b37",
+      "metrics": {
+        "synthetic_oracle_passed": true,
+        "kind": "fusion",
+        "cases": [
+          {
+            "index": 1,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 0
+          },
+          {
+            "index": 2,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 1
+          },
+          {
+            "index": 3,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 2
+          },
+          {
+            "index": 4,
+            "columns": 4096,
+            "rows": 9,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 0
+          },
+          {
+            "index": 5,
+            "columns": 23,
+            "rows": 65,
+            "controls": 1,
+            "product_first": 0,
+            "alias": 0
+          },
+          {
+            "index": 6,
+            "columns": 23,
+            "rows": 65,
+            "controls": 1,
+            "product_first": 0,
+            "alias": 1
+          },
+          {
+            "index": 7,
+            "columns": 23,
+            "rows": 65,
+            "controls": 1,
+            "product_first": 0,
+            "alias": 2
+          },
+          {
+            "index": 8,
+            "columns": 4096,
+            "rows": 9,
+            "controls": 1,
+            "product_first": 0,
+            "alias": 0
+          },
+          {
+            "index": 9,
+            "columns": 4096,
+            "rows": 4056,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 0
+          },
+          {
+            "index": 10,
+            "columns": 4096,
+            "rows": 8214,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 0
+          },
+          {
+            "index": 11,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 0
+          },
+          {
+            "index": 12,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 1
+          },
+          {
+            "index": 13,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 2
+          },
+          {
+            "index": 14,
+            "columns": 4096,
+            "rows": 9,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 0
+          },
+          {
+            "index": 15,
+            "columns": 23,
+            "rows": 65,
+            "controls": 1,
+            "product_first": 1,
+            "alias": 0
+          },
+          {
+            "index": 16,
+            "columns": 23,
+            "rows": 65,
+            "controls": 1,
+            "product_first": 1,
+            "alias": 1
+          },
+          {
+            "index": 17,
+            "columns": 23,
+            "rows": 65,
+            "controls": 1,
+            "product_first": 1,
+            "alias": 2
+          },
+          {
+            "index": 18,
+            "columns": 4096,
+            "rows": 9,
+            "controls": 1,
+            "product_first": 1,
+            "alias": 0
+          },
+          {
+            "index": 19,
+            "columns": 4096,
+            "rows": 4056,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 0
+          },
+          {
+            "index": 20,
+            "columns": 4096,
+            "rows": 8214,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 0
+          },
+          {
+            "index": 21,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 0,
+            "family": 2
+          },
+          {
+            "index": 22,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 1,
+            "family": 2
+          },
+          {
+            "index": 23,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 2,
+            "family": 2
+          },
+          {
+            "index": 24,
+            "columns": 4096,
+            "rows": 9,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 0,
+            "family": 2
+          },
+          {
+            "index": 25,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 0,
+            "family": 2
+          },
+          {
+            "index": 26,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 1,
+            "family": 2
+          },
+          {
+            "index": 27,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 2,
+            "family": 2
+          },
+          {
+            "index": 28,
+            "columns": 4096,
+            "rows": 9,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 0,
+            "family": 2
+          },
+          {
+            "index": 29,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 0,
+            "family": 3
+          },
+          {
+            "index": 30,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 1,
+            "family": 3
+          },
+          {
+            "index": 31,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 2,
+            "family": 3
+          },
+          {
+            "index": 32,
+            "columns": 4096,
+            "rows": 9,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 0,
+            "family": 3
+          },
+          {
+            "index": 33,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 0,
+            "family": 3
+          },
+          {
+            "index": 34,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 1,
+            "family": 3
+          },
+          {
+            "index": 35,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 2,
+            "family": 3
+          },
+          {
+            "index": 36,
+            "columns": 4096,
+            "rows": 9,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 0,
+            "family": 3
+          },
+          {
+            "index": 37,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 0,
+            "family": 4
+          },
+          {
+            "index": 38,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 1,
+            "family": 4
+          },
+          {
+            "index": 39,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 2,
+            "family": 4
+          },
+          {
+            "index": 40,
+            "columns": 4096,
+            "rows": 9,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 0,
+            "family": 4
+          },
+          {
+            "index": 41,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 0,
+            "family": 4
+          },
+          {
+            "index": 42,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 1,
+            "family": 4
+          },
+          {
+            "index": 43,
+            "columns": 23,
+            "rows": 65,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 2,
+            "family": 4
+          },
+          {
+            "index": 44,
+            "columns": 4096,
+            "rows": 9,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 0,
+            "family": 4
+          },
+          {
+            "index": 45,
+            "columns": 4096,
+            "rows": 4056,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 0,
+            "family": 2
+          },
+          {
+            "index": 46,
+            "columns": 4096,
+            "rows": 8214,
+            "controls": 0,
+            "product_first": 0,
+            "alias": 0,
+            "family": 2
+          },
+          {
+            "index": 47,
+            "columns": 4096,
+            "rows": 4056,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 0,
+            "family": 2
+          },
+          {
+            "index": 48,
+            "columns": 4096,
+            "rows": 8214,
+            "controls": 0,
+            "product_first": 1,
+            "alias": 0,
+            "family": 2
+          }
+        ],
+        "fixed_errors": [],
+        "exit_code": 0,
+        "seconds": 13.267,
+        "timeout": false,
+        "cleanup_uncertain": false,
+        "kernel_event_delta": 0,
+        "synthetic_data_only": true,
+        "binary_sha256": "2ebf62527750ecf08cc6f8bb29ba1500427b7f8c3043eb953185c90604c590f6",
+        "op_profile": [],
+        "op_profile_unavailable": false,
+        "device_caps": null,
+        "mismatch_categories": [],
+        "host_controls": [
+          {
+            "stage": 0,
+            "zero": 1,
+            "positive": 1,
+            "fma_distinct": 1,
+            "nearest": 1,
+            "mxcsr_supported": 1,
+            "ftz": 0,
+            "daz": 0
+          }
+        ],
+        "pair_rows": [],
+        "pair_bitwise_equal": false,
+        "pair_completed_cases": 0,
+        "quant_rows": [],
+        "quant_timing": [],
+        "repeat_rows": [],
+        "repeat_comparisons": 0,
+        "repeat_timings": [],
+        "whole_rows": [],
+        "whole_comparisons": 0,
+        "whole_timings": []
+      },
+      "full_workflow_performance": false
+    },
+    "whole_rope_residual_production_closure": {
+      "source_commit": "230d15b",
+      "worker_sha256": "4deb9a1bcd7108be8d22b56e8cc8958cb52458a56361c3b19c2b193012e679a3",
+      "manifest_sha256": "fc169dd2bf4418c2770940c85ec570f5b0a8c5ddaa21e32176cf839b36c88baa",
+      "archive_sha256": "85d7aecb92e9e27af85f56bf5569d31feffd63d37955e7549ac081ab3e3e54a3",
+      "archive_bytes": 156247147,
+      "sycl_archive_sha256": "277b639c2c912ba815b4250303b8e6f1cf17f47df7d40270c345ac03694730e0",
+      "worker_abi": 2,
+      "ggml_max_name": 160,
+      "unchanged_vendor_members": 63,
+      "test_profile_wrap_instrumentation_present": false,
+      "repeat_bypass_enabled": false,
+      "selected": false,
+      "installed": false,
+      "ready_receipt_path": "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/whole-rope-residual-v1/READY-v1.json",
+      "ready_receipt_sha256": "c6b48f1b15f5d926498787927f3b8c1517a52bf1f2e03f8fae82c01e8b060c33",
+      "independent_review_path": "/home/jmicko/.codex/worktrees/kuno-convrot-local-review/vashti/target/whole-rope-residual-production-closure-review-v1.json",
+      "independent_review_sha256": "084d6c0a88560afc1f5ad1bf0a287834232264c6f28c87ebc29595f78f18f381"
+    },
+    "whole_rope_residual_protected_routing_preflight": {
+      "receipt_path": "/home/jmicko/.codex/worktrees/kuno-image-speed/vashti/target/inference-tests/full-resident-whole-rope-residual-preflight-v1-metrics.json",
+      "receipt_sha256": "315d298dd406addd97fb26bdc0019da0d517611864d0c5085e2a37be6e45d56a",
+      "metrics": {
+        "full_resident_benchmark_passed": true,
+        "measurements": [
+          {
+            "label": "baseline:generate_first",
+            "pci": "0000:2d:00.0",
+            "pid": 504477,
+            "width": 1184,
+            "height": 1776,
+            "steps": 2,
+            "cfg": 1.0,
+            "seconds": 31.943,
+            "first_preview_seconds": 22.997,
+            "sampling_after_first_seconds": 2.426,
+            "after_last_preview_seconds": 6.521,
+            "result_before_cleanup_seconds": 31.907,
+            "resident_vram_bytes": 11019251712,
+            "privacy_checks_passed": true,
+            "phases": [
+              {
+                "stage": "model_load",
+                "seconds": 0.096
+              },
+              {
+                "stage": "generation_begin",
+                "seconds": 0.36
+              },
+              {
+                "stage": "cleanup",
+                "seconds": 31.378
+              }
+            ],
+            "images_saved": 0,
+            "prompts_saved": 0
+          },
+          {
+            "label": "baseline:generate_warm",
+            "pci": "0000:2d:00.0",
+            "pid": 504477,
+            "width": 1184,
+            "height": 1776,
+            "steps": 2,
+            "cfg": 1.0,
+            "seconds": 12.738,
+            "first_preview_seconds": 4.49,
+            "sampling_after_first_seconds": 2.43,
+            "after_last_preview_seconds": 5.818,
+            "result_before_cleanup_seconds": 12.704,
+            "resident_vram_bytes": 11021881344,
+            "privacy_checks_passed": true,
+            "phases": [
+              {
+                "stage": "model_reuse",
+                "seconds": 0.002
+              },
+              {
+                "stage": "generation_begin",
+                "seconds": 0.002
+              },
+              {
+                "stage": "cleanup",
+                "seconds": 12.155
+              }
+            ],
+            "images_saved": 0,
+            "prompts_saved": 0
+          },
+          {
+            "label": "baseline:edit_first",
+            "pci": "0000:2d:00.0",
+            "pid": 504477,
+            "width": 1248,
+            "height": 832,
+            "steps": 2,
+            "cfg": 4.0,
+            "seconds": 43.12,
+            "first_preview_seconds": 37.821,
+            "sampling_after_first_seconds": 2.442,
+            "after_last_preview_seconds": 2.857,
+            "result_before_cleanup_seconds": 43.098,
+            "resident_vram_bytes": 20280975360,
+            "privacy_checks_passed": true,
+            "phases": [
+              {
+                "stage": "model_reuse",
+                "seconds": 0.036
+              },
+              {
+                "stage": "generation_begin",
+                "seconds": 0.036
+              },
+              {
+                "stage": "cleanup",
+                "seconds": 42.776
+              }
+            ],
+            "images_saved": 0,
+            "prompts_saved": 0
+          },
+          {
+            "label": "baseline:edit_warm",
+            "pci": "0000:2d:00.0",
+            "pid": 504477,
+            "width": 1248,
+            "height": 832,
+            "steps": 2,
+            "cfg": 4.0,
+            "seconds": 16.135,
+            "first_preview_seconds": 10.841,
+            "sampling_after_first_seconds": 2.448,
+            "after_last_preview_seconds": 2.846,
+            "result_before_cleanup_seconds": 16.112,
+            "resident_vram_bytes": 20280979456,
+            "privacy_checks_passed": true,
+            "phases": [
+              {
+                "stage": "model_reuse",
+                "seconds": 0.033
+              },
+              {
+                "stage": "generation_begin",
+                "seconds": 0.033
+              },
+              {
+                "stage": "cleanup",
+                "seconds": 15.801
+              }
+            ],
+            "images_saved": 0,
+            "prompts_saved": 0
+          },
+          {
+            "label": "candidate:generate_first",
+            "pci": "0000:2d:00.0",
+            "pid": 505313,
+            "width": 1184,
+            "height": 1776,
+            "steps": 2,
+            "cfg": 1.0,
+            "seconds": 30.974,
+            "first_preview_seconds": 22.4,
+            "sampling_after_first_seconds": 1.975,
+            "after_last_preview_seconds": 6.599,
+            "result_before_cleanup_seconds": 30.939,
+            "resident_vram_bytes": 11019272192,
+            "privacy_checks_passed": true,
+            "phases": [
+              {
+                "stage": "model_load",
+                "seconds": 0.044
+              },
+              {
+                "stage": "generation_begin",
+                "seconds": 0.298
+              },
+              {
+                "stage": "cleanup",
+                "seconds": 30.407
+              }
+            ],
+            "images_saved": 0,
+            "prompts_saved": 0,
+            "ephemeral_whole_kernel_entries": 126
+          },
+          {
+            "label": "candidate:generate_warm",
+            "pci": "0000:2d:00.0",
+            "pid": 505313,
+            "width": 1184,
+            "height": 1776,
+            "steps": 2,
+            "cfg": 1.0,
+            "seconds": 11.739,
+            "first_preview_seconds": 4.003,
+            "sampling_after_first_seconds": 1.964,
+            "after_last_preview_seconds": 5.771,
+            "result_before_cleanup_seconds": 11.708,
+            "resident_vram_bytes": 11021897728,
+            "privacy_checks_passed": true,
+            "phases": [
+              {
+                "stage": "model_reuse",
+                "seconds": 0.002
+              },
+              {
+                "stage": "generation_begin",
+                "seconds": 0.002
+              },
+              {
+                "stage": "cleanup",
+                "seconds": 11.198
+              }
+            ],
+            "images_saved": 0,
+            "prompts_saved": 0,
+            "ephemeral_whole_kernel_entries": 126
+          },
+          {
+            "label": "candidate:edit_first",
+            "pci": "0000:2d:00.0",
+            "pid": 505313,
+            "width": 1248,
+            "height": 832,
+            "steps": 2,
+            "cfg": 4.0,
+            "seconds": 40.731,
+            "first_preview_seconds": 35.848,
+            "sampling_after_first_seconds": 2.04,
+            "after_last_preview_seconds": 2.844,
+            "result_before_cleanup_seconds": 40.711,
+            "resident_vram_bytes": 20280991744,
+            "privacy_checks_passed": true,
+            "phases": [
+              {
+                "stage": "model_reuse",
+                "seconds": 0.033
+              },
+              {
+                "stage": "generation_begin",
+                "seconds": 0.033
+              },
+              {
+                "stage": "cleanup",
+                "seconds": 40.403
+              }
+            ],
+            "images_saved": 0,
+            "prompts_saved": 0,
+            "ephemeral_whole_kernel_entries": 254
+          },
+          {
+            "label": "candidate:edit_warm",
+            "pci": "0000:2d:00.0",
+            "pid": 505313,
+            "width": 1248,
+            "height": 832,
+            "steps": 2,
+            "cfg": 4.0,
+            "seconds": 14.731,
+            "first_preview_seconds": 9.862,
+            "sampling_after_first_seconds": 2.043,
+            "after_last_preview_seconds": 2.826,
+            "result_before_cleanup_seconds": 14.708,
+            "resident_vram_bytes": 20280545280,
+            "privacy_checks_passed": true,
+            "phases": [
+              {
+                "stage": "model_reuse",
+                "seconds": 0.034
+              },
+              {
+                "stage": "generation_begin",
+                "seconds": 0.034
+              },
+              {
+                "stage": "cleanup",
+                "seconds": 14.402
+              }
+            ],
+            "images_saved": 0,
+            "prompts_saved": 0,
+            "ephemeral_whole_kernel_entries": 254
+          }
+        ],
+        "pixel_comparisons": [
+          {
+            "label": "generate_first",
+            "max_channel_difference": 1,
+            "mean_absolute_channel_difference": 0.0026266368775870463,
+            "changed_channel_fraction": 0.0026266368775870463
+          },
+          {
+            "label": "generate_warm",
+            "max_channel_difference": 1,
+            "mean_absolute_channel_difference": 7.014510287314342e-06,
+            "changed_channel_fraction": 7.014510287314342e-06
+          },
+          {
+            "label": "edit_first",
+            "max_channel_difference": 246,
+            "mean_absolute_channel_difference": 1.3395894970414202,
+            "changed_channel_fraction": 0.49236711430596647
+          },
+          {
+            "label": "edit_warm",
+            "max_channel_difference": 249,
+            "mean_absolute_channel_difference": 1.8592110357340976,
+            "changed_channel_fraction": 0.5785376795179981
+          }
+        ],
+        "same_seed_control": false,
+        "normal_idle_shutdown": true,
+        "kernel_event_delta": 0,
+        "op_profile": [],
+        "op_profile_unavailable": false,
+        "images_saved": 0,
+        "prompts_saved": 0
+      },
+      "performance_claim": false,
+      "main_thread_count_only_uprobes": true,
+      "samples_or_arguments_recorded": false,
+      "thread_inheritance_enabled": false,
+      "counter_disabled_for_full_benchmark": true
+    },
+    "whole_counter_cpu_preflight": {
+      "receipt_path": "/home/jmicko/.codex/worktrees/kuno-image-speed/vashti/target/inference-tests/whole-counter-cpu-v1-metrics.json",
+      "receipt_sha256": "902e8cff123914833eb019c9474ffebec27f519cac9b0398972f3c77a04568d0",
+      "metrics": {
+        "counter_cpu_self_test_passed": true,
+        "main_thread_probe_entries": 3,
+        "other_thread_entries_excluded": 2,
+        "main_entries": 1,
+        "exit_code": 0,
+        "gpu_used": false,
+        "samples_recorded": 0,
+        "event_files_created": 0,
+        "thread_inheritance_enabled": false,
+        "earlier_thread_inheritance_fixture_failed": true,
+        "reason_not_diagnosed": true,
+        "artifact_hashes": {
+          "whole_counter.py": "ad1aee8413628d3da552893b8aea9d9e6f4100350cd94d14e241a3194858c501",
+          "counter-self-test.c": "ad3a66c9dd7f709b9f357e69971a1005d54c99cc8314585f8ccefd0e34e64ea7",
+          "counter-self-test.py": "bc0eda8c477e99d033f81c1dfa18a310ee348280cb7cd34db7150777514e3ec7",
+          "counter-self-test": "d1edc427bddbc3199a40a2313367091e87795227341acc3f664e298d436a6418"
+        }
+      }
+    },
+    "whole_rope_residual_full": {
+      "receipt_path": "/home/jmicko/.codex/worktrees/kuno-image-speed/vashti/target/inference-tests/full-resident-whole-rope-residual-full-v1-metrics.json",
+      "receipt_sha256": "3054376ef8def809097f2460ac69f018bd017cfbe0741b9e407f707a73263891",
+      "metrics": {
+        "full_resident_benchmark_passed": true,
+        "measurements": [
+          {
+            "label": "baseline:generate_first",
+            "pci": "0000:2d:00.0",
+            "pid": 507502,
+            "width": 1184,
+            "height": 1776,
+            "steps": 50,
+            "cfg": 1.0,
+            "seconds": 149.031,
+            "first_preview_seconds": 22.582,
+            "sampling_after_first_seconds": 119.829,
+            "after_last_preview_seconds": 6.62,
+            "result_before_cleanup_seconds": 148.987,
+            "resident_vram_bytes": 11019251712,
+            "privacy_checks_passed": true,
+            "phases": [
+              {
+                "stage": "model_load",
+                "seconds": 0.183
+              },
+              {
+                "stage": "generation_begin",
+                "seconds": 0.406
+              },
+              {
+                "stage": "cleanup",
+                "seconds": 148.393
+              }
+            ],
+            "images_saved": 0,
+            "prompts_saved": 0
+          },
+          {
+            "label": "baseline:generate_warm",
+            "pci": "0000:2d:00.0",
+            "pid": 507502,
+            "width": 1184,
+            "height": 1776,
+            "steps": 50,
+            "cfg": 1.0,
+            "seconds": 132.893,
+            "first_preview_seconds": 7.015,
+            "sampling_after_first_seconds": 120.003,
+            "after_last_preview_seconds": 5.875,
+            "result_before_cleanup_seconds": 132.849,
+            "resident_vram_bytes": 11021885440,
+            "privacy_checks_passed": true,
+            "phases": [
+              {
+                "stage": "model_reuse",
+                "seconds": 0.002
+              },
+              {
+                "stage": "generation_begin",
+                "seconds": 0.002
+              },
+              {
+                "stage": "cleanup",
+                "seconds": 132.264
+              }
+            ],
+            "images_saved": 0,
+            "prompts_saved": 0
+          },
+          {
+            "label": "baseline:edit_first",
+            "pci": "0000:2d:00.0",
+            "pid": 507502,
+            "width": 1248,
+            "height": 832,
+            "steps": 25,
+            "cfg": 4.0,
+            "seconds": 97.463,
+            "first_preview_seconds": 35.614,
+            "sampling_after_first_seconds": 58.961,
+            "after_last_preview_seconds": 2.888,
+            "result_before_cleanup_seconds": 97.444,
+            "resident_vram_bytes": 20258590720,
+            "privacy_checks_passed": true,
+            "phases": [
+              {
+                "stage": "model_reuse",
+                "seconds": 0.032
+              },
+              {
+                "stage": "generation_begin",
+                "seconds": 0.032
+              },
+              {
+                "stage": "cleanup",
+                "seconds": 97.091
+              }
+            ],
+            "images_saved": 0,
+            "prompts_saved": 0
+          },
+          {
+            "label": "baseline:edit_warm",
+            "pci": "0000:2d:00.0",
+            "pid": 507502,
+            "width": 1248,
+            "height": 832,
+            "steps": 25,
+            "cfg": 4.0,
+            "seconds": 72.769,
+            "first_preview_seconds": 10.87,
+            "sampling_after_first_seconds": 59.029,
+            "after_last_preview_seconds": 2.87,
+            "result_before_cleanup_seconds": 72.75,
+            "resident_vram_bytes": 20258590720,
+            "privacy_checks_passed": true,
+            "phases": [
+              {
+                "stage": "model_reuse",
+                "seconds": 0.033
+              },
+              {
+                "stage": "generation_begin",
+                "seconds": 0.033
+              },
+              {
+                "stage": "cleanup",
+                "seconds": 72.405
+              }
+            ],
+            "images_saved": 0,
+            "prompts_saved": 0
+          },
+          {
+            "label": "candidate:generate_first",
+            "pci": "0000:2d:00.0",
+            "pid": 510785,
+            "width": 1184,
+            "height": 1776,
+            "steps": 50,
+            "cfg": 1.0,
+            "seconds": 125.142,
+            "first_preview_seconds": 21.867,
+            "sampling_after_first_seconds": 96.683,
+            "after_last_preview_seconds": 6.592,
+            "result_before_cleanup_seconds": 125.099,
+            "resident_vram_bytes": 11019259904,
+            "privacy_checks_passed": true,
+            "phases": [
+              {
+                "stage": "model_load",
+                "seconds": 0.064
+              },
+              {
+                "stage": "generation_begin",
+                "seconds": 0.316
+              },
+              {
+                "stage": "cleanup",
+                "seconds": 124.512
+              }
+            ],
+            "images_saved": 0,
+            "prompts_saved": 0
+          },
+          {
+            "label": "candidate:generate_warm",
+            "pci": "0000:2d:00.0",
+            "pid": 510785,
+            "width": 1184,
+            "height": 1776,
+            "steps": 50,
+            "cfg": 1.0,
+            "seconds": 106.523,
+            "first_preview_seconds": 3.978,
+            "sampling_after_first_seconds": 96.713,
+            "after_last_preview_seconds": 5.832,
+            "result_before_cleanup_seconds": 106.484,
+            "resident_vram_bytes": 11021557760,
+            "privacy_checks_passed": true,
+            "phases": [
+              {
+                "stage": "model_reuse",
+                "seconds": 0.002
+              },
+              {
+                "stage": "generation_begin",
+                "seconds": 0.002
+              },
+              {
+                "stage": "cleanup",
+                "seconds": 105.909
+              }
+            ],
+            "images_saved": 0,
+            "prompts_saved": 0
+          },
+          {
+            "label": "candidate:edit_first",
+            "pci": "0000:2d:00.0",
+            "pid": 510785,
+            "width": 1248,
+            "height": 832,
+            "steps": 25,
+            "cfg": 4.0,
+            "seconds": 86.391,
+            "first_preview_seconds": 34.453,
+            "sampling_after_first_seconds": 49.055,
+            "after_last_preview_seconds": 2.883,
+            "result_before_cleanup_seconds": 86.37,
+            "resident_vram_bytes": 20258263040,
+            "privacy_checks_passed": true,
+            "phases": [
+              {
+                "stage": "model_reuse",
+                "seconds": 0.032
+              },
+              {
+                "stage": "generation_begin",
+                "seconds": 0.032
+              },
+              {
+                "stage": "cleanup",
+                "seconds": 86.021
+              }
+            ],
+            "images_saved": 0,
+            "prompts_saved": 0
+          },
+          {
+            "label": "candidate:edit_warm",
+            "pci": "0000:2d:00.0",
+            "pid": 510785,
+            "width": 1248,
+            "height": 832,
+            "steps": 25,
+            "cfg": 4.0,
+            "seconds": 61.831,
+            "first_preview_seconds": 9.851,
+            "sampling_after_first_seconds": 49.1,
+            "after_last_preview_seconds": 2.88,
+            "result_before_cleanup_seconds": 61.811,
+            "resident_vram_bytes": 20258267136,
+            "privacy_checks_passed": true,
+            "phases": [
+              {
+                "stage": "model_reuse",
+                "seconds": 0.033
+              },
+              {
+                "stage": "generation_begin",
+                "seconds": 0.033
+              },
+              {
+                "stage": "cleanup",
+                "seconds": 61.464
+              }
+            ],
+            "images_saved": 0,
+            "prompts_saved": 0
+          }
+        ],
+        "pixel_comparisons": [
+          {
+            "label": "generate_first",
+            "max_channel_difference": 30,
+            "mean_absolute_channel_difference": 0.14242820470385925,
+            "changed_channel_fraction": 0.13126050987643048
+          },
+          {
+            "label": "generate_warm",
+            "max_channel_difference": 45,
+            "mean_absolute_channel_difference": 0.13643531622839056,
+            "changed_channel_fraction": 0.12239702223338203
+          },
+          {
+            "label": "edit_first",
+            "max_channel_difference": 254,
+            "mean_absolute_channel_difference": 3.170765773314226,
+            "changed_channel_fraction": 0.578565127280572
+          },
+          {
+            "label": "edit_warm",
+            "max_channel_difference": 234,
+            "mean_absolute_channel_difference": 1.6650222086107003,
+            "changed_channel_fraction": 0.47522261580066566
+          }
+        ],
+        "same_seed_control": false,
+        "normal_idle_shutdown": true,
+        "kernel_event_delta": 0,
+        "op_profile": [],
+        "op_profile_unavailable": false,
+        "images_saved": 0,
+        "prompts_saved": 0
+      },
+      "compilers_packaging_review_hashing_idle": true,
+      "counter_enabled": false,
+      "selected": false,
+      "installed": false
+    },
+    "whole_rope_shared_standard_rebuild_required": {
+      "receipt_path": "/home/jmicko/.codex/worktrees/kuno-convrot-local-review/vashti/target/shared-rope-standard-artifact-eligibility-review-v1.json",
+      "receipt_sha256": "43fef762441e038e3f78aad03bad14581379ca98d0960e32f23c6336b4baef0a",
+      "standard_tmp_artifacts_survive": false,
+      "cuda_runtime_reverified_in_this_followup": false,
+      "fresh_standard_release_rebuild_required": false,
+      "persistent_v2_native_revalidated": true,
+      "status": "persistent native v2 revalidated; fresh normal standard Cargo build/check/Clippy and CUDA workflows passed",
+      "new_versioned_final_release_build_still_required": true
+    },
+    "whole_rope_residual_cancellation": {
+      "receipt_path": "/home/jmicko/.codex/worktrees/kuno-image-speed/vashti/target/inference-tests/full-resident-whole-rope-residual-cancel-v1-metrics.json",
+      "receipt_sha256": "921dfbdabfffec1753be491c0ae0faa0c100940da19236d61c69e1d3161086f5",
+      "full_resident_benchmark_passed": true,
+      "measurements": [
+        {
+          "label": "baseline:edit_cancel",
+          "pid": 515023,
+          "cancellation_passed": true,
+          "cancellation_seconds": 2.859,
+          "exit_code": 1,
+          "forced_stop": false,
+          "privacy_checks_passed": true,
+          "resident_vram_before_cancel": 25876877312,
+          "images_saved": 0,
+          "prompts_saved": 0
+        },
+        {
+          "label": "baseline:edit_recovery",
+          "pci": "0000:2d:00.0",
+          "pid": 515390,
+          "width": 1248,
+          "height": 832,
+          "steps": 2,
+          "cfg": 4.0,
+          "seconds": 54.176,
+          "first_preview_seconds": 48.356,
+          "sampling_after_first_seconds": 2.448,
+          "after_last_preview_seconds": 3.373,
+          "result_before_cleanup_seconds": 54.153,
+          "resident_vram_bytes": 20176658432,
+          "privacy_checks_passed": true,
+          "phases": [
+            {
+              "stage": "model_load",
+              "seconds": 0.084
+            },
+            {
+              "stage": "generation_begin",
+              "seconds": 0.303
+            },
+            {
+              "stage": "cleanup",
+              "seconds": 53.838
+            }
+          ],
+          "images_saved": 0,
+          "prompts_saved": 0
+        },
+        {
+          "label": "candidate:edit_cancel",
+          "pid": 515848,
+          "cancellation_passed": true,
+          "cancellation_seconds": 2.567,
+          "exit_code": 1,
+          "forced_stop": false,
+          "privacy_checks_passed": true,
+          "resident_vram_before_cancel": 25876881408,
+          "images_saved": 0,
+          "prompts_saved": 0
+        },
+        {
+          "label": "candidate:edit_recovery",
+          "pci": "0000:2d:00.0",
+          "pid": 516222,
+          "width": 1248,
+          "height": 832,
+          "steps": 2,
+          "cfg": 4.0,
+          "seconds": 52.971,
+          "first_preview_seconds": 47.533,
+          "sampling_after_first_seconds": 2.054,
+          "after_last_preview_seconds": 3.383,
+          "result_before_cleanup_seconds": 52.949,
+          "resident_vram_bytes": 20176646144,
+          "privacy_checks_passed": true,
+          "phases": [
+            {
+              "stage": "model_load",
+              "seconds": 0.08
+            },
+            {
+              "stage": "generation_begin",
+              "seconds": 0.303
+            },
+            {
+              "stage": "cleanup",
+              "seconds": 52.636
+            }
+          ],
+          "images_saved": 0,
+          "prompts_saved": 0
+        }
+      ],
+      "pixel_comparisons": [],
+      "same_seed_control": false,
+      "normal_idle_shutdown": true,
+      "kernel_event_delta": 0,
+      "op_profile": [],
+      "op_profile_unavailable": false,
+      "images_saved": 0,
+      "prompts_saved": 0
+    },
+    "whole_rope_identical_f6_edit_control": {
+      "receipt_path": "/home/jmicko/.codex/worktrees/kuno-image-speed/vashti/target/inference-tests/full-resident-fusion-edit-interprocess-control-v1-metrics.json",
+      "receipt_sha256": "e17e32cb3597f436a5f52d0236ead5154a98e291de2e4758b216b6767dbc25cd",
+      "full_resident_benchmark_passed": true,
+      "measurements": [
+        {
+          "label": "baseline:edit_first",
+          "pci": "0000:2d:00.0",
+          "pid": 517263,
+          "width": 1248,
+          "height": 832,
+          "steps": 25,
+          "cfg": 4.0,
+          "seconds": 110.641,
+          "first_preview_seconds": 48.42,
+          "sampling_after_first_seconds": 58.8,
+          "after_last_preview_seconds": 3.421,
+          "result_before_cleanup_seconds": 110.619,
+          "resident_vram_bytes": 20169719808,
+          "privacy_checks_passed": true,
+          "phases": [
+            {
+              "stage": "model_load",
+              "seconds": 0.131
+            },
+            {
+              "stage": "generation_begin",
+              "seconds": 0.347
+            },
+            {
+              "stage": "cleanup",
+              "seconds": 110.268
+            }
+          ],
+          "images_saved": 0,
+          "prompts_saved": 0
+        },
+        {
+          "label": "baseline:edit_warm",
+          "pci": "0000:2d:00.0",
+          "pid": 517263,
+          "width": 1248,
+          "height": 832,
+          "steps": 25,
+          "cfg": 4.0,
+          "seconds": 72.715,
+          "first_preview_seconds": 10.844,
+          "sampling_after_first_seconds": 58.994,
+          "after_last_preview_seconds": 2.877,
+          "result_before_cleanup_seconds": 72.694,
+          "resident_vram_bytes": 20171030528,
+          "privacy_checks_passed": true,
+          "phases": [
+            {
+              "stage": "model_reuse",
+              "seconds": 0.032
+            },
+            {
+              "stage": "generation_begin",
+              "seconds": 0.032
+            },
+            {
+              "stage": "cleanup",
+              "seconds": 72.344
+            }
+          ],
+          "images_saved": 0,
+          "prompts_saved": 0
+        },
+        {
+          "label": "candidate:edit_first",
+          "pci": "0000:2d:00.0",
+          "pid": 518582,
+          "width": 1248,
+          "height": 832,
+          "steps": 25,
+          "cfg": 4.0,
+          "seconds": 110.83,
+          "first_preview_seconds": 48.395,
+          "sampling_after_first_seconds": 59.008,
+          "after_last_preview_seconds": 3.428,
+          "result_before_cleanup_seconds": 110.809,
+          "resident_vram_bytes": 20169707520,
+          "privacy_checks_passed": true,
+          "phases": [
+            {
+              "stage": "model_load",
+              "seconds": 0.092
+            },
+            {
+              "stage": "generation_begin",
+              "seconds": 0.306
+            },
+            {
+              "stage": "cleanup",
+              "seconds": 110.457
+            }
+          ],
+          "images_saved": 0,
+          "prompts_saved": 0
+        },
+        {
+          "label": "candidate:edit_warm",
+          "pci": "0000:2d:00.0",
+          "pid": 518582,
+          "width": 1248,
+          "height": 832,
+          "steps": 25,
+          "cfg": 4.0,
+          "seconds": 72.803,
+          "first_preview_seconds": 10.87,
+          "sampling_after_first_seconds": 59.046,
+          "after_last_preview_seconds": 2.886,
+          "result_before_cleanup_seconds": 72.783,
+          "resident_vram_bytes": 20171018240,
+          "privacy_checks_passed": true,
+          "phases": [
+            {
+              "stage": "model_reuse",
+              "seconds": 0.032
+            },
+            {
+              "stage": "generation_begin",
+              "seconds": 0.032
+            },
+            {
+              "stage": "cleanup",
+              "seconds": 72.435
+            }
+          ],
+          "images_saved": 0,
+          "prompts_saved": 0
+        }
+      ],
+      "pixel_comparisons": [
+        {
+          "label": "edit_first",
+          "max_channel_difference": 230,
+          "mean_absolute_channel_difference": 1.1163758648452908,
+          "changed_channel_fraction": 0.4556668072762574
+        },
+        {
+          "label": "edit_warm",
+          "max_channel_difference": 202,
+          "mean_absolute_channel_difference": 0.9485031820142998,
+          "changed_channel_fraction": 0.44851425742726825
+        }
+      ],
+      "same_seed_control": false,
+      "normal_idle_shutdown": true,
+      "kernel_event_delta": 0,
+      "op_profile": [],
+      "op_profile_unavailable": false,
+      "images_saved": 0,
+      "prompts_saved": 0
+    },
+    "whole_rope_installed_public_api": {
+      "receipt_path": "/home/jmicko/.codex/worktrees/kuno-image-speed/vashti/target/inference-tests/installed-whole-api-metrics.json",
+      "receipt_sha256": "1bd14e8e1753f946aa7c9d2182b06b60a6072de6a1cc3a8c359b78a9deb78bf0",
+      "installed_public_api_passed": true,
+      "keyless": true,
+      "sdk_hidden_client": true,
+      "model_residency_reused": true,
+      "kernel_event_delta": 0,
+      "measurements": [
+        {
+          "mode": "generate",
+          "steps": 2,
+          "preview_count": 2,
+          "seconds": 31.022,
+          "worker_pid": 525505,
+          "png_privacy_passed": true
+        },
+        {
+          "mode": "edit",
+          "steps": 2,
+          "preview_count": 2,
+          "seconds": 39.403,
+          "worker_pid": 525505,
+          "png_privacy_passed": true
+        }
+      ],
+      "images_saved": 0,
+      "prompts_saved": 0
+    },
+    "whole_rope_source_selection": {
+      "production_commit": "230d15ba3156eef237cd99017f4ad203e296c9bb",
+      "public_selection_commit": "5351f63c4da751eb9e3916d656f33f2bfbca2fdc",
+      "manifest_sha256": "fc169dd2bf4418c2770940c85ec570f5b0a8c5ddaa21e32176cf839b36c88baa",
+      "worker_sha256": "4deb9a1bcd7108be8d22b56e8cc8958cb52458a56361c3b19c2b193012e679a3",
+      "normal_package_sha256": "85d7aecb92e9e27af85f56bf5569d31feffd63d37955e7549ac081ab3e3e54a3",
+      "normal_package_pin_override": false,
+      "api_changed": false,
+      "vashti_changes_required": false,
+      "owner_source_commit": "05a95fc",
+      "public_builder_guard_commit": "bde8cd0eef306733f19f590c15a6355b3f2190bb",
+      "root_non_native_tests": {
+        "passed": 205,
+        "failed": 0,
+        "ignored": 9
+      },
+      "root_clippy_passed": true,
+      "package_cpu_tests": 8,
+      "installer_cpu_tests": 4,
+      "builder_cpu_tests": 6
+    },
+    "public_selection_review": {
+      "path": "/home/jmicko/.codex/worktrees/kuno-convrot-local-review/vashti/target/public-builder-selection-source-review-v1.json",
+      "sha256": "c25b99ac4a3bbd6986a18bdff5dffdf28b500ece6ad58b926d6f6b8b99ed7e3b",
+      "receipt": {
+        "status": "independent_bounded_source_selection_review_pass",
+        "source_selection_commit": "5351f63c4da751eb9e3916d656f33f2bfbca2fdc",
+        "source_guard_commit": "bde8cd0eef306733f19f590c15a6355b3f2190bb",
+        "builder_sha256": "8767284b20d839ad1a9282a2ccd9585d439b353862d5aaab3283ea05e8ec557b",
+        "CPU_fixture_source_sha256": "8f68f3cff5dc1d57ad07b94654ec975aa883916e82a4ce063e16b0bd05761ab9",
+        "selected_package_helper_sha256": "fc8c6a10a3943bb166085dbfe312887395dcd2b9bd98fc70820daffbf7a836d9",
+        "preserved_package_helper_sha256": "b5268f0933e1b70f326359068c0d9f398e53fae4323016ec8e6b32baf6213433",
+        "plan_v3_sha256": "8afc783cc2f125514db48af9b0129fb29cf41389f85a6c1c1301c2a65fbc7ec2",
+        "selection_receipt_v2_sha256": "9a0003e56434665880119e4bcea7aedd5d034e9ab223db85fc9e8d769a24aefe",
+        "source_guard_receipt_v3_sha256": "959c382f57fd7f02339e9516950bf0f7eb7184a26c2dfaf8a896287872d45fd5",
+        "historical_environment_fixture_sha256": "e4158764fabecc51dd06201cc48b6c35fd154f460e39b18aec0996fedbfa17a9",
+        "missing_MKL_gate_fixture_sha256": "9e5b1cc78b73fadc455394ecfe63924fe6589be19d2186f15d11b985d8a27a40",
+        "normal_package_result_sha256": "3236591c09cedf4b4b170a3355826895ff157a50d62e0955c071235fd775168a",
+        "normal_package_archive_sha256": "85d7aecb92e9e27af85f56bf5569d31feffd63d37955e7549ac081ab3e3e54a3",
+        "checks": {
+          "correct_repo_root_resolution": true,
+          "exact_engine_and_GGML_heads_and_three_complete_tracked_patch_diffs": true,
+          "untracked_and_ignored_paths_rejected_in_each_repo_before_plan": true,
+          "reviewed_source_unknown_path_count": 0,
+          "CARGO_ENCODED_RUSTFLAGS_cleared_before_fixed_linker": true,
+          "inherited_C_CXX_link_flags_cleared": true,
+          "fresh_native_and_Cargo_output_guard": true,
+          "plan_and_missing_MKL_gate_before_output_or_configure": true,
+          "whole_source_default_OFF_managed_flag_ON": true,
+          "name160_graph_OFF_static_native_image_ReleaseO3_flags": true,
+          "whole_TU_strict_source_flags_preserved": true,
+          "no_TEST_repeat_profile_or_wrapper_enabled": true,
+          "package_helper_only_two_pin_substitutions": true,
+          "no_API_Rust_CXX_or_other_backend_settings_change_in_selection_commits": true,
+          "no_worker_runtime_install_or_packaging_command_in_builder": true,
+          "peer_six_CPU_fixtures_source_reviewed": true
+        },
+        "limitations": [
+          "No fresh CMake/native/Cargo build was executed by this reviewer or claimed by public selection; reviewed MKLConfig.cmake is still absent. Fresh generated command/SDK/source closure and exact/full-workflow acceptance must precede replacing the frozen tested worker.",
+          "Peer six-fixture run is bound by source-guard receipt; reviewer did not rerun fixture or plan.",
+          "Prior frozen native/worker/package independent receipt remains 084d6c0a88560afc1f5ad1bf0a287834232264c6f28c87ebc29595f78f18f381."
+        ],
+        "reviewer_actions": "read-only git/file/source metadata checks; two own ignored content-free JSON receipts only",
+        "compiler_GPU_perf_runtime_service_or_peer_source_mutation": false
+      }
+    },
+    "integration_source_review": {
+      "path": "/home/jmicko/.codex/worktrees/kuno-convrot-local-review/vashti/target/whole-rope-residual-integration-path-review-v2.json",
+      "sha256": "fd8f7fe56e35b7e68217bc57072a5e11b59f9e4939b7e7d2a8992d39be5439a3",
+      "receipt": {
+        "status": "read_only_integration_path_review",
+        "source_commit": "bde8cd0eef306733f19f590c15a6355b3f2190bb",
+        "root_base": "be40c6a98cf717f96e74afc2deb4951aa1b32ec7",
+        "path_count": 19,
+        "paths": [
+          {
+            "path": "apps/kuno/patches/003-sycl-convrot.patch",
+            "sha256": "3d1191da4eb004a25c52116fa30421c3a7b617fc4e854d416248b2d7b0070794",
+            "git_blob": "0fa8494dcbad6cc6d8c86b4c6f21bc255a716b1c"
+          },
+          {
+            "path": "crates/kuno-image/build.rs",
+            "sha256": "81fec38b923c0e0e8e0b10f8257591adb9669f368e6657c2fd5342b3565e246e",
+            "git_blob": "c3694da2bacc68efc104383e6c0e4b25616cbde1"
+          },
+          {
+            "path": "crates/kuno-image/native/binary32-reference.hpp",
+            "sha256": "a9660ab4e2e7798abebda9c7a55d341d97be8f72a41d3013fc7e7bd1360a1e1c",
+            "git_blob": "d7af5d54eb976c10aaf678caeb05ed7fc063d2fd"
+          },
+          {
+            "path": "crates/kuno-image/native/binary32-reference-test.cpp",
+            "sha256": "0510200a3fb1060f4e7f0fba1b61cd82b554bf250bcb3f8ce357b823466c8d3e",
+            "git_blob": "e15d69463fa53527d41cadb9f770b5b2dab67ba4"
+          },
+          {
+            "path": "crates/kuno-image/native/sycl-mul-add-policy-test.cpp",
+            "sha256": "c96055102b5e0d9363377ddd1f2f146873d7c42c0cee3a6458445b99d882a7fc",
+            "git_blob": "1d20918ec229c8ce4aeee99cbcc63173b84abffe"
+          },
+          {
+            "path": "crates/kuno-image/native/sycl-mul-add-arithmetic-test.cpp",
+            "sha256": "e0a85f2769037ac818edeaa41351027e76ebe8f1c2356696437083cedf044985",
+            "git_blob": "7aa4c5beee5747bf6dcfc133df42bd232a69b24d"
+          },
+          {
+            "path": "crates/kuno-image/native/sycl-mul-add-failure-test.cpp",
+            "sha256": "37382a7d0e808631c200b4be63eac6fd6155d1611f7d71d193831b2ddda88212",
+            "git_blob": "86e0fd7cab455fd257a490ff7b328cfa417e099d"
+          },
+          {
+            "path": "crates/kuno-image/native/sycl-mul-add.md",
+            "sha256": "be7a2a6f1b9557f5375b0725e212bcbe5776f08a99dc8abe495a2ce867d829fd",
+            "git_blob": "a90e2b98c76dda1a32715896f0248365ff191ce8"
+          },
+          {
+            "path": "crates/kuno-image/native/sycl-whole-rope-policy-test.cpp",
+            "sha256": "c978da9c4eec2eaefd0c12b4b54ac17e1b174bc8b10cb03d988bf292ae22c39e",
+            "git_blob": "c836b4a96d7cf75a5aac2857e80368c0af9de6fa"
+          },
+          {
+            "path": "crates/kuno-image/native/sycl-whole-rope-allocation-test.cpp",
+            "sha256": "4fd9793a191baab1b870b3a121a22a4714e37e8e8f71f5d6b4cf215a8a690aac",
+            "git_blob": "4eeb3f46980581368d8a31e473ab21139d9d1f46"
+          },
+          {
+            "path": "crates/kuno-image/native/sycl-whole-rope-test.cpp",
+            "sha256": "4551028f4e004e8893b3b609f054f656f844f7d8ba2b1a25cb7449f356fc795d",
+            "git_blob": "55764054db3382023f92da02c0fc11eae161804b"
+          },
+          {
+            "path": "crates/kuno-image/native/sycl-whole-rope-failure-test.cpp",
+            "sha256": "c307cc07e543302362dd35d98eae4406aad742250cc61fa9646e5c754dd4ff97",
+            "git_blob": "9672e890e7886059e930af63da1b3d23540cc8e9"
+          },
+          {
+            "path": "crates/kuno-image/native/sycl-whole-rope.md",
+            "sha256": "d8fee2376cfaf8d8b7eaf323178b789bf51ebae2cefa45e89ded63afc701c78e",
+            "git_blob": "ee234817412ad7031d443e155b2c8d2924b427c1"
+          },
+          {
+            "path": "crates/kuno-image/native/sycl-whole-rope-residual.md",
+            "sha256": "dc26cb6ff9b6edc5c7a882a60c3ebadc306170b133ce6a008b13f242b9b5966a",
+            "git_blob": "3a5120f287398cc661f8c0c6d297e14b391c1aef"
+          },
+          {
+            "path": "crates/kuno-image/native/sycl-whole-rope-release-handoff.md",
+            "sha256": "31b883d68828654420f170daa22395ac6f1dbf5380d03fcfc027a31b46528b60",
+            "git_blob": "278410c28129474bdccb638113a6ffb4ba33b7c1"
+          },
+          {
+            "path": "apps/kuno/scripts/README-managed-sycl-build.md",
+            "sha256": "bc1d0daa3cb1017b2781442f6c2c046998fd4ed1a72761413e12966835472c36",
+            "git_blob": "19a0e9d3c751b5f208ec3248d9b7bebd57167fb9"
+          },
+          {
+            "path": "apps/kuno/scripts/build-image-runtime-sycl.py",
+            "sha256": "8767284b20d839ad1a9282a2ccd9585d439b353862d5aaab3283ea05e8ec557b",
+            "git_blob": "4502a1d2c5d5b1a8f062ae0035591483ab2a7eac"
+          },
+          {
+            "path": "apps/kuno/scripts/package-image-runtime.py",
+            "sha256": "fc8c6a10a3943bb166085dbfe312887395dcd2b9bd98fc70820daffbf7a836d9",
+            "git_blob": "4ff85a2b7daeead63c03176e180351c3b8a89f17"
+          },
+          {
+            "path": "apps/kuno/scripts/test-build-image-runtime-sycl.py",
+            "sha256": "8f68f3cff5dc1d57ad07b94654ec975aa883916e82a4ce063e16b0bd05761ab9",
+            "git_blob": "654b8092db692b3dd13d3edc78527a2d5b8dc1a4"
+          }
+        ],
+        "already_identical_omit": [
+          "apps/kuno/patches/001-qwen-quantized-config.patch",
+          "apps/kuno/patches/002-vulkan-flash-shapes.patch",
+          "apps/kuno/scripts/sycl-runtime-linker.sh",
+          "apps/kuno/src",
+          "crates/kuno-image/src",
+          "crates/kuno-image/native/shim.cpp",
+          "Cargo.lock"
+        ],
+        "preserve_root_paths": [
+          "crates/kuno-image/native/attention-layout-test.cpp",
+          "crates/kuno-image/native/attention-layout-failure-test.cpp",
+          "crates/kuno-image/native/rope-sharing-test.cpp",
+          "crates/kuno-image/native/rope-sharing-failure-test.cpp",
+          "crates/kuno-image/native/rope-sharing.md",
+          "docs/kuno-image-performance.md",
+          "docs/kuno-image-speed-candidate-build.json",
+          "docs/kuno-release-handoff.md",
+          "docs/kuno-vashti-coordination.md"
+        ],
+        "integration_method": "Copy the final explicit 19 paths from bde8cd0 into one owned integration commit; do not cherry-pick overlapping history or restore full directories. Preserve newer root attention/RoPE tests and performance/coordination docs, and reconcile root release/coordination notes separately under owner control.",
+        "no_compile_GPU_perf_runtime_services_or_peer_edits": true,
+        "root_uncommitted_notes_preserved": true,
+        "previous_receipt_sha256": "d9d3809f894effa265309e938b32e0ad791c146e62ba6a0b0a3bdf4edfa2e938",
+        "source_selection_review_sha256": "c25b99ac4a3bbd6986a18bdff5dffdf28b500ece6ad58b926d6f6b8b99ed7e3b",
+        "source_guard_review_pass": true
+      }
+    },
+    "read_only_revalidation_v3": {
+      "path": "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/shared-rope-standard-v2/read-only-revalidation-v3.json",
+      "sha256": "3932bd9772dc203be292c56ea685a602f97cf3ffd929eb93f0ce319c912405ee",
+      "receipt": {
+        "status": "read_only_persistent_standard_v2_revalidated",
+        "historical_receipt_sha256": "43e5ef99e5b9988873558563ca2c6f87c2f287255a0e57782b04fad0366d433b",
+        "historical_created_utc": "2026-10-02T02:04:52.960551+00:00",
+        "source_pins_and_complete001_002_diffs_verified": true,
+        "actual_checks": [
+          {
+            "kind": "cmake_cache",
+            "path": "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/shared-rope-standard-v2/build/CMakeCache.txt",
+            "sha256": "91a35cddd0118bbf0fa83c537470622babfcca8b969ad9daf0a6a27371cd4f79",
+            "mtime_utc": "2026-10-01T02:32:33.790962+00:00"
+          },
+          {
+            "kind": "archive",
+            "path": "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/shared-rope-standard-v2/build/libstable-diffusion.a",
+            "sha256": "3fc0342fd44eb42bd69451debd1bfeb5ef8515623f42ae4aec100d8459c11cfd",
+            "mtime_utc": "2026-10-02T02:08:27.619418+00:00"
+          },
+          {
+            "kind": "gateway",
+            "path": "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/shared-rope-standard-v2/cargo-target/release/kuno",
+            "sha256": "9865c0d4f075b3f7eab05c4907f9da0c4c68d49ab06f539c4f05b0814061b557",
+            "mtime_utc": "2026-10-02T02:11:03.065458+00:00"
+          },
+          {
+            "kind": "compiler",
+            "path": "/usr/bin/c++",
+            "sha256": "1353e9bdd29a7295c7226bf6c63abccce056d8cac31f112e5cdbecc3f28c2769",
+            "mtime_utc": "2025-12-18T20:59:51+00:00"
+          },
+          {
+            "kind": "cargo_lock",
+            "path": "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/Cargo.lock",
+            "sha256": "b680a386b1352c17f5848b2784e4c0ef15ededa6fa0a24ff6ca47c712483a54a",
+            "mtime_utc": "2026-10-02T00:08:39.346982+00:00"
+          }
+        ],
+        "GGML_archive_count": 5,
+        "CPP_object_count": 57,
+        "unchanged_C_member_count": 15,
+        "CUDA_static_producer_count": 4,
+        "gateway_DT_NEEDED": [
+          "libstdc++.so.6",
+          "libgomp.so.1",
+          "libvulkan.so.1",
+          "libcuda.so.1",
+          "libgcc_s.so.1",
+          "libm.so.6",
+          "libc.so.6",
+          "ld-linux-x86-64.so.2"
+        ],
+        "no_private_Intel_or_RPATH": true,
+        "Rust_production_paths_equal_original734bd11": true,
+        "native_archive_and_gateway_survive": true,
+        "hardware_runtime_acceptance_not_performed": true,
+        "actions": {
+          "compiler": false,
+          "GPU_init": false,
+          "worker_execution": false,
+          "service": false,
+          "installation": false
+        },
+        "scope": "Actual native/source/object/link evidence supports reuse; normal standard CUDA/Vulkan hardware/workflow acceptance and release packaging gates remain owned by root."
+      }
+    },
+    "header_source_revalidation_v3": {
+      "path": "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/shared-rope-standard-v2/header-source-revalidation-v3.json",
+      "sha256": "c57f36dd8f240db96f304619170a81adab047da229af157a7265c93315056f96",
+      "receipt": {
+        "CPP_dependency_file_count": 57,
+        "native_dependency_match_count": 211,
+        "native_paths": [
+          "ggml/src/../include/ggml-alloc.h",
+          "ggml/src/../include/ggml-backend.h",
+          "ggml/src/../include/ggml-cpu.h",
+          "ggml/src/../include/ggml.h",
+          "ggml/src/../include/gguf.h",
+          "ggml/src/ggml-backend-impl.h",
+          "ggml/src/ggml-impl.h",
+          "include/stable-diffusion.h",
+          "src/conditioning/conditioner.hpp",
+          "src/conditioning/conditioning_cache.h",
+          "src/conditioning/wan_audio.cpp",
+          "src/conditioning/wan_audio.h",
+          "src/convert.cpp",
+          "src/core/backend_fit.cpp",
+          "src/core/backend_fit.h",
+          "src/core/compute_workspace.cpp",
+          "src/core/compute_workspace.h",
+          "src/core/ggml_extend.cpp",
+          "src/core/ggml_extend.h",
+          "src/core/ggml_extend_backend.cpp",
+          "src/core/ggml_extend_backend.h",
+          "src/core/ggml_graph_cut.cpp",
+          "src/core/ggml_graph_cut.h",
+          "src/core/ggml_runner.cpp",
+          "src/core/ggml_runner.h",
+          "src/core/ggml_tensor_utils.cpp",
+          "src/core/ggml_tensor_utils.h",
+          "src/core/layer_split_partition.cpp",
+          "src/core/layer_split_partition.h",
+          "src/core/ordered_map.hpp",
+          "src/core/parallel.cpp",
+          "src/core/parallel.h",
+          "src/core/params_buffer_type.h",
+          "src/core/regex.cpp",
+          "src/core/regex.h",
+          "src/core/rng.hpp",
+          "src/core/rng_mt19937.hpp",
+          "src/core/rng_philox.hpp",
+          "src/core/runner_cache.cpp",
+          "src/core/runner_cache.h",
+          "src/core/segment_graph_bindings.cpp",
+          "src/core/segment_graph_bindings.h",
+          "src/core/segment_weight_pipeline.cpp",
+          "src/core/segment_weight_pipeline.h",
+          "src/core/tensor.hpp",
+          "src/core/tensor_ggml.hpp",
+          "src/core/util.cpp",
+          "src/core/util.h",
+          "src/detailer.cpp",
+          "src/detailer.h",
+          "src/device_residency_manager.h",
+          "src/extensions/generation_extension.h",
+          "src/extensions/photomaker_extension.cpp",
+          "src/extensions/pulid_extension.cpp",
+          "src/model/adapter/ip_adapter.hpp",
+          "src/model/adapter/lora.hpp",
+          "src/model/adapter/lora_ops.cpp",
+          "src/model/adapter/lora_ops.h",
+          "src/model/adapter/pmid.hpp",
+          "src/model/adapter/pulid.hpp",
+          "src/model/audio/wav2vec2.hpp",
+          "src/model/common/block.hpp",
+          "src/model/common/ggml_block.hpp",
+          "src/model/common/rope.hpp",
+          "src/model/common/rope_circular.hpp",
+          "src/model/detector/yolov8.h",
+          "src/model/diffusion/anima.hpp",
+          "src/model/diffusion/animatediff.hpp",
+          "src/model/diffusion/boogu.hpp",
+          "src/model/diffusion/control.hpp",
+          "src/model/diffusion/dit.hpp",
+          "src/model/diffusion/ernie_image.hpp",
+          "src/model/diffusion/flux.hpp",
+          "src/model/diffusion/hidream_o1.hpp",
+          "src/model/diffusion/hunyuan.hpp",
+          "src/model/diffusion/ideogram4.hpp",
+          "src/model/diffusion/krea2.hpp",
+          "src/model/diffusion/lens.hpp",
+          "src/model/diffusion/lingbot_video.hpp",
+          "src/model/diffusion/llada_image.hpp",
+          "src/model/diffusion/ltxv.hpp",
+          "src/model/diffusion/mage_flow.hpp",
+          "src/model/diffusion/minimax_h3.hpp",
+          "src/model/diffusion/minit2i.hpp",
+          "src/model/diffusion/mmdit.hpp",
+          "src/model/diffusion/model.hpp",
+          "src/model/diffusion/pid.hpp",
+          "src/model/diffusion/qwen_image.hpp",
+          "src/model/diffusion/qwen_image_2_1.hpp",
+          "src/model/diffusion/sefi_image.hpp",
+          "src/model/diffusion/sensenova_u1.h",
+          "src/model/diffusion/unet.hpp",
+          "src/model/diffusion/wan.hpp",
+          "src/model/diffusion/wan_audio.hpp",
+          "src/model/diffusion/z_image.hpp",
+          "src/model/te/clip.hpp",
+          "src/model/te/llada_image_te.hpp",
+          "src/model/te/llm.hpp",
+          "src/model/te/t5.hpp",
+          "src/model/upscaler/esrgan.hpp",
+          "src/model/upscaler/ltx_latent_upscaler.hpp",
+          "src/model/vae/audio_vae.hpp",
+          "src/model/vae/auto_encoder_kl.hpp",
+          "src/model/vae/hunyuan_vae.hpp",
+          "src/model/vae/ltx_audio_vae.hpp",
+          "src/model/vae/ltx_vae.hpp",
+          "src/model/vae/mage_vae.hpp",
+          "src/model/vae/minimax_h3_audio_vae.hpp",
+          "src/model/vae/minimax_h3_vae.hpp",
+          "src/model/vae/tae.hpp",
+          "src/model/vae/vae.hpp",
+          "src/model/vae/vae_tiling.hpp",
+          "src/model/vae/wan_vae.hpp",
+          "src/model.h",
+          "src/model_component.h",
+          "src/model_io/binary_io.h",
+          "src/model_io/gguf_io.cpp",
+          "src/model_io/gguf_io.h",
+          "src/model_io/gguf_reader_ext.h",
+          "src/model_io/int8_dense.h",
+          "src/model_io/pickle_io.cpp",
+          "src/model_io/pickle_io.h",
+          "src/model_io/safetensors_io.cpp",
+          "src/model_io/safetensors_io.h",
+          "src/model_io/streaming_writer.h",
+          "src/model_io/tensor_storage.h",
+          "src/model_io/torch_legacy_io.cpp",
+          "src/model_io/torch_legacy_io.h",
+          "src/model_io/torch_zip_io.cpp",
+          "src/model_io/torch_zip_io.h",
+          "src/model_loader.cpp",
+          "src/model_loader.h",
+          "src/model_loader_files.cpp",
+          "src/model_manager.cpp",
+          "src/model_manager.h",
+          "src/model_manager_files.cpp",
+          "src/model_manager_prefetch.cpp",
+          "src/name_conversion.cpp",
+          "src/name_conversion.h",
+          "src/pipeline/diffusion_engine.cpp",
+          "src/pipeline/diffusion_engine.h",
+          "src/pipeline/generation.h",
+          "src/pipeline/image.cpp",
+          "src/pipeline/model_builders.cpp",
+          "src/pipeline/model_builders.h",
+          "src/pipeline/request.cpp",
+          "src/pipeline/request.h",
+          "src/pipeline/video.cpp",
+          "src/runtime/audio_processing.cpp",
+          "src/runtime/audio_processing.h",
+          "src/runtime/cache_dit.hpp",
+          "src/runtime/condition_cache_utils.hpp",
+          "src/runtime/denoiser.hpp",
+          "src/runtime/easycache.hpp",
+          "src/runtime/gits_noise.h",
+          "src/runtime/guidance.cpp",
+          "src/runtime/guidance.h",
+          "src/runtime/image_preprocess.cpp",
+          "src/runtime/image_preprocess.h",
+          "src/runtime/imatrix.cpp",
+          "src/runtime/imatrix.h",
+          "src/runtime/latent-preview.h",
+          "src/runtime/preprocessing.hpp",
+          "src/runtime/preview_interval.h",
+          "src/runtime/sample-cache.cpp",
+          "src/runtime/sample-cache.h",
+          "src/runtime/spectrum.hpp",
+          "src/runtime/tiling.cpp",
+          "src/runtime/tiling.h",
+          "src/runtime/ucache.hpp",
+          "src/stable-diffusion.cpp",
+          "src/tokenizers/bpe_tokenizer.cpp",
+          "src/tokenizers/bpe_tokenizer.h",
+          "src/tokenizers/clip_tokenizer.cpp",
+          "src/tokenizers/clip_tokenizer.h",
+          "src/tokenizers/gemma_tokenizer.cpp",
+          "src/tokenizers/gemma_tokenizer.h",
+          "src/tokenizers/hf_tokenizer.cpp",
+          "src/tokenizers/hf_tokenizer.h",
+          "src/tokenizers/mistral_tokenizer.cpp",
+          "src/tokenizers/mistral_tokenizer.h",
+          "src/tokenizers/qwen2_tokenizer.cpp",
+          "src/tokenizers/qwen2_tokenizer.h",
+          "src/tokenizers/sensenova_u1_tokenizer.cpp",
+          "src/tokenizers/sensenova_u1_tokenizer.h",
+          "src/tokenizers/t5_unigram_tokenizer.cpp",
+          "src/tokenizers/t5_unigram_tokenizer.h",
+          "src/tokenizers/tokenize_util.cpp",
+          "src/tokenizers/tokenize_util.h",
+          "src/tokenizers/tokenizer.cpp",
+          "src/tokenizers/tokenizer.h",
+          "src/tokenizers/tokenizer_config.cpp",
+          "src/tokenizers/tokenizer_config.h",
+          "src/tokenizers/vocab/clip_merges.hpp",
+          "src/tokenizers/vocab/gemma_merges.hpp",
+          "src/tokenizers/vocab/gemma_vocab.hpp",
+          "src/tokenizers/vocab/mistral_merges.hpp",
+          "src/tokenizers/vocab/mistral_vocab.hpp",
+          "src/tokenizers/vocab/qwen_merges.hpp",
+          "src/tokenizers/vocab/t5.hpp",
+          "src/tokenizers/vocab/umt5.hpp",
+          "src/tokenizers/vocab/vocab.cpp",
+          "src/tokenizers/vocab/vocab.h",
+          "src/upscaler.cpp",
+          "src/upscaler.h",
+          "src/version.cpp",
+          "thirdparty/darts.h",
+          "thirdparty/json.hpp",
+          "thirdparty/oniguruma/oniguruma.h",
+          "thirdparty/utf8proc/utf8proc.h",
+          "thirdparty/zip.h"
+        ],
+        "excluded_SYCL_paths": [],
+        "current_source": "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/whole-rope-residual-v1/source",
+        "source": "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/shared-rope-standard-v2/source",
+        "all_dependencies_exist_and_match": true,
+        "no_compile_or_GPU": true
+      }
+    },
+    "root_normal_runtime_package": {
+      "path": "/home/jmicko/.codex/worktrees/kuno-image-speed/vashti/target/release-candidate/kuno-image-runtime-sycl-linux-x86_64.tar.gz",
+      "bytes": 156247147,
+      "sha256": "85d7aecb92e9e27af85f56bf5569d31feffd63d37955e7549ac081ab3e3e54a3",
+      "selected_manifest_sha256": "fc169dd2bf4418c2770940c85ec570f5b0a8c5ddaa21e32176cf839b36c88baa",
+      "public_package_pin_override": false
+    },
+    "installed_final_audit": {
+      "service_active": true,
+      "service_pid": 524784,
+      "service_automatic_restarts": 0,
+      "service_swap_limit_zero": true,
+      "service_swap_current_bytes": 0,
+      "admission_paused": false,
+      "active_requests": false,
+      "waiting_requests": 0,
+      "recovery_required": false,
+      "installed_gateway_matches_accepted": true,
+      "installed_manifest_matches_selected": true,
+      "installed_runtime_members_verified": true,
+      "image_workers_remaining": 0,
+      "benchmark_unit_active": false,
+      "config_identity_matches_installation_record": true,
+      "response_header_deadline_disabled": true,
+      "stream_idle_deadline_disabled": true,
+      "selected_manifest_sha256": "fc169dd2bf4418c2770940c85ec570f5b0a8c5ddaa21e32176cf839b36c88baa",
+      "selected_worker_sha256": "4deb9a1bcd7108be8d22b56e8cc8958cb52458a56361c3b19c2b193012e679a3",
+      "classified_xe_fault_count": 0,
+      "nvidia_xid_event_count": 0
+    },
+    "standard_cuda_rope_exact": {
+      "receipt_path": "/home/jmicko/.codex/worktrees/kuno-image-speed/vashti/target/inference-tests/cuda-rope-release-readiness-metrics.json",
+      "receipt_sha256": "c5858f5dce3cc02b6d6135b703dc0075a8a614bb874df9eaa78402c5898e5f4b",
+      "cuda_rope_oracle_passed": true,
+      "exit_code": 0,
+      "cases_completed": 40,
+      "fixed_errors": [],
+      "seconds": 5.021,
+      "synthetic_data_only": true,
+      "candidate_product_patches": [
+        "001"
+      ],
+      "binary_sha256": "87b4a85b610056cc586fe7bcddf6937817f0b8fcd19ed2ea49fa8929568ccdc8",
+      "kernel_event_delta": 0
+    },
+    "standard_normal_cpu_gates": {
+      "receipt_path": "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/standard-release-readiness-v1/readiness-receipt-v2.json",
+      "receipt_sha256": "7ca63f085e5d2be5ded7df32998e2cf4af168cd78cfff76db61f3a249e452fb7",
+      "receipt": {
+        "previous_receipt_sha256": "debf808018689dd664ad4b7c942cd55f354ca432e0e74253fe18d42755afd5b1",
+        "test_include_correction": "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/shared-rope-standard-v2/source/ggml/src",
+        "status": "complete_standard_CPU_gates_no_GPU_runtime_acceptance",
+        "created_utc": "2026-10-02T22:55:45.500075+00:00",
+        "repository_commit": "bde8cd0eef306733f19f590c15a6355b3f2190bb",
+        "native_provenance_sha256": "43e5ef99e5b9988873558563ca2c6f87c2f287255a0e57782b04fad0366d433b",
+        "native_readonly_revalidation_sha256": "3932bd9772dc203be292c56ea685a602f97cf3ffd929eb93f0ce319c912405ee",
+        "header_revalidation_sha256": "c57f36dd8f240db96f304619170a81adab047da229af157a7265c93315056f96",
+        "native_archive_sha256": "3fc0342fd44eb42bd69451debd1bfeb5ef8515623f42ae4aec100d8459c11cfd",
+        "safe_oracle_sources": {
+          "rope-sharing-test.cpp": {
+            "original": "/home/jmicko/.codex/worktrees/kuno-image-speed/vashti/crates/kuno-image/native/rope-sharing-test.cpp",
+            "frozen_copy": "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/standard-release-readiness-v1/native-test-source/rope-sharing-test.cpp",
+            "sha256": "9ac5a222936325aa76ff2efa9ea1c64479d9ce97fde6a9406278a183e6207566"
+          },
+          "rope-sharing-failure-test.cpp": {
+            "original": "/home/jmicko/.codex/worktrees/kuno-image-speed/vashti/crates/kuno-image/native/rope-sharing-failure-test.cpp",
+            "frozen_copy": "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/standard-release-readiness-v1/native-test-source/rope-sharing-failure-test.cpp",
+            "sha256": "4156458c31aa157292936d1bce7eb23a23f07cc44d3dd520455181a41ad07173"
+          }
+        },
+        "script_sha256": "fb2c672bcf336b0ce8c4a2e33cb5faa07a07e27daf1a5ee6bce1c728aa45d534",
+        "cleared_environment": [],
+        "environment": {
+          "KUNO_SD_SOURCE_DIR": "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/shared-rope-standard-v2/source",
+          "KUNO_SD_BUILD_DIR": "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/shared-rope-standard-v2/build",
+          "CARGO_TARGET_DIR": "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/standard-release-readiness-v1/cargo-target",
+          "CARGO_BUILD_JOBS": "1",
+          "TMPDIR": "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/standard-release-readiness-v1/compiler-temp",
+          "CC": "/usr/bin/cc",
+          "CXX": "/usr/bin/c++"
+        },
+        "calls": [
+          {
+            "label": "compile-rope-sharing-test",
+            "argv": [
+              "/usr/bin/c++",
+              "-std=c++17",
+              "-O1",
+              "-DGGML_MAX_NAME=160",
+              "-I",
+              "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/shared-rope-standard-v2/source/src",
+              "-I",
+              "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/shared-rope-standard-v2/source/ggml/include",
+              "-I",
+              "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/shared-rope-standard-v2/source/include",
+              "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/standard-release-readiness-v1/native-test-source/rope-sharing-test.cpp",
+              "-Wl,--start-group",
+              "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/shared-rope-standard-v2/build/libstable-diffusion.a",
+              "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/shared-rope-standard-v2/build/ggml/src/libggml.a",
+              "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/shared-rope-standard-v2/build/ggml/src/libggml-base.a",
+              "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/shared-rope-standard-v2/build/ggml/src/libggml-cpu.a",
+              "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/shared-rope-standard-v2/build/ggml/src/ggml-vulkan/libggml-vulkan.a",
+              "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/shared-rope-standard-v2/build/ggml/src/ggml-cuda/libggml-cuda.a",
+              "/home/jmicko/dev/vashti/target/kuno-toolchain/cuda-13.0/lib/libcublas_static.a",
+              "/home/jmicko/dev/vashti/target/kuno-toolchain/cuda-13.0/lib/libcublasLt_static.a",
+              "/home/jmicko/dev/vashti/target/kuno-toolchain/cuda-13.0/lib/libcudart_static.a",
+              "/home/jmicko/dev/vashti/target/kuno-toolchain/cuda-13.0/lib/libculibos.a",
+              "-Wl,--end-group",
+              "-lgomp",
+              "-lvulkan",
+              "-lcuda",
+              "-ldl",
+              "-lrt",
+              "-lpthread",
+              "-o",
+              "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/standard-release-readiness-v1/rope-sharing-test"
+            ],
+            "exit": 0,
+            "elapsed_seconds": 9.348657149996143,
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          {
+            "label": "CPU-rope-sharing-test",
+            "argv": [
+              "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/standard-release-readiness-v1/rope-sharing-test"
+            ],
+            "exit": 0,
+            "elapsed_seconds": 0.14234416399267502,
+            "stdout_sha256": "9e364b1a782e1b839490deb5708365842efd2f2a70481f5097df4972e5ee5cd0",
+            "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          {
+            "label": "compile-rope-sharing-failure-test",
+            "argv": [
+              "/usr/bin/c++",
+              "-std=c++17",
+              "-O1",
+              "-DGGML_MAX_NAME=160",
+              "-I",
+              "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/shared-rope-standard-v2/source/src",
+              "-I",
+              "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/shared-rope-standard-v2/source/ggml/include",
+              "-I",
+              "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/shared-rope-standard-v2/source/include",
+              "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/standard-release-readiness-v1/native-test-source/rope-sharing-failure-test.cpp",
+              "-Wl,--start-group",
+              "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/shared-rope-standard-v2/build/libstable-diffusion.a",
+              "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/shared-rope-standard-v2/build/ggml/src/libggml.a",
+              "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/shared-rope-standard-v2/build/ggml/src/libggml-base.a",
+              "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/shared-rope-standard-v2/build/ggml/src/libggml-cpu.a",
+              "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/shared-rope-standard-v2/build/ggml/src/ggml-vulkan/libggml-vulkan.a",
+              "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/shared-rope-standard-v2/build/ggml/src/ggml-cuda/libggml-cuda.a",
+              "/home/jmicko/dev/vashti/target/kuno-toolchain/cuda-13.0/lib/libcublas_static.a",
+              "/home/jmicko/dev/vashti/target/kuno-toolchain/cuda-13.0/lib/libcublasLt_static.a",
+              "/home/jmicko/dev/vashti/target/kuno-toolchain/cuda-13.0/lib/libcudart_static.a",
+              "/home/jmicko/dev/vashti/target/kuno-toolchain/cuda-13.0/lib/libculibos.a",
+              "-Wl,--end-group",
+              "-lgomp",
+              "-lvulkan",
+              "-lcuda",
+              "-ldl",
+              "-lrt",
+              "-lpthread",
+              "-o",
+              "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/standard-release-readiness-v1/rope-sharing-failure-test"
+            ],
+            "exit": 1,
+            "elapsed_seconds": 0.09102945000631735,
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr_sha256": "8598fa7360d2dad69493b13870daa55a735cce064a95e4a2a53a02fb107e8c26"
+          },
+          {
+            "label": "compile-rope-sharing-failure-test-v2",
+            "argv": [
+              "/usr/bin/c++",
+              "-I",
+              "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/shared-rope-standard-v2/source/ggml/src",
+              "-std=c++17",
+              "-O1",
+              "-DGGML_MAX_NAME=160",
+              "-I",
+              "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/shared-rope-standard-v2/source/src",
+              "-I",
+              "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/shared-rope-standard-v2/source/ggml/include",
+              "-I",
+              "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/shared-rope-standard-v2/source/include",
+              "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/standard-release-readiness-v1/native-test-source/rope-sharing-failure-test.cpp",
+              "-Wl,--start-group",
+              "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/shared-rope-standard-v2/build/libstable-diffusion.a",
+              "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/shared-rope-standard-v2/build/ggml/src/libggml.a",
+              "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/shared-rope-standard-v2/build/ggml/src/libggml-base.a",
+              "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/shared-rope-standard-v2/build/ggml/src/libggml-cpu.a",
+              "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/shared-rope-standard-v2/build/ggml/src/ggml-vulkan/libggml-vulkan.a",
+              "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/shared-rope-standard-v2/build/ggml/src/ggml-cuda/libggml-cuda.a",
+              "/home/jmicko/dev/vashti/target/kuno-toolchain/cuda-13.0/lib/libcublas_static.a",
+              "/home/jmicko/dev/vashti/target/kuno-toolchain/cuda-13.0/lib/libcublasLt_static.a",
+              "/home/jmicko/dev/vashti/target/kuno-toolchain/cuda-13.0/lib/libcudart_static.a",
+              "/home/jmicko/dev/vashti/target/kuno-toolchain/cuda-13.0/lib/libculibos.a",
+              "-Wl,--end-group",
+              "-lgomp",
+              "-lvulkan",
+              "-lcuda",
+              "-ldl",
+              "-lrt",
+              "-lpthread",
+              "-o",
+              "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/standard-release-readiness-v1/rope-sharing-failure-test-v2"
+            ],
+            "exit": 0,
+            "elapsed_seconds": 9.574434256006498,
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr_sha256": "6606bef8db50b25e32dbee95fc38f5ee3e9ce63a1645f3430ac56f912727be5a"
+          },
+          {
+            "label": "CPU-rope-sharing-failure-test-v2",
+            "argv": [
+              "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/standard-release-readiness-v1/rope-sharing-failure-test-v2"
+            ],
+            "exit": 0,
+            "elapsed_seconds": 0.07155885800602846,
+            "stdout_sha256": "81090a1a4a7e9d6894110e7cc224ac8b1858fa35842e4d5545f5a6fabf62dd8d",
+            "stderr_sha256": "7a8c09a09daba9ac1f458f395dd649df5be261aaed4a81efd0adf9e62accf4f7"
+          },
+          {
+            "label": "cargo-build",
+            "argv": [
+              "cargo",
+              "build",
+              "--release",
+              "--locked",
+              "--offline",
+              "-p",
+              "kuno",
+              "--features",
+              "native-image",
+              "-j",
+              "1"
+            ],
+            "exit": 0,
+            "elapsed_seconds": 153.145411015008,
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr_sha256": "7223f5c66560cba3b40cbd5e6dc9ac5f6e77cad03e2ea35e48ee99a7b8886f73"
+          },
+          {
+            "label": "cargo-check",
+            "argv": [
+              "cargo",
+              "check",
+              "--release",
+              "--locked",
+              "--offline",
+              "-p",
+              "kuno",
+              "--features",
+              "native-image",
+              "-j",
+              "1"
+            ],
+            "exit": 0,
+            "elapsed_seconds": 27.003409248005482,
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr_sha256": "a8ec0303f9e138c2a46f80b7a781b8bb33b271428315f7f289e291e0db2ec369"
+          },
+          {
+            "label": "cargo-clippy",
+            "argv": [
+              "cargo",
+              "clippy",
+              "--release",
+              "--locked",
+              "--offline",
+              "-p",
+              "kuno",
+              "--all-targets",
+              "--features",
+              "native-image",
+              "-j",
+              "1",
+              "--",
+              "-D",
+              "warnings"
+            ],
+            "exit": 0,
+            "elapsed_seconds": 16.08036864300084,
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr_sha256": "7e766d0701c297e16e99f48ef35ef95efaead044afbbd33142495da2fb9e5b4d"
+          }
+        ],
+        "max_compiler_jobs": 1,
+        "GPU_execution": false,
+        "services": false,
+        "installation_release": false,
+        "old_native_and_gateway_immutable": true,
+        "rope-sharing-test": {
+          "path": "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/standard-release-readiness-v1/rope-sharing-test",
+          "sha256": "87b4a85b610056cc586fe7bcddf6937817f0b8fcd19ed2ea49fa8929568ccdc8",
+          "source_sha256": "9ac5a222936325aa76ff2efa9ea1c64479d9ce97fde6a9406278a183e6207566",
+          "CPU_only_passed": true
+        },
+        "rope-sharing-failure-test": {
+          "path": "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/standard-release-readiness-v1/rope-sharing-failure-test-v2",
+          "sha256": "463962a27d85e804c94a3ef858f41a2fd8396bb80d3a348053ad12b1dfba585a",
+          "source_sha256": "4156458c31aa157292936d1bce7eb23a23f07cc44d3dd520455181a41ad07173",
+          "CPU_only_passed": true
+        },
+        "gateway": {
+          "path": "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/standard-release-readiness-v1/cargo-target/release/kuno",
+          "bytes": 725288672,
+          "sha256": "9865c0d4f075b3f7eab05c4907f9da0c4c68d49ab06f539c4f05b0814061b557",
+          "DT_NEEDED": [
+            "libstdc++.so.6",
+            "libgomp.so.1",
+            "libvulkan.so.1",
+            "libcuda.so.1",
+            "libgcc_s.so.1",
+            "libm.so.6",
+            "libc.so.6",
+            "ld-linux-x86-64.so.2"
+          ],
+          "no_private_Intel_or_RPATH": true
+        },
+        "native_inputs_and_safe_sources_postverified": true
+      }
+    },
+    "standard_cuda_fd_audit_correction": {
+      "initial_workflow_stopped_by_test_assertion": true,
+      "initial_harness_line": 76,
+      "kernel_fault_observed": false,
+      "synthetic_followup_descriptor_class": "anonymous_memfd",
+      "filesystem_magic": "0x01021994",
+      "link_count": 0,
+      "swap_limit_zero": true,
+      "classification_cpu_fixtures_passed": 4,
+      "subsequent_harness_allows_only_unlinked_memfd_on_tmpfs": true,
+      "writable_disk_files_still_rejected": true,
+      "production_code_changed": false,
+      "private_content_persisted": false
+    },
+    "standard_cuda_original_resolution_two_step_workflows": {
+      "receipt_path": "/home/jmicko/.codex/worktrees/kuno-image-speed/vashti/target/inference-tests/full-resident-standard-release-readiness-cuda-v1-metrics.json",
+      "receipt_sha256": "e48b5dca314c2c03546f49a8d21e2d7378671fad408e9270c463d71fde92e92d",
+      "full_resident_benchmark_passed": true,
+      "measurements": [
+        {
+          "label": "standard_candidate:generate_first",
+          "pci": "0000:04:00.0",
+          "pid": 552455,
+          "width": 1184,
+          "height": 1776,
+          "steps": 2,
+          "cfg": 1.0,
+          "seconds": 36.7,
+          "first_preview_seconds": 13.832,
+          "sampling_after_first_seconds": 8.588,
+          "after_last_preview_seconds": 14.28,
+          "result_before_cleanup_seconds": 36.664,
+          "resident_vram_bytes": 1459617792,
+          "privacy_checks_passed": true,
+          "phases": [
+            {
+              "stage": "model_load",
+              "seconds": 0.426
+            },
+            {
+              "stage": "generation_begin",
+              "seconds": 0.637
+            },
+            {
+              "stage": "cleanup",
+              "seconds": 36.085
+            }
+          ],
+          "images_saved": 0,
+          "prompts_saved": 0
+        },
+        {
+          "label": "standard_candidate:generate_warm",
+          "pci": "0000:04:00.0",
+          "pid": 552455,
+          "width": 1184,
+          "height": 1776,
+          "steps": 2,
+          "cfg": 1.0,
+          "seconds": 35.021,
+          "first_preview_seconds": 12.604,
+          "sampling_after_first_seconds": 8.567,
+          "after_last_preview_seconds": 13.849,
+          "result_before_cleanup_seconds": 34.986,
+          "resident_vram_bytes": 1459617792,
+          "privacy_checks_passed": true,
+          "phases": [
+            {
+              "stage": "model_reuse",
+              "seconds": 0.001
+            },
+            {
+              "stage": "generation_begin",
+              "seconds": 0.001
+            },
+            {
+              "stage": "cleanup",
+              "seconds": 34.417
+            }
+          ],
+          "images_saved": 0,
+          "prompts_saved": 0
+        },
+        {
+          "label": "standard_candidate:edit_first",
+          "pci": "0000:04:00.0",
+          "pid": 552455,
+          "width": 1248,
+          "height": 832,
+          "steps": 2,
+          "cfg": 4.0,
+          "seconds": 52.498,
+          "first_preview_seconds": 33.961,
+          "sampling_after_first_seconds": 11.921,
+          "after_last_preview_seconds": 6.617,
+          "result_before_cleanup_seconds": 52.478,
+          "resident_vram_bytes": 1459617792,
+          "privacy_checks_passed": true,
+          "phases": [
+            {
+              "stage": "model_reuse",
+              "seconds": 0.033
+            },
+            {
+              "stage": "generation_begin",
+              "seconds": 0.033
+            },
+            {
+              "stage": "cleanup",
+              "seconds": 52.149
+            }
+          ],
+          "images_saved": 0,
+          "prompts_saved": 0
+        },
+        {
+          "label": "standard_candidate:edit_warm",
+          "pci": "0000:04:00.0",
+          "pid": 552455,
+          "width": 1248,
+          "height": 832,
+          "steps": 2,
+          "cfg": 4.0,
+          "seconds": 50.169,
+          "first_preview_seconds": 31.704,
+          "sampling_after_first_seconds": 11.842,
+          "after_last_preview_seconds": 6.622,
+          "result_before_cleanup_seconds": 50.145,
+          "resident_vram_bytes": 1459617792,
+          "privacy_checks_passed": true,
+          "phases": [
+            {
+              "stage": "model_reuse",
+              "seconds": 0.032
+            },
+            {
+              "stage": "generation_begin",
+              "seconds": 0.032
+            },
+            {
+              "stage": "cleanup",
+              "seconds": 49.822
+            }
+          ],
+          "images_saved": 0,
+          "prompts_saved": 0
+        }
+      ],
+      "pixel_comparisons": [],
+      "same_seed_control": false,
+      "normal_idle_shutdown": true,
+      "kernel_event_delta": 0,
+      "op_profile": [],
+      "op_profile_unavailable": false,
+      "images_saved": 0,
+      "prompts_saved": 0
+    },
+    "standard_vulkan_rope_exact": {
+      "receipt_path": "/home/jmicko/.codex/worktrees/kuno-image-speed/vashti/target/inference-tests/vulkan-rope-release-readiness-metrics.json",
+      "receipt_sha256": "156ef2d51d68e314b516439ef55bd788bf31559cd35827a195d3a6d271764e24",
+      "vulkan_rope_oracle_passed": true,
+      "exit_code": 0,
+      "cases_completed": 40,
+      "fixed_errors": [],
+      "seconds": 6.635,
+      "synthetic_data_only": true,
+      "candidate_product_patches": [
+        "001"
+      ],
+      "binary_sha256": "87b4a85b610056cc586fe7bcddf6937817f0b8fcd19ed2ea49fa8929568ccdc8",
+      "kernel_event_delta": 0
     }
+  },
+  "selected_release": {
+    "production_commit": "230d15ba3156eef237cd99017f4ad203e296c9bb",
+    "public_selection_commit": "5351f63c4da751eb9e3916d656f33f2bfbca2fdc",
+    "manifest_sha256": "fc169dd2bf4418c2770940c85ec570f5b0a8c5ddaa21e32176cf839b36c88baa",
+    "worker_sha256": "4deb9a1bcd7108be8d22b56e8cc8958cb52458a56361c3b19c2b193012e679a3",
+    "normal_package_sha256": "85d7aecb92e9e27af85f56bf5569d31feffd63d37955e7549ac081ab3e3e54a3",
+    "normal_package_pin_override": false,
+    "api_changed": false,
+    "vashti_changes_required": false,
+    "owner_source_commit": "05a95fc",
+    "public_builder_guard_commit": "bde8cd0eef306733f19f590c15a6355b3f2190bb",
+    "root_non_native_tests": {
+      "passed": 205,
+      "failed": 0,
+      "ignored": 9
+    },
+    "root_clippy_passed": true,
+    "package_cpu_tests": 8,
+    "installer_cpu_tests": 4,
+    "builder_cpu_tests": 6,
+    "standard_gateway_path": "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/standard-release-readiness-v1/cargo-target/release/kuno",
+    "standard_gateway_sha256": "9865c0d4f075b3f7eab05c4907f9da0c4c68d49ab06f539c4f05b0814061b557",
+    "runtime_archive": "/home/jmicko/.codex/worktrees/kuno-image-speed/vashti/target/release-candidate/kuno-image-runtime-sycl-linux-x86_64.tar.gz",
+    "status": "backend accepted and installed; ready for versioned beta integration",
+    "published": false,
+    "runtime_installed": true,
+    "standard_gateway_installed": false,
+    "installed_gateway_sha256": "49115713860d966212ca09112f5166b126950c6b50e162e0fc4eb0a542fb9488",
+    "standard_cuda_two_step_workflows_passed": true,
+    "standard_cuda_exact_cases": 40,
+    "standard_vulkan_exact_cases": 40,
+    "live_vulkan_image_workflows_tested": false
   }
 }
