@@ -80,11 +80,13 @@
     "benchmark_unit_active": false
   },
   "acceptance": {
-    "candidate_gpu_correctness": false,
+    "candidate_gpu_correctness": true,
     "candidate_full_workflow_speed": false,
-    "candidate_protected_runtime": false,
+    "candidate_protected_runtime": true,
     "candidate_cancellation_reuse": false,
-    "installed_changes": false
+    "installed_changes": false,
+    "candidate_full_workflow_execution": true,
+    "candidate_pixel_equivalence": false
   },
   "limitations": [
     "Only original installed resident workflow was benchmarked successfully.",
@@ -93,7 +95,11 @@
     "Default source tests do not validate native GPU changes.",
     "Standard and private binaries were produced at the listed commits; later test/docs changes do not change their production source.",
     "Candidate runtime uses a local packaging pin override; production packaging pins remain at the accepted residency build.",
-    "No prompts, seeds, reference image paths, generated pixels, raw backend errors or inference payloads are included."
+    "No prompts, seeds, reference image paths, generated pixels, raw backend errors or inference payloads are included.",
+    "Post-reboot full workflow and guarded numerical tests passed; historical paused/failure checks above retain their original state.",
+    "Accepted same-seed full-step generation repeat was nearly identical (mean 0.0000083, max 1); edit repeat varied substantially (mean 1.7808, max 235). This does not distinguish backend nondeterminism from cold/warm state.",
+    "Generation candidate drift exceeds this same-seed control; pixel equivalence and cancellation acceptance remain unresolved.",
+    "User requested stopping GPU work after the current control; all benchmark workers exited normally, admission resumed, accepted install unchanged."
   ],
   "later_recovery_checks": {
     "cuda_rope_oracle": {
@@ -116,5 +122,774 @@
       "candidate_archive_used": false
     },
     "card_recovery": "User authorized targeted B70 rebind with FLR only; preparing attempt, not yet hardware acceptance."
+  },
+  "restored_standard_build": {
+    "artifact_root": "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/shared-rope-standard-v2",
+    "receipt_path": "/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/shared-rope-standard-v2/build-provenance.json",
+    "receipt_sha256": "43e5ef99e5b9988873558563ca2c6f87c2f287255a0e57782b04fad0366d433b",
+    "gateway_sha256": "9865c0d4f075b3f7eab05c4907f9da0c4c68d49ab06f539c4f05b0814061b557",
+    "oracle_sha256": "7bb1bf4a640a9a97a702a099753af4b4da78c9debee42f379d387813fbdc2236",
+    "original_temporary_build_erased_by_reboot": true
+  },
+  "post_reboot_checks": {
+    "kernel": "7.0.0-38-generic",
+    "previous_kernel": "7.0.0-34-generic",
+    "user_rebooted_after_black_screen": true,
+    "previous_boot_journal_available": false,
+    "targeted_driver_rebind_execution_confirmed": false,
+    "accepted_sycl_smoke": {
+      "baseline_smoke_passed": true,
+      "exit_code": 0,
+      "relative_l2": 0.00027684,
+      "fixed_errors": [],
+      "seconds": 6.293,
+      "synthetic_data_only": true,
+      "accepted_archive_only": true,
+      "binary_sha256": "93fbab3706476922ac6054b95164d54bd2f6a24094328baad85c56aef685394e"
+    },
+    "attention_correctness": {
+      "gpu_oracle_passed": true,
+      "records": [
+        {
+          "variant": "baseline",
+          "mode": "correctness",
+          "passed": true,
+          "case_count": 101,
+          "max_relative_l2": 0.0012553,
+          "samples": [],
+          "seconds": 84.02
+        },
+        {
+          "variant": "candidate",
+          "mode": "correctness",
+          "passed": true,
+          "case_count": 101,
+          "max_relative_l2": 0.0012553,
+          "samples": [],
+          "seconds": 84.215
+        }
+      ],
+      "synthetic_data_only": true
+    },
+    "attention_benchmark_heads32": {
+      "gpu_oracle_passed": true,
+      "records": [
+        {
+          "variant": "baseline",
+          "mode": "benchmark",
+          "passed": true,
+          "case_count": 0,
+          "max_relative_l2": null,
+          "samples": [
+            {
+              "iteration": 0,
+              "measured": false,
+              "seconds": 1.99946639
+            },
+            {
+              "iteration": 1,
+              "measured": true,
+              "seconds": 0.01491677
+            },
+            {
+              "iteration": 2,
+              "measured": true,
+              "seconds": 0.01057535
+            },
+            {
+              "iteration": 3,
+              "measured": true,
+              "seconds": 0.0105835
+            }
+          ],
+          "seconds": 3.131
+        },
+        {
+          "variant": "candidate",
+          "mode": "benchmark",
+          "passed": true,
+          "case_count": 0,
+          "max_relative_l2": null,
+          "samples": [
+            {
+              "iteration": 0,
+              "measured": false,
+              "seconds": 2.02440833
+            },
+            {
+              "iteration": 1,
+              "measured": true,
+              "seconds": 0.01424514
+            },
+            {
+              "iteration": 2,
+              "measured": true,
+              "seconds": 0.00883152
+            },
+            {
+              "iteration": 3,
+              "measured": true,
+              "seconds": 0.00883677
+            }
+          ],
+          "seconds": 3.125
+        }
+      ],
+      "synthetic_data_only": true
+    },
+    "cuda_rope_oracle": {
+      "cuda_rope_oracle_passed": true,
+      "exit_code": 0,
+      "cases_completed": 40,
+      "fixed_errors": [],
+      "seconds": 4.921,
+      "synthetic_data_only": true,
+      "candidate_product_patches": [
+        "001"
+      ],
+      "binary_sha256": "7bb1bf4a640a9a97a702a099753af4b4da78c9debee42f379d387813fbdc2236"
+    },
+    "sycl_rope_oracle": {
+      "sycl_rope_oracle_passed": true,
+      "kernel_event_delta": 0,
+      "exit_code": 0,
+      "cases_completed": 40,
+      "fixed_errors": [],
+      "seconds": 6.576,
+      "synthetic_data_only": true,
+      "comparison_target_patch": "001",
+      "linked_candidate_patches": [
+        "001",
+        "002",
+        "003"
+      ],
+      "binary_sha256": "7aab4e782c2d49681bad59545667bd395bed6c32325b93bc3eeb09b42c07c647"
+    },
+    "protected_candidate_preflight": {
+      "full_resident_benchmark_passed": true,
+      "measurements": [
+        {
+          "label": "installed:generate_first",
+          "pci": "0000:2d:00.0",
+          "pid": 33169,
+          "width": 1184,
+          "height": 1776,
+          "steps": 2,
+          "cfg": 1.0,
+          "seconds": 37.536,
+          "first_preview_seconds": 28.345,
+          "sampling_after_first_seconds": 2.463,
+          "after_last_preview_seconds": 6.728,
+          "result_before_cleanup_seconds": 37.5,
+          "resident_vram_bytes": 11019259904,
+          "phases": [
+            {
+              "stage": "model_load",
+              "seconds": 0.059
+            },
+            {
+              "stage": "generation_begin",
+              "seconds": 0.314
+            },
+            {
+              "stage": "cleanup",
+              "seconds": 36.959
+            }
+          ],
+          "images_saved": 0,
+          "prompts_saved": 0
+        },
+        {
+          "label": "installed:generate_warm",
+          "pci": "0000:2d:00.0",
+          "pid": 33169,
+          "width": 1184,
+          "height": 1776,
+          "steps": 2,
+          "cfg": 1.0,
+          "seconds": 12.691,
+          "first_preview_seconds": 4.439,
+          "sampling_after_first_seconds": 2.468,
+          "after_last_preview_seconds": 5.784,
+          "result_before_cleanup_seconds": 12.657,
+          "resident_vram_bytes": 11021889536,
+          "phases": [
+            {
+              "stage": "model_reuse",
+              "seconds": 0.002
+            },
+            {
+              "stage": "generation_begin",
+              "seconds": 0.002
+            },
+            {
+              "stage": "cleanup",
+              "seconds": 12.136
+            }
+          ],
+          "images_saved": 0,
+          "prompts_saved": 0
+        },
+        {
+          "label": "installed:edit_first",
+          "pci": "0000:2d:00.0",
+          "pid": 33169,
+          "width": 1248,
+          "height": 832,
+          "steps": 2,
+          "cfg": 4.0,
+          "seconds": 41.146,
+          "first_preview_seconds": 35.825,
+          "sampling_after_first_seconds": 2.478,
+          "after_last_preview_seconds": 2.843,
+          "result_before_cleanup_seconds": 41.125,
+          "resident_vram_bytes": 20280983552,
+          "phases": [
+            {
+              "stage": "model_reuse",
+              "seconds": 0.033
+            },
+            {
+              "stage": "generation_begin",
+              "seconds": 0.033
+            },
+            {
+              "stage": "cleanup",
+              "seconds": 40.813
+            }
+          ],
+          "images_saved": 0,
+          "prompts_saved": 0
+        },
+        {
+          "label": "installed:edit_warm",
+          "pci": "0000:2d:00.0",
+          "pid": 33169,
+          "width": 1248,
+          "height": 832,
+          "steps": 2,
+          "cfg": 4.0,
+          "seconds": 16.067,
+          "first_preview_seconds": 10.733,
+          "sampling_after_first_seconds": 2.489,
+          "after_last_preview_seconds": 2.846,
+          "result_before_cleanup_seconds": 16.045,
+          "resident_vram_bytes": 20280991744,
+          "phases": [
+            {
+              "stage": "model_reuse",
+              "seconds": 0.032
+            },
+            {
+              "stage": "generation_begin",
+              "seconds": 0.032
+            },
+            {
+              "stage": "cleanup",
+              "seconds": 15.732
+            }
+          ],
+          "images_saved": 0,
+          "prompts_saved": 0
+        }
+      ],
+      "pixel_comparisons": [],
+      "normal_idle_shutdown": true,
+      "kernel_event_delta": 0,
+      "images_saved": 0,
+      "prompts_saved": 0
+    },
+    "sycl_rope_oracle_build_receipt": {
+      "path": "/home/jmicko/.codex/worktrees/kuno-image-gap-review/vashti/target/sycl-rope-oracle-v2/build-receipt.json",
+      "source_commit": "dd60ee2e757d02e9cbacab35dbea64f752569f4b",
+      "receipt_sha256": "ba79ff4291727184999396f6966352d8a697c9a9543d647500367b555d53e914"
+    },
+    "full_matched_workflow": {
+      "full_resident_benchmark_passed": true,
+      "measurements": [
+        {
+          "label": "baseline:generate_first",
+          "pci": "0000:2d:00.0",
+          "pid": 34285,
+          "width": 1184,
+          "height": 1776,
+          "steps": 50,
+          "cfg": 1.0,
+          "seconds": 153.472,
+          "first_preview_seconds": 21.939,
+          "sampling_after_first_seconds": 124.918,
+          "after_last_preview_seconds": 6.614,
+          "result_before_cleanup_seconds": 153.427,
+          "resident_vram_bytes": 11019264000,
+          "privacy_checks_passed": true,
+          "phases": [
+            {
+              "stage": "model_load",
+              "seconds": 0.091
+            },
+            {
+              "stage": "generation_begin",
+              "seconds": 0.313
+            },
+            {
+              "stage": "cleanup",
+              "seconds": 152.836
+            }
+          ],
+          "images_saved": 0,
+          "prompts_saved": 0
+        },
+        {
+          "label": "baseline:generate_warm",
+          "pci": "0000:2d:00.0",
+          "pid": 34285,
+          "width": 1184,
+          "height": 1776,
+          "steps": 50,
+          "cfg": 1.0,
+          "seconds": 135.45,
+          "first_preview_seconds": 4.5,
+          "sampling_after_first_seconds": 125.087,
+          "after_last_preview_seconds": 5.863,
+          "result_before_cleanup_seconds": 135.407,
+          "resident_vram_bytes": 11021893632,
+          "privacy_checks_passed": true,
+          "phases": [
+            {
+              "stage": "model_reuse",
+              "seconds": 0.002
+            },
+            {
+              "stage": "generation_begin",
+              "seconds": 0.002
+            },
+            {
+              "stage": "cleanup",
+              "seconds": 134.826
+            }
+          ],
+          "images_saved": 0,
+          "prompts_saved": 0
+        },
+        {
+          "label": "baseline:edit_first",
+          "pci": "0000:2d:00.0",
+          "pid": 34285,
+          "width": 1248,
+          "height": 832,
+          "steps": 25,
+          "cfg": 4.0,
+          "seconds": 101.15,
+          "first_preview_seconds": 35.401,
+          "sampling_after_first_seconds": 62.872,
+          "after_last_preview_seconds": 2.876,
+          "result_before_cleanup_seconds": 101.13,
+          "resident_vram_bytes": 20258594816,
+          "privacy_checks_passed": true,
+          "phases": [
+            {
+              "stage": "model_reuse",
+              "seconds": 0.033
+            },
+            {
+              "stage": "generation_begin",
+              "seconds": 0.033
+            },
+            {
+              "stage": "cleanup",
+              "seconds": 100.783
+            }
+          ],
+          "images_saved": 0,
+          "prompts_saved": 0
+        },
+        {
+          "label": "baseline:edit_warm",
+          "pci": "0000:2d:00.0",
+          "pid": 34285,
+          "width": 1248,
+          "height": 832,
+          "steps": 25,
+          "cfg": 4.0,
+          "seconds": 76.872,
+          "first_preview_seconds": 11.036,
+          "sampling_after_first_seconds": 62.959,
+          "after_last_preview_seconds": 2.876,
+          "result_before_cleanup_seconds": 76.852,
+          "resident_vram_bytes": 20258594816,
+          "privacy_checks_passed": true,
+          "phases": [
+            {
+              "stage": "model_reuse",
+              "seconds": 0.032
+            },
+            {
+              "stage": "generation_begin",
+              "seconds": 0.032
+            },
+            {
+              "stage": "cleanup",
+              "seconds": 76.505
+            }
+          ],
+          "images_saved": 0,
+          "prompts_saved": 0
+        },
+        {
+          "label": "candidate:generate_first",
+          "pci": "0000:2d:00.0",
+          "pid": 37597,
+          "width": 1184,
+          "height": 1776,
+          "steps": 50,
+          "cfg": 1.0,
+          "seconds": 150.465,
+          "first_preview_seconds": 21.958,
+          "sampling_after_first_seconds": 121.916,
+          "after_last_preview_seconds": 6.591,
+          "result_before_cleanup_seconds": 150.422,
+          "resident_vram_bytes": 11019251712,
+          "privacy_checks_passed": true,
+          "phases": [
+            {
+              "stage": "model_load",
+              "seconds": 0.044
+            },
+            {
+              "stage": "generation_begin",
+              "seconds": 0.264
+            },
+            {
+              "stage": "cleanup",
+              "seconds": 149.821
+            }
+          ],
+          "images_saved": 0,
+          "prompts_saved": 0
+        },
+        {
+          "label": "candidate:generate_warm",
+          "pci": "0000:2d:00.0",
+          "pid": 37597,
+          "width": 1184,
+          "height": 1776,
+          "steps": 50,
+          "cfg": 1.0,
+          "seconds": 134.13,
+          "first_preview_seconds": 6.33,
+          "sampling_after_first_seconds": 121.944,
+          "after_last_preview_seconds": 5.857,
+          "result_before_cleanup_seconds": 134.091,
+          "resident_vram_bytes": 11021881344,
+          "privacy_checks_passed": true,
+          "phases": [
+            {
+              "stage": "model_reuse",
+              "seconds": 0.002
+            },
+            {
+              "stage": "generation_begin",
+              "seconds": 0.002
+            },
+            {
+              "stage": "cleanup",
+              "seconds": 133.501
+            }
+          ],
+          "images_saved": 0,
+          "prompts_saved": 0
+        },
+        {
+          "label": "candidate:edit_first",
+          "pci": "0000:2d:00.0",
+          "pid": 37597,
+          "width": 1248,
+          "height": 832,
+          "steps": 25,
+          "cfg": 4.0,
+          "seconds": 98.063,
+          "first_preview_seconds": 35.25,
+          "sampling_after_first_seconds": 59.934,
+          "after_last_preview_seconds": 2.878,
+          "result_before_cleanup_seconds": 98.043,
+          "resident_vram_bytes": 20258586624,
+          "privacy_checks_passed": true,
+          "phases": [
+            {
+              "stage": "model_reuse",
+              "seconds": 0.032
+            },
+            {
+              "stage": "generation_begin",
+              "seconds": 0.032
+            },
+            {
+              "stage": "cleanup",
+              "seconds": 97.685
+            }
+          ],
+          "images_saved": 0,
+          "prompts_saved": 0
+        },
+        {
+          "label": "candidate:edit_warm",
+          "pci": "0000:2d:00.0",
+          "pid": 37597,
+          "width": 1248,
+          "height": 832,
+          "steps": 25,
+          "cfg": 4.0,
+          "seconds": 73.673,
+          "first_preview_seconds": 10.822,
+          "sampling_after_first_seconds": 59.966,
+          "after_last_preview_seconds": 2.885,
+          "result_before_cleanup_seconds": 73.654,
+          "resident_vram_bytes": 20258586624,
+          "privacy_checks_passed": true,
+          "phases": [
+            {
+              "stage": "model_reuse",
+              "seconds": 0.033
+            },
+            {
+              "stage": "generation_begin",
+              "seconds": 0.033
+            },
+            {
+              "stage": "cleanup",
+              "seconds": 73.301
+            }
+          ],
+          "images_saved": 0,
+          "prompts_saved": 0
+        }
+      ],
+      "pixel_comparisons": [
+        {
+          "label": "generate_first",
+          "max_channel_difference": 21,
+          "mean_absolute_channel_difference": 0.145510546970112,
+          "changed_channel_fraction": 0.13343013357529826
+        },
+        {
+          "label": "generate_warm",
+          "max_channel_difference": 129,
+          "mean_absolute_channel_difference": 0.1652366576880935,
+          "changed_channel_fraction": 0.1354860984295106
+        },
+        {
+          "label": "edit_first",
+          "max_channel_difference": 203,
+          "mean_absolute_channel_difference": 1.0272467197516026,
+          "changed_channel_fraction": 0.44813191491000987
+        },
+        {
+          "label": "edit_warm",
+          "max_channel_difference": 209,
+          "mean_absolute_channel_difference": 1.0087185169347879,
+          "changed_channel_fraction": 0.45240437584750987
+        }
+      ],
+      "normal_idle_shutdown": true,
+      "kernel_event_delta": 0,
+      "images_saved": 0,
+      "prompts_saved": 0
+    },
+    "full_matched_workflow_receipt_sha256": "9db72ad10083913d62b172318223d924e7619ac91e823d7059643805ebb7fbb2",
+    "performance_interpretation": "Warm generation improved 1.320 seconds and editing 3.199 seconds in one matched pair. Sampling spans improved about 3 seconds; generation warm first-preview startup was 1.83 seconds slower. Full baseline same-seed variability control remains pending; no pixel equivalence or ComfyUI parity accepted.",
+    "accepted_same_seed_control": {
+      "full_resident_benchmark_passed": true,
+      "measurements": [
+        {
+          "label": "installed:generate_first",
+          "pci": "0000:2d:00.0",
+          "pid": 44953,
+          "width": 1184,
+          "height": 1776,
+          "steps": 50,
+          "cfg": 1.0,
+          "seconds": 153.397,
+          "first_preview_seconds": 21.98,
+          "sampling_after_first_seconds": 124.804,
+          "after_last_preview_seconds": 6.613,
+          "result_before_cleanup_seconds": 153.352,
+          "resident_vram_bytes": 11019264000,
+          "privacy_checks_passed": true,
+          "phases": [
+            {
+              "stage": "model_load",
+              "seconds": 0.093
+            },
+            {
+              "stage": "generation_begin",
+              "seconds": 0.317
+            },
+            {
+              "stage": "cleanup",
+              "seconds": 152.763
+            }
+          ],
+          "images_saved": 0,
+          "prompts_saved": 0
+        },
+        {
+          "label": "installed:generate_warm",
+          "pci": "0000:2d:00.0",
+          "pid": 44953,
+          "width": 1184,
+          "height": 1776,
+          "steps": 50,
+          "cfg": 1.0,
+          "seconds": 135.483,
+          "first_preview_seconds": 4.497,
+          "sampling_after_first_seconds": 125.135,
+          "after_last_preview_seconds": 5.851,
+          "result_before_cleanup_seconds": 135.44,
+          "resident_vram_bytes": 11021893632,
+          "privacy_checks_passed": true,
+          "phases": [
+            {
+              "stage": "model_reuse",
+              "seconds": 0.002
+            },
+            {
+              "stage": "generation_begin",
+              "seconds": 0.002
+            },
+            {
+              "stage": "cleanup",
+              "seconds": 134.851
+            }
+          ],
+          "images_saved": 0,
+          "prompts_saved": 0
+        },
+        {
+          "label": "installed:edit_first",
+          "pci": "0000:2d:00.0",
+          "pid": 44953,
+          "width": 1248,
+          "height": 832,
+          "steps": 25,
+          "cfg": 4.0,
+          "seconds": 101.471,
+          "first_preview_seconds": 35.709,
+          "sampling_after_first_seconds": 62.875,
+          "after_last_preview_seconds": 2.887,
+          "result_before_cleanup_seconds": 101.451,
+          "resident_vram_bytes": 20258594816,
+          "privacy_checks_passed": true,
+          "phases": [
+            {
+              "stage": "model_reuse",
+              "seconds": 0.033
+            },
+            {
+              "stage": "generation_begin",
+              "seconds": 0.033
+            },
+            {
+              "stage": "cleanup",
+              "seconds": 101.098
+            }
+          ],
+          "images_saved": 0,
+          "prompts_saved": 0
+        },
+        {
+          "label": "installed:edit_warm",
+          "pci": "0000:2d:00.0",
+          "pid": 44953,
+          "width": 1248,
+          "height": 832,
+          "steps": 25,
+          "cfg": 4.0,
+          "seconds": 76.9,
+          "first_preview_seconds": 11.06,
+          "sampling_after_first_seconds": 62.959,
+          "after_last_preview_seconds": 2.881,
+          "result_before_cleanup_seconds": 76.88,
+          "resident_vram_bytes": 20258594816,
+          "privacy_checks_passed": true,
+          "phases": [
+            {
+              "stage": "model_reuse",
+              "seconds": 0.033
+            },
+            {
+              "stage": "generation_begin",
+              "seconds": 0.033
+            },
+            {
+              "stage": "cleanup",
+              "seconds": 76.527
+            }
+          ],
+          "images_saved": 0,
+          "prompts_saved": 0
+        }
+      ],
+      "pixel_comparisons": [
+        {
+          "label": "generate",
+          "max_channel_difference": 1,
+          "mean_absolute_channel_difference": 8.322300340881422e-06,
+          "changed_channel_fraction": 8.322300340881422e-06
+        },
+        {
+          "label": "edit",
+          "max_channel_difference": 235,
+          "mean_absolute_channel_difference": 1.7808329866247534,
+          "changed_channel_fraction": 0.5361792810804981
+        }
+      ],
+      "same_seed_control": true,
+      "normal_idle_shutdown": true,
+      "kernel_event_delta": 0,
+      "images_saved": 0,
+      "prompts_saved": 0
+    },
+    "accepted_same_seed_control_receipt_sha256": "d031ee7a05926ca84b8ac5f44022f83e03caebd639509cf0acc73dd95332a188"
+  },
+  "post_reboot_final_audit": {
+    "service_active": true,
+    "service_pid": 2032,
+    "service_automatic_restarts": 0,
+    "service_swap_limit_zero": true,
+    "service_swap_current_bytes": 0,
+    "admission_paused": false,
+    "active_requests": false,
+    "waiting_requests": 0,
+    "recovery_required": false,
+    "installed_gateway_matches_accepted": true,
+    "installed_manifest_matches_accepted": true,
+    "installed_runtime_members_verified": true,
+    "image_workers_remaining": 0,
+    "benchmark_unit_active": false
+  },
+  "gpu_testing_stopped_at_user_request": true,
+  "unselected_followups": {
+    "residual_fusion": {
+      "branch": "codex/kuno-image-fused-residual",
+      "source_commits": [
+        "4d603abd073a0eba4985c0f52503a081f44ba3b2",
+        "ecd532fa7c0d79ceba7f84ec1bfca64f4cc69017"
+      ],
+      "patch003_sha256": "60ca8efbc76f71494ec1f34cd290c74d0909c9b87476a9e8c2c1b165d6815c68",
+      "source_receipt_sha256": "de42629b7b4025c4d286b9b52f27536d98ad25bbb2183e6a15748efdf6ca1a88",
+      "cpu_receipt_sha256": "fde87fe073ae0402d3c43eff7313797aa086949b67a37ee0a44a3797adbf785a",
+      "cpu_policy_checks": 141,
+      "cpu_arithmetic_cases": 8,
+      "native_sycl_compiled": false,
+      "gpu_tested": false
+    },
+    "diagnostic_profiler": {
+      "root": "/home/jmicko/.codex/worktrees/kuno-image-gap-review/vashti/target/sycl-op-profile-v1",
+      "checkpoint_sha256": "5553fd63b0c4494a509b5479570d88962193bb1c6f498e1ae5a5770f4f602c71",
+      "source_checks": 19,
+      "cpu_fake_event_cases": 8,
+      "native_compiled": false,
+      "gpu_tested": false
+    }
   }
 }

@@ -752,8 +752,9 @@ the fast path, but does not prove alignment is the sole cause.
 
 The guarded 101-case oracle has line-buffered, flushed numeric results. Its
 unchanged baseline aborted before the first reported case during the subsequent
-test window. The alignment guard therefore remains unvalidated on hardware;
-there is no accepted candidate speed result or valid matched GPU timing here.
+test window. At that checkpoint the alignment guard was unvalidated on hardware;
+there was no accepted candidate speed result or valid matched GPU timing.
+The post-reboot checks below supersede this pending numerical boundary.
 
 | Kernel observation | `engine_reset` | `job_timeout` | Total |
 | --- | ---: | ---: | ---: |
@@ -766,10 +767,15 @@ exit contributed, or the underlying driver/kernel cause. Numerical assertions
 abort without normal test teardown, and the existing SYCL backend uses `wait()`
 rather than `wait_and_throw()` for synchronization, limiting deferred-error
 diagnosis. Rejected and guarded binaries, archives and content-free numerical
-receipts are preserved; GPU testing is paused pending B70 recovery.
+receipts are preserved. This diagnostic window used kernel 7.0.0-34-generic;
+GPU testing was paused pending B70 recovery.
 
-The owning task is preparing a reboot/recovery checkpoint rather than another
-GPU retry. Building or packaging the candidate does not clear that boundary.
+An accepted-only small compute smoke later timed out after 45 seconds and
+added 93 classified job timeouts. A targeted driver recovery helper was prepared,
+but the retained visible execution history does not confirm that it ran.
+The user subsequently reported a black screen and powered off/rebooted.
+The previous boot journal is unavailable, so the cause of the black screen
+is unresolved; do not attribute it to a monitor, a particular test or a rebind.
 
 The installed runtime and configuration remain unchanged. Standard/private
 candidate build receipts are separate from hardware acceptance. Complete device
@@ -780,3 +786,148 @@ the packaging helper's current accepted pins yet. Historical build/manifest
 receipts retain their original checksums. No Vashti code or API change is involved;
 the [release handoff](kuno-release-handoff.md#experimental-performance-candidates)
 records this pending boundary.
+
+### Post-reboot guarded attention checks
+
+The reboot selected kernel `7.0.0-38-generic`. The unchanged accepted two-case
+compute smoke passed in 6.293 seconds. Both accepted and guarded SYCL archives
+passed all 101 attention cases plus two exact cache checks, with maximum relative
+L2 0.0012553. No new classified Xe reset/wedge/hang/timeout events appeared.
+These are numerical tests, not whole-workflow or stability acceptance.
+
+A matched 32-head attention microbenchmark used 4056 queries, 8192 keys and
+128 channels, with one warm-up and three measured synchronized graph evaluations.
+Compilers and other inference were idle. Median time was 10.584 ms accepted
+versus 8.837 ms guarded (16.5% lower, 1.747 ms saved). This suggests only a few
+seconds across a full workflow; it does not establish an end-to-end improvement.
+The oneDNN/JIT warm-up is excluded from these measured samples.
+
+Temporary standard build files were erased by the reboot. The standard RoPE
+candidate was restored into the persistent producer worktree, rebuilding all
+57 C++ units and verifying the 15 C objects and five unchanged GGML archives.
+See the [persistent producer receipt](../crates/kuno-image/native/rope-sharing.md).
+Private SYCL candidate files remained in persistent `target/`; installed gateway,
+runtime and configuration remain byte-identical to the accepted residency build.
+The restored CUDA RoPE oracle passed 40 cases in 4.921 seconds. The new safe
+SYCL oracle at source `dd60ee2` passed all 40 device cases in 6.576 seconds,
+including explicit finite outputs, bitwise legacy/shared equality and input
+immutability. Numerical failures unwind through fixed phases; backend exceptions
+conservatively skip uncertain release. This does not strengthen the underlying
+SYCL `wait()` to `wait_and_throw()` or handle vendor fatal assertions.
+
+The private combined candidate passed a two-step full-resolution generation/edit
+preflight under a read-only namespace runtime overlay. The installed runtime was
+unchanged; the SDK was inaccessible, swap/core dumps disabled, and all expected
+previews and metadata-free final PNGs arrived. One worker reused its loaded
+models for all four requests and exited normally, with no classified errors or
+new kernel events. Original 50/25-step matched execution subsequently passed; detailed results
+follow below. Cancellation acceptance remains pending. Historical producer receipts are retained rather than repinned.
+
+### Matched original-workflow execution after reboot
+
+On kernel `7.0.0-38-generic`, the accepted resident worker and combined `f6aa880`
+candidate each served first/warm generation then first/warm editing in one
+process. Original dimensions, 50/25 steps, CFG 1/4, seeds and references were
+matched between variants. There was no concurrent compilation/inference during
+the timed comparison. OS file caches were uncontrolled. The edit first request
+was model-warm/vision-first, not process-cold.
+
+| Workload | Accepted first | Candidate first | Accepted warm | Candidate warm |
+| --- | ---: | ---: | ---: | ---: |
+| Generation, 1184x1776, 50 steps, CFG1 | 153.472 s | 150.465 s | 135.450 s | 134.130 s |
+| Edit, 1248x832, 25 steps, CFG4 | 101.150 s | 98.063 s | 76.872 s | 73.673 s |
+
+Warm first-to-last preview spans fell from 125.087 to 121.944 seconds for
+generation and from 62.959 to 59.966 seconds for editing. Generation's first
+preview instead rose from 4.500 to 6.330 seconds in this pair. The cause of that
+startup difference is unresolved. End-to-end gains are therefore just 1.320
+seconds generation (0.97%) and 3.199 seconds editing (4.16%). This single pair
+does not establish a repeated performance distribution or ComfyUI parity.
+
+All eight requests passed dimensions, all expected previews, metadata-free PNG
+integrity, resident PID reuse, zero swap/core limits, NoNewPrivs and absence of
+writable regular-file handles. SDK paths were inaccessible. Each variant exited
+normally; there were no classified worker errors or new Xe events. The private
+candidate overlay affected only its mount namespace; installed binaries/runtime
+and configuration remain unchanged. Prompts, references and output/comparison
+pixels remained in RAM; the ignored receipt stores numeric measurements only.
+
+Matched-output differences were measured in 8-bit channels: mean absolute delta
+0.1455/0.1652 for generation first/warm, and 1.0272/1.0087 for edit first/warm;
+maxima were 21/129 and 203/209 respectively. These are **not bitwise equality**,
+not a visual-quality judgment, and cannot be attributed to ordinary backend
+nondeterminism without an appropriate full-step control. The earlier two-step
+rounding-scale repeat does not establish a tolerance for these longer workflows.
+Full-step accepted same-seed controls subsequently passed as the final GPU test;
+see the control receipt below.
+
+The candidate remains experimental/unselected. Warm sampling is modestly
+faster, but the measured whole-workflow gain is small and output equivalence
+plus cancellation acceptance are unresolved. No installation, packaging pin
+advance, merge, push, publication or Vashti/API change is authorized by this
+receipt. The user requested returning the GPUs after the current control run;
+no further GPU work will start in this session.
+
+### Prepared next investigations; no further GPU work
+
+A separate guarded F32 residual MUL→ADD fusion is prepared on
+`codex/kuno-image-fused-residual`, based on `f6aa880`. It preserves separate
+rounded multiply/add and original operand order, rejects unsafe shapes, views,
+partial aliases and device/buffer mismatches, and adds no allocation or cache.
+CPU policy testing found a view-escape gap in the generic fusion helper; the
+prototype now explicitly rejects that case. Source commits are `4d603ab` and its required safety follow-up `ecd532f`.
+The CPU policy passes 141 checks, and eight independent materialized-F32
+arithmetic cases plus pre-loader argument rejection pass. Exact source/CPU
+receipt hashes are in `kuno-image-speed-candidate-build.json`. It has no native SYCL build,
+GPU arithmetic result, full-workflow timing or acceptance. Do not cherry-pick
+only its original source commit before the safety follow-up.
+
+A diagnostic-only one-step op profiler is preserved at
+`/home/jmicko/.codex/worktrees/kuno-image-gap-review/vashti/target/sycl-op-profile-v1`.
+Its `diagnostic.patch` SHA-256 is
+`f2b6d0ad691c12e9aae7b86ff907dcd8dcbde9299895f46b9b061c4409e8893f`;
+`checkpoint.json` SHA-256 is
+`5553fd63b0c4494a509b5479570d88962193bb1c6f498e1ae5a5770f4f602c71`.
+Nineteen source/policy checks and eight CPU fake-event cases pass. The proposed
+SYCL tags preserve normal dispatch/fusion and aggregate fixed op enums in bounded
+RAM without per-op waits or tensor names/shapes. Native compilation, device tag
+support, math equivalence and overhead remain unverified. The prototype is
+ignored and unselected, not a production feature or release artifact.
+
+Resume by confirming the GPUs are available, checking live kernel/service state,
+then verifying full-step numerical drift and measuring the dominant bottleneck.
+Root remains the sole owner of GPU/service tests. Preserve all persistent
+producer directories and source proof; previously temporary artifacts were lost
+on reboot. Existing Vashti work and its uncommitted coordination notes are
+untouched.
+
+### Final same-seed control and stopped checkpoint
+
+The accepted full-step worker repeated each original recipe with identical seed
+in one process: generation cold then warm, followed by edit vision-first then
+warm. All requests, previews, dimensions, privacy checks and normal shutdown
+passed, with no new kernel events. Other CPU compilation was allowed during
+this numerical control; these control elapsed times are not a new matched
+performance comparison. Output bytes stayed only in no-swap RAM.
+
+| Accepted same-seed pair | Mean absolute 8-bit channel delta | Maximum | Changed fraction |
+| --- | ---: | ---: | ---: |
+| Generation, 50 steps | 0.0000083223 | 1 | 0.0000083223 |
+| Edit, 25 steps/CFG4 | 1.780833 | 235 | 0.5361793 |
+
+The existing full edit path therefore varies substantially even before these
+optimizations. This control does not separate numerical nondeterminism from
+cold/warm request state, and cannot by itself excuse the candidate changes.
+Generation's candidate deltas are much greater than this accepted repeat;
+output equivalence is still unaccepted. Investigate the two source optimizations
+separately, and compare same-process warm/warm plus inter-process controls
+before attributing a cause. No additional GPU tests ran after the user's stop
+request. Native fusion and profiler device builds/tests are deferred.
+
+Final read-only audit: installed accepted gateway/manifest/all members match,
+Kuno active with PID 2032, zero automatic restarts, zero service swap, admission
+unpaused with no active/waiting requests or recovery latch, no image workers
+remaining and benchmark unit inactive. The benchmark GPUs are released.
+Source remains on `codex/kuno-image-speed`; the main Vashti checkout and its
+uncommitted frontend/coordination work were preserved. The next session needs
+a fresh GPU-availability check before any device work.

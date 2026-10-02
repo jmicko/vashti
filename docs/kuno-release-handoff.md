@@ -68,12 +68,15 @@ runs its usual complete checks.
 
 The later graph-local RoPE and aligned contiguous-F16 K/V source candidates are
 **experimental and excluded from release selection**. Their controlled resident
-baseline, CPU checks, failed/pending GPU oracles and kernel-event boundary are in
+baseline, CPU checks, historical GPU failures, post-reboot passing oracles and
+matched full-workflow results are in
 [the performance appendix](kuno-image-performance.md#resident-full-workflow-baseline-and-experimental-speed-candidates).
 The installed runtime/configuration and historical artifact receipts are unchanged.
-Keep the packaging helper's current accepted pins until device recovery and
-successful GPU numerical/full-workflow benchmarks, protected runtime/privacy,
-and cancellation/reuse acceptance. A candidate build or passing source suite
+Keep the packaging helper's current accepted pins. Post-reboot numerical,
+full-workflow execution and protected runtime checks now pass, but gains are
+modest, full-step controls leave generation equivalence unresolved, and candidate
+cancellation/reuse acceptance is incomplete. The source-only residual fusion
+and diagnostic profiler are also excluded. A candidate build or passing source suite
 does not authorize repackaging, installation or publication. No Vashti code/API
 change or frontend integration is required for these internal candidates.
 

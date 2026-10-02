@@ -91,12 +91,19 @@ treat the published ABI 1 beta.2 runtime as the new resident worker.
 **Experimental performance follow-up:** the original resident B70 full-workflow
 baseline and pending graph-local RoPE/aligned K/V candidates are recorded in
 [the performance appendix](kuno-image-performance.md#resident-full-workflow-baseline-and-experimental-speed-candidates).
-CPU checks pass, but GPU acceptance is paused pending device recovery after
-oracle failures and new kernel events. Installed runtime/configuration are
+After a user reboot, guarded Intel attention numerical checks pass on the new
+kernel without new classified faults. Matched full workflows and protected
+runtime/privacy checks pass with modest gains. Full-step controls reveal
+existing edit variability and unresolved candidate generation differences;
+output equivalence and cancellation acceptance remain pending; see the appendix for the earlier
+oracle failures and kernel events. Installed runtime/configuration are
 unchanged. Exclude these candidates from releases until numerical, benchmark,
 privacy and cancellation/reuse acceptance pass; see
 [the release warning](kuno-release-handoff.md#experimental-performance-candidates).
-There is no API or Vashti code change and no frontend integration handoff needed.
+GPU work stopped at the user's request after the final control. Both benchmark
+cards are released and installed Kuno is unchanged. Fusion/profiling prototypes
+remain unselected. There is no API or Vashti code change and no frontend
+integration handoff needed.
 
 **Status:** Kuno backend, Vashti connector, and conversational image flows are
 implemented and source-tested. Synthetic application flows and installed native
