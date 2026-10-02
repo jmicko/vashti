@@ -150,3 +150,68 @@ development flag. Gateway size is 725,280,480 bytes; SHA-256:
 Post-build verification confirms the accepted source/archive/GGML inputs are
 unchanged and both resident cleanup API symbols are present. Total build time:
 411.463 seconds with one compiler job. The gateway was not executed or packaged.
+
+## Persistent restore after host restart
+
+The `/tmp` artifacts above are historical and were removed by the host restart.
+On 2026-10-01 local time (2026-10-02 UTC), the standard candidate and safe oracle
+were restored under the persistent worktree target directory on kernel
+`7.0.0-38-generic`. Repository source was
+`ac5ea5ef620d78b70f0e339f4e9e48b7d87a9700`; product source remains identical
+to `734bd110cb894b720ce7a98e44af7a6802c8a933`. Only test/documentation changes
+follow that product commit.
+
+Artifact root:
+`/home/jmicko/.codex/worktrees/kuno-comfy-speed-review/vashti/target/shared-rope-standard-v2`.
+It contains fresh `source`, `build`, `cargo-target`, compiler temporary files,
+logs, `rope-sharing-test`, and `build-provenance.json`. Final detailed receipt
+SHA-256 is `43e5ef99e5b9988873558563ca2c6f87c2f287255a0e57782b04fad0366d433b`.
+The executed `rebuild.py` SHA-256 is
+`f41d32ed391ee2a750d2b19da2f6a9c3a10fe5089789c9ee4b4d8543581f6ba5`.
+Receipt annotations were added after the build to explain argv destination
+rewrites and record the CPU output hash; the script and binaries were unchanged.
+
+The persistent original producers were
+`/home/jmicko/.codex/worktrees/kuno-image-performance/vashti/target/kuno-sd-source-88411ef-46ce05099d24f16f`
+and `kuno-sd-build-88411ef-46ce05099d24f16f-cuda` in the same target directory.
+Independent source and GGML clones checked out the pinned revisions above,
+applied only patches 001 and 002, and passed exact full-diff equality checks.
+Patch 003 is absent. The original engine archive SHA-256 is
+`0485532f359ccd1cf7bef71f8aeba07117d8bf4a10ede6756543e0fa84180400`.
+
+All 57 original Ninja C++ commands were replayed sequentially. Source/build
+prefixes were replaced, and relative `-o` and `-MF` destinations became absolute
+paths to the same files under the fresh build working directory. Relative `-MT`
+targets and all other argv entries were preserved. The receipt records each
+original and executed argv. Compiler identity, native `88411ef`/`unknown`
+version macros, optimization flags and CUDA producer paths are unchanged.
+The CMake cache is byte-identical to this persistent original producer
+(SHA-256 `91a35cddd0118bbf0fa83c537470622babfcca8b969ad9daf0a6a27371cd4f79`);
+it is not the lost residency cache or a fresh CMake/GGML build. It confirms
+CUDA/Vulkan enabled, SYCL disabled and static GGML.
+
+The restored engine archive has 72 unique members: 57 freshly compiled C++
+objects and 15 byte-identical original C objects. Five GGML archives were copied
+intact with byte-identical producer hashes. Post-build verification repeated
+the source pins, exact patch diffs, flags and unchanged original-producer checks.
+New artifacts:
+
+| Artifact under the persistent root | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `build/libstable-diffusion.a` | 50,557,902 | `3fc0342fd44eb42bd69451debd1bfeb5ef8515623f42ae4aec100d8459c11cfd` |
+| `cargo-target/release/kuno` | 725,288,672 | `9865c0d4f075b3f7eab05c4907f9da0c4c68d49ab06f539c4f05b0814061b557` |
+| `rope-sharing-test` | 725,868,280 | `7bb1bf4a640a9a97a702a099753af4b4da78c9debee42f379d387813fbdc2236` |
+
+Fresh offline locked release Cargo used the command above with default features
+plus `native-image`, one compiler job, the same Rust/Cargo toolchain and unchanged
+Cargo.lock hash. Its build-script output confirms static CUDA/Vulkan links with
+the original CUDA producer paths and no SYCL development flag.
+
+The safe oracle from `ac5ea5e` compiled against the fresh standard archives and
+passed the complete default CPU suite. CPU output SHA-256 is
+`9e364b1a782e1b839490deb5708365842efd2f2a70481f5097df4972e5ee5cd0`.
+Invalid `--device CPU invalid` returned fixed phase 1 and exit 2 before backend
+initialization. The receipt includes all compile/link commands and oracle source
+hash. Total restore time was 384.478 seconds. No GPU test, gateway execution,
+service change, packaging or installation was performed; GPU arithmetic and
+whole-workflow performance remain unverified for this restored standard build.
