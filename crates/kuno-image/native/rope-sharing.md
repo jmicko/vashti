@@ -108,10 +108,21 @@ the test enforces a 2 GiB workspace cap and 64 MiB of live free-memory headroom.
 It explicitly calls the pinned allocator's real reserve after size measurement.
 Each case reports scalar shape/index/pass fields; core dumps and backend logs
 are disabled. Device-path numerical and topology failures return fixed phase
-codes while unwinding resources; best-effort teardown contains backend
-exceptions. Synchronization orders operations; deferred-error detection and
+codes while unwinding resources. Both legacy and prepared Q/K outputs must be
+finite in every case (fixed phases 19/20). Backend loading and initialization
+are inside the fixed exception boundary. A thrown backend operation marks
+ownership uncertain: teardown skips further waits and frees, and phase 21
+prevents another case from using that backend. Remaining ownership is left to
+process teardown. Synchronization orders operations; deferred-error detection and
 device-fault recovery remain separate validation. This is an arithmetic oracle,
 not a speed test.
+
+`rope-sharing-failure-test.cpp` uses CPU inputs to exercise late Q/K NaN and
+positive/negative infinity failures followed by same-backend reuse. A fake
+backend throws from the pinned graph-compute synchronization path to verify
+that teardown does not retry its wait or free its owned handles. The fixture
+also checks the fixed entry exception before any backend loading; it does not
+enumerate or execute a GPU.
 
 After the standard build finished, the updated single-TU compile and complete
 CPU test passed against its fresh archives. GPU mode was not executed. No
