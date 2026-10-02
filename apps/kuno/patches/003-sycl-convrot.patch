@@ -1262,23 +1262,28 @@ index 55e0761..ae47990 100644
                            sycl::range<3>(1, 1, SYCL_CPY_BLOCK_SIZE)),
 diff --git a/src/ggml-sycl/fattn-onednn-shapes.hpp b/src/ggml-sycl/fattn-onednn-shapes.hpp
 new file mode 100644
-index 0000000..6ff610b
+index 0000000..33ded07
 --- /dev/null
 +++ b/src/ggml-sycl/fattn-onednn-shapes.hpp
-@@ -0,0 +1,78 @@
+@@ -0,0 +1,83 @@
 +#pragma once
 +
 +#include "ggml.h"
 +#include <cmath>
++#include <cstdint>
 +#include <cstring>
 +#include <initializer_list>
 +#include <limits>
 +
 +// The SDPA descriptors below use dense [batch, head, token, channel] inputs.
-+// A dense F16 view already has that byte layout, including its data offset;
-+// other layouts/types must retain the existing packing/conversion kernels.
-+inline bool ggml_sycl_onednn_sdpa_alias_f16(const ggml_tensor * tensor) {
-+    return tensor && tensor->type == GGML_TYPE_F16 && ggml_is_contiguous(tensor);
++// A dense F16 view has that byte layout, including its data offset. Limit the
++// fast path to the backend's normal buffer alignment; offset views below that
++// boundary retain the existing aligned packing. This is a conservative Kuno
++// eligibility policy, not a general oneDNN alignment requirement.
++inline bool ggml_sycl_onednn_sdpa_alias_f16(const ggml_tensor * tensor, size_t alignment) {
++    return tensor && tensor->data && alignment != 0 &&
++           reinterpret_cast<std::uintptr_t>(tensor->data) % alignment == 0 &&
++           tensor->type == GGML_TYPE_F16 && ggml_is_contiguous(tensor);
 +}
 +
 +// Hardware-independent envelope for the strided staging kernels and the
@@ -1345,7 +1350,7 @@ index 0000000..6ff610b
 +    return precision == GGML_PREC_DEFAULT || precision == GGML_PREC_F32;
 +}
 diff --git a/src/ggml-sycl/fattn-onednn.cpp b/src/ggml-sycl/fattn-onednn.cpp
-index fd17a25..c10de42 100644
+index fd17a25..e37c521 100644
 --- a/src/ggml-sycl/fattn-onednn.cpp
 +++ b/src/ggml-sycl/fattn-onednn.cpp
 @@ -1,4 +1,5 @@
@@ -1527,14 +1532,14 @@ index fd17a25..c10de42 100644
 -        cont_to_f16_sycl<sycl::half>((const char *) V->data, Vf_pool->get(), d, seq, Hkv, mb, V->nb[1], V->nb[2], V->nb[3], stream);
 -        K_ptr = Kf_pool->get();
 -        V_ptr = Vf_pool->get();
-+        if (ggml_sycl_onednn_sdpa_alias_f16(K)) {
++        if (ggml_sycl_onednn_sdpa_alias_f16(K, SYCL_BUFFER_ALIGNMENT)) {
 +            K_ptr = static_cast<sycl::half *>(K->data);
 +        } else {
 +            Kf_pool.emplace(ctx.pool(), (size_t) Hkv * seq * d);
 +            cont_to_f16_sycl<sycl::half>((const char *) K->data, Kf_pool->get(), d, seq, Hkv, mb, K->nb[1], K->nb[2], K->nb[3], stream);
 +            K_ptr = Kf_pool->get();
 +        }
-+        if (ggml_sycl_onednn_sdpa_alias_f16(V)) {
++        if (ggml_sycl_onednn_sdpa_alias_f16(V, SYCL_BUFFER_ALIGNMENT)) {
 +            V_ptr = static_cast<sycl::half *>(V->data);
 +        } else {
 +            Vf_pool.emplace(ctx.pool(), (size_t) Hkv * seq * d);

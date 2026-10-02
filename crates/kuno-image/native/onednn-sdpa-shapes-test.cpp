@@ -27,27 +27,44 @@ struct Shape {
 int main() {
     int accepted = 0, rejected = 0;
     int alias_cases = 0;
+    // Production passes SYCL_BUFFER_ALIGNMENT from common.hpp. Keep the helper
+    // CPU-only by supplying the same 128-byte eligibility policy here.
+    constexpr size_t alignment = 128;
+    alignas(alignment) unsigned char aligned_data[alignment * 2]{};
     for (bool strided_k : {false, true}) for (bool strided_v : {false, true}) {
         Shape s;
+        s.k->data = s.v->data = aligned_data;
         if (strided_k) s.k->nb[1] += sizeof(ggml_fp16_t) * 8;
         if (strided_v) s.v->nb[1] += sizeof(ggml_fp16_t) * 16;
         assert(ggml_sycl_onednn_sdpa_shape_supported(s.dst));
-        assert(ggml_sycl_onednn_sdpa_alias_f16(s.k) == !strided_k);
-        assert(ggml_sycl_onednn_sdpa_alias_f16(s.v) == !strided_v);
+        assert(ggml_sycl_onednn_sdpa_alias_f16(s.k, alignment) == !strided_k);
+        assert(ggml_sycl_onednn_sdpa_alias_f16(s.v, alignment) == !strided_v);
         ++alias_cases;
     }
-    // A dense offset view aliases its logical data, never the buffer's start.
-    { Shape s;
-      auto storage = ggml_new_tensor_1d(s.ctx, GGML_TYPE_F16, ggml_nelements(s.k) + 17);
+    // A dense offset view must meet the policy at its logical data pointer,
+    // independently of the backing allocation's alignment.
+    for (size_t offset : {size_t(34), alignment}) { Shape s;
+      auto storage = ggml_new_tensor_1d(s.ctx, GGML_TYPE_F16, ggml_nelements(s.k) + alignment);
       auto view = ggml_view_4d(s.ctx, storage, s.k->ne[0], s.k->ne[1], s.k->ne[2], 1,
-                               s.k->nb[1], s.k->nb[2], s.k->nb[3], 17 * sizeof(ggml_fp16_t));
-      assert(ggml_sycl_onednn_sdpa_alias_f16(view)); ++alias_cases; }
+                               s.k->nb[1], s.k->nb[2], s.k->nb[3], offset);
+      view->data = aligned_data + offset;
+      assert(ggml_sycl_onednn_sdpa_alias_f16(view, alignment) == (offset == alignment)); ++alias_cases; }
     { Shape s; s.k->type = GGML_TYPE_F32;
+      s.k->data = aligned_data;
       s.k->nb[0] = sizeof(float);
       for (int d = 1; d < 4; ++d) s.k->nb[d] = s.k->nb[d - 1] * s.k->ne[d - 1];
       assert(ggml_is_contiguous(s.k));
-      assert(!ggml_sycl_onednn_sdpa_alias_f16(s.k)); ++alias_cases; }
-    assert(!ggml_sycl_onednn_sdpa_alias_f16(nullptr)); ++alias_cases;
+      assert(!ggml_sycl_onednn_sdpa_alias_f16(s.k, alignment)); ++alias_cases; }
+    assert(!ggml_sycl_onednn_sdpa_alias_f16(nullptr, alignment)); ++alias_cases;
+    { Shape s; assert(!s.k->data);
+      assert(!ggml_sycl_onednn_sdpa_alias_f16(s.k, alignment)); ++alias_cases; }
+    for (bool unaligned_k : {false, true}) { Shape s;
+      s.k->data = aligned_data + (unaligned_k ? 34 : 0);
+      s.v->data = aligned_data + (unaligned_k ? 0 : 34);
+      assert(ggml_sycl_onednn_sdpa_alias_f16(s.k, alignment) == !unaligned_k);
+      assert(ggml_sycl_onednn_sdpa_alias_f16(s.v, alignment) == unaligned_k); ++alias_cases; }
+    { Shape s; s.k->data = aligned_data;
+      assert(!ggml_sycl_onednn_sdpa_alias_f16(s.k, 0)); ++alias_cases; }
     for (int rows : {32, 33, 65, 67}) for (int keys : {65, 128, 257})
         for (int heads : {2, 32}) for (bool masked : {false, true}) for (bool f32 : {false, true}) {
             Shape s(rows, keys, heads, masked, 128, f32);

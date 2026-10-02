@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <cstdint>
 #include <limits>
 #include <random>
 #include <sys/resource.h>
@@ -171,6 +172,7 @@ static void attention_case(ggml_backend_t backend, int batch, bool masked, bool 
     const double relative = std::sqrt(error / std::max(power, 1e-30));
     std::printf("attention_layout dim=%d rows=%d keys=%d heads=%d batch=%d masked=%d sage=%d kv_scale=%.1f v_f16=%d f32_precision=%d relative_l2=%.8f max_error=%.8f\n",
                 dim, rows, keys, heads, batch, masked, sage_op != nullptr, kv_scale, v_type == GGML_TYPE_F16, f32_precision, relative, maximum_error);
+    std::fflush(stdout);
     assert(relative < (sage_op ? 0.05 : 0.003));
     ggml_gallocr_free(allocator); ggml_backend_buffer_free(inputs); ggml_free(ctx);
 }
@@ -181,10 +183,12 @@ static void attention_case(ggml_backend_t backend, int batch, bool masked, bool 
 // instead of the logical input, or mistaking a padded view for dense storage.
 static void sdpa_layout_case(ggml_backend_t backend, bool strided_k, bool strided_v,
                              bool masked, bool f32_precision, ggml_type kv_type = GGML_TYPE_F16,
-                             int keys = 65) {
-    constexpr int dim = 128, rows = 33, heads = 2, lead = 17, tail = 19;
+                             int keys = 65, size_t offset_bytes = 34) {
+    constexpr int dim = 128, rows = 33, heads = 2, tail = 19;
     const int k_pitch = dim + (strided_k ? 8 : 0), v_pitch = dim + (strided_v ? 16 : 0);
     const size_t element_bytes = ggml_type_size(kv_type);
+    assert(offset_bytes % element_bytes == 0);
+    const size_t lead = offset_bytes / element_bytes;
     auto ctx = ggml_init({8 * 1024 * 1024, nullptr, true});
     auto q = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, dim, rows, heads, 1);
     auto k_storage = ggml_new_tensor_1d(ctx, kv_type, lead + heads * keys * k_pitch + tail);
@@ -202,6 +206,10 @@ static void sdpa_layout_case(ggml_backend_t backend, bool strided_k, bool stride
     assert(inputs != nullptr);
     assert(static_cast<const char*>(k->data) == static_cast<const char*>(k_storage->data) + lead * element_bytes);
     assert(static_cast<const char*>(v->data) == static_cast<const char*>(v_storage->data) + lead * element_bytes);
+    if (offset_bytes == 128 && std::strncmp(ggml_backend_name(backend), "SYCL", 4) == 0) {
+        assert(reinterpret_cast<std::uintptr_t>(k->data) % 128 == 0);
+        assert(reinterpret_cast<std::uintptr_t>(v->data) % 128 == 0);
+    }
     std::mt19937 rng(211);
     std::uniform_real_distribution<float> random(-0.7f, 0.7f);
     std::vector<float> qd(ggml_nelements(q)), kd(dim * keys * heads), vd(kd.size()), md(keys * rows);
@@ -266,6 +274,7 @@ static void sdpa_layout_case(ggml_backend_t backend, bool strided_k, bool stride
                 "offset_bytes=%zu relative_l2=%.8f max_error=%.8f\n",
                 strided_k, strided_v, masked, f32_precision, kv_type == GGML_TYPE_F16,
                 keys, lead * element_bytes, relative, maximum_error);
+    std::fflush(stdout);
     assert(relative < 0.003);
     ggml_gallocr_free(allocator); ggml_backend_buffer_free(inputs); ggml_free(ctx);
 }
@@ -375,6 +384,7 @@ static int attention_benchmark(ggml_backend_t backend, int heads) {
 }
 
 int main(int argc, char** argv) {
+    assert(std::setvbuf(stdout, nullptr, _IOLBF, 0) == 0);
     rlimit no_core{0, 0}; assert(setrlimit(RLIMIT_CORE, &no_core) == 0);
     const bool benchmark = argc > 1 && std::strcmp(argv[1], "--benchmark") == 0;
     int benchmark_heads = 16;
@@ -440,13 +450,14 @@ int main(int argc, char** argv) {
         attention_case(backend, 1, masked, false, 1, GGML_TYPE_F16,
                        test.dim, test.rows, test.keys, 2, f32);
     }
-    for (bool strided_k : {false, true}) for (bool strided_v : {false, true})
+    for (size_t offset : {size_t(34), size_t(128)})
+        for (bool strided_k : {false, true}) for (bool strided_v : {false, true})
         for (bool masked : {false, true}) for (bool f32 : {false, true}) {
-            sdpa_layout_case(backend, strided_k, strided_v, masked, f32);
+            sdpa_layout_case(backend, strided_k, strided_v, masked, f32, GGML_TYPE_F16, 65, offset);
         }
     // Preserve the existing F32-to-F16 staging path at supported prefill sizes.
     for (bool masked : {false, true}) {
-        sdpa_layout_case(backend, true, true, masked, true, GGML_TYPE_F32, 1025);
+        sdpa_layout_case(backend, true, true, masked, true, GGML_TYPE_F32, 1025, 68);
     }
     ggml_backend_free(backend);
     std::puts("attention_layout_passed");
