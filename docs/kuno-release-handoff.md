@@ -141,6 +141,13 @@ active, no automatic restarts/recovery, unpaused with no queued/active requests,
 zero swap, all installed members verified, both inference deadlines zero, no
 benchmark workers/units, and zero classified Xe/NVIDIA Xid events. GPUs are free.
 
+Backend source/test selection is `05a95fc`; complete acceptance/hardware receipts
+are committed at `b48d4fb` on `codex/kuno-image-speed`. Integrate the **entire Kuno
+range after shared application base `4f9b465`**, including the preceding residency
+and shared-PE work. Do not cherry-pick only `05a95fc`: its package/build pins depend
+on those earlier changes. Preserve/commit the application task's pending work
+before merging, and reconcile coordination/specification changes in place.
+
 The Vashti release task still selects the next unused beta version, integrates
 this final backend branch while preserving newer application/specification work,
 builds/signs all four artifacts, and performs its application checks/publication.

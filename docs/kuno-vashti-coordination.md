@@ -121,8 +121,10 @@ math cases on the 3060. Four original-resolution two-step
 CUDA generation/edit requests pass previews/PNG/privacy, resident PID reuse and
 normal shutdown. Live Vulkan image acceptance is not claimed for this update; the shared engine patch affects both backends.
 
-Integrate the owner branch's final reviewed backend source and tests, preserving
-this checkout's newer application/coordination work. Do not replace the standard
+Source selection is `05a95fc`, acceptance receipts are `b48d4fb`, on
+`codex/kuno-image-speed`. Integrate the complete Kuno range after shared base
+`4f9b465`, including residency/shared-PE prerequisites, preserving this checkout's
+newer application/coordination work. Do not cherry-pick only the selection commit. Do not replace the standard
 gateway with the SYCL-linked worker or reuse the published ABI1 beta.2 runtime.
 No model/content storage, API, frontend, public release or driver/reset/reboot
 change is part of this performance handoff.
