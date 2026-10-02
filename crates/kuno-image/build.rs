@@ -56,6 +56,10 @@ fn main() {
         );
         println!(
             "cargo:rerun-if-changed={}",
+            source.join("src/model/common/rope.hpp").display()
+        );
+        println!(
+            "cargo:rerun-if-changed={}",
             source.join("src/model/te/llm.hpp").display()
         );
         println!(
