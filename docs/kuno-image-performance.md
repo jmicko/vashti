@@ -931,3 +931,195 @@ remaining and benchmark unit inactive. The benchmark GPUs are released.
 Source remains on `codex/kuno-image-speed`; the main Vashti checkout and its
 uncommitted frontend/coordination work were preserved. The next session needs
 a fresh GPU-availability check before any device work.
+
+### Continued bounded Intel investigations (2026-10-02)
+
+The user renewed exclusive access to both cards after the earlier stopped
+checkpoint and requested no action requiring a restart. All device work in this
+session uses the B70 on kernel `7.0.0-38-generic`; no driver reset, detach/rebind,
+package/driver installation, reboot or installed Kuno replacement is performed.
+Private clients remain in swap-disabled/core-disabled transient units, and
+mount overlays affect only test processes. The installed accepted worker,
+public API and concurrent Vashti checkout remain unchanged.
+
+A diagnostic-only step-2 profiler passed its synthetic tag/capability probe and
+three-step original-resolution generation/edit runs. These are shortened
+profiling runs, **not new full-workflow timing or candidate acceptance**. There
+was no overlapping compilation or inference. Each returned every preview and a
+valid metadata-free final PNG, reused/cleared content normally and shut down
+without new classified Xe events. The profiler records fixed GGML operation
+numbers/counts/nanoseconds only; request content remained in no-swap RAM.
+Queue tag intervals include submission gaps and fused work, rather than pure
+individual kernel time. Profiling overhead and full math equivalence are still
+unaccepted; the diagnostic runtime must not be selected for release.
+
+| Operation | Generation step-2 interval share | Edit step-2 interval share |
+| --- | ---: | ---: |
+| Matrix multiply | 23.23% | 22.80% |
+| Attention | 18.05% | 18.19% |
+| CONT | 14.71% | 17.10% |
+| ConvRot quantization | 12.27% | 12.25% |
+| CPY | 6.10% | 5.77% |
+| REPEAT | 5.91% | 3.34% |
+
+Generation's summed intervals were 2.435696 seconds; editing's were 2.459109
+seconds across both conditioning calls. Source-derived accounting identifies
+128 RoPE repeat nodes, 128 RoPE CONT nodes and 128 much smaller modulation CONT
+nodes per diffusion graph. That is graph accounting, not measured per-node
+attribution; the number of small nodes does not establish their cost.
+
+Paired SDPA tests keep one graph/input allocation and compare five routing
+modes: legacy packing, aliasing, packing only K, packing only V, and making both
+copies while feeding the eligible aliases. Eleven small/layout/view/canary
+cases, each evaluated twice per mode, produced 143 exact comparison rows.
+The 4056-query/8192-key/32-head/128-channel case produced another 13 rows.
+All output bits matched, with maximum ULP difference zero and no new GPU fault.
+These results narrow the aliasing investigation but do not prove whole-pipeline
+equality or explain the earlier generation pixel drift.
+
+A row-local ConvRot quantizer prototype preserves the old arithmetic, scale
+bits and INT8 packing while caching rotated values in work-group local memory.
+The actual B70 reports 131072 local-memory bytes and maximum work-group size
+1024. All 164 small cases and four cases at each of 4056/8214 rows passed exact
+packed bytes, scale bits, padding, graph/direct outputs and input immutability.
+However, a compiler-idle, alternating 3-warm-up/7-measurement test rejects this
+candidate on performance:
+
+| Real quantization graph | Legacy median | Local-row median |
+| --- | ---: | ---: |
+| K4096, 4056 rows | 0.731557 ms | 2.294512 ms |
+| K4096, 8214 rows | 1.510144 ms | 4.575682 ms |
+
+The measurements include submission, eligibility queries and synchronization;
+they are not end-to-end times. The approximately threefold regression is also
+present in the direct route. Small-row gains are minor and do not justify this
+prototype for full images. Keep the legacy quantizer; no production worker is
+built from this rejected experiment. No new classified Xe events appeared.
+
+The first explicitly rounded residual fusion failed special-value comparisons.
+Replacing explicit round-to-nearest intrinsics with the backend's ordinary
+operations preserves the residual-first cases, but the corrected strict host
+oracle still detects NaN payload/sign differences in reverse-operand cases.
+The earlier phase-12 host control failure was separately caused by Intel host
+compiler defaults: pre-backend FMA distinction failed with FTZ/DAZ enabled.
+A test-only strict host relink fixes that control without changing the device
+archive; it passes all ten residual-first device cases, then fails the reverse
+special-value case. Neither unrestricted fusion is accepted. Exact checks and
+fallback coverage are required before any narrowed implementation is tested.
+
+Numeric receipts, binary/source hashes and status are recorded in
+[kuno-image-speed-candidate-build.json](kuno-image-speed-candidate-build.json).
+The profiler, paired SDPA and quantizer producer artifacts remain in isolated
+persistent worktrees. This session is still in progress; final audit and any
+additional accepted or rejected experiments will follow below.
+
+The installed accepted worker also completed a two-step warm-up followed by
+two identical full-step requests for each original recipe in one process.
+This tests warm/warm variation rather than the prior cold/warm pair. Generation
+had maximum channel delta 1, mean delta 0.00255007 and changed fraction
+0.00255007. Editing had maximum 255, mean 2.591600 and changed fraction
+0.581892. These are individual controls, not a validated tolerance/distribution
+or evidence of an identified cause. Candidate generation drift remains much
+larger than this control. CPU compilation was allowed, so elapsed times are
+not performance evidence. All six requests passed preview/PNG/dimension/privacy
+checks, reused one PID and shut down normally; kernel-event delta remained zero.
+
+The narrowed residual-first implementation at `7579f98` subsequently passed
+all 20 protected device fixtures in 7.732 seconds. Test-only linker wrappers
+prove forward graphs actually use one fused call and no ordinary MUL/ADD,
+while reverse graphs make no fused attempt and execute the original two calls.
+Supported special values, both full-size geometries, exact activation/residual
+aliases, input immutability and unsupported-order fallback remain checked.
+There was no kernel event or uncertain cleanup. The production worker contains
+no test wrappers/counters; all 63 vendor/library/notice members are unchanged.
+The private ABI 2 runtime and build receipt are checkpointed at `f6c917d`.
+
+An eight-request two-step generation/edit preflight compared that runtime only
+against the existing `f6aa880` runtime, keeping their inherited engine changes
+identical. All previews, PNG dimensions/integrity, content cleanup, PID reuse
+and normal shutdown passed. Generation output differences were bounded by one
+channel level. Edit differences were much larger, as in accepted controls;
+this is not a validated numerical tolerance or final quality acceptance.
+The original full 50/25-step performance comparison is still pending below.
+
+The private cancellation harness was separately checked against the installed
+accepted engine: SIGTERM after the first original-resolution edit preview
+returned `image_cancelled` and exited with status 1 in 3.011 seconds, without
+forced termination. A fresh worker then completed a two-step edit and normal
+idle shutdown. Privacy checks and zero new Xe events passed. This validates
+the harness/control, not cancellation of a new candidate.
+
+### Residual-first fusion original-workflow pair
+
+All eight original 50/25-step requests passed against `f6aa880` with compilers,
+package work and other inference idle. The private candidate differs only in
+residual-first SYCL fusion; both variants inherit the same shared-RoPE/SDPA
+engine. One worker served first/warm generation then first/warm editing per
+variant. OS file caches remain uncontrolled, and edit-first is vision-first,
+not process-cold.
+
+| Workload | f6 first | Fusion first | f6 warm | Fusion warm |
+| --- | ---: | ---: | ---: | ---: |
+| Generate, 50 steps/1184x1776/CFG1 | 150.390 s | 148.564 s | 132.279 s | 130.355 s |
+| Edit, 25 steps/1248x832/CFG4 | 98.469 s | 97.860 s | 73.638 s | 72.848 s |
+
+Warm reductions are 1.924 seconds (1.45%) and 0.790 seconds (1.07%), respectively.
+This single pair is a small improvement, **not ComfyUI parity** or a performance
+distribution. Every preview, metadata-free PNG/dimension check, PID reuse,
+content cleanup and normal idle shutdown passed; zero swap/core/writable-file
+checks and SDK isolation passed. There were no classified errors or Xe events.
+
+Generation first/warm mean absolute channel differences were 0.1447449/0.1670824,
+maxima 25/106, and changed fractions 0.1326949/0.1402320. Edit means were
+1.7476395/1.2955953, maxima 227/213 and changed fractions 0.5266101/0.4660250.
+These are not bitwise equal, and generation differences substantially exceed
+same-process accepted controls. Their magnitude resembles the earlier
+accepted-versus-f6 pair despite the new comparison sharing its RoPE/SDPA code.
+An identical accepted-runtime control across separate worker processes is
+therefore required before assigning the drift to either source optimization.
+That control is pending; no source/precision cause or tolerance is established.
+The candidate stays unselected and uninstalled. Cancellation and additional
+non-dyadic finite arithmetic controls also remain pending.
+
+### Identical workers in separate processes and further controls
+
+Two identical installed accepted runtimes, each in its own worker process and
+identical protected mount configuration, completed the original first/warm
+generation pair. Matching requests across processes had mean channel
+differences 0.1420189/0.1406261, maxima 28/51 and changed fractions
+0.1307590/0.1251452. This resembles the candidate's inter-process generation
+differences and shows the larger variation exists without these source changes.
+It does not identify the kernel/cause, establish a tolerance/distribution, or
+prove every candidate change harmless. Compilation overlapped this control;
+elapsed times are not performance evidence. All four requests and shutdowns
+passed, with no new classified Xe event.
+
+The private residual-first fusion passed first-preview edit cancellation in
+2.906 seconds (normal positive exit status1, no forced termination) and a fresh
+worker completed the two-step edit/reap recovery. Zero swap, core limit, writable
+file, SDK-isolation and transient-content checks passed; kernel delta stayed zero.
+The expanded non-dyadic finite arithmetic corpus remains pending.
+
+The separately gated REPEAT-to-MUL bypass at `9b563e3` passed all 50 device cases
+and 528 all-bit comparisons in 3.493 seconds. Sixteen actual prepared-PE Q/K RoPE
+graphs, intermediate output/view/use escapes, repeat execution, signed zeros,
+NaN payloads/classes and input immutability passed. Counters prove 74 eligible
+operations actually bypassed the copies: 72 general and two large unravel
+dispatches, across 25 finite and 25 special-value cases. Existing MUL routing
+uses a different zero-stride kernel/grid from the materialized legacy input;
+CPU address checks alone were not considered GPU arithmetic proof. There was no
+fixed error, cleanup uncertainty or new Xe fault. The feature remains default
+off and is not present in an accepted production worker; timings/full workflow
+and cancellation remain separate acceptance gates.
+
+The compiler-idle repeat-pair microbenchmark used the same graph and allocation
+for both modes, three warm-ups, then five measurements of four evaluations.
+Legacy median was 3.347200 ms/four evaluations; bypass median was 2.295120 ms,
+a 31.43% reduction for that isolated L4096 pair. It includes host submission and
+synchronization, not a pure kernel or whole-image measurement; modes were grouped
+rather than alternated. All numerical/routing checks passed again. Independent
+review then found unsafe host-vector unwinding if a device call threw or returned
+a failure status in the test executable. No such failure occurred in either run;
+these are clean-path receipts only. A new test-only fatal-boundary revision is
+required before further GPU use. Device resources alone do not protect host DMA
+buffers; preserve process lifetime or exit without C++ unwinding on uncertainty.
