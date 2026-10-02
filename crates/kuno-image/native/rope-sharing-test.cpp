@@ -8,6 +8,8 @@
 #include <cstdio>
 #include <cstring>
 #include <memory>
+#include <string>
+#include <sys/resource.h>
 #include <vector>
 
 #include "ggml-alloc.h"
@@ -249,7 +251,218 @@ static void segmented_case(ggml_backend_t cpu, int recipe) {
     ggml_free(ctx);
 }
 
-int main() {
+struct BackendOutputs {
+    std::vector<float> q, k;
+};
+
+struct BackendError {
+    int phase;
+};
+
+static BackendOutputs backend_variant(ggml_backend_t backend, int dim, int rows,
+                                      int heads, int batch, bool interleaved,
+                                      const std::vector<float>& qd, const std::vector<float>& kd,
+                                      const std::vector<float>& pd, bool shared) {
+    // Each variant owns a fresh context: freed gallocr bindings must never be
+    // reused as if their dangling data pointers were external allocations.
+    struct Resources {
+        ggml_backend_t backend = nullptr;
+        ggml_context* ctx = nullptr;
+        ggml_backend_buffer_t inputs = nullptr;
+        ggml_gallocr_t allocator = nullptr;
+        ~Resources() {
+            ggml_backend_synchronize(backend);
+            ggml_gallocr_free(allocator);
+            ggml_backend_buffer_free(inputs);
+            ggml_free(ctx);
+        }
+    } resources;
+    resources.backend = backend;
+    resources.ctx = ggml_init({16 * 1024 * 1024, nullptr, true});
+    if (!resources.ctx) throw BackendError{1};
+    auto ctx = resources.ctx;
+    auto q = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, dim, heads, rows, batch);
+    auto k = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, dim, heads, rows, batch);
+    auto pe = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, 2, 2, dim / 2, rows);
+    const size_t input_bytes = ggml_nbytes(q) + ggml_nbytes(k) + ggml_nbytes(pe);
+    constexpr size_t slack = 64 * 1024 * 1024;
+    constexpr size_t workspace_cap = 2ull * 1024 * 1024 * 1024;
+    ggml_backend_dev_props props{};
+    ggml_backend_dev_get_props(ggml_backend_get_device(backend), &props);
+    const bool gpu = props.type == GGML_BACKEND_DEVICE_TYPE_GPU;
+    if (gpu && (props.memory_free < slack || input_bytes > props.memory_free - slack)) {
+        throw BackendError{2};
+    }
+    // Allocate only inputs before constructing the compute intermediates.
+    resources.inputs = ggml_backend_alloc_ctx_tensors(ctx, backend);
+    if (!resources.inputs) throw BackendError{3};
+    ggml_backend_tensor_set(q, qd.data(), 0, ggml_nbytes(q));
+    ggml_backend_tensor_set(k, kd.data(), 0, ggml_nbytes(k));
+    ggml_backend_tensor_set(pe, pd.data(), 0, ggml_nbytes(pe));
+    auto prepared = shared ? Rope::prepare_rope_pe(ctx, pe) : nullptr;
+    auto qo = shared ? Rope::apply_rope_with_prepared_pe(ctx, q, prepared, interleaved)
+                     : Rope::apply_rope(ctx, q, pe, interleaved);
+    auto ko = shared ? Rope::apply_rope_with_prepared_pe(ctx, k, prepared, interleaved)
+                     : Rope::apply_rope(ctx, k, pe, interleaved);
+    // Gallocr may recycle earlier outputs otherwise; CPU allocated contexts
+    // would mask that bug. Retain prepared PE too for the immutability check.
+    ggml_set_output(qo);
+    ggml_set_output(ko);
+    if (prepared) ggml_set_output(prepared);
+    auto graph = ggml_new_graph(ctx);
+    ggml_build_forward_expand(graph, qo);
+    ggml_build_forward_expand(graph, ko);
+    assert(pe_copies(graph, pe) == (shared ? 1 : 2));
+    for (int i = 0; i < ggml_graph_n_nodes(graph); ++i) {
+        if (!ggml_backend_supports_op(backend, ggml_graph_node(graph, i))) {
+            throw BackendError{4};
+        }
+    }
+    resources.allocator = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
+    size_t workspace_bytes = 0;
+    if (!resources.allocator) throw BackendError{5};
+    ggml_gallocr_reserve_n_size(resources.allocator, graph, nullptr, nullptr, &workspace_bytes);
+    ggml_backend_dev_get_props(ggml_backend_get_device(backend), &props);
+    if (workspace_bytes > workspace_cap ||
+        (gpu && (props.memory_free < slack || workspace_bytes > props.memory_free - slack))) {
+        throw BackendError{6};
+    }
+    // The pinned size-only reserve populates the plan but leaves its backing
+    // buffers null; explicitly allocate them before alloc_graph reuses the plan.
+    if (!ggml_gallocr_reserve(resources.allocator, graph) ||
+        !ggml_gallocr_alloc_graph(resources.allocator, graph)) {
+        throw BackendError{7};
+    }
+    auto status = ggml_backend_graph_compute(backend, graph);
+    ggml_backend_synchronize(backend);
+    if (status != GGML_STATUS_SUCCESS) throw BackendError{8};
+    same(values(pe), pd);
+    same(values(q), qd);
+    same(values(k), kd);
+    if (prepared) {
+        // Independent physical permutation: raw [2,2,D/2,L] -> [2,D/2,L,2].
+        std::vector<float> expected(pd.size());
+        for (int row = 0; row < rows; ++row) for (int pair = 0; pair < dim / 2; ++pair) {
+            for (int component = 0; component < 2; ++component) for (int result = 0; result < 2; ++result) {
+                expected[result + 2 * (pair + (dim / 2) * (row + rows * component))] =
+                    pd[component + 2 * (result + 2 * (pair + (dim / 2) * row))];
+            }
+        }
+        same(values(prepared), expected);
+    }
+    return {values(qo), values(ko)};
+}
+
+static void backend_case(ggml_backend_t backend, int dim, int rows, int heads,
+                         int batch, bool interleaved, const std::vector<float>& pd,
+                         bool scalar_check) {
+    const size_t count = size_t(dim) * rows * heads * batch;
+    std::vector<float> qd(count), kd(count);
+    for (size_t i = 0; i < count; ++i) {
+        qd[i] = float(int(i * 17 % 127) - 63) / 32.f;
+        kd[i] = float(int(i * 23 % 113) - 56) / 64.f;
+    }
+    // Only one variant's device workspace is live; comparisons stay in RAM.
+    auto legacy = backend_variant(backend, dim, rows, heads, batch, interleaved, qd, kd, pd, false);
+    auto shared = backend_variant(backend, dim, rows, heads, batch, interleaved, qd, kd, pd, true);
+    same(legacy.q, shared.q);
+    same(legacy.k, shared.k);
+    if (scalar_check) {
+        same(legacy.q, oracle(qd, pd, dim, heads, rows, batch, interleaved));
+        same(legacy.k, oracle(kd, pd, dim, heads, rows, batch, interleaved));
+    }
+}
+
+static void backend_cases(ggml_backend_t backend, bool public_sizes) {
+    size_t index = 0;
+    auto run_case = [&](int dim, int rows, int heads, int batch, bool interleaved,
+                         const std::vector<float>& pe, bool scalar_check) {
+        if (public_sizes) {
+            std::printf("rope_device_case index=%zu dim=%d rows=%d heads=%d batch=%d interleaved=%d phase=0\n",
+                        ++index, dim, rows, heads, batch, interleaved);
+            std::fflush(stdout);
+        }
+        backend_case(backend, dim, rows, heads, batch, interleaved, pe, scalar_check);
+        if (public_sizes) {
+            std::printf("rope_device_case index=%zu exact=1 input_unchanged=1 phase=1\n", index);
+            std::fflush(stdout);
+        }
+    };
+    for (bool interleaved : {false, true}) {
+        const std::vector<float> pe{0.5f, -0.25f, 0.25f, 0.5f, -0.75f, -0.5f, 0.5f, -0.75f,
+                                    0.25f, 0.75f, -0.75f, 0.25f, 0.5f, 0.25f, -0.25f, 0.5f};
+        run_case(4, 2, 2, 2, interleaved, pe, true);
+    }
+    for (int text : {3, 7}) {
+        sd::Tensor<int32_t> slots({text + 4});
+        slots.data()[1] = slots.data()[2] = 1;
+        slots.data()[text] = slots.data()[text + 1] = 2;
+        auto layout = Qwen::QwenImage21Layout::build(text + 4, slots, {{2, 4}, {4, 2}, {3, 5}});
+        for (bool suffix : {false, true}) for (bool cx : {false, true}) for (bool cy : {false, true}) {
+            auto pe = embedding(layout, suffix, cx, cy);
+            for (bool interleaved : {false, true}) run_case(128, pe.ids.size(), 2, 1, interleaved, pe.values, false);
+        }
+    }
+    auto odd = Qwen::QwenImage21Layout::build(0, {}, {{5, 13}});
+    auto odd_pe = embedding(odd, false, false, false);
+    for (bool interleaved : {false, true}) run_case(128, 65, 2, 2, interleaved, odd_pe.values, false);
+    if (public_sizes) for (auto shape : {std::pair<int64_t, int64_t>{111, 74}, {52, 78}}) {
+        auto layout = Qwen::QwenImage21Layout::build(3, {}, {shape});
+        for (bool circular : {false, true}) {
+            auto pe = embedding(layout, true, circular, circular);
+            run_case(128, shape.first * shape.second, 32, 1, true, pe.values, false);
+        }
+    }
+}
+
+int main(int argc, char** argv) {
+    rlimit no_core{0, 0};
+    assert(setrlimit(RLIMIT_CORE, &no_core) == 0);
+    if (argc != 1) {
+        if (argc != 4 || std::strcmp(argv[1], "--device") != 0 ||
+            (std::strcmp(argv[2], "CUDA") != 0 && std::strcmp(argv[2], "Vulkan") != 0 && std::strcmp(argv[2], "SYCL") != 0)) {
+            std::fputs("rope_device_error phase=1\n", stderr);
+            return 2;
+        }
+        ggml_log_set([](enum ggml_log_level, const char*, void*) {}, nullptr);
+        sd_set_log_callback([](enum sd_log_level_t, const char*, void*) {}, nullptr);
+        ggml_backend_load_all();
+        ggml_backend_dev_t selected = nullptr;
+        for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
+            auto device = ggml_backend_dev_get(i);
+            ggml_backend_dev_props props{};
+            ggml_backend_dev_get_props(device, &props);
+            if (props.type == GGML_BACKEND_DEVICE_TYPE_GPU && props.device_id &&
+                std::strcmp(props.device_id, argv[3]) == 0 && props.name &&
+                std::strncmp(props.name, argv[2], std::strlen(argv[2])) == 0) {
+                if (selected) {
+                    std::fputs("rope_device_error phase=2\n", stderr);
+                    return 2;
+                }
+                selected = device;
+            }
+        }
+        if (!selected) {
+            std::fputs("rope_device_error phase=3\n", stderr);
+            return 2;
+        }
+        std::unique_ptr<ggml_backend, decltype(&ggml_backend_free)> backend(ggml_backend_dev_init(selected, nullptr), ggml_backend_free);
+        if (!backend) {
+            std::fputs("rope_device_error phase=4\n", stderr);
+            return 2;
+        }
+        try {
+            backend_cases(backend.get(), true);
+        } catch (const BackendError& error) {
+            std::fprintf(stderr, "rope_backend_error phase=%d\n", error.phase);
+            return 1;
+        } catch (...) {
+            std::fputs("rope_device_error phase=5\n", stderr);
+            return 1;
+        }
+        std::puts("RoPE device legacy/prepared bitwise equality and input immutability passed");
+        return 0;
+    }
     std::unique_ptr<ggml_backend, decltype(&ggml_backend_free)> cpu(ggml_backend_cpu_init(), ggml_backend_free);
     assert(cpu);
     ggml_backend_cpu_set_n_threads(cpu.get(), 1);
@@ -281,5 +494,6 @@ int main() {
     for (auto mode : {Qwen::QwenImage21PrefixCache::Mode::NONE, Qwen::QwenImage21PrefixCache::Mode::STORE, Qwen::QwenImage21PrefixCache::Mode::REUSE}) model_topology(cpu.get(), mode);
     segmented_case(cpu.get(), 0);
     segmented_case(cpu.get(), 1); // Fresh graph with different coefficients after cleanup.
+    backend_cases(cpu.get(), false); // Exercises the device-buffer API without loading GPUs.
     std::puts("RoPE scalar oracle, exact sharing, Qwen prefix layouts and segmented lifetime passed");
 }

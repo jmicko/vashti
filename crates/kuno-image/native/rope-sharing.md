@@ -52,12 +52,12 @@ match monolithic output exactly, release cached storage, then succeed with a
 fresh graph and changed coefficients.
 
 The test compiles one C++ translation unit against candidate source headers and
-the accepted standard engine/GGML archives, whose non-inline implementation is
-unchanged. Example with the accepted local build:
+the standard engine/GGML archives. The initial CPU receipt used the accepted
+archives; the device-buffer follow-up uses the fresh standard build below:
 
 ```sh
-rope_src=/tmp/kuno-image-shared-rope-source
-rope_build=/tmp/kuno-image-resident-native-v1/build-standard
+rope_src=/tmp/kuno-image-shared-rope-standard-v1/source
+rope_build=/tmp/kuno-image-shared-rope-standard-v1/build
 rope_cuda=/home/jmicko/dev/vashti/target/kuno-toolchain/cuda-13.0/lib64
 c++ -std=c++17 -O1 -DGGML_MAX_NAME=160 \
   -I "$rope_src/src" -I "$rope_src/ggml/include" -I "$rope_src/include" \
@@ -81,6 +81,68 @@ patch 002 and patch 003 exactly at the pinned GGML revision. `git diff --check`
 passes. The documented one-translation-unit compile and complete CPU regression
 passed on 2026-10-01, printing `RoPE scalar oracle, exact sharing, Qwen prefix
 layouts and segmented lifetime passed`. Independent source/test review found
-no blocking issue. No engine rebuild,
-GPU test, request content read, installed-service operation or deployment was
-performed for this candidate.
+no blocking issue. The later standard rebuild receipt is below. No GPU test,
+request content read, installed-service operation or deployment was performed.
+
+## Optional device oracle
+
+The same executable accepts `--device CUDA|Vulkan|SYCL <PCI-address>` when linked
+with that backend. Device selection requires a GPU, exact PCI match, a supported
+backend family and exactly one match before initialization. It has no fallback.
+Default execution initializes only CPU and also checks the upload/readback path
+through CPU backend buffers; it does not enumerate or initialize GPUs.
+
+The optional mode uploads synthetic Q/K and PE to real device buffers, checks
+every compute node's backend support, and executes legacy and prepared variants
+in separate fresh contexts. Their readbacks must match bit-for-bit in RAM.
+Raw Q/K/PE must remain unchanged. Prepared PE also matches an independent
+physical-permutation oracle. All readback outputs are marked as outputs so the
+allocator cannot recycle them before comparison.
+
+Forty cases cover ambiguous `D=4,L=2`, both pair layouts, differing condition
+lengths, two reference prefixes, full and suffix PE, all circular modes, an odd
+65-row/multiple-batch case, and public 8214/4056-row targets with 32 heads.
+Only one variant's device workspace is live. The largest Q+K+PE input is
+277,567,488 bytes. Size-only reservation measures workspace before allocation;
+the test enforces a 2 GiB workspace cap and 64 MiB of live free-memory headroom.
+It explicitly calls the pinned allocator's real reserve after size measurement.
+Each case reports scalar shape/index/pass fields; core dumps and backend logs
+are disabled. This is an arithmetic oracle, not a device-loss or speed test.
+
+After the standard build finished, the updated single-TU compile and complete
+CPU test passed against its fresh archives. GPU mode was not executed. No
+product source, engine archive or gateway binary changed for this test follow-up.
+
+## Standard CUDA/Vulkan build receipt
+
+Compiled repository commit `734bd110cb894b720ce7a98e44af7a6802c8a933` with
+the patch hashes above. Fresh directories:
+
+- Source: `/tmp/kuno-image-shared-rope-standard-v1/source`
+- Build: `/tmp/kuno-image-shared-rope-standard-v1/build`
+- Cargo target: `/tmp/kuno-image-shared-rope-standard-v1/cargo-target`
+- Detailed receipt: `/tmp/kuno-image-shared-rope-standard-v1/build-provenance.json`
+  (SHA-256 `400412832440122e1ebdc7b5b2f77d9fd768336f75032e190bb427325efd8d9b`).
+
+Copied the accepted standard source, reset only its copy, applied new patch001,
+and proved exact engine/GGML diffs. Replayed all 57 accepted C++ argv arrays
+sequentially with only source/build prefix substitutions. Compiler:
+`c++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0`. Existing native version macros
+remain `88411ef`/`unknown`. The copied CMake cache is byte-identical configuration;
+it is not a fresh CMake/GGML build. Accepted CUDA producer paths remain unchanged.
+
+The engine archive contains exactly 72 unique members: 57 freshly compiled C++
+objects and 15 byte-identical reused C objects. All five reused GGML archives
+match their accepted and original producer hashes. Engine archive SHA-256:
+`f0bae1e12938bcd9bf926f1973d20bd703c946e11a2a07de569fcd661eb72c9f`.
+
+Fresh Cargo build passed with
+`cargo build --release --locked --offline -p kuno --features native-image -j 1 -vv`.
+Rust: `rustc 1.95.0 (59807616e 2026-04-14)`. Cargo.lock SHA-256:
+`b680a386b1352c17f5848b2784e4c0ef15ededa6fa0a24ff6ca47c712483a54a`.
+The native build-script receipt confirms CUDA/Vulkan static links and no SYCL
+development flag. Gateway size is 725,280,480 bytes; SHA-256:
+`6c6409189ee4edd740095776d5df8d9dfa9645dfa95736f1c97b65b15f676938`.
+Post-build verification confirms the accepted source/archive/GGML inputs are
+unchanged and both resident cleanup API symbols are present. Total build time:
+411.463 seconds with one compiler job. The gateway was not executed or packaged.
