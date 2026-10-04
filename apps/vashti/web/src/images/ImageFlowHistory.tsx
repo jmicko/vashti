@@ -1,19 +1,22 @@
 import { useEffect, useState } from "react";
 import { Image, MoreHorizontal, Pencil, Trash2, X } from "lucide-react";
-import { requestJson } from "../api";
-import { imageError, imagePath, notifyImageFlows, writeImage } from "./api";
+import { imageError, requestJson, notifyImageFlows, writeImage } from "./api";
+import { deviceImagePath, type ImageStorage } from "./storage";
 import type { ImageSession } from "./types";
 import { ImagePanel } from "./controls";
 
 export function ImageFlowHistory({
+  storageMode,
   currentId,
   onOpen,
   onRemoved,
 }: {
+  storageMode: ImageStorage;
   currentId?: string;
   onOpen: (id: string) => void;
   onRemoved: (id: string) => void;
 }) {
+  const imagePath = storageMode === "device" ? deviceImagePath : "/api/images";
   const [sessions, setSessions] = useState<ImageSession[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");

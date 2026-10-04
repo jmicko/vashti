@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { requestJson } from "../api";
-import { imageError, imagePath, notifyImageFlows, writeImage } from "./api";
-import { advancedImageSeed, hasImageAncestry } from "./flow";
+import { imageError, requestJson, notifyImageFlows, writeImage } from "./api";
+import { useImagePath, deviceImagePath } from "./storage";
+import { advancedImageSeed, clearPromptAfterSend, hasImageAncestry } from "./flow";
 import {
   activeRun,
   newDraft,
@@ -22,6 +22,7 @@ export function useImageFlow(
   initialEditing: boolean,
   preferences: Preferences,
 ) {
+  const imagePath = useImagePath();
   const [session, setSession] = useState<ImageSession | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [results, setResults] = useState<ImageResult[]>([]);
@@ -206,6 +207,10 @@ export function useImageFlow(
       mounted = false;
       live.current = false;
       historyEpoch.current++;
+      if (imagePath === deviceImagePath && saved.current) {
+        const id = saved.current.id;
+        void import("./deviceRepository").then(module => module.stopDeviceImageFlow(id)).catch(() => {});
+      }
     };
   }, []);
   async function save(value: Draft = valueRef.current!) {
@@ -469,11 +474,7 @@ export function useImageFlow(
       if (dispatchSeed !== undefined)
         dispatchedSeeds.current.set(run.id, dispatchSeed);
       if (live.current) setRuns((values) => merge([run], values));
-      if (
-        !improveOnly &&
-        !retry &&
-        valueRef.current?.recipe.prompt === value.recipe.prompt
-      ) {
+      if (valueRef.current && clearPromptAfterSend(request, current.mode, valueRef.current.recipe.prompt)) {
         patch({ recipe: { ...valueRef.current.recipe, prompt: "" } });
         await save();
       }

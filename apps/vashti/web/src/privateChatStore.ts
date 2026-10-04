@@ -27,7 +27,8 @@ import type {
 
 const LEGACY_DB_NAME = "vashti-private-local";
 const DB_NAME_PREFIX = "vashti-private-local";
-const DB_VERSION = 9;
+const DB_VERSION = 10;
+const IMAGE_STORE = "private_images";
 const CHAT_STORE = "private_chats";
 const MESSAGE_STORE = "private_messages";
 const PERSONA_STORE = "private_personas";
@@ -318,6 +319,7 @@ type CachedHostedChatList<TSummary> = {
 };
 
 let currentUserId: string | null = null;
+let storageEpoch = 0;
 let currentStorageNamespace: string | null = null;
 let dbPromise: Promise<IDBDatabase> | null = null;
 let vaultKeyPromise: Promise<PrivateVaultKeyResponse> | null = null;
@@ -337,6 +339,7 @@ export function setPrivateStorageUser(
 ) {
   const normalizedNamespace = storageNamespace?.trim() || null;
   if (currentUserId !== userId || currentStorageNamespace !== normalizedNamespace) {
+    storageEpoch++;
     currentUserId = userId;
     currentStorageNamespace = normalizedNamespace;
     vaultKeyPromise = null;
@@ -362,6 +365,7 @@ export function setPrivateStorageUser(
 }
 
 export function resetPrivateStorageUser() {
+  storageEpoch++;
   currentUserId = null;
   currentStorageNamespace = null;
   vaultKeyPromise = null;
@@ -378,6 +382,61 @@ export function resetPrivateStorageUser() {
 
 export function unixTimestamp() {
   return Math.floor(Date.now() / 1000);
+}
+
+// Capture the identity before any asynchronous private-image work. A late
+// response must never be written under a different account or server key.
+export function privateImageGuard() {
+  const epoch = storageEpoch;
+  if (!currentUserId) throw new Error("Sign in to use device storage");
+  return () => {
+    if (epoch !== storageEpoch || !currentUserId)
+      throw new Error("Private storage user changed");
+  };
+}
+
+export async function readPrivateImage<T>(id: string): Promise<T | null> {
+  const guard = privateImageGuard();
+  const db = await openPrivateDb();
+  guard();
+  const tx = db.transaction(IMAGE_STORE, "readonly");
+  const record = await requestResult<PrivateStoreRecord | undefined>(tx.objectStore(IMAGE_STORE).get(id));
+  await transactionDone(tx);
+  const value = record ? await readPrivateRecord<{ value: T }>(record) : null;
+  guard();
+  return value?.value ?? null;
+}
+
+export async function writePrivateImage(id: string, value: unknown) {
+  const guard = privateImageGuard();
+  const db = await openPrivateDb();
+  const record = await privateStoreRecord({ id, value }, { updated_at: unixTimestamp() });
+  guard();
+  const tx = db.transaction(IMAGE_STORE, "readwrite");
+  tx.objectStore(IMAGE_STORE).put(record);
+  await transactionDone(tx);
+  guard();
+}
+
+export async function privateImageIds(prefix: string): Promise<string[]> {
+  const guard = privateImageGuard();
+  const db = await openPrivateDb();
+  guard();
+  const tx = db.transaction(IMAGE_STORE, "readonly");
+  const ids = await requestResult<IDBValidKey[]>(tx.objectStore(IMAGE_STORE).getAllKeys(IDBKeyRange.bound(prefix, `${prefix}\uffff`)));
+  await transactionDone(tx);
+  guard();
+  return ids.map(String);
+}
+
+export async function deletePrivateImage(id: string) {
+  const guard = privateImageGuard();
+  const db = await openPrivateDb();
+  guard();
+  const tx = db.transaction(IMAGE_STORE, "readwrite");
+  tx.objectStore(IMAGE_STORE).delete(id);
+  await transactionDone(tx);
+  guard();
 }
 
 export function privateId(prefix: string) {
@@ -2147,6 +2206,9 @@ function privateDbName() {
 }
 
 function ensurePrivateStores(db: IDBDatabase) {
+  if (!db.objectStoreNames.contains(IMAGE_STORE)) {
+    db.createObjectStore(IMAGE_STORE, { keyPath: "id" });
+  }
   if (!db.objectStoreNames.contains(CHAT_STORE)) {
     db.createObjectStore(CHAT_STORE, { keyPath: "id" });
   }

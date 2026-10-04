@@ -103,8 +103,12 @@ access the negative prompt and inference controls; the collapse control stays
 reachable in short/mobile viewports. Sending records a compact prompt bubble
 (first two lines, expandable to the full prompt and exact submitted settings),
 followed by image response bubbles. Stream previews inside the response bubble,
-not in a separate page section. Clear only the submitted prompt after acceptance;
-preserve unsent changes and recoverable drafts on failure.
+not in a separate page section. Keep the prompt after acceptance for generation
+and Original images edits, so the next request can reuse or adjust it. Only an
+accepted iterative edit clears the submitted prompt; never clear newer unsent
+text, retry prompts, or recoverable drafts on failure. An edit with reference
+images may have an empty positive prompt, including for aspect-ratio changes.
+Do not run prompt improvement on empty text; Improve alone still requires text.
 
 Show positive and negative prompts, steps, CFG, aspect ratio/dimensions, seed
 mode, image count, and applicable advanced controls. A visible **Customize
@@ -147,6 +151,9 @@ that run; changing relevant settings requires a new confirmation next time.
 Each output offers Edit, Retry with a new seed, reuse settings, download, and
 generation details. Edit continues the current flow from the selected image,
 using an available edit model on that host; editing from Gallery opens a new flow.
+Android downloads use the operating system's document-save picker and write the
+original image bytes to the selected document. Browser downloads retain the
+usual browser download flow. Cancellation does not report an export failure.
 Normal Send and finite-count outputs are separate gallery items. Explicit Retry
 creates a variant in the original image's stack; identical prompts alone do not
 make a stack.
@@ -185,6 +192,20 @@ continuation, if it has one. Other continuations remain accessible on their own
 branches. An existing "blue shirt" result continues to point to the exact carrot
 version it used, even after another carrot version is selected.
 
+Reserve each output's dimensions before loading its bytes, including offscreen
+messages. Load nearby images ahead of scrolling and retain decoded images in a
+bounded RAM cache. Cache original server-image bytes in the account/server-scoped
+encrypted device vault, with least-recently-used eviction at ten images or 128
+MiB of compressed bytes. Decoded RAM is separately bounded at ten unpinned
+images or 64 MiB; visible images are not evicted mid-display. Cache failures must
+not prevent online viewing or downloading.
+
+Gallery previews have a separate decoded RAM budget: up to 120 thumbnails or
+32 MiB, with visible thumbnails pinned and at most two being decoded at once.
+Generate centered square PNG previews of at most 320 pixels in memory; do not
+replace or recompress originals. Opening, editing and downloading an image
+always use its original bytes.
+
 Multiple outputs requested for one instruction are candidates from the same
 input snapshot, not automatic successive edits. Each has its own gallery entry
 and Retry stack; choose one to continue editing. The first successful candidate
@@ -204,6 +225,14 @@ outputs. It can filter by workflow/source and open the originating session/chat.
 New edit steps and separately requested generations each appear separately;
 only explicit retries of the same image form a stack. Show its variant count
 and the version selected in the workflow as the cover.
+
+Present a compact photo-library grid rather than large cards with repeated
+toolbars. Default to three square tiles per row on phones and responsive small
+tiles on desktop. Thumbnail-size controls allow a denser or larger view; phones
+support two, three or four columns. Keep stack counts visible on the tiles and
+move image actions into the opened viewer. Appending older gallery pages must
+preserve the existing tiles and scroll position. Load all requested stack
+versions even when they extend beyond the first page of session results.
 
 Fullscreen supports swiping through a stack, previous/next buttons, keyboard
 navigation, and a variant counter. **Browsing** a gallery variant does not change
@@ -299,6 +328,20 @@ completion atomically: an image committed before cancellation remains; no new
 attempt starts after Stop. A disconnected progress subscriber is not a Stop for
 a server-owned run. Permissions, ownership, and job idempotency are checked on
 every endpoint, including status, cancellation, assets, and variant selection.
+
+The Images workspace also offers Server and This device storage. Device flows,
+drafts, source images, results, version selection, gallery entries, and defaults
+stay in the existing encrypted account/server-scoped device vault. They are not
+uploaded through saved session or asset endpoints. The authenticated
+`POST /api/images/private/flow` accepts the draft plus ordered inline reference
+bytes for transient inference and optional prompt improvement; status/result/Stop
+use the existing owner-isolated private job routes with `Cache-Control: no-store`.
+Inference still sends the submitted inputs to Vashti and the selected Kuno host,
+but neither persists this content. Navigating away cancels device-owned work;
+reload retains completed results and marks interrupted work stopped. Results
+from a previous login or server must never be written under a new identity.
+Device defaults initially inherit the account profiles; subsequent explicit
+saves remain in the local vault and do not alter server-owned defaults.
 
 Private-local chat tool output stays in the existing encrypted device vault.
 Neither Vashti's server nor Kuno persists private prompts/images/jobs. Use

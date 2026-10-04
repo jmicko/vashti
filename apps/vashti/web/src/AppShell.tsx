@@ -1303,13 +1303,14 @@ export function AppShell({
             isNotesActive={isNotesPage}
             isImagesActive={isImagesPage}
             currentImageFlowId={route.page === "images" ? route.sessionId : undefined}
+            imageStorageMode={route.page === "images" ? route.storageMode ?? "server" : "server"}
             onOpenImageFlow={(id) => {
-              navigate({ page: "images", view: "flow", sessionId: id });
+              navigate({ page: "images", view: "flow", sessionId: id, storageMode: route.page === "images" ? route.storageMode : "server" });
               setIsSidebarOpen(false);
             }}
             onRemoveImageFlow={(id) => {
               if (route.page === "images" && route.sessionId === id) {
-                navigate({ page: "images", view: "home" });
+                navigate({ page: "images", view: "home", storageMode: route.storageMode });
               }
             }}
             isOpen={isSidebarOpen}
@@ -1324,7 +1325,7 @@ export function AppShell({
             onNewChat={() => {
               if (isImagesPage) {
                 setNewImageFlowKey(value => value + 1);
-                navigate({ page: "images", view: "flow" });
+                navigate({ page: "images", view: "flow", storageMode: route.page === "images" ? route.storageMode : "server" });
                 setIsSidebarOpen(false);
               } else {
                 openChat();
@@ -1579,17 +1580,18 @@ export function AppShell({
         ) : route.page === "images" ? (
           <Suspense fallback={<p role="status">Loading images...</p>}>
             <ImagesWorkspace
+              storageMode={route.storageMode ?? "server"}
               view={route.view ?? "home"}
               sessionId={route.sessionId}
               newFlowKey={newImageFlowKey}
               headerTarget={imageHeaderTarget}
               isAdmin={isAdmin}
               modelGroups={modelGroups}
-              onNavigate={(view, sessionId) => {
+              onNavigate={(view, sessionId, storageMode) => {
                 if (!sessionId && view !== "home" && view !== "gallery") {
                   setNewImageFlowKey(value => value + 1);
                 }
-                navigate({ page: "images", view, sessionId });
+                navigate({ page: "images", view, sessionId, storageMode: storageMode ?? route.storageMode });
               }}
               onOpenBackends={() => navigate({ page: "settings", section: "backends" })}
             />

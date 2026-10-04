@@ -7,7 +7,14 @@ import {
   type ImageResult,
   type Run,
   type Draft,
+  type RunRequest,
 } from "./types";
+
+export function clearPromptAfterSend(request: RunRequest, mode: string, currentPrompt: string | undefined): boolean {
+  return !request.improve_only && !request.retry_result_id && mode === "iterative" &&
+    request.draft.recipe.workflow === "qwen-image-2.1-edit/v1" &&
+    currentPrompt === request.draft.recipe.prompt;
+}
 
 export function advancedImageSeed(
   run: Run,

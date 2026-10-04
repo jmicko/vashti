@@ -20,8 +20,8 @@ import {
   Sparkles,
   Square,
   X,
+  LockKeyhole,
 } from "lucide-react";
-import { requestJson, requestMultipartJson } from "../api";
 import { ModelPicker } from "../ModelPicker";
 import { modelParts, modelValue } from "../modelSelection";
 import { MessageTreeExplorer } from "../MessageTreeExplorer";
@@ -36,7 +36,8 @@ import {
   imageTreeMessages,
   imageTurns,
 } from "./flow";
-import { imagePath, writeImage } from "./api";
+import { requestJson, requestMultipartJson, writeImage } from "./api";
+import { useImagePath, deviceImagePath } from "./storage";
 import {
   activeRun,
   canGenerate,
@@ -90,6 +91,7 @@ export function ImageFlow({
   isAdmin,
   onOpenBackends,
 }: Props) {
+  const imagePath = useImagePath();
   const flow = useImageFlow(sessionId, initialEditing, preferences);
   const { draft, results, runs, active, leaf, busy } = flow;
   useEffect(() => {
@@ -276,6 +278,7 @@ export function ImageFlow({
   }
   const picker = (
     <div className="image-flow-header-controls">
+      {imagePath === deviceImagePath && <LockKeyhole size={18} aria-label="Private image flow on this device" />}
       <ModelPicker
         groups={groups}
         personas={[]}
@@ -592,7 +595,7 @@ export function ImageFlow({
                   <article className="image-prompt-bubble message-bubble message-bubble-user">
                     <details className="image-prompt-details">
                       <summary>
-                        <span>{turn.run.request.draft.recipe.prompt}</span>
+                        <span>{turn.run.request.draft.recipe.prompt || "Image-only edit"}</span>
                         <ChevronDown size={16} />
                       </summary>
                       <div>
@@ -711,6 +714,7 @@ export function ImageFlow({
                         >
                           <ImageAsset
                             id={result.asset_id}
+                            dimensions={result.recipe}
                             neighbors={[
                               variants[index - 1]?.asset_id,
                               variants[index + 1]?.asset_id,
@@ -758,7 +762,7 @@ export function ImageFlow({
                             aria-label="Download image"
                             onClick={() =>
                               void flow.guard(() =>
-                                downloadImage(result.asset_id),
+                                downloadImage(result.asset_id, imagePath),
                               )
                             }
                           >
@@ -936,7 +940,7 @@ export function ImageFlow({
                 className="image-chat-composer"
                 onSubmit={(event) => {
                   event.preventDefault();
-                  if (ready && !busy && !active && draft.recipe.prompt.trim())
+                  if (ready && !busy && !active && (draft.recipe.prompt.trim() || draft.input_ids.length))
                     void send();
                 }}
               >
@@ -1290,7 +1294,7 @@ export function ImageFlow({
                       className="icon-button primary-action"
                       title="Send image prompt"
                       aria-label="Send image prompt"
-                      disabled={busy || !ready || !draft.recipe.prompt.trim()}
+                      disabled={busy || !ready || (!draft.recipe.prompt.trim() && !draft.input_ids.length)}
                     >
                       <SendHorizontal />
                     </button>
@@ -1403,7 +1407,7 @@ export function ImageFlow({
               title="Download image"
               aria-label="Download image"
               onClick={() =>
-                void flow.guard(() => downloadImage(viewer.ids[viewer.index]))
+                void flow.guard(() => downloadImage(viewer.ids[viewer.index], imagePath))
               }
             >
               <Download />

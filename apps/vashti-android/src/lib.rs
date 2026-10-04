@@ -1,6 +1,8 @@
 #[cfg(target_os = "android")]
 mod connections;
 #[cfg(target_os = "android")]
+mod image_export;
+#[cfg(target_os = "android")]
 mod secrets;
 #[cfg(target_os = "android")]
 mod transport;
@@ -15,6 +17,7 @@ pub fn run() {
     use tauri::Manager;
 
     tauri::Builder::default()
+        .plugin(image_export::init())
         .plugin(
             tauri_plugin_opener::Builder::new()
                 .open_js_links_on_click(false)
@@ -87,6 +90,7 @@ pub fn run() {
             transport::native_cancel_request,
             updates::native_check_app_update,
             updates::native_open_app_update,
+            image_export::native_save_image,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Vashti Android");

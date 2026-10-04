@@ -1,6 +1,10 @@
 //! Private image jobs exist only in RAM. Never route these through saved runs,
 //! assets, prompt history, attachment storage, or diagnostic payload logging.
-use super::{handlers, models::SeedMode, service};
+use super::{
+    handlers,
+    models::{Draft, SeedMode},
+    service,
+};
 use crate::{app_state::AppState, error::ApiError};
 use axum::{
     Json, Router,
@@ -32,6 +36,15 @@ struct Entry {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct FlowRequest {
+    draft: Draft,
+    #[serde(default)]
+    reference_images: Vec<String>,
+    #[serde(default)]
+    improve_only: bool,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Request {
     pub operation: String,
     pub prompt: String,
@@ -54,6 +67,10 @@ pub fn router() -> Router<AppState> {
         .route(
             "/private",
             post(start).layer(DefaultBodyLimit::max(64 * 1024 * 1024)),
+        )
+        .route(
+            "/private/flow",
+            post(start_flow).layer(DefaultBodyLimit::max(64 * 1024 * 1024)),
         )
         .route("/private/{id}", get(status))
         .route("/private/{id}/result", get(result))
@@ -84,6 +101,68 @@ async fn start(
         .await?;
     Ok(Json(json!({"id":submit(&state, &user, request).await?})))
 }
+async fn start_flow(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Json(request): Json<FlowRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let user = handlers::user(&state, &jar).await?;
+    state
+        .rate_limiter
+        .check(
+            crate::rate_limit::user_action_key("private-image", &user),
+            30,
+            60,
+        )
+        .await?;
+    Ok(Json(
+        json!({"id":submit_flow(&state, &user, request.draft, request.reference_images, request.improve_only).await?}),
+    ))
+}
+
+pub(super) async fn submit_flow(
+    state: &AppState,
+    user: &str,
+    draft: Draft,
+    references: Vec<String>,
+    improve_only: bool,
+) -> Result<String, ApiError> {
+    service::validate_draft(&draft)?;
+    if references.len() != draft.input_ids.len()
+        || (draft.recipe.prompt.trim().is_empty() && (references.is_empty() || improve_only))
+    {
+        return Err(ApiError::bad_request(
+            "image_request_invalid",
+            "Enter a prompt or choose an image to edit",
+        ));
+    }
+    let help = if (draft.auto_improve || improve_only) && !draft.recipe.prompt.trim().is_empty() {
+        Some(draft.prompt_help.clone().ok_or_else(|| {
+            ApiError::bad_request("image_request_invalid", "Choose a prompt improvement model")
+        })?)
+    } else {
+        None
+    };
+    let mut recipe = draft.recipe;
+    recipe.reference_images = references;
+    recipe.validate_execution().map_err(|_| {
+        ApiError::bad_request(
+            "image_request_invalid",
+            "Unsupported private image settings",
+        )
+    })?;
+    enqueue(
+        state,
+        user,
+        recipe,
+        vec![],
+        draft.backend_id,
+        help,
+        improve_only,
+    )
+    .await
+}
+
 pub(super) async fn submit(
     state: &AppState,
     user: &str,
@@ -134,6 +213,18 @@ pub(super) async fn submit(
             "Unsupported private image settings",
         )
     })?;
+    enqueue(state, user, recipe, ignored, None, None, false).await
+}
+
+async fn enqueue(
+    state: &AppState,
+    user: &str,
+    mut recipe: ImageRecipe,
+    ignored: Vec<String>,
+    backend_id: Option<String>,
+    help: Option<super::models::PromptHelp>,
+    improve_only: bool,
+) -> Result<String, ApiError> {
     let id = Uuid::new_v4().to_string();
     let cancel = CancellationToken::new();
     let mut jobs = state.image_jobs.private.0.lock().await;
@@ -151,7 +242,11 @@ pub(super) async fn submit(
             owner: user.into(),
             touched: Instant::now(),
             cancel: cancel.clone(),
-            status: "generating",
+            status: if help.is_some() {
+                "improving"
+            } else {
+                "generating"
+            },
             recipe: public_recipe,
             ignored,
             output: None,
@@ -160,11 +255,24 @@ pub(super) async fn submit(
     drop(jobs);
     let state = state.clone();
     let job = id.clone();
+    let owner = user.to_string();
     tokio::spawn(async move {
         let preview_key = job.clone();
         let outcome = {
             let worker_state = state.clone();
+            let worker_job = job.clone();
             let work = async move {
+                if let Some(help) = help {
+                    recipe.prompt = service::improve(&worker_state, &owner, &recipe, &help).await?;
+                    let mut jobs = worker_state.image_jobs.private.0.lock().await;
+                    if let Some(entry) = jobs.get_mut(&worker_job) {
+                        entry.recipe.prompt = recipe.prompt.clone();
+                        entry.status = "generating";
+                    }
+                }
+                if improve_only {
+                    return Ok(Vec::new());
+                }
                 let _permit = worker_state
                     .image_jobs
                     .slots
@@ -172,7 +280,8 @@ pub(super) async fn submit(
                     .acquire_owned()
                     .await
                     .map_err(|_| ApiError::internal("Image service unavailable"))?;
-                service::generate(&worker_state, &recipe, &preview_key).await
+                service::generate_on(&worker_state, &recipe, &preview_key, backend_id.as_deref())
+                    .await
             };
             tokio::pin!(work);
             let deadline = tokio::time::sleep(Duration::from_secs(3600));

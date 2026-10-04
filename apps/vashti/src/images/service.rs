@@ -517,8 +517,8 @@ pub async fn gallery(
     user: &str,
     offset: i64,
 ) -> Result<Vec<GalleryItem>, ApiError> {
-    sqlx::query("SELECT e.id,COALESCE(e.asset_id,r.asset_id) AS asset_id,e.group_id,g.session_id,e.created_at,CASE WHEN e.group_id IS NULL THEN 1 ELSE (SELECT COUNT(*) FROM image_results WHERE group_id=e.group_id) END AS variants FROM image_gallery e LEFT JOIN image_result_groups g ON g.id=e.group_id LEFT JOIN image_results r ON r.id=g.selected_result_id WHERE e.user_id=? ORDER BY e.created_at DESC,e.rowid DESC LIMIT 50 OFFSET ?")
-        .bind(user).bind(offset.max(0)).fetch_all(pool).await?.into_iter().map(|r|Ok(GalleryItem {id:r.try_get("id")?,asset_id:r.try_get("asset_id")?,group_id:r.try_get("group_id")?,session_id:r.try_get("session_id")?,variants:r.try_get("variants")?,created_at:r.try_get("created_at")?})).collect()
+    sqlx::query("SELECT e.id,COALESCE(e.asset_id,r.asset_id) AS asset_id,a.width,a.height,e.group_id,g.session_id,e.created_at,CASE WHEN e.group_id IS NULL THEN 1 ELSE (SELECT COUNT(*) FROM image_results WHERE group_id=e.group_id) END AS variants FROM image_gallery e LEFT JOIN image_result_groups g ON g.id=e.group_id LEFT JOIN image_results r ON r.id=g.selected_result_id JOIN image_assets a ON a.id=COALESCE(e.asset_id,r.asset_id) WHERE e.user_id=? ORDER BY e.created_at DESC,e.rowid DESC LIMIT 50 OFFSET ?")
+        .bind(user).bind(offset.max(0)).fetch_all(pool).await?.into_iter().map(|r|Ok(GalleryItem {width:r.try_get("width")?,height:r.try_get("height")?,id:r.try_get("id")?,asset_id:r.try_get("asset_id")?,group_id:r.try_get("group_id")?,session_id:r.try_get("session_id")?,variants:r.try_get("variants")?,created_at:r.try_get("created_at")?})).collect()
 }
 pub async fn copy_to_gallery(
     pool: &SqlitePool,
@@ -636,7 +636,9 @@ pub async fn submit(
     }
     validate_draft(&request.draft)?;
     validate_links(&state.db, user, Some(session), &request.draft).await?;
-    if request.draft.recipe.prompt.trim().is_empty() {
+    if request.draft.recipe.prompt.trim().is_empty()
+        && (request.draft.input_ids.is_empty() || request.improve_only)
+    {
         return Err(invalid("Enter a prompt first"));
     }
     if request.retry_result_id.is_none() && request.draft.recipe.workflow == QWEN21_EDIT_RECIPE {
@@ -664,6 +666,10 @@ pub async fn submit(
             "fixed_seed_endless",
             "Endless generation with a fixed seed repeats the same image. Confirm to continue.",
         ));
+    }
+    // There is no text to improve for an image-only resize/edit.
+    if request.draft.recipe.prompt.trim().is_empty() {
+        request.draft.auto_improve = false;
     }
     if (request.draft.auto_improve || request.improve_only) && request.draft.prompt_help.is_none() {
         return Err(invalid("Choose a model for prompt improvement"));
@@ -1268,14 +1274,7 @@ impl Drop for PreviewScope {
         }
     }
 }
-pub(super) async fn generate(
-    state: &AppState,
-    recipe: &ImageRecipe,
-    job: &str,
-) -> Result<Vec<u8>, ApiError> {
-    generate_on(state, recipe, job, None).await
-}
-async fn generate_on(
+pub(super) async fn generate_on(
     state: &AppState,
     recipe: &ImageRecipe,
     job: &str,
@@ -1296,7 +1295,7 @@ async fn generate_on(
         })
         .await
 }
-async fn improve(
+pub(super) async fn improve(
     state: &AppState,
     user: &str,
     recipe: &ImageRecipe,

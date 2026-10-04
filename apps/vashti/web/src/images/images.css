@@ -38,10 +38,26 @@
 .images-asset img { display: block; max-width: 100%; max-height: 68dvh; width: auto; height: auto; object-fit: contain; }
 .images-open-image { display: flex; justify-content: center; width: 100%; background: none; border: 0; padding: 0; border-radius: 0; box-shadow: none; }
 .images-icon { flex: 0 0 2.5rem; width: 2.5rem; height: 2.5rem; min-height: 2.5rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; box-shadow: none; }
-.images-gallery { max-width: 90rem; margin-inline: auto; display: grid; grid-template-columns: repeat(auto-fill,minmax(min(100%,19rem),1fr)); gap: 1.2rem; }
-.images-gallery article { min-width: 0; padding: .6rem; border: 1px solid var(--line-soft); border-radius: 8px; }
-.images-gallery .images-asset { height: 18rem; }
-.images-gallery img { max-height: 18rem; }
+.images-gallery-controls { max-width: 90rem; margin: 0 auto .6rem; display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+.images-gallery-controls small { color: var(--muted); }
+.images-gallery-workspace .images-page-header { max-width: 90rem; margin-bottom: .75rem; }
+.images-gallery { --gallery-size: 9rem; max-width: 90rem; margin-inline: auto; display: grid; grid-template-columns: repeat(auto-fill,minmax(min(100%,var(--gallery-size)),1fr)); gap: 4px; }
+.images-gallery-density-0 { --gallery-size: 7rem; }
+.images-gallery-density-2 { --gallery-size: 12rem; }
+.images-gallery-tile { position: relative; min-width: 0; width: 100%; aspect-ratio: 1; display: block; padding: 0; border: 0; border-radius: 4px; overflow: hidden; box-shadow: none; background: var(--panel); }
+.images-gallery-tile:hover { box-shadow: inset 0 0 0 2px var(--accent); }
+.images-gallery-tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; z-index: 1; }
+.images-gallery .images-asset { height: 100%; min-height: 0; max-height: none; border-radius: 0; pointer-events: none; background: var(--panel); }
+.images-gallery img { width: 100%; height: 100%; max-height: none; object-fit: cover; }
+.images-gallery .images-asset > span { font-size: .75rem; padding: .5rem; color: var(--muted); text-align: center; }
+.images-gallery-stack { position: absolute; bottom: .35rem; right: .35rem; display: inline-flex; align-items: center; gap: .25rem; padding: .2rem .35rem; border-radius: 4px; background: rgba(0,0,0,.8); color: #fff; font-size: .75rem; line-height: 1; pointer-events: none; }
+.images-gallery-remove { margin-top: 1rem; border-top: 1px solid var(--line-soft); padding-top: .75rem; }
+.images-gallery-remove p { margin: 0; }
+@media (max-width: 600px) {
+  .images-gallery { grid-template-columns: repeat(3,minmax(0,1fr)); }
+  .images-gallery-density-0 { grid-template-columns: repeat(4,minmax(0,1fr)); }
+  .images-gallery-density-2 { grid-template-columns: repeat(2,minmax(0,1fr)); }
+}
 .images-result-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .4rem; margin-top: .5rem; }
 .images-empty { padding: 2rem 1rem; text-align: center; color: var(--muted); }
 .images-pagination { justify-content: center; margin-top: 1rem; }
@@ -84,7 +100,10 @@
 .image-prompt-details[open] > div { margin-top: .8rem; }
 .image-prompt-details .image-recipe-details > p:first-child { display: none; }
 .image-response-bubble { width: 100%; min-width: 0; }
-.image-response-bubble .images-asset { width: fit-content; max-width: 100%; margin-inline: auto; }
+.image-response-bubble .images-asset { width: 100%; max-width: 100%; margin-inline: auto; }
+.image-storage-switch { max-width: 75rem; margin: 0 auto; }
+.image-storage-switch button { display: inline-flex; align-items: center; gap: .5rem; box-shadow: none; background: var(--surface); color: var(--accent); }
+.image-storage-switch button[aria-pressed="true"] { background: var(--accent-muted); border-color: var(--accent); }
 .image-response-bubble > header { display: flex; align-items: center; justify-content: space-between; gap: .5rem; flex-wrap: wrap; min-height: 2rem; }
 .image-response-bubble > header > strong { font-size: .8rem; text-transform: uppercase; color: var(--muted); }
 .image-response-bubble > header > span { color: var(--muted); font-size: .8rem; }

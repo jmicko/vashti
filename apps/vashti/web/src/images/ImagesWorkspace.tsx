@@ -8,13 +8,15 @@ import {
   Square,
   Settings2,
   X,
+  LockKeyhole,
+  Server,
 } from "lucide-react";
-import { requestJson } from "../api";
 import type { BackendModelGroup } from "../types";
 import { ImageAssetProvider } from "./ImageAsset";
 import { ImagePanel, NumberField } from "./controls";
 import { imageControls } from "./GenerationControls";
-import { imageError, imagePath, notifyImageFlows, writeImage } from "./api";
+import { imageError, requestJson, notifyImageFlows, writeImage } from "./api";
+import { ImageStorageProvider, useImagePath, type ImageStorage } from "./storage";
 import { ImageFlow } from "./ImageFlow";
 import { ImageGallery } from "./ImageGallery";
 import { workflowLabel, type Run } from "./types";
@@ -28,23 +30,27 @@ import type {
 import "./images.css";
 
 type Props = {
+  storageMode: ImageStorage;
   view: ImageView;
   sessionId?: string;
   newFlowKey: number;
   headerTarget: HTMLElement | null;
   isAdmin: boolean;
   modelGroups: BackendModelGroup[];
-  onNavigate: (view: ImageView, sessionId?: string) => void;
+  onNavigate: (view: ImageView, sessionId?: string, storageMode?: ImageStorage) => void;
   onOpenBackends: () => void;
 };
 export function ImagesWorkspace(props: Props) {
   return (
-    <ImageAssetProvider>
-      <Workspace {...props} />
-    </ImageAssetProvider>
+    <ImageStorageProvider mode={props.storageMode}>
+      <ImageAssetProvider key={props.storageMode}>
+        <Workspace {...props} />
+      </ImageAssetProvider>
+    </ImageStorageProvider>
   );
 }
 function Workspace({
+  storageMode,
   view,
   sessionId,
   newFlowKey,
@@ -54,6 +60,7 @@ function Workspace({
   onNavigate,
   onOpenBackends,
 }: Props) {
+  const imagePath = useImagePath();
   const [preferences, setPreferences] = useState<Preferences | null>(null);
   const [pendingPreferences, setPendingPreferences] =
     useState<Preferences | null>(null);
@@ -71,7 +78,7 @@ function Workspace({
   useEffect(() => {
     let live = true;
     const refresh = () => {
-      void requestJson<Run[]>(`${imagePath}/runs/active`)
+      void requestJson<Run[]>("/api/images/runs/active")
         .then((values) => {
           if (live) setActiveRuns(values);
         })
@@ -102,7 +109,7 @@ function Workspace({
   const refreshHosts = useCallback(async () => {
     setChecking(true);
     try {
-      setHosts(await requestJson<ImageHost[]>(`${imagePath}/hosts`));
+      setHosts(await requestJson<ImageHost[]>("/api/images/hosts"));
       setError("");
     } catch (error) {
       setError(imageError(error));
@@ -130,7 +137,7 @@ function Workspace({
     setPendingPreferences(preferences ? structuredClone(preferences) : null);
     setPreferencesOpen(true);
     if (isAdmin)
-      void requestJson<ServiceSettings>(`${imagePath}/settings`)
+      void requestJson<ServiceSettings>("/api/images/settings")
         .then(setSettings)
         .catch((error) => setError(imageError(error)));
   }
@@ -155,10 +162,10 @@ function Workspace({
   const flow = view !== "home" && view !== "gallery";
   return (
     <div
-      className={`images-workspace${flow ? " images-conversation-workspace" : ""}`}
+      className={`images-workspace${flow ? " images-conversation-workspace" : view === "gallery" ? " images-gallery-workspace" : ""}`}
     >
       {activeRuns
-        .filter((run) => !flow || run.session_id !== sessionId)
+        .filter((run) => storageMode === "server" && (!flow || run.session_id !== sessionId))
         .map((run) => (
           <div className="image-global-run" key={run.id}>
             <span role="status">
@@ -231,6 +238,12 @@ function Workspace({
             <Settings2 />
           </button>
         </header>
+      )}
+      {view === "home" && (
+        <div className="images-actions image-storage-switch" aria-label="Image storage">
+          <button type="button" aria-pressed={storageMode === "server"} onClick={() => onNavigate("home", undefined, "server")}><Server size={18} />Server</button>
+          <button type="button" aria-pressed={storageMode === "device"} onClick={() => onNavigate("home", undefined, "device")}><LockKeyhole size={18} />This device</button>
+        </div>
       )}
       {view === "home" ? (
         <div className="images-apps" aria-label="Image apps">
@@ -431,7 +444,7 @@ function Workspace({
                   onClick={() => {
                     setBusy(true);
                     void writeImage<ServiceSettings>(
-                      `${imagePath}/settings`,
+                      "/api/images/settings",
                       {
                         backend_id: settings.backend_id,
                         max_user_bytes: settings.max_user_bytes,

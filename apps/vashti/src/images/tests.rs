@@ -1286,3 +1286,114 @@ async fn private_images_return_only_to_owner_without_saved_content() {
     }
     server.abort();
 }
+
+#[tokio::test]
+async fn image_only_edits_are_allowed_but_empty_generation_and_improvement_are_not() {
+    let (state, mock, server) = setup(false).await;
+    let mut d = draft();
+    d.recipe.prompt.clear();
+    let session = service::create_session(&state.db, "alice", "Resize", "generate", d.clone())
+        .await
+        .unwrap();
+    assert!(
+        service::submit(&state, "alice", &session.id, request(d.clone()))
+            .await
+            .is_err()
+    );
+    let upload = service::upload(
+        &state.db,
+        "alice",
+        include_bytes!("fixtures/64.png").to_vec(),
+    )
+    .await
+    .unwrap();
+    d.recipe.workflow = kuno_protocol::QWEN21_EDIT_RECIPE.into();
+    d.input_ids = vec![upload["id"].as_str().unwrap().into()];
+    d.original_input_ids = d.input_ids.clone();
+    d.auto_improve = true;
+    let run = service::submit(&state, "alice", &session.id, request(d.clone()))
+        .await
+        .unwrap();
+    assert!(!run.request.draft.auto_improve);
+    assert_eq!(completed(&state, &run.id).await.status, "complete");
+    assert_eq!(mock.requests.lock().await[0]["prompt"], "");
+    let mut improvement = request(d);
+    improvement.improve_only = true;
+    assert!(
+        service::submit(&state, "alice", &session.id, improvement)
+            .await
+            .is_err()
+    );
+    server.abort();
+}
+
+#[tokio::test]
+async fn private_flows_use_explicit_settings_and_host_without_persisting_content() {
+    use super::transient;
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    let (state, mock, server) = setup(false).await;
+    sqlx::query("UPDATE image_service_settings SET backend_id=NULL")
+        .execute(&state.db)
+        .await
+        .unwrap();
+    let mut d = draft();
+    d.backend_id = Some("backend".into());
+    d.recipe.workflow = kuno_protocol::QWEN21_EDIT_RECIPE.into();
+    d.recipe.prompt.clear();
+    d.input_ids = vec![Uuid::new_v4().to_string()];
+    d.original_input_ids = d.input_ids.clone();
+    d.auto_improve = true; // An empty prompt skips improvement, without needing a helper.
+    assert!(
+        transient::submit_flow(&state, "alice", d.clone(), vec![], false)
+            .await
+            .is_err()
+    );
+    let id = transient::submit_flow(
+        &state,
+        "alice",
+        d,
+        vec![STANDARD.encode(include_bytes!("fixtures/64.png"))],
+        false,
+    )
+    .await
+    .unwrap();
+    assert!(
+        transient::read_status(&state.image_jobs.private, "bob", &id)
+            .await
+            .is_err()
+    );
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let status = transient::read_status(&state.image_jobs.private, "alice", &id)
+                .await
+                .unwrap();
+            if status["status"] == "complete" {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let bytes = transient::take_result(&state.image_jobs.private, "alice", &id)
+        .await
+        .unwrap();
+    assert_eq!(bytes, include_bytes!("fixtures/64.png"));
+    assert_eq!(mock.requests.lock().await[0]["prompt"], "");
+    for table in [
+        "image_sessions",
+        "image_runs",
+        "image_assets",
+        "image_results",
+        "image_prompt_versions",
+        "image_gallery",
+        "attachments",
+    ] {
+        let count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+        assert_eq!(count, 0, "Private flow wrote content to {table}");
+    }
+    server.abort();
+}

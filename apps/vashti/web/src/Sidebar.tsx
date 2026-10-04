@@ -33,6 +33,7 @@ export function Sidebar({
   isNotesActive,
   isImagesActive,
   currentImageFlowId,
+  imageStorageMode,
   onOpenImageFlow,
   onRemoveImageFlow,
   isOpen,
@@ -59,6 +60,7 @@ export function Sidebar({
   isNotesActive: boolean;
   isImagesActive: boolean;
   currentImageFlowId?: string;
+  imageStorageMode: "server" | "device";
   onOpenImageFlow: (id: string) => void;
   onRemoveImageFlow: (id: string) => void;
   isOpen: boolean;
@@ -188,7 +190,7 @@ export function Sidebar({
         </nav>
       </div>
       <div className="chat-history">
-        {isImagesActive ? <ImageFlowHistory currentId={currentImageFlowId} onOpen={onOpenImageFlow} onRemoved={onRemoveImageFlow} /> : <>
+        {isImagesActive ? <ImageFlowHistory key={imageStorageMode} storageMode={imageStorageMode} currentId={currentImageFlowId} onOpen={onOpenImageFlow} onRemoved={onRemoveImageFlow} /> : <>
         <p className="eyebrow">Previous Chats</p>
         {isLoadingAnyChats && combinedChats.length === 0 ? (
           <p>Loading chats...</p>

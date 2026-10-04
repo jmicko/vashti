@@ -41,8 +41,9 @@ export function routeFromLocation(): AppRoute {
 
   if (path === "/app/images" || path.startsWith("/app/images/")) {
     const view = path.split("/")[3];
-    const sessionId = new URLSearchParams(window.location.hash.slice(1)).get("session") ?? undefined;
-    return { page: "images", view: view === "generate" || view === "edit" || view === "gallery" || view === "flow" ? view : "home", sessionId };
+    const params = new URLSearchParams(window.location.hash.slice(1));
+    const sessionId = params.get("session") ?? undefined;
+    return { page: "images", view: view === "generate" || view === "edit" || view === "gallery" || view === "flow" ? view : "home", sessionId, storageMode: params.get("mode") === "device" ? "device" : "server" };
   }
 
   if (path.startsWith("/app/settings")) {
@@ -91,7 +92,10 @@ export function routeFromLocation(): AppRoute {
 
 export function pathForRoute(route: AppRoute) {
   if (route.page === "images") {
-    return `/app/images${!route.view || route.view === "home" ? "" : `/${route.view}`}${route.sessionId ? `#session=${encodeURIComponent(route.sessionId)}` : ""}`;
+    const params = new URLSearchParams();
+    if (route.storageMode === "device") params.set("mode", "device");
+    if (route.sessionId) params.set("session", route.sessionId);
+    return `/app/images${!route.view || route.view === "home" ? "" : `/${route.view}`}${params.size ? `#${params}` : ""}`;
   }
   if (route.page === "settings") {
     if (route.section === "notes" && route.storageMode === "device") {

@@ -81,6 +81,16 @@ beta.2 artifacts are published and full-download/signature verified. Live Hub
 and nginx upload limits are now verified at 1 GiB. Physical Android acceptance
 is still outstanding.
 
+**New Kuno backend work:** the latest owner handoff is on
+`codex/kuno-image-speed` through `ebd1925`, in
+`/home/jmicko/.codex/worktrees/kuno-image-speed/vashti/docs/kuno-release-handoff.md`.
+Read its **Selected Intel performance update (2026-10-02)** before the next
+release. It supersedes the earlier `fb2d1d0` residency artifact selection.
+Public contracts are unchanged; package the selected standard gateway and
+managed ABI 2 runtime together. Integrate the entire backend range after shared
+base `4f9b465`, not only the optimization commit. Preserve/commit pending Vashti
+work before merging. This source range is not yet merged into this checkout.
+
 **Status:** Kuno backend, Vashti connector, and conversational image flows are
 implemented and source-tested. Synthetic application flows and installed native
 generation, regeneration, editing, previews, and cancellation have been verified
@@ -636,3 +646,66 @@ downloads whose SHA-256 hashes match the local release files:
 The prerelease channel now returns beta.2; stable remains `v0.12.0`, with no
 promotion, main-branch merge, Git push, or live Vashti/Kuno installation. The
 physical Android and platform/runtime limits in the acceptance receipts remain.
+
+### Installed Kuno resident-image handoff (2026-10-01)
+
+This residency receipt is historical. The active handoff above selects the
+newer `codex/kuno-image-speed` closure and replaces this artifact selection;
+retain the following evidence, but do not package the earlier runtime.
+
+The user approved retaining image models between requests. Backend work is
+isolated on `codex/kuno-image-residency` through installed acceptance commit
+`fb2d1d0e367d4d53054bf8de63f49b316046d704`, based on `4f9b465`, in
+`/home/jmicko/.codex/worktrees/kuno-image-residency/vashti`.
+Read that worktree's updated `docs/kuno-images.md`, `docs/kuno-managed-sycl.md`,
+coordination receipt, `docs/kuno-release-handoff.md` Resident image update and
+`docs/kuno-image-residency-build.json` for the exact contract/artifacts/tests.
+The public API is unchanged; Vashti needs no connector or UI change. The new
+private runtime uses ABI 2; the published beta.2 ABI 1 runtime remains one-shot
+through the new gateway's upgrade fallback.
+
+Source checks passed 205 tests (nine ignored), default/native Clippy, formatting,
+eight packaging regressions, and native CPU cleanup tests. CUDA live smoke
+confirmed retained GPU weights and normal idle teardown. Authorized local
+transactional installation preserved configuration byte for byte. Installed
+Intel generation/edit/CFG/resize, previews, LLM handoff, cancellation/reload,
+legacy-family reuse and final service/privacy checks pass. The B70 retained
+15.6–20.3 GB; small 512-square/four-step generations took 40.604 seconds including
+initial load and 2.241 seconds warm. This is a synthetic residency smoke, not
+ComfyUI parity or full-workflow performance acceptance. Intel repeats show tiny
+rounding-scale pixel drift; see the detailed limitations and legacy diagnostics.
+
+Kuno is active, unpaused, with the Qwen 2.1 model loaded, zero automatic restarts,
+zero swap and no recovery latch or new Xe kernel events. No prompts/images were
+saved by the engine or test clients. Preserve this uncommitted coordination edit;
+no backend merge, push, release or Vashti/Hub code change was performed here.
+Integrate the complete resident branch and package its new standard gateway and
+ABI 2 archive together for the next beta; do not reuse beta.2's worker. Application
+and Android/release acceptance remain with the Vashti task.
+
+### Vashti compatibility and gallery receipt (2026-10-03)
+
+Reviewed the complete owner diff from `4f9b465` through `ebd1925` and its
+selected Intel performance handoff. Shared protocol types and public image
+discovery/generation fields are unchanged. Installed keyless discovery reports
+all three ready workflows, Standard-only attention, and NDJSON generation.
+Vashti's connector already enforces advertised attention/reference limits and
+handles bounded incremental previews/results, terminal errors and disconnects;
+no connector migration or inference deadline was added.
+
+The gallery now uses small square photo tiles, stack-count overlays, adjustable
+density, an original-image viewer with its actions, and append-only page loading.
+Gallery PNG thumbnails are derived in RAM with a separate bounded cache and
+decode queue; originals and encrypted device storage are unchanged. Owner-scoped
+server and device galleries use the same UI. Older stacks are loaded across
+session-result pages rather than silently limited to the newest 100 results.
+
+Application tests pass: 140 Rust and 44 frontend tests, including the installed
+discovery shape, stream/error handling, thumbnail cache identity/eviction/queue
+cleanup and gallery pagination. Production web and native-frontend builds pass.
+Browser checks cover phone/desktop density and overflow, original-image and
+keyboard version viewing, flow navigation, editing from a chosen variant,
+removal confirmation/cancel and the empty device-only gallery. No GPU generation,
+Kuno installation/restart, physical Android export, release, merge or commit was
+performed in this application pass. Integrating the backend source and matching
+release artifacts remains a separate release task.

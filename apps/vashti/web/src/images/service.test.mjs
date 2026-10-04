@@ -33,3 +33,31 @@ test("reference bounds and labels distinguish generation from editing", () => {
   assert.equal(workflowLabel(edit.id), "Qwen Image 2.1 Edit");
   assert.equal(workflowLabel("qwen-image-2512-text-to-image/v1"), "Qwen Image 2512");
 });
+
+test("the installed Kuno standard-only discovery contract supports all image workflows", () => {
+  const workflows = [
+    { ...generate, id: "qwen-image-2512-text-to-image/v1" },
+    generate,
+    { ...edit, attention: ["standard"] },
+  ];
+  const installed = {
+    state: "ready",
+    capabilities: {
+      service: "kuno",
+      discovery_version: 1,
+      inference_auth: "none",
+      images: {
+        api_version: 1,
+        access: "inference",
+        state: "ready",
+        generate_path: "/kuno/v1/images/generate",
+        response_formats: ["application/x-ndjson"],
+        workflows,
+      },
+    },
+  };
+  for (const workflow of workflows) {
+    assert.equal(canGenerate(installed, { workflow: workflow.id, attention: "standard" }, workflow.reference_images_min), true);
+    assert.equal(canGenerate(installed, { workflow: workflow.id, attention: "fast" }, workflow.reference_images_min), false);
+  }
+});

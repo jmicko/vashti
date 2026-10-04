@@ -1,17 +1,21 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
   Download,
   History,
+  Layers,
+  Minus,
   Pencil,
+  Plus,
   Trash2,
 } from "lucide-react";
-import { requestJson } from "../api";
 import { ImageAsset, downloadImage } from "./ImageAsset";
 import { ImagePanel } from "./controls";
 import { SwipeSurface } from "./SwipeSurface";
-import { imageError, imagePath, notifyImageFlows, writeImage } from "./api";
+import { appendGallery, galleryVariants } from "./gallery";
+import { imageError, requestJson, notifyImageFlows, writeImage } from "./api";
+import { useImagePath } from "./storage";
 import {
   newDraft,
   type GalleryItem,
@@ -28,23 +32,32 @@ export function ImageGallery({
   preferences: Preferences;
   onNavigate: (view: ImageView, id?: string) => void;
 }) {
+  const imagePath = useImagePath();
   const [items, setItems] = useState<GalleryItem[]>([]);
-  const [offset, setOffset] = useState(0);
+  const [nextOffset, setNextOffset] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [density, setDensity] = useState(1);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const mounted = useRef(true);
   const [viewer, setViewer] = useState<{
+    item: GalleryItem;
     ids: string[];
     index: number;
-    sessionId: string | null;
     results: ImageResult[];
   } | null>(null);
+
   useEffect(() => {
     let live = true;
-    setLoading(true);
-    requestJson<GalleryItem[]>(`${imagePath}/gallery?offset=${offset}`)
+    mounted.current = true;
+    requestJson<GalleryItem[]>(`${imagePath}/gallery?offset=0`)
       .then((values) => {
-        if (live) setItems(values);
+        if (!live) return;
+        setItems(values);
+        setNextOffset(values.length);
+        setHasMore(values.length === 50);
       })
       .catch((error) => {
         if (live) setError(imageError(error));
@@ -54,19 +67,40 @@ export function ImageGallery({
       });
     return () => {
       live = false;
+      mounted.current = false;
     };
-  }, [offset]);
+  }, [imagePath]);
+
+  async function loadMore() {
+    setLoading(true);
+    setError("");
+    try {
+      const page = await requestJson<GalleryItem[]>(
+        `${imagePath}/gallery?offset=${nextOffset}`,
+      );
+      if (!mounted.current) return;
+      setItems((values) => appendGallery(values, page));
+      setNextOffset((value) => value + page.length);
+      setHasMore(page.length === 50);
+    } catch (error) {
+      if (mounted.current) setError(imageError(error));
+    } finally {
+      if (mounted.current) setLoading(false);
+    }
+  }
+
   async function action(task: () => Promise<void>) {
     setBusy(true);
     setError("");
     try {
       await task();
     } catch (error) {
-      setError(imageError(error));
+      if (mounted.current) setError(imageError(error));
     } finally {
-      setBusy(false);
+      if (mounted.current) setBusy(false);
     }
   }
+
   async function edit(id: string) {
     const draft = newDraft(preferences.edit);
     draft.input_ids = [id];
@@ -75,29 +109,43 @@ export function ImageGallery({
       mode: "iterative",
       draft,
     });
+    if (!mounted.current) return;
     notifyImageFlows();
     onNavigate("flow", session.id);
   }
+
   async function open(item: GalleryItem) {
-    const results =
-      item.session_id && item.group_id
-        ? await requestJson<ImageResult[]>(
-            `${imagePath}/sessions/${item.session_id}/results`,
-          )
-        : [];
-    const variants = results
-      .filter((value) => value.group_id === item.group_id)
-      .reverse();
-    const ids = variants.length
-      ? variants.map((value) => value.asset_id)
-      : [item.asset_id];
-    setViewer({
-      ids,
-      index: Math.max(0, ids.indexOf(item.asset_id)),
-      sessionId: item.session_id,
-      results: variants,
-    });
+    setConfirmRemove(false);
+    setViewer({ item, ids: [item.asset_id], index: 0, results: [] });
+    if (!item.session_id || !item.group_id) return;
+    const variants = await galleryVariants(item, (offset) =>
+      requestJson<ImageResult[]>(
+        `${imagePath}/sessions/${item.session_id}/results?offset=${offset}`,
+      ),
+    );
+    if (!mounted.current || !variants.length) return;
+    const ids = variants.map((value) => value.asset_id);
+    setViewer((value) =>
+      value?.item.id === item.id
+        ? {
+            item,
+            ids,
+            index: Math.max(0, ids.indexOf(item.asset_id)),
+            results: variants,
+          }
+        : value,
+    );
   }
+
+  async function remove(item: GalleryItem) {
+    await requestJson(`${imagePath}/gallery/${item.id}`, { method: "DELETE" });
+    if (!mounted.current) return;
+    setItems((values) => values.filter((value) => value.id !== item.id));
+    setNextOffset((value) => Math.max(0, value - 1));
+    setViewer(null);
+    setConfirmRemove(false);
+  }
+
   function move(delta: number) {
     setViewer((value) =>
       value
@@ -110,147 +158,169 @@ export function ImageGallery({
           }
         : value,
     );
+    setConfirmRemove(false);
   }
+
   useEffect(() => {
     if (!viewer) return;
     const key = (event: KeyboardEvent) => {
-      if (event.key === "ArrowLeft") move(-1);
-      if (event.key === "ArrowRight") move(1);
+      if (
+        event.target instanceof HTMLElement &&
+        event.target.closest("input,textarea,select,[contenteditable=true]")
+      )
+        return;
+      if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+        event.preventDefault();
+        move(event.key === "ArrowLeft" ? -1 : 1);
+      }
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, [Boolean(viewer)]);
+
+  const selected = viewer?.results[viewer.index];
+  const alert = error && (
+    <p className="images-error" role="alert">
+      {error}
+    </p>
+  );
   return (
     <>
-      {error && (
-        <p className="images-error" role="alert">
-          {error}
-        </p>
-      )}
-      <div className="images-gallery">
-        {items.map((item) => (
-          <article key={item.id}>
+      {!viewer && alert}
+      <div className="images-gallery-controls">
+        <small role="status">
+          {loading && !items.length
+            ? "Loading images..."
+            : `${items.length}${hasMore ? "+" : ""} images`}
+        </small>
+        <div
+          className="images-actions"
+          role="group"
+          aria-label="Thumbnail size"
+        >
+          <button
+            type="button"
+            className="images-icon"
+            title="Smaller thumbnails"
+            aria-label="Smaller thumbnails"
+            disabled={density === 0}
+            onClick={() => setDensity((value) => value - 1)}
+          >
+            <Minus size={18} />
+          </button>
+          <button
+            type="button"
+            className="images-icon"
+            title="Larger thumbnails"
+            aria-label="Larger thumbnails"
+            disabled={density === 2}
+            onClick={() => setDensity((value) => value + 1)}
+          >
+            <Plus size={18} />
+          </button>
+        </div>
+      </div>
+      <div
+        className={`images-gallery images-gallery-density-${density}`}
+        aria-label="Image gallery"
+      >
+        {items.map((item, index) => (
+          <button
+            key={item.id}
+            type="button"
+            className="images-gallery-tile"
+            disabled={busy}
+            onClick={() => void action(() => open(item))}
+            aria-label={`Open image ${index + 1}${item.variants > 1 ? `, ${item.variants} versions` : ""}`}
+          >
             <ImageAsset
               id={item.asset_id}
-              onClick={() => void action(() => open(item))}
+              alt=""
+              thumbnail
+              dimensions={{ width: 1, height: 1 }}
             />
-            <div className="images-result-toolbar">
-              <small>
-                {item.variants > 1 ? `${item.variants} versions` : ""}
-              </small>
-              <div className="images-actions">
-                <button
-                  type="button"
-                  className="images-icon"
-                  disabled={busy}
-                  title="Edit image"
-                  aria-label="Edit image"
-                  onClick={() => void action(() => edit(item.asset_id))}
-                >
-                  <Pencil size={18} />
-                </button>
-                <button
-                  type="button"
-                  className="images-icon"
-                  title="Download image"
-                  aria-label="Download image"
-                  onClick={() =>
-                    void action(() => downloadImage(item.asset_id))
-                  }
-                >
-                  <Download size={18} />
-                </button>
-                {item.session_id && (
-                  <button
-                    type="button"
-                    className="images-icon"
-                    title="Open image flow"
-                    aria-label="Open image flow"
-                    onClick={() => onNavigate("flow", item.session_id!)}
-                  >
-                    <History size={18} />
-                  </button>
-                )}
-                <button
-                  type="button"
-                  className="images-icon"
-                  title="Remove from gallery"
-                  aria-label="Remove from gallery"
-                  disabled={busy}
-                  onClick={() =>
-                    void action(async () => {
-                      await requestJson(`${imagePath}/gallery/${item.id}`, {
-                        method: "DELETE",
-                      });
-                      setItems((values) =>
-                        values.filter((value) => value.id !== item.id),
-                      );
-                    })
-                  }
-                >
-                  <Trash2 size={18} />
-                </button>
-              </div>
-            </div>
-          </article>
+            {item.variants > 1 && (
+              <span className="images-gallery-stack" aria-hidden="true">
+                <Layers size={14} />
+                {item.variants}
+              </span>
+            )}
+          </button>
         ))}
       </div>
-      {!items.length && (
+      {!items.length && !loading && !error && (
         <p className="images-empty" role="status">
-          {loading ? "Loading images..." : "No images yet."}
+          No images yet.
         </p>
       )}
-      <div className="images-actions images-pagination">
-        <button
-          type="button"
-          disabled={!offset}
-          onClick={() => setOffset((value) => Math.max(0, value - 50))}
-        >
-          Newer
-        </button>
-        <button
-          type="button"
-          disabled={items.length < 50}
-          onClick={() => setOffset((value) => value + 50)}
-        >
-          Older
-        </button>
-      </div>
+      {(hasMore || (!items.length && error)) && (
+        <div className="images-actions images-pagination">
+          <button
+            type="button"
+            disabled={loading || busy}
+            onClick={() => void loadMore()}
+          >
+            {loading ? "Loading..." : error ? "Try again" : "Load more"}
+          </button>
+        </div>
+      )}
       {viewer && (
         <ImagePanel
-          title={`Image ${viewer.index + 1} of ${viewer.ids.length}`}
+          title={
+            viewer.ids.length > 1
+              ? `Version ${viewer.index + 1} of ${viewer.ids.length}`
+              : "Image"
+          }
           className="images-viewer-panel"
-          onClose={() => setViewer(null)}
+          onClose={() => {
+            setViewer(null);
+            setError("");
+          }}
         >
+          {alert}
           <SwipeSurface onStep={move}>
             <ImageAsset
               id={viewer.ids[viewer.index]}
+              dimensions={
+                selected
+                  ? {
+                      width: selected.recipe.width,
+                      height: selected.recipe.height,
+                    }
+                  : viewer.item.width && viewer.item.height
+                    ? { width: viewer.item.width, height: viewer.item.height }
+                    : undefined
+              }
               neighbors={viewer.ids.filter(
                 (_, index) => Math.abs(index - viewer.index) === 1,
               )}
             />
           </SwipeSurface>
           <div className="images-actions">
-            <button
-              type="button"
-              className="images-icon"
-              disabled={viewer.index === 0}
-              title="Previous image"
-              aria-label="Previous image"
-              onClick={() => move(-1)}
-            >
-              <ArrowLeft />
-            </button>
-            <button
-              type="button"
-              className="images-icon"
-              disabled={viewer.index === viewer.ids.length - 1}
-              title="Next image"
-              aria-label="Next image"
-              onClick={() => move(1)}
-            >
-              <ArrowRight />
-            </button>
+            {viewer.ids.length > 1 && (
+              <>
+                <button
+                  type="button"
+                  className="images-icon"
+                  disabled={viewer.index === 0}
+                  title="Previous version"
+                  aria-label="Previous version"
+                  onClick={() => move(-1)}
+                >
+                  <ArrowLeft />
+                </button>
+                <button
+                  type="button"
+                  className="images-icon"
+                  disabled={viewer.index === viewer.ids.length - 1}
+                  title="Next version"
+                  aria-label="Next version"
+                  onClick={() => move(1)}
+                >
+                  <ArrowRight />
+                </button>
+              </>
+            )}
             <button
               type="button"
               className="images-icon"
@@ -264,25 +334,63 @@ export function ImageGallery({
             <button
               type="button"
               className="images-icon"
+              disabled={busy}
               title="Download image"
               aria-label="Download image"
               onClick={() =>
-                void action(() => downloadImage(viewer.ids[viewer.index]))
+                void action(() =>
+                  downloadImage(viewer.ids[viewer.index], imagePath),
+                )
               }
             >
               <Download />
             </button>
-            {viewer.sessionId && (
+            {viewer.item.session_id && (
               <button
                 type="button"
-                onClick={() => {
-                  onNavigate("flow", viewer.sessionId!);
-                }}
+                className="images-icon"
+                title="Open image flow"
+                aria-label="Open image flow"
+                onClick={() => onNavigate("flow", viewer.item.session_id!)}
               >
-                Open flow
+                <History />
               </button>
             )}
+            <button
+              type="button"
+              className="images-icon"
+              disabled={busy}
+              title="Remove from gallery"
+              aria-label="Remove from gallery"
+              onClick={() => setConfirmRemove(true)}
+            >
+              <Trash2 />
+            </button>
           </div>
+          {confirmRemove && (
+            <div className="images-gallery-remove">
+              <p>
+                Remove from gallery? Images still used in flows or chats are
+                kept.
+              </p>
+              <div className="images-actions">
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void action(() => remove(viewer.item))}
+                >
+                  Remove
+                </button>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setConfirmRemove(false)}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
         </ImagePanel>
       )}
     </>

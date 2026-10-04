@@ -193,6 +193,8 @@ pub struct PromptVersion {
 
 #[derive(Serialize)]
 pub struct GalleryItem {
+    pub width: i64,
+    pub height: i64,
     pub id: String,
     pub asset_id: String,
     pub group_id: Option<String>,
