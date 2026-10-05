@@ -325,6 +325,7 @@ impl ExpertOperator {
             bytes(&values)?,
             MAX_WORKER_PRIVATE_BYTES * self.workers.count,
             4096,
+            worker_handle_metadata_bytes()?,
         ])?;
         if private_bytes > MAX_PRIVATE_HOST_BYTES {
             return Err(Error::LimitExceeded("CPU projection private host capacity"));
@@ -421,6 +422,7 @@ impl ExpertOperator {
         if public_request > MAX_PUBLIC_PACKED_BYTES {
             return Err(Error::LimitExceeded("CPU expert public packed capacity"));
         }
+        let mut jobs = retained_metadata::Owner::<[Vec<u8>; 3]>::new(MAX_SELECTED)?;
         let mut private_input = zeroed(g.hidden)?;
         let mut activations = zeroed(MAX_SELECTED * g.feed_forward)?;
         let mut values = zeroed(MAX_SELECTED * g.hidden)?;
@@ -434,41 +436,41 @@ impl ExpertOperator {
             bytes(&values)?,
             worker_bytes,
             size_of::<[usize; MAX_SELECTED]>() + 4096,
+            jobs.metadata_bytes()?,
+            worker_handle_metadata_bytes()?,
         ])?;
         if private_bytes > MAX_PRIVATE_HOST_BYTES {
             return Err(Error::LimitExceeded("CPU expert private host capacity"));
         }
         // All actual allocation capacities have been admitted before private fill.
         private_input[..g.hidden].copy_from_slice(input);
-        let mut jobs = Vec::<[Vec<u8>; 3]>::new();
-        jobs.try_reserve_exact(selected.len())
-            .map_err(|_| Error::LimitExceeded("CPU expert public job allocation"))?;
-        if jobs.capacity() > MAX_SELECTED {
-            return Err(Error::LimitExceeded("CPU expert public job capacity"));
-        }
-        let mut public_owned = 0usize;
-        for &expert in &ids[..selected.len()] {
+        let mut public_owned = Zeroizing::new(0usize);
+        for rank in 0..selected.len() {
             check_cancel(cancel)?;
-            let mut parts: [Vec<u8>; 3] = std::array::from_fn(|_| Vec::new());
-            for (part, packed) in parts.iter_mut().enumerate() {
+            // Store empty public Vec headers directly in their guarded owner;
+            // subsequent allocation/read failure cannot strand local job metadata.
+            jobs.push(std::array::from_fn(|_| Vec::new()))?;
+            for part in 0..3 {
+                let packed = &mut jobs.get_mut(rank)?[part];
                 packed
                     .try_reserve_exact(g.packed_bytes[part])
                     .map_err(|_| Error::LimitExceeded("CPU expert public packed allocation"))?;
-                public_owned = public_owned
+                *public_owned = public_owned
                     .checked_add(packed.capacity())
                     .ok_or(Error::ArithmeticOverflow)?;
-                if public_owned > MAX_PUBLIC_PACKED_BYTES {
+                if *public_owned > MAX_PUBLIC_PACKED_BYTES {
                     return Err(Error::LimitExceeded("CPU expert public owned capacity"));
                 }
                 packed.resize(g.packed_bytes[part], 0);
-                let offset = expert
-                    .checked_mul(g.packed_bytes[part])
-                    .ok_or(Error::ArithmeticOverflow)?;
+                let offset = Zeroizing::new(
+                    ids[rank]
+                        .checked_mul(g.packed_bytes[part])
+                        .ok_or(Error::ArithmeticOverflow)?,
+                );
                 weights
                     .reader
-                    .read_range(weights.tensors[part], offset as u64, packed)?;
+                    .read_range(weights.tensors[part], *offset as u64, packed)?;
             }
-            jobs.push(parts);
         }
         weights.reader.verify_file_unchanged()?;
         parallel_rows(
@@ -483,7 +485,7 @@ impl ExpertOperator {
                 let gate = dot_row(
                     self.backend,
                     g.kinds[0],
-                    row(&jobs[rank][0], feature, g.row_bytes[0])?,
+                    row(&jobs.get(rank)?[0], feature, g.row_bytes[0])?,
                     &private_input[..g.hidden],
                     scratch,
                     cancel,
@@ -491,7 +493,7 @@ impl ExpertOperator {
                 let up = dot_row(
                     self.backend,
                     g.kinds[1],
-                    row(&jobs[rank][1], feature, g.row_bytes[1])?,
+                    row(&jobs.get(rank)?[1], feature, g.row_bytes[1])?,
                     &private_input[..g.hidden],
                     scratch,
                     cancel,
@@ -514,7 +516,7 @@ impl ExpertOperator {
                 dot_row(
                     self.backend,
                     g.kinds[2],
-                    row(&jobs[rank][2], feature, g.row_bytes[2])?,
+                    row(&jobs.get(rank)?[2], feature, g.row_bytes[2])?,
                     &activations[rank * g.feed_forward..(rank + 1) * g.feed_forward],
                     scratch,
                     cancel,
@@ -537,6 +539,214 @@ impl ExpertOperator {
             count: selected.len(),
             values,
         })
+    }
+}
+
+fn worker_handle_metadata_bytes() -> Result<usize> {
+    retained_metadata::Owner::<std::thread::ScopedJoinHandle<'static, Result<()>>>::bytes_for(
+        MAX_WORKERS,
+    )
+}
+
+// Only retained application-owned headers are handled here. Public payloads
+// and std thread internals keep their ordinary destructors; compiler moves,
+// registers and opaque OS/runtime storage remain outside the wipe claim.
+#[allow(unsafe_code)]
+mod retained_metadata {
+    use super::*;
+    use std::mem::MaybeUninit;
+
+    /// Sealed, fixed-capacity live-item registry. MaybeUninit owns BOTH the
+    /// slot representations and outer Vec header after their normal Drop;
+    /// erased all-zero bytes never masquerade as a live Vec or JoinHandle.
+    pub(super) struct Owner<T> {
+        storage: MaybeUninit<Vec<MaybeUninit<T>>>,
+        first: Zeroizing<usize>,
+        end: Zeroizing<usize>,
+        #[cfg(test)]
+        witness: Option<std::sync::Arc<Witness>>,
+    }
+
+    impl<T> Owner<T> {
+        pub(super) fn new(capacity: usize) -> Result<Self> {
+            if capacity == 0 || capacity > MAX_WORKERS {
+                return Err(Error::LimitExceeded("CPU retained header count"));
+            }
+            Self::bytes_for(capacity)?;
+            let mut storage = Vec::<MaybeUninit<T>>::new();
+            storage
+                .try_reserve_exact(capacity)
+                .map_err(|_| Error::LimitExceeded("CPU retained header allocation"))?;
+            if storage.capacity() != capacity {
+                return Err(Error::LimitExceeded("CPU retained header owned capacity"));
+            }
+            let bytes = capacity
+                .checked_mul(size_of::<T>())
+                .ok_or(Error::ArithmeticOverflow)?;
+            // SAFETY: reserved allocation contains exactly capacity aligned T
+            // slots. MaybeUninit<T> permits any bits; zero all spare bytes before
+            // private headers enter it, then make all MaybeUninit slots live.
+            unsafe {
+                std::ptr::write_bytes(storage.as_mut_ptr().cast::<u8>(), 0, bytes);
+                storage.set_len(capacity);
+            }
+            Ok(Self {
+                storage: MaybeUninit::new(storage),
+                first: Zeroizing::new(0),
+                end: Zeroizing::new(0),
+                #[cfg(test)]
+                witness: None,
+            })
+        }
+
+        pub(super) fn bytes_for(capacity: usize) -> Result<usize> {
+            let bytes = capacity
+                .checked_mul(size_of::<T>())
+                .and_then(|value| value.checked_add(size_of::<Self>()))
+                .ok_or(Error::ArithmeticOverflow)?;
+            if bytes > MAX_PRIVATE_HOST_BYTES {
+                return Err(Error::LimitExceeded("CPU retained header capacity"));
+            }
+            Ok(bytes)
+        }
+
+        fn slots(&self) -> &Vec<MaybeUninit<T>> {
+            // SAFETY: constructor initializes outer Vec; only Drop ends it.
+            unsafe { self.storage.assume_init_ref() }
+        }
+        fn slots_mut(&mut self) -> &mut Vec<MaybeUninit<T>> {
+            // SAFETY: as above, and exclusive owner access.
+            unsafe { self.storage.assume_init_mut() }
+        }
+        pub(super) fn metadata_bytes(&self) -> Result<usize> {
+            Self::bytes_for(self.slots().capacity())
+        }
+        pub(super) fn push(&mut self, item: T) -> Result<()> {
+            if *self.end >= self.slots().len() {
+                return Err(Error::LimitExceeded("CPU retained live header count"));
+            }
+            let index = *self.end;
+            self.slots_mut()[index].write(item);
+            *self.end += 1;
+            Ok(())
+        }
+        pub(super) fn get(&self, index: usize) -> Result<&T> {
+            if index < *self.first || index >= *self.end {
+                return Err(Error::InvalidBufferLength);
+            }
+            // SAFETY: each first..end slot was initialized exactly once and
+            // hasn't been consumed. No mutation while borrowed.
+            Ok(unsafe { self.slots()[index].assume_init_ref() })
+        }
+        pub(super) fn get_mut(&mut self, index: usize) -> Result<&mut T> {
+            if index < *self.first || index >= *self.end {
+                return Err(Error::InvalidBufferLength);
+            }
+            // SAFETY: same initialized range proof, plus exclusive access.
+            Ok(unsafe { self.slots_mut()[index].assume_init_mut() })
+        }
+        pub(super) fn take_first(&mut self) -> Option<T> {
+            if *self.first >= *self.end {
+                return None;
+            }
+            let index = *self.first;
+            *self.first += 1;
+            // SAFETY: take removes exactly one live item; the old header bits
+            // remain only MaybeUninit bytes and are erased with full capacity.
+            Some(unsafe { self.slots()[index].assume_init_read() })
+        }
+        #[cfg(test)]
+        pub(super) fn observe(mut self, witness: std::sync::Arc<Witness>) -> Self {
+            self.witness = Some(witness);
+            self
+        }
+    }
+
+    unsafe fn wipe_bytes(pointer: *mut u8, bytes: usize) {
+        for index in 0..bytes {
+            // SAFETY: caller proves a complete live, uniquely owned allocation
+            // of at least bytes. No T is live in that span at this stage.
+            unsafe { std::ptr::write_volatile(pointer.add(index), 0) };
+        }
+        std::sync::atomic::compiler_fence(Ordering::SeqCst);
+    }
+
+    impl<T> Drop for Owner<T> {
+        fn drop(&mut self) {
+            // Current sealed consumers have non-panicking standard destructors:
+            // [Vec<u8>;3] and ScopedJoinHandle<Result<()>>. Normal payload drops
+            // happen before any header erasure; consumed handles are already
+            // joined by parallel_rows, preserving original first-error order.
+            let first = Zeroizing::new(*self.first);
+            let end = Zeroizing::new(*self.end);
+            let slots = self.slots_mut();
+            for slot in &mut slots[*first..*end] {
+                // SAFETY: exactly the remaining initialized live range. Never
+                // drop consumed slots, uninitialized spare capacity or twice.
+                unsafe { slot.assume_init_drop() };
+            }
+            let bytes = slots.capacity() * size_of::<T>();
+            let pointer = slots.as_mut_ptr().cast::<u8>();
+            // SAFETY: all values are now dead; the whole slot allocation is
+            // owned, writable, and contains only MaybeUninit representations.
+            unsafe { wipe_bytes(pointer, bytes) };
+            #[cfg(test)]
+            if let Some(witness) = &self.witness {
+                // SAFETY: bytes have just been initialized by volatile zeros;
+                // inspection finishes while the allocation is still owned.
+                let zeros = unsafe { std::slice::from_raw_parts(pointer, bytes) };
+                witness
+                    .slot_zero
+                    .store(zeros.iter().all(|&b| b == 0), Ordering::SeqCst);
+                witness.slot_bytes.store(bytes, Ordering::SeqCst);
+            }
+            // SAFETY: Vec<MaybeUninit<T>> only releases the already-erased
+            // allocation, never invokes T Drop. Then its header itself is dead.
+            unsafe {
+                self.storage.assume_init_drop();
+                wipe_bytes(
+                    self.storage.as_mut_ptr().cast::<u8>(),
+                    size_of::<Vec<MaybeUninit<T>>>(),
+                );
+            }
+            self.first.zeroize();
+            self.end.zeroize();
+            #[cfg(test)]
+            if let Some(witness) = &self.witness {
+                // SAFETY: dead outer header is MaybeUninit storage initialized
+                // entirely to zeros; neither Vec nor T is read after erasure.
+                let header = unsafe {
+                    std::slice::from_raw_parts(
+                        self.storage.as_ptr().cast::<u8>(),
+                        size_of::<Vec<MaybeUninit<T>>>(),
+                    )
+                };
+                witness
+                    .header_zero
+                    .store(header.iter().all(|&b| b == 0), Ordering::SeqCst);
+                witness
+                    .counts_zero
+                    .store(*self.first == 0 && *self.end == 0, Ordering::SeqCst);
+                witness.calls.fetch_add(1, Ordering::SeqCst);
+                if let Some(live) = &witness.live_workers {
+                    witness
+                        .joined
+                        .store(live.load(Ordering::SeqCst) == 0, Ordering::SeqCst);
+                }
+            }
+        }
+    }
+
+    #[cfg(test)]
+    #[derive(Default)]
+    pub(super) struct Witness {
+        pub(super) slot_zero: AtomicBool,
+        pub(super) header_zero: AtomicBool,
+        pub(super) counts_zero: AtomicBool,
+        pub(super) joined: AtomicBool,
+        pub(super) slot_bytes: std::sync::atomic::AtomicUsize,
+        pub(super) calls: std::sync::atomic::AtomicUsize,
+        pub(super) live_workers: Option<std::sync::Arc<std::sync::atomic::AtomicUsize>>,
     }
 }
 
@@ -620,10 +830,9 @@ fn parallel_rows(
     }
     let rows_per_worker = output.len().div_ceil(count);
     let result = std::thread::scope(|scope| {
-        let mut handles = Vec::new();
-        handles
-            .try_reserve_exact(count)
-            .map_err(|_| Error::LimitExceeded("CPU expert worker handles"))?;
+        // The exact accepted fixed-capacity header bytes were precharged before
+        // private input fill. Scoped lifetimes stay wholly inside this closure.
+        let mut handles = retained_metadata::Owner::new(MAX_WORKERS)?;
         let mut first_error = None;
         for (worker, rows) in output.chunks_mut(rows_per_worker).enumerate() {
             let first = worker * rows_per_worker;
@@ -652,7 +861,11 @@ fn parallel_rows(
                 result
             });
             match task {
-                Ok(handle) => handles.push(handle),
+                Ok(handle) => {
+                    // count <= MAX_WORKERS and each push follows one successful
+                    // spawn; this cannot exceed the exact admitted capacity.
+                    handles.push(handle)?;
+                }
                 Err(_) => {
                     failed.store(true, Ordering::Relaxed);
                     first_error = Some(Error::LimitExceeded("CPU expert worker spawn"));
@@ -662,7 +875,7 @@ fn parallel_rows(
         }
         // Every handle is consumed/joined, including after partial spawn or panic.
         // No worker can outlive the borrowed activation/output buffers.
-        for handle in handles {
+        while let Some(handle) = handles.take_first() {
             let result = match handle.join() {
                 Ok(result) => result,
                 Err(_) => {
@@ -1277,6 +1490,187 @@ mod tests {
                 "fixed-public numeric index{index}"
             );
         }
+    }
+
+    fn assert_metadata_wiped(witness: &retained_metadata::Witness, bytes: usize) {
+        assert_eq!(witness.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(witness.slot_bytes.load(Ordering::SeqCst), bytes);
+        assert!(witness.slot_zero.load(Ordering::SeqCst));
+        assert!(witness.header_zero.load(Ordering::SeqCst));
+        assert!(witness.counts_zero.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn public_job_headers_wipe_full_capacity_on_drop_partial_error_and_unwind() {
+        for mode in 0..3 {
+            let witness = std::sync::Arc::new(retained_metadata::Witness::default());
+            let attempt =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<()> {
+                    let mut jobs = retained_metadata::Owner::<[Vec<u8>; 3]>::new(MAX_SELECTED)?
+                        .observe(witness.clone());
+                    assert_eq!(
+                        jobs.metadata_bytes()?,
+                        retained_metadata::Owner::<[Vec<u8>; 3]>::bytes_for(MAX_SELECTED)?
+                    );
+                    for rank in 0..2 {
+                        jobs.push(std::array::from_fn(|_| Vec::new()))?;
+                        for part in 0..3 {
+                            // Original public payloads remain nonzero and use their
+                            // normal Vec destructors; only retained headers wipe.
+                            let payload = &mut jobs.get_mut(rank)?[part];
+                            payload.try_reserve_exact(16).unwrap();
+                            payload.resize(7 + part, (13 + rank + part) as u8);
+                            if mode == 1 && rank == 1 && part == 0 {
+                                return Err(Error::InvalidFormat("fixed-public partial fill"));
+                            }
+                        }
+                    }
+                    assert_eq!(jobs.get(1)?[2], vec![16; 9]);
+                    if mode == 2 {
+                        panic!("fixed-public owning metadata unwind");
+                    }
+                    Ok(())
+                }));
+            match mode {
+                0 => assert!(matches!(attempt, Ok(Ok(())))),
+                1 => assert!(matches!(attempt, Ok(Err(_)))),
+                _ => assert!(attempt.is_err()),
+            }
+            // All ten slots, including eight never-live spare slots, and the
+            // dead outer Vec header are inspected before their owners release.
+            assert_metadata_wiped(&witness, MAX_SELECTED * size_of::<[Vec<u8>; 3]>());
+        }
+    }
+
+    #[test]
+    fn public_job_headers_wipe_after_actual_positional_read_error_and_cancel() {
+        for cancel_after_load in [false, true] {
+            let f = fixture([TensorType::F32; 3], 8, 8, 2);
+            let reader = f.model.positional_reader().unwrap();
+            let witness = std::sync::Arc::new(retained_metadata::Witness::default());
+            let cancel = AtomicBool::new(false);
+            let result = (|| -> Result<()> {
+                let mut jobs = retained_metadata::Owner::<[Vec<u8>; 3]>::new(MAX_SELECTED)?
+                    .observe(witness.clone());
+                jobs.push(std::array::from_fn(|_| Vec::new()))?;
+                let tensor = f.model.tensor("gate").unwrap();
+                let offset = Zeroizing::new(8 * 8 * 4u64);
+                let packed = &mut jobs.get_mut(0)?[0];
+                packed.resize(*offset as usize, 0);
+                reader.read_range(tensor, *offset, packed)?;
+                assert!(packed.iter().any(|&byte| byte != 0));
+                if cancel_after_load {
+                    cancel.store(true, Ordering::Relaxed);
+                    check_cancel(&cancel)?;
+                } else {
+                    std::fs::OpenOptions::new()
+                        .write(true)
+                        .open(&f.path)?
+                        .set_len(64)?;
+                    let second = &mut jobs.get_mut(0)?[1];
+                    second.resize(*offset as usize, 91);
+                    let result = reader.read_range(f.model.tensor("up").unwrap(), *offset, second);
+                    assert!(second.iter().all(|&byte| byte == 0));
+                    result?;
+                }
+                Ok(())
+            })();
+            assert!(result.is_err());
+            assert_metadata_wiped(&witness, MAX_SELECTED * size_of::<[Vec<u8>; 3]>());
+        }
+    }
+
+    #[test]
+    fn consumed_scoped_handle_headers_wipe_only_after_all_consumers_join() {
+        let alive = std::sync::Arc::new(AtomicUsize::new(0));
+        let completed = AtomicUsize::new(0);
+        let jobs_witness = std::sync::Arc::new(retained_metadata::Witness {
+            live_workers: Some(alive.clone()),
+            ..retained_metadata::Witness::default()
+        });
+        let handles_witness = std::sync::Arc::new(retained_metadata::Witness {
+            live_workers: Some(alive.clone()),
+            ..retained_metadata::Witness::default()
+        });
+        let mut jobs = retained_metadata::Owner::<[Vec<u8>; 3]>::new(MAX_SELECTED)
+            .unwrap()
+            .observe(jobs_witness.clone());
+        jobs.push(std::array::from_fn(|_| Vec::new())).unwrap();
+        jobs.get_mut(0).unwrap()[0].extend([17, 29, 41]);
+        let mut failures = 0;
+        std::thread::scope(|scope| {
+            let mut handles = retained_metadata::Owner::new(MAX_WORKERS)
+                .unwrap()
+                .observe(handles_witness.clone());
+            assert_eq!(
+                handles.metadata_bytes().unwrap(),
+                worker_handle_metadata_bytes().unwrap()
+            );
+            for index in 0..4 {
+                let jobs = &jobs;
+                let alive = &alive;
+                let completed = &completed;
+                handles
+                    .push(
+                        std::thread::Builder::new()
+                            .spawn_scoped(scope, move || -> Result<()> {
+                                struct Live<'a>(&'a AtomicUsize);
+                                impl Drop for Live<'_> {
+                                    fn drop(&mut self) {
+                                        self.0.fetch_sub(1, Ordering::SeqCst);
+                                    }
+                                }
+                                alive.fetch_add(1, Ordering::SeqCst);
+                                let _live = Live(alive);
+                                assert_eq!(jobs.get(0)?[0], [17, 29, 41]);
+                                completed.fetch_add(1, Ordering::SeqCst);
+                                if index == 1 {
+                                    return Err(Error::InvalidFormat("fixed-public joined error"));
+                                }
+                                if index == 2 {
+                                    panic!("fixed-public joined unwind");
+                                }
+                                Ok(())
+                            })
+                            .unwrap(),
+                    )
+                    .unwrap();
+            }
+            while let Some(handle) = handles.take_first() {
+                if !matches!(handle.join(), Ok(Ok(()))) {
+                    failures += 1;
+                }
+            }
+            assert!(handles.get(0).is_err());
+            assert_eq!(alive.load(Ordering::SeqCst), 0);
+        });
+        assert_eq!(failures, 2);
+        assert_eq!(completed.load(Ordering::SeqCst), 4);
+        assert_metadata_wiped(
+            &handles_witness,
+            MAX_WORKERS * size_of::<std::thread::ScopedJoinHandle<'_, Result<()>>>(),
+        );
+        assert!(handles_witness.joined.load(Ordering::SeqCst));
+        drop(jobs);
+        assert_metadata_wiped(&jobs_witness, MAX_SELECTED * size_of::<[Vec<u8>; 3]>());
+        assert!(jobs_witness.joined.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn actual_fixed_header_capacities_are_admitted_before_private_input_fill() {
+        let jobs = retained_metadata::Owner::<[Vec<u8>; 3]>::new(MAX_SELECTED).unwrap();
+        let header_bytes = jobs.metadata_bytes().unwrap() + worker_handle_metadata_bytes().unwrap();
+        assert!(header_bytes < 4096);
+        assert!(retained_metadata::Owner::<[Vec<u8>; 3]>::new(0).is_err());
+        assert!(retained_metadata::Owner::<[Vec<u8>; 3]>::new(MAX_WORKERS + 1).is_err());
+        assert!(matches!(
+            retained_metadata::Owner::<[Vec<u8>; 3]>::bytes_for(usize::MAX),
+            Err(Error::ArithmeticOverflow)
+        ));
+        assert!(jobs.get(0).is_err());
+        assert!(
+            checked_sum(&[MAX_PRIVATE_HOST_BYTES, header_bytes]).unwrap() > MAX_PRIVATE_HOST_BYTES
+        );
     }
 
     #[test]
