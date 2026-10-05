@@ -1272,3 +1272,45 @@ claim follows from these source checks. QSA/PLE layer composition, owned expert
 waves, whole-model chunk connection and the full acceptance list above remain
 outstanding. **Required Vashti changes: none.** No public API, catalog, default
 routing, installed service, release or publication changed.
+
+### Native text PLE/QSA and grouped-expert source checkpoint (2026-10-05)
+
+**Current source candidate: `abf4396`, after `e43ea22`, on
+`codex/kuno-native-text`.** Read [the layer source boundaries](kuno-text-performance.md#ple-and-complete-qsa-layer-source-candidates-2026-10-05)
+and [the complete transaction plan](kuno-native-text-prefill.md). This does not
+supersede the prior both-card device receipts.
+
+Original layer1 PLE and layer3 QSA now have complete candidate wrappers and
+fixed-public probes, with immutable committed histories, sealed geometry and
+physical ownership, exact full owning readbacks and no state/cursor commit API.
+PLE includes original16-branch u64 hashing and bounded110-byte Q5 row reads; its
+new count1 GPU tail is labeled separately from the existing CPU tail. QSA
+includes all six projections, complete-block-only causal selection and all17
+status planes. Both-card numeric/cancel/cleanup runs remain pending. The frozen
+combined lab is SHA256
+`b7b2e40955d39829f71bf8a6dc09620b38f658ada3725dc311e77e13cf328983`; it
+includes the earlier cache-backed batch projector and sealed GDN fields. Do not
+substitute this identity into old `a1be34…` prepared-unit receipts.
+
+The grouped all-ten expert operator is host/offline-only, supporting all seven
+original packed formats and runtime protected maps with exact probability/rank
+bits. It preserves the original64-lane arithmetic and reduces original ranks
+only after all waves. The owning adapter to actual bank identity/revision,
+protected union, partial-fill poisoning and completed consumer lifetime is still
+being developed separately. No original bank ledger may publish before complete
+model acceptance; routed-only probe acceptance is insufficient.
+
+Root checks pass284 native host/offline tests, strict all-target Clippy, locked
+offline release build, formatting and diff checks. Normal `kuno-text` passes75
+tests; two installed checks remain ignored. Exact page/I/O/host budgets and
+source hashes are recorded in the source-only PLE/QSA/grouped-operator receipts.
+Opaque driver/register/spill and abrupt-loss erasure remain outside page audits.
+Whole-model batching, quality/options, production private-worker lifecycle,
+native catalog/default and managed `ollama.` routing, updated-Ollama cold/warm
+speed improvement and release remain outstanding.
+
+**Required Vashti changes: none.** No public API, configuration, installed
+service, model download/copy/conversion or release changed. Kuno/Ollama listeners
+responded with no resident models; admission remains resumed. Protected device
+validation awaits sudo refresh. No GPU reset, reboot or driver change is part
+of this checkpoint.
