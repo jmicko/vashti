@@ -1,0 +1,1164 @@
+//! Actual layer-major MAX8 laboratory composition. It reuses the original
+//! committed state/cache/banks and publishes only after whole-model acceptance.
+//! Source-only until parent completes physical whole-model validation. No
+//! default/API/catalog change, replay, fallback or private checkpoint export.
+use super::*;
+use crate::{
+    executor::{GpuExecutor, batch_moe},
+    quant_matvec::matmul::{BatchSpans, MAX_BATCH},
+    resident_batch_projection::{BatchedResidentProjector, ResidentBatchProjection},
+    resident_gdn::{BoundProjection, batch as gdn},
+    resident_gr::batch as gr,
+    resident_qsa::batch as qsa,
+    token_waves,
+};
+use kuno_text::cpu::Matrix;
+
+const OLD_MAIN: u64 = 785_186_816;
+const NEW_MAIN: u64 = 33_062_912;
+const TOTAL_MAIN: u64 = OLD_MAIN + NEW_MAIN;
+const PUBLIC_MAIN: u64 = 25_165_824;
+const HOST_CAP: usize = 12 * 1024 * 1024;
+const ORIGINAL_BANK_HOST: usize = 512 * 1024;
+const HOST_COMPONENTS: usize = 10_551_296 + ORIGINAL_BANK_HOST;
+const META_CAP: usize = 256 * 1024;
+const LAYERS: usize = 48;
+const D: usize = 2560;
+const HC: usize = 4;
+const ROUTER: usize = 512;
+const RESIDUAL_WORDS: usize = MAX_BATCH * HC * D;
+const BLOCK_WORDS: usize = MAX_BATCH * D;
+
+fn error() -> Error {
+    Error::InvalidFormat("native model chunk rejected")
+}
+fn sum(pages: &[u64]) -> Result<u64> {
+    pages.iter().try_fold(0_u64, |n, &p| {
+        n.checked_add(p).ok_or(Error::ArithmeticOverflow)
+    })
+}
+
+/// Constructed from the same already-selected public lab client/adapter limits.
+/// No device is selected/created here; all component owners recheck that client.
+#[derive(Clone)]
+pub(crate) struct Config {
+    client: ComputeClient<WgpuRuntime>,
+    limits: wgpu::Limits,
+    tile: usize,
+}
+impl Config {
+    pub(crate) fn new(
+        client: &ComputeClient<WgpuRuntime>,
+        limits: &wgpu::Limits,
+        tile: usize,
+    ) -> Result<Self> {
+        validate_limits(limits, tile)?;
+        Ok(Self {
+            client: client.clone(),
+            limits: limits.clone(),
+            tile,
+        })
+    }
+}
+fn validate_limits(l: &wgpu::Limits, tile: usize) -> Result<()> {
+    if ![4, 8].contains(&tile)
+        || l.max_compute_invocations_per_workgroup < 64
+        || l.max_compute_workgroup_size_x < 64
+        || l.max_compute_workgroups_per_dimension < 16384
+        || l.max_compute_workgroup_storage_size < 8192
+        || l.max_bind_groups < 1
+        || l.max_storage_buffers_per_shader_stage < 11
+        || l.max_bindings_per_bind_group < 12
+        || l.max_uniform_buffer_binding_size < 512
+        || l.max_storage_buffer_binding_size < 128 * 1024 * 1024
+        || l.max_buffer_size < 128 * 1024 * 1024
+        || l.min_storage_buffer_offset_alignment == 0
+        || l.min_uniform_buffer_offset_alignment == 0
+        || l.min_storage_buffer_offset_alignment > 512
+        || l.min_uniform_buffer_offset_alignment > 512
+    {
+        return Err(Error::LimitExceeded("native model device inventory"));
+    }
+    Ok(())
+}
+
+pub(super) struct Plan {
+    pub(super) requests: Vec<u64>,
+    pub(super) config: Config,
+}
+impl Plan {
+    pub(super) fn new(
+        graph: BoundGraph<'_, '_>,
+        client: &ComputeClient<WgpuRuntime>,
+        executor: &GpuExecutor<'_>,
+        config: Config,
+        old: &[u64],
+    ) -> Result<Self> {
+        graph.verify_unchanged()?;
+        if !std::ptr::eq(client.info(), config.client.info())
+            || sum(old)? != OLD_MAIN
+            || old.len() != 1286
+        {
+            return Err(error());
+        }
+        validate_limits(&config.limits, config.tile)?;
+        executor.check_original_bank_metadata(LAYERS, ORIGINAL_BANK_HOST)?;
+        let g = graph.geometry();
+        if g.layers != LAYERS
+            || g.residual.width != D
+            || g.residual.streams != HC
+            || g.experts != ROUTER
+            || g.experts_used != 10
+            || g.max_context != 4096
+        {
+            return Err(error());
+        }
+        let mut requests = Vec::new();
+        for (pages, expected) in [
+            (
+                gr::Workspace::allocation_requests(graph)?.to_vec(),
+                1_998_848,
+            ),
+            (
+                gdn::GdnBatchWorkspace::allocation_requests(graph)?.to_vec(),
+                3_932_160,
+            ),
+            (
+                qsa::QsaBatchWorkspace::allocation_requests(graph)?.to_vec(),
+                17_825_792,
+            ),
+            (
+                executor
+                    .routed_moe_batch_allocation_requests(graph, config.tile)?
+                    .to_vec(),
+                1_409_024,
+            ),
+            (
+                ple_batch::PleBatchWorkspace::allocation_requests(graph)?.to_vec(),
+                6_258_688,
+            ),
+            (
+                shared_batch::Workspace::allocation_requests(graph)?.to_vec(),
+                262_144,
+            ),
+        ] {
+            if sum(&pages)? != expected {
+                return Err(error());
+            }
+            requests.extend(pages);
+        }
+        for words in [
+            RESIDUAL_WORDS,
+            RESIDUAL_WORDS,
+            BLOCK_WORDS,
+            BLOCK_WORDS,
+            MAX_BATCH * ROUTER,
+            MAX_BATCH * ROUTER + 1,
+        ] {
+            requests.push(BufferLayout::new(words).map_err(u::fault)?.owned_bytes as u64);
+        }
+        if sum(&requests)? != NEW_MAIN || OLD_MAIN.checked_add(sum(&requests)?) != Some(TOTAL_MAIN)
+        {
+            return Err(error());
+        }
+        let head = graph.tensor("output.weight")?;
+        let row = head.info().row_bytes();
+        if row == 0 {
+            return Err(error());
+        }
+        let tile_rows = (64_u64 * 1024 * 1024 / row).min(16384);
+        if tile_rows == 0 {
+            return Err(error());
+        }
+        let head_tiles = (g.vocabulary as u64).div_ceil(tile_rows);
+        let runtime = runtime_bytes(head_tiles)?;
+        if runtime > crate::executor::RESIDENT_RUNTIME_IO_MAX
+            || HOST_COMPONENTS > HOST_CAP
+            || metadata_bytes() > META_CAP
+        {
+            return Err(Error::LimitExceeded("native model aggregate private plan"));
+        }
+        // All component/API-visible reservations remain independent of MAIN.
+        if gdn::GdnBatchWorkspace::runtime_info_reservation(graph, true)? != 4_718_592
+            || qsa::QsaBatchWorkspace::runtime_io_reservation(graph, true)? != 7_864_320
+            || batch_moe::Workspace::runtime_io_increment() != 524288
+            || ops::GUARDED_ROUTER_CAPACITY_BYTES > 8192
+        {
+            return Err(error());
+        }
+        Ok(Self { requests, config })
+    }
+    pub(super) fn check_public(&self, graph: BoundGraph<'_, '_>, pages: u64) -> Result<()> {
+        // prewarm() independently proves exact planned cache names/counts and
+        // seals them; here the actual graph count/full-page SUM must match too.
+        if graph.static_vectors().count() != 341 || pages != PUBLIC_MAIN {
+            return Err(error());
+        }
+        let derived = (0..LAYERS).try_fold(0usize, |n, l| {
+            Ok::<_, Error>(n + usize::from(graph.layer_kind(l)? == AttentionKind::Gdn))
+        })?;
+        if 341 + derived + 2 != 379 {
+            return Err(error());
+        }
+        Ok(())
+    }
+}
+fn runtime_bytes(head_tiles: u64) -> Result<u64> {
+    // Audited all-stage envelope, counting source+target+inspection separately.
+    // Real forced router/interior-MoE fences drain before another source window.
+    // Keep the helper's conservative embedding eight-record INFO envelope.
+    // These nine actual outer/scalar clears are a separate one-time category.
+    const OUTER_CLEAR_INFO: u64 = 9 * 2048;
+    const WITHOUT_HEAD: u64 = 61_751_296 + OUTER_CLEAR_INFO;
+    let dispatches = head_tiles
+        .checked_mul(2)
+        .and_then(|n| n.checked_add(1))
+        .ok_or(Error::ArithmeticOverflow)?;
+    let head = dispatches
+        .checked_mul(2048)
+        .and_then(|n| n.checked_add(2 * 1024 * 1024 + 65536))
+        .ok_or(Error::ArithmeticOverflow)?;
+    WITHOUT_HEAD
+        .checked_add(head)
+        .ok_or(Error::ArithmeticOverflow)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Purpose {
+    Advance,
+    LastLogits,
+}
+struct Outer {
+    residual: [BufferId; 2],
+    block: [BufferId; 2],
+    router: BufferId,
+    packet: BufferId,
+}
+impl Zeroize for Outer {
+    fn zeroize(&mut self) {
+        self.residual.zeroize();
+        self.block.zeroize();
+        self.router.zeroize();
+        self.packet.zeroize();
+    }
+}
+pub(super) struct Workspace {
+    gr: gr::Workspace,
+    gdn: gdn::GdnBatchWorkspace,
+    qsa: qsa::QsaBatchWorkspace,
+    moe: batch_moe::Workspace,
+    ple: ple_batch::PleBatchWorkspace,
+    shared: shared_batch::Workspace,
+    outer: Zeroizing<Outer>,
+    poison: Arc<AtomicBool>,
+}
+impl Workspace {
+    pub(super) fn allocate(
+        model: &mut ResidentModel<'_, '_>,
+        executor: &GpuExecutor<'_>,
+        sequence: SequenceKey,
+        config: Config,
+    ) -> Result<Self> {
+        let graph = model.graph;
+        let poison = model.admission.sequence_poison();
+        let cancel = AtomicBool::new(false); // Idle zero-state constructor only.
+        model
+            .admission
+            .check_client(model.arena.client().map_err(u::fault)?)?;
+        if !model.admission.transient_io()
+            || !std::ptr::eq(
+                config.client.info(),
+                model.arena.client().map_err(u::fault)?.info(),
+            )
+            || model.public.full_page_bytes() != PUBLIC_MAIN
+        {
+            return Err(error());
+        }
+        let gr = gr::Workspace::allocate(graph, &mut model.arena)?;
+        let gdn = gdn::GdnBatchWorkspace::allocate(
+            graph,
+            sequence,
+            &mut model.arena,
+            poison.clone(),
+            &cancel,
+        )?;
+        let qsa =
+            qsa::QsaBatchWorkspace::allocate(graph, sequence, &mut model.arena, poison.clone())?;
+        let moe = batch_moe::Workspace::allocate(
+            executor,
+            graph,
+            sequence,
+            &mut model.arena,
+            model.admission.clone(),
+            poison.clone(),
+            &config.limits,
+            config.tile,
+            &cancel,
+        )?;
+        let shared = shared_batch::Workspace::allocate(graph, &mut model.arena)?;
+        let mut alloc = |n| model.arena.allocate_zeroed(n).map_err(u::fault);
+        let outer = Zeroizing::new(Outer {
+            residual: [alloc(RESIDUAL_WORDS)?, alloc(RESIDUAL_WORDS)?],
+            block: [alloc(BLOCK_WORDS)?, alloc(BLOCK_WORDS)?],
+            router: alloc(MAX_BATCH * ROUTER)?,
+            packet: alloc(MAX_BATCH * ROUTER + 1)?,
+        });
+        let ple = ple_batch::PleBatchWorkspace::allocate(model, sequence, poison.clone(), &cancel)?;
+        let result = Self {
+            gr,
+            gdn,
+            qsa,
+            moe,
+            ple,
+            shared,
+            outer,
+            poison,
+        };
+        result.prove_outer(model)?;
+        Ok(result)
+    }
+    fn prove_outer(&self, model: &ResidentModel<'_, '_>) -> Result<()> {
+        let mut handles = Vec::new(); // Public resource references, no tensor copies.
+        for (id, words) in [
+            (self.outer.residual[0], RESIDUAL_WORDS),
+            (self.outer.residual[1], RESIDUAL_WORDS),
+            (self.outer.block[0], BLOCK_WORDS),
+            (self.outer.block[1], BLOCK_WORDS),
+            (self.outer.router, MAX_BATCH * ROUTER),
+            (self.outer.packet, MAX_BATCH * ROUTER + 1),
+            (model.b.fault, 1),
+            (model.b.logits, model.graph.geometry().vocabulary),
+            (model.b.logit_packet, model.graph.geometry().vocabulary + 1),
+        ] {
+            handles.push(gr::full_private(&model.arena, id, words)?);
+        }
+        gr::physical(&model.arena, &handles)?;
+        model
+            .admission
+            .check_client(model.arena.client().map_err(u::fault)?)?;
+        if !Arc::ptr_eq(&self.poison, &model.admission.sequence_poison())
+            || self.poison.load(Ordering::Acquire)
+        {
+            return Err(error());
+        }
+        Ok(())
+    }
+}
+impl Drop for Workspace {
+    fn drop(&mut self) {
+        self.poison.store(true, Ordering::Release);
+    }
+}
+
+struct Pending {
+    gdn: Box<[Option<gdn::PendingGdnBatch>; LAYERS]>,
+    qsa: Box<[Option<qsa::PendingQsaBatch>; LAYERS]>,
+    moe: Box<[Option<batch_moe::Pending>; LAYERS]>,
+    ple: Option<ple_batch::PendingPleBatch>,
+}
+fn pending_bytes() -> usize {
+    std::mem::size_of::<[Option<gdn::PendingGdnBatch>; LAYERS]>()
+        + std::mem::size_of::<[Option<qsa::PendingQsaBatch>; LAYERS]>()
+        + std::mem::size_of::<[Option<batch_moe::Pending>; LAYERS]>()
+        + std::mem::size_of::<Option<ple_batch::PendingPleBatch>>()
+}
+fn metadata_bytes() -> usize {
+    // Actual family anchors retain a subset of their pending metadata. Charge a
+    // second complete pending representation for every real GDN/QSA/PLE anchor,
+    // plus the controller/session and bounded stack/capability headroom. MoE's
+    // retained dynamic candidates and plans have their separate 2 MiB budget.
+    pending_bytes()
+        + 36 * std::mem::size_of::<gdn::PendingGdnBatch>()
+        + 12 * std::mem::size_of::<qsa::PendingQsaBatch>()
+        + std::mem::size_of::<ple_batch::PendingPleBatch>()
+        + std::mem::size_of::<Workspace>()
+        + std::mem::size_of::<batch_moe::Session>()
+        + 8192
+}
+impl Pending {
+    fn new() -> Result<Self> {
+        if metadata_bytes() > META_CAP {
+            return Err(Error::LimitExceeded("native model pending owner capacity"));
+        }
+        // Allocate zero/None before filling. Each opaque pending owns guarded
+        // metadata and sticky-only Drop; no filled inline table is returned.
+        Ok(Self {
+            gdn: Box::new(std::array::from_fn(|_| None)),
+            qsa: Box::new(std::array::from_fn(|_| None)),
+            moe: Box::new(std::array::from_fn(|_| None)),
+            ple: None,
+        })
+    }
+}
+struct Flight {
+    poison: Arc<AtomicBool>,
+    accepted: bool,
+}
+impl Drop for Flight {
+    fn drop(&mut self) {
+        if !self.accepted {
+            self.poison.store(true, Ordering::Release);
+        }
+        self.accepted.zeroize();
+    }
+}
+
+impl<'m, 'f> ResidentModel<'m, 'f> {
+    pub(crate) fn new_with_native_batch(
+        graph: BoundGraph<'m, 'f>,
+        client: ComputeClient<WgpuRuntime>,
+        context: usize,
+        executor: &mut GpuExecutor<'f>,
+        config: Config,
+        public_zero_audit: bool,
+    ) -> Result<Self> {
+        Self::construct_native(
+            graph,
+            client,
+            context,
+            executor,
+            public_zero_audit,
+            Some(config),
+        )
+    }
+    pub(crate) fn new_for_lab_fixture(
+        graph: BoundGraph<'m, 'f>,
+        client: ComputeClient<WgpuRuntime>,
+        context: usize,
+        executor: &mut GpuExecutor<'f>,
+        public_zero_audit: bool,
+        config: Option<Config>,
+    ) -> Result<Self> {
+        match config {
+            Some(config) => Self::new_with_native_batch(
+                graph,
+                client,
+                context,
+                executor,
+                config,
+                public_zero_audit,
+            ),
+            None => Self::new_with_public_owned_zero_audit(
+                graph,
+                client,
+                context,
+                executor,
+                public_zero_audit,
+            ),
+        }
+    }
+    /// Real layer-major enqueue and whole-chunk acceptance. Opaque receipts
+    /// cannot publish a token until ALL families and both required fences pass.
+    pub(crate) fn prefill_chunk(
+        &mut self,
+        executor: &mut GpuExecutor<'f>,
+        tokens: &[u32],
+        purpose: Purpose,
+        cancel: &AtomicBool,
+    ) -> Result<Zeroizing<Vec<f32>>> {
+        let mut native = self.native_batch.take().ok_or(error())?;
+        let mut flight = Flight {
+            poison: native.poison.clone(),
+            accepted: false,
+        };
+        let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            native.run(self, executor, tokens, purpose, cancel)
+        }));
+        match attempt {
+            Ok(Ok(logits)) => {
+                flight.accepted = true;
+                self.native_batch = Some(native);
+                Ok(logits)
+            }
+            _ => {
+                flight.poison.store(true, Ordering::Release);
+                self.poisoned = true;
+                executor.poison_resident();
+                self.native_batch = Some(native);
+                let _ = self.close(); // Explicit close outside admission-held guards.
+                let _ = executor.close_transient_resident(); // Abort/drain the actual staged bank registry.
+                Err(error())
+            }
+        }
+    }
+}
+
+type TokenPacket = (
+    Zeroizing<[u32; MAX_BATCH]>,
+    Zeroizing<[u32; MAX_BATCH]>,
+    Zeroizing<usize>,
+);
+fn packet(start: usize, context: usize, tokens: &[u32]) -> Result<TokenPacket> {
+    if !(1..=MAX_BATCH).contains(&tokens.len()) || context == 0 || context > 4096 {
+        return Err(error());
+    }
+    let end = start
+        .checked_add(tokens.len())
+        .ok_or(Error::ArithmeticOverflow)?;
+    if end > context || tokens.iter().any(|&t| t as usize >= 248320) {
+        return Err(error());
+    }
+    let mut ids = Zeroizing::new([0; MAX_BATCH]);
+    let mut positions = Zeroizing::new([0; MAX_BATCH]);
+    for (t, &id) in tokens.iter().enumerate() {
+        ids[t] = id;
+        positions[t] = (start + t) as u32;
+    }
+    Ok((ids, positions, Zeroizing::new(end)))
+}
+
+/// Used by real dispatch: a failed/cancelled actual layer cannot queue a later
+/// layer. The callback contains the full GR/attention/router/MoE/shared work.
+fn drive_layers(cancel: &AtomicBool, mut layer: impl FnMut(usize) -> Result<()>) -> Result<()> {
+    for index in 0..LAYERS {
+        u::cancel(cancel)?;
+        layer(index)?;
+    }
+    u::cancel(cancel)
+}
+/// Both actual completed proofs surround PLE's real owning diagnostic maps.
+/// No guarded output/PLE permit escapes if a map, audit or second proof fails.
+fn completed_proof<O, P>(
+    first: impl FnOnce() -> Result<O>,
+    ple: impl FnOnce() -> Result<P>,
+    second: impl FnOnce() -> Result<()>,
+) -> Result<(O, P)> {
+    let output = first()?;
+    let prepared = ple()?;
+    second()?;
+    Ok((output, prepared))
+}
+
+impl Workspace {
+    fn run(
+        &mut self,
+        m: &mut ResidentModel<'_, '_>,
+        e: &mut GpuExecutor<'_>,
+        tokens: &[u32],
+        purpose: Purpose,
+        cancel: &AtomicBool,
+    ) -> Result<Zeroizing<Vec<f32>>> {
+        self.prove_outer(m)?;
+        e.check_client(m.arena.client().map_err(u::fault)?)?;
+        e.check_resident_admission(&m.admission)?;
+        m.graph.verify_unchanged()?;
+        u::cancel(cancel)?;
+        if m.poisoned
+            || m.retired.load(Ordering::Acquire)
+            || !m.pending_qsa.is_empty()
+            || !m.pending_moe.is_empty()
+            || m.ple_batch_pending.is_some()
+            || m.layers.len() != LAYERS
+        {
+            return Err(error());
+        }
+        let start = Zeroizing::new(m.position);
+        let count = Zeroizing::new(tokens.len());
+        let (ids, positions, end) = packet(*start, m.context, tokens)?;
+        let mut pending = Pending::new()?;
+        self.gr.validate_all_consumers_queued()?;
+        self.shared.validate_all_consumers_queued()?;
+        for id in self
+            .outer
+            .residual
+            .into_iter()
+            .chain(self.outer.block)
+            .chain([
+                self.outer.router,
+                self.outer.packet,
+                m.b.fault,
+                m.b.logits,
+                m.b.logit_packet,
+            ])
+        {
+            u::zero(&m.arena, id)?;
+        }
+        batch_io::enqueue_embedding(
+            m.graph,
+            &m.arena,
+            &m.admission,
+            self.outer.residual[0],
+            batch_io::InputView {
+                first: 0,
+                stride: HC * D,
+                words: RESIDUAL_WORDS,
+            },
+            *count,
+            *start,
+            m.context,
+            &ids,
+            &positions,
+            cancel,
+        )?;
+        let mut session = e.begin_routed_moe_chunk(
+            &mut self.moe,
+            m.graph,
+            &m.arena,
+            *start as u64,
+            *count,
+            m.b.fault,
+            cancel,
+        )?;
+        let mut current = Zeroizing::new(0usize);
+        drive_layers(cancel, |layer| {
+            if layer == 1 {
+                let mut projector = ResidentBatchProjection {
+                    executor: e,
+                    fault: m.b.fault,
+                };
+                let spans = BatchSpans::new(*count, 0, 0, HC * D, 0, HC * D);
+                pending.ple = Some(self.ple.enqueue(
+                    m,
+                    &mut projector,
+                    self.outer.residual[*current],
+                    self.outer.residual[1 - *current],
+                    &spans,
+                    *start,
+                    &ids,
+                    &positions,
+                    cancel,
+                )?);
+                *current = 1 - *current;
+            }
+            let mut projector = ResidentBatchProjection {
+                executor: e,
+                fault: m.b.fault,
+            };
+            let prepared = self.gr.read(
+                m.graph,
+                &m.arena,
+                &mut m.public,
+                &mut projector,
+                gr::Kind::Attention(layer),
+                self.outer.residual[*current],
+                *count,
+                m.b.fault,
+                cancel,
+            )?;
+            let spans = BatchSpans::new(*count, 0, 0, D, 0, D);
+            match &mut m.layers[layer] {
+                Layer::Gdn(stage, public) => {
+                    pending.gdn[layer] = Some(stage.enqueue_batch(
+                        m.graph,
+                        &m.arena,
+                        public,
+                        &mut projector,
+                        &mut self.gdn,
+                        prepared.mixed(),
+                        self.outer.block[0],
+                        &spans,
+                        *start as u64,
+                        m.b.fault,
+                        cancel,
+                    )?)
+                }
+                Layer::Qsa(stage, public) => {
+                    let mut selector = qsa::AdmittedBatchSelector {
+                        admission: &m.admission,
+                    };
+                    pending.qsa[layer] = Some(stage.enqueue_batch(
+                        m.graph,
+                        &m.arena,
+                        public,
+                        &mut projector,
+                        &mut selector,
+                        &mut self.qsa,
+                        prepared.mixed(),
+                        self.outer.block[0],
+                        &spans,
+                        *start as u64,
+                        m.b.fault,
+                        cancel,
+                    )?);
+                }
+            }
+            prepared.combine(self.outer.block[0], self.outer.residual[1 - *current])?;
+            *current = 1 - *current;
+            if m.cancel_after_attention == Some(layer) {
+                m.cancel_after_attention = None;
+                cancel.store(true, Ordering::Release);
+                u::cancel(cancel)?;
+            }
+            let prepared = self.gr.read(
+                m.graph,
+                &m.arena,
+                &mut m.public,
+                &mut projector,
+                gr::Kind::Ffn(layer),
+                self.outer.residual[*current],
+                *count,
+                m.b.fault,
+                cancel,
+            )?;
+            u::zero(&m.arena, self.outer.router)?;
+            u::zero(&m.arena, self.outer.packet)?;
+            let tensor = m
+                .graph
+                .tensor(&format!("blk.{layer}.ffn_gate_inp.weight"))?;
+            let matrix = Matrix::new(tensor)?;
+            if matrix.inputs() != D || matrix.outputs() != ROUTER || matrix.experts() != 1 {
+                return Err(error());
+            }
+            projector.enqueue_batch(
+                BoundProjection { tensor, matrix },
+                &m.arena,
+                prepared.mixed(),
+                self.outer.router,
+                &BatchSpans::new(*count, 0, 0, D, 0, ROUTER),
+                cancel,
+            )?;
+            let logits = batch_io::read_router(
+                m.graph,
+                &m.arena,
+                &m.admission,
+                self.outer.router,
+                self.outer.packet,
+                m.b.fault,
+                batch_io::RouterView {
+                    first: 0,
+                    stride: ROUTER,
+                    words: MAX_BATCH * ROUTER,
+                },
+                *count,
+                cancel,
+            )?;
+            let mut routes = token_waves::Input::new(*count, self.moe.capacity(), ROUTER)
+                .map_err(|_| error())?;
+            for token in 0..*count {
+                let selection =
+                    ops::router_topk_guarded(logits.row(token)?, 10, true).map_err(u::fault)?;
+                for (rank, &(expert, probability)) in selection.as_slice().iter().enumerate() {
+                    routes
+                        .set(token, rank, expert, probability)
+                        .map_err(|_| error())?;
+                }
+            }
+            let waves = token_waves::Plan::build(&routes, cancel).map_err(|_| error())?;
+            pending.moe[layer] = Some(e.enqueue_routed_moe_batch(
+                m.graph,
+                &m.arena,
+                &mut self.moe,
+                &session,
+                layer,
+                prepared.mixed(),
+                self.outer.block[0],
+                &spans,
+                &waves,
+                cancel,
+            )?);
+            e.check_original_bank_metadata(LAYERS, ORIGINAL_BANK_HOST)?;
+            let mut projector = ResidentBatchProjection {
+                executor: e,
+                fault: m.b.fault,
+            };
+            self.shared.enqueue(
+                m.graph,
+                layer,
+                &m.arena,
+                &mut m.public,
+                &mut projector,
+                prepared.mixed(),
+                self.outer.block[0],
+                self.outer.block[1],
+                m.b.fault,
+                *count,
+                cancel,
+            )?;
+            prepared.combine(self.outer.block[1], self.outer.residual[1 - *current])?;
+            *current = 1 - *current;
+            Ok(())
+        })?;
+        if purpose == Purpose::LastLogits {
+            let mut projector = ResidentBatchProjection {
+                executor: e,
+                fault: m.b.fault,
+            };
+            self.gr
+                .read(
+                    m.graph,
+                    &m.arena,
+                    &mut m.public,
+                    &mut projector,
+                    gr::Kind::Final,
+                    self.outer.residual[*current],
+                    *count,
+                    m.b.fault,
+                    cancel,
+                )?
+                .enqueue_final_head(m.graph, &mut projector, m.b.logits)?;
+        }
+        self.gr.validate_all_consumers_queued()?;
+        self.shared.validate_all_consumers_queued()?;
+        let (output, ple) = completed_proof(
+            || {
+                Ok(if purpose == Purpose::LastLogits {
+                    batch_io::read_last_logits(
+                        m.graph,
+                        &m.arena,
+                        &m.admission,
+                        m.b.logits,
+                        m.b.logit_packet,
+                        m.b.fault,
+                        cancel,
+                    )?
+                } else {
+                    batch_io::read_fault(&m.arena, &m.admission, m.b.fault, cancel)?;
+                    Zeroizing::new(Vec::new())
+                })
+            },
+            || {
+                self.ple.prepare_split_after_whole_model_fence(
+                    ple_batch::Preparation {
+                        graph: m.graph,
+                        arena: &m.arena,
+                        retired: &m.retired,
+                        context: m.context,
+                        position: *start,
+                        owner_poisoned: &mut m.poisoned,
+                        sequence_poison: &m.ple_batch_poison,
+                        conv: &mut m.ple_conv,
+                        history: &mut m.ple_history,
+                        anchor: &mut m.ple_batch_pending,
+                        fault: m.b.fault,
+                        scalar_ids: [m.b.ple_emb, m.b.ple_key, m.b.ple_value],
+                    },
+                    pending.ple.take().ok_or(error())?,
+                    cancel,
+                )
+            },
+            || batch_io::read_fault(&m.arena, &m.admission, m.b.fault, cancel),
+        )?;
+        let mut ga = {
+            let (first_stage, first_receipt) = match (&m.layers[0], pending.gdn[0].as_ref()) {
+                (Layer::Gdn(s, _), Some(r)) => (s.as_ref(), r),
+                _ => return Err(error()),
+            };
+            let mut refs = [(first_stage, first_receipt); 36];
+            let mut at = 0;
+            for layer in 0..LAYERS {
+                if let Layer::Gdn(s, _) = &m.layers[layer] {
+                    refs[at] = (s, pending.gdn[layer].as_ref().ok_or(error())?);
+                    at += 1;
+                }
+            }
+            if at != refs.len() {
+                return Err(error());
+            }
+            self.gdn
+                .accept_after_whole_model_chunk_acceptance(&m.arena, &refs, cancel)?
+        };
+        let mut qa = {
+            let (first_stage, first_receipt) = match (&m.layers[3], pending.qsa[3].as_ref()) {
+                (Layer::Qsa(s, _), Some(r)) => (s.as_ref(), r),
+                _ => return Err(error()),
+            };
+            let mut refs = [(first_stage, first_receipt); 12];
+            let mut at = 0;
+            for layer in 0..LAYERS {
+                if let Layer::Qsa(s, _) = &m.layers[layer] {
+                    refs[at] = (s, pending.qsa[layer].as_ref().ok_or(error())?);
+                    at += 1;
+                }
+            }
+            if at != refs.len() {
+                return Err(error());
+            }
+            self.qsa
+                .accept_after_whole_model_chunk_acceptance(&m.arena, &refs, cancel)?
+        };
+        let mut ma = {
+            let first = pending.moe[0].as_ref().ok_or(error())?;
+            let mut refs = [first; LAYERS];
+            for (i, r) in refs.iter_mut().enumerate() {
+                *r = pending.moe[i].as_ref().ok_or(error())?;
+            }
+            self.moe.accept_after_whole_model_chunk_acceptance(
+                e,
+                &mut session,
+                &m.arena,
+                &refs,
+                cancel,
+            )?
+        };
+        ple.preflight(cancel)?;
+        self.gr.validate_all_consumers_queued()?;
+        self.shared.validate_all_consumers_queued()?;
+        m.graph.verify_unchanged()?;
+        u::cancel(cancel)?;
+        if self.poison.load(Ordering::Acquire)
+            || m.retired.load(Ordering::Acquire)
+            || m.position != *start
+        {
+            return Err(error());
+        }
+        // Every actual-family permit has now preflighted. Remaining cancellation
+        // or fallible commit failure terminally destroys the whole model; it
+        // cannot publish output/cursor or resume a partially changed sequence.
+        for (layer, owner) in m.layers.iter_mut().enumerate() {
+            match owner {
+                Layer::Gdn(stage, _) => stage.commit_after_whole_chunk_acceptance(
+                    pending.gdn[layer].take().ok_or(error())?,
+                    &m.arena,
+                    &mut ga,
+                    cancel,
+                )?,
+                Layer::Qsa(stage, _) => stage.commit_after_whole_chunk_acceptance(
+                    pending.qsa[layer].take().ok_or(error())?,
+                    &m.arena,
+                    &mut qa,
+                    cancel,
+                )?,
+            }
+        }
+        for receipt in pending.moe.iter_mut() {
+            ma.commit(receipt.take().ok_or(error())?, &m.arena, cancel)?;
+        }
+        ga.finish(&m.arena, cancel)?;
+        qa.finish(&m.arena, cancel)?;
+        ma.finish(&m.arena, cancel)?;
+        ple.commit(cancel)?;
+        e.check_original_bank_metadata(LAYERS, ORIGINAL_BANK_HOST)?;
+        u::cancel(cancel)?;
+        if self.poison.load(Ordering::Acquire) || m.retired.load(Ordering::Acquire) || m.poisoned {
+            return Err(error());
+        }
+        m.position = *end;
+        Ok(output)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn aggregate_plan_counts_original_owners_once_and_independent_runtime_head_tiles() {
+        assert_eq!(TOTAL_MAIN, 818249728);
+        assert_eq!(
+            NEW_MAIN + PUBLIC_MAIN + 2 * 67108864 + 41943040 + OLD_MAIN,
+            1019576320
+        );
+        assert_eq!(runtime_bytes(16).unwrap(), 64000000);
+        assert_eq!(runtime_bytes(38).unwrap(), 64090112);
+        assert!(runtime_bytes(u64::MAX).is_err());
+        assert!(runtime_bytes(4096).unwrap() > crate::executor::RESIDENT_RUNTIME_IO_MAX);
+        assert!(metadata_bytes() <= META_CAP);
+        assert_eq!(HOST_COMPONENTS, 11075584);
+        const { assert!(HOST_COMPONENTS <= HOST_CAP) };
+    }
+    #[test]
+    fn runtime_packet_covers_counts_boundaries_without_future_or_inactive_values() {
+        for count in [1, 3, 5, 8] {
+            for end in [4, 2048, 2049, 2052, 4096] {
+                if count > end {
+                    continue;
+                }
+                let input = vec![7; count];
+                let (ids, p, actual) = packet(end - count, 4096, &input).unwrap();
+                assert_eq!(*actual, end);
+                for t in 0..8 {
+                    if t < count {
+                        assert_eq!(ids[t], 7);
+                        assert_eq!(p[t] as usize, end - count + t);
+                    } else {
+                        assert_eq!(ids[t], 0);
+                        assert_eq!(p[t], 0);
+                    }
+                }
+            }
+        }
+        for (start, context, ids) in [
+            (0, 4096, vec![]),
+            (0, 4096, vec![1; 9]),
+            (4096, 4096, vec![1]),
+            (usize::MAX, 4096, vec![1]),
+            (0, 4096, vec![248320]),
+            (0, 4097, vec![1]),
+        ] {
+            assert!(packet(start, context, &ids).is_err());
+        }
+    }
+    #[test]
+    fn actual_inflight_guard_abandon_error_unwind_is_sticky_without_lock_callback() {
+        for kind in 0..4 {
+            let poison = Arc::new(AtomicBool::new(false));
+            let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let mut flight = Flight {
+                    poison: poison.clone(),
+                    accepted: false,
+                };
+                match kind {
+                    0 => {
+                        flight.accepted = true;
+                        Ok(())
+                    }
+                    1 => Err(error()),
+                    2 => Ok(()),
+                    _ => panic!("public injected chunk panic"),
+                }
+            }));
+            assert_eq!(poison.load(Ordering::Acquire), kind != 0);
+            assert_eq!(attempt.is_err(), kind == 3);
+        }
+    }
+    #[test]
+    fn production_layer_driver_is_complete_and_stops_before_next_actual_layer() {
+        for failed in [None, Some(0), Some(3), Some(23), Some(47)] {
+            let mut queued = Vec::new();
+            let result = drive_layers(&AtomicBool::new(false), |layer| {
+                queued.push(layer);
+                if failed == Some(layer) {
+                    Err(error())
+                } else {
+                    Ok(())
+                }
+            });
+            assert_eq!(
+                queued,
+                (0..failed.map_or(48, |n| n + 1)).collect::<Vec<_>>()
+            );
+            assert_eq!(result.is_err(), failed.is_some());
+        }
+        let cancelled = AtomicBool::new(false);
+        let mut queued = Vec::new();
+        assert!(
+            drive_layers(&cancelled, |layer| {
+                queued.push(layer);
+                if layer == 3 {
+                    cancelled.store(true, Ordering::Release);
+                }
+                Ok(())
+            })
+            .is_err()
+        );
+        assert_eq!(queued, [0, 1, 2, 3]);
+    }
+    #[test]
+    fn production_two_proofs_never_return_output_or_ple_permit_after_any_failure() {
+        use std::cell::RefCell;
+        struct DropProof<'a>(&'a RefCell<Vec<&'static str>>, &'static str);
+        impl Drop for DropProof<'_> {
+            fn drop(&mut self) {
+                self.0.borrow_mut().push(self.1);
+            }
+        }
+        for failure in [None, Some(0), Some(1), Some(2)] {
+            let events = RefCell::new(Vec::new());
+            let result = completed_proof(
+                || {
+                    events.borrow_mut().push("first model owning fence/audit");
+                    if failure == Some(0) {
+                        Err(error())
+                    } else {
+                        Ok(DropProof(&events, "output dropped"))
+                    }
+                },
+                || {
+                    events.borrow_mut().push("PLE owning maps/audit/prepare");
+                    if failure == Some(1) {
+                        Err(error())
+                    } else {
+                        Ok(DropProof(&events, "PLE permit dropped"))
+                    }
+                },
+                || {
+                    events.borrow_mut().push("second model fault/cleanup proof");
+                    if failure == Some(2) {
+                        Err(error())
+                    } else {
+                        Ok(())
+                    }
+                },
+            );
+            assert_eq!(result.is_err(), failure.is_some());
+            match result {
+                Ok((output, permit)) => {
+                    assert_eq!(events.borrow().len(), 3);
+                    events.borrow_mut().push("all family preflight then commit");
+                    drop(permit);
+                    drop(output);
+                }
+                Err(_) => assert!(
+                    !events
+                        .borrow()
+                        .contains(&"all family preflight then commit")
+                ),
+            }
+            let observed = events.borrow();
+            assert_eq!(observed.first(), Some(&"first model owning fence/audit"));
+            if failure == Some(0) {
+                assert_eq!(observed.len(), 1);
+            }
+            if failure == Some(1) {
+                assert_eq!(
+                    &*observed,
+                    &[
+                        "first model owning fence/audit",
+                        "PLE owning maps/audit/prepare",
+                        "output dropped"
+                    ]
+                );
+            }
+            if failure == Some(2) {
+                assert_eq!(
+                    &*observed,
+                    &[
+                        "first model owning fence/audit",
+                        "PLE owning maps/audit/prepare",
+                        "second model fault/cleanup proof",
+                        "PLE permit dropped",
+                        "output dropped"
+                    ]
+                );
+            }
+        }
+    }
+    #[test]
+    fn wholeflight_poison_survives_panic_inside_the_actual_second_proof() {
+        let poison = Arc::new(AtomicBool::new(false));
+        let reached_commit = AtomicBool::new(false);
+        let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _flight = Flight {
+                poison: poison.clone(),
+                accepted: false,
+            };
+            completed_proof(
+                || Ok(()),
+                || Ok(()),
+                || panic!("public injected second-fence panic"),
+            )
+            .unwrap();
+            reached_commit.store(true, Ordering::Release);
+        }));
+        assert!(attempt.is_err());
+        assert!(poison.load(Ordering::Acquire));
+        assert!(!reached_commit.load(Ordering::Acquire));
+    }
+    #[test]
+    fn actual_limit_inventory_rejects_binding_alignment_and_workspace_shortfalls() {
+        let limits = wgpu::Limits {
+            max_compute_workgroups_per_dimension: 16384,
+            max_storage_buffers_per_shader_stage: 11,
+            max_bindings_per_bind_group: 12,
+            max_compute_workgroup_storage_size: 8192,
+            max_storage_buffer_binding_size: 128 * 1024 * 1024,
+            max_buffer_size: 128 * 1024 * 1024,
+            ..Default::default()
+        };
+        for tile in [4, 8] {
+            validate_limits(&limits, tile).unwrap();
+        }
+        assert!(validate_limits(&limits, 16).is_err());
+        for kind in 0..6 {
+            let mut malformed = limits.clone();
+            match kind {
+                0 => malformed.max_compute_workgroups_per_dimension = 4096,
+                1 => malformed.max_storage_buffers_per_shader_stage = 10,
+                2 => malformed.max_bindings_per_bind_group = 11,
+                3 => malformed.max_compute_workgroup_storage_size = 8191,
+                4 => malformed.min_storage_buffer_offset_alignment = 1024,
+                _ => malformed.min_uniform_buffer_offset_alignment = 0,
+            }
+            assert!(validate_limits(&malformed, 8).is_err());
+        }
+    }
+}

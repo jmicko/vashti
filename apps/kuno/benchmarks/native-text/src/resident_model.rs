@@ -29,6 +29,9 @@ pub(crate) mod shared_batch;
 #[path = "resident_ple_batch.rs"]
 pub(crate) mod ple_batch;
 
+#[path = "resident_model_batch.rs"]
+pub(crate) mod batch;
+
 #[path = "resident_batch_io.rs"]
 pub(crate) mod batch_io;
 
@@ -62,6 +65,7 @@ pub struct ResidentModel<'m, 'f> {
     io: PrivateArena,
     public: PublicVectors,
     gr: GrWorkspace,
+    native_batch: Option<batch::Workspace>,
     layers: Vec<Layer<'f>>,
     moe_layers: Vec<crate::resident_moe::ResidentMoe>,
     pending_qsa: Vec<(usize, crate::resident_qsa::PendingQsa)>,
@@ -318,18 +322,37 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         executor: &mut crate::executor::GpuExecutor<'f>,
         public_zero_audit: bool,
     ) -> Result<Self> {
+        Self::construct_native(graph, client, context, executor, public_zero_audit, None)
+    }
+    fn construct_native(
+        graph: BoundGraph<'m, 'f>,
+        client: ComputeClient<WgpuRuntime>,
+        context: usize,
+        executor: &mut crate::executor::GpuExecutor<'f>,
+        public_zero_audit: bool,
+        native: Option<batch::Config>,
+    ) -> Result<Self> {
         let g = graph.geometry();
         if context == 0 || context > g.max_context {
             return Err(Error::LimitExceeded("resident context"));
         }
         executor.check_client(&client)?;
-        let requests = private_requests(graph)?;
+        let mut requests = private_requests(graph)?;
+        let native = native
+            .map(|config| batch::Plan::new(graph, &client, executor, config, &requests))
+            .transpose()?;
+        if let Some(plan) = &native {
+            requests.extend_from_slice(&plan.requests);
+        }
         let private_owned = requests.iter().try_fold(0_u64, |sum, &n| {
             sum.checked_add(n).ok_or(Error::ArithmeticOverflow)
         })?;
         let public_pages = PublicVectors::prewarm_page_bytes(graph)?;
+        if let Some(plan) = &native {
+            plan.check_public(graph, public_pages)?;
+        }
         let admission = executor.begin_resident(graph, private_owned, public_pages)?;
-        if public_zero_audit && !admission.transient_io() {
+        if (public_zero_audit || native.is_some()) && !admission.transient_io() {
             admission.poison();
             return Err(Error::InvalidFormat(
                 "owned zero audit requires transient resident I/O",
@@ -430,17 +453,15 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 shared_down: alloc(2560)?,
                 shared_scale: alloc(1)?,
             };
-            if arena.charged_bytes() as u64 != private_owned {
-                return Err(Error::InvalidFormat("resident private page plan"));
-            }
             let ple_history = PleTokenHistory::new(graph.ple_hash());
             let ple_conv = CausalConvState::new(10240, 4, 3).map_err(u::fault)?;
-            Ok(Self {
+            let mut model = Self {
                 graph,
                 arena,
                 io,
                 public,
                 gr,
+                native_batch: None,
                 layers,
                 moe_layers,
                 pending_qsa: Vec::new(),
@@ -457,7 +478,19 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 admission: admission.clone(),
                 cancel_after_attention: None,
                 phase_ns: BTreeMap::new(),
-            })
+            };
+            if let Some(plan) = native {
+                model.native_batch = Some(batch::Workspace::allocate(
+                    &mut model,
+                    executor,
+                    key,
+                    plan.config,
+                )?);
+            }
+            if model.arena.charged_bytes() as u64 != private_owned {
+                return Err(Error::InvalidFormat("resident private page plan"));
+            }
+            Ok(model)
         })
     }
     pub fn arm_public_mid_token_cancel(&mut self, layer: usize) -> Result<()> {
@@ -508,6 +541,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             poison.store(true, Ordering::Release);
         }
         self.ple_batch_pending = None;
+        self.native_batch = None; // Sticky-only workspace Drop; no admission callback.
         self.admission.poison();
         // Explicit close only: no callback from Drop/constructor guards into
         // admission. Cancelled short QSA can leave up to40MiB of ordered source

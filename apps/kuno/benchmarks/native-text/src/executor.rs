@@ -772,6 +772,40 @@ impl<'a> GpuExecutor<'a> {
         }
         Ok(())
     }
+    /// Keep committed bank ledgers separate from retained native candidate
+    /// plans. Validate actual capacities as well as the public 48-layer bound.
+    pub(crate) fn check_original_bank_metadata(&self, layers: usize, cap: usize) -> Result<()> {
+        let per_bank =
+            crate::bank_slots::BankSlots::bounded_original_metadata_bytes(self.bank_slots, 512)
+                .map_err(|_| Error::InvalidFormat("original bank host plan"))?;
+        if layers != 48
+            || self.banks.len() > layers
+            || per_bank
+                .checked_mul(layers)
+                .ok_or(Error::ArithmeticOverflow)?
+                > cap
+        {
+            return Err(Error::LimitExceeded("original bank host plan"));
+        }
+        let actual = self.banks.values().try_fold(0usize, |sum, bank| {
+            let bytes = bank
+                .slots
+                .original_metadata_bytes()
+                .map_err(|_| Error::ArithmeticOverflow)?;
+            if bank.slots.capacity() != self.bank_slots
+                || bank.slots.experts() != 512
+                || bytes > per_bank
+            {
+                return Err(Error::LimitExceeded("original bank host capacity"));
+            }
+            sum.checked_add(bytes).ok_or(Error::ArithmeticOverflow)
+        })?;
+        if actual > cap {
+            return Err(Error::LimitExceeded("original bank host capacity"));
+        }
+        Ok(())
+    }
+
     fn weight(
         &mut self,
         tensor: TensorView<'_>,

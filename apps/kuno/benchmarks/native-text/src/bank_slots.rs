@@ -177,6 +177,39 @@ impl BankSlots {
         self.state.by_expert.len()
     }
 
+    /// Actual committed state storage, including both Vec capacities and the
+    /// inline owner/state/counters. Public capacity only; no route data escapes.
+    pub(crate) fn original_metadata_bytes(&self) -> Result<usize> {
+        self.state
+            .slots
+            .capacity()
+            .checked_mul(std::mem::size_of::<Option<Resident>>())
+            .and_then(|n| {
+                n.checked_add(
+                    self.state
+                        .by_expert
+                        .capacity()
+                        .checked_mul(std::mem::size_of::<Option<usize>>())?,
+                )
+            })
+            .and_then(|n| n.checked_add(std::mem::size_of::<Self>()))
+            .ok_or(BankError::CounterOverflow)
+    }
+
+    pub(crate) fn bounded_original_metadata_bytes(
+        capacity: usize,
+        experts: usize,
+    ) -> Result<usize> {
+        if !(1..=MAX_CAPACITY).contains(&capacity) || experts < capacity || experts > 512 {
+            return Err(BankError::Capacity);
+        }
+        capacity
+            .checked_mul(std::mem::size_of::<Option<Resident>>())
+            .and_then(|n| n.checked_add(experts.checked_mul(std::mem::size_of::<Option<usize>>())?))
+            .and_then(|n| n.checked_add(std::mem::size_of::<Self>()))
+            .ok_or(BankError::CounterOverflow)
+    }
+
     /// Construct a plan without mutating committed residency or recency.
     pub fn plan(&mut self, selected: &[usize]) -> Result<Plan> {
         if selected.len() > self.capacity() {
@@ -549,6 +582,25 @@ impl Drop for StagedSlots {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn original_state_bound_includes_actual_capacity_and_inline_counters() {
+        let mut bank = BankSlots::new(96, 512).unwrap();
+        let bound = BankSlots::bounded_original_metadata_bytes(96, 512).unwrap();
+        assert_eq!(bank.original_metadata_bytes().unwrap(), bound);
+        assert!(48 * bound <= 512 * 1024);
+        #[cfg(target_pointer_width = "64")]
+        assert_eq!(48 * bound, 507_264);
+        assert_eq!(
+            bound,
+            std::mem::size_of::<BankSlots>()
+                + 96 * std::mem::size_of::<Option<Resident>>()
+                + 512 * std::mem::size_of::<Option<usize>>()
+        );
+        bank.state.slots.reserve(96);
+        assert!(bank.original_metadata_bytes().unwrap() > bound);
+        assert!(BankSlots::bounded_original_metadata_bytes(97, 512).is_err());
+    }
 
     fn commit(bank: &mut BankSlots, experts: &[usize]) -> (Vec<usize>, Vec<(usize, usize)>) {
         let plan = bank.plan(experts).unwrap();

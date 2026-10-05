@@ -764,6 +764,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let fixture: serde_json::Value =
                 serde_json::from_str(include_str!("../../text/qwen38-baseline.json"))?;
             let resident_enabled = mode.starts_with("resident-");
+            let native_max8 = std::env::var("KUNO_LAB_NATIVE_MAX8").as_deref() == Ok("1");
+            if native_max8 && (!resident_enabled || transient_context.is_none()) {
+                return Err(
+                    "native MAX8 requires fixed resident fixture and owned transient I/O".into(),
+                );
+            }
+            let native_count = if native_max8 {
+                let count = std::env::var("KUNO_LAB_NATIVE_BATCH_COUNT")
+                    .unwrap_or_else(|_| "8".to_owned())
+                    .parse::<usize>()?;
+                if !(1..=8).contains(&count) {
+                    return Err("invalid native MAX8 public fixture count".into());
+                }
+                count
+            } else {
+                8
+            };
+            let native_config = if native_max8 {
+                Some(resident_model::batch::Config::new(
+                    &client,
+                    &grouped_limits,
+                    8,
+                )?)
+            } else {
+                None
+            };
             let prefill_last_head =
                 std::env::var("KUNO_LAB_PREFILL_LAST_HEAD").as_deref() == Ok("1");
             if prefill_last_head && !resident_enabled {
@@ -808,15 +834,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             let cancel = AtomicBool::new(false);
             let mut resident = if resident_enabled {
-                Some(
-                    resident_model::ResidentModel::new_with_public_owned_zero_audit(
-                        model.bound_graph(),
-                        client.clone(),
-                        ids.len() + limit,
-                        &mut executor,
-                        public_owned_zero_audit,
-                    )?,
-                )
+                Some(resident_model::ResidentModel::new_for_lab_fixture(
+                    model.bound_graph(),
+                    client.clone(),
+                    ids.len() + limit,
+                    &mut executor,
+                    public_owned_zero_audit,
+                    native_config.clone(),
+                )?)
             } else {
                 None
             };
@@ -831,24 +856,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
             let start = Instant::now();
             let mut logits = Vec::new();
-            for (n, token) in ids.iter().enumerate() {
-                logits.zeroize();
-                logits = if let Some(r) = &mut resident {
-                    if prefill_last_head && n + 1 < ids.len() {
-                        r.advance_without_logits(&mut executor, *token, &cancel)?;
-                        Vec::new()
+            if native_max8 {
+                let r = resident.as_mut().ok_or("native fixture owner missing")?;
+                let chunks = ids.len().div_ceil(native_count);
+                for (n, tokens) in ids.chunks(native_count).enumerate() {
+                    logits.zeroize();
+                    let purpose = if n + 1 == chunks {
+                        resident_model::batch::Purpose::LastLogits
                     } else {
-                        let mut output = r.step(&mut executor, *token, &cancel)?;
-                        std::mem::take(&mut *output)
-                    }
-                } else {
-                    model.step(&mut executor, &mut sequence, *token, &cancel, |_| {})?
-                };
-                println!(
-                    "gpu_prefill_tokens={} elapsed_ms={}",
-                    n + 1,
-                    start.elapsed().as_millis()
-                );
+                        resident_model::batch::Purpose::Advance
+                    };
+                    let mut output = r.prefill_chunk(&mut executor, tokens, purpose, &cancel)?;
+                    logits = std::mem::take(&mut *output);
+                }
+            } else {
+                for (n, token) in ids.iter().enumerate() {
+                    logits.zeroize();
+                    logits = if let Some(r) = &mut resident {
+                        if prefill_last_head && n + 1 < ids.len() {
+                            r.advance_without_logits(&mut executor, *token, &cancel)?;
+                            Vec::new()
+                        } else {
+                            let mut output = r.step(&mut executor, *token, &cancel)?;
+                            std::mem::take(&mut *output)
+                        }
+                    } else {
+                        model.step(&mut executor, &mut sequence, *token, &cancel, |_| {})?
+                    };
+                    println!(
+                        "gpu_prefill_tokens={} elapsed_ms={}",
+                        n + 1,
+                        start.elapsed().as_millis()
+                    );
+                }
             }
             let prefill = start.elapsed();
             let pre_stats = (
@@ -948,6 +988,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 receipt["resident_main_admitted_upper_bytes"] =
                     serde_json::json!(executor.admission_upper_bytes()?);
                 receipt["prefill_last_head"] = serde_json::json!(prefill_last_head);
+                receipt["native_max8"] = serde_json::json!(native_max8);
+                receipt["native_public_chunk_count"] = serde_json::json!(if native_max8 {
+                    Some(native_count)
+                } else {
+                    None
+                });
+                receipt["native_public_chunk_partition"] = serde_json::json!(if native_max8 {
+                    Some(
+                        ids.chunks(native_count)
+                            .map(|chunk| chunk.len())
+                            .collect::<Vec<_>>(),
+                    )
+                } else {
+                    None
+                });
+                receipt["native_public_max_batch"] = serde_json::json!(8);
+                receipt["native_projection_tile"] = serde_json::json!(8);
                 receipt["resident_transient_io"] = serde_json::json!(transient_resident);
                 receipt["resident_owned_zero_audit_enabled"] =
                     serde_json::json!(public_owned_zero_audit);
@@ -1019,19 +1076,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if let Some(retired) = &transient_context {
                     executor.enable_transient_resident(retired.clone())?;
                 }
-                let mut fresh = resident_model::ResidentModel::new_with_public_owned_zero_audit(
+                let mut fresh = resident_model::ResidentModel::new_for_lab_fixture(
                     model.bound_graph(),
                     client.clone(),
                     ids.len() + limit,
                     &mut executor,
                     public_owned_zero_audit,
+                    native_config.clone(),
                 )?;
                 let mut fresh_logits = zeroize::Zeroizing::new(Vec::new());
-                for (n, token) in ids.iter().enumerate() {
-                    if prefill_last_head && n + 1 < ids.len() {
-                        fresh.advance_without_logits(&mut executor, *token, &cancel)?;
-                    } else {
-                        fresh_logits = fresh.step(&mut executor, *token, &cancel)?;
+                if native_max8 {
+                    let chunks = ids.len().div_ceil(native_count);
+                    for (n, tokens) in ids.chunks(native_count).enumerate() {
+                        let purpose = if n + 1 == chunks {
+                            resident_model::batch::Purpose::LastLogits
+                        } else {
+                            resident_model::batch::Purpose::Advance
+                        };
+                        fresh_logits =
+                            fresh.prefill_chunk(&mut executor, tokens, purpose, &cancel)?;
+                    }
+                } else {
+                    for (n, token) in ids.iter().enumerate() {
+                        if prefill_last_head && n + 1 < ids.len() {
+                            fresh.advance_without_logits(&mut executor, *token, &cancel)?;
+                        } else {
+                            fresh_logits = fresh.step(&mut executor, *token, &cancel)?;
+                        }
                     }
                 }
                 if greedy(&fresh_logits)? != generated[0] {
@@ -1053,16 +1124,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if let Some(retired) = &transient_context {
                         executor.enable_transient_resident(retired.clone())?;
                     }
-                    let mut partial =
-                        resident_model::ResidentModel::new_with_public_owned_zero_audit(
-                            model.bound_graph(),
-                            client.clone(),
-                            ids.len() + limit,
-                            &mut executor,
-                            public_owned_zero_audit,
-                        )?;
+                    let mut partial = resident_model::ResidentModel::new_for_lab_fixture(
+                        model.bound_graph(),
+                        client.clone(),
+                        ids.len() + limit,
+                        &mut executor,
+                        public_owned_zero_audit,
+                        native_config.clone(),
+                    )?;
                     partial.arm_public_mid_token_cancel(layer)?;
-                    let failed = if prefill_last_head && ids.len() > 1 {
+                    let failed = if native_max8 {
+                        partial
+                            .prefill_chunk(
+                                &mut executor,
+                                &ids[..ids.len().min(native_count)],
+                                resident_model::batch::Purpose::LastLogits,
+                                &cancel,
+                            )
+                            .is_err()
+                    } else if prefill_last_head && ids.len() > 1 {
                         partial
                             .advance_without_logits(&mut executor, ids[0], &cancel)
                             .is_err()
