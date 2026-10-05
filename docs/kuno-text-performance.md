@@ -331,3 +331,19 @@ accuracy is being replaced by exact public Rust-generated tables; this is not a
 GPU crash or a reason to loosen acceptance. Long-context whole-model acceptance
 is still required on both cards. Host/offline checks currently pass89 tests and
 all-target Clippy with warnings denied; core remains74 tests.
+
+### Rotary accuracy correction verified
+
+The NVIDIA large-angle failure is resolved by1MiB of public immutable sin/cos
+constants, computed once in Rust for all4096 positions/all32 pairs using the
+core's exact f32 angle and `sin_cos`. Each bound public model cache uploads two
+bounded arrays once; positions remain runtime data, never shader constants.
+Checked table bounds reject positions outside the supported text context.
+
+Both cards pass the same six QSA contexts with unchanged tolerances. At2052,
+maximum normalization error is9.54e-7, score error≤3.82e-6, output error≤7.46e-9.
+Exact selection, candidate append and immutable committed prefix checks pass.
+Receipts `rust-qsa-rust-tables-{intel,nvidia}-20261005.json` record binary
+`3e9653dccb4c3c812f7f47d9b38ed95486e3c6dabe0d46a333050140ae7d843a`.
+Ninety laboratory host/offline tests and strict all-target Clippy pass. This is
+operator acceptance, not long-context whole-model or private-worker acceptance.

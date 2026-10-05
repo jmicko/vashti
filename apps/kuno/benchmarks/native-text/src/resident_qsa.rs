@@ -74,12 +74,12 @@ fn cancelled(cancel: &AtomicBool) -> Result<()> {
 }
 
 /// Immutable PUBLIC model vectors; exact already-converted gamma and f32
-/// public frequency constants. Public cache API never receives private data.
+/// public Rust-generated sin/cos tables. Public cache API never receives private data.
 pub struct PublicQsaParameters {
     binding: GraphBindingId,
     layer: usize,
     identity: u64,
-    vectors: [Handle; 5], // qgamma256,kgamma256,iqgamma128,ikgamma128,freq32
+    vectors: [Handle; 6], // qgamma256,kgamma256,iqgamma128,ikgamma128,sin128K,cos128K
 }
 impl PublicQsaParameters {
     pub fn prepare(
@@ -105,21 +105,33 @@ impl PublicQsaParameters {
         let identity = identity()?;
         let mut vectors = Vec::new();
         vectors
-            .try_reserve_exact(5)
+            .try_reserve_exact(6)
             .map_err(|_| Error::LimitExceeded("public QSA metadata"))?;
         for (name, values) in names.iter().zip(values) {
             vectors.push(cache.upload_public_vector(binding, name, values)?);
         }
-        let frequency = qsa::rope_frequencies();
+        let (sin_table, cos_table) = qsa::rope_tables();
         vectors.push(cache.upload_public_vector(
             binding,
-            "kuno_public_qsa_frequency32_theta1e7",
-            &frequency,
+            "kuno_public_qsa_rope_sin32_theta1e7_positions4096",
+            sin_table,
         )?);
-        let vectors: [Handle; 5] = vectors
+        vectors.push(cache.upload_public_vector(
+            binding,
+            "kuno_public_qsa_rope_cos32_theta1e7_positions4096",
+            cos_table,
+        )?);
+        let vectors: [Handle; 6] = vectors
             .try_into()
             .map_err(|_| fault("public QSA vector count"))?;
-        for (h, n) in vectors.iter().zip([qsa::HD, qsa::HD, qsa::ID, qsa::ID, 32]) {
+        for (h, n) in vectors.iter().zip([
+            qsa::HD,
+            qsa::HD,
+            qsa::ID,
+            qsa::ID,
+            qsa::ROPE_TABLE_WORDS,
+            qsa::ROPE_TABLE_WORDS,
+        ]) {
             bounded_view(h, 0, n)?;
         }
         Ok(Self {
@@ -783,7 +795,8 @@ impl<'f> ResidentQsa<'f> {
         qsa::validate_norm_lengths(
             groups * width,
             width,
-            32,
+            qsa::ROPE_TABLE_WORDS,
+            qsa::ROPE_TABLE_WORDS,
             self.layout.max_context,
             groups * width,
             status.words,
@@ -801,7 +814,14 @@ impl<'f> ResidentQsa<'f> {
             CubeDim::new_1d(64),
             input,
             raw_arg(bounded_view(&public.vectors[gamma], 0, width)?, width),
-            raw_arg(bounded_view(&public.vectors[4], 0, 32)?, 32),
+            raw_arg(
+                bounded_view(&public.vectors[4], 0, qsa::ROPE_TABLE_WORDS)?,
+                qsa::ROPE_TABLE_WORDS,
+            ),
+            raw_arg(
+                bounded_view(&public.vectors[5], 0, qsa::ROPE_TABLE_WORDS)?,
+                qsa::ROPE_TABLE_WORDS,
+            ),
             arg(arena, self.ids[POSITIONS], self.layout.max_context)?,
             arg(arena, output, groups * width)?,
             arg(arena, status.buffer, status.words)?,
@@ -1021,7 +1041,7 @@ fn validate_regions(
     let client = arena.client().map_err(arena_fault)?;
     let mut handles = Vec::new();
     handles
-        .try_reserve_exact(N + 5)
+        .try_reserve_exact(N + 6)
         .map_err(|_| Error::LimitExceeded("QSA region metadata"))?;
     for &id in ids {
         handles.push(arena.handle(id).map_err(arena_fault)?.clone());
@@ -1323,9 +1343,9 @@ pub fn public_parity_probe(client: &ComputeClient<WgpuRuntime>) -> Result<Vec<Pu
         for g in &f.gamma {
             gamma_ids.push(arena.upload_f32(g).map_err(arena_fault)?);
         }
-        let frequency = arena
-            .upload_f32(&qsa::rope_frequencies())
-            .map_err(arena_fault)?;
+        let (public_sin, public_cos) = qsa::rope_tables();
+        let sin_table = arena.upload_f32(public_sin).map_err(arena_fault)?;
+        let cos_table = arena.upload_f32(public_cos).map_err(arena_fault)?;
         let counts = [
             qsa::QUERY * 2,
             qsa::QH,
@@ -1372,7 +1392,8 @@ pub fn public_parity_probe(client: &ComputeClient<WgpuRuntime>) -> Result<Vec<Pu
                 CubeDim::new_1d(64),
                 input,
                 arg(&arena, gamma_ids[g], width)?,
-                arg(&arena, frequency, 32)?,
+                arg(&arena, sin_table, qsa::ROPE_TABLE_WORDS)?,
+                arg(&arena, cos_table, qsa::ROPE_TABLE_WORDS)?,
                 arg(&arena, ids[POSITIONS], visible)?,
                 arg(&arena, target, groups * width)?,
                 arg(&arena, ids[STATUS + s], groups)?,

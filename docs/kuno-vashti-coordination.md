@@ -1069,3 +1069,9 @@ sanitization before real private requests. No native route/default/catalog,
 public contract, deployment or Vashti code changes: **no Vashti integration is
 required yet**. This remains development toward the active performance goal,
 not a production/release or complete privacy receipt.
+
+Connected resident laboratory checkpoint is committed as `2eec122`; subsequent
+public rotary tables pass both-card QSA contexts1/4/5/2048/2049/2052 without
+changing acceptance tolerance. See the updated performance receipt. The earlier
+NVIDIA numerical failure is resolved; it was not a driver/GPU crash. This fix
+changes no public contract or Vashti consumer and does not authorize deployment.

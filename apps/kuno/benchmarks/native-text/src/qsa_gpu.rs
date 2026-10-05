@@ -11,8 +11,9 @@
 //! Cache is token-major [K512,V512,RAW indexer key128]; the current token is a
 //! distinct 1152-float candidate. No full-history copy is needed. Position and
 //! visible/selected counts are runtime parameters. Static gamma is supplied
-//! already converted/folded; do not add one or requantize it. Frequencies are
-//! public f32 constants computed on the host exactly as the core does.
+//! already converted/folded; do not add one or requantize it. Public sin/cos
+//! tables cover all4096positions/32pairs and use the core's Rust f32 angle and
+//! sin_cos; shader trig approximations must not change large-angle RoPE.
 //!
 //! Dispatch 64 lanes. Split/pack/output use ceil(elements/64) cubes; RMS/pool/
 //! score use one cube/group; logits use 24*selected cubes; softmax uses24 cubes.
@@ -21,7 +22,7 @@
 //! Full budget is 512 COMPLETE blocks plus ALL 0..3 tail tokens (max2051).
 //!
 //! Core uses f64 reductions and rotation multiply/add, with f32 stage casts.
-//! Here f32 tree reductions, sin/cos/exp and contraction/subnormal behavior
+//! Here f32 tree reductions, exp and contraction/subnormal behavior
 //! can differ. Near-cutoff scores may select different blocks: numerical and
 //! full-graph device acceptance is required, not established by these tests.
 //! Intermediate overflow fails even when a f64 oracle could cancel it.
@@ -42,7 +43,9 @@ pub const TOKEN: usize = KV * 2 + ID;
 pub const BLOCK: usize = 4;
 pub const BUDGET: usize = 2048;
 pub const MAX_CONTEXT: usize = 4096;
-pub const MAX_POSITION: u32 = 1 << 24;
+pub const MAX_POSITION: u32 = (MAX_CONTEXT - 1) as u32;
+pub const ROPE_PAIRS: usize = 32;
+pub const ROPE_TABLE_WORDS: usize = MAX_CONTEXT * ROPE_PAIRS;
 pub const EPSILON: f32 = 1e-6;
 pub const THETA: f32 = 10_000_000.0;
 
@@ -82,6 +85,34 @@ impl QsaLayout {
 pub fn rope_frequencies() -> [f32; 32] {
     std::array::from_fn(|i| THETA.powf(-(i as f32) / 32.0))
 }
+struct RopeTables {
+    sin: Box<[f32]>,
+    cos: Box<[f32]>,
+}
+/// One immutable PUBLIC table pair shared by every layer/request. GPU upload
+/// remains once per bound public cache/context under fixed sin/cos names.
+/// Separate arrays fit the cache's existing131072-float upload bound each.
+pub fn rope_tables() -> (&'static [f32], &'static [f32]) {
+    static TABLES: std::sync::OnceLock<RopeTables> = std::sync::OnceLock::new();
+    let table = TABLES.get_or_init(|| {
+        let frequencies = rope_frequencies();
+        let mut sin = Vec::with_capacity(ROPE_TABLE_WORDS);
+        let mut cos = Vec::with_capacity(ROPE_TABLE_WORDS);
+        for position in 0..MAX_CONTEXT {
+            for frequency in frequencies {
+                let angle = position as f32 * frequency;
+                let (s, c) = angle.sin_cos();
+                sin.push(s);
+                cos.push(c);
+            }
+        }
+        RopeTables {
+            sin: sin.into_boxed_slice(),
+            cos: cos.into_boxed_slice(),
+        }
+    });
+    (&table.sin, &table.cos)
+}
 pub fn validate_positions(layout: QsaLayout, positions: &[u32]) -> Result<(), &'static str> {
     layout.validate()?;
     if positions.len() != layout.visible
@@ -109,7 +140,8 @@ pub fn validate_cache_lengths(
 pub fn validate_norm_lengths(
     input: usize,
     gamma: usize,
-    freq: usize,
+    sin_table: usize,
+    cos_table: usize,
     positions: usize,
     output: usize,
     status: usize,
@@ -125,7 +157,8 @@ pub fn validate_norm_lengths(
         || input != groups * width
         || output != input
         || status != groups
-        || freq != 32
+        || sin_table != ROPE_TABLE_WORDS
+        || cos_table != ROPE_TABLE_WORDS
         || !(gamma == width || gamma == input)
         || position > MAX_POSITION
         || !epsilon.is_finite()
@@ -368,7 +401,8 @@ pub fn pack_token(
 pub fn rms_rope(
     input: &Array<f32>,
     gamma: &Array<f32>,
-    frequencies: &Array<f32>,
+    sin_table: &Array<f32>,
+    cos_table: &Array<f32>,
     positions: &Array<u32>,
     output: &mut Array<f32>,
     status: &mut Array<u32>,
@@ -455,8 +489,10 @@ pub fn rms_rope(
                 gi = d;
             }
             let mut y = ((input[i] / scale) / denom) * gamma[gi];
-            let mut frequency_good = true;
-            if d < 64 {
+            let mut table_good = true;
+            // Guard the runtime table index even after an invalid position
+            // poisoned flags: unchecked launches must not load past a table.
+            if d < 64 && p <= MAX_POSITION {
                 let mut pair = d + 32;
                 let mut frequency_index = d;
                 if d >= 32 {
@@ -468,19 +504,18 @@ pub fn rms_rope(
                     gpair = pair;
                 }
                 let mate = ((input[group * width + pair] / scale) / denom) * gamma[gpair];
-                let f = frequencies[frequency_index];
-                let angle = p as f32 * f;
-                let c = angle.cos();
-                let s = angle.sin();
+                let table_index = p as usize * ROPE_PAIRS + frequency_index;
+                let s = sin_table[table_index];
+                let c = cos_table[table_index];
                 if d < 32 {
                     y = y * c - mate * s;
                 } else {
                     y = y * c + mate * s;
                 }
-                frequency_good = finite(f) && f > 0.0 && finite(angle);
+                table_good = finite(s) && finite(c);
             }
             output[i] = 0.0;
-            if flags[0] == 1 && finite(denom) && denom > 0.0 && frequency_good && finite(y) {
+            if flags[0] == 1 && finite(denom) && denom > 0.0 && table_good && finite(y) {
                 output[i] = y;
             } else {
                 out_flag = 0;
@@ -861,7 +896,7 @@ mod tests {
         tree(lanes)
     }
     fn norm_rope(input: &[f32], gamma: &[f32], width: usize, positions: &[u32]) -> Vec<f32> {
-        let frequency = rope_frequencies();
+        let (sin_table, cos_table) = rope_tables();
         let mut out = vec![0.0; input.len()];
         for (h, head) in input.chunks_exact(width).enumerate() {
             let scale = head.iter().fold(1.0_f32, |s, x| s.max(x.abs()));
@@ -891,8 +926,9 @@ mod tests {
                     } else {
                         (d - 32, d - 32)
                     };
-                    let angle = positions[h] as f32 * frequency[index];
-                    let (s, c) = angle.sin_cos();
+                    let table_index = positions[h] as usize * ROPE_PAIRS + index;
+                    let s = sin_table[table_index];
+                    let c = cos_table[table_index];
                     y = if d < 32 {
                         y * c - normalized[pair] * s
                     } else {
@@ -1222,13 +1258,54 @@ mod tests {
         }
         validate_cache_lengths(l, l.old_elements, TOKEN).unwrap();
         assert!(validate_cache_lengths(l, l.old_elements - 1, TOKEN).is_err());
-        validate_norm_lengths(QUERY, HD, 32, 0, QUERY, QH, QH, HD, false, 4095, EPSILON).unwrap();
+        validate_norm_lengths(
+            QUERY,
+            HD,
+            ROPE_TABLE_WORDS,
+            ROPE_TABLE_WORDS,
+            0,
+            QUERY,
+            QH,
+            QH,
+            HD,
+            false,
+            4095,
+            EPSILON,
+        )
+        .unwrap();
         assert!(
-            validate_norm_lengths(QUERY, HD - 1, 32, 0, QUERY, QH, QH, HD, false, 0, EPSILON)
-                .is_err()
+            validate_norm_lengths(
+                QUERY,
+                HD - 1,
+                ROPE_TABLE_WORDS,
+                ROPE_TABLE_WORDS,
+                0,
+                QUERY,
+                QH,
+                QH,
+                HD,
+                false,
+                0,
+                EPSILON
+            )
+            .is_err()
         );
         assert!(
-            validate_norm_lengths(ID * 2, ID, 32, 4, ID * 2, 2, 2, ID, true, 0, EPSILON).is_err()
+            validate_norm_lengths(
+                ID * 2,
+                ID,
+                ROPE_TABLE_WORDS,
+                ROPE_TABLE_WORDS,
+                4,
+                ID * 2,
+                2,
+                2,
+                ID,
+                true,
+                0,
+                EPSILON
+            )
+            .is_err()
         );
         for ids in [[0, 1, 1, 3, 4], [0, 1, 2, 4, 3], [0, 1, 2, 3, 5]] {
             assert!(validate_selected(l, &ids).is_err());
@@ -1282,6 +1359,75 @@ mod tests {
         output[lane] = flags[lane];
     }
     #[test]
+    fn public_tables_are_bit_exact_core_angles_all_pairs_and_reused() {
+        let (sin, cos) = rope_tables();
+        let (same_sin, same_cos) = rope_tables();
+        assert!(std::ptr::eq(sin, same_sin) && std::ptr::eq(cos, same_cos));
+        assert_eq!(sin.len(), 131072);
+        assert_eq!(cos.len(), 131072);
+        for position in 0..MAX_CONTEXT {
+            for pair in 0..ROPE_PAIRS {
+                // Independent direct core formula, including its f32 angle.
+                let angle = position as f32 * THETA.powf(-(pair as f32) / 32.0);
+                let (s, c) = angle.sin_cos();
+                let i = position * ROPE_PAIRS + pair;
+                assert_eq!(sin[i].to_bits(), s.to_bits());
+                assert_eq!(cos[i].to_bits(), c.to_bits());
+            }
+        }
+        assert!(
+            validate_norm_lengths(
+                QUERY,
+                HD,
+                ROPE_TABLE_WORDS,
+                ROPE_TABLE_WORDS,
+                0,
+                QUERY,
+                QH,
+                QH,
+                HD,
+                false,
+                4096,
+                EPSILON
+            )
+            .is_err()
+        );
+        assert!(
+            validate_norm_lengths(
+                QUERY,
+                HD,
+                ROPE_TABLE_WORDS - 1,
+                ROPE_TABLE_WORDS,
+                0,
+                QUERY,
+                QH,
+                QH,
+                HD,
+                false,
+                0,
+                EPSILON
+            )
+            .is_err()
+        );
+        assert!(
+            validate_norm_lengths(
+                QUERY,
+                HD,
+                ROPE_TABLE_WORDS,
+                ROPE_TABLE_WORDS - 1,
+                0,
+                QUERY,
+                QH,
+                QH,
+                HD,
+                false,
+                0,
+                EPSILON
+            )
+            .is_err()
+        );
+    }
+    #[test]
     fn all_operators_generate_checked_unchecked_wgsl_and_success_branches() {
         use cubecl::compute::KernelBuilder;
         use cubecl::ir::{ElemType, FloatKind, StorageType, Type, UIntKind};
@@ -1316,7 +1462,8 @@ mod tests {
                     2..=5 => {
                         let x = b.input_array(Type::new(float)).into();
                         let g = b.input_array(Type::new(float)).into();
-                        let f = b.input_array(Type::new(float)).into();
+                        let sin = b.input_array(Type::new(float)).into();
+                        let cos = b.input_array(Type::new(float)).into();
                         let p = b.input_array(Type::new(uint)).into();
                         let out = b.output_array(Type::new(float)).into();
                         let s = b.output_array(Type::new(uint)).into();
@@ -1330,7 +1477,8 @@ mod tests {
                             &mut b.scope,
                             x,
                             g,
-                            f,
+                            sin,
+                            cos,
                             p,
                             out,
                             s,
@@ -1461,6 +1609,14 @@ mod tests {
                     );
                 }
                 if (2..=5).contains(&variant) {
+                    assert!(
+                        !wgsl.contains("sin(") && !wgsl.contains("cos("),
+                        "RoPE must only index public tables"
+                    );
+                    assert!(
+                        wgsl.contains("u32(4095)"),
+                        "runtime position must be bounded before table loads"
+                    );
                     assert!(
                         wgsl.contains("info.scalars_u32"),
                         "positions/groups must remain runtime"

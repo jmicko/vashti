@@ -41,7 +41,8 @@ whole-token resident owner, including exact QSA candidate/cache ownership.
 Projected PLE retains the Rust host oracle. Both cards reproduce the four-token
 reference; B70 also matches the eight-token chat. `resident-qsa-probe` checks
 attention through the first actual sparse-selection boundary at context2052.
-Long-position NVIDIA arithmetic is still under correction at this checkpoint. This remains
+Both cards pass all six contexts after replacing shader trigonometry with
+1MiB of public Rust-generated rotary constants; oracle tolerances are unchanged. This remains
 an isolated public-fixture laboratory, outside the installed private worker.
 
 `KUNO_PUBLIC_RECEIPT` optionally writes a new numeric/public-ID receipt, refusing
