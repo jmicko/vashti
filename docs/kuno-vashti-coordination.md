@@ -1427,7 +1427,14 @@ locked offline release, formatting/diff and focused peer source review.
 `rust-native-moe-router-source-20261005.json` pins the current350/86 checkpoint
 and frozen binary `27c25fea8741017a090052118e95da102a062a159451ba4c919bc2af502b6950`.
 The approved complete constructor/chunk plan is linked above. Its actual
-coordinator and owning I/O helpers are being developed in isolated snapshots.
+coordinator is being developed in an isolated snapshot. Owning embedding/router/
+final-output/fault helpers are committed as `99f6e73`; composed root acceptance
+passes361 native tests, strict all-target Clippy, locked offline release,
+formatting/diff and focused peer review. Core86 tests are unchanged. The exact
+helper source/file/runtime/host bounds are recorded in
+`rust-native-batch-io-source-20261005.json`. Helpers add no MAIN pages and still
+have no selected whole-model caller; their unselected frozen executable has the
+same `27c25fea…` identity. All new native adapter/device acceptance remains pending.
 
 Separately, the original scalar model with optional finite-fault fusion passes
 fixed-public four-output inference and cancellation/poison/fresh-owner cleanup
