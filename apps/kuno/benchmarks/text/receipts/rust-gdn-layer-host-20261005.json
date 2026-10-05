@@ -1,0 +1,102 @@
+{
+  "scope": "fixed-public original layer0 candidate-only GDN composition, GPU-free source/host handoff",
+  "source_base_root_head": "1064a62c0c1a85ed213982c1c4e7803ffc3c9b73",
+  "isolated_baseline": "40f21cfe51fc0b3e18d44e0e25d22c085e51739e",
+  "patch_sha256": "977f156c500400c3a8a508d4a65ec2934aca5c4ec2a62944e3ced64a1d87e3b6",
+  "checks": {
+    "offline_host_tests": 243,
+    "failures": 0,
+    "new_wrapper_probe_tests": 12,
+    "actual_shape_projection_wgsl_checked_unchecked": 10,
+    "strict_clippy_D_warnings": true,
+    "release_check": true,
+    "fmt": true,
+    "diff_check": true,
+    "root_git_apply_check": true
+  },
+  "gpu_or_service_calls": false,
+  "model_payload_reads": false,
+  "full_model_graph_accepted": false,
+  "timing_or_default_selected": false,
+  "source_sha256": {
+    "src/gdn_layer_batch.rs": "da5cd11630c21c5e35894f19a172ff6788e12061099a58dcfba273641c29796f",
+    "src/gdn_layer_batch_probe.rs": "0640dc885aa935974d5783c237228005ccdfbd8a31dda1271759948c1413a89e",
+    "src/main.rs": "2a15c441cd31eb8d43f0803cd57e1ff1fa961e0838aa98c2d5e97bbbe5e31181",
+    "src/resident_gdn.rs": "53fbdfd55bc435d2df6e3e4453ec005f4bb3dec6399db436cbdb290b0f717ac1",
+    "src/gdn_batch_pointwise.rs": "bb474ce615124dbb898fc8d7126b5015e116d120ee5eeb2110fd9e2aebd0fe4c",
+    "src/gdn_chunk.rs": "bcb59c2b269e0c6a45a2883d02670fe44f9b6c531f3db7bd316381c7ca3a1d70",
+    "src/gdn_gpu.rs": "eeb55157e94f5c6494ce8931c1b5384f3f88a8ecf25d69d7d777488c80a84475",
+    "src/gdn_pointwise.rs": "4d37964f60516158e06a007d6fe5a422f527b98c087fcb90a0a4f13491742c83",
+    "src/quant_matmul.rs": "4d8c99e19262270535d66d471df55ebd6604183e33a5a45c1f487d19753cedd8",
+    "src/quant_matvec.rs": "7daef8991cc9d9b6825bec697d055ab3c81cad08ce501810733bd3096af9ea0a",
+    "src/private_arena.rs": "ac351625acfab1e44a0e694c5a354037aedd61ab2ff6a3d413d02d14dbd92985",
+    "vendor/cubecl-wgpu/src/compute/stream.rs": "af8662e362314677d5d3405322f430b974d2882ea34b69018f0407a05a592d66",
+    "vendor/cubecl-wgpu/src/compute/transient_io.rs": "7ca3045e31a7ac5dcf14e3f6f6cfb479f90cc7cb39323b0264ea2caed5a05876",
+    "crates/kuno-text/src/ops.rs": "b9d9bdb43417dcdd67c63349ad36ca8a92ed46801c9fe5ca23ba11fd02f9c0bd",
+    "crates/kuno-text/src/model.rs": "16d0006d717631806206645d3a04cc9bb34d6cba869e0af5a1e4364ad2e01c6f",
+    "crates/kuno-text/src/quant.rs": "57c26b8165b408225fb9e19c3c5b099f094de4bc8c1103fa3ece08fc8cb64ae7"
+  },
+  "runtime_rebase_sha256_file": "current-baseline-sha256.json",
+  "operator_order": [
+    "original packed QKV",
+    "original packed Z",
+    "original packed alpha",
+    "original packed beta",
+    "raw causal conv4 + SiLU",
+    "Q/K L2 + Q/sqrt128 + V split",
+    "stored negative A/dt softplus controls + beta sigmoid",
+    "sequential recurrence chunk",
+    "shared gamma128 RMS + sigmoid closing gate",
+    "original packed output"
+  ],
+  "geometry": {
+    "max_batch": 8,
+    "counts": [
+      1,
+      3,
+      5,
+      8
+    ],
+    "width": 2560,
+    "head_dim": 128,
+    "key_heads": 16,
+    "value_heads": 48,
+    "start_position": 3,
+    "context_bound": 4096
+  },
+  "budget": {
+    "private_main_bytes": 24117248,
+    "private_main_cap": 33554432,
+    "runtime_io_upper_bound": 17235968,
+    "runtime_io_cap": 67108864,
+    "guarded_host_scratch_upper_bound": 88053848,
+    "host_cap": 134217728,
+    "original_public_full_page_bytes": 67698688,
+    "public_page_cap": 134217728,
+    "transient_public_decoded_oracle_bytes": 231669760,
+    "decoded_public_cap": 268435456
+  },
+  "failure_cases": [
+    "late token7 input NaN",
+    "cancel after completed owning read",
+    "stale arena epoch after completed owning read",
+    "equal-extent physical input/output alias"
+  ],
+  "remaining": [
+    "both physical GPU numeric/cleanup acceptance",
+    "full-model composition",
+    "compiler-idle performance acceptance",
+    "production private-worker ownership/register-spill/driver limits"
+  ],
+  "peer_source_review": {
+    "transient_io_review": "No material ownership/acceptance blocker; audit malformed-count retirement hardened and behavior tested. No peer builds/device/actions.",
+    "resident_moe": "No material blocker in wrapper order/math/bindings or scalar comparator. Batch/current/reference owners remain separate; only guarded scalar old-reference images advance; candidate acceptance/epoch/status/cancel gates and cleanup reviewed. No peer builds/device/actions."
+  },
+  "root_acceptance": {
+    "source_base": "46be6b4 plus default-off fused matrix-fault candidate",
+    "native_host_tests": 245,
+    "strict_all_target_clippy": true,
+    "fmt": true,
+    "gpu_acceptance": "Pending protected device window; no GPU execution claimed"
+  }
+}

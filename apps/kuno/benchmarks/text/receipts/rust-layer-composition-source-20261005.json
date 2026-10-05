@@ -1,0 +1,51 @@
+{
+  "scope": "Backend-only source checkpoint; GPU acceptance and production routing remain pending",
+  "source_base": "46be6b4",
+  "checks": {
+    "native_host_tests": 247,
+    "failures": 0,
+    "strict_all_target_clippy": true,
+    "fmt": true
+  },
+  "source_sha256": {
+    "apps/kuno/benchmarks/native-text/src/cooperative_matvec.rs": "10a07c33834f6ef4d3b11e08d9c153235e35c1c9e3ef7ae4f15459c2aa9e2d24",
+    "apps/kuno/benchmarks/native-text/src/executor.rs": "0a865b857ee64e5e3f0db9e37dea18f4fd0d616b9e4bbe7f5be6cb4f69d030c0",
+    "apps/kuno/benchmarks/native-text/src/main.rs": "935926ec90c35d59beb590dac3e6edfccc147a53caf7559960db4a8661ad9dd8",
+    "apps/kuno/benchmarks/native-text/src/matmul_probe.rs": "6b526ead2cd01875991fa00b9f16004857a2e096ccb8302d7e81bd4261b904a9",
+    "apps/kuno/benchmarks/native-text/src/resident_gr.rs": "fe48a94307dd594a047664cd7704b0fa9386d959d8772aa473fd7a18bf8eab29",
+    "apps/kuno/benchmarks/native-text/src/resident_batch_projection.rs": "e4d1ceb16a873d65db027ec7af46521f729433b13dafe5a820e749c66b2948bf",
+    "apps/kuno/benchmarks/native-text/src/gdn_layer_batch.rs": "da5cd11630c21c5e35894f19a172ff6788e12061099a58dcfba273641c29796f",
+    "apps/kuno/benchmarks/native-text/src/gdn_layer_batch_probe.rs": "0640dc885aa935974d5783c237228005ccdfbd8a31dda1271759948c1413a89e"
+  },
+  "resident_batch_projection": {
+    "max_batch": 8,
+    "static_original_projections_only": true,
+    "routed_experts_separate": true,
+    "entire_original_row_extent_checked_before_weight_allocation": true,
+    "existing_static_cache_reused": true,
+    "reserved_memory_limit_preserved": true,
+    "separate_whole_output_finite_fence": true,
+    "state_or_cursor_commit": false,
+    "device_acceptance": "pending"
+  },
+  "fused_scalar_fault": {
+    "default_enabled": false,
+    "formats_offline_validated": 7,
+    "checked_unchecked_wgsl_variants": 14,
+    "block_path_preserves_separate_fence": true,
+    "full_owning_readback_required": true,
+    "byte_leases_wiped_on_every_exit": true,
+    "device_acceptance": "pending",
+    "frozen_probe_binary_sha256": "a1be34e63179b2ba1fdc33ad13c15fe27f8f456362f5cda69482dce3041f59b7",
+    "frozen_probe_binary_predates_shared_batch_adapter": true
+  },
+  "no_public_contract_consumer_or_installed_service_changes": true,
+  "no_device_or_speed_claim": true,
+  "remaining": [
+    "protected both-GPU original numeric and owning cleanup tests",
+    "full-model MAX8 layer-major composition",
+    "compiler-idle paired measurements",
+    "quality/options and production private-worker lifecycle",
+    "native-default and managed ollama. routing"
+  ]
+}

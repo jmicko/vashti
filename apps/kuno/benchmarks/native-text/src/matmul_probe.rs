@@ -13,7 +13,7 @@ use cubecl_runtime::transient::TransientIoReceipt;
 use kuno_text::{GgufFile, GgufLimits, TensorType};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 #[path = "matmul_timing.rs"]
 mod timing;
@@ -88,6 +88,13 @@ fn fixture_layout(rows: usize, columns: usize) -> Result<FixtureLayout> {
 }
 
 fn load_public(client: &ComputeClient<WgpuRuntime>, file: &GgufFile) -> Result<Vec<PublicMatrix>> {
+    load_public_variant(client, file, true)
+}
+fn load_public_variant(
+    client: &ComputeClient<WgpuRuntime>,
+    file: &GgufFile,
+    prefix: bool,
+) -> Result<Vec<PublicMatrix>> {
     let mut matrices = Vec::with_capacity(FORMATS.len());
     for kind in FORMATS {
         // Preserve main's original selection: Q5_0's PLE rows are 160 wide,
@@ -137,7 +144,13 @@ fn load_public(client: &ComputeClient<WgpuRuntime>, file: &GgufFile) -> Result<V
         if decoded.iter().any(|x| !x.is_finite()) {
             return Err("public matrix contains nonfinite values".into());
         }
-        let packed_first: usize = if kind == TensorType::F32 { 12 } else { 3 };
+        let packed_first: usize = if !prefix {
+            0
+        } else if kind == TensorType::F32 {
+            12
+        } else {
+            3
+        };
         let wire_len = packed_first
             .checked_add(bytes)
             .ok_or("public fixture overflow")?
@@ -553,9 +566,312 @@ pub fn run(client: &ComputeClient<WgpuRuntime>) -> Result<()> {
     Ok(())
 }
 
+struct FusedReadLease(cubecl::bytes::Bytes);
+impl Drop for FusedReadLease {
+    fn drop(&mut self) {
+        self.0.zeroize();
+    }
+}
+fn decode_fused_owning_read(bytes: &[u8], layout: BufferLayout) -> Result<Zeroizing<Vec<u32>>> {
+    if bytes.len() != layout.owned_bytes || !bytes.len().is_multiple_of(4) {
+        return Err("fused full owning read extent".into());
+    }
+    let mut words = Zeroizing::new(Vec::new());
+    words
+        .try_reserve_exact(layout.owned_words)
+        .map_err(|_| "fused owning host budget")?;
+    words.resize(layout.owned_words, 0);
+    for (w, b) in words.iter_mut().zip(bytes.chunks_exact(4)) {
+        *w = u32::from_le_bytes(b.try_into()?);
+    }
+    Ok(words)
+}
+/// Original packed matrices plus fixed synthetic activations. Default-off
+/// finite fusion is compared with the untouched scalar-GPU projection followed
+/// by the original output-only fault kernel. No arbitrary input is accepted.
+pub fn run_fused_fault(client: &ComputeClient<WgpuRuntime>) -> Result<()> {
+    client
+        .configure_transient_io(IO_BUDGET)
+        .map_err(|_| "fused fixture owned IO setup")?;
+    let path = std::env::var_os("KUNO_TEST_GGUF").ok_or("fused fixture original GGUF required")?;
+    let file =
+        GgufFile::open(path, GgufLimits::default()).map_err(|_| "fused fixture GGUF metadata")?;
+    // Coarse full-page public/host bounds before any model upload. Each original
+    // format has <=7 rows, <=512KiB packed and <=65536 columns. No source row
+    // is larger or copied outside these existing validated fixture bounds.
+    for kind in FORMATS {
+        let t = if kind == TensorType::Q5_0 {
+            file.tensor("per_layer_token_embd.weight")
+        } else {
+            file.tensors()
+                .values()
+                .find(|t| t.dtype() == kind)
+                .and_then(|t| file.tensor(t.name()))
+        }
+        .ok_or("fused fixture format absent")?;
+        let rows = MAX_ROWS.min(usize::try_from(t.info().row_count())?);
+        let cols = usize::try_from(t.info().row_len())?;
+        fixture_layout(rows, cols)?;
+        if rows
+            .checked_mul(usize::try_from(t.info().row_bytes())?)
+            .is_none_or(|b| b > MAX_PACKED_BYTES)
+        {
+            return Err("fused fixture public bound".into());
+        }
+    }
+    let matrices = load_public_variant(client, &file, false)?;
+    let public_bound = FORMATS.len() * (MAX_PACKED_BYTES + 4).next_power_of_two();
+    let retired = Arc::new(AtomicBool::new(false));
+    let mut arena = PrivateArena::new(client.clone(), MAIN_BUDGET, retired.clone())?;
+    arena.enable_public_owned_zero_audit()?;
+    let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+        || -> Result<Vec<serde_json::Value>> {
+            let mut cases = Vec::new();
+            for m in &matrices {
+                for bad in [
+                    None,
+                    Some(f32::NAN),
+                    Some(f32::INFINITY),
+                    Some(f32::NEG_INFINITY),
+                ] {
+                    let out_words = 5 + m.rows + 13;
+                    let full = [m.columns, out_words, out_words, 1, 1]
+                        .into_iter()
+                        .try_fold(0usize, |n, w| -> Result<usize> {
+                            Ok(n.checked_add(BufferLayout::new(w)?.owned_bytes)
+                                .ok_or("fused main bound overflow")?)
+                        })?;
+                    if full > MAIN_BUDGET {
+                        return Err("fused main bound".into());
+                    }
+                    // Worst simultaneous sources/targets plus full audit duplication
+                    // fit under32MiB; no main-ledger credit is reused for runtime IO.
+                    if 2 * full + 2 * 512 * 8 > IO_BUDGET as usize {
+                        return Err("fused IO bound".into());
+                    }
+                    let mut input = Zeroizing::new(
+                        (0..m.columns)
+                            .map(|i| ((i % 17) as f32 - 8.0) / 16.0)
+                            .collect::<Vec<_>>(),
+                    );
+                    if let Some(value) = bad {
+                        input[m.columns / 2] = value;
+                    }
+                    let initial = Zeroizing::new(vec![OUTPUT_GAP; out_words]);
+                    let x = arena.upload_f32(&input)?;
+                    let y = arena.upload_f32(&initial)?;
+                    let original = arena.upload_f32(&initial)?;
+                    let f = arena.upload_u32(&[4])?;
+                    let original_f = arena.upload_u32(&[4])?;
+                    let ids = [x, y, original, f, original_f];
+                    if arena.charged_bytes() != full {
+                        return Err("fused exact owning charge".into());
+                    }
+                    let handles = ids
+                        .iter()
+                        .map(|&id| arena.handle(id).cloned())
+                        .collect::<std::result::Result<Vec<_>, _>>()?;
+                    let mut all = vec![m.handle.clone()];
+                    all.extend(handles.iter().cloned());
+                    let resources = all
+                        .iter()
+                        .map(|h| client.get_resource(h.clone()))
+                        .collect::<std::result::Result<Vec<_>, _>>()?;
+                    for (i, r) in resources.iter().enumerate() {
+                        let r = r.resource();
+                        if all[i].stream != all[0].stream || r.size != all[i].size_in_used() {
+                            return Err("fused client/span mismatch".into());
+                        }
+                        validate_physical_extent(r.offset, r.size, r.buffer.size(), i > 0)?;
+                        if resources[..i]
+                            .iter()
+                            .any(|p| p.resource().buffer == r.buffer)
+                        {
+                            return Err("fused binding alias".into());
+                        }
+                    }
+                    let arg = |id, words| -> Result<ArrayArg<WgpuRuntime>> {
+                        Ok(unsafe { ArrayArg::from_raw_parts(arena.handle(id)?.clone(), words) })
+                    };
+                    let weight = || unsafe { ArrayArg::from_raw_parts(m.handle.clone(), m.words) };
+                    crate::quant_matvec::cooperative::cooperative_matvec::launch::<WgpuRuntime>(
+                        client,
+                        CubeCount::Static(m.rows as u32, 1, 1),
+                        CubeDim::new_1d(64),
+                        weight(),
+                        arg(x, m.columns)?,
+                        arg(original, out_words)?,
+                        m.rows,
+                        m.columns,
+                        m.kind.gguf_id(),
+                        5,
+                    );
+                    crate::resident_util::verify_finite::launch::<WgpuRuntime>(
+                        client,
+                        CubeCount::Static(out_words.div_ceil(64) as u32, 1, 1),
+                        CubeDim::new_1d(64),
+                        arg(original, out_words)?,
+                        arg(original_f, 1)?,
+                    );
+                    crate::quant_matvec::cooperative::cooperative_matvec_with_fault::launch::<
+                        WgpuRuntime,
+                    >(
+                        client,
+                        CubeCount::Static(m.rows as u32, 1, 1),
+                        CubeDim::new_1d(64),
+                        weight(),
+                        arg(x, m.columns)?,
+                        arg(y, out_words)?,
+                        arg(f, 1)?,
+                        m.rows,
+                        m.columns,
+                        m.kind.gguf_id(),
+                        5,
+                    );
+                    let mut snapshots = Vec::new();
+                    for h in &handles {
+                        let lease = FusedReadLease(
+                            client
+                                .read_one(h.clone())
+                                .map_err(|_| "fused fixture read")?,
+                        );
+                        let i = snapshots.len();
+                        let words = decode_fused_owning_read(&lease.0, arena.layout(ids[i])?)?;
+                        drop(lease);
+                        snapshots.push(words);
+                    }
+                    audited(client)?;
+                    if snapshots[1].len() != snapshots[2].len()
+                        || snapshots[3][0] != snapshots[4][0]
+                    {
+                        return Err("fused output/fault extent mismatch".into());
+                    }
+                    let mut max_error = 0f32;
+                    for (i, (&a, &b)) in snapshots[1].iter().zip(snapshots[2].iter()).enumerate() {
+                        let av = f32::from_bits(a);
+                        let bv = f32::from_bits(b);
+                        if av.is_nan()
+                            && bv.is_nan()
+                            && bad.is_some()
+                            && (5..5 + m.rows).contains(&i)
+                        {
+                            continue;
+                        }
+                        if a != b {
+                            return Err("fused projection differs from untouched GPU".into());
+                        }
+                        if i < out_words
+                            && !(5..5 + m.rows).contains(&i)
+                            && a != OUTPUT_GAP.to_bits()
+                        {
+                            return Err("fused output gap changed".into());
+                        }
+                        if i >= out_words && a != 0 {
+                            return Err("fused owning tail changed".into());
+                        }
+                        if bad.is_none() && (5..5 + m.rows).contains(&i) {
+                            let expected = crate::quant_matvec::cooperative::reference_tree_dot(
+                                &m.decoded[(i - 5) * m.columns..(i - 4) * m.columns],
+                                &input,
+                            )?;
+                            let err = (av - expected).abs();
+                            if !av.is_finite() || err > 1e-4 + 3e-4 * expected.abs() {
+                                return Err("fused independent codec oracle".into());
+                            }
+                            max_error = max_error.max(err);
+                        }
+                    }
+                    for (i, &word) in snapshots[0].iter().enumerate() {
+                        let expected = if i < input.len() {
+                            input[i].to_bits()
+                        } else {
+                            0
+                        };
+                        if word != expected {
+                            return Err("fused readonly input changed".into());
+                        }
+                    }
+                    if snapshots[3][1..]
+                        .iter()
+                        .chain(&snapshots[4][1..])
+                        .any(|&w| w != 0)
+                    {
+                        return Err("fused fault owning tail changed".into());
+                    }
+                    if snapshots[3][0] != if bad.is_some() { 5 } else { 4 } {
+                        return Err("fused finite OR contract".into());
+                    }
+                    arena.reset()?;
+                    for h in handles {
+                        let lease = FusedReadLease(
+                            client.read_one(h.clone()).map_err(|_| "fused zero read")?,
+                        );
+                        if lease.0.len() != h.size() as usize || lease.0.iter().any(|&b| b != 0) {
+                            return Err("fused full owner erasure".into());
+                        }
+                        drop(lease);
+                        audited(client)?;
+                    }
+                    let cache = FusedReadLease(
+                        client
+                            .read_one(m.handle.clone())
+                            .map_err(|_| "fused public cache check")?,
+                    );
+                    if &*cache.0 != m.wire.as_slice() {
+                        return Err("fused original weight mutation".into());
+                    }
+                    drop(cache);
+                    audited(client)?;
+                    cases.push(serde_json::json!({"dtype":m.kind.gguf_id(),"rows":m.rows,"columns":m.columns,"nonfinite_input":bad.is_some(),"same_gpu_output_and_fault":true,"fault_or_preserved":true,"max_core_abs_error":max_error,"full_main_bytes":full}));
+                }
+            }
+            Ok(cases)
+        },
+    ));
+    let closed = arena.close();
+    let cases = match (attempt, closed, retired.load(Ordering::Acquire)) {
+        (Ok(Ok(cases)), Ok(()), false) => cases,
+        _ => return Err("fused fixture failed; no success receipt".into()),
+    };
+    file.verify_file_unchanged()
+        .map_err(|_| "fused original artifact changed")?;
+    let zero = arena
+        .owned_zero_audit_receipt()
+        .ok_or("fused zero audit absent")?;
+    let report = serde_json::json!({"scope":"fixed-public-original-packed-projection-only","fixture":"fused-matrix-fault-probe","cases":cases,"main_cap_bytes":MAIN_BUDGET,"public_full_page_upper_bytes":public_bound,"runtime_io_cap_bytes":IO_BUDGET,"main_erased_bytes":zero.bytes,"main_erased_buffers":zero.buffers,"owned_cleanup":true,"context_retired":false,"whole_graph_or_performance_accepted":false});
+    if let Some(path) = std::env::var_os("KUNO_PUBLIC_RECEIPT") {
+        use std::io::Write;
+        let mut out = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)?;
+        out.write_all(serde_json::to_string_pretty(&report)?.as_bytes())?;
+    }
+    println!(
+        "public_fused_matrix_fault cases=28 full_main_zero_bytes={} context_retired=false",
+        zero.bytes
+    );
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fused_complete_owner_read_rejects_equal_truncation_before_decoding() {
+        let l = BufferLayout::new(3).unwrap();
+        let mut bytes = Zeroizing::new(vec![0u8; l.owned_bytes]);
+        bytes[l.owned_bytes - 4..].copy_from_slice(&7u32.to_le_bytes());
+        let words = decode_fused_owning_read(&bytes, l).unwrap();
+        assert_eq!(words.len(), l.owned_words);
+        assert_eq!(words[l.owned_words - 1], 7);
+        for short in [0, 3, l.owned_bytes - 4, l.owned_bytes - 1] {
+            assert!(decode_fused_owning_read(&bytes[..short], l).is_err());
+        }
+        bytes.push(0);
+        assert!(decode_fused_owning_read(&bytes, l).is_err());
+    }
 
     #[test]
     fn public_alignment_tail_is_allowed_but_effective_extents_are_checked() {
@@ -708,7 +1024,19 @@ mod tests {
             .split("#[cfg(test)]")
             .next()
             .unwrap();
+        let run = run.split("pub fn run_fused_fault(").next().unwrap();
         assert_eq!(run.matches("std::env::var_os(").count(), 2);
+        let fused = source
+            .split("pub fn run_fused_fault(")
+            .nth(1)
+            .unwrap()
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap();
+        assert_eq!(fused.matches("std::env::var_os(").count(), 2);
+        assert!(fused.contains("KUNO_TEST_GGUF") && fused.contains("KUNO_PUBLIC_RECEIPT"));
+        assert!(fused.contains("create_new(true)"));
+        assert!(!fused.contains("create(true)") && !fused.contains("truncate(true)"));
         assert!(run.contains("KUNO_TEST_GGUF") && run.contains("KUNO_PUBLIC_RECEIPT"));
         assert!(run.contains("create_new(true)"));
         assert!(!run.contains("create(true)") && !run.contains("truncate(true)"));

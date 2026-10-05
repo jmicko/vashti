@@ -348,6 +348,7 @@ pub struct GpuExecutor<'a> {
     pub block_kernel: bool,
     pub block_large_only: bool,
     pub block_moe: bool,
+    pub fused_matrix_fault: bool,
     pub word_down: bool,
     pub batch_experts: bool,
     pub expert_batch_bytes: usize,
@@ -453,6 +454,7 @@ impl<'a> GpuExecutor<'a> {
             block_kernel: std::env::var("KUNO_LAB_BLOCK_KERNEL").as_deref() != Ok("0"),
             block_large_only: std::env::var("KUNO_LAB_BLOCK_KERNEL").as_deref() != Ok("1"),
             block_moe: std::env::var("KUNO_LAB_BLOCK_MOE").as_deref() == Ok("1"),
+            fused_matrix_fault: std::env::var("KUNO_LAB_FUSED_MATRIX_FAULT").as_deref() == Ok("1"),
             word_down: std::env::var("KUNO_LAB_WORD_DOWN").as_deref() == Ok("1"),
             // Candidate batching stays opt-in until paired measurements win.
             batch_experts: std::env::var("KUNO_LAB_BATCH_EXPERTS").as_deref() == Ok("1"),
@@ -1074,6 +1076,188 @@ impl<'a> GpuExecutor<'a> {
         output_len: usize,
         cancel: &AtomicBool,
     ) -> Result<()> {
+        // SAFETY: forwarded original caller-owned span contract.
+        unsafe {
+            self.enqueue_matrix_inner(tensor, expert, x, input_len, y, output_len, cancel, None)
+        }
+    }
+
+    /// Opt-in finite fusion only for the unchanged cooperative path. Returns
+    /// false for every fallback, which still needs the original separate fence.
+    /// # Safety
+    /// In addition to enqueue_matrix's contract, fault is a separate one-word
+    /// same-stream live owner, retained through whole-token completion/erasure.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) unsafe fn enqueue_matrix_with_finite_fault(
+        &mut self,
+        tensor: TensorView<'_>,
+        expert: usize,
+        x: &Handle,
+        input_len: usize,
+        y: &Handle,
+        output_len: usize,
+        fault: &Handle,
+        cancel: &AtomicBool,
+    ) -> Result<bool> {
+        let fused = self.fused_matrix_fault
+            && !(self.block_kernel && (!self.block_large_only || output_len >= 16_384));
+        if fault.size_in_used() != 4 || fault.stream != x.stream || fault.stream != y.stream {
+            return Err(Error::InvalidBufferLength);
+        }
+        // SAFETY: caller proves all three arena spans distinct before entry.
+        unsafe {
+            self.enqueue_matrix_inner(
+                tensor,
+                expert,
+                x,
+                input_len,
+                y,
+                output_len,
+                cancel,
+                fused.then_some(fault),
+            )?;
+        }
+        Ok(fused)
+    }
+
+    /// MAX8 original packed projection for a future whole-chunk owner.
+    /// This queues work only; the caller still accepts every finite/device
+    /// fence and commits all causal candidates together, or poisons/erases.
+    /// # Safety
+    /// x/y are distinct live same-client/arena owners covering their logical
+    /// words through completed execution and full-span erasure. Spans are a
+    /// guarded runtime packet, never a shader or persistent cache key.
+    #[allow(dead_code, clippy::too_many_arguments)]
+    pub(crate) unsafe fn enqueue_matrix_batch(
+        &mut self,
+        tensor: TensorView<'_>,
+        x: &Handle,
+        input_words: usize,
+        y: &Handle,
+        output_words: usize,
+        spans: &quant_matvec::matmul::BatchSpans,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        if !tensor.belongs_to(self.model) || spans.packed_first() != 0 {
+            return Err(Error::InvalidFormat(
+                "resident batch artifact/packed binding",
+            ));
+        }
+        self.model.verify_file_unchanged()?;
+        let m = Matrix::new(tensor)?;
+        if m.experts() != 1 {
+            return Err(Error::InvalidFormat(
+                "resident batch requires static projection",
+            ));
+        }
+        crate::resident_batch_projection::validate_view(
+            spans.count(),
+            spans.input_first(),
+            spans.input_stride(),
+            m.inputs(),
+            input_words,
+        )?;
+        crate::resident_batch_projection::validate_view(
+            spans.count(),
+            spans.output_first(),
+            spans.output_stride(),
+            m.outputs(),
+            output_words,
+        )?;
+        if x.stream != y.stream
+            || x.size_in_used() < (input_words as u64) * 4
+            || y.size_in_used() < (output_words as u64) * 4
+        {
+            return Err(Error::InvalidBufferLength);
+        }
+        let row_bytes =
+            usize::try_from(tensor.info().row_bytes()).map_err(|_| Error::ArithmeticOverflow)?;
+        if row_bytes == 0 || row_bytes > TILE_BYTES {
+            return Err(Error::LimitExceeded("resident batch packed row"));
+        }
+        let per_tile = (TILE_BYTES / row_bytes).min(16_384);
+        for first in (0..m.outputs()).step_by(per_tile) {
+            if cancel.load(Ordering::Acquire) {
+                return Err(Error::InvalidFormat("resident batch cancelled"));
+            }
+            let rows = per_tile.min(m.outputs() - first);
+            let g = quant_matvec::matmul::MatrixGeometry::new(
+                tensor.info().dtype().gguf_id(),
+                rows,
+                m.inputs(),
+                8,
+            )
+            .map_err(|_| Error::InvalidFormat("resident batch matrix geometry"))?;
+            let packet = quant_matvec::matmul::BatchSpans::new(
+                spans.count(),
+                0,
+                spans.input_first(),
+                spans.input_stride(),
+                spans
+                    .output_first()
+                    .checked_add(first)
+                    .ok_or(Error::ArithmeticOverflow)?,
+                spans.output_stride(),
+            );
+            // Prove all runtime extents against the predicted packed view BEFORE
+            // public-cache allocation; repeat against the actual returned words.
+            g.validate_spans(
+                &packet,
+                g.total_bytes().div_ceil(4),
+                input_words,
+                output_words,
+            )
+            .map_err(|_| Error::InvalidBufferLength)?;
+            let (weights, words) = self.weight(tensor, 0, first, rows)?;
+            if self.resident_admission.is_none()
+                && self.reserved_bytes()? > self.reserved_limit as u64
+            {
+                return Err(Error::LimitExceeded("GPU allocator reserved memory"));
+            }
+            g.validate_spans(&packet, words, input_words, output_words)
+                .map_err(|_| Error::InvalidBufferLength)?;
+            // SAFETY: same original packed row proof as scalar enqueue; caller
+            // owns disjoint x/y, and the exact runtime spans passed validation.
+            unsafe {
+                quant_matvec::matmul::packed_matmul::launch_unchecked::<WgpuRuntime>(
+                    &self.client,
+                    g.grid(),
+                    CubeDim::new_1d(64),
+                    ArrayArg::from_raw_parts(weights, words),
+                    ArrayArg::from_raw_parts(x.clone(), input_words),
+                    ArrayArg::from_raw_parts(y.clone(), output_words),
+                    packet.count(),
+                    packet.packed_first(),
+                    packet.input_first(),
+                    packet.input_stride(),
+                    packet.output_first(),
+                    packet.output_stride(),
+                    g.rows(),
+                    g.columns(),
+                    g.dtype(),
+                    g.tile_tokens(),
+                );
+            }
+            self.calls += 1;
+        }
+        if cancel.load(Ordering::Acquire) {
+            return Err(Error::InvalidFormat("resident batch cancelled"));
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    unsafe fn enqueue_matrix_inner(
+        &mut self,
+        tensor: TensorView<'_>,
+        expert: usize,
+        x: &Handle,
+        input_len: usize,
+        y: &Handle,
+        output_len: usize,
+        cancel: &AtomicBool,
+        fault: Option<&Handle>,
+    ) -> Result<()> {
         if !tensor.belongs_to(self.model) {
             return Err(Error::InvalidFormat("GPU artifact binding"));
         }
@@ -1124,6 +1308,22 @@ impl<'a> GpuExecutor<'a> {
                         ArrayArg::from_raw_parts(weights, words),
                         ArrayArg::from_raw_parts(x.clone(), input_len),
                         ArrayArg::from_raw_parts(y.clone(), matrix.outputs()),
+                        rows,
+                        matrix.inputs(),
+                        dtype,
+                        first,
+                    );
+                } else if let Some(fault) = fault {
+                    quant_matvec::cooperative::cooperative_matvec_with_fault::launch_unchecked::<
+                        WgpuRuntime,
+                    >(
+                        &self.client,
+                        CubeCount::Static(rows as u32, 1, 1),
+                        CubeDim::new_1d(64),
+                        ArrayArg::from_raw_parts(weights, words),
+                        ArrayArg::from_raw_parts(x.clone(), input_len),
+                        ArrayArg::from_raw_parts(y.clone(), matrix.outputs()),
+                        ArrayArg::from_raw_parts(fault.clone(), 1),
                         rows,
                         matrix.inputs(),
                         dtype,

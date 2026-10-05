@@ -285,6 +285,8 @@ impl ResidentProjector for ResidentProjection<'_, '_> {
         self.executor
             .check_client(arena.client().map_err(u::fault)?)?;
         if input == output
+            || input == self.fault
+            || output == self.fault
             || u::words(arena, input)? != projection.matrix.inputs()
             || u::words(arena, output)? != projection.matrix.outputs()
         {
@@ -293,18 +295,21 @@ impl ResidentProjector for ResidentProjection<'_, '_> {
         // SAFETY: arena active IDs are distinct exclusive spans on this client;
         // the full graph owns them through drain/erasure. Device results below
         // join the whole-token fault decision before any state commit.
-        unsafe {
-            self.executor.enqueue_matrix(
+        let fused = unsafe {
+            self.executor.enqueue_matrix_with_finite_fault(
                 projection.tensor,
                 0,
                 &u::handle(arena, input)?,
                 projection.matrix.inputs(),
                 &u::handle(arena, output)?,
                 projection.matrix.outputs(),
+                &u::handle(arena, self.fault)?,
                 cancel,
-            )?;
+            )?
+        };
+        if !fused {
+            u::validate(arena, output, self.fault)?;
         }
-        u::validate(arena, output, self.fault)?;
         Ok(())
     }
 }

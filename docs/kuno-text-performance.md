@@ -872,3 +872,49 @@ is no private heap allocation. The module is registered only for host tests.
 The future GPU adapter must additionally retain and validate the actual pending
 bank plan/generation through completed consumers; a union alone does not pin
 slots. Fullgraph integration and private request acceptance are outstanding.
+
+## Full GDN layer and fused matrix fault source checkpoint (2026-10-05)
+
+The new candidate-only full GDN layer composes all five original packed layer0
+matrices, accepted causal convolution/normalization/recurrence/closing-gate
+kernels and output projection. It preserves immutable committed history/state,
+checks all ten status planes and emits no state/cursor commit. The fixed probe
+compares every stage and final candidates at counts1/3/5/8 against unchanged
+single-token GPU scheduling and the independent decoded public core oracle.
+Its exact plans admit24,117,248 private main bytes,67,698,688 original public
+weight-page bytes,17,235,968 runtime audit-peak bytes and88,053,848 guarded host
+scratch bytes. The decoded public oracle alone is231,669,760 bytes, bounded
+below256 MiB; it is a test oracle, not a new inference weight representation.
+
+Independent source reviews found no material order/geometry/ownership or scalar
+comparison blocker. Root passes245 native host tests including the new wrapper,
+full owning-read and generated checked/unchecked WGSL cases, strict all-target
+Clippy, release build, formatting and diff checks. **Physical GPU acceptance of
+this complete layer is pending.** See [the exact source receipt](../apps/kuno/benchmarks/text/receipts/rust-gdn-layer-host-20261005.json).
+
+A separate default-off `KUNO_LAB_FUSED_MATRIX_FAULT=1` candidate folds the
+existing output-only finite predicate and fault-bit OR into the cooperative
+projection, preserving the original64-lane arithmetic and output values.
+Block-kernel fallbacks retain the separate finite fence; no graph state commits
+early. Both execution modes compile and Naga-validate all seven packed formats.
+The fixed device probe borrows small original model rows, compares original GPU
+output/faults with normal, NaN and signed-infinity activations, and requires exact
+full owning read lengths before decoding, guarded leases, all tails and full
+cleanup. It has not run on a GPU yet. Frozen combined source binary SHA256 is
+`a1be34e63179b2ba1fdc33ad13c15fe27f8f456362f5cda69482dce3041f59b7`.
+The earlier `bf4a1ef7` executable predates full-read hardening and is not accepted.
+Privileged device units did not start because cached sudo expired; normal Kuno
+admission remains enabled. No device, performance, private-worker or release
+claim follows from these source checks.
+
+The shared cache-backed MAX8 projector now validates each complete original
+input/output row span before dividing matrices into bounded row tiles, reuses
+the existing original packed static-weight cache and preserves its reserved
+memory ceiling. It passes actual runtime counts/bases/strides through guarded
+packets and keeps the separate full-output finite fault fence. Routed expert
+banks remain a separate adapter. This seam accepts neither state nor cursor and
+has no connected production consumer or device acceptance yet. Combined source
+checks pass247 host tests, strict all-target Clippy and formatting; see the
+[source-only composition receipt](../apps/kuno/benchmarks/text/receipts/rust-layer-composition-source-20261005.json).
+The frozen `a1be34e6` probe binary predates this shared adapter; its prepared
+device fixtures prove only their exact frozen source after they run.

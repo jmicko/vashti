@@ -9,6 +9,8 @@ mod gdn_chunk;
 mod gdn_chunk_probe;
 mod gdn_executor;
 mod gdn_gpu;
+mod gdn_layer_batch;
+mod gdn_layer_batch_probe;
 mod gdn_pointwise;
 mod gr_batch_probe;
 mod info_slab_probe;
@@ -20,6 +22,7 @@ mod qsa_chunk;
 mod qsa_chunk_probe;
 mod qsa_gpu;
 mod quant_matvec;
+mod resident_batch_projection;
 mod resident_gdn;
 mod resident_gr;
 mod resident_model;
@@ -228,6 +231,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
         );
         let client = WgpuRuntime::client(&selected);
+        if mode == "gdn-layer-batch-probe" {
+            gdn_layer_batch_probe::run(&client)?;
+            return Ok(());
+        }
         if mode == "gdn-batch-pointwise-probe" {
             gdn_batch_pointwise_probe::run(&client)?;
             return Ok(());
@@ -250,6 +257,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if mode == "info-slab-probe" {
             info_slab_probe::run(&client)?;
             return Ok(());
+        }
+        if mode == "fused-matrix-fault-probe" {
+            return matmul_probe::run_fused_fault(&client);
         }
         if mode == "matmul-probe" {
             matmul_probe::run(&client)?;
@@ -917,6 +927,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "small_cpu_cache_bytes":executor.small_cpu.cached_bytes(),
                     "small_cpu_cache_matrices":executor.small_cpu.cached_matrices(), "resident_graph":resident_enabled,"weights":"borrowed-unmodified-ollama-blob"
                 });
+                receipt["fused_matrix_fault"] = serde_json::json!(executor.fused_matrix_fault);
                 receipt["word_down"] = serde_json::json!(executor.word_down);
                 receipt["resident_main_admitted_upper_bytes"] =
                     serde_json::json!(executor.admission_upper_bytes()?);
