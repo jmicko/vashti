@@ -1,0 +1,238 @@
+{
+  "scope": "fixed public synthetic long cache diagnostic; no performance or native API selection",
+  "source_base": "95ab55c plus static diagnostics",
+  "binary_sha256": "bcd9bcf2ebcc8b9636fbe8928d1666f7917a79837f34e5c777e7a69bba9ea9b7",
+  "vendor_patch_sha256": "1dcabe09fb8e095c9b780a590a65a188e32ed9681c4a9faa2d022d52ebc2da7d",
+  "unit": "kuno-rust-bank96-long-diagnostic-v1",
+  "options": {
+    "expert_slots": 96,
+    "static_cache_bytes": 6442450944,
+    "owned_io": true,
+    "block_moe": true,
+    "prefill_last_head": true,
+    "device": "intel",
+    "public_fixture": "resident-rainwater"
+  },
+  "bounds": {
+    "host_memory_max_bytes": 55834574848,
+    "memory_swap_max": 0,
+    "core_limit": 0,
+    "operator_unit_runtime_max_seconds": 900
+  },
+  "result": {
+    "exit_status": 1,
+    "unit_runtime_seconds": 42.964,
+    "unit_cpu_seconds": 36.778,
+    "last_completed_prefill_tokens": 52,
+    "last_progress_elapsed_ms": 40949,
+    "first_observed_static_failure_category": "upload_map",
+    "success_receipt": false
+  },
+  "limitations": [
+    "First observed category does not identify underlying driver or callback cause.",
+    "systemd reported memory peak is not treated as actual measured usage.",
+    "The 96-slot candidate remains default off; no matched long ABBA result.",
+    "No GPU reset or reboot performed."
+  ],
+  "fresh_context_gdn_recovery": {
+    "case_count": 8,
+    "cases": [
+      {
+        "cancel_before_enqueue_and_after_fence_rejected": true,
+        "count": 1,
+        "finite_control_failure_rejected": true,
+        "full_main_zero_audit": true,
+        "head_dim": 7,
+        "immutable_old": true,
+        "inactive_gaps_padding_preserved": true,
+        "key_heads": 2,
+        "main_full_span_bytes": 524288,
+        "max_abs_core_error": 1.4901161193847656e-08,
+        "max_abs_single_error": 1.4901161193847656e-08,
+        "max_batch": 8,
+        "old_next_alias_rejected": true,
+        "runtime_spans": {
+          "inspected_buffers": 17,
+          "inspected_bytes": 427008,
+          "readback_bytes": 262656,
+          "uniform_bytes": 256,
+          "upload_bytes": 164096
+        },
+        "value_heads": 6
+      },
+      {
+        "cancel_before_enqueue_and_after_fence_rejected": true,
+        "count": 3,
+        "finite_control_failure_rejected": true,
+        "full_main_zero_audit": true,
+        "head_dim": 7,
+        "immutable_old": true,
+        "inactive_gaps_padding_preserved": true,
+        "key_heads": 2,
+        "main_full_span_bytes": 524288,
+        "max_abs_core_error": 2.2351741790771484e-08,
+        "max_abs_single_error": 1.4901161193847656e-08,
+        "max_batch": 8,
+        "old_next_alias_rejected": true,
+        "runtime_spans": {
+          "inspected_buffers": 17,
+          "inspected_bytes": 427008,
+          "readback_bytes": 262656,
+          "uniform_bytes": 256,
+          "upload_bytes": 164096
+        },
+        "value_heads": 6
+      },
+      {
+        "cancel_before_enqueue_and_after_fence_rejected": true,
+        "count": 5,
+        "finite_control_failure_rejected": true,
+        "full_main_zero_audit": true,
+        "head_dim": 7,
+        "immutable_old": true,
+        "inactive_gaps_padding_preserved": true,
+        "key_heads": 2,
+        "main_full_span_bytes": 524288,
+        "max_abs_core_error": 2.9802322387695312e-08,
+        "max_abs_single_error": 1.4901161193847656e-08,
+        "max_batch": 8,
+        "old_next_alias_rejected": true,
+        "runtime_spans": {
+          "inspected_buffers": 17,
+          "inspected_bytes": 427008,
+          "readback_bytes": 262656,
+          "uniform_bytes": 256,
+          "upload_bytes": 164096
+        },
+        "value_heads": 6
+      },
+      {
+        "cancel_before_enqueue_and_after_fence_rejected": true,
+        "count": 8,
+        "finite_control_failure_rejected": true,
+        "full_main_zero_audit": true,
+        "head_dim": 7,
+        "immutable_old": true,
+        "inactive_gaps_padding_preserved": true,
+        "key_heads": 2,
+        "main_full_span_bytes": 524288,
+        "max_abs_core_error": 4.470348358154297e-08,
+        "max_abs_single_error": 1.4901161193847656e-08,
+        "max_batch": 8,
+        "old_next_alias_rejected": true,
+        "runtime_spans": {
+          "inspected_buffers": 17,
+          "inspected_bytes": 427008,
+          "readback_bytes": 262656,
+          "uniform_bytes": 256,
+          "upload_bytes": 164096
+        },
+        "value_heads": 6
+      },
+      {
+        "cancel_before_enqueue_and_after_fence_rejected": true,
+        "count": 1,
+        "finite_control_failure_rejected": true,
+        "full_main_zero_audit": true,
+        "head_dim": 128,
+        "immutable_old": true,
+        "inactive_gaps_padding_preserved": true,
+        "key_heads": 16,
+        "main_full_span_bytes": 22249472,
+        "max_abs_core_error": 1.862645149230957e-08,
+        "max_abs_single_error": 0.0,
+        "max_batch": 8,
+        "old_next_alias_rejected": true,
+        "runtime_spans": {
+          "inspected_buffers": 17,
+          "inspected_bytes": 22610944,
+          "readback_bytes": 13664768,
+          "uniform_bytes": 256,
+          "upload_bytes": 8945920
+        },
+        "value_heads": 48
+      },
+      {
+        "cancel_before_enqueue_and_after_fence_rejected": true,
+        "count": 3,
+        "finite_control_failure_rejected": true,
+        "full_main_zero_audit": true,
+        "head_dim": 128,
+        "immutable_old": true,
+        "inactive_gaps_padding_preserved": true,
+        "key_heads": 16,
+        "main_full_span_bytes": 22249472,
+        "max_abs_core_error": 1.862645149230957e-08,
+        "max_abs_single_error": 0.0,
+        "max_batch": 8,
+        "old_next_alias_rejected": true,
+        "runtime_spans": {
+          "inspected_buffers": 17,
+          "inspected_bytes": 22610944,
+          "readback_bytes": 13664768,
+          "uniform_bytes": 256,
+          "upload_bytes": 8945920
+        },
+        "value_heads": 48
+      },
+      {
+        "cancel_before_enqueue_and_after_fence_rejected": true,
+        "count": 5,
+        "finite_control_failure_rejected": true,
+        "full_main_zero_audit": true,
+        "head_dim": 128,
+        "immutable_old": true,
+        "inactive_gaps_padding_preserved": true,
+        "key_heads": 16,
+        "main_full_span_bytes": 22249472,
+        "max_abs_core_error": 1.862645149230957e-08,
+        "max_abs_single_error": 0.0,
+        "max_batch": 8,
+        "old_next_alias_rejected": true,
+        "runtime_spans": {
+          "inspected_buffers": 17,
+          "inspected_bytes": 22610944,
+          "readback_bytes": 13664768,
+          "uniform_bytes": 256,
+          "upload_bytes": 8945920
+        },
+        "value_heads": 48
+      },
+      {
+        "cancel_before_enqueue_and_after_fence_rejected": true,
+        "count": 8,
+        "finite_control_failure_rejected": true,
+        "full_main_zero_audit": true,
+        "head_dim": 128,
+        "immutable_old": true,
+        "inactive_gaps_padding_preserved": true,
+        "key_heads": 16,
+        "main_full_span_bytes": 22249472,
+        "max_abs_core_error": 1.862645149230957e-08,
+        "max_abs_single_error": 0.0,
+        "max_batch": 8,
+        "old_next_alias_rejected": true,
+        "runtime_spans": {
+          "inspected_buffers": 17,
+          "inspected_bytes": 22610944,
+          "readback_bytes": 13664768,
+          "uniform_bytes": 256,
+          "upload_bytes": 8945920
+        },
+        "value_heads": 48
+      }
+    ],
+    "context_retired": false,
+    "explicit_owned_cleanup_accepted": true,
+    "fixture": "gdn-chunk-probe",
+    "main_budget_bytes": 33554432,
+    "main_zero_buffers": 128,
+    "main_zero_bytes": 91095040,
+    "max_batch": 8,
+    "production_private_worker_accepted": false,
+    "proof_scope": "owned API-visible full pages and I/O; not opaque driver allocations or private register/spill storage",
+    "runtime_io_budget_bytes": 67108864,
+    "scope": "fixed-public-synthetic-operator-test-only",
+    "whole_graph_batched_prefill": false
+  }
+}

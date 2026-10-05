@@ -707,3 +707,31 @@ This does not establish the cause or accept longer 96-slot operation.
 samples, the interrupted long comparison and recovery with frozen executable
 `32387b0...`. The larger cache remains opt-in, with **no default selection or
 whole-model performance claim**. No service, public API or Vashti changes apply.
+
+
+## Static owned-I/O diagnostic follow-up (2026-10-05)
+
+The default-off96-slot/6GiB cache candidate failed a second protected long
+public rainwater run, this time after52 completed prefill tokens. The unchanged
+cleanup policy now preserves a whitelist of28 static first-observed categories;
+the failure was `upload_map`. It does not expose error descriptions, shader
+source, INFO values or request content. This category still conflates mapping
+rejection and missing callback delivery, so it does not establish a driver cause.
+The stream retires and emits no successful receipt. No cap, timeout, retry,
+ordinary inference deadline, installed runtime or public API changed.
+
+The frozen diagnostic binary is
+`bcd9bcf2ebcc8b9636fbe8928d1666f7917a79837f34e5c777e7a69bba9ea9b7`.
+The run exited1 after42.964s; this failed run is not a performance sample.
+A fresh Intel context immediately passed all8 GDN chunk fixtures and full
+128-page/91,095,040-byte inspection without retirement. This is fresh-context
+acceptance, not a proof that the failed context was erased or that the underlying
+mapping issue is solved. No reset or reboot was attempted.
+
+204 native host/offline tests and31 owned-runtime fixtures pass, as do strict
+all-target Clippy and formatting. The composed18-file vendor patch was
+regenerated from exact pinned cached archives and reconstructed with every
+modified hash verified; patch SHA256
+`1dcabe09fb8e095c9b780a590a65a188e32ed9681c4a9faa2d022d52ebc2da7d`.
+The ordinary64-slot default is retained. See the structured
+[diagnostic receipt](../apps/kuno/benchmarks/text/rust-owned-io-diagnostic-20261005.json).

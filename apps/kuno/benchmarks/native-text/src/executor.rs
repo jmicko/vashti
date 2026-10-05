@@ -24,11 +24,55 @@ pub(crate) const RESIDENT_IO_MAX: u64 = 64 * 1024 * 1024;
 /// Separate runtime upload/uniform/readback ownership. Not main-pool telemetry.
 pub(crate) const RESIDENT_RUNTIME_IO_MAX: u64 = 64 * 1024 * 1024;
 
+fn cleanup_failure_category(code: &str) -> Option<&'static str> {
+    // Forward fixed infrastructure categories only, never backend descriptions,
+    // shader source, metadata values or request content.
+    const CODES: [&str; 28] = [
+        "held_lease",
+        "mutation_abandoned",
+        "lease_overflow",
+        "readback_map",
+        "readback_conversion",
+        "unmap",
+        "prior_stream_error",
+        "context_retired",
+        "drain_timeout",
+        "poll_submission_index",
+        "upload_map",
+        "upload_wipe",
+        "destination_clear",
+        "queue_submit",
+        "gpu_out_of_memory",
+        "gpu_validation",
+        "gpu_internal",
+        "audit_budget",
+        "audit_allocation",
+        "audit_map",
+        "audit_nonzero",
+        "audit_bookkeeping",
+        "panic",
+        "epoch_overflow",
+        "allocation_budget",
+        "allocation_metadata",
+        "allocation_span",
+        "cleanup_rejected",
+    ];
+    CODES.into_iter().find(|known| *known == code)
+}
+
 pub(crate) fn sanitize_resident_io(client: &ComputeClient<WgpuRuntime>) -> Result<()> {
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         cubecl::future::block_on(client.sanitize_transient_io())
     })) {
         Ok(Ok(_counts)) => Ok(()),
+        Ok(Err(cubecl_runtime::server::ServerError::Generic { reason, .. })) => {
+            Err(Error::InvalidFormat(
+                reason
+                    .strip_prefix("kuno_private_io_failure:")
+                    .and_then(cleanup_failure_category)
+                    .unwrap_or("resident runtime I/O cleanup failed"),
+            ))
+        }
         _ => Err(Error::InvalidFormat("resident runtime I/O cleanup failed")),
     }
 }
@@ -41,7 +85,12 @@ fn checked_transient_cleanup(
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(cleanup));
     if !matches!(result, Ok(Ok(()))) || retired.load(Ordering::Acquire) {
         retired.store(true, Ordering::Release);
-        return Err(Error::InvalidFormat("resident runtime I/O cleanup failed"));
+        return match result {
+            Ok(Err(Error::InvalidFormat(code))) if cleanup_failure_category(code).is_some() => {
+                Err(Error::InvalidFormat(code))
+            }
+            _ => Err(Error::InvalidFormat("resident runtime I/O cleanup failed")),
+        };
     }
     Ok(())
 }
@@ -1313,6 +1362,45 @@ impl Drop for GpuExecutor<'_> {
 
 #[cfg(test)]
 mod admission_tests {
+    #[test]
+    fn cleanup_categories_discard_backend_descriptions_and_private_values() {
+        use super::cleanup_failure_category;
+        assert_eq!(
+            cleanup_failure_category("gpu_validation"),
+            Some("gpu_validation")
+        );
+        assert_eq!(
+            cleanup_failure_category("audit_budget"),
+            Some("audit_budget")
+        );
+        for unknown in [
+            "",
+            "gpu_validation:fixture value",
+            "fixture private text",
+            "shader source",
+        ] {
+            assert!(cleanup_failure_category(unknown).is_none());
+        }
+    }
+
+    #[test]
+    fn first_fixed_cleanup_category_survives_checked_retirement() {
+        use super::{Error, checked_transient_cleanup};
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let retired = AtomicBool::new(false);
+        assert!(matches!(
+            checked_transient_cleanup(&retired, || Err(Error::InvalidFormat("gpu_validation"))),
+            Err(Error::InvalidFormat("gpu_validation"))
+        ));
+        assert!(retired.load(Ordering::Acquire));
+        assert!(matches!(
+            checked_transient_cleanup(&retired, || Err(Error::InvalidFormat(
+                "fixture private text"
+            ))),
+            Err(Error::InvalidFormat("resident runtime I/O cleanup failed"))
+        ));
+    }
+
     use super::*;
     use std::cell::{Cell, RefCell};
     const PAGE: u64 = main_admission::MIN_PAGE_BYTES;

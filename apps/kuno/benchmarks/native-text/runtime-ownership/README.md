@@ -271,3 +271,16 @@ swap, complete resident graph privacy or production worker acceptance. The
 composed patch applies to fresh pinned archive sources and all 18 changed-file
 hashes match `provenance.json`. No global registry, installed service, public
 API or ordinary inference deadline changed.
+
+
+## Fixed diagnostic categories (2026-10-05)
+
+Owned I/O records the first observed infrastructure failure as a fixed enum code,
+shared across future/controller/cleanup lifetimes. GPU error variants are matched
+without formatting their description or source. The executor forwards only the
+28 exact whitelisted codes; unknown descriptions become the existing generic
+cleanup error. Held-readback rejection remains recoverable and does not latch a
+failure. No cleanup attempt, poll bound, allocator or retirement policy changed.
+31 host fixtures and204 native tests pass. The protected default-off96-slot long
+run exposed `upload_map`; further callback/error-scope diagnosis remains open.
+This diagnostic is not evidence of successful erasure after failure.

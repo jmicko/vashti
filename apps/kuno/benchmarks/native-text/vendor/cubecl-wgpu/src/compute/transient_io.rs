@@ -162,10 +162,116 @@ impl Ledger {
     }
 }
 
+// Diagnostic codes contain no backend descriptions, values, offsets or shader
+// text. First OBSERVED failure wins, including failures in async lease owners.
+#[derive(Clone, Copy)]
+#[repr(usize)]
+enum Failure {
+    HeldLease,
+    MutationAbandoned,
+    LeaseOverflow,
+    ReadbackMap,
+    ReadbackConversion,
+    Unmap,
+    PriorStreamError,
+    ContextRetired,
+    DrainTimeout,
+    PollIndex,
+    UploadMap,
+    UploadWipe,
+    DestinationClear,
+    QueueSubmit,
+    GpuOutOfMemory,
+    GpuValidation,
+    GpuInternal,
+    AuditBudget,
+    AuditAllocation,
+    AuditMap,
+    AuditNonzero,
+    AuditBookkeeping,
+    Panic,
+    EpochOverflow,
+    AllocationBudget,
+    AllocationMetadata,
+    AllocationSpan,
+    CleanupRejected,
+}
+const FAILURE_CODES: [&str; 28] = [
+    "kuno_private_io_failure:held_lease",
+    "kuno_private_io_failure:mutation_abandoned",
+    "kuno_private_io_failure:lease_overflow",
+    "kuno_private_io_failure:readback_map",
+    "kuno_private_io_failure:readback_conversion",
+    "kuno_private_io_failure:unmap",
+    "kuno_private_io_failure:prior_stream_error",
+    "kuno_private_io_failure:context_retired",
+    "kuno_private_io_failure:drain_timeout",
+    "kuno_private_io_failure:poll_submission_index",
+    "kuno_private_io_failure:upload_map",
+    "kuno_private_io_failure:upload_wipe",
+    "kuno_private_io_failure:destination_clear",
+    "kuno_private_io_failure:queue_submit",
+    "kuno_private_io_failure:gpu_out_of_memory",
+    "kuno_private_io_failure:gpu_validation",
+    "kuno_private_io_failure:gpu_internal",
+    "kuno_private_io_failure:audit_budget",
+    "kuno_private_io_failure:audit_allocation",
+    "kuno_private_io_failure:audit_map",
+    "kuno_private_io_failure:audit_nonzero",
+    "kuno_private_io_failure:audit_bookkeeping",
+    "kuno_private_io_failure:panic",
+    "kuno_private_io_failure:epoch_overflow",
+    "kuno_private_io_failure:allocation_budget",
+    "kuno_private_io_failure:allocation_metadata",
+    "kuno_private_io_failure:allocation_span",
+    "kuno_private_io_failure:cleanup_rejected",
+];
+impl Failure {
+    fn code(self) -> &'static str {
+        FAILURE_CODES[self as usize]
+    }
+}
+fn gpu_failure(error: &wgpu::Error) -> Failure {
+    match error {
+        wgpu::Error::OutOfMemory { .. } => Failure::GpuOutOfMemory,
+        wgpu::Error::Validation { .. } => Failure::GpuValidation,
+        wgpu::Error::Internal { .. } => Failure::GpuInternal,
+    }
+}
+pub(crate) fn held_lease_fault() -> ServerError {
+    fault(Failure::HeldLease.code())
+}
+pub(crate) fn cleanup_panic_fault() -> ServerError {
+    fault(Failure::Panic.code())
+}
+
 #[derive(Debug, Default)]
 struct LeaseTracker {
     count: AtomicUsize,
     retired: AtomicBool,
+    first_failure: AtomicUsize,
+}
+impl LeaseTracker {
+    fn record(&self, category: Failure) {
+        let _ = self.first_failure.compare_exchange(
+            0,
+            category as usize + 1,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        );
+    }
+    fn reason(&self, fallback: Failure) -> &'static str {
+        self.first_failure
+            .load(Ordering::Acquire)
+            .checked_sub(1)
+            .and_then(|i| FAILURE_CODES.get(i))
+            .copied()
+            .unwrap_or(fallback.code())
+    }
+    fn retire_with(&self, category: Failure) {
+        self.record(category);
+        self.retired.store(true, Ordering::Release);
+    }
 }
 struct LeaseTicket(Arc<LeaseTracker>);
 /// A synchronous configured-private operation must either complete or retire
@@ -183,7 +289,7 @@ impl PrivateMutationGuard {
 impl Drop for PrivateMutationGuard {
     fn drop(&mut self) {
         if !self.accepted {
-            self.tracker.retired.store(true, Ordering::Release);
+            self.tracker.retire_with(Failure::MutationAbandoned);
         }
     }
 }
@@ -192,7 +298,10 @@ impl LeaseTicket {
         tracker
             .count
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| n.checked_add(1))
-            .map_err(|_| fault("private readback lease overflow"))?;
+            .map_err(|_| {
+                tracker.record(Failure::LeaseOverflow);
+                fault(Failure::LeaseOverflow.code())
+            })?;
         Ok(Self(tracker))
     }
 }
@@ -213,7 +322,7 @@ impl ReadbackLease {
         self.unmap = false;
     }
     fn retire(&self) {
-        self.ticket.0.retired.store(true, Ordering::Release);
+        self.ticket.0.retire_with(Failure::ReadbackMap);
     }
 }
 impl Drop for ReadbackLease {
@@ -222,7 +331,7 @@ impl Drop for ReadbackLease {
             && std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.buffer.unmap()))
                 .is_err()
         {
-            self.retire();
+            self.ticket.0.retire_with(Failure::Unmap);
         }
         // ticket drops AFTER pending-map cancellation/unmap is attempted.
     }
@@ -282,8 +391,11 @@ impl PendingReadback {
                 Ok(unsafe { Bytes::from_controller(controller, self.logical) })
             }
             _ => {
+                self.lease.ticket.0.record(Failure::ReadbackConversion);
                 self.fail();
-                Err(fault("private readback conversion failed"))
+                Err(fault(
+                    self.lease.ticket.0.reason(Failure::ReadbackConversion),
+                ))
             }
         }
     }
@@ -437,6 +549,7 @@ impl EraseBackend for NativeEraser<'_> {
                 let _ = sender.try_send(r);
             });
             if !self.io.poll(None) || !matches!(receiver.try_recv(), Ok(Ok(()))) {
+                self.io.leases.record(Failure::UploadMap);
                 return false;
             }
             {
@@ -454,16 +567,25 @@ impl EraseBackend for NativeEraser<'_> {
         if matches!(attempted, Ok(true)) {
             true
         } else {
+            if attempted.is_err() {
+                self.io.leases.record(Failure::UploadWipe);
+            }
             // Always abort failed/pending mapping. Never report success here.
-            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| buffer.unmap()));
+            if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| buffer.unmap())).is_err() {
+                self.io.leases.record(Failure::Unmap);
+            }
             false
         }
     }
     fn clear_copy_destination_full_span(&mut self, buffer: &wgpu::Buffer) -> bool {
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let accepted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             self.encoder.as_mut().unwrap().clear_buffer(buffer, 0, None);
         }))
-        .is_ok()
+        .is_ok();
+        if !accepted {
+            self.io.leases.record(Failure::DestinationClear);
+        }
+        accepted
     }
     fn finish_and_accept_errors(&mut self) -> bool {
         let mut failed = false;
@@ -474,11 +596,17 @@ impl EraseBackend for NativeEraser<'_> {
         }));
         match submitted {
             Ok(index) => failed |= !self.io.poll(Some(index)),
-            Err(_) => failed = true,
+            Err(_) => {
+                self.io.leases.record(Failure::QueueSubmit);
+                failed = true
+            }
         }
         self.scopes.take().unwrap().finish(self.io);
         for future in self.io.errors.drain(..) {
-            failed |= cubecl_common::future::block_on(future).is_some();
+            if let Some(error) = cubecl_common::future::block_on(future) {
+                self.io.leases.record(gpu_failure(&error));
+                failed = true;
+            }
         }
         !failed
     }
@@ -498,7 +626,7 @@ impl NativeAudit<'_> {
                 if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.buffer.unmap()))
                     .is_err()
                 {
-                    self.retired.retired.store(true, Ordering::Release);
+                    self.retired.retire_with(Failure::Unmap);
                 }
             }
         }
@@ -515,11 +643,13 @@ impl NativeAudit<'_> {
         });
         scopes.finish(self.0);
         if !self.0.poll(None) || !matches!(receiver.try_recv(), Ok(Ok(()))) {
-            return Err(fault("private audit mapping failed"));
+            self.0.leases.record(Failure::AuditMap);
+            return Err(fault(self.0.leases.reason(Failure::AuditMap)));
         }
         let view = buffer.get_mapped_range(..);
         if view.len() as u64 != buffer.size() || view.iter().any(|byte| *byte != 0) {
-            return Err(fault("private audit full-span verification failed"));
+            self.0.leases.record(Failure::AuditNonzero);
+            return Err(fault(self.0.leases.reason(Failure::AuditNonzero)));
         }
         // View drops before the unmap guard. No copy/to_vec/format/log exists.
         Ok(())
@@ -543,7 +673,16 @@ impl AuditBackend for NativeAudit<'_> {
             // spans into an explicitly owned/tracked MAP_READ stage, including
             // padding, and inspect that stage. No opaque queue upload staging.
             let scopes = IoScopes::new(&self.0.device);
-            let stage = self.0.allocate(Kind::Readback, source.size())?;
+            self.0.ledger.check(span(source.size())?).map_err(|_| {
+                self.0.leases.record(Failure::AuditBudget);
+                fault(self.0.leases.reason(Failure::AuditBudget))
+            })?;
+            let stage = self
+                .0
+                .allocate(Kind::Readback, source.size())
+                .inspect_err(|_| {
+                    self.0.leases.record(Failure::AuditAllocation);
+                })?;
             let mut encoder =
                 self.0
                     .device
@@ -555,7 +694,7 @@ impl AuditBackend for NativeAudit<'_> {
             let submitted = self.0.queue.submit([encoder.finish()]);
             scopes.finish(self.0);
             if !self.0.poll(Some(submitted)) {
-                return Err(fault("private audit copy/drain failed"));
+                return Err(fault(self.0.leases.reason(Failure::DrainTimeout)));
             }
             self.inspect_readable(&stage)?;
             // stage.span is equal to source.span (both bounded powers of two),
@@ -590,7 +729,7 @@ impl TransientIo {
         self.leases.retired.load(Ordering::Acquire)
     }
     pub fn retire(&self) {
-        self.leases.retired.store(true, Ordering::Release);
+        self.leases.retire_with(Failure::ContextRetired);
     }
     pub fn mutation_guard(&self) -> PrivateMutationGuard {
         PrivateMutationGuard {
@@ -600,7 +739,7 @@ impl TransientIo {
     }
     pub fn active(&self) -> Result<(), ServerError> {
         if self.retired() {
-            Err(fault("private I/O stream retired"))
+            Err(fault(self.leases.reason(Failure::ContextRetired)))
         } else {
             Ok(())
         }
@@ -611,7 +750,7 @@ impl TransientIo {
         if self.poll(None) {
             Ok(())
         } else {
-            Err(fault("private I/O bounded drain failed"))
+            Err(fault(self.leases.reason(Failure::DrainTimeout)))
         }
     }
     pub fn leases(&self) -> usize {
@@ -619,10 +758,13 @@ impl TransientIo {
     }
     fn allocate(&mut self, kind: Kind, logical: u64) -> Result<wgpu::Buffer, ServerError> {
         self.active()?;
-        self.buffers
-            .try_reserve(1)
-            .map_err(|_| fault("private I/O host metadata allocation"))?;
-        let owned = self.ledger.reserve(kind, logical)?;
+        self.buffers.try_reserve(1).map_err(|_| {
+            self.leases.record(Failure::AllocationMetadata);
+            fault(self.leases.reason(Failure::AllocationMetadata))
+        })?;
+        let owned = self.ledger.reserve(kind, logical).inspect_err(|_| {
+            self.leases.record(Failure::AllocationBudget);
+        })?;
         let usage = match kind {
             Kind::Upload => wgpu::BufferUsages::MAP_WRITE | wgpu::BufferUsages::COPY_SRC,
             Kind::Uniform => {
@@ -645,8 +787,8 @@ impl TransientIo {
             kind,
         });
         if buffer.size() != owned {
-            self.retire();
-            return Err(fault("private I/O buffer span mismatch"));
+            self.leases.retire_with(Failure::AllocationSpan);
+            return Err(fault(self.leases.reason(Failure::AllocationSpan)));
         }
         Ok(buffer)
     }
@@ -686,7 +828,9 @@ impl TransientIo {
         let needed = span(logical)?
             .checked_mul(2)
             .ok_or_else(|| fault("private uniform charge overflow"))?;
-        self.ledger.check(needed)?;
+        self.ledger.check(needed).inspect_err(|_| {
+            self.leases.record(Failure::AllocationBudget);
+        })?;
         let buffer = self.allocate(Kind::Uniform, logical)?;
         encoder.clear_buffer(&buffer, 0, None);
         let resource = WgpuResource {
@@ -734,27 +878,39 @@ impl TransientIo {
         inspect: bool,
     ) -> Result<TransientIoReceipt, ServerError> {
         if self.leases() != 0 {
-            return Err(fault("private I/O readbacks still held"));
+            return Err(fault(Failure::HeldLease.code()));
         }
         let attempted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             self.erase_checked(previous_error, inspect)
         }));
         match attempted {
             Ok(Ok(receipt)) => Ok(receipt),
-            _ => {
-                self.retire();
-                Err(fault("private I/O erasure failed; context must retire"))
+            Ok(Err(_)) => {
+                self.leases.retire_with(Failure::CleanupRejected);
+                Err(fault(self.leases.reason(Failure::CleanupRejected)))
+            }
+            Err(_) => {
+                self.leases.retire_with(Failure::Panic);
+                Err(fault(self.leases.reason(Failure::Panic)))
             }
         }
     }
     #[cfg(not(target_family = "wasm"))]
     fn poll(&self, index: Option<wgpu::SubmissionIndex>) -> bool {
-        self.device
-            .poll(wgpu::PollType::Wait {
-                submission_index: index,
-                timeout: Some(POLL_TIMEOUT),
-            })
-            .is_ok()
+        match self.device.poll(wgpu::PollType::Wait {
+            submission_index: index,
+            timeout: Some(POLL_TIMEOUT),
+        }) {
+            Ok(_) => true,
+            Err(wgpu::PollError::Timeout) => {
+                self.leases.record(Failure::DrainTimeout);
+                false
+            }
+            Err(wgpu::PollError::WrongSubmissionIndex(_, _)) => {
+                self.leases.record(Failure::PollIndex);
+                false
+            }
+        }
     }
     #[cfg(target_family = "wasm")]
     fn poll(&self, _index: Option<wgpu::SubmissionIndex>) -> bool {
@@ -767,6 +923,12 @@ impl TransientIo {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("CubeCL private I/O erase"),
             });
+        if previous_error {
+            self.leases.record(Failure::PriorStreamError);
+        }
+        if self.retired() {
+            self.leases.record(Failure::ContextRetired);
+        }
         let failed = previous_error || self.retired();
         let mut eraser = NativeEraser {
             io: self,
@@ -789,22 +951,29 @@ impl TransientIo {
             // bytes. Final ownership restoration then cannot allocate/panic.
             let stages = buffers.iter().filter(|b| b.kind != Kind::Readback).count();
             if buffers.try_reserve_exact(stages).is_err() {
+                self.leases.record(Failure::AuditBookkeeping);
                 let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     self.erase_set(&buffers, true)
                 }));
                 self.buffers = buffers;
-                return Err(fault("private audit bookkeeping allocation failed"));
+                return Err(fault(self.leases.reason(Failure::AuditBookkeeping)));
             }
         }
         let initial = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             self.erase_set(&buffers, previous_error)
         }));
+        if initial.is_err() {
+            self.leases.record(Failure::Panic);
+        }
         let initial_ok = matches!(initial, Ok(true));
         let inspected = if inspect && initial_ok {
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 inspect_all(&mut NativeAudit(self), &buffers)
             }))
-            .map_err(|_| fault("private audit failed"))
+            .map_err(|_| {
+                self.leases.record(Failure::Panic);
+                fault(self.leases.reason(Failure::Panic))
+            })
             .and_then(|result| result)
         } else if inspect {
             Err(fault("private audit preceding erasure failed"))
@@ -816,21 +985,25 @@ impl TransientIo {
         buffers.append(&mut self.buffers);
         let final_erased = if inspect {
             let preceding_failure = !initial_ok || inspected.is_err();
-            matches!(
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(
-                    || self.erase_set(&buffers, preceding_failure)
-                )),
-                Ok(true)
-            ) && !preceding_failure
+            let final_attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.erase_set(&buffers, preceding_failure)
+            }));
+            if final_attempt.is_err() {
+                self.leases.record(Failure::Panic);
+            }
+            matches!(final_attempt, Ok(true)) && !preceding_failure
         } else {
             initial_ok
         };
         let accepted = accepts_clean_epoch(initial_ok, inspected.is_ok(), final_erased);
         self.buffers = buffers;
         if !accepted {
-            return Err(fault("private I/O erase/audit/drain/GPU fault"));
+            self.leases.record(Failure::CleanupRejected);
+            return Err(fault(self.leases.reason(Failure::CleanupRejected)));
         }
-        let mut receipt = self.ledger.after_erasure()?;
+        let mut receipt = self.ledger.after_erasure().inspect_err(|_| {
+            self.leases.record(Failure::EpochOverflow);
+        })?;
         let counts = inspected?;
         receipt.inspected_bytes = counts.bytes;
         receipt.inspected_buffers = counts.buffers;
@@ -868,6 +1041,101 @@ mod cleanup_read_tests {
 mod tests {
     use super::*;
     use std::cell::RefCell;
+
+    #[test]
+    fn fixed_first_observed_category_survives_later_cleanup_retirement_and_drop() {
+        let tracker = Arc::new(LeaseTracker::default());
+        tracker.record(Failure::AuditBudget);
+        tracker.record(Failure::GpuOutOfMemory);
+        tracker.retire_with(Failure::ContextRetired);
+        drop(PrivateMutationGuard {
+            tracker: tracker.clone(),
+            accepted: false,
+        });
+        assert_eq!(
+            tracker.reason(Failure::CleanupRejected),
+            Failure::AuditBudget.code()
+        );
+        assert!(tracker.retired.load(Ordering::Acquire));
+        assert_eq!(
+            tracker.first_failure.load(Ordering::Acquire),
+            Failure::AuditBudget as usize + 1
+        );
+        // Held leases reject only this attempt; their fixed code is not sticky.
+        let clean = LeaseTracker::default();
+        let ServerError::Generic { reason, .. } = held_lease_fault() else {
+            panic!("wrong error kind")
+        };
+        assert_eq!(reason, Failure::HeldLease.code());
+        assert_eq!(clean.first_failure.load(Ordering::Acquire), 0);
+        assert!(!clean.retired.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn typed_scope_errors_never_export_source_description_or_shader_text() {
+        let sensitive = "do-not-export-fixture-description-or-private-metadata";
+        let errors = [
+            wgpu::Error::OutOfMemory {
+                source: Box::new(std::io::Error::other(sensitive)),
+            },
+            wgpu::Error::Validation {
+                source: Box::new(std::io::Error::other(sensitive)),
+                description: sensitive.into(),
+            },
+            wgpu::Error::Internal {
+                source: Box::new(std::io::Error::other(sensitive)),
+                description: sensitive.into(),
+            },
+        ];
+        for (error, expected) in errors.into_iter().zip([
+            Failure::GpuOutOfMemory,
+            Failure::GpuValidation,
+            Failure::GpuInternal,
+        ]) {
+            let tracker = LeaseTracker::default();
+            tracker.record(gpu_failure(&error));
+            let code = tracker.reason(Failure::CleanupRejected);
+            assert_eq!(code, expected.code());
+            assert!(!code.contains(sensitive));
+            assert!(FAILURE_CODES.contains(&code));
+        }
+        assert_eq!(FAILURE_CODES.len(), Failure::CleanupRejected as usize + 1);
+        assert!(
+            FAILURE_CODES
+                .iter()
+                .all(|code| code.starts_with("kuno_private_io_failure:"))
+        );
+        let mut unique = FAILURE_CODES.to_vec();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(unique.len(), FAILURE_CODES.len());
+    }
+
+    #[test]
+    fn first_category_is_atomic_and_never_reset_by_a_new_guard() {
+        let tracker = Arc::new(LeaseTracker::default());
+        tracker.record(Failure::DrainTimeout);
+        std::thread::scope(|scope| {
+            for category in [Failure::Unmap, Failure::Panic, Failure::GpuValidation] {
+                let tracker = tracker.clone();
+                scope.spawn(move || tracker.retire_with(category));
+            }
+        });
+        assert_eq!(
+            tracker.reason(Failure::CleanupRejected),
+            Failure::DrainTimeout.code()
+        );
+        PrivateMutationGuard {
+            tracker: tracker.clone(),
+            accepted: false,
+        }
+        .accept();
+        assert_eq!(
+            tracker.reason(Failure::CleanupRejected),
+            Failure::DrainTimeout.code()
+        );
+        assert!(tracker.retired.load(Ordering::Acquire));
+    }
 
     #[test]
     fn configured_private_mutation_unwind_and_early_error_permanently_retire() {

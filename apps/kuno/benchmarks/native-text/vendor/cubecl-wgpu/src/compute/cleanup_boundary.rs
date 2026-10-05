@@ -22,9 +22,7 @@ impl CleanupBoundary {
     pub(crate) fn begin(self: &Arc<Self>, live_leases: usize) -> Result<CleanupGuard, ServerError> {
         // Reject BEFORE scheduler/encoder mutation or changing boundary state.
         if live_leases != 0 {
-            return Err(super::transient_io::fault(
-                "private I/O readbacks still held",
-            ));
+            return Err(super::transient_io::held_lease_fault());
         }
         if self.active.swap(true, Ordering::AcqRel) {
             return Err(super::transient_io::fault(
@@ -64,9 +62,7 @@ impl CleanupGuard {
                 Ok(value)
             }
             Ok(Err(error)) => Err(error),
-            Err(_) => Err(super::transient_io::fault(
-                "private I/O cleanup panicked; context must retire",
-            )),
+            Err(_) => Err(super::transient_io::cleanup_panic_fault()),
         }
     }
 }

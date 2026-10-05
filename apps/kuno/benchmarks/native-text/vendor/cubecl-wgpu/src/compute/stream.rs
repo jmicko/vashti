@@ -491,9 +491,7 @@ impl WgpuStream {
             .as_ref()
             .ok_or_else(|| super::transient_io::fault("private I/O not configured"))?;
         if io.leases() != 0 {
-            return Err(super::transient_io::fault(
-                "private I/O readbacks still held",
-            ));
+            return Err(super::transient_io::held_lease_fault());
         }
         // Deliberately synchronous at the server boundary, so dropping the
         // returned future cannot abandon cleanup midway or unlock the stream.
