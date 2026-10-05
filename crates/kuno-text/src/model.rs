@@ -1,0 +1,845 @@
+//! Experimental, sequential Rust reference for the borrowed Qwen4exp artifact.
+//!
+//! This is not exposed through Kuno's HTTP API. It deliberately starts with
+//! exact operators and bounded read-only weights; performance, production
+//! sampling, and worker privacy acceptance are separate milestones.
+use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use crate::cpu::Matrix;
+use crate::ops::{
+    self, CausalConvState, GatedResidualShape, GdnShape, GdnState, PleHashConfig, PleTokenHistory,
+    QsaShape,
+};
+use crate::{Error, GgufFile, MetadataValue, Result, TensorView};
+
+const D: usize = 2560;
+const HC: usize = 4;
+const LR: usize = 320;
+const LAYERS: usize = 48;
+const VOCAB: usize = 248320;
+const EXPERTS: usize = 512;
+const TOP_K: usize = 10;
+const FF: usize = 640;
+const EPS: f32 = 1e-6;
+const MAX_REFERENCE_CONTEXT: usize = 4096;
+
+/// Backend owns computation, never graph semantics or model routing. All tensors
+/// retain their original mixed-format GGUF packing and expert row orientation.
+pub trait MatrixExecutor {
+    fn run(
+        &mut self,
+        tensor: TensorView<'_>,
+        expert: usize,
+        input: &[f32],
+        cancel: &AtomicBool,
+    ) -> Result<Vec<f32>>;
+}
+
+#[derive(Default)]
+pub struct ScalarExecutor;
+impl MatrixExecutor for ScalarExecutor {
+    fn run(
+        &mut self,
+        tensor: TensorView<'_>,
+        expert: usize,
+        input: &[f32],
+        cancel: &AtomicBool,
+    ) -> Result<Vec<f32>> {
+        let matrix = Matrix::new(tensor)?;
+        let mut output = vec![0.; matrix.outputs()];
+        if let Err(error) = matrix.apply(expert, input, &mut output, cancel) {
+            output.fill(0.);
+            return Err(error);
+        }
+        Ok(output)
+    }
+}
+
+fn op<T>(value: std::result::Result<T, ops::OpsError>) -> Result<T> {
+    value.map_err(|_| Error::InvalidFormat("native graph operator"))
+}
+
+fn nonnegative(value: &MetadataValue) -> Option<u64> {
+    value
+        .as_u64()
+        .or_else(|| value.as_i64().and_then(|n| u64::try_from(n).ok()))
+}
+fn integer(file: &GgufFile, key: &str) -> Result<u64> {
+    file.metadata()
+        .get(key)
+        .and_then(nonnegative)
+        .ok_or(Error::InvalidFormat("graph integer metadata"))
+}
+fn integers(file: &GgufFile, key: &str) -> Result<Vec<u64>> {
+    file.metadata()
+        .get(key)
+        .and_then(MetadataValue::as_array)
+        .ok_or(Error::InvalidFormat("graph array metadata"))?
+        .iter()
+        .map(|value| nonnegative(value).ok_or(Error::InvalidFormat("graph array integer")))
+        .collect()
+}
+fn checked_tensor<'a>(file: &'a GgufFile, name: &str, dims: &[u64]) -> Result<TensorView<'a>> {
+    let tensor = file
+        .tensor(name)
+        .ok_or(Error::InvalidFormat("missing graph tensor"))?;
+    if tensor.info().dimensions() != dims {
+        return Err(Error::InvalidFormat("graph tensor geometry"));
+    }
+    Ok(tensor)
+}
+fn vector(tensor: TensorView<'_>) -> Result<Vec<f32>> {
+    let len =
+        usize::try_from(tensor.info().element_count()).map_err(|_| Error::ArithmeticOverflow)?;
+    let size = usize::try_from(tensor.info().byte_len()).map_err(|_| Error::ArithmeticOverflow)?;
+    if len > 65536 || size > 512 * 1024 {
+        return Err(Error::LimitExceeded("graph static vector"));
+    }
+    let mut bytes = vec![0u8; size];
+    let mut values = vec![0.; len];
+    tensor.read_range(0, &mut bytes)?;
+    tensor.info().dtype().decode(&bytes, &mut values)?;
+    if values.iter().any(|x| !x.is_finite()) {
+        return Err(Error::InvalidFormat("non-finite static graph weights"));
+    }
+    Ok(values)
+}
+
+/// Exact-geometry binding, rejected before execution if unsupported. Model
+/// vectors are public static weights; no request-derived caches live here.
+pub struct Qwen4Exp<'a> {
+    file: &'a GgufFile,
+    vectors: BTreeMap<String, Vec<f32>>,
+    ple_hash: PleHashConfig,
+    eos: u32,
+}
+
+impl<'a> Qwen4Exp<'a> {
+    pub fn bind(file: &'a GgufFile) -> Result<Self> {
+        if file
+            .metadata()
+            .get("general.architecture")
+            .and_then(MetadataValue::as_str)
+            != Some("qwen4exp")
+        {
+            return Err(Error::InvalidFormat("unsupported native architecture"));
+        }
+        for (suffix, expected) in [
+            ("embedding_length", D),
+            ("block_count", LAYERS),
+            ("hyper_connection.count", HC),
+            ("hyper_connection.low_rank", LR),
+            ("expert_count", EXPERTS),
+            ("expert_used_count", TOP_K),
+            ("expert_feed_forward_length", FF),
+            ("expert_shared_feed_forward_length", FF),
+            ("full_attention_interval", 4),
+            ("attention.head_count", 24),
+            ("attention.head_count_kv", 2),
+            ("attention.key_length", 256),
+            ("attention.value_length", 256),
+            ("attention.indexer.head_count", 4),
+            ("attention.indexer.key_length", 128),
+            ("attention.indexer.top_k", 2048),
+            ("ssm.group_count", 16),
+            ("ssm.inner_size", 6144),
+            ("ssm.state_size", 128),
+            ("ssm.time_step_rank", 48),
+            ("ssm.conv_kernel", 4),
+            ("ple.conv_kernel", 4),
+            ("rope.dimension_count", 64),
+            ("embedding_length_per_layer_input", 160),
+            ("ple.ngram_size", 3),
+            ("ple.heads_per_ngram", 8),
+            ("ple.eos_token_id", 248044),
+        ] {
+            if integer(file, &format!("qwen4exp.{suffix}"))? != expected as u64 {
+                return Err(Error::InvalidFormat("unsupported native geometry"));
+            }
+        }
+        let epsilon = file
+            .metadata()
+            .get("qwen4exp.attention.layer_norm_rms_epsilon")
+            .and_then(MetadataValue::as_f64)
+            .ok_or(Error::InvalidFormat("graph epsilon"))?;
+        let theta = file
+            .metadata()
+            .get("qwen4exp.rope.freq_base")
+            .and_then(MetadataValue::as_f64)
+            .ok_or(Error::InvalidFormat("graph rope base"))?;
+        if (epsilon - EPS as f64).abs() > 1e-12 || theta != 10_000_000. {
+            return Err(Error::InvalidFormat("unsupported graph normalization"));
+        }
+        if integers(file, "qwen4exp.ple.layers")? != [1]
+            || integers(file, "qwen4exp.rope.dimension_sections")? != [11, 11, 10, 0]
+            || integers(file, "qwen4exp.attention.compress_ratios")?
+                != (0..LAYERS)
+                    .map(|l| if l % 4 == 3 { 4 } else { 0 })
+                    .collect::<Vec<_>>()
+        {
+            return Err(Error::InvalidFormat("unsupported graph layer arrangement"));
+        }
+        checked_tensor(file, "token_embd.weight", &[D as u64, VOCAB as u64])?;
+        checked_tensor(file, "output.weight", &[D as u64, VOCAB as u64])?;
+        let ple = checked_tensor(file, "per_layer_token_embd.weight", &[160, 320001536])?;
+        let ple_hash = op(PleHashConfig::new(
+            integers(file, "qwen4exp.ple.layer_multipliers")?,
+            integers(file, "qwen4exp.ple.head_vocab_sizes")?,
+            integers(file, "qwen4exp.ple.head_offsets")?,
+            8,
+            248044,
+            VOCAB as u32,
+            ple.info().dimensions()[1],
+        ))?;
+        let eos = u32::try_from(integer(file, "tokenizer.ggml.eos_token_id")?)
+            .map_err(|_| Error::ArithmeticOverflow)?;
+        if eos != 248046 {
+            return Err(Error::InvalidFormat("unsupported generation EOS"));
+        }
+        let mut model = Self {
+            file,
+            vectors: BTreeMap::new(),
+            ple_hash,
+            eos,
+        };
+        for l in 0..LAYERS {
+            let prefix = format!("blk.{l}.");
+            for kind in ["attn", "ffn"] {
+                let base = format!("{prefix}hc_{kind}");
+                model.static_vector(&format!("{base}_norm.weight"), &[10240])?;
+                model.matrix(&format!("{base}_down.weight"), &[10240, 320])?;
+                model.matrix(&format!("{base}_up.weight"), &[320, 10240])?;
+                model.matrix(&format!("{base}_inject.weight"), &[10240, 4])?;
+            }
+            model.matrix(&format!("{prefix}ffn_gate_inp.weight"), &[2560, 512])?;
+            model.static_vector(&format!("{prefix}ffn_gate_inp_shexp.weight"), &[2560])?;
+            for suffix in ["ffn_gate_exps", "ffn_up_exps"] {
+                model.matrix(&format!("{prefix}{suffix}.weight"), &[2560, 640, 512])?;
+            }
+            model.matrix(&format!("{prefix}ffn_down_exps.weight"), &[640, 2560, 512])?;
+            for suffix in ["ffn_gate_shexp", "ffn_up_shexp"] {
+                model.matrix(&format!("{prefix}{suffix}.weight"), &[2560, 640])?;
+            }
+            model.matrix(&format!("{prefix}ffn_down_shexp.weight"), &[640, 2560])?;
+            if l % 4 == 3 {
+                for (suffix, dims) in [
+                    ("attn_q.weight", [2560, 12288]),
+                    ("attn_k.weight", [2560, 512]),
+                    ("attn_v.weight", [2560, 512]),
+                    ("attn_output.weight", [6144, 2560]),
+                    ("indexer.q_proj.weight", [2560, 512]),
+                    ("indexer.k_proj.weight", [2560, 128]),
+                ] {
+                    model.matrix(&format!("{prefix}{suffix}"), &dims)?;
+                }
+                for (suffix, width) in [
+                    ("attn_q_norm.weight", 256),
+                    ("attn_k_norm.weight", 256),
+                    ("indexer.q_norm.weight", 128),
+                    ("indexer.k_norm.weight", 128),
+                ] {
+                    model.static_vector(&format!("{prefix}{suffix}"), &[width])?;
+                }
+            } else {
+                for (suffix, dims) in [
+                    ("attn_qkv.weight", [2560, 10240]),
+                    ("attn_gate.weight", [2560, 6144]),
+                    ("ssm_alpha.weight", [2560, 48]),
+                    ("ssm_beta.weight", [2560, 48]),
+                    ("ssm_out.weight", [6144, 2560]),
+                ] {
+                    model.matrix(&format!("{prefix}{suffix}"), &dims)?;
+                }
+                for (suffix, dims) in [
+                    ("ssm_conv1d.weight", vec![4, 10240]),
+                    ("ssm_dt.bias", vec![48]),
+                    ("ssm_a", vec![48]),
+                    ("ssm_norm.weight", vec![128]),
+                ] {
+                    model.static_vector(&format!("{prefix}{suffix}"), &dims)?;
+                }
+            }
+        }
+        model.static_vector("output_hc_norm.weight", &[10240])?;
+        model.matrix("output_hc_down.weight", &[10240, 320])?;
+        model.matrix("output_hc_up.weight", &[320, 10240])?;
+        for (suffix, dims) in [
+            ("ple_key.weight", vec![2560, 10240]),
+            ("ple_value.weight", vec![2560, 2560]),
+        ] {
+            model.matrix(&format!("blk.1.{suffix}"), &dims)?;
+        }
+        for (suffix, dims) in [
+            ("ple_norm_key.weight", vec![10240]),
+            ("ple_norm_query.weight", vec![10240]),
+            ("ple_norm_conv.weight", vec![10240]),
+            ("ple_conv1d.weight", vec![4, 10240]),
+        ] {
+            model.static_vector(&format!("blk.1.{suffix}"), &dims)?;
+        }
+        file.verify_file_unchanged()?;
+        Ok(model)
+    }
+    fn matrix(&self, name: &str, dims: &[u64]) -> Result<()> {
+        Matrix::new(checked_tensor(self.file, name, dims)?)?;
+        Ok(())
+    }
+    fn static_vector(&mut self, name: &str, dims: &[u64]) -> Result<()> {
+        self.vectors
+            .insert(name.into(), vector(checked_tensor(self.file, name, dims)?)?);
+        Ok(())
+    }
+    fn weight(&self, name: &str) -> Result<TensorView<'a>> {
+        self.file
+            .tensor(name)
+            .ok_or(Error::InvalidFormat("missing bound graph weights"))
+    }
+    fn values(&self, name: &str) -> Result<&[f32]> {
+        self.vectors
+            .get(name)
+            .map(Vec::as_slice)
+            .ok_or(Error::InvalidFormat("missing bound graph vector"))
+    }
+    fn project(
+        &self,
+        executor: &mut impl MatrixExecutor,
+        name: &str,
+        expert: usize,
+        x: &[f32],
+        cancel: &AtomicBool,
+    ) -> Result<Vec<f32>> {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(Error::InvalidFormat("graph cancelled"));
+        }
+        let tensor = self.weight(name)?;
+        let dims = tensor.info().dimensions();
+        if x.len() != dims[0] as usize || expert >= dims.get(2).copied().unwrap_or(1) as usize {
+            return Err(Error::InvalidBufferLength);
+        }
+        let output = executor.run(tensor, expert, x, cancel)?;
+        if output.len() != dims[1] as usize || output.iter().any(|x| !x.is_finite()) {
+            return Err(Error::InvalidFormat("graph executor output"));
+        }
+        Ok(output)
+    }
+    pub fn eos_token(&self) -> u32 {
+        self.eos
+    }
+    pub fn sequence(&self, context_limit: usize) -> Result<Sequence> {
+        Sequence::new(context_limit, &self.ple_hash)
+    }
+    fn gr_read(
+        &self,
+        executor: &mut impl MatrixExecutor,
+        residual: &[f32],
+        base: &str,
+        inject: bool,
+        cancel: &AtomicBool,
+    ) -> Result<(Vec<f32>, Vec<f32>)> {
+        let shape = op(GatedResidualShape::new(HC, D))?;
+        let norm = op(ops::rms_norm(
+            residual,
+            self.values(&format!("{base}_norm.weight"))?,
+            D,
+            EPS,
+        ))?;
+        let down = self.project(executor, &format!("{base}_down.weight"), 0, &norm, cancel)?;
+        let low = op(shape.activate_down(&down))?;
+        let up = self.project(executor, &format!("{base}_up.weight"), 0, &low, cancel)?;
+        let mixed = op(shape.mix(&norm, &up))?;
+        let injection = if inject {
+            self.project(executor, &format!("{base}_inject.weight"), 0, &norm, cancel)?
+        } else {
+            Vec::new()
+        };
+        Ok((mixed, injection))
+    }
+    fn gdn(
+        &self,
+        executor: &mut impl MatrixExecutor,
+        l: usize,
+        x: &[f32],
+        state: &mut GdnLayer,
+        cancel: &AtomicBool,
+    ) -> Result<Vec<f32>> {
+        let base = format!("blk.{l}.");
+        let qkv = self.project(executor, &format!("{base}attn_qkv.weight"), 0, x, cancel)?;
+        let z = self.project(executor, &format!("{base}attn_gate.weight"), 0, x, cancel)?;
+        let alpha = self.project(executor, &format!("{base}ssm_alpha.weight"), 0, x, cancel)?;
+        let beta = self
+            .project(executor, &format!("{base}ssm_beta.weight"), 0, x, cancel)?
+            .into_iter()
+            .map(ops::sigmoid)
+            .collect::<Vec<_>>();
+        let mut u = op(state
+            .conv
+            .step(&qkv, self.values(&format!("{base}ssm_conv1d.weight"))?))?;
+        u.iter_mut().for_each(|v| *v = ops::silu(*v));
+        let mut q = op(ops::l2_norm_heads(&u[..2048], 128, EPS))?;
+        q.iter_mut().for_each(|v| *v /= 128f32.sqrt());
+        let k = op(ops::l2_norm_heads(&u[2048..4096], 128, EPS))?;
+        let decay = op(ops::gdn_log_decay(
+            &alpha,
+            self.values(&format!("{base}ssm_dt.bias"))?,
+            self.values(&format!("{base}ssm_a"))?,
+        ))?;
+        let out = op(state.recurrent.step(&q, &k, &u[4096..], &decay, &beta))?;
+        let gated = op(ops::gdn_output_gate(
+            &out,
+            &z,
+            self.values(&format!("{base}ssm_norm.weight"))?,
+            128,
+            EPS,
+        ))?;
+        self.project(
+            executor,
+            &format!("{base}ssm_out.weight"),
+            0,
+            &gated,
+            cancel,
+        )
+    }
+    fn qsa(
+        &self,
+        executor: &mut impl MatrixExecutor,
+        l: usize,
+        x: &[f32],
+        state: &mut QsaLayer,
+        position: u32,
+        cancel: &AtomicBool,
+    ) -> Result<Vec<f32>> {
+        let base = format!("blk.{l}.");
+        let shape = QsaShape::qwen38();
+        let qfull = self.project(executor, &format!("{base}attn_q.weight"), 0, x, cancel)?;
+        let mut q = Vec::with_capacity(6144);
+        let mut gate = Vec::with_capacity(6144);
+        for head in qfull.chunks_exact(512) {
+            q.extend_from_slice(&head[..256]);
+            gate.extend_from_slice(&head[256..]);
+        }
+        q = op(ops::rms_norm(
+            &q,
+            self.values(&format!("{base}attn_q_norm.weight"))?,
+            256,
+            EPS,
+        ))?;
+        let kraw = self.project(executor, &format!("{base}attn_k.weight"), 0, x, cancel)?;
+        let mut k = op(ops::rms_norm(
+            &kraw,
+            self.values(&format!("{base}attn_k_norm.weight"))?,
+            256,
+            EPS,
+        ))?;
+        let v = self.project(executor, &format!("{base}attn_v.weight"), 0, x, cancel)?;
+        op(ops::rope_neox_heads(
+            &mut q,
+            256,
+            64,
+            position,
+            shape.rope_theta,
+        ))?;
+        op(ops::rope_neox_heads(
+            &mut k,
+            256,
+            64,
+            position,
+            shape.rope_theta,
+        ))?;
+        state.keys.extend_from_slice(&k);
+        state.values.extend_from_slice(&v);
+        let iqraw = self.project(
+            executor,
+            &format!("{base}indexer.q_proj.weight"),
+            0,
+            x,
+            cancel,
+        )?;
+        let mut iq = op(ops::rms_norm(
+            &iqraw,
+            self.values(&format!("{base}indexer.q_norm.weight"))?,
+            128,
+            EPS,
+        ))?;
+        op(ops::rope_neox_heads(
+            &mut iq,
+            128,
+            64,
+            position,
+            shape.rope_theta,
+        ))?;
+        let ik = self.project(
+            executor,
+            &format!("{base}indexer.k_proj.weight"),
+            0,
+            x,
+            cancel,
+        )?;
+        state.indexer_keys.extend_from_slice(&ik);
+        state.positions.push(position);
+        let visible = state.positions.len();
+        let scores = op(ops::qsa_block_scores(
+            &state.indexer_keys,
+            &iq,
+            self.values(&format!("{base}indexer.k_norm.weight"))?,
+            &state.positions,
+            visible,
+            shape,
+        ))?;
+        let selected = op(ops::qsa_select_blocks(
+            &scores,
+            visible,
+            shape.block_size,
+            shape.token_budget,
+        ))?;
+        let mut out = op(ops::qsa_attend(
+            &q,
+            &state.keys,
+            &state.values,
+            &selected,
+            visible,
+            shape,
+        ))?;
+        for (y, z) in out.iter_mut().zip(gate) {
+            *y *= ops::sigmoid(z);
+        }
+        self.project(
+            executor,
+            &format!("{base}attn_output.weight"),
+            0,
+            &out,
+            cancel,
+        )
+    }
+    fn moe(
+        &self,
+        executor: &mut impl MatrixExecutor,
+        l: usize,
+        x: &[f32],
+        cancel: &AtomicBool,
+    ) -> Result<Vec<f32>> {
+        let base = format!("blk.{l}.");
+        let router = self.project(
+            executor,
+            &format!("{base}ffn_gate_inp.weight"),
+            0,
+            x,
+            cancel,
+        )?;
+        let selected = op(ops::router_topk(&router, TOP_K, true))?;
+        let mut result = vec![0.; D];
+        for (expert, weight) in selected {
+            let gate = self.project(
+                executor,
+                &format!("{base}ffn_gate_exps.weight"),
+                expert,
+                x,
+                cancel,
+            )?;
+            let up = self.project(
+                executor,
+                &format!("{base}ffn_up_exps.weight"),
+                expert,
+                x,
+                cancel,
+            )?;
+            let activation = gate
+                .iter()
+                .zip(up)
+                .map(|(g, u)| ops::silu(*g) * u)
+                .collect::<Vec<_>>();
+            let down = self.project(
+                executor,
+                &format!("{base}ffn_down_exps.weight"),
+                expert,
+                &activation,
+                cancel,
+            )?;
+            for (y, e) in result.iter_mut().zip(down) {
+                *y += weight * e;
+            }
+        }
+        let gate = self.project(
+            executor,
+            &format!("{base}ffn_gate_shexp.weight"),
+            0,
+            x,
+            cancel,
+        )?;
+        let up = self.project(
+            executor,
+            &format!("{base}ffn_up_shexp.weight"),
+            0,
+            x,
+            cancel,
+        )?;
+        let activation = gate
+            .iter()
+            .zip(up)
+            .map(|(g, u)| ops::silu(*g) * u)
+            .collect::<Vec<_>>();
+        let shared = self.project(
+            executor,
+            &format!("{base}ffn_down_shexp.weight"),
+            0,
+            &activation,
+            cancel,
+        )?;
+        let scalar = self
+            .values(&format!("{base}ffn_gate_inp_shexp.weight"))?
+            .iter()
+            .zip(x)
+            .map(|(w, v)| w * v)
+            .sum::<f32>();
+        for (y, s) in result.iter_mut().zip(shared) {
+            *y += ops::sigmoid(scalar) * s;
+        }
+        if result.iter().any(|x| !x.is_finite()) {
+            return Err(Error::InvalidFormat("non-finite MoE output"));
+        }
+        Ok(result)
+    }
+    /// Sequential token reference. On failure, all partially advanced state is
+    /// discarded and the sequence must be reset; it can never silently resume.
+    pub fn step(
+        &self,
+        executor: &mut impl MatrixExecutor,
+        sequence: &mut Sequence,
+        token: u32,
+        cancel: &AtomicBool,
+        mut layer_complete: impl FnMut(usize),
+    ) -> Result<Vec<f32>> {
+        if sequence.poisoned
+            || sequence.position >= sequence.context_limit
+            || token as usize >= VOCAB
+        {
+            return Err(Error::InvalidFormat("invalid native sequence input"));
+        }
+        sequence.poisoned = true;
+        let result = (|| {
+            let mut emb = vec![0.; D];
+            self.weight("token_embd.weight")?
+                .decode_row(token as u64, &mut emb)?;
+            let mut residual = emb.repeat(HC);
+            let gr = op(GatedResidualShape::new(HC, D))?;
+            for l in 0..LAYERS {
+                if cancel.load(Ordering::Relaxed) {
+                    return Err(Error::InvalidFormat("graph cancelled"));
+                }
+                if l == 1 {
+                    let rows = op(self
+                        .ple_hash
+                        .rows_and_advance(token as i32, &mut sequence.ple_history))?;
+                    let mut ple_emb = vec![0.; D];
+                    for (row, out) in rows.into_iter().zip(ple_emb.chunks_exact_mut(160)) {
+                        self.weight("per_layer_token_embd.weight")?
+                            .decode_row(row as u64, out)?;
+                    }
+                    let key =
+                        self.project(executor, "blk.1.ple_key.weight", 0, &ple_emb, cancel)?;
+                    let value =
+                        self.project(executor, "blk.1.ple_value.weight", 0, &ple_emb, cancel)?;
+                    residual = op(ops::ple_inject_projected(
+                        &key,
+                        &value,
+                        &residual,
+                        self.values("blk.1.ple_norm_key.weight")?,
+                        self.values("blk.1.ple_norm_query.weight")?,
+                        self.values("blk.1.ple_norm_conv.weight")?,
+                        self.values("blk.1.ple_conv1d.weight")?,
+                        &mut sequence.ple_conv,
+                        gr,
+                        EPS,
+                    ))?
+                    .residual;
+                }
+                let (x, inject) = self.gr_read(
+                    executor,
+                    &residual,
+                    &format!("blk.{l}.hc_attn"),
+                    true,
+                    cancel,
+                )?;
+                let attention = match &mut sequence.layers[l] {
+                    LayerState::Gdn(state) => self.gdn(executor, l, &x, state, cancel)?,
+                    LayerState::Qsa(state) => {
+                        self.qsa(executor, l, &x, state, sequence.position as u32, cancel)?
+                    }
+                };
+                residual = op(gr.combine(&residual, &attention, &inject))?;
+                let (x, inject) = self.gr_read(
+                    executor,
+                    &residual,
+                    &format!("blk.{l}.hc_ffn"),
+                    true,
+                    cancel,
+                )?;
+                let ffn = self.moe(executor, l, &x, cancel)?;
+                residual = op(gr.combine(&residual, &ffn, &inject))?;
+                layer_complete(l);
+            }
+            let (mixed, _) = self.gr_read(executor, &residual, "output_hc", false, cancel)?;
+            self.project(executor, "output.weight", 0, &mixed, cancel)
+        })();
+        match result {
+            Ok(logits) => {
+                sequence.position += 1;
+                sequence.poisoned = false;
+                Ok(logits)
+            }
+            Err(error) => {
+                sequence.clear();
+                sequence.poisoned = true;
+                Err(error)
+            }
+        }
+    }
+}
+
+struct GdnLayer {
+    conv: CausalConvState,
+    recurrent: GdnState,
+}
+struct QsaLayer {
+    keys: Vec<f32>,
+    values: Vec<f32>,
+    indexer_keys: Vec<f32>,
+    positions: Vec<u32>,
+}
+impl QsaLayer {
+    fn new(limit: usize) -> Self {
+        Self {
+            keys: Vec::with_capacity(limit * 512),
+            values: Vec::with_capacity(limit * 512),
+            indexer_keys: Vec::with_capacity(limit * 128),
+            positions: Vec::with_capacity(limit),
+        }
+    }
+    fn clear(&mut self) {
+        for buffer in [&mut self.keys, &mut self.values, &mut self.indexer_keys] {
+            buffer.resize(buffer.capacity(), 0.);
+            buffer.fill(0.);
+            buffer.clear();
+        }
+        self.positions.resize(self.positions.capacity(), 0);
+        self.positions.fill(0);
+        self.positions.clear();
+    }
+}
+impl Drop for QsaLayer {
+    fn drop(&mut self) {
+        self.clear();
+    }
+}
+enum LayerState {
+    Gdn(GdnLayer),
+    Qsa(QsaLayer),
+}
+
+/// Per-request state; never stored in the public/static model binding.
+pub struct Sequence {
+    layers: Vec<LayerState>,
+    ple_history: PleTokenHistory,
+    ple_conv: CausalConvState,
+    context_limit: usize,
+    position: usize,
+    poisoned: bool,
+}
+impl Sequence {
+    fn new(context_limit: usize, config: &PleHashConfig) -> Result<Self> {
+        if !(1..=MAX_REFERENCE_CONTEXT).contains(&context_limit) {
+            return Err(Error::LimitExceeded("reference context"));
+        }
+        let mut layers = Vec::with_capacity(LAYERS);
+        for l in 0..LAYERS {
+            layers.push(if l % 4 == 3 {
+                LayerState::Qsa(QsaLayer::new(context_limit))
+            } else {
+                LayerState::Gdn(GdnLayer {
+                    conv: op(CausalConvState::new(10240, 4, 1))?,
+                    recurrent: op(GdnState::new(GdnShape::qwen38()))?,
+                })
+            });
+        }
+        Ok(Self {
+            layers,
+            ple_history: PleTokenHistory::new(config),
+            ple_conv: op(CausalConvState::new(10240, 4, 3))?,
+            context_limit,
+            position: 0,
+            poisoned: false,
+        })
+    }
+    pub fn position(&self) -> usize {
+        self.position
+    }
+    pub fn reset(&mut self) {
+        self.clear();
+        self.poisoned = false;
+    }
+    fn clear(&mut self) {
+        for state in &mut self.layers {
+            match state {
+                LayerState::Gdn(state) => {
+                    state.conv.reset();
+                    state.recurrent.reset();
+                }
+                LayerState::Qsa(state) => state.clear(),
+            }
+        }
+        self.ple_history.reset();
+        self.ple_conv.reset();
+        self.position = 0;
+    }
+}
+impl Drop for Sequence {
+    fn drop(&mut self) {
+        self.clear();
+    }
+}
+
+/// Greedy token selection with an explicit ascending-ID tie rule.
+pub fn greedy(logits: &[f32]) -> Result<u32> {
+    if logits.is_empty() || logits.iter().any(|x| !x.is_finite()) {
+        return Err(Error::InvalidFormat("invalid sampling logits"));
+    }
+    let mut best = 0;
+    for id in 1..logits.len() {
+        if logits[id] > logits[best] {
+            best = id;
+        }
+    }
+    u32::try_from(best).map_err(|_| Error::ArithmeticOverflow)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn greedy_ties_nonfinite_and_empty() {
+        assert_eq!(greedy(&[1., 3., 3., 2.]).unwrap(), 1);
+        assert!(greedy(&[]).is_err());
+        assert!(greedy(&[0., f32::NAN]).is_err());
+    }
+    #[test]
+    fn sequence_reset_and_context_bound() {
+        assert!(Sequence::new(0, &PleHashConfig::qwen38()).is_err());
+        assert!(Sequence::new(4097, &PleHashConfig::qwen38()).is_err());
+        let mut seq = Sequence::new(1, &PleHashConfig::qwen38()).unwrap();
+        seq.position = 1;
+        seq.poisoned = true;
+        seq.reset();
+        assert_eq!(seq.position(), 0);
+        assert!(!seq.poisoned);
+        assert!(
+            seq.layers
+                .iter()
+                .filter_map(|l| if let LayerState::Gdn(s) = l {
+                    Some(s)
+                } else {
+                    None
+                })
+                .all(|s| s.recurrent.values().iter().all(|x| *x == 0.))
+        );
+    }
+}

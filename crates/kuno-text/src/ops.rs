@@ -81,6 +81,7 @@ fn checked_copy(input: &[f32], context: &'static str) -> Result<Vec<f32>, OpsErr
     Ok(result)
 }
 
+#[allow(unsafe_code)]
 fn clear_f32_capacity(values: &mut Vec<f32>) {
     let pointer = values.as_mut_ptr();
     for i in 0..values.capacity() {
@@ -92,6 +93,7 @@ fn clear_f32_capacity(values: &mut Vec<f32>) {
     std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
 }
 
+#[allow(unsafe_code)]
 fn clear_i32_capacity(values: &mut Vec<i32>) {
     let pointer = values.as_mut_ptr();
     for i in 0..values.capacity() {
@@ -126,7 +128,7 @@ pub fn rms_norm(
     group_width: usize,
     epsilon: f32,
 ) -> Result<Vec<f32>, OpsError> {
-    if group_width == 0 || input.is_empty() || input.len() % group_width != 0 {
+    if group_width == 0 || input.is_empty() || !input.len().is_multiple_of(group_width) {
         return Err(OpsError::InvalidShape("rms_norm"));
     }
     if gamma.len() != group_width && gamma.len() != input.len() {
@@ -155,7 +157,7 @@ pub fn rms_norm(
 
 /// GDN normalizes by the sum of squares, unlike RMS's mean of squares.
 pub fn l2_norm_heads(input: &[f32], width: usize, epsilon: f32) -> Result<Vec<f32>, OpsError> {
-    if width == 0 || input.is_empty() || input.len() % width != 0 {
+    if width == 0 || input.is_empty() || !input.len().is_multiple_of(width) {
         return Err(OpsError::InvalidShape("l2_norm_heads"));
     }
     if !epsilon.is_finite() || epsilon <= 0.0 {
@@ -361,7 +363,11 @@ pub struct GdnShape {
 
 impl GdnShape {
     pub fn new(head_dim: usize, key_heads: usize, value_heads: usize) -> Result<Self, OpsError> {
-        if head_dim == 0 || key_heads == 0 || value_heads == 0 || value_heads % key_heads != 0 {
+        if head_dim == 0
+            || key_heads == 0
+            || value_heads == 0
+            || !value_heads.is_multiple_of(key_heads)
+        {
             return Err(OpsError::InvalidShape("gdn"));
         }
         product(
@@ -809,9 +815,9 @@ pub fn rope_neox_heads(
 ) -> Result<(), OpsError> {
     if head_dim == 0
         || input.is_empty()
-        || input.len() % head_dim != 0
+        || !input.len().is_multiple_of(head_dim)
         || rotary_dims > head_dim
-        || rotary_dims % 2 != 0
+        || !rotary_dims.is_multiple_of(2)
     {
         return Err(OpsError::InvalidShape("rope"));
     }
@@ -875,11 +881,11 @@ impl QsaShape {
             || self.head_dim == 0
             || self.indexer_heads == 0
             || self.indexer_dim == 0
-            || self.query_heads % self.kv_heads != 0
+            || !self.query_heads.is_multiple_of(self.kv_heads)
             || self.block_size == 0
             || self.token_budget == 0
-            || self.token_budget % self.block_size != 0
-            || self.rotary_dims % 2 != 0
+            || !self.token_budget.is_multiple_of(self.block_size)
+            || !self.rotary_dims.is_multiple_of(2)
             || self.rotary_dims > self.indexer_dim
             || self.rotary_dims > self.head_dim
         {
@@ -970,7 +976,7 @@ pub fn qsa_select_blocks(
     block_size: usize,
     token_budget: usize,
 ) -> Result<Vec<usize>, OpsError> {
-    if block_size == 0 || token_budget == 0 || token_budget % block_size != 0 {
+    if block_size == 0 || token_budget == 0 || !token_budget.is_multiple_of(block_size) {
         return Err(OpsError::InvalidShape("qsa selection"));
     }
     if visible_tokens == 0 || block_scores.len() != visible_tokens / block_size {
@@ -1067,7 +1073,7 @@ pub fn qsa_attend(
     let query_width = product(shape.query_heads, shape.head_dim, "qsa query width")?;
     if query.len() != query_width
         || keys.len() != values.len()
-        || keys.len() % kv_width != 0
+        || !keys.len().is_multiple_of(kv_width)
         || visible_tokens == 0
         || visible_tokens > keys.len() / kv_width
     {

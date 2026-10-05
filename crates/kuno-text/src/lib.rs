@@ -5,9 +5,12 @@
 //! downloads artifacts, invokes another engine, or stores inference content.
 //! Scalar decoding is a correctness reference, not an optimized inference path.
 
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 
+pub mod cpu;
 pub mod gguf;
+pub mod model;
+pub mod ops;
 pub mod quant;
 
 pub use gguf::{GgufFile, GgufLimits, MetadataValue, TensorInfo, TensorView};
