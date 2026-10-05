@@ -1194,3 +1194,48 @@ speedup remain outstanding.
 service, deployment or release changes apply. Kuno admission is temporarily
 paused only for exclusive operator GPU tests and must be resumed at the end of
 that test window. No GPU reset or reboot is authorized by this checkpoint.
+
+### Latest native-text owner checkpoint (2026-10-05)
+
+**Current source/acceptance commit: `3e244d5`, after `1064a62`, on
+`codex/kuno-native-text`.** This supersedes the outstanding callback diagnosis
+and long96 acceptance limitation in the preceding `e378d32` checkpoint.
+Read [the measured operator boundaries and callback repair](kuno-text-performance.md#mapping-callback-completion-repair-2026-10-05)
+and [the full-prefill transaction plan](kuno-native-text-prefill.md).
+
+Both GPUs pass24 causal GDN pointwise and24 causal QSA chunk cases at
+counts1/3/5/8, including original arithmetic/status tolerances, future-group
+exclusion, late nonfinite failure, immutable committed history, cancellation,
+full owning pages and independent I/O cleanup. A QSA plane-index regression was
+fixed before acceptance; checked/unchecked generated WGSL tests cover it.
+The complete GDN/QSA projection wrappers, PLE batching and whole-layer-major
+prefill remain under implementation. These isolated operators do not establish
+an overall Ollama speedup.
+
+Owned upload/audit/cleanup-read mapping now waits for callback delivery within
+one shared requested deadline after native polling. This repairs a reachable
+background-poller race without remapping, retrying, relaxing erasure or changing
+ordinary inference waits. Content-free diagnostics expose only37 static first-
+observed categories. The long96/6-GiB public75-input/128-output run now completes
+with all128 prior native IDs and accepted I/O cleanup. It is one diagnostic run,
+without full main-page audit or compiler-idle paired timing;96 stays disabled.
+
+Default-off append-only INFO targets pass67-record/two-epoch numeric and
+lease/cleanup fixtures at0/4096/8192 on both cards. Full chat and separate explicit
+cancellation at0/4096 pass on both cards, including poisoned retry rejection,
+fresh recovery and four1,286-page/785,186,816-byte complete owner audits per run.
+No performance selection is made; oversized individual INFO has no separate GPU
+fixture. The bounded expert-wave planner passes nine host fixtures preserving
+all explicitly supplied ten routes/token; it is host-test-only, without actual
+bank pinning or fullgraph consumption yet.
+
+Root acceptance is231 native host/offline tests,39 pinned runtime ownership
+fixtures, strict all-target Clippy, formatting and diff checks. The18-file vendor
+patch reconstructs against pinned originals, SHA256
+`e3aa774114789d47b6d14bc817a2e1f6da0a849020c0324492dd5c21cb2def4a`.
+Exact synthetic receipts live under `apps/kuno/benchmarks/text/receipts`.
+Full quality/options, production private-worker lifecycle, native catalog/default
+and managed `ollama.` routing, matched cold/warm Ollama improvement and release
+remain outstanding. Installed Kuno/Ollama are unchanged; admission was resumed
+after testing. **Required Vashti changes: none at this checkpoint.** No GPU reset,
+reboot, driver change, installation or publication is part of this handoff.
