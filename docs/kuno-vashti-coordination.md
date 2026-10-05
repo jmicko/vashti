@@ -1622,3 +1622,24 @@ protected lab containment has no effect on production long inference. Actual
 long-context boundaries, options/quality, private worker/native routing and
 matched Ollama speed remain pending. **Required Vashti changes: none.** Installed
 services, drivers, public API, defaults, frontend and release remain unchanged.
+
+### Current both-card model lifecycle result (2026-10-05)
+
+The preceding physical-pending note is superseded for the fixed context4/8
+fixture only. Frozen `110b9926…` completes all 44 actual owner cases across both
+cards, real late error/panic/post-first-GDN-commit cancellation, retry rejection,
+full original scalar/native MAIN and source audits, fresh recovery and physical
+retirement=false. Both worker units exit 0. Exact reports are in
+`rust-native-model-lifecycle-device-20261005.json` and
+[the performance guide](kuno-text-performance.md#both-card-actual-lifecycle-acceptance-and-numerical-rejection).
+
+All 24 final greedy comparisons equal the scalar reference, but full logits
+have small deltas (Intel maximum about1.04e-5; NVIDIA about8.70e-6). Whole-model
+bitwise numerical acceptance remains explicitly false and both outer runners
+exit 1 after clean completion. No whole-model tolerance was relaxed; a source
+investigation is pending. These simultaneous diagnostic runs make no speed
+claim. Existing full128-output acceptance is a separate, narrower receipt.
+Long contexts, options/quality, production private workers, native-default/
+managed `ollama.` routing and faster matched Ollama inference remain outstanding.
+**Required Vashti changes: none.** Installed/public/frontend/release state is
+unchanged; no reset or reboot occurred.

@@ -1424,3 +1424,29 @@ format/diff and three actual pre-device protection rejections pass. The
 pins the Cargo-selected `110b9926…` artifact. Both-card actual execution remains
 pending. Whole-model long contexts, options/quality, production private workers,
 native routing and faster matched Ollama inference remain outstanding.
+
+### Both-card actual lifecycle acceptance and numerical rejection
+
+The frozen `110b9926…` candidate now completes all 22 real owner cases on each
+card: context 4/8 exhaustion, malformed chunks, the genuine late-error/panic/
+post-first-commit cancellation sites, both retry rejections, full owning cleanup
+and fresh recovery. Each scalar audit covers 1,286 pages/785,186,816 bytes and
+each native audit 1,376 pages/818,249,728 bytes; native source counters are zero.
+Actual scalar source resets inspect exactly 15 buffers/17 full 32-KiB pages per
+token. Both physical retirement flags remain false and both worker units exit 0.
+
+All 24 final greedy comparisons match the original scalar reference. The full
+248,320-logit comparisons differ: maximum absolute delta is
+`1.0371208190917969e-5` on Intel and `8.702278137207031e-6` on NVIDIA. None exceeds
+the recorded stage diagnostic bound, but that bound is not an accepted whole-model
+tolerance. Both reports explicitly retain `whole_model_numeric_accepted=false`;
+the outer runners each exit 1 after successful cleanup. The
+[complete device receipt](../apps/kuno/benchmarks/text/receipts/rust-native-model-lifecycle-device-20261005.json)
+preserves both outcomes, all cases, reports/run hashes and numerical statistics.
+Identical aggregate statistics do not prove native-partition vector identity.
+The first differing stage and its arithmetic cause remain to be investigated.
+
+These opposite-card runs were simultaneous and include diagnostic inspections;
+their times are not performance evidence. The existing full 128-token native
+reference acceptance remains separately valid. There is no new public inference,
+model quality, long-context, production-worker, routing or release acceptance.
