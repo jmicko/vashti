@@ -1114,7 +1114,8 @@ Ollama and long-inference contract intact until native acceptance/integration.
 
 ### Native text connected ownership and matrix batching checkpoint (2026-10-05)
 
-The isolated laboratory now connects the complete resident graph to explicit
+Source and public receipts are committed as `3de1bff`, after `9649c86`, on
+`codex/kuno-native-text`. The isolated laboratory connects the resident graph to explicit
 owned uploads, uniforms and readbacks, with separate 64 MiB main/runtime I/O
 budgets and retirement shared across fresh owners of the same physical stream.
 Both GPUs pass the fixed bang/chat fixtures, queued GDN/QSA cancellation,

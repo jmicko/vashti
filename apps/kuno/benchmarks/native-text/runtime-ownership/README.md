@@ -155,9 +155,8 @@ cargo test --offline --release -j 2 --target-dir /tmp/kuno-transient-runtime-pat
 cargo clippy --offline --release -j 2 --target-dir /tmp/kuno-transient-runtime-patch/target --lib --tests -- -D warnings
 ```
 
-The repository host harness passes 27 tests and strict Clippy, importing the
-actual modified source modules. Its fixtures
-and cover full-capacity heap/scalar/metadata wiping, retained-builder partial
+The repository host harness passes 28 tests and strict Clippy, importing the
+actual modified source modules. Its fixtures cover full-capacity heap/scalar/metadata wiping, retained-builder partial
 pack panic, abandoned/panicking TLS launchers, fail-closed invalid TLS borrowing,
 owned upload pointer movement, full-span bounds/checked budgets/epoch overflow,
 lease counts across cancellation/returned ownership, shared native/fake erase
