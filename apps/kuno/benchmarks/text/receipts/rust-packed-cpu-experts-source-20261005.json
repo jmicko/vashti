@@ -1,0 +1,113 @@
+{
+  "arithmetic": {
+    "activation": "F32",
+    "activation_function": "original sign-stable SiLU",
+    "all_original_types": [
+      "F32",
+      "F16",
+      "BF16",
+      "Q4_K",
+      "Q5_0",
+      "Q6_K",
+      "Q8_0"
+    ],
+    "avx2": "eight8-lane accumulators; explicit separate mul/add; no FMA",
+    "lane_order": "lane+64*tile",
+    "no_pruning_or_probability_change": true,
+    "returned": "unweighted request-order rank partials; all requested including zero-probability ranks",
+    "tree_strides": [
+      32,
+      16,
+      8,
+      4,
+      2,
+      1
+    ]
+  },
+  "bounds": {
+    "experts_max": 512,
+    "feed_forward_max": 1024,
+    "hidden_max": 2560,
+    "packed_component_max": 8388608,
+    "private_controlled_component_max": 1048576,
+    "projection_rows_max": 4096,
+    "public_packed_jobs_max": 41943040,
+    "scratch_per_worker_max": 32768,
+    "selected_count_max": 10,
+    "whole_model_aggregate_admission": false,
+    "workers_max": 16
+  },
+  "checks": [
+    {
+      "ignored": 2,
+      "log_sha256": "35f809e28617cb6681e730faea7a6bf82d6d8d140aedc8f4a339355e9197cf1e",
+      "name": "core-debug",
+      "observed_command_exit": 0,
+      "passed": 105
+    },
+    {
+      "ignored": 2,
+      "log_sha256": "f978c89c0dd1e76ed82381a22ce421e8b617a04aeabdc421abda6913b9072144",
+      "name": "core-release",
+      "observed_command_exit": 0,
+      "passed": 105
+    },
+    {
+      "ignored": 0,
+      "log_sha256": "6bd3a77dcca77e8ecaed9821b4b4a05ef9124bfbd1847e934df9e947cde752e5",
+      "name": "native-debug",
+      "observed_command_exit": 0,
+      "passed": 369
+    },
+    {
+      "locked_offline": true,
+      "log_sha256": "14d49c14d9630ebcf1082ef4542218650a00516bb87e159c7a280b99779b0b7e",
+      "name": "cpu-clippy",
+      "observed_command_exit": 0,
+      "strict_all_targets": true
+    },
+    {
+      "locked_offline": true,
+      "log_sha256": "c9962e700a0e35b2607aa9908fe6356bec8bb0e23dc6a13dbb825e2979581f09",
+      "name": "native-clippy",
+      "observed_command_exit": 0,
+      "strict_all_targets": true
+    }
+  ],
+  "combined_author_patch_sha256": "51ce67c4835184c32a4d8ae2f9a214cfca3d06b5e88f1e01972d52f6065e9128",
+  "date": "2026-10-05",
+  "files_sha256": {
+    "crates/kuno-text/src/cpu_expert.rs": "a4c58eacd22a9ca08a52b361fb6016428b773dd1b7396f11fcff731db2ebd9bb",
+    "crates/kuno-text/src/gguf.rs": "d8ed31a546e3c3d1c02e35b74ce7677ef0a7ecf35c82b44c7acf159ed3ea9ad7",
+    "crates/kuno-text/src/gguf_positional.rs": "3e9e0713e35a503f4e63c214bb47584f7ac870690b60a9ca3812e8c6665c8e7b",
+    "crates/kuno-text/src/lib.rs": "caedd58d11a83cb017daa1f78c56ffa6f81c5ec055d87de83123560576369d6f"
+  },
+  "format_and_diff_pass": true,
+  "integrated_commits": [
+    "7950074",
+    "d1a0446"
+  ],
+  "limits": [
+    "actual original-model CPU versus GPU numerical calibration pending",
+    "no joint timing or speed claim",
+    "whole-model hybrid/rank merge/aggregate admission not implemented",
+    "scoped workers recreated each phase; overhead must be measured",
+    "opaque std/OS/compiler/register storage outside controlled erasure claim",
+    "no production private worker/native default/API/installed service change"
+  ],
+  "native_release_artifact": {
+    "cargo_transcript_snapshot_sha256": "3371e900607b4e32b9190845e13390db9ff5a701650ae956a1570bae2859b346",
+    "cpu_operator_executed_in_model": false,
+    "sha256": "b1ba040fa2e4d63d2bf6d554189738781d8ed5d0c1c4f1c93ce43a9745e8f589",
+    "target": "kuno-text-lab"
+  },
+  "original_author_commits": [
+    "55dfe3434652c5e4d730660dc67623fc8d0a0833",
+    "d8c08873bc05f561f775da9baa6dd9ca96ed07fc"
+  ],
+  "ownership": "guards before private fill; fixed retained job/worker metadata full-capacity and dead header erasure after payload release/joins; offset/count guards; error/cancel/unwind tests",
+  "peer_review": "exact repaired a4c58eac source accepted by transient_io_review; parent reviewed vector math, reader, retained metadata and join code",
+  "reader": "clone pinned already-open read-only descriptor; bounded Unix positional reads with original model/tensor identity and before/after unchanged checks; no seek cursor mutation/path reopen/whole model copy",
+  "root_source_commit": "d1a044600ae0258c4e45698bb2507f2974a0aa60",
+  "scope": "source-only-original-packed-cpu-operators-not-integrated-into-model-execution"
+}

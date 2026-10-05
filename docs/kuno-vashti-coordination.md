@@ -1503,3 +1503,35 @@ operators are separately source-reviewed and await root integration and real
 CPU/GPU numeric/joint timing acceptance. **Required Vashti changes: none.** No
 public contract, installed service/configuration, frontend, release, driver,
 reset or reboot is changed by this internal checkpoint.
+
+### Current packed Rust CPU expert checkpoint (2026-10-05)
+
+**Root source `7950074`/`d1a0446`, after device/runner checkpoint `8280ec1`.**
+Both corrected CPU commits are integrated; this supersedes the root-integration-
+pending note above. Read
+[CPU source acceptance](kuno-text-performance.md#original-packed-rust-cpu-expert-source-acceptance-2026-10-05),
+the [crate API/limits](../crates/kuno-text/README.md) and the original decode plan.
+`rust-packed-cpu-experts-source-20261005.json` pins root source/checks/budgets.
+
+`GgufFile::positional_reader` borrows the already-inspected model/open descriptor;
+`PackedProjection`/`PackedExperts` borrow that reader and original views.
+Explicit `ExpertOperator` calls return guarded unweighted requested-rank values,
+preserving all selected experts and original64-lane math. They are not called by
+the native model or installed gateway. Source-only controlled CPU private storage
+has an independent1-MiB cap; this does not admit a future whole-model aggregate.
+
+Root passes105 core tests in both debug/release (two installed checks ignored),
+369 composed native tests, strict all-target Clippy for both, formatting and
+locked offline release. New composed lab binary SHA256 is `b1ba040f…5e8f589`;
+prior physical native fixtures retain their separately verified `fca4b669…`
+identity and are not attributed to the new binary.
+
+Next source work is the approved bounded real-read one-layer CPU/GPU numeric and
+joint-calibration lab in its own managed worktree based on `d1a0446`. It uses
+actual original fills/consumers/completed fences, all-ten rank ownership and
+one original-rank merge. Numeric acceptance precedes timing. Prepared-host CPU
+timing is deferred: the current CPU API always performs positional reads, even
+when OS file pages are warm. Root exclusively owns real model/GPU/service runs.
+No CPU/GPU parity, hybrid model, speed win or production privacy claim follows
+from these source checks. **Required Vashti changes: none.** Public HTTP,
+installed services, drivers, release and frontend remain unchanged.

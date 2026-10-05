@@ -19,8 +19,13 @@ as model-management content: callers must not log templates or token arrays.
 `tensor(name)` returns a view bound to the inspected file. Its `read_range` and
 `read_row` copy only requested bytes into caller-owned buffers. `decode_row`
 allocates one bounded packed row and decodes into caller-owned `f32` storage.
-Concurrent reads are correct but serialized by the descriptor lock; async reads,
-direct I/O, row caching and zero-copy GPU staging are later work.
+Ordinary concurrent reads are correct but serialized by the descriptor lock.
+The separate `positional_reader()` clones the already-inspected open descriptor
+and provides bounded Unix positional reads without changing that cursor. It
+pins the original model/tensor identity, checks unchanged size/mtime before and
+after reads, and clears the full caller slice on I/O or late-consistency failure.
+It never reopens by path, maps/copies the complete model or converts weights.
+Async/direct I/O, row caching and zero-copy GPU staging remain later work.
 
 Scalar decoding supports F32, F16, BF16, Q4_K, Q5_0, Q6_K and Q8_0. Mixed formats
 are preserved per tensor, including the existing Qwen model's 160-element Q5_0
@@ -120,9 +125,37 @@ are not implemented. Sequence state cannot cross model bindings. Execution
 errors discard partial state and require explicit reset. The model binding
 never contains request-dependent router, recurrent, KV or PLE caches.
 
-The crate denies unsafe code except two small audited volatile erase helpers
-in `ops.rs`. Model I/O, quant decoding and tokenization have no unsafe code.
+The crate denies unsafe code except focused volatile erase helpers and the
+explicit CPU expert module's audited AVX2, Linux affinity and retained-metadata
+owners. Model I/O, scalar quant decoding and tokenization have no unsafe code.
 Returned token/logit/intermediate buffers remain the worker's cleanup
 responsibility. Protected subprocess containment, cancellation during long
 operators, crash cleanup, GPU memory erasure and concurrent-request acceptance
 are still required before production exposure.
+
+`cpu_expert` adds original packed CPU projections and selected-expert execution,
+with explicit portable/AVX2 backends and1..16 unpinned or physical-core workers.
+All seven weight layouts retain the GPU's64-lane accumulation/reduction order;
+explicit multiply/add avoids FMA and reassociation. Original sign-stable SiLU
+remains unchanged. `PackedProjection` and `PackedExperts` borrow one positional
+reader and its original tensor views. Calls read only selected original packed
+components and return guarded projections or unweighted original-rank partials.
+All selected ranks execute, including zero-probability ranks. Routing, one final
+rank-ordered probability sum, shared experts and whole-model acceptance remain
+the caller's responsibility.
+
+Public packed jobs have a40-MiB cap; controlled private buffers, full retained
+job/worker metadata and <=16 workers' scratch have an independent1-MiB component
+cap. Admission precedes private fill; actual capacities are checked. Scoped
+workers finish before borrowed input/output owners release. Owned private
+capacities and metadata erase on completion/error/unwind; original public weight
+payloads deallocate normally. No register, compiler-copy, opaque std-thread or
+OS-stack erasure claim is made. New scoped threads are created for each phase;
+their measured overhead remains an optimization question.
+
+Source acceptance passes105 core tests in debug and release, with two installed
+checks ignored, strict Clippy and focused source review. Real-model CPU/GPU
+numeric and joint timing comparisons remain pending. These helpers do not
+change scalar/default execution or installed HTTP behavior. See the
+[decode plan](../../docs/kuno-native-text-decode.md) and
+[current source acceptance](../../docs/kuno-text-performance.md#original-packed-rust-cpu-expert-source-acceptance-2026-10-05).

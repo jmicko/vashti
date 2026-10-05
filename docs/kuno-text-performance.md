@@ -1283,3 +1283,39 @@ cancellation/cleanup messages; successful exit alone is insufficient. Other
 partitions, full75/128 output,
 whole-model long-context boundaries, injected failures, quality/options,
 compiler-idle matched performance and production worker/routing remain pending.
+
+## Original packed Rust CPU expert source acceptance (2026-10-05)
+
+Root integrates `7950074`/`d1a0446`, the author's `55dfe343` plus corrected
+`d8c08873` metadata ownership. The standalone core helpers preserve all seven
+original weight layouts, F32 activations, explicit64-lane multiply/add order,
+tree32/16/8/4/2/1 and original sign-stable SiLU. They return unweighted requested
+rank partials; no selected rank is pruned and probability/shared/final reduction
+remain the caller's responsibility. Portable and AVX2 backends are explicit;
+physical plans choose1..16 allowed distinct physical cores without fallback.
+
+The new positional reader clones the already-open original descriptor, pins
+actual model/tensor identity, bounds every read, checks unchanged size/mtime
+before/after and clears the full destination on I/O/late-consistency failure.
+It never reopens by path or mutates the ordinary reader cursor. Same-size/
+same-mtime malicious changes remain outside the original guard. No model
+download, duplication, conversion, expanded whole expert cache or mmap is added.
+
+Controlled CPU request buffers, <=16x32-KiB scratch and full retained job/worker
+metadata are admitted under a1-MiB component cap before private fill. Original
+public packed jobs stay below40 MiB and deallocate normally; private slots,
+offsets/counts and dead outer headers erase after ordinary payload release and
+completed workers. Four focused witnesses cover full retained capacity, partial
+fill/read/cancel/unwind and join ordering. Compiler/register/OS-stack/opaque std
+thread storage are explicitly outside the controlled erasure claim.
+
+Root debug and release core checks pass105 tests (two installed checks ignored);
+the composed native lab passes369. Both strict all-target Clippy, locked offline
+release and formatting pass. The
+[exact CPU source receipt](../apps/kuno/benchmarks/text/receipts/rust-packed-cpu-experts-source-20261005.json)
+pins source/check hashes and the new composed Cargo-selected lab artifact
+`b1ba040f…5e8f589`. The helpers are not yet called by model execution. Real original
+CPU/GPU numeric comparisons, completed joint timing and whole-model hybrid
+acceptance remain pending under the [decode plan](kuno-native-text-decode.md).
+New scoped workers per phase are a measured overhead question. Source equality
+does not imply device bit equality or faster-than-Ollama performance.
