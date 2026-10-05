@@ -16,7 +16,7 @@ use cubecl::wgpu::WgpuRuntime;
 use cubecl_runtime::transient::TransientIoReceipt;
 use kuno_text::cpu::Matrix;
 use kuno_text::cpu_expert::{Backend, ExpertOperator, PackedExperts, PackedProjection, WorkerPlan};
-use kuno_text::model::{BoundGraph, Qwen4Exp, RoutedWeights};
+use kuno_text::model::{BoundGraph, GraphBindingId, RoutedWeights};
 use kuno_text::{Error, GgufFile, Result, TensorType, TensorView};
 use std::sync::{
     Arc,
@@ -82,6 +82,7 @@ pub struct NumericPermit<'m> {
     client: ComputeClient<WgpuRuntime>,
     file: &'m GgufFile,
     config: Config,
+    binding: GraphBindingId,
     samples: Arc<std::sync::atomic::AtomicUsize>,
     retired: Arc<AtomicBool>,
     thread: std::thread::ThreadId,
@@ -1040,9 +1041,10 @@ fn pages() -> Result<Vec<u64>> {
 /// It is a local one-card gate; parent must separately approve both-card parity.
 /// Timings include full owning GPU verification/fences, never enqueue-only work.
 #[allow(clippy::too_many_arguments)]
-pub fn run<'m>(
+pub fn run<'graph, 'm>(
     client: &ComputeClient<WgpuRuntime>,
     file: &'m GgufFile,
+    graph: BoundGraph<'graph, 'm>,
     device_limits: &wgpu::Limits,
     retired: Arc<AtomicBool>,
     config: Config,
@@ -1061,6 +1063,7 @@ pub fn run<'m>(
             permit_health(&p.retired, &retired, p.thread)?;
             if !std::ptr::eq(p.file, file)
                 || !std::ptr::eq(p.client.info(), client.info())
+                || p.binding != graph.binding_id()
                 || !same_config(p.config, config)
             {
                 return Err(fault());
@@ -1073,8 +1076,16 @@ pub fn run<'m>(
     let op = ExpertOperator::new(WorkerPlan::physical(config.workers)?, config.backend)?;
     let portable = ExpertOperator::new(WorkerPlan::portable(1)?, Backend::Portable)?;
     let reader = file.positional_reader()?;
-    let model = Qwen4Exp::bind(file)?;
-    let graph = model.bound_graph();
+    graph.verify_unchanged()?;
+    let geometry = graph.geometry();
+    if geometry.layers != 48
+        || geometry.residual.width != D
+        || geometry.experts != 512
+        || geometry.experts_used != N
+        || geometry.expert_hidden != FF
+    {
+        return Err(fault());
+    }
     let layer = (0..48)
         .find(|&layer| {
             file.tensor(&format!("blk.{layer}.ffn_down_exps.weight"))
@@ -1086,6 +1097,12 @@ pub fn run<'m>(
         up: graph.tensor(&format!("blk.{layer}.ffn_up_exps.weight"))?,
         down: graph.tensor(&format!("blk.{layer}.ffn_down_exps.weight"))?,
     };
+    if [weights.gate, weights.up, weights.down]
+        .iter()
+        .any(|t| !t.belongs_to(file))
+    {
+        return Err(fault());
+    }
     original(weights, config.down)?;
     let experts = PackedExperts::new(&reader, weights.gate, weights.up, weights.down)?;
     // Existing unrelated pending IO cannot be carried into this envelope.
@@ -1390,6 +1407,7 @@ pub fn run<'m>(
                     client: client.clone(),
                     file,
                     config,
+                    binding: graph.binding_id(),
                     samples,
                     retired: retired.clone(),
                     thread: std::thread::current().id(),
