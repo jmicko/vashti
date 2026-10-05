@@ -990,3 +990,34 @@ Rust quant decoding and scalar graph/state primitives. No native model catalog,
 public API, default routing, Vashti connector/UI or deployed engine changes have
 been accepted. Frontend work is not required at this checkpoint. Preserve the
 explicit native-default/`ollama.` direction for later tested integration.
+
+### Native Rust text correctness receipt (2026-10-05)
+
+On `codex/kuno-native-text`, isolated from the normal Vashti checkout, Rust now
+runs the downloaded Qwen4exp trunk directly through `crates/kuno-text`.
+Foundations `c5e05b4`, operators `5cef124`/`d3d716c`, graph `8f6cff1`, tokenizer
+`5f95495`, graph hardening/public fixtures `44cb36f`, and CPU pool `98b3112` are
+committed. Read [the exact graph contract](kuno-native-text-graph.md) and
+[performance/acceptance receipts](kuno-text-performance.md) before continuing.
+The separate `apps/kuno/benchmarks/native-text` operator laboratory contains
+Rust-authored packed Vulkan kernels, outside installed release dependencies.
+
+Acceptance is deliberately narrow: native scalar raw/chat smokes reproduce
+updated Ollama output, Rust tokenizer matches 75/80 baseline prompt IDs/counts,
+all seven actual artifact types pass both-GPU packed numeric probes, and B70
+full-graph GPU matrix execution reproduces the four-token raw smoke. 70 normal
+Rust tests plus two explicit installed-artifact checks passed; cancellation,
+bounded allocation, malformed file/tokenizer handling and state cleanup are
+covered at the library level. This does not establish production worker privacy,
+long-context/vision/tool/sampling/API acceptance or a native speedup. Model state
+belongs to a sequence, cannot cross bindings, and is discarded on execution
+error. No private request content or credentials appear in these receipts.
+
+**Required Vashti changes: none at this milestone.** Native default/explicit
+`ollama.` routing is still intended but unimplemented; current Ollama endpoints,
+Kuno protocol/configuration, installed service and model list are unchanged.
+Keep the existing managed scheduler and long-inference behavior when exposing
+native text later. A tested public contract/capability and error handoff must
+precede consumer integration. No installation or release is authorized by this
+receipt; the user's current goal remains correctness followed by a measured
+speedup and backend integration.

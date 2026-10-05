@@ -1,0 +1,18 @@
+[package]
+name = "kuno-text-lab"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+cubecl-runtime = "=0.10.0"
+serde_json = "1"
+zeroize = "1.9"
+kuno-text = { path = "../../../../crates/kuno-text" }
+cubecl = { version = "=0.10.0", default-features = false, features = ["std", "wgpu"] }
+wgpu = { version = "29", default-features = false, features = ["std", "vulkan", "wgsl"] }
+
+[profile.release]
+debug = 0
+
+# Operator laboratory stays out of deployed Kuno dependency/release builds.
+[workspace]

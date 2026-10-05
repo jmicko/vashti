@@ -12,6 +12,7 @@ pub mod gguf;
 pub mod model;
 pub mod ops;
 pub mod quant;
+pub mod threaded;
 pub mod tokenizer;
 
 pub use gguf::{GgufFile, GgufLimits, MetadataValue, TensorInfo, TensorView};
