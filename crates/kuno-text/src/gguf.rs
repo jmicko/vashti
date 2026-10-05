@@ -339,6 +339,12 @@ pub struct TensorView<'a> {
 }
 
 impl<'a> TensorView<'a> {
+    /// Cache ownership is tied to the same pinned descriptor, not tensor names
+    /// or paths that can be replaced. This is transient identity, not a digest.
+    pub fn belongs_to(self, model: &GgufFile) -> bool {
+        std::ptr::eq(self.model, model)
+    }
+
     pub fn info(self) -> &'a TensorInfo {
         self.info
     }

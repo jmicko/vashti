@@ -351,3 +351,9 @@ mod tests {
         }
     }
 }
+
+#[path = "cooperative_matvec.rs"]
+pub mod cooperative;
+
+#[path = "moe_gpu.rs"]
+pub mod moe;

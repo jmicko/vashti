@@ -37,6 +37,44 @@ pub trait MatrixExecutor {
         input: &[f32],
         cancel: &AtomicBool,
     ) -> Result<Vec<f32>>;
+    /// Optional full routed MoE fusion. The graph still owns routing, all
+    /// selected experts and the separate shared expert. None means scalar
+    /// projections; an error must never trigger a replay on another engine.
+    fn routed_moe(
+        &mut self,
+        _weights: RoutedWeights<'_>,
+        _input: &[f32],
+        _selected: &[(usize, f32)],
+        _cancel: &AtomicBool,
+    ) -> Result<Option<Vec<f32>>> {
+        Ok(None)
+    }
+
+    /// Backend override for the exact delta rule, with CPU-owned committed
+    /// state. This avoids hidden backend state surviving Sequence reset/drop.
+    #[allow(clippy::too_many_arguments)]
+    fn delta_rule(
+        &mut self,
+        state: &mut GdnState,
+        query: &[f32],
+        key: &[f32],
+        value: &[f32],
+        log_decay: &[f32],
+        beta: &[f32],
+        cancel: &AtomicBool,
+    ) -> Result<Vec<f32>> {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(Error::InvalidFormat("graph cancelled"));
+        }
+        op(state.step(query, key, value, log_decay, beta))
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct RoutedWeights<'a> {
+    pub gate: TensorView<'a>,
+    pub up: TensorView<'a>,
+    pub down: TensorView<'a>,
 }
 
 #[derive(Default)]
@@ -411,7 +449,15 @@ impl<'a> Qwen4Exp<'a> {
             self.values(&format!("{base}ssm_dt.bias"))?,
             self.values(&format!("{base}ssm_a"))?,
         ))?;
-        let out = op(state.recurrent.step(&q, &k, &u[4096..], &decay, &beta))?;
+        let out = executor.delta_rule(
+            &mut state.recurrent,
+            &q,
+            &k,
+            &u[4096..],
+            &decay,
+            &beta,
+            cancel,
+        )?;
         let gated = op(ops::gdn_output_gate(
             &out,
             &z,
@@ -554,36 +600,56 @@ impl<'a> Qwen4Exp<'a> {
             cancel,
         )?;
         let selected = op(ops::router_topk(&router, TOP_K, true))?;
-        let mut result = vec![0.; D];
-        for (expert, weight) in selected {
-            let gate = self.project(
-                executor,
-                &format!("{base}ffn_gate_exps.weight"),
-                expert,
-                x,
-                cancel,
-            )?;
-            let up = self.project(
-                executor,
-                &format!("{base}ffn_up_exps.weight"),
-                expert,
-                x,
-                cancel,
-            )?;
-            let activation = gate
-                .iter()
-                .zip(up)
-                .map(|(g, u)| ops::silu(*g) * u)
-                .collect::<Vec<_>>();
-            let down = self.project(
-                executor,
-                &format!("{base}ffn_down_exps.weight"),
-                expert,
-                &activation,
-                cancel,
-            )?;
-            for (y, e) in result.iter_mut().zip(down) {
-                *y += weight * e;
+        let weights = RoutedWeights {
+            gate: self.weight(&format!("{base}ffn_gate_exps.weight"))?,
+            up: self.weight(&format!("{base}ffn_up_exps.weight"))?,
+            down: self.weight(&format!("{base}ffn_down_exps.weight"))?,
+        };
+        let fused = executor.routed_moe(weights, x, &selected, cancel)?;
+        let has_fused = fused.is_some();
+        let mut result = if let Some(output) = fused {
+            output
+        } else {
+            vec![0.; D]
+        };
+        if result.len() != D
+            || result.iter().any(|v| !v.is_finite())
+            || cancel.load(Ordering::Relaxed)
+        {
+            result.zeroize();
+            return Err(Error::InvalidFormat("routed MoE backend output"));
+        }
+        if !has_fused {
+            for (expert, weight) in selected {
+                let gate = self.project(
+                    executor,
+                    &format!("{base}ffn_gate_exps.weight"),
+                    expert,
+                    x,
+                    cancel,
+                )?;
+                let up = self.project(
+                    executor,
+                    &format!("{base}ffn_up_exps.weight"),
+                    expert,
+                    x,
+                    cancel,
+                )?;
+                let activation = gate
+                    .iter()
+                    .zip(up)
+                    .map(|(g, u)| ops::silu(*g) * u)
+                    .collect::<Vec<_>>();
+                let down = self.project(
+                    executor,
+                    &format!("{base}ffn_down_exps.weight"),
+                    expert,
+                    &activation,
+                    cancel,
+                )?;
+                for (y, e) in result.iter_mut().zip(down) {
+                    *y += weight * e;
+                }
             }
         }
         let gate = self.project(
@@ -713,7 +779,13 @@ impl<'a> Qwen4Exp<'a> {
             self.project(executor, "output.weight", 0, &mixed, cancel)
         })();
         match result {
-            Ok(logits) => {
+            Ok(mut logits) => {
+                if cancel.load(Ordering::Relaxed) {
+                    logits.zeroize();
+                    sequence.clear();
+                    sequence.poisoned = true;
+                    return Err(Error::InvalidFormat("graph cancelled"));
+                }
                 sequence.position += 1;
                 sequence.poisoned = false;
                 Ok(logits)

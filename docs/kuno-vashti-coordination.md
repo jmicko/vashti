@@ -1003,7 +1003,7 @@ The separate `apps/kuno/benchmarks/native-text` operator laboratory contains
 Rust-authored packed Vulkan kernels, outside installed release dependencies.
 
 Acceptance is deliberately narrow: native scalar raw/chat smokes reproduce
-updated Ollama output, Rust tokenizer matches 75/80 baseline prompt IDs/counts,
+updated Ollama output, Rust tokenizer matches 75/80 baseline prompt counts,
 all seven actual artifact types pass both-GPU packed numeric probes, and B70
 full-graph GPU matrix execution reproduces the four-token raw smoke. 70 normal
 Rust tests plus two explicit installed-artifact checks passed; cancellation,
@@ -1021,3 +1021,15 @@ native text later. A tested public contract/capability and error handoff must
 precede consumer integration. No installation or release is authorized by this
 receipt; the user's current goal remains correctness followed by a measured
 speedup and backend integration.
+
+### Native text laboratory follow-up (2026-10-05)
+
+On `codex/kuno-native-text`, bounded Rust graph backend hooks now support exact
+full routed MoE and transactional GDN overrides. Cooperative packed kernels,
+expert-bank planning/dispatch, and GDN parity pass on B70 and RTX3060; the short
+four-token graph output still matches the scalar/Ollama oracle on both cards.
+See [the detailed numeric/source receipt](kuno-text-performance.md#cooperative-reductions-expert-banks-and-gdn-laboratory).
+Performance is still slower than updated Ollama. Full baseline, long context,
+private-worker lifecycle and native default/`ollama.` managed routing remain
+required. No API or Vashti consumer change is exposed by this backend laboratory;
+there is nothing to integrate or release from this receipt yet.

@@ -1,10 +1,14 @@
 //! Public synthetic Rust-authored kernel probe, not a model engine wrapper.
+mod bank_slots;
 mod executor;
+mod expert_banks;
+mod gdn_executor;
+mod gdn_gpu;
 mod quant_matvec;
 use cubecl::prelude::*;
 use cubecl::wgpu::{RuntimeOptions, WgpuRuntime, WgpuSetup, init_device};
 use cubecl_runtime::memory_management::{MemoryPoolOptions, PoolType};
-use kuno_text::model::{Qwen4Exp, greedy};
+use kuno_text::model::{MatrixExecutor, Qwen4Exp, RoutedWeights, greedy};
 use kuno_text::{GgufFile, GgufLimits, Qwen35Tokenizer, TensorType, TokenizerLimits};
 use std::sync::atomic::AtomicBool;
 use std::time::Instant;
@@ -74,7 +78,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             RuntimeOptions {
                 tasks_max: 32,
                 memory_config: cubecl::MemoryConfiguration::Custom {
-                    pool_options: (15..=26)
+                    pool_options: (15..=27)
                         .map(|power| MemoryPoolOptions {
                             pool_type: PoolType::ExclusivePages {
                                 max_alloc_size: 1u64 << power,
@@ -123,6 +127,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             println!("rust_matvec rows={rows} cols={cols} max_abs_error={max_error}");
         }
+        if mode == "gdn-probe" {
+            for report in gdn_executor::parity_probe(&client)? {
+                println!(
+                    "rust_gdn shape={:?} steps={} max_state_abs_error={} max_output_abs_error={} elapsed_ms={}",
+                    report.shape,
+                    report.steps,
+                    report.max_state_abs_error,
+                    report.max_output_abs_error,
+                    report.elapsed.as_millis()
+                );
+            }
+            return Ok(());
+        }
         if let Some(path) = std::env::var_os("KUNO_TEST_GGUF") {
             let file = GgufFile::open(path, GgufLimits::default())?;
             for kind in [
@@ -162,6 +179,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         &mut decoded,
                     )?;
                     *out = decoded.iter().zip(&input).map(|(w, x)| w * x).sum();
+                    let tree = quant_matvec::cooperative::reference_tree_dot(&decoded, &input)?;
+                    if !tree.is_finite() || (tree - *out).abs() > 1e-4 + 3e-4 * out.abs() {
+                        return Err("CPU reduction schedule oracle failed".into());
+                    }
                 }
                 let dtype = kind.gguf_id();
                 quant_matvec::validate_layout(dtype, rows, cols, packed.len(), input.len(), rows)?;
@@ -171,9 +192,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let x = client.create_from_slice(f32::as_bytes(&input));
                 let y = client.empty(rows * 4);
                 // SAFETY: validated upload sizes, handle element types and exact logical lengths.
-                quant_matvec::packed_matvec::launch::<WgpuRuntime>(
+                quant_matvec::cooperative::cooperative_matvec::launch::<WgpuRuntime>(
                     &client,
-                    CubeCount::Static((rows as u32).div_ceil(64), 1, 1),
+                    CubeCount::Static(rows as u32, 1, 1),
                     CubeDim::new_1d(64),
                     unsafe { ArrayArg::from_raw_parts(w, words.len()) },
                     unsafe { ArrayArg::from_raw_parts(x, input.len()) },
@@ -201,6 +222,83 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
         }
+        if mode == "moe-probe" {
+            let path = std::env::var_os("KUNO_TEST_GGUF").ok_or("existing GGUF required")?;
+            let file = GgufFile::open(path, GgufLimits::default())?;
+            let cancel = AtomicBool::new(false);
+            let mut executor = executor::GpuExecutor::new(
+                &file,
+                client.clone(),
+                64 * 1024 * 1024,
+                16,
+                2 * 1024 * 1024 * 1024,
+            )?;
+            for kind in [TensorType::Q5_0, TensorType::Q8_0] {
+                let down = file
+                    .tensors()
+                    .values()
+                    .find(|t| t.dtype() == kind && t.name().ends_with("ffn_down_exps.weight"))
+                    .ok_or("missing expert dtype")?;
+                let base = down.name().strip_suffix("ffn_down_exps.weight").unwrap();
+                let weights = RoutedWeights {
+                    gate: file.tensor(&format!("{base}ffn_gate_exps.weight")).unwrap(),
+                    up: file.tensor(&format!("{base}ffn_up_exps.weight")).unwrap(),
+                    down: file.tensor(down.name()).unwrap(),
+                };
+                let input: Vec<f32> = (0..2560).map(|i| ((i % 23) as f32 - 11.) / 23.).collect();
+                let gate = kuno_text::cpu::Matrix::new(weights.gate)?;
+                let up = kuno_text::cpu::Matrix::new(weights.up)?;
+                let down = kuno_text::cpu::Matrix::new(weights.down)?;
+                for pass in 0..3 {
+                    let ids = if pass == 2 {
+                        [503, 71, 6, 97, 12, 31, 78, 491, 99, 311]
+                    } else {
+                        [0, 17, 511, 71, 3, 31, 255, 491, 97, 119]
+                    };
+                    let selected: Vec<_> = ids
+                        .into_iter()
+                        .enumerate()
+                        .map(|(i, e)| (e, (i + 1) as f32 / 55.))
+                        .collect();
+                    let mut expected = vec![0.; 2560];
+                    for &(e, p) in &selected {
+                        let mut g = vec![0.; 640];
+                        let mut u = vec![0.; 640];
+                        let mut d = vec![0.; 2560];
+                        gate.apply(e, &input, &mut g, &cancel)?;
+                        up.apply(e, &input, &mut u, &cancel)?;
+                        for (a, b) in g.iter_mut().zip(u) {
+                            *a = kuno_text::ops::silu(*a) * b;
+                        }
+                        down.apply(e, &g, &mut d, &cancel)?;
+                        for (y, x) in expected.iter_mut().zip(d) {
+                            *y += p * x;
+                        }
+                    }
+                    let actual = executor
+                        .routed_moe(weights, &input, &selected, &cancel)?
+                        .ok_or("missing routed backend")?;
+                    let max_error = actual
+                        .iter()
+                        .zip(&expected)
+                        .map(|(a, b)| (a - b).abs())
+                        .fold(0f32, f32::max);
+                    let magnitude = expected.iter().map(|v| v.abs()).fold(0f32, f32::max);
+                    if actual.len() != expected.len() || max_error > 1e-4 + 3e-4 * magnitude {
+                        return Err("expert GPU parity failed".into());
+                    }
+                    println!(
+                        "rust_moe dtype={} pass={pass} max_abs_error={max_error} hits={} uploads={} gdn_ms={} gdn_calls={}",
+                        kind.gguf_id(),
+                        executor.expert_hits,
+                        executor.expert_uploads,
+                        executor.gdn_ns / 1_000_000,
+                        executor.gdn_calls
+                    );
+                }
+            }
+            return Ok(());
+        }
         if mode != "probe" {
             let fixture: serde_json::Value =
                 serde_json::from_str(include_str!("../../text/qwen38-baseline.json"))?;
@@ -224,11 +322,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let ids = tokenizer.encode(prompt, true)?;
             let mut sequence = model.sequence(ids.len() + limit)?;
             let mut executor = executor::GpuExecutor::new(
+                &file,
                 client.clone(),
                 if vendor == 0x8086 {
                     8 * 1024 * 1024 * 1024
                 } else {
-                    4 * 1024 * 1024 * 1024
+                    3 * 1024 * 1024 * 1024
+                },
+                if vendor == 0x8086 { 64 } else { 32 },
+                if vendor == 0x8086 {
+                    26 * 1024 * 1024 * 1024
+                } else {
+                    10 * 1024 * 1024 * 1024
                 },
             )?;
             let cancel = AtomicBool::new(false);
@@ -249,6 +354,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
             let prefill = start.elapsed();
+            let pre_stats = (
+                executor.matrix_ns,
+                executor.moe_ns,
+                executor.gdn_ns,
+                executor.weight_read_ns,
+                executor.weight_upload_ns,
+                executor.gpu_wait_ns,
+                executor.uploaded_bytes,
+                executor.expert_hits,
+                executor.expert_uploads,
+            );
+            executor.by_tensor.clear();
             let start = Instant::now();
             let mut generated = Vec::new();
             let mut decoder = tokenizer.stream_decoder();
@@ -276,12 +393,58 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 executor.calls
             );
             println!(
-                "matrix_ms={} weight_read_ms={} weight_upload_ms={} gpu_wait_ms={}",
+                "matrix_ms={} weight_read_ms={} weight_upload_ms={} gpu_wait_ms={} moe_ms={} moe_calls={} expert_hits={} expert_uploads={} gdn_ms={} gdn_calls={}",
                 executor.matrix_ns / 1_000_000,
                 executor.weight_read_ns / 1_000_000,
                 executor.weight_upload_ns / 1_000_000,
-                executor.gpu_wait_ns / 1_000_000
+                executor.gpu_wait_ns / 1_000_000,
+                executor.moe_ns / 1_000_000,
+                executor.moe_calls,
+                executor.expert_hits,
+                executor.expert_uploads,
+                executor.gdn_ns / 1_000_000,
+                executor.gdn_calls
             );
+            let generation_ms = start.elapsed().as_millis() as u64;
+            if let Some(path) = std::env::var_os("KUNO_PUBLIC_RECEIPT") {
+                use std::io::Write;
+                let receipt = serde_json::json!({
+                    "scope":"fixed-public-synthetic-operator-test-only", "fixture":mode,"vendor":vendor,
+                    "seed":424242,"temperature":0,"prompt_tokens":ids.len(),"public_generated_ids":generated,
+                    "prefill_ms":prefill.as_millis() as u64,"generation_ms":generation_ms,
+                    "cache_accounted_bytes":executor.cache_bytes(),"allocator_reserved_bytes":executor.reserved_bytes()?,
+                    "matrix_calls":executor.calls,"moe_calls":executor.moe_calls,"gdn_calls":executor.gdn_calls,
+                    "total_matrix_ms":(executor.matrix_ns/1_000_000) as u64,
+                    "total_moe_ms":(executor.moe_ns/1_000_000) as u64,"total_gdn_ms":(executor.gdn_ns/1_000_000) as u64,
+                    "warm_matrix_ms":((executor.matrix_ns-pre_stats.0)/1_000_000) as u64,
+                    "warm_moe_ms":((executor.moe_ns-pre_stats.1)/1_000_000) as u64,
+                    "warm_gdn_ms":((executor.gdn_ns-pre_stats.2)/1_000_000) as u64,
+                    "warm_weight_read_ms":((executor.weight_read_ns-pre_stats.3)/1_000_000) as u64,
+                    "warm_weight_upload_ms":((executor.weight_upload_ns-pre_stats.4)/1_000_000) as u64,
+                    "warm_gpu_wait_ms":((executor.gpu_wait_ns-pre_stats.5)/1_000_000) as u64,
+                    "warm_uploaded_bytes":executor.uploaded_bytes-pre_stats.6,
+                    "warm_expert_hits":executor.expert_hits-pre_stats.7,"warm_expert_uploads":executor.expert_uploads-pre_stats.8,
+                    "public_warm_matrix_ns":executor.by_tensor,
+                    "gpu_gdn_cpu_state_owner":true, "weights":"borrowed-unmodified-ollama-blob"
+                });
+                let mut out = std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(path)?;
+                out.write_all(serde_json::to_string_pretty(&receipt)?.as_bytes())?;
+            }
+            let tail = decoder.finish();
+            if !tail.is_empty() {
+                println!("synthetic_gpu_tail={tail:?}");
+            }
+            let mut matrix_profile: Vec<_> = executor.by_tensor.iter().collect();
+            matrix_profile.sort_by_key(|(_, ns)| std::cmp::Reverse(**ns));
+            for (tensor, ns) in matrix_profile.into_iter().take(12) {
+                println!(
+                    "public_warm_matrix tensor={tensor} total_ms={}",
+                    ns / 1_000_000
+                );
+            }
             logits.zeroize();
             generated.zeroize();
             sequence.reset();

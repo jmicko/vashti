@@ -1,12 +1,15 @@
 //! Operator laboratory only: bounded packed model cache + Rust GPU matvec.
 //! No HTTP path, arbitrary prompts, production logging or installation.
-use crate::quant_matvec;
+use crate::{
+    expert_banks::{self, ExpertBanks},
+    quant_matvec,
+};
 use cubecl::prelude::*;
 use cubecl::server::Handle;
 use cubecl::wgpu::WgpuRuntime;
 use kuno_text::cpu::Matrix;
-use kuno_text::model::MatrixExecutor;
-use kuno_text::{Error, Result, TensorView};
+use kuno_text::model::{MatrixExecutor, RoutedWeights};
+use kuno_text::{Error, GgufFile, Result, TensorView};
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
@@ -28,12 +31,24 @@ struct Cached {
 
 /// The lifetime of this executor is one fixed synthetic experiment. Its cache
 /// keys/ranks must never be persisted or reused as private request history.
-pub struct GpuExecutor {
+pub struct GpuExecutor<'a> {
+    model: &'a GgufFile,
     client: ComputeClient<WgpuRuntime>,
     cache: BTreeMap<Key, Cached>,
     cache_bytes: usize,
     budget: usize,
     tick: u64,
+    banks: BTreeMap<String, ExpertBanks>,
+    bank_reserved: usize,
+    bank_slots: usize,
+    reserved_limit: usize,
+    pub by_tensor: BTreeMap<String, u128>,
+    pub gdn_ns: u128,
+    pub gdn_calls: u64,
+    pub moe_ns: u128,
+    pub moe_calls: u64,
+    pub expert_hits: u64,
+    pub expert_uploads: u64,
     pub uploaded_bytes: u64,
     pub cache_hits: u64,
     pub calls: u64,
@@ -42,17 +57,35 @@ pub struct GpuExecutor {
     pub weight_upload_ns: u128,
     pub gpu_wait_ns: u128,
 }
-impl GpuExecutor {
-    pub fn new(client: ComputeClient<WgpuRuntime>, budget: usize) -> Result<Self> {
+impl<'a> GpuExecutor<'a> {
+    pub fn new(
+        model: &'a GgufFile,
+        client: ComputeClient<WgpuRuntime>,
+        budget: usize,
+        bank_slots: usize,
+        reserved_limit: usize,
+    ) -> Result<Self> {
         if !(TILE_BYTES..=16 * 1024 * 1024 * 1024).contains(&budget) {
             return Err(Error::LimitExceeded("laboratory GPU cache"));
         }
         Ok(Self {
+            model,
             client,
             cache: BTreeMap::new(),
             cache_bytes: 0,
             budget,
             tick: 0,
+            banks: BTreeMap::new(),
+            bank_reserved: 0,
+            bank_slots,
+            reserved_limit,
+            by_tensor: BTreeMap::new(),
+            gdn_ns: 0,
+            gdn_calls: 0,
+            moe_ns: 0,
+            moe_calls: 0,
+            expert_hits: 0,
+            expert_uploads: 0,
             uploaded_bytes: 0,
             cache_hits: 0,
             calls: 0,
@@ -63,7 +96,7 @@ impl GpuExecutor {
         })
     }
     pub fn cache_bytes(&self) -> usize {
-        self.cache_bytes
+        self.cache_bytes + self.bank_reserved
     }
     pub fn reserved_bytes(&self) -> Result<u64> {
         self.client
@@ -94,7 +127,8 @@ impl GpuExecutor {
             .checked_mul(row_bytes)
             .ok_or(Error::ArithmeticOverflow)?;
         let padded = bytes.checked_add(3).ok_or(Error::ArithmeticOverflow)? / 4 * 4;
-        while self.cache_bytes + padded > self.budget {
+        let reserved = padded.max(32 * 1024).next_power_of_two();
+        while self.cache_bytes + reserved > self.budget {
             let old = self
                 .cache
                 .iter()
@@ -108,11 +142,16 @@ impl GpuExecutor {
             self.cache_bytes -= removed.bytes;
         }
         self.client.memory_cleanup();
-        if self.reserved_bytes()? > (self.budget + 512 * 1024 * 1024) as u64 {
+        if self.reserved_bytes()?
+            > (self.budget + self.bank_reserved + 512 * 1024 * 1024).min(self.reserved_limit) as u64
+        {
             self.cache.clear();
             self.cache_bytes = 0;
             self.client.memory_cleanup();
-            if self.reserved_bytes()? > (self.budget + 512 * 1024 * 1024) as u64 {
+            if self.reserved_bytes()?
+                > (self.budget + self.bank_reserved + 512 * 1024 * 1024).min(self.reserved_limit)
+                    as u64
+            {
                 return Err(Error::LimitExceeded("GPU allocator reserved memory"));
             }
         }
@@ -138,11 +177,11 @@ impl GpuExecutor {
             Cached {
                 handle: handle.clone(),
                 words,
-                bytes: padded,
+                bytes: reserved,
                 last: self.tick,
             },
         );
-        self.cache_bytes += padded;
+        self.cache_bytes += reserved;
         Ok((handle, words))
     }
 }
@@ -158,7 +197,129 @@ fn clear_scratch(input: &mut Array<f32>, output: &mut Array<f32>) {
     }
 }
 
-impl MatrixExecutor for GpuExecutor {
+impl MatrixExecutor for GpuExecutor<'_> {
+    fn delta_rule(
+        &mut self,
+        state: &mut kuno_text::ops::GdnState,
+        query: &[f32],
+        key: &[f32],
+        value: &[f32],
+        log_decay: &[f32],
+        beta: &[f32],
+        cancel: &AtomicBool,
+    ) -> Result<Vec<f32>> {
+        let start = Instant::now();
+        let out = crate::gdn_executor::run(
+            &self.client,
+            state,
+            query,
+            key,
+            value,
+            log_decay,
+            beta,
+            cancel,
+        )?;
+        self.gdn_ns += start.elapsed().as_nanos();
+        self.gdn_calls += 1;
+        Ok(out)
+    }
+
+    fn routed_moe(
+        &mut self,
+        weights: RoutedWeights<'_>,
+        input: &[f32],
+        selected: &[(usize, f32)],
+        cancel: &AtomicBool,
+    ) -> Result<Option<Vec<f32>>> {
+        let started = Instant::now();
+        if [weights.gate, weights.up, weights.down]
+            .iter()
+            .any(|t| !t.belongs_to(self.model))
+        {
+            return Err(Error::InvalidFormat("GPU artifact binding"));
+        }
+        self.model.verify_file_unchanged()?;
+        let key = weights.gate.info().name().to_owned();
+        let mut bank = if let Some(bank) = self.banks.remove(&key) {
+            bank
+        } else {
+            let size = ExpertBanks::allocation(weights, self.bank_slots)?;
+            if self
+                .bank_reserved
+                .checked_add(size)
+                .and_then(|n| n.checked_add(self.budget + 512 * 1024 * 1024))
+                .is_none_or(|n| n > self.reserved_limit)
+            {
+                return Err(Error::LimitExceeded("expert bank residency"));
+            }
+            let bank = ExpertBanks::new(&self.client, weights, self.bank_slots)?;
+            self.bank_reserved += bank.reserved();
+            bank
+        };
+        let result = (|| {
+            bank.check(weights, input, selected)?;
+            let ids: Vec<_> = selected.iter().map(|&(e, _)| e).collect();
+            let plan = bank
+                .slots
+                .plan(&ids)
+                .map_err(|_| Error::InvalidFormat("expert slot plan"))?;
+            self.expert_hits += (ids.len() - plan.uploads.len()) as u64;
+            for &(expert, slot) in &plan.uploads {
+                for (target, tensor) in [
+                    (&bank.gate, weights.gate),
+                    (&bank.up, weights.up),
+                    (&bank.down, weights.down),
+                ] {
+                    let (bytes, read, upload) =
+                        expert_banks::fill(&self.client, target, tensor, expert, slot, cancel)?;
+                    self.uploaded_bytes += bytes;
+                    self.weight_read_ns += read;
+                    self.weight_upload_ns += upload;
+                }
+                self.expert_uploads += 1;
+            }
+            let probabilities: Vec<_> = selected.iter().map(|&(_, p)| p).collect();
+            let mut output = expert_banks::execute(
+                &self.client,
+                &bank,
+                weights,
+                input,
+                &plan.slots,
+                &probabilities,
+                cancel,
+            )?;
+            let validate = (|| {
+                bank.slots
+                    .commit(plan)
+                    .map_err(|_| Error::InvalidFormat("expert slot commit"))?;
+                if self.reserved_bytes()? > self.reserved_limit as u64 {
+                    return Err(Error::LimitExceeded("GPU allocator reserved memory"));
+                }
+                Ok(())
+            })();
+            if let Err(e) = validate {
+                output.zeroize();
+                return Err(e);
+            }
+            Ok(output)
+        })();
+        match result {
+            Ok(output) => {
+                self.banks.insert(key, bank);
+                self.moe_calls += 1;
+                self.moe_ns += started.elapsed().as_nanos();
+                Ok(Some(output))
+            }
+            Err(error) => {
+                // A partial upload invalidates old contents; never reuse stale metadata.
+                self.bank_reserved -= bank.reserved();
+                drop(bank);
+                self.client.memory_cleanup();
+                Err(error)
+            }
+        }
+    }
+
     fn run(
         &mut self,
         tensor: TensorView<'_>,
@@ -167,6 +328,10 @@ impl MatrixExecutor for GpuExecutor {
         cancel: &AtomicBool,
     ) -> Result<Vec<f32>> {
         let started = Instant::now();
+        if !tensor.belongs_to(self.model) {
+            return Err(Error::InvalidFormat("GPU artifact binding"));
+        }
+        self.model.verify_file_unchanged()?;
         let matrix = Matrix::new(tensor)?;
         if input.len() != matrix.inputs()
             || expert >= matrix.experts()
@@ -180,7 +345,8 @@ impl MatrixExecutor for GpuExecutor {
             if row_bytes > TILE_BYTES {
                 return Err(Error::LimitExceeded("GPU row"));
             }
-            let per_tile = TILE_BYTES / row_bytes;
+            // Keep cooperative row grids within the portable Vulkan limits.
+            let per_tile = (TILE_BYTES / row_bytes).min(16_384);
             for first in (0..matrix.outputs()).step_by(per_tile) {
                 if cancel.load(Ordering::Relaxed) {
                     return Err(Error::InvalidFormat("GPU execution cancelled"));
@@ -199,19 +365,25 @@ impl MatrixExecutor for GpuExecutor {
                 let (weights, words) = self.weight(tensor, expert, first, rows)?;
                 let x = self.client.create_from_slice(f32::as_bytes(input));
                 let y = self.client.empty(rows * 4);
+                if self.reserved_bytes()? > self.reserved_limit as u64 {
+                    expert_banks::clear(&self.client, &[(x, input.len()), (y, rows)]);
+                    return Err(Error::LimitExceeded("GPU allocator reserved memory"));
+                }
                 // SAFETY: host geometry/read/upload validation proves the
                 // handles hold exactly these typed logical element counts.
-                quant_matvec::packed_matvec::launch::<WgpuRuntime>(
-                    &self.client,
-                    CubeCount::Static((rows as u32).div_ceil(64), 1, 1),
-                    CubeDim::new_1d(64),
-                    unsafe { ArrayArg::from_raw_parts(weights, words) },
-                    unsafe { ArrayArg::from_raw_parts(x.clone(), input.len()) },
-                    unsafe { ArrayArg::from_raw_parts(y.clone(), rows) },
-                    rows,
-                    matrix.inputs(),
-                    dtype,
-                );
+                unsafe {
+                    quant_matvec::cooperative::cooperative_matvec::launch_unchecked::<WgpuRuntime>(
+                        &self.client,
+                        CubeCount::Static(rows as u32, 1, 1),
+                        CubeDim::new_1d(64),
+                        ArrayArg::from_raw_parts(weights, words),
+                        ArrayArg::from_raw_parts(x.clone(), input.len()),
+                        ArrayArg::from_raw_parts(y.clone(), rows),
+                        rows,
+                        matrix.inputs(),
+                        dtype,
+                    );
+                }
                 let waited = Instant::now();
                 let read = self.client.read_one(y.clone());
                 self.gpu_wait_ns += waited.elapsed().as_nanos();
@@ -224,12 +396,14 @@ impl MatrixExecutor for GpuExecutor {
                     unsafe { ArrayArg::from_raw_parts(x, input.len()) },
                     unsafe { ArrayArg::from_raw_parts(y, rows) },
                 );
-                let bytes = read.map_err(|_| Error::InvalidFormat("GPU output read"))?;
+                let mut bytes = read.map_err(|_| Error::InvalidFormat("GPU output read"))?;
                 let values = f32::from_bytes(&bytes);
                 if values.len() != rows || values.iter().any(|v| !v.is_finite()) {
+                    bytes.zeroize();
                     return Err(Error::InvalidFormat("GPU output values"));
                 }
                 result[first..first + rows].copy_from_slice(values);
+                bytes.zeroize();
                 self.calls += 1;
             }
             Ok(())
@@ -242,14 +416,21 @@ impl MatrixExecutor for GpuExecutor {
             result.zeroize();
             return Err(Error::InvalidFormat("GPU execution cancelled"));
         }
-        self.matrix_ns += started.elapsed().as_nanos();
+        let elapsed = started.elapsed().as_nanos();
+        self.matrix_ns += elapsed;
+        *self
+            .by_tensor
+            .entry(tensor.info().name().into())
+            .or_default() += elapsed;
         Ok(result)
     }
 }
-impl Drop for GpuExecutor {
+impl Drop for GpuExecutor<'_> {
     fn drop(&mut self) {
         self.cache.clear();
         self.cache_bytes = 0;
+        self.banks.clear();
+        self.bank_reserved = 0;
         self.client.memory_cleanup();
         let _ = cubecl::future::block_on(self.client.sync());
     }

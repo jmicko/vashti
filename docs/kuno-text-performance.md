@@ -132,3 +132,48 @@ experiment. Persistent private worker containment, all-failure GPU cleanup,
 crash/cancellation/concurrency, native routing and complete matched baseline
 remain required before API exposure. No service restart, driver reset, install,
 release or Vashti change was performed.
+
+## Cooperative reductions, expert banks and GDN laboratory
+
+The next Rust-only prototype retains the independent scalar implementation and
+adds 64-lane packed dot reductions, full ten-expert gate/up/down batching, and a
+transactional GPU GDN operator. The CPU still owns committed recurrent state;
+old/next GPU state buffers are distinct, validated and cleared before commit.
+Both devices pass seven-step tiny/actual-dimension GDN state/output checks, with
+maximum state differences below 6e-8. Full selected-expert tests pass for both
+Q5_0 and Q8_0 down weights, including repeated hits and protected-slot eviction;
+maximum observed output difference is below 1.4e-8. These are bounded fixtures,
+not general floating-point equivalence or long-context acceptance.
+
+The fixed public four-token graph result still matches CPU/Ollama on both cards.
+The selected B70 experiment records 6.844 s prefill and 5.040 s for the three
+following model steps. The 3060 records 9.580 s and 24.339 s. Receipts contain
+numeric counters, exact public IDs, source-file/binary hashes and fixture scope:
+[B70](../apps/kuno/benchmarks/text/receipts/rust-batched-bang-intel-gdn-20261005.json),
+[3060](../apps/kuno/benchmarks/text/receipts/rust-batched-bang-nvidia-20261005.json).
+They are **not a speedup over Ollama** or the complete 128-token matched baseline.
+The three following steps still incur new expert uploads; "same process" is not
+proof of fully warm weights. GPU GDN also does not establish an end-to-end gain.
+
+Measurements explain two remaining problems. On B70, dense execution consumes
+2.315 s and routed experts 2.027 s of the following three steps; GDN costs
+0.620 s. These top-level categories are separate, but read/upload/wait counters
+are nested and must not be added to them. On 3060, the 3 GiB static cache is too
+small: the following steps upload 11.332 GB, versus B70's 2.209 GB. The next
+placement experiment will reserve fewer expert slots and a larger static cache.
+Each expert bank still protects all ten selected experts before eviction; no
+expert approximation, pruning or model-file conversion is used.
+
+The laboratory now pins every cache to one inspected GGUF descriptor, validates
+rank/layout before dispatch, accounts for power-of-two allocation pages, checks
+post-allocation reservation, and clears host activation readbacks. Host planning
+is transactional; partial-upload failures discard the entire affected bank.
+Unchecked shader launches are narrowly confined to validated packed geometry;
+scalar and checked device probes remain the oracle. Actual private-worker
+containment, all-failure cleanup, long sampling/context acceptance, native
+catalog/routing and a full matched performance matrix remain outstanding.
+
+At this checkpoint 70 ordinary core tests and 31 laboratory host tests pass,
+as do all-target Clippy with warnings denied and formatting. Both-card public
+probes/full raw smoke use swap/core-disabled bounded operator units. No gateway
+API, installed services, Vashti files, public release, reset or reboot changed.

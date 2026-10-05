@@ -419,6 +419,10 @@ impl GdnState {
         })
     }
 
+    pub fn shape(&self) -> GdnShape {
+        self.shape
+    }
+
     pub fn values(&self) -> &[f32] {
         &self.values
     }
