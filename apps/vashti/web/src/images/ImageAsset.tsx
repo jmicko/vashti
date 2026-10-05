@@ -108,12 +108,19 @@ export function ImageAssetProvider({ children }: { children: ReactNode }) {
   ) : null;
 }
 
+export type ImageAssetStatus = {
+  id: string;
+  state: "loading" | "ready" | "unavailable";
+};
+
 export function ImageAsset({
   id,
   alt = "Generated image",
   dimensions,
   onClick,
   onDimensions,
+  onStatus,
+  openLabel = "Open full image",
   neighbors = [],
   thumbnail = false,
 }: {
@@ -122,6 +129,8 @@ export function ImageAsset({
   dimensions?: { width: number; height: number };
   onClick?: () => void;
   onDimensions?: (size: { width: number; height: number }) => void;
+  onStatus?: (status: ImageAssetStatus) => void;
+  openLabel?: string;
   neighbors?: string[];
   thumbnail?: boolean;
 }) {
@@ -219,6 +228,10 @@ export function ImageAsset({
   );
   const frame =
     dimensions ?? (size?.id === id ? size : null) ?? cache?.peek(id);
+  const state = failed ? "unavailable" : image?.id === id ? "ready" : "loading";
+  useEffect(() => {
+    onStatus?.({ id, state });
+  }, [id, state, onStatus]);
   return (
     <div
       className="images-asset"
@@ -235,7 +248,7 @@ export function ImageAsset({
             className="images-open-image"
             disabled={image.id !== id}
             onClick={onClick}
-            aria-label="Open full image"
+            aria-label={openLabel}
           >
             <img draggable={false} src={image.url} alt={alt} />
           </button>

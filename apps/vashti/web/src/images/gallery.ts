@@ -14,7 +14,7 @@ export async function galleryVariants(
   item: GalleryItem,
   fetchPage: (offset: number) => Promise<ImageResult[]>,
 ) {
-  if (!item.group_id || item.variants <= 1) return [];
+  if (!item.group_id) return [];
   const variants: ImageResult[] = [];
   for (let offset = 0; ; offset += 100) {
     const page = await fetchPage(offset);

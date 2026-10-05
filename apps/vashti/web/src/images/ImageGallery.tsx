@@ -11,8 +11,9 @@ import {
   Trash2,
 } from "lucide-react";
 import { ImageAsset, downloadImage } from "./ImageAsset";
+import { ImageComparison } from "./ImageComparison";
+import { comparisonReference } from "./comparison";
 import { ImagePanel } from "./controls";
-import { SwipeSurface } from "./SwipeSurface";
 import { appendGallery, galleryVariants } from "./gallery";
 import { imageError, requestJson, notifyImageFlows, writeImage } from "./api";
 import { useImagePath } from "./storage";
@@ -278,25 +279,24 @@ export function ImageGallery({
           }}
         >
           {alert}
-          <SwipeSurface onStep={move}>
-            <ImageAsset
-              id={viewer.ids[viewer.index]}
-              dimensions={
-                selected
-                  ? {
-                      width: selected.recipe.width,
-                      height: selected.recipe.height,
-                    }
-                  : viewer.item.width && viewer.item.height
-                    ? { width: viewer.item.width, height: viewer.item.height }
-                    : undefined
-              }
-              neighbors={viewer.ids.filter(
-                (_, index) => Math.abs(index - viewer.index) === 1,
-              )}
-            />
-          </SwipeSurface>
-          <div className="images-actions">
+          <ImageComparison
+            id={viewer.ids[viewer.index]}
+            referenceId={comparisonReference(selected)}
+            onStep={move}
+            dimensions={
+              selected
+                ? {
+                    width: selected.recipe.width,
+                    height: selected.recipe.height,
+                  }
+                : viewer.item.width && viewer.item.height
+                  ? { width: viewer.item.width, height: viewer.item.height }
+                  : undefined
+            }
+            neighbors={viewer.ids.filter(
+              (_, index) => Math.abs(index - viewer.index) === 1,
+            )}
+          >
             {viewer.ids.length > 1 && (
               <>
                 <button
@@ -366,7 +366,7 @@ export function ImageGallery({
             >
               <Trash2 />
             </button>
-          </div>
+          </ImageComparison>
           {confirmRemove && (
             <div className="images-gallery-remove">
               <p>

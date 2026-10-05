@@ -128,7 +128,19 @@
 .images-variants { display: flex; align-items: center; gap: .25rem; font-size: .8rem; }
 .images-variants button { display: grid; place-items: center; width: 2rem; height: 2rem; padding: 0; box-shadow: none; color: var(--accent); background: var(--surface); }
 .images-swipe { touch-action: pan-y pinch-zoom; }
-.images-message-actions { display: flex; gap: .5rem; }
+.images-message-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; }
+.image-compare-frame { position: relative; min-width: 0; }
+.image-compare-enabled .images-open-image { height: 100%; }
+.image-compare-enabled .images-asset img { width: 100%; height: 100%; max-height: 100%; object-fit: contain; }
+.image-compare-reference { position: absolute; inset: 0; opacity: 0; pointer-events: none; }
+.image-compare-reference .images-asset { height: 100%; max-height: none; min-height: 0; }
+.image-compare-reference img { width: 100%; height: 100%; max-height: 100%; object-fit: contain; }
+.image-compare-show-reference .image-compare-reference { opacity: 1; }
+.image-compare-show-reference .image-compare-result { opacity: 0; pointer-events: none; }
+.image-compare-label { position: absolute; bottom: .5rem; left: .5rem; padding: .2rem .5rem; border-radius: 4px; background: var(--panel); color: var(--text); font-size: .75rem; pointer-events: none; }
+.image-compare-button { display: inline-flex; align-items: center; gap: .4rem; min-height: 2.5rem; padding: .4rem .6rem; font-size: .8rem; background: transparent; color: var(--accent); box-shadow: none; touch-action: none; user-select: none; -webkit-user-select: none; }
+.image-compare-button[aria-pressed="true"] { background: var(--accent); color: var(--control-text); }
+.image-compare-error { display: block; color: var(--muted); padding-top: .4rem; }
 .message-tool-button { display: inline-flex; align-items: center; justify-content: center; width: 2.25rem; height: 2.25rem; padding: .25rem; border: 0; border-radius: 6px; color: var(--accent); background: transparent; box-shadow: none; flex-shrink: 0; }
 .message-tool-button:hover { background: var(--accent-muted); }
 .images-result-details { font-size: .8rem; }
@@ -186,6 +198,7 @@
   .image-flow-messages { gap: 1rem; }
   .image-prompt-bubble { width: 90%; }
   .image-response-bubble { padding: .65rem; }
+  .image-compare-button { min-height: 2.75rem; }
   .image-composer-dock { padding-inline: .75rem; }
   .image-chat-composer:not(.image-chat-composer-compact) .image-prompt-input { height: 6.4rem; }
   .image-chat-composer:not(.image-chat-composer-compact) .image-prompt-collapse { display: inline-flex; }
@@ -194,8 +207,10 @@
   .image-chat-composer-compact .image-composer-body { overflow: hidden; padding: 0; }
   .image-chat-composer-compact .image-composer-prompt { align-items: center; }
   .image-chat-composer-compact .image-prompt-input { height: 2.75rem; min-height: 2.75rem; padding: .5rem 0; white-space: nowrap; overflow: hidden; }
-  .image-chat-composer-compact .image-reference-summary { flex: 0 0 auto; display: flex; align-items: center; gap: .3rem; height: 2.75rem; min-width: 2.75rem; padding: .25rem; background: transparent; border: 0; box-shadow: none; color: var(--muted); }
-  .image-reference-summary .images-asset { width: 2rem; height: 2rem; min-height: 0; border-radius: 4px; }
+  .image-chat-composer-compact .image-reference-summary { flex: 0 0 auto; display: flex; align-items: center; gap: .25rem; height: 2.75rem; color: var(--muted); }
+  .image-reference-summary .images-asset { width: 2.75rem; height: 2.75rem; min-height: 0; border-radius: 4px; }
+  .image-reference-summary .images-open-image { height: 100%; }
+  .image-reference-count { display: inline-flex; align-items: center; justify-content: center; gap: .2rem; min-width: 2.75rem; height: 2.75rem; padding: .25rem; border: 0; background: transparent; color: var(--muted); box-shadow: none; }
   .image-reference-summary img { width: 100%; height: 100%; max-height: none; object-fit: cover; }
   .image-reference-summary .images-asset > span { display: none; }
   .image-chat-composer footer .message-tool-button,.image-prompt-collapse { width: 2.75rem; height: 2.75rem; }

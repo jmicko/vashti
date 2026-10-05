@@ -172,6 +172,8 @@ make a stack.
 ## Editing, variants, and branches
 
 Show an ordered input-image strip with add, remove, reorder, and replace actions.
+Reference thumbnails open a full-size viewer without leaving the flow or changing
+the draft. The viewer supports swiping and arrows through the ordered references.
 Make the distinction between the two editing modes explicit and always visible:
 
 | Mode | Input used for a new instruction |
@@ -196,6 +198,15 @@ ordered source-image IDs, and exact parent result. Retry uses that step's origin
 inputs and parameters with a new seed; it does not edit its own output again.
 Editing a previous prompt creates a sibling branch from the same prior result.
 Do not overwrite the old instruction, images, or descendants.
+
+Edited results offer a press-and-hold Compare control below the image, including
+in full-size flow and gallery viewers. Compare displays the first reference in
+that result's immutable submitted input list, not the current draft's sources.
+Release, cancellation, losing focus, or switching versions restores the result.
+Space/Enter and assistive activation toggle comparison. Keep the frame
+fixed while comparing, containing rather than cropping differently shaped
+references. Warm the nearby reference through the same owner-scoped original
+image cache; never show an unrelated image when a reference is unavailable.
 
 Swiping/selecting a variant inside the workflow selects that version for future
 edits and updates its gallery stack cover. Display that variant's existing

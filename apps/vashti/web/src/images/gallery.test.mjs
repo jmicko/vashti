@@ -31,7 +31,7 @@ test("older gallery stacks load across result pages in chronological order", asy
   );
 });
 
-test("single images skip result loading and stale counts end at the last page", async () => {
+test("standalone uploads skip result loading and stale counts end at the last page", async () => {
   assert.deepEqual(
     await galleryVariants({ group_id: null, variants: 1 }, () =>
       assert.fail("Must not fetch"),
@@ -47,4 +47,17 @@ test("single images skip result loading and stale counts end at the last page", 
     [],
   );
   assert.equal(requests, 1);
+});
+
+test("single generated images load their submitted reference metadata for comparison", async () => {
+  const result = {
+    id: "edit",
+    asset_id: "output",
+    input_ids: ["first-reference", "second-reference"],
+    group_id: "single",
+  };
+  assert.deepEqual(
+    await galleryVariants({ group_id: "single", variants: 1 }, async () => [result]),
+    [result],
+  );
 });

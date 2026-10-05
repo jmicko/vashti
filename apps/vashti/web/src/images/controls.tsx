@@ -6,8 +6,13 @@ export function ImagePanel({ title, onClose, children, className = "" }: { title
   const titleId = useId();
   useEffect(() => {
     const dialog = ref.current!;
+    const opener = document.activeElement;
     dialog.showModal();
-    return () => dialog.close();
+    return () => {
+      dialog.close();
+      if (opener instanceof HTMLElement && opener.isConnected)
+        opener.focus({ preventScroll: true });
+    };
   }, []);
   return <dialog ref={ref} className={`images-panel ${className}`} aria-labelledby={titleId}
     onCancel={event => { event.preventDefault(); onClose(); }}

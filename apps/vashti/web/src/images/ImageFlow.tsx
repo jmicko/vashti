@@ -28,6 +28,8 @@ import { MessageTreeExplorer } from "../MessageTreeExplorer";
 import { usesMobileInputBehavior } from "../viewport";
 import type { BackendModelGroup } from "../types";
 import { ImageAsset, downloadImage } from "./ImageAsset";
+import { ImageComparison } from "./ImageComparison";
+import { comparisonReference } from "./comparison";
 import { ImagePanel } from "./controls";
 import { GenerationControls } from "./GenerationControls";
 import {
@@ -54,7 +56,6 @@ import {
   type Run,
 } from "./types";
 import { useImageFlow } from "./useImageFlow";
-import { SwipeSurface } from "./SwipeSurface";
 import { ImageReferencePicker } from "./ImageReferencePicker";
 import { referencePatch, referenceWorkflow } from "./references";
 
@@ -107,9 +108,18 @@ export function ImageFlow({
   useEffect(() => setDefaultsSaved(false), [draft]);
   const [treeOpen, setTreeOpen] = useState(false);
   const [confirmEndless, setConfirmEndless] = useState(false);
-  const [viewer, setViewer] = useState<{ ids: string[]; index: number } | null>(
-    null,
-  );
+  const [viewer, setViewer] = useState<{
+    ids: string[];
+    index: number;
+    kind: "result" | "reference";
+  } | null>(null);
+  const viewedResult =
+    viewer?.kind === "result"
+      ? results.find((result) => result.asset_id === viewer.ids[viewer.index])
+      : undefined;
+  function viewReferences(ids: string[], index: number) {
+    setViewer({ ids: [...ids], index, kind: "reference" });
+  }
   const [suggestion, setSuggestion] = useState<Run | null>(null);
   const suggestionIds = useRef(new Set<string>());
   const suggestionsInitialized = useRef(false);
@@ -159,6 +169,7 @@ export function ImageFlow({
       if (
         expanded ||
         galleryOpen ||
+        viewer ||
         !(target instanceof Element) ||
         composer.current?.contains(target) ||
         target.closest("dialog[open],[data-image-composer-control]")
@@ -179,7 +190,7 @@ export function ImageFlow({
       document.removeEventListener("click", outside, true);
       window.removeEventListener("blur", up);
     };
-  }, [expanded, galleryOpen]);
+  }, [expanded, galleryOpen, Boolean(viewer)]);
   const groups = useMemo(() => imageModelGroups(hosts), [hosts]);
   const selectedHost = hosts.find(
     (host) => host.backend.id === draft?.backend_id,
@@ -759,7 +770,22 @@ export function ImageFlow({
                             </div>
                           )}
                         </header>
-                        <SwipeSurface
+                        <ImageComparison
+                          id={result.asset_id}
+                          referenceId={comparisonReference(result)}
+                          dimensions={result.recipe}
+                          neighbors={[
+                            variants[index - 1]?.asset_id,
+                            variants[index + 1]?.asset_id,
+                          ].filter(Boolean)}
+                          actionsClassName="images-message-actions"
+                          onClick={() => {
+                            setViewer({
+                              ids: variants.map((value) => value.asset_id),
+                              index,
+                              kind: "result",
+                            });
+                          }}
                           onStep={(direction) => {
                             const next = variants[index + direction];
                             if (next)
@@ -769,22 +795,6 @@ export function ImageFlow({
                               );
                           }}
                         >
-                          <ImageAsset
-                            id={result.asset_id}
-                            dimensions={result.recipe}
-                            neighbors={[
-                              variants[index - 1]?.asset_id,
-                              variants[index + 1]?.asset_id,
-                            ].filter(Boolean)}
-                            onClick={() => {
-                              setViewer({
-                                ids: variants.map((value) => value.asset_id),
-                                index,
-                              });
-                            }}
-                          />
-                        </SwipeSurface>
-                        <div className="images-message-actions">
                           <button
                             type="button"
                             className="message-tool-button"
@@ -834,7 +844,7 @@ export function ImageFlow({
                           >
                             <GitBranch size={18} />
                           </button>
-                        </div>
+                        </ImageComparison>
                         <details className="images-result-details">
                           <summary>
                             Generation details{" "}
@@ -1000,6 +1010,7 @@ export function ImageFlow({
                   if (
                     !expanded &&
                     !galleryOpen &&
+                    !viewer &&
                     !pointerDown.current &&
                     !focusReferences.current &&
                     !event.currentTarget.contains(event.relatedTarget)
@@ -1049,7 +1060,15 @@ export function ImageFlow({
                     >
                       {draft.input_ids.map((id, index) => (
                         <div key={`${id}:${index}`}>
-                          <ImageAsset id={id} alt={`Reference ${index + 1}`} />
+                          <ImageAsset
+                            id={id}
+                            alt={`Reference ${index + 1}`}
+                            openLabel={`View reference ${index + 1}`}
+                            neighbors={draft.input_ids.filter(
+                              (_, position) => Math.abs(position - index) === 1,
+                            )}
+                            onClick={() => viewReferences(draft.input_ids, index)}
+                          />
                           <div className="images-actions">
                             <button
                               type="button"
@@ -1122,25 +1141,30 @@ export function ImageFlow({
                   )}
                   <div className="image-composer-prompt">
                     {draft.input_ids.length > 0 && (
-                      <button
-                        type="button"
-                        className="image-reference-summary"
-                        title="Show reference images"
-                        aria-label={`Show ${draft.input_ids.length} reference image${draft.input_ids.length === 1 ? "" : "s"}`}
-                        onClick={() => {
-                          composerEpoch.current++;
-                          focusReferences.current = true;
-                          setComposerOpen(true);
-                        }}
-                      >
+                      <div className="image-reference-summary">
                         <ImageAsset
                           id={draft.input_ids[0]}
-                          alt=""
+                          alt="Reference 1"
+                          openLabel="View reference 1"
+                          onClick={() => viewReferences(draft.input_ids, 0)}
                           thumbnail
                           dimensions={{ width: 1, height: 1 }}
                         />
-                        <span>{draft.input_ids.length}</span>
-                      </button>
+                        <button
+                          type="button"
+                          className="image-reference-count"
+                          title="Show reference controls"
+                          aria-label={`Show ${draft.input_ids.length} reference image${draft.input_ids.length === 1 ? "" : "s"}`}
+                          onClick={() => {
+                            composerEpoch.current++;
+                            focusReferences.current = true;
+                            setComposerOpen(true);
+                          }}
+                        >
+                          <Images size={14} />
+                          <span>{draft.input_ids.length}</span>
+                        </button>
+                      </div>
                     )}
                     <textarea
                       ref={input}
@@ -1515,19 +1539,24 @@ export function ImageFlow({
       )}
       {viewer && (
         <ImagePanel
-          title={`Image ${viewer.index + 1} of ${viewer.ids.length}`}
+          title={`${viewer.kind === "reference" ? "Reference" : "Image"} ${viewer.index + 1} of ${viewer.ids.length}`}
           className="images-viewer-panel"
           onClose={() => setViewer(null)}
         >
-          <SwipeSurface onStep={moveViewer}>
-            <ImageAsset
-              id={viewer.ids[viewer.index]}
-              neighbors={viewer.ids.filter(
-                (_, index) => Math.abs(index - viewer.index) === 1,
-              )}
-            />
-          </SwipeSurface>
-          <div className="images-actions">
+          <ImageComparison
+            id={viewer.ids[viewer.index]}
+            alt={
+              viewer.kind === "reference"
+                ? `Reference ${viewer.index + 1}`
+                : "Generated image"
+            }
+            referenceId={comparisonReference(viewedResult)}
+            dimensions={viewedResult?.recipe}
+            neighbors={viewer.ids.filter(
+              (_, index) => Math.abs(index - viewer.index) === 1,
+            )}
+            onStep={moveViewer}
+          >
             <button
               type="button"
               className="images-icon"
@@ -1577,23 +1606,15 @@ export function ImageFlow({
             >
               <Copy />
             </button>
-            {results.some(
-              (result) => result.asset_id === viewer.ids[viewer.index],
-            ) && (
+            {viewedResult && (
               <button
                 type="button"
-                onClick={() =>
-                  editResult(
-                    results.find(
-                      (result) => result.asset_id === viewer.ids[viewer.index],
-                    )!,
-                  )
-                }
+                onClick={() => editResult(viewedResult)}
               >
                 Edit image
               </button>
             )}
-          </div>
+          </ImageComparison>
         </ImagePanel>
       )}
     </div>
