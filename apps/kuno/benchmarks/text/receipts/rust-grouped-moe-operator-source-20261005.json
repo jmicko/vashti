@@ -1,0 +1,53 @@
+{
+  "scope": "Host/offline grouped all-ten expert operator candidate; no physical or whole-model acceptance",
+  "source_base": "e43ea22",
+  "patch_sha256": "b6c142f85ef48120f646fd2819da3ce8b1999c9d01cc8ddf274e71769325f4ed",
+  "supersedes_patch_sha256": "6c1c264589608440a63e32e2e2e3fd6f96910258e1cb4bbb9eccfafbe3c65adb",
+  "source_sha256": {
+    "apps/kuno/benchmarks/native-text/src/quant_matvec.rs": "57f14eb1b1a58aa79e60e0dd1a7e2a5ba6024b870cc83d14a66c609a2d471867",
+    "apps/kuno/benchmarks/native-text/src/grouped_moe.rs": "6d024765b0fe47014c0ddc7271f71479b4288e9f0396996dbd88f53374abf435"
+  },
+  "checks": {
+    "combined_native_host_tests": 259,
+    "focused_operator_tests": 12,
+    "failures": 0,
+    "offline_checked_unchecked_wgsl_variants": 78,
+    "strict_all_target_clippy": true
+  },
+  "operator_contract": {
+    "max_batch": 8,
+    "original_routes_per_token": 10,
+    "maximum_total_routes": 80,
+    "original_formats": 7,
+    "tile_policies": [
+      4,
+      8
+    ],
+    "rank_probability_bits_preserved": true,
+    "separate_shared_expert": true,
+    "group_count_slots_maps_and_strides_are_runtime": true,
+    "original_weights_decoded_once_per_lane_and_reused_across_members": true,
+    "original_64_lane_reduction_order": true,
+    "final_rank_reduction_after_all_waves": true,
+    "probability_and_coverage_scratch_guarded_before_fill": true,
+    "source_error_success_unwind_scratch_wiping": true,
+    "module_is_test_only": true
+  },
+  "budget": {
+    "actual_2560_640_scratch_full_page_bytes": 1409024,
+    "with_full_max8_input_output_bytes": 1671168,
+    "gate_up_storage_buffers_including_INFO": 7,
+    "tile8_shared_bytes": 4096
+  },
+  "device_checks": "None; actual bank ownership, pending plan protection and completed consumer lifetime require the separate wrapper",
+  "remaining": [
+    "actual bank identity/revision and complete wave-union protected mapping validation",
+    "actual full physical owner/epoch/client/device-limit proofs",
+    "both-GPU numeric/failure and full-main/owned-I/O erasure acceptance",
+    "separate shared expert and complete FFN composition",
+    "whole-model layer-major prefill",
+    "compiler-idle paired timing and updated Ollama improvement"
+  ],
+  "public_contract_or_service_changes": false,
+  "speed_or_production_privacy_claim": false
+}

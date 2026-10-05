@@ -577,6 +577,18 @@ pub struct PleHashConfig {
     token_vocab_size: u32,
 }
 
+/// Borrowed original public PLE integer metadata. No allocation, conversion,
+/// token history, selected rows, cache keys, or request data are returned.
+#[derive(Clone, Copy)]
+pub struct PleHashMetadata<'a> {
+    pub multipliers: &'a [u64],
+    pub vocab_sizes: &'a [u64],
+    pub offsets: &'a [u64],
+    pub heads_per_ngram: usize,
+    pub boundary_token: i32,
+    pub token_vocab_size: u32,
+}
+
 impl PleHashConfig {
     pub fn new(
         multipliers: Vec<u64>,
@@ -647,6 +659,18 @@ impl PleHashConfig {
 
     pub fn history_len(&self) -> usize {
         self.multipliers.len() - 1
+    }
+    /// Preserve exact model metadata for an allocation-free guarded caller.
+    /// The existing scalar rows/history API and arithmetic remain unchanged.
+    pub fn metadata(&self) -> PleHashMetadata<'_> {
+        PleHashMetadata {
+            multipliers: &self.multipliers,
+            vocab_sizes: &self.vocab_sizes,
+            offsets: &self.offsets,
+            heads_per_ngram: self.heads_per_ngram,
+            boundary_token: self.boundary_token,
+            token_vocab_size: self.token_vocab_size,
+        }
     }
 
     /// Previous tokens are oldest-first. The current token's own EOS does not
@@ -1309,6 +1333,25 @@ mod tests {
             &gdn_output_gate(&[2.0], &[0.0], &[1.0], 1, 1e-6).unwrap(),
             &[0.5],
         );
+    }
+
+    #[test]
+    fn ple_borrowed_metadata_is_original_without_allocation_or_conversion() {
+        let cfg = PleHashConfig::qwen38();
+        let metadata = cfg.metadata();
+        assert_eq!(metadata.multipliers.as_ptr(), cfg.multipliers.as_ptr());
+        assert_eq!(metadata.vocab_sizes.as_ptr(), cfg.vocab_sizes.as_ptr());
+        assert_eq!(metadata.offsets.as_ptr(), cfg.offsets.as_ptr());
+        assert_eq!(metadata.multipliers.len(), 3);
+        assert_eq!(metadata.vocab_sizes.len(), 16);
+        assert_eq!(metadata.heads_per_ngram, 8);
+        assert_eq!(metadata.boundary_token, 248044);
+        assert_eq!(metadata.token_vocab_size, 248320);
+        let history = PleTokenHistory::new(&cfg);
+        let before = cfg.rows(42, &history).unwrap();
+        let _borrow = cfg.metadata();
+        assert_eq!(cfg.rows(42, &history).unwrap(), before);
+        assert_eq!(history.tokens(), &[-1, -1]);
     }
 
     #[test]

@@ -918,3 +918,68 @@ checks pass247 host tests, strict all-target Clippy and formatting; see the
 [source-only composition receipt](../apps/kuno/benchmarks/text/receipts/rust-layer-composition-source-20261005.json).
 The frozen `a1be34e6` probe binary predates this shared adapter; its prepared
 device fixtures prove only their exact frozen source after they run.
+
+## Grouped all-ten expert operator source checkpoint (2026-10-05)
+
+The test-only grouped MoE candidate reuses each decoded original packed weight
+across4/8 RHS members while preserving each route's original64-lane tree. Gate/up
+is fused; down scatters back to original token/rank partials. One final reduction
+runs after all waves in ranks0..9 order. Runtime maps/counts/slots/probabilities
+never specialize pipelines. The separate shared expert remains outside this
+routed operator, and no route is discarded or renormalized for residency.
+
+All seven original formats pass78 checked/unchecked offline WGSL variants and
+12 focused host/operator fixtures. Combined root acceptance passes259 tests and
+strict all-target Clippy. Fixed maps and probability/coverage scratch are guarded
+before filling and wipe on ordinary success, error and unwind. Actual D2560/FF640
+full owning scratch charges1,409,024 bytes, or1,671,168 bytes including MAX8 input
+and output; caps remain unchanged. See [the source-only operator receipt](../apps/kuno/benchmarks/text/receipts/rust-grouped-moe-operator-source-20261005.json).
+
+A borrowed slot tuple is not proof of actual bank protection. The owning adapter
+must validate and retain the immutable wave and real pending bank plan through
+completed consumers, stage successive wave ledgers privately, and publish only
+after the whole-model chunk fence. That wrapper, actual physical bindings and
+both-card numeric/cleanup checks remain pending. No device, whole-model, timing,
+default-route or production private-worker claim follows from these host checks.
+## PLE and complete QSA layer source candidates (2026-10-05)
+
+The standalone lab now composes original layer1 PLE and layer3 QSA candidates.
+This is source acceptance, with physical comparisons still pending. Combined
+root validation passes284 native host/offline tests, strict all-target Clippy,
+locked offline release build, formatting and diff checks. Normal `kuno-text`
+passes75 tests with two installed checks ignored. No installed service, public
+API, catalog, default routing or Vashti consumer changed.
+
+PLE preserves all16 original u64 hash branches, boundary248044 versus EOS248046,
+bounded110-byte Q5 row reads, original projections and normalized-history taps
+9/6/3/0. Input and both committed histories remain immutable. Candidate history
+is exposed only after layer acceptance, with no whole-model commit API. The
+existing resident PLE tail is CPU; the new count1 GPU tail is labeled separately
+from scalar GPU projection and independent core comparisons. Eight numeric and
+four failure cases on each card remain pending. Paired full MAIN pages total
+15,958,016 B under16 MiB; diagnostic owning-I/O bound17,367,040 B under64 MiB;
+conservative guarded host inventory42,909,696 B under64 MiB.
+
+QSA includes all six original packed matrices and the accepted causal selector/
+attention operators. Prepared geometry, physical buffer ownership and pending
+state are sealed before dispatch. Its unchanged scalar comparator resets every
+status plane per token and advances only its separate reference cache after
+completed acceptance. Twenty-four contexts/counts and four rejection paths on
+each card remain pending. Dual capacity2064 full MAIN pages total58,818,560 B
+under64 MiB; audited I/O bound35,491,840 B under64 MiB; guarded host bound
+169,577,300 B under256 MiB. The dual4096 fixture needs100,925,440 B and is
+explicitly rejected before allocation rather than enlarging the cap.
+
+Both fixtures require exact full owning reads, scrub/drop of readback leases,
+checked independent I/O cleanup and full MAIN zero inspection before a receipt.
+Unexpected run/read/dispatch failure retires the context before best-effort
+close. This proves no opaque driver/register/spill or abrupt-loss erasure, and
+does not accept a private worker, whole-model prefill, full context4096 or speed.
+Receipts are
+`text/receipts/rust-ple-chunk-source-20261005.json` and
+`text/receipts/rust-qsa-layer-composition-source-20261005.json` under
+`apps/kuno/benchmarks`. They identify source hashes and frozen executable
+`b7b2e40955d39829f71bf8a6dc09620b38f658ada3725dc311e77e13cf328983`,
+which includes the shared cache-backed batch projector and sealed GDN owners.
+Earlier prepared `a1be34…` units describe an older frozen binary; do not
+substitute identities or infer device acceptance from this build.

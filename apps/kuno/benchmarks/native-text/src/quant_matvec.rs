@@ -484,3 +484,9 @@ pub mod matmul;
 pub mod moe_block;
 #[path = "segmented_moe.rs"]
 pub mod segmented_moe;
+
+// Candidate operator-only host/offline checks. Runtime wiring waits for the
+// owning wave/bank/arena wrapper and physical acceptance; no default selected.
+#[cfg(test)]
+#[path = "grouped_moe.rs"]
+pub mod grouped_moe;

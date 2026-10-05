@@ -1,0 +1,90 @@
+{
+  "scope": "Host/offline source candidate only; both-GPU numeric and complete-model acceptance pending",
+  "source_base": "e43ea22974f56876126b0dedbdf3c3314d2487fb",
+  "frozen_executable": {
+    "path": "/tmp/kuno-rust-ple-qsa-layer-benchmark-20261005",
+    "sha256": "b7b2e40955d39829f71bf8a6dc09620b38f658ada3725dc311e77e13cf328983",
+    "includes_shared_cache_batch_projector_and_sealed_gdn_fields": true
+  },
+  "root_checks": {
+    "native_host_tests_passed": 284,
+    "native_tests_failed": 0,
+    "strict_all_target_clippy": true,
+    "locked_offline_release_build": true,
+    "format_and_diff_check": true,
+    "normal_core_tests_passed": 75,
+    "installed_core_tests_ignored": 2
+  },
+  "public_contract_or_service_changes": false,
+  "gpu_acceptance_or_performance_claim": false,
+  "shared_source_sha256": {
+    "apps/kuno/benchmarks/native-text/src/main.rs": "469dfb425939cb179a0e6266d35b640cc4a0c5502dc4e52db96804b4a182ae9b",
+    "apps/kuno/benchmarks/native-text/src/gdn_layer_batch.rs": "f29c58657e84867793e896a111efdfc6c77e502e134f066111134fea87ecf752",
+    "apps/kuno/benchmarks/native-text/src/resident_batch_projection.rs": "e4d1ceb16a873d65db027ec7af46521f729433b13dafe5a820e749c66b2948bf"
+  },
+  "fixture": "ple-chunk-probe",
+  "patch_sha256": "54f76997cc58afe3b734009ede8e7dee97428768e373f542805086d1016e5af8",
+  "focused_new_native_tests": 14,
+  "new_core_borrowed_metadata_test": 1,
+  "source_sha256": {
+    "crates/kuno-text/src/ops.rs": "fbec2cba6ec7664352f818fc9ecdcfffa7700de3b7348c52c367cfa6e048a270",
+    "apps/kuno/benchmarks/native-text/src/ple_batch_gpu.rs": "f44d2653c3d305cf4078c802a902a400f466b725d6f6d60d8a718985f1ca017d",
+    "apps/kuno/benchmarks/native-text/src/ple_chunk.rs": "4e73b96651675b05db5c643e237ed5d3f918e30b70bd4e1dcfe1a08a20151fac",
+    "apps/kuno/benchmarks/native-text/src/ple_chunk_probe.rs": "c468d23af746b2e1d654cd180ca95124d3df713800bcdc90135a3f03b7a1dba9"
+  },
+  "budget": {
+    "main_cap": 16777216,
+    "main_paired_peak": 15958016,
+    "public_cap": 33554432,
+    "public_original_pages": 21430272,
+    "combined_peak": 37388288,
+    "runtime_cap": 67108864,
+    "runtime_operator_audit_duplicate_bound": 3538944,
+    "runtime_full_diagnostic_audit_duplicate_bound": 17367040,
+    "host_cap": 67108864,
+    "host_simultaneous_upper_bound": 42909696
+  },
+  "contract": {
+    "original_layer": 1,
+    "input": "original pre-GR residual columns",
+    "max_batch": 8,
+    "original_hash_branches": 16,
+    "row_read_bytes": 110,
+    "original_rows": "Q5_0, 160 decoded floats",
+    "committed_token_and_normalized_history_readonly": true,
+    "candidate_token_history_after_layer_acceptance_only": true,
+    "state_or_cursor_commit_api": false,
+    "unchanged_resident_ple_tail": "CPU; new count1 GPU tail is separately labeled",
+    "physical_owner_proof_before_source_write": true,
+    "all_old_input_inactive_gaps_padding_checked": true,
+    "readback_lease_wipe_before_checked_audit": true,
+    "failed_attempt_retires_before_best_effort_close": true
+  },
+  "pending_device_cases": {
+    "numeric": 8,
+    "counts": [
+      1,
+      3,
+      5,
+      8
+    ],
+    "geometry": [
+      "original4x2560",
+      "projected odd3x97"
+    ],
+    "negative_cases": [
+      "late nonfinite residual",
+      "completed cancellation",
+      "preenqueue cancellation",
+      "physical owner alias"
+    ],
+    "fresh_parity_and_full_main_owned_io_audit": true
+  },
+  "remaining": [
+    "API-visible main and tracked runtime pages only; opaque driver/register/spill/process-abort unproved",
+    "Existing scalar core oracle is fixed PUBLIC reference; its internal temporaries are not a production private host oracle",
+    "Lexical file-offset/access trace privacy and production request worker/whole graph transaction remain unaccepted",
+    "Candidate accept relies on caller completed owning map/dropped leases/checked audit; no state commit API",
+    "No whole-model batched prefill/default or timing selection"
+  ]
+}

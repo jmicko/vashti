@@ -17,10 +17,15 @@ mod info_slab_probe;
 mod main_admission;
 mod matmul_probe;
 mod ordered_public;
+mod ple_batch_gpu;
+mod ple_chunk;
+mod ple_chunk_probe;
 mod private_arena;
 mod qsa_chunk;
 mod qsa_chunk_probe;
 mod qsa_gpu;
+mod qsa_layer_batch;
+mod qsa_layer_batch_probe;
 mod quant_matvec;
 mod resident_batch_projection;
 mod resident_gdn;
@@ -231,6 +236,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
         );
         let client = WgpuRuntime::client(&selected);
+        if mode == "qsa-layer-batch-probe" {
+            return qsa_layer_batch_probe::run(&client);
+        }
+        if mode == "ple-chunk-probe" {
+            return ple_chunk_probe::run(&client, gr_storage_alignment);
+        }
         if mode == "gdn-layer-batch-probe" {
             gdn_layer_batch_probe::run(&client)?;
             return Ok(());

@@ -363,7 +363,9 @@ pub struct PackedMatrix {
     pub decoded: Zeroizing<Vec<f32>>,
 }
 impl PackedMatrix {
-    fn load(
+    // Shared fixture-only original packed cache; production uses the admitted
+    // BatchedResidentProjector and never needs this decoded CPU oracle.
+    pub(crate) fn load(
         client: &ComputeClient<WgpuRuntime>,
         tensor: TensorView<'_>,
         rows: usize,
@@ -708,8 +710,10 @@ fn transition(
     }
 }
 pub struct LayerBatch {
-    pub geometry: Geometry,
-    pub buffers: Buffers,
+    // Sealed after construction: queue and acceptance must refer to the same
+    // full arena owners and geometry throughout the candidate lifecycle.
+    geometry: Geometry,
+    buffers: Buffers,
     phase: Phase,
     binding: GraphBindingId,
     start: usize,
