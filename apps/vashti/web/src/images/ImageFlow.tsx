@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   ArrowLeft,
@@ -55,6 +55,8 @@ import {
 } from "./types";
 import { useImageFlow } from "./useImageFlow";
 import { SwipeSurface } from "./SwipeSurface";
+import { ImageReferencePicker } from "./ImageReferencePicker";
+import { referencePatch, referenceWorkflow } from "./references";
 
 type Props = {
   sessionId?: string;
@@ -99,6 +101,8 @@ export function ImageFlow({
       onNavigate("flow", flow.session.id);
   }, [flow.session?.id, sessionId, busy, flow.loaded]);
   const [expanded, setExpanded] = useState(false);
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [galleryOpen, setGalleryOpen] = useState(false);
   const [defaultsSaved, setDefaultsSaved] = useState(false);
   useEffect(() => setDefaultsSaved(false), [draft]);
   const [treeOpen, setTreeOpen] = useState(false);
@@ -112,6 +116,10 @@ export function ImageFlow({
   const [unseen, setUnseen] = useState(false);
   const input = useRef<HTMLTextAreaElement>(null);
   const file = useRef<HTMLInputElement>(null);
+  const composer = useRef<HTMLFormElement>(null);
+  const pointerDown = useRef(false);
+  const focusReferences = useRef(false);
+  const composerEpoch = useRef(0);
   const scroll = useRef<HTMLDivElement>(null);
   const end = useRef<HTMLDivElement>(null);
   const following = useRef(true);
@@ -119,6 +127,59 @@ export function ImageFlow({
   function noteScrollIntent() {
     scrollIntentUntil.current = performance.now() + 240;
   }
+  function collapseComposer() {
+    setComposerOpen(false);
+    if (
+      window.matchMedia("(max-width: 600px)").matches &&
+      document.activeElement === input.current
+    )
+      input.current?.blur();
+  }
+  function toggleSettings() {
+    composerEpoch.current++;
+    setExpanded(!expanded);
+    if (expanded) collapseComposer();
+  }
+  useLayoutEffect(() => {
+    if (!composerOpen || !focusReferences.current) return;
+    composer.current
+      ?.querySelector<HTMLElement>(".images-inputs")
+      ?.focus({ preventScroll: true });
+    focusReferences.current = false;
+  }, [composerOpen]);
+  useEffect(() => {
+    const down = () => {
+      pointerDown.current = true;
+    };
+    const up = () => {
+      pointerDown.current = false;
+    };
+    const outside = (event: MouseEvent) => {
+      const target = event.target;
+      if (
+        expanded ||
+        galleryOpen ||
+        !(target instanceof Element) ||
+        composer.current?.contains(target) ||
+        target.closest("dialog[open],[data-image-composer-control]")
+      )
+        return;
+      // The click target is resolved now; its handler can still explicitly reopen the prompt.
+      collapseComposer();
+    };
+    document.addEventListener("pointerdown", down, true);
+    document.addEventListener("pointerup", up, true);
+    document.addEventListener("pointercancel", up, true);
+    document.addEventListener("click", outside, true);
+    window.addEventListener("blur", up);
+    return () => {
+      document.removeEventListener("pointerdown", down, true);
+      document.removeEventListener("pointerup", up, true);
+      document.removeEventListener("pointercancel", up, true);
+      document.removeEventListener("click", outside, true);
+      window.removeEventListener("blur", up);
+    };
+  }, [expanded, galleryOpen]);
   const groups = useMemo(() => imageModelGroups(hosts), [hosts]);
   const selectedHost = hosts.find(
     (host) => host.backend.id === draft?.backend_id,
@@ -127,10 +188,15 @@ export function ImageFlow({
   const selectedWorkflow = workflows.find(
     (workflow) => workflow.id === draft?.recipe.workflow,
   );
+  const referenceLimit = Math.min(
+    10,
+    referenceWorkflow(workflows, draft?.recipe.workflow ?? "")
+      ?.reference_images_max || 10,
+  );
   const editing = draft?.recipe.workflow === "qwen-image-2.1-edit/v1";
   const ready = Boolean(
     draft &&
-    canGenerate(selectedHost?.service, draft.recipe, draft.input_ids.length),
+      canGenerate(selectedHost?.service, draft.recipe, draft.input_ids.length),
   );
   const turns = useMemo(
     () => imageTurns(runs, results, leaf),
@@ -203,7 +269,11 @@ export function ImageFlow({
     if (!draft || draft.backend_id || checking) return;
     const options = hosts.flatMap((host) =>
       (host.service.capabilities?.images.workflows ?? [])
-        .filter((workflow) => workflow.state === "ready")
+        .filter(
+          (workflow) =>
+            workflow.state === "ready" &&
+            workflow.reference_images_max >= draft.input_ids.length,
+        )
         .map((workflow) => ({ host, workflow })),
     );
     const matching =
@@ -278,7 +348,9 @@ export function ImageFlow({
   }
   const picker = (
     <div className="image-flow-header-controls">
-      {imagePath === deviceImagePath && <LockKeyhole size={18} aria-label="Private image flow on this device" />}
+      {imagePath === deviceImagePath && (
+        <LockKeyhole size={18} aria-label="Private image flow on this device" />
+      )}
       <ModelPicker
         groups={groups}
         personas={[]}
@@ -305,7 +377,8 @@ export function ImageFlow({
         aria-label="Image inference settings"
         title="Image inference settings"
         aria-expanded={expanded}
-        onClick={() => setExpanded((value) => !value)}
+        data-image-composer-control
+        onClick={toggleSettings}
       >
         <Settings2 />
       </button>
@@ -328,6 +401,7 @@ export function ImageFlow({
     restore?: Draft,
   ) {
     if (!draft || active) return;
+    const submittedEpoch = composerEpoch.current;
     const value = structuredClone(restore ?? draft);
     if (!retry && !restore)
       value.parent_result_id = editing ? draft.parent_result_id : leaf;
@@ -346,15 +420,19 @@ export function ImageFlow({
       if (!improveOnly) {
         following.current = true;
         setUnseen(false);
-        setExpanded(false);
+        // Do not interrupt new typing or controls opened while the request was being accepted.
+        if (composerEpoch.current === submittedEpoch) {
+          setExpanded(false);
+          collapseComposer();
+        }
       }
       if (!sessionId) onNavigate("flow", id);
     }
   }
   async function upload(files: FileList | null) {
     if (!draft || !files?.length) return;
-    if (draft.input_ids.length + files.length > 10) {
-      flow.setError("Choose at most ten reference images.");
+    if (draft.input_ids.length + files.length > referenceLimit) {
+      flow.setError(`Choose at most ${referenceLimit} reference images.`);
       return;
     }
     const chosenFiles = [...files];
@@ -370,42 +448,18 @@ export function ImageFlow({
         );
         ids.push(value.id);
       }
-      const snapshot = flow.getDraft();
-      if (!snapshot) return;
-      const input_ids = [...snapshot.input_ids, ...ids];
-      flow.patch({
-        input_ids,
-        original_input_ids: input_ids,
-        parent_result_id: snapshot.input_ids.length
-          ? snapshot.parent_result_id
-          : null,
-      });
-      const edit = hosts
-        .find((host) => host.backend.id === snapshot.backend_id)
-        ?.service.capabilities?.images.workflows.find(
-          (workflow) =>
-            workflow.reference_images_max > 0 && workflow.state === "ready",
-        );
-      if (
-        snapshot.recipe.workflow !== "qwen-image-2.1-edit/v1" &&
-        edit &&
-        snapshot.backend_id
-      ) {
-        flow.patch({
-          backend_id: snapshot.backend_id,
-          recipe: {
-            ...preferences.edit.recipe,
-            prompt: snapshot.recipe.prompt,
-            negative_prompt: snapshot.recipe.negative_prompt,
-            workflow: edit.id,
-          },
-          input_ids,
-          original_input_ids: input_ids,
-          parent_result_id: null,
-        });
-      }
-      await flow.save();
+      await attachReferences(ids);
     });
+  }
+  async function attachReferences(ids: string[]) {
+    const snapshot = flow.getDraft();
+    if (!snapshot) throw new Error("The image flow is no longer available.");
+    const available =
+      hosts.find((host) => host.backend.id === snapshot.backend_id)?.service
+        .capabilities?.images.workflows ?? [];
+    const edit = referenceWorkflow(available, snapshot.recipe.workflow);
+    flow.patch(referencePatch(snapshot, ids, preferences.edit, edit));
+    await flow.save();
   }
   function editResult(result: ImageResult) {
     if (!draft) return;
@@ -595,7 +649,10 @@ export function ImageFlow({
                   <article className="image-prompt-bubble message-bubble message-bubble-user">
                     <details className="image-prompt-details">
                       <summary>
-                        <span>{turn.run.request.draft.recipe.prompt || "Image-only edit"}</span>
+                        <span>
+                          {turn.run.request.draft.recipe.prompt ||
+                            "Image-only edit"}
+                        </span>
                         <ChevronDown size={16} />
                       </summary>
                       <div>
@@ -937,10 +994,26 @@ export function ImageFlow({
                 </div>
               )}
               <form
-                className="image-chat-composer"
+                ref={composer}
+                className={`image-chat-composer${!composerOpen && !expanded ? " image-chat-composer-compact" : ""}`}
+                onBlurCapture={(event) => {
+                  if (
+                    !expanded &&
+                    !galleryOpen &&
+                    !pointerDown.current &&
+                    !focusReferences.current &&
+                    !event.currentTarget.contains(event.relatedTarget)
+                  )
+                    setComposerOpen(false);
+                }}
                 onSubmit={(event) => {
                   event.preventDefault();
-                  if (ready && !busy && !active && (draft.recipe.prompt.trim() || draft.input_ids.length))
+                  if (
+                    ready &&
+                    !busy &&
+                    !active &&
+                    (draft.recipe.prompt.trim() || draft.input_ids.length)
+                  )
                     void send();
                 }}
               >
@@ -958,7 +1031,7 @@ export function ImageFlow({
                       : "Expand inference settings"
                   }
                   aria-expanded={expanded}
-                  onClick={() => setExpanded((value) => !value)}
+                  onClick={toggleSettings}
                 >
                   {expanded ? (
                     <ChevronDown size={18} />
@@ -968,7 +1041,12 @@ export function ImageFlow({
                 </button>
                 <div className="image-composer-body">
                   {draft.input_ids.length > 0 && (
-                    <div className="images-inputs">
+                    <div
+                      className="images-inputs"
+                      tabIndex={-1}
+                      role="group"
+                      aria-label="Reference images"
+                    >
                       {draft.input_ids.map((id, index) => (
                         <div key={`${id}:${index}`}>
                           <ImageAsset id={id} alt={`Reference ${index + 1}`} />
@@ -1042,35 +1120,79 @@ export function ImageFlow({
                       ))}
                     </div>
                   )}
-                  <textarea
-                    ref={input}
-                    aria-label="Image prompt"
-                    placeholder={
-                      editing
-                        ? "Describe the changes..."
-                        : "Describe an image..."
-                    }
-                    rows={expanded ? 5 : 2}
-                    value={draft.recipe.prompt}
-                    onChange={(event) =>
-                      patchRecipe({ prompt: event.target.value })
-                    }
-                    onKeyDown={(event) => {
-                      if (
-                        event.key === "Enter" &&
-                        !event.shiftKey &&
-                        !event.altKey &&
-                        !event.nativeEvent.isComposing &&
-                        event.keyCode !== 229 &&
-                        (event.ctrlKey ||
-                          event.metaKey ||
-                          !usesMobileInputBehavior())
-                      ) {
-                        event.preventDefault();
-                        event.currentTarget.form?.requestSubmit();
+                  <div className="image-composer-prompt">
+                    {draft.input_ids.length > 0 && (
+                      <button
+                        type="button"
+                        className="image-reference-summary"
+                        title="Show reference images"
+                        aria-label={`Show ${draft.input_ids.length} reference image${draft.input_ids.length === 1 ? "" : "s"}`}
+                        onClick={() => {
+                          composerEpoch.current++;
+                          focusReferences.current = true;
+                          setComposerOpen(true);
+                        }}
+                      >
+                        <ImageAsset
+                          id={draft.input_ids[0]}
+                          alt=""
+                          thumbnail
+                          dimensions={{ width: 1, height: 1 }}
+                        />
+                        <span>{draft.input_ids.length}</span>
+                      </button>
+                    )}
+                    <textarea
+                      ref={input}
+                      className="image-prompt-input"
+                      aria-label="Image prompt"
+                      placeholder={
+                        editing
+                          ? "Describe the changes..."
+                          : "Describe an image..."
                       }
-                    }}
-                  />
+                      rows={expanded ? 5 : 2}
+                      onFocus={() => {
+                        composerEpoch.current++;
+                        setComposerOpen(true);
+                      }}
+                      value={draft.recipe.prompt}
+                      onChange={(event) => {
+                        composerEpoch.current++;
+                        patchRecipe({ prompt: event.target.value });
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Escape" && !expanded) {
+                          collapseComposer();
+                          return;
+                        }
+                        if (
+                          event.key === "Enter" &&
+                          !event.shiftKey &&
+                          !event.altKey &&
+                          !event.nativeEvent.isComposing &&
+                          event.keyCode !== 229 &&
+                          (event.ctrlKey ||
+                            event.metaKey ||
+                            !usesMobileInputBehavior())
+                        ) {
+                          event.preventDefault();
+                          event.currentTarget.form?.requestSubmit();
+                        }
+                      }}
+                    />
+                    {!expanded && (
+                      <button
+                        type="button"
+                        className="image-prompt-collapse message-tool-button"
+                        title="Collapse prompt"
+                        aria-label="Collapse prompt"
+                        onClick={collapseComposer}
+                      >
+                        <ChevronDown size={18} />
+                      </button>
+                    )}
+                  </div>
                   {expanded && (
                     <div className="image-expanded-controls">
                       {editing && (
@@ -1215,8 +1337,12 @@ export function ImageFlow({
                               ? preferences.edit
                               : preferences.generate;
                             if (editing)
-                              flow.setEditMode(profile.edit_mode ?? "iterative");
-                            flow.patch(resetDraftSettings(flow.getDraft()!, profile));
+                              flow.setEditMode(
+                                profile.edit_mode ?? "iterative",
+                              );
+                            flow.patch(
+                              resetDraftSettings(flow.getDraft()!, profile),
+                            );
                           }}
                         >
                           Reset to account defaults
@@ -1254,7 +1380,9 @@ export function ImageFlow({
                       className="icon-button primary-action"
                       title="Add reference images"
                       aria-label="Add reference images"
-                      disabled={busy || draft.input_ids.length >= 10}
+                      disabled={
+                        busy || draft.input_ids.length >= referenceLimit
+                      }
                       onClick={() => file.current?.click()}
                     >
                       <Paperclip />
@@ -1262,9 +1390,12 @@ export function ImageFlow({
                     <button
                       type="button"
                       className="message-tool-button"
-                      title="Gallery"
-                      aria-label="Open gallery"
-                      onClick={() => onNavigate("gallery")}
+                      title="Attach from gallery"
+                      aria-label="Attach from gallery"
+                      disabled={
+                        busy || draft.input_ids.length >= referenceLimit
+                      }
+                      onClick={() => setGalleryOpen(true)}
                     >
                       <Images size={18} />
                     </button>
@@ -1294,7 +1425,11 @@ export function ImageFlow({
                       className="icon-button primary-action"
                       title="Send image prompt"
                       aria-label="Send image prompt"
-                      disabled={busy || !ready || (!draft.recipe.prompt.trim() && !draft.input_ids.length)}
+                      disabled={
+                        busy ||
+                        !ready ||
+                        (!draft.recipe.prompt.trim() && !draft.input_ids.length)
+                      }
                     >
                       <SendHorizontal />
                     </button>
@@ -1315,6 +1450,18 @@ export function ImageFlow({
             </div>
           )}
         </>
+      )}
+      {galleryOpen && draft && (
+        <ImageReferencePicker
+          existingIds={draft.input_ids}
+          limit={referenceLimit}
+          onClose={() => setGalleryOpen(false)}
+          onAttach={async (ids) => {
+            await attachReferences(ids);
+            setGalleryOpen(false);
+            collapseComposer();
+          }}
+        />
       )}
       {confirmEndless && (
         <ImagePanel
@@ -1407,7 +1554,9 @@ export function ImageFlow({
               title="Download image"
               aria-label="Download image"
               onClick={() =>
-                void flow.guard(() => downloadImage(viewer.ids[viewer.index], imagePath))
+                void flow.guard(() =>
+                  downloadImage(viewer.ids[viewer.index], imagePath),
+                )
               }
             >
               <Download />

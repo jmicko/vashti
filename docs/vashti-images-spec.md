@@ -110,6 +110,17 @@ text, retry prompts, or recoverable drafts on failure. An edit with reference
 images may have an empty positive prompt, including for aspect-ratio changes.
 Do not run prompt improvement on empty text; Improve alone still requires text.
 
+On narrow/mobile screens, the unfocused composer shows a single-line prompt,
+a compact actual-reference thumbnail/count, and the attachment and Send/Stop
+controls. Focus the prompt to expand it or tap the thumbnail to manage ordered
+references. Collapse after an accepted send or leaving the composer; do not
+collapse while moving focus between its controls or while explicitly opened
+inference settings are in use. Preserve the full prompt and attachments.
+File attachment and **Attach from gallery** are separate controls. The latter
+opens an in-flow multi-image picker with version selection, ordered selection,
+reference limits, and pagination. Closing it returns to the unchanged flow,
+not another route. Only the current server/device gallery is accessible.
+
 Show positive and negative prompts, steps, CFG, aspect ratio/dimensions, seed
 mode, image count, and applicable advanced controls. A visible **Customize
 controls** action lets the user show/hide each setting, including negative
