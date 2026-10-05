@@ -457,6 +457,69 @@ impl StagedSlots {
         self.accepted_waves
     }
 
+    /// Crate-private native family commit only. Caller has preflighted EVERY
+    /// model family/physical bank and accepted the actual whole-model fence.
+    /// Routed operator success or a dependency fence never grants this right.
+    pub(crate) fn publish_after_whole_model_acceptance(
+        mut self,
+        source: &mut BankSlots,
+        expected_waves: usize,
+    ) -> Result<()> {
+        self.validate_origin(source)?;
+        if expected_waves == 0 || expected_waves != self.accepted_waves {
+            return Err(BankError::ModifiedPlan);
+        }
+        std::mem::swap(&mut source.state, &mut self.candidate.state);
+        Ok(())
+    }
+    /// Report actual retained heap capacities, including canonical route copies.
+    /// Called before retaining a native pending receipt; allocator over-reserve
+    /// cannot silently consume the declared request-private host envelope.
+    pub(crate) fn retained_native_metadata_bytes(&self, plan: &Plan) -> Result<usize> {
+        let mul =
+            |count: usize, bytes: usize| count.checked_mul(bytes).ok_or(BankError::CounterOverflow);
+        let add = |a: usize, b: usize| a.checked_add(b).ok_or(BankError::CounterOverflow);
+        let state = |s: &State| -> Result<usize> {
+            add(
+                mul(s.slots.capacity(), std::mem::size_of::<Option<Resident>>())?,
+                mul(s.by_expert.capacity(), std::mem::size_of::<Option<usize>>())?,
+            )
+        };
+        let states = add(state(&self.candidate.state)?, state(&plan.next)?)?;
+        let slots = mul(
+            add(plan.slots.capacity(), plan.canonical_slots.capacity())?,
+            std::mem::size_of::<usize>(),
+        )?;
+        let uploads = mul(
+            add(plan.uploads.capacity(), plan.canonical_uploads.capacity())?,
+            std::mem::size_of::<(usize, usize)>(),
+        )?;
+        add(
+            add(add(states, slots)?, uploads)?,
+            std::mem::size_of::<Self>() + std::mem::size_of::<Plan>(),
+        )
+    }
+
+    pub(crate) fn bounded_native_metadata_bytes(capacity: usize) -> Result<usize> {
+        if !routed_capacity(capacity) {
+            return Err(BankError::Capacity);
+        }
+        let state = capacity
+            .checked_mul(std::mem::size_of::<Option<Resident>>())
+            .and_then(|n| n.checked_add(512 * std::mem::size_of::<Option<usize>>()))
+            .ok_or(BankError::CounterOverflow)?;
+        state
+            .checked_mul(2)
+            .and_then(|n| {
+                n.checked_add(
+                    2 * 80 * (std::mem::size_of::<usize>() + std::mem::size_of::<(usize, usize)>())
+                        + std::mem::size_of::<Self>()
+                        + std::mem::size_of::<Plan>(),
+                )
+            })
+            .ok_or(BankError::CounterOverflow)
+    }
+
     // No routed-only GPU fixture may publish original-bank metadata. A future
     // whole-model owner must place publication behind its real whole-chunk
     // fence. This pure host seam proves identity/revision/swap semantics only.

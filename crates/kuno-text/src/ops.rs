@@ -19,6 +19,13 @@
 
 use std::fmt;
 
+#[path = "ops_router_guarded.rs"]
+mod router_guarded;
+pub use router_guarded::{
+    GUARDED_ROUTER_CAPACITY_BYTES, GUARDED_ROUTER_MAX_EXPERTS, GUARDED_ROUTER_MAX_TOP_K,
+    GuardedRouterSelection, router_topk_guarded,
+};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OpsError {
     InvalidShape(&'static str),

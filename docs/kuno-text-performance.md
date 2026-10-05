@@ -1161,3 +1161,45 @@ component, which is not global64 MiB credit. The
 [approved actual connection plan](kuno-native-text-model-batching.md) now records
 aggregate constructor and acceptance budgets. This adapter is still unconnected;
 physical native/full-model acceptance and matched speed remain pending.
+
+## Native actual-bank MoE and guarded router (2026-10-05)
+
+The native MAX8 routed adapter now uses the actual executor's original bank
+instances and retained `StagedSlots`/`BankSlots` plans. It protects the complete
+selected union before choosing victims, uses bounded original packed fills,
+and retains the final pending plan for each of48 layers until external complete
+model acceptance and all-family preflight. Scalar bank access is rejected while
+the native session is armed. Interior owning dependencies permit safe scratch
+and victim reuse; they do not publish the original bank ledger or establish
+whole-model completion.
+
+Five reusable full MAIN pages add1,409,024 B. Original scalar owners remain for
+subsequent decode. The private pending metadata fits a2 MiB component cap;
+original public packed payloads retain their separate40 MiB cap. The524,288 B
+runtime component includes the491,520 B conservative audited/slab bound and
+does not grant aggregate64 MiB I/O credit. Drop only stores sticky logical poison;
+explicit terminal cleanup remains outside admission guards.
+
+The new guarded core router preserves the original f64 softmax/sum and f32
+round points, probability ordering/ID ties, denominator clamp and all ten ranks,
+including zero probabilities. Its fixed scratch/result total6,256 B on this
+64-bit host and allocate no heap storage. Guards clear complete API-visible
+fields on error, unwind and drop; opaque compiler/register copies are outside
+this proof. The existing scalar router API is unchanged.
+
+Root acceptance passes350 native and86 core tests, with two installed checks
+ignored, strict all-target Clippy for both, locked offline release, formatting/
+diff and focused peer source review. The frozen executable is
+`27c25fea8741017a090052118e95da102a062a159451ba4c919bc2af502b6950`.
+[The exact source receipt](../apps/kuno/benchmarks/text/receipts/rust-native-moe-router-source-20261005.json)
+pins files, delivery identities and component bounds. This actual-bank adapter
+has no connected whole-model consumer or new physical acceptance yet; older
+grouped fixture and scalar lifecycle receipts do not establish those properties.
+
+[The native decode plan](kuno-native-text-decode.md) records the next measured
+optimization path. Stage1 original packed Rust CPU experts and a pinned-file
+positional reader are approved for isolated synthetic source implementation.
+Actual CPU/GPU calibration, mixed execution and an expert-only secondary GPU
+remain later experiments. MAX8 prompt batching alone cannot establish faster
+hot decode. No public API, model catalog/default, installed service or Vashti
+consumer behavior changes at this checkpoint.

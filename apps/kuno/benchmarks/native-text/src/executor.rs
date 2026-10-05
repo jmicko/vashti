@@ -19,6 +19,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use zeroize::Zeroize;
 
+#[path = "resident_moe_batch.rs"]
+pub(crate) mod batch_moe;
+
 const TILE_BYTES: usize = 64 * 1024 * 1024;
 pub(crate) const RESIDENT_IO_MAX: u64 = 64 * 1024 * 1024;
 /// Separate runtime upload/uniform/readback ownership. Not main-pool telemetry.
@@ -409,6 +412,7 @@ pub struct GpuExecutor<'a> {
     budget: usize,
     tick: u64,
     banks: BTreeMap<String, ExpertBanks>,
+    batch_moe: Option<batch_moe::Registry>,
     bank_reserved: usize,
     bank_slots: usize,
     reserved_limit: usize,
@@ -512,6 +516,7 @@ impl<'a> GpuExecutor<'a> {
             budget,
             tick: 0,
             banks: BTreeMap::new(),
+            batch_moe: None,
             bank_reserved: 0,
             bank_slots,
             reserved_limit,
@@ -570,6 +575,9 @@ impl<'a> GpuExecutor<'a> {
             .clone()
             .ok_or(Error::InvalidFormat("resident I/O ownership unavailable"))?;
         self.poison_resident();
+        if let Some(r) = &self.batch_moe {
+            r.abort();
+        }
         checked_transient_cleanup(&retired, || {
             if let Some(sources) = &self.ordered_sources {
                 release_ordered_sources(&self.client, sources)
@@ -580,6 +588,7 @@ impl<'a> GpuExecutor<'a> {
         self.cache.clear();
         self.cache_bytes = 0;
         self.banks.clear();
+        self.batch_moe = None;
         self.bank_reserved = 0;
         // All previous commands completed before public cache handles release.
         let cleaned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -979,6 +988,7 @@ impl<'a> GpuExecutor<'a> {
         selected: &[(usize, f32)],
         cancel: &AtomicBool,
     ) -> Result<crate::resident_moe::PendingMoe> {
+        batch_moe::reject_scalar(self)?;
         let result =
             self.enqueue_routed_moe_inner(graph, arena, resident, input, output, selected, cancel);
         if result.is_err() {
@@ -1436,6 +1446,7 @@ impl MatrixExecutor for GpuExecutor<'_> {
         selected: &[(usize, f32)],
         cancel: &AtomicBool,
     ) -> Result<Option<Vec<f32>>> {
+        batch_moe::reject_scalar(self)?;
         self.check_segmented_resident(false)?;
         self.nonresident_only()?;
         let started = Instant::now();

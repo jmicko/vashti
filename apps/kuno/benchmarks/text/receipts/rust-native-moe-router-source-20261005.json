@@ -1,0 +1,75 @@
+{
+  "actual_MoE_owners": [
+    "Actual Executor BTreeMap of original full-model banks; original immutable cached packed pages.",
+    "Real StagedSlots generation and final BankSlots Plan retained until external complete-model acceptance and all-family preflight.",
+    "Same actual ResidentAdmission sequence-poison Arc, client, physical full pages and context.",
+    "Complete selected union protected before victim selection; bounded original public fills and checked owning interior dependencies; original all-ten rank order including zero probabilities.",
+    "All scalar bank access blocked while native session is armed; explicit terminal teardown uses original checked executor close."
+  ],
+  "base_commit": "0f31146cc0374d08a44c6dc78ebcd932260204b7",
+  "date": "2026-10-05",
+  "delivered_patches_sha256": {
+    "actual_native_MoE": "7b3d25c3d7f312b21d1699aeca6cea795fb6df1dc80c86ad08a089a4d8c835a2",
+    "guarded_core_router": "95fb632b66fb174508929c5c8323aee589d2057937a2dcf03d6c8bea903d79c0"
+  },
+  "failure_boundary": [
+    "No enqueue, interior routed-only dependency, or family permit proves whole-model completion.",
+    "Caller must complete actual whole-model output/fault and checked I/O proofs; PLE maps then second same-fault/I/O/admission proof; every family preflight before any state or bank publication.",
+    "Drop only atomically sticky-poisons; it never reenters held admission locks.",
+    "All fill/map/nonfinite/cancel/unwind/abandonment failures poison the complete logical sequence and reject scalar retry/native fallback.",
+    "No arbitrary accepted device owner mutation, cache replacement or early original ledger publication."
+  ],
+  "files_sha256": {
+    "apps/kuno/benchmarks/native-text/src/bank_slots.rs": "8a40e2b9e4fa1ff58f33129eeafd610c7171c99de10ce10472d64eb4c5734f51",
+    "apps/kuno/benchmarks/native-text/src/executor.rs": "08334b3af7e11cf8616de267b44ed65a36c668fa26ffbaf2af1856184f7046dd",
+    "apps/kuno/benchmarks/native-text/src/resident_moe_batch.rs": "1bdcecf2324436c9ba75d4a0d73a6873010e8f733869c2ad8b184086c61047d3",
+    "crates/kuno-text/src/ops.rs": "4df28b23e28951a80a46dad277be3212449df420e6eb7dab5fa5fbd4a97e7dad",
+    "crates/kuno-text/src/ops_router_guarded.rs": "cb40d3e0eae1398ad552d0f915df2355b29c4d090b128be4611e4d5cab388978"
+  },
+  "frozen_executable": "/tmp/kuno-rust-native-moe-source-v8-20261005",
+  "frozen_executable_sha256": "27c25fea8741017a090052118e95da102a062a159451ba4c919bc2af502b6950",
+  "limitations": [
+    "New actual adapter and router consumer are not yet connected to complete model execution.",
+    "Older grouped-fixture and scalar lifecycle receipts do not accept this adapter.",
+    "No new paired performance, full quality/options or production worker/default routing acceptance.",
+    "Fixed field erasure does not prove opaque compiler registers/driver state or abrupt-loss erasure."
+  ],
+  "memory": {
+    "all_48_pending_private_metadata_cap": 1572864,
+    "guarded_router_fixed_capacity_bytes_64bit": 6256,
+    "guarded_router_heap_allocations": 0,
+    "new_PUBLIC_bytes": 0,
+    "new_full_MAIN_bytes": 1409024,
+    "new_full_MAIN_pages": 5,
+    "original_retained_scalar_MAIN_bytes": 785186816,
+    "private_host_cap": 2097152,
+    "public_packed_host_cap": 41943040,
+    "public_packed_host_payload_window_max": 39321600,
+    "runtime_component_bound_including_audit_and_slab": 491520,
+    "runtime_component_cap": 524288,
+    "whole_runtime_cap_unchanged": 67108864
+  },
+  "native_adapters_or_whole_model_device_accepted": false,
+  "next_decode_plan": {
+    "path": "docs/kuno-native-text-decode.md",
+    "sha256": "5dee1df81bf391011b20a096fa59e31cb6b98c106c102fc1190711133e0bd0ca",
+    "status": "Stage 1 packed Rust CPU operator and pinned-FD positional reader approved for isolated synthetic source implementation only; later calibration/hybrid/secondary-GPU stages remain measured proposals."
+  },
+  "public_API_catalog_defaults_services_or_Vashti_changed": false,
+  "root_checks": {
+    "core_installed_checks_ignored": 2,
+    "core_tests": 86,
+    "focused_peer_source_review_no_material_blocker": true,
+    "format_and_diff_checks": true,
+    "native_tests": 350,
+    "release_build": true,
+    "strict_all_target_clippy_both_manifests": true
+  },
+  "router_math": [
+    "Original f32 max followed by f64 exp and sum with original f32 exponential/probability round points.",
+    "Original total_cmp descending probability and ascending expert ID ties.",
+    "Selected-sum denominator clamp 2^-14, original f32 normalized probabilities, all ten ranks including zeros.",
+    "Guarded complete fixed scratch and result fields; existing scalar API remains unchanged."
+  ],
+  "scope": "unconnected-native-actual-bank-MoE-and-guarded-router-source-only"
+}
