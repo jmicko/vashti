@@ -11,7 +11,9 @@ use cubecl::wgpu::WgpuRuntime;
 use kuno_text::cpu::Matrix;
 use kuno_text::model::{MatrixExecutor, RoutedWeights};
 use kuno_text::{Error, GgufFile, Result, TensorView};
+use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -44,8 +46,20 @@ fn checked_transient_cleanup(
     Ok(())
 }
 
-fn checkpoint_needed(intermediate: bool, token_checkpoint: bool) -> bool {
-    !intermediate || !token_checkpoint
+fn checkpoint_needed(intermediate: bool, token_checkpoint: bool, ordered_router: bool) -> bool {
+    ordered_router || !intermediate || !token_checkpoint
+}
+type OrderedSources = Rc<RefCell<crate::ordered_public::PendingSources<Handle>>>;
+fn release_ordered_sources(
+    client: &ComputeClient<WgpuRuntime>,
+    sources: &OrderedSources,
+) -> Result<()> {
+    sources
+        .borrow_mut()
+        .after_completed_read(|| sanitize_resident_io(client))?;
+    // No admission callback: this also runs while a readback holds its ledger.
+    client.memory_cleanup();
+    Ok(())
 }
 
 fn admission_error(_: main_admission::AdmissionError) -> Error {
@@ -134,6 +148,7 @@ pub(crate) struct ResidentAdmission {
     ledger: Arc<Mutex<MainAdmission>>,
     transient_io: bool,
     token_io_checkpoint: bool,
+    ordered_sources: Option<OrderedSources>,
     retired: Arc<AtomicBool>,
 }
 impl ResidentAdmission {
@@ -173,17 +188,24 @@ impl ResidentAdmission {
         self.with_ledger(|ledger| guarded_allocation(ledger, requests, || self.telemetry(), f))
     }
     pub(crate) fn readback<T>(&self, f: impl FnOnce() -> Result<T>) -> Result<T> {
-        self.readback_with_cadence(false, f)
+        self.readback_with_cadence(false, false, f)
     }
     /// Completed intermediate maps still drop their guarded Bytes immediately.
     /// Deferred I/O remains tracked and charged in the separate hard runtime
     /// budget; main-pool fence credit cannot reclaim those runtime spans.
     pub(crate) fn readback_intermediate<T>(&self, f: impl FnOnce() -> Result<T>) -> Result<T> {
-        self.readback_with_cadence(true, f)
+        self.readback_with_cadence(true, false, f)
+    }
+    /// The existing router read completes normally before bounded cleanup.
+    /// Ordered public sources force this boundary even on cache-hit layers and
+    /// under token-only cadence; upload/enqueue never invokes cleanup itself.
+    pub(crate) fn readback_router<T>(&self, f: impl FnOnce() -> Result<T>) -> Result<T> {
+        self.readback_with_cadence(true, self.ordered_sources.is_some(), f)
     }
     fn readback_with_cadence<T>(
         &self,
         intermediate: bool,
+        ordered_router: bool,
         f: impl FnOnce() -> Result<T>,
     ) -> Result<T> {
         if self.retired.load(Ordering::Acquire) {
@@ -195,7 +217,7 @@ impl ResidentAdmission {
                 ledger,
                 f,
                 || {
-                    if checkpoint_needed(intermediate, self.token_io_checkpoint) {
+                    if checkpoint_needed(intermediate, self.token_io_checkpoint, ordered_router) {
                         self.checkpoint()
                     } else {
                         Ok(())
@@ -215,7 +237,24 @@ impl ResidentAdmission {
         if !self.transient_io {
             return Ok(());
         }
-        checked_transient_cleanup(&self.retired, || sanitize_resident_io(&self.client))
+        checked_transient_cleanup(&self.retired, || {
+            if let Some(sources) = &self.ordered_sources {
+                release_ordered_sources(&self.client, sources)
+            } else {
+                sanitize_resident_io(&self.client)
+            }
+        })
+    }
+    /// Explicit abandoned-owner teardown, outside any admission lock. A
+    /// cancelled attention step may not have reached its next router read.
+    /// Drain/erase ordered upload staging before the optional MAIN zero audit
+    /// allocates inspection stages. This grants no MAIN fence credit, resets
+    /// no poisoned ledger, and leaves pending sources retained on failure.
+    pub(crate) fn cleanup_abandoned_ordered_sources(&self) -> Result<()> {
+        if self.ordered_sources.is_none() {
+            return Ok(());
+        }
+        self.checkpoint()
     }
     pub(crate) fn prewarm(
         &self,
@@ -257,6 +296,8 @@ pub struct GpuExecutor<'a> {
     pub expert_scatter: expert_banks::ScatterMode,
     pub gpu_gdn: bool,
     pub token_io_checkpoint: bool,
+    pub ordered_public_upload: bool,
+    ordered_sources: Option<OrderedSources>,
     pub small_cpu: crate::small_cpu::SmallCpu<'a>,
     pub small_cpu_enabled: bool,
     pub small_cpu_ns: u128,
@@ -296,6 +337,22 @@ impl<'a> GpuExecutor<'a> {
         reserved_limit: usize,
     ) -> Result<Self> {
         expert_banks::validate_capacity(bank_slots)?;
+        let explicit_static = match std::env::var("KUNO_LAB_STATIC_CACHE_BYTES") {
+            Ok(raw) => Some(expert_banks::configured_static_cache(Some(&raw), budget)?),
+            Err(std::env::VarError::NotPresent) => None,
+            Err(_) => return Err(Error::InvalidFormat("laboratory static cache environment")),
+        };
+        expert_banks::validate_segmented_configuration(
+            bank_slots,
+            explicit_static,
+            budget,
+            std::env::var("KUNO_LAB_BLOCK_MOE").as_deref() == Ok("1"),
+            std::env::var("KUNO_LAB_BATCH_EXPERTS").as_deref() == Ok("1"),
+            std::env::var("KUNO_LAB_WORD_DOWN").as_deref() == Ok("1"),
+            true,
+        )?;
+        expert_banks::validate_ordered_segmented(bank_slots)?;
+
         let expert_batch_bytes = match std::env::var("KUNO_LAB_EXPERT_BATCH_BYTES") {
             Ok(raw) => expert_banks::configured_batch_bytes(Some(&raw))?,
             Err(std::env::VarError::NotPresent) => expert_banks::configured_batch_bytes(None)?,
@@ -317,7 +374,20 @@ impl<'a> GpuExecutor<'a> {
         if !(TILE_BYTES..=16 * 1024 * 1024 * 1024).contains(&budget) {
             return Err(Error::LimitExceeded("laboratory GPU cache"));
         }
+        let ordered_raw = match std::env::var("KUNO_LAB_ORDERED_PUBLIC_UPLOAD") {
+            Ok(raw) => Some(raw),
+            Err(std::env::VarError::NotPresent) => None,
+            Err(_) => return Err(Error::InvalidFormat("ordered public upload setting")),
+        };
+        let ordered_public_upload = crate::ordered_public::configured(
+            ordered_raw.as_deref(),
+            std::env::var("KUNO_LAB_TRANSIENT_IO").as_deref() == Ok("1"),
+            std::env::var("KUNO_LAB_BATCH_EXPERTS").as_deref() == Ok("1"),
+        )?;
         Ok(Self {
+            ordered_public_upload,
+            ordered_sources: ordered_public_upload
+                .then(|| Rc::new(RefCell::new(crate::ordered_public::PendingSources::new()))),
             small_cpu: crate::small_cpu::SmallCpu::new(model, 64 * 1024 * 1024)?,
             small_cpu_enabled: std::env::var("KUNO_LAB_SMALL_CPU").as_deref() == Ok("1"),
             small_cpu_ns: 0,
@@ -398,7 +468,13 @@ impl<'a> GpuExecutor<'a> {
             .clone()
             .ok_or(Error::InvalidFormat("resident I/O ownership unavailable"))?;
         self.poison_resident();
-        checked_transient_cleanup(&retired, || sanitize_resident_io(&self.client))?;
+        checked_transient_cleanup(&retired, || {
+            if let Some(sources) = &self.ordered_sources {
+                release_ordered_sources(&self.client, sources)
+            } else {
+                sanitize_resident_io(&self.client)
+            }
+        })?;
         self.cache.clear();
         self.cache_bytes = 0;
         self.banks.clear();
@@ -413,6 +489,16 @@ impl<'a> GpuExecutor<'a> {
         }
         checked_transient_cleanup(&retired, || sanitize_resident_io(&self.client))
     }
+    pub(crate) fn ordered_source_peak_bytes(&self) -> u64 {
+        self.ordered_sources
+            .as_ref()
+            .map_or(0, |sources| sources.borrow().peak())
+    }
+    pub(crate) fn ordered_source_pending_bytes(&self) -> u64 {
+        self.ordered_sources
+            .as_ref()
+            .map_or(0, |sources| sources.borrow().bytes())
+    }
     pub fn cache_bytes(&self) -> usize {
         self.cache_bytes + self.bank_reserved
     }
@@ -421,6 +507,21 @@ impl<'a> GpuExecutor<'a> {
             .memory_usage()
             .map(|m| m.bytes_reserved)
             .map_err(|_| Error::InvalidFormat("GPU memory telemetry"))
+    }
+    fn check_segmented_resident(&self, resident: bool) -> Result<()> {
+        // The constructor pins explicit budget configuration; no environment
+        // re-read is needed after creation. Public mutable experiment flags
+        // still need revalidation before every allocation/dispatch seam.
+        expert_banks::validate_segmented_configuration(
+            self.bank_slots,
+            Some(self.budget),
+            self.budget,
+            self.block_moe,
+            self.batch_experts,
+            self.word_down,
+            resident,
+        )?;
+        expert_banks::check_ordered_segmented(self.bank_slots, self.ordered_public_upload)
     }
     /// Before ANY owner allocation, admit all static full pages and every
     /// simultaneously queued source page. Capacity plan is distinct from the
@@ -431,6 +532,7 @@ impl<'a> GpuExecutor<'a> {
         private_owned: u64,
         public_pages: u64,
     ) -> Result<ResidentAdmission> {
+        self.check_segmented_resident(true)?;
         if self.resident_admission.is_some() || !self.cache.is_empty() || !self.banks.is_empty() {
             return Err(Error::InvalidFormat("resident executor already used"));
         }
@@ -445,6 +547,17 @@ impl<'a> GpuExecutor<'a> {
             .is_some_and(|retired| retired.load(Ordering::Acquire))
         {
             return Err(Error::InvalidFormat("resident GPU context retired"));
+        }
+        if self.ordered_public_upload {
+            if self.transient_resident.is_none() || self.batch_experts {
+                return Err(Error::InvalidFormat(
+                    "ordered public upload policy mismatch",
+                ));
+            }
+            crate::ordered_public::validate_geometry(graph.geometry())?;
+            if crate::ordered_public::WINDOW_RUNTIME > RESIDENT_RUNTIME_IO_MAX {
+                return Err(Error::LimitExceeded("ordered public runtime window"));
+            }
         }
         let banks = expert_banks::preflight_residency(
             graph,
@@ -470,6 +583,9 @@ impl<'a> GpuExecutor<'a> {
                     .row_bytes()
                     .checked_mul(t.info().dimensions()[1])
                     .ok_or(Error::ArithmeticOverflow)?;
+            }
+            if self.ordered_public_upload {
+                crate::ordered_public::validate_parts(parts)?;
             }
             let requests = fill_requests(parts, 10, self.batch_experts, self.expert_batch_bytes)?;
             let pages = requests.into_iter().try_fold(0_u64, |sum, n| {
@@ -501,6 +617,7 @@ impl<'a> GpuExecutor<'a> {
             client: self.client.clone(),
             transient_io: self.transient_resident.is_some(),
             token_io_checkpoint: self.token_io_checkpoint,
+            ordered_sources: self.ordered_sources.clone(),
             retired: self
                 .transient_resident
                 .clone()
@@ -660,6 +777,14 @@ impl<'a> GpuExecutor<'a> {
             if misses.is_empty() {
                 return Ok(());
             }
+            // A previous fill must have crossed the NEXT completed router.
+            // No cleanup/reentry while allocation holds the admission mutex.
+            if let Some(sources) = &self.ordered_sources
+                && sources.borrow().bytes() != 0
+            {
+                admission.poison();
+                return Err(Error::InvalidFormat("ordered public source fence missing"));
+            }
             let parts = [bank.gate(), bank.up(), bank.down()].map(|b| b.expert_bytes() as u64);
             let requests = fill_requests(
                 parts,
@@ -672,6 +797,11 @@ impl<'a> GpuExecutor<'a> {
                 self.fill_expert_misses_inner(bank, weights, misses, cancel)
             })
         } else {
+            if self.ordered_public_upload {
+                return Err(Error::InvalidFormat(
+                    "ordered public fill requires resident admission",
+                ));
+            }
             self.fill_expert_misses_inner(bank, weights, misses, cancel)
         }
     }
@@ -705,8 +835,19 @@ impl<'a> GpuExecutor<'a> {
                     (bank.up(), weights.up),
                     (bank.down(), weights.down),
                 ] {
-                    let (bytes, read, upload) =
-                        expert_banks::fill(&self.client, target, tensor, expert, slot, cancel)?;
+                    let (bytes, read, upload) = if let Some(sources) = &self.ordered_sources {
+                        expert_banks::fill_ordered(
+                            &self.client,
+                            target,
+                            tensor,
+                            expert,
+                            slot,
+                            cancel,
+                            &mut sources.borrow_mut(),
+                        )?
+                    } else {
+                        expert_banks::fill(&self.client, target, tensor, expert, slot, cancel)?
+                    };
                     self.uploaded_bytes += bytes;
                     self.weight_read_ns += read;
                     self.weight_upload_ns += upload;
@@ -754,6 +895,7 @@ impl<'a> GpuExecutor<'a> {
         selected: &[(usize, f32)],
         cancel: &AtomicBool,
     ) -> Result<crate::resident_moe::PendingMoe> {
+        self.check_segmented_resident(self.resident_admission.is_some())?;
         if let Some(admission) = &self.resident_admission {
             admission.active()?;
         }
@@ -783,16 +925,7 @@ impl<'a> GpuExecutor<'a> {
         } else {
             let size = ExpertBanks::allocation(weights, self.bank_slots)?;
             let bank = if let Some(admission) = &self.resident_admission {
-                let requests = [weights.gate, weights.up, weights.down]
-                    .map(|t| {
-                        t.info()
-                            .row_bytes()
-                            .checked_mul(t.info().dimensions()[1])
-                            .and_then(|n| n.checked_mul(self.bank_slots as u64))
-                            .ok_or(Error::ArithmeticOverflow)
-                    })
-                    .into_iter()
-                    .collect::<Result<Vec<_>>>()?;
+                let requests = ExpertBanks::allocation_requests(weights, self.bank_slots)?;
                 admission.allocate(&requests, || {
                     ExpertBanks::new(&self.client, weights, self.bank_slots)
                 })?
@@ -1002,6 +1135,7 @@ impl MatrixExecutor for GpuExecutor<'_> {
         selected: &[(usize, f32)],
         cancel: &AtomicBool,
     ) -> Result<Option<Vec<f32>>> {
+        self.check_segmented_resident(false)?;
         self.nonresident_only()?;
         let started = Instant::now();
         if [weights.gate, weights.up, weights.down]
@@ -1188,10 +1322,11 @@ mod admission_tests {
 
     #[test]
     fn token_cadence_keeps_cleanup_mandatory_at_final_fence() {
-        assert!(checkpoint_needed(true, false));
-        assert!(checkpoint_needed(false, false));
-        assert!(!checkpoint_needed(true, true));
-        assert!(checkpoint_needed(false, true));
+        assert!(checkpoint_needed(true, false, false));
+        assert!(checkpoint_needed(false, false, false));
+        assert!(!checkpoint_needed(true, true, false));
+        assert!(checkpoint_needed(false, true, false));
+        assert!(checkpoint_needed(true, true, true)); // Cache-hit next router too.
     }
 
     #[test]
@@ -1214,7 +1349,7 @@ mod admission_tests {
             },
             || {
                 assert!(!leased.get());
-                assert!(!checkpoint_needed(true, true));
+                assert!(!checkpoint_needed(true, true, false));
                 Ok(())
             },
             || Ok(PAGE),
@@ -1286,6 +1421,37 @@ mod admission_tests {
     }
 
     #[test]
+    fn ordered_source_cleanup_failure_retains_owner_before_main_credit() {
+        let mut sources = crate::ordered_public::PendingSources::new();
+        sources
+            .enqueue(vec![0; PAGE as usize], Ok, |_, _| Ok(()))
+            .unwrap();
+        let sampled = Cell::new(false);
+        let retired = AtomicBool::new(false);
+        let mut main = MainAdmission::new(4 * PAGE, PAGE).unwrap();
+        main.precharge(&[PAGE]).unwrap();
+        assert!(
+            guarded_readback(
+                &mut main,
+                || Ok(()),
+                || checked_transient_cleanup(&retired, || sources.after_completed_read(failure)),
+                || {
+                    sampled.set(true);
+                    Ok(PAGE)
+                },
+            )
+            .is_err()
+        );
+        assert_eq!(sources.bytes(), PAGE);
+        assert!(!sampled.get());
+        assert!(retired.load(Ordering::Acquire));
+        assert!(main.is_poisoned());
+        assert_eq!(main.upper_bytes(), 2 * PAGE);
+        // Only explicit teardown may try again. No ledger reuse/clean receipt.
+        sources.after_completed_read(|| Ok(())).unwrap();
+    }
+
+    #[test]
     fn cleanup_panic_retires_and_later_best_effort_cannot_claim_clean() {
         let stream = Arc::new(AtomicBool::new(false));
         let retired = stream.clone();
@@ -1349,6 +1515,59 @@ mod admission_tests {
         assert_eq!(*events.borrow(), ["before", "create", "after", "publish"]);
         assert_eq!(ledger.upper_bytes(), 2 * PAGE);
         assert!(!ledger.is_poisoned());
+    }
+
+    #[test]
+    fn six_segment_pages_are_precharged_together_and_partial_creation_poisons_owner() {
+        const MIB: u64 = 1024 * 1024;
+        // Actual gate/up Q4_K and down Q8_0 original 64+32 logical extents.
+        let requests = [
+            921600 * 64,
+            921600 * 32,
+            921600 * 64,
+            921600 * 32,
+            1740800 * 64,
+            1740800 * 32,
+        ];
+        let charge = requests
+            .iter()
+            .map(|&n| main_admission::page_bytes(n).unwrap())
+            .sum::<u64>();
+        assert_eq!(charge, 384 * MIB);
+        let created = Cell::new(0);
+        let mut short = MainAdmission::new(PAGE + charge - 1, PAGE).unwrap();
+        assert!(
+            guarded_allocation(
+                &mut short,
+                &requests,
+                || Ok(PAGE),
+                || {
+                    created.set(6);
+                    Ok(())
+                }
+            )
+            .is_err()
+        );
+        assert_eq!(created.get(), 0);
+        assert!(short.is_poisoned());
+        let mut exact = MainAdmission::new(PAGE + charge, PAGE).unwrap();
+        let result = guarded_allocation(
+            &mut exact,
+            &requests,
+            || Ok(PAGE),
+            || {
+                // Failure after the first physical shard: the enclosing ledger
+                // remains poisoned, retains debt and cannot publish/accept retry.
+                created.set(1);
+                failure::<()>()
+            },
+        );
+        assert!(result.is_err());
+        assert_eq!(created.get(), 1);
+        assert_eq!(exact.upper_bytes(), PAGE + charge);
+        assert!(exact.is_poisoned());
+        assert!(exact.completed_fence(0).is_err());
+        assert!(guarded_allocation(&mut exact, &requests, || Ok(0), || Ok(())).is_err());
     }
 
     #[test]

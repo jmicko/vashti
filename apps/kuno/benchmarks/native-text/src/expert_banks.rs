@@ -1,28 +1,64 @@
 //! Transient packed expert banks for a fixed public laboratory experiment.
 //! Stores original weights only; never persists expert access/rank history.
-use crate::bank_slots::{BankSlots, MAX_CAPACITY, MIN_ROUTED_CAPACITY};
+use crate::bank_slots::{BankSlots, SEGMENTED_CAPACITY, routed_capacity};
 use crate::quant_matvec;
 use cubecl::prelude::*;
 use cubecl::server::Handle;
 use cubecl::wgpu::WgpuRuntime;
 use kuno_text::cpu::Matrix;
 use kuno_text::model::{BoundGraph, RoutedWeights};
-use kuno_text::{Error, Result, TensorView};
+use kuno_text::{Error, Result, TensorType, TensorView};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Instant;
 use zeroize::Zeroize;
 
 /// Immutable allocation extent; expose only readonly handles/geometry. Filling
 /// changes PUBLIC weight bytes, never these allocations or their offsets.
-pub struct Bank {
+pub struct BankSegment {
     handle: Handle,
+    first_slot: usize,
+    capacity: usize,
+    words: usize,
+}
+impl BankSegment {
+    pub fn handle(&self) -> &Handle {
+        &self.handle
+    }
+    pub fn first_slot(&self) -> usize {
+        self.first_slot
+    }
+    pub fn capacity(&self) -> usize {
+        self.capacity
+    }
+    pub fn words(&self) -> usize {
+        self.words
+    }
+}
+pub struct Bank {
+    segments: Vec<BankSegment>,
     expert_bytes: usize,
     words: usize,
     reserved: usize,
 }
 impl Bank {
-    pub fn handle(&self) -> &Handle {
-        &self.handle
+    pub fn single(&self) -> Result<&BankSegment> {
+        if self.segments.len() != 1 {
+            return Err(Error::InvalidFormat(
+                "segmented bank requires resident block MoE",
+            ));
+        }
+        Ok(&self.segments[0])
+    }
+    pub fn segments(&self) -> &[BankSegment] {
+        &self.segments
+    }
+    fn resolve(&self, slot: usize) -> Result<(&BankSegment, usize)> {
+        let index = resolve_segment(
+            self.segments.iter().map(|s| (s.first_slot, s.capacity)),
+            slot,
+        )?;
+        let segment = &self.segments[index];
+        Ok((segment, slot - segment.first_slot))
     }
     pub fn expert_bytes(&self) -> usize {
         self.expert_bytes
@@ -30,6 +66,18 @@ impl Bank {
     pub fn words(&self) -> usize {
         self.words
     }
+}
+fn resolve_segment(parts: impl IntoIterator<Item = (usize, usize)>, slot: usize) -> Result<usize> {
+    parts
+        .into_iter()
+        .enumerate()
+        .find_map(|(i, (first, count))| {
+            first
+                .checked_add(count)
+                .filter(|&end| slot >= first && slot < end)
+                .map(|_| i)
+        })
+        .ok_or(Error::InvalidBufferLength)
 }
 static NEXT_BANK_INSTANCE: AtomicU64 = AtomicU64::new(1);
 /// Opaque constructor-only allocation generation. No pointer/allocator reuse
@@ -61,15 +109,98 @@ pub(crate) fn fixture_bank_instance() -> BankInstance {
     next_instance(&NEXT_BANK_INSTANCE).expect("public test bank identity")
 }
 
-fn bank_bytes(t: TensorView<'_>, capacity: usize) -> Result<(usize, usize)> {
+fn segment_capacities(capacity: usize) -> Result<Vec<usize>> {
+    validate_capacity(capacity)?;
+    Ok(if capacity == SEGMENTED_CAPACITY {
+        vec![64, 32]
+    } else {
+        vec![capacity]
+    })
+}
+fn bank_segments(t: TensorView<'_>, capacity: usize) -> Result<(usize, Vec<usize>)> {
     if t.info().dimensions().len() != 3 {
         return Err(Error::InvalidFormat("expert bank rank"));
     }
-    packed_bank_bytes(
+    packed_segments(
         t.info().row_bytes() as usize,
         t.info().dimensions()[1] as usize,
         capacity,
     )
+}
+fn packed_segments(row_bytes: usize, rows: usize, capacity: usize) -> Result<(usize, Vec<usize>)> {
+    let mut expert = 0;
+    let mut bytes = Vec::new();
+    for count in segment_capacities(capacity)? {
+        let (e, b) = packed_bank_bytes(row_bytes, rows, count)?;
+        expert = e;
+        bytes.push(b);
+    }
+    Ok((expert, bytes))
+}
+/// Public metadata restriction for the focused 64+32 experiment. This is not a
+/// permissive generic bank: all 48 original triples must match before allocation.
+fn validate_segmented_metadata(parts: [(TensorType, &[u64]); 3]) -> Result<()> {
+    let [(gate, gd), (up, ud), (down, dd)] = parts;
+    if gate != TensorType::Q4K
+        || up != TensorType::Q4K
+        || !matches!(down, TensorType::Q5_0 | TensorType::Q8_0)
+        || gd != [2560, 640, 512]
+        || ud != gd
+        || dd != [640, 2560, 512]
+    {
+        return Err(Error::InvalidFormat("96-slot original expert metadata"));
+    }
+    Ok(())
+}
+pub fn configured_static_cache(raw: Option<&str>, default: usize) -> Result<usize> {
+    let bytes = match raw {
+        None => default,
+        Some(raw) if !raw.is_empty() && raw.bytes().all(|b| b.is_ascii_digit()) => raw
+            .parse()
+            .map_err(|_| Error::InvalidFormat("KUNO_LAB_STATIC_CACHE_BYTES integer bytes"))?,
+        Some(_) => {
+            return Err(Error::InvalidFormat(
+                "KUNO_LAB_STATIC_CACHE_BYTES integer bytes",
+            ));
+        }
+    };
+    if !(64 * 1024 * 1024..=16 * 1024 * 1024 * 1024).contains(&bytes) {
+        return Err(Error::LimitExceeded("laboratory static cache"));
+    }
+    Ok(bytes)
+}
+pub(crate) fn check_ordered_segmented(capacity: usize, ordered: bool) -> Result<()> {
+    if capacity == SEGMENTED_CAPACITY && ordered {
+        return Err(Error::InvalidFormat(
+            "96 slots do not yet support ordered public upload",
+        ));
+    }
+    Ok(())
+}
+pub fn validate_ordered_segmented(capacity: usize) -> Result<()> {
+    check_ordered_segmented(
+        capacity,
+        std::env::var("KUNO_LAB_ORDERED_PUBLIC_UPLOAD").as_deref() == Ok("1"),
+    )
+}
+pub fn validate_segmented_configuration(
+    capacity: usize,
+    explicit_cache: Option<usize>,
+    budget: usize,
+    block: bool,
+    batch: bool,
+    word_down: bool,
+    resident: bool,
+) -> Result<()> {
+    validate_capacity(capacity)?;
+    if capacity == SEGMENTED_CAPACITY
+        && (explicit_cache != Some(budget) || !block || batch || word_down || !resident)
+    {
+        return Err(Error::InvalidFormat(
+            "96 slots require explicit static cache, resident block MoE, legacy fill and generic down",
+        ));
+    }
+    Ok(())
 }
 fn packed_bank_bytes(row_bytes: usize, rows: usize, capacity: usize) -> Result<(usize, usize)> {
     let expert = row_bytes
@@ -84,7 +215,7 @@ fn packed_bank_bytes(row_bytes: usize, rows: usize, capacity: usize) -> Result<(
     Ok((expert, bytes))
 }
 pub fn validate_capacity(capacity: usize) -> Result<()> {
-    if !(MIN_ROUTED_CAPACITY..=MAX_CAPACITY).contains(&capacity) {
+    if !routed_capacity(capacity) {
         return Err(Error::LimitExceeded("expert bank slots"));
     }
     Ok(())
@@ -118,6 +249,9 @@ pub fn preflight_residency(
     device_bytes: usize,
 ) -> Result<usize> {
     validate_capacity(capacity)?;
+    if capacity == SEGMENTED_CAPACITY && graph.geometry().layers != 48 {
+        return Err(Error::InvalidFormat("96-slot graph requires 48 layers"));
+    }
     let mut total = 0usize;
     for layer in 0..graph.geometry().layers {
         let prefix = format!("blk.{layer}.");
@@ -130,19 +264,41 @@ pub fn preflight_residency(
             .checked_add(ExpertBanks::allocation(weights, capacity)?)
             .ok_or(Error::ArithmeticOverflow)?;
     }
+    if capacity == SEGMENTED_CAPACITY && total != 18 * 1024 * 1024 * 1024 {
+        return Err(Error::InvalidFormat("96-slot full graph page charge"));
+    }
     validate_residency_budget(total, cache_bytes, device_bytes)?;
     Ok(total)
 }
 impl ExpertBanks {
-    pub fn allocation(weights: RoutedWeights<'_>, capacity: usize) -> Result<usize> {
+    pub fn allocation_requests(weights: RoutedWeights<'_>, capacity: usize) -> Result<Vec<u64>> {
         validate_capacity(capacity)?;
-        let mut total = 0usize;
-        for t in [weights.gate, weights.up, weights.down] {
-            total = total
-                .checked_add(bank_bytes(t, capacity)?.1.next_power_of_two())
-                .ok_or(Error::ArithmeticOverflow)?;
+        if capacity == SEGMENTED_CAPACITY {
+            validate_segmented_metadata(
+                [weights.gate, weights.up, weights.down]
+                    .map(|t| (t.info().dtype(), t.info().dimensions())),
+            )?;
         }
-        Ok(total)
+        let mut requests = Vec::new();
+        for t in [weights.gate, weights.up, weights.down] {
+            for bytes in bank_segments(t, capacity)?.1 {
+                requests.push(bytes as u64);
+            }
+        }
+        Ok(requests)
+    }
+    pub fn allocation(weights: RoutedWeights<'_>, capacity: usize) -> Result<usize> {
+        Self::allocation_requests(weights, capacity)?
+            .into_iter()
+            .try_fold(0usize, |total, bytes| {
+                total
+                    .checked_add(
+                        (bytes as usize)
+                            .checked_next_power_of_two()
+                            .ok_or(Error::ArithmeticOverflow)?,
+                    )
+                    .ok_or(Error::ArithmeticOverflow)
+            })
     }
     pub fn new(
         client: &ComputeClient<WgpuRuntime>,
@@ -166,12 +322,28 @@ impl ExpertBanks {
         }
         Self::allocation(weights, capacity)?;
         let create = |t| -> Result<Bank> {
-            let (expert_bytes, bytes) = bank_bytes(t, capacity)?;
+            let (expert_bytes, sizes) = bank_segments(t, capacity)?;
+            let mut first_slot = 0;
+            let mut words = 0;
+            let mut reserved = 0;
+            let mut segments = Vec::new();
+            for bytes in sizes {
+                let count = bytes / expert_bytes;
+                segments.push(BankSegment {
+                    handle: client.empty(bytes),
+                    first_slot,
+                    capacity: count,
+                    words: bytes / 4,
+                });
+                first_slot += count;
+                words += bytes / 4;
+                reserved += bytes.next_power_of_two();
+            }
             Ok(Bank {
-                handle: client.empty(bytes),
+                segments,
                 expert_bytes,
-                words: bytes / 4,
-                reserved: bytes.next_power_of_two(),
+                words,
+                reserved,
             })
         };
         let instance = next_instance(&NEXT_BANK_INSTANCE)?;
@@ -258,6 +430,31 @@ pub fn fill(
     slot: usize,
     cancel: &AtomicBool,
 ) -> Result<(u64, u128, u128)> {
+    fill_source(client, bank, tensor, expert, slot, cancel, None)
+}
+
+/// Same expert bytes/scatter as legacy fill, with an explicitly retained full
+/// source page and mapped owned staging. Pending owners survive every failure.
+pub(crate) fn fill_ordered(
+    client: &ComputeClient<WgpuRuntime>,
+    bank: &Bank,
+    tensor: TensorView<'_>,
+    expert: usize,
+    slot: usize,
+    cancel: &AtomicBool,
+    sources: &mut crate::ordered_public::PendingSources<Handle>,
+) -> Result<(u64, u128, u128)> {
+    fill_source(client, bank, tensor, expert, slot, cancel, Some(sources))
+}
+fn fill_source(
+    client: &ComputeClient<WgpuRuntime>,
+    bank: &Bank,
+    tensor: TensorView<'_>,
+    expert: usize,
+    slot: usize,
+    cancel: &AtomicBool,
+    sources: Option<&mut crate::ordered_public::PendingSources<Handle>>,
+) -> Result<(u64, u128, u128)> {
     if cancel.load(Ordering::Relaxed) {
         return Err(Error::InvalidFormat("GPU execution cancelled"));
     }
@@ -267,38 +464,70 @@ pub fn fill(
     let offset = expert
         .checked_mul(bank.expert_bytes)
         .ok_or(Error::ArithmeticOverflow)?;
-    let dst = slot
+    let (segment, local_slot) = bank.resolve(slot)?;
+    let dst = local_slot
         .checked_mul(bank.expert_bytes / 4)
         .ok_or(Error::ArithmeticOverflow)?;
     if expert >= tensor.info().dimensions()[2] as usize
         || dst
             .checked_add(bank.expert_bytes / 4)
-            .is_none_or(|n| n > bank.words)
+            .is_none_or(|n| n > segment.words)
     {
         return Err(Error::InvalidBufferLength);
     }
-    let mut packed = vec![0u8; bank.expert_bytes];
+    let source_bytes = if sources.is_some() {
+        crate::main_admission::page_bytes(bank.expert_bytes as u64)
+            .map_err(|_| Error::InvalidBufferLength)? as usize
+    } else {
+        bank.expert_bytes
+    };
+    let mut packed = if sources.is_some() {
+        let mut data = Vec::new();
+        data.try_reserve_exact(source_bytes)
+            .map_err(|_| Error::LimitExceeded("public expert upload scratch"))?;
+        data.resize(source_bytes, 0u8);
+        data
+    } else {
+        vec![0u8; bank.expert_bytes]
+    };
     let read = Instant::now();
-    tensor.read_range(offset as u64, &mut packed)?;
+    tensor.read_range(offset as u64, &mut packed[..bank.expert_bytes])?;
     let read_ns = read.elapsed().as_nanos();
     let upload = Instant::now();
-    let src = client.create_from_slice(&packed);
+    let src = if let Some(sources) = sources {
+        sources.enqueue(
+            packed,
+            |bytes| Ok(client.empty(bytes)),
+            |owner, data| {
+                if owner.stream != segment.handle.stream
+                    || owner.size() != data.len() as u64
+                    || owner.size_in_used() != owner.size()
+                {
+                    return Err(Error::InvalidFormat(
+                        "ordered public source layout or stream",
+                    ));
+                }
+                client
+                    .write_private(owner, data)
+                    .map_err(|_| Error::InvalidFormat("ordered public source upload failed"))
+            },
+        )?
+    } else {
+        // Immutable PUBLIC weights retain the original ordinary upload policy.
+        client.create_from_slice(&packed)
+    };
     copy_words::launch::<WgpuRuntime>(
         client,
         CubeCount::Static((bank.expert_bytes as u32 / 4).div_ceil(256), 1, 1),
         CubeDim::new_1d(256),
         // SAFETY: checked word-aligned expert geometry and destination capacity.
         unsafe { ArrayArg::from_raw_parts(src, bank.expert_bytes / 4) },
-        unsafe { ArrayArg::from_raw_parts(bank.handle.clone(), bank.words) },
+        unsafe { ArrayArg::from_raw_parts(segment.handle.clone(), segment.words) },
         dst,
     );
     let upload_ns = upload.elapsed().as_nanos();
-    // These are immutable PUBLIC original GGUF bytes, as in the dense weight
-    // cache. No activation, slot, probability or request content enters packed.
-    // create_from_slice owns its public copy before this bounded scratch drops.
-    // Volatile wiping public weights twice was measurable CPU overhead; private
-    // scratch/readbacks still require erasure and the separate staging audit.
-    drop(packed);
+    // Only logical original words are copied; full-page padding stays zero.
+    // Owned sources remain pending until the next checked completed read fence.
     Ok((bank.expert_bytes as u64, read_ns, upload_ns))
 }
 
@@ -365,7 +594,7 @@ struct BatchLayout {
 impl BatchLayout {
     fn new(component_bytes: [usize; 3], capacity: usize, batch_bytes: usize) -> Result<Self> {
         if !(MIN_CONFIG_BATCH_BYTES..=MAX_CONFIG_BATCH_BYTES).contains(&batch_bytes)
-            || !(MIN_ROUTED_CAPACITY..=MAX_CAPACITY).contains(&capacity)
+            || !(10..=72).contains(&capacity)
             || component_bytes
                 .iter()
                 .any(|&n| n == 0 || !n.is_multiple_of(4))
@@ -473,6 +702,9 @@ pub fn fill_plan(
         }
     };
     cancelled()?;
+    banks.gate.single()?;
+    banks.up.single()?;
+    banks.down.single()?;
     banks.check_client(client)?;
     banks.check_names(weights)?;
     let parts = [
@@ -504,7 +736,7 @@ pub fn fill_plan(
             rows,
         )
         .map_err(|_| Error::InvalidFormat("public expert batch packing"))?;
-        if bank.handle.stream != banks.gate.handle.stream {
+        if bank.single()?.handle.stream != banks.gate.single()?.handle.stream {
             return Err(Error::InvalidFormat("public expert batch stream"));
         }
     }
@@ -541,7 +773,7 @@ pub fn fill_plan(
         cancelled()?;
         let upload = Instant::now();
         let source = client.create_from_slice(&packed);
-        if source.stream != banks.gate.handle.stream {
+        if source.stream != banks.gate.single()?.handle.stream {
             return Err(Error::InvalidFormat("public expert batch source stream"));
         }
         cancelled()?;
@@ -557,9 +789,15 @@ pub fn fill_plan(
                         CubeCount::Static(gx, gy, gz),
                         CubeDim::new_1d(256),
                         ArrayArg::from_raw_parts(source, bytes / 4),
-                        ArrayArg::from_raw_parts(banks.gate.handle.clone(), banks.gate.words),
-                        ArrayArg::from_raw_parts(banks.up.handle.clone(), banks.up.words),
-                        ArrayArg::from_raw_parts(banks.down.handle.clone(), banks.down.words),
+                        ArrayArg::from_raw_parts(
+                            banks.gate.single()?.handle.clone(),
+                            banks.gate.words,
+                        ),
+                        ArrayArg::from_raw_parts(banks.up.single()?.handle.clone(), banks.up.words),
+                        ArrayArg::from_raw_parts(
+                            banks.down.single()?.handle.clone(),
+                            banks.down.words,
+                        ),
                         layout.component_words[0],
                         layout.component_words[1],
                         layout.component_words[2],
@@ -849,6 +1087,9 @@ pub fn execute(
     block_moe: bool,
     word_down: bool,
 ) -> Result<Vec<f32>> {
+    banks.gate.single()?;
+    banks.up.single()?;
+    banks.down.single()?;
     let selected = slots.len();
     let shape = quant_matvec::moe::MoeShape::new(selected, banks.hidden, banks.ff, 65535)
         .map_err(|_| Error::InvalidFormat("expert launch shape"))?;
@@ -906,8 +1147,8 @@ pub fn execute(
                     client,
                     CubeCount::Static(shape.gate_up_cubes, 1, 1),
                     CubeDim::new_1d(64),
-                    ArrayArg::from_raw_parts(banks.gate.handle.clone(), banks.gate.words),
-                    ArrayArg::from_raw_parts(banks.up.handle.clone(), banks.up.words),
+                    ArrayArg::from_raw_parts(banks.gate.single()?.handle.clone(), banks.gate.words),
+                    ArrayArg::from_raw_parts(banks.up.single()?.handle.clone(), banks.up.words),
                     ArrayArg::from_raw_parts(x, input.len()),
                     ArrayArg::from_raw_parts(sl.clone(), selected),
                     ArrayArg::from_raw_parts(act.clone(), selected * banks.ff),
@@ -922,8 +1163,8 @@ pub fn execute(
                     client,
                     CubeCount::Static(shape.gate_up_cubes, 1, 1),
                     CubeDim::new_1d(64),
-                    ArrayArg::from_raw_parts(banks.gate.handle.clone(), banks.gate.words),
-                    ArrayArg::from_raw_parts(banks.up.handle.clone(), banks.up.words),
+                    ArrayArg::from_raw_parts(banks.gate.single()?.handle.clone(), banks.gate.words),
+                    ArrayArg::from_raw_parts(banks.up.single()?.handle.clone(), banks.up.words),
                     ArrayArg::from_raw_parts(x, input.len()),
                     ArrayArg::from_raw_parts(sl.clone(), selected),
                     ArrayArg::from_raw_parts(act.clone(), selected * banks.ff),
@@ -939,7 +1180,7 @@ pub fn execute(
                     client,
                     CubeCount::Static(shape.down_cubes, 1, 1),
                     CubeDim::new_1d(quant_matvec::moe_word_down::PHYSICAL_LANES as u32),
-                    ArrayArg::from_raw_parts(banks.down.handle.clone(), banks.down.words),
+                    ArrayArg::from_raw_parts(banks.down.single()?.handle.clone(), banks.down.words),
                     ArrayArg::from_raw_parts(act, selected * banks.ff),
                     ArrayArg::from_raw_parts(sl, selected),
                     ArrayArg::from_raw_parts(parts.clone(), selected * banks.hidden),
@@ -953,7 +1194,7 @@ pub fn execute(
                     client,
                     CubeCount::Static(shape.down_cubes, 1, 1),
                     CubeDim::new_1d(64),
-                    ArrayArg::from_raw_parts(banks.down.handle.clone(), banks.down.words),
+                    ArrayArg::from_raw_parts(banks.down.single()?.handle.clone(), banks.down.words),
                     ArrayArg::from_raw_parts(act, selected * banks.ff),
                     ArrayArg::from_raw_parts(sl, selected),
                     ArrayArg::from_raw_parts(parts.clone(), selected * banks.hidden),
@@ -1532,7 +1773,8 @@ mod capacity_tests {
         for (dtype, columns, rows, row_bytes, expert, page) in shapes {
             quant_matvec::validate_layout(dtype, rows, columns, expert, columns, rows).unwrap();
             let (actual, b64) = packed_bank_bytes(row_bytes, rows, 64).unwrap();
-            let (_, b72) = packed_bank_bytes(row_bytes, rows, MAX_CAPACITY).unwrap();
+            let (_, b72) =
+                packed_bank_bytes(row_bytes, rows, crate::bank_slots::MAX_FLAT_CAPACITY).unwrap();
             assert_eq!(actual, expert);
             assert_eq!(b64, expert * 64);
             assert_eq!(b72, expert * 72);
@@ -1572,5 +1814,169 @@ mod capacity_tests {
         }
         assert!(packed_bank_bytes(640 / 32 * 34, 2560, 78).is_err());
         assert!(packed_bank_bytes(usize::MAX, 2, 72).is_err());
+    }
+}
+
+#[cfg(test)]
+mod segmented_tests {
+    use super::*;
+    const MIB: usize = 1024 * 1024;
+    const GIB: usize = 1024 * MIB;
+    #[test]
+    fn exact_original_segment_charge_and_full_envelope() {
+        let mut layer = 0;
+        for (row, rows, expert, expected) in [
+            (1440, 640, 921600, [64, 32]),
+            (1440, 640, 921600, [64, 32]),
+            (440, 2560, 1126400, [128, 64]),
+        ] {
+            let (e, bytes) = packed_segments(row, rows, 96).unwrap();
+            assert_eq!(e, expert);
+            assert_eq!(bytes, [expert * 64, expert * 32]);
+            let pages: Vec<_> = bytes.iter().map(|n| n.next_power_of_two()).collect();
+            assert_eq!(pages, expected.map(|n| n * MIB));
+            assert!(bytes.iter().all(|&n| n <= 128 * MIB));
+            layer += pages.iter().sum::<usize>();
+        }
+        let (_, q8) = packed_segments(680, 2560, 96).unwrap();
+        assert_eq!(
+            q8.iter().map(|n| n.next_power_of_two()).collect::<Vec<_>>(),
+            [128 * MIB, 64 * MIB]
+        );
+        assert_eq!(layer, 384 * MIB);
+        assert_eq!(48 * layer, 18 * GIB);
+        validate_residency_budget(48 * layer, 6 * GIB, 26 * GIB).unwrap();
+        assert!(validate_residency_budget(48 * layer, 8 * GIB, 26 * GIB).is_err());
+        assert!(validate_residency_budget(48 * layer, 6 * GIB, 10 * GIB).is_err());
+        // Existing full admission must ALSO fit public vectors and live
+        // baseline. These are conditional ceiling arithmetic, not telemetry.
+        let private_plan = 785186816;
+        let base = 18 * GIB + 6 * GIB + private_plan + 64 * MIB + 64 * MIB + 40 * MIB;
+        assert_eq!(26 * GIB - base, 1186136064);
+        assert_eq!(26 * GIB - base, 1131 * MIB + 196608);
+        assert!(packed_segments(usize::MAX, 2, 96).is_err());
+        for cap in [9, 73, 95, 97, 128, usize::MAX] {
+            assert!(segment_capacities(cap).is_err());
+        }
+        assert_eq!(segment_capacities(72).unwrap(), [72]);
+    }
+    #[test]
+    fn every_original_triple_must_match_and_unsupported_options_fail() {
+        let gate = [2560, 640, 512];
+        let down = [640, 2560, 512];
+        for dtype in [TensorType::Q5_0, TensorType::Q8_0] {
+            validate_segmented_metadata([
+                (TensorType::Q4K, &gate),
+                (TensorType::Q4K, &gate),
+                (dtype, &down),
+            ])
+            .unwrap();
+        }
+        for layer in 0..48 {
+            let mut invalid_gate = gate;
+            invalid_gate[2] = 511;
+            for pos in 0..48 {
+                let g = if pos == layer { &invalid_gate } else { &gate };
+                let result = validate_segmented_metadata([
+                    (TensorType::Q4K, g),
+                    (TensorType::Q4K, &gate),
+                    (TensorType::Q5_0, &down),
+                ]);
+                assert_eq!(result.is_err(), pos == layer);
+            }
+        }
+        for bad in [TensorType::F32, TensorType::Q6K, TensorType::Q4K] {
+            assert!(
+                validate_segmented_metadata([
+                    (TensorType::Q4K, &gate),
+                    (TensorType::Q4K, &gate),
+                    (bad, &down)
+                ])
+                .is_err()
+            );
+        }
+        let wrong = [640, 2560, 512, 1];
+        assert!(
+            validate_segmented_metadata([
+                (TensorType::Q4K, &gate),
+                (TensorType::Q4K, &gate),
+                (TensorType::Q5_0, &wrong)
+            ])
+            .is_err()
+        );
+        let wrong = [2560, 641, 512];
+        assert!(
+            validate_segmented_metadata([
+                (TensorType::Q4K, &wrong),
+                (TensorType::Q4K, &gate),
+                (TensorType::Q5_0, &down)
+            ])
+            .is_err()
+        );
+        validate_segmented_configuration(96, Some(6 * GIB), 6 * GIB, true, false, false, true)
+            .unwrap();
+        for (cache, block, batch, word, resident) in [
+            (None, true, false, false, true),
+            (Some(8 * GIB), true, false, false, true),
+            (Some(6 * GIB), false, false, false, true),
+            (Some(6 * GIB), true, true, false, true),
+            (Some(6 * GIB), true, false, true, true),
+            (Some(6 * GIB), true, false, false, false),
+        ] {
+            assert!(
+                validate_segmented_configuration(96, cache, 6 * GIB, block, batch, word, resident)
+                    .is_err()
+            );
+        }
+        validate_segmented_configuration(64, None, 8 * GIB, false, true, true, false).unwrap();
+        check_ordered_segmented(64, true).unwrap();
+        check_ordered_segmented(96, false).unwrap();
+        assert!(check_ordered_segmented(96, true).is_err());
+        assert_eq!(configured_static_cache(None, 8 * GIB).unwrap(), 8 * GIB);
+        assert_eq!(
+            configured_static_cache(Some("6442450944"), 8 * GIB).unwrap(),
+            6 * GIB
+        );
+        for invalid in [
+            "",
+            "0",
+            "67108863",
+            "17179869185",
+            "-1",
+            "+6442450944",
+            " 6442450944",
+            "1.5",
+            "184467440737095516160",
+        ] {
+            assert!(configured_static_cache(Some(invalid), 8 * GIB).is_err());
+        }
+    }
+    #[test]
+    fn global_slots_resolve_once_across_boundary_and_failure_is_transactional() {
+        let parts = [(0, 64), (64, 32)];
+        for (slot, expected) in [(0, 0), (63, 0), (64, 1), (95, 1)] {
+            assert_eq!(resolve_segment(parts, slot).unwrap(), expected);
+        }
+        for slot in [96, usize::MAX] {
+            assert!(resolve_segment(parts, slot).is_err());
+        }
+        let mut bank = BankSlots::new(96, 512).unwrap();
+        let initial: Vec<_> = (0..96).collect();
+        let p = bank.plan(&initial).unwrap();
+        bank.commit(p).unwrap();
+        // Global LRU remains one plan. All ten hits protect their physical
+        // slots regardless of segment. A partial physical fill can corrupt
+        // either segment: dropping host plan is NOT permission to reuse bank.
+        let p = bank
+            .plan(&[95, 63, 64, 200, 0, 65, 201, 94, 62, 32])
+            .unwrap();
+        assert_eq!(p.uploads, [(200, 1), (201, 2)]);
+        assert_eq!(p.slots, [95, 63, 64, 1, 0, 65, 2, 94, 62, 32]);
+        drop(p);
+        let p = bank
+            .plan(&[95, 63, 64, 200, 0, 65, 201, 94, 62, 32])
+            .unwrap();
+        assert_eq!(p.uploads, [(200, 1), (201, 2)]);
+        bank.commit(p).unwrap();
     }
 }

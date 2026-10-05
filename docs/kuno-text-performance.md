@@ -489,7 +489,13 @@ the same independent hard runtime budget until the final accepted token fence.
 Intermediate completed reads grant only main-pool credit, after dropping host
 leases; they cannot reclaim runtime I/O spans. Final fault/logit acceptance still
 sanitizes before committing recurrent/cache state. Both cards pass chat and
-cancellation with this cadence; timing benefit is not established. Planning
+cancellation with this cadence. A later compiler-idle B70 chat ABBA is slower:
+median prefill 12.355→13.731 s, following seven steps 3.323→3.512 s. Each process
+has a fresh owner/executor; weights load lazily and the OS file cache is not
+flushed. All eight IDs and explicit cleanup pass. The option remains unselected;
+this short run does not establish a long-run or NVIDIA timing result.
+`rust-token-cadence-abba-intel-20261005.json` records the four ordered samples
+and frozen `5a7f7c2...` binary. Planning
 temporaries, candidate/committed expert mappings, LRU state and duplicate route
 vectors now wipe their complete retained host capacities on discarded ownership.
 This is a narrow ownership improvement, not complete host privacy acceptance.
@@ -560,3 +566,144 @@ current composed SHA256 is
 No private request API, persistent worker, full options/quality/long-context
 acceptance, native-default/`ollama.` routing, deployment or Vashti integration is
 accepted here. Opaque driver/firmware memory and historical swap remain excluded.
+
+#### Ordered public upload: accepted lifecycle, rejected timing
+
+An explicit, default-off `KUNO_LAB_ORDERED_PUBLIC_UPLOAD=1` retains preowned
+power-of-two source pages before moved uploads of original expert bytes. It
+uses the unchanged copy kernel and legacy nonbatch fill, with no weight
+conversion, routing pruning or private compile constants. Ten misses require
+40 MiB of main source pages plus 40 MiB of separately tracked runtime uploads;
+the pinned complete-router window is conservatively 42.5 MiB under the existing
+64 MiB runtime cap. Every completed router, including cache hits, drops read
+leases before checked staging cleanup, source release and MAIN fence credit.
+
+The first B70 cancellation/audit run failed closed at first-position QSA3,
+writing no receipt. That short QSA path has no selector read, so a preceding
+40 MiB upload window remained live when the optional audit tried to duplicate
+its stages under a 64 MiB cap. Explicit owner close now drains/erases those
+stages and releases public sources before full private-main/source inspection,
+without taking the ledger lock or granting credits. Failure retains sources
+and retires the context. Drop remains unchanged. Already sanitized runtime
+stages have checked erasure/completion proof, not a zero-inspection receipt;
+normal router checkpoints also sanitize without inspection.
+
+Both GPUs and both token-cadence settings then pass exact eight-token chat,
+queued GDN0/QSA3 cancellation, poisoned retry rejection, fresh recovery and all
+four 1,286-page private-main audits. No pending sources remain after cleanup.
+Strict Clippy and the 176 host/offline suite pass; the explicit teardown fix
+is additionally checked by that device matrix and independent source review.
+
+A compiler-idle ABBA uses one frozen executable with only the upload flag
+changed. Each process has a fresh owner/cache, no OS-cache flush, one input
+token and three following graph steps; all four IDs and explicit cleanup pass.
+
+| Card | Median prefill, legacy→candidate | Median following steps, legacy→candidate |
+| --- | ---: | ---: |
+| B70 | 5.232→7.368 s | 1.843→3.613 s |
+| RTX3060 | 7.107→12.042 s | 3.350→10.322 s |
+
+The candidate remains disabled. `rust-ordered-public-upload-both-gpus-20261005.json`
+includes exact source/dispatch inventory, all accepted device cases, raw ordered
+samples and frozen binary `6582901...`; the rejected initial binary is recorded
+separately. Units disable swap/core dumps with 12 GiB host and 600/300-second
+acceptance/timing bounds. No long-fixture, production worker/privacy or whole
+engine gain is inferred. These observations do not establish one sole cause
+of the regression. The [causal prefill plan](kuno-native-text-prefill.md) records
+the next whole-model batching boundary.
+
+#### Batched GR operator acceptance
+
+The separate `gr-batch-probe` borrows the original attention, feed-forward and
+final GR weights and compares count1/3/5/8 at matrix tiles4/8. It retains the
+original 64-lane reductions, HC0..3 sum order, SiLU and injection formulas, and
+the final mixer's no-injection behavior. Both cards pass all 24 cases against
+the existing scalar GPU operators and an independent Rust CPU oracle. Maximum
+observed absolute error is 2.0980835e-5 under the unchanged operator tolerance.
+
+Runtime spans include nonzero bases, irregular strides, inactive columns and
+gaps. Scalar comparison spans separately respect the actual storage alignment.
+Each case owns two complete MAX8 private sets totaling 7,536,640 bytes under a
+16 MiB MAIN cap, with an independent 64 MiB runtime I/O cap. Full-page private
+erasure and guarded readback checks pass; both receipts report 768 audited
+buffers/180,879,360 bytes in aggregate and no retired context. Protected units
+disable swap/core dumps with an 8 GiB host and 300-second operator limit.
+
+`rust-gr-batch-both-gpus-20261005.json` records all cases, source identities and
+frozen binary `4db6515...`. Root host/offline tests pass 184 cases. This is
+numerical and ownership acceptance only: no GR timing, complete causal prefill,
+private worker, public API or whole-engine gain is established.
+
+#### GDN recurrence chunk acceptance
+
+The separate `gdn-chunk-probe` computes up to eight consecutive recurrence steps
+while retaining each state column locally. It keeps the exact original f32
+decay, prediction, delta, update and readout order, modulo head pairing and
+immutable committed input state. Actual count and every span base/stride remain
+runtime data. Every active output/status and the final candidate state must pass
+acceptance together; the operator provides no commit API.
+
+Both cards pass counts1/3/5/8 for odd7/2/6 and actual Qwen128/16/48 shapes from
+nonzero initial state. The actual-shape outputs/final state exactly match the
+unchanged single-step GPU operator in every case. Maximum error against the
+independent Rust core is 5.960465e-8 across all fixtures. Finite invalid controls,
+pre-enqueue/post-fence cancellation, old/next aliases, old-state immutability,
+inactive gaps and complete owning padding are checked.
+
+The fixed main plans are 524,288/22,249,472 bytes under a 32 MiB MAIN cap; runtime
+I/O remains separately capped at 64 MiB. The largest primary I/O/audit-duplicate
+windows are 13,665,280/27,330,560 bytes. Both receipts inspect 128 complete main
+page lifetimes/91,095,040 bytes before release and report accepted cleanup without
+context retirement. Units disable swap/core dumps, with 8 GiB host and 300-second
+operator bounds. The current combined root host/offline suite passes 197 tests,
+strict all-target Clippy and formatting.
+
+`rust-gdn-chunk-both-gpus-20261005.json` records all cases and frozen executable
+`7082b1d...`. No model payload is read by this probe. Convolution, matrix
+projections, closing gates, whole-model chunk integration and performance are
+outside this acceptance; register/spill and opaque driver memory are outside
+the owned API-page erasure proof.
+
+#### Segmented 96-slot expert cache: short acceptance, long failure
+
+An explicit resident-only 96-slot candidate splits each original packed bank
+into immutable 64+32 segments. It keeps every token's ten experts/probabilities,
+global ranks and original arithmetic. Full 48-layer banks charge 18 GiB of
+complete pages; they require an explicit static-cache budget (6 GiB tested)
+under the unchanged 26 GiB model limit. Ordinary 64/16-slot defaults and the
+8/6 GiB static-cache defaults remain unchanged. Generic/nonresident MoE,
+expert-batch, word-down and ordered-upload combinations are rejected before
+allocation. The full 96-slot plan is rejected for the 3060's 10 GiB limit.
+
+`bank96-probe` has a separate bounded one-layer admission; it never bypasses
+full-model preflight. Ordinary plans/fills/accepted consumers prime actual
+slots0..95. Both cards exactly match flat10 activation, down partials and output
+for Q5/Q8 with slots0/63/64/95, preserving all ten ranks. Independent Rust
+64-lane trees/core references also pass. Post-enqueue cancellation and a partial
+copy into a real second-segment LRU victim poison the owner and reject retries;
+full private-page cleanup and public weight sentinels pass. An initial envelope
+check failed before allocation: flat10 costs48 MiB for Q5 and64 MiB for Q8.
+The corrected combined charges are432/448 MiB. Root tests/strict Clippy pass202.
+
+The full B70 96/6 GiB chat fixture preserves all eight native IDs, queued
+GDN0/QSA3 cancellation, poisoned retry, fresh recovery and four complete
+785,186,816-byte main inspections. A compiler-idle short ABBA is near noise:
+
+| Static cache for 64 slots | Median prefill64→96 | Median seven following steps64→96 |
+| --- | ---: | ---: |
+| 6 GiB | 12.483→12.618 s | 3.249→3.263 s |
+| 8 GiB | 12.471→12.623 s | 3.283→3.255 s |
+
+The longer 75-input/128-output ABBA did **not** complete. Its 64/8 GiB reference
+preserves all prior native IDs with accepted cleanup (59.392 s prefill/71.238 s
+following steps). The subsequent 96/6 GiB run fails during runtime I/O cleanup
+after partial generation, writing no success receipt. The underlying category
+was collapsed by the existing error path; remaining samples were not run.
+Kernel inspection found no matching Xe/DRM/GPU fault/reset messages in the
+checked interval, and a fresh Intel GDN chunk/cleanup test passes immediately.
+This does not establish the cause or accept longer 96-slot operation.
+
+`rust-bank96-both-gpus-20261005.json` records accepted cases, all ordered short
+samples, the interrupted long comparison and recovery with frozen executable
+`32387b0...`. The larger cache remains opt-in, with **no default selection or
+whole-model performance claim**. No service, public API or Vashti changes apply.

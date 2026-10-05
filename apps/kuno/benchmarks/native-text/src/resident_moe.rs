@@ -119,7 +119,7 @@ fn selection(
 ) -> Result<([u32; SELECTED], [f32; SELECTED])> {
     if slots.len() != SELECTED
         || probabilities.len() != SELECTED
-        || !(SELECTED..=crate::bank_slots::MAX_CAPACITY).contains(&capacity)
+        || !crate::bank_slots::routed_capacity(capacity)
     {
         return Err(Error::InvalidBufferLength);
     }
@@ -372,6 +372,14 @@ impl ResidentMoe {
             down: graph.tensor(&format!("{prefix}ffn_down_exps.weight"))?,
         })
     }
+    /// Fixed-public operator diagnostic only. These IDs remain governed by
+    /// the arena epoch and whole-operation fence; no host inference is added.
+    pub(crate) fn fixed_public_probe_outputs(&self) -> [(BufferId, usize); 2] {
+        [
+            (self.activations, self.layout.activation_words),
+            (self.partials, self.layout.partial_words),
+        ]
+    }
     pub fn poison(&mut self) {
         self.phase = Phase::Poisoned;
         self.alias_proof.invalidate();
@@ -456,6 +464,12 @@ impl ResidentMoe {
             quant_matvec::moe_word_down::validate(weights.down.info().dtype().gguf_id(), banks.ff)
                 .map_err(|_| Error::InvalidFormat("word down packed layout"))?;
         }
+        let segmented = banks.slots.capacity() == crate::bank_slots::SEGMENTED_CAPACITY;
+        if segmented && (!block_moe || word_down) {
+            return Err(fault(
+                "segmented resident MoE requires block gate/up and generic down",
+            ));
+        }
         let (s, p) = selection(slots, probabilities, banks.slots.capacity())?;
         if banks.hidden != self.layout.hidden
             || banks.ff != self.layout.feed_forward
@@ -518,11 +532,13 @@ impl ResidentMoe {
             .iter()
             .map(|&id| arena.handle(id).cloned().map_err(af))
             .collect::<Result<_>>()?;
-        let public = [
-            banks.gate().handle(),
-            banks.up().handle(),
-            banks.down().handle(),
-        ];
+        let public: Vec<_> = [banks.gate(), banks.up(), banks.down()]
+            .into_iter()
+            .flat_map(|bank| bank.segments().iter().map(|segment| segment.handle()))
+            .collect();
+        if public.len() != if segmented { 6 } else { 3 } {
+            return Err(fault("resident MoE immutable segment count"));
+        }
         // Every call still validates active IDs/epochs/exact sizes above and
         // checks the same immutable bank client and all streams. Keep handles
         // live while using the cached physical proof; no allocation may be
@@ -582,68 +598,131 @@ impl ResidentMoe {
         // publisher precedes every read; same-stream full arena spans and
         // immutable banks are retained through whole-token drain/acceptance.
         unsafe {
-            if block_moe {
-                quant_matvec::moe_block::moe_gate_up::launch_unchecked::<WgpuRuntime>(
-                    client,
-                    CubeCount::Static(shape.gate_up_cubes, 1, 1),
-                    CubeDim::new_1d(64),
-                    ArrayArg::from_raw_parts(banks.gate().handle().clone(), banks.gate().words()),
-                    ArrayArg::from_raw_parts(banks.up().handle().clone(), banks.up().words()),
-                    ArrayArg::from_raw_parts(x, banks.hidden),
-                    ArrayArg::from_raw_parts(sl.clone(), SELECTED),
-                    ArrayArg::from_raw_parts(act.clone(), SELECTED * banks.ff),
-                    SELECTED,
-                    banks.hidden,
-                    banks.ff,
-                    weights.gate.info().dtype().gguf_id(),
-                    weights.up.info().dtype().gguf_id(),
-                );
+            if segmented {
+                for (gate, up) in banks.gate().segments().iter().zip(banks.up().segments()) {
+                    cancelled(cancel)?;
+                    if gate.first_slot() != up.first_slot() || gate.capacity() != up.capacity() {
+                        return Err(fault("resident gate/up segment identity"));
+                    }
+                    quant_matvec::segmented_moe::moe_gate_up::launch_unchecked::<WgpuRuntime>(
+                        client,
+                        CubeCount::Static(shape.gate_up_cubes, 1, 1),
+                        CubeDim::new_1d(64),
+                        ArrayArg::from_raw_parts(gate.handle().clone(), gate.words()),
+                        ArrayArg::from_raw_parts(up.handle().clone(), up.words()),
+                        ArrayArg::from_raw_parts(x.clone(), banks.hidden),
+                        ArrayArg::from_raw_parts(sl.clone(), SELECTED),
+                        ArrayArg::from_raw_parts(act.clone(), SELECTED * banks.ff),
+                        SELECTED,
+                        banks.hidden,
+                        banks.ff,
+                        gate.first_slot(),
+                        gate.capacity(),
+                        weights.gate.info().dtype().gguf_id(),
+                        weights.up.info().dtype().gguf_id(),
+                    );
+                }
+                for down in banks.down().segments() {
+                    cancelled(cancel)?;
+                    quant_matvec::segmented_moe::moe_down::launch_unchecked::<WgpuRuntime>(
+                        client,
+                        CubeCount::Static(shape.down_cubes, 1, 1),
+                        CubeDim::new_1d(64),
+                        ArrayArg::from_raw_parts(down.handle().clone(), down.words()),
+                        ArrayArg::from_raw_parts(act.clone(), SELECTED * banks.ff),
+                        ArrayArg::from_raw_parts(sl.clone(), SELECTED),
+                        ArrayArg::from_raw_parts(parts.clone(), SELECTED * banks.hidden),
+                        SELECTED,
+                        banks.hidden,
+                        banks.ff,
+                        down.first_slot(),
+                        down.capacity(),
+                        weights.down.info().dtype().gguf_id(),
+                    );
+                }
             } else {
-                quant_matvec::moe::moe_gate_up::launch_unchecked::<WgpuRuntime>(
-                    client,
-                    CubeCount::Static(shape.gate_up_cubes, 1, 1),
-                    CubeDim::new_1d(64),
-                    ArrayArg::from_raw_parts(banks.gate().handle().clone(), banks.gate().words()),
-                    ArrayArg::from_raw_parts(banks.up().handle().clone(), banks.up().words()),
-                    ArrayArg::from_raw_parts(x, banks.hidden),
-                    ArrayArg::from_raw_parts(sl.clone(), SELECTED),
-                    ArrayArg::from_raw_parts(act.clone(), SELECTED * banks.ff),
-                    SELECTED,
-                    banks.hidden,
-                    banks.ff,
-                    weights.gate.info().dtype().gguf_id(),
-                    weights.up.info().dtype().gguf_id(),
-                );
+                if block_moe {
+                    quant_matvec::moe_block::moe_gate_up::launch_unchecked::<WgpuRuntime>(
+                        client,
+                        CubeCount::Static(shape.gate_up_cubes, 1, 1),
+                        CubeDim::new_1d(64),
+                        ArrayArg::from_raw_parts(
+                            banks.gate().single()?.handle().clone(),
+                            banks.gate().words(),
+                        ),
+                        ArrayArg::from_raw_parts(
+                            banks.up().single()?.handle().clone(),
+                            banks.up().words(),
+                        ),
+                        ArrayArg::from_raw_parts(x, banks.hidden),
+                        ArrayArg::from_raw_parts(sl.clone(), SELECTED),
+                        ArrayArg::from_raw_parts(act.clone(), SELECTED * banks.ff),
+                        SELECTED,
+                        banks.hidden,
+                        banks.ff,
+                        weights.gate.info().dtype().gguf_id(),
+                        weights.up.info().dtype().gguf_id(),
+                    );
+                } else {
+                    quant_matvec::moe::moe_gate_up::launch_unchecked::<WgpuRuntime>(
+                        client,
+                        CubeCount::Static(shape.gate_up_cubes, 1, 1),
+                        CubeDim::new_1d(64),
+                        ArrayArg::from_raw_parts(
+                            banks.gate().single()?.handle().clone(),
+                            banks.gate().words(),
+                        ),
+                        ArrayArg::from_raw_parts(
+                            banks.up().single()?.handle().clone(),
+                            banks.up().words(),
+                        ),
+                        ArrayArg::from_raw_parts(x, banks.hidden),
+                        ArrayArg::from_raw_parts(sl.clone(), SELECTED),
+                        ArrayArg::from_raw_parts(act.clone(), SELECTED * banks.ff),
+                        SELECTED,
+                        banks.hidden,
+                        banks.ff,
+                        weights.gate.info().dtype().gguf_id(),
+                        weights.up.info().dtype().gguf_id(),
+                    );
+                }
+                if word_down {
+                    quant_matvec::moe_word_down::moe_down::launch_unchecked::<WgpuRuntime>(
+                        client,
+                        CubeCount::Static(shape.down_cubes, 1, 1),
+                        CubeDim::new_1d(quant_matvec::moe_word_down::PHYSICAL_LANES as u32),
+                        ArrayArg::from_raw_parts(
+                            banks.down().single()?.handle().clone(),
+                            banks.down().words(),
+                        ),
+                        ArrayArg::from_raw_parts(act, SELECTED * banks.ff),
+                        ArrayArg::from_raw_parts(sl, SELECTED),
+                        ArrayArg::from_raw_parts(parts.clone(), SELECTED * banks.hidden),
+                        SELECTED,
+                        banks.hidden,
+                        banks.ff,
+                        weights.down.info().dtype().gguf_id(),
+                    );
+                } else {
+                    quant_matvec::moe::moe_down::launch_unchecked::<WgpuRuntime>(
+                        client,
+                        CubeCount::Static(shape.down_cubes, 1, 1),
+                        CubeDim::new_1d(64),
+                        ArrayArg::from_raw_parts(
+                            banks.down().single()?.handle().clone(),
+                            banks.down().words(),
+                        ),
+                        ArrayArg::from_raw_parts(act, SELECTED * banks.ff),
+                        ArrayArg::from_raw_parts(sl, SELECTED),
+                        ArrayArg::from_raw_parts(parts.clone(), SELECTED * banks.hidden),
+                        SELECTED,
+                        banks.hidden,
+                        banks.ff,
+                        weights.down.info().dtype().gguf_id(),
+                    );
+                }
             }
-            if word_down {
-                quant_matvec::moe_word_down::moe_down::launch_unchecked::<WgpuRuntime>(
-                    client,
-                    CubeCount::Static(shape.down_cubes, 1, 1),
-                    CubeDim::new_1d(quant_matvec::moe_word_down::PHYSICAL_LANES as u32),
-                    ArrayArg::from_raw_parts(banks.down().handle().clone(), banks.down().words()),
-                    ArrayArg::from_raw_parts(act, SELECTED * banks.ff),
-                    ArrayArg::from_raw_parts(sl, SELECTED),
-                    ArrayArg::from_raw_parts(parts.clone(), SELECTED * banks.hidden),
-                    SELECTED,
-                    banks.hidden,
-                    banks.ff,
-                    weights.down.info().dtype().gguf_id(),
-                );
-            } else {
-                quant_matvec::moe::moe_down::launch_unchecked::<WgpuRuntime>(
-                    client,
-                    CubeCount::Static(shape.down_cubes, 1, 1),
-                    CubeDim::new_1d(64),
-                    ArrayArg::from_raw_parts(banks.down().handle().clone(), banks.down().words()),
-                    ArrayArg::from_raw_parts(act, SELECTED * banks.ff),
-                    ArrayArg::from_raw_parts(sl, SELECTED),
-                    ArrayArg::from_raw_parts(parts.clone(), SELECTED * banks.hidden),
-                    SELECTED,
-                    banks.hidden,
-                    banks.ff,
-                    weights.down.info().dtype().gguf_id(),
-                );
-            }
+            cancelled(cancel)?;
             quant_matvec::moe::moe_reduce::launch_unchecked::<WgpuRuntime>(
                 client,
                 CubeCount::Static(shape.reduce_cubes, 1, 1),
@@ -849,6 +928,13 @@ mod tests {
         );
         assert!(selection(&extended, &p, 71).is_err());
         assert!(selection(&extended, &p, 73).is_err());
+        let split = [95, 0, 63, 64, 1, 94, 31, 65, 62, 32];
+        let (s, probabilities) = selection(&split, &p, 96).unwrap();
+        assert_eq!(s, split.map(|s| s as u32));
+        assert_eq!(probabilities.map(f32::to_bits), p.map(f32::to_bits));
+        for capacity in [73, 95, 97] {
+            assert!(selection(&split, &p, capacity).is_err());
+        }
     }
     #[test]
     fn regions_reject_overlap_but_allow_adjacent_owned_spans() {

@@ -78,7 +78,8 @@ output is not bit-identical to Ollama.
 `KUNO_LAB_IO_TOKEN_CHECKPOINT=1` additionally defers intermediate I/O erasure to
 the accepted final token fence under the unchanged 64-MiB runtime cap. Main-pool
 fence credit cannot reclaim tracked runtime spans. This cadence requires owned
-resident I/O and remains an optional experiment. For correctness/cleanup audits,
+resident I/O and remains disabled by default; the short B70 chat ABBA is slower.
+For correctness/cleanup audits,
 `KUNO_LAB_OWNED_ZERO_AUDIT=1` retains and reads every full main/source page after
 erasure, including padding, then checks its readback staging before release.
 Both cards inspect all 1,286 main pages/785,186,816 bytes through normal/fresh
@@ -97,3 +98,40 @@ whole-engine speedup remain unimplemented; sequential step loops are not batchin
 `moe-word-probe`/`moe-word-bench` test the optional exact-schedule 16-thread down
 kernel. `KUNO_LAB_WORD_DOWN=1` can select it in full fixtures, but measured cached
 all-ten MoE is slower on both cards/formats. It remains disabled by default.
+
+`KUNO_LAB_ORDERED_PUBLIC_UPLOAD=1` uses moved, owned staging for original public
+expert slices, retaining complete source pages until the next completed router
+or explicit teardown. It requires owned resident I/O and rejects expert batching.
+Every router forces cleanup even under token-level cadence; sources are capped
+at 40 MiB and runtime I/O at 64 MiB. Explicit close drains/erases pending source
+staging before the optional full-main zero audit, without granting MAIN credit.
+Prior staging then has checked erasure/completion proof rather than a zero
+inspection receipt. Both cards pass chat, cancellation and full-main audits,
+but the paired bang fixture is slower on both; this option remains disabled.
+
+`gr-batch-probe` configures owned I/O itself and checks original attention,
+feed-forward and final GR matrices at counts1/3/5/8 and tiles4/8. Leave
+`KUNO_LAB_TRANSIENT_IO` unset for this mode. Both cards pass 24 cases against
+the unchanged scalar GPU and independent Rust CPU oracles, including irregular
+spans, inactive tails and full owning-page erasure. This is an isolated operator
+probe without timing or complete causal prefill acceptance. The internal
+[prefill plan](../../../../docs/kuno-native-text-prefill.md) records the remaining
+transaction and attention/recurrent boundaries.
+
+`gdn-chunk-probe` configures owned I/O before any launch and needs no GGUF. Leave
+other resident experiment flags unset. It checks counts1/3/5/8 for odd and actual
+Qwen recurrent shapes against the existing GPU and independent Rust core,
+including immutable old state, cancellation/invalid-control rejection and full
+owning-page cleanup. Both cards pass; actual-shape recurrence is bit-identical
+to the scalar GPU in these fixtures. This mode does not batch convolution,
+projections, closing gates or the complete model, and emits no timing claim.
+
+`bank96-probe` borrows the original GGUF and owns a separate bounded one-layer
+96+10 comparison; leave expert overrides unset for this mode. Both cards pass
+Q5/Q8 cross-segment numerical, cancellation, poison and full cleanup checks.
+Full resident96 experiments additionally require explicit
+`KUNO_LAB_STATIC_CACHE_BYTES` and block MoE; batch/word/ordered/nonresident paths
+are rejected. The 18 GiB bank plan fits the tested B70 with explicit6 GiB static
+cache and is rejected under the 3060 full-model limit. The short B70 chat passes,
+but a later long fixture fails runtime cleanup. No 96-slot default or longer
+acceptance is selected; ordinary bank/cache defaults remain unchanged.

@@ -482,3 +482,5 @@ pub mod block;
 pub mod matmul;
 #[path = "moe_block.rs"]
 pub mod moe_block;
+#[path = "segmented_moe.rs"]
+pub mod segmented_moe;

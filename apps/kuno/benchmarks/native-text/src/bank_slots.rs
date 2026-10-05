@@ -10,8 +10,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use zeroize::{Zeroize, Zeroizing};
 
 // 72 original packed Qwen experts fit the same pooled pages as 64.
-// Higher capacities are a separate allocation-budget decision.
-pub const MAX_CAPACITY: usize = 72;
+// The resident-only 96 experiment splits public banks into 64 + 32 pages.
+pub const MAX_CAPACITY: usize = 96;
+pub const MAX_FLAT_CAPACITY: usize = 72;
+pub const SEGMENTED_CAPACITY: usize = 96;
+pub fn routed_capacity(capacity: usize) -> bool {
+    (MIN_ROUTED_CAPACITY..=MAX_FLAT_CAPACITY).contains(&capacity) || capacity == SEGMENTED_CAPACITY
+}
 pub const MIN_ROUTED_CAPACITY: usize = 10;
 
 static NEXT_BANK_ID: AtomicU64 = AtomicU64::new(1);
@@ -32,7 +37,7 @@ pub enum BankError {
 impl std::fmt::Display for BankError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
-            Self::Capacity => "expert bank capacity must be between one and 72",
+            Self::Capacity => "expert bank capacity must be between one and 96",
             Self::ExpertCount => "expert bank count must be between capacity and 512",
             Self::SelectionTooLarge => "expert selection exceeds bank capacity",
             Self::ExpertOutOfRange => "expert selection is out of range",
@@ -87,7 +92,7 @@ impl Drop for State {
 }
 
 /// Transient model-local residency and LRU; Debug is omitted to avoid dumping
-/// request-derived expert histories. Production's 512 experts/10..72 slots fit
+/// request-derived expert histories. Production's 512 experts/10..72 or 96 slots fit
 /// these bounds; smaller banks are supported for independent fixture tests.
 pub struct BankSlots {
     bank_id: u64,
@@ -134,7 +139,7 @@ pub fn configured_capacity(raw: Option<&str>, default: usize) -> Result<usize> {
         Some(_) => return Err(BankError::Capacity),
         None => default,
     };
-    if !(MIN_ROUTED_CAPACITY..=MAX_CAPACITY).contains(&capacity) {
+    if !routed_capacity(capacity) {
         return Err(BankError::Capacity);
     }
     Ok(capacity)
@@ -407,12 +412,15 @@ mod tests {
         assert_eq!(configured_capacity(None, 64).unwrap(), 64);
         assert_eq!(configured_capacity(None, 16).unwrap(), 16);
         assert_eq!(configured_capacity(Some("72"), 64).unwrap(), 72);
+        assert_eq!(configured_capacity(Some("96"), 64).unwrap(), 96);
         assert_eq!(configured_capacity(Some("10"), 16).unwrap(), 10);
         for invalid in [
             "",
             "0",
             "9",
             "73",
+            "95",
+            "97",
             "512",
             "-1",
             "+72",

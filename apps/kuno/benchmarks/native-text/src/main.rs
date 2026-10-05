@@ -1,12 +1,17 @@
 //! Public synthetic Rust-authored kernel probe, not a model engine wrapper.
+mod bank96_probe;
 mod bank_slots;
 mod executor;
 mod expert_banks;
+mod gdn_chunk;
+mod gdn_chunk_probe;
 mod gdn_executor;
 mod gdn_gpu;
 mod gdn_pointwise;
+mod gr_batch_probe;
 mod main_admission;
 mod matmul_probe;
+mod ordered_public;
 mod private_arena;
 mod qsa_gpu;
 mod quant_matvec;
@@ -17,6 +22,7 @@ mod resident_moe;
 mod resident_probe;
 mod resident_qsa;
 mod resident_util;
+mod residual_batch_gpu;
 mod residual_gpu;
 mod small_cpu;
 mod transient_probe;
@@ -120,20 +126,52 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let public_owned_zero_audit =
         public_owned_zero_audit_mode(transient_resident, owned_audit_setting.as_deref())?;
+    let ordered_setting = match std::env::var("KUNO_LAB_ORDERED_PUBLIC_UPLOAD") {
+        Ok(raw) => Some(raw),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(_) => return Err("KUNO_LAB_ORDERED_PUBLIC_UPLOAD must be 0 or 1".into()),
+    };
+    let ordered_public_upload = ordered_public::configured(
+        ordered_setting.as_deref(),
+        transient_resident,
+        std::env::var("KUNO_LAB_BATCH_EXPERTS").as_deref() == Ok("1"),
+    )?;
     // One retirement flag belongs to the configured physical stream, across
     // every fresh logical owner/executor in the cancellation diagnostic.
     let transient_context = transient_resident.then(|| std::sync::Arc::new(AtomicBool::new(false)));
     let requested_slots = match std::env::var("KUNO_LAB_EXPERT_SLOTS") {
         Ok(value) => Some(value),
         Err(std::env::VarError::NotPresent) => None,
-        Err(_) => return Err("KUNO_LAB_EXPERT_SLOTS must be an integer 10..72".into()),
+        Err(_) => return Err("KUNO_LAB_EXPERT_SLOTS must be an integer 10..72 or 96".into()),
     };
     // Reject malformed/out-of-range overrides before creating a GPU device.
     let expert_slots = bank_slots::configured_capacity(
         requested_slots.as_deref(),
         if vendor == 0x8086 { 64 } else { 16 },
     )
-    .map_err(|_| "KUNO_LAB_EXPERT_SLOTS must be an integer 10..72")?;
+    .map_err(|_| "KUNO_LAB_EXPERT_SLOTS must be an integer 10..72 or 96")?;
+    let static_cache_setting = match std::env::var("KUNO_LAB_STATIC_CACHE_BYTES") {
+        Ok(raw) => Some(raw),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(_) => return Err("KUNO_LAB_STATIC_CACHE_BYTES must be integer bytes".into()),
+    };
+    let cache_budget = expert_banks::configured_static_cache(
+        static_cache_setting.as_deref(),
+        if vendor == 0x8086 { 8 } else { 6 } * 1024 * 1024 * 1024,
+    )?;
+    expert_banks::validate_segmented_configuration(
+        expert_slots,
+        static_cache_setting.as_ref().map(|_| cache_budget),
+        cache_budget,
+        std::env::var("KUNO_LAB_BLOCK_MOE").as_deref() == Ok("1"),
+        std::env::var("KUNO_LAB_BATCH_EXPERTS").as_deref() == Ok("1"),
+        std::env::var("KUNO_LAB_WORD_DOWN").as_deref() == Ok("1"),
+        matches!(
+            mode.as_str(),
+            "resident-bang" | "resident-chat" | "resident-rainwater"
+        ),
+    )?;
+    expert_banks::validate_ordered_segmented(expert_slots)?;
     cubecl::future::block_on(async move {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::VULKAN,
@@ -168,6 +206,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ..Default::default()
             })
             .await?;
+        let gr_storage_alignment = adapter.limits().min_storage_buffer_offset_alignment as usize;
         let selected = init_device(
             WgpuSetup {
                 instance,
@@ -182,6 +221,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
         );
         let client = WgpuRuntime::client(&selected);
+        if mode == "gr-batch-probe" {
+            gr_batch_probe::run(&client, gr_storage_alignment)?;
+            return Ok(());
+        }
+        if mode == "gdn-chunk-probe" {
+            gdn_chunk_probe::run(&client)?;
+            return Ok(());
+        }
+        if mode == "bank96-probe" {
+            bank96_probe::run(&client)?;
+            return Ok(());
+        }
         if mode == "matmul-probe" {
             matmul_probe::run(&client)?;
             return Ok(());
@@ -694,7 +745,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let model = Qwen4Exp::bind(&file)?;
             let ids = tokenizer.encode(prompt, true)?;
             let mut sequence = model.sequence(ids.len() + limit)?;
-            let cache_budget = if vendor == 0x8086 { 8 } else { 6 } * 1024 * 1024 * 1024;
             let device_budget = if vendor == 0x8086 { 26 } else { 10 } * 1024 * 1024 * 1024;
             let bank_charge = expert_banks::preflight_residency(
                 model.bound_graph(),
@@ -860,6 +910,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 receipt["resident_runtime_io_limit_bytes"] = serde_json::json!(
                     transient_resident.then_some(executor::RESIDENT_RUNTIME_IO_MAX)
                 );
+                receipt["ordered_public_upload"] = serde_json::json!(ordered_public_upload);
+                receipt["ordered_public_source_limit_bytes"] = serde_json::json!(
+                    ordered_public_upload.then_some(ordered_public::SOURCE_LIMIT)
+                );
+                receipt["ordered_public_source_peak_bytes"] =
+                    serde_json::json!(executor.ordered_source_peak_bytes());
                 receipt["batch_experts"] = serde_json::json!(executor.batch_experts);
                 receipt["expert_batch_window_bytes"] =
                     serde_json::json!(executor.expert_batch_bytes);
@@ -867,6 +923,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 receipt["expert_bank_slots"] = serde_json::json!(expert_slots);
                 receipt["expert_bank_accounted_limit_bytes"] = serde_json::json!(bank_charge);
                 receipt["static_cache_budget_bytes"] = serde_json::json!(cache_budget);
+                receipt["explicit_static_cache"] =
+                    serde_json::json!(static_cache_setting.is_some());
+                receipt["expert_bank_segments"] = serde_json::json!(if expert_slots == 96 {
+                    vec![64, 32]
+                } else {
+                    vec![expert_slots]
+                });
                 receipt["device_reserved_limit_bytes"] = serde_json::json!(device_budget);
                 // Timings/public IDs remain in RAM until explicit owned cleanup
                 // and optional cancellation/audit acceptance complete.
@@ -995,12 +1058,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     )?;
                 }
                 executor.close_transient_resident()?;
+                if executor.ordered_source_pending_bytes() != 0 {
+                    return Err("ordered public source cleanup incomplete".into());
+                }
                 println!("public_resident_owned_cleanup=true context_retired=false");
             }
             if let Some((path, mut receipt)) = pending_receipt {
                 use std::io::Write;
                 receipt["owned_io_cleanup_accepted"] = serde_json::json!(transient_resident);
                 receipt["owned_zero_audits"] = serde_json::json!(owned_zero_audits);
+                if ordered_public_upload {
+                    receipt["ordered_public_source_pending_bytes_after_cleanup"] =
+                        serde_json::json!(executor.ordered_source_pending_bytes());
+                }
                 let mut out = std::fs::OpenOptions::new()
                     .write(true)
                     .create_new(true)

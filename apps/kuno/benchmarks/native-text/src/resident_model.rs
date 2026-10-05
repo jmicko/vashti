@@ -491,6 +491,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
     pub fn close(&mut self) -> Result<()> {
         self.poisoned = true;
         self.admission.poison();
+        // Explicit close only: no callback from Drop/constructor guards into
+        // admission. Cancelled short QSA can leave up to40MiB of ordered source
+        // staging live; checked drain/erase must precede full MAIN inspection.
+        let sources = self.admission.cleanup_abandoned_ordered_sources();
         let io = self.io.close();
         let all = self.arena.close();
         self.layers.clear();
@@ -503,7 +507,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         self.cancel_after_attention = None;
         self.ple_history.reset();
         self.ple_conv.reset();
-        if io.is_err() || all.is_err() || self.retired.load(Ordering::Acquire) {
+        if sources.is_err() || io.is_err() || all.is_err() || self.retired.load(Ordering::Acquire) {
             self.retired.store(true, Ordering::Release);
             return Err(Error::InvalidFormat("resident full-span cleanup failed"));
         }
@@ -884,7 +888,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             cancel,
         )?;
         let start = Instant::now();
-        let router = self.admission.readback_intermediate(|| {
+        let router = self.admission.readback_router(|| {
             u::read_fence(
                 &self.arena,
                 self.b.router,
