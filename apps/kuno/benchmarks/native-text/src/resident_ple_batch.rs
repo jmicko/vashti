@@ -465,6 +465,21 @@ impl PleBatchWorkspace {
                         &BatchSpans::new(count, 0, 0, WIDTH, 0, WIDTHS[target]),
                         cancel,
                     )?;
+                    model.numeric_boundary.observe(
+                        if i == 0 {
+                            super::numeric_boundaries::Boundary::ProjectedKey
+                        } else {
+                            super::numeric_boundaries::Boundary::ProjectedValue
+                        },
+                        arena,
+                        &model.admission,
+                        self.ids[target],
+                        model.b.fault,
+                        words(target),
+                        start,
+                        count,
+                        cancel,
+                    )?;
                 }
                 Operation::Tail => {
                     tail(arena, &self.ids, &self.public, input, output, spans, cancel)?

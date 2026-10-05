@@ -85,6 +85,7 @@ fn validate_limits(l: &wgpu::Limits, tile: usize) -> Result<()> {
 pub(super) struct Plan {
     pub(super) requests: Vec<u64>,
     pub(super) config: Config,
+    pub(super) runtime: u64,
 }
 impl Plan {
     pub(super) fn new(
@@ -186,7 +187,11 @@ impl Plan {
         {
             return Err(error());
         }
-        Ok(Self { requests, config })
+        Ok(Self {
+            requests,
+            config,
+            runtime,
+        })
     }
     pub(super) fn check_public(&self, graph: BoundGraph<'_, '_>, pages: u64) -> Result<()> {
         // prewarm() independently proves exact planned cache names/counts and
@@ -602,6 +607,17 @@ impl Workspace {
         let mut current = Zeroizing::new(0usize);
         drive_layers(cancel, |layer| {
             if layer == 1 {
+                m.numeric_boundary.observe(
+                    numeric_boundaries::Boundary::Input,
+                    &m.arena,
+                    &m.admission,
+                    self.outer.residual[*current],
+                    m.b.fault,
+                    RESIDUAL_WORDS,
+                    *start,
+                    *count,
+                    cancel,
+                )?;
                 let mut projector = ResidentBatchProjection {
                     executor: e,
                     fault: m.b.fault,
@@ -618,6 +634,17 @@ impl Workspace {
                     &positions,
                     cancel,
                 )?);
+                m.numeric_boundary.observe(
+                    numeric_boundaries::Boundary::Injected,
+                    &m.arena,
+                    &m.admission,
+                    self.outer.residual[1 - *current],
+                    m.b.fault,
+                    RESIDUAL_WORDS,
+                    *start,
+                    *count,
+                    cancel,
+                )?;
                 *current = 1 - *current;
             }
             let mut projector = ResidentBatchProjection {

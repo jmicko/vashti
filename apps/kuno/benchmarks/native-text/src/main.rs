@@ -122,6 +122,11 @@ fn report_public_owned_zero_audit(
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Compile the source-only typed diagnostic entry; no CLI/default selection.
+    let _numeric_boundary_entry: fn(
+        &kuno_text::GgufFile,
+        resident_model::lifecycle_probe::RunConfig,
+    ) -> kuno_text::Result<serde_json::Value> = resident_model::numeric_boundaries::run;
     let vendor = match std::env::args().nth(1).as_deref() {
         Some("intel") => 0x8086,
         Some("nvidia") => 0x10de,

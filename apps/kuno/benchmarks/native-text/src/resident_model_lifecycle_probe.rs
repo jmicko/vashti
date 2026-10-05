@@ -32,7 +32,7 @@ pub(crate) struct RunConfig {
     pub(crate) vendor: u32,
     pub(crate) retired: Arc<AtomicBool>,
 }
-struct Fixture<'a> {
+pub(super) struct Fixture<'a> {
     config: RunConfig,
     file: &'a GgufFile,
     cache: usize,
@@ -41,7 +41,7 @@ struct Fixture<'a> {
     native: batch::Config,
 }
 impl<'a> Fixture<'a> {
-    fn new(file: &'a GgufFile, config: RunConfig) -> Result<Self> {
+    pub(super) fn new(file: &'a GgufFile, config: RunConfig) -> Result<Self> {
         if config.retired.load(Ordering::Acquire) {
             return Err(error());
         }
@@ -69,7 +69,7 @@ impl<'a> Fixture<'a> {
         Ok(e)
     }
     /// Actual metadata/limits/admission proof, before any private/bank pages.
-    fn envelope(&self, graph: BoundGraph<'_, 'a>) -> Result<()> {
+    pub(super) fn envelope(&self, graph: BoundGraph<'_, 'a>) -> Result<u64> {
         graph.verify_unchanged()?;
         let requests = private_requests(graph)?;
         if requests.len() as u64 != SCALAR_PAGES || checked_sum(&requests)? != SCALAR_BYTES {
@@ -95,9 +95,9 @@ impl<'a> Fixture<'a> {
         // This metadata-only executor owns no residency, bank or transient
         // allocations. Its ordinary public cache remains empty.
         drop(e);
-        Ok(())
+        Ok(plan.runtime)
     }
-    fn owner<T>(
+    pub(super) fn owner<T>(
         &self,
         graph: BoundGraph<'_, 'a>,
         context: usize,
@@ -211,14 +211,14 @@ fn check_settings() -> Result<()> {
     Ok(())
 }
 #[derive(Clone, Copy)]
-struct Audit {
+pub(super) struct Audit {
     main_bytes: u64,
     main_buffers: u64,
     source_bytes: u64,
     source_buffers: u64,
 }
 impl Audit {
-    fn value(self) -> Value {
+    pub(super) fn value(self) -> Value {
         json!({"main_bytes":self.main_bytes,"main_buffers":self.main_buffers,
             "source_bytes":self.source_bytes,"source_buffers":self.source_buffers})
     }
@@ -321,7 +321,7 @@ impl CaseReport {
             "audit":self.audit.value(),"terminal_cleanup":self.terminal,"hook_observed":self.hook_observed})
     }
 }
-fn accepted(model: &ResidentModel<'_, '_>, position: usize) -> Result<()> {
+pub(super) fn accepted(model: &ResidentModel<'_, '_>, position: usize) -> Result<()> {
     if model.position != position
         || model.poisoned
         || model.ple_batch_pending.is_some()

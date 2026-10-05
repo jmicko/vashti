@@ -39,6 +39,8 @@ pub(crate) mod batch_io;
 mod lifecycle_hooks;
 #[path = "resident_model_lifecycle_probe.rs"]
 pub(crate) mod lifecycle_probe;
+#[path = "resident_numeric_boundaries.rs"]
+pub(crate) mod numeric_boundaries;
 
 enum Layer<'f> {
     Gdn(Box<ResidentGdn<'f>>, PublicGdnParameters),
@@ -87,6 +89,7 @@ pub struct ResidentModel<'m, 'f> {
     admission: ResidentAdmission,
     cancel_after_attention: Option<usize>,
     lifecycle_hooks: lifecycle_hooks::Hooks,
+    numeric_boundary: numeric_boundaries::Collector,
     pub phase_ns: BTreeMap<&'static str, u128>,
 }
 #[cube]
@@ -484,6 +487,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 admission: admission.clone(),
                 cancel_after_attention: None,
                 lifecycle_hooks: lifecycle_hooks::Hooks::default(),
+                numeric_boundary: numeric_boundaries::Collector::default(),
                 phase_ns: BTreeMap::new(),
             };
             if let Some(plan) = native {
@@ -667,7 +671,29 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             u::cancel(cancel)?;
             let start = Instant::now();
             if l == 1 {
+                self.numeric_boundary.observe(
+                    numeric_boundaries::Boundary::Input,
+                    &self.arena,
+                    &self.admission,
+                    self.b.residual[current],
+                    self.b.fault,
+                    10240,
+                    self.position,
+                    1,
+                    cancel,
+                )?;
                 self.ple(executor, token, self.b.residual[current], cancel)?;
+                self.numeric_boundary.observe(
+                    numeric_boundaries::Boundary::Injected,
+                    &self.arena,
+                    &self.admission,
+                    self.b.residual[current],
+                    self.b.fault,
+                    10240,
+                    self.position,
+                    1,
+                    cancel,
+                )?;
             }
             self.record("ple_and_previous_owner", start);
             let start = Instant::now();
@@ -899,6 +925,30 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             self.b.ple_value,
             cancel,
         )?;
+        for (boundary, id, words) in [
+            (
+                numeric_boundaries::Boundary::ProjectedKey,
+                self.b.ple_key,
+                10240,
+            ),
+            (
+                numeric_boundaries::Boundary::ProjectedValue,
+                self.b.ple_value,
+                2560,
+            ),
+        ] {
+            self.numeric_boundary.observe(
+                boundary,
+                &self.arena,
+                &self.admission,
+                id,
+                self.b.fault,
+                words,
+                self.position,
+                1,
+                cancel,
+            )?;
+        }
         let (key, value, original) = self.admission.readback_intermediate(|| {
             Ok((
                 u::read_f32(&self.arena, self.b.ple_key)?,
