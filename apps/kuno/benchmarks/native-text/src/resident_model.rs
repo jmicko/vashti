@@ -26,6 +26,9 @@ use zeroize::{Zeroize, Zeroizing};
 #[path = "resident_shared_batch.rs"]
 pub(crate) mod shared_batch;
 
+#[path = "resident_ple_batch.rs"]
+pub(crate) mod ple_batch;
+
 enum Layer<'f> {
     Gdn(Box<ResidentGdn<'f>>, PublicGdnParameters),
     Qsa(
@@ -63,6 +66,8 @@ pub struct ResidentModel<'m, 'f> {
     b: Buffers,
     ple_history: PleTokenHistory,
     ple_conv: CausalConvState,
+    ple_batch_pending: Option<ple_batch::Anchor>,
+    ple_batch_poison: Option<Arc<AtomicBool>>,
     position: usize,
     context: usize,
     poisoned: bool,
@@ -440,6 +445,8 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 b,
                 ple_history,
                 ple_conv,
+                ple_batch_pending: None,
+                ple_batch_poison: None,
                 position: 0,
                 context,
                 poisoned: false,
@@ -494,6 +501,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
     /// It never resets/reuses the admission ledger or emits a clean receipt.
     pub fn close(&mut self) -> Result<()> {
         self.poisoned = true;
+        if let Some(poison) = &self.ple_batch_poison {
+            poison.store(true, Ordering::Release);
+        }
+        self.ple_batch_pending = None;
         self.admission.poison();
         // Explicit close only: no callback from Drop/constructor guards into
         // admission. Cancelled short QSA can leave up to40MiB of ordered source
@@ -545,6 +556,11 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         purpose: StepPurpose,
     ) -> Result<Zeroizing<Vec<f32>>> {
         if self.poisoned
+            || self.ple_batch_pending.is_some()
+            || self
+                .ple_batch_poison
+                .as_ref()
+                .is_some_and(|p| p.load(Ordering::Acquire))
             || self.position >= self.context
             || token as usize >= self.graph.geometry().vocabulary
         {

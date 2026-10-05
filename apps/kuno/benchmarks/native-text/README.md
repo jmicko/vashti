@@ -26,6 +26,17 @@ are transient to the one public experiment. Host intermediate/driver buffers,
 GPU erasure on every failure and a persistent private worker still need privacy
 and lifecycle acceptance before linking this executor into Kuno.
 
+Protected fixed-public acceptance can use a user systemd unit without sudo.
+Pass the frozen executable, vendor and fixed mode to
+`python3 apps/kuno/benchmarks/text/protected-lab-exec.py` under
+`systemd-run --user --collect --wait --pipe`, with `MemorySwapMax=0`,
+`LimitCORE=0`, `MemoryMax=8G` and the desired lab-only `RuntimeMaxSec`.
+The wrapper verifies actual cgroup/core limits before exec; it fails if they
+are missing. Set `KUNO_TEST_GGUF` and a fresh `KUNO_PUBLIC_RECEIPT` path on the
+unit. The8 GiB cap is an acceptance-test limit, not a matched performance
+configuration. Exact run settings and frozen identities belong in receipts;
+do not use unit wall time or inconsistent MemoryPeak output as benchmark data.
+
 The `bang` and `chat` fixtures use seed 424242, temperature zero and greedy
 sampling (the RNG is unused). Simple greedy equality is only an initial graph
 acceptance check; longer contexts, QSA sparsity, options, templates/tool calling,

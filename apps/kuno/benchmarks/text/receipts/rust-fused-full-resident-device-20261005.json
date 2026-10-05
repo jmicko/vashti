@@ -1,0 +1,289 @@
+{
+  "additional_limits": [
+    "The original scalar ResidentModel runs; the new MAX8 adapters are not selected.",
+    "Timings are diagnostic only: compiler activity,8GiB user memory cap and cache state were not controlled as an Ollama comparison.",
+    "This four-output synthetic smoke is not full75/80 prompt+128 output quality/options/longcontext acceptance.",
+    "Fused flag stays default-off pending full matched parity and paired speed measurements."
+  ],
+  "artifact": "existing Ollama GGUF sha256-89059c880c2f000b24520919d4ba2edd2a8101327c7f8ab33b2280e01addda75; read-only bounded tensor ranges; no model copy",
+  "cards": {
+    "intel": {
+      "observed_process_exit": 0,
+      "observed_success_messages": {
+        "context_retired": false,
+        "fresh_first_token_matches": true,
+        "owned_cleanup": true,
+        "poisoned_retry_rejected": true,
+        "preenqueue_cancel_erased": true,
+        "queued_GDN_layer0_cancel_erased": true,
+        "queued_QSA_layer3_cancel_erased": true
+      },
+      "original_receipt_name": "kuno-rust-user-fused-resident-intel-20261005-v1.json",
+      "original_receipt_sha256": "7b4c2e75660cccbf70cbbad76cf626b159878cb566aa94a79585d8e21e8230d8",
+      "original_scalar_public_ids_match": true,
+      "report": {
+        "allocator_reserved_bytes": 14248385664,
+        "batch_experts": false,
+        "block_kernel": true,
+        "block_large_only": true,
+        "block_moe": false,
+        "cache_accounted_bytes": 18010341376,
+        "device_reserved_limit_bytes": 27917287424,
+        "expert_bank_accounted_limit_bytes": 12884901888,
+        "expert_bank_segments": [
+          64
+        ],
+        "expert_bank_slots": 64,
+        "expert_batch_window_bytes": 8388608,
+        "expert_scatter_mode": "dynamic-1d",
+        "explicit_static_cache": false,
+        "fixture": "resident-bang",
+        "fused_matrix_fault": true,
+        "gdn_calls": 0,
+        "generation_ms": 1963,
+        "gpu_gdn_cpu_state_owner": false,
+        "io_token_checkpoint": false,
+        "matrix_calls": 3008,
+        "model_bind_ms": 1264,
+        "moe_calls": 192,
+        "ordered_public_source_limit_bytes": null,
+        "ordered_public_source_peak_bytes": 0,
+        "ordered_public_upload": false,
+        "owned_io_cleanup_accepted": true,
+        "owned_zero_audits": [
+          {
+            "main_buffers": 1286,
+            "main_bytes": 785186816,
+            "source_buffers": 60,
+            "source_bytes": 2228224
+          },
+          {
+            "main_buffers": 1286,
+            "main_bytes": 785186816,
+            "source_buffers": 15,
+            "source_bytes": 557056
+          },
+          {
+            "main_buffers": 1286,
+            "main_bytes": 785186816,
+            "source_buffers": 1,
+            "source_bytes": 65536
+          },
+          {
+            "main_buffers": 1286,
+            "main_bytes": 785186816,
+            "source_buffers": 4,
+            "source_bytes": 196608
+          }
+        ],
+        "prefill_last_head": false,
+        "prefill_ms": 6297,
+        "prompt_tokens": 1,
+        "public_generated_ids": [
+          49276,
+          2349,
+          1074,
+          5928
+        ],
+        "public_resident_warm_phase_ns": {
+          "attention_combine_and_ffn_gr_enqueue": 4236459,
+          "attention_enqueue_and_host_fences": 130566683,
+          "attention_gr_enqueue": 4463272,
+          "expert_upload_and_enqueue": 1045395698,
+          "moe_route_and_upload_enqueue": 1728899289,
+          "ple_and_previous_owner": 31275172,
+          "router_fence": 674131631
+        },
+        "public_warm_matrix_ns": {},
+        "resident_graph": true,
+        "resident_main_admitted_upper_bytes": 14248385664,
+        "resident_owned_zero_audit_enabled": true,
+        "resident_private_owned_bytes": 785186816,
+        "resident_runtime_io_limit_bytes": 67108864,
+        "resident_transient_io": true,
+        "scope": "fixed-public-synthetic-operator-test-only",
+        "seed": 424242,
+        "small_cpu_cache_bytes": 0,
+        "small_cpu_cache_matrices": 0,
+        "small_cpu_calls": 0,
+        "small_cpu_enabled": false,
+        "small_cpu_ms": 0,
+        "static_cache_budget_bytes": 8589934592,
+        "temperature": 0,
+        "total_gdn_ms": 0,
+        "total_matrix_ms": 0,
+        "total_moe_ms": 0,
+        "vendor": 32902,
+        "warm_expert_hits": 769,
+        "warm_expert_uploads": 671,
+        "warm_gdn_ms": 0,
+        "warm_gpu_wait_ms": 0,
+        "warm_matrix_ms": 0,
+        "warm_moe_ms": 0,
+        "warm_uploaded_bytes": 2209484800,
+        "warm_weight_read_ms": 280,
+        "warm_weight_upload_ms": 336,
+        "weights": "borrowed-unmodified-ollama-blob",
+        "word_down": false
+      }
+    },
+    "nvidia": {
+      "observed_process_exit": 0,
+      "observed_success_messages": {
+        "context_retired": false,
+        "fresh_first_token_matches": true,
+        "owned_cleanup": true,
+        "poisoned_retry_rejected": true,
+        "preenqueue_cancel_erased": true,
+        "queued_GDN_layer0_cancel_erased": true,
+        "queued_QSA_layer3_cancel_erased": true
+      },
+      "original_receipt_name": "kuno-rust-user-fused-resident-nvidia-20261005-v1.json",
+      "original_receipt_sha256": "7b4d2a7fc3a19c3ea0f75b14b9114fff2f86ed6c041169d54f5fca9d53478e9a",
+      "original_scalar_public_ids_match": true,
+      "report": {
+        "allocator_reserved_bytes": 6650956608,
+        "batch_experts": false,
+        "block_kernel": true,
+        "block_large_only": true,
+        "block_moe": false,
+        "cache_accounted_bytes": 8346664960,
+        "device_reserved_limit_bytes": 10737418240,
+        "expert_bank_accounted_limit_bytes": 3221225472,
+        "expert_bank_segments": [
+          16
+        ],
+        "expert_bank_slots": 16,
+        "expert_batch_window_bytes": 8388608,
+        "expert_scatter_mode": "dynamic-1d",
+        "explicit_static_cache": false,
+        "fixture": "resident-bang",
+        "fused_matrix_fault": true,
+        "gdn_calls": 0,
+        "generation_ms": 3434,
+        "gpu_gdn_cpu_state_owner": false,
+        "io_token_checkpoint": false,
+        "matrix_calls": 3008,
+        "model_bind_ms": 732,
+        "moe_calls": 192,
+        "ordered_public_source_limit_bytes": null,
+        "ordered_public_source_peak_bytes": 0,
+        "ordered_public_upload": false,
+        "owned_io_cleanup_accepted": true,
+        "owned_zero_audits": [
+          {
+            "main_buffers": 1286,
+            "main_bytes": 785186816,
+            "source_buffers": 60,
+            "source_bytes": 2228224
+          },
+          {
+            "main_buffers": 1286,
+            "main_bytes": 785186816,
+            "source_buffers": 15,
+            "source_bytes": 557056
+          },
+          {
+            "main_buffers": 1286,
+            "main_bytes": 785186816,
+            "source_buffers": 1,
+            "source_bytes": 65536
+          },
+          {
+            "main_buffers": 1286,
+            "main_bytes": 785186816,
+            "source_buffers": 4,
+            "source_bytes": 196608
+          }
+        ],
+        "prefill_last_head": false,
+        "prefill_ms": 7526,
+        "prompt_tokens": 1,
+        "public_generated_ids": [
+          49276,
+          2349,
+          1074,
+          5928
+        ],
+        "public_resident_warm_phase_ns": {
+          "attention_combine_and_ffn_gr_enqueue": 4516154,
+          "attention_enqueue_and_host_fences": 186799770,
+          "attention_gr_enqueue": 4751863,
+          "expert_upload_and_enqueue": 1926006580,
+          "moe_route_and_upload_enqueue": 3132067226,
+          "ple_and_previous_owner": 29141599,
+          "router_fence": 1196732793
+        },
+        "public_warm_matrix_ns": {},
+        "resident_graph": true,
+        "resident_main_admitted_upper_bytes": 6650956608,
+        "resident_owned_zero_audit_enabled": true,
+        "resident_private_owned_bytes": 785186816,
+        "resident_runtime_io_limit_bytes": 67108864,
+        "resident_transient_io": true,
+        "scope": "fixed-public-synthetic-operator-test-only",
+        "seed": 424242,
+        "small_cpu_cache_bytes": 0,
+        "small_cpu_cache_matrices": 0,
+        "small_cpu_calls": 0,
+        "small_cpu_enabled": false,
+        "small_cpu_ms": 0,
+        "static_cache_budget_bytes": 6442450944,
+        "temperature": 0,
+        "total_gdn_ms": 0,
+        "total_matrix_ms": 0,
+        "total_moe_ms": 0,
+        "vendor": 4318,
+        "warm_expert_hits": 753,
+        "warm_expert_uploads": 687,
+        "warm_gdn_ms": 0,
+        "warm_gpu_wait_ms": 0,
+        "warm_matrix_ms": 0,
+        "warm_moe_ms": 0,
+        "warm_uploaded_bytes": 2260684800,
+        "warm_weight_read_ms": 315,
+        "warm_weight_upload_ms": 426,
+        "weights": "borrowed-unmodified-ollama-blob",
+        "word_down": false
+      }
+    }
+  },
+  "date": "2026-10-05",
+  "devices": {
+    "intel": "Vulkan Intel BMG G31 vendor8086 devicee223 (Arc Pro B70)",
+    "nvidia": "Vulkan NVIDIA RTX3060 vendor10de device2504"
+  },
+  "fixed_prompt": "!",
+  "frozen_executable": "/tmp/kuno-rust-native-batch-source-v6-20261005",
+  "frozen_executable_sha256": "861b285a0dc581ec6c03c1d16dd7814269e33f1a103cbece43fc7ebd9416409e",
+  "installed_service_api_catalog_default_or_vashti_changed": false,
+  "laboratory_env": {
+    "KUNO_LAB_CANCEL_CHECK": "1",
+    "KUNO_LAB_FUSED_MATRIX_FAULT": "1",
+    "KUNO_LAB_OWNED_ZERO_AUDIT": "1",
+    "KUNO_LAB_TRANSIENT_IO": "1"
+  },
+  "measurement_limits": [
+    "Numeric/ownership tests, not performance measurements.",
+    "User declared both GPUs free; both Ollama-compatible listeners reported no resident models before the loop. Installed Kuno admission was not paused.",
+    "Independent CPU compilation remained active; unit wall/CPU times are not benchmark results.",
+    "systemd MemoryPeak observations were inconsistent and are not used as memory evidence.",
+    "Owning MAIN and tracked I/O cleanup does not prove opaque driver/register/spill or abrupt-process-loss erasure."
+  ],
+  "post_fixture_observed_driver_identity": {
+    "intel": "Mesa26.2.3 kisak PPA; Vulkan1.4.354;8086:e223",
+    "nvidia": "595.91.07;Vulkan1.4.329;10de:2504",
+    "vulkan_instance": "1.3.275"
+  },
+  "protected_user_unit": {
+    "core_hard": 0,
+    "core_soft": 0,
+    "limits_verified_inside_unit_before_exec": true,
+    "memory_max_bytes": 8589934592,
+    "memory_swap_max": 0,
+    "runtime_max_seconds": 900,
+    "wrapper_sha256": "8c1510e050aa9606db4c116f2ed74f44efd60be3ffc1de04c264d93645de80e9"
+  },
+  "scope": "fixed-public-full-scalar-resident-correctness-and-lifecycle-only",
+  "whole_model_native_batch_or_private_worker_accepted": false
+}

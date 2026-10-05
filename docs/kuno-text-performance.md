@@ -1119,3 +1119,45 @@ each card inspects4,587,520 cumulative MAIN bytes/140 pages as zero. This remain
 a small operator fixture; the optimization is default-off pending full-model
 parity, cancellation and paired measurements. No public or installed behavior
 changed.
+
+### Full scalar finite-fault lifecycle smoke
+
+Frozen `861b285a…` also passes the original full scalar `resident-bang` fixture
+with finite fusion enabled on both GPUs. Both reproduce IDs
+`[49276,2349,1074,5928]`. Pre-enqueue cancellation, queued GDN layer0 and QSA
+layer3 cancellation erase complete owners; poisoned retries fail and a new
+owner reproduces the first output. Each of four owner audits per card inspects
+785,186,816 B/1,286 pages, with separate owning source/IO cleanup.
+[The exact receipt](../apps/kuno/benchmarks/text/receipts/rust-fused-full-resident-device-20261005.json)
+retains fixed public settings, diagnostic timings and observed lifecycle proofs.
+The identical protection wrapper is preserved as
+[protected-lab-exec.py](../apps/kuno/benchmarks/text/protected-lab-exec.py).
+These runs use the original scalar model, not new MAX8 adapters; they establish
+neither full quality nor paired performance acceptance. The flag stays default-off.
+
+## Native PLE bridge into actual CPU histories (2026-10-05)
+
+The native layer1 adapter now borrows the real CPU token/convolution histories,
+original cached projections and sealed public vectors. Nineteen new complete
+MAIN pages add6,258,688 B; no public weights or committed CPU state are duplicated.
+Its524,288 B GPU OLD page is an explicit readonly mirror, with NEXT candidate-only.
+Seven stage statuses plus history/output folds join the same model fault.
+
+Enqueue does no maps, completion or state commit. After the future whole-model
+fence, owning OLD/NORMALIZED/NEXT maps validate complete pages and exact original
+history bits. A guarded core factory reconstructs the ordered token/normalized
+extension, compares NEXT bitwise and returns an opaque borrowing commit ticket.
+The field-split ticket retains only actual PLE histories/anchor, leaving other
+families and a second actual fault/IO/admission proof available. All families
+must preflight before any state swap; subsequent scalar generation uses the
+same accepted CPU history objects. Error/abandonment wipes candidates and poisons
+the logical owner; there is no arbitrary imported-state setter.
+
+Root acceptance passes343 native and80 core tests (two installed checks ignored),
+strict all-target Clippy for both, locked offline release, formatting/diff and
+focused peer source review. The [source receipt](../apps/kuno/benchmarks/text/receipts/rust-native-ple-bridge-source-20261005.json)
+pins identities, full-page/guarded-host bounds and the4,587,520 B audited I/O
+component, which is not global64 MiB credit. The
+[approved actual connection plan](kuno-native-text-model-batching.md) now records
+aggregate constructor and acceptance budgets. This adapter is still unconnected;
+physical native/full-model acceptance and matched speed remain pending.

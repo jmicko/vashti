@@ -767,6 +767,9 @@ pub struct PleOutput {
     pub normalized: Vec<f32>,
 }
 
+#[path = "ops_ple_transition.rs"]
+pub mod ple_transition;
+
 /// PLE projections are performed by the graph. This operator receives projected
 /// key/value and stores only normalized gated values in its dilated convolution.
 #[allow(clippy::too_many_arguments)]

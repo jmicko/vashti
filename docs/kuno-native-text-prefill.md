@@ -6,6 +6,11 @@ model catalog, scheduler or Vashti consumer. Multi-RHS matrices and isolated
 operators are groundwork; repeatedly calling the existing token step is not
 batched prefill. See [measured acceptance](kuno-text-performance.md).
 
+The approved [actual model connection plan](kuno-native-text-model-batching.md)
+pins the real constructor/chunk API, aggregate full-page/runtime/host budgets,
+guarded router/embedding boundaries and all-family acceptance sequence. It is a
+plan, not proof that the actual whole-model consumer or device tests exist.
+
 ## One transaction across the whole model
 
 Use fixed public capacity eight, with actual count 1–8, token IDs, positions,
