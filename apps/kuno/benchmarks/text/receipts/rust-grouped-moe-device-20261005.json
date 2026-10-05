@@ -1,0 +1,1796 @@
+{
+  "additional_limits": [
+    "Actual original bank protections and staged generations are tested; original bank ledger publication is forbidden.",
+    "This is a routed operator fixture, not the new full-model cache adapter, shared expert, full FFN, whole graph, timing or default selection."
+  ],
+  "artifact": "existing Ollama GGUF sha256-89059c880c2f000b24520919d4ba2edd2a8101327c7f8ab33b2280e01addda75; read-only bounded tensor ranges; no model copy",
+  "date": "2026-10-05",
+  "devices": {
+    "intel": "Vulkan Intel BMG G31 vendor8086 devicee223 (Arc Pro B70)",
+    "nvidia": "Vulkan NVIDIA RTX3060 vendor10de device2504"
+  },
+  "failure_and_fresh_owner_cases_per_card": 12,
+  "fresh_owner_evidence": "Frozen run() executes one independent correct() owner after each of the12 rejected fixtures, all before a success receipt; reports.cases stores only the40 primary cases.",
+  "installed_service_api_catalog_default_or_vashti_changed": false,
+  "measurement_limits": [
+    "Numeric/ownership tests, not performance measurements.",
+    "User declared both GPUs free; both Ollama-compatible listeners reported no resident models before the loop. Installed Kuno admission was not paused.",
+    "Independent CPU compilation remained active; unit wall/CPU times are not benchmark results.",
+    "systemd MemoryPeak observations were inconsistent and are not used as memory evidence.",
+    "Owning MAIN and tracked I/O cleanup does not prove opaque driver/register/spill or abrupt-process-loss erasure."
+  ],
+  "operators": {
+    "routed_moe": {
+      "cards": {
+        "intel": {
+          "aggregate_maxima": {
+            "core_output_max_abs_error": 4.190951585769653e-09,
+            "scalar_max_abs_error": 2.3283064365386963e-10,
+            "tree_activation_partial_output_max_abs_errors": [
+              1.1175870895385742e-08,
+              3.725290298461914e-09,
+              9.313225746154785e-10
+            ]
+          },
+          "numeric_case_count": 40,
+          "original_receipt_name": "kuno-rust-user-grouped-moe-intel-20261005-v1.json",
+          "original_receipt_sha256": "5b0301845a5bfb773a3a508821ca56a0ab2bc4cd74165813102bedc5cb7b2dac",
+          "report": {
+            "all_ten_original_ranks_and_probabilities": true,
+            "cases": [
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 117440512,
+                "capacity": 16,
+                "core_output_max_abs_error": 1.979060471057892e-09,
+                "count": 1,
+                "cross_segment_boundary": false,
+                "down_dtype": 6,
+                "layer": 6,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": true,
+                "scalar_max_abs_error": 1.1641532182693481e-10,
+                "tile": 4,
+                "tree_activation_partial_output_max_abs_errors": [
+                  3.725290298461914e-09,
+                  9.313225746154785e-10,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 117440512,
+                "capacity": 16,
+                "core_output_max_abs_error": 1.979060471057892e-09,
+                "count": 1,
+                "cross_segment_boundary": false,
+                "down_dtype": 6,
+                "layer": 6,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": true,
+                "scalar_max_abs_error": 1.1641532182693481e-10,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  3.725290298461914e-09,
+                  9.313225746154785e-10,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 117440512,
+                "capacity": 16,
+                "core_output_max_abs_error": 1.979060471057892e-09,
+                "count": 1,
+                "cross_segment_boundary": false,
+                "down_dtype": 6,
+                "layer": 6,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": false,
+                "scalar_max_abs_error": 1.1641532182693481e-10,
+                "tile": 4,
+                "tree_activation_partial_output_max_abs_errors": [
+                  3.725290298461914e-09,
+                  9.313225746154785e-10,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 117440512,
+                "capacity": 16,
+                "core_output_max_abs_error": 1.979060471057892e-09,
+                "count": 1,
+                "cross_segment_boundary": false,
+                "down_dtype": 6,
+                "layer": 6,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": false,
+                "scalar_max_abs_error": 1.1641532182693481e-10,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  3.725290298461914e-09,
+                  9.313225746154785e-10,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 117440512,
+                "capacity": 16,
+                "core_output_max_abs_error": 2.270098775625229e-09,
+                "count": 3,
+                "cross_segment_boundary": false,
+                "down_dtype": 6,
+                "layer": 6,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": true,
+                "scalar_max_abs_error": 1.1641532182693481e-10,
+                "tile": 4,
+                "tree_activation_partial_output_max_abs_errors": [
+                  3.725290298461914e-09,
+                  9.313225746154785e-10,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 117440512,
+                "capacity": 16,
+                "core_output_max_abs_error": 2.270098775625229e-09,
+                "count": 3,
+                "cross_segment_boundary": false,
+                "down_dtype": 6,
+                "layer": 6,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": true,
+                "scalar_max_abs_error": 1.1641532182693481e-10,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  3.725290298461914e-09,
+                  9.313225746154785e-10,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 117440512,
+                "capacity": 16,
+                "core_output_max_abs_error": 2.08092387765646e-09,
+                "count": 3,
+                "cross_segment_boundary": false,
+                "down_dtype": 6,
+                "layer": 6,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": false,
+                "scalar_max_abs_error": 1.1641532182693481e-10,
+                "tile": 4,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  1.1641532182693481e-09,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 117440512,
+                "capacity": 16,
+                "core_output_max_abs_error": 2.08092387765646e-09,
+                "count": 3,
+                "cross_segment_boundary": false,
+                "down_dtype": 6,
+                "layer": 6,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": false,
+                "scalar_max_abs_error": 1.1641532182693481e-10,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  1.1641532182693481e-09,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 117440512,
+                "capacity": 16,
+                "core_output_max_abs_error": 2.270098775625229e-09,
+                "count": 5,
+                "cross_segment_boundary": false,
+                "down_dtype": 6,
+                "layer": 6,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": true,
+                "scalar_max_abs_error": 1.1641532182693481e-10,
+                "tile": 4,
+                "tree_activation_partial_output_max_abs_errors": [
+                  3.725290298461914e-09,
+                  9.313225746154785e-10,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 117440512,
+                "capacity": 16,
+                "core_output_max_abs_error": 2.270098775625229e-09,
+                "count": 5,
+                "cross_segment_boundary": false,
+                "down_dtype": 6,
+                "layer": 6,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": true,
+                "scalar_max_abs_error": 1.1641532182693481e-10,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  3.725290298461914e-09,
+                  9.313225746154785e-10,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 117440512,
+                "capacity": 16,
+                "core_output_max_abs_error": 2.2118911147117615e-09,
+                "count": 5,
+                "cross_segment_boundary": false,
+                "down_dtype": 6,
+                "layer": 6,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": false,
+                "scalar_max_abs_error": 1.1641532182693481e-10,
+                "tile": 4,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  1.1641532182693481e-09,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 117440512,
+                "capacity": 16,
+                "core_output_max_abs_error": 2.2118911147117615e-09,
+                "count": 5,
+                "cross_segment_boundary": false,
+                "down_dtype": 6,
+                "layer": 6,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": false,
+                "scalar_max_abs_error": 1.1641532182693481e-10,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  1.1641532182693481e-09,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 117440512,
+                "capacity": 16,
+                "core_output_max_abs_error": 2.270098775625229e-09,
+                "count": 8,
+                "cross_segment_boundary": false,
+                "down_dtype": 6,
+                "layer": 6,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": true,
+                "scalar_max_abs_error": 1.1641532182693481e-10,
+                "tile": 4,
+                "tree_activation_partial_output_max_abs_errors": [
+                  3.725290298461914e-09,
+                  9.313225746154785e-10,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 117440512,
+                "capacity": 16,
+                "core_output_max_abs_error": 2.270098775625229e-09,
+                "count": 8,
+                "cross_segment_boundary": false,
+                "down_dtype": 6,
+                "layer": 6,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": true,
+                "scalar_max_abs_error": 1.1641532182693481e-10,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  3.725290298461914e-09,
+                  9.313225746154785e-10,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 117440512,
+                "capacity": 16,
+                "core_output_max_abs_error": 2.2118911147117615e-09,
+                "count": 8,
+                "cross_segment_boundary": false,
+                "down_dtype": 6,
+                "layer": 6,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": false,
+                "scalar_max_abs_error": 1.1641532182693481e-10,
+                "tile": 4,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  1.6298145055770874e-09,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 117440512,
+                "capacity": 16,
+                "core_output_max_abs_error": 2.2118911147117615e-09,
+                "count": 8,
+                "cross_segment_boundary": false,
+                "down_dtype": 6,
+                "layer": 6,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": false,
+                "scalar_max_abs_error": 1.1641532182693481e-10,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  1.6298145055770874e-09,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 318767104,
+                "capacity": 64,
+                "core_output_max_abs_error": 2.270098775625229e-09,
+                "count": 8,
+                "cross_segment_boundary": false,
+                "down_dtype": 6,
+                "layer": 6,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": true,
+                "scalar_max_abs_error": 1.1641532182693481e-10,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  3.725290298461914e-09,
+                  9.313225746154785e-10,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 318767104,
+                "capacity": 64,
+                "core_output_max_abs_error": 2.2118911147117615e-09,
+                "count": 8,
+                "cross_segment_boundary": false,
+                "down_dtype": 6,
+                "layer": 6,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": false,
+                "scalar_max_abs_error": 1.1641532182693481e-10,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  1.6298145055770874e-09,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 452984832,
+                "capacity": 96,
+                "core_output_max_abs_error": 2.270098775625229e-09,
+                "count": 8,
+                "cross_segment_boundary": true,
+                "down_dtype": 6,
+                "layer": 6,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": true,
+                "scalar_max_abs_error": 1.1641532182693481e-10,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  1.1175870895385742e-08,
+                  9.313225746154785e-10,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 452984832,
+                "capacity": 96,
+                "core_output_max_abs_error": 2.2118911147117615e-09,
+                "count": 8,
+                "cross_segment_boundary": false,
+                "down_dtype": 6,
+                "layer": 6,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": false,
+                "scalar_max_abs_error": 1.1641532182693481e-10,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  1.6298145055770874e-09,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 134217728,
+                "capacity": 16,
+                "core_output_max_abs_error": 3.92901711165905e-09,
+                "count": 1,
+                "cross_segment_boundary": false,
+                "down_dtype": 8,
+                "layer": 0,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": true,
+                "scalar_max_abs_error": 1.1641532182693481e-10,
+                "tile": 4,
+                "tree_activation_partial_output_max_abs_errors": [
+                  3.725290298461914e-09,
+                  1.3969838619232178e-09,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 134217728,
+                "capacity": 16,
+                "core_output_max_abs_error": 3.92901711165905e-09,
+                "count": 1,
+                "cross_segment_boundary": false,
+                "down_dtype": 8,
+                "layer": 0,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": true,
+                "scalar_max_abs_error": 1.1641532182693481e-10,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  3.725290298461914e-09,
+                  1.3969838619232178e-09,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 134217728,
+                "capacity": 16,
+                "core_output_max_abs_error": 3.92901711165905e-09,
+                "count": 1,
+                "cross_segment_boundary": false,
+                "down_dtype": 8,
+                "layer": 0,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": false,
+                "scalar_max_abs_error": 1.1641532182693481e-10,
+                "tile": 4,
+                "tree_activation_partial_output_max_abs_errors": [
+                  3.725290298461914e-09,
+                  1.3969838619232178e-09,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 134217728,
+                "capacity": 16,
+                "core_output_max_abs_error": 3.92901711165905e-09,
+                "count": 1,
+                "cross_segment_boundary": false,
+                "down_dtype": 8,
+                "layer": 0,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": false,
+                "scalar_max_abs_error": 1.1641532182693481e-10,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  3.725290298461914e-09,
+                  1.3969838619232178e-09,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 134217728,
+                "capacity": 16,
+                "core_output_max_abs_error": 3.92901711165905e-09,
+                "count": 3,
+                "cross_segment_boundary": false,
+                "down_dtype": 8,
+                "layer": 0,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": true,
+                "scalar_max_abs_error": 1.1641532182693481e-10,
+                "tile": 4,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  1.3969838619232178e-09,
+                  4.656612873077393e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 134217728,
+                "capacity": 16,
+                "core_output_max_abs_error": 3.92901711165905e-09,
+                "count": 3,
+                "cross_segment_boundary": false,
+                "down_dtype": 8,
+                "layer": 0,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": true,
+                "scalar_max_abs_error": 1.1641532182693481e-10,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  1.3969838619232178e-09,
+                  4.656612873077393e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 134217728,
+                "capacity": 16,
+                "core_output_max_abs_error": 3.92901711165905e-09,
+                "count": 3,
+                "cross_segment_boundary": false,
+                "down_dtype": 8,
+                "layer": 0,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": false,
+                "scalar_max_abs_error": 2.3283064365386963e-10,
+                "tile": 4,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  1.862645149230957e-09,
+                  6.984919309616089e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 134217728,
+                "capacity": 16,
+                "core_output_max_abs_error": 3.92901711165905e-09,
+                "count": 3,
+                "cross_segment_boundary": false,
+                "down_dtype": 8,
+                "layer": 0,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": false,
+                "scalar_max_abs_error": 2.3283064365386963e-10,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  1.862645149230957e-09,
+                  6.984919309616089e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 134217728,
+                "capacity": 16,
+                "core_output_max_abs_error": 3.92901711165905e-09,
+                "count": 5,
+                "cross_segment_boundary": false,
+                "down_dtype": 8,
+                "layer": 0,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": true,
+                "scalar_max_abs_error": 1.1641532182693481e-10,
+                "tile": 4,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  1.862645149230957e-09,
+                  4.656612873077393e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 134217728,
+                "capacity": 16,
+                "core_output_max_abs_error": 3.92901711165905e-09,
+                "count": 5,
+                "cross_segment_boundary": false,
+                "down_dtype": 8,
+                "layer": 0,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": true,
+                "scalar_max_abs_error": 1.1641532182693481e-10,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  1.862645149230957e-09,
+                  4.656612873077393e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 134217728,
+                "capacity": 16,
+                "core_output_max_abs_error": 3.958120942115784e-09,
+                "count": 5,
+                "cross_segment_boundary": false,
+                "down_dtype": 8,
+                "layer": 0,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": false,
+                "scalar_max_abs_error": 2.3283064365386963e-10,
+                "tile": 4,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  1.862645149230957e-09,
+                  6.984919309616089e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 134217728,
+                "capacity": 16,
+                "core_output_max_abs_error": 3.958120942115784e-09,
+                "count": 5,
+                "cross_segment_boundary": false,
+                "down_dtype": 8,
+                "layer": 0,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": false,
+                "scalar_max_abs_error": 2.3283064365386963e-10,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  1.862645149230957e-09,
+                  6.984919309616089e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 134217728,
+                "capacity": 16,
+                "core_output_max_abs_error": 3.92901711165905e-09,
+                "count": 8,
+                "cross_segment_boundary": false,
+                "down_dtype": 8,
+                "layer": 0,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": true,
+                "scalar_max_abs_error": 2.3283064365386963e-10,
+                "tile": 4,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  1.862645149230957e-09,
+                  4.656612873077393e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 134217728,
+                "capacity": 16,
+                "core_output_max_abs_error": 3.92901711165905e-09,
+                "count": 8,
+                "cross_segment_boundary": false,
+                "down_dtype": 8,
+                "layer": 0,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": true,
+                "scalar_max_abs_error": 2.3283064365386963e-10,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  1.862645149230957e-09,
+                  4.656612873077393e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 134217728,
+                "capacity": 16,
+                "core_output_max_abs_error": 3.958120942115784e-09,
+                "count": 8,
+                "cross_segment_boundary": false,
+                "down_dtype": 8,
+                "layer": 0,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": false,
+                "scalar_max_abs_error": 2.3283064365386963e-10,
+                "tile": 4,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  3.725290298461914e-09,
+                  9.313225746154785e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 134217728,
+                "capacity": 16,
+                "core_output_max_abs_error": 3.958120942115784e-09,
+                "count": 8,
+                "cross_segment_boundary": false,
+                "down_dtype": 8,
+                "layer": 0,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": false,
+                "scalar_max_abs_error": 2.3283064365386963e-10,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  3.725290298461914e-09,
+                  9.313225746154785e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 335544320,
+                "capacity": 64,
+                "core_output_max_abs_error": 3.92901711165905e-09,
+                "count": 8,
+                "cross_segment_boundary": false,
+                "down_dtype": 8,
+                "layer": 0,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": true,
+                "scalar_max_abs_error": 2.3283064365386963e-10,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  1.862645149230957e-09,
+                  4.656612873077393e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 335544320,
+                "capacity": 64,
+                "core_output_max_abs_error": 3.958120942115784e-09,
+                "count": 8,
+                "cross_segment_boundary": false,
+                "down_dtype": 8,
+                "layer": 0,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": false,
+                "scalar_max_abs_error": 2.3283064365386963e-10,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  3.725290298461914e-09,
+                  9.313225746154785e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 469762048,
+                "capacity": 96,
+                "core_output_max_abs_error": 4.190951585769653e-09,
+                "count": 8,
+                "cross_segment_boundary": true,
+                "down_dtype": 8,
+                "layer": 0,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": true,
+                "scalar_max_abs_error": 2.3283064365386963e-10,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  1.862645149230957e-09,
+                  4.656612873077393e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 469762048,
+                "capacity": 96,
+                "core_output_max_abs_error": 3.958120942115784e-09,
+                "count": 8,
+                "cross_segment_boundary": false,
+                "down_dtype": 8,
+                "layer": 0,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": false,
+                "scalar_max_abs_error": 2.3283064365386963e-10,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  3.725290298461914e-09,
+                  9.313225746154785e-10
+                ]
+              }
+            ],
+            "combined_private_pages": 1998848,
+            "context_retired": false,
+            "failure_cases": 12,
+            "full_model_96_nvidia_rejected": true,
+            "host_scratch_upper_bound": 15872000,
+            "io_cap_bytes": 67108864,
+            "io_checkpoint_bound": 8388608,
+            "main_erased_buffers": 812,
+            "main_erased_bytes": 123994112,
+            "main_limit_bytes": 1073741824,
+            "no_original_ledger_publication": true,
+            "performance_or_production_private_worker_accepted": false,
+            "private_limit_bytes": 2097152,
+            "private_register_spill_driver_erasure_accepted": false,
+            "scope": "fixed-public-grouped-routed-MoE-operator-only",
+            "shared_expert_or_FFN_or_full_graph_accepted": false
+          }
+        },
+        "nvidia": {
+          "aggregate_maxima": {
+            "core_output_max_abs_error": 4.6566128730773926e-09,
+            "scalar_max_abs_error": 0,
+            "tree_activation_partial_output_max_abs_errors": [
+              7.450580596923828e-09,
+              3.725290298461914e-09,
+              9.313225746154785e-10
+            ]
+          },
+          "numeric_case_count": 40,
+          "original_receipt_name": "kuno-rust-user-grouped-moe-nvidia-20261005-v1.json",
+          "original_receipt_sha256": "29a82d6a195b849e96592ae259c7973fb4b4e8d2d7aafa75b67763fc8657034b",
+          "report": {
+            "all_ten_original_ranks_and_probabilities": true,
+            "cases": [
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 117440512,
+                "capacity": 16,
+                "core_output_max_abs_error": 2.0954757928848267e-09,
+                "count": 1,
+                "cross_segment_boundary": false,
+                "down_dtype": 6,
+                "layer": 6,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": true,
+                "scalar_max_abs_error": 0.0,
+                "tile": 4,
+                "tree_activation_partial_output_max_abs_errors": [
+                  3.725290298461914e-09,
+                  9.313225746154785e-10,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 117440512,
+                "capacity": 16,
+                "core_output_max_abs_error": 2.0954757928848267e-09,
+                "count": 1,
+                "cross_segment_boundary": false,
+                "down_dtype": 6,
+                "layer": 6,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": true,
+                "scalar_max_abs_error": 0.0,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  3.725290298461914e-09,
+                  9.313225746154785e-10,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 117440512,
+                "capacity": 16,
+                "core_output_max_abs_error": 2.0954757928848267e-09,
+                "count": 1,
+                "cross_segment_boundary": false,
+                "down_dtype": 6,
+                "layer": 6,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": false,
+                "scalar_max_abs_error": 0.0,
+                "tile": 4,
+                "tree_activation_partial_output_max_abs_errors": [
+                  3.725290298461914e-09,
+                  9.313225746154785e-10,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 117440512,
+                "capacity": 16,
+                "core_output_max_abs_error": 2.0954757928848267e-09,
+                "count": 1,
+                "cross_segment_boundary": false,
+                "down_dtype": 6,
+                "layer": 6,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": false,
+                "scalar_max_abs_error": 0.0,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  3.725290298461914e-09,
+                  9.313225746154785e-10,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 117440512,
+                "capacity": 16,
+                "core_output_max_abs_error": 2.3283064365386963e-09,
+                "count": 3,
+                "cross_segment_boundary": false,
+                "down_dtype": 6,
+                "layer": 6,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": true,
+                "scalar_max_abs_error": 0.0,
+                "tile": 4,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  9.313225746154785e-10,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 117440512,
+                "capacity": 16,
+                "core_output_max_abs_error": 2.3283064365386963e-09,
+                "count": 3,
+                "cross_segment_boundary": false,
+                "down_dtype": 6,
+                "layer": 6,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": true,
+                "scalar_max_abs_error": 0.0,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  9.313225746154785e-10,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 117440512,
+                "capacity": 16,
+                "core_output_max_abs_error": 2.1245796233415604e-09,
+                "count": 3,
+                "cross_segment_boundary": false,
+                "down_dtype": 6,
+                "layer": 6,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": false,
+                "scalar_max_abs_error": 0.0,
+                "tile": 4,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  1.1641532182693481e-09,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 117440512,
+                "capacity": 16,
+                "core_output_max_abs_error": 2.1245796233415604e-09,
+                "count": 3,
+                "cross_segment_boundary": false,
+                "down_dtype": 6,
+                "layer": 6,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": false,
+                "scalar_max_abs_error": 0.0,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  1.1641532182693481e-09,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 117440512,
+                "capacity": 16,
+                "core_output_max_abs_error": 2.3283064365386963e-09,
+                "count": 5,
+                "cross_segment_boundary": false,
+                "down_dtype": 6,
+                "layer": 6,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": true,
+                "scalar_max_abs_error": 0.0,
+                "tile": 4,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  1.3969838619232178e-09,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 117440512,
+                "capacity": 16,
+                "core_output_max_abs_error": 2.3283064365386963e-09,
+                "count": 5,
+                "cross_segment_boundary": false,
+                "down_dtype": 6,
+                "layer": 6,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": true,
+                "scalar_max_abs_error": 0.0,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  1.3969838619232178e-09,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 117440512,
+                "capacity": 16,
+                "core_output_max_abs_error": 2.3283064365386963e-09,
+                "count": 5,
+                "cross_segment_boundary": false,
+                "down_dtype": 6,
+                "layer": 6,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": false,
+                "scalar_max_abs_error": 0.0,
+                "tile": 4,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  1.862645149230957e-09,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 117440512,
+                "capacity": 16,
+                "core_output_max_abs_error": 2.3283064365386963e-09,
+                "count": 5,
+                "cross_segment_boundary": false,
+                "down_dtype": 6,
+                "layer": 6,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": false,
+                "scalar_max_abs_error": 0.0,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  1.862645149230957e-09,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 117440512,
+                "capacity": 16,
+                "core_output_max_abs_error": 2.3283064365386963e-09,
+                "count": 8,
+                "cross_segment_boundary": false,
+                "down_dtype": 6,
+                "layer": 6,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": true,
+                "scalar_max_abs_error": 0.0,
+                "tile": 4,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  1.3969838619232178e-09,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 117440512,
+                "capacity": 16,
+                "core_output_max_abs_error": 2.3283064365386963e-09,
+                "count": 8,
+                "cross_segment_boundary": false,
+                "down_dtype": 6,
+                "layer": 6,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": true,
+                "scalar_max_abs_error": 0.0,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  1.3969838619232178e-09,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 117440512,
+                "capacity": 16,
+                "core_output_max_abs_error": 2.3283064365386963e-09,
+                "count": 8,
+                "cross_segment_boundary": false,
+                "down_dtype": 6,
+                "layer": 6,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": false,
+                "scalar_max_abs_error": 0.0,
+                "tile": 4,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  1.862645149230957e-09,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 117440512,
+                "capacity": 16,
+                "core_output_max_abs_error": 2.3283064365386963e-09,
+                "count": 8,
+                "cross_segment_boundary": false,
+                "down_dtype": 6,
+                "layer": 6,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": false,
+                "scalar_max_abs_error": 0.0,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  1.862645149230957e-09,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 318767104,
+                "capacity": 64,
+                "core_output_max_abs_error": 2.3283064365386963e-09,
+                "count": 8,
+                "cross_segment_boundary": false,
+                "down_dtype": 6,
+                "layer": 6,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": true,
+                "scalar_max_abs_error": 0.0,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  1.3969838619232178e-09,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 318767104,
+                "capacity": 64,
+                "core_output_max_abs_error": 2.3283064365386963e-09,
+                "count": 8,
+                "cross_segment_boundary": false,
+                "down_dtype": 6,
+                "layer": 6,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": false,
+                "scalar_max_abs_error": 0.0,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  1.862645149230957e-09,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 452984832,
+                "capacity": 96,
+                "core_output_max_abs_error": 2.3283064365386963e-09,
+                "count": 8,
+                "cross_segment_boundary": true,
+                "down_dtype": 6,
+                "layer": 6,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": true,
+                "scalar_max_abs_error": 0.0,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  9.313225746154785e-10,
+                  4.656612873077393e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 452984832,
+                "capacity": 96,
+                "core_output_max_abs_error": 2.3283064365386963e-09,
+                "count": 8,
+                "cross_segment_boundary": false,
+                "down_dtype": 6,
+                "layer": 6,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": false,
+                "scalar_max_abs_error": 0.0,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  1.862645149230957e-09,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 134217728,
+                "capacity": 16,
+                "core_output_max_abs_error": 3.987224772572517e-09,
+                "count": 1,
+                "cross_segment_boundary": false,
+                "down_dtype": 8,
+                "layer": 0,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": true,
+                "scalar_max_abs_error": 0.0,
+                "tile": 4,
+                "tree_activation_partial_output_max_abs_errors": [
+                  3.725290298461914e-09,
+                  1.3969838619232178e-09,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 134217728,
+                "capacity": 16,
+                "core_output_max_abs_error": 3.987224772572517e-09,
+                "count": 1,
+                "cross_segment_boundary": false,
+                "down_dtype": 8,
+                "layer": 0,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": true,
+                "scalar_max_abs_error": 0.0,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  3.725290298461914e-09,
+                  1.3969838619232178e-09,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 134217728,
+                "capacity": 16,
+                "core_output_max_abs_error": 3.987224772572517e-09,
+                "count": 1,
+                "cross_segment_boundary": false,
+                "down_dtype": 8,
+                "layer": 0,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": false,
+                "scalar_max_abs_error": 0.0,
+                "tile": 4,
+                "tree_activation_partial_output_max_abs_errors": [
+                  3.725290298461914e-09,
+                  1.3969838619232178e-09,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 134217728,
+                "capacity": 16,
+                "core_output_max_abs_error": 3.987224772572517e-09,
+                "count": 1,
+                "cross_segment_boundary": false,
+                "down_dtype": 8,
+                "layer": 0,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": false,
+                "scalar_max_abs_error": 0.0,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  3.725290298461914e-09,
+                  1.3969838619232178e-09,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 134217728,
+                "capacity": 16,
+                "core_output_max_abs_error": 3.987224772572517e-09,
+                "count": 3,
+                "cross_segment_boundary": false,
+                "down_dtype": 8,
+                "layer": 0,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": true,
+                "scalar_max_abs_error": 0.0,
+                "tile": 4,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  1.3969838619232178e-09,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 134217728,
+                "capacity": 16,
+                "core_output_max_abs_error": 3.987224772572517e-09,
+                "count": 3,
+                "cross_segment_boundary": false,
+                "down_dtype": 8,
+                "layer": 0,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": true,
+                "scalar_max_abs_error": 0.0,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  1.3969838619232178e-09,
+                  3.4924596548080444e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 134217728,
+                "capacity": 16,
+                "core_output_max_abs_error": 3.987224772572517e-09,
+                "count": 3,
+                "cross_segment_boundary": false,
+                "down_dtype": 8,
+                "layer": 0,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": false,
+                "scalar_max_abs_error": 0.0,
+                "tile": 4,
+                "tree_activation_partial_output_max_abs_errors": [
+                  3.725290298461914e-09,
+                  1.862645149230957e-09,
+                  4.656612873077393e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 134217728,
+                "capacity": 16,
+                "core_output_max_abs_error": 3.987224772572517e-09,
+                "count": 3,
+                "cross_segment_boundary": false,
+                "down_dtype": 8,
+                "layer": 0,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": false,
+                "scalar_max_abs_error": 0.0,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  3.725290298461914e-09,
+                  1.862645149230957e-09,
+                  4.656612873077393e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 134217728,
+                "capacity": 16,
+                "core_output_max_abs_error": 3.987224772572517e-09,
+                "count": 5,
+                "cross_segment_boundary": false,
+                "down_dtype": 8,
+                "layer": 0,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": true,
+                "scalar_max_abs_error": 0.0,
+                "tile": 4,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  1.862645149230957e-09,
+                  4.656612873077393e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 134217728,
+                "capacity": 16,
+                "core_output_max_abs_error": 3.987224772572517e-09,
+                "count": 5,
+                "cross_segment_boundary": false,
+                "down_dtype": 8,
+                "layer": 0,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": true,
+                "scalar_max_abs_error": 0.0,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  1.862645149230957e-09,
+                  4.656612873077393e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 134217728,
+                "capacity": 16,
+                "core_output_max_abs_error": 4.6566128730773926e-09,
+                "count": 5,
+                "cross_segment_boundary": false,
+                "down_dtype": 8,
+                "layer": 0,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": false,
+                "scalar_max_abs_error": 0.0,
+                "tile": 4,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  1.862645149230957e-09,
+                  4.656612873077393e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 134217728,
+                "capacity": 16,
+                "core_output_max_abs_error": 4.6566128730773926e-09,
+                "count": 5,
+                "cross_segment_boundary": false,
+                "down_dtype": 8,
+                "layer": 0,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": false,
+                "scalar_max_abs_error": 0.0,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  1.862645149230957e-09,
+                  4.656612873077393e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 134217728,
+                "capacity": 16,
+                "core_output_max_abs_error": 3.987224772572517e-09,
+                "count": 8,
+                "cross_segment_boundary": false,
+                "down_dtype": 8,
+                "layer": 0,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": true,
+                "scalar_max_abs_error": 0.0,
+                "tile": 4,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  1.862645149230957e-09,
+                  4.656612873077393e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 134217728,
+                "capacity": 16,
+                "core_output_max_abs_error": 3.987224772572517e-09,
+                "count": 8,
+                "cross_segment_boundary": false,
+                "down_dtype": 8,
+                "layer": 0,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": true,
+                "scalar_max_abs_error": 0.0,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  1.862645149230957e-09,
+                  4.656612873077393e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 134217728,
+                "capacity": 16,
+                "core_output_max_abs_error": 4.6566128730773926e-09,
+                "count": 8,
+                "cross_segment_boundary": false,
+                "down_dtype": 8,
+                "layer": 0,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": false,
+                "scalar_max_abs_error": 0.0,
+                "tile": 4,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  3.725290298461914e-09,
+                  9.313225746154785e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 134217728,
+                "capacity": 16,
+                "core_output_max_abs_error": 4.6566128730773926e-09,
+                "count": 8,
+                "cross_segment_boundary": false,
+                "down_dtype": 8,
+                "layer": 0,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": false,
+                "scalar_max_abs_error": 0.0,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  3.725290298461914e-09,
+                  9.313225746154785e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 335544320,
+                "capacity": 64,
+                "core_output_max_abs_error": 3.987224772572517e-09,
+                "count": 8,
+                "cross_segment_boundary": false,
+                "down_dtype": 8,
+                "layer": 0,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": true,
+                "scalar_max_abs_error": 0.0,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  1.862645149230957e-09,
+                  4.656612873077393e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 335544320,
+                "capacity": 64,
+                "core_output_max_abs_error": 4.6566128730773926e-09,
+                "count": 8,
+                "cross_segment_boundary": false,
+                "down_dtype": 8,
+                "layer": 0,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": false,
+                "scalar_max_abs_error": 0.0,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  3.725290298461914e-09,
+                  9.313225746154785e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 469762048,
+                "capacity": 96,
+                "core_output_max_abs_error": 4.190951585769653e-09,
+                "count": 8,
+                "cross_segment_boundary": true,
+                "down_dtype": 8,
+                "layer": 0,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": true,
+                "scalar_max_abs_error": 0.0,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  1.862645149230957e-09,
+                  6.984919309616089e-10
+                ]
+              },
+              {
+                "all_full_guards_and_inactive_tails": true,
+                "all_ten_ranks": true,
+                "bank_full_pages": 469762048,
+                "capacity": 96,
+                "core_output_max_abs_error": 4.6566128730773926e-09,
+                "count": 8,
+                "cross_segment_boundary": false,
+                "down_dtype": 8,
+                "layer": 0,
+                "operator_only_no_publication": true,
+                "original_bank_ledger_unchanged": true,
+                "overlap": false,
+                "scalar_max_abs_error": 0.0,
+                "tile": 8,
+                "tree_activation_partial_output_max_abs_errors": [
+                  7.450580596923828e-09,
+                  3.725290298461914e-09,
+                  9.313225746154785e-10
+                ]
+              }
+            ],
+            "combined_private_pages": 1998848,
+            "context_retired": false,
+            "failure_cases": 12,
+            "full_model_96_nvidia_rejected": true,
+            "host_scratch_upper_bound": 15872000,
+            "io_cap_bytes": 67108864,
+            "io_checkpoint_bound": 8388608,
+            "main_erased_buffers": 812,
+            "main_erased_bytes": 123994112,
+            "main_limit_bytes": 1073741824,
+            "no_original_ledger_publication": true,
+            "performance_or_production_private_worker_accepted": false,
+            "private_limit_bytes": 2097152,
+            "private_register_spill_driver_erasure_accepted": false,
+            "scope": "fixed-public-grouped-routed-MoE-operator-only",
+            "shared_expert_or_FFN_or_full_graph_accepted": false
+          }
+        }
+      },
+      "frozen_executable": "/tmp/kuno-rust-native-batch-owner-benchmark-20261005",
+      "frozen_executable_sha256": "0c1b3f553ae24ee497f2f9637324778582feeeb89b9427e0c451d67d157438f5"
+    }
+  },
+  "post_fixture_observed_driver_identity": {
+    "intel": "Mesa26.2.3 kisak PPA; Vulkan1.4.354;8086:e223",
+    "nvidia": "595.91.07;Vulkan1.4.329;10de:2504",
+    "vulkan_instance": "1.3.275"
+  },
+  "protected_user_unit": {
+    "core_hard": 0,
+    "core_soft": 0,
+    "limits_verified_inside_unit_before_exec": true,
+    "memory_max_bytes": 8589934592,
+    "memory_swap_max": 0,
+    "runtime_max_seconds": 900,
+    "wrapper_sha256": "8c1510e050aa9606db4c116f2ed74f44efd60be3ffc1de04c264d93645de80e9"
+  },
+  "scope": "fixed-public-synthetic-numeric-acceptance-only",
+  "whole_model_native_batch_or_private_worker_accepted": false
+}

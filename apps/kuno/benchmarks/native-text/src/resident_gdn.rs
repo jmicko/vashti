@@ -41,6 +41,9 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
+#[path = "resident_gdn_batch.rs"]
+pub(crate) mod batch;
+
 use cubecl::prelude::*;
 use cubecl::server::Handle;
 use cubecl::wgpu::WgpuRuntime;
@@ -77,6 +80,11 @@ fn arena_fault(_: private_arena::ArenaError) -> Error {
 /// Generate once per transient sequence; reuse the key for all of its layers.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct SequenceKey(u64);
+impl zeroize::Zeroize for SequenceKey {
+    fn zeroize(&mut self) {
+        zeroize::Zeroize::zeroize(&mut self.0);
+    }
+}
 impl SequenceKey {
     pub fn new() -> Result<Self> {
         identity().map(Self)
@@ -394,6 +402,7 @@ pub fn logical_handle(arena: &PrivateArena, id: BufferId) -> Result<Handle> {
 enum Phase {
     Ready(u64),
     Uncommitted(u64),
+    UncommittedBatch(u64, usize),
     Poisoned,
 }
 struct Lifecycle {
@@ -565,6 +574,8 @@ pub struct ResidentGdn<'file> {
     buffers: Buffers,
     projections: Projections<'file>,
     lifecycle: Lifecycle,
+    batch_pending: Option<batch::StageAnchor>,
+    batch_poison: Option<std::sync::Arc<AtomicBool>>,
 }
 
 impl<'file> ResidentGdn<'file> {
@@ -647,6 +658,8 @@ impl<'file> ResidentGdn<'file> {
             buffers,
             projections,
             lifecycle: Lifecycle::new(layout.max_context),
+            batch_pending: None,
+            batch_poison: None,
         })
     }
     pub fn layout(&self) -> StageLayout {
@@ -656,9 +669,16 @@ impl<'file> ResidentGdn<'file> {
     /// abandoned, owner must erase the enclosing sequence, not just this layer.
     pub fn requires_erasure_if_abandoned(&self) -> bool {
         !matches!(self.lifecycle.phase, Phase::Ready(_))
+            || self
+                .batch_poison
+                .as_ref()
+                .is_some_and(|p| p.load(Ordering::Acquire))
     }
     pub fn poison(&mut self) {
         self.lifecycle.poison();
+        if let Some(poison) = &self.batch_poison {
+            poison.store(true, Ordering::Release);
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -706,6 +726,13 @@ impl<'file> ResidentGdn<'file> {
         cancel: &AtomicBool,
     ) -> Result<PendingGdn> {
         cancelled(cancel)?;
+        if self
+            .batch_poison
+            .as_ref()
+            .is_some_and(|p| p.load(Ordering::Acquire))
+        {
+            return Err(fault("resident GDN sequence poisoned"));
+        }
         if graph.binding_id() != self.binding
             || public.binding != self.binding
             || public.layer != self.layer
@@ -884,6 +911,13 @@ impl<'file> ResidentGdn<'file> {
     ) -> Result<()> {
         let attempted = (|| {
             cancelled(cancel)?;
+            if self
+                .batch_poison
+                .as_ref()
+                .is_some_and(|p| p.load(Ordering::Acquire))
+            {
+                return Err(fault("resident GDN sequence poisoned"));
+            }
             arena.client().map_err(arena_fault)?;
             if receipt.stage != self.identity || receipt.sequence != self.sequence {
                 return Err(fault("resident GDN foreign token receipt"));

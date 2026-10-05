@@ -197,6 +197,28 @@ fn guarded_readback<T>(
     result
 }
 
+/// Sticky logical failure is checked under the existing admission guard. A
+/// pending owner's Drop sets only this atomic; it never reenters the mutex.
+fn checked_sequence_guard<T>(
+    ledger: &mut MainAdmission,
+    poison: &AtomicBool,
+    operation: impl FnOnce(&mut MainAdmission) -> Result<T>,
+) -> Result<T> {
+    if poison.load(Ordering::Acquire) {
+        ledger.poison();
+        return Err(Error::InvalidFormat("resident sequence poisoned"));
+    }
+    let value = operation(ledger);
+    if poison.load(Ordering::Acquire) {
+        ledger.poison();
+        return Err(Error::InvalidFormat("resident sequence poisoned"));
+    }
+    if value.is_err() {
+        ledger.poison();
+    }
+    value
+}
+
 /// Shared host accounting only. It owns no activations/sequence state. The
 /// exclusive resident owner serializes all allocations on the same stream;
 /// selector callbacks need a clone while the projector borrows its executor.
@@ -208,6 +230,7 @@ pub(crate) struct ResidentAdmission {
     token_io_checkpoint: bool,
     ordered_sources: Option<OrderedSources>,
     retired: Arc<AtomicBool>,
+    sequence_poison: Arc<AtomicBool>,
 }
 impl ResidentAdmission {
     fn with_ledger<T>(&self, f: impl FnOnce(&mut MainAdmission) -> Result<T>) -> Result<T> {
@@ -230,7 +253,7 @@ impl ResidentAdmission {
         }
     }
     fn active(&self) -> Result<()> {
-        if self.retired.load(Ordering::Acquire) {
+        if self.retired.load(Ordering::Acquire) || self.sequence_poison.load(Ordering::Acquire) {
             self.poison();
             return Err(Error::InvalidFormat("resident GPU context retired"));
         }
@@ -243,7 +266,11 @@ impl ResidentAdmission {
         })
     }
     pub(crate) fn allocate<T>(&self, requests: &[u64], f: impl FnOnce() -> Result<T>) -> Result<T> {
-        self.with_ledger(|ledger| guarded_allocation(ledger, requests, || self.telemetry(), f))
+        self.with_ledger(|ledger| {
+            checked_sequence_guard(ledger, &self.sequence_poison, |ledger| {
+                guarded_allocation(ledger, requests, || self.telemetry(), f)
+            })
+        })
     }
     pub(crate) fn readback<T>(&self, f: impl FnOnce() -> Result<T>) -> Result<T> {
         self.readback_with_cadence(false, false, f)
@@ -271,19 +298,34 @@ impl ResidentAdmission {
             return Err(Error::InvalidFormat("resident GPU context retired"));
         }
         self.with_ledger(|ledger| {
-            guarded_readback(
-                ledger,
-                f,
-                || {
-                    if checkpoint_needed(intermediate, self.token_io_checkpoint, ordered_router) {
-                        self.checkpoint()
-                    } else {
-                        Ok(())
-                    }
-                },
-                || self.telemetry(),
-            )
+            checked_sequence_guard(ledger, &self.sequence_poison, |ledger| {
+                guarded_readback(
+                    ledger,
+                    f,
+                    || {
+                        if checkpoint_needed(intermediate, self.token_io_checkpoint, ordered_router)
+                        {
+                            self.checkpoint()
+                        } else {
+                            Ok(())
+                        }
+                    },
+                    || self.telemetry(),
+                )
+            })
         })
+    }
+    #[allow(dead_code)] // Shared native-family dependency; consumers arrive separately.
+    pub(crate) fn sequence_poison(&self) -> Arc<AtomicBool> {
+        self.sequence_poison.clone()
+    }
+    /// Identity only: dependency selectors must clean/credit the SAME stream
+    /// client that owns their maps. No telemetry or nested admission lock.
+    pub(crate) fn check_client(&self, client: &ComputeClient<WgpuRuntime>) -> Result<()> {
+        if !std::ptr::eq(self.client.info(), client.info()) {
+            return Err(Error::InvalidBufferLength);
+        }
+        Ok(())
     }
     pub(crate) fn transient_io(&self) -> bool {
         self.transient_io
@@ -674,6 +716,7 @@ impl<'a> GpuExecutor<'a> {
         )
         .map_err(admission_error)?;
         let admission = ResidentAdmission {
+            sequence_poison: Arc::new(AtomicBool::new(false)),
             client: self.client.clone(),
             transient_io: self.transient_resident.is_some(),
             token_io_checkpoint: self.token_io_checkpoint,
@@ -1765,6 +1808,85 @@ mod admission_tests {
         );
         assert!(retried.get());
         assert!(retired.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn sequence_failure_rejects_before_mutation_and_keeps_partial_source_debt() {
+        let poison = AtomicBool::new(true);
+        let mut ledger = MainAdmission::new(4 * PAGE, PAGE).unwrap();
+        let entered = Cell::new(false);
+        let result = checked_sequence_guard(&mut ledger, &poison, |_| {
+            entered.set(true);
+            Ok(())
+        });
+        assert!(result.is_err());
+        assert!(!entered.get());
+        assert!(ledger.is_poisoned());
+        assert_eq!(ledger.upper_bytes(), PAGE);
+
+        let healthy = AtomicBool::new(false);
+        let mut partial = MainAdmission::new(4 * PAGE, PAGE).unwrap();
+        let result: Result<()> = checked_sequence_guard(&mut partial, &healthy, |ledger| {
+            ledger.precharge(&[PAGE]).map_err(admission_error)?;
+            failure()
+        });
+        assert!(result.is_err());
+        assert!(partial.is_poisoned());
+        assert_eq!(partial.upper_bytes(), 2 * PAGE);
+        assert!(partial.completed_fence(0).is_err());
+    }
+
+    #[test]
+    fn sticky_drop_inside_held_admission_guard_does_not_reenter_mutex() {
+        struct StickyDrop(Arc<AtomicBool>);
+        impl Drop for StickyDrop {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::Release);
+            }
+        }
+        let poison = Arc::new(AtomicBool::new(false));
+        let physical_retired = AtomicBool::new(false);
+        let ledger = Mutex::new(MainAdmission::new(4 * PAGE, PAGE).unwrap());
+        let mut held = ledger.lock().unwrap();
+        let pending = StickyDrop(poison.clone());
+        let result = checked_sequence_guard(&mut held, &poison, |_| {
+            assert!(ledger.try_lock().is_err());
+            drop(pending);
+            Ok(())
+        });
+        assert!(result.is_err());
+        assert!(held.is_poisoned());
+        assert!(poison.load(Ordering::Acquire));
+        assert!(!physical_retired.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn healthy_sequence_guard_accepts_but_unwound_owner_blocks_later_reuse() {
+        struct StickyDrop(Arc<AtomicBool>);
+        impl Drop for StickyDrop {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::Release);
+            }
+        }
+        let getter: fn(&ResidentAdmission) -> Arc<AtomicBool> = ResidentAdmission::sequence_poison;
+        let _ = getter;
+        let poison = Arc::new(AtomicBool::new(false));
+        let mut ledger = MainAdmission::new(4 * PAGE, PAGE).unwrap();
+        assert_eq!(
+            checked_sequence_guard(&mut ledger, &poison, |_| Ok(7)).unwrap(),
+            7
+        );
+        assert!(!ledger.is_poisoned());
+        let unwind = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _pending = StickyDrop(poison.clone());
+            let _: Result<()> = checked_sequence_guard(&mut ledger, &poison, |_| {
+                panic!("public logical-owner unwind fixture")
+            });
+        }));
+        assert!(unwind.is_err());
+        assert!(poison.load(Ordering::Acquire));
+        assert!(checked_sequence_guard(&mut ledger, &poison, |_| Ok(())).is_err());
+        assert!(ledger.is_poisoned());
     }
 
     #[test]

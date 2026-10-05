@@ -108,6 +108,23 @@ pub struct BufferId {
     slot: usize,
 }
 
+#[cfg(test)]
+impl BufferId {
+    pub(crate) fn metadata_fixture(arena: u64, epoch: u64, slot: usize) -> Self {
+        Self { arena, epoch, slot }
+    }
+}
+
+// Fixed private transaction metadata can wipe opaque IDs without exposing or
+// forging their fields. The zero token is invalid (arena identities start at1).
+impl Zeroize for BufferId {
+    fn zeroize(&mut self) {
+        self.arena.zeroize();
+        self.epoch.zeroize();
+        self.slot.zeroize();
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BufferLayout {
     pub logical_words: usize,

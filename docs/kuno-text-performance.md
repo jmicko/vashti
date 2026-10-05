@@ -1036,3 +1036,86 @@ in `rust-native-gr-batch-source-20261005.json` and
 `apps/kuno/benchmarks/text/receipts`. Native GDN/QSA adapters and the complete
 layer-major transaction remain under implementation; no frontend change follows
 from this internal laboratory checkpoint.
+
+## Both-card layer and expert fixture acceptance (2026-10-05)
+
+The frozen layer fixture `b7b2e40955d39829f71bf8a6dc09620b38f658ada3725dc311e77e13cf328983`
+now passes on both B70 and RTX3060: four GDN counts and four rejection cases,
+eight PLE cases including odd geometry and its four rejection paths, and24 QSA
+causal-boundary/count cases plus four rejection cases. These receipts supersede
+the corresponding device-pending statements above, not their narrow scope.
+Across all cases, GDN original scalar-GPU error is zero; independent core error
+is at most1.9073486e-5 on B70 and1.5258789e-5 on3060. PLE original projection
+and new count1 GPU-tail errors are zero, with original CPU/core tail error at
+most1.9073486e-6 on each card. QSA original scalar-GPU error is zero; core error
+is at most9.5367432e-7 on B70 and1.4305115e-6 on3060.
+
+The owning routed-expert fixture frozen at
+`0c1b3f553ae24ee497f2f9637324778582feeeb89b9427e0c451d67d157438f5`
+passes40 primary numeric cases,12 rejection cases and an independent fresh owner
+after each rejection on each card. All ten original ranks/probabilities and
+staged bank generations are preserved; no original ledger is published. Maximum
+core-output error is4.1909516e-9 on B70 and4.6566129e-9 on3060; scalar-GPU
+error is2.3283064e-10 and zero respectively. Cumulative owning MAIN zero
+inspection covers123,994,112 B/812 pages per card. The separate shared expert,
+full FFN and actual ResidentModel adapter are outside this fixture's acceptance.
+
+All eight invocations used user systemd units with `MemorySwapMax=0`,
+`LimitCORE=0`,8 GiB `MemoryMax` and a900-second lab-only runtime bound. A wrapper
+verified actual cgroup/core limits before executing. This removes the need for
+sudo for these lab tests; it adds no production inference deadline. The user
+declared the cards free, and both listeners reported no resident models before
+the loop. Installed Kuno admission was not paused and independent CPU builds
+remained active. Unit runtimes are not performance measurements; inconsistent
+systemd MemoryPeak reports are not used as memory evidence.
+
+The complete numeric reports, all-case maxima, exact frozen identities,
+protection-wrapper hash, bounds and limitations are retained in
+[the layer device receipt](../apps/kuno/benchmarks/text/receipts/rust-gdn-ple-qsa-device-20261005.json)
+and [the expert device receipt](../apps/kuno/benchmarks/text/receipts/rust-grouped-moe-device-20261005.json).
+Owning MAIN/IO acceptance excludes opaque driver/register/spill and abrupt loss.
+These frozen fixtures predate the new native cache-backed adapters. They do not
+prove full4096 QSA, whole-model batching, private-worker acceptance, quality/
+options, production routing, or an Ollama speedup. Installed services, API,
+catalog, defaults and Vashti are unchanged.
+
+## Native cache-backed layer adapters (2026-10-05)
+
+Native GDN and QSA adapters now borrow the real ResidentModel state/cache and
+original packed projector. One reusable MAX8 workspace adds3,932,160 B for GDN
+and17,825,792 B for QSA, with no new public weights or duplicated committed
+cache. Opaque staged receipts bind the actual sequence, chunk, graph-derived
+36/12 layer masks and generations. QSA's required intermediate selector maps
+owning score/status pages under the actual admission/client and shared poison;
+both read leases drop before cleanup or credit. No state advances on enqueue.
+
+The separate shared expert borrows its original three cached matrices and gate
+vector, adding262,144 B of five full pages. GR final mixing reads only the last
+original residual column; intermediate prompt chunks omit final mixer/head.
+Full physical private extents must be offset zero and equal the actual backing
+buffer. The common actual admission now carries sticky logical sequence poison;
+pending Drop stores an atomic without reentering its held mutex, and allocation/
+readback recheck it under the admission guard. Logical failure is distinct from
+physical GPU retirement.
+
+Root source acceptance passes336 host/offline tests, strict all-target Clippy,
+locked offline release, formatting and diff checks. The
+[source receipt](../apps/kuno/benchmarks/text/receipts/rust-native-layer-adapters-source-20261005.json)
+records exact files, incremental owning budgets and the external whole-model
+fence/all-family preflight requirements. These native adapters are not connected
+to a whole-model chunk yet and require separate physical acceptance. Runtime
+components are not approval of the future aggregate64 MiB I/O budget. The actual
+native MoE and PLE adapters, complete constructor/transaction, matched Ollama
+improvement, quality/options and production worker/routing remain pending.
+
+The optional finite-fault projection fixture now passes28 original-format cases
+on each card with untouched scalar-GPU output/fault parity and owning cleanup:
+[exact receipt](../apps/kuno/benchmarks/text/receipts/rust-fused-matrix-fault-device-20261005.json).
+Earlier failures came from fixture initialization policy and intentional NaN
+upload rejection. Original public weights now prewarm before owned I/O; fixed
+nonfinite inputs use guarded IEEE words while the normal float upload finite
+check stays intact. All seven formats preserve the original output and OR bits;
+each card inspects4,587,520 cumulative MAIN bytes/140 pages as zero. This remains
+a small operator fixture; the optimization is default-off pending full-model
+parity, cancellation and paired measurements. No public or installed behavior
+changed.

@@ -1,0 +1,643 @@
+{
+  "additional_limits": [
+    "At most7 original rows and65536 columns per each of7 dtypes; this is not a full projection/graph or timing receipt.",
+    "Fused matrix fault remains default-off pending full-model parity/cancellation and paired whole-model measurements."
+  ],
+  "artifact": "existing Ollama GGUF sha256-89059c880c2f000b24520919d4ba2edd2a8101327c7f8ab33b2280e01addda75; read-only bounded tensor ranges; no model copy",
+  "date": "2026-10-05",
+  "devices": {
+    "intel": "Vulkan Intel BMG G31 vendor8086 devicee223 (Arc Pro B70)",
+    "nvidia": "Vulkan NVIDIA RTX3060 vendor10de device2504"
+  },
+  "fixture_repair": [
+    "Original immutable packed weights prewarm before owned I/O configuration.",
+    "Fixed NaN/infinity cases use guarded original IEEE words through upload_u32; upload_f32 finite checks stay intact.",
+    "Failure diagnostics expose only static classes/stages and original public dtype IDs, never error payloads."
+  ],
+  "frozen_executable": "/tmp/kuno-rust-native-batch-source-v6-20261005",
+  "frozen_executable_sha256": "861b285a0dc581ec6c03c1d16dd7814269e33f1a103cbece43fc7ebd9416409e",
+  "installed_service_api_catalog_default_or_vashti_changed": false,
+  "measurement_limits": [
+    "Numeric/ownership tests, not performance measurements.",
+    "User declared both GPUs free; both Ollama-compatible listeners reported no resident models before the loop. Installed Kuno admission was not paused.",
+    "Independent CPU compilation remained active; unit wall/CPU times are not benchmark results.",
+    "systemd MemoryPeak observations were inconsistent and are not used as memory evidence.",
+    "Owning MAIN and tracked I/O cleanup does not prove opaque driver/register/spill or abrupt-process-loss erasure."
+  ],
+  "operators": {
+    "intel": {
+      "max_core_abs_error": 0.0,
+      "original_receipt_name": "kuno-rust-user-fused-fault-intel-20261005-v7.json",
+      "original_receipt_sha256": "0d350aab589b44e254e33ffe3a15f0d0625b3b52b5c933eaa5cffa007eb76453",
+      "report": {
+        "cases": [
+          {
+            "columns": 2560,
+            "dtype": 0,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": false,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 2560,
+            "dtype": 0,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": true,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 2560,
+            "dtype": 0,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": true,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 2560,
+            "dtype": 0,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": true,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 4,
+            "dtype": 1,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": false,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 4,
+            "dtype": 1,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": true,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 4,
+            "dtype": 1,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": true,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 4,
+            "dtype": 1,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": true,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 2560,
+            "dtype": 30,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": false,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 2560,
+            "dtype": 30,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": true,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 2560,
+            "dtype": 30,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": true,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 2560,
+            "dtype": 30,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": true,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 2560,
+            "dtype": 12,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": false,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 2560,
+            "dtype": 12,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": true,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 2560,
+            "dtype": 12,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": true,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 2560,
+            "dtype": 12,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": true,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 160,
+            "dtype": 6,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": false,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 160,
+            "dtype": 6,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": true,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 160,
+            "dtype": 6,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": true,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 160,
+            "dtype": 6,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": true,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 2560,
+            "dtype": 14,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": false,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 2560,
+            "dtype": 14,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": true,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 2560,
+            "dtype": 14,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": true,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 2560,
+            "dtype": 14,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": true,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 640,
+            "dtype": 8,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": false,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 640,
+            "dtype": 8,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": true,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 640,
+            "dtype": 8,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": true,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 640,
+            "dtype": 8,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": true,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          }
+        ],
+        "context_retired": false,
+        "fixture": "fused-matrix-fault-probe",
+        "main_cap_bytes": 8388608,
+        "main_erased_buffers": 140,
+        "main_erased_bytes": 4587520,
+        "owned_cleanup": true,
+        "public_full_page_upper_bytes": 7340032,
+        "runtime_io_cap_bytes": 33554432,
+        "scope": "fixed-public-original-packed-projection-only",
+        "whole_graph_or_performance_accepted": false
+      }
+    },
+    "nvidia": {
+      "max_core_abs_error": 0.0,
+      "original_receipt_name": "kuno-rust-user-fused-fault-nvidia-20261005-v7.json",
+      "original_receipt_sha256": "0d350aab589b44e254e33ffe3a15f0d0625b3b52b5c933eaa5cffa007eb76453",
+      "report": {
+        "cases": [
+          {
+            "columns": 2560,
+            "dtype": 0,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": false,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 2560,
+            "dtype": 0,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": true,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 2560,
+            "dtype": 0,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": true,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 2560,
+            "dtype": 0,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": true,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 4,
+            "dtype": 1,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": false,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 4,
+            "dtype": 1,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": true,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 4,
+            "dtype": 1,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": true,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 4,
+            "dtype": 1,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": true,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 2560,
+            "dtype": 30,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": false,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 2560,
+            "dtype": 30,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": true,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 2560,
+            "dtype": 30,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": true,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 2560,
+            "dtype": 30,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": true,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 2560,
+            "dtype": 12,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": false,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 2560,
+            "dtype": 12,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": true,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 2560,
+            "dtype": 12,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": true,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 2560,
+            "dtype": 12,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": true,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 160,
+            "dtype": 6,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": false,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 160,
+            "dtype": 6,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": true,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 160,
+            "dtype": 6,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": true,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 160,
+            "dtype": 6,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": true,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 2560,
+            "dtype": 14,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": false,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 2560,
+            "dtype": 14,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": true,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 2560,
+            "dtype": 14,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": true,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 2560,
+            "dtype": 14,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": true,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 640,
+            "dtype": 8,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": false,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 640,
+            "dtype": 8,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": true,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 640,
+            "dtype": 8,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": true,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          },
+          {
+            "columns": 640,
+            "dtype": 8,
+            "fault_or_preserved": true,
+            "full_main_bytes": 163840,
+            "max_core_abs_error": 0.0,
+            "nonfinite_input": true,
+            "rows": 7,
+            "same_gpu_output_and_fault": true
+          }
+        ],
+        "context_retired": false,
+        "fixture": "fused-matrix-fault-probe",
+        "main_cap_bytes": 8388608,
+        "main_erased_buffers": 140,
+        "main_erased_bytes": 4587520,
+        "owned_cleanup": true,
+        "public_full_page_upper_bytes": 7340032,
+        "runtime_io_cap_bytes": 33554432,
+        "scope": "fixed-public-original-packed-projection-only",
+        "whole_graph_or_performance_accepted": false
+      }
+    }
+  },
+  "post_fixture_observed_driver_identity": {
+    "intel": "Mesa26.2.3 kisak PPA; Vulkan1.4.354;8086:e223",
+    "nvidia": "595.91.07;Vulkan1.4.329;10de:2504",
+    "vulkan_instance": "1.3.275"
+  },
+  "protected_user_unit": {
+    "core_hard": 0,
+    "core_soft": 0,
+    "limits_verified_inside_unit_before_exec": true,
+    "memory_max_bytes": 8589934592,
+    "memory_swap_max": 0,
+    "runtime_max_seconds": 900,
+    "wrapper_sha256": "8c1510e050aa9606db4c116f2ed74f44efd60be3ffc1de04c264d93645de80e9"
+  },
+  "scope": "fixed-public-synthetic-numeric-acceptance-only",
+  "whole_model_native_batch_or_private_worker_accepted": false
+}

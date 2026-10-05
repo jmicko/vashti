@@ -53,6 +53,25 @@ impl Kind {
     }
 }
 
+/// Final mixer reads only the last original residual column into scratch row0.
+/// Attention/FFN retain every active column. Both source and scratch geometry
+/// remain runtime data with fixed MAX8 owning allocation.
+fn read_columns(kind: Kind, count: usize, width: usize, words: usize) -> Result<(usize, usize)> {
+    validate_view(count, 0, width, width, words)?;
+    let (active, first) = if kind == Kind::Final {
+        (
+            1,
+            (count - 1)
+                .checked_mul(width)
+                .ok_or(Error::ArithmeticOverflow)?,
+        )
+    } else {
+        (count, 0)
+    };
+    validate_view(active, first, width, width, words)?;
+    Ok((active, first))
+}
+
 #[derive(Clone, Copy)]
 struct Layout {
     streams: usize,
@@ -111,7 +130,7 @@ fn distinct<T: PartialEq>(ids: &[T]) -> Result<()> {
     }
     Ok(())
 }
-fn full_private(arena: &PrivateArena, id: BufferId, words: usize) -> Result<Handle> {
+pub(crate) fn full_private(arena: &PrivateArena, id: BufferId, words: usize) -> Result<Handle> {
     let l = arena.layout(id).map_err(u::fault)?;
     let h = arena.handle(id).map_err(u::fault)?.clone();
     if l.logical_words != words
@@ -125,7 +144,7 @@ fn full_private(arena: &PrivateArena, id: BufferId, words: usize) -> Result<Hand
     }
     Ok(h)
 }
-fn physical(arena: &PrivateArena, owners: &[Handle]) -> Result<()> {
+pub(crate) fn physical(arena: &PrivateArena, owners: &[Handle]) -> Result<()> {
     let stream = owners.first().ok_or(Error::InvalidBufferLength)?.stream;
     if owners.iter().any(|h| h.stream != stream) {
         return Err(Error::InvalidBufferLength);
@@ -137,9 +156,8 @@ fn physical(arena: &PrivateArena, owners: &[Handle]) -> Result<()> {
         .map_err(|_| Error::LimitExceeded("GR owner metadata"))?;
     for h in owners {
         let resource = client.get_resource(h.clone()).map_err(u::fault)?;
-        if resource.resource().size != h.size() {
-            return Err(Error::InvalidBufferLength);
-        }
+        let r = resource.resource();
+        validate_full_extent(r.offset, r.size, r.buffer.size(), h.size())?;
         resources.push(resource);
     }
     for (i, a) in resources.iter().enumerate() {
@@ -158,6 +176,12 @@ fn physical(arena: &PrivateArena, owners: &[Handle]) -> Result<()> {
                 return Err(Error::InvalidBufferLength);
             }
         }
+    }
+    Ok(())
+}
+fn validate_full_extent(offset: u64, size: u64, backing: u64, owned: u64) -> Result<()> {
+    if owned == 0 || offset != 0 || size != owned || backing != owned {
+        return Err(Error::InvalidBufferLength);
     }
     Ok(())
 }
@@ -294,25 +318,14 @@ impl Workspace {
         self.phase = Phase::Poisoned; // A panic/error cannot authorize scratch reuse.
         u::cancel(cancel)?;
         graph.verify_unchanged()?;
-        if self.binding != graph.binding_id()
-            || public.binding != self.binding
-            || projector.global_fault() != fault
-            || !std::ptr::eq(
-                public.client.info(),
-                arena.client().map_err(u::fault)?.info(),
-            )
-        {
+        if self.binding != graph.binding_id() || projector.global_fault() != fault {
             return Err(Error::InvalidBufferLength);
         }
+        public.validate_native_batch_owner(graph, arena)?;
         let base = kind.base(graph.geometry().layers)?;
         let l = self.layout;
-        validate_view(
-            count,
-            0,
-            l.streams * l.width,
-            l.streams * l.width,
-            u::words(arena, residual)?,
-        )?;
+        let (count, input_first) =
+            read_columns(kind, count, l.streams * l.width, u::words(arena, residual)?)?;
         let gamma = public.vector(graph, &format!("{base}_norm.weight"))?;
         self.prove(arena, residual, fault, &[], Some(&gamma))?;
         let client = arena.client().map_err(u::fault)?;
@@ -331,7 +344,7 @@ impl Workspace {
             u::arg(arena, self.ids[SN])?,
             graph.geometry().epsilon,
             count,
-            0,
+            input_first,
             l.streams * l.width,
             0,
             l.streams * l.width,
@@ -606,6 +619,17 @@ impl Drop for Prepared<'_, '_> {
 mod tests {
     use super::*;
     #[test]
+    fn full_owner_proof_rejects_interior_resource_and_hidden_physical_tail() {
+        for owned in [32768, 131072, 524288] {
+            assert!(validate_full_extent(0, owned, owned, owned).is_ok());
+            assert!(validate_full_extent(4, owned, owned + 4, owned).is_err());
+            assert!(validate_full_extent(0, owned, owned * 2, owned).is_err());
+            assert!(validate_full_extent(0, owned - 4, owned, owned).is_err());
+            assert!(validate_full_extent(0, owned, owned - 4, owned).is_err());
+        }
+        assert!(validate_full_extent(0, 0, 0, 0).is_err());
+    }
+    #[test]
     fn actual_max8_pages_are_admitted_once_and_never_logical_payload_only() {
         let l = Layout::new(4, 2560, 320).unwrap();
         assert_eq!(
@@ -648,6 +672,27 @@ mod tests {
             (4, usize::MAX, 320),
         ] {
             assert!(Layout::new(s, w, l).is_err());
+        }
+    }
+    #[test]
+    fn final_mixer_selects_last_original_column_before_all_projections() {
+        for width in [97, 10240] {
+            for count in [1, 3, 5, 8] {
+                assert_eq!(
+                    read_columns(Kind::Final, count, width, MAX_BATCH * width).unwrap(),
+                    (1, (count - 1) * width)
+                );
+                for kind in [Kind::Attention(0), Kind::Ffn(47)] {
+                    assert_eq!(
+                        read_columns(kind, count, width, MAX_BATCH * width).unwrap(),
+                        (count, 0)
+                    );
+                }
+                assert!(read_columns(Kind::Final, count, width, count * width - 1).is_err());
+            }
+            for count in [0, 9, usize::MAX] {
+                assert!(read_columns(Kind::Final, count, width, MAX_BATCH * width).is_err());
+            }
         }
     }
 }

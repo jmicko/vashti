@@ -19,6 +19,9 @@
 //! Fixed history capacity avoids repeated full-cache copies or per-token
 //! allocations. Positions/counts remain runtime; no request-derived comptime.
 
+#[path = "resident_qsa_batch.rs"]
+pub(crate) mod batch;
+
 use crate::private_arena::{self, BufferId, BufferLayout, PrivateArena};
 use crate::qsa_gpu::{self as qsa, QsaLayout};
 pub use crate::resident_gdn::{
@@ -304,6 +307,7 @@ impl StageLayout {
 enum Phase {
     Ready(u64),
     Pending(u64),
+    PendingBatch(u64, usize),
     Poisoned,
 }
 struct Lifecycle {
@@ -394,6 +398,8 @@ pub struct ResidentQsa<'f> {
     ids: [BufferId; N],
     projections: Projections<'f>,
     lifecycle: Lifecycle,
+    batch_pending: Option<batch::StageAnchor>,
+    batch_poison: Option<std::sync::Arc<AtomicBool>>,
 }
 impl<'f> ResidentQsa<'f> {
     pub fn allocate(
@@ -466,6 +472,8 @@ impl<'f> ResidentQsa<'f> {
             ids,
             projections,
             lifecycle: Lifecycle::new(layout.max_context),
+            batch_pending: None,
+            batch_poison: None,
         })
     }
     pub fn layout(&self) -> StageLayout {
@@ -473,9 +481,16 @@ impl<'f> ResidentQsa<'f> {
     }
     pub fn requires_erasure_if_abandoned(&self) -> bool {
         !matches!(self.lifecycle.phase, Phase::Ready(_))
+            || self
+                .batch_poison
+                .as_ref()
+                .is_some_and(|p| p.load(Ordering::Acquire))
     }
     pub fn poison(&mut self) {
         self.lifecycle.phase = Phase::Poisoned;
+        if let Some(poison) = &self.batch_poison {
+            poison.store(true, Ordering::Release);
+        }
     }
     #[allow(clippy::too_many_arguments)]
     pub fn enqueue(
@@ -520,6 +535,7 @@ impl<'f> ResidentQsa<'f> {
         position: u64,
         cancel: &AtomicBool,
     ) -> Result<PendingQsa> {
+        batch::ensure_scalar(self)?;
         cancelled(cancel)?;
         if graph.binding_id() != self.binding
             || public.binding != self.binding
@@ -928,6 +944,7 @@ impl<'f> ResidentQsa<'f> {
         cancel: &AtomicBool,
     ) -> Result<()> {
         let result = (|| {
+            batch::ensure_scalar(self)?;
             cancelled(cancel)?;
             arena.client().map_err(arena_fault)?;
             if receipt.stage != self.identity || receipt.sequence != self.sequence {

@@ -22,6 +22,10 @@ use std::sync::{
 use std::time::Instant;
 use zeroize::{Zeroize, Zeroizing};
 
+// Candidate MAX8 shared expert; scalar execution below remains unchanged.
+#[path = "resident_shared_batch.rs"]
+pub(crate) mod shared_batch;
+
 enum Layer<'f> {
     Gdn(Box<ResidentGdn<'f>>, PublicGdnParameters),
     Qsa(

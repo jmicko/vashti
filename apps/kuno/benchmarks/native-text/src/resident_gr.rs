@@ -235,6 +235,21 @@ impl PublicVectors {
     pub fn vector(&mut self, graph: BoundGraph<'_, '_>, name: &str) -> Result<Handle> {
         self.upload_public_vector(graph.binding_id(), name, graph.static_vector(name)?)
     }
+    /// Native adapters only borrow the already admitted sealed model cache.
+    /// Reject a foreign client or an unprewarmed cache before vector lookup.
+    pub(crate) fn validate_native_batch_owner(
+        &self,
+        graph: BoundGraph<'_, '_>,
+        arena: &PrivateArena,
+    ) -> Result<()> {
+        if !self.prewarmed
+            || self.binding != graph.binding_id()
+            || !std::ptr::eq(self.client.info(), arena.client().map_err(u::fault)?.info())
+        {
+            return Err(Error::InvalidFormat("native batch public cache owner"));
+        }
+        Ok(())
+    }
 }
 impl PublicGdnCache for PublicVectors {
     fn upload_public_vector(

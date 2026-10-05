@@ -586,13 +586,48 @@ fn decode_fused_owning_read(bytes: &[u8], layout: BufferLayout) -> Result<Zeroiz
     }
     Ok(words)
 }
+fn fused_input_words(input: &[f32]) -> Result<Zeroizing<Vec<u32>>> {
+    let mut words = Zeroizing::new(Vec::new());
+    words
+        .try_reserve_exact(input.len())
+        .map_err(|_| "fused guarded input words")?;
+    words.extend(input.iter().map(|v| v.to_bits()));
+    Ok(words)
+}
+/// Counts-only synthetic-fixture diagnostics never forward an arbitrary error.
+fn fused_failure_class(error: &(dyn std::error::Error + 'static)) -> &'static str {
+    if let Some(error) = error.downcast_ref::<crate::private_arena::ArenaError>() {
+        use crate::private_arena::ArenaError;
+        return match error {
+            ArenaError::DeviceAllocation => "owned_device_allocation",
+            ArenaError::Initialization => "owned_initialization",
+            ArenaError::Cleanup => "owned_cleanup",
+            _ => "owned_arena",
+        };
+    }
+    let message = Zeroizing::new(error.to_string());
+    match message.as_str() {
+        "fused output/fault extent mismatch" => "fault_or_extent",
+        "fused projection differs from untouched GPU" => "original_gpu_projection",
+        "fused independent codec oracle" => "independent_codec",
+        "fused finite OR contract" => "finite_or",
+        "fused output gap changed"
+        | "fused owning tail changed"
+        | "fused fault owning tail changed" => "owning_padding",
+        "fused readonly input changed" => "readonly_input",
+        "fused full owner erasure" => "main_erasure",
+        "fused original weight mutation" => "public_weight_mutation",
+        "fused client/span mismatch" | "fused binding alias" => "owner_binding",
+        "public multi-RHS physical extent is not fully owned/bounded"
+        | "public physical extent overflow"
+        | "public physical extent is empty" => "physical_extent",
+        _ => "unclassified",
+    }
+}
 /// Original packed matrices plus fixed synthetic activations. Default-off
 /// finite fusion is compared with the untouched scalar-GPU projection followed
 /// by the original output-only fault kernel. No arbitrary input is accepted.
 pub fn run_fused_fault(client: &ComputeClient<WgpuRuntime>) -> Result<()> {
-    client
-        .configure_transient_io(IO_BUDGET)
-        .map_err(|_| "fused fixture owned IO setup")?;
     let path = std::env::var_os("KUNO_TEST_GGUF").ok_or("fused fixture original GGUF required")?;
     let file =
         GgufFile::open(path, GgufLimits::default()).map_err(|_| "fused fixture GGUF metadata")?;
@@ -620,10 +655,21 @@ pub fn run_fused_fault(client: &ComputeClient<WgpuRuntime>) -> Result<()> {
         }
     }
     let matrices = load_public_variant(client, &file, false)?;
+    // Immutable original weights use the same PUBLIC prewarm boundary as the
+    // accepted multi-RHS fixture. No activation exists before owned I/O starts.
+    client
+        .configure_transient_io(IO_BUDGET)
+        .map_err(|_| "fused fixture owned IO setup")?;
     let public_bound = FORMATS.len() * (MAX_PACKED_BYTES + 4).next_power_of_two();
     let retired = Arc::new(AtomicBool::new(false));
-    let mut arena = PrivateArena::new(client.clone(), MAIN_BUDGET, retired.clone())?;
+    // Owned zero inspection requires the already configured transient policy.
+    // A PUBLIC-fixture arena correctly rejects that audit before any kernel.
+    let mut arena =
+        PrivateArena::new_transient_on_configured(client.clone(), MAIN_BUDGET, retired.clone())?;
     arena.enable_public_owned_zero_audit()?;
+    // Only fixed synthetic stage labels and public dtypes reach diagnostics.
+    // Backend errors and tensor values remain transient.
+    let mut diagnostic = ("case_setup", 0_u32);
     let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
         || -> Result<Vec<serde_json::Value>> {
             let mut cases = Vec::new();
@@ -634,6 +680,7 @@ pub fn run_fused_fault(client: &ComputeClient<WgpuRuntime>) -> Result<()> {
                     Some(f32::INFINITY),
                     Some(f32::NEG_INFINITY),
                 ] {
+                    diagnostic = ("case_setup", m.kind.gguf_id());
                     let out_words = 5 + m.rows + 13;
                     let full = [m.columns, out_words, out_words, 1, 1]
                         .into_iter()
@@ -658,7 +705,12 @@ pub fn run_fused_fault(client: &ComputeClient<WgpuRuntime>) -> Result<()> {
                         input[m.columns / 2] = value;
                     }
                     let initial = Zeroizing::new(vec![OUTPUT_GAP; out_words]);
-                    let x = arena.upload_f32(&input)?;
+                    diagnostic.0 = "owning_upload";
+                    // The fixed rejection fixture intentionally injects NaN/
+                    // infinity. Keep upload_f32's finite-input protection;
+                    // upload the original IEEE words through the owning path.
+                    let input_words = fused_input_words(&input)?;
+                    let x = arena.upload_u32(&input_words)?;
                     let y = arena.upload_f32(&initial)?;
                     let original = arena.upload_f32(&initial)?;
                     let f = arena.upload_u32(&[4])?;
@@ -673,6 +725,7 @@ pub fn run_fused_fault(client: &ComputeClient<WgpuRuntime>) -> Result<()> {
                         .collect::<std::result::Result<Vec<_>, _>>()?;
                     let mut all = vec![m.handle.clone()];
                     all.extend(handles.iter().cloned());
+                    diagnostic.0 = "physical_bindings";
                     let resources = all
                         .iter()
                         .map(|h| client.get_resource(h.clone()))
@@ -694,6 +747,7 @@ pub fn run_fused_fault(client: &ComputeClient<WgpuRuntime>) -> Result<()> {
                         Ok(unsafe { ArrayArg::from_raw_parts(arena.handle(id)?.clone(), words) })
                     };
                     let weight = || unsafe { ArrayArg::from_raw_parts(m.handle.clone(), m.words) };
+                    diagnostic.0 = "projection_enqueue";
                     crate::quant_matvec::cooperative::cooperative_matvec::launch::<WgpuRuntime>(
                         client,
                         CubeCount::Static(m.rows as u32, 1, 1),
@@ -729,6 +783,7 @@ pub fn run_fused_fault(client: &ComputeClient<WgpuRuntime>) -> Result<()> {
                         5,
                     );
                     let mut snapshots = Vec::new();
+                    diagnostic.0 = "owning_readback";
                     for h in &handles {
                         let lease = FusedReadLease(
                             client
@@ -741,6 +796,7 @@ pub fn run_fused_fault(client: &ComputeClient<WgpuRuntime>) -> Result<()> {
                         snapshots.push(words);
                     }
                     audited(client)?;
+                    diagnostic.0 = "numeric_comparison";
                     if snapshots[1].len() != snapshots[2].len()
                         || snapshots[3][0] != snapshots[4][0]
                     {
@@ -802,6 +858,7 @@ pub fn run_fused_fault(client: &ComputeClient<WgpuRuntime>) -> Result<()> {
                         return Err("fused finite OR contract".into());
                     }
                     arena.reset()?;
+                    diagnostic.0 = "owning_erasure";
                     for h in handles {
                         let lease = FusedReadLease(
                             client.read_one(h.clone()).map_err(|_| "fused zero read")?,
@@ -817,6 +874,7 @@ pub fn run_fused_fault(client: &ComputeClient<WgpuRuntime>) -> Result<()> {
                             .read_one(m.handle.clone())
                             .map_err(|_| "fused public cache check")?,
                     );
+                    diagnostic.0 = "public_weight_check";
                     if &*cache.0 != m.wire.as_slice() {
                         return Err("fused original weight mutation".into());
                     }
@@ -828,6 +886,14 @@ pub fn run_fused_fault(client: &ComputeClient<WgpuRuntime>) -> Result<()> {
             Ok(cases)
         },
     ));
+    if let Ok(Err(error)) = &attempt {
+        eprintln!(
+            "public_fused_failure class={} phase={} dtype={}",
+            fused_failure_class(&**error),
+            diagnostic.0,
+            diagnostic.1
+        );
+    }
     let closed = arena.close();
     let cases = match (attempt, closed, retired.load(Ordering::Acquire)) {
         (Ok(Ok(cases)), Ok(()), false) => cases,
@@ -857,6 +923,39 @@ pub fn run_fused_fault(client: &ComputeClient<WgpuRuntime>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fused_failure_diagnostic_does_not_forward_arbitrary_error_payloads() {
+        let known: Box<dyn std::error::Error> = "fused finite OR contract".into();
+        assert_eq!(fused_failure_class(&*known), "finite_or");
+        let unknown: Box<dyn std::error::Error> = "untrusted synthetic error body".into();
+        assert_eq!(fused_failure_class(&*unknown), "unclassified");
+        let io = std::io::Error::other("untrusted synthetic backend error");
+        assert_eq!(fused_failure_class(&io), "unclassified");
+        assert_eq!(
+            fused_failure_class(&crate::private_arena::ArenaError::Initialization),
+            "owned_initialization"
+        );
+    }
+
+    #[test]
+    fn fused_public_prewarm_precedes_owned_activation_initialization() {
+        let source = include_str!("matmul_probe.rs");
+        let source = source.split("pub fn run_fused_fault(").nth(1).unwrap();
+        let prewarm = source.find("let matrices = load_public_variant").unwrap();
+        let configure = source.find(".configure_transient_io(IO_BUDGET)").unwrap();
+        let private = source
+            .find("let x = arena.upload_u32(&input_words)")
+            .unwrap();
+        assert!(prewarm < configure && configure < private);
+    }
+
+    #[test]
+    fn fused_rejection_inputs_preserve_ieee_bits_without_weakening_float_uploads() {
+        let bits = [0x8000_0000, 0x7fc0_0042, 0x7f80_0000, 0xff80_0000];
+        let input = bits.map(f32::from_bits);
+        assert_eq!(fused_input_words(&input).unwrap().as_slice(), &bits);
+    }
 
     #[test]
     fn fused_complete_owner_read_rejects_equal_truncation_before_decoding() {
