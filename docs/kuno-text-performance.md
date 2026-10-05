@@ -461,3 +461,102 @@ public arena policy at this receipt. Opaque driver/firmware padding, failed Drop
 historical swap and abandoned contexts remain excluded. This changes no API,
 installed service, ordinary inference deadline or Vashti consumer. Native is
 still slower than updated Ollama; no complete performance goal is claimed.
+
+### Connected owned I/O, full-page inspection and multi-RHS operators
+
+The previous paragraph describes the earlier checkpoint. The isolated resident
+graph now has an explicit `KUNO_LAB_TRANSIENT_IO=1` path: private source pages
+are retained before moved, guarded uploads; all map leases end before checked
+sanitization. Separate main and runtime I/O capacities remain 64 MiB each.
+There is no fallback to ordinary private staging. Cleanup failure retires the
+shared physical stream across fresh logical owners. Ordinary inference polling
+and installed services are unchanged.
+
+Both GPUs reproduce the four-token bang and eight-token, 15-input-token chat,
+including queued GDN/QSA cancellation, poisoned retry rejection and fresh owner
+recovery. `KUNO_LAB_PREFILL_LAST_HEAD=1` runs every intermediate token through
+all layers and a completed finite/status fence, omitting only its unused final
+mixer/vocabulary projection. On B70 it preserves all 128 prior native output
+IDs for the fixed 75-token baseline. This does not make the longer native output
+bit-identical to Ollama. Owned-I/O bind/owner setup is 1.244 s, sequential prefill
+64.591 s, and the 127 following steps take 75.753 s; transient unit wall is
+142.156 s. Lazy weight loading is part of prefill, so this setup duration is not
+equivalent to Ollama's reported model-load duration. Host builds overlap this
+acceptance run; it is not a matched throughput comparison or a speed win.
+
+The optional `KUNO_LAB_IO_TOKEN_CHECKPOINT=1` keeps intermediate staging under
+the same independent hard runtime budget until the final accepted token fence.
+Intermediate completed reads grant only main-pool credit, after dropping host
+leases; they cannot reclaim runtime I/O spans. Final fault/logit acceptance still
+sanitizes before committing recurrent/cache state. Both cards pass chat and
+cancellation with this cadence; timing benefit is not established. Planning
+temporaries, candidate/committed expert mappings, LRU state and duplicate route
+vectors now wipe their complete retained host capacities on discarded ownership.
+This is a narrow ownership improvement, not complete host privacy acceptance.
+
+With `KUNO_LAB_OWNED_ZERO_AUDIT=1`, both cards inspect all **1,286 main pages /
+785,186,816 bytes** after erasure, retaining handles until each full page and its
+readback staging are accepted as zero. Each card checks four owners: completed
+chat completion, a fresh prompt, and cancellation after GDN0 and QSA3.
+Cumulative source-page counts are respectively 330/12,255,232 bytes,
+225/8,355,840 bytes, 1/65,536 bytes and 4/196,608 bytes. These are page lifetimes
+over resets, not simultaneous memory. Cleanup-only maps use checked native polls;
+normal inference reads have no new deadline. Failed opted-in audit ownership is
+quarantined until process recovery. Public receipts are written only after
+explicit cleanup, cancellation/fresh-owner checks and executor shutdown succeed.
+
+`rust-secure-resident-owned-io-20261005.json` records the exact flags and frozen
+binaries: `fdf6d68...` for connected owned I/O/head skipping, `5edf911...` for
+token cadence/host route cleanup, and `30f6e44...` for whole-page audits. Units
+disable swap/core dumps; short runs use 12 GiB host limits and the full fixture
+52 GiB. Unit bounds are operator controls, not production inference deadlines.
+Observed full-run cgroup memory reaches at least 13,662,404,608 bytes with zero
+swap; unreliable short systemd MemoryPeak summaries are not measurements.
+
+#### Packed multi-RHS acceptance and cached timing
+
+The Rust packed matrix primitive decodes each weight once per lane/column and
+reuses it across four/eight token accumulators, retaining each token's original
+64-lane sum order and reduction tree. Both GPUs pass all seven original GGUF
+types with counts 1/3/5/8 and tiles 4/8: 56 cases per card. Nonzero runtime bases,
+irregular strides, inactive tails, padding, physical nonaliasing, guarded I/O
+inspection, full main erasure and public-weight preservation pass. Maximum
+observed error against the independent Rust decode/tree is 1.20e-7.
+
+A compiler-idle, same-process comparison measures eight legacy cooperative
+matvec launches versus one multi-RHS launch, including completed output readback.
+Weights/inputs are cached; initialization, numerical checks and audited cleanup
+are outside the clock. Three ABBA rounds per candidate preserve sample order.
+Tile8 ratios of median legacy time to candidate time are:
+
+| Original matrix | B70 | RTX3060 |
+| --- | ---: | ---: |
+| Q4_K gate, 640×2560 | 3.71× | 2.96× |
+| Q5_0 down, 2560×640 | 3.15× | 2.50× |
+| Q8_0 down, 2560×640 | 3.05× | 2.09× |
+
+`rust-packed-matmul-both-gpus-20261005.json` includes all raw numeric cases,
+audits and ordered samples. Frozen numeric binary is `5edf911...`; timing binary
+is `5a7f7c2...`. This is an operator win. Full layer-major batching still needs
+causal GDN/QSA/PLE transactions and bounded expert-union dispatch; no whole-engine
+or updated-Ollama speedup follows from this table.
+
+#### Rejected exact-schedule down candidate
+
+The optional Q5_0/Q8_0 kernel uses 16 physical threads for the same 64 virtual
+accumulators and original addition tree. Both GPUs match the old all-ten MoE
+output exactly in these samples, but five cached ABBA cycles are slower:
+B70 Q5/Q8 median legacy→candidate 0.935→1.123 / 1.187→1.287 ms;
+RTX3060 1.153→1.320 / 0.985→1.149 ms. The kernel remains disabled.
+`rust-word-down-abba-both-gpus-20261005.json` records both formats, remapped
+slots, cache-hit invariants and frozen binary `30f6e44...`.
+
+Current checks pass 169 native host/offline tests, 28 imported runtime ownership
+tests, strict all-target native/host Clippy, formatting and exact-archive composed
+runtime patch reconstruction. Core remains at the separately accepted 74 normal
+tests with two installed checks ignored. The runtime patch remains 18 files;
+current composed SHA256 is
+`a0d985c9b32653e95289cd64af651208f7b4b6142eb91e55e2af08e29e9ec5eb`.
+No private request API, persistent worker, full options/quality/long-context
+acceptance, native-default/`ollama.` routing, deployment or Vashti integration is
+accepted here. Opaque driver/firmware memory and historical swap remain excluded.

@@ -203,6 +203,36 @@ pub fn read_fence(
     Ok(output)
 }
 
+/// Accept one little-endian fault word. Packet width is fixed independently
+/// of vocabulary/context and rejects malformed bytes before interpretation.
+pub(crate) fn accept_fault_packet(bytes: &[u8]) -> Result<()> {
+    let word: [u8; 4] = bytes.try_into().map_err(|_| Error::InvalidBufferLength)?;
+    if u32::from_le_bytes(word) != 0 {
+        return Err(Error::InvalidFormat("resident token numerical failure"));
+    }
+    Ok(())
+}
+fn validate_fault_words(logical_words: usize) -> Result<()> {
+    if logical_words != 1 {
+        return Err(Error::InvalidBufferLength);
+    }
+    Ok(())
+}
+/// This completed same-stream read drains the final combine/status commands.
+/// Only the accumulated fault word is downloaded; the local Bytes lease drops
+/// before return, preserving the owner's admission/sanitizer readback seam.
+pub fn read_fault_fence(arena: &PrivateArena, fault_id: BufferId) -> Result<()> {
+    validate_fault_words(words(arena, fault_id)?)?;
+    let bytes = ScrubBytes(
+        arena
+            .client()
+            .map_err(fault)?
+            .read_one(handle(arena, fault_id)?)
+            .map_err(fault)?,
+    );
+    accept_fault_packet(&bytes.0)
+}
+
 pub fn arg_prefix(arena: &PrivateArena, id: BufferId, n: usize) -> Result<ArrayArg<WgpuRuntime>> {
     let capacity = words(arena, id)?;
     if n == 0 || n > capacity {
@@ -328,6 +358,27 @@ impl crate::resident_qsa::ResidentQsaSelector for TransientSelector<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn fault_only_fence_accepts_exact_zero_and_rejects_all_failure_bits() {
+        assert!(accept_fault_packet(&[0; 4]).is_ok());
+        for bit in 0..32 {
+            assert!(accept_fault_packet(&(1_u32 << bit).to_le_bytes()).is_err());
+        }
+        assert!(accept_fault_packet(&u32::MAX.to_le_bytes()).is_err());
+        // Interpret exactly four bytes without relying on host slice alignment.
+        assert!(accept_fault_packet(&[0x7f, 0, 0, 0, 0][1..]).is_ok());
+        assert!(accept_fault_packet(&[0x7f, 0, 0, 0, 1][1..]).is_err());
+    }
+    #[test]
+    fn malformed_fault_extent_or_packet_is_never_accepted() {
+        assert!(validate_fault_words(1).is_ok());
+        for n in [0, 2, 256, usize::MAX] {
+            assert!(validate_fault_words(n).is_err());
+        }
+        for n in [0, 1, 2, 3, 5, 8, 256] {
+            assert!(accept_fault_packet(&vec![0; n]).is_err());
+        }
+    }
     #[test]
     fn portable_dispatch_bounds_are_checked() {
         assert!(grid(0).is_err());

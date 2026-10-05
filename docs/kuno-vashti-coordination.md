@@ -1093,8 +1093,8 @@ reviews found no blocker within that limited preowned Wgpu/Arena proof. The
 connected public graph now has precharged complete pages, sealed public-vector
 inventory and accounting that grants credits only after completed readbacks;
 both GPUs pass bang/chat plus queued GDN/QSA cancellation, poisoned retry
-rejection and fresh recovery. Intel's72-slot option also passes chat; default
-capacity remains unchanged. Tests:27 runtime ownership,128 native host/offline,
+rejection and fresh recovery. Intel's 72-slot option also passes chat; default
+capacity remains unchanged. Tests: 27 runtime ownership, 128 native host/offline,
 74 normal core with two installed checks ignored; strict host/native Clippy,
 formatting and fresh-archive composed-patch/hash verification pass.
 
@@ -1111,3 +1111,42 @@ routing and public capabilities remain intended but unimplemented. No API,
 protocol or consumer contract changed. This is a development checkpoint toward
 the active goal, not a release/integration handoff. Keep the ordinary managed
 Ollama and long-inference contract intact until native acceptance/integration.
+
+### Native text connected ownership and matrix batching checkpoint (2026-10-05)
+
+The isolated laboratory now connects the complete resident graph to explicit
+owned uploads, uniforms and readbacks, with separate 64 MiB main/runtime I/O
+budgets and retirement shared across fresh owners of the same physical stream.
+Both GPUs pass the fixed bang/chat fixtures, queued GDN/QSA cancellation,
+poisoned retry rejection and fresh recovery. An opted-in inspection verifies all
+1,286 main pages / 785,186,816 bytes after erasure for each of four owners on
+each card. Read [the ownership and performance receipt](kuno-text-performance.md#connected-owned-io-full-page-inspection-and-multi-rhs-operators)
+and [runtime ownership limits](../apps/kuno/benchmarks/native-text/runtime-ownership/README.md).
+
+Skipping unused intermediate prompt heads preserves all 128 prior native output
+IDs on B70. The long native output is not bit-identical to Ollama, and the
+connected owned-I/O run is still slower. Token-level cleanup cadence passes
+both-card acceptance but has no matched performance benefit yet. Expert
+planning/mapping/LRU host allocations now wipe their full retained capacities.
+Receipts are emitted only after explicit owner/executor cleanup succeeds.
+
+The new packed multi-RHS operator passes 56 original-artifact numeric cases on
+each GPU. Cached eight-vector ABBA samples are 3.05–3.71 times faster on B70
+and 2.09–2.96 times faster on RTX3060 for the three tested matrices. This is
+an operator result; causal layer-major prefill is not implemented. A separate
+exact-order down kernel is numerically accepted but slower on both GPUs and
+remains disabled. All new performance choices remain explicit lab options.
+
+Checks pass: 169 native host/offline tests, 28 imported runtime ownership tests,
+strict native/runtime Clippy, formatting, and reconstruction of the complete
+18-file vendor patch from exact pinned archives. The separately accepted core
+remains at 74 normal tests with two installed checks ignored. Full receipts
+record public fixture settings, frozen executable hashes, ordered samples,
+cleanup counts and limitations. Production worker/privacy, full quality/options,
+long-context graph, native default/managed `ollama.` routing and a matched
+whole-engine speedup remain outstanding.
+
+**Vashti changes: none.** No public API, model catalog, configuration, installed
+service or consumer changes are exposed by this laboratory. The native route
+still requires a separately agreed and tested contract before integration.
+No installation, release, GPU reset or reboot is part of this checkpoint.

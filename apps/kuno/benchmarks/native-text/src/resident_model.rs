@@ -1,7 +1,7 @@
 //! Fixed-fixture laboratory whole-token owner. No HTTP/private request support.
 //! GR, GDN, QSA and all-ten routed MoE stay on the device; projected PLE
 //! uses the exact Rust host oracle. Any partially queued failure destroys the
-//! entire sequence. Runtime staging erasure is explicitly still unaccepted.
+//! entire sequence. Owned runtime I/O is opt-in pending both-GPU acceptance.
 use crate::{
     executor::ResidentAdmission,
     private_arena::{BufferId, BufferLayout, PrivateArena},
@@ -196,6 +196,38 @@ fn workspace_words(
     ]);
     Ok(words)
 }
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StepPurpose {
+    Logits,
+    Advance,
+}
+fn completed_output(
+    purpose: StepPurpose,
+    logits: impl FnOnce() -> Result<Zeroizing<Vec<f32>>>,
+    advance: impl FnOnce() -> Result<()>,
+) -> Result<Zeroizing<Vec<f32>>> {
+    match purpose {
+        StepPurpose::Logits => logits(),
+        StepPurpose::Advance => {
+            advance()?;
+            Ok(Zeroizing::new(Vec::new()))
+        }
+    }
+}
+/// State commits can run only after an accepted completed readback. A late
+/// cancellation still rejects the whole token through the existing poison path.
+fn commit_after_fence<T>(
+    fence: Result<T>,
+    cancel: &AtomicBool,
+    commit: impl FnOnce() -> Result<()>,
+) -> Result<T> {
+    let value = fence?;
+    u::cancel(cancel)?;
+    commit()?;
+    u::cancel(cancel)?;
+    Ok(value)
+}
+
 fn admitted_upload(
     admission: &ResidentAdmission,
     io: &mut PrivateArena,
@@ -223,7 +255,7 @@ impl crate::resident_qsa::ResidentQsaSelector for AdmittedSelector<'_> {
     ) -> Result<crate::resident_qsa::PrivateSelection> {
         // The original selector completes both score/status reads before this
         // guard samples/reclaims; no added numerical-success assumption.
-        self.admission.readback(|| {
+        self.admission.readback_intermediate(|| {
             self.inner
                 .select_transient(arena, layout, scores, status, cancel)
         })
@@ -251,6 +283,29 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         context: usize,
         executor: &mut crate::executor::GpuExecutor<'f>,
     ) -> Result<Self> {
+        Self::construct(graph, client, context, executor, false)
+    }
+    /// Counts-only diagnostic for compiled fixed-public fixtures. Ordinary
+    /// ownership, polling, numerical work and scheduling remain the default.
+    pub fn new_with_public_owned_zero_audit(
+        graph: BoundGraph<'m, 'f>,
+        client: ComputeClient<WgpuRuntime>,
+        context: usize,
+        executor: &mut crate::executor::GpuExecutor<'f>,
+        public_zero_audit: bool,
+    ) -> Result<Self> {
+        if !public_zero_audit {
+            return Self::new(graph, client, context, executor);
+        }
+        Self::construct(graph, client, context, executor, true)
+    }
+    fn construct(
+        graph: BoundGraph<'m, 'f>,
+        client: ComputeClient<WgpuRuntime>,
+        context: usize,
+        executor: &mut crate::executor::GpuExecutor<'f>,
+        public_zero_audit: bool,
+    ) -> Result<Self> {
         let g = graph.geometry();
         if context == 0 || context > g.max_context {
             return Err(Error::LimitExceeded("resident context"));
@@ -262,6 +317,12 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         })?;
         let public_pages = PublicVectors::prewarm_page_bytes(graph)?;
         let admission = executor.begin_resident(graph, private_owned, public_pages)?;
+        if public_zero_audit && !admission.transient_io() {
+            admission.poison();
+            return Err(Error::InvalidFormat(
+                "owned zero audit requires transient resident I/O",
+            ));
+        }
         let mut public = PublicVectors::new(client.clone(), graph.binding_id());
         admission.prewarm(graph, &mut public)?;
         if public.full_page_bytes() != public_pages {
@@ -269,12 +330,41 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             return Err(Error::InvalidFormat("resident public page plan"));
         }
         admission.allocate(&requests, || {
-            let retired = Arc::new(AtomicBool::new(false));
-            let mut arena =
-                PrivateArena::new(client.clone(), 2 * 1024 * 1024 * 1024, retired.clone())
-                    .map_err(u::fault)?;
-            let io = PrivateArena::new(client.clone(), 64 * 1024 * 1024, retired.clone())
-                .map_err(u::fault)?;
+            let retired = admission.retired_context();
+            let make_arena = |budget| {
+                if admission.transient_io() {
+                    // The outer fixed-stream runner configured ONCE before
+                    // all uniforms/readbacks. Never reconfigure on rebinding.
+                    PrivateArena::new_transient_on_configured(
+                        client.clone(),
+                        budget,
+                        retired.clone(),
+                    )
+                } else {
+                    PrivateArena::new(client.clone(), budget, retired.clone())
+                }
+            };
+            let mut arena = make_arena(2 * 1024 * 1024 * 1024).map_err(u::fault)?;
+            if public_zero_audit {
+                arena.enable_public_owned_zero_audit().map_err(u::fault)?;
+            }
+            let mut io = if admission.transient_io() {
+                PrivateArena::new_transient_source_on_configured(
+                    client.clone(),
+                    crate::executor::RESIDENT_IO_MAX as usize,
+                    retired.clone(),
+                )
+            } else {
+                PrivateArena::new(
+                    client.clone(),
+                    crate::executor::RESIDENT_IO_MAX as usize,
+                    retired.clone(),
+                )
+            }
+            .map_err(u::fault)?;
+            if public_zero_audit {
+                io.enable_public_owned_zero_audit().map_err(u::fault)?;
+            }
             let key = SequenceKey::new()?;
             let mut layers = Vec::new();
             for l in 0..g.layers {
@@ -376,14 +466,75 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             && self.ple_history.tokens().iter().all(|x| *x == -1)
             && self.ple_conv.history().iter().all(|x| *x == 0.)
     }
+    /// Available only after BOTH arenas accepted explicit close. Never use
+    /// Drop telemetry or a partial audit as a whole-owner erasure receipt.
+    pub fn public_owned_zero_audit_receipt(
+        &self,
+    ) -> Option<(
+        crate::private_arena::OwnedZeroAudit,
+        crate::private_arena::OwnedZeroAudit,
+    )> {
+        if !self.erased_after_failure() {
+            return None;
+        }
+        Some((
+            self.arena.owned_zero_audit_receipt()?,
+            self.io.owned_zero_audit_receipt()?,
+        ))
+    }
     pub fn owned_bytes(&self) -> usize {
         self.arena.charged_bytes()
+    }
+    /// Explicit checked full-span cleanup for the fixed public acceptance
+    /// runner. Failure retains arena ownership and retires the shared context.
+    /// It never resets/reuses the admission ledger or emits a clean receipt.
+    pub fn close(&mut self) -> Result<()> {
+        self.poisoned = true;
+        self.admission.poison();
+        let io = self.io.close();
+        let all = self.arena.close();
+        self.layers.clear();
+        for m in &mut self.moe_layers {
+            m.poison();
+        }
+        self.moe_layers.clear();
+        self.pending_moe.clear();
+        self.pending_qsa.clear();
+        self.cancel_after_attention = None;
+        self.ple_history.reset();
+        self.ple_conv.reset();
+        if io.is_err() || all.is_err() || self.retired.load(Ordering::Acquire) {
+            self.retired.store(true, Ordering::Release);
+            return Err(Error::InvalidFormat("resident full-span cleanup failed"));
+        }
+        Ok(())
     }
     pub fn step(
         &mut self,
         executor: &mut crate::executor::GpuExecutor<'f>,
         token: u32,
         cancel: &AtomicBool,
+    ) -> Result<Zeroizing<Vec<f32>>> {
+        self.step_for(executor, token, cancel, StepPurpose::Logits)
+    }
+    /// Explicitly advance a prompt token whose logits will not be sampled.
+    /// Every layer and final HC combine still runs and accepts its full fault
+    /// fence before state/cursor commits. No logits are exposed by this API.
+    pub fn advance_without_logits(
+        &mut self,
+        executor: &mut crate::executor::GpuExecutor<'f>,
+        token: u32,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        self.step_for(executor, token, cancel, StepPurpose::Advance)
+            .map(drop)
+    }
+    fn step_for(
+        &mut self,
+        executor: &mut crate::executor::GpuExecutor<'f>,
+        token: u32,
+        cancel: &AtomicBool,
+        purpose: StepPurpose,
     ) -> Result<Zeroizing<Vec<f32>>> {
         if self.poisoned
             || self.position >= self.context
@@ -393,7 +544,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         }
         self.poisoned = true;
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            self.step_checked(executor, token, cancel)
+            self.step_checked(executor, token, cancel, purpose)
         }));
         match result {
             Ok(Ok(logits)) => {
@@ -410,21 +561,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                         Layer::Qsa(q, _) => q.poison(),
                     }
                 }
-                let io = self.io.close();
-                let all = self.arena.close();
-                self.layers.clear();
-                for m in &mut self.moe_layers {
-                    m.poison();
-                }
-                self.moe_layers.clear();
-                self.pending_moe.clear();
-                self.pending_qsa.clear();
-                self.cancel_after_attention = None;
-                self.ple_history.reset();
-                self.ple_conv.reset();
-                if io.is_err() || all.is_err() {
-                    self.retired.store(true, Ordering::Release);
-                }
+                let _ = self.close();
                 match other {
                     Ok(Err(e)) => Err(e),
                     _ => Err(Error::InvalidFormat("resident graph execution failed")),
@@ -437,6 +574,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         executor: &mut crate::executor::GpuExecutor<'f>,
         token: u32,
         cancel: &AtomicBool,
+        purpose: StepPurpose,
     ) -> Result<Zeroizing<Vec<f32>>> {
         executor.check_client(self.arena.client().map_err(u::fault)?)?;
         executor.check_resident_admission(&self.admission)?;
@@ -579,61 +717,71 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             )?;
             current = 1 - current;
         }
-        let mut projector = ResidentProjection {
-            executor,
-            fault: self.b.fault,
-        };
-        self.gr.read(
-            self.graph,
-            &self.arena,
-            &mut self.public,
-            &mut projector,
-            "output_hc",
-            self.b.residual[current],
-            false,
-            self.b.fault,
-            cancel,
-        )?;
-        project(
-            self.graph,
-            &mut projector,
-            &self.arena,
-            "output.weight",
-            self.gr.mixed,
-            self.b.logits,
-            cancel,
-        )?;
-        let logits = self.admission.readback(|| {
-            u::read_fence(
-                &self.arena,
-                self.b.logits,
-                self.b.fault,
-                self.b.logit_packet,
-            )
-        })?;
-        // The device completion/finiteness decision covers ALL layer outputs,
-        // including the output projection. A late cancellation discards all.
-        u::cancel(cancel)?;
-        for (l, p) in pending {
-            if let Layer::Gdn(g, _) = &mut self.layers[l] {
-                g.commit_after_whole_token_acceptance(p, &self.arena, cancel)?;
-            } else {
-                return Err(Error::InvalidFormat("resident layer identity"));
+        let fence = completed_output(
+            purpose,
+            || {
+                let mut projector = ResidentProjection {
+                    executor,
+                    fault: self.b.fault,
+                };
+                self.gr.read(
+                    self.graph,
+                    &self.arena,
+                    &mut self.public,
+                    &mut projector,
+                    "output_hc",
+                    self.b.residual[current],
+                    false,
+                    self.b.fault,
+                    cancel,
+                )?;
+                project(
+                    self.graph,
+                    &mut projector,
+                    &self.arena,
+                    "output.weight",
+                    self.gr.mixed,
+                    self.b.logits,
+                    cancel,
+                )?;
+                self.admission.readback(|| {
+                    u::read_fence(
+                        &self.arena,
+                        self.b.logits,
+                        self.b.fault,
+                        self.b.logit_packet,
+                    )
+                })
+            },
+            || {
+                // GrWorkspace::combine already checks every final residual
+                // element and ORs all status failures into b.fault. Reading that
+                // word completes those commands without the output head.
+                self.admission
+                    .readback(|| u::read_fault_fence(&self.arena, self.b.fault))
+            },
+        );
+        commit_after_fence(fence, cancel, || {
+            for (l, p) in pending {
+                if let Layer::Gdn(g, _) = &mut self.layers[l] {
+                    g.commit_after_whole_token_acceptance(p, &self.arena, cancel)?;
+                } else {
+                    return Err(Error::InvalidFormat("resident layer identity"));
+                }
             }
-        }
-        for (l, p) in self.pending_qsa.drain(..) {
-            if let Layer::Qsa(q, _) = &mut self.layers[l] {
-                q.commit_after_whole_token_acceptance(p, &self.arena, cancel)?;
-            } else {
-                return Err(Error::InvalidFormat("resident attention identity"));
+            for (l, p) in self.pending_qsa.drain(..) {
+                if let Layer::Qsa(q, _) = &mut self.layers[l] {
+                    q.commit_after_whole_token_acceptance(p, &self.arena, cancel)?;
+                } else {
+                    return Err(Error::InvalidFormat("resident attention identity"));
+                }
             }
-        }
-        for (l, p) in self.pending_moe.drain(..) {
-            self.moe_layers[l].accept_after_whole_token_acceptance(p)?;
-        }
-        self.io.reset().map_err(u::fault)?;
-        u::cancel(cancel)?;
-        Ok(logits)
+            for (l, p) in self.pending_moe.drain(..) {
+                self.moe_layers[l].accept_after_whole_token_acceptance(p)?;
+            }
+            self.io.reset().map_err(u::fault)?;
+            Ok(())
+        })
     }
     fn ple(
         &mut self,
@@ -683,7 +831,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             self.b.ple_value,
             cancel,
         )?;
-        let (key, value, original) = self.admission.readback(|| {
+        let (key, value, original) = self.admission.readback_intermediate(|| {
             Ok((
                 u::read_f32(&self.arena, self.b.ple_key)?,
                 u::read_f32(&self.arena, self.b.ple_value)?,
@@ -736,7 +884,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             cancel,
         )?;
         let start = Instant::now();
-        let router = self.admission.readback(|| {
+        let router = self.admission.readback_intermediate(|| {
             u::read_fence(
                 &self.arena,
                 self.b.router,
@@ -838,6 +986,108 @@ mod admission_tests {
     use super::*;
     use kuno_text::ops::{GatedResidualShape, GdnShape};
 
+    #[test]
+    fn explicit_advance_skips_head_but_sample_keeps_full_output() {
+        use std::cell::Cell;
+        for purpose in [StepPurpose::Logits, StepPurpose::Advance] {
+            let heads = Cell::new(0);
+            let advances = Cell::new(0);
+            let result = completed_output(
+                purpose,
+                || {
+                    heads.set(heads.get() + 1);
+                    Ok(Zeroizing::new(vec![3., -2.]))
+                },
+                || {
+                    advances.set(advances.get() + 1);
+                    u::accept_fault_packet(&[0; 4])
+                },
+            )
+            .unwrap();
+            if purpose == StepPurpose::Logits {
+                assert_eq!(heads.get(), 1);
+                assert_eq!(advances.get(), 0);
+                assert_eq!(&*result, &[3., -2.]);
+            } else {
+                assert_eq!(heads.get(), 0);
+                assert_eq!(advances.get(), 1);
+                assert!(result.is_empty());
+            }
+        }
+    }
+    #[test]
+    fn advance_fault_read_failure_or_cancel_never_commits() {
+        use std::cell::Cell;
+        for packet in [
+            vec![0; 3],
+            1_u32.to_le_bytes().to_vec(),
+            u32::MAX.to_le_bytes().to_vec(),
+        ] {
+            let committed = Cell::new(false);
+            let fence = completed_output(
+                StepPurpose::Advance,
+                || panic!("advance executed vocabulary head"),
+                || u::accept_fault_packet(&packet),
+            );
+            assert!(
+                commit_after_fence(fence, &AtomicBool::new(false), || {
+                    committed.set(true);
+                    Ok(())
+                })
+                .is_err()
+            );
+            assert!(!committed.get());
+        }
+        let committed = Cell::new(false);
+        let read_error: Result<()> = Err(Error::InvalidFormat("fixed public read failure"));
+        assert!(
+            commit_after_fence(read_error, &AtomicBool::new(false), || {
+                committed.set(true);
+                Ok(())
+            })
+            .is_err()
+        );
+        assert!(!committed.get());
+        assert!(
+            commit_after_fence(Ok(()), &AtomicBool::new(true), || {
+                committed.set(true);
+                Ok(())
+            })
+            .is_err()
+        );
+        assert!(!committed.get());
+        let cancel = AtomicBool::new(false);
+        assert!(
+            commit_after_fence(Ok(()), &cancel, || {
+                cancel.store(true, Ordering::Release);
+                Ok(())
+            })
+            .is_err()
+        );
+    }
+    #[test]
+    fn successful_fault_fence_precedes_state_commit() {
+        use std::cell::RefCell;
+        let events = RefCell::new(Vec::new());
+        let fence = completed_output(
+            StepPurpose::Advance,
+            || panic!("advance executed vocabulary head"),
+            || {
+                u::accept_fault_packet(&[0; 4])?;
+                events.borrow_mut().push("accepted fence");
+                Ok(())
+            },
+        );
+        assert!(
+            commit_after_fence(fence, &AtomicBool::new(false), || {
+                events.borrow_mut().push("state commit");
+                Ok(())
+            })
+            .unwrap()
+            .is_empty()
+        );
+        assert_eq!(*events.borrow(), ["accepted fence", "state commit"]);
+    }
     #[test]
     fn exact_public_qwen_owner_plan_includes_full_padding_for_every_handle() {
         // Fixed public geometry, no GGUF file, client, private content or device.

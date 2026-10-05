@@ -95,6 +95,14 @@ fn copy_bounds(size: u64, offset: u64, backing: u64, logical: usize) -> Result<u
     Ok(copy_len)
 }
 
+/// Cleanup-only read must cover exactly the full underlying API-visible
+/// page, including any allocator padding. Interior/logical views never certify.
+pub(crate) fn cleanup_read_bounds(offset: u64, size: u64, backing: u64) -> Result<(), ServerError> {
+    if offset != 0 || size == 0 || size != backing || !size.is_multiple_of(4) {
+        return Err(fault("private cleanup read has hidden page tail"));
+    }
+    Ok(())
+}
 #[derive(Debug)]
 struct Ledger {
     budget: u64,
@@ -836,6 +844,23 @@ impl Drop for TransientIo {
         // WgpuStream's explicit sanitizer is authoritative. Drop attempts only
         // owned I/O cleanup and never emits a success/privacy claim.
         let _ = self.sanitize_after_drain(false, false);
+    }
+}
+
+#[cfg(test)]
+mod cleanup_read_tests {
+    use super::cleanup_read_bounds;
+    #[test]
+    fn only_entire_api_visible_pages_can_be_cleanup_audited() {
+        for bytes in [32768, 65536, 32 * 1024 * 1024] {
+            assert!(cleanup_read_bounds(0, bytes, bytes).is_ok());
+            assert!(cleanup_read_bounds(4, bytes, bytes + 4).is_err());
+            assert!(cleanup_read_bounds(0, bytes - 4, bytes).is_err());
+            assert!(cleanup_read_bounds(0, bytes, bytes * 2).is_err());
+        }
+        assert!(cleanup_read_bounds(0, 0, 0).is_err());
+        assert!(cleanup_read_bounds(0, 32767, 32767).is_err());
+        assert!(cleanup_read_bounds(u64::MAX, 4, 4).is_err());
     }
 }
 

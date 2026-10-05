@@ -372,6 +372,26 @@ impl<R: Runtime> ComputeClient<R> {
             })?
     }
 
+    /// Protected lab cleanup only: map a FULL retained same-stream span with
+    /// a checked bounded poll. Caller must have completed ordinary inference
+    /// (or explicitly abandoned it for cleanup), retain the owning handle, and
+    /// drop returned Bytes before sanitizing/auditing its owned readback stage.
+    /// Ordinary read/read_async and their inference waits remain unchanged.
+    pub fn read_private_cleanup(&self, handle: Handle) -> Result<Bytes, ServerError> {
+        let len = usize::try_from(handle.size()).map_err(|_| ServerError::Generic {
+            reason: "private cleanup read span overflow".into(),
+            backtrace: BackTrace::capture(),
+        })?;
+        let stream_id = self.stream_id();
+        let descriptor = crate::transient::private_write_descriptor(handle, stream_id, len)?;
+        self.device
+            .submit_blocking(move |server| server.read_private_cleanup(descriptor, stream_id))
+            .map_err(|_| ServerError::Generic {
+                reason: "private I/O channel unavailable".into(),
+                backtrace: BackTrace::capture(),
+            })?
+    }
+
     /// Drain and explicitly erase owned stream-local I/O. Outstanding readback
     /// futures/Bytes must be dropped first. Any erasure failure retires the
     /// private stream; caller must retire the entire shared device context.

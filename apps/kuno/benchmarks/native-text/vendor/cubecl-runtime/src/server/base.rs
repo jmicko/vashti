@@ -386,6 +386,19 @@ where
         .into())
     }
 
+    /// Protected native lab cleanup read of one retained full span. Ordinary
+    /// inference reads are separate; unsupported backends must reject this API.
+    fn read_private_cleanup(
+        &mut self,
+        _descriptor: CopyDescriptor,
+        _stream_id: StreamId,
+    ) -> Result<Bytes, ServerError> {
+        Err(IoError::UnsupportedIoOperation {
+            backtrace: BackTrace::capture(),
+        }
+        .into())
+    }
+
     /// Checked stream-local I/O erasure. Main/public weights are excluded.
     /// Caller must resolve/drop readbacks and serialize all stream enqueues.
     fn sanitize_transient_io(

@@ -7,6 +7,7 @@
 //! that physical bank; dropping a plan cannot restore its old GPU bytes.
 
 use std::sync::atomic::{AtomicU64, Ordering};
+use zeroize::{Zeroize, Zeroizing};
 
 // 72 original packed Qwen experts fit the same pooled pages as 64.
 // Higher capacities are a separate allocation-budget decision.
@@ -54,12 +55,35 @@ struct Resident {
     last_used: u64,
 }
 
+impl Zeroize for Resident {
+    fn zeroize(&mut self) {
+        self.expert.zeroize();
+        self.last_used.zeroize();
+    }
+}
+
 #[derive(Clone, PartialEq, Eq)]
 struct State {
     slots: Vec<Option<Resident>>,
     by_expert: Vec<Option<usize>>,
     tick: u64,
     revision: u64,
+}
+
+impl State {
+    fn wipe(&mut self) {
+        // Each vector has fixed, public capacity and never grows after creation.
+        // Vec::zeroize covers initialized entries and the entire spare capacity.
+        self.slots.zeroize();
+        self.by_expert.zeroize();
+        self.tick.zeroize();
+        self.revision.zeroize();
+    }
+}
+impl Drop for State {
+    fn drop(&mut self) {
+        self.wipe();
+    }
 }
 
 /// Transient model-local residency and LRU; Debug is omitted to avoid dumping
@@ -81,6 +105,23 @@ pub struct Plan {
     canonical_slots: Vec<usize>,
     canonical_uploads: Vec<(usize, usize)>,
     next: State,
+}
+
+impl Plan {
+    fn wipe_routes(&mut self) {
+        self.slots.zeroize();
+        self.uploads.zeroize();
+        self.canonical_slots.zeroize();
+        self.canonical_uploads.zeroize();
+        self.bank_id.zeroize();
+        self.base_revision.zeroize();
+    }
+}
+impl Drop for Plan {
+    fn drop(&mut self) {
+        self.wipe_routes();
+        // The candidate or swapped-out committed State has its own wiping Drop.
+    }
 }
 
 /// Pure parsing keeps overrides testable without process-global environment
@@ -134,7 +175,7 @@ impl BankSlots {
         if selected.len() > self.capacity() {
             return Err(BankError::SelectionTooLarge);
         }
-        let mut protected = vec![false; self.experts()];
+        let mut protected = Zeroizing::new(vec![false; self.experts()]);
         for &expert in selected {
             let seen = protected
                 .get_mut(expert)
@@ -159,8 +200,8 @@ impl BankSlots {
                 .ok_or(BankError::CounterOverflow)?
         };
         let mut next = self.state.clone();
-        let mut slots = Vec::with_capacity(selected.len());
-        let mut uploads = Vec::with_capacity(selected.len());
+        let mut slots = Zeroizing::new(Vec::with_capacity(selected.len()));
+        let mut uploads = Zeroizing::new(Vec::with_capacity(selected.len()));
         for (index, &expert) in selected.iter().enumerate() {
             let slot = if let Some(slot) = next.by_expert[expert] {
                 slot
@@ -202,10 +243,10 @@ impl BankSlots {
         next.tick = tick;
         next.revision = revision;
         Ok(Plan {
-            canonical_slots: slots.clone(),
-            canonical_uploads: uploads.clone(),
-            slots,
-            uploads,
+            canonical_slots: slots.to_vec(),
+            canonical_uploads: uploads.to_vec(),
+            slots: std::mem::take(&mut *slots),
+            uploads: std::mem::take(&mut *uploads),
             bank_id: self.bank_id,
             base_revision: self.state.revision,
             next,
@@ -214,14 +255,16 @@ impl BankSlots {
 
     /// Commit only after all planned uploads succeed. Stale/cross-bank or altered
     /// plans fail without changing residency. GPU upload rollback is external.
-    pub fn commit(&mut self, plan: Plan) -> Result<()> {
+    pub fn commit(&mut self, mut plan: Plan) -> Result<()> {
         if plan.bank_id != self.bank_id || plan.base_revision != self.state.revision {
             return Err(BankError::StalePlan);
         }
         if plan.slots != plan.canonical_slots || plan.uploads != plan.canonical_uploads {
             return Err(BankError::ModifiedPlan);
         }
-        self.state = plan.next;
+        // Swapping preserves ownership: Plan Drop erases the previous committed
+        // state and both route copies on success, and candidate state on error.
+        std::mem::swap(&mut self.state, &mut plan.next);
         Ok(())
     }
 }
@@ -235,6 +278,42 @@ mod tests {
         let result = (plan.slots.clone(), plan.uploads.clone());
         bank.commit(plan).unwrap();
         result
+    }
+
+    fn assert_zero_capacity<T>(values: &Vec<T>) {
+        assert!(values.is_empty());
+        // After Vec::zeroize, every byte of the entire capacity is initialized
+        // to zero. Inspect before deallocation; no use-after-free test tricks.
+        let bytes = unsafe {
+            std::slice::from_raw_parts(
+                values.as_ptr().cast::<u8>(),
+                values.capacity() * std::mem::size_of::<T>(),
+            )
+        };
+        assert!(bytes.iter().all(|&byte| byte == 0));
+    }
+
+    #[test]
+    fn route_and_lru_cleanup_covers_complete_retained_host_capacities() {
+        let mut bank = BankSlots::new(3, 8).unwrap();
+        commit(&mut bank, &[5, 2, 7]);
+        let mut plan = bank.plan(&[6, 5, 2]).unwrap();
+        assert!(!plan.uploads.is_empty());
+        plan.wipe_routes();
+        assert_zero_capacity(&plan.slots);
+        assert_zero_capacity(&plan.uploads);
+        assert_zero_capacity(&plan.canonical_slots);
+        assert_zero_capacity(&plan.canonical_uploads);
+        assert_eq!((plan.bank_id, plan.base_revision), (0, 0));
+        plan.next.wipe();
+        assert_zero_capacity(&plan.next.slots);
+        assert_zero_capacity(&plan.next.by_expert);
+        assert_eq!((plan.next.tick, plan.next.revision), (0, 0));
+        // Wiping an uncommitted candidate leaves the original owner intact.
+        assert_eq!(bank.state.by_expert[5], Some(0));
+        bank.state.wipe();
+        assert_zero_capacity(&bank.state.slots);
+        assert_zero_capacity(&bank.state.by_expert);
     }
 
     #[test]

@@ -32,6 +32,7 @@ The existing `ComputeClient` gains:
 configure_transient_io(budget_bytes: u64) -> Result<(), ServerError>
 create_private(data: Vec<u8>) -> Result<Handle, ServerError>
 write_private(handle: Handle, data: Vec<u8>) -> Result<(), ServerError>
+read_private_cleanup(handle: Handle) -> Result<Bytes, ServerError>
 sanitize_transient_io() -> DynFut<Result<TransientIoReceipt, ServerError>>
 sanitize_transient_io_audited() -> DynFut<Result<TransientIoReceipt, ServerError>>
 ```
@@ -193,9 +194,33 @@ the complete upstream CubeCL test suite or live GPU privacy acceptance.
    allocations. No blanket production privacy guarantee follows from Drop,
    receipts, fake tests, or compilation. Document these boundaries precisely.
 
-Full connected-graph private staging, host request ownership and lifecycle
-acceptance remain pending. No production privacy acceptance or release is
-claimed here.
+The earlier standalone I/O checkpoint did not connect the complete graph.
+The protected public resident graph now uses owned staging and passes both-card
+chat/cancellation/fresh-owner acceptance. General host request ownership,
+persistent private worker/lifecycle and production privacy remain unaccepted.
+No release or production API is part of this laboratory.
+
+`read_private_cleanup` is a narrow cleanup-boundary API. It retains a full,
+untrimmed, same-stream owner, checks that its actual API backing has no hidden
+tail, enters the cleanup guard before scheduler mutation and uses checked native
+map polls. Ordinary read/read_async polling is unchanged. Its guarded returned
+Bytes must drop before I/O sanitization. The optional arena zero audit inspects
+one full main page at a time, drops its host lease, audits/erases readback staging,
+and releases no main page until the whole owner succeeds. Failed audit Drop
+quarantines bounded retained handles until process exit; it emits no clean receipt.
+
+Both cards verify 1,286 main pages/785,186,816 bytes for each of four fixed public
+owners, including queued GDN/QSA cancellation and fresh recovery. The separate
+64-MiB runtime ledger stays in force. Optional token-boundary cleanup retains
+intermediate tracked spans under that cap, while completed reads credit only the
+main pool; final fault/logit acceptance sanitizes before any state commit.
+Exact receipts are in `rust-secure-resident-owned-io-20261005.json` under the text
+receipts directory. Root checks pass 28 imported runtime host tests and 169 native
+host/offline tests; independent exact-reconstruction runtime/arena checks pass
+43. Current composed patch SHA256 is
+`a0d985c9b32653e95289cd64af651208f7b4b6142eb91e55e2af08e29e9ec5eb`.
+Owned API pages are the proof boundary; opaque driver/firmware memory, old caller
+copies/stack spills, historical swap and abandoned contexts remain excluded.
 
 
 ## Repository verification entry points

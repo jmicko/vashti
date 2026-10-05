@@ -512,6 +512,61 @@ impl WgpuStream {
             .sanitize_after_drain(previous_error, inspect)
     }
 
+    /// Cleanup boundary only; no background ordinary/inference poll is used.
+    pub(crate) fn read_private_cleanup_resource(
+        &mut self,
+        resource: WgpuResource,
+    ) -> Result<Bytes, ServerError> {
+        let timeout = self.cleanup_boundary.cleanup_timeout().ok_or_else(|| {
+            super::transient_io::fault("private cleanup read outside cleanup boundary")
+        })?;
+        self.private_io_active()?;
+        let mutation = self.transient_io.as_ref().unwrap().mutation_guard();
+        self.compute_pass = None;
+        let scopes = super::transient_io::IoScopes::new(&self.device);
+        let setup: Result<_, ServerError> = (|| {
+            let logical = usize::try_from(resource.size)
+                .map_err(|_| super::transient_io::fault("private cleanup read span overflow"))?;
+            let entry = self.transient_io.as_mut().unwrap().readback(
+                &mut self.encoder,
+                &resource,
+                logical,
+            )?;
+            self.tasks_count += 2;
+            self.flush(StreamErrorMode {
+                ignore: false,
+                flush: true,
+            })?;
+            Ok(entry)
+        })();
+        scopes.finish(self.transient_io.as_mut().unwrap());
+        let entry = setup?;
+        let scopes = super::transient_io::IoScopes::new(&self.device);
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        // entry's ReadbackLease already guards pending-map cancellation/unmap.
+        entry.buffer.map_async(wgpu::MapMode::Read, .., move |r| {
+            let _ = sender.try_send(r);
+        });
+        scopes.finish(self.transient_io.as_mut().unwrap());
+        if self
+            .device
+            .poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: Some(timeout),
+            })
+            .is_err()
+            || !matches!(receiver.try_recv(), Ok(Ok(())))
+        {
+            entry.fail();
+            return Err(super::transient_io::fault(
+                "private cleanup read map/drain failed",
+            ));
+        }
+        let bytes = entry.into_bytes()?;
+        mutation.accept();
+        Ok(bytes)
+    }
+
     fn read_private_resources(
         &mut self,
         descriptors: Vec<(WgpuResource, Shape, usize)>,

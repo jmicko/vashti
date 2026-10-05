@@ -49,7 +49,7 @@
   "changed_files": [
     {
       "path": "cubecl-runtime/src/client.rs",
-      "sha256": "b543147df9d59d4505479148d8e77845d19758d8b48f060196f707c667a675d6",
+      "sha256": "ca1b728f890ac42fa1c1c1c95ff242e5bc71edafd3b4aef7c2704c8740bf5b91",
       "original_sha256": "dd25c67906e3db68d05d916d45234e4bdf20cd5b65ac1ad2b00a2ddcb520e85a"
     },
     {
@@ -59,7 +59,7 @@
     },
     {
       "path": "cubecl-runtime/src/server/base.rs",
-      "sha256": "2750fdc41ba303294456bf41348339e6d7fba00c972fe0a08b64e86a9f24c15a",
+      "sha256": "ab32e1d3be718c280216d03cfacbe9d8e7eb68522115249f1dd5000e3b2a1111",
       "original_sha256": "c6292c16d5a73d7a1570776ffd25ec10afc339b942dbc5a693d8c791feb8ef5b"
     },
     {
@@ -124,21 +124,21 @@
     },
     {
       "path": "cubecl-wgpu/src/compute/server.rs",
-      "sha256": "a4daa678ac88c5b40ee296f097ab58488c94fd76b2531e8e4b25c2550050d90f",
+      "sha256": "b9339d4767c9f6ab2cea7e39611b9dba847934803d5785566150f09830fcbc3d",
       "original_sha256": "a4840cd40e4541b27d93f0f08a211af96a0b50e272903fe97b74eec7a29a5903"
     },
     {
       "path": "cubecl-wgpu/src/compute/stream.rs",
-      "sha256": "90b90e735fdbc83537311163e2cca295da1d2b02e60bf2ec0e44e68641ccc7d0",
+      "sha256": "0dad581f1abc3b11753a9d505464a5098da6949a6a31072d52bbcfa4d93259c5",
       "original_sha256": "97501594e0424c70cd65cbebfedf3b1f1578ecccb4b7ef1e3a873e85141cc35e"
     },
     {
       "path": "cubecl-wgpu/src/compute/transient_io.rs",
-      "sha256": "21f48f16bad083a48381d013fc25af4e7ea955d75f400c15bb50738a68faf919",
+      "sha256": "b27c179bffc5ad42edeb5ccc436b596c5ebfa9b1b1a5808a4111be7e1d25c9a1",
       "original_sha256": null
     }
   ],
-  "patch_sha256": "985bda86d7b7e0c2b954107b04506bc140bc655cb1d18b9daa158da48e000f32",
+  "patch_sha256": "a0d985c9b32653e95289cd64af651208f7b4b6142eb91e55e2af08e29e9ec5eb",
   "lock_sha256": "b63c5bbf0b755839ed0a59bcf0c83c8ca87bb94ebd57933c7fccac21dcfaece5",
   "host_lock_sha256": "b968a383901ba657bdc2b670a0c7d30fc8c6b8c7ae9335c7c231fb827f0b7acf"
 }

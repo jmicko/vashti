@@ -1,5 +1,11 @@
 # Resident Rust graph / private I/O review
 
+Latest laboratory receipt: the complete fixed public graph now uses owned I/O
+and both GPUs inspect all 1,286 main pages/785,186,816 bytes after cleanup.
+See the [connected ownership follow-up](kuno-text-performance.md#connected-owned-io-full-page-inspection-and-multi-rhs-operators).
+Earlier pending statements below describe their historical checkpoint. This is
+not a persistent private worker, production API or blanket privacy acceptance.
+
 Historical read-only source audit, 2026-10-05. The initial audit performed no
 device actions, real model payload reads, service changes or production edits.
 Later laboratory implementation and protected device receipts are below and

@@ -6,6 +6,7 @@ mod gdn_executor;
 mod gdn_gpu;
 mod gdn_pointwise;
 mod main_admission;
+mod matmul_probe;
 mod private_arena;
 mod qsa_gpu;
 mod quant_matvec;
@@ -39,6 +40,60 @@ fn matvec<F: Float>(matrix: &Array<F>, input: &Array<F>, output: &mut Array<F>, 
     }
 }
 
+fn transient_resident_mode(mode: &str, raw: Option<&str>) -> Result<bool, &'static str> {
+    match raw {
+        None | Some("0") => Ok(false),
+        Some("1")
+            if matches!(
+                mode,
+                "resident-bang" | "resident-chat" | "resident-rainwater"
+            ) =>
+        {
+            Ok(true)
+        }
+        Some("1") => Err("owned runtime I/O requires a full resident fixture"),
+        Some(_) => Err("KUNO_LAB_TRANSIENT_IO must be 0 or 1"),
+    }
+}
+
+fn token_io_cadence(raw: Option<&str>, owned_resident: bool) -> Result<bool, &'static str> {
+    match raw {
+        None | Some("0") => Ok(false),
+        Some("1") if owned_resident => Ok(true),
+        Some("1") => Err("token I/O checkpoint requires owned resident I/O"),
+        Some(_) => Err("KUNO_LAB_IO_TOKEN_CHECKPOINT must be 0 or 1"),
+    }
+}
+
+fn public_owned_zero_audit_mode(transient: bool, raw: Option<&str>) -> Result<bool, &'static str> {
+    match raw {
+        None | Some("0") => Ok(false),
+        Some("1") if transient => Ok(true),
+        Some("1") => Err("owned zero audit requires the transient fixed-public resident fixture"),
+        Some(_) => Err("KUNO_LAB_OWNED_ZERO_AUDIT must be 0 or 1"),
+    }
+}
+fn report_public_owned_zero_audit(
+    resident: &resident_model::ResidentModel<'_, '_>,
+    enabled: bool,
+    reports: &mut Vec<serde_json::Value>,
+) -> Result<(), &'static str> {
+    if enabled {
+        let (main, source) = resident
+            .public_owned_zero_audit_receipt()
+            .ok_or("owned main zero audit did not accept complete cleanup")?;
+        println!(
+            "public_resident_owned_zero_audit main_buffers={} main_bytes={} source_buffers={} source_bytes={}",
+            main.buffers, main.bytes, source.buffers, source.bytes
+        );
+        reports.push(serde_json::json!({
+            "main_buffers":main.buffers,"main_bytes":main.bytes,
+            "source_buffers":source.buffers,"source_bytes":source.bytes
+        }));
+    }
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let vendor = match std::env::args().nth(1).as_deref() {
         Some("intel") => 0x8086,
@@ -46,6 +101,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         _ => return Err("expected intel or nvidia".into()),
     };
     let mode = std::env::args().nth(2).unwrap_or("probe".into());
+    let transient_setting = match std::env::var("KUNO_LAB_TRANSIENT_IO") {
+        Ok(raw) => Some(raw),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(_) => return Err("KUNO_LAB_TRANSIENT_IO must be 0 or 1".into()),
+    };
+    let transient_resident = transient_resident_mode(&mode, transient_setting.as_deref())?;
+    let io_token_setting = match std::env::var("KUNO_LAB_IO_TOKEN_CHECKPOINT") {
+        Ok(raw) => Some(raw),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(_) => return Err("KUNO_LAB_IO_TOKEN_CHECKPOINT must be 0 or 1".into()),
+    };
+    let token_checkpoint = token_io_cadence(io_token_setting.as_deref(), transient_resident)?;
+    let owned_audit_setting = match std::env::var("KUNO_LAB_OWNED_ZERO_AUDIT") {
+        Ok(raw) => Some(raw),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(_) => return Err("KUNO_LAB_OWNED_ZERO_AUDIT must be 0 or 1".into()),
+    };
+    let public_owned_zero_audit =
+        public_owned_zero_audit_mode(transient_resident, owned_audit_setting.as_deref())?;
+    // One retirement flag belongs to the configured physical stream, across
+    // every fresh logical owner/executor in the cancellation diagnostic.
+    let transient_context = transient_resident.then(|| std::sync::Arc::new(AtomicBool::new(false)));
     let requested_slots = match std::env::var("KUNO_LAB_EXPERT_SLOTS") {
         Ok(value) => Some(value),
         Err(std::env::VarError::NotPresent) => None,
@@ -105,6 +182,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
         );
         let client = WgpuRuntime::client(&selected);
+        if mode == "matmul-probe" {
+            matmul_probe::run(&client)?;
+            return Ok(());
+        }
+        if let Some(retired) = &transient_context {
+            let configured = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                client.configure_transient_io(executor::RESIDENT_RUNTIME_IO_MAX)
+            }));
+            if !matches!(configured, Ok(Ok(()))) {
+                retired.store(true, std::sync::atomic::Ordering::Release);
+                return Err("resident runtime I/O initialization failed".into());
+            }
+        }
         if mode == "transient-io-probe" {
             transient_probe::run(&client)?;
             return Ok(());
@@ -145,6 +235,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 return Err("Rust GPU numeric fixture failed".into());
             }
             println!("rust_matvec rows={rows} cols={cols} max_abs_error={max_error}");
+            drop(bytes);
+            if transient_resident {
+                executor::sanitize_resident_io(&client)?;
+            }
         }
         if mode == "resident-qsa-probe" {
             for report in resident_qsa::public_parity_probe(&client)? {
@@ -263,6 +357,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!(
                     "rust_packed_matvec dtype={dtype} rows={rows} cols={cols} max_abs_error={max_error}"
                 );
+                drop(actual_bytes);
+                if transient_resident {
+                    executor::sanitize_resident_io(&client)?;
+                }
             }
         }
         if mode == "matrix-bench" {
@@ -342,7 +440,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             return Ok(());
         }
-        if mode == "moe-probe" || mode == "moe-bench" {
+        if matches!(
+            mode.as_str(),
+            "moe-probe" | "moe-bench" | "moe-word-probe" | "moe-word-bench"
+        ) {
+            let word_probe = mode.starts_with("moe-word-");
             let path = std::env::var_os("KUNO_TEST_GGUF").ok_or("existing GGUF required")?;
             let file = GgufFile::open(path, GgufLimits::default())?;
             let cancel = AtomicBool::new(false);
@@ -353,6 +455,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 16,
                 2 * 1024 * 1024 * 1024,
             )?;
+            if word_probe {
+                executor.word_down = true;
+            }
             let mut results = Vec::new();
             for kind in [TensorType::Q5_0, TensorType::Q8_0] {
                 let down = file
@@ -416,6 +521,87 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         executor.gdn_ns / 1_000_000,
                         executor.gdn_calls
                     );
+                    if word_probe {
+                        executor.word_down = false;
+                        let mut reference = executor
+                            .routed_moe(weights, &input, &selected, &cancel)?
+                            .ok_or("missing routed backend")?;
+                        executor.word_down = true;
+                        if reference.len() != actual.len() {
+                            return Err("word down MoE output extent".into());
+                        }
+                        let mut max_difference = 0.0_f32;
+                        for (&a, &e) in actual.iter().zip(&reference) {
+                            let error = (a - e).abs();
+                            max_difference = max_difference.max(error);
+                            if !a.is_finite() || !e.is_finite() || error > 1e-4 + 3e-4 * e.abs() {
+                                return Err("word down MoE numerical parity failed".into());
+                            }
+                        }
+                        reference.zeroize();
+                        println!(
+                            "public_word_down dtype={} pass={pass} selected=10 physical_lanes=16 virtual_lanes=64 max_abs_difference={max_difference}",
+                            kind.gguf_id()
+                        );
+                        results.push(serde_json::json!({"down_dtype":kind.gguf_id(),"pass":pass,"selected":10,"max_abs_difference":max_difference,"physical_lanes":16,"virtual_lanes":64,"rows_per_cube":1}));
+                        if mode == "moe-word-bench" && pass == 1 {
+                            for variant in [false, true] {
+                                executor.word_down = variant;
+                                let mut warm = executor
+                                    .routed_moe(weights, &input, &selected, &cancel)?
+                                    .ok_or("missing routed backend")?;
+                                warm.zeroize();
+                            }
+                            let misses = executor.expert_uploads;
+                            let mut generic = Vec::new();
+                            let mut word = Vec::new();
+                            for _ in 0..5 {
+                                for variant in [false, true, true, false] {
+                                    executor.word_down = variant;
+                                    let start = Instant::now();
+                                    let mut output = executor
+                                        .routed_moe(weights, &input, &selected, &cancel)?
+                                        .ok_or("missing routed backend")?;
+                                    let ns = start.elapsed().as_nanos() as u64;
+                                    if variant {
+                                        word.push(ns);
+                                    } else {
+                                        generic.push(ns);
+                                    }
+                                    if output.len() != actual.len() {
+                                        return Err("word down timed MoE output extent".into());
+                                    }
+                                    for (&a, &e) in output.iter().zip(&actual) {
+                                        let error = (a - e).abs();
+                                        max_difference = max_difference.max(error);
+                                        if !a.is_finite()
+                                            || !e.is_finite()
+                                            || error > 1e-4 + 3e-4 * e.abs()
+                                        {
+                                            return Err(
+                                                "word down timed MoE numerical parity failed"
+                                                    .into(),
+                                            );
+                                        }
+                                    }
+                                    output.zeroize();
+                                }
+                            }
+                            executor.word_down = true;
+                            if executor.expert_uploads != misses {
+                                return Err("MoE cache changed during word down bench".into());
+                            }
+                            generic.sort_unstable();
+                            word.sort_unstable();
+                            println!(
+                                "public_word_down_bench dtype={} generic_median_us={} word_median_us={} max_abs_difference={max_difference}",
+                                kind.gguf_id(),
+                                generic[5] / 1000,
+                                word[5] / 1000
+                            );
+                            results.push(serde_json::json!({"down_dtype":kind.gguf_id(),"generic_ns":generic,"word_ns":word,"max_abs_difference":max_difference,"cache_misses_during_measurement":0,"selected":10,"physical_lanes":16,"virtual_lanes":64,"rows_per_cube":1,"block_gate_up":executor.block_moe}));
+                        }
+                    }
                     if mode == "moe-bench" && pass == 1 {
                         for variant in [false, true] {
                             executor.block_moe = variant;
@@ -466,11 +652,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             }
-            if mode == "moe-bench"
+            if (mode == "moe-bench" || word_probe)
                 && let Some(path) = std::env::var_os("KUNO_PUBLIC_RECEIPT")
             {
                 use std::io::Write;
-                let receipt = serde_json::json!({"scope":"fixed-public-synthetic-operator-test-only","fixture":"moe-bench","vendor":vendor,"results":results});
+                let receipt = serde_json::json!({"scope":"fixed-public-synthetic-operator-test-only","fixture":mode,"vendor":vendor,"word_down":executor.word_down,"results":results});
                 let mut out = std::fs::OpenOptions::new()
                     .write(true)
                     .create_new(true)
@@ -483,6 +669,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let fixture: serde_json::Value =
                 serde_json::from_str(include_str!("../../text/qwen38-baseline.json"))?;
             let resident_enabled = mode.starts_with("resident-");
+            let prefill_last_head =
+                std::env::var("KUNO_LAB_PREFILL_LAST_HEAD").as_deref() == Ok("1");
+            if prefill_last_head && !resident_enabled {
+                return Err("last-head prefill requires a resident fixture".into());
+            }
             let fixture_mode = mode.strip_prefix("resident-").unwrap_or(&mode);
             let (prompt, limit) = match fixture_mode {
                 "bang" => ("!", 4usize),
@@ -518,14 +709,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 expert_slots,
                 device_budget,
             )?;
+            if let Some(retired) = &transient_context {
+                executor.enable_transient_resident(retired.clone())?;
+            }
             let cancel = AtomicBool::new(false);
             let mut resident = if resident_enabled {
-                Some(resident_model::ResidentModel::new(
-                    model.bound_graph(),
-                    client.clone(),
-                    ids.len() + limit,
-                    &mut executor,
-                )?)
+                Some(
+                    resident_model::ResidentModel::new_with_public_owned_zero_audit(
+                        model.bound_graph(),
+                        client.clone(),
+                        ids.len() + limit,
+                        &mut executor,
+                        public_owned_zero_audit,
+                    )?,
+                )
             } else {
                 None
             };
@@ -543,8 +740,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             for (n, token) in ids.iter().enumerate() {
                 logits.zeroize();
                 logits = if let Some(r) = &mut resident {
-                    let mut output = r.step(&mut executor, *token, &cancel)?;
-                    std::mem::take(&mut *output)
+                    if prefill_last_head && n + 1 < ids.len() {
+                        r.advance_without_logits(&mut executor, *token, &cancel)?;
+                        Vec::new()
+                    } else {
+                        let mut output = r.step(&mut executor, *token, &cancel)?;
+                        std::mem::take(&mut *output)
+                    }
                 } else {
                     model.step(&mut executor, &mut sequence, *token, &cancel, |_| {})?
                 };
@@ -618,8 +820,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Some(r) = &resident {
                 println!("public_resident_warm_phase_ns={:?}", r.phase_ns);
             }
+            let mut pending_receipt = None;
+            let mut owned_zero_audits = Vec::new();
             if let Some(path) = std::env::var_os("KUNO_PUBLIC_RECEIPT") {
-                use std::io::Write;
                 let mut receipt = serde_json::json!({
                     "scope":"fixed-public-synthetic-operator-test-only", "fixture":mode,"vendor":vendor,
                     "seed":424242,"temperature":0,"model_bind_ms":model_bind_ms,"prompt_tokens":ids.len(),"public_generated_ids":generated,
@@ -646,8 +849,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "small_cpu_cache_bytes":executor.small_cpu.cached_bytes(),
                     "small_cpu_cache_matrices":executor.small_cpu.cached_matrices(), "resident_graph":resident_enabled,"weights":"borrowed-unmodified-ollama-blob"
                 });
+                receipt["word_down"] = serde_json::json!(executor.word_down);
                 receipt["resident_main_admitted_upper_bytes"] =
                     serde_json::json!(executor.admission_upper_bytes()?);
+                receipt["prefill_last_head"] = serde_json::json!(prefill_last_head);
+                receipt["resident_transient_io"] = serde_json::json!(transient_resident);
+                receipt["resident_owned_zero_audit_enabled"] =
+                    serde_json::json!(public_owned_zero_audit);
+                receipt["io_token_checkpoint"] = serde_json::json!(token_checkpoint);
+                receipt["resident_runtime_io_limit_bytes"] = serde_json::json!(
+                    transient_resident.then_some(executor::RESIDENT_RUNTIME_IO_MAX)
+                );
                 receipt["batch_experts"] = serde_json::json!(executor.batch_experts);
                 receipt["expert_batch_window_bytes"] =
                     serde_json::json!(executor.expert_batch_bytes);
@@ -656,11 +868,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 receipt["expert_bank_accounted_limit_bytes"] = serde_json::json!(bank_charge);
                 receipt["static_cache_budget_bytes"] = serde_json::json!(cache_budget);
                 receipt["device_reserved_limit_bytes"] = serde_json::json!(device_budget);
-                let mut out = std::fs::OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(path)?;
-                out.write_all(serde_json::to_string_pretty(&receipt)?.as_bytes())?;
+                // Timings/public IDs remain in RAM until explicit owned cleanup
+                // and optional cancellation/audit acceptance complete.
+                pending_receipt = Some((path, receipt));
             }
             let tail = decoder.finish();
             if !tail.is_empty() {
@@ -686,6 +896,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if r.step(&mut executor, ids[0], &cancel).is_ok() {
                     return Err("poisoned resident sequence reused".into());
                 }
+                report_public_owned_zero_audit(r, public_owned_zero_audit, &mut owned_zero_audits)?;
                 // A poisoned admission ledger is never reset/reused. The
                 // diagnostic explicitly drops the erased owner and executor;
                 // executor Drop drains its public cache before a fresh binding.
@@ -697,18 +908,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     expert_slots,
                     device_budget,
                 )?;
-                let mut fresh = resident_model::ResidentModel::new(
+                if let Some(retired) = &transient_context {
+                    executor.enable_transient_resident(retired.clone())?;
+                }
+                let mut fresh = resident_model::ResidentModel::new_with_public_owned_zero_audit(
                     model.bound_graph(),
                     client.clone(),
                     ids.len() + limit,
                     &mut executor,
+                    public_owned_zero_audit,
                 )?;
                 let mut fresh_logits = zeroize::Zeroizing::new(Vec::new());
-                for token in &ids {
-                    fresh_logits = fresh.step(&mut executor, *token, &cancel)?;
+                for (n, token) in ids.iter().enumerate() {
+                    if prefill_last_head && n + 1 < ids.len() {
+                        fresh.advance_without_logits(&mut executor, *token, &cancel)?;
+                    } else {
+                        fresh_logits = fresh.step(&mut executor, *token, &cancel)?;
+                    }
                 }
                 if greedy(&fresh_logits)? != generated[0] {
                     return Err("fresh resident sequence mismatch".into());
+                }
+                if public_owned_zero_audit {
+                    fresh.close()?;
+                    report_public_owned_zero_audit(&fresh, true, &mut owned_zero_audits)?;
                 }
                 drop(fresh);
                 for layer in [0, 3] {
@@ -719,18 +942,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         expert_slots,
                         device_budget,
                     )?;
-                    let mut partial = resident_model::ResidentModel::new(
-                        model.bound_graph(),
-                        client.clone(),
-                        ids.len() + limit,
-                        &mut executor,
-                    )?;
+                    if let Some(retired) = &transient_context {
+                        executor.enable_transient_resident(retired.clone())?;
+                    }
+                    let mut partial =
+                        resident_model::ResidentModel::new_with_public_owned_zero_audit(
+                            model.bound_graph(),
+                            client.clone(),
+                            ids.len() + limit,
+                            &mut executor,
+                            public_owned_zero_audit,
+                        )?;
                     partial.arm_public_mid_token_cancel(layer)?;
-                    if partial.step(&mut executor, ids[0], &cancel).is_ok()
-                        || !partial.erased_after_failure()
-                    {
+                    let failed = if prefill_last_head && ids.len() > 1 {
+                        partial
+                            .advance_without_logits(&mut executor, ids[0], &cancel)
+                            .is_err()
+                    } else {
+                        partial.step(&mut executor, ids[0], &cancel).is_err()
+                    };
+                    if !failed || !partial.erased_after_failure() {
                         return Err("partially queued resident cancellation failed".into());
                     }
+                    report_public_owned_zero_audit(
+                        &partial,
+                        public_owned_zero_audit,
+                        &mut owned_zero_audits,
+                    )?;
                     cancel.store(false, std::sync::atomic::Ordering::Release);
                     println!("public_mid_token_cancel layer={layer} erased=true");
                 }
@@ -742,7 +980,83 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             generated.zeroize();
             sequence.reset();
             decoder.clear();
+            if transient_resident {
+                // Cancellation diagnostics already explicitly checked and
+                // dropped this owner before their fresh logical bindings.
+                if let Some(r) = resident.as_mut() {
+                    r.close()?;
+                    if !r.erased_after_failure() {
+                        return Err("resident full-span cleanup acceptance failed".into());
+                    }
+                    report_public_owned_zero_audit(
+                        r,
+                        public_owned_zero_audit,
+                        &mut owned_zero_audits,
+                    )?;
+                }
+                executor.close_transient_resident()?;
+                println!("public_resident_owned_cleanup=true context_retired=false");
+            }
+            if let Some((path, mut receipt)) = pending_receipt {
+                use std::io::Write;
+                receipt["owned_io_cleanup_accepted"] = serde_json::json!(transient_resident);
+                receipt["owned_zero_audits"] = serde_json::json!(owned_zero_audits);
+                let mut out = std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(path)?;
+                out.write_all(serde_json::to_string_pretty(&receipt)?.as_bytes())?;
+            }
         }
         Ok::<_, Box<dyn std::error::Error>>(())
     })
+}
+
+#[cfg(test)]
+mod transient_mode_tests {
+    #[test]
+    fn owned_zero_audit_is_explicit_and_requires_secure_fixed_public_mode() {
+        use super::public_owned_zero_audit_mode;
+        for transient in [false, true] {
+            assert_eq!(public_owned_zero_audit_mode(transient, None), Ok(false));
+            assert_eq!(
+                public_owned_zero_audit_mode(transient, Some("0")),
+                Ok(false)
+            );
+            assert_eq!(
+                public_owned_zero_audit_mode(transient, Some("1")).is_ok(),
+                transient
+            );
+            for raw in ["", "true", "01", "2"] {
+                assert!(public_owned_zero_audit_mode(transient, Some(raw)).is_err());
+            }
+        }
+        assert_eq!(public_owned_zero_audit_mode(true, Some("1")), Ok(true));
+    }
+
+    use super::{token_io_cadence, transient_resident_mode};
+    #[test]
+    fn token_checkpoint_requires_explicit_owned_resident_path() {
+        assert_eq!(token_io_cadence(None, false), Ok(false));
+        assert_eq!(token_io_cadence(Some("0"), false), Ok(false));
+        assert!(token_io_cadence(Some("1"), false).is_err());
+        assert_eq!(token_io_cadence(Some("1"), true), Ok(true));
+        for raw in ["", "true", "2", " 1"] {
+            assert!(token_io_cadence(Some(raw), true).is_err());
+        }
+    }
+    #[test]
+    fn owned_io_is_an_explicit_full_resident_fixture_option() {
+        for mode in ["resident-bang", "resident-chat", "resident-rainwater"] {
+            assert_eq!(transient_resident_mode(mode, None), Ok(false));
+            assert_eq!(transient_resident_mode(mode, Some("0")), Ok(false));
+            assert_eq!(transient_resident_mode(mode, Some("1")), Ok(true));
+        }
+        for mode in ["probe", "bang", "matrix-bench", "resident-qsa-probe"] {
+            assert!(transient_resident_mode(mode, Some("1")).is_err());
+        }
+        for raw in ["", "true", "01", "2"] {
+            assert!(transient_resident_mode("resident-bang", Some(raw)).is_err());
+        }
+    }
 }

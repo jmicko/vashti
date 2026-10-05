@@ -19,6 +19,34 @@ use zeroize::Zeroize;
 
 const TILE_BYTES: usize = 64 * 1024 * 1024;
 pub(crate) const RESIDENT_IO_MAX: u64 = 64 * 1024 * 1024;
+/// Separate runtime upload/uniform/readback ownership. Not main-pool telemetry.
+pub(crate) const RESIDENT_RUNTIME_IO_MAX: u64 = 64 * 1024 * 1024;
+
+pub(crate) fn sanitize_resident_io(client: &ComputeClient<WgpuRuntime>) -> Result<()> {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        cubecl::future::block_on(client.sanitize_transient_io())
+    })) {
+        Ok(Ok(_counts)) => Ok(()),
+        _ => Err(Error::InvalidFormat("resident runtime I/O cleanup failed")),
+    }
+}
+
+fn checked_transient_cleanup(
+    retired: &AtomicBool,
+    cleanup: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    // Retired streams still get one best-effort attempt, never a clean receipt.
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(cleanup));
+    if !matches!(result, Ok(Ok(()))) || retired.load(Ordering::Acquire) {
+        retired.store(true, Ordering::Release);
+        return Err(Error::InvalidFormat("resident runtime I/O cleanup failed"));
+    }
+    Ok(())
+}
+
+fn checkpoint_needed(intermediate: bool, token_checkpoint: bool) -> bool {
+    !intermediate || !token_checkpoint
+}
 
 fn admission_error(_: main_admission::AdmissionError) -> Error {
     Error::LimitExceeded("resident main-pool admission")
@@ -75,6 +103,7 @@ fn guarded_allocation<T>(
 fn guarded_readback<T>(
     ledger: &mut MainAdmission,
     read: impl FnOnce() -> Result<T>,
+    cleanup: impl FnOnce() -> Result<()>,
     telemetry: impl FnOnce() -> Result<u64>,
 ) -> Result<T> {
     let result = (|| {
@@ -82,6 +111,9 @@ fn guarded_readback<T>(
             return Err(Error::InvalidFormat("resident admission poisoned"));
         }
         let value = read()?;
+        // Helpers return only owned host values. Every mapped Bytes/future
+        // lease must be dropped before sanitizing or granting fence credit.
+        cleanup()?;
         ledger
             .completed_fence(telemetry()?)
             .map_err(admission_error)?;
@@ -100,6 +132,9 @@ fn guarded_readback<T>(
 pub(crate) struct ResidentAdmission {
     client: ComputeClient<WgpuRuntime>,
     ledger: Arc<Mutex<MainAdmission>>,
+    transient_io: bool,
+    token_io_checkpoint: bool,
+    retired: Arc<AtomicBool>,
 }
 impl ResidentAdmission {
     fn with_ledger<T>(&self, f: impl FnOnce(&mut MainAdmission) -> Result<T>) -> Result<T> {
@@ -122,6 +157,10 @@ impl ResidentAdmission {
         }
     }
     fn active(&self) -> Result<()> {
+        if self.retired.load(Ordering::Acquire) {
+            self.poison();
+            return Err(Error::InvalidFormat("resident GPU context retired"));
+        }
         self.with_ledger(|ledger| {
             if ledger.is_poisoned() {
                 Err(Error::InvalidFormat("resident admission poisoned"))
@@ -134,7 +173,49 @@ impl ResidentAdmission {
         self.with_ledger(|ledger| guarded_allocation(ledger, requests, || self.telemetry(), f))
     }
     pub(crate) fn readback<T>(&self, f: impl FnOnce() -> Result<T>) -> Result<T> {
-        self.with_ledger(|ledger| guarded_readback(ledger, f, || self.telemetry()))
+        self.readback_with_cadence(false, f)
+    }
+    /// Completed intermediate maps still drop their guarded Bytes immediately.
+    /// Deferred I/O remains tracked and charged in the separate hard runtime
+    /// budget; main-pool fence credit cannot reclaim those runtime spans.
+    pub(crate) fn readback_intermediate<T>(&self, f: impl FnOnce() -> Result<T>) -> Result<T> {
+        self.readback_with_cadence(true, f)
+    }
+    fn readback_with_cadence<T>(
+        &self,
+        intermediate: bool,
+        f: impl FnOnce() -> Result<T>,
+    ) -> Result<T> {
+        if self.retired.load(Ordering::Acquire) {
+            self.poison();
+            return Err(Error::InvalidFormat("resident GPU context retired"));
+        }
+        self.with_ledger(|ledger| {
+            guarded_readback(
+                ledger,
+                f,
+                || {
+                    if checkpoint_needed(intermediate, self.token_io_checkpoint) {
+                        self.checkpoint()
+                    } else {
+                        Ok(())
+                    }
+                },
+                || self.telemetry(),
+            )
+        })
+    }
+    pub(crate) fn transient_io(&self) -> bool {
+        self.transient_io
+    }
+    pub(crate) fn retired_context(&self) -> Arc<AtomicBool> {
+        self.retired.clone()
+    }
+    fn checkpoint(&self) -> Result<()> {
+        if !self.transient_io {
+            return Ok(());
+        }
+        checked_transient_cleanup(&self.retired, || sanitize_resident_io(&self.client))
     }
     pub(crate) fn prewarm(
         &self,
@@ -170,10 +251,12 @@ pub struct GpuExecutor<'a> {
     pub block_kernel: bool,
     pub block_large_only: bool,
     pub block_moe: bool,
+    pub word_down: bool,
     pub batch_experts: bool,
     pub expert_batch_bytes: usize,
     pub expert_scatter: expert_banks::ScatterMode,
     pub gpu_gdn: bool,
+    pub token_io_checkpoint: bool,
     pub small_cpu: crate::small_cpu::SmallCpu<'a>,
     pub small_cpu_enabled: bool,
     pub small_cpu_ns: u128,
@@ -188,6 +271,7 @@ pub struct GpuExecutor<'a> {
     bank_slots: usize,
     reserved_limit: usize,
     resident_admission: Option<ResidentAdmission>,
+    transient_resident: Option<Arc<AtomicBool>>,
     pub by_tensor: BTreeMap<String, u128>,
     pub gdn_ns: u128,
     pub gdn_calls: u64,
@@ -241,10 +325,13 @@ impl<'a> GpuExecutor<'a> {
             block_kernel: std::env::var("KUNO_LAB_BLOCK_KERNEL").as_deref() != Ok("0"),
             block_large_only: std::env::var("KUNO_LAB_BLOCK_KERNEL").as_deref() != Ok("1"),
             block_moe: std::env::var("KUNO_LAB_BLOCK_MOE").as_deref() == Ok("1"),
+            word_down: std::env::var("KUNO_LAB_WORD_DOWN").as_deref() == Ok("1"),
             // Candidate batching stays opt-in until paired measurements win.
             batch_experts: std::env::var("KUNO_LAB_BATCH_EXPERTS").as_deref() == Ok("1"),
             expert_batch_bytes,
             expert_scatter,
+            token_io_checkpoint: std::env::var("KUNO_LAB_IO_TOKEN_CHECKPOINT").as_deref()
+                == Ok("1"),
             gpu_gdn: std::env::var("KUNO_LAB_CPU_GDN").as_deref() != Ok("1"),
             model,
             client,
@@ -257,6 +344,7 @@ impl<'a> GpuExecutor<'a> {
             bank_slots,
             reserved_limit,
             resident_admission: None,
+            transient_resident: None,
             by_tensor: BTreeMap::new(),
             gdn_ns: 0,
             gdn_calls: 0,
@@ -279,6 +367,52 @@ impl<'a> GpuExecutor<'a> {
         }
         Ok(())
     }
+    /// Adopt configuration performed ONCE by the fixed-stream lab runner,
+    /// before any uniforms/readbacks. The SAME retirement flag belongs to the
+    /// physical stream across fresh logical owners. No configuration/fallback.
+    pub(crate) fn enable_transient_resident(&mut self, retired: Arc<AtomicBool>) -> Result<()> {
+        if let Some(previous) = &self.transient_resident {
+            previous.store(true, Ordering::Release);
+            retired.store(true, Ordering::Release);
+            self.poison_resident();
+            return Err(Error::InvalidFormat("resident I/O adoption after use"));
+        }
+        self.transient_resident = Some(retired.clone());
+        if self.resident_admission.is_some() || !self.cache.is_empty() || !self.banks.is_empty() {
+            retired.store(true, Ordering::Release);
+            self.poison_resident();
+            return Err(Error::InvalidFormat("resident I/O adoption after use"));
+        }
+        if checked_transient_cleanup(&retired, || sanitize_resident_io(&self.client)).is_err() {
+            return Err(Error::InvalidFormat(
+                "resident I/O configuration unavailable",
+            ));
+        }
+        Ok(())
+    }
+    /// Checked fixed-fixture shutdown. No ordinary sync on owned-runtime I/O;
+    /// failure keeps the context retired and the admission ledger poisoned.
+    pub(crate) fn close_transient_resident(&mut self) -> Result<()> {
+        let retired = self
+            .transient_resident
+            .clone()
+            .ok_or(Error::InvalidFormat("resident I/O ownership unavailable"))?;
+        self.poison_resident();
+        checked_transient_cleanup(&retired, || sanitize_resident_io(&self.client))?;
+        self.cache.clear();
+        self.cache_bytes = 0;
+        self.banks.clear();
+        self.bank_reserved = 0;
+        // All previous commands completed before public cache handles release.
+        let cleaned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.client.memory_cleanup();
+        }));
+        if cleaned.is_err() {
+            retired.store(true, Ordering::Release);
+            return Err(Error::InvalidFormat("resident public cache cleanup failed"));
+        }
+        checked_transient_cleanup(&retired, || sanitize_resident_io(&self.client))
+    }
     pub fn cache_bytes(&self) -> usize {
         self.cache_bytes + self.bank_reserved
     }
@@ -299,6 +433,18 @@ impl<'a> GpuExecutor<'a> {
     ) -> Result<ResidentAdmission> {
         if self.resident_admission.is_some() || !self.cache.is_empty() || !self.banks.is_empty() {
             return Err(Error::InvalidFormat("resident executor already used"));
+        }
+        if self.token_io_checkpoint && self.transient_resident.is_none() {
+            return Err(Error::InvalidFormat(
+                "token checkpoint requires owned runtime I/O",
+            ));
+        }
+        if self
+            .transient_resident
+            .as_ref()
+            .is_some_and(|retired| retired.load(Ordering::Acquire))
+        {
+            return Err(Error::InvalidFormat("resident GPU context retired"));
         }
         let banks = expert_banks::preflight_residency(
             graph,
@@ -340,6 +486,11 @@ impl<'a> GpuExecutor<'a> {
                 banks,
                 private_owned,
                 RESIDENT_IO_MAX,
+                if self.transient_resident.is_some() {
+                    RESIDENT_RUNTIME_IO_MAX
+                } else {
+                    0
+                },
                 public_pages,
                 source_pages,
                 baseline,
@@ -348,6 +499,12 @@ impl<'a> GpuExecutor<'a> {
         .map_err(admission_error)?;
         let admission = ResidentAdmission {
             client: self.client.clone(),
+            transient_io: self.transient_resident.is_some(),
+            token_io_checkpoint: self.token_io_checkpoint,
+            retired: self
+                .transient_resident
+                .clone()
+                .unwrap_or_else(|| Arc::new(AtomicBool::new(false))),
             ledger: Arc::new(Mutex::new(
                 MainAdmission::new(self.reserved_limit as u64, baseline)
                     .map_err(admission_error)?,
@@ -675,6 +832,7 @@ impl<'a> GpuExecutor<'a> {
                 &probabilities,
                 cancel,
                 self.block_moe,
+                self.word_down,
             )?;
             // Same-stream commands retain old handles through completion. The
             // next token cannot reuse this layer until whole-token acceptance.
@@ -889,6 +1047,7 @@ impl MatrixExecutor for GpuExecutor<'_> {
                 &probabilities,
                 cancel,
                 self.block_moe,
+                self.word_down,
             )?;
             let validate = (|| {
                 bank.slots
@@ -1003,6 +1162,12 @@ impl MatrixExecutor for GpuExecutor<'_> {
 }
 impl Drop for GpuExecutor<'_> {
     fn drop(&mut self) {
+        if self.transient_resident.is_some() {
+            // Drain and erase runtime ownership before releasing public cache
+            // handles. Sanitizer failure never becomes a clean-context claim.
+            let _ = self.close_transient_resident();
+            return;
+        }
         self.cache.clear();
         self.cache_bytes = 0;
         self.banks.clear();
@@ -1019,6 +1184,142 @@ mod admission_tests {
     const PAGE: u64 = main_admission::MIN_PAGE_BYTES;
     fn failure<T>() -> Result<T> {
         Err(Error::InvalidFormat("fixed public failure fixture"))
+    }
+
+    #[test]
+    fn token_cadence_keeps_cleanup_mandatory_at_final_fence() {
+        assert!(checkpoint_needed(true, false));
+        assert!(checkpoint_needed(false, false));
+        assert!(!checkpoint_needed(true, true));
+        assert!(checkpoint_needed(false, true));
+    }
+
+    #[test]
+    fn deferred_fence_drops_host_lease_and_final_failure_poisons_main() {
+        struct Lease<'a>(&'a Cell<bool>);
+        impl Drop for Lease<'_> {
+            fn drop(&mut self) {
+                self.0.set(false);
+            }
+        }
+        let leased = Cell::new(false);
+        let mut main = MainAdmission::new(8 * PAGE, PAGE).unwrap();
+        main.precharge(&[PAGE]).unwrap();
+        let out = guarded_readback(
+            &mut main,
+            || {
+                leased.set(true);
+                let _lease = Lease(&leased);
+                Ok(zeroize::Zeroizing::new(vec![1_u32]))
+            },
+            || {
+                assert!(!leased.get());
+                assert!(!checkpoint_needed(true, true));
+                Ok(())
+            },
+            || Ok(PAGE),
+        )
+        .unwrap();
+        assert_eq!(*out, vec![1]);
+        // Final acceptance still runs the mandatory checkpoint first. Failure
+        // poisons main admission before any new fence credit.
+        assert!(guarded_readback(&mut main, || Ok(()), failure, || Ok(PAGE)).is_err());
+        assert!(main.is_poisoned());
+    }
+
+    #[test]
+    fn read_lease_drops_before_sanitizer_and_fence_credit() {
+        struct Lease<'a>(&'a Cell<bool>);
+        impl Drop for Lease<'_> {
+            fn drop(&mut self) {
+                self.0.set(false);
+            }
+        }
+        let leased = Cell::new(false);
+        let events = RefCell::new(Vec::new());
+        let mut ledger = MainAdmission::new(4 * PAGE, PAGE).unwrap();
+        ledger.precharge(&[PAGE]).unwrap();
+        let owned = guarded_readback(
+            &mut ledger,
+            || {
+                leased.set(true);
+                let _bytes = Lease(&leased);
+                events.borrow_mut().push("read lease");
+                Ok(zeroize::Zeroizing::new(vec![1.0_f32]))
+            },
+            || {
+                assert!(!leased.get());
+                events.borrow_mut().push("sanitize");
+                Ok(())
+            },
+            || {
+                events.borrow_mut().push("telemetry");
+                Ok(PAGE)
+            },
+        )
+        .unwrap();
+        assert_eq!(*owned, vec![1.0_f32]);
+        assert_eq!(*events.borrow(), ["read lease", "sanitize", "telemetry"]);
+        assert_eq!(ledger.upper_bytes(), PAGE);
+    }
+
+    #[test]
+    fn cleanup_failure_never_samples_or_credits_a_completed_read() {
+        let sampled = Cell::new(false);
+        let retired = AtomicBool::new(false);
+        let mut ledger = MainAdmission::new(4 * PAGE, PAGE).unwrap();
+        ledger.precharge(&[PAGE]).unwrap();
+        let result = guarded_readback(
+            &mut ledger,
+            || Ok(zeroize::Zeroizing::new(vec![1.0_f32])),
+            || checked_transient_cleanup(&retired, failure),
+            || {
+                sampled.set(true);
+                Ok(PAGE)
+            },
+        );
+        assert!(result.is_err());
+        assert!(!sampled.get());
+        assert!(retired.load(Ordering::Acquire));
+        assert!(ledger.is_poisoned());
+        assert_eq!(ledger.upper_bytes(), 2 * PAGE);
+    }
+
+    #[test]
+    fn cleanup_panic_retires_and_later_best_effort_cannot_claim_clean() {
+        let stream = Arc::new(AtomicBool::new(false));
+        let retired = stream.clone();
+        assert!(checked_transient_cleanup(&retired, || panic!("public fault fixture")).is_err());
+        assert!(retired.load(Ordering::Acquire));
+        let fresh_owner = stream.clone();
+        let retried = Cell::new(false);
+        assert!(
+            checked_transient_cleanup(&fresh_owner, || {
+                retried.set(true);
+                Ok(())
+            })
+            .is_err()
+        );
+        assert!(retried.get());
+        assert!(retired.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn allocation_unwind_poisoned_mutex_blocks_a_following_cached_operation() {
+        // ResidentAdmission holds this same standard mutex through allocation.
+        // An allocation panic cannot reach the next active/cache-hit guard.
+        let ledger = Mutex::new(MainAdmission::new(4 * PAGE, PAGE).unwrap());
+        let attempted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut held = ledger.lock().unwrap();
+            let _: Result<()> = guarded_allocation(
+                &mut held,
+                &[PAGE],
+                || Ok(PAGE),
+                || panic!("public partial allocation fixture"),
+            );
+        }));
+        assert!(attempted.is_err());
+        assert!(ledger.lock().is_err());
     }
 
     #[test]
@@ -1120,6 +1421,7 @@ mod admission_tests {
                 events.borrow_mut().push("completed read");
                 Ok(31)
             },
+            || Ok(()),
             || {
                 events.borrow_mut().push("physical sample");
                 Ok(2 * PAGE)
@@ -1146,6 +1448,7 @@ mod admission_tests {
             let result = guarded_readback(
                 &mut ledger,
                 || if read_failure { failure() } else { Ok(31) },
+                || Ok(()),
                 || {
                     sampled.set(true);
                     failure()
@@ -1166,6 +1469,7 @@ mod admission_tests {
                     read.set(true);
                     Ok(31)
                 },
+                || Ok(()),
                 || Ok(0)
             )
             .is_err()

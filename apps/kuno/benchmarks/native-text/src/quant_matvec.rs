@@ -466,6 +466,9 @@ mod tests {
     }
 }
 
+#[path = "moe_word_down.rs"]
+pub mod moe_word_down;
+
 #[path = "cooperative_matvec.rs"]
 pub mod cooperative;
 
@@ -475,5 +478,7 @@ pub mod moe;
 #[path = "block_matvec.rs"]
 pub mod block;
 
+#[path = "quant_matmul.rs"]
+pub mod matmul;
 #[path = "moe_block.rs"]
 pub mod moe_block;

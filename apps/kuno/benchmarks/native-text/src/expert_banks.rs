@@ -847,6 +847,7 @@ pub fn execute(
     probabilities: &[f32],
     cancel: &AtomicBool,
     block_moe: bool,
+    word_down: bool,
 ) -> Result<Vec<f32>> {
     let selected = slots.len();
     let shape = quant_matvec::moe::MoeShape::new(selected, banks.hidden, banks.ff, 65535)
@@ -874,6 +875,10 @@ pub fn execute(
             rows,
         )
         .map_err(|_| Error::InvalidFormat("expert packed layout"))?;
+    }
+    if word_down {
+        quant_matvec::moe_word_down::validate(weights.down.info().dtype().gguf_id(), banks.ff)
+            .map_err(|_| Error::InvalidFormat("word down packed layout"))?;
     }
     let slots: Vec<u32> = slots.iter().map(|&s| s as u32).collect();
     let x = client.create_from_slice(f32::as_bytes(input));
@@ -929,19 +934,35 @@ pub fn execute(
                     weights.up.info().dtype().gguf_id(),
                 );
             }
-            quant_matvec::moe::moe_down::launch_unchecked::<WgpuRuntime>(
-                client,
-                CubeCount::Static(shape.down_cubes, 1, 1),
-                CubeDim::new_1d(64),
-                ArrayArg::from_raw_parts(banks.down.handle.clone(), banks.down.words),
-                ArrayArg::from_raw_parts(act, selected * banks.ff),
-                ArrayArg::from_raw_parts(sl, selected),
-                ArrayArg::from_raw_parts(parts.clone(), selected * banks.hidden),
-                selected,
-                banks.hidden,
-                banks.ff,
-                weights.down.info().dtype().gguf_id(),
-            );
+            if word_down {
+                quant_matvec::moe_word_down::moe_down::launch_unchecked::<WgpuRuntime>(
+                    client,
+                    CubeCount::Static(shape.down_cubes, 1, 1),
+                    CubeDim::new_1d(quant_matvec::moe_word_down::PHYSICAL_LANES as u32),
+                    ArrayArg::from_raw_parts(banks.down.handle.clone(), banks.down.words),
+                    ArrayArg::from_raw_parts(act, selected * banks.ff),
+                    ArrayArg::from_raw_parts(sl, selected),
+                    ArrayArg::from_raw_parts(parts.clone(), selected * banks.hidden),
+                    selected,
+                    banks.hidden,
+                    banks.ff,
+                    weights.down.info().dtype().gguf_id(),
+                );
+            } else {
+                quant_matvec::moe::moe_down::launch_unchecked::<WgpuRuntime>(
+                    client,
+                    CubeCount::Static(shape.down_cubes, 1, 1),
+                    CubeDim::new_1d(64),
+                    ArrayArg::from_raw_parts(banks.down.handle.clone(), banks.down.words),
+                    ArrayArg::from_raw_parts(act, selected * banks.ff),
+                    ArrayArg::from_raw_parts(sl, selected),
+                    ArrayArg::from_raw_parts(parts.clone(), selected * banks.hidden),
+                    selected,
+                    banks.hidden,
+                    banks.ff,
+                    weights.down.info().dtype().gguf_id(),
+                );
+            }
             quant_matvec::moe::moe_reduce::launch_unchecked::<WgpuRuntime>(
                 client,
                 CubeCount::Static(shape.reduce_cubes, 1, 1),

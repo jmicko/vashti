@@ -1,0 +1,716 @@
+//! Fixed public original-GGUF multi-RHS acceptance. No arbitrary fixture input.
+//! Device selection/configuration belongs to main; host tests never use a GPU.
+//! Borrow <=7 rows/<=512 KiB per original format and guard all host vectors.
+//! Retained main handles below are used ONLY to inspect post-erasure zeros,
+//! never for inference after an arena reset. Receipts contain numeric stats.
+
+use crate::private_arena::{BufferLayout, PrivateArena};
+use crate::quant_matvec::matmul::{BatchSpans, MAX_BATCH, MatrixGeometry, packed_matmul};
+use cubecl::prelude::*;
+use cubecl::server::Handle;
+use cubecl::wgpu::WgpuRuntime;
+use cubecl_runtime::transient::TransientIoReceipt;
+use kuno_text::{GgufFile, GgufLimits, TensorType};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use zeroize::Zeroizing;
+
+#[path = "matmul_timing.rs"]
+mod timing;
+
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+const MAX_ROWS: usize = 7;
+const MAX_COLUMNS: usize = 65536;
+const MAX_PACKED_BYTES: usize = 512 * 1024;
+const MAIN_BUDGET: usize = 8 * 1024 * 1024;
+const IO_BUDGET: u64 = 32 * 1024 * 1024;
+const OUTPUT_GAP: f32 = -12345.0;
+const INPUT_GAP: f32 = 31415.0;
+const FORMATS: [TensorType; 7] = [
+    TensorType::F32,
+    TensorType::F16,
+    TensorType::Bf16,
+    TensorType::Q4K,
+    TensorType::Q5_0,
+    TensorType::Q6K,
+    TensorType::Q8_0,
+];
+
+struct PublicMatrix {
+    kind: TensorType,
+    rows: usize,
+    columns: usize,
+    packed_first: usize,
+    words: usize,
+    handle: Handle,
+    wire: Zeroizing<Vec<u8>>,
+    decoded: Zeroizing<Vec<f32>>,
+}
+
+#[derive(Clone, Copy)]
+struct FixtureLayout {
+    input_first: usize,
+    input_stride: usize,
+    input_words: usize,
+    output_first: usize,
+    output_stride: usize,
+    output_words: usize,
+}
+fn fixture_layout(rows: usize, columns: usize) -> Result<FixtureLayout> {
+    if !(1..=MAX_ROWS).contains(&rows) || !(1..=MAX_COLUMNS).contains(&columns) {
+        return Err("public matmul geometry exceeds fixture bounds".into());
+    }
+    let input_stride = columns.checked_add(11).ok_or("public fixture overflow")?;
+    let output_stride = rows.checked_add(5).ok_or("public fixture overflow")?;
+    let input_words = MAX_BATCH
+        .checked_mul(input_stride)
+        .and_then(|n| n.checked_add(9))
+        .ok_or("public fixture overflow")?;
+    let output_words = MAX_BATCH
+        .checked_mul(output_stride)
+        .and_then(|n| n.checked_add(7))
+        .ok_or("public fixture overflow")?;
+    let charged = BufferLayout::new(input_words)?
+        .owned_bytes
+        .checked_add(BufferLayout::new(output_words)?.owned_bytes)
+        .ok_or("public fixture overflow")?;
+    if charged > MAIN_BUDGET {
+        return Err("public fixture exceeds private arena budget".into());
+    }
+    Ok(FixtureLayout {
+        input_first: 9,
+        input_stride,
+        input_words,
+        output_first: 7,
+        output_stride,
+        output_words,
+    })
+}
+
+fn load_public(client: &ComputeClient<WgpuRuntime>, file: &GgufFile) -> Result<Vec<PublicMatrix>> {
+    let mut matrices = Vec::with_capacity(FORMATS.len());
+    for kind in FORMATS {
+        // Preserve main's original selection: Q5_0's PLE rows are 160 wide,
+        // rather than using that format's unsupported partial quant blocks.
+        let tensor = if kind == TensorType::Q5_0 {
+            file.tensor("per_layer_token_embd.weight")
+                .ok_or("public Q5_0 fixture missing")?
+        } else {
+            let info = file
+                .tensors()
+                .values()
+                .find(|t| t.dtype() == kind)
+                .ok_or("public matrix format missing")?;
+            file.tensor(info.name())
+                .ok_or("public matrix format missing")?
+        };
+        let rows = MAX_ROWS.min(
+            usize::try_from(tensor.info().row_count()).map_err(|_| "public fixture overflow")?,
+        );
+        let columns =
+            usize::try_from(tensor.info().row_len()).map_err(|_| "public fixture overflow")?;
+        let row_bytes =
+            usize::try_from(tensor.info().row_bytes()).map_err(|_| "public fixture overflow")?;
+        let bytes = rows
+            .checked_mul(row_bytes)
+            .ok_or("public fixture overflow")?;
+        if tensor.info().dtype() != kind || bytes > MAX_PACKED_BYTES {
+            return Err("public matrix slice exceeds format/byte bounds".into());
+        }
+        fixture_layout(rows, columns)?;
+        let geometry = MatrixGeometry::new(kind.gguf_id(), rows, columns, 4)?;
+        if geometry.row_bytes() != row_bytes || geometry.total_bytes() != bytes {
+            return Err("public matrix layout mismatch".into());
+        }
+        let mut packed = Zeroizing::new(vec![0_u8; bytes]);
+        tensor
+            .read_range(0, &mut packed)
+            .map_err(|_| "public matrix read failed")?;
+        let mut decoded = Zeroizing::new(vec![
+            0_f32;
+            rows.checked_mul(columns)
+                .ok_or("public fixture overflow")?
+        ]);
+        // Independent Rust GGUF decoder, not a copy of the shader decoder.
+        kind.decode(&packed, &mut decoded)
+            .map_err(|_| "public matrix decode failed")?;
+        if decoded.iter().any(|x| !x.is_finite()) {
+            return Err("public matrix contains nonfinite values".into());
+        }
+        let packed_first: usize = if kind == TensorType::F32 { 12 } else { 3 };
+        let wire_len = packed_first
+            .checked_add(bytes)
+            .ok_or("public fixture overflow")?
+            .div_ceil(4)
+            * 4;
+        let mut wire = Zeroizing::new(vec![0x53_u8; wire_len]);
+        wire[packed_first..packed_first + bytes].copy_from_slice(&packed);
+        let handle = client.create_from_slice(&wire); // immutable PUBLIC original weights
+        matrices.push(PublicMatrix {
+            kind,
+            rows,
+            columns,
+            packed_first,
+            words: wire_len / 4,
+            handle,
+            wire,
+            decoded,
+        });
+    }
+    Ok(matrices)
+}
+
+fn input_fixture(layout: FixtureLayout, columns: usize, count: usize) -> Zeroizing<Vec<f32>> {
+    let mut input = Zeroizing::new(vec![INPUT_GAP; layout.input_words]);
+    for token in 0..count {
+        for column in 0..columns {
+            input[layout.input_first + token * layout.input_stride + column] =
+                ((column * 3 + token * 5) % 17) as f32 / 17.0 - 8.0 / 17.0;
+        }
+    }
+    input
+}
+
+fn expectations(
+    rows: usize,
+    columns: usize,
+    decoded: &[f32],
+    input: &[f32],
+    layout: FixtureLayout,
+    count: usize,
+) -> Result<Zeroizing<Vec<f32>>> {
+    let mut expected = Zeroizing::new(vec![OUTPUT_GAP; layout.output_words]);
+    for token in 0..count {
+        let x = &input[layout.input_first + token * layout.input_stride..][..columns];
+        for row in 0..rows {
+            let w = &decoded[row * columns..(row + 1) * columns];
+            let tree = crate::quant_matvec::cooperative::reference_tree_dot(w, x)?;
+            let independent = w
+                .iter()
+                .zip(x)
+                .map(|(&a, &b)| f64::from(a) * f64::from(b))
+                .sum::<f64>();
+            if !tree.is_finite()
+                || !independent.is_finite()
+                || (f64::from(tree) - independent).abs() > 1e-4 + 3e-4 * independent.abs()
+            {
+                return Err("public CPU reduction schedule oracle failed".into());
+            }
+            expected[layout.output_first + token * layout.output_stride + row] = tree;
+        }
+    }
+    Ok(expected)
+}
+
+/// Check every logical gap/inactive token bit-for-bit, active numeric results
+/// with the existing tolerance, and every full owning-span padding byte zero.
+fn check_output(
+    actual: &[u8],
+    expected: &[f32],
+    rows: usize,
+    layout: FixtureLayout,
+    count: usize,
+    full_bytes: usize,
+) -> Result<f32> {
+    if actual.len() != full_bytes
+        || expected.len() != layout.output_words
+        || actual.len() < expected.len() * 4
+        || !actual.len().is_multiple_of(4)
+    {
+        return Err("public output length mismatch".into());
+    }
+    let mut max_error = 0_f32;
+    for (index, (bytes, &reference)) in actual.chunks_exact(4).zip(expected).enumerate() {
+        let value = f32::from_le_bytes(bytes.try_into().unwrap());
+        let relative = index.saturating_sub(layout.output_first);
+        let active = index >= layout.output_first
+            && relative / layout.output_stride < count
+            && relative % layout.output_stride < rows;
+        if active {
+            let error = (value - reference).abs();
+            if !value.is_finite() || !error.is_finite() || error > 1e-4 + 3e-4 * reference.abs() {
+                return Err("public packed multi-RHS numeric fixture failed".into());
+            }
+            max_error = max_error.max(error);
+        } else if value.to_bits() != reference.to_bits() {
+            return Err("public packed multi-RHS changed a gap or inactive token".into());
+        }
+    }
+    if actual[expected.len() * 4..].iter().any(|&byte| byte != 0) {
+        return Err("public packed multi-RHS changed owning-span padding".into());
+    }
+    Ok(max_error)
+}
+
+fn audited(client: &ComputeClient<WgpuRuntime>) -> Result<TransientIoReceipt> {
+    let r = cubecl::future::block_on(client.sanitize_transient_io_audited())
+        .map_err(|_| "public multi-RHS audited I/O cleanup failed")?;
+    validate_audit(r)?;
+    Ok(r)
+}
+fn validate_audit(r: TransientIoReceipt) -> Result<()> {
+    let full = r
+        .upload_bytes
+        .checked_add(r.uniform_bytes)
+        .and_then(|n| n.checked_add(r.readback_bytes))
+        .ok_or("public audit count overflow")?;
+    if full == 0 || r.inspected_bytes != full || r.inspected_buffers == 0 {
+        return Err("public audit full-span counts mismatch".into());
+    }
+    Ok(())
+}
+
+fn receipt(r: TransientIoReceipt) -> serde_json::Value {
+    serde_json::json!({"epoch":r.epoch,"upload_bytes":r.upload_bytes,"uniform_bytes":r.uniform_bytes,
+        "readback_bytes":r.readback_bytes,"inspected_bytes":r.inspected_bytes,"inspected_buffers":r.inspected_buffers})
+}
+
+/// The probe constructs all three bindings locally on this same client. Still
+/// verify the complete physical regions, rather than assuming distinct handles
+/// imply distinct resources. No descriptor/selection is retained after a case.
+fn verify_bindings(
+    client: &ComputeClient<WgpuRuntime>,
+    handles: [&Handle; 3],
+    lengths: [usize; 3],
+) -> Result<()> {
+    for (index, (handle, length)) in handles.iter().zip(lengths).enumerate() {
+        let span = effective_bytes(
+            handle.size(),
+            handle.offset_start.unwrap_or(0),
+            handle.offset_end.unwrap_or(0),
+        )?;
+        if handle.stream != handles[0].stream
+            || span != length as u64
+            || (index > 0 && handle.size() != span)
+        {
+            return Err("public multi-RHS binding size/stream mismatch".into());
+        }
+    }
+    let resources = handles
+        .iter()
+        .map(|h| client.get_resource((*h).clone()))
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|_| "public multi-RHS resource lookup failed")?;
+    for (i, left) in resources.iter().enumerate() {
+        let left = left.resource();
+        if left.size != lengths[i] as u64 {
+            return Err("public multi-RHS physical binding length mismatch".into());
+        }
+        validate_physical_extent(left.offset, left.size, left.buffer.size(), i > 0)?;
+        for right in resources.iter().skip(i + 1) {
+            let right = right.resource();
+            if left.buffer == right.buffer
+                && regions_overlap(left.offset, left.size, right.offset, right.size)?
+            {
+                return Err("public multi-RHS physical bindings alias".into());
+            }
+        }
+    }
+    Ok(())
+}
+// Public contiguous layouts may have positive alignment padding at the end;
+// private bindings must cover their complete original owning span instead.
+fn effective_bytes(total: u64, first: u64, tail: u64) -> Result<u64> {
+    total
+        .checked_sub(first)
+        .and_then(|n| n.checked_sub(tail))
+        .filter(|&n| n > 0)
+        .ok_or_else(|| "public multi-RHS binding offsets invalid".into())
+}
+fn validate_physical_extent(
+    offset: u64,
+    length: u64,
+    backing_bytes: u64,
+    whole_owned: bool,
+) -> Result<()> {
+    let end = offset
+        .checked_add(length)
+        .ok_or("public physical extent overflow")?;
+    if length == 0 || end > backing_bytes || (whole_owned && (offset != 0 || end != backing_bytes))
+    {
+        return Err("public multi-RHS physical extent is not fully owned/bounded".into());
+    }
+    Ok(())
+}
+fn regions_overlap(a: u64, a_len: u64, b: u64, b_len: u64) -> Result<bool> {
+    let end_a = a
+        .checked_add(a_len)
+        .ok_or("public physical extent overflow")?;
+    let end_b = b
+        .checked_add(b_len)
+        .ok_or("public physical extent overflow")?;
+    if a_len == 0 || b_len == 0 {
+        return Err("public physical extent is empty".into());
+    }
+    Ok(a < end_b && b < end_a)
+}
+
+fn cases(
+    client: &ComputeClient<WgpuRuntime>,
+    arena: &mut PrivateArena,
+    matrices: &[PublicMatrix],
+    retired: &AtomicBool,
+) -> Result<Vec<serde_json::Value>> {
+    let mut reports = Vec::with_capacity(56);
+    for matrix in matrices {
+        for count in [1, 3, 5, 8] {
+            for tile in [4, 8] {
+                let geometry =
+                    MatrixGeometry::new(matrix.kind.gguf_id(), matrix.rows, matrix.columns, tile)?;
+                let layout = fixture_layout(geometry.rows(), geometry.columns())?;
+                let spans = BatchSpans::new(
+                    count,
+                    matrix.packed_first,
+                    layout.input_first,
+                    layout.input_stride,
+                    layout.output_first,
+                    layout.output_stride,
+                );
+                let input = input_fixture(layout, geometry.columns(), spans.count());
+                let expected = expectations(
+                    geometry.rows(),
+                    geometry.columns(),
+                    &matrix.decoded,
+                    &input,
+                    layout,
+                    spans.count(),
+                )?;
+                let initial = Zeroizing::new(vec![OUTPUT_GAP; layout.output_words]);
+                let x = arena
+                    .upload_f32(&input)
+                    .map_err(|_| "public owned input upload failed")?;
+                let y = arena
+                    .upload_f32(&initial)
+                    .map_err(|_| "public owned output initialization failed")?;
+                let x_layout = arena.layout(x)?;
+                let y_layout = arena.layout(y)?;
+                geometry.validate_spans(
+                    &spans,
+                    matrix.words,
+                    x_layout.owned_words,
+                    y_layout.owned_words,
+                )?;
+                let retained_x = arena.handle(x)?.clone();
+                let retained_y = arena.handle(y)?.clone();
+                verify_bindings(
+                    client,
+                    [&matrix.handle, &retained_x, &retained_y],
+                    [
+                        matrix.wire.len(),
+                        x_layout.owned_bytes,
+                        y_layout.owned_bytes,
+                    ],
+                )?;
+                // Leave one explicitly owned upload live for the device audit.
+                // Move the guarded host allocation without any ordinary copy.
+                let mut upload = Zeroizing::new(vec![0_u8; x_layout.owned_bytes]);
+                for (bytes, value) in upload.chunks_exact_mut(4).zip(input.iter()) {
+                    bytes.copy_from_slice(&value.to_le_bytes());
+                }
+                let owned = std::mem::take(&mut *upload);
+                client
+                    .write_private(retained_x.clone(), owned)
+                    .map_err(|_| "public owned write failed")?;
+                // SAFETY: all same-client full spans are independently allocated;
+                // public cache is retained, private IDs/lengths and spans checked
+                // immediately above; fixed cube/grid match validated geometry.
+                packed_matmul::launch::<WgpuRuntime>(
+                    client,
+                    geometry.grid(),
+                    CubeDim::new_1d(64),
+                    unsafe { ArrayArg::from_raw_parts(matrix.handle.clone(), matrix.words) },
+                    unsafe {
+                        ArrayArg::from_raw_parts(arena.handle(x)?.clone(), x_layout.owned_words)
+                    },
+                    unsafe {
+                        ArrayArg::from_raw_parts(arena.handle(y)?.clone(), y_layout.owned_words)
+                    },
+                    spans.count(),
+                    spans.packed_first(),
+                    spans.input_first(),
+                    spans.input_stride(),
+                    spans.output_first(),
+                    spans.output_stride(),
+                    geometry.rows(),
+                    geometry.columns(),
+                    geometry.dtype(),
+                    geometry.tile_tokens(),
+                );
+                let output = client
+                    .read_one(retained_y.clone())
+                    .map_err(|_| "public output readback failed")?;
+                let max_error = check_output(
+                    &output,
+                    &expected,
+                    geometry.rows(),
+                    layout,
+                    spans.count(),
+                    y_layout.owned_bytes,
+                )?;
+                drop(output); // release readback lease BEFORE audited cleanup
+                let io = audited(client)?;
+                if io.upload_bytes == 0 || io.uniform_bytes == 0 || io.readback_bytes == 0 {
+                    return Err("public multi-RHS audit missed an I/O kind".into());
+                }
+                arena
+                    .reset()
+                    .map_err(|_| "public full owning main cleanup failed")?;
+                if arena.handle(x).is_ok()
+                    || arena.handle(y).is_ok()
+                    || retired.load(Ordering::Acquire)
+                {
+                    return Err("public multi-RHS reset did not invalidate ownership".into());
+                }
+                for (retained, full) in [
+                    (retained_x, x_layout.owned_bytes),
+                    (retained_y, y_layout.owned_bytes),
+                ] {
+                    let erased = client
+                        .read_one(retained)
+                        .map_err(|_| "public main erasure readback failed")?;
+                    if erased.len() != full || erased.iter().any(|&b| b != 0) {
+                        return Err("public main owning span was not fully erased".into());
+                    }
+                    drop(erased);
+                }
+                let main_audit = audited(client)?;
+                let original = client
+                    .read_one(matrix.handle.clone())
+                    .map_err(|_| "public cache check readback failed")?;
+                if original.len() != matrix.wire.len() || &*original != matrix.wire.as_slice() {
+                    return Err("public original weights changed across private cleanup".into());
+                }
+                drop(original);
+                let cache_audit = audited(client)?;
+                reports.push(serde_json::json!({"dtype":geometry.dtype(),"rows":geometry.rows(),"columns":geometry.columns(),
+                    "count":spans.count(),"tile_tokens":geometry.tile_tokens(),"max_abs_error":max_error,
+                    "main_full_span_bytes":x_layout.owned_bytes+y_layout.owned_bytes,"gaps_and_inactive_preserved":true,
+                    "main_erased":true,"public_cache_preserved":true,"io":receipt(io),"main_audit":receipt(main_audit),"cache_audit":receipt(cache_audit)}));
+                println!(
+                    "public_packed_matmul dtype={} rows={} columns={} count={} tile={} max_abs_error={max_error}",
+                    geometry.dtype(),
+                    geometry.rows(),
+                    geometry.columns(),
+                    spans.count(),
+                    geometry.tile_tokens()
+                );
+            }
+        }
+    }
+    Ok(reports)
+}
+
+pub fn run(client: &ComputeClient<WgpuRuntime>) -> Result<()> {
+    let path = std::env::var_os("KUNO_TEST_GGUF")
+        .ok_or("existing GGUF required for public matmul probe")?;
+    let file = GgufFile::open(path, GgufLimits::default())
+        .map_err(|_| "public matmul GGUF open failed")?;
+    let raw_timing = match std::env::var("KUNO_LAB_MATMUL_TIMING") {
+        Ok(raw) => Some(raw),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(_) => return Err("KUNO_LAB_MATMUL_TIMING must be 0 or 1".into()),
+    };
+    let timing_enabled = timing::enabled(raw_timing.as_deref())?;
+    // PUBLIC weights are allocated before configuring any private upload path.
+    let matrices = load_public(client, &file)?;
+    let timing_matrices = if timing_enabled {
+        Some(timing::load_public(client, &file)?)
+    } else {
+        None
+    };
+    let retired = Arc::new(AtomicBool::new(false));
+    let mut arena =
+        PrivateArena::new_transient(client.clone(), MAIN_BUDGET, IO_BUDGET, retired.clone())?;
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<_> {
+        let reports = cases(client, &mut arena, &matrices, &retired)?;
+        let timings = timing_matrices
+            .as_ref()
+            .map(|matrices| timing::run(client, &mut arena, matrices, &retired))
+            .transpose()?;
+        Ok((reports, timings))
+    }));
+    // Always attempt owning main + bounded I/O cleanup before returning an
+    // error, including a panic in CPU checking or a partly queued GPU operation.
+    let closed = arena.close();
+    if closed.is_err() || retired.load(Ordering::Acquire) {
+        return Err("public matmul owning cleanup failed/context retired".into());
+    }
+    let (reports, timings) = result.map_err(|_| "public matmul probe panicked")??;
+    file.verify_file_unchanged()
+        .map_err(|_| "public borrowed GGUF changed")?;
+    if let Some(path) = std::env::var_os("KUNO_PUBLIC_RECEIPT") {
+        use std::io::Write;
+        let report = serde_json::json!({"scope":"fixed-public-synthetic-operator-test-only","fixture":"packed-matmul-probe",
+            "borrowed_original_gguf":true,"format_count":FORMATS.len(),"case_count":reports.len(),"cases":reports,
+            "private_uploads_owned":true,"context_retired":false,"operator_timings":timings,
+            "proof_scope":"owned API-visible main and I/O spans; not opaque physical driver padding"});
+        let mut out = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)?;
+        out.write_all(serde_json::to_string_pretty(&report)?.as_bytes())?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn public_alignment_tail_is_allowed_but_effective_extents_are_checked() {
+        validate_physical_extent(0, 252, 256, false).unwrap();
+        validate_physical_extent(4, 252, 256, false).unwrap();
+        validate_physical_extent(0, 32768, 32768, true).unwrap();
+        for (offset, length, backing, owned) in [
+            (0, 252, 256, true),
+            (4, 252, 256, true),
+            (1, 256, 256, false),
+            (0, 0, 256, false),
+            (u64::MAX, 1, u64::MAX, false),
+        ] {
+            assert!(validate_physical_extent(offset, length, backing, owned).is_err());
+        }
+        assert_eq!(effective_bytes(256, 0, 4).unwrap(), 252);
+        assert_eq!(effective_bytes(256, 4, 0).unwrap(), 252);
+        assert_eq!(effective_bytes(32768, 0, 0).unwrap(), 32768);
+        for (total, first, tail) in [
+            (256, 257, 0),
+            (256, 0, 257),
+            (256, 1, 256),
+            (256, 0, 256),
+            (u64::MAX, 1, u64::MAX),
+        ] {
+            assert!(effective_bytes(total, first, tail).is_err());
+        }
+    }
+
+    #[test]
+    fn physical_extents_reject_overlap_empty_and_overflow_but_allow_adjacency() {
+        for (a, a_len, b, b_len, expected) in [
+            (0, 32768, 32768, 32768, false),
+            (32768, 32768, 0, 32768, false),
+            (3, 11, 14, 7, false),
+            (3, 11, 13, 7, true),
+            (13, 7, 3, 11, true),
+            (9, 32768, 9, 32768, true),
+            (9, 32768, 10, 1, true),
+        ] {
+            assert_eq!(regions_overlap(a, a_len, b, b_len).unwrap(), expected);
+        }
+        for (a, a_len, b, b_len) in [
+            (0, 0, 1, 1),
+            (1, 1, 0, 0),
+            (u64::MAX, 1, 0, 1),
+            (0, 1, u64::MAX - 1, 2),
+        ] {
+            assert!(regions_overlap(a, a_len, b, b_len).is_err());
+        }
+    }
+
+    #[test]
+    fn bounded_layout_charges_full_spans_and_rejects_bad_geometry() {
+        for (rows, columns) in [(0, 1), (1, 0), (8, 1), (1, 65537), (usize::MAX, usize::MAX)] {
+            assert!(fixture_layout(rows, columns).is_err());
+        }
+        let layout = fixture_layout(7, 65536).unwrap();
+        assert_eq!(layout.input_first, 9);
+        assert_eq!(layout.output_first, 7);
+        assert_eq!(layout.input_stride, 65547);
+        assert_eq!(layout.output_stride, 12);
+        assert_eq!(
+            BufferLayout::new(layout.input_words).unwrap().owned_bytes,
+            4 * 1024 * 1024
+        );
+        assert!(
+            BufferLayout::new(layout.input_words).unwrap().owned_bytes
+                + BufferLayout::new(layout.output_words).unwrap().owned_bytes
+                < MAIN_BUDGET
+        );
+    }
+
+    #[test]
+    fn independent_oracles_and_output_checker_cover_every_gap_tail_and_padding() {
+        let rows = 3;
+        let columns = 137;
+        let decoded = Zeroizing::new(
+            (0..rows * columns)
+                .map(|i| (i % 29) as f32 / 32.0 - 14.0 / 32.0)
+                .collect::<Vec<_>>(),
+        );
+        let layout = fixture_layout(rows, columns).unwrap();
+        let full = BufferLayout::new(layout.output_words).unwrap().owned_bytes;
+        for count in [1, 3, 5, 8] {
+            let input = input_fixture(layout, columns, count);
+            let expected = expectations(rows, columns, &decoded, &input, layout, count).unwrap();
+            let mut bytes = Zeroizing::new(vec![0_u8; full]);
+            for (out, value) in bytes.chunks_exact_mut(4).zip(expected.iter()) {
+                out.copy_from_slice(&value.to_le_bytes());
+            }
+            assert_eq!(
+                check_output(&bytes, &expected, rows, layout, count, full).unwrap(),
+                0.0
+            );
+            for index in 0..expected.len() {
+                let original: [u8; 4] = bytes[index * 4..index * 4 + 4].try_into().unwrap();
+                bytes[index * 4..index * 4 + 4].copy_from_slice(&f32::NAN.to_le_bytes());
+                assert!(check_output(&bytes, &expected, rows, layout, count, full).is_err());
+                bytes[index * 4..index * 4 + 4].copy_from_slice(&original);
+            }
+            bytes[full - 1] = 1;
+            assert!(check_output(&bytes, &expected, rows, layout, count, full).is_err());
+        }
+    }
+
+    #[test]
+    fn audits_reject_partial_counts_empty_receipts_and_overflow() {
+        let good = TransientIoReceipt {
+            epoch: 3,
+            upload_bytes: 32,
+            uniform_bytes: 64,
+            readback_bytes: 128,
+            inspected_bytes: 224,
+            inspected_buffers: 3,
+        };
+        validate_audit(good).unwrap();
+        for bad in [
+            TransientIoReceipt {
+                inspected_bytes: 223,
+                ..good
+            },
+            TransientIoReceipt {
+                inspected_buffers: 0,
+                ..good
+            },
+            TransientIoReceipt {
+                upload_bytes: u64::MAX,
+                ..good
+            },
+            TransientIoReceipt {
+                upload_bytes: 0,
+                uniform_bytes: 0,
+                readback_bytes: 0,
+                inspected_bytes: 0,
+                ..good
+            },
+        ] {
+            assert!(validate_audit(bad).is_err());
+        }
+    }
+
+    #[test]
+    fn probe_accepts_only_existing_model_and_receipt_paths_with_fixed_fixture_policy() {
+        let source = include_str!("matmul_probe.rs");
+        let run = source
+            .split("pub fn run(")
+            .nth(1)
+            .unwrap()
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap();
+        assert_eq!(run.matches("std::env::var_os(").count(), 2);
+        assert!(run.contains("KUNO_TEST_GGUF") && run.contains("KUNO_PUBLIC_RECEIPT"));
+        assert!(run.contains("create_new(true)"));
+        assert!(!run.contains("create(true)") && !run.contains("truncate(true)"));
+    }
+}

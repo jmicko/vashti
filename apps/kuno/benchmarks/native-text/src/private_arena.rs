@@ -24,6 +24,11 @@
 //! opts into owned runtime I/O and bounded sanitizer cleanup. Its caller must
 //! provision enough I/O budget for ALL eraser uniforms after a checkpoint;
 //! the arena never falls back to an ordinary upload or unbounded sync.
+//! Optional fixed-public zero audit maps each complete owning page only AFTER
+//! checked erasure. It drops each guarded lease then audits/erases its runtime
+//! readback before any main handle release. A failed audit retires the context;
+//! Drop quarantines retained handles until process recovery. Counts cover API
+//! pages and padding, never opaque driver allocations or public model caches.
 //! Runtime-owned I/O needs separate device audit acceptance. No content or backend error payload
 //! is logged. No device initialization occurs here or in host tests.
 
@@ -36,6 +41,7 @@ use cubecl::prelude::*;
 use cubecl::server::Handle;
 use cubecl::wgpu::WgpuRuntime;
 use cubecl_runtime::memory_management::{MemoryPoolOptions, PoolType};
+use zeroize::Zeroize;
 
 pub const MIN_SPAN_BYTES: usize = 32 * 1024;
 pub const MAX_SPAN_BYTES: usize = 128 * 1024 * 1024;
@@ -349,12 +355,125 @@ fn write_owned_upload<H: Clone>(
     write(handle, upload.into_vec())
 }
 
+fn initialize_owned_upload(
+    ordered: bool,
+    mut checkpoint: impl FnMut() -> Result<()>,
+    write: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    if !ordered {
+        checkpoint()?;
+    }
+    write()?;
+    if !ordered {
+        checkpoint()?;
+    }
+    Ok(())
+}
+
+/// Counts of COMPLETE arena-owned pages accepted as zero. No readback bytes
+/// escape inspection, and counts advance only after all leases/stages are gone.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct OwnedZeroAudit {
+    pub bytes: u64,
+    pub buffers: u64,
+}
+impl OwnedZeroAudit {
+    fn checked_add(self, next: Self) -> Result<Self> {
+        Ok(Self {
+            bytes: self
+                .bytes
+                .checked_add(next.bytes)
+                .ok_or(ArenaError::Cleanup)?,
+            buffers: self
+                .buffers
+                .checked_add(next.buffers)
+                .ok_or(ArenaError::Cleanup)?,
+        })
+    }
+}
+
+struct AuditBytes(cubecl::bytes::Bytes);
+impl AsRef<[u8]> for AuditBytes {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+impl Drop for AuditBytes {
+    fn drop(&mut self) {
+        self.0.zeroize();
+    }
+}
+
+trait OwnedZeroInspection {
+    type Lease: AsRef<[u8]>;
+    fn read_full(&mut self, slot: usize) -> Result<Self::Lease>;
+    fn cleanup_after_read(&mut self) -> Result<()>;
+}
+
+/// Consumes the lease; its complete private host allocation is guarded even
+/// when bounds/zero acceptance fails. In particular, logical-prefix zeros do
+/// not credit an uninspected tail. No content is returned or formatted.
+fn inspect_zero_span(lease: impl AsRef<[u8]>, owned_bytes: usize) -> Result<()> {
+    let bytes = lease.as_ref();
+    if owned_bytes == 0 || bytes.len() != owned_bytes || bytes.iter().any(|&b| b != 0) {
+        return Err(ArenaError::Cleanup);
+    }
+    Ok(())
+}
+fn inspect_owned_zero(
+    backend: &mut impl OwnedZeroInspection,
+    spans: &[BufferLayout],
+) -> Result<OwnedZeroAudit> {
+    let mut counts = OwnedZeroAudit::default();
+    for (slot, span) in spans.iter().enumerate() {
+        let zero = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            inspect_zero_span(backend.read_full(slot)?, span.owned_bytes)
+        }));
+        // The consumed lease (including an Err/panic path) is gone BEFORE this
+        // audited sanitizer. One readback page at a time fits the I/O budget.
+        let cleanup = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            backend.cleanup_after_read()
+        }));
+        if !matches!(zero, Ok(Ok(()))) || !matches!(cleanup, Ok(Ok(()))) {
+            return Err(ArenaError::Cleanup);
+        }
+        counts = counts.checked_add(OwnedZeroAudit {
+            bytes: span.owned_bytes as u64,
+            buffers: 1,
+        })?;
+    }
+    Ok(counts)
+}
+
+fn accept_owned_zero_cleanup(
+    retired: &AtomicBool,
+    previous: OwnedZeroAudit,
+    cleanup: impl FnOnce() -> Result<OwnedZeroAudit>,
+) -> Result<OwnedZeroAudit> {
+    let accepted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(cleanup))
+        .map_err(|_| ArenaError::Cleanup)
+        .and_then(|counts| counts)
+        .and_then(|counts| previous.checked_add(counts));
+    if retired.load(Ordering::Acquire) || accepted.is_err() {
+        retired.store(true, Ordering::Release);
+        return Err(ArenaError::Cleanup);
+    }
+    accepted
+}
+fn quarantine_failed_audit_handles<H>(handles: &mut Vec<H>, audit: bool, failed: bool) {
+    if audit && failed {
+        std::mem::forget(std::mem::take(handles));
+    }
+}
 pub struct PrivateArena {
     client: ComputeClient<WgpuRuntime>,
     ledger: Ledger,
     handles: Vec<Handle>,
     retired: Arc<AtomicBool>,
     io_policy: IoPolicy,
+    ordered_uploads: bool,
+    public_zero_audit: bool,
+    zero_audit_counts: OwnedZeroAudit,
     closed_clean: bool,
     // CubeCL default stream depends on the current thread. Pin all arena
     // construction, commands, cleanup and Drop to the same worker thread.
@@ -378,6 +497,9 @@ impl PrivateArena {
             handles: Vec::new(),
             retired,
             io_policy: IoPolicy::PublicFixture,
+            ordered_uploads: false,
+            public_zero_audit: false,
+            zero_audit_counts: OwnedZeroAudit::default(),
             closed_clean: false,
             _same_thread: PhantomData,
         })
@@ -407,7 +529,6 @@ impl PrivateArena {
     /// this SAME serialized stream. Several request arenas may share it.
     /// Actual private writes/checkpoints reject an unconfigured backend; there
     /// is no ordinary-I/O fallback and failure retires the shared context.
-    #[allow(dead_code)] // Reserved for the root's paired main/I/O arena owner.
     pub(crate) fn new_transient_on_configured(
         client: ComputeClient<WgpuRuntime>,
         budget_bytes: usize,
@@ -416,6 +537,38 @@ impl PrivateArena {
         let mut arena = Self::new(client, budget_bytes, retired)?;
         arena.io_policy = IoPolicy::OwnedTransient;
         Ok(arena)
+    }
+    /// Source-only arena for same-stream immediate copies. A full-span owned
+    /// upload is QUEUED before its ID returns; it is not a completed fence.
+    /// Caller retains every source until a completed readback plus sanitizer,
+    /// then reset/close erases all main spans. Never sanitize pending inference
+    /// merely to upload a source: cleanup timeouts are not inference deadlines.
+    pub(crate) fn new_transient_source_on_configured(
+        client: ComputeClient<WgpuRuntime>,
+        budget_bytes: usize,
+        retired: Arc<AtomicBool>,
+    ) -> Result<Self> {
+        let mut arena = Self::new_transient_on_configured(client, budget_bytes, retired)?;
+        arena.ordered_uploads = true;
+        Ok(arena)
+    }
+    /// Explicit fixed-public operator diagnostic. Set before allocations so
+    /// constructor-failure Drop also follows this policy. Never applicable to
+    /// the ordinary benchmark owner or a production/private request API.
+    pub(crate) fn enable_public_owned_zero_audit(&mut self) -> Result<()> {
+        self.active()?;
+        if self.io_policy != IoPolicy::OwnedTransient || !self.handles.is_empty() {
+            self.retired.store(true, Ordering::Release);
+            return Err(ArenaError::Initialization);
+        }
+        self.public_zero_audit = true;
+        Ok(())
+    }
+    /// Accepted counts are available only AFTER checked explicit close. A
+    /// failed/retired context cannot emit prior successful partial audit credit.
+    pub(crate) fn owned_zero_audit_receipt(&self) -> Option<OwnedZeroAudit> {
+        (self.public_zero_audit && self.closed_clean && !self.retired.load(Ordering::Acquire))
+            .then_some(self.zero_audit_counts)
     }
     fn active(&self) -> Result<()> {
         if self.ledger.closed {
@@ -513,31 +666,45 @@ impl PrivateArena {
         Ok(id)
     }
     fn checkpoint_transient(&self) -> Result<()> {
+        self.checkpoint_transient_with_audit(false)
+    }
+    fn checkpoint_transient_with_audit(&self, audit: bool) -> Result<()> {
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            cubecl::future::block_on(self.client.sanitize_transient_io())
+            cubecl::future::block_on(if audit {
+                self.client.sanitize_transient_io_audited()
+            } else {
+                self.client.sanitize_transient_io()
+            })
         })) {
             Ok(Ok(_counts)) => Ok(()),
             _ => Err(ArenaError::Cleanup),
         }
     }
     fn initialize_transient(&self, slot: usize, upload: Option<Upload>) -> Result<()> {
-        // Destination is already tracked. Free old I/O budget before a write
-        // or eraser uniform, then accept only after bounded submission/drain.
-        self.checkpoint_transient()?;
+        // Destination is already tracked. Ordinary owned initialization frees
+        // I/O budget and proves completion. A source-only upload instead relies
+        // on same-stream copy order and the owner's next completed readback.
         match upload {
-            Some(upload) => {
-                write_owned_upload(&self.handles, slot, upload, |handle, data| {
-                    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        self.client.write_private(handle, data)
-                    })) {
-                        Ok(Ok(())) => Ok(()),
-                        _ => Err(ArenaError::Initialization),
-                    }
-                })?;
+            Some(upload) => initialize_owned_upload(
+                self.ordered_uploads,
+                || self.checkpoint_transient(),
+                || {
+                    write_owned_upload(&self.handles, slot, upload, |handle, data| {
+                        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            self.client.write_private(handle, data)
+                        })) {
+                            Ok(Ok(())) => Ok(()),
+                            _ => Err(ArenaError::Initialization),
+                        }
+                    })
+                },
+            ),
+            None => {
+                self.checkpoint_transient()?;
+                self.queue_erase(slot)?;
+                self.checkpoint_transient()
             }
-            None => self.queue_erase(slot)?,
         }
-        self.checkpoint_transient()
     }
     fn queue_erase(&self, slot: usize) -> Result<()> {
         let layout = self
@@ -571,7 +738,8 @@ impl PrivateArena {
             struct Native<'a>(&'a PrivateArena);
             impl TransientCleanup for Native<'_> {
                 fn checkpoint(&mut self) -> Result<()> {
-                    self.0.checkpoint_transient()
+                    self.0
+                        .checkpoint_transient_with_audit(self.0.public_zero_audit)
                 }
                 fn erase(&mut self, slot: usize) -> Result<()> {
                     self.0.queue_erase(slot)
@@ -596,6 +764,49 @@ impl PrivateArena {
             Ok(())
         }
     }
+    fn erase_and_verify(&self) -> Result<OwnedZeroAudit> {
+        // Explicit cleanup or a reset AFTER an accepted completed token fence.
+        // The ordinary inference read path never calls this cleanup-only read.
+        self.erase_and_drain()?;
+        if !self.public_zero_audit {
+            return Ok(OwnedZeroAudit::default());
+        }
+        if self.io_policy != IoPolicy::OwnedTransient
+            || self.handles.len() != self.ledger.spans.len()
+        {
+            return Err(ArenaError::Cleanup);
+        }
+        struct Native<'a>(&'a PrivateArena);
+        impl OwnedZeroInspection for Native<'_> {
+            type Lease = AuditBytes;
+            fn read_full(&mut self, slot: usize) -> Result<Self::Lease> {
+                let handle = self.0.handles.get(slot).ok_or(ArenaError::Cleanup)?;
+                let span = self.0.ledger.spans.get(slot).ok_or(ArenaError::Cleanup)?;
+                if handle.size() != span.owned_bytes as u64
+                    || handle.size_in_used() != span.owned_bytes as u64
+                {
+                    return Err(ArenaError::Cleanup);
+                }
+                self.0
+                    .client
+                    .read_private_cleanup(handle.clone())
+                    .map(AuditBytes)
+                    .map_err(|_| ArenaError::Cleanup)
+            }
+            fn cleanup_after_read(&mut self) -> Result<()> {
+                match cubecl::future::block_on(self.0.client.sanitize_transient_io_audited()) {
+                    Ok(_) => Ok(()),
+                    Err(_) => Err(ArenaError::Cleanup),
+                }
+            }
+        }
+        let counts = inspect_owned_zero(&mut Native(self), &self.ledger.spans)?;
+        if counts.bytes != self.ledger.charged as u64 || counts.buffers != self.handles.len() as u64
+        {
+            return Err(ArenaError::Cleanup);
+        }
+        Ok(counts)
+    }
     fn fail(&mut self) {
         self.retired.store(true, Ordering::Release);
         self.ledger.closed = true;
@@ -614,12 +825,20 @@ impl PrivateArena {
             self.fail();
             return Err(ArenaError::IdentityExhausted);
         }
-        if self.erase_and_drain().is_err() {
-            self.fail();
-            return Err(ArenaError::Cleanup);
-        }
+        let accepted = accept_owned_zero_cleanup(&self.retired, self.zero_audit_counts, || {
+            self.erase_and_verify()
+        });
+        let counts = match accepted {
+            Ok(counts) => counts,
+            Err(_) => {
+                self.fail();
+                return Err(ArenaError::Cleanup);
+            }
+        };
+        self.ledger.reset_after_erasure()?;
+        self.zero_audit_counts = counts;
         self.handles.clear();
-        self.ledger.reset_after_erasure()
+        Ok(())
     }
     /// Idempotent after success. On failure the context remains retired and
     /// retained tracked handles allow a later close/Drop best-effort retry.
@@ -633,10 +852,17 @@ impl PrivateArena {
             self.closed_clean = true;
             return Ok(());
         }
-        if self.erase_and_drain().is_err() {
-            self.retired.store(true, Ordering::Release);
-            return Err(ArenaError::Cleanup);
-        }
+        let accepted = accept_owned_zero_cleanup(&self.retired, self.zero_audit_counts, || {
+            self.erase_and_verify()
+        });
+        let counts = match accepted {
+            Ok(counts) => counts,
+            Err(_) => {
+                self.retired.store(true, Ordering::Release);
+                return Err(ArenaError::Cleanup);
+            }
+        };
+        self.zero_audit_counts = counts;
         self.handles.clear();
         self.ledger.close_after_erasure();
         self.closed_clean = true;
@@ -645,13 +871,257 @@ impl PrivateArena {
 }
 impl Drop for PrivateArena {
     fn drop(&mut self) {
-        let _ = self.close();
+        let failed = self.close().is_err();
+        // Failure is not permission to recycle unaudited pages. Retain the
+        // bounded owning handles until process recovery; never issue clean
+        // counts from Drop. This diagnostic deliberately quarantines them.
+        quarantine_failed_audit_handles(&mut self.handles, self.public_zero_audit, failed);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    struct FakeAuditLease {
+        bytes: Vec<u8>,
+        live: Rc<std::cell::Cell<usize>>,
+        panic_on_view: bool,
+    }
+    impl AsRef<[u8]> for FakeAuditLease {
+        fn as_ref(&self) -> &[u8] {
+            assert!(!self.panic_on_view, "public synthetic inspection panic");
+            &self.bytes
+        }
+    }
+    impl Drop for FakeAuditLease {
+        fn drop(&mut self) {
+            self.bytes.zeroize();
+            self.live.set(self.live.get() - 1);
+        }
+    }
+    struct FakeZeroAudit {
+        spans: Vec<BufferLayout>,
+        live: Rc<std::cell::Cell<usize>>,
+        reads: Vec<usize>,
+        cleanups: usize,
+        fail_at: usize,
+        failure: &'static str,
+        budget: usize,
+    }
+    impl OwnedZeroInspection for FakeZeroAudit {
+        type Lease = FakeAuditLease;
+        fn read_full(&mut self, slot: usize) -> Result<Self::Lease> {
+            // These fake owned pages are retained throughout every read.
+            assert_eq!(self.spans.len(), 3);
+            assert_eq!(self.live.get(), 0); // no lease accumulation
+            self.reads.push(slot);
+            let span = self.spans[slot];
+            if span.owned_bytes > self.budget || (slot == self.fail_at && self.failure == "map") {
+                return Err(ArenaError::Cleanup);
+            }
+            if slot == self.fail_at && self.failure == "read panic" {
+                panic!("public synthetic map setup panic");
+            }
+            let mut bytes = vec![0; span.owned_bytes];
+            if slot == self.fail_at {
+                match self.failure {
+                    "padding" => bytes[span.owned_bytes - 1] = 1,
+                    "logical" => bytes[0] = 1,
+                    "short" => {
+                        bytes.pop();
+                    }
+                    "long" => bytes.push(0),
+                    _ => (),
+                }
+            }
+            self.live.set(1);
+            Ok(FakeAuditLease {
+                bytes,
+                live: self.live.clone(),
+                panic_on_view: slot == self.fail_at && self.failure == "view panic",
+            })
+        }
+        fn cleanup_after_read(&mut self) -> Result<()> {
+            assert_eq!(self.live.get(), 0); // host wipe + lease drop BEFORE audit
+            self.cleanups += 1;
+            if self.reads.last() == Some(&self.fail_at) {
+                if self.failure == "cleanup" {
+                    return Err(ArenaError::Cleanup);
+                }
+                if self.failure == "cleanup panic" {
+                    panic!("public synthetic cleanup panic");
+                }
+            }
+            Ok(())
+        }
+    }
+    fn fake_zero_audit(failure: &'static str, fail_at: usize) -> FakeZeroAudit {
+        FakeZeroAudit {
+            spans: [1, 8193, 3]
+                .map(|words| BufferLayout::new(words).unwrap())
+                .to_vec(),
+            live: Rc::new(std::cell::Cell::new(0)),
+            reads: Vec::new(),
+            cleanups: 0,
+            fail_at,
+            failure,
+            budget: 2 * MIN_SPAN_BYTES,
+        }
+    }
+    #[test]
+    fn full_owned_zero_audit_counts_padding_and_drops_each_lease_before_cleanup() {
+        let mut backend = fake_zero_audit("none", usize::MAX);
+        let spans = backend.spans.clone();
+        let receipt = inspect_owned_zero(&mut backend, &spans).unwrap();
+        assert_eq!(
+            receipt,
+            OwnedZeroAudit {
+                bytes: 4 * MIN_SPAN_BYTES as u64,
+                buffers: 3
+            }
+        );
+        assert_eq!(backend.reads, [0, 1, 2]);
+        assert_eq!(backend.cleanups, 3);
+        assert_eq!(backend.live.get(), 0);
+    }
+    #[test]
+    fn zero_audit_never_accepts_partial_padding_map_budget_error_or_panic() {
+        for failure in [
+            "padding",
+            "logical",
+            "short",
+            "long",
+            "map",
+            "read panic",
+            "view panic",
+            "cleanup",
+            "cleanup panic",
+            "budget",
+        ] {
+            let mut backend = fake_zero_audit(failure, 1);
+            if failure == "budget" {
+                backend.budget = MIN_SPAN_BYTES;
+            }
+            let spans = backend.spans.clone();
+            let receipt = inspect_owned_zero(&mut backend, &spans);
+            assert_eq!(receipt, Err(ArenaError::Cleanup));
+            assert_eq!(backend.reads, [0, 1]);
+            assert_eq!(backend.cleanups, 2); // even rejected/missing leases
+            assert_eq!(backend.live.get(), 0);
+            assert_eq!(backend.spans, spans); // no owned page released on failure
+        }
+        assert_eq!(
+            inspect_zero_span(vec![0; MIN_SPAN_BYTES - 1], MIN_SPAN_BYTES),
+            Err(ArenaError::Cleanup)
+        );
+        assert_eq!(
+            inspect_zero_span(Vec::<u8>::new(), 0),
+            Err(ArenaError::Cleanup)
+        );
+    }
+    #[test]
+    fn failed_zero_cleanup_retires_and_never_promotes_prior_counts_or_retry() {
+        for failure in ["zero", "panic", "overflow"] {
+            let retired = AtomicBool::new(false);
+            let previous = OwnedZeroAudit {
+                bytes: if failure == "overflow" {
+                    u64::MAX
+                } else {
+                    32768
+                },
+                buffers: 1,
+            };
+            let result = accept_owned_zero_cleanup(&retired, previous, || match failure {
+                "zero" => Err(ArenaError::Cleanup),
+                "panic" => panic!("public synthetic cleanup panic"),
+                _ => Ok(OwnedZeroAudit {
+                    bytes: 32768,
+                    buffers: 1,
+                }),
+            });
+            assert_eq!(result, Err(ArenaError::Cleanup));
+            assert!(retired.load(Ordering::Acquire));
+            assert!(
+                accept_owned_zero_cleanup(&retired, previous, || Ok(OwnedZeroAudit::default()))
+                    .is_err()
+            );
+        }
+    }
+    #[test]
+    fn audit_counter_overflow_cannot_issue_partial_receipt() {
+        let maximum = OwnedZeroAudit {
+            bytes: u64::MAX,
+            buffers: u64::MAX,
+        };
+        assert!(
+            maximum
+                .checked_add(OwnedZeroAudit {
+                    bytes: 1,
+                    buffers: 1
+                })
+                .is_err()
+        );
+        assert_eq!(
+            maximum,
+            OwnedZeroAudit {
+                bytes: u64::MAX,
+                buffers: u64::MAX
+            }
+        );
+    }
+    #[test]
+    fn audit_failure_quarantine_retains_pages_while_ordinary_drop_releases() {
+        for (audit, failed) in [(false, false), (false, true), (true, false), (true, true)] {
+            let owner = Rc::new(());
+            let mut handles = vec![owner.clone()];
+            quarantine_failed_audit_handles(&mut handles, audit, failed);
+            drop(handles);
+            assert_eq!(
+                Rc::strong_count(&owner),
+                if audit && failed { 2 } else { 1 }
+            );
+        }
+    }
+    #[test]
+    fn ordered_private_source_write_has_no_cleanup_deadline_or_fence_credit() {
+        use std::cell::RefCell;
+        for ordered in [false, true] {
+            let events = RefCell::new(Vec::new());
+            initialize_owned_upload(
+                ordered,
+                || {
+                    events.borrow_mut().push("checkpoint");
+                    Ok(())
+                },
+                || {
+                    events.borrow_mut().push("owned full write");
+                    Ok(())
+                },
+            )
+            .unwrap();
+            assert_eq!(
+                *events.borrow(),
+                if ordered {
+                    vec!["owned full write"]
+                } else {
+                    vec!["checkpoint", "owned full write", "checkpoint"]
+                }
+            );
+        }
+        let checkpointed = std::cell::Cell::new(false);
+        assert!(
+            initialize_owned_upload(
+                true,
+                || {
+                    checkpointed.set(true);
+                    Ok(())
+                },
+                || Err(ArenaError::Initialization),
+            )
+            .is_err()
+        );
+        assert!(!checkpointed.get());
+    }
     #[test]
     fn moved_upload_keeps_owned_destination_on_write_error_and_unwind() {
         use cubecl::bytes::AllocationController;

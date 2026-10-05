@@ -51,16 +51,49 @@ the option is not an arbitrary request logger. `KUNO_LAB_CANCEL_CHECK=1` on a
 resident fixture additionally cancels a sequence, verifies whole-arena/host PLE
 teardown and poisoned retry rejection, then checks a fresh sequence's first
 output using the same public weights. It also cancels after queued GDN and QSA
-work at layers0/3 and requires complete arena erasure. The ordinary runtime's private staging
-copies remain outside that arena proof. Experiment switches are
+work at layers0/3 and requires complete arena erasure. Under the earlier public
+arena policy, ordinary runtime staging was outside that arena proof; the opted-in
+owned-I/O follow-up below covers the specified staging spans. Experiment switches are
 `KUNO_LAB_SMALL_CPU=1`, `KUNO_LAB_BLOCK_MOE=1`, `KUNO_LAB_CPU_GDN=1`, and
 `KUNO_LAB_BLOCK_KERNEL=0|1` (generic/all shapes). Without the block-kernel
 override, only large outputs use block decoding. The tested full rainwater run
 explicitly selected small CPU projections, large-output block decoding and the
 block MoE kernel. See the performance guide for timings and unaccepted work.
 
-The private arena proves erasure only for its own full allocation spans.
-CubeCL/wgpu also own upload, uniform and readback copies; their sanitization
-remains unaccepted. See [the residency audit](../../../../docs/kuno-native-text-residency.md)
-before exposing a persistent worker to real requests. Never specialize private
-tokens, positions or routing data as compile-time shader constants.
+The earlier public arena policy is not suitable for real requests. The lab now
+vendors three pinned CubeCL crates and provides an explicit owned-I/O policy;
+see [the residency audit](../../../../docs/kuno-native-text-residency.md) and
+[runtime ownership](runtime-ownership/README.md). This remains a compiled public
+fixture runner, with no production private worker or request API. Never
+specialize private tokens, positions or routing as compile-time shader constants.
+
+`KUNO_LAB_TRANSIENT_IO=1` on a full resident fixture configures owned runtime
+uploads, uniforms and readbacks before the first launch. Private source pages
+remain owned through their consumers; map leases drop before checked cleanup.
+`KUNO_LAB_PREFILL_LAST_HEAD=1` omits unused intermediate vocabulary projections
+while keeping complete layer/state/finite acceptance. Both cards pass multi-token
+chat; B70 preserves the full 128-token prior native fixture. This longer native
+output is not bit-identical to Ollama.
+
+`KUNO_LAB_IO_TOKEN_CHECKPOINT=1` additionally defers intermediate I/O erasure to
+the accepted final token fence under the unchanged 64-MiB runtime cap. Main-pool
+fence credit cannot reclaim tracked runtime spans. This cadence requires owned
+resident I/O and remains an optional experiment. For correctness/cleanup audits,
+`KUNO_LAB_OWNED_ZERO_AUDIT=1` retains and reads every full main/source page after
+erasure, including padding, then checks its readback staging before release.
+Both cards inspect all 1,286 main pages/785,186,816 bytes through normal/fresh
+owners and queued cancellation. Counts are available only after both arenas
+close successfully; failed audit ownership is quarantined until process exit.
+Receipts are written after explicit cleanup succeeds. Opaque driver memory and
+general private worker/host lifecycle remain outside this proof.
+
+`matmul-probe` configures owned I/O itself and validates all seven original packed
+formats at counts 1/3/5/8 and tiles 4/8. Do not set `KUNO_LAB_TRANSIENT_IO` for this
+mode. `KUNO_LAB_MATMUL_TIMING=1` adds a fixed cached eight-vector ABBA comparison
+against eight legacy cooperative launches. Both cards pass numeric/full-span
+checks and show a cached operator gain. True layer-major causal prefill and a
+whole-engine speedup remain unimplemented; sequential step loops are not batching.
+
+`moe-word-probe`/`moe-word-bench` test the optional exact-schedule 16-thread down
+kernel. `KUNO_LAB_WORD_DOWN=1` can select it in full fixtures, but measured cached
+all-ten MoE is slower on both cards/formats. It remains disabled by default.

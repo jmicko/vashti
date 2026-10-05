@@ -397,6 +397,48 @@ impl ComputeServer for WgpuServer {
         Ok(())
     }
 
+    fn read_private_cleanup(
+        &mut self,
+        descriptor: CopyDescriptor,
+        stream_id: StreamId,
+    ) -> Result<Bytes, ServerError> {
+        // Enter BEFORE scheduler execution can invoke the ordinary regulator.
+        // Live lease rejection precedes every scheduler/resource mutation.
+        let guard = self
+            .scheduler
+            .stream(&stream_id)
+            .begin_transient_cleanup()?;
+        guard.run(|| {
+            if descriptor.handle.stream != stream_id
+                || descriptor.handle.offset_start.unwrap_or(0) != 0
+                || descriptor.handle.offset_end.unwrap_or(0) != 0
+                || descriptor.elem_size != 1
+                || descriptor.strides.as_ref() != [1]
+                || descriptor.shape.as_slice() != [descriptor.handle.size() as usize]
+            {
+                return Err(super::transient_io::fault(
+                    "private cleanup read requires full span",
+                ));
+            }
+            let resource = self
+                .scheduler
+                .stream(&stream_id)
+                .mem_manage
+                .get_resource(descriptor.handle)?;
+            // Actual API-visible allocation must be the exact owning page.
+            // Reject any hidden allocator tail or interior resource view.
+            super::transient_io::cleanup_read_bounds(
+                resource.offset,
+                resource.size,
+                resource.buffer.size(),
+            )?;
+            self.scheduler.execute_streams(vec![stream_id]);
+            self.scheduler
+                .stream(&stream_id)
+                .read_private_cleanup_resource(resource)
+        })
+    }
+
     fn sanitize_transient_io(
         &mut self,
         stream_id: StreamId,
