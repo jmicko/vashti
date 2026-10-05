@@ -24,6 +24,8 @@ UI or change its user-data storage.
 - [Kuno development guide](../apps/kuno/README.md): operation and validation.
 - [Native text research proposal](kuno-text-engine-research.md): pinned FreeToken
   and Strata findings and proposed Qwen3.8 engine phases; no implementation claim.
+- [Native text implementation/benchmarks](kuno-text-performance.md): fixed
+  synthetic updated-Ollama baseline and Rust engine development receipts.
 - [Image engine contract](kuno-images.md): supported execution and image API.
 - [Vashti Images specification](vashti-images-spec.md): product behavior and UX.
 
@@ -969,3 +971,22 @@ this research**. Exact endpoint/errors/capability fields remain to be specified
 before implementation changes consumers. Implementation needs a separate
 acceptance receipt and shared contract agreement. Keep request-derived router,
 PLE and prefix state transient under the existing content-free privacy contract.
+
+### Native Rust text implementation started (2026-10-05)
+
+The user authorized the research plan's implementation and a goal to exceed
+updated Ollama throughput. Rust inference correctness comes before performance
+optimization; embedding an entire C++ graph does not meet this milestone.
+Read [the updated Ollama baseline](kuno-text-performance.md). Ollama 0.35.1
+automatically selected B70/Vulkan, producing 128 tokens in 100.346 seconds cold
+(41.500 seconds load), 16.690 seconds warm with prompt reuse, and 25.935 seconds
+warm with a changed prefix and no reported prompt reuse. Exact public synthetic
+prompts, seed 424242, options, manifest and numeric receipts are committed with
+the harness. This is one reference sequence, not a native speedup claim.
+
+Development is on `codex/kuno-native-text` from `e9de15a`, with isolated loader
+and operator worktrees. Initial scope is read-only borrowed GGUF access, pure
+Rust quant decoding and scalar graph/state primitives. No native model catalog,
+public API, default routing, Vashti connector/UI or deployed engine changes have
+been accepted. Frontend work is not required at this checkpoint. Preserve the
+explicit native-default/`ollama.` direction for later tested integration.

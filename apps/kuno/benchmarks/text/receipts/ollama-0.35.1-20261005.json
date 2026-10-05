@@ -1,0 +1,208 @@
+{
+  "schema_version": 1,
+  "fixture_kind": "public_synthetic_benchmark",
+  "label": "ollama-0.35.1-default-auto-b70-vulkan",
+  "utc_started": "2026-10-05T09:12:15.110525+00:00",
+  "endpoint": "http://127.0.0.1:11435",
+  "server_version": "0.35.1",
+  "fixture": {
+    "fixture_kind": "public_synthetic_benchmark",
+    "model": "qwen3.8-flash-next:125b-a6b-q4_K_M",
+    "expected_manifest_digest": "f79436a1cc83fd1a9b7752cf62247a2e7ad9fd7775c67230da4254fcc1d07f01",
+    "stream": true,
+    "raw": true,
+    "think": false,
+    "keep_alive": "30m",
+    "prompt": "<|im_start|>system\nYou are a helpful assistant. Answer directly without a thinking section.<|im_end|>\n<|im_start|>user\nExplain how a town can collect rainwater from roofs and use it safely to water a community garden. Include storage, filtering, maintenance, and one practical limitation. Write about 200 words in clear connected paragraphs.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+    "alternate_prompt": "<|im_start|>system\nFor this second benchmark, you are a helpful assistant. Answer directly without a thinking section.<|im_end|>\n<|im_start|>user\nExplain how a town can collect rainwater from roofs and use it safely to water a community garden. Include storage, filtering, maintenance, and one practical limitation. Write about 200 words in clear connected paragraphs.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+    "options": {
+      "seed": 424242,
+      "temperature": 0,
+      "top_k": 0,
+      "top_p": 1,
+      "min_p": 0,
+      "repeat_penalty": 1,
+      "presence_penalty": 0,
+      "num_ctx": 4096,
+      "num_predict": 128,
+      "num_batch": 128,
+      "num_thread": 16
+    }
+  },
+  "runs": [
+    {
+      "label": "cold",
+      "outcome": "complete",
+      "http_status": 200,
+      "done_reason": "length",
+      "wall_seconds": 100.34587650899994,
+      "first_record_seconds": 75.03884806200222,
+      "first_content_seconds": 75.03885016200002,
+      "stream_records": 129,
+      "synthetic_output_bytes": 656,
+      "synthetic_output_sha256": {
+        "thinking": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "response": "03095da322ed258d16f7548365a10fe15b5f3a234879d7fd1d01e79577ce1858"
+      },
+      "prompt_eval_count": 75,
+      "prompt_eval_cached_count": 0,
+      "eval_count": 128,
+      "total_duration": 100345442485,
+      "load_duration": 41500119530,
+      "prompt_eval_duration": 33535383000,
+      "eval_duration": 25308121000,
+      "decode_tokens_per_second": 5.057665087028784,
+      "uncached_prefill_tokens_per_second": 2.2364438181606574,
+      "resident_models_after": [
+        {
+          "name": "qwen3.8-flash-next:125b-a6b-q4_K_M",
+          "digest": "f79436a1cc83fd1a9b7752cf62247a2e7ad9fd7775c67230da4254fcc1d07f01",
+          "size": 63879889549,
+          "size_vram": 28646991461,
+          "context_length": 4096
+        }
+      ]
+    },
+    {
+      "label": "warm_same_prompt",
+      "outcome": "complete",
+      "http_status": 200,
+      "done_reason": "length",
+      "wall_seconds": 16.689856639000936,
+      "first_record_seconds": 0.6351795180016779,
+      "first_content_seconds": 0.6351817879985902,
+      "stream_records": 129,
+      "synthetic_output_bytes": 656,
+      "synthetic_output_sha256": {
+        "thinking": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "response": "03095da322ed258d16f7548365a10fe15b5f3a234879d7fd1d01e79577ce1858"
+      },
+      "prompt_eval_count": 75,
+      "prompt_eval_cached_count": 71,
+      "eval_count": 128,
+      "total_duration": 16689391274,
+      "load_duration": 4531014,
+      "prompt_eval_duration": 445382000,
+      "eval_duration": 16054625000,
+      "decode_tokens_per_second": 7.97278042931554,
+      "uncached_prefill_tokens_per_second": 8.981054465604807,
+      "resident_models_after": [
+        {
+          "name": "qwen3.8-flash-next:125b-a6b-q4_K_M",
+          "digest": "f79436a1cc83fd1a9b7752cf62247a2e7ad9fd7775c67230da4254fcc1d07f01",
+          "size": 63879889549,
+          "size_vram": 28646991461,
+          "context_length": 4096
+        }
+      ]
+    },
+    {
+      "label": "warm_changed_prefix",
+      "outcome": "complete",
+      "http_status": 200,
+      "done_reason": "length",
+      "wall_seconds": 25.93482544500148,
+      "first_record_seconds": 9.096357471000374,
+      "first_content_seconds": 9.096359410999867,
+      "stream_records": 129,
+      "synthetic_output_bytes": 656,
+      "synthetic_output_sha256": {
+        "thinking": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "response": "8b2d771cb7c47a3cd69413464ed35abbc13e2c65d92397a424afcd0fd83d527e"
+      },
+      "prompt_eval_count": 80,
+      "prompt_eval_cached_count": 0,
+      "eval_count": 128,
+      "total_duration": 25934341410,
+      "load_duration": 2182272,
+      "prompt_eval_duration": 9092328000,
+      "eval_duration": 16838529999,
+      "decode_tokens_per_second": 7.60161368050546,
+      "uncached_prefill_tokens_per_second": 8.798626710343049,
+      "resident_models_after": [
+        {
+          "name": "qwen3.8-flash-next:125b-a6b-q4_K_M",
+          "digest": "f79436a1cc83fd1a9b7752cf62247a2e7ad9fd7775c67230da4254fcc1d07f01",
+          "size": 63879889549,
+          "size_vram": 28646991461,
+          "context_length": 4096
+        }
+      ]
+    }
+  ],
+  "cold_definition": "no loaded models; OS disk page cache not flushed",
+  "privacy": "public synthetic fixture only; no output text or raw errors retained",
+  "initial_command_label": "ollama-0.35.1-default-cuda",
+  "hardware": {
+    "cpu": "AMD Ryzen 9 5900XT",
+    "physical_cpu_cores": 16,
+    "host_ram_bytes": 67335233536,
+    "selected_gpu": "Intel Arc Pro B70",
+    "selected_gpu_pci": "0000:2d:00.0",
+    "backend": "Vulkan",
+    "other_gpu": "NVIDIA RTX3060",
+    "memory_max_bytes": 55834574848,
+    "memory_swap_max_bytes": 0,
+    "core_limit_bytes": 0
+  },
+  "observations": {
+    "backend_evidence": "runner maps libggml-vulkan.so and Intel Vulkan driver; DRM fdinfo identifies xe 0000:2d:00.0; no CUDA ggml backend mapped",
+    "sampled_ollama_cgroup_memory_bytes": 53026336768,
+    "cgroup_memory_events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0",
+    "nvidia_memory_mib_during_load": 551,
+    "gpu_fdinfo": [
+      {
+        "drm-driver": "xe",
+        "drm-pdev": "0000:2d:00.0",
+        "drm-total-system": "0",
+        "drm-shared-system": "0",
+        "drm-active-system": "0",
+        "drm-resident-system": "0",
+        "drm-purgeable-system": "0",
+        "drm-total-gtt": "0",
+        "drm-shared-gtt": "0",
+        "drm-active-gtt": "0",
+        "drm-resident-gtt": "0",
+        "drm-total-vram0": "0",
+        "drm-shared-vram0": "0",
+        "drm-active-vram0": "0",
+        "drm-resident-vram0": "0",
+        "drm-total-stolen": "0",
+        "drm-shared-stolen": "0",
+        "drm-active-stolen": "0",
+        "drm-resident-stolen": "0",
+        "drm-total-cycles-rcs": "607157881385",
+        "drm-total-cycles-vcs": "607157881385",
+        "drm-total-cycles-vecs": "607157881385",
+        "drm-total-cycles-bcs": "607157881385",
+        "drm-total-cycles-ccs": "607157881385"
+      },
+      {
+        "drm-driver": "xe",
+        "drm-pdev": "0000:2d:00.0",
+        "drm-total-system": "0",
+        "drm-shared-system": "0",
+        "drm-active-system": "0",
+        "drm-resident-system": "0",
+        "drm-purgeable-system": "0",
+        "drm-total-gtt": "26860 KiB",
+        "drm-shared-gtt": "0",
+        "drm-active-gtt": "0",
+        "drm-resident-gtt": "26860 KiB",
+        "drm-total-vram0": "29060212 KiB",
+        "drm-shared-vram0": "0",
+        "drm-active-vram0": "0",
+        "drm-resident-vram0": "29060212 KiB",
+        "drm-total-stolen": "0",
+        "drm-shared-stolen": "0",
+        "drm-active-stolen": "0",
+        "drm-resident-stolen": "0",
+        "drm-total-cycles-rcs": "607157891495",
+        "drm-total-cycles-vcs": "607157891495",
+        "drm-total-cycles-vecs": "607157891495",
+        "drm-total-cycles-bcs": "607157891495",
+        "drm-total-cycles-ccs": "607157891495"
+      }
+    ]
+  }
+}
