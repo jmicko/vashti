@@ -51,15 +51,23 @@ before persistence. Audit dependency logging and crash behavior too.
 ## Ollama compatibility contract
 
 Use a stable explicit public model identifier, provisionally `bonsai2:27b`.
-Installing a Kuno model must reject a collision with an Ollama name/alias;
-silently shadowing an existing model is forbidden. Pin artifact digests,
-quantization, tokenizer/template, runtime build, and supported capabilities.
+Reject accidental collisions with Ollama names/aliases. **Updated intended
+direction, 2026-10-05; not implemented:** a verified native adapter may explicitly
+bind an existing Ollama model name and borrow its files read-only. That ordinary
+name then selects Kuno, while a registered `ollama.<full-model-name>` alias
+selects managed Ollama through the same scheduler. This user-requested binding
+supersedes the earlier unconditional collision prohibition; it does not allow
+undeclared shadowing or arbitrary prefix stripping. See the
+[storage/routing research contract](kuno-text-engine-research.md#proposed-model-names-and-dispatch).
+Pin artifact digests, quantization, tokenizer/template, runtime build, and
+supported capabilities. A native-only model still requires its own unique name.
 
 - Merge installed usable entries into `/api/tags` and `/v1/models`. A warm load
   is not required for discovery. Do not advertise a merely planned download or
   unsupported engine. Preserve upstream entries and their extra fields.
-- Resolve the model before dispatch. Route Kuno-owned names to their adapter;
-  other names retain Ollama behavior. Unknown endpoints for an explicitly
+- Resolve the model before dispatch. Route Kuno-owned names and verified explicit
+  bindings to their adapter; registered `ollama.` aliases and other ordinary
+  names retain Ollama execution. Unknown endpoints for an explicitly
   Kuno-owned model must fail clearly rather than accidentally reaching Ollama.
 - Supply `/api/show`, running-model `/api/ps`, and corresponding OpenAI model
   metadata consistently. A Kuno worker must not be double-counted as Ollama.
@@ -67,9 +75,11 @@ quantization, tokenizer/template, runtime build, and supported capabilities.
   final markers, timing/token counts, stop reasons, cancellation, and errors.
   Preserve thinking and tool calls as structured data. Do not silently discard
   an unsupported option, requested modality, format constraint, or API feature.
-- Define keep-alive/load/unload behavior through the common scheduler. Model
-  deletion, copy, pull, push, and creation must either implement the operation
-  for Kuno-owned artifacts or return an explicit unsupported-operation error.
+- Define keep-alive/load/unload behavior through the common scheduler. Borrowed
+  artifacts retain Ollama ownership of deletion, copy, pull, push and creation;
+  coordinate workers and invalidate bindings when those artifacts change.
+  For native-only artifacts, management must implement the operation or return
+  an explicit unsupported-operation error.
   No management request for a Kuno model is blindly forwarded to Ollama.
 - Test the same client transcript against both runtime routes, including
   fragmented streams, tool round trips, cancellation before/after headers,

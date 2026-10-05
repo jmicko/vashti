@@ -22,6 +22,8 @@ UI or change its user-data storage.
 
 - [Kuno specification](kuno-spec.md): privacy, compatibility, admission, lifecycle.
 - [Kuno development guide](../apps/kuno/README.md): operation and validation.
+- [Native text research proposal](kuno-text-engine-research.md): pinned FreeToken
+  and Strata findings and proposed Qwen3.8 engine phases; no implementation claim.
 - [Image engine contract](kuno-images.md): supported execution and image API.
 - [Vashti Images specification](vashti-images-spec.md): product behavior and UX.
 
@@ -939,3 +941,31 @@ with about 856 MiB available. No release or log cleanup, storage resize, Hub
 deployment, stable promotion, main-branch merge, Git push or live Vashti/Kuno
 installation was performed. Physical Android acceptance and the backend
 hardware/platform limits remain as recorded above.
+
+### Kuno native text research proposal (2026-10-05)
+
+The user requested research only on FreeToken and Strata. See
+[the research and implementation proposal](kuno-text-engine-research.md), based
+on integrated beta.3 commit `ae3e70d`, on `codex/kuno-text-research` in the reused
+Kuno worktree. It pins both upstream repositories, the official Qwen3.8 model
+configuration and an independent graph reference. The proposed first target is
+the full 512-expert model on B70, followed by measured CPU/GPU expert scheduling,
+heterogeneous execution and verified MTP if a compatible draft module exists.
+The user's follow-up requests read-only reuse of Ollama's downloaded files and
+default-native routing for verified models, with `ollama.<full-model-name>` as
+the explicit managed-Ollama route. The research records the exact existing
+Q4_K_M manifest, mixed tensor formats, approximately 120 GB artifact size and
+the need for bounded host caches/disk-backed PLE. No duplicate weight download
+is proposed. The Bonsai graph plan is unchanged; its intended compatibility
+section now records this explicit alias exception to accidental collision
+rejection. No native text architecture or alias is implemented.
+
+Evidence is source inspection, model manifest/tensor metadata and read-only
+hardware inventory. No runtime build/test, model-weight download, inference,
+GPU workload, installation, service
+change or performance verification was performed. No Kuno API, protocol,
+configuration, consumer or UI behavior changes; **no Vashti work is required for
+this research**. Exact endpoint/errors/capability fields remain to be specified
+before implementation changes consumers. Implementation needs a separate
+acceptance receipt and shared contract agreement. Keep request-derived router,
+PLE and prefix state transient under the existing content-free privacy contract.
