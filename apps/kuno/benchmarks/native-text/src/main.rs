@@ -1,6 +1,8 @@
 //! Public synthetic Rust-authored kernel probe, not a model engine wrapper.
 mod bank96_probe;
 mod bank_slots;
+pub mod cpu_gpu_expert_probe;
+mod cpu_gpu_expert_schedule;
 mod executor;
 mod expert_banks;
 mod gdn_batch_pointwise;
