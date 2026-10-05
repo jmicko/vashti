@@ -35,6 +35,11 @@ pub(crate) mod batch;
 #[path = "resident_batch_io.rs"]
 pub(crate) mod batch_io;
 
+#[path = "resident_lifecycle_hooks.rs"]
+mod lifecycle_hooks;
+#[path = "resident_model_lifecycle_probe.rs"]
+pub(crate) mod lifecycle_probe;
+
 enum Layer<'f> {
     Gdn(Box<ResidentGdn<'f>>, PublicGdnParameters),
     Qsa(
@@ -81,6 +86,7 @@ pub struct ResidentModel<'m, 'f> {
     retired: Arc<AtomicBool>,
     admission: ResidentAdmission,
     cancel_after_attention: Option<usize>,
+    lifecycle_hooks: lifecycle_hooks::Hooks,
     pub phase_ns: BTreeMap<&'static str, u128>,
 }
 #[cube]
@@ -477,6 +483,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 retired,
                 admission: admission.clone(),
                 cancel_after_attention: None,
+                lifecycle_hooks: lifecycle_hooks::Hooks::default(),
                 phase_ns: BTreeMap::new(),
             };
             if let Some(plan) = native {

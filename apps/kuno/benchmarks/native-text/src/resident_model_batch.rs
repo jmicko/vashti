@@ -766,6 +766,9 @@ impl Workspace {
             )?;
             prepared.combine(self.outer.block[1], self.outer.residual[1 - *current])?;
             *current = 1 - *current;
+            // Fixed-public lab hook: actual routed/shared consumers and HC
+            // combine are already queued; no family has published its state.
+            m.lifecycle_hooks.late_combine(layer)?;
             Ok(())
         })?;
         if purpose == Purpose::LastLogits {
@@ -826,7 +829,12 @@ impl Workspace {
                     cancel,
                 )
             },
-            || batch_io::read_fault(&m.arena, &m.admission, m.b.fault, cancel),
+            || {
+                // The real PLE preparation exists and the first whole-model
+                // proof completed. Failure here must drop that real ticket.
+                m.lifecycle_hooks.before_second_proof()?;
+                batch_io::read_fault(&m.arena, &m.admission, m.b.fault, cancel)
+            },
         )?;
         let mut ga = {
             let (first_stage, first_receipt) = match (&m.layers[0], pending.gdn[0].as_ref()) {
@@ -896,12 +904,17 @@ impl Workspace {
         // cannot publish output/cursor or resume a partially changed sequence.
         for (layer, owner) in m.layers.iter_mut().enumerate() {
             match owner {
-                Layer::Gdn(stage, _) => stage.commit_after_whole_chunk_acceptance(
-                    pending.gdn[layer].take().ok_or(error())?,
-                    &m.arena,
-                    &mut ga,
-                    cancel,
-                )?,
+                Layer::Gdn(stage, _) => {
+                    stage.commit_after_whole_chunk_acceptance(
+                        pending.gdn[layer].take().ok_or(error())?,
+                        &m.arena,
+                        &mut ga,
+                        cancel,
+                    )?;
+                    // Inject only AFTER the first genuine family commit. The
+                    // next real commit must reject and destroy this sequence.
+                    m.lifecycle_hooks.after_gdn_commit(layer, cancel);
+                }
                 Layer::Qsa(stage, _) => stage.commit_after_whole_chunk_acceptance(
                     pending.qsa[layer].take().ok_or(error())?,
                     &m.arena,
