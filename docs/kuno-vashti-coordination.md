@@ -29,6 +29,11 @@ UI or change its user-data storage.
 - [Native causal prefill plan](kuno-native-text-prefill.md): internal MAX8
   transaction, recurrent/attention boundaries and bounded expert waves;
   isolated operators do not establish whole-model batching.
+- [Actual native model connection plan](kuno-native-text-model-batching.md):
+  approved complete constructor, original model owners and all-family chunk
+  acceptance; source adapters do not establish a connected device consumer.
+- [Native decode optimization plan](kuno-native-text-decode.md): original packed
+  Rust CPU experts, positional reads and later measured CPU/mixed-GPU trials.
 - [Image engine contract](kuno-images.md): supported execution and image API.
 - [Vashti Images specification](vashti-images-spec.md): product behavior and UX.
 
@@ -1394,3 +1399,54 @@ quality/options and production private-worker/native-default/managed `ollama.`
 routing remain outstanding. Installed Kuno/Ollama services respond and remain
 unchanged; no reset/reboot, API, catalog, route, frontend or installed binary
 changed. No Vashti consumer work is required for this internal checkpoint.
+
+### Current native actual-history/bank checkpoint (2026-10-05)
+
+**Source commits `0f31146` and `09a9164`, after `49cf147`/`526f31d`, on
+`codex/kuno-native-text`.** Read the
+[actual CPU-history bridge](kuno-text-performance.md#native-ple-bridge-into-actual-cpu-histories-2026-10-05)
+and [actual-bank/router receipt](kuno-text-performance.md#native-actual-bank-moe-and-guarded-router-2026-10-05).
+This supersedes the adapter-pending statements of the preceding checkpoint;
+complete model execution and device acceptance remain pending.
+
+Native PLE uses the authoritative original CPU history objects and guarded
+OLD/NORMALIZED/NEXT owning maps. Its opaque field-split preparation permits
+other families and the required second actual fault/I/O/admission proof before
+any commit. Original token/hash/convolution math remains unchanged. Native MoE
+uses real original executor banks and retained final staged plans; complete
+selected unions stay protected, scalar bank access is blocked during sessions,
+and original ledgers publish only after complete-model acceptance and all-family
+preflight. The guarded router preserves original rounding/ties/clamp and all
+ten ranks, including zeros. Full-page, private-host and independent runtime
+component bounds are recorded; no component alone admits the aggregate model.
+
+Current root acceptance passes350 native and86 core host/offline tests, with
+two installed checks ignored, strict all-target Clippy for both manifests,
+locked offline release, formatting/diff and focused peer source review.
+`rust-native-ple-bridge-source-20261005.json` pins the343/80 source checkpoint;
+`rust-native-moe-router-source-20261005.json` pins the current350/86 checkpoint
+and frozen binary `27c25fea8741017a090052118e95da102a062a159451ba4c919bc2af502b6950`.
+The approved complete constructor/chunk plan is linked above. Its actual
+coordinator and owning I/O helpers are being developed in isolated snapshots.
+
+Separately, the original scalar model with optional finite-fault fusion passes
+fixed-public four-output inference and cancellation/poison/fresh-owner cleanup
+on both GPUs. Each card reproduces `[49276,2349,1074,5928]`; four owner audits
+each inspect785,186,816 B/1,286 complete pages plus separately checked source/I/O
+cleanup. `rust-fused-full-resident-device-20261005.json` preserves exact reports,
+settings and binary identity. These protected user-unit runs are lifecycle
+evidence, not matched performance measurements or new native MAX8 acceptance.
+The exact protection wrapper is committed as
+`apps/kuno/benchmarks/text/protected-lab-exec.py`; swap/core limits are checked
+inside the unit before exec. Sudo is not required for this laboratory path.
+
+The decode plan approves Stage1 original packed Rust CPU experts and a pinned-FD
+positional reader for isolated synthetic source work. Actual calibration and
+CPU/B70/secondary-GPU execution are later measured proposals. Whole-model native
+adapter parity/lifecycle, complete prompt/output quality and options, faster
+matched updated-Ollama cold/warm runs, production private-worker lifecycle and
+native-default/managed `ollama.` routing remain outstanding. **Required Vashti
+changes: none at this internal checkpoint.** No public API/configuration,
+download/copy/conversion, installed service, frontend, release, driver, reset or
+reboot changed. Installed Kuno/Ollama listeners respond with no resident models;
+admission was not paused and all completed root GPU laboratory units are stopped.
