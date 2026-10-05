@@ -7,5 +7,6 @@ members = [
     "crates/vashti-update-manifest",
     "crates/kuno-protocol",
     "crates/kuno-image",
+    "crates/kuno-text",
 ]
 resolver = "3"
