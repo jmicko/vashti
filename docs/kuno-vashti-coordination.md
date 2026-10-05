@@ -26,6 +26,9 @@ UI or change its user-data storage.
   and Strata findings and proposed Qwen3.8 engine phases; no implementation claim.
 - [Native text implementation/benchmarks](kuno-text-performance.md): fixed
   synthetic updated-Ollama baseline and Rust engine development receipts.
+- [Native causal prefill plan](kuno-native-text-prefill.md): internal MAX8
+  transaction, recurrent/attention boundaries and bounded expert waves;
+  isolated operators do not establish whole-model batching.
 - [Image engine contract](kuno-images.md): supported execution and image API.
 - [Vashti Images specification](vashti-images-spec.md): product behavior and UX.
 
@@ -1151,3 +1154,43 @@ whole-engine speedup remain outstanding.
 service or consumer changes are exposed by this laboratory. The native route
 still requires a separately agreed and tested contract before integration.
 No installation, release, GPU reset or reboot is part of this checkpoint.
+
+### Native text GR/GDN batching and cache experiments (2026-10-05)
+
+The next source/receipt checkpoint is `e378d32`, after `ecf3320`, on
+`codex/kuno-native-text`. Read [the measured operator and cache limits](kuno-text-performance.md#batched-gr-operator-acceptance)
+and [the internal causal prefill plan](kuno-native-text-prefill.md). These are
+isolated compiled public fixtures, without real request support.
+
+Both physical GPUs pass 24 original-weight GR cases and eight GDN recurrence
+chunk cases with full owning-page and guarded I/O cleanup. Actual Qwen GDN
+chunks match scalar GPU state/output exactly at counts1/3/5/8. Projections,
+convolution, closing gate and full causal layer-major prefill still require
+integration; no whole-engine gain is established by these operator checks.
+
+The default-off segmented96 expert cache passes both-card Q5/Q8 boundary-slot
+comparisons, partial-fill/post-enqueue cancellation, poisoning and cleanup. Full
+B70 chat/cancellation/main-page audits also pass. Short compiler-idle ABBA is
+near noise. A long96 candidate fails runtime cleanup after partial generation;
+it writes no success receipt and the remaining ABBA samples are not run. The
+64 reference and fresh Intel recurrent recovery pass. Underlying cleanup/GPU
+error categories need diagnosis before longer96 acceptance or selection.
+
+Token-level cleanup cadence and ordered public upload pass their specified
+short acceptance but are slower in paired measurements and remain disabled.
+An explicit teardown-order repair safely drains pending source staging before
+duplicated main-page audits. All unchanged default choices remain in force.
+
+Root checks pass202 native host/offline tests, strict all-target Clippy,
+formatting and diff checks. Core and the pinned18-file runtime vendor patch are
+unchanged from the prior checkpoint; their previously accepted checks are not
+claimed as newly repeated here. Public receipts record exact executable/source
+identities, ordered samples, failure exclusions and unit bounds with swap/core
+dumps disabled. Longer96, whole-prefill, private-worker lifecycle, quality/
+options, native catalog/default/managed `ollama.` routing and a matched Ollama
+speedup remain outstanding.
+
+**Vashti changes: none.** No production protocol, configuration, installed
+service, deployment or release changes apply. Kuno admission is temporarily
+paused only for exclusive operator GPU tests and must be resumed at the end of
+that test window. No GPU reset or reboot is authorized by this checkpoint.
