@@ -1239,3 +1239,36 @@ and managed `ollama.` routing, matched cold/warm Ollama improvement and release
 remain outstanding. Installed Kuno/Ollama are unchanged; admission was resumed
 after testing. **Required Vashti changes: none at this checkpoint.** No GPU reset,
 reboot, driver change, installation or publication is part of this handoff.
+
+### Native text layer-composition source checkpoint (2026-10-05)
+
+**Source candidate: `3a6c4cc`, after accepted checkpoint `3e244d5` and its
+handoff `46be6b4`, on `codex/kuno-native-text`.** This does not supersede the
+device acceptance above. Read [the composition source limits](kuno-text-performance.md#full-gdn-layer-and-fused-matrix-fault-source-checkpoint-2026-10-05)
+and [whole-model chunk semantics](kuno-native-text-prefill.md) before connecting
+these candidates.
+
+The full candidate GDN layer includes all five original packed projections,
+causal pointwise operations and recurrence. It has separate immutable current
+and candidate state, all ten status planes and no state/cursor commit. Its fixed
+public probe compares counts1/3/5/8 against the original scalar GPU schedule and
+independent core oracle; those device comparisons have not run yet. Exact main,
+public, host and I/O envelopes are in the source receipt.
+
+The shared MAX8 projector reuses the existing original-weight cache, validates
+full row extents before bounded tiles and preserves reserved-memory checks and
+the separate whole-output fault fence. It is not yet connected to a whole chunk
+owner or device-tested. The default-off cooperative projection candidate folds
+only its output finite fault into the original64-lane arithmetic; block paths
+keep the separate fence. Its probe rejects incomplete owning reads and wipes
+byte leases on every exit. Seven formats pass14 checked/unchecked WGSL variants.
+
+Combined host acceptance passes247 tests, strict all-target Clippy, formatting
+and diff checks. Prepared device probes use frozen executable SHA256
+`a1be34e63179b2ba1fdc33ad13c15fe27f8f456362f5cda69482dce3041f59b7`,
+which predates the shared batch projector. Sudo expired before device units
+started; normal Kuno admission remains enabled. No GPU/performance/private-worker
+claim follows from these source checks. QSA/PLE layer composition, owned expert
+waves, whole-model chunk connection and the full acceptance list above remain
+outstanding. **Required Vashti changes: none.** No public API, catalog, default
+routing, installed service, release or publication changed.
