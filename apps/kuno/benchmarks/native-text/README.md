@@ -151,7 +151,7 @@ acceptance is selected; ordinary bank/cache defaults remain unchanged.
 model owners. It requires `KUNO_LAB_TRANSIENT_IO=1` and accepts an explicit
 `KUNO_LAB_NATIVE_BATCH_COUNT=1..8` (default8). Intermediate chunks omit the final
 mixer/head; scalar output generation continues from the accepted original state.
-Both GPUs pass short bang/chat fixtures, including counts3 and8, native GDN/QSA
+Both GPUs pass short bang/chat fixtures, including chat counts1/3/5/8, native GDN/QSA
 cancellation, poisoned retry rejection and fresh-owner recovery. Four complete
 audits per run inspect1,376 private pages/818,249,728 B. Longer whole-model
 contexts, complete options/quality, production private workers and matched
@@ -176,7 +176,9 @@ python3 apps/kuno/benchmarks/text/run-native-max8-lab.py \
 
 The runner checks the protected unit's actual swap/core/host bounds, exact public
 fixture partition/output and full audit/cancel/cleanup completion before writing
-its run record. Only compiled public bang/chat fixtures are accepted; never use
+its run record. Only compiled public bang/chat/rainwater fixtures are accepted;
+rainwater compares the full75/128 fixture against the committed original native
+public IDs, with fresh full-prompt replay and cancellation/audits. Never use
 it to retain private request data. Lab units have a900-second containment bound,
 which is unrelated to production inference. Diagnostic durations are not paired
 performance samples. See [current model acceptance](../../../../docs/kuno-text-performance.md#connected-native-model-laboratory-2026-10-05).

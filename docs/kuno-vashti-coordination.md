@@ -1535,3 +1535,11 @@ when OS file pages are warm. Root exclusively owns real model/GPU/service runs.
 No CPU/GPU parity, hybrid model, speed win or production privacy claim follows
 from these source checks. **Required Vashti changes: none.** Public HTTP,
 installed services, drivers, release and frontend remain unchanged.
+
+The short native partition matrix is now complete on both GPUs for counts
+1/3/5/8, all original eight output IDs, four complete MAIN/source audits and
+native GDN/QSA cancel/poison/fresh recovery. Exact reports remain pinned to the
+earlier `fca4b669…` artifact in `rust-native-model-partitions-device-20261005.json`;
+this is not newer CPU-binary or speed acceptance. The protected runner now also
+accepts the already-compiled public75/128 rainwater fixture and compares against
+committed original native IDs; full physical acceptance is still pending.

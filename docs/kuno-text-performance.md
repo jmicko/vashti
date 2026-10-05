@@ -1284,6 +1284,20 @@ partitions, full75/128 output,
 whole-model long-context boundaries, injected failures, quality/options,
 compiler-idle matched performance and production worker/routing remain pending.
 
+Both cards additionally pass the complete short chat partition matrix:
+count1=`[1;15]`, count3=`[3,3,3,3,3]`, count5=`[5,5,5]`, count8=`[8,7]`.
+Every case reproduces the same original eight public IDs, accepts scalar
+continuation and passes four full audits plus native GDN/QSA cancel/poison/fresh
+recovery. The
+[partition receipt](../apps/kuno/benchmarks/text/receipts/rust-native-model-partitions-device-20261005.json)
+preserves all eight actual reports under the original `fca4b669…` artifact;
+typed effective card/cache/bank/runtime/source-audit fields were revalidated.
+The final NVIDIA count1 run directly uses that hash-verified immutable binary;
+its failed first launch never reached the protection wrapper/model and is excluded.
+This establishes short-fixture partition invariance, without full-logit, long
+context, options or matched speed acceptance. The newer CPU-composed binary
+retains separate provenance; the full75/128 native fixture is the next device gate.
+
 ## Original packed Rust CPU expert source acceptance (2026-10-05)
 
 Root integrates `7950074`/`d1a0446`, the author's `55dfe343` plus corrected

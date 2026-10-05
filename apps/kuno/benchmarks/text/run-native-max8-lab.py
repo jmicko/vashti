@@ -66,8 +66,11 @@ def validate_receipt(receipt, card, fixture, count, output):
     expected = {
         "resident-bang": [49276, 2349, 1074, 5928],
         "resident-chat": [9419, 0, 2500, 628, 353, 1438, 488, 3242],
+        "resident-rainwater": json.loads(pathlib.Path(__file__).with_name("receipts")
+            .joinpath("rust-full-resident-rainwater-intel-20261005.json").read_bytes())
+            ["public_generated_ids"],
     }[fixture]
-    prompt = 1 if fixture == "resident-bang" else 15
+    prompt = {"resident-bang": 1, "resident-chat": 15, "resident-rainwater": 75}[fixture]
     partition = [min(count, prompt - at) for at in range(0, prompt, count)]
     slots, cache, reserved = {
         "intel": (64, 8 * 1024**3, 26 * 1024**3),
@@ -149,7 +152,7 @@ def main():
     parser.add_argument("--cargo-artifacts", type=pathlib.Path, required=True)
     parser.add_argument("--model", type=pathlib.Path, required=True)
     parser.add_argument("--card", choices=("intel", "nvidia"), required=True)
-    parser.add_argument("--fixture", choices=("resident-bang", "resident-chat"), required=True)
+    parser.add_argument("--fixture", choices=("resident-bang", "resident-chat", "resident-rainwater"), required=True)
     parser.add_argument("--count", type=int, choices=(1, 3, 5, 8), required=True)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--receipt", type=pathlib.Path, required=True)
@@ -199,14 +202,15 @@ def main():
         raise SystemExit("Protected compiled-public fixture failed; no acceptance recorded")
     if not target.is_file():
         raise SystemExit("Missing native model receipt; successful probe exit is insufficient")
-    receipt = json.loads(target.read_text())
+    receipt_snapshot = target.read_bytes()
+    receipt = json.loads(receipt_snapshot)
     validate_receipt(receipt, args.card, args.fixture, args.count, "".join(lines))
     record = {
-        "scope": "fixed-public-short-lifecycle-fixture-only",
+        "scope": "fixed-public-model-partition-output-and-lifecycle-fixture-only",
         "cargo_artifacts_sha256": artifacts_identity,
         "frozen_executable_sha256": identity,
         "card": args.card, "fixture": args.fixture, "count": args.count,
-        "receipt_sha256": digest(target.read_bytes()),
+        "receipt_sha256": digest(receipt_snapshot),
         "protected_lifecycle_completion_checked": True,
         "matched_performance_measurement": False,
     }
