@@ -8,6 +8,7 @@ description = "Bounded Rust model readers and native text inference foundations 
 [dependencies]
 aho-corasick = "1.1"
 fancy-regex = "=0.11.0"
+rayon = "1.11"
 zeroize = "1.9"
 
 [dev-dependencies]
