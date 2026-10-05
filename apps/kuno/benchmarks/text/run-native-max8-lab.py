@@ -126,13 +126,17 @@ def validate_receipt(receipt, card, fixture, count, output):
     if len(audits) != 4 or any(not isinstance(item, dict) or
         item.get("main_buffers") != 1376 or item.get("main_bytes") != 818249728 or
         any(type(item.get(key)) is not int for key in ("source_buffers", "source_bytes")) or
-        not 0 <= item["source_buffers"] <= 2048 or
-        not 0 <= item["source_bytes"] <= 67108864 or
+        item["source_buffers"] < 0 or item["source_bytes"] < 0 or
         (item["source_buffers"] == 0) != (item["source_bytes"] == 0) or
         item["source_bytes"] < item["source_buffers"] * 32768
         for item in audits):
         raise ValueError("Four complete private-owner audits are required")
-    if audits[0]["source_buffers"] == 0 or any(
+    # Source counts accumulate checked resets, not simultaneous live residency.
+    # Each original scalar continuation audits15 buffers/17 full32-KiB pages;
+    # native prompt chunks use their separate owned runtime sources.
+    scalar_steps = len(expected) - 1
+    if (audits[0]["source_buffers"] != scalar_steps * 15 or
+        audits[0]["source_bytes"] != scalar_steps * 17 * 32768) or any(
         item["source_buffers"] != 0 for item in audits[1:]
     ):
         raise ValueError("Positive and empty cancelled/fresh source-owner audits required")

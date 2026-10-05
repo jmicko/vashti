@@ -1298,6 +1298,26 @@ This establishes short-fixture partition invariance, without full-logit, long
 context, options or matched speed acceptance. The newer CPU-composed binary
 retains separate provenance; the full75/128 native fixture is the next device gate.
 
+The CPU-composed `b1ba040f…` binary now passes the full Intel75/128 native fixture,
+partition nine8s plus3, all128 prior native public IDs and scalar continuation.
+All four1,376-page/818,249,728-byte private audits, native GDN/QSA cancellation,
+poisoned retry rejection and fresh full75-prompt replay pass. The
+[full Intel receipt](../apps/kuno/benchmarks/text/receipts/rust-native-model-full-intel-20261005.json)
+preserves exact source/build/report/reference identities and the observed
+worker-unit exit0. CPU experts remain uncalled by this model.
+
+The first outer runner exited1 after the model completed: its validator wrongly
+applied the simultaneous64-MiB source cap to cumulative completed audit counts.
+`PrivateArena::reset` erases/inspects/releases each live source batch, then adds
+numeric counts; only those counts survive.127 scalar continuations each inspect
+15 buffers/17 full32-KiB pages, giving1,905 buffers/70,746,112 B in total. This
+does not describe simultaneous residency. The corrected runner requires those
+exact cumulative counts for the public fixture; a missing full page rejects.
+Root revalidated the original completed report without rerunning the model,
+preserving both worker0 and outer-runner1 outcomes. No cap or engine behavior
+was changed. NVIDIA full acceptance remains pending. These are diagnostic
+correctness/lifecycle runs, not paired speed measurements.
+
 ## Original packed Rust CPU expert source acceptance (2026-10-05)
 
 Root integrates `7950074`/`d1a0446`, the author's `55dfe343` plus corrected

@@ -34,6 +34,9 @@ UI or change its user-data storage.
   acceptance; source adapters do not establish a connected device consumer.
 - [Native decode optimization plan](kuno-native-text-decode.md): original packed
   Rust CPU experts, positional reads and later measured CPU/mixed-GPU trials.
+- [CPU/GPU calibration lab](kuno-native-text-cpu-gpu-calibration.md): approved
+  bounded real-read operator, original-rank merge and completed joint controls;
+  source/device/timing acceptance remain separate.
 - [Image engine contract](kuno-images.md): supported execution and image API.
 - [Vashti Images specification](vashti-images-spec.md): product behavior and UX.
 
@@ -1543,3 +1546,29 @@ earlier `fca4b669…` artifact in `rust-native-model-partitions-device-20261005.
 this is not newer CPU-binary or speed acceptance. The protected runner now also
 accepts the already-compiled public75/128 rainwater fixture and compares against
 committed original native IDs; full physical acceptance is still pending.
+
+### Current full native fixture checkpoint (2026-10-05)
+
+The root CPU-composed `b1ba040f…` artifact, actual `d1a0446` build snapshot
+`3371e900…`, passes Intel's full75/128 public native fixture: all128 original
+native IDs, scalar continuation, fresh full-prefix replay, queued native GDN/QSA
+cancel, poisoned retry rejection and four complete1,376-page/818,249,728-byte
+private audits. `rust-native-model-full-intel-20261005.json` retains the entire
+report and exact identities. NVIDIA's full counterpart is running separately;
+do not attribute Intel acceptance to it before completed evidence.
+
+The first outer validator exited1 after the worker's success0 because it
+mistook cumulative audited source bytes for simultaneous live usage. Source
+arena reset accepts complete erasure/inspection and drops handles before adding
+numeric counters.127 scalar continuations yield1,905 buffers/70,746,112 B
+cumulatively, under the unchanged independently checked64-MiB live cap. The
+forward-corrected runner requires exact original per-step cumulative counts;
+root revalidated the completed original report and preserved both outcomes.
+No engine limit, cleanup or numerical behavior changed. Full-logit/options/
+quality/longcontext/fault/production-worker and speed acceptance remain pending.
+
+The approved one-layer real-read CPU/GPU calibration plan and exact bounds now
+live in `docs/kuno-native-text-cpu-gpu-calibration.md` and
+`rust-cpu-gpu-calibration-plan-20261005.json`; implementation is isolated from
+root GPU work. No model/private/default/API/installed/Vashti change follows
+from that source plan. **Required Vashti changes: none.**
