@@ -1599,3 +1599,26 @@ calibration runner are isolated source candidates, awaiting root review and
 physical acceptance. **Required Vashti changes: none.** Public contracts,
 installed services/configuration, drivers, defaults, frontend and release are
 unchanged; no reset/reboot is required for this lab work.
+
+### Current whole-model failure fixture source (2026-10-05)
+
+Root `19e12af`/`cdb3524` integrates the independently reviewed actual lifecycle
+candidate and its explicit protected lab entry. Read
+[the source checkpoint](kuno-text-performance.md#actual-model-failure-and-context-fixture-source-2026-10-05)
+and `rust-native-model-lifecycle-source-20261005.json`. Twenty-two serialized
+real owners exercise context4/8 partitions, exhaustion, malformed chunks,
+late-combine error, real PLE-ticket error/panic and cancellation after the first
+actual GDN commit, both retry rejections and fresh recovery. The fixture preserves
+original scalar preflight exhaustion and explicitly closes it; native failure
+must itself close. No state import, fake position, extra MAIN or relaxed
+whole-model numerical tolerance is introduced.
+
+Root passes 376 native tests, strict all-target Clippy, locked offline release,
+format/diff and three missing-protection invocations rejected before device
+creation. Frozen executable `110b9926…` retains exact Cargo/source provenance.
+Physical both-card execution is pending. Cleaned full-logit mismatch is explicitly
+unaccepted; process success alone cannot establish parity. The 1,800-second
+protected lab containment has no effect on production long inference. Actual
+long-context boundaries, options/quality, private worker/native routing and
+matched Ollama speed remain pending. **Required Vashti changes: none.** Installed
+services, drivers, public API, defaults, frontend and release remain unchanged.

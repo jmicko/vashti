@@ -1384,3 +1384,43 @@ as an unreliable measurement. This is limited single-expert CPU numeric
 acceptance, not an all-ten CPU/GPU merge, timing, whole-model hybrid or production
 private-worker proof. CPU helpers remain uncalled by model execution. Completed
 joint calibration and matched updated-Ollama performance remain outstanding.
+
+## Actual model failure and context fixture source (2026-10-05)
+
+Root `19e12af` integrates the isolated lifecycle candidate `c2f120c`; `cdb3524`
+registers an explicit fixed-public laboratory entry. It constructs 22 actual
+model/executor owners serially, using original scalar sequential references at
+context 4/8 and native partitions `[3,1]`, `[3,5]`, `[8]`. The original tokenizer's
+single `!` token is repeated through genuine inference; no cursor/history/cache
+setter is used. Exhaustion and empty/9-token/out-of-vocabulary chunks check real
+terminal cleanup, rejection by both retry APIs and separate fresh recovery.
+Original scalar exhaustion still rejects at preflight; the diagnostic explicitly
+closes that owner. Native malformed/exhausted chunks must close automatically.
+
+Sealed default-unarmed hooks inject a late error after layer 47 routed/shared
+combine, error/panic while the real PLE ticket is alive before the second owning
+fault proof, and cancellation after the first genuine GDN state/history commit.
+Failure must prevent output/cursor publication and continued use of any partially
+changed sequence. Unexpected failures, incomplete audits or uncertain cleanup
+retire the physical stream. Independent review of these actual sites found no
+material source blocker.
+
+Each owner retains the original native 1,376 pages/818,249,728 bytes or scalar
+1,286 pages/785,186,816 bytes. No extra MAIN is admitted. The separate diagnostic
+has a 4-MiB host and 64-KiB metadata cap; original model host/source/runtime caps
+are unchanged. Full 248,320-logit bit/greedy comparisons report numerical mismatch
+only after checked cleanup, without accepting a new tolerance. Source tests do
+not establish device equality.
+
+The protected `resident-lifecycle-probe` entry requires both transient I/O and
+complete audits before device creation, configures one physical retirement Arc,
+and writes a new numeric-only receipt after all owners close. The runner checks
+all 22 exact cases, complete audits, contexts/hooks, numerical result and protected
+completion; a cleaned numerical rejection is retained with a nonzero result.
+Its 1,800-second diagnostic containment does not change production inference
+deadlines. Root 376 native tests, strict all-target Clippy, locked offline release,
+format/diff and three actual pre-device protection rejections pass. The
+[source receipt](../apps/kuno/benchmarks/text/receipts/rust-native-model-lifecycle-source-20261005.json)
+pins the Cargo-selected `110b9926…` artifact. Both-card actual execution remains
+pending. Whole-model long contexts, options/quality, production private workers,
+native routing and faster matched Ollama inference remain outstanding.
