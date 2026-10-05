@@ -3,7 +3,7 @@
 //! This is not exposed through Kuno's HTTP API. It deliberately starts with
 //! exact operators and bounded read-only weights; performance, production
 //! sampling, and worker privacy acceptance are separate milestones.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use zeroize::Zeroize;
@@ -147,6 +147,16 @@ fn vector(tensor: TensorView<'_>) -> Result<Vec<f32>> {
     Ok(values)
 }
 
+fn checked_ple_shape(config: &PleHashConfig) -> Result<()> {
+    // ngram_size=3 and heads_per_ngram=8 imply exactly 16 rows of 160
+    // features. A hash with another multiplier count must not be truncated by
+    // the scalar graph's row/embedding zip or admitted as a fixed GPU plan.
+    if config.history_len() != 2 {
+        return Err(Error::InvalidFormat("unsupported graph PLE head geometry"));
+    }
+    Ok(())
+}
+
 /// Exact-geometry binding, rejected before execution if unsupported. Model
 /// vectors are public static weights; no request-derived caches live here.
 pub struct Qwen4Exp<'a> {
@@ -155,6 +165,136 @@ pub struct Qwen4Exp<'a> {
     ple_hash: PleHashConfig,
     eos: u32,
     binding_id: u64,
+    bound_tensors: BTreeSet<String>,
+}
+
+/// Opaque identity of one successful graph binding, not merely a file path.
+/// A separate execution backend must bind its sequence and public weight cache
+/// to this identity and a device-context identity. No sequence state is exposed.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct GraphBindingId(u64);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AttentionKind {
+    Gdn,
+    Qsa,
+}
+
+/// Fixed geometry admitted by Qwen4Exp::bind. Lengths refer to logical f32
+/// values, not packed bytes or an allocator's padded span.
+#[derive(Clone, Copy, Debug)]
+pub struct GraphGeometry {
+    pub layers: usize,
+    pub residual: GatedResidualShape,
+    pub low_rank: usize,
+    pub vocabulary: usize,
+    pub experts: usize,
+    pub experts_used: usize,
+    pub expert_hidden: usize,
+    pub epsilon: f32,
+    pub max_context: usize,
+    pub generation_eos: u32,
+    pub gdn: GdnShape,
+    pub gdn_conv_channels: usize,
+    pub gdn_conv_kernel: usize,
+    pub gdn_conv_dilation: usize,
+    pub qsa: QsaShape,
+    pub ple: PleGeometry,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PleGeometry {
+    pub layer: usize,
+    pub head_width: usize,
+    pub heads: usize,
+    pub table_rows: u64,
+    pub predecessor_tokens: usize,
+    pub boundary_token: u32,
+    pub conv_channels: usize,
+    pub conv_kernel: usize,
+    pub conv_dilation: usize,
+}
+
+/// Read-only plan borrowed from a successfully bound graph. There is no public
+/// constructor: extra tensors in a GGUF are inaccessible through this view.
+/// It exposes public model weights only, never mutable/request-derived state.
+/// Tensor views preserve original GGUF packing and dimension-zero row order.
+#[derive(Clone, Copy)]
+pub struct BoundGraph<'model, 'file> {
+    model: &'model Qwen4Exp<'file>,
+}
+
+impl<'model, 'file> BoundGraph<'model, 'file> {
+    pub fn binding_id(self) -> GraphBindingId {
+        GraphBindingId(self.model.binding_id)
+    }
+    pub fn geometry(self) -> GraphGeometry {
+        GraphGeometry {
+            layers: LAYERS,
+            residual: GatedResidualShape {
+                streams: HC,
+                width: D,
+            },
+            low_rank: LR,
+            vocabulary: VOCAB,
+            experts: EXPERTS,
+            experts_used: TOP_K,
+            expert_hidden: FF,
+            epsilon: EPS,
+            max_context: MAX_REFERENCE_CONTEXT,
+            generation_eos: self.model.eos,
+            gdn: GdnShape::qwen38(),
+            gdn_conv_channels: 10240,
+            gdn_conv_kernel: 4,
+            gdn_conv_dilation: 1,
+            qsa: QsaShape::qwen38(),
+            ple: PleGeometry {
+                layer: 1,
+                head_width: 160,
+                heads: 16,
+                table_rows: 320001536,
+                predecessor_tokens: self.model.ple_hash.history_len(),
+                boundary_token: 248044,
+                conv_channels: HC * D,
+                conv_kernel: 4,
+                conv_dilation: 3,
+            },
+        }
+    }
+    pub fn layer_kind(self, layer: usize) -> Result<AttentionKind> {
+        if layer >= LAYERS {
+            return Err(Error::OutOfBounds);
+        }
+        Ok(if layer % 4 == 3 {
+            AttentionKind::Qsa
+        } else {
+            AttentionKind::Gdn
+        })
+    }
+    pub fn tensor_names(self) -> impl Iterator<Item = &'model str> + 'model {
+        self.model.bound_tensors.iter().map(String::as_str)
+    }
+    pub fn tensor(self, name: &str) -> Result<TensorView<'file>> {
+        if !self.model.bound_tensors.contains(name) {
+            return Err(Error::InvalidFormat("tensor not bound to graph"));
+        }
+        self.model.weight(name)
+    }
+    /// Gamma is already folded/direct. Convolution vectors retain their
+    /// GGUF kernel-first row layout. Returned storage belongs to the model.
+    pub fn static_vector(self, name: &str) -> Result<&'model [f32]> {
+        self.model.values(name)
+    }
+    /// Retain the existing scalar hash oracle for row selection. Each request
+    /// creates its own PleTokenHistory; never share history in a public cache.
+    pub fn ple_hash(self) -> &'model PleHashConfig {
+        &self.model.ple_hash
+    }
+    /// Call before executing from cached weights. Tensor reads independently
+    /// check source identity; a cache hit alone does not read the source file.
+    pub fn verify_unchanged(self) -> Result<()> {
+        self.model.file.verify_file_unchanged()
+    }
 }
 
 impl<'a> Qwen4Exp<'a> {
@@ -249,6 +389,7 @@ impl<'a> Qwen4Exp<'a> {
             VOCAB as u32,
             ple.info().dimensions()[1],
         ))?;
+        checked_ple_shape(&ple_hash)?;
         let eos = u32::try_from(integer(file, "tokenizer.ggml.eos_token_id")?)
             .map_err(|_| Error::ArithmeticOverflow)?;
         if eos != 248046 {
@@ -263,6 +404,14 @@ impl<'a> Qwen4Exp<'a> {
             ple_hash,
             eos,
             binding_id,
+            bound_tensors: [
+                "token_embd.weight",
+                "output.weight",
+                "per_layer_token_embd.weight",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect(),
         };
         for l in 0..LAYERS {
             let prefix = format!("blk.{l}.");
@@ -342,13 +491,15 @@ impl<'a> Qwen4Exp<'a> {
         file.verify_file_unchanged()?;
         Ok(model)
     }
-    fn matrix(&self, name: &str, dims: &[u64]) -> Result<()> {
+    fn matrix(&mut self, name: &str, dims: &[u64]) -> Result<()> {
         Matrix::new(checked_tensor(self.file, name, dims)?)?;
+        self.bound_tensors.insert(name.into());
         Ok(())
     }
     fn static_vector(&mut self, name: &str, dims: &[u64]) -> Result<()> {
-        self.vectors
-            .insert(name.into(), vector(checked_tensor(self.file, name, dims)?)?);
+        let values = vector(checked_tensor(self.file, name, dims)?)?;
+        self.vectors.insert(name.into(), values);
+        self.bound_tensors.insert(name.into());
         Ok(())
     }
     fn weight(&self, name: &str) -> Result<TensorView<'a>> {
@@ -390,6 +541,9 @@ impl<'a> Qwen4Exp<'a> {
     }
     pub fn eos_token(&self) -> u32 {
         self.eos
+    }
+    pub fn bound_graph(&self) -> BoundGraph<'_, 'a> {
+        BoundGraph { model: self }
     }
     pub fn sequence(&self, context_limit: usize) -> Result<Sequence> {
         Sequence::new(context_limit, &self.ple_hash, self.binding_id)
@@ -920,6 +1074,209 @@ pub fn greedy(logits: &[f32]) -> Result<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs::{self, OpenOptions};
+    use std::io::Write;
+    use std::path::PathBuf;
+
+    struct TinyFixture(PathBuf);
+    impl TinyFixture {
+        fn new() -> Self {
+            fn string(bytes: &mut Vec<u8>, text: &str) {
+                bytes.extend((text.len() as u64).to_le_bytes());
+                bytes.extend(text.as_bytes());
+            }
+            let tensors: [(&str, &[u64], u64, &[f32]); 4] = [
+                ("small_matrix.weight", &[2, 2], 0, &[1., 2., 3., 4.]),
+                ("small_norm.weight", &[2], 32, &[2., 3.]),
+                ("extra.weight", &[2], 64, &[7., 8.]),
+                ("invalid_norm.weight", &[2], 96, &[1., f32::NAN]),
+            ];
+            let mut bytes = b"GGUF".to_vec();
+            bytes.extend(3_u32.to_le_bytes());
+            bytes.extend((tensors.len() as u64).to_le_bytes());
+            bytes.extend(0_u64.to_le_bytes());
+            for (name, dims, offset, _) in tensors {
+                string(&mut bytes, name);
+                bytes.extend((dims.len() as u32).to_le_bytes());
+                for &d in dims {
+                    bytes.extend(d.to_le_bytes());
+                }
+                bytes.extend(0_u32.to_le_bytes());
+                bytes.extend(offset.to_le_bytes());
+            }
+            let data = bytes.len().next_multiple_of(32);
+            bytes.resize(data + 104, 0);
+            for (_, _, offset, values) in tensors {
+                for (i, &value) in values.iter().enumerate() {
+                    let start = data + offset as usize + 4 * i;
+                    bytes[start..start + 4].copy_from_slice(&value.to_le_bytes());
+                }
+            }
+            let path = std::env::temp_dir().join(format!(
+                "kuno-bound-graph-{}-{}.gguf",
+                std::process::id(),
+                NEXT_BINDING_ID.fetch_add(1, Ordering::Relaxed)
+            ));
+            let mut f = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+                .unwrap();
+            f.write_all(&bytes).unwrap();
+            Self(path)
+        }
+        fn open(&self) -> GgufFile {
+            GgufFile::open(&self.0, crate::GgufLimits::default()).unwrap()
+        }
+    }
+    impl Drop for TinyFixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_file(&self.0);
+        }
+    }
+    // Exercise the exact same private admission helpers that populate the
+    // production registry, without downloading/reading a real model. This
+    // miniature fixture deliberately does not claim full Qwen4Exp::bind parity.
+    fn tiny_binding(file: &GgufFile, identity: u64) -> Qwen4Exp<'_> {
+        Qwen4Exp {
+            file,
+            vectors: BTreeMap::new(),
+            ple_hash: PleHashConfig::qwen38(),
+            eos: 248046,
+            binding_id: identity,
+            bound_tensors: BTreeSet::new(),
+        }
+    }
+    #[test]
+    fn bound_view_only_exposes_successfully_admitted_tensors_and_vectors() {
+        let fixture = TinyFixture::new();
+        let file = fixture.open();
+        assert!(file.tensor("extra.weight").is_some());
+        let mut model = tiny_binding(&file, 1);
+        model.matrix("small_matrix.weight", &[2, 2]).unwrap();
+        model.static_vector("small_norm.weight", &[2]).unwrap();
+        assert!(model.matrix("extra.weight", &[1, 2]).is_err());
+        assert!(model.static_vector("invalid_norm.weight", &[2]).is_err());
+        let graph = model.bound_graph();
+        assert_eq!(
+            graph.tensor_names().collect::<Vec<_>>(),
+            ["small_matrix.weight", "small_norm.weight"]
+        );
+        assert!(matches!(
+            graph.tensor("extra.weight"),
+            Err(Error::InvalidFormat("tensor not bound to graph"))
+        ));
+        assert!(graph.tensor("invalid_norm.weight").is_err());
+        assert!(graph.static_vector("invalid_norm.weight").is_err());
+        assert!(graph.static_vector("small_matrix.weight").is_err());
+        assert_eq!(graph.static_vector("small_norm.weight").unwrap(), [2., 3.]);
+        let tensor = graph.tensor("small_matrix.weight").unwrap();
+        assert!(tensor.belongs_to(&file));
+        assert_eq!(tensor.info().dimensions(), [2, 2]);
+        let mut row = [0.; 2];
+        tensor.decode_row(1, &mut row).unwrap();
+        assert_eq!(row, [3., 4.]);
+        graph.verify_unchanged().unwrap();
+        // Opaque binding identity distinguishes two bindings over the same file.
+        let other = tiny_binding(&file, 2);
+        assert!(graph.binding_id() != other.bound_graph().binding_id());
+    }
+    #[test]
+    fn bound_geometry_and_ple_hash_preserve_exact_graph_contract() {
+        let fixture = TinyFixture::new();
+        let file = fixture.open();
+        let model = tiny_binding(&file, 3);
+        let graph = model.bound_graph();
+        let g = graph.geometry();
+        assert_eq!(
+            (g.layers, g.residual.streams, g.residual.width, g.low_rank),
+            (48, 4, 2560, 320)
+        );
+        assert_eq!(
+            (g.vocabulary, g.experts, g.experts_used, g.expert_hidden),
+            (248320, 512, 10, 640)
+        );
+        assert_eq!((g.max_context, g.generation_eos), (4096, 248046));
+        assert_eq!(g.epsilon, 1e-6);
+        assert_eq!(g.gdn, GdnShape::qwen38());
+        assert_eq!(
+            (g.gdn_conv_channels, g.gdn_conv_kernel, g.gdn_conv_dilation),
+            (10240, 4, 1)
+        );
+        assert_eq!(
+            (g.qsa.query_heads, g.qsa.kv_heads, g.qsa.head_dim),
+            (24, 2, 256)
+        );
+        assert_eq!(
+            (g.qsa.block_size, g.qsa.token_budget, g.qsa.rotary_dims),
+            (4, 2048, 64)
+        );
+        assert_eq!(g.qsa.rope_theta, 10_000_000.0);
+        assert_eq!(
+            (g.ple.layer, g.ple.head_width, g.ple.heads, g.ple.table_rows),
+            (1, 160, 16, 320001536)
+        );
+        assert_eq!(
+            (g.ple.predecessor_tokens, g.ple.boundary_token),
+            (2, 248044)
+        );
+        assert_ne!(g.ple.boundary_token, g.generation_eos);
+        assert_eq!(
+            (g.ple.conv_channels, g.ple.conv_kernel, g.ple.conv_dilation),
+            (10240, 4, 3)
+        );
+        for l in 0..g.layers {
+            assert_eq!(
+                graph.layer_kind(l).unwrap(),
+                if l % 4 == 3 {
+                    AttentionKind::Qsa
+                } else {
+                    AttentionKind::Gdn
+                }
+            );
+        }
+        assert!(matches!(graph.layer_kind(48), Err(Error::OutOfBounds)));
+        let mut actual = PleTokenHistory::new(graph.ple_hash());
+        let mut expected = PleTokenHistory::new(&PleHashConfig::qwen38());
+        for token in [1, 32, 248044, 73] {
+            assert_eq!(
+                graph
+                    .ple_hash()
+                    .rows_and_advance(token, &mut actual)
+                    .unwrap(),
+                PleHashConfig::qwen38()
+                    .rows_and_advance(token, &mut expected)
+                    .unwrap()
+            );
+        }
+    }
+    #[test]
+    fn cached_plan_can_detect_source_mutation_without_reading_cached_weights() {
+        let fixture = TinyFixture::new();
+        let file = fixture.open();
+        let model = tiny_binding(&file, 4);
+        model.bound_graph().verify_unchanged().unwrap();
+        OpenOptions::new()
+            .append(true)
+            .open(&fixture.0)
+            .unwrap()
+            .write_all(&[0])
+            .unwrap();
+        assert!(matches!(
+            model.bound_graph().verify_unchanged(),
+            Err(Error::FileChanged)
+        ));
+    }
+    #[test]
+    fn graph_rejects_hash_head_geometry_inconsistent_with_fixed_embedding() {
+        checked_ple_shape(&PleHashConfig::qwen38()).unwrap();
+        let inconsistent =
+            PleHashConfig::new(vec![1, 3], vec![1; 8], (0..8).collect(), 8, 0, 2, 8).unwrap();
+        assert!(matches!(
+            checked_ple_shape(&inconsistent),
+            Err(Error::InvalidFormat("unsupported graph PLE head geometry"))
+        ));
+    }
     #[test]
     fn greedy_ties_nonfinite_and_empty() {
         assert_eq!(greedy(&[1., 3., 3., 2.]).unwrap(), 1);
