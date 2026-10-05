@@ -9,7 +9,7 @@ should depend on having the other's entire conversation history.
 
 | Area | Default owner |
 | --- | --- |
-| `apps/kuno`, `crates/kuno-image` | Kuno task: inference, resource management, runtime, installation |
+| `apps/kuno`, `crates/kuno-image`, `crates/kuno-text` | Kuno task: inference, resource management, runtime, installation |
 | `apps/vashti/src`, including `images` and the Ollama connector | Vashti task: authorization, persistence, application API, Kuno client |
 | `apps/vashti/web`, `apps/vashti-android` | Vashti task: UI, mobile workflows, native integration |
 | `crates/kuno-protocol`, workspace dependencies, cross-app specifications | Coordinate changes and identify affected consumers |
@@ -1075,3 +1075,39 @@ public rotary tables pass both-card QSA contexts1/4/5/2048/2049/2052 without
 changing acceptance tolerance. See the updated performance receipt. The earlier
 NVIDIA numerical failure is resolved; it was not a driver/GPU crash. This fix
 changes no public contract or Vashti consumer and does not authorize deployment.
+
+
+### Native text owned-I/O and admission checkpoint (2026-10-05)
+
+Backend source/receipts are committed as `a27a7c3` on the isolated
+`codex/kuno-native-text` branch, after `c75fdf2`. The standalone lab vendors
+three exact CubeCL0.10.0 crates with retained licenses/source provenance; normal
+production dependencies and installed services are unchanged. Read the updated
+[resident ownership receipt](kuno-native-text-residency.md#owned-runtime-io-implementation-and-both-card-proof-2026-10-05)
+and [performance limits](kuno-text-performance.md#owned-runtime-io-and-resident-admission-acceptance).
+
+Both physical GPUs pass the fixed synthetic owned-I/O probe: audited complete
+upload/uniform/readback spans, pending/retained lease rejection, runtime scalar
+parity, public-cache preservation and full main-span erasure. Independent source
+reviews found no blocker within that limited preowned Wgpu/Arena proof. The
+connected public graph now has precharged complete pages, sealed public-vector
+inventory and accounting that grants credits only after completed readbacks;
+both GPUs pass bang/chat plus queued GDN/QSA cancellation, poisoned retry
+rejection and fresh recovery. Intel's72-slot option also passes chat; default
+capacity remains unchanged. Tests:27 runtime ownership,128 native host/offline,
+74 normal core with two installed checks ignored; strict host/native Clippy,
+formatting and fresh-archive composed-patch/hash verification pass.
+
+**Remaining:** complete connected private staging/host ownership, long fixture
+and options/quality/lifecycle acceptance, true batched prefill and a matched
+performance win. Native remains slower than updated Ollama. Opaque driver/
+firmware padding, failed Drop and historical swap are outside owned-span proof.
+Public receipts are fixed synthetic operator artifacts; no real request logs,
+model downloads, copied/converted weights, new inference deadlines, device
+reset, reboot or installation are part of this checkpoint.
+
+**Vashti changes: none.** Native catalog/default/explicit managed `ollama.`
+routing and public capabilities remain intended but unimplemented. No API,
+protocol or consumer contract changed. This is a development checkpoint toward
+the active goal, not a release/integration handoff. Keep the ordinary managed
+Ollama and long-inference contract intact until native acceptance/integration.
