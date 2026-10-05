@@ -147,6 +147,9 @@ fn signed_byte(value: u32) -> i32 {
     result
 }
 
+/// F32 callers must use a four-byte-aligned row_offset. Validated tightly
+/// packed F32 rows are columns*4 bytes; whole-row tile/expert views preserve
+/// alignment. Quantized rows keep their original byte addressing below.
 #[cube]
 fn packed_value(
     words: &Array<u32>,
@@ -156,7 +159,8 @@ fn packed_value(
 ) -> f32 {
     let mut value = 0.0_f32;
     if comptime!(dtype == F32) {
-        value = f32::from_bits(u32_at(words, row_offset + column * 4));
+        // Original little-endian u32 word, exact bitcast; no weight arithmetic.
+        value = f32::from_bits(words[row_offset / 4 + column]);
     } else if comptime!(dtype == F16) {
         value = binary16(u16_at(words, row_offset + column * 2));
     } else if comptime!(dtype == BF16) {
@@ -304,6 +308,116 @@ mod tests {
         assert!(validate_layout(F32, usize::MAX, 2, 0, 2, 1).is_err());
         assert!(validate_layout(F32, 1, usize::MAX, 0, 1, 1).is_err());
         assert!(validate_layout(F32, 1, u32::MAX as usize, 0, 1, 1).is_err());
+    }
+
+    #[test]
+    fn aligned_f32_original_words_preserve_special_values_and_independent_decode_bits() {
+        let special = [
+            0_u32,
+            0x8000_0000,
+            1,
+            0x8000_0001,
+            0x007f_ffff,
+            0x807f_ffff,
+            0x0080_0000,
+            0x8080_0000,
+            0x3f80_0000,
+            0xbf80_0000,
+            0x7f7f_ffff,
+            0xff7f_ffff,
+            0x7f80_0000,
+            0xff80_0000,
+            0x7fc0_0001,
+            0xffc0_1234,
+            0x7f80_0001,
+            0xff80_0001,
+        ];
+        for columns in [1, 3, 5, 63, 64, 65, 320, 2560, 10240] {
+            let rows = 3;
+            let bits: Vec<u32> = (0..rows * columns)
+                .map(|i| special[i % special.len()])
+                .collect();
+            let bytes: Vec<u8> = bits.iter().flat_map(|v| v.to_le_bytes()).collect();
+            let layout = validate_layout(F32, rows, columns, bytes.len(), columns, rows).unwrap();
+            let words = pack_le_words(&bytes);
+            let mut independent = vec![0_f32; bits.len()];
+            kuno_text::TensorType::F32
+                .decode(&bytes, &mut independent)
+                .unwrap();
+            for row in 0..rows {
+                let row_offset = row * layout.row_bytes;
+                assert!(row_offset.is_multiple_of(4));
+                for column in 0..columns {
+                    let index = row_offset / 4 + column;
+                    assert_eq!(index, row * columns + column);
+                    // Shader performs this original-word bitcast; its actual
+                    // IR/load shape is independently checked in the WGSL test.
+                    assert_eq!(
+                        f32::from_bits(words[index]).to_bits(),
+                        independent[index].to_bits()
+                    );
+                    assert_eq!(independent[index].to_bits(), bits[index]);
+                }
+            }
+        }
+    }
+    #[test]
+    fn f32_geometry_rejects_non_word_lengths_and_proves_whole_row_offsets() {
+        for columns in [1, 5, 48, 320, 2560, 10240] {
+            let rows = 3;
+            let size = rows * columns * 4;
+            for invalid in [size - 3, size - 2, size - 1, size + 1, size + 2, size + 3] {
+                assert!(validate_layout(F32, rows, columns, invalid, columns, rows).is_err());
+            }
+            let layout = validate_layout(F32, rows, columns, size, columns, rows).unwrap();
+            assert!(layout.row_bytes.is_multiple_of(4));
+            assert_eq!(layout.padded_words, rows * columns);
+            // A view beginning at any whole row/expert remains word-aligned.
+            for first in [0, 1, 2, 17, 511 * rows] {
+                assert!((first * layout.row_bytes).is_multiple_of(4));
+            }
+        }
+    }
+    #[test]
+    fn f32_wgsl_uses_one_original_word_bitcast_in_both_execution_modes() {
+        use cubecl::compute::KernelBuilder;
+        use cubecl::ir::{ElemType, FloatKind, StorageType, Type, UIntKind};
+        use cubecl::server::ExecutionMode;
+        use cubecl::wgpu::WgslCompiler;
+        use cubecl::{Compiler, KernelSettings, WgpuCompilationOptions};
+        let u = StorageType::Scalar(ElemType::UInt(UIntKind::U32));
+        let f = StorageType::Scalar(ElemType::Float(FloatKind::F32));
+        for mode in [ExecutionMode::Checked, ExecutionMode::Unchecked] {
+            let mut b = KernelBuilder::default();
+            b.scope.register_type::<u32>(u);
+            b.scope.register_type::<usize>(u);
+            b.scope.register_type::<f32>(f);
+            let packed = b.input_array(Type::new(u)).into();
+            let input = b.input_array(Type::new(f)).into();
+            let output = b.output_array(Type::new(f)).into();
+            let rows = b.scalar(u).into();
+            let columns = b.scalar(u).into();
+            packed_matvec::expand(&mut b.scope, packed, input, output, rows, columns, F32);
+            let code = WgslCompiler::default()
+                .compile(
+                    b.build(
+                        KernelSettings::default()
+                            .cube_dim(CubeDim::new_1d(64))
+                            .kernel_name("f32_original_word_probe"),
+                    ),
+                    &WgpuCompilationOptions::default(),
+                    mode,
+                    f,
+                )
+                .unwrap()
+                .to_string();
+            assert!(code.contains("bitcast<f32>"));
+            assert_eq!(code.matches("buffer_0_global[").count(), 1, "{code}");
+            assert!(
+                !code.contains("u32(255)") && !code.contains(" >> ") && !code.contains(" << "),
+                "{code}"
+            );
+        }
     }
 
     // #[cube] scalar helpers also retain their ordinary Rust function bodies;

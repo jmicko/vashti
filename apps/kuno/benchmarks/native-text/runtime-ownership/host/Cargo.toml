@@ -1,0 +1,30 @@
+[package]
+name = "kuno-transient-runtime-host-fixtures"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[features]
+default = ["std"]
+std = []
+
+[dependencies]
+cubecl = { version = "=0.10.0", default-features = false, features = ["std", "wgpu"] }
+cubecl-runtime = { version = "=0.10.0", default-features = false, features = ["std", "channel-mutex"] }
+cubecl-wgpu = { version = "=0.10.0", default-features = false }
+cubecl-core = { version = "=0.10.0", default-features = false, features = ["std"] }
+
+[patch.crates-io]
+cubecl-runtime = { path = "../../vendor/cubecl-runtime" }
+cubecl-wgpu = { path = "../../vendor/cubecl-wgpu" }
+cubecl-core = { path = "../../vendor/cubecl-core" }
+
+[dev-dependencies]
+cubecl-common = { version = "=0.10.0", default-features = false, features = ["std"] }
+wgpu = { version = "=29.0.4", default-features = false, features = ["std", "vulkan", "wgsl"] }
+cubecl-ir = { version = "=0.10.0", default-features = false }
+cubecl-zspace = { version = "=0.10.0", default-features = false }
+bytemuck = "=1.25.2"
+num-traits = "=0.2.19"
+
+[workspace]

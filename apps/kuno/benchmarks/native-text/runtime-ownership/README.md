@@ -1,0 +1,249 @@
+# Kuno transient-I/O runtime patch (laboratory only)
+
+This is an isolated, unpublished Rust experiment for Kuno's resident native
+text graph. It patches exactly three CubeCL 0.10.0 crates. It does not change the
+production Kuno/Vashti dependencies, public inference API, system services,
+installed model files, the global Cargo registry, or any inference deadline.
+Initial patch authoring was source-only. Protected device acceptance performed
+later by the root task is recorded below; it remains a standalone laboratory.
+
+## Pin and licenses
+
+`cubecl-runtime`, `cubecl-core`, and `cubecl-wgpu` are copies of the published
+0.10.0 crates. Their `.cargo_vcs_info.json` pins CubeCL commit
+`7cf203735e095e640a2c03b2400d0faa03196bb4`, with each original `path_in_vcs`.
+Original MIT/Apache-2.0 licenses and crate manifests are preserved. Wgpu 29.0.4
+and all other dependencies are unchanged. `provenance.json` records the locally
+cached published archive SHA-256, original/modified source hashes, and lock/patch
+hashes. The patch is generated against those original archives, not mutable
+registry source files. A cached archive's hash is a provenance pin, not a fresh
+network authenticity check.
+
+Use only these three `[patch.crates-io]` path overrides in the standalone lab.
+Do not override production workspace dependencies or edit global registry files.
+`transient-runtime.patch` applies to directories named `cubecl-runtime`,
+`cubecl-core`, and `cubecl-wgpu` containing the original pinned packages.
+
+## Small public ownership API
+
+The existing `ComputeClient` gains:
+
+```rust
+configure_transient_io(budget_bytes: u64) -> Result<(), ServerError>
+create_private(data: Vec<u8>) -> Result<Handle, ServerError>
+write_private(handle: Handle, data: Vec<u8>) -> Result<(), ServerError>
+sanitize_transient_io() -> DynFut<Result<TransientIoReceipt, ServerError>>
+sanitize_transient_io_audited() -> DynFut<Result<TransientIoReceipt, ServerError>>
+```
+
+Configure once on a serialized native stream while quiescent. Budget accounts
+for FULL power-of-two spans, minimum 256 bytes, maximum 128 MiB per buffer. The 256-byte public minimum
+satisfies map/copy/uniform alignment; these dedicated I/O spans do not inherit
+the separate private main arena’s 32-KiB pool minimum. Driver allocation padding
+is opaque regardless of that choice. No
+private pooled uniform/readback pages or hidden retired pool pages are used.
+Audited cleanup additionally charges one full MAP_READ stage for each upload
+and uniform span; ordinary readback spans are inspected directly. Its required
+budget is therefore original tracked spans plus upload/uniform spans. A
+budget/map/verification failure fails closed and tries to erase any new stages.
+
+`write_private` moves an owned Vec into a heap-only wiping controller,
+without staging()/clone()/to_vec()/file controllers. Drop volatile-wipes FULL
+capacity. The caller must first allocate and retain the full main handle, then
+move a handle clone and its guarded padded upload. Initialization/reset/close
+remain responsible for full main-span erasure. All private writes must use this
+path, including selected embedding/PLE rows, statuses, routes and CPU-derived
+vectors. Public weights retain ordinary create/create_from_slice APIs.
+
+The convenience `create_private` allocates its destination internally and cannot
+return that owner after a failed write. It is not used by the secure arena or
+accepted as an integration substitute. Explicit preowned `write_private` is the
+private worker contract. Misclassifying a private upload as public defeats the
+boundary; there is no automatic content detector.
+
+When configured, runtime scalar/metadata uniforms and readbacks use direct owned
+buffers. Private writes/readbacks reject cross-stream bindings. Do not share
+private handles across streams; root must serialize all graph enqueues and
+lifecycle transitions. Unsupported backends reject these new APIs; no fallback
+silently uses ordinary staging. Native Wgpu/Vulkan is the compiled target. Wasm
+explicitly refuses the experiment; Wasm/no_std/other backend builds are untested.
+
+`TransientIoReceipt` contains only `epoch`, full `upload_bytes`, `uniform_bytes`,
+`readback_bytes`, and `inspected_bytes`/`inspected_buffers`. Ordinary sanitize
+reports zero inspection counts. Audited sanitize returns acceptance only after
+checking all original spans plus its own audit staging. Its inspected bytes
+should equal the sum of the three per-kind totals. Contents/bytes/patterns are
+never returned or logged by the audit.
+
+## Ownership and cleanup order
+
+Private upload staging uses MAP_WRITE|COPY_SRC mapped-at-creation buffers. Full
+API-visible spans are initialized before a logical copy. It bypasses
+Queue::write_buffer[_with]; Wgpu's native mapped-at-creation MAP_WRITE branch
+maps the original buffer directly, whereas its non-MAP_WRITE branch constructs
+an implicit StagingBuffer. Uniforms use directly owned UNIFORM|STORAGE|COPY_DST|
+COPY_SRC buffers, with full clear then owned upload. Readbacks use directly owned
+MAP_READ|COPY_DST buffers, with full clear before source copy. Bounds include
+checked alignment, offset overflow, and actual backing-buffer size.
+
+Returned readback futures hold cancellation/unmap leases. Successful readbacks
+copy directly into guarded heap controllers, whose FULL heap capacities wipe
+on Drop and whose leases survive until returned Bytes drop. Pending future Drop
+aborts mapping via unmap; a sanitizer refuses live leases before flushing or
+touching buffers. Resolve/drop every future and Bytes before cleanup. Copying
+Bytes into ordinary host Vecs creates additional caller-owned private copies;
+those need their own guards. No raw mapped or request bytes escape the audit.
+
+For explicit cleanup, stop new enqueues; resolve/drop readbacks; checkpoint
+transient I/O to free its bounded budget before eraser uniforms; enqueue full
+main private-arena erasure; then use the checked sanitizer to drain those erasers
+and erase their transient I/O. Accept/release main spans only after both stages. The
+sanitizer flushes the unsubmitted encoder, performs a checked native queue drain,
+remaps and volatile-wipes FULL upload spans, unmaps to flush, clears FULL uniform
+and readback spans, submits/waits, and accepts scoped OOM/Internal/Validation
+errors. An audited sanitizer then inspects every erased full span before
+release; upload/uniform spans are copied to tracked direct MAP_READ stages,
+while original readback spans are mapped directly. It then erases ALL original
+and audit spans again and accepts completion/errors before advancing its epoch
+or releasing buffers. Failing audits still attempt that final erasure.
+
+Native drain/map/erase polls have a 30-second limit PER POLL, solely at cleanup
+and configure/audit boundaries. This is not an inference timeout. Ordinary
+stream sync/readback inference behavior is unchanged. Root must not call an
+unbounded ordinary `client.sync()` first when closing the private arena;
+integrate its final erase/drain transaction with this checked boundary.
+The cleanup guard starts BEFORE scheduler execution, skips ordinary submission
+regulation only at this boundary, and uses bounded public-write drains there.
+Live leases reject before scheduled tasks/encoder mutations. Failed or panicking
+cleanup/private operations permanently retire their stream even if the channel
+catches a panic and keeps the server object alive. Many
+spans mean multiple bounded polls, so total cleanup time is not a single
+30-second deadline. Native Wgpu pop_error_scope returns an already-ready future.
+
+Any cleanup error or panic retires the private stream, retains tracked buffers
+WHILE the owner remains live, returns no success receipt, and requires retiring
+the whole shared context/poisoning its sequences. A future cannot cancel cleanup
+midway: cleanup is synchronous at the server submit boundary. Explicit cleanup
+is authoritative. Drop attempts best-effort cleanup; if it fails, eventual
+object/context Drop may still release dirty resources. Do not claim erasure
+because objects were dropped or because a device was retired.
+
+## Host scalar/INFO patch
+
+Runtime ScalarArg values remain runtime inputs; private values must NEVER be
+#[comptime] or enter persistent shader/cache keys. ScalarBuilder, both U32/U64
+MetadataBuilder states, and packed MetadataBindingInfo wipe all retained Vec
+capacities on finish, abandonment, and unwind. Guarded POD growth wipes old
+allocations before release, rather than ordinary Vec reallocation leaving old
+private bytes behind. A guarded packed Vec covers partial pack panic and the
+Wgpu conversion temporary. Packed Debug reports a word count, never values.
+
+The retained std INFO TLS now has a same-thread launcher lease; Drop wipes and
+releases it on cancellation/abandonment/panic. Nested same-thread launchers
+reject rather than mix INFO. KernelLauncher becomes !Send/!Sync. Invalid TLS
+borrowing fails closed without double-panicking; it retains the busy marker
+until worker-thread teardown, whose member destructors wipe. Ordinary owning
+launcher unwind releases its RefCell borrow before lease cleanup. SCOPE TLS
+keeps types/IR only; request-dependent comptime values remain forbidden.
+
+## Host verification
+
+```sh
+cargo check --offline --release -j 2 --target-dir /tmp/kuno-transient-runtime-patch/target
+cargo test --offline --release -j 2 --target-dir /tmp/kuno-transient-runtime-patch/target --lib
+cargo clippy --offline --release -j 2 --target-dir /tmp/kuno-transient-runtime-patch/target --lib --tests -- -D warnings
+```
+
+The repository host harness passes 27 tests and strict Clippy, importing the
+actual modified source modules. Its fixtures
+and cover full-capacity heap/scalar/metadata wiping, retained-builder partial
+pack panic, abandoned/panicking TLS launchers, fail-closed invalid TLS borrowing,
+owned upload pointer movement, full-span bounds/checked budgets/epoch overflow,
+lease counts across cancellation/returned ownership, shared native/fake erase
+ordering, failures at map/copy/drain/completion, audited full padding/counts,
+extra-stage budget charge, failed audit budget/map/nonzero padding, and
+LIFO nested-error-scope cleanup on early return/panic. The fake
+backend verifies release acceptance only after the shared policy and leaves a
+separate public cache untouched. No adapter/device is initialized. This is not
+the complete upstream CubeCL test suite or live GPU privacy acceptance.
+
+## Required protected device proof / remaining limits
+
+1. On BOTH physical GPUs, configure the experiment with a bounded ledger; upload
+   synthetic nonzero/private patterns including stale logical tails; launch with
+   runtime scalar values; read/return/drop guarded Bytes; audited cleanup must
+   inspect every tracked FULL span and return zero acceptance with exact counts.
+2. Verify public packed weights/expert-cache remain usable and model parity
+   survives a successful audited checkpoint. Run token/cancel/reset/retry paths
+   through whole-sequence main-span + transient cleanup and fresh-sequence parity.
+3. Exercise pending/dropped/retained futures and Bytes: live leases must reject
+   sanitizer without mutations; after leases drop it must clean. Inject map,
+   copy, drain, completion, audit-nonzero, and audit-budget errors; no epoch reuse
+   or accepted receipt, complete owner/context retirement, and best-effort
+   cleanup of newly allocated audit stages. Do not dump private bytes on failure.
+4. Audit ALL root host request allocations, preceding casts/copies, packed data,
+   CPU PLE state, final logits/sampling, and uploads. Disable swap/core dumps and
+   profiling/tracing for protected fixtures. Source/compiler cache input must
+   remain public/static. This runtime patch cannot scrub earlier caller copies,
+   stack/register spills, allocator historical data outside its guards, or
+   unrelated processes.
+5. Even live success proves full owned API spans under checked Wgpu operations;
+   it does NOT prove scrubbing of opaque physical-allocation padding, Vulkan
+   driver caches, firmware memory, CPU swap/core files, or abandoned context
+   allocations. No blanket production privacy guarantee follows from Drop,
+   receipts, fake tests, or compilation. Document these boundaries precisely.
+
+Full connected-graph private staging, host request ownership and lifecycle
+acceptance remain pending. No production privacy acceptance or release is
+claimed here.
+
+
+## Repository verification entry points
+
+From the repository root, use the standalone host manifest at
+`apps/kuno/benchmarks/native-text/runtime-ownership/host/Cargo.toml` with
+`cargo test --locked --offline --lib` and Clippy `--lib --tests -- -D warnings`.
+Private-arena ownership/cleanup-policy tests also run in the normal standalone
+`native-text/Cargo.toml` laboratory suite. No device is initialized by host tests.
+`regenerate-provenance.py` regenerates the composed patch and all modified hashes
+against the three exact cached published archives. Whole patch application to
+fresh original archive files passed. A cached pin is not network authenticity.
+
+The opt-in `transient-io-probe` uses only fixed synthetic patterns and runtime
+scalar uniforms. It checks pending/retained lease rejection, dropped future
+cleanup, full-span audit counts, public cache preservation, repeat use and main
+span zeroing. It accepts no arbitrary prompt or model input and writes only
+explicit public count receipts when an operator requests them. Device acceptance
+and remaining failed attempts are recorded in the residency/performance guides.
+
+## Both-card owned-I/O acceptance (2026-10-05)
+
+Frozen Rust binary
+`9136b527e6634fe4394076b8bce297bb2a5a4aee6775385461fc418d5ee057e7`
+passes the fixed `transient-io-probe` on B70/Vulkan and RTX3060/Vulkan. The
+operator units have MemorySwapMax=0, LimitCORE=0, MemoryMax=4G and a
+180-second test bound. The main and I/O budgets are 1 MiB and 8 MiB. The
+8193-word pattern occupies a full 65536-byte main span. Counts-only receipt:
+`../../text/receipts/rust-owned-io-both-gpus-20261005.json`.
+
+Pending futures and retained returned Bytes reject sanitizer entry. Dropping
+them permits audited cleanup; each epoch's inspected bytes equal the sum of
+its complete upload/uniform/readback spans, including audit stages. Runtime
+scalar changes preserve kernel parity. An unrelated immutable public allocation
+survives repeated cleanup. Closing the secure arena erases its full span,
+rejects stale IDs, and leaves the context usable. No private bytes are returned
+by the audit or recorded by the harness.
+
+An earlier constructor rejected explicit zero offsets emitted by the actual
+contiguous allocator. Validation now accepts absent/zero offsets equivalently,
+rejects every nonzero trim before size arithmetic, and is covered by actual
+allocator fixtures. This was an upload-validation failure, not a GPU fault.
+The two later host-fixture ownership assertions were corrected to retain an
+independent memory reference; they did not change the accepted runtime logic.
+
+This proves erasure of tracked API-visible spans under checked operations. It
+does not prove opaque physical driver padding, firmware memory, historical
+swap, complete resident graph privacy or production worker acceptance. The
+composed patch applies to fresh pinned archive sources and all 18 changed-file
+hashes match `provenance.json`. No global registry, installed service, public
+API or ordinary inference deadline changed.

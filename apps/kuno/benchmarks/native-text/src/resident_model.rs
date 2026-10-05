@@ -3,7 +3,8 @@
 //! uses the exact Rust host oracle. Any partially queued failure destroys the
 //! entire sequence. Runtime staging erasure is explicitly still unaccepted.
 use crate::{
-    private_arena::{BufferId, PrivateArena},
+    executor::ResidentAdmission,
+    private_arena::{BufferId, BufferLayout, PrivateArena},
     resident_gdn::{PendingGdn, PublicGdnParameters, ResidentGdn, SequenceKey},
     resident_gr::{GrWorkspace, PublicVectors, ResidentProjection, project},
     resident_util as u,
@@ -62,6 +63,7 @@ pub struct ResidentModel<'m, 'f> {
     context: usize,
     poisoned: bool,
     retired: Arc<AtomicBool>,
+    admission: ResidentAdmission,
     cancel_after_attention: Option<usize>,
     pub phase_ns: BTreeMap<&'static str, u128>,
 }
@@ -132,92 +134,226 @@ fn shared_gate_dot(
         }
     }
 }
+/// Reuses every constructor's public layout, including full owned padding.
+/// GR/final scratch follows the fixed Qwen graph's existing allocation order.
+fn private_requests(graph: BoundGraph<'_, '_>) -> Result<Vec<u64>> {
+    let g = graph.geometry();
+    let mut words = Vec::new();
+    for layer in 0..g.layers {
+        match graph.layer_kind(layer)? {
+            AttentionKind::Gdn => words.extend(
+                crate::resident_gdn::StageLayout::from_graph(graph, layer)?.allocation_words(),
+            ),
+            AttentionKind::Qsa => words.extend(
+                crate::resident_qsa::StageLayout::from_graph(graph, layer)?.allocation_words(),
+            ),
+        }
+    }
+    for layer in 0..g.layers {
+        let l = crate::resident_moe::MoeLayout::from_graph(graph, layer)?;
+        words.extend([10, 10, l.activation_words, l.partial_words, l.status_words]);
+    }
+    let r = crate::residual_gpu::ResidualLayout::new(g.residual, g.low_rank).map_err(u::fault)?;
+    words.extend(workspace_words(r, g.vocabulary)?);
+    words
+        .into_iter()
+        .map(|n| Ok(BufferLayout::new(n).map_err(u::fault)?.owned_bytes as u64))
+        .collect()
+}
+fn workspace_words(
+    r: crate::residual_gpu::ResidualLayout,
+    vocabulary: usize,
+) -> Result<Vec<usize>> {
+    let mut words = vec![
+        r.shape.width,
+        r.shape.streams,
+        r.residual_elements,
+        r.low_rank,
+        r.low_rank,
+        r.residual_elements,
+        r.shape.streams,
+        r.low_rank,
+        r.shape.width,
+        r.residual_elements,
+    ];
+    words.extend([
+        10240,
+        10240,
+        2560,
+        512,
+        513,
+        vocabulary,
+        vocabulary.checked_add(1).ok_or(Error::ArithmeticOverflow)?,
+        1,
+        2560,
+        10240,
+        2560,
+        640,
+        640,
+        640,
+        2560,
+        1,
+    ]);
+    Ok(words)
+}
+fn admitted_upload(
+    admission: &ResidentAdmission,
+    io: &mut PrivateArena,
+    arena: &PrivateArena,
+    target: BufferId,
+    values: &[f32],
+) -> Result<()> {
+    let page = BufferLayout::new(values.len())
+        .map_err(u::fault)?
+        .owned_bytes as u64;
+    admission.allocate(&[page], || u::upload_f32(io, arena, target, values))
+}
+struct AdmittedSelector<'a> {
+    inner: u::TransientSelector<'a>,
+    admission: ResidentAdmission,
+}
+impl crate::resident_qsa::ResidentQsaSelector for AdmittedSelector<'_> {
+    fn select_transient(
+        &mut self,
+        arena: &PrivateArena,
+        layout: crate::qsa_gpu::QsaLayout,
+        scores: crate::resident_gdn::StatusRegion,
+        status: crate::resident_gdn::StatusRegion,
+        cancel: &AtomicBool,
+    ) -> Result<crate::resident_qsa::PrivateSelection> {
+        // The original selector completes both score/status reads before this
+        // guard samples/reclaims; no added numerical-success assumption.
+        self.admission.readback(|| {
+            self.inner
+                .select_transient(arena, layout, scores, status, cancel)
+        })
+    }
+    fn upload_selected(
+        &mut self,
+        arena: &PrivateArena,
+        target: BufferId,
+        selection: &crate::resident_qsa::PrivateSelection,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        let page = BufferLayout::new(u::words(arena, target)?)
+            .map_err(u::fault)?
+            .owned_bytes as u64;
+        self.admission.allocate(&[page], || {
+            self.inner.upload_selected(arena, target, selection, cancel)
+        })
+    }
+}
+
 impl<'m, 'f> ResidentModel<'m, 'f> {
     pub fn new(
         graph: BoundGraph<'m, 'f>,
         client: ComputeClient<WgpuRuntime>,
         context: usize,
+        executor: &mut crate::executor::GpuExecutor<'f>,
     ) -> Result<Self> {
         let g = graph.geometry();
         if context == 0 || context > g.max_context {
             return Err(Error::LimitExceeded("resident context"));
         }
-        let retired = Arc::new(AtomicBool::new(false));
-        let mut arena = PrivateArena::new(client.clone(), 2 * 1024 * 1024 * 1024, retired.clone())
-            .map_err(u::fault)?;
-        let io = PrivateArena::new(client.clone(), 64 * 1024 * 1024, retired.clone())
-            .map_err(u::fault)?;
-        let mut public = PublicVectors::new(client, graph.binding_id());
-        let key = SequenceKey::new()?;
-        let mut layers = Vec::new();
-        for l in 0..g.layers {
-            layers.push(match graph.layer_kind(l)? {
-                AttentionKind::Gdn => {
-                    let params = PublicGdnParameters::prepare(graph, l, &mut public)?;
-                    let stage = ResidentGdn::allocate(graph, l, key, &mut arena, &params)?;
-                    if stage.layout().max_context < context {
-                        return Err(Error::LimitExceeded("resident stage context"));
-                    }
-                    Layer::Gdn(Box::new(stage), params)
-                }
-                AttentionKind::Qsa => {
-                    let p =
-                        crate::resident_qsa::PublicQsaParameters::prepare(graph, l, &mut public)?;
-                    let stage =
-                        crate::resident_qsa::ResidentQsa::allocate(graph, l, key, &mut arena, &p)?;
-                    if stage.layout().max_context < context {
-                        return Err(Error::LimitExceeded("resident attention context"));
-                    }
-                    Layer::Qsa(Box::new(stage), p)
-                }
-            });
+        executor.check_client(&client)?;
+        let requests = private_requests(graph)?;
+        let private_owned = requests.iter().try_fold(0_u64, |sum, &n| {
+            sum.checked_add(n).ok_or(Error::ArithmeticOverflow)
+        })?;
+        let public_pages = PublicVectors::prewarm_page_bytes(graph)?;
+        let admission = executor.begin_resident(graph, private_owned, public_pages)?;
+        let mut public = PublicVectors::new(client.clone(), graph.binding_id());
+        admission.prewarm(graph, &mut public)?;
+        if public.full_page_bytes() != public_pages {
+            admission.poison();
+            return Err(Error::InvalidFormat("resident public page plan"));
         }
-        let mut moe_layers = Vec::new();
-        for l in 0..g.layers {
-            moe_layers.push(crate::resident_moe::ResidentMoe::allocate(
-                graph, l, &mut arena,
-            )?);
-        }
-        let gr = GrWorkspace::allocate(graph, &mut arena)?;
-        let mut alloc = |n| arena.allocate_zeroed(n).map_err(u::fault);
-        let b = Buffers {
-            residual: [alloc(10240)?, alloc(10240)?],
-            block: alloc(2560)?,
-            router: alloc(512)?,
-            router_packet: alloc(513)?,
-            logits: alloc(g.vocabulary)?,
-            logit_packet: alloc(g.vocabulary + 1)?,
-            fault: alloc(1)?,
-            ple_emb: alloc(2560)?,
-            ple_key: alloc(10240)?,
-            ple_value: alloc(2560)?,
-            shared_gate: alloc(640)?,
-            shared_up: alloc(640)?,
-            shared_act: alloc(640)?,
-            shared_down: alloc(2560)?,
-            shared_scale: alloc(1)?,
-        };
-        let ple_history = PleTokenHistory::new(graph.ple_hash());
-        let ple_conv = CausalConvState::new(10240, 4, 3).map_err(u::fault)?;
-        Ok(Self {
-            graph,
-            arena,
-            io,
-            public,
-            gr,
-            layers,
-            moe_layers,
-            pending_qsa: Vec::new(),
-            pending_moe: Vec::new(),
-            b,
-            ple_history,
-            ple_conv,
-            position: 0,
-            context,
-            poisoned: false,
-            retired,
-            cancel_after_attention: None,
-            phase_ns: BTreeMap::new(),
+        admission.allocate(&requests, || {
+            let retired = Arc::new(AtomicBool::new(false));
+            let mut arena =
+                PrivateArena::new(client.clone(), 2 * 1024 * 1024 * 1024, retired.clone())
+                    .map_err(u::fault)?;
+            let io = PrivateArena::new(client.clone(), 64 * 1024 * 1024, retired.clone())
+                .map_err(u::fault)?;
+            let key = SequenceKey::new()?;
+            let mut layers = Vec::new();
+            for l in 0..g.layers {
+                layers.push(match graph.layer_kind(l)? {
+                    AttentionKind::Gdn => {
+                        let params = PublicGdnParameters::prepare(graph, l, &mut public)?;
+                        let stage = ResidentGdn::allocate(graph, l, key, &mut arena, &params)?;
+                        if stage.layout().max_context < context {
+                            return Err(Error::LimitExceeded("resident stage context"));
+                        }
+                        Layer::Gdn(Box::new(stage), params)
+                    }
+                    AttentionKind::Qsa => {
+                        let p = crate::resident_qsa::PublicQsaParameters::prepare(
+                            graph,
+                            l,
+                            &mut public,
+                        )?;
+                        let stage = crate::resident_qsa::ResidentQsa::allocate(
+                            graph, l, key, &mut arena, &p,
+                        )?;
+                        if stage.layout().max_context < context {
+                            return Err(Error::LimitExceeded("resident attention context"));
+                        }
+                        Layer::Qsa(Box::new(stage), p)
+                    }
+                });
+            }
+            let mut moe_layers = Vec::new();
+            for l in 0..g.layers {
+                moe_layers.push(crate::resident_moe::ResidentMoe::allocate(
+                    graph, l, &mut arena,
+                )?);
+            }
+            let gr = GrWorkspace::allocate(graph, &mut arena)?;
+            let mut alloc = |n| arena.allocate_zeroed(n).map_err(u::fault);
+            let b = Buffers {
+                residual: [alloc(10240)?, alloc(10240)?],
+                block: alloc(2560)?,
+                router: alloc(512)?,
+                router_packet: alloc(513)?,
+                logits: alloc(g.vocabulary)?,
+                logit_packet: alloc(g.vocabulary + 1)?,
+                fault: alloc(1)?,
+                ple_emb: alloc(2560)?,
+                ple_key: alloc(10240)?,
+                ple_value: alloc(2560)?,
+                shared_gate: alloc(640)?,
+                shared_up: alloc(640)?,
+                shared_act: alloc(640)?,
+                shared_down: alloc(2560)?,
+                shared_scale: alloc(1)?,
+            };
+            if arena.charged_bytes() as u64 != private_owned {
+                return Err(Error::InvalidFormat("resident private page plan"));
+            }
+            let ple_history = PleTokenHistory::new(graph.ple_hash());
+            let ple_conv = CausalConvState::new(10240, 4, 3).map_err(u::fault)?;
+            Ok(Self {
+                graph,
+                arena,
+                io,
+                public,
+                gr,
+                layers,
+                moe_layers,
+                pending_qsa: Vec::new(),
+                pending_moe: Vec::new(),
+                b,
+                ple_history,
+                ple_conv,
+                position: 0,
+                context,
+                poisoned: false,
+                retired,
+                admission: admission.clone(),
+                cancel_after_attention: None,
+                phase_ns: BTreeMap::new(),
+            })
         })
     }
     pub fn arm_public_mid_token_cancel(&mut self, layer: usize) -> Result<()> {
@@ -266,6 +402,8 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 Ok(logits)
             }
             other => {
+                executor.poison_resident();
+                self.admission.poison();
                 for layer in &mut self.layers {
                     match layer {
                         Layer::Gdn(g, _) => g.poison(),
@@ -301,6 +439,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         cancel: &AtomicBool,
     ) -> Result<Zeroizing<Vec<f32>>> {
         executor.check_client(self.arena.client().map_err(u::fault)?)?;
+        executor.check_resident_admission(&self.admission)?;
         self.graph.verify_unchanged()?;
         u::cancel(cancel)?;
         u::zero(&self.arena, self.b.fault)?;
@@ -309,7 +448,13 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             .tensor("token_embd.weight")?
             .decode_row(token as u64, &mut embedding)?;
         let residual = Zeroizing::new(embedding.repeat(4));
-        u::upload_f32(&mut self.io, &self.arena, self.b.residual[0], &residual)?;
+        admitted_upload(
+            &self.admission,
+            &mut self.io,
+            &self.arena,
+            self.b.residual[0],
+            &residual,
+        )?;
         let mut current = 0;
         let mut pending: Vec<(usize, PendingGdn)> = Vec::new();
         for l in 0..self.layers.len() {
@@ -366,7 +511,10 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                     if q.requires_erasure_if_abandoned() {
                         return Err(Error::InvalidFormat("uncommitted resident attention"));
                     }
-                    let mut selector = u::TransientSelector { io: &mut self.io };
+                    let mut selector = AdmittedSelector {
+                        inner: u::TransientSelector { io: &mut self.io },
+                        admission: self.admission.clone(),
+                    };
                     let receipt = q.enqueue(
                         self.graph,
                         &self.arena,
@@ -455,12 +603,14 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             self.b.logits,
             cancel,
         )?;
-        let logits = u::read_fence(
-            &self.arena,
-            self.b.logits,
-            self.b.fault,
-            self.b.logit_packet,
-        )?;
+        let logits = self.admission.readback(|| {
+            u::read_fence(
+                &self.arena,
+                self.b.logits,
+                self.b.fault,
+                self.b.logit_packet,
+            )
+        })?;
         // The device completion/finiteness decision covers ALL layer outputs,
         // including the output projection. A late cancellation discards all.
         u::cancel(cancel)?;
@@ -504,7 +654,13 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 .tensor("per_layer_token_embd.weight")?
                 .decode_row(*row as u64, out)?;
         }
-        u::upload_f32(&mut self.io, &self.arena, self.b.ple_emb, &emb)?;
+        admitted_upload(
+            &self.admission,
+            &mut self.io,
+            &self.arena,
+            self.b.ple_emb,
+            &emb,
+        )?;
         let mut p = ResidentProjection {
             executor,
             fault: self.b.fault,
@@ -527,9 +683,13 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             self.b.ple_value,
             cancel,
         )?;
-        let key = u::read_f32(&self.arena, self.b.ple_key)?;
-        let value = u::read_f32(&self.arena, self.b.ple_value)?;
-        let original = u::read_f32(&self.arena, residual)?;
+        let (key, value, original) = self.admission.readback(|| {
+            Ok((
+                u::read_f32(&self.arena, self.b.ple_key)?,
+                u::read_f32(&self.arena, self.b.ple_value)?,
+                u::read_f32(&self.arena, residual)?,
+            ))
+        })?;
         let mut result = ops::ple_inject_projected(
             &key,
             &value,
@@ -543,7 +703,13 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             self.graph.geometry().epsilon,
         )
         .map_err(u::fault)?;
-        let uploaded = u::upload_f32(&mut self.io, &self.arena, residual, &result.residual);
+        let uploaded = admitted_upload(
+            &self.admission,
+            &mut self.io,
+            &self.arena,
+            residual,
+            &result.residual,
+        );
         result.residual.zeroize();
         result.gates.zeroize();
         result.normalized.zeroize();
@@ -570,12 +736,14 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             cancel,
         )?;
         let start = Instant::now();
-        let router = u::read_fence(
-            &self.arena,
-            self.b.router,
-            self.b.fault,
-            self.b.router_packet,
-        )?;
+        let router = self.admission.readback(|| {
+            u::read_fence(
+                &self.arena,
+                self.b.router,
+                self.b.fault,
+                self.b.router_packet,
+            )
+        })?;
         self.record("router_fence", start);
         let selected = Zeroizing::new(ops::router_topk(&router, 10, true).map_err(u::fault)?);
         let start = Instant::now();
@@ -662,5 +830,67 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             u::arg(&self.arena, self.b.block)?,
         );
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod admission_tests {
+    use super::*;
+    use kuno_text::ops::{GatedResidualShape, GdnShape};
+
+    #[test]
+    fn exact_public_qwen_owner_plan_includes_full_padding_for_every_handle() {
+        // Fixed public geometry, no GGUF file, client, private content or device.
+        let shape = GdnShape::qwen38();
+        let gdn = crate::resident_gdn::StageLayout {
+            pointwise: crate::gdn_pointwise::PointwiseLayout::new(shape).unwrap(),
+            recurrence: crate::gdn_gpu::GdnLayout::new(shape).unwrap(),
+            input_words: 2560,
+            epsilon: 1e-6,
+            max_context: 4096,
+        };
+        let qsa = crate::resident_qsa::StageLayout {
+            input_words: 2560,
+            max_context: 4096,
+            epsilon: 1e-6,
+        };
+        let moe = crate::resident_moe::MoeLayout::new(2560, 640).unwrap();
+        let gr = crate::residual_gpu::ResidualLayout::new(
+            GatedResidualShape::new(4, 2560).unwrap(),
+            320,
+        )
+        .unwrap();
+        let mut words = Vec::new();
+        for layer in 0..48 {
+            if layer % 4 == 3 {
+                words.extend(qsa.allocation_words());
+            } else {
+                words.extend(gdn.allocation_words());
+            }
+        }
+        for _ in 0..48 {
+            words.extend([
+                10,
+                10,
+                moe.activation_words,
+                moe.partial_words,
+                moe.status_words,
+            ]);
+        }
+        words.extend(workspace_words(gr, 248320).unwrap());
+        let requests = words
+            .iter()
+            .map(|&n| BufferLayout::new(n).unwrap().owned_bytes as u64)
+            .collect::<Vec<_>>();
+        let total = requests.iter().sum::<u64>();
+        assert_eq!(total, 785_186_816);
+        // The largest private span is the 4096-token QSA cache (32 MiB).
+        assert_eq!(requests.iter().copied().max(), Some(32 * 1024 * 1024));
+        assert_eq!(requests.len(), 36 * 18 + 12 * 31 + 48 * 5 + 10 + 16);
+        assert!(requests.iter().all(|&n| n >= 32768 && n.is_power_of_two()));
+        let mut ledger = crate::main_admission::MainAdmission::new(total, 0).unwrap();
+        assert_eq!(ledger.precharge(&requests).unwrap(), total);
+        assert_eq!(ledger.upper_bytes(), total);
+        assert!(workspace_words(gr, usize::MAX).is_err());
     }
 }

@@ -11,6 +11,11 @@ kuno-text = { path = "../../../../crates/kuno-text" }
 cubecl = { version = "=0.10.0", default-features = false, features = ["std", "wgpu"] }
 wgpu = { version = "29", default-features = false, features = ["std", "vulkan", "wgsl"] }
 
+[patch.crates-io]
+cubecl-runtime = { path = "vendor/cubecl-runtime" }
+cubecl-core = { path = "vendor/cubecl-core" }
+cubecl-wgpu = { path = "vendor/cubecl-wgpu" }
+
 [profile.release]
 debug = 0
 

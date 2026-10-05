@@ -347,3 +347,117 @@ Receipts `rust-qsa-rust-tables-{intel,nvidia}-20261005.json` record binary
 `3e9653dccb4c3c812f7f47d9b38ed95486e3c6dabe0d46a333050140ae7d843a`.
 Ninety laboratory host/offline tests and strict all-target Clippy pass. This is
 operator acceptance, not long-context whole-model or private-worker acceptance.
+
+### Full resident public fixture
+
+The rotary-corrected resident graph completes the same75-token prompt and128
+output selections on B70:64.936s sequential prefill,52.086s for127 following
+steps,0.975s bind/owner setup,118.489s transient unit wall. Its binary is the
+same `3e9653d...` public-table acceptance build. The first GPU implementation
+was147.900/219.925s; these remain exploratory profiles with overlapping host
+builds, not an idle paired cold/warm matrix. All original weights are borrowed.
+Ollama's warm changed-prefix result remains faster (25.935s wall,
+7.602decode tokens/s). No cross-request native prefix cache is used.
+
+Following steps still transfer50,682,982,400 original-weight bytes. Nested
+profile time includes31.565s expert upload/enqueue,2.996s router fences,
+5.843s attention enqueue/fences,14.008s weight reads and6.174s weight uploads.
+The next experiment batches each layer's missing public gate/up/down weights
+into one checked upload/scatter. Live observed host peak reaches11,169,583,104
+bytes under52GiB limit, with zero cgroup swap/core dumps. Final unit output is
+not used as the sole memory proof. The full connected fixture remains public
+laboratory correctness/profile acceptance, not complete private-worker,
+long-context quality, production API or deployment acceptance.
+
+
+### Rejected expert-upload batching experiments (2026-10-05)
+
+Legacy separate public weight uploads remain the default. A bounded concatenated
+public packed source plus GPU scatter was numerically correct on both GPUs,
+including all ten routed experts, Q5/Q8 down banks, hits and eviction. It was
+slower for the fixed one-prompt/four-output bang fixture. No routing pruning,
+quant conversion, private comptime values or model-file writes were used.
+
+The 64-MiB ABBA comparison used frozen binary
+`4407d714119d9ee1f77881fdff1d8c3fd13c4add1923aa5bed833fd234437ca7`.
+B70 legacy prefill/decode ranges were 5.250–6.015 / 1.341–1.474 s; batched
+ranges were 8.801–9.374 / 5.929–6.276 s. RTX3060 legacy ranges were
+7.174–7.773 / 2.884–3.109 s; batched ranges were 10.779–10.848 /
+7.588–7.666 s. Decode here means three following graph steps.
+
+Bounded 4/8/16-MiB B70 windows used binary
+`c72ccbd547860b066da61a8d11d5ed648bad66c7df170552cf2d96ce9879053c`: legacy
+5.865 / 1.528 s, 4-MiB 5.953 / 1.568 s, 8-MiB 6.883 / 2.577 s,
+16-MiB 9.386 / 3.579 s, then legacy 5.921 / 1.653 s.
+
+A follow-up removed per-word division with public geometry specialization and
+a three-dimensional scatter; all ten slots stay runtime uniforms. Both variants
+passed both-card MoE parity but remained slower in the B70 paired fixture.
+Binary `87259b75683f1c86824422db9fd76246ea5a834c812140ec6d44e45115a04b8d`,
+8-MiB source windows: legacy 5.342 / 1.456 s, specialized1D 6.136 / 2.185 s,
+division-free3D 6.090 / 2.198 s, repeated3D 6.683 / 2.870 s, repeated1D
+7.569 / 2.397 s, then legacy 5.929 / 1.444 s. All four output IDs matched.
+The data do not establish one sole cause; upload timing includes queued GPU
+work, host concatenation and staging. Neither candidate is selected.
+
+Exact numeric receipts are `rust-expert-batch-paired-20261005.json`,
+`rust-expert-batch-windows-20261005.json`, and
+`rust-expert-scatter-paired-20261005.json` under the public receipts directory.
+Timing units used MemorySwapMax=0, LimitCORE=0, MemoryMax=12G and an explicit
+180-second operator bound. Short unit MemoryPeak summaries are unreliable, so
+these do not claim a measured host peak. No ordinary inference deadline,
+installed service, API/default route or Vashti consumer changed.
+
+
+Aligned F32 decoding now loads and bitcasts the original aligned u32 directly,
+while preserving the 64-lane sum order and all other quantized formats. Both
+GPUs pass original-artifact numeric probes and the four-token graph. The short
+ABBA graph measurement does not establish a material speedup: B70 decode times
+1.385/1.363/1.473/1.573 s, RTX3060 3.116/3.036/3.122/3.225 s (old/new/new/old).
+`rust-f32-aligned-word-paired-20261005.json` records complete settings and both
+binary hashes. The new binary also contains inactive private-cleanup guards;
+this receipt accepts exact original-word decode, not an isolated speed claim.
+
+
+### Owned runtime I/O and resident admission acceptance
+
+The standalone laboratory pins/vendors exactly three CubeCL0.10.0 crates at
+`7cf203735e095e640a2c03b2400d0faa03196bb4`; production dependencies and global
+registry files are unchanged. Twenty-seven runtime ownership host fixtures,
+128 native host/offline tests, 74 ordinary core tests (two installed checks
+ignored), formatting and strict host/native Clippy pass. The 18-file composed
+runtime patch applies to fresh pinned archives with all modified hashes matching.
+Independent source reviews accept the limited preowned Wgpu/Arena path and
+public-graph admission; they do not establish a production privacy guarantee.
+
+Both GPUs pass fixed `transient-io-probe` using frozen binary
+`9136b527e6634fe4394076b8bce297bb2a5a4aee6775385461fc418d5ee057e7`.
+It covers full tracked upload/uniform/readback spans, pending future drop,
+retained Bytes rejection before mutation, guarded host capacities, runtime
+scalar parity, repeated audited cleanup, public cache preservation and complete
+65536-byte main-span erasure. Every epoch's inspection counts match all full
+owned spans, including audit stages. Swap/core dumps are disabled under 4GiB
+host/180-second operator bounds. An initial explicit-zero-offset validation
+failure is resolved and tested with the actual contiguous allocator; no GPU
+fault occurred. Receipt: `rust-owned-io-both-gpus-20261005.json`.
+
+The connected graph has a sealed, completely charged public-vector inventory,
+actual 1286-page/785186816-byte private plan, separate 64MiB main IO capacity,
+and full independently rounded outstanding source reservation. Admission charges
+before creation, checks before slot/state publication, reconciles only at
+completed readbacks and remains poisoned after failure. Eviction/Drop/telemetry
+submission alone grant no credits. Cached projections avoid telemetry that
+forced extra GPU submissions. Both GPUs reproduce all four bang and eight chat
+IDs; cancellation at queued GDN0/QSA3 erases the owner, rejects poisoned reuse
+and restores fresh first-token parity. Intel's 72-slot option also matches chat.
+Receipt: `rust-main-admission-both-gpus-20261005.json`, frozen binary
+`e92dd97bea0465a6fa86f0cf32eb27f5600783b5b1d5b047d866d7f69d7aa29e`.
+These runs overlap isolated host builds/root-disk pressure and are acceptance
+runs, not matched throughput or reliable MemoryPeak comparisons. The default
+expert capacity remains unchanged.
+
+Full connected-graph private staging remains pending; that graph still uses the
+public arena policy at this receipt. Opaque driver/firmware padding, failed Drop,
+historical swap and abandoned contexts remain excluded. This changes no API,
+installed service, ordinary inference deadline or Vashti consumer. Native is
+still slower than updated Ollama; no complete performance goal is claimed.

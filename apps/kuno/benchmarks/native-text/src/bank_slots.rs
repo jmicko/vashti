@@ -8,6 +8,11 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
+// 72 original packed Qwen experts fit the same pooled pages as 64.
+// Higher capacities are a separate allocation-budget decision.
+pub const MAX_CAPACITY: usize = 72;
+pub const MIN_ROUTED_CAPACITY: usize = 10;
+
 static NEXT_BANK_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -26,7 +31,7 @@ pub enum BankError {
 impl std::fmt::Display for BankError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
-            Self::Capacity => "expert bank capacity must be between one and 64",
+            Self::Capacity => "expert bank capacity must be between one and 72",
             Self::ExpertCount => "expert bank count must be between capacity and 512",
             Self::SelectionTooLarge => "expert selection exceeds bank capacity",
             Self::ExpertOutOfRange => "expert selection is out of range",
@@ -58,7 +63,7 @@ struct State {
 }
 
 /// Transient model-local residency and LRU; Debug is omitted to avoid dumping
-/// request-derived expert histories. Production's 512 experts/10..64 slots fit
+/// request-derived expert histories. Production's 512 experts/10..72 slots fit
 /// these bounds; smaller banks are supported for independent fixture tests.
 pub struct BankSlots {
     bank_id: u64,
@@ -78,9 +83,25 @@ pub struct Plan {
     next: State,
 }
 
+/// Pure parsing keeps overrides testable without process-global environment
+/// mutation. Smaller fixture-only banks are not valid routed-model overrides.
+pub fn configured_capacity(raw: Option<&str>, default: usize) -> Result<usize> {
+    let capacity = match raw {
+        Some(raw) if !raw.is_empty() && raw.bytes().all(|b| b.is_ascii_digit()) => {
+            raw.parse().map_err(|_| BankError::Capacity)?
+        }
+        Some(_) => return Err(BankError::Capacity),
+        None => default,
+    };
+    if !(MIN_ROUTED_CAPACITY..=MAX_CAPACITY).contains(&capacity) {
+        return Err(BankError::Capacity);
+    }
+    Ok(capacity)
+}
+
 impl BankSlots {
     pub fn new(capacity: usize, experts: usize) -> Result<Self> {
-        if !(1..=64).contains(&capacity) {
+        if !(1..=MAX_CAPACITY).contains(&capacity) {
             return Err(BankError::Capacity);
         }
         if experts < capacity || experts > 512 {
@@ -303,9 +324,58 @@ mod tests {
     }
 
     #[test]
+    fn routed_capacity_override_preserves_defaults_and_rejects_invalid_before_planning() {
+        assert_eq!(configured_capacity(None, 64).unwrap(), 64);
+        assert_eq!(configured_capacity(None, 16).unwrap(), 16);
+        assert_eq!(configured_capacity(Some("72"), 64).unwrap(), 72);
+        assert_eq!(configured_capacity(Some("10"), 16).unwrap(), 10);
+        for invalid in [
+            "",
+            "0",
+            "9",
+            "73",
+            "512",
+            "-1",
+            "+72",
+            " 72",
+            "72 ",
+            "1.5",
+            "abc",
+            "184467440737095516160",
+        ] {
+            assert_eq!(
+                configured_capacity(Some(invalid), 64),
+                Err(BankError::Capacity)
+            );
+        }
+        assert_eq!(configured_capacity(None, 9), Err(BankError::Capacity));
+    }
+
+    #[test]
+    fn extended_slots_are_used_and_requested_hits_remain_protected() {
+        let mut bank = BankSlots::new(MAX_CAPACITY, 512).unwrap();
+        let initial: Vec<_> = (0..MAX_CAPACITY).collect();
+        let p = bank.plan(&initial).unwrap();
+        assert_eq!(p.slots, initial);
+        bank.commit(p).unwrap();
+        let p = bank
+            .plan(&[100, 71, 70, 69, 68, 67, 66, 65, 64, 63])
+            .unwrap();
+        assert_eq!(p.uploads, [(100, 0)]);
+        assert_eq!(&p.slots[1..], &[71, 70, 69, 68, 67, 66, 65, 64, 63]);
+        bank.commit(p).unwrap();
+        assert_eq!(bank.state.by_expert[100], Some(0));
+        assert_eq!(bank.state.by_expert[71], Some(71));
+        assert_eq!(bank.state.by_expert[0], None);
+    }
+
+    #[test]
     fn counter_overflow_and_capacity_errors_leave_state_unchanged() {
         assert!(matches!(BankSlots::new(0, 512), Err(BankError::Capacity)));
-        assert!(matches!(BankSlots::new(65, 512), Err(BankError::Capacity)));
+        assert!(matches!(
+            BankSlots::new(MAX_CAPACITY + 1, 512),
+            Err(BankError::Capacity)
+        ));
         assert!(matches!(BankSlots::new(2, 1), Err(BankError::ExpertCount)));
         assert!(matches!(
             BankSlots::new(1, 513),

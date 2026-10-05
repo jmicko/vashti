@@ -1,0 +1,150 @@
+{
+  "scope": "fixed-public-synthetic-operator-test-only",
+  "binary_sha256": "9136b527e6634fe4394076b8bce297bb2a5a4aee6775385461fc418d5ee057e7",
+  "operator_unit": {
+    "MemorySwapMax": 0,
+    "LimitCORE": 0,
+    "MemoryMax": "4G",
+    "RuntimeMaxSec": 180,
+    "CUBECL_DEBUG_LOG": "0"
+  },
+  "private_main_budget_bytes": 1048576,
+  "private_io_budget_bytes": 8388608,
+  "pattern_words": 8193,
+  "main_full_span_bytes": 65536,
+  "runs": [
+    {
+      "gpu": "intel",
+      "vendor": 32902,
+      "receipt": {
+        "context_retired": false,
+        "epochs": [
+          {
+            "epoch": 5,
+            "inspected_buffers": 3,
+            "inspected_bytes": 196608,
+            "readback_bytes": 131072,
+            "uniform_bytes": 0,
+            "upload_bytes": 65536
+          },
+          {
+            "epoch": 6,
+            "inspected_buffers": 5,
+            "inspected_bytes": 66560,
+            "readback_bytes": 66048,
+            "uniform_bytes": 256,
+            "upload_bytes": 256
+          },
+          {
+            "epoch": 7,
+            "inspected_buffers": 1,
+            "inspected_bytes": 256,
+            "readback_bytes": 256,
+            "uniform_bytes": 0,
+            "upload_bytes": 0
+          },
+          {
+            "epoch": 8,
+            "inspected_buffers": 5,
+            "inspected_bytes": 66560,
+            "readback_bytes": 66048,
+            "uniform_bytes": 256,
+            "upload_bytes": 256
+          },
+          {
+            "epoch": 9,
+            "inspected_buffers": 1,
+            "inspected_bytes": 256,
+            "readback_bytes": 256,
+            "uniform_bytes": 0,
+            "upload_bytes": 0
+          },
+          {
+            "epoch": 12,
+            "inspected_buffers": 1,
+            "inspected_bytes": 65536,
+            "readback_bytes": 65536,
+            "uniform_bytes": 0,
+            "upload_bytes": 0
+          }
+        ],
+        "fixture": "transient-io-probe",
+        "main_full_span_bytes": 65536,
+        "pending_future_drop": true,
+        "proof_scope": "owned API-visible spans including audit stages; not opaque physical driver padding",
+        "public_cache_preserved": true,
+        "retained_readback_rejected": true,
+        "scope": "fixed-public-synthetic-operator-test-only"
+      }
+    },
+    {
+      "gpu": "nvidia",
+      "vendor": 4318,
+      "receipt": {
+        "context_retired": false,
+        "epochs": [
+          {
+            "epoch": 5,
+            "inspected_buffers": 3,
+            "inspected_bytes": 196608,
+            "readback_bytes": 131072,
+            "uniform_bytes": 0,
+            "upload_bytes": 65536
+          },
+          {
+            "epoch": 6,
+            "inspected_buffers": 5,
+            "inspected_bytes": 66560,
+            "readback_bytes": 66048,
+            "uniform_bytes": 256,
+            "upload_bytes": 256
+          },
+          {
+            "epoch": 7,
+            "inspected_buffers": 1,
+            "inspected_bytes": 256,
+            "readback_bytes": 256,
+            "uniform_bytes": 0,
+            "upload_bytes": 0
+          },
+          {
+            "epoch": 8,
+            "inspected_buffers": 5,
+            "inspected_bytes": 66560,
+            "readback_bytes": 66048,
+            "uniform_bytes": 256,
+            "upload_bytes": 256
+          },
+          {
+            "epoch": 9,
+            "inspected_buffers": 1,
+            "inspected_bytes": 256,
+            "readback_bytes": 256,
+            "uniform_bytes": 0,
+            "upload_bytes": 0
+          },
+          {
+            "epoch": 12,
+            "inspected_buffers": 1,
+            "inspected_bytes": 65536,
+            "readback_bytes": 65536,
+            "uniform_bytes": 0,
+            "upload_bytes": 0
+          }
+        ],
+        "fixture": "transient-io-probe",
+        "main_full_span_bytes": 65536,
+        "pending_future_drop": true,
+        "proof_scope": "owned API-visible spans including audit stages; not opaque physical driver padding",
+        "public_cache_preserved": true,
+        "retained_readback_rejected": true,
+        "scope": "fixed-public-synthetic-operator-test-only"
+      }
+    }
+  ],
+  "acceptance_limits": "Owned API-visible spans only; opaque driver/firmware padding, full connected graph private staging, production worker and real requests are not accepted",
+  "resolved_attempt": {
+    "binary_sha256": "2490cfd18561bc5b13251a9959ec598066bfa4f656d3e0197b4937ea844e02ac",
+    "result": "constructor upload validation rejected actual full-span Some(0) offsets; corrected to accept absent/zero and reject every nonzero trim; no GPU fault"
+  }
+}

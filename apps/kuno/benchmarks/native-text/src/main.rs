@@ -5,6 +5,7 @@ mod expert_banks;
 mod gdn_executor;
 mod gdn_gpu;
 mod gdn_pointwise;
+mod main_admission;
 mod private_arena;
 mod qsa_gpu;
 mod quant_matvec;
@@ -17,6 +18,7 @@ mod resident_qsa;
 mod resident_util;
 mod residual_gpu;
 mod small_cpu;
+mod transient_probe;
 use cubecl::prelude::*;
 use cubecl::wgpu::{RuntimeOptions, WgpuRuntime, WgpuSetup, init_device};
 use kuno_text::model::{MatrixExecutor, Qwen4Exp, RoutedWeights, greedy};
@@ -44,6 +46,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         _ => return Err("expected intel or nvidia".into()),
     };
     let mode = std::env::args().nth(2).unwrap_or("probe".into());
+    let requested_slots = match std::env::var("KUNO_LAB_EXPERT_SLOTS") {
+        Ok(value) => Some(value),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(_) => return Err("KUNO_LAB_EXPERT_SLOTS must be an integer 10..72".into()),
+    };
+    // Reject malformed/out-of-range overrides before creating a GPU device.
+    let expert_slots = bank_slots::configured_capacity(
+        requested_slots.as_deref(),
+        if vendor == 0x8086 { 64 } else { 16 },
+    )
+    .map_err(|_| "KUNO_LAB_EXPERT_SLOTS must be an integer 10..72")?;
     cubecl::future::block_on(async move {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::VULKAN,
@@ -92,6 +105,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
         );
         let client = WgpuRuntime::client(&selected);
+        if mode == "transient-io-probe" {
+            transient_probe::run(&client)?;
+            return Ok(());
+        }
         for (rows, cols) in [(3usize, 5usize), (137, 257)] {
             let weights: Vec<f32> = (0..rows * cols)
                 .map(|n| ((n % 23) as f32 - 11.0) / 23.0)
@@ -486,20 +503,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let model = Qwen4Exp::bind(&file)?;
             let ids = tokenizer.encode(prompt, true)?;
             let mut sequence = model.sequence(ids.len() + limit)?;
+            let cache_budget = if vendor == 0x8086 { 8 } else { 6 } * 1024 * 1024 * 1024;
+            let device_budget = if vendor == 0x8086 { 26 } else { 10 } * 1024 * 1024 * 1024;
+            let bank_charge = expert_banks::preflight_residency(
+                model.bound_graph(),
+                expert_slots,
+                cache_budget,
+                device_budget,
+            )?;
             let mut executor = executor::GpuExecutor::new(
                 &file,
                 client.clone(),
-                if vendor == 0x8086 {
-                    8 * 1024 * 1024 * 1024
-                } else {
-                    6 * 1024 * 1024 * 1024
-                },
-                if vendor == 0x8086 { 64 } else { 16 },
-                if vendor == 0x8086 {
-                    26 * 1024 * 1024 * 1024
-                } else {
-                    10 * 1024 * 1024 * 1024
-                },
+                cache_budget,
+                expert_slots,
+                device_budget,
             )?;
             let cancel = AtomicBool::new(false);
             let mut resident = if resident_enabled {
@@ -507,6 +524,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     model.bound_graph(),
                     client.clone(),
                     ids.len() + limit,
+                    &mut executor,
                 )?)
             } else {
                 None
@@ -602,7 +620,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             if let Some(path) = std::env::var_os("KUNO_PUBLIC_RECEIPT") {
                 use std::io::Write;
-                let receipt = serde_json::json!({
+                let mut receipt = serde_json::json!({
                     "scope":"fixed-public-synthetic-operator-test-only", "fixture":mode,"vendor":vendor,
                     "seed":424242,"temperature":0,"model_bind_ms":model_bind_ms,"prompt_tokens":ids.len(),"public_generated_ids":generated,
                     "prefill_ms":prefill.as_millis() as u64,"generation_ms":generation_ms,
@@ -628,6 +646,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "small_cpu_cache_bytes":executor.small_cpu.cached_bytes(),
                     "small_cpu_cache_matrices":executor.small_cpu.cached_matrices(), "resident_graph":resident_enabled,"weights":"borrowed-unmodified-ollama-blob"
                 });
+                receipt["resident_main_admitted_upper_bytes"] =
+                    serde_json::json!(executor.admission_upper_bytes()?);
+                receipt["batch_experts"] = serde_json::json!(executor.batch_experts);
+                receipt["expert_batch_window_bytes"] =
+                    serde_json::json!(executor.expert_batch_bytes);
+                receipt["expert_scatter_mode"] = serde_json::json!(executor.expert_scatter.label());
+                receipt["expert_bank_slots"] = serde_json::json!(expert_slots);
+                receipt["expert_bank_accounted_limit_bytes"] = serde_json::json!(bank_charge);
+                receipt["static_cache_budget_bytes"] = serde_json::json!(cache_budget);
+                receipt["device_reserved_limit_bytes"] = serde_json::json!(device_budget);
                 let mut out = std::fs::OpenOptions::new()
                     .write(true)
                     .create_new(true)
@@ -658,10 +686,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if r.step(&mut executor, ids[0], &cancel).is_ok() {
                     return Err("poisoned resident sequence reused".into());
                 }
+                // A poisoned admission ledger is never reset/reused. The
+                // diagnostic explicitly drops the erased owner and executor;
+                // executor Drop drains its public cache before a fresh binding.
+                resident.take();
+                executor = executor::GpuExecutor::new(
+                    &file,
+                    client.clone(),
+                    cache_budget,
+                    expert_slots,
+                    device_budget,
+                )?;
                 let mut fresh = resident_model::ResidentModel::new(
                     model.bound_graph(),
                     client.clone(),
                     ids.len() + limit,
+                    &mut executor,
                 )?;
                 let mut fresh_logits = zeroize::Zeroizing::new(Vec::new());
                 for token in &ids {
@@ -670,11 +710,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if greedy(&fresh_logits)? != generated[0] {
                     return Err("fresh resident sequence mismatch".into());
                 }
+                drop(fresh);
                 for layer in [0, 3] {
+                    executor = executor::GpuExecutor::new(
+                        &file,
+                        client.clone(),
+                        cache_budget,
+                        expert_slots,
+                        device_budget,
+                    )?;
                     let mut partial = resident_model::ResidentModel::new(
                         model.bound_graph(),
                         client.clone(),
                         ids.len() + limit,
+                        &mut executor,
                     )?;
                     partial.arm_public_mid_token_cancel(layer)?;
                     if partial.step(&mut executor, ids[0], &cancel).is_ok()

@@ -1,7 +1,10 @@
 # Resident Rust graph / private I/O review
 
-Read-only source audit, 2026-10-05. No device actions, real model payload reads,
-service changes or production edits. BoundGraph implementation is
+Historical read-only source audit, 2026-10-05. The initial audit performed no
+device actions, real model payload reads, service changes or production edits.
+Later laboratory implementation and protected device receipts are below and
+supersede the proposal's pending status only within their stated scope.
+BoundGraph implementation is
 `ce2bea0cfb8868ae5efd7dc167eeb8add9585846` (parent integrated as `2467ac7`).
 Residual/arena module receipt is below. Existing public-fixture GPU acceptance
 belongs to the root task; this document does not claim production privacy.
@@ -193,3 +196,69 @@ scalar/INFO host builders on launch, reset, abandonment and panic. Guarded
 runtime/wgpu buffers alone do not close that CPU-copy gap. An isolated pinned
 three-crate patch is undergoing review and synthetic host fault tests; no
 persistent private worker acceptance or device staging proof is claimed yet.
+
+
+## Owned runtime I/O implementation and both-card proof (2026-10-05)
+
+The standalone native lab now vendors three exact CubeCL0.10.0 crates pinned
+at `7cf203735e095e640a2c03b2400d0faa03196bb4`, preserving MIT/Apache licenses.
+Production dependencies and the global registry are untouched. The composed
+18-file patch, original/modified hashes and lock identities are reproducible
+from the exact published archives; fresh-source application/hash verification
+passes. See `apps/kuno/benchmarks/native-text/runtime-ownership/README.md`.
+
+Preowned `write_private` moves a full-capacity wiping host allocation into a
+direct MAP_WRITE upload; uniforms/readbacks also use bounded owned full spans.
+Live future/returned Bytes leases reject cleanup before mutation. Scalar/INFO
+and metadata builders wipe retained capacity on completion, abandonment and
+unwind. Checked cleanup starts before scheduler execution, erases/drains full
+API-visible spans and accepts scoped errors before advancing epochs/releasing
+buffers. Failed/panicking operations retire the stream. PrivateArena retains
+the main destination before a write can fail and uses this checked boundary
+for initialization/reset/close; its public-fixture policy remains separate.
+
+Twenty-seven host fixtures and strict Clippy pass. Independent source review
+found no blocker in the preowned Wgpu/Arena path. Frozen binary
+`9136b527e6634fe4394076b8bce297bb2a5a4aee6775385461fc418d5ee057e7`
+passes `transient-io-probe` on both B70/Vulkan and RTX3060/Vulkan, in units with swap and core dumps
+disabled, a 4GiB host bound and 180-second operator limit. Pending
+future drop, retained-Bytes rejection, full-span audited zeroing, runtime scalar
+parity, preserved unrelated public cache, repeat use and 65536-byte main-span
+zeroing/stale-ID rejection pass. Every accepted epoch's inspected bytes equal
+its full upload+uniform+readback counts, including audit staging. The committed
+counts-only receipt is `rust-owned-io-both-gpus-20261005.json`.
+
+An initial constructor failure rejected explicit Some(0) offsets used by the
+actual contiguous allocator. The check now accepts absent/zero offsets and
+rejects every positive/overflowing trim before size arithmetic. Actual allocator
+fixtures cover full, padded and coallocated views. This was code validation,
+not a GPU fault. Opaque physical driver/firmware padding, historical swap,
+failed Drop and abandoned contexts are outside this proof. The convenience
+create_private orphan-on-error path is excluded; the owner uses write_private.
+**Full resident graph private staging and production request acceptance remain
+pending.** This receipt does not expose a native route or authorize deployment.
+
+## Resident main-pool admission (implemented public laboratory)
+
+A sealed prewarmed public-vector inventory and main ledger now bound the
+connected public graph. The ledger charges each independently rounded source
+or private page before allocation; eviction, handle Drop and telemetry-only
+submission grant no credits. Only an already successful completed readback may
+reconcile actual main bytes. Unexpected growth, allocation/fence failure and
+panic poison admission before slot/state acceptance; a poisoned ledger is never
+reset from a fresh sample.
+
+The private plan is 1286 complete pages totaling 785186816 bytes, plus a separate
+64MiB main IO capacity, exact public-vector/rotary pages and the sum of all
+simultaneously live source pages for a ten-expert fill. Dense/bank capacity and
+actual baseline are checked separately to avoid double charging. The next layer
+router completes prior fills before the source reservation can be reused.
+Cached projection hits no longer query memory_usage and force an extra queue
+submission. These are resource and submission changes, not a new deadline.
+
+Independent source review found no admission blocker. Both physical GPUs pass
+the four-token graph, cancellation at queued GDN0/QSA3, full-arena erasure,
+poisoned retry rejection and fresh first-token parity using the new ledger.
+The connected graph still uses the public arena policy at this receipt; do not
+substitute admission success for full private-staging acceptance. Long fixture
+and capacity-option receipts remain separate.

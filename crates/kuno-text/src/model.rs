@@ -285,6 +285,14 @@ impl<'model, 'file> BoundGraph<'model, 'file> {
     pub fn static_vector(self, name: &str) -> Result<&'model [f32]> {
         self.model.values(name)
     }
+    /// Immutable public vectors from the successfully admitted graph only.
+    /// Allows a device owner to prewarm/account these weights before requests.
+    pub fn static_vectors(self) -> impl Iterator<Item = (&'model str, &'model [f32])> + 'model {
+        self.model
+            .vectors
+            .iter()
+            .map(|(name, values)| (name.as_str(), values.as_slice()))
+    }
     /// Retain the existing scalar hash oracle for row selection. Each request
     /// creates its own PleTokenHistory; never share history in a public cache.
     pub fn ple_hash(self) -> &'model PleHashConfig {
@@ -1170,6 +1178,10 @@ mod tests {
         assert!(graph.static_vector("invalid_norm.weight").is_err());
         assert!(graph.static_vector("small_matrix.weight").is_err());
         assert_eq!(graph.static_vector("small_norm.weight").unwrap(), [2., 3.]);
+        assert_eq!(
+            graph.static_vectors().collect::<Vec<_>>(),
+            [("small_norm.weight", &[2., 3.][..])]
+        );
         let tensor = graph.tensor("small_matrix.weight").unwrap();
         assert!(tensor.belongs_to(&file));
         assert_eq!(tensor.info().dimensions(), [2, 2]);

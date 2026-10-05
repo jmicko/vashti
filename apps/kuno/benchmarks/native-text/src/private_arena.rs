@@ -20,8 +20,11 @@
 //! Any initialization/backend/cleanup failure retires the SHARED context flag;
 //! the worker must stop using this device context, including public caches.
 //! Failure does not prove erasure; context/process recovery remains root-owned.
-//! Runtime-owned upload/staging/readback copies are outside this owner and
-//! still require a separate privacy audit. No content or backend error payload
+//! new() retains the original PUBLIC fixture upload/sync policy. new_transient
+//! opts into owned runtime I/O and bounded sanitizer cleanup. Its caller must
+//! provision enough I/O budget for ALL eraser uniforms after a checkpoint;
+//! the arena never falls back to an ordinary upload or unbounded sync.
+//! Runtime-owned I/O needs separate device audit acceptance. No content or backend error payload
 //! is logged. No device initialization occurs here or in host tests.
 
 use std::marker::PhantomData;
@@ -254,6 +257,11 @@ fn sync(client: &ComputeClient<WgpuRuntime>) -> Result<()> {
 
 struct Upload(Vec<u8>);
 impl Upload {
+    fn into_vec(mut self) -> Vec<u8> {
+        // Transfer the original allocation; empty Upload Drop cannot erase or
+        // release the moved bytes. Runtime immediately installs its wipe guard.
+        std::mem::take(&mut self.0)
+    }
     fn zeroed(layout: BufferLayout) -> Result<Self> {
         let mut data = Vec::new();
         data.try_reserve_exact(layout.owned_bytes)
@@ -282,6 +290,38 @@ impl Upload {
         Ok(upload)
     }
 }
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum IoPolicy {
+    PublicFixture,
+    OwnedTransient,
+}
+
+/// Same cleanup transaction drives the native owner and fault-injected host
+/// fixtures. The first checkpoint frees prior staging/uniform budget BEFORE
+/// the main erasers allocate metadata. No error skips a known main span or the
+/// second checkpoint, and a prior failure cannot become accepted cleanup.
+trait TransientCleanup {
+    fn checkpoint(&mut self) -> Result<()>;
+    fn erase(&mut self, slot: usize) -> Result<()>;
+}
+fn cleanup_transient(
+    backend: &mut impl TransientCleanup,
+    buffers: usize,
+    previous_failure: bool,
+) -> Result<()> {
+    let mut failed = previous_failure;
+    failed |= backend.checkpoint().is_err();
+    for slot in 0..buffers {
+        failed |= backend.erase(slot).is_err();
+    }
+    failed |= backend.checkpoint().is_err();
+    if failed {
+        Err(ArenaError::Cleanup)
+    } else {
+        Ok(())
+    }
+}
 impl Drop for Upload {
     fn drop(&mut self) {
         let pointer = self.0.as_mut_ptr();
@@ -296,11 +336,26 @@ impl Drop for Upload {
     }
 }
 
+/// Borrowed ownership prevents a write/error callback from discarding the
+/// destination owner. Only its handle clone and the original guarded Vec move
+/// into the backend; failures leave the owning handle slice untouched.
+fn write_owned_upload<H: Clone>(
+    handles: &[H],
+    slot: usize,
+    upload: Upload,
+    write: impl FnOnce(H, Vec<u8>) -> Result<()>,
+) -> Result<()> {
+    let handle = handles.get(slot).ok_or(ArenaError::Initialization)?.clone();
+    write(handle, upload.into_vec())
+}
+
 pub struct PrivateArena {
     client: ComputeClient<WgpuRuntime>,
     ledger: Ledger,
     handles: Vec<Handle>,
     retired: Arc<AtomicBool>,
+    io_policy: IoPolicy,
+    closed_clean: bool,
     // CubeCL default stream depends on the current thread. Pin all arena
     // construction, commands, cleanup and Drop to the same worker thread.
     _same_thread: PhantomData<Rc<()>>,
@@ -322,8 +377,45 @@ impl PrivateArena {
             ledger: Ledger::new(budget_bytes)?,
             handles: Vec::new(),
             retired,
+            io_policy: IoPolicy::PublicFixture,
+            closed_clean: false,
             _same_thread: PhantomData,
         })
+    }
+    /// Opt-in laboratory ownership on one serialized worker/client stream.
+    /// The client must use required_memory_configuration before any allocation.
+    /// Configuration failure retires the shared context without a fallback.
+    pub fn new_transient(
+        client: ComputeClient<WgpuRuntime>,
+        budget_bytes: usize,
+        io_budget_bytes: u64,
+        retired: Arc<AtomicBool>,
+    ) -> Result<Self> {
+        let mut arena = Self::new(client, budget_bytes, retired)?;
+        arena.io_policy = IoPolicy::OwnedTransient;
+        let configured = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            arena.client.configure_transient_io(io_budget_bytes)
+        }));
+        if !matches!(configured, Ok(Ok(()))) {
+            arena.retired.store(true, Ordering::Release);
+            arena.ledger.closed = true;
+            return Err(ArenaError::Initialization);
+        }
+        Ok(arena)
+    }
+    /// PRECONDITION: the root has already configured bounded transient I/O on
+    /// this SAME serialized stream. Several request arenas may share it.
+    /// Actual private writes/checkpoints reject an unconfigured backend; there
+    /// is no ordinary-I/O fallback and failure retires the shared context.
+    #[allow(dead_code)] // Reserved for the root's paired main/I/O arena owner.
+    pub(crate) fn new_transient_on_configured(
+        client: ComputeClient<WgpuRuntime>,
+        budget_bytes: usize,
+        retired: Arc<AtomicBool>,
+    ) -> Result<Self> {
+        let mut arena = Self::new(client, budget_bytes, retired)?;
+        arena.io_policy = IoPolicy::OwnedTransient;
+        Ok(arena)
     }
     fn active(&self) -> Result<()> {
         if self.ledger.closed {
@@ -384,11 +476,14 @@ impl PrivateArena {
             .try_reserve(1)
             .map_err(|_| ArenaError::HostAllocation)?;
         let id = self.ledger.reserve(layout)?;
-        let allocated =
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match upload.as_ref() {
-                Some(bytes) => self.client.create_from_slice(&bytes.0),
-                None => self.client.empty(layout.owned_bytes),
-            }));
+        let allocated = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            match (self.io_policy, upload.as_ref()) {
+                (IoPolicy::PublicFixture, Some(bytes)) => self.client.create_from_slice(&bytes.0),
+                // Own a separately allocated FULL main span BEFORE a private
+                // write can fail; create_private cannot return its handle on Err.
+                _ => self.client.empty(layout.owned_bytes),
+            }
+        }));
         let handle = match allocated {
             Ok(h) => h,
             Err(_) => {
@@ -406,16 +501,43 @@ impl PrivateArena {
             self.fail();
             return Err(ArenaError::DeviceAllocation);
         }
-        let initialized = if upload.is_some() {
-            sync(&self.client)
-        } else {
-            self.queue_erase(id.slot).and_then(|()| sync(&self.client))
+        let initialized = match self.io_policy {
+            IoPolicy::PublicFixture if upload.is_some() => sync(&self.client),
+            IoPolicy::PublicFixture => self.queue_erase(id.slot).and_then(|()| sync(&self.client)),
+            IoPolicy::OwnedTransient => self.initialize_transient(id.slot, upload),
         };
         if initialized.is_err() {
             self.fail();
             return Err(ArenaError::Initialization);
         }
         Ok(id)
+    }
+    fn checkpoint_transient(&self) -> Result<()> {
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            cubecl::future::block_on(self.client.sanitize_transient_io())
+        })) {
+            Ok(Ok(_counts)) => Ok(()),
+            _ => Err(ArenaError::Cleanup),
+        }
+    }
+    fn initialize_transient(&self, slot: usize, upload: Option<Upload>) -> Result<()> {
+        // Destination is already tracked. Free old I/O budget before a write
+        // or eraser uniform, then accept only after bounded submission/drain.
+        self.checkpoint_transient()?;
+        match upload {
+            Some(upload) => {
+                write_owned_upload(&self.handles, slot, upload, |handle, data| {
+                    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        self.client.write_private(handle, data)
+                    })) {
+                        Ok(Ok(())) => Ok(()),
+                        _ => Err(ArenaError::Initialization),
+                    }
+                })?;
+            }
+            None => self.queue_erase(slot)?,
+        }
+        self.checkpoint_transient()
     }
     fn queue_erase(&self, slot: usize) -> Result<()> {
         let layout = self
@@ -445,6 +567,22 @@ impl PrivateArena {
         }
     }
     fn erase_and_drain(&self) -> Result<()> {
+        if self.io_policy == IoPolicy::OwnedTransient {
+            struct Native<'a>(&'a PrivateArena);
+            impl TransientCleanup for Native<'_> {
+                fn checkpoint(&mut self) -> Result<()> {
+                    self.0.checkpoint_transient()
+                }
+                fn erase(&mut self, slot: usize) -> Result<()> {
+                    self.0.queue_erase(slot)
+                }
+            }
+            return cleanup_transient(
+                &mut Native(self),
+                self.handles.len(),
+                self.retired.load(Ordering::Acquire),
+            );
+        }
         // Even if the first drain fails, attempt erasure of EVERY known buffer,
         // then another sync. A failed first drain still retires the context.
         let mut failed = sync(&self.client).is_err();
@@ -463,7 +601,7 @@ impl PrivateArena {
         self.ledger.closed = true;
         // Keep handles/spans if cleanup fails so Drop can retry; never imply
         // that a failed erasure returned clean memory to the pool.
-        if self.erase_and_drain().is_ok() {
+        if self.erase_and_drain().is_ok() && self.io_policy == IoPolicy::PublicFixture {
             self.handles.clear();
             self.ledger.close_after_erasure();
         }
@@ -486,9 +624,13 @@ impl PrivateArena {
     /// Idempotent after success. On failure the context remains retired and
     /// retained tracked handles allow a later close/Drop best-effort retry.
     pub fn close(&mut self) -> Result<()> {
+        if self.closed_clean {
+            return Ok(());
+        }
         self.ledger.closed = true;
-        if self.handles.is_empty() {
+        if self.handles.is_empty() && self.io_policy == IoPolicy::PublicFixture {
             self.ledger.close_after_erasure();
+            self.closed_clean = true;
             return Ok(());
         }
         if self.erase_and_drain().is_err() {
@@ -497,6 +639,7 @@ impl PrivateArena {
         }
         self.handles.clear();
         self.ledger.close_after_erasure();
+        self.closed_clean = true;
         Ok(())
     }
 }
@@ -509,6 +652,89 @@ impl Drop for PrivateArena {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn moved_upload_keeps_owned_destination_on_write_error_and_unwind() {
+        use cubecl::bytes::AllocationController;
+        use cubecl_runtime::transient::PrivateHostAllocation;
+        let memory = Rc::new(());
+        let handles = vec![memory.clone()];
+        for panic in [false, true] {
+            let upload = Upload::words(BufferLayout::new(2).unwrap(), &[7, 9]).unwrap();
+            let pointer = upload.0.as_ptr();
+            let attempted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                write_owned_upload(&handles, 0, upload, |handle, data| {
+                    assert_eq!(handles.len(), 1); // already retained during write
+                    assert!(Rc::ptr_eq(&handle, &memory));
+                    assert_eq!(data.as_ptr(), pointer); // original heap moved
+                    let guarded = PrivateHostAllocation::from_vec(data);
+                    assert_eq!(guarded.memory().as_ptr().cast::<u8>(), pointer);
+                    if panic {
+                        panic!("synthetic private write panic")
+                    }
+                    Err(ArenaError::Initialization)
+                })
+            }));
+            assert!(!matches!(attempted, Ok(Ok(()))));
+            assert_eq!(handles.len(), 1);
+            assert!(Rc::ptr_eq(&handles[0], &memory));
+            assert_eq!(Rc::strong_count(&memory), 2);
+        }
+    }
+
+    #[test]
+    fn transient_cleanup_checkpoints_before_uniforms_and_never_releases_on_fault() {
+        struct Fake {
+            events: Vec<(char, usize)>,
+            checkpoints: usize,
+            failure: usize,
+        }
+        impl TransientCleanup for Fake {
+            fn checkpoint(&mut self) -> Result<()> {
+                self.events.push(('c', self.checkpoints));
+                self.checkpoints += 1;
+                if self.failure == self.events.len() {
+                    Err(ArenaError::Cleanup)
+                } else {
+                    Ok(())
+                }
+            }
+            fn erase(&mut self, slot: usize) -> Result<()> {
+                self.events.push(('e', slot));
+                if self.failure == self.events.len() {
+                    Err(ArenaError::Cleanup)
+                } else {
+                    Ok(())
+                }
+            }
+        }
+        for failure in 0..=6 {
+            let mut ledger = Ledger::new(3 * MIN_SPAN_BYTES).unwrap();
+            let ids: Vec<_> = (0..3)
+                .map(|_| ledger.reserve(BufferLayout::new(1).unwrap()).unwrap())
+                .collect();
+            let mut backend = Fake {
+                events: Vec::new(),
+                checkpoints: 0,
+                failure,
+            };
+            let result = cleanup_transient(&mut backend, 3, failure == 6);
+            assert_eq!(
+                backend.events,
+                [('c', 0), ('e', 0), ('e', 1), ('e', 2), ('c', 1)]
+            );
+            if result.is_ok() {
+                ledger.close_after_erasure();
+            }
+            assert_eq!(result.is_ok(), failure == 0);
+            if failure != 0 {
+                assert_eq!(ledger.charged, 3 * MIN_SPAN_BYTES);
+                assert!(ids.into_iter().all(|id| ledger.lookup(id).is_ok()));
+            } else {
+                assert_eq!(ledger.charged, 0);
+                assert!(ledger.closed);
+            }
+        }
+    }
     #[test]
     fn required_pool_bins_make_each_owned_span_an_entire_underlying_page() {
         let cubecl::MemoryConfiguration::Custom { pool_options } = required_memory_configuration()

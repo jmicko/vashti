@@ -119,7 +119,7 @@ fn selection(
 ) -> Result<([u32; SELECTED], [f32; SELECTED])> {
     if slots.len() != SELECTED
         || probabilities.len() != SELECTED
-        || !(SELECTED..=64).contains(&capacity)
+        || !(SELECTED..=crate::bank_slots::MAX_CAPACITY).contains(&capacity)
     {
         return Err(Error::InvalidBufferLength);
     }
@@ -819,6 +819,13 @@ mod tests {
             assert!(selection(&slots, &bad, 64).is_err());
         }
         assert!(selection(&slots, &[0.; 10], 64).is_err());
+        let extended = [71, 70, 69, 68, 67, 66, 65, 64, 1, 0];
+        assert_eq!(
+            selection(&extended, &p, 72).unwrap().0,
+            extended.map(|s| s as u32)
+        );
+        assert!(selection(&extended, &p, 71).is_err());
+        assert!(selection(&extended, &p, 73).is_err());
     }
     #[test]
     fn regions_reject_overlap_but_allow_adjacent_owned_spans() {

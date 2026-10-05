@@ -1,0 +1,144 @@
+{
+  "scope": "standalone native-text laboratory ownership sources; acceptance is recorded separately",
+  "upstream_git_commit": "7cf203735e095e640a2c03b2400d0faa03196bb4",
+  "crates": {
+    "cubecl-runtime": {
+      "version": "0.10.0",
+      "published_archive_sha256": "b68491bf5b3e997ae36bdc4e63b4ccd6d2f0e86b3b596a5d7a48d2b9e92622a0",
+      "git": {
+        "git": {
+          "sha1": "7cf203735e095e640a2c03b2400d0faa03196bb4"
+        },
+        "path_in_vcs": "crates/cubecl-runtime"
+      },
+      "licenses": [
+        "MIT",
+        "Apache-2.0"
+      ]
+    },
+    "cubecl-core": {
+      "version": "0.10.0",
+      "published_archive_sha256": "a7522e7acf25d7848032c7b5270780f9f2abe84e13c7ed6345aa27ba70c312ca",
+      "git": {
+        "git": {
+          "sha1": "7cf203735e095e640a2c03b2400d0faa03196bb4"
+        },
+        "path_in_vcs": "crates/cubecl-core"
+      },
+      "licenses": [
+        "MIT",
+        "Apache-2.0"
+      ]
+    },
+    "cubecl-wgpu": {
+      "version": "0.10.0",
+      "published_archive_sha256": "4d3663c6e1a86187172b2cee495b6b533e7d91a2cb37e26f421649e315fe4c3a",
+      "git": {
+        "git": {
+          "sha1": "7cf203735e095e640a2c03b2400d0faa03196bb4"
+        },
+        "path_in_vcs": "crates/cubecl-wgpu"
+      },
+      "licenses": [
+        "MIT",
+        "Apache-2.0"
+      ]
+    }
+  },
+  "unchanged_wgpu_version": "29.0.4",
+  "changed_files": [
+    {
+      "path": "cubecl-runtime/src/client.rs",
+      "sha256": "b543147df9d59d4505479148d8e77845d19758d8b48f060196f707c667a675d6",
+      "original_sha256": "dd25c67906e3db68d05d916d45234e4bdf20cd5b65ac1ad2b00a2ddcb520e85a"
+    },
+    {
+      "path": "cubecl-runtime/src/lib.rs",
+      "sha256": "90db6b6a2f984a47e225d3260acfb5066a5ab4cc920ec864d1404e63cce86d68",
+      "original_sha256": "634dc81833a5fc97bff56f433043948dba17dc6dfdfb81841cfed29df25fa5ab"
+    },
+    {
+      "path": "cubecl-runtime/src/server/base.rs",
+      "sha256": "2750fdc41ba303294456bf41348339e6d7fba00c972fe0a08b64e86a9f24c15a",
+      "original_sha256": "c6292c16d5a73d7a1570776ffd25ec10afc339b942dbc5a693d8c791feb8ef5b"
+    },
+    {
+      "path": "cubecl-runtime/src/transient.rs",
+      "sha256": "5b030003429bd16f9873addc0e3e7df942e5d7879d24322a81da493d78c07982",
+      "original_sha256": null
+    },
+    {
+      "path": "cubecl-core/src/codegen/info.rs",
+      "sha256": "aa4925a40d615df46ff6714b6c19f8e318808bd042c6220ad3a84b7227f50e19",
+      "original_sha256": "101db7b294959c99378e6727c55ab5aaec586aa0703a5ac4dba3930356eafba4"
+    },
+    {
+      "path": "cubecl-core/src/codegen/metadata.rs",
+      "sha256": "c1947738099716d2767558adb1b334f7f62c87883b49636243981dbc2d8ac55b",
+      "original_sha256": "eaf4244380ab9ba9f8a0148ac0e64645920067806fe6773a22ad7dbf12fedf6c"
+    },
+    {
+      "path": "cubecl-core/src/codegen/scalars.rs",
+      "sha256": "2ea7e68308e7d2513a9adfc1157f3cff59a442689dcd508b9d7f757ed446e24a",
+      "original_sha256": "857a2b849b56a661f4e114e994c2b34b693484d809a52d79eb21ec5fd2e0e758"
+    },
+    {
+      "path": "cubecl-core/src/compute/launcher.rs",
+      "sha256": "9fcaa7038e36dd25909ffb416ae3769ae411fd9bfefa3637be789ef976ea0223",
+      "original_sha256": "d0d51cf5685f648f77ca73ddaa7201eae4aa0a16e329790dbbddd260a173b4ae"
+    },
+    {
+      "path": "cubecl-core/src/compute/mod.rs",
+      "sha256": "31a3e0a24a22bd6fa6c7924016c8e63557c50be0da559f1f18b19a636ba48433",
+      "original_sha256": "e9fd5a553efb27f5468ccf0004a9f5828198a58d3880434a5f8e9212915817bd"
+    },
+    {
+      "path": "cubecl-core/src/compute/private_info.rs",
+      "sha256": "6b47b0e39fd080cfef1d05210ffb5a1c8b48fc3454ec148990a054d86b77d430",
+      "original_sha256": null
+    },
+    {
+      "path": "cubecl-core/src/lib.rs",
+      "sha256": "8e58e02d7894313dd69230378eb94cd5b776684b8ccbe6caf38024893f01624b",
+      "original_sha256": "5993d77c3f7c22d4297256f963bb3b7d6d196cdfc36f9ef0a59f65bc6a2a8d67"
+    },
+    {
+      "path": "cubecl-core/src/private.rs",
+      "sha256": "2f12195b11cad521dbb4ef61b029a1b90a63c574bc68f663f4c9679578136b3b",
+      "original_sha256": null
+    },
+    {
+      "path": "cubecl-wgpu/src/compute/cleanup_boundary.rs",
+      "sha256": "80383f9206e1d7582d31dee4a7daa333d25d30260eacdcf11bc2c12a593b097f",
+      "original_sha256": null
+    },
+    {
+      "path": "cubecl-wgpu/src/compute/mod.rs",
+      "sha256": "5e53e69b2556ae0aa0dab7056705b0ef80729db33837296f27b523f4c3c22a4d",
+      "original_sha256": "add8acb1b1f8e92c330be1e66f182317c328f3778821b28db425d176f10cfe6f"
+    },
+    {
+      "path": "cubecl-wgpu/src/compute/schedule.rs",
+      "sha256": "404288ccdfbde0436cecd682f6ead3a8e750e8999a04ff4a8fad7bb08f9c47be",
+      "original_sha256": "471669d4598f22d0405f8d5b8b46f696f8fc5e8a6305ca831645416bbc440157"
+    },
+    {
+      "path": "cubecl-wgpu/src/compute/server.rs",
+      "sha256": "a4daa678ac88c5b40ee296f097ab58488c94fd76b2531e8e4b25c2550050d90f",
+      "original_sha256": "a4840cd40e4541b27d93f0f08a211af96a0b50e272903fe97b74eec7a29a5903"
+    },
+    {
+      "path": "cubecl-wgpu/src/compute/stream.rs",
+      "sha256": "90b90e735fdbc83537311163e2cca295da1d2b02e60bf2ec0e44e68641ccc7d0",
+      "original_sha256": "97501594e0424c70cd65cbebfedf3b1f1578ecccb4b7ef1e3a873e85141cc35e"
+    },
+    {
+      "path": "cubecl-wgpu/src/compute/transient_io.rs",
+      "sha256": "21f48f16bad083a48381d013fc25af4e7ea955d75f400c15bb50738a68faf919",
+      "original_sha256": null
+    }
+  ],
+  "patch_sha256": "985bda86d7b7e0c2b954107b04506bc140bc655cb1d18b9daa158da48e000f32",
+  "lock_sha256": "b63c5bbf0b755839ed0a59bcf0c83c8ca87bb94ebd57933c7fccac21dcfaece5",
+  "host_lock_sha256": "b968a383901ba657bdc2b670a0c7d30fc8c6b8c7ae9335c7c231fb827f0b7acf"
+}
