@@ -29,6 +29,9 @@ pub(crate) mod shared_batch;
 #[path = "resident_ple_batch.rs"]
 pub(crate) mod ple_batch;
 
+#[path = "resident_batch_io.rs"]
+pub(crate) mod batch_io;
+
 enum Layer<'f> {
     Gdn(Box<ResidentGdn<'f>>, PublicGdnParameters),
     Qsa(

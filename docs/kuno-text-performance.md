@@ -1203,3 +1203,28 @@ Actual CPU/GPU calibration, mixed execution and an expert-only secondary GPU
 remain later experiments. MAX8 prompt batching alone cannot establish faster
 hot decode. No public API, model catalog/default, installed service or Vashti
 consumer behavior changes at this checkpoint.
+
+### Owning embedding and output I/O helpers
+
+The connected-model prerequisites now include bounded original embedding-row
+gather, router packet readback, final vocabulary readback and complete fault-page
+readback. These use the actual client/admission and full disjoint physical owners;
+no MAIN page is added. Embedding fills a preguarded full owning source and queues
+only. Router output fills an already-zeroed boxed guarded table, avoiding a move
+of the filled table on return. Final logits have exactly the admitted guarded
+capacity after full finite/fault/padding validation.
+
+Mandatory admission readback drops raw guarded leases inside its callback before
+checked audited I/O cleanup and forced normal checkpoint/credit. Failed, partial,
+empty or overflowing audit receipts retire the context. All errors/cancel/unwind
+poison the logical sequence; no helper commits state or grants model acceptance.
+Private host caps are768 KiB embedding,64 KiB router and2 MiB output. Audited I/O
+components are1,064,960 B embedding,81,920 B per router boundary and65,536 B for
+the second final fault proof, within the separately planned aggregate64 MiB cap.
+
+The composed root passes361 native host/offline tests, strict all-target Clippy,
+locked offline release, formatting/diff and peer source review. Core86 tests are
+unchanged. [The source receipt](../apps/kuno/benchmarks/text/receipts/rust-native-batch-io-source-20261005.json)
+pins exact interfaces/files/bounds. The unselected release binary has the same
+`27c25fea…` identity: these helpers still require a connected caller, and no
+device or performance claim follows from their source acceptance.

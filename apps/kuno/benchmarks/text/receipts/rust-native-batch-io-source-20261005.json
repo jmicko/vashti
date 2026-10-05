@@ -1,0 +1,54 @@
+{
+  "actual_interfaces": [
+    "enqueue_embedding: original bounded tensor rows, all four HC copies; queues only into full preowned residual destination.",
+    "read_router: full owning packet, active finite logits and zero inactive/padding/fault; boxed prezeroed guarded table.",
+    "read_last_logits: full original owning vocabulary packet, exact guarded output capacity, finite active and zero padding/fault.",
+    "read_fault: complete original owning fault page must be zero."
+  ],
+  "base_commit": "6c8131efd85692f0019cfa97e8a299e49cd2300f",
+  "date": "2026-10-05",
+  "delivered_patch_sha256": "4127574f038519ddbd537df5cfa42066d00dc69d80bc641a5699477ce3cd3c4f",
+  "delivered_provenance_sha256": "eb575f15bac064ae685d6669e3d82e9a09515475aae44900426d73aa0e9e4515",
+  "files_sha256": {
+    "apps/kuno/benchmarks/native-text/src/resident_batch_io.rs": "bc232b8edb8daf798af7f4bf93f6e1e3dd699fd4b0ebeeff9e8358155e2ac2bf",
+    "apps/kuno/benchmarks/native-text/src/resident_model.rs": "6c2bde8015ee015e967e7772d73797164ea6759e2d1bd04ce6319d6a4c0ee38c"
+  },
+  "frozen_executable": "/tmp/kuno-rust-native-io-source-v9-20261005",
+  "frozen_executable_sha256": "27c25fea8741017a090052118e95da102a062a159451ba4c919bc2af502b6950",
+  "limitations": [
+    "Whole-model coordinator supplies actual graph/sequence-bound same arena/admission/fault and must prove aggregate budget before allocation.",
+    "Host/offline fixture tests and peer review do not establish actual-device numerical or lifecycle acceptance.",
+    "No new end-to-end quality, timing or production worker claim."
+  ],
+  "memory": {
+    "embedding_audited_component": 1064960,
+    "embedding_private_host_cap": 786432,
+    "independent_runtime_IO_cap_unchanged": 67108864,
+    "new_MAIN_bytes": 0,
+    "output_map_plus_guarded_capacity": 2041856,
+    "output_private_host_cap": 2097152,
+    "router_48_boundaries": 3932160,
+    "router_boundary_audited_component": 81920,
+    "router_private_host_cap": 65536,
+    "second_fault_audited_component": 65536
+  },
+  "native_whole_model_device_accepted": false,
+  "ownership_and_failure": [
+    "Actual client/stream/full physical arena epoch/backing/disjointness verified before dispatch or map.",
+    "Actual ResidentAdmission forced readback; raw guarded leases scrubbed and dropped inside callback before checked audited IO sanitization and normal checkpoint/credit.",
+    "Nonempty audit with exact checked byte sum required; incomplete/failed/backend cleanup retires context.",
+    "Errors/cancellation/panic poison the actual same logical sequence; no deadline, lock-recursive Drop or alternate private upload fallback.",
+    "Helper does not grant whole-model acceptance or alter original committed histories/cursors/bank ledgers."
+  ],
+  "public_API_catalog_defaults_services_or_Vashti_changed": false,
+  "root_checks": {
+    "core_installed_checks_ignored": 2,
+    "focused_peer_review_no_material_blocker": true,
+    "format_and_diff_checks": true,
+    "locked_offline_release_build": true,
+    "native_host_offline_tests": 361,
+    "strict_all_target_clippy": true,
+    "unchanged_core_tests": 86
+  },
+  "scope": "native-MAX8-owning-embedding-router-output-IO-source-only"
+}
