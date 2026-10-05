@@ -865,3 +865,57 @@ No public contract or Vashti connector/UI changes are required. This receipt
 records authorized local installation, not publication or application/Android
 acceptance. No merge, push, release or task message was performed. Preserve the
 worktree and ignored producer artifacts until next-release integration.
+
+### Vashti beta.3 preparation receipt (2026-10-05)
+
+The pending reference-viewing/comparison feature is committed as `e67dd40`.
+The complete Kuno owner range after `4f9b465` through `ebd1925` is merged into
+`codex/image-flow-refinements` as `18935a8`, preserving both applications'
+coordination records. Vashti and Android are aligned at `0.13.0-beta.3`, with
+Android version code 13003. No public image contract or migration changed.
+
+All four release artifacts are prepared in
+`apps/vashti/dist/release/v0.13.0-beta.3`. The standard Kuno archive uses the
+verified `shared-rope-standard-v2` native source/build closure described in the
+active handoff, built with the ordinary native-image package script and no
+private Intel linkage. The optional archive is the exact approved ABI 2 bundle;
+its manifest checksum is
+`fc169dd2bf4418c2770940c85ec570f5b0a8c5ddaa21e32176cf839b36c88baa`.
+Versioned notes include explicit runtime replacement/enablement instructions
+and platform limits. Existing ABI 1 installs retain the one-shot fallback.
+
+| Target | Bytes | SHA-256 |
+| --- | ---: | --- |
+| linux-x86_64 | 9841269 | `8518c965354ffce7c5892c0fdf6e70adc28335bc548c32e2ca6db1be43d56e70` |
+| android-universal | 52322265 | `2e2326eafd8e06d148951f1b260fdcc85ad3c9bd08f16e23bb4ed10d166ee32e` |
+| kuno-linux-x86_64 | 456471447 | `8ab008c9c36647b7b84b6c5d7eb2436c05ea8a27435db0937a8b53f021ad1cfc` |
+| kuno-sycl-linux-x86_64 | 156247147 | `85d7aecb92e9e27af85f56bf5569d31feffd63d37955e7549ac081ab3e3e54a3` |
+
+Checks passed: locked Rust suites (345 passed, nine hardware/privilege tests
+ignored), frontend helpers (57), release packaging (four), Kuno packaging
+(eight), managed builder fixtures (six), formatting, whitespace, default and
+standard native-image all-target Clippy with warnings denied, and production
+web/native frontend builds. The complete four-artifact publisher signing
+dry-run and SHA256SUMS verification pass. APK signatures verify under the same
+certificate as beta.2; all four Android ABIs and the new version/code are present.
+
+The extracted Linux package started on an isolated loopback listener with a
+fresh data directory, completed migrations, served beta.3 `/api/version`, and
+rendered the bundled sign-in UI without browser errors. The smoke server and
+temporary browser tab were closed. Installed Kuno keyless discovery still
+reports three ready Standard-only workflows. No fresh GPU generation, installed
+service change, physical Pixel acceptance, or Android export/gesture test was
+performed in this release pass; the backend hardware and earlier application
+browser receipts retain their stated scope.
+
+The live Hub still lists beta.2 as its newest prerelease and v0.12.0 as stable.
+A read-only disk check found an 8 GiB EBS volume with a 7 GiB root partition,
+1,572,651,008 bytes available, and about 677 MiB of journals. Published artifact
+metadata accounts for 1,493,187,697 bytes. Beta.3 adds 674,882,128 bytes plus small
+metadata overhead; finalization hard-links the streamed upload files rather
+than duplicating their contents. Recheck free space immediately before upload.
+This does not authorize deleting releases/logs or resizing storage.
+
+**Publication pending:** all local checks are complete; a fresh one-time upload
+key has been requested. No upload, stable promotion, main-branch merge, Git push,
+Hub deployment or live Vashti/Kuno installation has occurred in this pass.
