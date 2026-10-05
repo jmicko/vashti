@@ -12,9 +12,11 @@ pub mod gguf;
 pub mod model;
 pub mod ops;
 pub mod quant;
+pub mod tokenizer;
 
 pub use gguf::{GgufFile, GgufLimits, MetadataValue, TensorInfo, TensorView};
 pub use quant::TensorType;
+pub use tokenizer::{Qwen35Tokenizer, TokenizerLimits, Utf8StreamDecoder};
 
 /// Errors deliberately omit file paths, metadata values and payload bytes.
 #[derive(Debug)]

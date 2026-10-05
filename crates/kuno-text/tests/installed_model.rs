@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use kuno_text::{GgufFile, GgufLimits, TensorType};
+use kuno_text::{GgufFile, GgufLimits, Qwen35Tokenizer, TensorType, TokenizerLimits};
 
 /// Deliberately ignored in normal CI: the artifact is not downloaded/copied by
 /// this test. Only public model geometry and individually bounded rows are read;
@@ -44,4 +44,25 @@ fn installed_qwen_geometry_and_individual_rows() {
     }
     assert_eq!(formats, BTreeSet::from([0, 1, 6, 8, 12, 14, 30]));
     model.verify_file_unchanged().unwrap();
+}
+
+#[test]
+#[ignore = "requires existing target GGUF and public raw fixture via KUNO_TEST_GGUF/KUNO_TEST_BASELINE"]
+fn installed_tokenizer_matches_ollama_raw_baseline_token_counts() {
+    let path = std::env::var_os("KUNO_TEST_GGUF").expect("KUNO_TEST_GGUF is required");
+    let fixture = std::env::var_os("KUNO_TEST_BASELINE").expect("KUNO_TEST_BASELINE is required");
+    let model = GgufFile::open(path, GgufLimits::default()).unwrap();
+    let tokenizer = Qwen35Tokenizer::from_gguf(&model, TokenizerLimits::default()).unwrap();
+    assert_eq!(tokenizer.vocabulary_len(), 248320);
+    assert_eq!(tokenizer.eos_token_id(), 248046);
+    assert_eq!(tokenizer.bos_token_id(), 248044);
+    let fixture: serde_json::Value =
+        serde_json::from_reader(std::fs::File::open(fixture).unwrap()).unwrap();
+    assert_eq!(fixture["fixture_kind"], "public_synthetic_benchmark");
+    for (key, count) in [("prompt", 75), ("alternate_prompt", 80)] {
+        let input = fixture[key].as_str().unwrap();
+        let encoded = tokenizer.encode(input, true).unwrap();
+        assert_eq!(encoded.len(), count);
+        assert_eq!(tokenizer.decode(&encoded).unwrap(), input);
+    }
 }

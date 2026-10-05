@@ -2,9 +2,17 @@ GGML packing layouts and scalar decoding equations were checked against ggml
 revision 4bf5f6000653b7881d00963cd6ddb665ccd62a8d. Kuno's reader and decoding
 implementation are safe Rust; no ggml library or C/C++ engine is linked.
 
+Qwen35 pretokenizer/special-token semantics were checked against llama.cpp
+revision 806eee9841de5f2c20f9d43914117f157d2baacc, src/llama-vocab.cpp, and
+Strata revision 6f32ec070f23ced9f50e704d854d775da52591ab,
+tools/strata_tokenizer.py. The synthetic test fixture's expected token IDs were
+generated with that pinned Python reference and regex 2025.11.3. No upstream
+inference engine is linked or invoked by Kuno's Rust tokenizer.
+
 MIT License
 
 Copyright (c) 2023-2026 The ggml authors
+Copyright (c) 2026 Niko1221 and the Strata contributors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
