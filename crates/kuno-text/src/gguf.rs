@@ -14,6 +14,10 @@ use std::time::SystemTime;
 
 use crate::{Error, Result, TensorType};
 
+#[path = "gguf_positional.rs"]
+mod positional;
+pub use positional::PositionalReader;
+
 #[derive(Clone, Debug)]
 pub struct GgufLimits {
     pub max_header_bytes: u64,
