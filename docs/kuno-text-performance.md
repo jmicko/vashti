@@ -1189,8 +1189,12 @@ this proof. The existing scalar router API is unchanged.
 
 Root acceptance passes350 native and86 core tests, with two installed checks
 ignored, strict all-target Clippy for both, locked offline release, formatting/
-diff and focused peer source review. The frozen executable is
-`27c25fea8741017a090052118e95da102a062a159451ba4c919bc2af502b6950`.
+diff and focused peer source review. The initially recorded frozen executable
+`27c25fea…` was an unrelated historical probe; its source association is invalid.
+[The forward correction](../apps/kuno/benchmarks/text/receipts/rust-native-artifact-binding-correction-20261005.json)
+retains the error and selects the current combined executable from actual Cargo
+artifact metadata. Source checks remain valid; no device acceptance came from
+that incorrect executable.
 [The exact source receipt](../apps/kuno/benchmarks/text/receipts/rust-native-moe-router-source-20261005.json)
 pins files, delivery identities and component bounds. This actual-bank adapter
 has no connected whole-model consumer or new physical acceptance yet; older
@@ -1225,6 +1229,57 @@ the second final fault proof, within the separately planned aggregate64 MiB cap.
 The composed root passes361 native host/offline tests, strict all-target Clippy,
 locked offline release, formatting/diff and peer source review. Core86 tests are
 unchanged. [The source receipt](../apps/kuno/benchmarks/text/receipts/rust-native-batch-io-source-20261005.json)
-pins exact interfaces/files/bounds. The unselected release binary has the same
-`27c25fea…` identity: these helpers still require a connected caller, and no
-device or performance claim follows from their source acceptance.
+pins exact interfaces/files/bounds. The earlier identical `27c25fea…` identity
+was an unrelated old probe, as recorded in the forward correction above; it did
+not prove dead-code elimination or the helper source association. Source checks
+remain valid, and no device or performance claim follows from them.
+
+## Connected native model laboratory (2026-10-05)
+
+Source `371b9d1` connects the actual48 original layers through native chunks of
+up to eight prompt tokens. It uses the original cached dense/GR/GDN/QSA/shared
+projections, authoritative CPU PLE histories, actual original staged expert banks
+and original guarded all-ten router. Intermediate chunks omit the complete final
+mixer/head; only the last original residual column reaches the final head.
+Subsequent ordinary scalar generation uses those accepted original model owners.
+
+The constructor charges retained scalar plus90 native pages before allocating:
+1,376 private pages/818,249,728 B and the same379 sealed original public vector
+entries/25,165,824 B. Explicit nine clear records add18,432 audited runtime bytes;
+complete runtime reserves64,000,000 B for this Q6 head and64,090,112 B for the
+worst supported F32 head, below64 MiB. Separate original bank-state capacity
+checks add512 KiB to controlled private host accounting:11,075,584 B below12 MiB.
+Existing native MoE candidate/next reserve stays intact. The
+[historical approved plan](kuno-native-text-model-batching.md) now records these
+implemented accounting corrections.
+
+Output acceptance completes the actual owning same-fault/output proof, guarded
+PLE maps/lease destruction/audit, a second same-fault/I/O/admission proof, and all
+family preflights before any state/bank publication. Cancellation/partial commit/
+unwind poisons the complete model; explicit model/executor-registry teardown runs
+outside admission guards. No healthy cursor/output or fallback follows failure.
+
+Root369 native tests, strict all-target Clippy, locked offline release and
+formatting/diff checks pass; core86 checks are unchanged. The
+[exact source receipt](../apps/kuno/benchmarks/text/receipts/rust-native-model-max8-source-20261005.json)
+records complete budgets and actual Cargo-selected executable
+`fca4b66911251cfcf8a74ce1399f0304e4f3f979e5dcedc688fd9e735d61ca15`.
+The default-off fixed-public flag `KUNO_LAB_NATIVE_MAX8=1` requires owned transient
+I/O; `KUNO_LAB_NATIVE_BATCH_COUNT=1..8` selects a contiguous public prompt partition.
+There is no new public API, catalog/default, installation or Vashti behavior.
+
+Initial protected device runs pass native `resident-bang` (actual partition `[1]`)
+and `resident-chat` (`[8,7]`) on both cards. Both produce original scalar public
+IDs and continue with ordinary scalar generation. Pre-enqueue cancel, queued
+native GDN layer0/QSA layer3 cancel, poisoned retry rejection and fresh native
+replay pass; each of four owner audits per run inspects all1,376 pages/
+818,249,728 B, with separate source/I/O cleanup and no context retirement. These
+are short fixed-public lifecycle smokes. Their complete reports and lifecycle
+observations are preserved in the
+[initial device receipt](../apps/kuno/benchmarks/text/receipts/rust-native-model-initial-device-20261005.json).
+The public runner in `apps/kuno/benchmarks/text/run-native-max8-lab.py` verifies
+Cargo executable identity, protected limits, complete model receipt and actual
+cancellation/cleanup messages; successful exit alone is insufficient. Other
+partitions, full75/128 output,
+whole-model long-context boundaries, injected failures, quality/options,
+compiler-idle matched performance and production worker/routing remain pending.

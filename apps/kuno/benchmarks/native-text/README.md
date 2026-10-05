@@ -103,8 +103,8 @@ general private worker/host lifecycle remain outside this proof.
 formats at counts 1/3/5/8 and tiles 4/8. Do not set `KUNO_LAB_TRANSIENT_IO` for this
 mode. `KUNO_LAB_MATMUL_TIMING=1` adds a fixed cached eight-vector ABBA comparison
 against eight legacy cooperative launches. Both cards pass numeric/full-span
-checks and show a cached operator gain. True layer-major causal prefill and a
-whole-engine speedup remain unimplemented; sequential step loops are not batching.
+checks and show a cached operator gain. The isolated operator does not establish
+whole-engine speedup; the connected model experiment is described below.
 
 `moe-word-probe`/`moe-word-bench` test the optional exact-schedule 16-thread down
 kernel. `KUNO_LAB_WORD_DOWN=1` can select it in full fixtures, but measured cached
@@ -146,3 +146,37 @@ are rejected. The 18 GiB bank plan fits the tested B70 with explicit6 GiB static
 cache and is rejected under the 3060 full-model limit. The short B70 chat passes,
 but a later long fixture fails runtime cleanup. No 96-slot default or longer
 acceptance is selected; ordinary bank/cache defaults remain unchanged.
+
+`KUNO_LAB_NATIVE_MAX8=1` connects actual layer-major prompt chunks to the original
+model owners. It requires `KUNO_LAB_TRANSIENT_IO=1` and accepts an explicit
+`KUNO_LAB_NATIVE_BATCH_COUNT=1..8` (default8). Intermediate chunks omit the final
+mixer/head; scalar output generation continues from the accepted original state.
+Both GPUs pass short bang/chat fixtures, including counts3 and8, native GDN/QSA
+cancellation, poisoned retry rejection and fresh-owner recovery. Four complete
+audits per run inspect1,376 private pages/818,249,728 B. Longer whole-model
+contexts, complete options/quality, production private workers and matched
+faster-than-Ollama performance remain pending. This flag stays off by default.
+
+The fixed-public runner selects the **actual `kuno-text-lab` executable from Cargo
+compiler-artifact JSON** and freezes its bytes by SHA256. Do not select the old
+`kuno-rust-gpu-probe` filename: it can remain in a reused target directory and its
+successful exit does not establish any model execution. Use a fresh receipt and
+unit name for each run:
+
+```bash
+cargo build --locked --offline --release --message-format=json \
+  --manifest-path apps/kuno/benchmarks/native-text/Cargo.toml \
+  > /tmp/kuno-native-cargo-artifacts.jsonl
+python3 apps/kuno/benchmarks/text/run-native-max8-lab.py \
+  --cargo-artifacts /tmp/kuno-native-cargo-artifacts.jsonl \
+  --model /path/to/existing/ollama/blob --card intel \
+  --fixture resident-chat --count 8 --run-id native-chat-intel-unique \
+  --receipt /tmp/kuno-native-chat-intel-unique.json
+```
+
+The runner checks the protected unit's actual swap/core/host bounds, exact public
+fixture partition/output and full audit/cancel/cleanup completion before writing
+its run record. Only compiled public bang/chat fixtures are accepted; never use
+it to retain private request data. Lab units have a900-second containment bound,
+which is unrelated to production inference. Diagnostic durations are not paired
+performance samples. See [current model acceptance](../../../../docs/kuno-text-performance.md#connected-native-model-laboratory-2026-10-05).

@@ -5,6 +5,7 @@
     "read_last_logits: full original owning vocabulary packet, exact guarded output capacity, finite active and zero padding/fault.",
     "read_fault: complete original owning fault page must be zero."
   ],
+  "artifact_correction_receipt": "rust-native-artifact-binding-correction-20261005.json",
   "base_commit": "6c8131efd85692f0019cfa97e8a299e49cd2300f",
   "date": "2026-10-05",
   "delivered_patch_sha256": "4127574f038519ddbd537df5cfa42066d00dc69d80bc641a5699477ce3cd3c4f",
@@ -14,7 +15,9 @@
     "apps/kuno/benchmarks/native-text/src/resident_model.rs": "6c2bde8015ee015e967e7772d73797164ea6759e2d1bd04ce6319d6a4c0ee38c"
   },
   "frozen_executable": "/tmp/kuno-rust-native-io-source-v9-20261005",
+  "frozen_executable_provenance_verified": false,
   "frozen_executable_sha256": "27c25fea8741017a090052118e95da102a062a159451ba4c919bc2af502b6950",
+  "frozen_executable_status": "Invalid source-to-executable association: historical kuno-rust-gpu-probe selected instead of Cargo bin kuno-text-lab. Source test/build results remain valid. No whole-model device acceptance was claimed.",
   "limitations": [
     "Whole-model coordinator supplies actual graph/sequence-bound same arena/admission/fault and must prove aggregate budget before allocation.",
     "Host/offline fixture tests and peer review do not establish actual-device numerical or lifecycle acceptance.",

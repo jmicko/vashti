@@ -6,6 +6,7 @@
     "Complete selected union protected before victim selection; bounded original public fills and checked owning interior dependencies; original all-ten rank order including zero probabilities.",
     "All scalar bank access blocked while native session is armed; explicit terminal teardown uses original checked executor close."
   ],
+  "artifact_correction_receipt": "rust-native-artifact-binding-correction-20261005.json",
   "base_commit": "0f31146cc0374d08a44c6dc78ebcd932260204b7",
   "date": "2026-10-05",
   "delivered_patches_sha256": {
@@ -27,7 +28,9 @@
     "crates/kuno-text/src/ops_router_guarded.rs": "cb40d3e0eae1398ad552d0f915df2355b29c4d090b128be4611e4d5cab388978"
   },
   "frozen_executable": "/tmp/kuno-rust-native-moe-source-v8-20261005",
+  "frozen_executable_provenance_verified": false,
   "frozen_executable_sha256": "27c25fea8741017a090052118e95da102a062a159451ba4c919bc2af502b6950",
+  "frozen_executable_status": "Invalid source-to-executable association: historical kuno-rust-gpu-probe selected instead of Cargo bin kuno-text-lab. Source test/build results remain valid. No whole-model device acceptance was claimed.",
   "limitations": [
     "New actual adapter and router consumer are not yet connected to complete model execution.",
     "Older grouped-fixture and scalar lifecycle receipts do not accept this adapter.",

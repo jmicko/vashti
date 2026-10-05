@@ -1425,16 +1425,20 @@ two installed checks ignored, strict all-target Clippy for both manifests,
 locked offline release, formatting/diff and focused peer source review.
 `rust-native-ple-bridge-source-20261005.json` pins the343/80 source checkpoint;
 `rust-native-moe-router-source-20261005.json` pins the current350/86 checkpoint
-and frozen binary `27c25fea8741017a090052118e95da102a062a159451ba4c919bc2af502b6950`.
+The `27c25fea…` frozen-binary association in those source-only receipts is
+invalid: an unrelated historical probe was selected. The forward correction
+`rust-native-artifact-binding-correction-20261005.json` preserves that error and
+selects the current combined model executable from actual Cargo metadata.
+Source checks are unaffected; the wrong artifact established no device acceptance.
 The approved complete constructor/chunk plan is linked above. Its actual
 coordinator is being developed in an isolated snapshot. Owning embedding/router/
 final-output/fault helpers are committed as `99f6e73`; composed root acceptance
 passes361 native tests, strict all-target Clippy, locked offline release,
 formatting/diff and focused peer review. Core86 tests are unchanged. The exact
 helper source/file/runtime/host bounds are recorded in
-`rust-native-batch-io-source-20261005.json`. Helpers add no MAIN pages and still
-have no selected whole-model caller; their unselected frozen executable has the
-same `27c25fea…` identity. All new native adapter/device acceptance remains pending.
+`rust-native-batch-io-source-20261005.json`. Helpers add no MAIN pages; the
+original source-only checkpoint preceded connection to the actual coordinator.
+Do not infer source provenance from the identical old-probe artifact identity.
 
 Separately, the original scalar model with optional finite-fault fusion passes
 fixed-public four-output inference and cancellation/poison/fresh-owner cleanup
@@ -1457,3 +1461,45 @@ changes: none at this internal checkpoint.** No public API/configuration,
 download/copy/conversion, installed service, frontend, release, driver, reset or
 reboot changed. Installed Kuno/Ollama listeners respond with no resident models;
 admission was not paused and all completed root GPU laboratory units are stopped.
+
+### Current connected native model checkpoint (2026-10-05)
+
+**Source `371b9d1`, after `bed3f96`/`99f6e73`, on `codex/kuno-native-text`.**
+This supersedes the coordinator-pending statements immediately above. Read
+[connected model acceptance](kuno-text-performance.md#connected-native-model-laboratory-2026-10-05)
+and the linked original constructor/chunk and decode plans before further work.
+Concurrent source work now uses managed Git worktrees from the agreed base;
+older snapshots remain preserved but are not integration authorities.
+
+The real48-layer native coordinator is connected. It charges all retained
+original/new pages and original bank-state metadata before fill, executes
+original causal/history/router math, completes two owning fault/I/O proofs and
+all-family preflight before publication, and continues scalar decode from the
+same accepted original model owners. Any failure terminally poisons that model;
+explicit registry cleanup runs outside admission guards. Both independent
+64-MiB I/O caps and existing GPU/cache/bank defaults are unchanged.
+
+Root acceptance passes369 native and86 unchanged core tests (two installed
+checks ignored), strict all-target Clippy, locked offline release and formatting.
+The source receipt is `rust-native-model-max8-source-20261005.json`. Correct
+Cargo-selected frozen executable SHA256 is `fca4b669…d61ca15`; the forward
+artifact-binding correction preserves the unrelated historical probe mistake.
+No device acceptance is attributed to the wrong probe.
+
+Both GPUs pass native fixed-public bang/chat, original scalar output IDs,
+pre-enqueue and queued native GDN/QSA cancellation, poisoned retry rejection,
+fresh-owner recovery and four complete1,376-page/818,249,728-byte private audits
+per run. `rust-native-model-initial-device-20261005.json` preserves the four
+initial count8 reports and exact lifecycle observations. Counts/longer contexts,
+full75/128 output, injected whole-model failures, options/quality, production
+private workers, faster matched Ollama inference and native-default/managed
+`ollama.` routing remain unaccepted. These short runs are diagnostic lifecycle
+acceptance, not a performance claim.
+
+The fixed-public protected runner binds the actual Cargo target/binary and checks
+full receipt plus cancellation/cleanup completion; lab-only containment has no
+bearing on production long-inference deadlines. Stage1 corrected Rust CPU expert
+operators are separately source-reviewed and await root integration and real
+CPU/GPU numeric/joint timing acceptance. **Required Vashti changes: none.** No
+public contract, installed service/configuration, frontend, release, driver,
+reset or reboot is changed by this internal checkpoint.

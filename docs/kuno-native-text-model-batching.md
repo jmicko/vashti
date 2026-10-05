@@ -1,8 +1,8 @@
 # Actual native MAX8 model connection
 
-Approved internal connection plan for `codex/kuno-native-text`. This is a plan, not whole-model implementation or device acceptance. See the existing [causal prefill contract](kuno-native-text-prefill.md) and [coordination handoff](kuno-vashti-coordination.md).
+Approved internal connection plan for `codex/kuno-native-text`, originally recorded before implementation. Experimental fixed-public whole-model source is now implemented by `371b9d1`; read [the current acceptance boundary](kuno-text-performance.md#connected-native-model-laboratory-2026-10-05). Initial device smokes do not establish the complete numerical, quality or performance matrix. See the existing [causal prefill contract](kuno-native-text-prefill.md) and [coordination handoff](kuno-vashti-coordination.md).
 
-Actual ResidentModel MAX8 coordinator — concrete connection plan, no implementation yet
+Actual ResidentModel MAX8 coordinator — historical approved connection plan
 
 Pinned clean root: 526f31dce211c9f9abdfc31cf44068c97460deb3 (source49cf147 + handoff526f31d).
 Isolated read-only source snapshot: /tmp/kuno-native-model-max8-plan-p_x045ha/work.
@@ -94,3 +94,10 @@ All mutation/partial construction/dispatch/router/selection/fill/map/cleanup/sta
 Acceptance and implementation slicing
 
 After plan approval: first guarded router prerequisite, then pure aggregate constructor/guarded gather +one REAL native chunk enqueue (defaultoff); next real owning router/final readback and second PLE proof +all-family acceptance; finally narrow fixed-public mode wiring/receipts. Each slice compiles real signatures against the actual native owners, no replacement fixture state. Preserve old scalar paths and all experimental defaults. Parent owns protected both-GPU counts1/3/5/8 original fullgraph parity, partitions/contexts4/2048/2049/2052, original fixed75/80 prompt+128 output, accepted chunk then scalar continuation, every family latefailure/poison/cancel/lease/cleanup/fresh-owner audit and exact whole ownedpage receipts. Device/operator receipt does not establish wholemodel quality or speed. Compiler-idle paired timing only AFTER full numeric/lifecycle acceptance; no whole-model connector selection, production worker, model catalog/API, installation or release is authorized here.
+
+
+## Implemented budget reconciliation (371b9d1)
+
+The original plan below used a conservative embedding8-INFO category but omitted explicit accounting for nine outer/scalar startup clears. The implemented aggregate adds18,432 audited runtime bytes without reducing another category: actual Q6 head64,000,000 B, worst F32 head64,090,112 B, margin3,018,752 B under the unchanged64 MiB cap.
+
+Original48 committed BankSlots receive a separate512 KiB application host reservation; actual Vec capacities are checked at constructor, each native filled layer and after publication. The64-bit max96/512 bound is507,264 B. Existing native MoE2 MiB candidate/next reserve remains intact. Complete controlled private application reservation is11,075,584 B under12 MiB, margin1,507,328 B. Private MAIN remains1,376 full pages/818,249,728 B; sealed original public vectors remain379entries/25,165,824 B. These implemented totals supersede the earlier plan figures. No component cap or public/default contract changed.
