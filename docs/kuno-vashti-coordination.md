@@ -1352,3 +1352,45 @@ transaction, matched Ollama improvement, options/quality and production private
 worker/routing acceptance remain outstanding. No Vashti consumer change is needed
 for this internal checkpoint; a future public native contract needs a separate
 backend and consumer handoff.
+
+### Latest native cached-layer and both-card checkpoint (2026-10-05)
+
+**Source/device receipt commit `49cf147`, after `d918a10`, on
+`codex/kuno-native-text`.** Read the
+[cached-layer source boundary](kuno-text-performance.md#native-cache-backed-layer-adapters-2026-10-05)
+and [both-card fixture acceptance](kuno-text-performance.md#both-card-layer-and-expert-fixture-acceptance-2026-10-05).
+This supersedes the device-pending and sudo-blocked statements of the preceding
+source checkpoints, while preserving their narrower fixture scope.
+
+Frozen `b7b2e409…` passes GDN4 numeric/4 rejection, PLE8 numeric/its4 rejection
+paths, and QSA24 numeric/4 rejection cases on each GPU. Frozen `0c1b3f55…`
+passes40 routed-expert numeric/12 rejection cases and a fresh independent owner
+after each rejection on each GPU. Complete reports, maxima, exact identities,
+owned-memory bounds and erasure evidence are in the new device receipts. Tests
+used verified user-unit swap/core limits; root authentication is no longer a
+prerequisite for this laboratory path. Admission was not paused, CPU builds were
+active, and unit runtimes are not benchmark measurements.
+
+New actual-cache GDN/QSA adapters, shared-expert batch workspace and last-column
+GR head are implemented and source-tested. Common sticky logical poison belongs
+to the actual admission; pending Drop does not reenter its mutex. All-family
+preflight and the completed whole-model fence remain mandatory before any state
+or bank publication. These new adapters are not covered by the older fixture
+receipts and have no selected whole-model consumer yet. Incremental full-page
+and I/O components are recorded; they do not approve an aggregate allocation.
+
+Root acceptance passes336 native host/offline tests, strict all-target Clippy,
+locked offline release, formatting and diff checks. Optional finite-fault probe
+`861b285a0dc581ec6c03c1d16dd7814269e33f1a103cbece43fc7ebd9416409e`
+passes28 original-format cases and owning cleanup on each GPU after harness
+initialization/nonfinite-upload fixes. It remains default-off. Exact source and
+device receipts are `rust-native-layer-adapters-source-20261005.json`,
+`rust-gdn-ple-qsa-device-20261005.json`, `rust-grouped-moe-device-20261005.json`
+and `rust-fused-matrix-fault-device-20261005.json` in the text receipts directory.
+
+Native actual-bank MoE/CPU-history PLE adapters, complete constructor/chunk
+transaction, full adapter/device acceptance, matched Ollama improvement,
+quality/options and production private-worker/native-default/managed `ollama.`
+routing remain outstanding. Installed Kuno/Ollama services respond and remain
+unchanged; no reset/reboot, API, catalog, route, frontend or installed binary
+changed. No Vashti consumer work is required for this internal checkpoint.
