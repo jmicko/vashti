@@ -64,6 +64,20 @@ impl<'a> Matrix<'a> {
         output: &mut [f32],
         cancel: &AtomicBool,
     ) -> Result<()> {
+        let result = self.apply_checked(expert, input, output, cancel);
+        if result.is_err() {
+            output.fill(0.);
+        }
+        result
+    }
+
+    fn apply_checked(
+        self,
+        expert: usize,
+        input: &[f32],
+        output: &mut [f32],
+        cancel: &AtomicBool,
+    ) -> Result<()> {
         if input.len() != self.inputs || output.len() != self.outputs || expert >= self.experts {
             return Err(Error::InvalidBufferLength);
         }
@@ -175,6 +189,34 @@ mod tests {
                 .apply(2, &[2., 3., 4.], &mut output, &cancel)
                 .is_err()
         );
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn invalid_input_and_changed_file_clear_entire_output() {
+        let (path, file) = fixture(3);
+        let matrix = Matrix::new(file.tensor("w").unwrap()).unwrap();
+        let cancel = AtomicBool::new(false);
+        let mut output = [99.; 2];
+        assert!(
+            matrix
+                .apply(0, &[f32::NAN, 3., 4.], &mut output, &cancel)
+                .is_err()
+        );
+        assert_eq!(output, [0.; 2]);
+        output.fill(99.);
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_len(0)
+            .unwrap();
+        assert!(
+            matrix
+                .apply(0, &[2., 3., 4.], &mut output, &cancel)
+                .is_err()
+        );
+        assert_eq!(output, [0.; 2]);
         std::fs::remove_file(path).unwrap();
     }
 

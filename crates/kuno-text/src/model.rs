@@ -4,7 +4,9 @@
 //! exact operators and bounded read-only weights; performance, production
 //! sampling, and worker privacy acceptance are separate milestones.
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+use zeroize::Zeroize;
 
 use crate::cpu::Matrix;
 use crate::ops::{
@@ -23,6 +25,7 @@ const TOP_K: usize = 10;
 const FF: usize = 640;
 const EPS: f32 = 1e-6;
 const MAX_REFERENCE_CONTEXT: usize = 4096;
+static NEXT_BINDING_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Backend owns computation, never graph semantics or model routing. All tensors
 /// retain their original mixed-format GGUF packing and expert row orientation.
@@ -113,6 +116,7 @@ pub struct Qwen4Exp<'a> {
     vectors: BTreeMap<String, Vec<f32>>,
     ple_hash: PleHashConfig,
     eos: u32,
+    binding_id: u64,
 }
 
 impl<'a> Qwen4Exp<'a> {
@@ -124,6 +128,17 @@ impl<'a> Qwen4Exp<'a> {
             != Some("qwen4exp")
         {
             return Err(Error::InvalidFormat("unsupported native architecture"));
+        }
+        if file.metadata().keys().any(|key| {
+            key.starts_with("qwen4exp.rope.scaling")
+                || key == "qwen4exp.attention.scale"
+                || key == "qwen4exp.expert_weights_scale"
+        }) || file
+            .tensors()
+            .keys()
+            .any(|name| name.ends_with(".bias") && !name.ends_with(".ssm_dt.bias"))
+        {
+            return Err(Error::InvalidFormat("unsupported native graph override"));
         }
         for (suffix, expected) in [
             ("embedding_length", D),
@@ -168,7 +183,11 @@ impl<'a> Qwen4Exp<'a> {
             .get("qwen4exp.rope.freq_base")
             .and_then(MetadataValue::as_f64)
             .ok_or(Error::InvalidFormat("graph rope base"))?;
-        if (epsilon - EPS as f64).abs() > 1e-12 || theta != 10_000_000. {
+        if !epsilon.is_finite()
+            || !theta.is_finite()
+            || (epsilon - EPS as f64).abs() > 1e-12
+            || theta != 10_000_000.
+        {
             return Err(Error::InvalidFormat("unsupported graph normalization"));
         }
         if integers(file, "qwen4exp.ple.layers")? != [1]
@@ -197,11 +216,15 @@ impl<'a> Qwen4Exp<'a> {
         if eos != 248046 {
             return Err(Error::InvalidFormat("unsupported generation EOS"));
         }
+        let binding_id = NEXT_BINDING_ID
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+            .map_err(|_| Error::ArithmeticOverflow)?;
         let mut model = Self {
             file,
             vectors: BTreeMap::new(),
             ple_hash,
             eos,
+            binding_id,
         };
         for l in 0..LAYERS {
             let prefix = format!("blk.{l}.");
@@ -317,7 +340,11 @@ impl<'a> Qwen4Exp<'a> {
         if x.len() != dims[0] as usize || expert >= dims.get(2).copied().unwrap_or(1) as usize {
             return Err(Error::InvalidBufferLength);
         }
-        let output = executor.run(tensor, expert, x, cancel)?;
+        let mut output = executor.run(tensor, expert, x, cancel)?;
+        if cancel.load(Ordering::Relaxed) {
+            output.zeroize();
+            return Err(Error::InvalidFormat("graph cancelled"));
+        }
         if output.len() != dims[1] as usize || output.iter().any(|x| !x.is_finite()) {
             return Err(Error::InvalidFormat("graph executor output"));
         }
@@ -327,7 +354,7 @@ impl<'a> Qwen4Exp<'a> {
         self.eos
     }
     pub fn sequence(&self, context_limit: usize) -> Result<Sequence> {
-        Sequence::new(context_limit, &self.ple_hash)
+        Sequence::new(context_limit, &self.ple_hash, self.binding_id)
     }
     fn gr_read(
         &self,
@@ -591,6 +618,9 @@ impl<'a> Qwen4Exp<'a> {
             .zip(x)
             .map(|(w, v)| w * v)
             .sum::<f32>();
+        if !scalar.is_finite() {
+            return Err(Error::InvalidFormat("non-finite shared expert gate"));
+        }
         for (y, s) in result.iter_mut().zip(shared) {
             *y += ops::sigmoid(scalar) * s;
         }
@@ -609,7 +639,8 @@ impl<'a> Qwen4Exp<'a> {
         cancel: &AtomicBool,
         mut layer_complete: impl FnMut(usize),
     ) -> Result<Vec<f32>> {
-        if sequence.poisoned
+        if sequence.binding_id != self.binding_id
+            || sequence.poisoned
             || sequence.position >= sequence.context_limit
             || token as usize >= VOCAB
         {
@@ -718,11 +749,11 @@ impl QsaLayer {
     fn clear(&mut self) {
         for buffer in [&mut self.keys, &mut self.values, &mut self.indexer_keys] {
             buffer.resize(buffer.capacity(), 0.);
-            buffer.fill(0.);
+            buffer.as_mut_slice().zeroize();
             buffer.clear();
         }
         self.positions.resize(self.positions.capacity(), 0);
-        self.positions.fill(0);
+        self.positions.as_mut_slice().zeroize();
         self.positions.clear();
     }
 }
@@ -744,9 +775,10 @@ pub struct Sequence {
     context_limit: usize,
     position: usize,
     poisoned: bool,
+    binding_id: u64,
 }
 impl Sequence {
-    fn new(context_limit: usize, config: &PleHashConfig) -> Result<Self> {
+    fn new(context_limit: usize, config: &PleHashConfig, binding_id: u64) -> Result<Self> {
         if !(1..=MAX_REFERENCE_CONTEXT).contains(&context_limit) {
             return Err(Error::LimitExceeded("reference context"));
         }
@@ -768,6 +800,7 @@ impl Sequence {
             context_limit,
             position: 0,
             poisoned: false,
+            binding_id,
         })
     }
     pub fn position(&self) -> usize {
@@ -822,10 +855,24 @@ mod tests {
         assert!(greedy(&[0., f32::NAN]).is_err());
     }
     #[test]
+    fn integer_metadata_never_rounds_through_float() {
+        assert_eq!(
+            nonnegative(&MetadataValue::Signed(23703573157769)),
+            Some(23703573157769)
+        );
+        assert_eq!(
+            nonnegative(&MetadataValue::Unsigned(u64::MAX)),
+            Some(u64::MAX)
+        );
+        assert_eq!(nonnegative(&MetadataValue::Signed(-1)), None);
+        assert_eq!(nonnegative(&MetadataValue::Float(1.)), None);
+    }
+
+    #[test]
     fn sequence_reset_and_context_bound() {
-        assert!(Sequence::new(0, &PleHashConfig::qwen38()).is_err());
-        assert!(Sequence::new(4097, &PleHashConfig::qwen38()).is_err());
-        let mut seq = Sequence::new(1, &PleHashConfig::qwen38()).unwrap();
+        assert!(Sequence::new(0, &PleHashConfig::qwen38(), 1).is_err());
+        assert!(Sequence::new(4097, &PleHashConfig::qwen38(), 1).is_err());
+        let mut seq = Sequence::new(1, &PleHashConfig::qwen38(), 1).unwrap();
         seq.position = 1;
         seq.poisoned = true;
         seq.reset();

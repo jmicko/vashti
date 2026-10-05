@@ -1,8 +1,11 @@
 # Kuno native text foundations
 
-This crate is a Rust foundation for Kuno's future native
-text engine. It does not yet implement a model graph, generation,
-GPU execution or Ollama API integration. No other inference engine is linked.
+This crate contains a bounded Rust GGUF reader, Qwen35 byte BPE tokenizer,
+checked graph operators, and an experimental sequential Qwen4exp graph. The
+reference can generate tokens directly from the existing mixed-format model;
+no other inference engine is linked. It is not connected to Kuno HTTP routing,
+model discovery or the installed service. Production privacy/lifecycle and
+matched performance acceptance remain separate milestones.
 
 `GgufFile::open(path, GgufLimits)` parses little-endian GGUF v2/v3 and validates
 the complete tensor directory against the file. It keeps one read-only file
@@ -99,3 +102,27 @@ format and one 110-byte PLE row. It emits no weight values:
 ```sh
 KUNO_TEST_GGUF=/path/to/model.gguf cargo test -p kuno-text --test installed_model -- --ignored
 ```
+
+The graph's exact formulas and artifact scope are recorded in
+[the graph contract](../../docs/kuno-native-text-graph.md); live numeric receipts
+are in [the performance record](../../docs/kuno-text-performance.md). The
+`reference_step` and `reference_generate` examples are operator-only public
+synthetic probes, run with swap and core dumps disabled. They are not interfaces
+for real user content or request logging.
+
+`Qwen4Exp::bind(&GgufFile)` validates the supported geometry and loads bounded
+static norm/conv vectors. `sequence(context_limit)` creates separate transient
+state capped at 4096 tokens. `step(executor,sequence,token,cancel,progress)`
+executes all 48 layers, including PLE, all ten routed experts plus the shared
+expert, GDN and causal block-sparse attention, then returns vocabulary logits.
+Greedy sampling has a fixed ascending-ID tie rule; other sampling and vision
+are not implemented. Sequence state cannot cross model bindings. Execution
+errors discard partial state and require explicit reset. The model binding
+never contains request-dependent router, recurrent, KV or PLE caches.
+
+The crate denies unsafe code except two small audited volatile erase helpers
+in `ops.rs`. Model I/O, quant decoding and tokenization have no unsafe code.
+Returned token/logit/intermediate buffers remain the worker's cleanup
+responsibility. Protected subprocess containment, cancellation during long
+operators, crash cleanup, GPU memory erasure and concurrent-request acceptance
+are still required before production exposure.
