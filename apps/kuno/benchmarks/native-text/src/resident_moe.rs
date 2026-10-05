@@ -374,6 +374,17 @@ impl ResidentMoe {
     }
     /// Fixed-public operator diagnostic only. These IDs remain governed by
     /// the arena epoch and whole-operation fence; no host inference is added.
+    /// Read-only fixed-public lab inventory; the caller still proves actual
+    /// full resource/client/stream identity and nonaliasing before private fills.
+    pub(crate) fn fixed_public_probe_owners(&self) -> [(BufferId, usize); 5] {
+        [
+            (self.slots, SELECTED),
+            (self.probabilities, SELECTED),
+            (self.activations, self.layout.activation_words),
+            (self.partials, self.layout.partial_words),
+            (self.status, self.layout.status_words),
+        ]
+    }
     pub(crate) fn fixed_public_probe_outputs(&self) -> [(BufferId, usize); 2] {
         [
             (self.activations, self.layout.activation_words),
