@@ -68,7 +68,10 @@ fn transient_resident_mode(mode: &str, raw: Option<&str>) -> Result<bool, &'stat
         Some("1")
             if matches!(
                 mode,
-                "resident-bang" | "resident-chat" | "resident-rainwater"
+                "resident-bang"
+                    | "resident-chat"
+                    | "resident-rainwater"
+                    | "resident-lifecycle-probe"
             ) =>
         {
             Ok(true)
@@ -117,12 +120,6 @@ fn report_public_owned_zero_audit(
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // SOURCE-ONLY compile seam; parent replaces this with explicit fixed-public
-    // CLI registration after review. This pointer is never invoked by defaults.
-    let _lifecycle_source_only: fn(
-        &GgufFile,
-        resident_model::lifecycle_probe::RunConfig,
-    ) -> kuno_text::Result<serde_json::Value> = resident_model::lifecycle_probe::run;
     let vendor = match std::env::args().nth(1).as_deref() {
         Some("intel") => 0x8086,
         Some("nvidia") => 0x10de,
@@ -148,6 +145,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let public_owned_zero_audit =
         public_owned_zero_audit_mode(transient_resident, owned_audit_setting.as_deref())?;
+    if mode == "resident-lifecycle-probe" && (!transient_resident || !public_owned_zero_audit) {
+        return Err("lifecycle probe requires owned transient I/O and complete zero audits".into());
+    }
     let ordered_setting = match std::env::var("KUNO_LAB_ORDERED_PUBLIC_UPLOAD") {
         Ok(raw) => Some(raw),
         Err(std::env::VarError::NotPresent) => None,
@@ -298,6 +298,40 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         if mode == "transient-io-probe" {
             transient_probe::run(&client)?;
+            return Ok(());
+        }
+        if mode == "resident-lifecycle-probe" {
+            let path = std::env::var_os("KUNO_TEST_GGUF").ok_or("existing GGUF required")?;
+            let file = GgufFile::open(path, GgufLimits::default())?;
+            let retired = transient_context
+                .clone()
+                .ok_or("lifecycle probe requires the configured transient stream")?;
+            let mut receipt = resident_model::lifecycle_probe::run(
+                &file,
+                resident_model::lifecycle_probe::RunConfig {
+                    client: client.clone(),
+                    limits: grouped_limits.clone(),
+                    vendor,
+                    retired,
+                },
+            )?;
+            receipt["vendor"] = serde_json::json!(vendor);
+            receipt["weights"] = serde_json::json!("borrowed-unmodified-ollama-blob");
+            receipt["fixed_public_input"] = serde_json::json!("original tokenizer ! repeated4/8");
+            receipt["seed"] = serde_json::json!(424242);
+            receipt["performance_claim"] = serde_json::json!(false);
+            // The fixed-public runner returned only aggregate statistics after
+            // all actual owners closed. Never overwrite a prior lab receipt.
+            let target = std::env::var_os("KUNO_PUBLIC_RECEIPT")
+                .ok_or("fixed-public lifecycle receipt path required")?;
+            let output = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(target)?;
+            serde_json::to_writer_pretty(output, &receipt)?;
+            println!(
+                "public_actual_model_lifecycle_complete cases=22 owned_cleanup=true context_retired=false performance_claim=false"
+            );
             return Ok(());
         }
         for (rows, cols) in [(3usize, 5usize), (137, 257)] {
