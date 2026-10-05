@@ -109,6 +109,67 @@ pub fn status(arena: &PrivateArena, region: BufferId, fault_id: BufferId) -> Res
     );
     Ok(())
 }
+
+/// Fold only initialized active token rows. Inactive MAX8 status words may be
+/// zero or belong to earlier work; neither is evidence about this operation.
+/// Same-stream dispatch precedes scratch reuse and joins the final model fault.
+#[allow(clippy::collapsible_if)] // Cube DSL eagerly evaluates storage in AND operands.
+#[cube(launch)]
+fn verify_status_batch(
+    status: &Array<u32>,
+    fault: &mut Array<Atomic<u32>>,
+    count: usize,
+    first: usize,
+    stride: usize,
+    width: usize,
+) {
+    let token = CUBE_POS_Y as usize;
+    let element = ABSOLUTE_POS_X as usize;
+    // Cube DSL lowers boolean operands eagerly. Keep the storage read INSIDE
+    // the active-row branch so an inactive grid row never indexes a subregion.
+    if token < count && element < width {
+        if status[first + token * stride + element] != 1 {
+            fault[0].fetch_or(2);
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn status_batch(
+    arena: &PrivateArena,
+    region: BufferId,
+    fault_id: BufferId,
+    count: usize,
+    first: usize,
+    stride: usize,
+    width: usize,
+) -> Result<()> {
+    if region == fault_id || words(arena, fault_id)? != 1 {
+        return Err(Error::InvalidBufferLength);
+    }
+    crate::resident_batch_projection::validate_view(
+        count,
+        first,
+        stride,
+        width,
+        words(arena, region)?,
+    )?;
+    let CubeCount::Static(x, _, _) = grid(width)? else {
+        return Err(Error::InvalidBufferLength);
+    };
+    verify_status_batch::launch::<WgpuRuntime>(
+        arena.client().map_err(fault)?,
+        CubeCount::Static(x, crate::quant_matvec::matmul::MAX_BATCH as u32, 1),
+        CubeDim::new_1d(64),
+        arg(arena, region)?,
+        arg(arena, fault_id)?,
+        count,
+        first,
+        stride,
+        width,
+    );
+    Ok(())
+}
 pub fn zero(arena: &PrivateArena, id: BufferId) -> Result<()> {
     let layout = arena.layout(id).map_err(fault)?;
     crate::private_arena::erase_full_span::launch::<WgpuRuntime>(
@@ -396,7 +457,7 @@ mod tests {
         use cubecl::wgpu::WgslCompiler;
         use cubecl::{Compiler, KernelSettings, WgpuCompilationOptions};
         for mode in [ExecutionMode::Checked, ExecutionMode::Unchecked] {
-            for variant in 0..4 {
+            for variant in 0..5 {
                 let mut b = KernelBuilder::default();
                 b.scope
                     .register_type::<u32>(StorageType::Scalar(ElemType::UInt(UIntKind::U32)));
@@ -419,11 +480,25 @@ mod tests {
                     let x = b.input_array(Type::new(u)).into();
                     let y = b.output_array(Type::new(u)).into();
                     copy_words::expand(&mut b.scope, x, y);
-                } else {
+                } else if variant == 3 {
                     let x = b.input_array(Type::new(f)).into();
                     let fault = b.input_array(Type::new(u)).into();
                     let y = b.output_array(Type::new(u)).into();
                     fence_packet::expand(&mut b.scope, x, fault, y);
+                } else {
+                    let x = b.input_array(Type::new(u)).into();
+                    let fault = b.output_array(Type::new(a)).into();
+                    let args: Vec<NativeExpand<usize>> =
+                        (0..4).map(|_| b.scalar(u).into()).collect();
+                    verify_status_batch::expand(
+                        &mut b.scope,
+                        x,
+                        fault,
+                        args[0].clone(),
+                        args[1].clone(),
+                        args[2].clone(),
+                        args[3].clone(),
+                    );
                 }
                 let source = WgslCompiler::default()
                     .compile(
@@ -444,6 +519,31 @@ mod tests {
                 }
                 if variant == 3 {
                     assert!(source.contains("bitcast<u32>"));
+                }
+                if variant == 4 {
+                    let module = wgpu::naga::front::wgsl::parse_str(&source).unwrap();
+                    wgpu::naga::valid::Validator::new(
+                        wgpu::naga::valid::ValidationFlags::all(),
+                        wgpu::naga::valid::Capabilities::empty(),
+                    )
+                    .validate(&module)
+                    .unwrap();
+                    assert!(source.contains("atomicOr("));
+                    for index in 0..4 {
+                        assert!(
+                            source.contains(&format!("scalars_u32[{index}]")),
+                            "{source}"
+                        );
+                    }
+                    assert!(source.contains("global_id.x"), "{source}");
+                    assert!(source.contains("workgroup_id.y"), "{source}");
+                    let body = source.split("fn resident_util(").nth(1).unwrap();
+                    // The storage load must not be hoisted before the active
+                    // mask, especially for count1 variable-width QSA planes.
+                    assert!(
+                        body.find("if ").unwrap() < body.find("buffer_0_global[").unwrap(),
+                        "{source}"
+                    );
                 }
             }
         }

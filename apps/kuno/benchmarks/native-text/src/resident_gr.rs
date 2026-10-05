@@ -14,6 +14,10 @@ use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::sync::atomic::AtomicBool;
 
+// Candidate native-owner seam; scalar graph/defaults remain unchanged.
+#[path = "resident_gr_batch.rs"]
+pub(crate) mod batch;
+
 pub struct PublicVectors {
     client: ComputeClient<WgpuRuntime>,
     binding: GraphBindingId,

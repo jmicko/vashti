@@ -983,3 +983,56 @@ Receipts are
 which includes the shared cache-backed batch projector and sealed GDN owners.
 Earlier prepared `a1be34…` units describe an older frozen binary; do not
 substitute identities or infer device acceptance from this build.
+
+## Native GR workspace and owning expert-wave source checkpoint (2026-10-05)
+
+The laboratory now has a cache-backed native GR workspace and an owning grouped
+expert-wave fixture. Root acceptance passes300 native host/offline tests,
+strict all-target Clippy, locked offline release build, formatting and diff
+checks. The unchanged core acceptance is75 normal tests with two installed
+checks ignored. The frozen source executable is
+`0c1b3f553ae24ee497f2f9637324778582feeeb89b9427e0c451d67d157438f5`,
+at `/tmp/kuno-rust-native-batch-owner-benchmark-20261005`. This is source-only
+acceptance: there was no GPU run or installed service/API/default change.
+
+GR reuses the original cached packed projections and public norm vectors. Its
+ten MAX8 pages charge1,998,848 B, including the131,072 B mixed-input page. A
+prepared borrow prevents scratch reuse until the residual combine or final
+output head and their active finite folds are queued. The last head consumes
+only the last active mixed column; intermediate prompt chunks omit the entire
+final mixer/head. Abandoned/error capabilities poison the workspace. Available
+means consumers queued, not completed GPU acceptance or allocation credit.
+Peer review caught premature final mixed-input release; the explicit original
+head enqueue now retains that capability, and the focused recheck passes.
+
+The shared status fold validates complete active extents and checks the active
+row before loading storage. A nested shader branch is required because the
+Cube DSL eagerly lowers both operands of a logical AND. Checked/unchecked Naga
+validation and a source-order regression cover that guard. Existing scalar
+projection and status behavior remain unchanged.
+
+The expert-wave fixture binds the actual original graph, layer and bank
+generation, validates canonical pending mappings before mutation, and protects
+each complete wave union through bounded fill windows and completed consumers.
+Each source window has at most ten misses and40 MiB; independent runtime I/O
+remains64 MiB. Staged bank ledgers remain private: the routed operator never
+publishes the original ledger. Later waves preserve already completed rank
+partials. Cancellation, partial mutation, panic or unexpected runtime failure
+poison the owner and retire its physical context before best-effort erasure.
+Source credit follows owning lease destruction and verified I/O cleanup.
+
+The grouped fixture's private candidate plus scalar comparator charge1,998,848 B
+under2 MiB; guarded host inventory is15,872,000 B under32 MiB. Physical bank
+upper bounds, complete allocator baseline and the temporary source window fit
+its1 GiB MAIN cap. Forty positive, twelve rejection and twelve fresh-owner cases
+remain pending on both cards. These are operator fixtures, not a native
+full-model expert adapter, separate shared expert, full FFN or whole-model
+transaction. Neither source checks nor isolated operator improvements establish
+an Ollama speedup, private-worker acceptance or opaque GPU/abrupt-loss erasure.
+
+Exact source hashes, budgets, review boundaries and remaining work are recorded
+in `rust-native-gr-batch-source-20261005.json` and
+`rust-grouped-moe-chunk-source-20261005.json` under
+`apps/kuno/benchmarks/text/receipts`. Native GDN/QSA adapters and the complete
+layer-major transaction remain under implementation; no frontend change follows
+from this internal laboratory checkpoint.

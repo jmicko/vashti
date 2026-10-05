@@ -13,6 +13,8 @@ mod gdn_layer_batch;
 mod gdn_layer_batch_probe;
 mod gdn_pointwise;
 mod gr_batch_probe;
+mod grouped_moe_chunk;
+mod grouped_moe_chunk_probe;
 mod info_slab_probe;
 mod main_admission;
 mod matmul_probe;
@@ -38,7 +40,6 @@ mod resident_util;
 mod residual_batch_gpu;
 mod residual_gpu;
 mod small_cpu;
-#[cfg(test)]
 mod token_waves;
 mod transient_probe;
 use cubecl::prelude::*;
@@ -221,6 +222,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ..Default::default()
             })
             .await?;
+        let grouped_limits = adapter.limits();
         let gr_storage_alignment = adapter.limits().min_storage_buffer_offset_alignment as usize;
         let selected = init_device(
             WgpuSetup {
@@ -236,6 +238,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
         );
         let client = WgpuRuntime::client(&selected);
+        if mode == "grouped-moe-chunk-probe" {
+            return grouped_moe_chunk_probe::run(&client, &grouped_limits);
+        }
         if mode == "qsa-layer-batch-probe" {
             return qsa_layer_batch_probe::run(&client);
         }

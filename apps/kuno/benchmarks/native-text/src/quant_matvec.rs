@@ -485,8 +485,6 @@ pub mod moe_block;
 #[path = "segmented_moe.rs"]
 pub mod segmented_moe;
 
-// Candidate operator-only host/offline checks. Runtime wiring waits for the
-// owning wave/bank/arena wrapper and physical acceptance; no default selected.
-#[cfg(test)]
+// Opt-in fixed routed operator owner; ordinary graph selection is unchanged.
 #[path = "grouped_moe.rs"]
 pub mod grouped_moe;

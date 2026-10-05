@@ -39,6 +39,8 @@ pub fn validate_view(
 
 #[allow(dead_code)] // Pending full causal-owner composition; no default selection.
 pub trait BatchedResidentProjector {
+    /// Sealed stage owners must fold projections into their SAME model fault.
+    fn global_fault(&self) -> BufferId;
     #[allow(clippy::too_many_arguments)]
     fn enqueue_batch(
         &mut self,
@@ -57,6 +59,9 @@ pub struct ResidentBatchProjection<'e, 'f> {
     pub fault: BufferId,
 }
 impl BatchedResidentProjector for ResidentBatchProjection<'_, '_> {
+    fn global_fault(&self) -> BufferId {
+        self.fault
+    }
     fn enqueue_batch(
         &mut self,
         projection: BoundProjection<'_>,

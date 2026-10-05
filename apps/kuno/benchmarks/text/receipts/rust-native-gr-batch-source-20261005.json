@@ -1,0 +1,60 @@
+{
+  "scope": "Native laboratory source/offline only; no GPU or complete-model acceptance",
+  "source_base": "25246bc3531de3056e833e54aaa91ae1ff4f8021",
+  "combined_root_checks": {
+    "native_host_tests": 300,
+    "failed": 0,
+    "strict_all_target_clippy": true,
+    "locked_offline_release_build": true,
+    "format_and_diff_check": true
+  },
+  "frozen_executable": {
+    "path": "/tmp/kuno-rust-native-batch-owner-benchmark-20261005",
+    "sha256": "0c1b3f553ae24ee497f2f9637324778582feeeb89b9427e0c451d67d157438f5"
+  },
+  "public_api_default_or_service_change": false,
+  "whole_model_batching_or_ollama_speedup": false,
+  "component": "sealed native MAX8 GR workspace and shared active status folding",
+  "source_sha256": {
+    "apps/kuno/benchmarks/native-text/src/resident_gr_batch.rs": "220e0921ddcc53bb021258b1c70d9fb855e12159b3ca911d056823f5b17e8551",
+    "apps/kuno/benchmarks/native-text/src/resident_gr.rs": "7a89d01b3e70f5670503beb839a5f3ef5e67bef1beaf27a2701955577a7e5212",
+    "apps/kuno/benchmarks/native-text/src/resident_batch_projection.rs": "fe901457f563bb8028763b5f4d3b340071717b2d07386046cf5a7d6c25918b30",
+    "apps/kuno/benchmarks/native-text/src/resident_util.rs": "43e5fc95b005d957fe14b74f8f4cac2523463eb0ff51f5a04d0ee4f71e36d86a"
+  },
+  "focused_new_host_tests": 2,
+  "new_checked_unchecked_status_shader_variants": 2,
+  "budget": {
+    "new_main_pages": 10,
+    "new_full_main_bytes": 1998848,
+    "mixed_page_already_included_bytes": 131072,
+    "new_public_weights": 0,
+    "outer_residual_block_logits_and_whole_graph_io_not_in_this_component": true
+  },
+  "ownership": {
+    "original_cache_backed_projector": true,
+    "same_global_fault_before_mutation": true,
+    "sealed_workspace_ids_binding_geometry": true,
+    "private_full_page_and_original_public_gamma_owner_proof": true,
+    "scratch_borrow_retained_until_consumers_queued": true,
+    "abandoned_capability_poisons_workspace": true,
+    "whole_model_must_require_all_consumers_queued": true,
+    "last_active_column_head_queued_before_final_capability_release": true,
+    "intermediate_prompt_chunk_omits_final_mixer_and_head": true,
+    "no_readback_or_state_cursor_commit": true,
+    "active_status_folds_before_reuse": true,
+    "original_scalar_default_unchanged": true
+  },
+  "source_review": {
+    "arithmetic_signature_full_owner_borrow_review": "no other material issue identified",
+    "material_issue_repaired": "final mixed scratch previously released before output head consumer; now explicit enqueue_final_head consumes capability",
+    "focused_recheck_pending": false,
+    "focused_recheck": "passed: final head retains the prepared scratch borrow through original head enqueue, finite fold, and cancellation check; no further material issue identified; source review only"
+  },
+  "shader_regression": "Cube DSL eagerly evaluates AND operands; nested active row branch keeps first storage load after mask, checked/unchecked Naga and source-order regression pass",
+  "remaining": [
+    "Borrowed-cached native GR device numeric/alias/cancel/cleanup acceptance",
+    "Complete main and independent runtime IO admission and chunk owner",
+    "All other native GDN/QSA/PLE/MoE stage adapters and full-model comparison",
+    "No speed/private-worker/production acceptance from source checks"
+  ]
+}

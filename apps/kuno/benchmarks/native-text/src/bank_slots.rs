@@ -32,6 +32,7 @@ pub enum BankError {
     NoVictim,
     StalePlan,
     ModifiedPlan,
+    Allocation,
 }
 
 impl std::fmt::Display for BankError {
@@ -46,6 +47,7 @@ impl std::fmt::Display for BankError {
             Self::NoVictim => "no unprotected expert bank slot is available",
             Self::StalePlan => "expert bank plan is stale or belongs to another bank",
             Self::ModifiedPlan => "expert bank plan was modified after construction",
+            Self::Allocation => "expert bank bounded metadata allocation failed",
         })
     }
 }
@@ -258,6 +260,96 @@ impl BankSlots {
         })
     }
 
+    /// Validate a real pending plan against its complete original protected
+    /// selection BEFORE any public fill. Canonical arrays alone cannot prove
+    /// that a cached hit belongs to the caller's requested original expert.
+    pub fn validate_pending(&self, plan: &Plan, selected: &[usize]) -> Result<()> {
+        if plan.bank_id != self.bank_id || plan.base_revision != self.state.revision {
+            return Err(BankError::StalePlan);
+        }
+        if plan.slots != plan.canonical_slots
+            || plan.uploads != plan.canonical_uploads
+            || selected.len() != plan.slots.len()
+            || selected.len() > self.capacity()
+            || plan.next.slots.len() != self.capacity()
+            || plan.next.by_expert.len() != self.experts()
+        {
+            return Err(BankError::ModifiedPlan);
+        }
+        let delta = u64::try_from(selected.len()).map_err(|_| BankError::CounterOverflow)?;
+        let tick = self
+            .state
+            .tick
+            .checked_add(delta)
+            .ok_or(BankError::CounterOverflow)?;
+        let revision = if selected.is_empty() {
+            self.state.revision
+        } else {
+            self.state
+                .revision
+                .checked_add(1)
+                .ok_or(BankError::CounterOverflow)?
+        };
+        if plan.next.tick != tick || plan.next.revision != revision {
+            return Err(BankError::ModifiedPlan);
+        }
+        let mut upload_index = Zeroizing::new(0usize);
+        for (i, &expert) in selected.iter().enumerate() {
+            if expert >= self.experts() {
+                return Err(BankError::ExpertOutOfRange);
+            }
+            if selected[..i].contains(&expert) {
+                return Err(BankError::DuplicateExpert);
+            }
+            let slot = plan.slots[i];
+            let recency = self
+                .state
+                .tick
+                .checked_add(i as u64)
+                .and_then(|n| n.checked_add(1))
+                .ok_or(BankError::CounterOverflow)?;
+            if slot >= self.capacity()
+                || plan.next.by_expert[expert] != Some(slot)
+                || plan.next.slots[slot]
+                    .is_none_or(|r| r.expert != expert || r.last_used != recency)
+            {
+                return Err(BankError::ModifiedPlan);
+            }
+            if let Some(hit) = self.state.by_expert[expert] {
+                if slot != hit {
+                    return Err(BankError::ModifiedPlan);
+                }
+            } else {
+                if plan.uploads.get(*upload_index) != Some(&(expert, slot)) {
+                    return Err(BankError::ModifiedPlan);
+                }
+                *upload_index += 1;
+            }
+        }
+        if *upload_index != plan.uploads.len() {
+            return Err(BankError::ModifiedPlan);
+        }
+        // Prove the complete candidate forward/reverse ledger, not only misses.
+        for (slot, resident) in plan.next.slots.iter().enumerate() {
+            if let Some(resident) = resident
+                && (resident.expert >= self.experts()
+                    || resident.last_used > tick
+                    || plan.next.by_expert[resident.expert] != Some(slot))
+            {
+                return Err(BankError::ModifiedPlan);
+            }
+        }
+        for (expert, slot) in plan.next.by_expert.iter().enumerate() {
+            if let Some(slot) = slot
+                && (*slot >= self.capacity()
+                    || plan.next.slots[*slot].is_none_or(|r| r.expert != expert))
+            {
+                return Err(BankError::ModifiedPlan);
+            }
+        }
+        Ok(())
+    }
+
     /// Commit only after all planned uploads succeed. Stale/cross-bank or altered
     /// plans fail without changing residency. GPU upload rollback is external.
     pub fn commit(&mut self, mut plan: Plan) -> Result<()> {
@@ -271,6 +363,123 @@ impl BankSlots {
         // state and both route copies on success, and candidate state on error.
         std::mem::swap(&mut self.state, &mut plan.next);
         Ok(())
+    }
+}
+
+/// Private candidate ledger for one MAX8 chunk. Original slots are never
+/// mutated by planning or completed-wave advances. The owning GPU transaction
+/// must hold exclusive physical banks, validate origin before every mutation,
+/// and poison/drop those banks if any fill/consumer/cleanup fails.
+/// No Clone/Debug/serialization/persistence; candidate State wipes on Drop.
+pub struct StagedSlots {
+    source_bank_id: u64,
+    source_revision: u64,
+    candidate: BankSlots,
+    accepted_waves: usize,
+}
+impl StagedSlots {
+    pub fn begin(source: &BankSlots) -> Result<Self> {
+        // Establish wiping owners BEFORE copying any private residency data.
+        let mut slots = Zeroizing::new(Vec::new());
+        slots
+            .try_reserve_exact(source.capacity())
+            .map_err(|_| BankError::Allocation)?;
+        slots.extend_from_slice(&source.state.slots);
+        let mut by_expert = Zeroizing::new(Vec::new());
+        by_expert
+            .try_reserve_exact(source.experts())
+            .map_err(|_| BankError::Allocation)?;
+        by_expert.extend_from_slice(&source.state.by_expert);
+        Ok(Self {
+            source_bank_id: source.bank_id,
+            source_revision: source.state.revision,
+            candidate: BankSlots {
+                bank_id: source.bank_id,
+                state: State {
+                    slots: std::mem::take(&mut *slots),
+                    by_expert: std::mem::take(&mut *by_expert),
+                    tick: source.state.tick,
+                    revision: source.state.revision,
+                },
+            },
+            accepted_waves: 0,
+        })
+    }
+    pub fn validate_origin(&self, source: &BankSlots) -> Result<()> {
+        if self.source_bank_id != source.bank_id
+            || self.source_revision != source.state.revision
+            || self.candidate.capacity() != source.capacity()
+            || self.candidate.experts() != source.experts()
+        {
+            return Err(BankError::StalePlan);
+        }
+        Ok(())
+    }
+    pub fn plan(&mut self, source: &BankSlots, selected: &[usize]) -> Result<Plan> {
+        self.validate_origin(source)?;
+        if self.accepted_waves >= 8 {
+            return Err(BankError::SelectionTooLarge);
+        }
+        self.candidate.plan(selected)
+    }
+    pub fn validate_pending(
+        &self,
+        source: &BankSlots,
+        plan: &Plan,
+        selected: &[usize],
+    ) -> Result<()> {
+        self.validate_origin(source)?;
+        self.candidate.validate_pending(plan, selected)
+    }
+    /// Caller precondition: this exact plan's full copies/consumers completed,
+    /// owning controls/readiness/output/status/guards accepted, all Bytes leases
+    /// dropped and checked I/O cleanup accepted, cancellation/context clear.
+    /// This advances ONLY request-private candidate metadata, never the source.
+    pub fn advance_after_completed_consumers(
+        &mut self,
+        source: &BankSlots,
+        plan: Plan,
+        selected: &[usize],
+    ) -> Result<()> {
+        self.validate_pending(source, &plan, selected)?;
+        let next = self
+            .accepted_waves
+            .checked_add(1)
+            .ok_or(BankError::CounterOverflow)?;
+        if next > 8 {
+            return Err(BankError::SelectionTooLarge);
+        }
+        self.candidate.commit(plan)?;
+        self.accepted_waves = next;
+        Ok(())
+    }
+    pub fn accepted_waves(&self) -> usize {
+        self.accepted_waves
+    }
+
+    // No routed-only GPU fixture may publish original-bank metadata. A future
+    // whole-model owner must place publication behind its real whole-chunk
+    // fence. This pure host seam proves identity/revision/swap semantics only.
+    #[cfg(test)]
+    fn publish_host_fixture_only(
+        mut self,
+        source: &mut BankSlots,
+        expected_waves: usize,
+    ) -> Result<()> {
+        self.validate_origin(source)?;
+        if expected_waves == 0 || expected_waves != self.accepted_waves {
+            return Err(BankError::ModifiedPlan);
+        }
+        std::mem::swap(&mut source.state, &mut self.candidate.state);
+        Ok(())
+    }
+}
+impl Drop for StagedSlots {
+    fn drop(&mut self) {
+        self.source_bank_id.zeroize();
+        self.source_revision.zeroize();
+        self.accepted_waves.zeroize();
+        // candidate.State owns complete wiping Drop, including spare capacity.
     }
 }
 
@@ -526,5 +735,105 @@ mod tests {
             }
             bank.commit(plan).unwrap();
         }
+    }
+    #[test]
+    fn staged_real_generation_protects_hits_and_does_not_publish_between_waves() {
+        let mut source = BankSlots::new(16, 512).unwrap();
+        let seed: Vec<_> = (0..16).collect();
+        let p = source.plan(&seed).unwrap();
+        source.commit(p).unwrap();
+        let original = source.state.clone();
+        let mut staged = StagedSlots::begin(&source).unwrap();
+        let first = [16, 0, 1, 2, 3, 4, 5, 6, 7, 8];
+        let p = staged.plan(&source, &first).unwrap();
+        assert_eq!(p.uploads, [(16, 9)]); // All requested hits protected before first victim.
+        staged.validate_pending(&source, &p, &first).unwrap();
+        assert!(source.state == original);
+        staged
+            .advance_after_completed_consumers(&source, p, &first)
+            .unwrap();
+        assert_eq!(staged.accepted_waves(), 1);
+        assert!(source.state == original);
+        let second = [17, 18, 19, 20, 21, 22, 23, 24, 25, 26];
+        let p = staged.plan(&source, &second).unwrap();
+        staged
+            .advance_after_completed_consumers(&source, p, &second)
+            .unwrap();
+        assert_eq!(staged.accepted_waves(), 2);
+        assert!(source.state == original);
+        assert_eq!(staged.candidate.state.by_expert[16], None);
+        // Pure host only: eventual authorized whole-model publication swaps
+        // candidate state and wipes the previous ledger through owning Drop.
+        staged.publish_host_fixture_only(&mut source, 2).unwrap();
+        assert!(source.state != original);
+        assert_eq!(source.state.by_expert[17], Some(10));
+        assert_eq!(source.state.revision, original.revision + 2);
+    }
+
+    #[test]
+    fn staged_drop_cross_bank_stale_and_modified_pending_plans_cannot_publish() {
+        let mut source = BankSlots::new(16, 512).unwrap();
+        let selected: Vec<_> = (0..10).collect();
+        let original = source.state.clone();
+        {
+            let mut s = StagedSlots::begin(&source).unwrap();
+            let p = s.plan(&source, &selected).unwrap();
+            s.advance_after_completed_consumers(&source, p, &selected)
+                .unwrap();
+        }
+        assert!(source.state == original);
+        let mut s = StagedSlots::begin(&source).unwrap();
+        let foreign = BankSlots::new(16, 512).unwrap();
+        assert_eq!(s.validate_origin(&foreign), Err(BankError::StalePlan));
+        let mut p = s.plan(&source, &selected).unwrap();
+        p.slots.swap(0, 1);
+        assert_eq!(
+            s.validate_pending(&source, &p, &selected),
+            Err(BankError::ModifiedPlan)
+        );
+        drop(p);
+        let p = s.plan(&source, &selected).unwrap();
+        let mut wrong = selected.clone();
+        wrong[0] = 20;
+        assert_eq!(
+            s.validate_pending(&source, &p, &wrong),
+            Err(BankError::ModifiedPlan)
+        );
+        drop(p);
+        let mut p = s.plan(&source, &selected).unwrap();
+        p.next.by_expert[0] = Some(1);
+        assert_eq!(
+            s.validate_pending(&source, &p, &selected),
+            Err(BankError::ModifiedPlan)
+        );
+        drop(p);
+        let p = source.plan(&selected).unwrap();
+        source.commit(p).unwrap();
+        assert_eq!(s.validate_origin(&source), Err(BankError::StalePlan));
+        assert_eq!(
+            s.publish_host_fixture_only(&mut source, 1),
+            Err(BankError::StalePlan)
+        );
+    }
+
+    #[test]
+    fn staged_plan_cannot_advance_twice_or_publish_an_incomplete_chunk() {
+        let mut source = BankSlots::new(16, 512).unwrap();
+        let selected: Vec<_> = (0..10).collect();
+        let original = source.state.clone();
+        let mut s = StagedSlots::begin(&source).unwrap();
+        let stale = s.plan(&source, &selected).unwrap();
+        let accepted = s.plan(&source, &selected).unwrap();
+        s.advance_after_completed_consumers(&source, accepted, &selected)
+            .unwrap();
+        assert_eq!(
+            s.validate_pending(&source, &stale, &selected),
+            Err(BankError::StalePlan)
+        );
+        assert_eq!(
+            s.publish_host_fixture_only(&mut source, 2),
+            Err(BankError::ModifiedPlan)
+        );
+        assert!(source.state == original);
     }
 }
