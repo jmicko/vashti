@@ -1,0 +1,102 @@
+{
+  "acceptance": {
+    "case_count": 16,
+    "final_original_file_consistency_verified": true,
+    "nine_inactive_rank_tails_exact_zero": true,
+    "portable1_complete_partial_bit_equal_to_scalar64": true,
+    "raw_gate_up_rows_bit_equal_to_scalar64": true,
+    "unweighted_complete_partial_rows_bit_equal_to_scalar64": true
+  },
+  "backend": "Portable1 reference comparison and explicit AVX2 physical-core plans1/4/8/16",
+  "build_record": {
+    "cargo_snapshot_sha256": "894df6e3ed31df3bdace3b02e285df8d61376df45f5a48cee0c535ed5af80240",
+    "compiled_executable": "/tmp/kuno-cpu-original-probe-2c89851a0ff29d7fee2d948162a0e2b5e688eeb2d2776ef732f5f806d7c1acc5",
+    "compiled_executable_sha256": "2c89851a0ff29d7fee2d948162a0e2b5e688eeb2d2776ef732f5f806d7c1acc5",
+    "fixture": "public vectors only; originalQ4 gate/up andQ5/Q8 down, experts0/7; scalar64 reference +portable1 andAVX2 physical workers1/4/8/16; no GPU or timing claim"
+  },
+  "checks": [
+    {
+      "log_sha256": "569e8873631c251079df31f66f5a8c2e0f15011753814cdea189a0b0e883563a",
+      "name": "strict-example-Clippy",
+      "observed_exit": 0
+    },
+    {
+      "cargo_snapshot_sha256": "894df6e3ed31df3bdace3b02e285df8d61376df45f5a48cee0c535ed5af80240",
+      "name": "locked-offline-example-release",
+      "observed_exit": 0
+    }
+  ],
+  "compiled_public_expert_ids": [
+    0,
+    7
+  ],
+  "cpu": "AMD Ryzen 9 5900XT 16-Core Processor",
+  "date": "2026-10-05",
+  "fixture_source": "crates/kuno-text/examples/packed_expert_public_probe.rs",
+  "fixture_source_sha256": "4f6674b523901f35489612e301b743711363a83d6b1afa4e5c7b5e1af7401b53",
+  "input_formula": "((column % 29) - 14) / 512, columns0..2560, F32",
+  "limitations": [
+    "only two public experts per actual down format; not all-ten joint CPU/GPU numerical or whole-model acceptance",
+    "no GPU/timing claim; hot pages/thread setup cannot be inferred from unit runtime",
+    "systemd-reported256KiB MemoryPeak is not a trustworthy allocation measurement and is excluded",
+    "fixed-public fixture guards API-visible vectors; not production private worker/opaque register-stack erasure proof",
+    "CPU helpers remain uncalled by installed/native model; no API/default/frontend/installed/service/release changes"
+  ],
+  "matched_performance_claim": false,
+  "model": "existing original read-only Ollama blob89059c; no copied/converted weights",
+  "observed_unit_exit": 0,
+  "original_layers": [
+    {
+      "down": "Q5_0",
+      "gate_up": "Q4_K",
+      "layer": 6
+    },
+    {
+      "down": "Q8_0",
+      "gate_up": "Q4_K",
+      "layer": 0
+    }
+  ],
+  "protected_unit": "kuno-user-public-cpu-original-20261005-v1",
+  "protection": {
+    "core_limit": 0,
+    "inside_unit_verified": true,
+    "memory_max": 8589934592,
+    "swap_max": 0
+  },
+  "public_output_lines": [
+    "Running as unit: kuno-user-public-cpu-original-20261005-v1.service; invocation ID: e0bd3905b88749a09cd1a0614f8ce5e7",
+    "verified_lab_limits swap_max=0 core_soft=0 core_hard=0 memory_max=8589934592",
+    "public_cpu_original_numeric down_dtype=6 layer=6 workers=1 ranks=1 raw_rows=1280 partial_rows=2560 independent64_bit_match=true inactive_tail_zero=true",
+    "public_cpu_original_numeric down_dtype=6 layer=6 workers=4 ranks=1 raw_rows=1280 partial_rows=2560 independent64_bit_match=true inactive_tail_zero=true",
+    "public_cpu_original_numeric down_dtype=6 layer=6 workers=8 ranks=1 raw_rows=1280 partial_rows=2560 independent64_bit_match=true inactive_tail_zero=true",
+    "public_cpu_original_numeric down_dtype=6 layer=6 workers=16 ranks=1 raw_rows=1280 partial_rows=2560 independent64_bit_match=true inactive_tail_zero=true",
+    "public_cpu_original_numeric down_dtype=6 layer=6 workers=1 ranks=1 raw_rows=1280 partial_rows=2560 independent64_bit_match=true inactive_tail_zero=true",
+    "public_cpu_original_numeric down_dtype=6 layer=6 workers=4 ranks=1 raw_rows=1280 partial_rows=2560 independent64_bit_match=true inactive_tail_zero=true",
+    "public_cpu_original_numeric down_dtype=6 layer=6 workers=8 ranks=1 raw_rows=1280 partial_rows=2560 independent64_bit_match=true inactive_tail_zero=true",
+    "public_cpu_original_numeric down_dtype=6 layer=6 workers=16 ranks=1 raw_rows=1280 partial_rows=2560 independent64_bit_match=true inactive_tail_zero=true",
+    "public_cpu_original_numeric down_dtype=8 layer=0 workers=1 ranks=1 raw_rows=1280 partial_rows=2560 independent64_bit_match=true inactive_tail_zero=true",
+    "public_cpu_original_numeric down_dtype=8 layer=0 workers=4 ranks=1 raw_rows=1280 partial_rows=2560 independent64_bit_match=true inactive_tail_zero=true",
+    "public_cpu_original_numeric down_dtype=8 layer=0 workers=8 ranks=1 raw_rows=1280 partial_rows=2560 independent64_bit_match=true inactive_tail_zero=true",
+    "public_cpu_original_numeric down_dtype=8 layer=0 workers=16 ranks=1 raw_rows=1280 partial_rows=2560 independent64_bit_match=true inactive_tail_zero=true",
+    "public_cpu_original_numeric down_dtype=8 layer=0 workers=1 ranks=1 raw_rows=1280 partial_rows=2560 independent64_bit_match=true inactive_tail_zero=true",
+    "public_cpu_original_numeric down_dtype=8 layer=0 workers=4 ranks=1 raw_rows=1280 partial_rows=2560 independent64_bit_match=true inactive_tail_zero=true",
+    "public_cpu_original_numeric down_dtype=8 layer=0 workers=8 ranks=1 raw_rows=1280 partial_rows=2560 independent64_bit_match=true inactive_tail_zero=true",
+    "public_cpu_original_numeric down_dtype=8 layer=0 workers=16 ranks=1 raw_rows=1280 partial_rows=2560 independent64_bit_match=true inactive_tail_zero=true",
+    "public_cpu_original_numeric cases=16 complete=true performance_claim=false",
+    "Finished with result: success",
+    "Main processes terminated with: code=exited/status=0",
+    "Service runtime: 310ms",
+    "CPU time consumed: 369ms",
+    "Memory peak: 256.0K",
+    "Memory swap peak: 0B"
+  ],
+  "public_output_log_sha256": "1bb95a370264d4eae77abc57391d7997e4d85aca353663e280dcc0d20704b1e3",
+  "reference": "independent original TensorView row reader/TensorType decoder, lane+64*tile multiply/add and tree32/16/8/4/2/1, original sign-stable SiLU, one guarded decoded row; never calls CPU vector implementation or expands an entire expert",
+  "root_cpu_source_commit": "d1a0446",
+  "scope": "fixed-public-original-CPU-operator-numeric-only",
+  "source_sha256": {
+    "crates/kuno-text/src/cpu_expert.rs": "a4c58eacd22a9ca08a52b361fb6016428b773dd1b7396f11fcff731db2ebd9bb",
+    "crates/kuno-text/src/gguf_positional.rs": "3e9e0713e35a503f4e63c214bb47584f7ac870690b60a9ca3812e8c6665c8e7b"
+  }
+}

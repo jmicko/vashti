@@ -1554,8 +1554,11 @@ The root CPU-composed `b1ba040f…` artifact, actual `d1a0446` build snapshot
 native IDs, scalar continuation, fresh full-prefix replay, queued native GDN/QSA
 cancel, poisoned retry rejection and four complete1,376-page/818,249,728-byte
 private audits. `rust-native-model-full-intel-20261005.json` retains the entire
-report and exact identities. NVIDIA's full counterpart is running separately;
-do not attribute Intel acceptance to it before completed evidence.
+report and exact identities. NVIDIA's full counterpart is now complete with
+the same 128 original IDs, full-prefix fresh replay, native cancellation,
+poisoned retry rejection and all four MAIN/source audits. Both its worker and
+corrected outer runner exit 0; `rust-native-model-full-nvidia-20261005.json`
+preserves that separate completed evidence under the same exact binary.
 
 The first outer validator exited1 after the worker's success0 because it
 mistook cumulative audited source bytes for simultaneous live usage. Source
@@ -1572,3 +1575,27 @@ live in `docs/kuno-native-text-cpu-gpu-calibration.md` and
 `rust-cpu-gpu-calibration-plan-20261005.json`; implementation is isolated from
 root GPU work. No model/private/default/API/installed/Vashti change follows
 from that source plan. **Required Vashti changes: none.**
+
+### Current actual CPU operator checkpoint (2026-10-05)
+
+The integrated `d1a0446` CPU source now has actual original-weight numeric
+acceptance on the Ryzen 5900XT. The fixed-public
+`crates/kuno-text/examples/packed_expert_public_probe.rs` executes original
+Q4 gate/up with Q5/Q8 down, experts 0/7, and explicit AVX2 physical plans
+1/4/8/16. All 16 cases bit-match an independent scalar 64-lane row decoder for
+raw gate/up and complete unweighted partials; inactive rank tails are zero.
+Portable single-worker complete partials also match. Final file consistency
+and the protected swap/core-limited user unit pass. Strict example Clippy and
+locked offline release pass; unchanged libraries retain their 105 core/369
+native acceptance. Exact source/build/public result evidence is in
+`rust-packed-cpu-experts-actual-20261005.json`.
+
+This supersedes the CPU-device-pending note for these limited public CPU cases;
+all-ten CPU/GPU parity, completed joint timing and whole-model hybrid execution
+are still pending. The new CPU helpers are not called by the native model or
+installed gateway. No faster-than-Ollama or production private-worker claim
+follows. Additional actual model context/failure hooks and the one-layer joint
+calibration runner are isolated source candidates, awaiting root review and
+physical acceptance. **Required Vashti changes: none.** Public contracts,
+installed services/configuration, drivers, defaults, frontend and release are
+unchanged; no reset/reboot is required for this lab work.

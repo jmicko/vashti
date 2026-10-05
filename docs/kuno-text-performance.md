@@ -1315,8 +1315,14 @@ does not describe simultaneous residency. The corrected runner requires those
 exact cumulative counts for the public fixture; a missing full page rejects.
 Root revalidated the original completed report without rerunning the model,
 preserving both worker0 and outer-runner1 outcomes. No cap or engine behavior
-was changed. NVIDIA full acceptance remains pending. These are diagnostic
-correctness/lifecycle runs, not paired speed measurements.
+was changed. NVIDIA's completed counterpart now passes the same 128 original
+IDs, full-prefix fresh replay, cancellation and all four MAIN/source audits.
+Its worker and corrected outer runner both exit 0. The
+[full NVIDIA receipt](../apps/kuno/benchmarks/text/receipts/rust-native-model-full-nvidia-20261005.json)
+preserves the complete report, Cargo/binary identities and original run record.
+Both full runs use the same `b1ba040f…` binary. Their recorded timings include
+inspection and diagnostic instrumentation; these are correctness/lifecycle
+runs, not paired speed measurements.
 
 ## Original packed Rust CPU expert source acceptance (2026-10-05)
 
@@ -1353,3 +1359,28 @@ CPU/GPU numeric comparisons, completed joint timing and whole-model hybrid
 acceptance remain pending under the [decode plan](kuno-native-text-decode.md).
 New scoped workers per phase are a measured overhead question. Source equality
 does not imply device bit equality or faster-than-Ollama performance.
+
+## Original packed Rust CPU expert physical acceptance (2026-10-05)
+
+The fixed-public example `packed_expert_public_probe` now executes the integrated
+CPU operator against actual original model slices on the Ryzen 5900XT. It
+derives the first Q5 down layer (6) and Q8 down layer (0) from metadata and
+verifies their original Q4 gate/up geometry. Experts 0 and 7 use the compiled
+public input `((column % 29) - 14) / 512`; no prompt or route is accepted.
+
+An independent original row decoder uses explicit scalar 64-lane multiply/add,
+tree 32/16/8/4/2/1, original SiLU and down projection. It holds one guarded
+decoded row and never expands a complete expert. Portable single-worker full
+partials and AVX2 physical worker plans 1/4/8/16 match that reference bitwise.
+All 16 AVX2 cases also match both raw gate/up projections and leave the nine
+inactive rank tails exactly zero. The final original-file consistency check and
+protected user unit complete successfully with verified swap/core limits.
+
+The [actual CPU receipt](../apps/kuno/benchmarks/text/receipts/rust-packed-cpu-experts-actual-20261005.json)
+pins the example/source hashes, successful strict example Clippy and locked
+offline release checks, immutable executable `2c89851a…`, Cargo snapshot and
+complete public result lines. Systemd's reported 256-KiB memory peak is excluded
+as an unreliable measurement. This is limited single-expert CPU numeric
+acceptance, not an all-ten CPU/GPU merge, timing, whole-model hybrid or production
+private-worker proof. CPU helpers remain uncalled by model execution. Completed
+joint calibration and matched updated-Ollama performance remain outstanding.
