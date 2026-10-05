@@ -1314,3 +1314,41 @@ service, model download/copy/conversion or release changed. Kuno/Ollama listener
 responded with no resident models; admission remains resumed. Protected device
 validation awaits sudo refresh. No GPU reset, reboot or driver change is part
 of this checkpoint.
+
+### Native GR ownership and protected expert waves (2026-10-05)
+
+**Source commit `e17957f`, after layer source handoff `25246bc`, on
+`codex/kuno-native-text`.** Read [the exact source checkpoint](kuno-text-performance.md#native-gr-workspace-and-owning-expert-wave-source-checkpoint-2026-10-05)
+and the [whole-model prefill plan](kuno-native-text-prefill.md). This does not
+supersede accepted device receipts or establish complete prefill.
+
+The native GR workspace borrows original cached projections and public norms.
+A sealed prepared capability remains alive through all residual consumers or
+last-column output-head enqueue. Cancellation/error/abandonment poison it;
+queued completion is explicitly distinct from the future whole-model fence.
+Ten full MAX8 pages charge1,998,848 B including the mixed page. The new active
+status shader guards before storage reads, with checked/unchecked validation.
+Source peer review and the repaired final-head lifetime recheck pass.
+
+The owning grouped MoE fixture validates real pending bank generations and
+protects complete unions through at most ten misses/40 MiB per source window
+and completed consumers. It retains staged ledgers privately and never publishes
+the original routed bank ledger. Independent I/O stays64 MiB. Full-page source
+credit requires owning lease destruction and checked cleanup; unexpected runtime
+failure retires the context. Its40 positive,12 rejection and12 fresh-owner cases
+per card remain physically untested. Shared expert/full FFN and the native adapter
+using the full model's actual banks are not implemented by this fixture.
+
+Root checks pass300 native host/offline tests, strict all-target Clippy, locked
+offline release build, formatting/diff checks. Unchanged core acceptance is75
+normal tests/two installed checks ignored. Frozen source binary is
+`0c1b3f553ae24ee497f2f9637324778582feeeb89b9427e0c451d67d157438f5`,
+`/tmp/kuno-rust-native-batch-owner-benchmark-20261005`. Receipts are
+`rust-native-gr-batch-source-20261005.json` and
+`rust-grouped-moe-chunk-source-20261005.json` in the text receipts directory.
+Sudo remains expired; no GPU unit, service, configuration, API, catalog, route,
+frontend or installed binary changed. Native GDN/QSA adapters, whole-model
+transaction, matched Ollama improvement, options/quality and production private
+worker/routing acceptance remain outstanding. No Vashti consumer change is needed
+for this internal checkpoint; a future public native contract needs a separate
+backend and consumer handoff.
