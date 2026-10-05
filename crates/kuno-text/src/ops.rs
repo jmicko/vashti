@@ -981,7 +981,14 @@ pub fn qsa_select_blocks(
         return Err(OpsError::InvalidParameter("qsa selection score sign"));
     }
     let mut blocks: Vec<usize> = (0..block_scores.len()).collect();
-    blocks.sort_unstable_by(|&a, &b| block_scores[b].total_cmp(&block_scores[a]).then(a.cmp(&b)));
+    blocks.sort_unstable_by(|&a, &b| {
+        if block_scores[a] == block_scores[b] {
+            // IEEE signed zeros are a mathematical tie, too.
+            a.cmp(&b)
+        } else {
+            block_scores[b].total_cmp(&block_scores[a])
+        }
+    });
     blocks.truncate(token_budget / block_size);
     blocks.sort_unstable();
     let len = product(blocks.len(), block_size, "qsa selected tokens")?
@@ -1445,6 +1452,10 @@ mod tests {
         near(&scores, &[3.0]);
         assert_eq!(
             qsa_select_blocks(&[1.0, 1.0, 1.0], 6, 2, 2).unwrap(),
+            vec![0, 1]
+        );
+        assert_eq!(
+            qsa_select_blocks(&[-0.0, 0.0], 4, 2, 2).unwrap(),
             vec![0, 1]
         );
     }
