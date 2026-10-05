@@ -75,9 +75,10 @@ authorizes it.
 
 ## Active Handoff: Image Access Without Manual Key Setup
 
-**Latest application acceptance:** see the beta.2 integration receipt at the end
-of this guide. Kuno's handoff is merged into the normal project checkout; all four
-beta.2 artifacts are published and full-download/signature verified. Live Hub
+**Latest application acceptance:** see the beta.3 preparation/publication
+receipts at the end of this guide. Kuno's handoff is merged into the normal
+project checkout; all four beta.3 artifacts are published and
+full-download/signature verified. Live Hub
 and nginx upload limits are now verified at 1 GiB. Physical Android acceptance
 is still outstanding.
 
@@ -916,6 +917,25 @@ metadata overhead; finalization hard-links the streamed upload files rather
 than duplicating their contents. Recheck free space immediately before upload.
 This does not authorize deleting releases/logs or resizing storage.
 
-**Publication pending:** all local checks are complete; a fresh one-time upload
-key has been requested. No upload, stable promotion, main-branch merge, Git push,
-Hub deployment or live Vashti/Kuno installation has occurred in this pass.
+**Preparation checkpoint (superseded by publication below):** all local checks
+were complete and a fresh one-time upload key was requested. At this checkpoint,
+no upload, stable promotion, main-branch merge, Git push, Hub deployment or live
+Vashti/Kuno installation had occurred.
+
+### Vashti beta.3 publication receipt (2026-10-05)
+
+Uploaded all four prepared artifacts together using the user's fresh one-time
+key. Public verification covered the release listing/status, exact versioned
+notes, VERSION, SHA256SUMS entries, all four prerelease manifests and their
+Ed25519 signatures against the repository's compiled public key. Full streamed
+downloads of all four artifacts match the local sizes and SHA-256 values in the
+preparation table, totaling 674,882,128 bytes. The Hub orders checksum entries
+by target rather than local filename order; the same complete entries match.
+
+The prerelease channel now returns `v0.13.0-beta.3`; stable remains `v0.12.0`.
+Published artifacts occupy 2,168,069,825 bytes according to the public release
+metadata. The Hub service remains active; the post-upload root disk is 88% full
+with about 856 MiB available. No release or log cleanup, storage resize, Hub
+deployment, stable promotion, main-branch merge, Git push or live Vashti/Kuno
+installation was performed. Physical Android acceptance and the backend
+hardware/platform limits remain as recorded above.
