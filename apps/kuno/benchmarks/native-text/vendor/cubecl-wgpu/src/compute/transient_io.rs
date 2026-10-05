@@ -25,7 +25,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::WgpuResource;
 use cubecl_common::backtrace::BackTrace;
@@ -76,6 +76,138 @@ fn span(logical: u64) -> Result<u64, ServerError> {
         return Err(fault("private I/O buffer exceeds bound"));
     }
     Ok(owned)
+}
+
+// Public laboratory opt-in. The default keeps the existing per-INFO owners.
+// INFO is Storage/read in WGSL and can be Uniform in other representations.
+// Use a checked common device alignment/extent without compiler-key changes.
+fn configured_info_slab(raw: Option<&str>) -> Result<Option<u64>, ServerError> {
+    match raw {
+        None | Some("0") => Ok(None),
+        Some("4096") => Ok(Some(4096)),
+        Some("8192") => Ok(Some(8192)),
+        _ => Err(fault("private INFO slab requires 0, 4096 or 8192")),
+    }
+}
+#[derive(Clone, Copy)]
+struct InfoPolicy {
+    slab_bytes: u64,
+    alignment: u64,
+    binding_limit: u64,
+}
+impl InfoPolicy {
+    fn new(
+        slab_bytes: u64,
+        storage_alignment: u64,
+        uniform_alignment: u64,
+        storage_limit: u64,
+        uniform_limit: u64,
+    ) -> Result<Self, ServerError> {
+        if !matches!(slab_bytes, 4096 | 8192)
+            || !storage_alignment.is_power_of_two()
+            || !uniform_alignment.is_power_of_two()
+            || storage_alignment < 4
+            || uniform_alignment < 4
+            || storage_limit == 0
+            || uniform_limit == 0
+        {
+            return Err(fault("private INFO slab device geometry"));
+        }
+        let alignment = storage_alignment.max(uniform_alignment);
+        let binding_limit = storage_limit.min(uniform_limit).min(MAX_BYTES);
+        if alignment > slab_bytes || binding_limit < 4 {
+            return Err(fault("private INFO slab device alignment/extent"));
+        }
+        Ok(Self {
+            slab_bytes,
+            alignment,
+            binding_limit,
+        })
+    }
+    fn plan(
+        self,
+        logical: u64,
+        current: Option<(u64, u64)>, // (FULL owner bytes, private append cursor)
+    ) -> Result<InfoPlan, ServerError> {
+        if logical == 0 || !logical.is_multiple_of(4) || logical > self.binding_limit {
+            return Err(fault("private INFO slab logical binding extent"));
+        }
+        let source_bytes = span(logical)?;
+        if logical > self.slab_bytes {
+            return Ok(InfoPlan {
+                logical,
+                source_bytes,
+                target_bytes: span(logical)?,
+                offset: 0,
+                next_cursor: 0,
+                existing: false,
+                slab: false,
+            });
+        }
+        if let Some((owned, cursor)) = current {
+            if owned != self.slab_bytes || cursor > owned {
+                return Err(fault("private INFO slab owner/cursor mismatch"));
+            }
+            let offset = cursor
+                .checked_add(self.alignment - 1)
+                .map(|n| n / self.alignment * self.alignment)
+                .ok_or_else(|| fault("private INFO slab offset overflow"))?;
+            let end = offset
+                .checked_add(logical)
+                .ok_or_else(|| fault("private INFO slab record overflow"))?;
+            if end <= owned {
+                return Ok(InfoPlan {
+                    logical,
+                    source_bytes,
+                    target_bytes: 0,
+                    offset,
+                    next_cursor: end,
+                    existing: true,
+                    slab: true,
+                });
+            }
+        }
+        Ok(InfoPlan {
+            logical,
+            source_bytes,
+            target_bytes: self.slab_bytes,
+            offset: 0,
+            next_cursor: logical,
+            existing: false,
+            slab: true,
+        })
+    }
+}
+struct InfoPlan {
+    logical: u64,
+    source_bytes: u64,
+    target_bytes: u64, // Zero only when reusing an append region in this epoch.
+    offset: u64,
+    next_cursor: u64,
+    existing: bool,
+    slab: bool,
+}
+struct InfoSlab {
+    buffer: wgpu::Buffer,
+    cursor: u64,
+    epoch: u64,
+}
+fn info_epoch(owner: u64, current: u64) -> Result<(), ServerError> {
+    if owner == 0 || owner != current {
+        return Err(fault("private INFO slab epoch mismatch"));
+    }
+    Ok(())
+}
+impl Drop for InfoSlab {
+    fn drop(&mut self) {
+        // Cursor is request-derived host bookkeeping, not a persistent key.
+        // SAFETY: exclusively owned fields, with no references surviving Drop.
+        unsafe {
+            core::ptr::addr_of_mut!(self.cursor).write_volatile(0);
+            core::ptr::addr_of_mut!(self.epoch).write_volatile(0);
+        }
+        std::sync::atomic::compiler_fence(Ordering::SeqCst);
+    }
 }
 
 /// Validate full aligned copy bounds against the actual API-visible backing
@@ -142,6 +274,31 @@ impl Ledger {
         self.totals[kind.slot()] = total;
         Ok(bytes)
     }
+    /// Opt-in slabs reserve all full Upload/Uniform audit duplicates before
+    /// normal mutation. Readback creation must preserve that same headroom.
+    /// Audit-stage allocation consumes it with ordinary reserve(), never adds
+    /// another recursive audit reservation or tries to checkpoint itself.
+    fn check_info_audit_group(
+        &self,
+        upload: u64,
+        uniform: u64,
+        readback: u64,
+    ) -> Result<(), ServerError> {
+        let extra = upload
+            .checked_add(uniform)
+            .and_then(|n| n.checked_add(readback))
+            .ok_or_else(|| fault("private INFO slab allocation group overflow"))?;
+        let audit = self.totals[Kind::Upload.slot()]
+            .checked_add(self.totals[Kind::Uniform.slot()])
+            .and_then(|n| n.checked_add(upload))
+            .and_then(|n| n.checked_add(uniform))
+            .ok_or_else(|| fault("private INFO slab audit headroom overflow"))?;
+        self.check(
+            extra
+                .checked_add(audit)
+                .ok_or_else(|| fault("private INFO slab group overflow"))?,
+        )
+    }
     fn after_erasure(&mut self) -> Result<TransientIoReceipt, ServerError> {
         let next = self
             .epoch
@@ -195,8 +352,17 @@ enum Failure {
     AllocationMetadata,
     AllocationSpan,
     CleanupRejected,
+    UploadMapRejected,
+    UploadMapDisconnected,
+    UploadMapCallbackTimeout,
+    AuditMapRejected,
+    AuditMapDisconnected,
+    AuditMapCallbackTimeout,
+    CleanupReadMapRejected,
+    CleanupReadMapDisconnected,
+    CleanupReadMapCallbackTimeout,
 }
-const FAILURE_CODES: [&str; 28] = [
+const FAILURE_CODES: [&str; 37] = [
     "kuno_private_io_failure:held_lease",
     "kuno_private_io_failure:mutation_abandoned",
     "kuno_private_io_failure:lease_overflow",
@@ -225,6 +391,15 @@ const FAILURE_CODES: [&str; 28] = [
     "kuno_private_io_failure:allocation_metadata",
     "kuno_private_io_failure:allocation_span",
     "kuno_private_io_failure:cleanup_rejected",
+    "kuno_private_io_failure:upload_map_rejected",
+    "kuno_private_io_failure:upload_map_disconnected",
+    "kuno_private_io_failure:upload_map_callback_timeout",
+    "kuno_private_io_failure:audit_map_rejected",
+    "kuno_private_io_failure:audit_map_disconnected",
+    "kuno_private_io_failure:audit_map_callback_timeout",
+    "kuno_private_io_failure:cleanup_read_map_rejected",
+    "kuno_private_io_failure:cleanup_read_map_disconnected",
+    "kuno_private_io_failure:cleanup_read_map_callback_timeout",
 ];
 impl Failure {
     fn code(self) -> &'static str {
@@ -236,6 +411,70 @@ fn gpu_failure(error: &wgpu::Error) -> Failure {
         wgpu::Error::OutOfMemory { .. } => Failure::GpuOutOfMemory,
         wgpu::Error::Validation { .. } => Failure::GpuValidation,
         wgpu::Error::Internal { .. } => Failure::GpuInternal,
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MapCallbackFailure {
+    Rejected,
+    Disconnected,
+    Timeout,
+}
+impl MapCallbackFailure {
+    fn upload(self) -> Failure {
+        match self {
+            Self::Rejected => Failure::UploadMapRejected,
+            Self::Disconnected => Failure::UploadMapDisconnected,
+            Self::Timeout => Failure::UploadMapCallbackTimeout,
+        }
+    }
+    fn audit(self) -> Failure {
+        match self {
+            Self::Rejected => Failure::AuditMapRejected,
+            Self::Disconnected => Failure::AuditMapDisconnected,
+            Self::Timeout => Failure::AuditMapCallbackTimeout,
+        }
+    }
+    fn cleanup_read(self) -> Failure {
+        match self {
+            Self::Rejected => Failure::CleanupReadMapRejected,
+            Self::Disconnected => Failure::CleanupReadMapDisconnected,
+            Self::Timeout => Failure::CleanupReadMapCallbackTimeout,
+        }
+    }
+}
+
+fn remaining_map_time(deadline: Instant) -> Option<Duration> {
+    remaining_map_time_at(deadline, Instant::now())
+}
+fn remaining_map_time_at(deadline: Instant, now: Instant) -> Option<Duration> {
+    deadline
+        .checked_duration_since(now)
+        .filter(|remaining| !remaining.is_zero())
+}
+
+/// A successful poll is not a delivered mapping callback: another native poll
+/// can claim the callback under the queue lock and fire it after releasing that
+/// lock. Wait for delivery within the SAME deadline used for the native poll.
+/// The unit BufferAsyncError has no typed cause to inspect; never format it.
+fn await_map_callback(
+    receiver: &std::sync::mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>,
+    deadline: Instant,
+) -> Result<(), MapCallbackFailure> {
+    let remaining = remaining_map_time(deadline).ok_or(MapCallbackFailure::Timeout)?;
+    let result = receiver.recv_timeout(remaining);
+    // Reject even a queued success if scheduling resumed after the deadline.
+    // Full mapping acceptance, not only the blocking wait, is time-bounded.
+    if remaining_map_time(deadline).is_none() {
+        return Err(MapCallbackFailure::Timeout);
+    }
+    match result {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(_)) => Err(MapCallbackFailure::Rejected),
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            Err(MapCallbackFailure::Disconnected)
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(MapCallbackFailure::Timeout),
     }
 }
 pub(crate) fn held_lease_fault() -> ServerError {
@@ -412,6 +651,8 @@ pub(crate) struct TransientIo {
     buffers: Vec<Tracked>,
     leases: Arc<LeaseTracker>,
     errors: Vec<ErrorFuture>,
+    info_policy: Option<InfoPolicy>,
+    info_slab: Option<InfoSlab>,
 }
 impl std::fmt::Debug for TransientIo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -544,12 +785,19 @@ impl EraseBackend for NativeEraser<'_> {
     }
     fn erase_upload_full_span(&mut self, buffer: &wgpu::Buffer) -> bool {
         let attempted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            // Mapping, polling and callback delivery share one bounded window.
+            // No second map attempt or extra full timeout is permitted.
+            let deadline = Instant::now() + POLL_TIMEOUT;
             let (sender, receiver) = std::sync::mpsc::sync_channel(1);
             buffer.map_async(wgpu::MapMode::Write, .., move |r| {
                 let _ = sender.try_send(r);
             });
-            if !self.io.poll(None) || !matches!(receiver.try_recv(), Ok(Ok(()))) {
+            if !self.io.poll_map_until(deadline) {
                 self.io.leases.record(Failure::UploadMap);
+                return false;
+            }
+            if let Err(category) = await_map_callback(&receiver, deadline) {
+                self.io.leases.record(category.upload());
                 return false;
             }
             {
@@ -631,28 +879,38 @@ impl NativeAudit<'_> {
             }
         }
         let scopes = IoScopes::new(&self.0.device);
-        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-        // Guard established before requesting a map; panic/error/cancellation
-        // aborts pending maps, with the tracked buffer retained for erasure.
-        let _unmap = Unmap {
-            buffer,
-            retired: self.0.leases.clone(),
-        };
-        buffer.map_async(wgpu::MapMode::Read, .., move |result| {
-            let _ = sender.try_send(result);
-        });
+        let result = (|| {
+            let deadline = Instant::now() + POLL_TIMEOUT;
+            let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+            // Guard established before requesting a map; panic/error/timeout
+            // aborts pending maps, with the tracked buffer retained for erasure.
+            let _unmap = Unmap {
+                buffer,
+                retired: self.0.leases.clone(),
+            };
+            buffer.map_async(wgpu::MapMode::Read, .., move |result| {
+                let _ = sender.try_send(result);
+            });
+            if !self.0.poll_map_until(deadline) {
+                self.0.leases.record(Failure::AuditMap);
+                return Err(fault(self.0.leases.reason(Failure::AuditMap)));
+            }
+            if let Err(category) = await_map_callback(&receiver, deadline) {
+                self.0.leases.record(category.audit());
+                return Err(fault(self.0.leases.reason(category.audit())));
+            }
+            let view = buffer.get_mapped_range(..);
+            if view.len() as u64 != buffer.size() || view.iter().any(|byte| *byte != 0) {
+                self.0.leases.record(Failure::AuditNonzero);
+                return Err(fault(self.0.leases.reason(Failure::AuditNonzero)));
+            }
+            // View drops before the unmap guard. No copy/to_vec/format/log exists.
+            Ok(())
+        })();
+        // Include guard-triggered unmap in the typed scopes, also on an error
+        // return. Futures are still accepted at the existing final erase fence.
         scopes.finish(self.0);
-        if !self.0.poll(None) || !matches!(receiver.try_recv(), Ok(Ok(()))) {
-            self.0.leases.record(Failure::AuditMap);
-            return Err(fault(self.0.leases.reason(Failure::AuditMap)));
-        }
-        let view = buffer.get_mapped_range(..);
-        if view.len() as u64 != buffer.size() || view.iter().any(|byte| *byte != 0) {
-            self.0.leases.record(Failure::AuditNonzero);
-            return Err(fault(self.0.leases.reason(Failure::AuditNonzero)));
-        }
-        // View drops before the unmap guard. No copy/to_vec/format/log exists.
-        Ok(())
+        result
     }
 }
 impl AuditBackend for NativeAudit<'_> {
@@ -679,7 +937,7 @@ impl AuditBackend for NativeAudit<'_> {
             })?;
             let stage = self
                 .0
-                .allocate(Kind::Readback, source.size())
+                .allocate_audit(Kind::Readback, source.size())
                 .inspect_err(|_| {
                     self.0.leases.record(Failure::AuditAllocation);
                 })?;
@@ -716,14 +974,39 @@ impl TransientIo {
             return Err(fault("private I/O requires native runtime"));
         }
         #[cfg(not(target_family = "wasm"))]
-        Ok(Self {
-            device,
-            queue,
-            ledger: Ledger::new(budget)?,
-            buffers: Vec::new(),
-            leases: Arc::default(),
-            errors: Vec::new(),
-        })
+        {
+            let raw = std::env::var_os("KUNO_LAB_INFO_SLAB_BYTES");
+            let slab_bytes = configured_info_slab(
+                raw.as_ref()
+                    .map(|v| {
+                        v.to_str()
+                            .ok_or_else(|| fault("private INFO slab setting encoding"))
+                    })
+                    .transpose()?,
+            )?;
+            let info_policy = slab_bytes
+                .map(|bytes| {
+                    let limits = device.limits();
+                    InfoPolicy::new(
+                        bytes,
+                        u64::from(limits.min_storage_buffer_offset_alignment),
+                        u64::from(limits.min_uniform_buffer_offset_alignment),
+                        limits.max_storage_buffer_binding_size,
+                        limits.max_uniform_buffer_binding_size,
+                    )
+                })
+                .transpose()?;
+            Ok(Self {
+                device,
+                queue,
+                ledger: Ledger::new(budget)?,
+                buffers: Vec::new(),
+                leases: Arc::default(),
+                errors: Vec::new(),
+                info_policy,
+                info_slab: None,
+            })
+        }
     }
     pub fn retired(&self) -> bool {
         self.leases.retired.load(Ordering::Acquire)
@@ -753,10 +1036,38 @@ impl TransientIo {
             Err(fault(self.leases.reason(Failure::DrainTimeout)))
         }
     }
+    /// Synchronous cleanup reads use the same bounded native drain/callback
+    /// completion as erasure/audit. Caller starts this deadline before mapping,
+    /// using CleanupBoundary's timeout, and retains its ReadbackLease throughout.
+    /// Record before caller marks that lease failed, preserving the useful code.
+    pub(crate) fn await_cleanup_read_map(
+        &self,
+        receiver: &std::sync::mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>,
+        deadline: Instant,
+    ) -> Result<(), ServerError> {
+        if !self.poll_map_until(deadline) {
+            return Err(fault(self.leases.reason(Failure::DrainTimeout)));
+        }
+        await_map_callback(receiver, deadline).map_err(|category| {
+            self.leases.record(category.cleanup_read());
+            fault(self.leases.reason(category.cleanup_read()))
+        })
+    }
     pub fn leases(&self) -> usize {
         self.leases.count.load(Ordering::Acquire)
     }
     fn allocate(&mut self, kind: Kind, logical: u64) -> Result<wgpu::Buffer, ServerError> {
+        if self.info_policy.is_some() {
+            let full = span(logical)?;
+            let mut group = [0; 3];
+            group[kind.slot()] = full;
+            self.ledger
+                .check_info_audit_group(group[0], group[1], group[2])
+                .inspect_err(|_| self.leases.record(Failure::AuditBudget))?;
+        }
+        self.allocate_audit(kind, logical)
+    }
+    fn allocate_audit(&mut self, kind: Kind, logical: u64) -> Result<wgpu::Buffer, ServerError> {
         self.active()?;
         self.buffers.try_reserve(1).map_err(|_| {
             self.leases.record(Failure::AllocationMetadata);
@@ -825,6 +1136,9 @@ impl TransientIo {
             .checked_add(3)
             .map(|n| n / 4 * 4)
             .ok_or_else(|| fault("private uniform overflow"))?;
+        if let Some(policy) = self.info_policy {
+            return self.uniform_slab(encoder, data, logical, policy);
+        }
         let needed = span(logical)?
             .checked_mul(2)
             .ok_or_else(|| fault("private uniform charge overflow"))?;
@@ -837,6 +1151,63 @@ impl TransientIo {
             buffer,
             offset: 0,
             size: logical,
+        };
+        self.upload(encoder, &resource, data)?;
+        Ok(resource)
+    }
+    fn uniform_slab(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        data: &[u8],
+        logical: u64,
+        policy: InfoPolicy,
+    ) -> Result<WgpuResource, ServerError> {
+        self.active()?;
+        let current = self
+            .info_slab
+            .as_ref()
+            .map(|slab| -> Result<_, ServerError> {
+                // Owner is created only by this same stream/device; no API
+                // accepts foreign slabs. Every successful epoch drops it.
+                info_epoch(slab.epoch, self.ledger.epoch)?;
+                Ok((slab.buffer.size(), slab.cursor))
+            })
+            .transpose()?;
+        let plan = policy.plan(logical, current)?;
+        self.ledger
+            .check_info_audit_group(plan.source_bytes, plan.target_bytes, 0)
+            .inspect_err(|_| self.leases.record(Failure::AuditBudget))?;
+        let buffer = if plan.existing {
+            self.info_slab
+                .as_ref()
+                .ok_or_else(|| fault("private INFO slab missing owner"))?
+                .buffer
+                .clone()
+        } else {
+            let buffer = self.allocate(Kind::Uniform, plan.target_bytes)?;
+            encoder.clear_buffer(&buffer, 0, None);
+            if plan.slab {
+                self.info_slab = Some(InfoSlab {
+                    buffer: buffer.clone(),
+                    cursor: 0,
+                    epoch: self.ledger.epoch,
+                });
+            }
+            buffer
+        };
+        copy_bounds(plan.logical, plan.offset, buffer.size(), data.len())?;
+        if plan.slab {
+            // This append region cannot be reused within the epoch, even if
+            // a subsequent mapping/copy fails. The mutation owner retires.
+            self.info_slab
+                .as_mut()
+                .ok_or_else(|| fault("private INFO slab missing cursor"))?
+                .cursor = plan.next_cursor;
+        }
+        let resource = WgpuResource {
+            buffer,
+            offset: plan.offset,
+            size: plan.logical,
         };
         self.upload(encoder, &resource, data)?;
         Ok(resource)
@@ -897,9 +1268,25 @@ impl TransientIo {
     }
     #[cfg(not(target_family = "wasm"))]
     fn poll(&self, index: Option<wgpu::SubmissionIndex>) -> bool {
+        self.poll_with_timeout(index, POLL_TIMEOUT)
+    }
+    /// Mapping's drain and delivered callback must fit the same 30-second
+    /// deadline. Poll only the remaining window; never restart that timeout.
+    #[cfg(not(target_family = "wasm"))]
+    fn poll_map_until(&self, deadline: Instant) -> bool {
+        match remaining_map_time(deadline) {
+            Some(timeout) => self.poll_with_timeout(None, timeout),
+            None => {
+                self.leases.record(Failure::DrainTimeout);
+                false
+            }
+        }
+    }
+    #[cfg(not(target_family = "wasm"))]
+    fn poll_with_timeout(&self, index: Option<wgpu::SubmissionIndex>, timeout: Duration) -> bool {
         match self.device.poll(wgpu::PollType::Wait {
             submission_index: index,
-            timeout: Some(POLL_TIMEOUT),
+            timeout: Some(timeout),
         }) {
             Ok(_) => true,
             Err(wgpu::PollError::Timeout) => {
@@ -914,6 +1301,10 @@ impl TransientIo {
     }
     #[cfg(target_family = "wasm")]
     fn poll(&self, _index: Option<wgpu::SubmissionIndex>) -> bool {
+        false
+    }
+    #[cfg(target_family = "wasm")]
+    fn poll_map_until(&self, _deadline: Instant) -> bool {
         false
     }
     fn erase_set(&mut self, buffers: &[Tracked], previous_error: bool) -> bool {
@@ -942,6 +1333,13 @@ impl TransientIo {
         previous_error: bool,
         inspect: bool,
     ) -> Result<TransientIoReceipt, ServerError> {
+        if self.info_policy.is_some() && inspect {
+            // Check ALL duplicate full-span stages before any erase/audit
+            // mutation. Never recurse into a checkpoint to obtain space.
+            self.ledger
+                .check_info_audit_group(0, 0, 0)
+                .inspect_err(|_| self.leases.record(Failure::AuditBudget))?;
+        }
         // Move bookkeeping, never GPU bytes. Restore ALL original and audit
         // stages before handling any panic/error. Failed audit never releases.
         let mut buffers = std::mem::take(&mut self.buffers);
@@ -1007,6 +1405,7 @@ impl TransientIo {
         let counts = inspected?;
         receipt.inspected_bytes = counts.bytes;
         receipt.inspected_buffers = counts.buffers;
+        self.info_slab = None; // No clean pool or cross-epoch owner reuse.
         self.buffers.clear(); // ONLY after full erase + optional audit acceptance
         Ok(receipt)
     }
@@ -1041,6 +1440,289 @@ mod cleanup_read_tests {
 mod tests {
     use super::*;
     use std::cell::RefCell;
+
+    #[test]
+    fn info_slab_opt_in_and_actual_storage_uniform_limits_are_strict() {
+        assert_eq!(configured_info_slab(None).unwrap(), None);
+        assert_eq!(configured_info_slab(Some("0")).unwrap(), None);
+        for size in [4096, 8192] {
+            assert_eq!(
+                configured_info_slab(Some(&size.to_string())).unwrap(),
+                Some(size)
+            );
+        }
+        for raw in ["", "00", "004096", "+4096", "4096 ", "16384", "256"] {
+            assert!(configured_info_slab(Some(raw)).is_err());
+        }
+        let policy = InfoPolicy::new(4096, 512, 256, MAX_BYTES, 65536).unwrap();
+        assert_eq!(policy.alignment, 512);
+        assert_eq!(policy.binding_limit, 65536);
+        for alignment in [0, 1, 2, 3, 12, 8192, u64::MAX] {
+            assert!(InfoPolicy::new(4096, alignment, 256, MAX_BYTES, 65536).is_err());
+            assert!(InfoPolicy::new(4096, 256, alignment, MAX_BYTES, 65536).is_err());
+        }
+        assert!(InfoPolicy::new(256, 256, 256, MAX_BYTES, 65536).is_err());
+        assert!(InfoPolicy::new(4096, 256, 256, 0, 65536).is_err());
+        assert!(InfoPolicy::new(4096, 256, 256, MAX_BYTES, 0).is_err());
+    }
+
+    #[test]
+    fn append_records_keep_all_prior_values_gaps_and_full_owner_tails() {
+        for size in [4096, 8192] {
+            let policy = InfoPolicy::new(size, 128, 256, MAX_BYTES, 65536).unwrap();
+            let mut owners = Vec::<Vec<u8>>::new();
+            let mut regions = Vec::new();
+            let mut cursor = None;
+            for n in 0..67usize {
+                let logical = [4, 20, 68, 260][n % 4];
+                let p = policy.plan(logical, cursor).unwrap();
+                if !p.existing {
+                    assert_eq!(p.target_bytes, size);
+                    owners.push(vec![0; size as usize]);
+                }
+                let owner = owners.len() - 1;
+                let start = p.offset as usize;
+                let end = start + logical as usize;
+                assert!(p.offset.is_multiple_of(policy.alignment));
+                assert!(end <= size as usize);
+                assert!(
+                    regions
+                        .iter()
+                        .all(|&(o, first, last, _)| o != owner || end <= first || start >= last)
+                );
+                owners[owner][start..end].fill((n + 1) as u8);
+                regions.push((owner, start, end, (n + 1) as u8));
+                cursor = Some((size, p.next_cursor));
+            }
+            assert!(owners.len() > 1);
+            for &(owner, first, last, value) in &regions {
+                assert!(owners[owner][first..last].iter().all(|&v| v == value));
+            }
+            for (owner, bytes) in owners.iter().enumerate() {
+                for (i, &byte) in bytes.iter().enumerate() {
+                    if !regions
+                        .iter()
+                        .any(|&(o, first, last, _)| o == owner && i >= first && i < last)
+                    {
+                        assert_eq!(byte, 0);
+                    }
+                }
+            }
+            for bytes in &mut owners {
+                bytes.fill(0);
+            }
+            assert!(owners.iter().flatten().all(|&b| b == 0));
+        }
+    }
+
+    #[test]
+    fn info_plan_boundaries_and_oversized_individual_path_never_overwrite() {
+        let p = InfoPolicy::new(4096, 256, 256, MAX_BYTES, 65536).unwrap();
+        let last = p.plan(256, Some((4096, 3840))).unwrap();
+        assert!(last.existing && last.slab);
+        assert_eq!(
+            (last.offset, last.next_cursor, last.target_bytes),
+            (3840, 4096, 0)
+        );
+        let next = p.plan(4, Some((4096, 4096))).unwrap();
+        assert!(!next.existing && next.slab);
+        assert_eq!(
+            (next.offset, next.next_cursor, next.target_bytes),
+            (0, 4, 4096)
+        );
+        let large = p.plan(4100, Some((4096, 20))).unwrap();
+        assert!(!large.existing && !large.slab);
+        assert_eq!(
+            (
+                large.logical,
+                large.target_bytes,
+                large.source_bytes,
+                large.offset
+            ),
+            (4100, 8192, 8192, 0)
+        );
+        for n in [0, 1, 3, 65540, u64::MAX] {
+            assert!(p.plan(n, None).is_err());
+        }
+        assert!(p.plan(4, Some((8192, 0))).is_err());
+        assert!(p.plan(4, Some((4096, 4097))).is_err());
+        assert!(p.plan(4, Some((4096, u64::MAX))).is_err());
+        assert!(info_epoch(0, 0).is_err());
+        assert!(info_epoch(1, 2).is_err());
+        assert!(info_epoch(2, 1).is_err());
+        assert!(info_epoch(1, 1).is_ok());
+    }
+
+    #[test]
+    fn slab_group_preflight_includes_every_future_audit_stage_without_partial_charge() {
+        let mut ledger = Ledger::new(16384).unwrap();
+        ledger.check_info_audit_group(256, 4096, 0).unwrap();
+        ledger.reserve(Kind::Uniform, 4096).unwrap();
+        for _ in 0..16 {
+            ledger.check_info_audit_group(256, 0, 0).unwrap();
+            ledger.reserve(Kind::Upload, 20).unwrap();
+        }
+        assert_eq!(ledger.charged, 8192);
+        assert_eq!(ledger.totals, [4096, 4096, 0]);
+        ledger.check_info_audit_group(0, 0, 0).unwrap();
+        let before = (ledger.charged, ledger.totals, ledger.epoch);
+        assert!(ledger.check_info_audit_group(256, 4096, 0).is_err());
+        assert!(ledger.check_info_audit_group(0, 0, 256).is_err());
+        assert_eq!((ledger.charged, ledger.totals, ledger.epoch), before);
+        for _ in 0..16 {
+            ledger.reserve(Kind::Readback, 20).unwrap();
+        }
+        ledger.reserve(Kind::Readback, 4096).unwrap();
+        assert_eq!(ledger.charged, 16384);
+        assert!(ledger.reserve(Kind::Readback, 1).is_err());
+        let receipt = ledger.after_erasure().unwrap();
+        assert_eq!(
+            receipt.upload_bytes + receipt.uniform_bytes + receipt.readback_bytes,
+            16384
+        );
+        assert_eq!(ledger.charged, 0);
+        assert_eq!(ledger.epoch, 2);
+    }
+
+    #[test]
+    fn claimed_callback_empty_channel_is_not_a_mapping_rejection() {
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let (claimed_sender, claimed_receiver) = std::sync::mpsc::sync_channel(1);
+        let release_callback = Arc::new(std::sync::Barrier::new(2));
+        let callback_release = release_callback.clone();
+        let callback = std::thread::spawn(move || {
+            // Models another native poll removing the callback under its lock,
+            // then being paused before UserClosures::fire outside that lock.
+            claimed_sender.send(()).unwrap();
+            callback_release.wait();
+            sender.try_send(Ok(())).unwrap();
+        });
+        claimed_receiver
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        ));
+        let before_wait = Arc::new(std::sync::Barrier::new(2));
+        let waiter_ready = before_wait.clone();
+        let waiter = std::thread::spawn(move || {
+            waiter_ready.wait();
+            await_map_callback(&receiver, Instant::now() + Duration::from_secs(5))
+        });
+        before_wait.wait();
+        release_callback.wait();
+        assert_eq!(waiter.join().unwrap(), Ok(()));
+        callback.join().unwrap();
+    }
+
+    #[test]
+    fn callback_rejection_and_disconnection_have_distinct_static_categories() {
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        sender.try_send(Err(wgpu::BufferAsyncError)).unwrap();
+        assert_eq!(
+            await_map_callback(&receiver, Instant::now() + Duration::from_secs(5)),
+            Err(MapCallbackFailure::Rejected)
+        );
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        drop(sender);
+        assert_eq!(
+            await_map_callback(&receiver, Instant::now() + Duration::from_secs(5)),
+            Err(MapCallbackFailure::Disconnected)
+        );
+        for (category, upload, audit) in [
+            (
+                MapCallbackFailure::Rejected,
+                "kuno_private_io_failure:upload_map_rejected",
+                "kuno_private_io_failure:audit_map_rejected",
+            ),
+            (
+                MapCallbackFailure::Disconnected,
+                "kuno_private_io_failure:upload_map_disconnected",
+                "kuno_private_io_failure:audit_map_disconnected",
+            ),
+            (
+                MapCallbackFailure::Timeout,
+                "kuno_private_io_failure:upload_map_callback_timeout",
+                "kuno_private_io_failure:audit_map_callback_timeout",
+            ),
+        ] {
+            assert_eq!(category.upload().code(), upload);
+            assert_eq!(category.audit().code(), audit);
+            let tracker = LeaseTracker::default();
+            tracker.record(Failure::GpuOutOfMemory);
+            tracker.record(category.upload());
+            assert_eq!(
+                tracker.reason(category.audit()),
+                Failure::GpuOutOfMemory.code()
+            );
+        }
+    }
+
+    #[test]
+    fn mapping_callback_timeout_never_restarts_deadline_or_accepts_stale_success() {
+        let now = Instant::now();
+        let deadline = now + POLL_TIMEOUT;
+        assert_eq!(remaining_map_time_at(deadline, now), Some(POLL_TIMEOUT));
+        // Models a 29-second native drain: callback receives only one second.
+        assert_eq!(
+            remaining_map_time_at(deadline, now + Duration::from_secs(29)),
+            Some(Duration::from_secs(1))
+        );
+        assert_eq!(remaining_map_time_at(deadline, deadline), None);
+        assert_eq!(
+            remaining_map_time_at(deadline, deadline + Duration::from_nanos(1)),
+            None
+        );
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        sender.try_send(Ok(())).unwrap();
+        assert_eq!(
+            await_map_callback(&receiver, now - Duration::from_secs(1)),
+            Err(MapCallbackFailure::Timeout)
+        );
+        let (_sender, receiver) = std::sync::mpsc::sync_channel(1);
+        assert_eq!(
+            await_map_callback(&receiver, Instant::now() + Duration::from_millis(2)),
+            Err(MapCallbackFailure::Timeout)
+        );
+    }
+
+    #[test]
+    fn cleanup_read_callback_categories_survive_lease_failure_and_mutation_drop() {
+        for (category, expected) in [
+            (
+                MapCallbackFailure::Rejected,
+                "kuno_private_io_failure:cleanup_read_map_rejected",
+            ),
+            (
+                MapCallbackFailure::Disconnected,
+                "kuno_private_io_failure:cleanup_read_map_disconnected",
+            ),
+            (
+                MapCallbackFailure::Timeout,
+                "kuno_private_io_failure:cleanup_read_map_callback_timeout",
+            ),
+        ] {
+            let tracker = Arc::new(LeaseTracker::default());
+            // Same order as await_cleanup_read_map then PendingReadback.fail:
+            // callback classification precedes generic readback retirement.
+            tracker.record(category.cleanup_read());
+            tracker.retire_with(Failure::ReadbackMap);
+            drop(PrivateMutationGuard {
+                tracker: tracker.clone(),
+                accepted: false,
+            });
+            assert_eq!(tracker.reason(Failure::CleanupRejected), expected);
+            assert!(tracker.retired.load(Ordering::Acquire));
+            let prior = LeaseTracker::default();
+            prior.record(Failure::DrainTimeout);
+            prior.record(category.cleanup_read());
+            assert_eq!(
+                prior.reason(Failure::ReadbackMap),
+                Failure::DrainTimeout.code()
+            );
+        }
+    }
 
     #[test]
     fn fixed_first_observed_category_survives_later_cleanup_retirement_and_drop() {
@@ -1099,7 +1781,10 @@ mod tests {
             assert!(!code.contains(sensitive));
             assert!(FAILURE_CODES.contains(&code));
         }
-        assert_eq!(FAILURE_CODES.len(), Failure::CleanupRejected as usize + 1);
+        assert_eq!(
+            FAILURE_CODES.len(),
+            Failure::CleanupReadMapCallbackTimeout as usize + 1
+        );
         assert!(
             FAILURE_CODES
                 .iter()

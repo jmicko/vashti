@@ -735,3 +735,140 @@ modified hash verified; patch SHA256
 `1dcabe09fb8e095c9b780a590a65a188e32ed9681c4a9faa2d022d52ebc2da7d`.
 The ordinary64-slot default is retained. See the structured
 [diagnostic receipt](../apps/kuno/benchmarks/text/rust-owned-io-diagnostic-20261005.json).
+
+
+## GDN batched preprocessing and closing acceptance (2026-10-05)
+
+The candidate-only fixedMAX8 path now batches causal RAW convolution+SiLU,
+Q/K normalization and scaling, stored-negative-A decay/write controls and
+per-head RMS+sigmoid closing gate. Count/bases/strides are runtime; old RAW
+history is immutable and no layer/cursor commit is provided. The four projections,
+recurrence and final projection still need a connected full-layer receipt.
+
+Both physical GPUs pass24 cases across odd and actual dimensions/counts1/3/5/8,
+plus12 invalid raw/alpha/z/stored-A fixtures. Full active columns, statuses,
+unchanged inputs, inactive/gap/padding regions and final raw histories pass.
+Existing scalar128-wide GPU kernels and independent core operators provide the
+references; odd7-wide normalization/closing uses the separate generic count-one
+reference and core, without pretending the unchanged128-only kernel supports7.
+Maximum absolute CPU/scalar-GPU error is2.3841858e-7 on B70 and1.1920929e-7
+on3060, within the existing tolerance. Each card accepts1080 complete main-page
+lifetimes/121,634,816 bytes plus owned-I/O inspection with no retired context.
+
+Frozen executable SHA256:
+`bd9fe5f9f1916a82148a1c4abb42f6c8656904c099ed2bc0d76ccdf100b9d492`.
+218 combined host/offline tests, strict all-target Clippy, release build and
+formatting pass. The same binary also contains an unaccepted optional QSA
+candidate; this receipt establishes only GDN pointwise acceptance. No timing,
+whole-engine speedup, private worker, production default or API change is claimed.
+See [the numeric receipt](../apps/kuno/benchmarks/text/receipts/rust-gdn-pointwise-both-gpus-20261005.json).
+
+
+## Causal QSA chunk acceptance and plane-index correction (2026-10-05)
+
+The after-projection QSA candidate passes24 fixtures on BOTH B70 and3060:
+committed starts0/3/4/2047/2049/2051 and active counts1/3/5/8. Each query builds
+only its visible complete raw-indexer-key groups before normalization/RoPE;
+a later completed group never enters an earlier plane. Original head/12,
+stable score selection, complete blocks and exact incomplete tails are retained.
+All candidate tokens and gated outputs are bitwise equal to unchanged scalar GPU
+execution on both cards. Maximum independent core error is2.861023e-6, within
+the existing tolerance. Late nonfinite future-key rejection preserves earlier
+planes and rejects the whole chunk. Both cards accept full1728 owning-page
+lifetimes/1,379,401,728 bytes and runtime audits, cancellation and immutable
+committed cache. No sequence commit hook is provided.
+
+The first Intel attempt failed validation because three kernels used the
+flattened `ABSOLUTE_POS` across gridY. Later token planes were skipped. Those
+three kernels now use X-only element coordinates; the mandatory validators and
+numeric tolerance are unchanged. Checked/unchecked WGSL index coverage plus
+the complete both-card device fixtures cover the regression.
+
+Frozen accepted binary:
+`91ce1fcea660808eb569f3e881872d358520d35423a5dbd105c4023163923b51`.
+220 combined native host/offline tests,35 runtime fixtures, strict all-target
+Clippy, release build and formatting pass. This binary also contains the bounded
+mapping-callback repair described below. The QSA receipt alone does not establish
+whole-model batched prefill, image behavior, a private worker or performance.
+See [the complete receipt](../apps/kuno/benchmarks/text/receipts/rust-qsa-chunk-both-gpus-20261005.json).
+
+
+## Mapping callback completion repair (2026-10-05)
+
+Pinned CubeCL runs a native background polling thread. In pinned wgpu-core29,
+queue maintenance removes ready mapping callbacks under its lock, then fires
+them after dropping locks. A background poll can claim a callback and be
+rescheduled after cleanup's own poll returns. The former immediate `try_recv`
+therefore treated a still-undelivered successful map as failure. This is a
+source-confirmed reachable race; the failed96 run's ambiguous old `upload_map`
+code alone cannot prove that it hit this interleaving.
+
+Eraser upload remapping, audit mapping and the synchronous cleanup-read seam
+now require delivered callback completion within ONE mapping deadline. Native
+polling and the callback receive share the remaining30-second window; there is
+no remap, retry, additional full wait or arbitrary inference deadline. Full
+volatile wipe, unmap, destination clear, completion/error acceptance and audit
+remain mandatory. Failed/panicking/timed-out mappings retain ownership and retire
+the context. Readback leases retain cancellation/unmap behavior and mutation
+acceptance follows `into_bytes` success. Ordinary async inference reads are
+unchanged. This requested-wait bound cannot preempt a synchronous driver call
+or OS descheduling; whole cleanup still comprises several bounded operations.
+
+The whitelist now has37 static codes, separating mapping rejection, disconnected
+callback and callback timeout at all three seams. It reports the first observed
+category, which can precede a later-consumed typed GPU error; it never formats
+backend descriptions or source. Native BufferAsyncError discards its underlying
+cause, and device loss is separate from the three scoped GPU error classes.
+35 ownership host fixtures pass, including controlled callback-claimed/Empty-
+then-delivery, errors, disconnects, a shared deadline and stale-success rejection.
+Full device/graph acceptance is recorded separately below.
+
+The repaired frozen binary completes the original public75-token prompt and128
+generated tokens with96 expert slots and the explicit6-GiB static cache. All128
+native token IDs equal the previous64-slot native result; checked I/O cleanup
+succeeds. Prefill is59.480 s and the127 following decode steps take77.039 s.
+This is one diagnostic run with concurrent compilation permitted, without full
+main-page zero audit. It establishes long-run acceptance, not a matched speed
+gain or proof that the earlier failure necessarily hit the callback race. The96
+cache remains default-off. See [the exact long receipt](../apps/kuno/benchmarks/text/receipts/rust-mapping-callback-long-acceptance-20261005.json).
+
+## Append-only INFO target slabs (2026-10-05)
+
+The optional runtime target-only slab accepts0,4096 or8192 bytes; default0
+preserves individual targets. Full initialized target spans stay owned until
+checked erasure, including unused tails. A slab appends within its current I/O
+epoch, without rewinding, reusing across epochs, batching mapped upload sources
+or silently checkpointing. Before mutation, admission reserves source/target
+ownership and future full duplicated audit staging under the same64-MiB I/O
+ledger. Records too large for a slab use the checked individually owned path.
+
+Both physical GPUs pass all three sizes with67 distinct runtime scalar records,
+two epochs, retained-readback rejection, dropped pending futures, abandoned
+queued records, original public-weight preservation and full owning-page/I/O
+audits. Oversized individual INFO has host-policy checks but no separate GPU
+fixture. The frozen819c9ac binary then passes original chat8 completion on both
+cards at sizes0/4096, and separate explicit cancellation runs on all four
+combinations pass poisoned retry rejection, fresh first-token match and queued
+GDN0/QSA3 cancellation. Each cancellation run verifies four complete main owners,
+each1,286 pages/785,186,816 bytes, with independent guarded I/O cleanup.
+
+The normal v1 runs did not select cancellation; only the v2 runs establish it.
+Neither sequence is compiler-idle paired timing or production private-worker
+acceptance. Slabs remain disabled pending measurement. Root host checks at the
+frozen binary pass222 native and39 ownership fixtures plus strict Clippy and
+formatting. See [the operator and complete-owner receipts](../apps/kuno/benchmarks/text/receipts/rust-info-slab-both-gpus-20261005.json).
+
+## Guarded contiguous expert-wave planner (2026-10-05)
+
+The host-only MAX8 planner preserves every token's ten original expert IDs and
+probability bits, builds maximal contiguous waves under the routed-bank limit,
+and exposes the complete stable union before any future victim selection.
+Explicit initialization bits reject an omitted rank even if its default zero
+expert/probability would otherwise look valid. It never drops, sorts or
+renormalizes original routes. Nine host fixtures cover overlap/disjoint unions,
+capacity boundaries, exact route order, malformed packets, cancellation and
+full guarded storage wiping. Fixed owned API storage peaks at2,528 bytes; there
+is no private heap allocation. The module is registered only for host tests.
+The future GPU adapter must additionally retain and validate the actual pending
+bank plan/generation through completed consumers; a union alone does not pin
+slots. Fullgraph integration and private request acceptance are outstanding.

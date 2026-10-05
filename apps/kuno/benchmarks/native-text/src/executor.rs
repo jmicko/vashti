@@ -27,7 +27,7 @@ pub(crate) const RESIDENT_RUNTIME_IO_MAX: u64 = 64 * 1024 * 1024;
 fn cleanup_failure_category(code: &str) -> Option<&'static str> {
     // Forward fixed infrastructure categories only, never backend descriptions,
     // shader source, metadata values or request content.
-    const CODES: [&str; 28] = [
+    const CODES: [&str; 37] = [
         "held_lease",
         "mutation_abandoned",
         "lease_overflow",
@@ -56,6 +56,15 @@ fn cleanup_failure_category(code: &str) -> Option<&'static str> {
         "allocation_metadata",
         "allocation_span",
         "cleanup_rejected",
+        "upload_map_rejected",
+        "upload_map_disconnected",
+        "upload_map_callback_timeout",
+        "audit_map_rejected",
+        "audit_map_disconnected",
+        "audit_map_callback_timeout",
+        "cleanup_read_map_rejected",
+        "cleanup_read_map_disconnected",
+        "cleanup_read_map_callback_timeout",
     ];
     CODES.into_iter().find(|known| *known == code)
 }

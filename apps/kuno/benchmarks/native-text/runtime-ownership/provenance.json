@@ -129,16 +129,16 @@
     },
     {
       "path": "cubecl-wgpu/src/compute/stream.rs",
-      "sha256": "d5ccfe2e01f6a3a8da45bae29618d897daf9d4b268c174ceb9d38d7435a53f0f",
+      "sha256": "af8662e362314677d5d3405322f430b974d2882ea34b69018f0407a05a592d66",
       "original_sha256": "97501594e0424c70cd65cbebfedf3b1f1578ecccb4b7ef1e3a873e85141cc35e"
     },
     {
       "path": "cubecl-wgpu/src/compute/transient_io.rs",
-      "sha256": "64df1aa8c6aa9d56eff26a7d625f96c7a79cffcf4a3008ef9db6b33fa0f6356d",
+      "sha256": "7ca3045e31a7ac5dcf14e3f6f6cfb479f90cc7cb39323b0264ea2caed5a05876",
       "original_sha256": null
     }
   ],
-  "patch_sha256": "1dcabe09fb8e095c9b780a590a65a188e32ed9681c4a9faa2d022d52ebc2da7d",
+  "patch_sha256": "e3aa774114789d47b6d14bc817a2e1f6da0a849020c0324492dd5c21cb2def4a",
   "lock_sha256": "b63c5bbf0b755839ed0a59bcf0c83c8ca87bb94ebd57933c7fccac21dcfaece5",
   "host_lock_sha256": "b968a383901ba657bdc2b670a0c7d30fc8c6b8c7ae9335c7c231fb827f0b7acf"
 }

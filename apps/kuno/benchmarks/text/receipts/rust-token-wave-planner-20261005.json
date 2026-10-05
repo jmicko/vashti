@@ -1,0 +1,72 @@
+{
+  "source": "new bounded host policy module; no original implementation copied",
+  "specification": "docs/kuno-native-text-prefill.md expert waves",
+  "specification_sha256": "661a60d8651cdf17da5171c74d37919b7a8f90ff066925584ff4b6c2d3e94b2b",
+  "path": "apps/kuno/benchmarks/native-text/src/token_waves.rs",
+  "source_sha256": "4b26a2313a2411adbaf5fd742fe8cc6ecc4be09d3d4667c8536dae84edcfc91a",
+  "patch_sha256": "f21a2e61900a20293ff957f55b749f6436ddc0c5ed1af4ee049b702782d4f1cc",
+  "dependency": {
+    "zeroize": "1.9.0",
+    "source_sha256": "61012679ef3d0cc4e29b6f9c9d6c572c4ba8110e70a1e1c527da6bfaf77494ef"
+  },
+  "policy": {
+    "max_batch": 8,
+    "top_per_token": 10,
+    "max_routes": 80,
+    "expert_count_min": "configured capacity",
+    "expert_count_max": 512,
+    "routed_slots": "10..72 inclusive or96",
+    "probabilities": "original f32 bits; finite/nonnegative; f64 rank-order sum tolerance1e-5, no renormalization",
+    "ordering": "maximal contiguous waves; stable first-appearance complete union; independent original token/rank routes",
+    "initialized": "all active10 ranks must be explicitly supplied, including expert0/probability0"
+  },
+  "ownership": {
+    "private_heap_allocations": 0,
+    "full_fixed_storage_zeroizing": true,
+    "x86_64_input_bytes": 744,
+    "x86_64_plan_bytes": 1248,
+    "membership_scratch_bytes": 512,
+    "cursor_scratch_bytes": 24,
+    "preflight_sum_scratch_bytes": 8,
+    "peak_owned_api_storage_bytes": 2528,
+    "copied_or_cloned_private_plan_debug": false
+  },
+  "validation": [
+    "9 independent host tests passed, including omitted default rank regression",
+    "strict all-target Clippy -D warnings passed",
+    "offline release check and fmt passed",
+    "read-only root git apply --check passed",
+    "isolated cfg(test) main seam rustfmt edition2024 check passed; parent full-native suite pending"
+  ],
+  "integration": "module plus cfg(test) registration only; no production BankSlots/GPU/default/fullgraph changes",
+  "limits": [
+    "fixed public host source acceptance only",
+    "future adapter must also retain/validate actual pending bank plan and generation through completed consumers",
+    "no GPU or main/runtime budget changes",
+    "compiler-created stack/register copies and allocator/driver opaque state are not inspected",
+    "process abort does not run Rust Drop",
+    "no production private-worker acceptance"
+  ],
+  "supersedes": "3ed6cba8e458d464b3a5a5ea032e13abf833a1ba67c16ec1e49e237a41596b0e (incomplete input masking; never accepted/applied)",
+  "main_test_seam": {
+    "before_sha256": "be2fca0786343cda0a18ab718c39c7aed3ecdf25fac9a1879525e7f3c69cc6df",
+    "after_sha256": "3cb9784d1f9d9c3c02e4d617067c2041fccaf05c3a19880fcede95efe2a377b4",
+    "runtime_change": false,
+    "seam": "cfg(test) only module registration; parent full-native host suite pending"
+  },
+  "independent_review": "Strata read-only review; first identified missing supplied rank accepted via default expert0/prob0; full initialized[80] fixes it; second read confirms closure and no remaining material source blocker. No tests/device/edits by reviewer.",
+  "host_harness": {
+    "edition": "2024 (matches native lab)",
+    "manifest_sha256": "2761c00e7815c5daf6e0079bab5b52a1253fe286369e879202f403e29d4f5966",
+    "lock_sha256": "9316bb7d918a0f1d564f20d12cc05b98316b992d147ebd317b238a75da973994",
+    "module_exact_source": true
+  },
+  "root_validation": {
+    "parent_native_host_tests": 231,
+    "full_parent_offline_host_suite_passed": true,
+    "strict_all_targets_clippy_passed": true,
+    "formatting_passed": true,
+    "physical_gpu_tests": false
+  },
+  "reviewed_patch_applied": true
+}

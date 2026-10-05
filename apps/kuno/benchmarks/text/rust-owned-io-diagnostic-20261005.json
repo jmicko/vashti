@@ -234,5 +234,8 @@
     "runtime_io_budget_bytes": 67108864,
     "scope": "fixed-public-synthetic-operator-test-only",
     "whole_graph_batched_prefill": false
-  }
+  },
+  "kernel_journal_filtered_match_count_after_failure": 0,
+  "kernel_journal_window_minutes": 10,
+  "kernel_journal_filter_scope": "Xe/GPU fault reset timeout hang and kernel OOM; absence does not exclude device invalidation"
 }

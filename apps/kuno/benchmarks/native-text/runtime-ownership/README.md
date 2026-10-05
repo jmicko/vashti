@@ -224,6 +224,33 @@ copies/stack spills, historical swap and abandoned contexts remain excluded.
 
 ## Repository verification entry points
 
+### Current mapping/slab follow-up (2026-10-05)
+
+The current composed patch adds static, content-free first-observed failure
+categories and one shared mapping deadline at eraser upload, audit and cleanup
+read seams. Waiting for callback delivery repairs a source-confirmed race with
+the background poller; it does not retry mapping, relax erasure or introduce an
+ordinary inference deadline. Native polling and callback delivery consume the
+same30-second requested-wait window. A synchronous driver call or descheduling
+may overrun that requested bound. There are37 whitelisted category codes; no
+native error descriptions, request bytes or scalar values are formatted.
+
+The default-off target-only INFO slab is append-only within one epoch and
+reserves complete source/target spans plus duplicated future audit headroom
+before mutation. It neither pools mapped sources nor reuses a target across
+epochs. Valid sizes are0/4096/8192 bytes; absent means0. Oversized records retain
+the checked individual path. Full spans including unused tails stay owned until
+accepted erasure. The independent runtime64-MiB cap and main ownership budgets
+are unchanged.39 runtime host fixtures pass. All sizes pass fixed public
+operator tests on both GPUs;0/4096 also pass full chat, explicit cancellation,
+poisoned retry rejection, fresh recovery and four complete owner audits/card.
+The long96-slot public generation also accepts cleanup after the callback repair.
+These are laboratory receipts, without production private-worker or timing
+selection. See [the measured limits](../../../../../docs/kuno-text-performance.md#mapping-callback-completion-repair-2026-10-05).
+The current18-file composed patch reconstructs exactly against pinned original
+archives; its SHA256 is
+`e3aa774114789d47b6d14bc817a2e1f6da0a849020c0324492dd5c21cb2def4a`.
+
 From the repository root, use the standalone host manifest at
 `apps/kuno/benchmarks/native-text/runtime-ownership/host/Cargo.toml` with
 `cargo test --locked --offline --lib` and Clippy `--lib --tests -- -D warnings`.

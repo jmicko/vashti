@@ -540,27 +540,28 @@ impl WgpuStream {
         scopes.finish(self.transient_io.as_mut().unwrap());
         let entry = setup?;
         let scopes = super::transient_io::IoScopes::new(&self.device);
-        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-        // entry's ReadbackLease already guards pending-map cancellation/unmap.
-        entry.buffer.map_async(wgpu::MapMode::Read, .., move |r| {
-            let _ = sender.try_send(r);
-        });
+        let mapped = (|| {
+            let deadline = std::time::Instant::now() + timeout;
+            let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+            // entry's ReadbackLease already guards pending-map cancellation/unmap.
+            entry.buffer.map_async(wgpu::MapMode::Read, .., move |r| {
+                let _ = sender.try_send(r);
+            });
+            if let Err(error) = self
+                .transient_io
+                .as_ref()
+                .unwrap()
+                .await_cleanup_read_map(&receiver, deadline)
+            {
+                // Specific callback/drain code precedes generic ReadbackMap
+                // retirement. Lease Drop still aborts/unmaps inside scopes.
+                entry.fail();
+                return Err(error);
+            }
+            entry.into_bytes()
+        })();
         scopes.finish(self.transient_io.as_mut().unwrap());
-        if self
-            .device
-            .poll(wgpu::PollType::Wait {
-                submission_index: None,
-                timeout: Some(timeout),
-            })
-            .is_err()
-            || !matches!(receiver.try_recv(), Ok(Ok(())))
-        {
-            entry.fail();
-            return Err(super::transient_io::fault(
-                "private cleanup read map/drain failed",
-            ));
-        }
-        let bytes = entry.into_bytes()?;
+        let bytes = mapped?;
         mutation.accept();
         Ok(bytes)
     }

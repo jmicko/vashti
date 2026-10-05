@@ -3,16 +3,21 @@ mod bank96_probe;
 mod bank_slots;
 mod executor;
 mod expert_banks;
+mod gdn_batch_pointwise;
+mod gdn_batch_pointwise_probe;
 mod gdn_chunk;
 mod gdn_chunk_probe;
 mod gdn_executor;
 mod gdn_gpu;
 mod gdn_pointwise;
 mod gr_batch_probe;
+mod info_slab_probe;
 mod main_admission;
 mod matmul_probe;
 mod ordered_public;
 mod private_arena;
+mod qsa_chunk;
+mod qsa_chunk_probe;
 mod qsa_gpu;
 mod quant_matvec;
 mod resident_gdn;
@@ -25,6 +30,8 @@ mod resident_util;
 mod residual_batch_gpu;
 mod residual_gpu;
 mod small_cpu;
+#[cfg(test)]
+mod token_waves;
 mod transient_probe;
 use cubecl::prelude::*;
 use cubecl::wgpu::{RuntimeOptions, WgpuRuntime, WgpuSetup, init_device};
@@ -221,9 +228,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
         );
         let client = WgpuRuntime::client(&selected);
+        if mode == "gdn-batch-pointwise-probe" {
+            gdn_batch_pointwise_probe::run(&client)?;
+            return Ok(());
+        }
         if mode == "gr-batch-probe" {
             gr_batch_probe::run(&client, gr_storage_alignment)?;
             return Ok(());
+        }
+        if mode == "qsa-chunk-probe" {
+            return qsa_chunk_probe::run(&client);
         }
         if mode == "gdn-chunk-probe" {
             gdn_chunk_probe::run(&client)?;
@@ -231,6 +245,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         if mode == "bank96-probe" {
             bank96_probe::run(&client)?;
+            return Ok(());
+        }
+        if mode == "info-slab-probe" {
+            info_slab_probe::run(&client)?;
             return Ok(());
         }
         if mode == "matmul-probe" {
