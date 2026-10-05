@@ -16,6 +16,46 @@ production worker, public API or installed behavior changes here.
 Original proposal SHA256: `3d1ff3bc2796d1bf85841c079ec86c9cff92fa6f5c690dba27109bc31d4d1d06`.
 See [the decode plan](kuno-native-text-decode.md) for the later hybrid-model gate.
 
+## Implemented source checkpoint, paused 2026-10-05
+
+Root `5f2ed09`, `b2b69cc`, `1ef151f` and `e386c79` integrate the read-only
+owner inventory, bounded joint operator, borrowed caller graph and corrected
+calibration ordering. Their author equivalents are `6cd9a246`, `c16359f5`,
+`dc915f6b` and `db3a18f7`. Read [the paused checkpoint](kuno-native-text-checkpoint.md)
+before resuming. No CLI or physical acceptance is established for this operator.
+
+The actual typed entry borrows one caller-owned `GgufFile` and `BoundGraph`,
+the configured client, device limits, the actual shared retirement `Arc`, explicit
+configuration/purpose and cancellation. Its sealed numeric permit is bound to
+the file/client/graph/configuration, actual retirement owner and parent thread;
+at most 16 subsequent explicit calibration samples may share that permit.
+One-card numeric success does not authorize timing before root both-card
+acceptance or enable an automatic split policy.
+
+The dated snapshot's **reference ladder before timed execution** is superseded
+for Calibration: mandatory hit/filler priming remains first, then actual CPU/GPU
+consumers, joined work, owning maps, bridge/merge and checked I/O cleanup complete
+before independent references execute. Numeric retains references before
+candidate work. Every numerical comparison, immutable input/probability/map
+check, file consistency check and full capacity check still precedes publication
+of the candidate's local slot plan. Numerical gates and original rank math are
+unchanged. Reference time is excluded from operator counters; bridge/merge and
+mandatory cleanup are included in the measured work.
+
+Required priming, the numeric permit run and previous samples' post-run
+references still condition caches. Rotating groups beyond the CPU LLC does not
+establish storage-cold timing or whole-model cost. Prepared-hot CPU execution
+remains deferred; the current operator reads the original file on each call.
+
+Actual source accounting freezes 18 private pages/884,736 bytes, two public
+16-slot banks/134,217,728 bytes, original legacy source precharge up to
+41,943,040 bytes and an independent 64-MiB runtime hard cap within a 256-MiB
+physical envelope. Controlled private application storage is 4 MiB (1 MiB CPU,
+2 MiB references/snapshots, 1 MiB bridge/metadata). The bridge inventory now
+includes a separate 4,096-byte scoped-control/header reservation, for 870,400
+bytes. No duplicate model binding, converted weights or prepared payload cache
+is introduced.
+
 ## Approved original snapshot
 
 Bounded original CPU/GPU expert acceptance and joint calibration

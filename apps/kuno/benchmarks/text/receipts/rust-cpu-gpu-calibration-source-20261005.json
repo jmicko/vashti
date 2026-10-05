@@ -1,0 +1,155 @@
+{
+  "scope": "source_host_offline_only; user_paused_goal; no_new_device_payload_service_install_or_release",
+  "root_branch": "codex/kuno-native-text",
+  "root_source_commit": "e386c7917ba3961eb1107e7afc8b646f410501cf",
+  "integrated_root_commits": [
+    "5f2ed09",
+    "b2b69cc",
+    "1ef151f",
+    "e386c79"
+  ],
+  "author_commits": [
+    "6cd9a2461232c94d8f322f3cd548b3db9f8b6005",
+    "c16359f50c4a12ef9607304c7971ff6cfde485ca",
+    "dc915f6bf2c4d2836e09e38cb42d425045fa9f02",
+    "db3a18f79b2446f8b6a545541f3a0be5b85c5bc5"
+  ],
+  "source_sha256": {
+    "apps/kuno/benchmarks/native-text/src/cpu_gpu_expert_probe.rs": "bcf732609180dcd17fa583313a99be31c8218d8c2fd94db9f80499f6a30dbc4b",
+    "apps/kuno/benchmarks/native-text/src/cpu_gpu_expert_schedule.rs": "d9badca64ffb93b615c618c47c99bf1bca7014822b2feaa974d9cb91708cdbf0",
+    "apps/kuno/benchmarks/native-text/src/resident_moe.rs": "d4d2257af61311693c4069438b112a63ebe36e86129e8d040a5fad12020e3e26",
+    "apps/kuno/benchmarks/native-text/src/main.rs": "2a8d767a7a21d6295aa438eb0f9a0746a7c6f6784a411679e6c4ff62688789e6",
+    "crates/kuno-text/src/cpu_expert.rs": "a4c58eacd22a9ca08a52b361fb6016428b773dd1b7396f11fcff731db2ebd9bb"
+  },
+  "root_checks": {
+    "host_offline": {
+      "command": "CARGO_TARGET_DIR=/media/jmicko/faststore/kuno-development/root-native-text-target-20261005 cargo test --locked --offline --manifest-path apps/kuno/benchmarks/native-text/Cargo.toml -j4 --",
+      "passed": 391,
+      "failed": 0,
+      "ignored": 0,
+      "exit_code": 0,
+      "log_path": "/tmp/kuno-root-paused-checkpoint-tests-20261005.log",
+      "log_sha256": "0f49109edea3fa8c1f8daece7b5fb946431af7295b5a6001ee7796f074ff7741"
+    },
+    "strict_clippy": {
+      "command": "CARGO_TARGET_DIR=/media/jmicko/faststore/kuno-development/root-native-text-target-20261005 cargo clippy --locked --offline --manifest-path apps/kuno/benchmarks/native-text/Cargo.toml -j4 --all-targets -- -D warnings",
+      "exit_code": 0,
+      "log_path": "/tmp/kuno-root-paused-checkpoint-clippy-20261005.log",
+      "log_sha256": "b02c04ef447cec03dde3a9ca217f20c7fa795b436aa290938275348f4e2d9994"
+    },
+    "fmt": {
+      "command": "cargo fmt --manifest-path apps/kuno/benchmarks/native-text/Cargo.toml -- --check",
+      "exit_code": 0
+    },
+    "diff_check": {
+      "command": "git diff --check",
+      "exit_code": 0
+    },
+    "release_build": "not_run_on_root_for_this_source_checkpoint"
+  },
+  "author_checks": {
+    "release_host_offline_passed": 384,
+    "strict_all_target_clippy": "passed",
+    "fmt": "passed",
+    "normal_release_build": "passed; unregistered author binary only",
+    "unregistered_binary_sha256": "68f8f5672f480c4a63144b5225608594e3d77e2447c8234048c1bae4968aac7b"
+  },
+  "focused_peer_review": {
+    "scope": "read_only_source; final db3a18f7 correction and caller context",
+    "material_blockers": 0,
+    "completed": true,
+    "calibration_order": "actual CPU/GPU join, owning maps/fault/audit and bridge merge precede references; all comparisons precede local Plan publication",
+    "numeric_gates": "unchanged original tolerances and CPU rank bit comparisons",
+    "retained_results": "existing charged reference/snapshot and bridge envelopes; separate4096-byte scoped header reserve",
+    "physical_acceptance": false
+  },
+  "actual_budget_inventory": {
+    "scope": "implemented_source_only_no_model_payload_gpu_services_or_timing_execution",
+    "private_full_pages": [
+      32768,
+      32768,
+      32768,
+      32768,
+      32768,
+      131072,
+      32768,
+      32768,
+      131072,
+      32768,
+      32768,
+      32768,
+      32768,
+      131072,
+      32768,
+      32768,
+      32768,
+      32768
+    ],
+    "private_count": 18,
+    "private_actual_sum": 884736,
+    "private_arena_cap": 1048576,
+    "two_original_16slot_banks": 134217728,
+    "outstanding_legacy_source_max": 41943040,
+    "independent_runtime_hardcap": 67108864,
+    "combined_physical_ceiling": 268435456,
+    "actual_baseline_max": 24281088,
+    "runtime_component_inventory_before_double": 2375680,
+    "runtime_component_with_double_inspection": 4751360,
+    "runtime_component_reservation": 8388608,
+    "private_application_host_cap": 4194304,
+    "public_CPU_API_payload_cap": 41943040,
+    "joint_public_application_host_cap": 50331648,
+    "working_set_320_experts_Q5_bytes": 950272000,
+    "working_set_320_experts_Q8_bytes": 1146880000,
+    "all_split_points_sum_M0to10_K0toM": 66,
+    "max_recorded_samples_per_point": 16,
+    "cpu_source_commit": "d8c08873bc05f561f775da9baa6dd9ca96ed07fc",
+    "cpu_source_sha256": "a4c58eacd22a9ca08a52b361fb6016428b773dd1b7396f11fcff731db2ebd9bb",
+    "lab_base": "d1a0446",
+    "plan_sha256": "3d1ff3bc2796d1bf85841c079ec86c9cff92fa6f5c690dba27109bc31d4d1d06",
+    "limits": "freeze actual operator signatures and staged lifetime inventory before source acceptance; plan reserve never credits completed work before fence/lease drop/cleanup",
+    "private_host_reservations": {
+      "stage1_controlled": 1048576,
+      "oracle_and_full_snapshot": 2097152,
+      "bridge_and_metadata": 1048576
+    },
+    "private_host_known_oracle_peak": 655360,
+    "private_host_known_bridge_inventory": 870400,
+    "original_bank_state_per_owner_cap": 32768,
+    "actual_staged_plan_plus_original_per_owner_cap": 262144,
+    "opaque_staged_inventories_simultaneous": 2,
+    "local_scoped_header_reservation": 4096,
+    "independent_runtime_component_policy": "8MiB audited component, separate from hard native64MiB; actual map lease drop precedes cleanup and completed MAIN credit",
+    "prebound_public_graph": "borrowed from caller; no duplicate binding/vectors, external inspected graph and file are outside incremental fixture",
+    "cpu_payload_public_component": 41943040,
+    "legacy_public_single_component_max": 1740800,
+    "numeric_purpose_timings": false,
+    "calibration_references": "after completed actual consumers/bridge/merge/fault/audit; numeric before candidate work",
+    "calibration_cache_conditioning": [
+      "mandatory real hit/filler priming",
+      "earlier permit-granting numeric run",
+      "prior timed samples and post-sample references",
+      "OS page cache and model file mmap may remain warm"
+    ],
+    "calibration_limit_claim": "controlled operator costs only; no cold-read/general-model/whole-model/Ollama speed claim",
+    "lab_head": "db3a18f79b2446f8b6a545541f3a0be5b85c5bc5",
+    "source_sha256": {
+      "apps/kuno/benchmarks/native-text/src/cpu_gpu_expert_probe.rs": "bcf732609180dcd17fa583313a99be31c8218d8c2fd94db9f80499f6a30dbc4b",
+      "apps/kuno/benchmarks/native-text/src/cpu_gpu_expert_schedule.rs": "d9badca64ffb93b615c618c47c99bf1bca7014822b2feaa974d9cb91708cdbf0",
+      "apps/kuno/benchmarks/native-text/src/resident_moe.rs": "d4d2257af61311693c4069438b112a63ebe36e86129e8d040a5fad12020e3e26",
+      "apps/kuno/benchmarks/native-text/src/main.rs": "365336cb3a137485eaac5f0334f587b5d914d6930c8e0c91eeb534892de6fe89",
+      "crates/kuno-text/src/cpu_expert.rs": "a4c58eacd22a9ca08a52b361fb6016428b773dd1b7396f11fcff731db2ebd9bb",
+      "crates/kuno-text/src/gguf.rs": "d8ed31a546e3c3d1c02e35b74ce7677ef0a7ecf35c82b44c7acf159ed3ea9ad7"
+    },
+    "combined_patch_sha256": "6e33f34596b2efd997a6eafbad85d7103a70ca5a6f3ff1f7375cdc5083ac426c"
+  },
+  "public_cli_registered": false,
+  "physical_numeric_accepted": false,
+  "calibration_executed": false,
+  "whole_model_hybrid_connected": false,
+  "speed_accepted": false,
+  "installed": false,
+  "required_vashti_changes": [],
+  "cache_conditioning": "required priming, earlier Numeric and prior samples remain; no cold-storage or general-model-cost claim",
+  "goal_status": "paused"
+}

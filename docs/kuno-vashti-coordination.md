@@ -37,6 +37,9 @@ UI or change its user-data storage.
 - [CPU/GPU calibration lab](kuno-native-text-cpu-gpu-calibration.md): approved
   bounded real-read operator, original-rank merge and completed joint controls;
   source/device/timing acceptance remain separate.
+- [Paused native text checkpoint](kuno-native-text-checkpoint.md): current
+  integrated source, isolated diagnostic candidate, completed checks and the
+  next physical acceptance gates. Resume from this checkpoint first.
 - [Image engine contract](kuno-images.md): supported execution and image API.
 - [Vashti Images specification](vashti-images-spec.md): product behavior and UX.
 
@@ -1643,3 +1646,31 @@ Long contexts, options/quality, production private workers, native-default/
 managed `ollama.` routing and faster matched Ollama inference remain outstanding.
 **Required Vashti changes: none.** Installed/public/frontend/release state is
 unchanged; no reset or reboot occurred.
+
+### Paused native text source checkpoint (2026-10-05)
+
+**The user paused the goal.** Read [the clean checkpoint](kuno-native-text-checkpoint.md)
+first on resume. Root `codex/kuno-native-text` integrates the joint expert source
+through `e386c79` (`5f2ed09`, `b2b69cc`, `1ef151f`, `e386c79`). Root passes 391
+host/offline tests, strict all-target Clippy, formatting and diff checks. The
+focused independent review of the corrected reference ordering found no
+material blocker. No root CLI, physical joint numeric/timing acceptance or
+whole-model hybrid dispatch is established. Numeric precedes timing; references
+in Calibration now follow completed measured consumers/merge/audit while all
+numeric/file/immutability gates still precede local plan publication. Required
+priming/prior samples remain cache conditioning.
+
+The isolated first-divergence diagnostic is frozen at `2439d73` on
+`codex/kuno-native-numeric-boundaries`, based on `8621308`, with five focused
+tests and strict Clippy/fmt/diff checks passing. It is not integrated or
+registered on root. Source review passes; extra peer review and both-card actual
+four-boundary/full-cleanup evidence remain pending. No arithmetic or whole-model
+tolerance changed; the cause of the measured full-score deltas is unaccepted.
+
+Resume with the checkpoint's exact candidate/source receipts and physical gates.
+Preserve the 8-GiB correctness lane; separately address benchmark containment
+and cache accounting before a matched Ollama comparison. No new model/GPU job,
+installed service/configuration, default, public contract, driver/reset/reboot,
+frontend or release change occurred while finishing this checkpoint.
+**Required Vashti changes: none.** All current source workers and checks have
+finished; goal completion and a speed win remain outstanding.
