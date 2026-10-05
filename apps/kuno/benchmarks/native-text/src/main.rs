@@ -4,10 +4,21 @@ mod executor;
 mod expert_banks;
 mod gdn_executor;
 mod gdn_gpu;
+mod gdn_pointwise;
+mod private_arena;
+mod qsa_gpu;
 mod quant_matvec;
+mod resident_gdn;
+mod resident_gr;
+mod resident_model;
+mod resident_moe;
+mod resident_probe;
+mod resident_qsa;
+mod resident_util;
+mod residual_gpu;
+mod small_cpu;
 use cubecl::prelude::*;
 use cubecl::wgpu::{RuntimeOptions, WgpuRuntime, WgpuSetup, init_device};
-use cubecl_runtime::memory_management::{MemoryPoolOptions, PoolType};
 use kuno_text::model::{MatrixExecutor, Qwen4Exp, RoutedWeights, greedy};
 use kuno_text::{GgufFile, GgufLimits, Qwen35Tokenizer, TensorType, TokenizerLimits};
 use std::sync::atomic::AtomicBool;
@@ -77,16 +88,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
             RuntimeOptions {
                 tasks_max: 32,
-                memory_config: cubecl::MemoryConfiguration::Custom {
-                    pool_options: (15..=27)
-                        .map(|power| MemoryPoolOptions {
-                            pool_type: PoolType::ExclusivePages {
-                                max_alloc_size: 1u64 << power,
-                            },
-                            dealloc_period: Some(1),
-                        })
-                        .collect(),
-                },
+                memory_config: private_arena::required_memory_configuration(),
             },
         );
         let client = WgpuRuntime::client(&selected);
@@ -126,6 +128,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 return Err("Rust GPU numeric fixture failed".into());
             }
             println!("rust_matvec rows={rows} cols={cols} max_abs_error={max_error}");
+        }
+        if mode == "resident-qsa-probe" {
+            for report in resident_qsa::public_parity_probe(&client)? {
+                println!(
+                    "public_resident_qsa visible={} complete={} selected={} norm_error={} score_error={} output_error={} owned_bytes={}",
+                    report.visible,
+                    report.complete_blocks,
+                    report.selected_tokens,
+                    report.max_norm_error,
+                    report.max_score_error,
+                    report.max_output_error,
+                    report.charged_bytes
+                );
+            }
+            return Ok(());
+        }
+        if mode == "resident-gdn-probe" {
+            resident_probe::gdn(&client)?;
+            return Ok(());
+        }
+        if mode == "resident-probe" {
+            resident_probe::run(&client)?;
+            return Ok(());
         }
         if mode == "gdn-probe" {
             for report in gdn_executor::parity_probe(&client)? {
@@ -192,7 +217,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let x = client.create_from_slice(f32::as_bytes(&input));
                 let y = client.empty(rows * 4);
                 // SAFETY: validated upload sizes, handle element types and exact logical lengths.
-                quant_matvec::cooperative::cooperative_matvec::launch::<WgpuRuntime>(
+                quant_matvec::block::block_matvec::launch::<WgpuRuntime>(
                     &client,
                     CubeCount::Static(rows as u32, 1, 1),
                     CubeDim::new_1d(64),
@@ -202,6 +227,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     rows,
                     cols,
                     dtype,
+                    0,
                 );
                 let actual_bytes = client.read_one(y)?;
                 let actual = f32::from_bytes(&actual_bytes);
@@ -222,7 +248,84 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
         }
-        if mode == "moe-probe" {
+        if mode == "matrix-bench" {
+            let path = std::env::var_os("KUNO_TEST_GGUF").ok_or("existing GGUF required")?;
+            let file = GgufFile::open(path, GgufLimits::default())?;
+            let cancel = AtomicBool::new(false);
+            let mut executor = executor::GpuExecutor::new(
+                &file,
+                client.clone(),
+                2 * 1024 * 1024 * 1024,
+                16,
+                4 * 1024 * 1024 * 1024,
+            )?;
+            executor.small_cpu_enabled = false;
+            executor.block_large_only = false;
+            let mut results = Vec::new();
+            for name in [
+                "output.weight",
+                "blk.0.hc_attn_down.weight",
+                "blk.0.hc_ffn_down.weight",
+            ] {
+                let tensor = file.tensor(name).ok_or("missing public test matrix")?;
+                let input: Vec<f32> = (0..tensor.info().row_len())
+                    .map(|i| ((i % 13) as f32 - 6.) / 13.)
+                    .collect();
+                executor.block_kernel = false;
+                let mut oracle = executor.run(tensor, 0, &input, &cancel)?;
+                for variant in [true, false] {
+                    executor.block_kernel = variant;
+                    let mut warm = executor.run(tensor, 0, &input, &cancel)?;
+                    warm.zeroize();
+                }
+                let mut generic = Vec::new();
+                let mut block = Vec::new();
+                let mut max_error = 0f32;
+                // Alternating ABBA order within one resident process bounds
+                // cache/JIT/clock drift better than independent tiny graph runs.
+                for _ in 0..5 {
+                    for variant in [false, true, true, false] {
+                        executor.block_kernel = variant;
+                        let t = Instant::now();
+                        let mut out = executor.run(tensor, 0, &input, &cancel)?;
+                        let ns = t.elapsed().as_nanos() as u64;
+                        if variant {
+                            block.push(ns);
+                        } else {
+                            generic.push(ns);
+                        }
+                        for (&a, &e) in out.iter().zip(&oracle) {
+                            let error = (a - e).abs();
+                            max_error = max_error.max(error);
+                            if !a.is_finite() || error > 1e-4 + 3e-4 * e.abs() {
+                                return Err("block numeric parity failed".into());
+                            }
+                        }
+                        out.zeroize();
+                    }
+                }
+                generic.sort_unstable();
+                block.sort_unstable();
+                println!(
+                    "public_matrix_bench tensor={name} generic_median_us={} block_median_us={} max_abs_error={max_error}",
+                    generic[5] / 1000,
+                    block[5] / 1000
+                );
+                results.push(serde_json::json!({"tensor":name,"generic_ns":generic,"block_ns":block,"max_abs_error":max_error}));
+                oracle.zeroize();
+            }
+            if let Some(path) = std::env::var_os("KUNO_PUBLIC_RECEIPT") {
+                use std::io::Write;
+                let receipt = serde_json::json!({"scope":"fixed-public-synthetic-operator-test-only","fixture":"matrix-bench","vendor":vendor,"results":results});
+                let mut out = std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(path)?;
+                out.write_all(serde_json::to_string_pretty(&receipt)?.as_bytes())?;
+            }
+            return Ok(());
+        }
+        if mode == "moe-probe" || mode == "moe-bench" {
             let path = std::env::var_os("KUNO_TEST_GGUF").ok_or("existing GGUF required")?;
             let file = GgufFile::open(path, GgufLimits::default())?;
             let cancel = AtomicBool::new(false);
@@ -233,6 +336,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 16,
                 2 * 1024 * 1024 * 1024,
             )?;
+            let mut results = Vec::new();
             for kind in [TensorType::Q5_0, TensorType::Q8_0] {
                 let down = file
                     .tensors()
@@ -295,14 +399,75 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         executor.gdn_ns / 1_000_000,
                         executor.gdn_calls
                     );
+                    if mode == "moe-bench" && pass == 1 {
+                        for variant in [false, true] {
+                            executor.block_moe = variant;
+                            let mut warm = executor
+                                .routed_moe(weights, &input, &selected, &cancel)?
+                                .ok_or("missing routed backend")?;
+                            warm.zeroize();
+                        }
+                        let misses = executor.expert_uploads;
+                        let mut generic = Vec::new();
+                        let mut block = Vec::new();
+                        let mut max_difference = 0f32;
+                        for _ in 0..5 {
+                            for variant in [false, true, true, false] {
+                                executor.block_moe = variant;
+                                let start = Instant::now();
+                                let mut out = executor
+                                    .routed_moe(weights, &input, &selected, &cancel)?
+                                    .ok_or("missing routed backend")?;
+                                let ns = start.elapsed().as_nanos() as u64;
+                                if variant {
+                                    block.push(ns);
+                                } else {
+                                    generic.push(ns);
+                                }
+                                for (&a, &e) in out.iter().zip(&actual) {
+                                    let error = (a - e).abs();
+                                    max_difference = max_difference.max(error);
+                                    if !a.is_finite() || error > 1e-4 + 3e-4 * e.abs() {
+                                        return Err("block MoE numeric parity failed".into());
+                                    }
+                                }
+                                out.zeroize();
+                            }
+                        }
+                        if executor.expert_uploads != misses {
+                            return Err("MoE cache changed during fixed bench".into());
+                        }
+                        generic.sort_unstable();
+                        block.sort_unstable();
+                        println!(
+                            "public_moe_bench dtype={} generic_median_us={} block_median_us={} max_abs_difference={max_difference}",
+                            kind.gguf_id(),
+                            generic[5] / 1000,
+                            block[5] / 1000
+                        );
+                        results.push(serde_json::json!({"down_dtype":kind.gguf_id(),"generic_ns":generic,"block_ns":block,"max_abs_difference":max_difference,"cache_misses_during_measurement":0}));
+                    }
                 }
+            }
+            if mode == "moe-bench"
+                && let Some(path) = std::env::var_os("KUNO_PUBLIC_RECEIPT")
+            {
+                use std::io::Write;
+                let receipt = serde_json::json!({"scope":"fixed-public-synthetic-operator-test-only","fixture":"moe-bench","vendor":vendor,"results":results});
+                let mut out = std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(path)?;
+                out.write_all(serde_json::to_string_pretty(&receipt)?.as_bytes())?;
             }
             return Ok(());
         }
         if mode != "probe" {
             let fixture: serde_json::Value =
                 serde_json::from_str(include_str!("../../text/qwen38-baseline.json"))?;
-            let (prompt, limit) = match mode.as_str() {
+            let resident_enabled = mode.starts_with("resident-");
+            let fixture_mode = mode.strip_prefix("resident-").unwrap_or(&mode);
+            let (prompt, limit) = match fixture_mode {
                 "bang" => ("!", 4usize),
                 "chat" => (
                     "<|im_start|>user\nSay hello.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
@@ -327,9 +492,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if vendor == 0x8086 {
                     8 * 1024 * 1024 * 1024
                 } else {
-                    3 * 1024 * 1024 * 1024
+                    6 * 1024 * 1024 * 1024
                 },
-                if vendor == 0x8086 { 64 } else { 32 },
+                if vendor == 0x8086 { 64 } else { 16 },
                 if vendor == 0x8086 {
                     26 * 1024 * 1024 * 1024
                 } else {
@@ -337,6 +502,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 },
             )?;
             let cancel = AtomicBool::new(false);
+            let mut resident = if resident_enabled {
+                Some(resident_model::ResidentModel::new(
+                    model.bound_graph(),
+                    client.clone(),
+                    ids.len() + limit,
+                )?)
+            } else {
+                None
+            };
+            if let Some(r) = &resident {
+                println!("resident_private_owned_bytes={}", r.owned_bytes());
+            }
+            let model_bind_ms = load.elapsed().as_millis() as u64;
             println!(
                 "gpu_fixture={mode} prompt_tokens={} seed=424242 temperature=0 load_ms={}",
                 ids.len(),
@@ -346,7 +524,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut logits = Vec::new();
             for (n, token) in ids.iter().enumerate() {
                 logits.zeroize();
-                logits = model.step(&mut executor, &mut sequence, *token, &cancel, |_| {})?;
+                logits = if let Some(r) = &mut resident {
+                    let mut output = r.step(&mut executor, *token, &cancel)?;
+                    std::mem::take(&mut *output)
+                } else {
+                    model.step(&mut executor, &mut sequence, *token, &cancel, |_| {})?
+                };
                 println!(
                     "gpu_prefill_tokens={} elapsed_ms={}",
                     n + 1,
@@ -366,6 +549,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 executor.expert_uploads,
             );
             executor.by_tensor.clear();
+            if let Some(r) = &mut resident {
+                r.phase_ns.clear();
+            }
             let start = Instant::now();
             let mut generated = Vec::new();
             let mut decoder = tokenizer.stream_decoder();
@@ -379,7 +565,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("synthetic_gpu_token={token} synthetic_gpu_text={text:?}");
                 if n + 1 < limit {
                     logits.zeroize();
-                    logits = model.step(&mut executor, &mut sequence, token, &cancel, |_| {})?;
+                    logits = if let Some(r) = &mut resident {
+                        let mut output = r.step(&mut executor, token, &cancel)?;
+                        std::mem::take(&mut *output)
+                    } else {
+                        model.step(&mut executor, &mut sequence, token, &cancel, |_| {})?
+                    };
                 }
             }
             println!(
@@ -406,11 +597,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 executor.gdn_calls
             );
             let generation_ms = start.elapsed().as_millis() as u64;
+            if let Some(r) = &resident {
+                println!("public_resident_warm_phase_ns={:?}", r.phase_ns);
+            }
             if let Some(path) = std::env::var_os("KUNO_PUBLIC_RECEIPT") {
                 use std::io::Write;
                 let receipt = serde_json::json!({
                     "scope":"fixed-public-synthetic-operator-test-only", "fixture":mode,"vendor":vendor,
-                    "seed":424242,"temperature":0,"prompt_tokens":ids.len(),"public_generated_ids":generated,
+                    "seed":424242,"temperature":0,"model_bind_ms":model_bind_ms,"prompt_tokens":ids.len(),"public_generated_ids":generated,
                     "prefill_ms":prefill.as_millis() as u64,"generation_ms":generation_ms,
                     "cache_accounted_bytes":executor.cache_bytes(),"allocator_reserved_bytes":executor.reserved_bytes()?,
                     "matrix_calls":executor.calls,"moe_calls":executor.moe_calls,"gdn_calls":executor.gdn_calls,
@@ -425,7 +619,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "warm_uploaded_bytes":executor.uploaded_bytes-pre_stats.6,
                     "warm_expert_hits":executor.expert_hits-pre_stats.7,"warm_expert_uploads":executor.expert_uploads-pre_stats.8,
                     "public_warm_matrix_ns":executor.by_tensor,
-                    "gpu_gdn_cpu_state_owner":true, "weights":"borrowed-unmodified-ollama-blob"
+                    "gpu_gdn_cpu_state_owner":executor.gpu_gdn&&!resident_enabled,
+                    "public_resident_warm_phase_ns":resident.as_ref().map(|r|&r.phase_ns),"resident_private_owned_bytes":resident.as_ref().map(|r|r.owned_bytes()),"block_kernel":executor.block_kernel,
+                    "block_large_only":executor.block_large_only,"block_moe":executor.block_moe,
+                    "small_cpu_enabled":executor.small_cpu_enabled,
+                    "small_cpu_ms":(executor.small_cpu_ns/1_000_000) as u64,
+                    "small_cpu_calls":executor.small_cpu_calls,
+                    "small_cpu_cache_bytes":executor.small_cpu.cached_bytes(),
+                    "small_cpu_cache_matrices":executor.small_cpu.cached_matrices(), "resident_graph":resident_enabled,"weights":"borrowed-unmodified-ollama-blob"
                 });
                 let mut out = std::fs::OpenOptions::new()
                     .write(true)
@@ -443,6 +644,49 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!(
                     "public_warm_matrix tensor={tensor} total_ms={}",
                     ns / 1_000_000
+                );
+            }
+            if std::env::var("KUNO_LAB_CANCEL_CHECK").as_deref() == Ok("1") {
+                let Some(r) = &mut resident else {
+                    return Err("resident cancellation check requires resident fixture".into());
+                };
+                cancel.store(true, std::sync::atomic::Ordering::Release);
+                if r.step(&mut executor, ids[0], &cancel).is_ok() || !r.erased_after_failure() {
+                    return Err("resident cancellation cleanup failed".into());
+                }
+                cancel.store(false, std::sync::atomic::Ordering::Release);
+                if r.step(&mut executor, ids[0], &cancel).is_ok() {
+                    return Err("poisoned resident sequence reused".into());
+                }
+                let mut fresh = resident_model::ResidentModel::new(
+                    model.bound_graph(),
+                    client.clone(),
+                    ids.len() + limit,
+                )?;
+                let mut fresh_logits = zeroize::Zeroizing::new(Vec::new());
+                for token in &ids {
+                    fresh_logits = fresh.step(&mut executor, *token, &cancel)?;
+                }
+                if greedy(&fresh_logits)? != generated[0] {
+                    return Err("fresh resident sequence mismatch".into());
+                }
+                for layer in [0, 3] {
+                    let mut partial = resident_model::ResidentModel::new(
+                        model.bound_graph(),
+                        client.clone(),
+                        ids.len() + limit,
+                    )?;
+                    partial.arm_public_mid_token_cancel(layer)?;
+                    if partial.step(&mut executor, ids[0], &cancel).is_ok()
+                        || !partial.erased_after_failure()
+                    {
+                        return Err("partially queued resident cancellation failed".into());
+                    }
+                    cancel.store(false, std::sync::atomic::Ordering::Release);
+                    println!("public_mid_token_cancel layer={layer} erased=true");
+                }
+                println!(
+                    "public_resident_cancel_erased=true poisoned_retry_rejected=true fresh_first_token_matches=true"
                 );
             }
             logits.zeroize();

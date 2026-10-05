@@ -357,3 +357,9 @@ pub mod cooperative;
 
 #[path = "moe_gpu.rs"]
 pub mod moe;
+
+#[path = "block_matvec.rs"]
+pub mod block;
+
+#[path = "moe_block.rs"]
+pub mod moe_block;

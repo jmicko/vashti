@@ -1033,3 +1033,39 @@ Performance is still slower than updated Ollama. Full baseline, long context,
 private-worker lifecycle and native default/`ollama.` managed routing remain
 required. No API or Vashti consumer change is exposed by this backend laboratory;
 there is nothing to integrate or release from this receipt yet.
+
+
+### Native text resident-operator checkpoint (2026-10-05)
+
+`codex/kuno-native-text` integrates read-only bound plan `2467ac7` and measured
+transfer/cache/block-decoding experiments after `f8b2d2d`. The first full fixed
+75-prompt/128-output Rust fixture completes but is still substantially slower
+than updated Ollama. Both cards pass residual/full-span buffer erasure and
+seven-step resident GDN operator parity. Read [the performance receipt](kuno-text-performance.md#transfer-reductions-and-first-full-public-native-fixture)
+and [the resident ownership audit](kuno-native-text-residency.md).
+
+This is backend-only laboratory work. It exposes no native model/capability,
+changes no API/configuration or installed service, and requires **no Vashti
+changes**. Native-default and explicit managed `ollama.` routing remain intended
+but unimplemented. Runtime staging sanitization, the complete resident graph,
+quality/options/lifecycle acceptance and a matched performance win remain
+outstanding. Preserve normal Ollama behavior and long inference until the
+verified engine is integrated. This checkpoint is not a release handoff.
+
+### Native text connected resident graph follow-up (2026-10-05)
+
+The isolated laboratory now connects GR/GDN/QSA/full all-ten MoE with a single
+whole-token owner; PLE retains its exact Rust host oracle. Both cards match
+four output tokens and pass cancellation after queued GDN/QSA, whole-arena
+erasure, poisoned retry rejection and fresh-sequence recovery. B70 matches the
+eight-token chat. Short decode overhead improves, but native remains slower than
+Ollama. Long-position NVIDIA QSA numerical accuracy is being corrected without
+loosening the oracle. Exact binary receipts and limits are in
+[performance acceptance](kuno-text-performance.md#connected-resident-graph-acceptance-public-laboratory-2026-10-05).
+
+Public weight wipe removal does not alter private-content cleanup. Runtime
+upload/readback/uniform and scalar/INFO host copies still require checked
+sanitization before real private requests. No native route/default/catalog,
+public contract, deployment or Vashti code changes: **no Vashti integration is
+required yet**. This remains development toward the active performance goal,
+not a production/release or complete privacy receipt.

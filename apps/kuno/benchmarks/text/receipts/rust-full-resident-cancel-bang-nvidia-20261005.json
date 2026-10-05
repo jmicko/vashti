@@ -1,0 +1,78 @@
+{
+  "allocator_reserved_bytes": 6640968000,
+  "block_kernel": true,
+  "block_large_only": true,
+  "block_moe": true,
+  "cache_accounted_bytes": 8346664960,
+  "fixture": "resident-bang",
+  "gdn_calls": 0,
+  "generation_ms": 2949,
+  "gpu_gdn_cpu_state_owner": false,
+  "matrix_calls": 3008,
+  "model_bind_ms": 528,
+  "moe_calls": 192,
+  "prefill_ms": 7255,
+  "prompt_tokens": 1,
+  "public_generated_ids": [
+    49276,
+    2349,
+    1074,
+    5928
+  ],
+  "public_resident_warm_phase_ns": {
+    "attention_combine_and_ffn_gr_enqueue": 56532407,
+    "attention_enqueue_and_host_fences": 243254212,
+    "attention_gr_enqueue": 53989775,
+    "expert_upload_and_enqueue": 1913371471,
+    "moe_route_and_upload_enqueue": 2530521078,
+    "ple_and_previous_owner": 23881019,
+    "router_fence": 557276790
+  },
+  "public_warm_matrix_ns": {},
+  "resident_graph": true,
+  "resident_private_owned_bytes": 785186816,
+  "scope": "fixed-public-synthetic-operator-test-only",
+  "seed": 424242,
+  "small_cpu_cache_bytes": 0,
+  "small_cpu_cache_matrices": 0,
+  "small_cpu_calls": 0,
+  "small_cpu_enabled": false,
+  "small_cpu_ms": 0,
+  "temperature": 0,
+  "total_gdn_ms": 0,
+  "total_matrix_ms": 0,
+  "total_moe_ms": 0,
+  "vendor": 4318,
+  "warm_expert_hits": 753,
+  "warm_expert_uploads": 687,
+  "warm_gdn_ms": 0,
+  "warm_gpu_wait_ms": 0,
+  "warm_matrix_ms": 0,
+  "warm_moe_ms": 0,
+  "warm_uploaded_bytes": 2260684800,
+  "warm_weight_read_ms": 307,
+  "warm_weight_upload_ms": 414,
+  "weights": "borrowed-unmodified-ollama-blob",
+  "experiment_identity": {
+    "core_base": "2467ac7554eaa18586905344c7e47447930831f9",
+    "binary_sha256": "2b9748b9979d8df9699fe8af138a714175fed1d3fdde8e18c29ef168f2ddb777",
+    "source_state": "explicit public laboratory development after core_base; variant named by receipt"
+  },
+  "containment": {
+    "host_memory_limit_bytes": 12884901888,
+    "memory_swap_max": 0,
+    "limit_core": 0,
+    "operator_only_runtime_limit_seconds": 180
+  },
+  "public_lifecycle_checks": {
+    "before_step_cancel_erased": true,
+    "mid_token_cancel_after_attention_layers": [
+      0,
+      3
+    ],
+    "mid_token_cancel_erased": true,
+    "poisoned_retry_rejected": true,
+    "fresh_first_token_matches": true
+  },
+  "production_runtime_staging_erasure_verified": false
+}

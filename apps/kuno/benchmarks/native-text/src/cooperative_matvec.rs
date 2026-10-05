@@ -31,6 +31,7 @@ pub fn cooperative_matvec(
     rows: usize,
     columns: usize,
     #[comptime] dtype: u32,
+    output_first: usize,
 ) {
     let row = CUBE_POS_X as usize;
     let lane = UNIT_POS_X as usize;
@@ -72,7 +73,7 @@ pub fn cooperative_matvec(
         stride /= 2;
     }
     if lane == 0 && row < rows {
-        output[row] = sums[0];
+        output[output_first + row] = sums[0];
     }
 }
 

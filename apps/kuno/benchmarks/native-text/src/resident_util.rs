@@ -1,0 +1,400 @@
+//! Buffer-only laboratory glue. All private allocations are arena-owned.
+//! Numerical faults accumulate until the whole-token owner rejects/cleans up.
+use cubecl::prelude::*;
+use cubecl::server::Handle;
+use cubecl::wgpu::WgpuRuntime;
+use kuno_text::{Error, Result};
+use std::sync::atomic::{AtomicBool, Ordering};
+use zeroize::{Zeroize, Zeroizing};
+struct ScrubBytes(cubecl::bytes::Bytes);
+impl Drop for ScrubBytes {
+    fn drop(&mut self) {
+        self.0.zeroize();
+    }
+}
+use crate::private_arena::{BufferId, PrivateArena};
+
+pub fn fault(_: impl std::fmt::Display) -> Error {
+    Error::InvalidFormat("resident graph device operation")
+}
+pub fn cancel(cancel: &AtomicBool) -> Result<()> {
+    if cancel.load(Ordering::Acquire) {
+        Err(Error::InvalidFormat("resident graph cancelled"))
+    } else {
+        Ok(())
+    }
+}
+pub fn words(arena: &PrivateArena, id: BufferId) -> Result<usize> {
+    Ok(arena.layout(id).map_err(fault)?.logical_words)
+}
+pub fn handle(arena: &PrivateArena, id: BufferId) -> Result<Handle> {
+    crate::resident_gdn::logical_handle(arena, id)
+}
+pub fn arg(arena: &PrivateArena, id: BufferId) -> Result<ArrayArg<WgpuRuntime>> {
+    // SAFETY: arena identity, epoch and exact logical bounds checked by handle.
+    Ok(unsafe { ArrayArg::from_raw_parts(handle(arena, id)?, words(arena, id)?) })
+}
+pub fn raw_arg(handle: Handle, words: usize) -> Result<ArrayArg<WgpuRuntime>> {
+    if handle.size_in_used() < (words.checked_mul(4).ok_or(Error::ArithmeticOverflow)?) as u64 {
+        return Err(Error::InvalidBufferLength);
+    }
+    // SAFETY: caller owns public handle on same stream and verified element type.
+    Ok(unsafe { ArrayArg::from_raw_parts(handle, words) })
+}
+pub fn grid(words: usize) -> Result<CubeCount> {
+    if words == 0 || words.div_ceil(64) > 65535 {
+        return Err(Error::LimitExceeded("resident kernel grid"));
+    }
+    Ok(CubeCount::Static(words.div_ceil(64) as u32, 1, 1))
+}
+#[allow(clippy::manual_range_contains)]
+#[cube]
+fn finite(x: f32) -> bool {
+    x <= 3.4028235e38_f32 && x >= -3.4028235e38_f32
+}
+#[cube(launch)]
+pub fn verify_finite(values: &Array<f32>, fault: &mut Array<Atomic<u32>>) {
+    let i = ABSOLUTE_POS;
+    if i < values.len() && !finite(values[i]) {
+        fault[0].fetch_or(1);
+    }
+}
+#[cube(launch)]
+pub fn verify_status(status: &Array<u32>, fault: &mut Array<Atomic<u32>>) {
+    let i = ABSOLUTE_POS;
+    if i < status.len() && status[i] != 1 {
+        fault[0].fetch_or(2);
+    }
+}
+#[cube(launch)]
+pub fn copy_words(input: &Array<u32>, output: &mut Array<u32>) {
+    let i = ABSOLUTE_POS;
+    if i < output.len() {
+        output[i] = input[i];
+    }
+}
+#[cube(launch)]
+pub fn fence_packet(values: &Array<f32>, fault: &Array<u32>, packet: &mut Array<u32>) {
+    let i = ABSOLUTE_POS;
+    if i < values.len() {
+        packet[i] = u32::reinterpret(values[i]);
+    }
+    if i == values.len() {
+        packet[i] = fault[0];
+    }
+}
+pub fn validate(arena: &PrivateArena, output: BufferId, fault_id: BufferId) -> Result<()> {
+    if output == fault_id || words(arena, fault_id)? != 1 {
+        return Err(Error::InvalidBufferLength);
+    }
+    verify_finite::launch::<WgpuRuntime>(
+        arena.client().map_err(fault)?,
+        grid(words(arena, output)?)?,
+        CubeDim::new_1d(64),
+        arg(arena, output)?,
+        arg(arena, fault_id)?,
+    );
+    Ok(())
+}
+pub fn status(arena: &PrivateArena, region: BufferId, fault_id: BufferId) -> Result<()> {
+    if region == fault_id || words(arena, fault_id)? != 1 {
+        return Err(Error::InvalidBufferLength);
+    }
+    verify_status::launch::<WgpuRuntime>(
+        arena.client().map_err(fault)?,
+        grid(words(arena, region)?)?,
+        CubeDim::new_1d(64),
+        arg(arena, region)?,
+        arg(arena, fault_id)?,
+    );
+    Ok(())
+}
+pub fn zero(arena: &PrivateArena, id: BufferId) -> Result<()> {
+    let layout = arena.layout(id).map_err(fault)?;
+    crate::private_arena::erase_full_span::launch::<WgpuRuntime>(
+        arena.client().map_err(fault)?,
+        CubeCount::Static(layout.workgroups_x, layout.workgroups_y, 1),
+        CubeDim::new_1d(64),
+        unsafe {
+            ArrayArg::from_raw_parts(arena.handle(id).map_err(fault)?.clone(), layout.owned_words)
+        },
+    );
+    Ok(())
+}
+/// Source allocations remain tracked until I/O arena reset after a fence.
+pub fn upload_f32(
+    io: &mut PrivateArena,
+    arena: &PrivateArena,
+    id: BufferId,
+    values: &[f32],
+) -> Result<()> {
+    if values.len() != words(arena, id)? || values.iter().any(|v| !v.is_finite()) {
+        return Err(Error::InvalidBufferLength);
+    }
+    if !std::ptr::eq(
+        io.client().map_err(fault)?.info(),
+        arena.client().map_err(fault)?.info(),
+    ) {
+        return Err(Error::InvalidFormat("resident upload context mismatch"));
+    }
+    let source = io.upload_f32(values).map_err(fault)?;
+    copy_words::launch::<WgpuRuntime>(
+        arena.client().map_err(fault)?,
+        grid(values.len())?,
+        CubeDim::new_1d(64),
+        arg(io, source)?,
+        arg(arena, id)?,
+    );
+    Ok(())
+}
+pub fn read_f32(arena: &PrivateArena, id: BufferId) -> Result<Zeroizing<Vec<f32>>> {
+    let bytes = ScrubBytes(
+        arena
+            .client()
+            .map_err(fault)?
+            .read_one(handle(arena, id)?)
+            .map_err(fault)?,
+    );
+    let values = f32::from_bytes(&bytes.0);
+    if values.len() != words(arena, id)? || values.iter().any(|v| !v.is_finite()) {
+        return Err(Error::InvalidFormat("resident output invalid"));
+    }
+    Ok(Zeroizing::new(values.to_vec()))
+}
+/// ONE readback drains prior commands and includes the accumulated fault word.
+pub fn read_fence(
+    arena: &PrivateArena,
+    values: BufferId,
+    fault_id: BufferId,
+    packet: BufferId,
+) -> Result<Zeroizing<Vec<f32>>> {
+    let n = words(arena, values)?;
+    if words(arena, packet)? != n + 1
+        || words(arena, fault_id)? != 1
+        || values == packet
+        || fault_id == packet
+    {
+        return Err(Error::InvalidBufferLength);
+    }
+    fence_packet::launch::<WgpuRuntime>(
+        arena.client().map_err(fault)?,
+        grid(n + 1)?,
+        CubeDim::new_1d(64),
+        arg(arena, values)?,
+        arg(arena, fault_id)?,
+        arg(arena, packet)?,
+    );
+    let bytes = ScrubBytes(
+        arena
+            .client()
+            .map_err(fault)?
+            .read_one(handle(arena, packet)?)
+            .map_err(fault)?,
+    );
+    let packed = u32::from_bytes(&bytes.0);
+    if packed.len() != n + 1 || packed[n] != 0 {
+        return Err(Error::InvalidFormat("resident token numerical failure"));
+    }
+    let output: Vec<f32> = packed[..n].iter().map(|v| f32::from_bits(*v)).collect();
+    let output = Zeroizing::new(output);
+    if output.iter().any(|v| !v.is_finite()) {
+        return Err(Error::InvalidFormat("resident output invalid"));
+    }
+    Ok(output)
+}
+
+pub fn arg_prefix(arena: &PrivateArena, id: BufferId, n: usize) -> Result<ArrayArg<WgpuRuntime>> {
+    let capacity = words(arena, id)?;
+    if n == 0 || n > capacity {
+        return Err(Error::InvalidBufferLength);
+    }
+    let h = handle(arena, id)?.offset_end(((capacity - n) * 4) as u64);
+    Ok(unsafe { ArrayArg::from_raw_parts(h, n) })
+}
+pub fn status_prefix(
+    arena: &PrivateArena,
+    id: BufferId,
+    n: usize,
+    fault_id: BufferId,
+) -> Result<()> {
+    if n == 0 {
+        return Ok(());
+    }
+    if id == fault_id || words(arena, fault_id)? != 1 {
+        return Err(Error::InvalidBufferLength);
+    }
+    verify_status::launch::<WgpuRuntime>(
+        arena.client().map_err(fault)?,
+        grid(n)?,
+        CubeDim::new_1d(64),
+        arg_prefix(arena, id, n)?,
+        arg(arena, fault_id)?,
+    );
+    Ok(())
+}
+pub fn read_prefix_f32(
+    arena: &PrivateArena,
+    id: BufferId,
+    n: usize,
+) -> Result<Zeroizing<Vec<f32>>> {
+    let capacity = words(arena, id)?;
+    if n == 0 || n > capacity {
+        return Err(Error::InvalidBufferLength);
+    }
+    let bytes = ScrubBytes(
+        arena
+            .client()
+            .map_err(fault)?
+            .read_one(handle(arena, id)?.offset_end(((capacity - n) * 4) as u64))
+            .map_err(fault)?,
+    );
+    let values = f32::from_bytes(&bytes.0);
+    if values.len() != n || values.iter().any(|v| !v.is_finite()) {
+        return Err(Error::InvalidFormat("resident score invalid"));
+    }
+    Ok(Zeroizing::new(values.to_vec()))
+}
+pub fn read_prefix_u32(
+    arena: &PrivateArena,
+    id: BufferId,
+    n: usize,
+) -> Result<Zeroizing<Vec<u32>>> {
+    let capacity = words(arena, id)?;
+    if n == 0 || n > capacity {
+        return Err(Error::InvalidBufferLength);
+    }
+    let bytes = ScrubBytes(
+        arena
+            .client()
+            .map_err(fault)?
+            .read_one(handle(arena, id)?.offset_end(((capacity - n) * 4) as u64))
+            .map_err(fault)?,
+    );
+    let values = u32::from_bytes(&bytes.0);
+    if values.len() != n {
+        return Err(Error::InvalidBufferLength);
+    }
+    Ok(Zeroizing::new(values.to_vec()))
+}
+pub struct TransientSelector<'a> {
+    pub io: &'a mut PrivateArena,
+}
+impl crate::resident_qsa::ResidentQsaSelector for TransientSelector<'_> {
+    fn select_transient(
+        &mut self,
+        arena: &PrivateArena,
+        layout: crate::qsa_gpu::QsaLayout,
+        scores: crate::resident_gdn::StatusRegion,
+        status: crate::resident_gdn::StatusRegion,
+        cancel: &AtomicBool,
+    ) -> Result<crate::resident_qsa::PrivateSelection> {
+        self::cancel(cancel)?;
+        let values = read_prefix_f32(arena, scores.buffer, scores.words)?;
+        let flags = read_prefix_u32(arena, status.buffer, status.words)?;
+        self::cancel(cancel)?;
+        crate::resident_qsa::PrivateSelection::from_scores(layout, &values, &flags)
+    }
+    fn upload_selected(
+        &mut self,
+        arena: &PrivateArena,
+        target: BufferId,
+        selection: &crate::resident_qsa::PrivateSelection,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        self::cancel(cancel)?;
+        if !std::ptr::eq(
+            self.io.client().map_err(fault)?.info(),
+            arena.client().map_err(fault)?.info(),
+        ) {
+            return Err(Error::InvalidFormat("resident selection context mismatch"));
+        }
+        let mut padded = Zeroizing::new(vec![0_u32; words(arena, target)?]);
+        if selection.ids().is_empty() || selection.ids().len() > padded.len() {
+            return Err(Error::InvalidBufferLength);
+        }
+        padded[..selection.ids().len()].copy_from_slice(selection.ids());
+        let source = self.io.upload_u32(&padded).map_err(fault)?;
+        copy_words::launch::<WgpuRuntime>(
+            arena.client().map_err(fault)?,
+            grid(padded.len())?,
+            CubeDim::new_1d(64),
+            arg(self.io, source)?,
+            arg(arena, target)?,
+        );
+        self::cancel(cancel)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn portable_dispatch_bounds_are_checked() {
+        assert!(grid(0).is_err());
+        assert!(grid(65535 * 64 + 1).is_err());
+        assert!(matches!(
+            grid(65535 * 64).unwrap(),
+            CubeCount::Static(65535, 1, 1)
+        ));
+    }
+    #[test]
+    fn atomic_validation_and_packet_bits_compile_checked_and_unchecked() {
+        use cubecl::compute::KernelBuilder;
+        use cubecl::ir::{ElemType, FloatKind, StorageType, Type, UIntKind};
+        use cubecl::server::ExecutionMode;
+        use cubecl::wgpu::WgslCompiler;
+        use cubecl::{Compiler, KernelSettings, WgpuCompilationOptions};
+        for mode in [ExecutionMode::Checked, ExecutionMode::Unchecked] {
+            for variant in 0..4 {
+                let mut b = KernelBuilder::default();
+                b.scope
+                    .register_type::<u32>(StorageType::Scalar(ElemType::UInt(UIntKind::U32)));
+                b.scope
+                    .register_type::<usize>(StorageType::Scalar(ElemType::UInt(UIntKind::U32)));
+                b.scope
+                    .register_type::<f32>(StorageType::Scalar(ElemType::Float(FloatKind::F32)));
+                let f = StorageType::Scalar(ElemType::Float(FloatKind::F32));
+                let u = StorageType::Scalar(ElemType::UInt(UIntKind::U32));
+                let a = StorageType::Atomic(ElemType::UInt(UIntKind::U32));
+                if variant == 0 {
+                    let x = b.input_array(Type::new(f)).into();
+                    let fault = b.output_array(Type::new(a)).into();
+                    verify_finite::expand(&mut b.scope, x, fault);
+                } else if variant == 1 {
+                    let x = b.input_array(Type::new(u)).into();
+                    let fault = b.output_array(Type::new(a)).into();
+                    verify_status::expand(&mut b.scope, x, fault);
+                } else if variant == 2 {
+                    let x = b.input_array(Type::new(u)).into();
+                    let y = b.output_array(Type::new(u)).into();
+                    copy_words::expand(&mut b.scope, x, y);
+                } else {
+                    let x = b.input_array(Type::new(f)).into();
+                    let fault = b.input_array(Type::new(u)).into();
+                    let y = b.output_array(Type::new(u)).into();
+                    fence_packet::expand(&mut b.scope, x, fault, y);
+                }
+                let source = WgslCompiler::default()
+                    .compile(
+                        b.build(
+                            KernelSettings::default()
+                                .cube_dim(CubeDim::new_1d(64))
+                                .kernel_name("resident_util"),
+                        ),
+                        &WgpuCompilationOptions::default(),
+                        mode,
+                        u,
+                    )
+                    .unwrap()
+                    .to_string();
+                assert!(source.contains("@compute"));
+                if variant < 2 {
+                    assert!(source.contains("atomicOr("));
+                }
+                if variant == 3 {
+                    assert!(source.contains("bitcast<u32>"));
+                }
+            }
+        }
+    }
+}
