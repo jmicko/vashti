@@ -936,6 +936,64 @@ fn raw_projections(
     }
     Ok(())
 }
+// Per-run guarded snapshots only. Calibration does not execute these reads
+// before its completed consumers; numeric mode keeps its original ordering.
+struct ReferenceWindow<T>(Option<T>);
+impl<T> ReferenceWindow<T> {
+    fn before(calibrating: bool, reference: impl FnOnce() -> Result<T>) -> Result<Self> {
+        if calibrating {
+            Ok(Self(None))
+        } else {
+            Ok(Self(Some(reference()?)))
+        }
+    }
+    fn after(self, reference: impl FnOnce() -> Result<T>) -> Result<T> {
+        match self.0 {
+            Some(value) => Ok(value),
+            None => reference(),
+        }
+    }
+}
+#[allow(clippy::too_many_arguments)]
+fn verified_references(
+    graph: BoundGraph<'_, '_>,
+    arena: &PrivateArena,
+    ledger: &mut MainAdmission,
+    retired: &AtomicBool,
+    flat: &mut ExpertBanks,
+    reference_moe: &mut ResidentMoe,
+    buffers: &Buffers,
+    weights: RoutedWeights<'_>,
+    ids: &[usize; N],
+    x: &[f32],
+    prob: &[f32; N],
+    op: &ExpertOperator,
+    portable: &ExpertOperator,
+    experts: &PackedExperts<'_, '_>,
+    reader: &kuno_text::gguf::PositionalReader<'_>,
+    cancel: &AtomicBool,
+) -> Result<(Values, Oracle, usize)> {
+    let (full, metadata) = reference(
+        graph,
+        arena,
+        ledger,
+        retired,
+        flat,
+        reference_moe,
+        buffers,
+        ids,
+        prob,
+        cancel,
+    )?;
+    let expected = oracle(weights, ids, x, prob, cancel)?;
+    let all_cpu = portable.execute(experts, ids, x, cancel)?;
+    bits(all_cpu.active(), &expected.part)?;
+    drop(all_cpu);
+    raw_projections(
+        arena, buffers, flat, weights, ids, x, op, reader, &expected, ledger, retired, cancel,
+    )?;
+    Ok((full, expected, metadata))
+}
 fn snapshot_bytes(v: &[&Vec<f32>]) -> Result<usize> {
     let bytes = v.iter().try_fold(0usize, |n, v| {
         v.capacity()
@@ -993,7 +1051,9 @@ fn host_preflight() -> Result<()> {
     // Two simultaneous measured StagedSlots/Plan inventories are each capped
     // at256KiB; both committed states, full moved bridge+word encoding, input,
     // handle/resource headers and one scoped orchestrator fit the spare1MiB.
-    let bridge = 2 * (HOST_BRIDGE_LIMIT / 4) + 2 * 32 * 1024 + 131072 + N * D * 4 + D * 4 + 32768;
+    // Separate4KiB reservation covers the guarded scoped handle/control header.
+    let bridge =
+        2 * (HOST_BRIDGE_LIMIT / 4) + 2 * 32 * 1024 + 131072 + N * D * 4 + D * 4 + 32768 + 4096;
     if oracle > HOST_ORACLE_LIMIT
         || bridge > HOST_BRIDGE_LIMIT
         || kuno_text::cpu_expert::MAX_PRIVATE_HOST_BYTES + HOST_ORACLE_LIMIT + HOST_BRIDGE_LIMIT
@@ -1040,6 +1100,9 @@ fn pages() -> Result<Vec<u64>> {
 /// At most ONE explicit point; shared sealed permit bounds calibration to16.
 /// It is a local one-card gate; parent must separately approve both-card parity.
 /// Timings include full owning GPU verification/fences, never enqueue-only work.
+/// Calibration defers independent references until after the timed consumers;
+/// mandatory priming and prior samples remain explicit cache conditioning.
+/// These are controlled operator costs, not cold-read or whole-model costs.
 #[allow(clippy::too_many_arguments)]
 pub fn run<'graph, 'm>(
     client: &ComputeClient<WgpuRuntime>,
@@ -1191,42 +1254,27 @@ pub fn run<'graph, 'm>(
             prob,
             cancel,
         )?;
-        let (expected_full, reference_meta) = reference(
-            graph,
-            &arena,
-            &mut ledger,
-            &retired,
-            flat,
-            &mut reference_moe,
-            &buffers,
-            &ids,
-            prob,
-            cancel,
-        )?;
-        let expected = oracle(weights, &ids, &x, prob, cancel)?;
-        let mut tree_error = compare(&expected_full.act, &expected.act, 1e-4, 3e-4)?
-            .max(compare(&expected_full.part, &expected.part, 1e-4, 3e-4)?)
-            .max(compare(&expected_full.out, &expected.out, 1e-4, 3e-4)?);
-        let mut core_error = compare(&expected_full.out, &expected.core, 1e-3, 3e-3)?;
-        // Stage1 portable CPU bit oracle and raw projections precede calibration.
-        let all_cpu = portable.execute(&experts, &*ids, &x, cancel)?;
-        bits(all_cpu.active(), &expected.part)?;
-        drop(all_cpu);
-        raw_projections(
-            &arena,
-            &buffers,
-            flat,
-            weights,
-            &ids,
-            &x,
-            &op,
-            &reader,
-            &expected,
-            &mut ledger,
-            &retired,
-            cancel,
-        )?;
-        let mut metadata = prime_meta.max(reference_meta);
+        let references = ReferenceWindow::before(timed, || {
+            verified_references(
+                graph,
+                &arena,
+                &mut ledger,
+                &retired,
+                flat,
+                &mut reference_moe,
+                &buffers,
+                weights,
+                &ids,
+                &x,
+                prob,
+                &op,
+                &portable,
+                &experts,
+                &reader,
+                cancel,
+            )
+        })?;
+        let mut metadata = prime_meta;
         let candidate_plan = if split.gpu().is_empty() {
             None
         } else {
@@ -1288,9 +1336,8 @@ pub fn run<'graph, 'm>(
             {
                 return Err(fault());
             }
-            for (r, &id) in split.cpu().iter().enumerate() {
-                let rank = ids.iter().position(|&e| e == id).ok_or_else(fault)?;
-                bits(&cpu.active()[r * D..][..D], &expected.part[rank * D..][..D])?;
+            if cpu.active().iter().any(|v| !v.is_finite()) {
+                return Err(fault());
             }
         }
         let bridge_start = std::time::Instant::now();
@@ -1307,6 +1354,40 @@ pub fn run<'graph, 'm>(
             cancel,
         )?;
         let bridge = bridge_start.elapsed();
+        // Calibration reaches here only after both consumers and the original-
+        // rank bridge completed owning maps/fault checks and audited cleanup.
+        // Required real priming and prior samples can still condition caches.
+        let (expected_full, expected, reference_meta) = references.after(|| {
+            verified_references(
+                graph,
+                &arena,
+                &mut ledger,
+                &retired,
+                flat,
+                &mut reference_moe,
+                &buffers,
+                weights,
+                &ids,
+                &x,
+                prob,
+                &op,
+                &portable,
+                &experts,
+                &reader,
+                cancel,
+            )
+        })?;
+        metadata = metadata.max(reference_meta);
+        let mut tree_error = compare(&expected_full.act, &expected.act, 1e-4, 3e-4)?
+            .max(compare(&expected_full.part, &expected.part, 1e-4, 3e-4)?)
+            .max(compare(&expected_full.out, &expected.out, 1e-4, 3e-4)?);
+        let mut core_error = compare(&expected_full.out, &expected.core, 1e-3, 3e-3)?;
+        if let Some(cpu) = &cpu {
+            for (r, &id) in split.cpu().iter().enumerate() {
+                let rank = ids.iter().position(|&e| e == id).ok_or_else(fault)?;
+                bits(&cpu.active()[r * D..][..D], &expected.part[rank * D..][..D])?;
+            }
+        }
         let mut legacy_error = compare(&y, &expected_full.out, 1e-4, 3e-4)?;
         tree_error = tree_error.max(compare(&y, &expected.out, 1e-4, 3e-4)?);
         core_error = core_error.max(compare(&y, &expected.core, 1e-3, 3e-3)?);
@@ -1427,6 +1508,39 @@ pub fn run<'graph, 'm>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn calibration_defers_exactly_one_reference_and_retains_error_gates() {
+        use std::cell::RefCell;
+        for calibrating in [false, true] {
+            let calls = RefCell::new(Vec::new());
+            let window = ReferenceWindow::before(calibrating, || {
+                calls.borrow_mut().push("reference");
+                Ok(Zeroizing::new(vec![7u32]))
+            })
+            .unwrap();
+            assert_eq!(calls.borrow().is_empty(), calibrating);
+            calls.borrow_mut().push("completed-consumers");
+            let reference = window
+                .after(|| {
+                    calls.borrow_mut().push("reference");
+                    Ok(Zeroizing::new(vec![7u32]))
+                })
+                .unwrap();
+            assert_eq!(&*reference, &[7]);
+            assert_eq!(
+                &*calls.borrow(),
+                if calibrating {
+                    &["completed-consumers", "reference"]
+                } else {
+                    &["reference", "completed-consumers"]
+                }
+            );
+        }
+        let window =
+            ReferenceWindow::before(true, || -> Result<()> { panic!("early read") }).unwrap();
+        assert!(window.after(|| Err(fault())).is_err());
+        assert!(ReferenceWindow::<()>::before(false, || Err(fault())).is_err());
+    }
     fn merge_reference(
         gpu: &[f32],
         cpu: &[f32],
