@@ -19,13 +19,13 @@ import tempfile
 
 
 PINS = {
-    "version": 1, "id": "qwen21-sycl-2026.1-v1", "worker_abi": 1,
+    "version": 1, "id": "qwen21-sycl-2026.1-v1", "worker_abi": 2,
     "ggml_max_name": 160,
     "engine_revision": "88411ef1e0688ff2df1010aeeb5d92b2d8cea2be",
     "ggml_revision": "4bf5f6000653b7881d00963cd6ddb665ccd62a8d",
-    "engine_patch_sha256": "50941bef18b1c1e415a055e7ef89706d4e68a726db1bcf1d43adacde94cd4504",
+    "engine_patch_sha256": "ed75739ccb193099f23d4600cc4a8846f9d17fe6c2cec7591a7c9cb30c2d0134",
     "ggml_patch_sha256": "7298590faed44cad4733c78f6f6c2bf261b647712b5ec5f75840da450f0067dc",
-    "sycl_patch_sha256": "7f6a75c75544c0e3776d780b0710cab2fabb94ddfe57eeb436dff02891bd4771",
+    "sycl_patch_sha256": "3d1191da4eb004a25c52116fa30421c3a7b617fc4e854d416248b2d7b0070794",
 }
 HEX = re.compile(r"[0-9a-f]{64}\Z")
 NAME = re.compile(r"[A-Za-z0-9_.-]{1,128}\Z")

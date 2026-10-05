@@ -111,8 +111,13 @@ inference messages into artifacts or retaining model-management request logs.
 The image adapter has no facility for saving user prompts or image history.
 
 Inputs, request-derived caches, and results may exist transiently in RAM/VRAM for
-execution. Image request buffers and derived caches are released after delivery,
-cancellation, failure, or a bounded delivery timeout. Ollama's transient prompt
+execution. A successful image worker may retain model weights and model-only
+parameter state between requests. It must synchronize and release native
+request-derived state and clear worker-owned Rust content allocations before
+acknowledging itself idle. Prompts, references, conditioning, prefix caches,
+latents, previews, and results are not reusable idle state. Gateway delivery
+buffers are released after delivery, cancellation, failure, or a bounded delivery
+timeout. Ollama's transient prompt
 cache is subject to its managed runtime lifecycle and must never be saved to disk.
 Request content must not be passed in process command-line arguments.
 
@@ -351,13 +356,30 @@ loop. Otherwise an image tool could deadlock waiting for its own LLM reservation
 4. Drain conflicting work, unload conflicting models, and verify actual memory
    recovery before loading the image worker.
 5. Return the image and effective recipe/provenance to Vashti in memory.
-6. Release image resources and admit the next LLM request with the tool result.
+6. Release the image request's content/resources and admission reservation.
+   Retain the compatible model context until placement needs its memory,
+   configuration/model identity changes, or cancellation, failure, recovery or
+   shutdown requires worker termination. Admit the next LLM request with the
+   tool result using live placement checks.
 
 Ollama's tool cycle accepts results in a new request. Unloading preserves the
 conversation held by Vashti, but loses runtime caches and adds reload/prompt
 processing cost. See [tool calling](https://docs.ollama.com/capabilities/tool-calling).
 An unload acknowledgement or disappearance from the model list alone does not
 establish that device memory has recovered.
+
+The current implementation retains one image context in one private worker,
+without an idle expiry. Managed LLM placement tries other GPUs first. On the
+image GPU it requires an exact prior in-process load profile and live headroom;
+unknown first-use workloads require image eviction before their isolated probe.
+Shared-device failures do not recalibrate an unloaded baseline or record a bad
+combination while image weights are present. After orderly eviction/reaping,
+normal preparation rechecks memory and may retry once before useful inference
+dispatch. Opaque/catalog fallback releases image residency because its placement
+cannot be verified. Metadata does not. This preserves the global execution
+lease and does not enable simultaneous LLM/image computation. See
+[image lifecycle](kuno-images.md#api-and-lifecycle) and
+[private worker ABI](kuno-managed-sycl.md#resident-worker-abi-2).
 
 ## 6. Learning from measurements
 

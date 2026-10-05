@@ -1,3 +1,43 @@
+diff --git a/include/stable-diffusion.h b/include/stable-diffusion.h
+index a2bfdb6..525c774 100644
+--- a/include/stable-diffusion.h
++++ b/include/stable-diffusion.h
+@@ -503,6 +503,10 @@ SD_API char* sd_ctx_params_to_str(const sd_ctx_params_t* sd_ctx_params);
+ 
+ SD_API sd_ctx_t* new_sd_ctx(const sd_ctx_params_t* sd_ctx_params);
+ SD_API void free_sd_ctx(sd_ctx_t* sd_ctx);
++// Pinned Kuno extension: serial public-weight residency, explicit per-job
++// cache selection, and synchronous request-derived state cleanup acknowledgement.
++SD_API bool sd_kuno_prepare_image_request(sd_ctx_t* sd_ctx, bool prefix_cache, bool cache_f16, bool host_cache);
++SD_API bool sd_kuno_clear_image_request(sd_ctx_t* sd_ctx);
+ SD_API void free_sd_audio(sd_audio_t* audio);
+ 
+ SD_API void sd_sample_params_init(sd_sample_params_t* sample_params);
+diff --git a/src/conditioning/conditioner.hpp b/src/conditioning/conditioner.hpp
+index 6b750f9..8001238 100644
+--- a/src/conditioning/conditioner.hpp
++++ b/src/conditioning/conditioner.hpp
+@@ -156,6 +156,7 @@ public:
+     virtual void set_scale_overrides(float linear_scale, float attn_scale) {}
+     virtual void set_weight_adapter(const std::shared_ptr<WeightAdapter>& adapter) {}
+     virtual void runner_end() {}
++    virtual bool clear_request_state() { return false; }
+ };
+ 
+ // ldm.modules.encoders.modules.FrozenCLIPEmbedder
+@@ -2101,6 +2102,12 @@ struct LLMEmbedder : public Conditioner {
+         }
+     }
+ 
++    bool clear_request_state() override {
++        const bool llm_cleared = llm && llm->clear_request_state();
++        const bool byt5_cleared = !byt5 || byt5->clear_request_state();
++        return llm_cleared && byt5_cleared;
++    }
++
+     void runner_end() override {
+         if (llm) {
+             llm->runner_end();
 diff --git a/src/core/ggml_extend.cpp b/src/core/ggml_extend.cpp
 index 7432416..c149352 100644
 --- a/src/core/ggml_extend.cpp
@@ -61,7 +101,7 @@ index 7432416..c149352 100644
          if (ggml_backend_supports_op(backend, out)) {
              kqv = kv_scale != 1.0f ? ggml_ext_scale(ctx, out, 1.0f / kv_scale) : out;
 diff --git a/src/core/ggml_runner.cpp b/src/core/ggml_runner.cpp
-index 5957321..2799cf1 100644
+index 5957321..2a237c2 100644
 --- a/src/core/ggml_runner.cpp
 +++ b/src/core/ggml_runner.cpp
 @@ -239,6 +239,7 @@ size_t GGMLRunner::retained_runtime_buffer_bytes(ggml_backend_t backend) const {
@@ -72,7 +112,41 @@ index 5957321..2799cf1 100644
          const size_t cache_bytes = cache_.resident_bytes(ggml_backend_get_device(backend));
          bytes                    = cache_bytes > SIZE_MAX - bytes ? SIZE_MAX : bytes + cache_bytes;
          const size_t cut_bytes   = cut_cache_.resident_bytes(ggml_backend_get_device(backend));
-@@ -530,7 +531,7 @@ GGMLRunnerContext GGMLRunner::get_context() {
+@@ -492,12 +493,32 @@ void GGMLRunner::runner_end() {
+             if (parameter != nullptr)
+                 tensors.push_back(parameter);
+         }
+-        manager->evict_compute_backend_params(tensors);
++        if (!manager->retain_weights_between_requests) {
++            manager->evict_compute_backend_params(tensors);
++        }
+         manager->remove_runtime_owner(reinterpret_cast<uintptr_t>(this));
+     }
+     runner_started_ = false;
+ }
+ 
++bool GGMLRunner::clear_request_state() {
++    if (graph_active_ || workspace_.active()) return false;
++    ggml_backend_synchronize(runtime_backend);
++    for (auto backend : extra_runtime_backends) ggml_backend_synchronize(backend);
++    runner_end();
++    if (!workspace_.release()) return false;
++    cache_.clear();
++    cut_cache_.clear();
++    free_compute_ctx();
++    graph_cut_plan_cache_.graph_cut_plans.clear();
++    graph_cut_layer_split_node_assignments_.clear();
++    graph_cut_layer_split_assignments_.clear();
++    one_tensor = nullptr;
++    zero_int_tensor = nullptr;
++    sync_runtime_residency();
++    return cache_staging_bytes_ == 0;
++}
++
+ GGMLRunner::GGMLRunner(ggml_backend_t backend,
+                        std::shared_ptr<DeviceResidencyManager> manager)
+     : runtime_backend(backend),
+@@ -530,7 +551,7 @@ GGMLRunnerContext GGMLRunner::get_context() {
      runner_ctx.weight_adapter        = weight_adapter;
      runner_ctx.debug_tensors         = &debug_tensors;
      runner_ctx.get_cache_tensor      = [this](const std::string& name) {
@@ -81,7 +155,7 @@ index 5957321..2799cf1 100644
      };
      runner_ctx.cache_tensor = [this](const std::string& name, ggml_tensor* tensor) {
          this->cache(name, tensor);
-@@ -832,10 +833,14 @@ std::optional<Tensor<float>> GGMLRunner::execute_graph(ggml_cgraph* graph, int n
+@@ -832,10 +853,14 @@ std::optional<Tensor<float>> GGMLRunner::execute_graph(ggml_cgraph* graph, int n
          return std::nullopt;
      }
      auto manager         = residency_manager.lock();
@@ -100,7 +174,7 @@ index 5957321..2799cf1 100644
      ggml_graph_cut::Plan monolithic_plan;
      if (!segmented) {
          monolithic_plan.segments.emplace_back();
-@@ -961,7 +966,9 @@ std::optional<Tensor<float>> GGMLRunner::execute_graph(ggml_cgraph* graph, int n
+@@ -961,7 +986,9 @@ std::optional<Tensor<float>> GGMLRunner::execute_graph(ggml_cgraph* graph, int n
          if (!ensure_capacity()) {
              return fail_segment("allocated capacity check");
          }
@@ -111,7 +185,7 @@ index 5957321..2799cf1 100644
          if (!prefetch_requests.empty()) {
              weights.enqueue_next(index, prefetch_requests.front());
 diff --git a/src/core/ggml_runner.h b/src/core/ggml_runner.h
-index 9084db1..1390b78 100644
+index 9084db1..b700844 100644
 --- a/src/core/ggml_runner.h
 +++ b/src/core/ggml_runner.h
 @@ -150,6 +150,7 @@ protected:
@@ -122,6 +196,17 @@ index 9084db1..1390b78 100644
      sd::GraphCutTensorCache cut_cache_;
      sd::ComputeWorkspace workspace_;
      ggml_context* compute_ctx = nullptr;
+@@ -281,6 +282,10 @@ public:
+ 
+     void runner_end();
+ 
++    // Release every request-derived allocation while keeping public model
++    // tensors eligible for managed residency. Never call during graph execution.
++    virtual bool clear_request_state();
++
+ public:
+     virtual std::string get_desc() = 0;
+ 
 diff --git a/src/core/params_buffer_type.h b/src/core/params_buffer_type.h
 new file mode 100644
 index 0000000..5034739
@@ -399,6 +484,21 @@ index f1b5cf9..2c052bb 100644
      class GraphCutTensorCache {
          ggml_backend_t backend_;
          CachedTensors tensors_;
+diff --git a/src/device_residency_manager.h b/src/device_residency_manager.h
+index 0a2a889..aee2ccb 100644
+--- a/src/device_residency_manager.h
++++ b/src/device_residency_manager.h
+@@ -39,6 +39,10 @@ struct DeviceMemoryRequest {
+ struct DeviceResidencyManager {
+     virtual ~DeviceResidencyManager() = default;
+ 
++    // Kuno owns the context exclusively. Capacity-driven eviction remains
++    // enabled; only unconditional end-of-graph weight eviction is suppressed.
++    bool retain_weights_between_requests = false;
++
+     virtual bool segmented_compute_enabled() const                                          = 0;
+     virtual bool prefetch_enabled() const                                                   = 0;
+     virtual void set_workspace_reclaimer(uintptr_t owner_id, std::function<bool()> reclaim) = 0;
 diff --git a/src/model/common/ggml_block.hpp b/src/model/common/ggml_block.hpp
 index 991b88f..9fc0c7d 100644
 --- a/src/model/common/ggml_block.hpp
@@ -516,8 +616,99 @@ index 991b88f..9fc0c7d 100644
          embedding      = ggml_reshape_3d(ctx->ggml_ctx, embedding, embedding->ne[0], embedding->ne[1] / n, n);
  
          // [N, n_token, embedding_dim]
+diff --git a/src/model/common/rope.hpp b/src/model/common/rope.hpp
+index ec82245..3f5d197 100644
+--- a/src/model/common/rope.hpp
++++ b/src/model/common/rope.hpp
+@@ -1067,10 +1067,15 @@ namespace Rope {
+         return result;
+     }
+ 
+-    __STATIC_INLINE__ ggml_tensor* apply_rope(ggml_context* ctx,
+-                                              ggml_tensor* x,
+-                                              ggml_tensor* pe,
+-                                              bool rope_interleaved = true) {
++    __STATIC_INLINE__ ggml_tensor* prepare_rope_pe(ggml_context* ctx, ggml_tensor* pe) {
++        return ggml_cont(ctx, ggml_permute(ctx, pe, 3, 0, 1, 2));  // [2, L, d_head/2, 2]
++    }
++
++    __STATIC_INLINE__ ggml_tensor* apply_rope_impl(ggml_context* ctx,
++                                                 ggml_tensor* x,
++                                                 ggml_tensor* pe,
++                                                 bool rope_interleaved,
++                                                 bool pe_prepared) {
+         // x: [N, L, n_head, d_head]
+         // pe: [L, d_head/2, 2, 2], [[cos, -sin], [sin, cos]]
+         int64_t d_head = x->ne[0];
+@@ -1095,7 +1100,9 @@ namespace Rope {
+         x_0            = ggml_repeat(ctx, x_0, temp_x);  // [N * n_head, L, d_head/2, 2]
+         x_1            = ggml_repeat(ctx, x_1, temp_x);  // [N * n_head, L, d_head/2, 2]
+ 
+-        pe        = ggml_cont(ctx, ggml_permute(ctx, pe, 3, 0, 1, 2));  // [2, L, d_head/2, 2]
++        if (!pe_prepared) {
++            pe = prepare_rope_pe(ctx, pe);
++        }
+         offset    = pe->nb[2] * pe->ne[2];
+         auto pe_0 = ggml_view_3d(ctx, pe, pe->ne[0], pe->ne[1], pe->ne[2], pe->nb[1], pe->nb[2], offset * 0);  // [L, d_head/2, 2]
+         auto pe_1 = ggml_view_3d(ctx, pe, pe->ne[0], pe->ne[1], pe->ne[2], pe->nb[1], pe->nb[2], offset * 1);  // [L, d_head/2, 2]
+@@ -1108,6 +1115,21 @@ namespace Rope {
+         return x_out;
+     }
+ 
++    __STATIC_INLINE__ ggml_tensor* apply_rope(ggml_context* ctx,
++                                             ggml_tensor* x,
++                                             ggml_tensor* pe,
++                                             bool rope_interleaved = true) {
++        return apply_rope_impl(ctx, x, pe, rope_interleaved, false);
++    }
++
++    // The prepared tensor belongs to this compute graph; never retain it across runs.
++    __STATIC_INLINE__ ggml_tensor* apply_rope_with_prepared_pe(ggml_context* ctx,
++                                                              ggml_tensor* x,
++                                                              ggml_tensor* prepared_pe,
++                                                              bool rope_interleaved = true) {
++        return apply_rope_impl(ctx, x, prepared_pe, rope_interleaved, true);
++    }
++
+     __STATIC_INLINE__ ggml_tensor* attention(GGMLRunnerContext* ctx,
+                                              ggml_tensor* q,
+                                              ggml_tensor* k,
+diff --git a/src/model/diffusion/model.hpp b/src/model/diffusion/model.hpp
+index c82b9d7..46e9574 100644
+--- a/src/model/diffusion/model.hpp
++++ b/src/model/diffusion/model.hpp
+@@ -196,6 +196,10 @@ public:
+         : GGMLRunner(backend, weight_manager),
+           prefix(prefix) {}
+ 
++    virtual bool configure_request_prefix_cache(bool enabled, bool f16, bool host) {
++        return !enabled;
++    }
++
+     virtual sd::Tensor<float> compute(int n_threads,
+                                       const DiffusionParams& diffusion_params) = 0;
+ 
+diff --git a/src/model/diffusion/qwen_image.hpp b/src/model/diffusion/qwen_image.hpp
+index 82d1730..cee9bea 100644
+--- a/src/model/diffusion/qwen_image.hpp
++++ b/src/model/diffusion/qwen_image.hpp
+@@ -595,6 +595,14 @@ namespace Qwen {
+             qwen_image.init(params_ctx, tensor_storage_map, prefix);
+         }
+ 
++        bool clear_request_state() override {
++            const bool cleared = GGMLRunner::clear_request_state();
++            std::vector<float>().swap(pe_vec);
++            std::vector<float>().swap(modulate_index_vec);
++            std::vector<int32_t>().swap(additional_t_cond_vec);
++            return cleared;
++        }
++
+         std::string get_desc() override {
+             return "qwen_image";
+         }
 diff --git a/src/model/diffusion/qwen_image_2_1.hpp b/src/model/diffusion/qwen_image_2_1.hpp
-index 9884325..a18b06f 100644
+index 9884325..f56f3da 100644
 --- a/src/model/diffusion/qwen_image_2_1.hpp
 +++ b/src/model/diffusion/qwen_image_2_1.hpp
 @@ -134,6 +134,7 @@ namespace Qwen {
@@ -560,7 +751,23 @@ index 9884325..a18b06f 100644
          QwenImage21Attention(const QwenImage21Config& config)
              : QwenImageAttention(config.hidden_size, config.head_dim, config.hidden_size / config.head_dim, 0, 0, false, false) {
              for (const auto* name : {"add_q_proj", "add_k_proj", "add_v_proj", "norm_added_q", "norm_added_k", "to_add_out"}) {
-@@ -191,7 +217,7 @@ namespace Qwen {
+@@ -175,7 +201,7 @@ namespace Qwen {
+             }
+         }
+ 
+-        ggml_tensor* forward(GGMLRunnerContext* ctx, ggml_tensor* x, ggml_tensor* pe, const std::vector<QwenImage21Segment>& segments, const std::vector<ggml_tensor*>& masks, const QwenImage21PrefixCache& cache) {
++        ggml_tensor* forward(GGMLRunnerContext* ctx, ggml_tensor* x, ggml_tensor* prepared_pe, const std::vector<QwenImage21Segment>& segments, const std::vector<ggml_tensor*>& masks, const QwenImage21PrefixCache& cache) {
+             int64_t heads = x->ne[0] / dim_head;
+             auto project  = [&](const char* name) {
+                 auto h = std::dynamic_pointer_cast<Linear>(blocks[name])->forward(ctx, x);
+@@ -186,12 +212,12 @@ namespace Qwen {
+             auto v = project("to_v");
+             q      = std::dynamic_pointer_cast<RMSNorm>(blocks["norm_q"])->forward(ctx, q);
+             k      = std::dynamic_pointer_cast<RMSNorm>(blocks["norm_k"])->forward(ctx, k);
+-            q      = Rope::apply_rope(ctx->ggml_ctx, q, pe);
+-            k      = Rope::apply_rope(ctx->ggml_ctx, k, pe);
++            q      = Rope::apply_rope_with_prepared_pe(ctx->ggml_ctx, q, prepared_pe);
++            k      = Rope::apply_rope_with_prepared_pe(ctx->ggml_ctx, k, prepared_pe);
              if (cache.mode == QwenImage21PrefixCache::Mode::STORE) {
                  auto persist = [&](ggml_tensor* tensor, int axis, const char* name) {
                      auto part = ggml_ext_slice(ctx->ggml_ctx, tensor, axis, 0, cache.prefix_length);
@@ -582,7 +789,7 @@ index 9884325..a18b06f 100644
                  result = ggml_ext_attention_ext(ctx, q, k, v, heads, nullptr, true, ctx->flash_attn_enabled);
              } else {
                  for (size_t i = 0; i < segments.size(); ++i) {
-@@ -248,10 +274,10 @@ namespace Qwen {
+@@ -248,34 +274,37 @@ namespace Qwen {
                  row = gate ? ggml_tanh(ctx, row) : ggml_scale_bias(ctx, row, 1.f, 1.f);
                  return ggml_mul(ctx, part, row);
              };
@@ -595,7 +802,14 @@ index 9884325..a18b06f 100644
              auto prefix = apply(ggml_ext_slice(ctx, x, 1, 0, prefix_length), rows[1]);
              return ggml_concat(ctx, prefix, target, 1);
          }
-@@ -264,18 +290,21 @@ namespace Qwen {
+ 
+-        ggml_tensor* forward(GGMLRunnerContext* ctx, ggml_tensor* x, const std::vector<ggml_tensor*>& modulation, ggml_tensor* pe, const QwenImage21Layout& layout, const std::vector<ggml_tensor*>& masks, const QwenImage21PrefixCache& cache) {
++        ggml_tensor* forward(GGMLRunnerContext* ctx, ggml_tensor* x, const std::vector<ggml_tensor*>& modulation, ggml_tensor* prepared_pe, const QwenImage21Layout& layout, const std::vector<ggml_tensor*>& masks, const QwenImage21PrefixCache& cache) {
+             const int64_t prefix_length = cache.mode == QwenImage21PrefixCache::Mode::REUSE ? 0 : layout.prefix_length;
+             auto h                      = std::dynamic_pointer_cast<LayerNorm>(blocks["img_norm1"])->forward(ctx, x);
+             h                           = modulate(ctx->ggml_ctx, h, modulation[0], prefix_length);
+-            h                           = std::dynamic_pointer_cast<QwenImage21Attention>(blocks["attn"])->forward(ctx, h, pe, layout.segments, masks, cache);
++            h                           = std::dynamic_pointer_cast<QwenImage21Attention>(blocks["attn"])->forward(ctx, h, prepared_pe, layout.segments, masks, cache);
              x                           = ggml_add(ctx->ggml_ctx, x, modulate(ctx->ggml_ctx, h, modulation[1], prefix_length, true));
              h                           = std::dynamic_pointer_cast<LayerNorm>(blocks["img_norm2"])->forward(ctx, x);
              h                           = modulate(ctx->ggml_ctx, h, modulation[2], prefix_length);
@@ -623,7 +837,26 @@ index 9884325..a18b06f 100644
              h = std::dynamic_pointer_cast<Linear>(blocks["img_mlp.out"])->forward(ctx, h);
              return ggml_add(ctx->ggml_ctx, x, modulate(ctx->ggml_ctx, h, modulation[3], prefix_length, true));
          }
-@@ -353,16 +382,25 @@ namespace Qwen {
+@@ -326,13 +355,17 @@ namespace Qwen {
+                 }
+             }
+             sd::ggml_graph_cut::mark_graph_cut(joint, "qwen_image_2_1.prelude", "joint");
++            // All layers use the same positional matrix. Share its contiguous
++            // permutation within this graph, including prefix STORE/REUSE runs.
++            auto prepared_pe = Rope::prepare_rope_pe(ctx->ggml_ctx, pe);
++            sd::ggml_graph_cut::mark_graph_cut(prepared_pe, "qwen_image_2_1.prelude", "rope_pe");
+             for (int i = 0; i < config.num_layers; ++i) {
+                 const std::string layer = "transformer_blocks." + std::to_string(i);
+                 auto layer_cache        = cache;
+                 layer_cache.name        = cache.name + "." + std::to_string(i);
+                 layer_cache.cut_group   = "qwen_image_2_1." + layer;
+                 auto block              = std::dynamic_pointer_cast<QwenImage21TransformerBlock>(blocks[layer]);
+-                joint                   = block->forward(ctx, joint, mod, pe, layout, masks, layer_cache);
++                joint                   = block->forward(ctx, joint, mod, prepared_pe, layout, masks, layer_cache);
+                 sd::ggml_graph_cut::mark_graph_cut(joint, layer_cache.cut_group, "joint");
+             }
+             if (cache.mode != QwenImage21PrefixCache::Mode::REUSE) {
+@@ -353,19 +386,45 @@ namespace Qwen {
          std::vector<sd::Tensor<float>> mask_data;
          bool prefix_cache_enabled  = true;
          bool prefix_cache_disabled = false;
@@ -649,7 +882,27 @@ index 9884325..a18b06f 100644
              model.init(params_ctx, weights, prefix);
          }
  
-@@ -377,7 +415,7 @@ namespace Qwen {
++        bool configure_request_prefix_cache(bool enabled, bool f16, bool host) override {
++            if (runner_started() || !cache_.empty()) return false;
++            prefix_cache_enabled = enabled;
++            prefix_cache_f16 = f16;
++            prefix_cache_disabled = false;
++            cache_.set_host_storage(host);
++            return true;
++        }
++
++        bool clear_request_state() override {
++            const bool cleared = GGMLRunner::clear_request_state();
++            std::vector<float>().swap(pe_data);
++            std::vector<sd::Tensor<float>>().swap(mask_data);
++            prefix_cache_disabled = false;
++            return cleared;
++        }
++
+         std::string get_desc() override { return "qwen_image_2_1"; }
+ 
+         void get_param_tensors(std::map<std::string, ggml_tensor*>& tensors, const std::string& prefix) override {
+@@ -377,7 +436,7 @@ namespace Qwen {
                  const auto name = cache.name + "." + std::to_string(i);
                  auto k          = get_cache_tensor_by_name(name + ".k");
                  auto v          = get_cache_tensor_by_name(name + ".v");
@@ -658,7 +911,7 @@ index 9884325..a18b06f 100644
                      k->ne[0] != config.head_dim || k->ne[1] != cache.prefix_length ||
                      k->ne[2] != config.hidden_size / config.head_dim || k->ne[3] != 1 ||
                      v->ne[0] != config.head_dim || v->ne[1] != config.hidden_size / config.head_dim ||
-@@ -420,6 +458,7 @@ namespace Qwen {
+@@ -420,6 +479,7 @@ namespace Qwen {
                  prefix_cache_disabled = false;
              }
              QwenImage21PrefixCache cache;
@@ -667,7 +920,7 @@ index 9884325..a18b06f 100644
                  cache.name = "qwen_image_2_1.prefix." + std::to_string(extra->prefix_id) +
                               ".circular." + std::to_string(circular_x_enabled) + std::to_string(circular_y_enabled);
 diff --git a/src/model/te/llm.hpp b/src/model/te/llm.hpp
-index da59cfa..f75d580 100644
+index da59cfa..b98f6c4 100644
 --- a/src/model/te/llm.hpp
 +++ b/src/model/te/llm.hpp
 @@ -332,7 +332,7 @@ namespace LLM {
@@ -679,6 +932,45 @@ index da59cfa..f75d580 100644
                      config.hidden_size = tensor_storage.ne[0];
                      config.vocab_size  = tensor_storage.ne[1];
                  }
+@@ -1985,6 +1985,20 @@ namespace LLM {
+         std::array<std::vector<int32_t>, 4> pos_embed_idx_data_;
+         std::array<std::vector<float>, 4> pos_embed_weight_data_;
+ 
++        bool clear_request_state() override {
++            const bool cleared = GGMLRunner::clear_request_state();
++            std::vector<int>().swap(input_pos_vec);
++            std::vector<float>().swap(attention_mask_vec);
++            std::vector<float>().swap(sliding_attention_mask_vec);
++            std::vector<float>().swap(window_mask_vec);
++            std::vector<int>().swap(window_index_vec);
++            std::vector<int>().swap(window_inverse_index_vec);
++            std::vector<float>().swap(pe_vec);
++            for (auto& data : pos_embed_idx_data_) std::vector<int32_t>().swap(data);
++            for (auto& data : pos_embed_weight_data_) std::vector<float>().swap(data);
++            return cleared;
++        }
++
+         static ggml_tensor* process_image_common(ggml_context* ctx,
+                                                  ggml_tensor* image,
+                                                  const LLMVisionConfig& vision_params) {
+diff --git a/src/model/vae/wan_vae.hpp b/src/model/vae/wan_vae.hpp
+index 8d14cf9..4c105fa 100644
+--- a/src/model/vae/wan_vae.hpp
++++ b/src/model/vae/wan_vae.hpp
+@@ -1322,6 +1322,13 @@ namespace WAN {
+             ae.init(params_ctx, tensor_storage_map, prefix);
+         }
+ 
++        bool clear_request_state() override {
++            const bool cleared = VAE::clear_request_state();
++            std::fill(ae._feat_map.begin(), ae._feat_map.end(), nullptr);
++            std::fill(ae._enc_feat_map.begin(), ae._enc_feat_map.end(), nullptr);
++            return cleared;
++        }
++
+         std::string get_desc() override {
+             return "wan_vae";
+         }
 diff --git a/src/model_io/int8_dense.h b/src/model_io/int8_dense.h
 new file mode 100644
 index 0000000..b7a7378
@@ -983,10 +1275,50 @@ index 5bdf59c..d705e04 100644
          state.compute_backend != nullptr) {
          ggml_backend_dev_t compute_dev = ggml_backend_get_device(state.compute_backend);
 diff --git a/src/pipeline/diffusion_engine.cpp b/src/pipeline/diffusion_engine.cpp
-index 0220939..1cd7966 100644
+index 0220939..8dbc296 100644
 --- a/src/pipeline/diffusion_engine.cpp
 +++ b/src/pipeline/diffusion_engine.cpp
-@@ -2691,7 +2691,7 @@ int StableDiffusionGGML::get_diffusion_model_down_factor() {
+@@ -206,6 +206,39 @@ void StableDiffusionGGML::end_runners() {
+             lora.model->runner_end();
+ }
+ 
++bool StableDiffusionGGML::kuno_prepare_request(bool prefix_cache, bool cache_f16, bool host_cache) {
++    ContextOperation operation(*this);
++    if (!operation.acquired || !model_manager ||
++        (version != VERSION_QWEN_IMAGE && version != VERSION_QWEN_IMAGE_2_1)) return false;
++    if (!refresh_model_sources()) return false;
++    model_manager->retain_weights_between_requests = true;
++    conditioning_cache_->set_capacity(0);
++    reset_cancel_flag();
++    return version != VERSION_QWEN_IMAGE_2_1 ||
++        diffusion_model->configure_request_prefix_cache(prefix_cache, cache_f16, host_cache);
++}
++
++bool StableDiffusionGGML::kuno_clear_request_state() {
++    ContextOperation operation(*this);
++    if (!operation.acquired || !model_manager ||
++        (version != VERSION_QWEN_IMAGE && version != VERSION_QWEN_IMAGE_2_1)) return false;
++    conditioning_cache_->clear();
++    std::vector<ModelManager::LoraSpec>().swap(conditioning_loras_);
++    ip_adapter_tokens = {};
++    ip_adapter_uncond_tokens = {};
++    reset_generation_extensions();
++    bool cleared = cond_stage_model && cond_stage_model->clear_request_state();
++    if (diffusion_model) cleared = diffusion_model->clear_request_state() && cleared;
++    if (high_noise_diffusion_model) cleared = high_noise_diffusion_model->clear_request_state() && cleared;
++    if (first_stage_model) cleared = first_stage_model->clear_request_state() && cleared;
++    if (preview_vae) cleared = preview_vae->clear_request_state() && cleared;
++    rng->manual_seed(0);
++    if (sampler_rng) sampler_rng->manual_seed(0);
++    reset_cancel_flag();
++    vae_tiling_params = {false, false, 0, 0, 0.5f, 0, 0, nullptr};
++    return cleared;
++}
++
+ bool StableDiffusionGGML::reset_runners(const RunnerGroups& groups) {
+     conditioning_cache_->clear();
+     conditioning_loras_.clear();
+@@ -2691,7 +2724,7 @@ int StableDiffusionGGML::get_diffusion_model_down_factor() {
      if (sd_version_is_dit(version)) {
          if (sd_version_is_sensenova_u1(version)) {
              down_factor = 32;
@@ -995,7 +1327,7 @@ index 0220939..1cd7966 100644
              down_factor = 2;
          } else {
              down_factor = 1;
-@@ -2829,6 +2829,14 @@ sd::Tensor<float> StableDiffusionGGML::decode_first_stage(const sd::Tensor<float
+@@ -2829,6 +2862,14 @@ sd::Tensor<float> StableDiffusionGGML::decode_first_stage(const sd::Tensor<float
      while (decoded.empty() &&
             sd::backend_fit::prepare_vae_decode_retry_tiling(vae_tiling_params, prefer_temporal_tiling,
                                                              first_stage_model->last_compute_status())) {
@@ -1010,3 +1342,35 @@ index 0220939..1cd7966 100644
          decoded = first_stage_model->decode(n_threads, latents, vae_tiling_params, decode_video, circular_x, circular_y);
      }
      return decoded;
+diff --git a/src/pipeline/diffusion_engine.h b/src/pipeline/diffusion_engine.h
+index d1a8866..349f5aa 100644
+--- a/src/pipeline/diffusion_engine.h
++++ b/src/pipeline/diffusion_engine.h
+@@ -198,6 +198,8 @@ public:
+     void capture_runner_sources();
+ 
+     void end_runners();
++    bool kuno_prepare_request(bool prefix_cache, bool cache_f16, bool host_cache);
++    bool kuno_clear_request_state();
+ 
+     bool reset_runners(const RunnerGroups& groups);
+ 
+diff --git a/src/stable-diffusion.cpp b/src/stable-diffusion.cpp
+index b13c055..91dfccc 100644
+--- a/src/stable-diffusion.cpp
++++ b/src/stable-diffusion.cpp
+@@ -662,6 +662,14 @@ void free_sd_ctx(sd_ctx_t* sd_ctx) {
+     free(sd_ctx);
+ }
+ 
++SD_API bool sd_kuno_prepare_image_request(sd_ctx_t* sd_ctx, bool prefix_cache, bool cache_f16, bool host_cache) {
++    return sd_ctx && sd_ctx->sd && sd_ctx->sd->kuno_prepare_request(prefix_cache, cache_f16, host_cache);
++}
++
++SD_API bool sd_kuno_clear_image_request(sd_ctx_t* sd_ctx) {
++    return sd_ctx && sd_ctx->sd && sd_ctx->sd->kuno_clear_request_state();
++}
++
+ SD_API void sd_cancel_generation(sd_ctx_t* sd_ctx, enum sd_cancel_mode_t mode) {
+     if (sd_ctx && sd_ctx->sd) {
+         if (mode < SD_CANCEL_ALL || mode > SD_CANCEL_RESET) {

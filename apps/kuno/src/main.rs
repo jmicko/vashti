@@ -16,6 +16,8 @@ fn main() {
         run_image_launcher()
     } else if std::env::args().nth(1).as_deref() == Some("image-worker") {
         run_image_worker()
+    } else if std::env::args().nth(1).as_deref() == Some("image-worker-resident") {
+        run_resident_image_worker()
     } else {
         match tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -44,6 +46,34 @@ fn run_image_launcher() -> Result<(), &'static str> {
         &models,
         &pci,
         std::env::var_os("KUNO_IMAGE_PREVIEWS").is_some(),
+        std::env::var_os("KUNO_IMAGE_RESIDENT").is_some(),
+    )
+}
+
+#[cfg(not(feature = "native-image"))]
+fn run_resident_image_worker() -> Result<(), &'static str> {
+    Err("image_engine_not_in_this_build")
+}
+
+#[cfg(feature = "native-image")]
+fn run_resident_image_worker() -> Result<(), &'static str> {
+    // Protect the original thread before creating a session/vendor threads or
+    // reading content. Model/session identity is supplied only by the gateway.
+    kuno::image_privacy::protect_process()?;
+    kuno::image_privacy::require_no_swap()?;
+    kuno::image_privacy::restrict_filesystem()?;
+    let mut args = std::env::args().skip(2);
+    let directory = args.next().ok_or("missing_image_models")?;
+    let pci = args.next().ok_or("missing_image_device")?;
+    if args.next().is_some() {
+        return Err("unknown_argument");
+    }
+    let mut session = kuno_image::native::Session::new(Path::new(&directory), &pci)?;
+    let previews = std::env::var_os("KUNO_IMAGE_PREVIEWS").is_some();
+    kuno::image_worker::serve(
+        &mut std::io::stdin().lock(),
+        &mut std::io::stdout(),
+        |recipe| session.generate(recipe, previews),
     )
 }
 
@@ -494,6 +524,7 @@ async fn serve(mut config: Config) -> Result<(), &'static str> {
                 while gateway.admission.status().active {
                     tokio::time::sleep(Duration::from_millis(50)).await;
                 }
+                gateway.evict_images().await?;
                 Ok(())
             };
             match tokio::time::timeout(Duration::from_secs(grace), cleanup).await {

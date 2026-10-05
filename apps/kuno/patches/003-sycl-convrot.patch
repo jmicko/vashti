@@ -1,3 +1,95 @@
+diff --git a/src/ggml-sycl/CMakeLists.txt b/src/ggml-sycl/CMakeLists.txt
+index a8d9c0d..2d9bbcf 100644
+--- a/src/ggml-sycl/CMakeLists.txt
++++ b/src/ggml-sycl/CMakeLists.txt
+@@ -32,6 +32,14 @@ list(APPEND GGML_SOURCES_SYCL ${SRCS})
+ 
+ target_sources(ggml-sycl PRIVATE ${GGML_HEADERS_SYCL} ${GGML_SOURCES_SYCL})
+ 
++# Default-OFF diagnostic candidate. A dedicated TU preserves both F32 product
++# rounding boundaries; global unsafe-math options must not reach this source.
++if(KUNO_SYCL_WHOLE_ROPE_BYPASS)
++    target_compile_definitions(ggml-sycl PRIVATE KUNO_SYCL_WHOLE_ROPE_BYPASS)
++    set_source_files_properties(whole-rope.cpp PROPERTIES COMPILE_OPTIONS
++        "-fp-model=precise;-fno-fast-math;-fno-associative-math;-ffp-contract=off")
++endif()
++
+ if (WIN32)
+     # To generate a Visual Studio solution, using Intel C++ Compiler for ggml-sycl is mandatory
+     if( ${CMAKE_GENERATOR} MATCHES "Visual Studio" AND NOT (${CMAKE_GENERATOR_TOOLSET} MATCHES "Intel C"))
+diff --git a/src/ggml-sycl/binbcast.cpp b/src/ggml-sycl/binbcast.cpp
+index 306eedd..45de28e 100644
+--- a/src/ggml-sycl/binbcast.cpp
++++ b/src/ggml-sycl/binbcast.cpp
+@@ -1,4 +1,5 @@
+ #include "binbcast.hpp"
++#include "mul-add-policy.hpp"
+ 
+ #include <cstddef>
+ #include <cstdint>
+@@ -6,6 +7,39 @@
+ 
+ #include "ggml.h"
+ 
++bool ggml_sycl_op_mul_add_f32(ggml_backend_sycl_context & ctx, ggml_tensor * mul, ggml_tensor * add) {
++    if (!ggml_sycl_mul_add_memory_safe(mul, add)) return false;
++    auto queue = ctx.stream();
++    const auto device = queue->get_device();
++    if (!device.is_gpu() || device.get_backend() != sycl::backend::ext_oneapi_level_zero ||
++        device.get_info<sycl::info::device::vendor_id>() != 0x8086) return false;
++    const auto activation = mul->src[0], gate = mul->src[1];
++    const auto residual = add->src[0] == mul ? add->src[1] : add->src[0];
++    for (const auto tensor : {activation, gate, residual, add}) {
++        const auto buffer = tensor->buffer ? tensor->buffer : tensor->view_src ? tensor->view_src->buffer : nullptr;
++        if (!buffer || ggml_backend_buffer_get_type(buffer) != ggml_backend_sycl_buffer_type(ctx.device)) return false;
++    }
++    const auto a = static_cast<const float *>(activation->data);
++    const auto g = static_cast<const float *>(gate->data);
++    const auto r = static_cast<const float *>(residual->data);
++    const auto output = static_cast<float *>(add->data);
++    const size_t columns = size_t(mul->ne[0]), rows = size_t(mul->ne[1]);
++    const bool product_first = add->src[0] == mul;
++    queue->parallel_for(sycl::range<2>(rows, columns), [=](sycl::id<2> at) {
++#pragma clang fp contract(off)
++        const size_t i = at[0] * columns + at[1];
++        // Use the exact plain operators from the two former kernels. Volatile
++        // FP32 materialization prevents contraction across their storage
++        // boundary without substituting the IMF rounding entrypoints' special
++        // value behavior. No global scratch or retained state is introduced.
++        volatile float product = op_mul(a[i], g[at[1]]);
++        const float materialized_product = product;
++        output[i] = product_first ? op_add(materialized_product, r[i])
++                                  : op_add(r[i], materialized_product);
++    });
++    return true;
++}
++
+ template<float (*bin_op)(const float, const float), typename src0_t, typename src1_t, typename dst_t>
+ static void k_bin_bcast(const src0_t * src0, const src1_t * src1, dst_t * dst,
+         int ne0, int ne1, int ne2, int ne3,
+@@ -355,4 +389,3 @@ void ggml_sycl_repeat(ggml_backend_sycl_context & ctx, ggml_tensor * dst) {
+     scope_op_debug_print scope_dbg_print(__func__, dst, /*num_src=*/1);
+     ggml_sycl_op_repeat(ctx, dst);
+ }
+-
+diff --git a/src/ggml-sycl/binbcast.hpp b/src/ggml-sycl/binbcast.hpp
+index 9cce0f0..8901ecc 100644
+--- a/src/ggml-sycl/binbcast.hpp
++++ b/src/ggml-sycl/binbcast.hpp
+@@ -30,10 +30,12 @@ void ggml_sycl_sub(ggml_backend_sycl_context & ctx, ggml_tensor * dst);
+ 
+ void ggml_sycl_mul(ggml_backend_sycl_context & ctx, ggml_tensor * dst);
+ 
++// Returns false without submitting work when the narrow fast path is unsafe.
++bool ggml_sycl_op_mul_add_f32(ggml_backend_sycl_context & ctx, ggml_tensor * mul, ggml_tensor * add);
++
+ void ggml_sycl_div(ggml_backend_sycl_context & ctx, ggml_tensor * dst);
+ 
+ void ggml_sycl_repeat(ggml_backend_sycl_context & ctx, ggml_tensor * dst);
+ 
+ 
+ #endif //GGML_SYCL_BINBCAST_HPP
+-
 diff --git a/src/ggml-sycl/convrot-policy.hpp b/src/ggml-sycl/convrot-policy.hpp
 new file mode 100644
 index 0000000..7899841
@@ -1262,17 +1354,29 @@ index 55e0761..ae47990 100644
                            sycl::range<3>(1, 1, SYCL_CPY_BLOCK_SIZE)),
 diff --git a/src/ggml-sycl/fattn-onednn-shapes.hpp b/src/ggml-sycl/fattn-onednn-shapes.hpp
 new file mode 100644
-index 0000000..bb91537
+index 0000000..33ded07
 --- /dev/null
 +++ b/src/ggml-sycl/fattn-onednn-shapes.hpp
-@@ -0,0 +1,71 @@
+@@ -0,0 +1,83 @@
 +#pragma once
 +
 +#include "ggml.h"
 +#include <cmath>
++#include <cstdint>
 +#include <cstring>
 +#include <initializer_list>
 +#include <limits>
++
++// The SDPA descriptors below use dense [batch, head, token, channel] inputs.
++// A dense F16 view has that byte layout, including its data offset. Limit the
++// fast path to the backend's normal buffer alignment; offset views below that
++// boundary retain the existing aligned packing. This is a conservative Kuno
++// eligibility policy, not a general oneDNN alignment requirement.
++inline bool ggml_sycl_onednn_sdpa_alias_f16(const ggml_tensor * tensor, size_t alignment) {
++    return tensor && tensor->data && alignment != 0 &&
++           reinterpret_cast<std::uintptr_t>(tensor->data) % alignment == 0 &&
++           tensor->type == GGML_TYPE_F16 && ggml_is_contiguous(tensor);
++}
 +
 +// Hardware-independent envelope for the strided staging kernels and the
 +// contiguous oneDNN SDPA graph. Unsupported layouts retain native attention.
@@ -1338,7 +1442,7 @@ index 0000000..bb91537
 +    return precision == GGML_PREC_DEFAULT || precision == GGML_PREC_F32;
 +}
 diff --git a/src/ggml-sycl/fattn-onednn.cpp b/src/ggml-sycl/fattn-onednn.cpp
-index fd17a25..11d174d 100644
+index fd17a25..e37c521 100644
 --- a/src/ggml-sycl/fattn-onednn.cpp
 +++ b/src/ggml-sycl/fattn-onednn.cpp
 @@ -1,4 +1,5 @@
@@ -1501,7 +1605,45 @@ index fd17a25..11d174d 100644
      E.cp       = parts[0].compile(E.ins, {E.out}, eng);
      E.out      = E.cp.query_logical_tensor(E.out.get_id());
      E.id_q     = query.get_id(); E.id_k = key.get_id(); E.id_v = value.get_id();
-@@ -341,23 +298,26 @@ void ggml_sycl_flash_attn_ext_onednn(ggml_backend_sycl_context & ctx, ggml_tenso
+@@ -231,19 +188,30 @@ void ggml_sycl_flash_attn_ext_onednn(ggml_backend_sycl_context & ctx, ggml_tenso
+     ggml_sycl_pool_alloc<sycl::half> Qf(ctx.pool(), (size_t) H * q * d);
+     cont_to_f16_sycl<float>((const char *) Q->data, Qf.get(), d, q, H, mb, Q->nb[1], Q->nb[2], Q->nb[3], stream);
+ 
+-    // K/V: use pool-alloc for both F16 and dequant paths.
++    // K/V: dense F16 inputs already match the compiled SDPA descriptors.
++    // Alias each independently; packing remains necessary for strided views.
+     sycl::half * K_ptr = nullptr;
+     sycl::half * V_ptr = nullptr;
+     std::optional<ggml_sycl_pool_alloc<sycl::half>> Kf_pool;
+     std::optional<ggml_sycl_pool_alloc<sycl::half>> Vf_pool;
+ 
+     if (K->type == GGML_TYPE_F16 && V->type == GGML_TYPE_F16) {
+-        Kf_pool.emplace(ctx.pool(), (size_t) Hkv * seq * d);
+-        Vf_pool.emplace(ctx.pool(), (size_t) Hkv * seq * d);
+-        cont_to_f16_sycl<sycl::half>((const char *) K->data, Kf_pool->get(), d, seq, Hkv, mb, K->nb[1], K->nb[2], K->nb[3], stream);
+-        cont_to_f16_sycl<sycl::half>((const char *) V->data, Vf_pool->get(), d, seq, Hkv, mb, V->nb[1], V->nb[2], V->nb[3], stream);
+-        K_ptr = Kf_pool->get();
+-        V_ptr = Vf_pool->get();
++        if (ggml_sycl_onednn_sdpa_alias_f16(K, SYCL_BUFFER_ALIGNMENT)) {
++            K_ptr = static_cast<sycl::half *>(K->data);
++        } else {
++            Kf_pool.emplace(ctx.pool(), (size_t) Hkv * seq * d);
++            cont_to_f16_sycl<sycl::half>((const char *) K->data, Kf_pool->get(), d, seq, Hkv, mb, K->nb[1], K->nb[2], K->nb[3], stream);
++            K_ptr = Kf_pool->get();
++        }
++        if (ggml_sycl_onednn_sdpa_alias_f16(V, SYCL_BUFFER_ALIGNMENT)) {
++            V_ptr = static_cast<sycl::half *>(V->data);
++        } else {
++            Vf_pool.emplace(ctx.pool(), (size_t) Hkv * seq * d);
++            cont_to_f16_sycl<sycl::half>((const char *) V->data, Vf_pool->get(), d, seq, Hkv, mb, V->nb[1], V->nb[2], V->nb[3], stream);
++            V_ptr = Vf_pool->get();
++        }
++        // GGML owns these inputs until graph completion. SDPA and subsequent
++        // workspace reuse execute on the same in-order queue used for packing.
+     } else if (ggml_is_quantized(K->type)) {
+         // Quantized K/V: dequant to dense F16 using pool, same lifetime as F16 path.
+         Kf_pool.emplace(ctx.pool(), ggml_nelements(K));
+@@ -341,23 +309,26 @@ void ggml_sycl_flash_attn_ext_onednn(ggml_backend_sycl_context & ctx, ggml_tenso
      // compile once per (device, shape), reuse across layers/calls.
      static std::unordered_map<std::string, sdpa_partition> cache;
      char keyb[96];
@@ -1535,8 +1677,29 @@ index fd17a25..11d174d 100644
          return nullptr;
      };
      std::vector<tensor> ti;
+diff --git a/src/ggml-sycl/fusion.cpp b/src/ggml-sycl/fusion.cpp
+index 4a6027f..818fbe7 100644
+--- a/src/ggml-sycl/fusion.cpp
++++ b/src/ggml-sycl/fusion.cpp
+@@ -1,4 +1,5 @@
+ #include "fusion.hpp"
++#include "mul-add-policy.hpp"
+ 
+ bool ggml_sycl_can_fuse(const ggml_cgraph * cgraph, int node_idx, std::initializer_list<enum ggml_op> ops) {
+     if (!g_ggml_sycl_enable_fusion) {
+@@ -9,6 +10,10 @@ bool ggml_sycl_can_fuse(const ggml_cgraph * cgraph, int node_idx, std::initializ
+         return false;
+     }
+ 
++    if (ops.size() == 2 && ops.begin()[0] == GGML_OP_MUL && ops.begin()[1] == GGML_OP_ADD) {
++        return ggml_sycl_mul_add_graph_safe(cgraph, node_idx);
++    }
++
+     if (ops.size() == 2 && ops.begin()[0] == GGML_OP_RMS_NORM && ops.begin()[1] == GGML_OP_MUL) {
+         const ggml_tensor * rms_norm = cgraph->nodes[node_idx];
+         const ggml_tensor * mul      = cgraph->nodes[node_idx + 1];
 diff --git a/src/ggml-sycl/ggml-sycl.cpp b/src/ggml-sycl/ggml-sycl.cpp
-index 18d5878..b081ccc 100644
+index 18d5878..5f92308 100644
 --- a/src/ggml-sycl/ggml-sycl.cpp
 +++ b/src/ggml-sycl/ggml-sycl.cpp
 @@ -59,6 +59,8 @@
@@ -1548,7 +1711,30 @@ index 18d5878..b081ccc 100644
  #include "ggml-sycl/repeat_back.hpp"
  #include "ggml-sycl/set_rows.hpp"
  #include "ggml-sycl/set.hpp"
-@@ -1607,6 +1609,9 @@ struct ggml_sycl_pool_leg : public ggml_sycl_pool {
+@@ -98,6 +100,12 @@ int g_ggml_sycl_enable_flash_attention = 1;
+ int g_ggml_sycl_dev2dev_memcpy = DEV2DEV_MEMCPY_SYCL;
+ int g_ggml_sycl_usm_system = 0;
+ 
++#ifdef KUNO_SYCL_WHOLE_ROPE_BYPASS
++// Captured only during existing device/context initialization. No driver query
++// occurs while preparing or submitting a graph; failed initialization propagates.
++static size_t g_kuno_whole_rope_max_work_item_1d[GGML_SYCL_MAX_DEVICES]{};
++#endif
++
+ static ggml_sycl_device_info ggml_sycl_init() {
+     ggml_sycl_device_info info = {};
+ 
+@@ -153,6 +161,9 @@ static ggml_sycl_device_info ggml_sycl_init() {
+         info.devices[i].usm_system_support = device.has(sycl::aspect::usm_system_allocations);
+ 
+         info.max_work_group_sizes[i] = prop.get_max_work_group_size();
++#ifdef KUNO_SYCL_WHOLE_ROPE_BYPASS
++        g_kuno_whole_rope_max_work_item_1d[i] = device.get_info<sycl::info::device::max_work_item_sizes<1>>()[0];
++#endif
+         info.devices[i].max_wg_per_cu = info.max_work_group_sizes[i] / prop.get_max_compute_units();
+         info.devices[i].hw_info = get_device_hw_info(&device);
+ 
+@@ -1607,6 +1618,9 @@ struct ggml_sycl_pool_leg : public ggml_sycl_pool {
              }
          }
          GGML_LOG_WARN("WARNING: sycl buffer pool full, increase MAX_sycl_BUFFERS\n");
@@ -1558,7 +1744,7 @@ index 18d5878..b081ccc 100644
          SYCL_CHECK(CHECK_TRY_ERROR(ggml_sycl_free_device(ptr, *qptr)));
          pool_size -= size;
      }
-@@ -5110,7 +5115,16 @@ static bool ggml_sycl_compute_forward(ggml_backend_sycl_context & ctx, struct gg
+@@ -5110,7 +5124,16 @@ static bool ggml_sycl_compute_forward(ggml_backend_sycl_context & ctx, struct gg
          case GGML_OP_L2_NORM:
              ggml_sycl_l2_norm(ctx, dst);
              break;
@@ -1575,7 +1761,47 @@ index 18d5878..b081ccc 100644
              if (dst->src[0]->ne[3] != dst->src[1]->ne[3]) {
                  return false;
              }
-@@ -5449,6 +5463,9 @@ static bool check_graph_compatibility(ggml_cgraph * cgraph) {
+@@ -5396,8 +5419,15 @@ catch (sycl::exception const &exc) {
+   std::exit(1);
+ }
+ 
++#ifdef KUNO_SYCL_WHOLE_ROPE_BYPASS
++#include "whole-rope-dispatch.hpp"
++#endif
++
+ static void ggml_backend_sycl_graph_compute_impl(ggml_backend_sycl_context * sycl_ctx, ggml_cgraph * cgraph) {
+     ggml_sycl_set_main_device(sycl_ctx->device);
++#ifdef KUNO_SYCL_WHOLE_ROPE_BYPASS
++    auto whole_rope_plans = kuno_whole_rope_prepare(*sycl_ctx,cgraph);
++#endif
+ 
+     for (int i = 0; i < cgraph->n_nodes; i++) {
+         ggml_tensor * node = cgraph->nodes[i];
+@@ -5408,6 +5438,9 @@ static void ggml_backend_sycl_graph_compute_impl(ggml_backend_sycl_context * syc
+             continue;
+         }
+ 
++#ifdef KUNO_SYCL_WHOLE_ROPE_BYPASS
++        if (kuno_whole_rope_step(*sycl_ctx,whole_rope_plans,i)) continue;
++#endif
+         const int nodes_to_skip = ggml_sycl_fuse(*sycl_ctx, cgraph, i);
+         if (nodes_to_skip != 0) {
+             i += nodes_to_skip;
+@@ -5428,6 +5461,13 @@ static void ggml_backend_sycl_graph_compute_impl(ggml_backend_sycl_context * syc
+             continue;
+         }
+ 
++        if (node->op == GGML_OP_MUL &&
++            ggml_sycl_can_fuse(cgraph, i, { GGML_OP_MUL, GGML_OP_ADD }) &&
++            ggml_sycl_op_mul_add_f32(*sycl_ctx, node, cgraph->nodes[i + 1])) {
++            i++;
++            continue;
++        }
++
+         bool ok = ggml_sycl_compute_forward(*sycl_ctx, node);
+         if (!ok) {
+             GGML_LOG_ERROR("%s: error: op not supported %s (%s)\n", __func__, node->name, ggml_op_name(node->op));
+@@ -5449,6 +5489,9 @@ static bool check_graph_compatibility(ggml_cgraph * cgraph) {
          switch (node_op) {
              default:
                  break;
@@ -1585,7 +1811,7 @@ index 18d5878..b081ccc 100644
              case GGML_OP_CONCAT:
                  // ggml_sycl_op_concat() does a blocking host wait after memcpy operations,
                  // but wait() can't be called on the events returned by a queue recording
-@@ -5462,6 +5479,7 @@ static bool check_graph_compatibility(ggml_cgraph * cgraph) {
+@@ -5462,6 +5505,7 @@ static bool check_graph_compatibility(ggml_cgraph * cgraph) {
                                ggml_op_name(node_op));
                  return false;
              case GGML_OP_MUL_MAT:
@@ -1593,7 +1819,7 @@ index 18d5878..b081ccc 100644
                  // We cannot use graphs with ggml_sycl_mul_mat() when SYCL async memory allocation extensions are not available,
                  // as SYCL malloc / free and host wait calls are not supported when recording to a graph which are all present
                  // in reordering.
-@@ -5602,6 +5620,7 @@ struct ggml_backend_sycl_device_context {
+@@ -5602,6 +5646,7 @@ struct ggml_backend_sycl_device_context {
      int device;
      std::string name;
      std::string description;
@@ -1601,7 +1827,7 @@ index 18d5878..b081ccc 100644
      int op_offload_min_batch_size;
  };
  
-@@ -5632,6 +5651,8 @@ static enum ggml_backend_dev_type ggml_backend_sycl_device_get_type(ggml_backend
+@@ -5632,6 +5677,8 @@ static enum ggml_backend_dev_type ggml_backend_sycl_device_get_type(ggml_backend
  }
  
  static void ggml_backend_sycl_device_get_props(ggml_backend_dev_t dev, ggml_backend_dev_props * props) {
@@ -1610,7 +1836,7 @@ index 18d5878..b081ccc 100644
      props->name        = ggml_backend_sycl_device_get_name(dev);
      props->description = ggml_backend_sycl_device_get_description(dev);
      props->type        = ggml_backend_sycl_device_get_type(dev);
-@@ -5736,9 +5757,18 @@ static bool do_ggml_backend_sycl_device_supports_op(ggml_backend_dev_t dev, cons
+@@ -5736,9 +5783,18 @@ static bool do_ggml_backend_sycl_device_supports_op(ggml_backend_dev_t dev, cons
                      return false;
              }
              break;
@@ -1629,7 +1855,7 @@ index 18d5878..b081ccc 100644
                  struct ggml_tensor * a = op->src[0];
                  struct ggml_tensor * b = op->src[1];
  
-@@ -6499,6 +6529,15 @@ ggml_backend_reg_t ggml_backend_sycl_reg() {
+@@ -6499,6 +6555,15 @@ ggml_backend_reg_t ggml_backend_sycl_reg() {
                  SYCL_CHECK(CHECK_TRY_ERROR(dpct::get_device_info(
                      prop, dpct::dev_mgr::instance().get_device(i))));
  
@@ -1780,6 +2006,90 @@ index 7bf3584..f48b102 100644
  }
  
  static void im2col_3d_sycl_f16(const float *   src,
+diff --git a/src/ggml-sycl/mul-add-policy.hpp b/src/ggml-sycl/mul-add-policy.hpp
+new file mode 100644
+index 0000000..8e833d6
+--- /dev/null
++++ b/src/ggml-sycl/mul-add-policy.hpp
+@@ -0,0 +1,78 @@
++// Narrow, allocation-free policy for materialized-F32 MUL followed by ADD.
++#pragma once
++#include "ggml.h"
++#include "ggml-impl.h"
++#include <cstddef>
++#include <cstdint>
++#include <initializer_list>
++#include <limits>
++
++inline bool ggml_sycl_mul_add_geometry(const ggml_tensor * mul, const ggml_tensor * add) {
++    if (!mul || !add || mul->op != GGML_OP_MUL || add->op != GGML_OP_ADD ||
++        mul->type != GGML_TYPE_F32 || add->type != GGML_TYPE_F32 ||
++        !mul->src[0] || !mul->src[1] ||
++        add->src[1] != mul || add->src[0] == mul) return false;
++    // Qwen21 uses ADD(residual, MUL(activation, gate)). Reversed ADD operands
++    // retain the legacy path: their device NaN payload/sign propagation differs.
++    const auto activation = mul->src[0], gate = mul->src[1];
++    const auto residual = add->src[0];
++    if (!residual || activation->type != GGML_TYPE_F32 || gate->type != GGML_TYPE_F32 ||
++        residual->type != GGML_TYPE_F32 || !ggml_are_same_shape(mul, activation) ||
++        !ggml_are_same_shape(mul, add) || !ggml_are_same_shape(mul, residual)) return false;
++    if (mul->ne[0] <= 0 || mul->ne[1] <= 0 || mul->ne[2] != 1 || mul->ne[3] != 1 ||
++        gate->ne[0] != mul->ne[0] || gate->ne[1] != 1 || gate->ne[2] != 1 || gate->ne[3] != 1)
++        return false;
++    const uint64_t columns = uint64_t(mul->ne[0]), rows = uint64_t(mul->ne[1]);
++    if (columns > std::numeric_limits<size_t>::max() / sizeof(float) / rows) return false;
++    // Full arrays cannot be views. The per-channel coefficient may be a view.
++    const ggml_tensor * arrays[] = {activation, residual, mul, add};
++    for (const auto tensor : arrays) {
++        if (tensor->view_src || !ggml_is_contiguous(tensor)) return false;
++    }
++    if (!ggml_is_contiguous(gate)) return false;
++    return true;
++}
++
++inline bool ggml_sycl_mul_add_graph_safe(const ggml_cgraph * graph, int index) {
++    if (!graph || index < 0 || index >= graph->n_nodes - 1 ||
++        !ggml_can_fuse(graph, index, {GGML_OP_MUL, GGML_OP_ADD}) ||
++        !ggml_sycl_mul_add_geometry(graph->nodes[index], graph->nodes[index + 1])) return false;
++    const auto mul = graph->nodes[index];
++    // GGML's direct use count excludes view-only escapes. A view of this
++    // intermediate still needs its materialized value after the fused ADD.
++    auto escapes = [&](const ggml_tensor * tensor) {
++        for (auto source = tensor->view_src; source; source = source->view_src) {
++            if (source == mul) return true;
++        }
++        return false;
++    };
++    for (int i = 0; i < graph->n_nodes; ++i) if (escapes(graph->nodes[i])) return false;
++    for (int i = 0; i < graph->n_leafs; ++i) if (escapes(graph->leafs[i])) return false;
++    return true;
++}
++
++inline bool ggml_sycl_mul_add_memory_safe(const ggml_tensor * mul, const ggml_tensor * add) {
++    if (!ggml_sycl_mul_add_geometry(mul, add)) return false;
++    const auto activation = mul->src[0], gate = mul->src[1];
++    const auto residual = add->src[0];
++    const size_t bytes = size_t(mul->ne[0]) * size_t(mul->ne[1]) * sizeof(float);
++    const size_t gate_bytes = size_t(mul->ne[0]) * sizeof(float);
++    auto valid_range = [](const void * pointer, size_t size) {
++        const auto start = reinterpret_cast<uintptr_t>(pointer);
++        return start != 0 && start % alignof(float) == 0 &&
++               size <= std::numeric_limits<uintptr_t>::max() - start;
++    };
++    if (!valid_range(add->data, bytes) || !valid_range(activation->data, bytes) ||
++        !valid_range(residual->data, bytes) || !valid_range(gate->data, gate_bytes)) return false;
++    const auto destination = reinterpret_cast<uintptr_t>(add->data);
++    auto overlaps = [&](const void * pointer, size_t size) {
++        const auto start = reinterpret_cast<uintptr_t>(pointer);
++        return destination < start + size && start < destination + bytes;
++    };
++    // Exact full-array aliases are elementwise safe. Partial aliases and a
++    // coefficient/output overlap would race between work items.
++    for (const auto tensor : {activation, residual}) {
++        if (tensor->data != add->data && overlaps(tensor->data, bytes)) return false;
++    }
++    return !overlaps(gate->data, gate_bytes);
++}
 diff --git a/src/ggml-sycl/pci-address.hpp b/src/ggml-sycl/pci-address.hpp
 new file mode 100644
 index 0000000..9907438
@@ -1800,3 +2110,553 @@ index 0000000..9907438
 +    if (pci[8] > '1' || pci[11] > '7') return {}; // PCI slot <=31, function <=7.
 +    return pci;
 +}
+diff --git a/src/ggml-sycl/repeat-mul-policy.hpp b/src/ggml-sycl/repeat-mul-policy.hpp
+new file mode 100644
+index 0000000..b6d615c
+--- /dev/null
++++ b/src/ggml-sycl/repeat-mul-policy.hpp
+@@ -0,0 +1,124 @@
++#pragma once
++#include <climits>
++#include <cstddef>
++#include <cstdint>
++#include <cstring>
++#include <limits>
++#include "ggml-impl.h"
++
++namespace ggml_sycl_repeat_mul_policy {
++constexpr int max_metadata_nodes = 4;
++constexpr int max_graph_nodes = 16384;
++constexpr int max_view_depth = 8;
++enum class Reason : unsigned { eligible, shape, use, overlap, graph };
++struct Plan {
++    const ggml_tensor * source = nullptr;
++    const ggml_tensor * coefficient = nullptr;
++    int mul_index = -1;
++    Reason reason = Reason::graph;
++    explicit operator bool() const noexcept { return reason == Reason::eligible; }
++};
++struct Span { uintptr_t first = 0, last = 0; };
++inline bool checked_add(size_t a, size_t b, size_t & out) noexcept {
++    if (b > std::numeric_limits<size_t>::max() - a) return false;
++    out = a + b; return true;
++}
++inline bool checked_mul(size_t a, size_t b, size_t & out) noexcept {
++    if (a && b > std::numeric_limits<size_t>::max() / a) return false;
++    out = a * b; return true;
++}
++inline bool span(const ggml_tensor * tensor, Span & out) noexcept {
++    if (!tensor || !tensor->data || tensor->type != GGML_TYPE_F32) return false;
++    size_t bytes = sizeof(float);
++    for (unsigned i = 0; i < 4; ++i) {
++        if (tensor->ne[i] <= 0) return false;
++        size_t term = 0;
++        if (!checked_mul(size_t(tensor->ne[i] - 1), tensor->nb[i], term) || !checked_add(bytes, term, bytes)) return false;
++    }
++    const auto first = reinterpret_cast<uintptr_t>(tensor->data);
++    if (bytes > std::numeric_limits<uintptr_t>::max() - first) return false;
++    out = {first, first + bytes}; return true;
++}
++inline bool overlaps(const Span & a, const Span & b) noexcept { return a.first < b.last && b.first < a.last; }
++inline bool dense(const ggml_tensor * tensor, int64_t n0, int64_t n1, int64_t n2, int64_t n3) noexcept {
++    if (!tensor || tensor->type != GGML_TYPE_F32) return false;
++    const int64_t shape[] = {n0,n1,n2,n3};
++    size_t stride = sizeof(float);
++    for (unsigned i = 0; i < 4; ++i) {
++        if (tensor->ne[i] != shape[i] || shape[i] <= 0 || tensor->nb[i] != stride) return false;
++        if (!checked_mul(stride,size_t(shape[i]),stride)) return false;
++    }
++    return true;
++}
++inline bool metadata(enum ggml_op op) noexcept {
++    return op == GGML_OP_VIEW || op == GGML_OP_RESHAPE || op == GGML_OP_TRANSPOSE || op == GGML_OP_PERMUTE || op == GGML_OP_NONE;
++}
++inline bool protected_output(const ggml_tensor * tensor) noexcept {
++    // Runner cut/cache outputs carry OUTPUT in executable segment graphs. The
++    // fixed cut prefix also protects monolithic graphs; it is never printed.
++    constexpr char cut_prefix[] = "ggml_runner_cut:";
++    return (tensor->flags & GGML_TENSOR_FLAG_OUTPUT) ||
++        std::memcmp(tensor->name,cut_prefix,sizeof(cut_prefix)-1) == 0;
++}
++inline bool read_chain(const ggml_tensor * tensor, const Span & destination, size_t alignment) noexcept {
++    if (!alignment || (alignment & (alignment-1))) return false;
++    const ggml_tensor * seen[max_view_depth]{};
++    Span child{};
++    bool have_child = false;
++    int depth = 0;
++    for (; tensor; tensor = tensor->view_src) {
++        if (depth == max_view_depth) return false;
++        for (int i = 0; i < depth; ++i) if (seen[i] == tensor) return false;
++        seen[depth++] = tensor;
++        Span current{};
++        if (!span(tensor,current) || current.first % alignment || overlaps(current,destination)) return false;
++        if (have_child && (child.first < current.first || child.last > current.last)) return false;
++        child = current; have_child = true;
++    }
++    return true;
++}
++inline Plan find(const ggml_cgraph * graph, int index, size_t alignment) noexcept {
++    Plan result;
++    if (!graph || !graph->nodes || graph->n_nodes <= 0 || graph->n_nodes > max_graph_nodes ||
++        index < 0 || index >= graph->n_nodes || !alignment || (alignment & (alignment-1))) return result;
++    const auto * repeat = graph->nodes[index];
++    result.reason = Reason::shape;
++    if (!repeat || repeat->op != GGML_OP_REPEAT || repeat->view_src || protected_output(repeat) ||
++        !(repeat->flags & GGML_TENSOR_FLAG_COMPUTE) || !repeat->src[0]) return result;
++    const int64_t length = repeat->ne[2];
++    if (length <= 0 || length > INT_MAX / 4096 ||
++        !dense(repeat,2,64,length,32) || !dense(repeat->src[0],1,64,length,32)) return result;
++    int next = index + 1, skipped = 0;
++    while (next < graph->n_nodes && graph->nodes[next] && metadata(graph->nodes[next]->op)) {
++        if (++skipped > max_metadata_nodes) return result;
++        ++next;
++    }
++    if (next >= graph->n_nodes) return result;
++    const auto * mul = graph->nodes[next];
++    if (!mul || mul->op != GGML_OP_MUL || mul->src[0] != repeat ||
++        !(mul->flags & GGML_TENSOR_FLAG_COMPUTE) || !dense(mul,2,64,length,32) ||
++        !dense(mul->src[1],2,64,length,1)) return result;
++    result.reason = Reason::use;
++    unsigned uses = 0;
++    for (int j = 0; j < graph->n_nodes; ++j) {
++        const auto * node = graph->nodes[j];
++        if (!node) return result;
++        if (node->view_src == repeat) return result;
++        for (unsigned k = 0; k < GGML_MAX_SRC; ++k) if (node->src[k] == repeat) {
++            if (node != mul || k != 0 || ++uses != 1) return result;
++        }
++    }
++    if (uses != 1) return result;
++    result.reason = Reason::overlap;
++    Span destination{}, repeated{};
++    if (!span(mul,destination) || !span(repeat,repeated) ||
++        destination.first % alignment || repeated.first % alignment) return result;
++    // Gallocr may reuse the dead repeated intermediate as MUL's destination.
++    // Exact reuse is safe; partial overlap is never accepted. Actual inputs and
++    // all view ancestors (including both halves/PE components) stay disjoint.
++    if (overlaps(destination,repeated) && (destination.first != repeated.first || destination.last != repeated.last)) return result;
++    if (!read_chain(repeat->src[0],destination,alignment) || !read_chain(mul->src[1],destination,alignment)) return result;
++    result = {repeat->src[0],mul->src[1],next,Reason::eligible};
++    return result;
++}
++}
+diff --git a/src/ggml-sycl/whole-rope-dispatch.hpp b/src/ggml-sycl/whole-rope-dispatch.hpp
+new file mode 100644
+index 0000000..6326774
+--- /dev/null
++++ b/src/ggml-sycl/whole-rope-dispatch.hpp
+@@ -0,0 +1,101 @@
++#pragma once
++// Included only inside the SYCL backend TU, after its normal buffer context.
++#include "whole-rope-policy.hpp"
++#include "whole-rope-test.h"
++#include "whole-rope.hpp"
++
++namespace {
++using KunoWholeRopePlans=ggml_sycl_whole_rope_policy::Plans;
++#ifdef KUNO_SYCL_WHOLE_ROPE_TEST
++thread_local bool kuno_whole_rope_enabled=true;
++thread_local unsigned long long kuno_whole_rope_counts[9]{};
++inline void kuno_whole_rope_count(unsigned bucket) noexcept { ++kuno_whole_rope_counts[bucket]; }
++#else
++inline void kuno_whole_rope_count(unsigned) noexcept {}
++#endif
++bool kuno_whole_rope_device_chain(const ggml_tensor* tensor,int device) noexcept {
++    unsigned depth=0;
++    for(;tensor;tensor=tensor->view_src) {
++        if(++depth>ggml_sycl_whole_rope_policy::max_view_depth||!tensor->buffer||
++           !ggml_backend_buffer_is_sycl(tensor->buffer)) return false;
++        const auto* context=static_cast<ggml_backend_sycl_buffer_context*>(tensor->buffer->context);
++        if(!context||context->device!=device) return false;
++        const uintptr_t base=reinterpret_cast<uintptr_t>(ggml_backend_buffer_get_base(tensor->buffer));
++        const size_t size=ggml_backend_buffer_get_size(tensor->buffer);
++        ggml_sycl_repeat_mul_policy::Span span{};
++        if(!base||size>UINTPTR_MAX-base||!ggml_sycl_repeat_mul_policy::span(tensor,span)||
++           span.first<base||span.last>base+size) return false;
++    }
++    return true;
++}
++KunoWholeRopePlans kuno_whole_rope_prepare(ggml_backend_sycl_context& context,const ggml_cgraph* graph) {
++    KunoWholeRopePlans result;
++#ifdef KUNO_SYCL_WHOLE_ROPE_TEST
++    if(!kuno_whole_rope_enabled) return result;
++#endif
++    if(!g_ggml_sycl_enable_fusion||!graph||!graph->nodes||graph->n_nodes<0||
++       graph->n_nodes>ggml_sycl_whole_rope_policy::max_graph_nodes) return result;
++    if(context.device<0||context.device>=GGML_SYCL_MAX_DEVICES||
++       !ggml_sycl_whole_rope_policy::capable(ggml_sycl_info().max_work_group_sizes[context.device],
++           g_kuno_whole_rope_max_work_item_1d[context.device])) {
++        kuno_whole_rope_count(8);
++        return result;
++    }
++#ifdef GGML_SYCL_GRAPH
++    // This initial prototype always declines a graph-capture-enabled build.
++    kuno_whole_rope_count(8);
++    return result;
++#else
++    for(int i=0;i<graph->n_nodes;++i) {
++        const auto* node=graph->nodes[i];
++        if(!node||node->op!=GGML_OP_ADD) continue;
++        kuno_whole_rope_count(0);
++        const auto plan=ggml_sycl_whole_rope_policy::find(graph,i,SYCL_BUFFER_ALIGNMENT);
++        if(!plan) {
++            const unsigned bucket=unsigned(plan.reason)+2;
++            kuno_whole_rope_count(bucket);
++            continue;
++        }
++        bool device_ok=kuno_whole_rope_device_chain(plan.source,context.device)&&
++            kuno_whole_rope_device_chain(plan.coefficient,context.device)&&
++            kuno_whole_rope_device_chain(plan.output,context.device);
++        for(int j=plan.begin;device_ok&&j<=plan.end;++j)
++            device_ok=kuno_whole_rope_device_chain(graph->nodes[j],context.device);
++        if(!device_ok) { kuno_whole_rope_count(8);continue; }
++        if(!result.append(plan)) {
++            // A capacity or interleaving ambiguity discards all plans before
++            // any submission, preserving the complete normal graph path.
++            kuno_whole_rope_count(8);
++            return result;
++        }
++    }
++    for(unsigned i=0;i<result.count;++i) kuno_whole_rope_count(1);
++    return result;
++#endif
++}
++bool kuno_whole_rope_step(ggml_backend_sycl_context& context,KunoWholeRopePlans& plans,int index) {
++    while(plans.current<plans.count&&index>plans.values[plans.current].end) ++plans.current;
++    if(plans.current==plans.count) return false;
++    const auto& plan=plans.values[plans.current];
++    if(index<plan.begin) return false;
++    if(index==plan.end) {
++        // Terminal ADD is the only submission point. Every skipped compute is
++        // in the proven closed window; earlier source storage remains intact.
++        // An uncertain submission never invokes the normal path afterwards.
++        ggml_sycl_whole_rope(context,plan.source,plan.coefficient,plan.destination);
++        kuno_whole_rope_count(2);
++        ++plans.current;
++    }
++    return true;
++}
++} // namespace
++
++#ifdef KUNO_SYCL_WHOLE_ROPE_TEST
++extern "C" void kuno_sycl_whole_rope_test_enable(bool enabled) noexcept {
++    kuno_whole_rope_enabled=enabled;
++    for(auto& count:kuno_whole_rope_counts) count=0;
++}
++extern "C" void kuno_sycl_whole_rope_test_counts(unsigned long long out[9]) noexcept {
++    if(out) for(unsigned i=0;i<9;++i) out[i]=kuno_whole_rope_counts[i];
++}
++#endif
+diff --git a/src/ggml-sycl/whole-rope-policy.hpp b/src/ggml-sycl/whole-rope-policy.hpp
+new file mode 100644
+index 0000000..99eefeb
+--- /dev/null
++++ b/src/ggml-sycl/whole-rope-policy.hpp
+@@ -0,0 +1,228 @@
++#pragma once
++#include <array>
++#include "repeat-mul-policy.hpp"
++
++namespace ggml_sycl_whole_rope_policy {
++namespace bytes = ggml_sycl_repeat_mul_policy;
++constexpr int max_graph_nodes=16384;
++constexpr int max_window_nodes=32;
++constexpr int max_view_depth=8;
++constexpr int max_length=16384;
++inline bool capable(size_t max_work_group,size_t max_work_item_1d) noexcept {
++    return max_work_group>=128&&max_work_item_1d>=128;
++}
++enum class Reason:unsigned { eligible,shape,edges,use,window,overlap,graph };
++struct Plan {
++    const ggml_tensor* source=nullptr;
++    const ggml_tensor* coefficient=nullptr;
++    ggml_tensor* destination=nullptr;
++    const ggml_tensor* output=nullptr;
++    int begin=-1,end=-1;
++    Reason reason=Reason::graph;
++    explicit operator bool() const noexcept { return reason==Reason::eligible; }
++};
++constexpr unsigned max_plans=64;
++struct Plans {
++    std::array<Plan,max_plans> values{};
++    unsigned count=0,current=0;
++    bool discarded=false;
++    bool append(const Plan& plan) noexcept {
++        if(discarded||!plan||plan.begin<0||plan.end<plan.begin||plan.end>=max_graph_nodes||
++           plan.end-plan.begin>=max_window_nodes||count==max_plans||
++           (count&&plan.begin<=values[count-1].end)) {
++            discarded=true;count=0;current=0;return false;
++        }
++        values[count++]=plan;return true;
++    }
++};
++static_assert(sizeof(Plans)<=4096,"whole_rope_bounded_stack_plan");
++inline bool shape(const ggml_tensor* t,int64_t a,int64_t b,int64_t c,int64_t d) noexcept {
++    return t&&t->type==GGML_TYPE_F32&&t->ne[0]==a&&t->ne[1]==b&&t->ne[2]==c&&t->ne[3]==d;
++}
++inline bool sources(const ggml_tensor* t,ggml_op op,const ggml_tensor* a,const ggml_tensor* b=nullptr) noexcept {
++    if(!t||t->op!=op||t->src[0]!=a||t->src[1]!=b) return false;
++    for(unsigned i=2;i<GGML_MAX_SRC;++i) if(t->src[i]) return false;
++    return true;
++}
++inline bool axes(const ggml_tensor* t,int a,int b,int c,int d) noexcept {
++    const int32_t expected[]={a,b,c,d};
++    return t&&std::memcmp(t->op_params,expected,sizeof(expected))==0;
++}
++inline bool strides(const ggml_tensor* t,size_t a,size_t b,size_t c,size_t d) noexcept {
++    return t&&t->nb[0]==a&&t->nb[1]==b&&t->nb[2]==c&&t->nb[3]==d;
++}
++inline bool protected_intermediate(const ggml_tensor* t) noexcept {
++    if(t->flags&GGML_TENSOR_FLAG_OUTPUT) return true;
++    // Match the engine's complete cut marker. VIEW names inherit the cut
++    // prefix plus " (view)" and are not themselves cached segment outputs.
++    constexpr char prefix[]="ggml_runner_cut:";
++    if(std::memcmp(t->name,prefix,sizeof(prefix)-1)) return false;
++    size_t length=0;
++    while(length<sizeof(t->name)&&t->name[length]) ++length;
++    return length==sizeof(t->name)||(length&&t->name[length-1]=='|');
++}
++inline bool alias(const ggml_tensor* child,const ggml_tensor* parent,size_t offset=0) noexcept {
++    if(!child||!parent||!child->data||!parent->data) return false;
++    const auto* root=parent->view_src?parent->view_src:parent;
++    if(!root->data||root->view_src||child->view_src!=root) return false;
++    const uintptr_t base=reinterpret_cast<uintptr_t>(parent->data);
++    const uintptr_t owner=reinterpret_cast<uintptr_t>(root->data);
++    size_t absolute=0;
++    return base>=owner&&bytes::checked_add(size_t(base-owner),offset,absolute)&&
++        offset<=UINTPTR_MAX-base&&reinterpret_cast<uintptr_t>(child->data)==base+offset&&
++        child->view_offs==absolute;
++}
++inline int index_of(const ggml_cgraph* graph,const ggml_tensor* tensor) noexcept {
++    for(int i=0;i<graph->n_nodes;++i) if(graph->nodes[i]==tensor) return i;
++    return -1;
++}
++inline bool ready_chain(const ggml_cgraph* graph,const ggml_tensor* t,int before) noexcept {
++    const ggml_tensor* seen[max_view_depth]{};
++    unsigned depth=0;
++    for(;t;t=t->view_src) {
++        if(depth==max_view_depth) return false;
++        for(unsigned i=0;i<depth;++i) if(seen[i]==t) return false;
++        seen[depth++]=t;
++        const int index=index_of(graph,t);
++        if(index>=before) return false;
++        if(index<0) {
++            if(t->op!=GGML_OP_NONE) return false;
++            for(auto* source:t->src) if(source) return false;
++        }
++    }
++    return true;
++}
++inline bool output_descendant(const ggml_tensor* t,const ggml_tensor* output,const bytes::Span& extent) noexcept {
++    const ggml_tensor* seen[max_view_depth]{};
++    for(unsigned depth=0;depth<max_view_depth;++depth) {
++        if(t==output) return true;
++        if(!t||!bytes::metadata(t->op)||t->op==GGML_OP_NONE) return false;
++        for(unsigned i=0;i<depth;++i) if(seen[i]==t) return false;
++        seen[depth]=t;
++        for(unsigned i=1;i<GGML_MAX_SRC;++i) if(t->src[i]) return false;
++        bytes::Span current{};
++        const auto* source=t->src[0];
++        if(!source||!source->data||!t->data) return false;
++        const uintptr_t child=reinterpret_cast<uintptr_t>(t->data);
++        const uintptr_t parent=reinterpret_cast<uintptr_t>(source->data);
++        if(child<parent||!bytes::span(t,current)||current.first<extent.first||current.last>extent.last||
++           !alias(t,source,size_t(child-parent))) return false;
++        t=t->src[0];
++    }
++    return false;
++}
++inline Plan find(const ggml_cgraph* graph,int terminal,size_t alignment) noexcept {
++    Plan plan;
++    if(!graph||!graph->nodes||graph->n_nodes<=0||graph->n_nodes>max_graph_nodes||
++       graph->n_leafs<0||graph->n_leafs>max_graph_nodes||(graph->n_leafs&&!graph->leafs)||
++       graph->grads||graph->grad_accs||graph->order!=GGML_CGRAPH_EVAL_ORDER_LEFT_TO_RIGHT||
++       terminal<0||terminal>=graph->n_nodes||!alignment||(alignment&(alignment-1))) return plan;
++    auto* add=graph->nodes[terminal];
++    plan.reason=Reason::shape;
++    if(!add||add->op!=GGML_OP_ADD) return plan;
++    const int64_t length=add->ne[2];
++    if(length<=0||length>max_length||!bytes::dense(add,2,64,length,32)) return plan;
++    const auto* mul0=add->src[0];const auto* mul1=add->src[1];
++    const auto* repeat0=mul0?mul0->src[0]:nullptr;const auto* repeat1=mul1?mul1->src[0]:nullptr;
++    const auto* half0=repeat0?repeat0->src[0]:nullptr;const auto* half1=repeat1?repeat1->src[0]:nullptr;
++    const auto* view0=half0?half0->src[0]:nullptr;const auto* view1=half1?half1->src[0]:nullptr;
++    const auto* split=view0?view0->src[0]:nullptr;
++    const auto* perm2=split?split->src[0]:nullptr;
++    const auto* reshape=perm2?perm2->src[0]:nullptr;
++    const auto* cont=reshape?reshape->src[0]:nullptr;
++    const auto* perm1=cont?cont->src[0]:nullptr;
++    const auto* input=perm1?perm1->src[0]:nullptr;
++    const auto* pe0=mul0?mul0->src[1]:nullptr;const auto* pe1=mul1?mul1->src[1]:nullptr;
++    const auto* pe=pe0?pe0->src[0]:nullptr;
++    if(!shape(input,128,32,length,1)||input->nb[0]!=4||input->nb[1]<512||input->nb[1]%4||input->nb[2]%4||
++       input->nb[1]>SIZE_MAX/32||input->nb[2]<32*input->nb[1]||
++       !bytes::dense(pe,2,64,length,2)||!bytes::dense(cont,128,length,32,1)||
++       !bytes::dense(split,64,length,32,2)||!bytes::dense(reshape,2,64,length,32)||
++       !bytes::dense(half0,1,64,length,32)||!bytes::dense(half1,1,64,length,32)||
++       !bytes::dense(repeat0,2,64,length,32)||!bytes::dense(repeat1,2,64,length,32)||
++       !bytes::dense(mul0,2,64,length,32)||!bytes::dense(mul1,2,64,length,32)||
++       !bytes::dense(pe0,2,64,length,1)||!bytes::dense(pe1,2,64,length,1)||
++       !shape(view0,64,length,32,1)||!shape(view1,64,length,32,1)||
++       !strides(view0,4,256,256*size_t(length),8192*size_t(length))||
++       !strides(view1,4,256,256*size_t(length),8192*size_t(length))||
++       !shape(perm1,128,length,32,1)||!strides(perm1,input->nb[0],input->nb[2],input->nb[1],input->nb[3])||
++       !shape(perm2,64,length,32,2)||!strides(perm2,8,512,512*size_t(length),4)) return plan;
++    plan.reason=Reason::edges;
++    if(!sources(perm1,GGML_OP_PERMUTE,input)||!axes(perm1,0,2,1,3)||!alias(perm1,input)||
++       !sources(cont,GGML_OP_CONT,perm1)||cont->view_src||
++       !sources(reshape,GGML_OP_RESHAPE,cont)||!alias(reshape,cont)||
++       !sources(perm2,GGML_OP_PERMUTE,reshape)||!axes(perm2,3,0,1,2)||!alias(perm2,reshape)||
++       !sources(split,GGML_OP_CONT,perm2)||split->view_src||
++       !sources(view0,GGML_OP_VIEW,split)||!alias(view0,split)||
++       !sources(view1,GGML_OP_VIEW,split)||!alias(view1,split,8192*size_t(length))||
++       !sources(half0,GGML_OP_RESHAPE,view0)||!alias(half0,view0)||
++       !sources(half1,GGML_OP_RESHAPE,view1)||!alias(half1,view1)||
++       !sources(repeat0,GGML_OP_REPEAT,half0)||repeat0->view_src||
++       !sources(repeat1,GGML_OP_REPEAT,half1)||repeat1->view_src||
++       !sources(pe0,GGML_OP_VIEW,pe)||!alias(pe0,pe)||
++       !sources(pe1,GGML_OP_VIEW,pe)||!alias(pe1,pe,512*size_t(length))||
++       !sources(mul0,GGML_OP_MUL,repeat0,pe0)||mul0->view_src||
++       !sources(mul1,GGML_OP_MUL,repeat1,pe1)||mul1->view_src||
++       !sources(add,GGML_OP_ADD,mul0,mul1)||!alias(add,mul0)) return plan;
++    const ggml_tensor* output=nullptr;
++    for(int i=0;i<graph->n_nodes;++i) {
++        const auto* node=graph->nodes[i];if(!node) return plan;
++        if(node->src[0]==add) {
++            if(output||!sources(node,GGML_OP_RESHAPE,add)||!bytes::dense(node,128,length,32,1)||!alias(node,add)) return plan;
++            output=node;
++        }
++    }
++    if(!output) return plan;
++    const std::array<const ggml_tensor*,17> chain={perm1,cont,reshape,perm2,split,view0,half0,repeat0,pe0,mul0,view1,half1,repeat1,pe1,mul1,add,output};
++    for(unsigned i=0;i<chain.size();++i) for(unsigned j=0;j<i;++j) if(chain[i]==chain[j]) return plan;
++    // Require this exact subtree to be present once in the executable graph.
++    // Source edges, rather than flattened view_src owners, define topology.
++    std::array<int,17> positions{};
++    positions.fill(-1);
++    for(int i=0;i<graph->n_nodes;++i) for(unsigned c=0;c<chain.size();++c) if(graph->nodes[i]==chain[c]) {
++        if(positions[c]!=-1) return plan;
++        positions[c]=i;
++    }
++    for(unsigned c=0;c<chain.size();++c) {
++        if(positions[c]<0) return plan;
++        for(const auto* source:chain[c]->src) for(unsigned s=0;s<chain.size();++s)
++            if(source==chain[s]&&positions[s]>=positions[c]) return plan;
++    }
++    plan.reason=Reason::use;
++    bytes::Span output_extent{};
++    if(!bytes::span(output,output_extent)) return plan;
++    for(unsigned c=0;c+1<chain.size();++c) if(protected_intermediate(chain[c])) return plan;
++    auto check_uses=[&](const ggml_tensor* node) {
++        if(!node) return false;
++        bool internal=false;
++        for(const auto* part:chain) internal|=node==part;
++        if(internal) return true; // All source/root edges were verified above.
++        for(const auto* source:node->src) for(unsigned c=0;c+1<chain.size();++c) if(source==chain[c]) return false;
++        for(unsigned c=0;c+1<chain.size();++c) if(node->view_src==chain[c]) {
++            if(chain[c]!=mul0||!output_descendant(node,output,output_extent)) return false;
++        }
++        return true;
++    };
++    for(int i=0;i<graph->n_nodes;++i) if(!check_uses(graph->nodes[i])) return plan;
++    for(int i=0;i<graph->n_leafs;++i) if(!check_uses(graph->leafs[i])) return plan;
++    plan.reason=Reason::window;
++    const int begin=index_of(graph,cont);
++    if(begin<0||terminal<begin||terminal-begin>=max_window_nodes||positions[0]>=begin||positions[16]<=terminal||
++       !ready_chain(graph,input,begin)||!ready_chain(graph,pe,begin)) return plan;
++    const std::array<const ggml_tensor*,7> compute={cont,split,repeat0,mul0,repeat1,mul1,add};
++    unsigned found=0;
++    for(int i=begin;i<=terminal;++i) {
++        const auto* node=graph->nodes[i];bool internal=false;
++        for(const auto* part:chain) internal|=node==part;
++        if(!internal) return plan;
++        if(bytes::metadata(node->op)) continue;
++        if(found==compute.size()||node!=compute[found++]||!(node->flags&GGML_TENSOR_FLAG_COMPUTE)) return plan;
++    }
++    if(found!=compute.size()) return plan;
++    plan.reason=Reason::overlap;
++    bytes::Span written{};
++    if(!bytes::span(add,written)||written.first%alignment||written.first!=output_extent.first||written.last!=output_extent.last||
++       !bytes::read_chain(input,written,alignment)||!bytes::read_chain(pe,written,alignment)) return plan;
++    plan={input,pe,add,output,begin,terminal,Reason::eligible};return plan;
++}
++} // namespace ggml_sycl_whole_rope_policy
+diff --git a/src/ggml-sycl/whole-rope-test.h b/src/ggml-sycl/whole-rope-test.h
+new file mode 100644
+index 0000000..a969ef2
+--- /dev/null
++++ b/src/ggml-sycl/whole-rope-test.h
+@@ -0,0 +1,8 @@
++#pragma once
++// Synthetic-only controls, separate from the worker and public backend ABI.
++#ifdef KUNO_SYCL_WHOLE_ROPE_TEST
++extern "C" void kuno_sycl_whole_rope_test_enable(bool enabled) noexcept;
++// attempts, selected, launches, shape, edges, uses, window, overlap,
++// graph/device/capture/capacity. No content, dimensions or tensor identities.
++extern "C" void kuno_sycl_whole_rope_test_counts(unsigned long long out[9]) noexcept;
++#endif
+diff --git a/src/ggml-sycl/whole-rope.cpp b/src/ggml-sycl/whole-rope.cpp
+new file mode 100644
+index 0000000..70ff0ff
+--- /dev/null
++++ b/src/ggml-sycl/whole-rope.cpp
+@@ -0,0 +1,46 @@
++#include "whole-rope.hpp"
++
++#ifdef KUNO_SYCL_WHOLE_ROPE_BYPASS
++#include "binbcast.hpp"
++
++// This experimental TU requires explicit precise/no-fast-math/no-contraction
++// flags. Volatile F32 intermediates additionally expose the two rounding
++// boundaries; device NaN payload/zero/denormal equivalence needs native tests.
++#if defined(__FAST_MATH__)
++#error "whole_rope_requires_no_fast_math"
++#endif
++#if defined(__clang__)
++#pragma clang fp contract(off)
++#pragma clang fp reassociate(off)
++#endif
++
++void ggml_sycl_whole_rope(ggml_backend_sycl_context& context,
++    const ggml_tensor* input,const ggml_tensor* prepared_pe,ggml_tensor* output) {
++    const char* x=static_cast<const char*>(input->data);
++    const float* pe=static_cast<const float*>(prepared_pe->data);
++    float* destination=static_cast<float*>(output->data);
++    const size_t length=size_t(input->ne[2]);
++    const size_t head_stride=input->nb[1],token_stride=input->nb[2];
++    const size_t pairs=64*length*32;
++    constexpr size_t local_size=128;
++    const size_t global_size=((pairs+local_size-1)/local_size)*local_size;
++    // Only immutable scalar descriptors/pointers are captured. No tensor/plan
++    // host address, device scratch, waits, cache or asynchronous fallback.
++    context.stream()->parallel_for(sycl::nd_range<1>(global_size,local_size),
++        [=](sycl::nd_item<1> item) {
++            const size_t i=item.get_global_linear_id();
++            if(i>=pairs) return;
++            const size_t pair=i%64;
++            const size_t token=(i/64)%length,head=i/(64*length);
++            const float* original=reinterpret_cast<const float*>(x+head*head_stride+token*token_stride+pair*8);
++            const float x0=original[0],x1=original[1];
++            const size_t coefficient=2*pair+128*token;
++            const size_t result=2*pair+128*(token+length*head);
++            for(size_t component=0;component<2;++component) {
++                volatile float product0=op_mul(x0,pe[coefficient+component]);
++                volatile float product1=op_mul(x1,pe[coefficient+component+128*length]);
++                destination[result+component]=op_add(product0,product1);
++            }
++        });
++}
++#endif
+diff --git a/src/ggml-sycl/whole-rope.hpp b/src/ggml-sycl/whole-rope.hpp
+new file mode 100644
+index 0000000..2c4363b
+--- /dev/null
++++ b/src/ggml-sycl/whole-rope.hpp
+@@ -0,0 +1,7 @@
++#pragma once
++#include "common.hpp"
++
++#ifdef KUNO_SYCL_WHOLE_ROPE_BYPASS
++void ggml_sycl_whole_rope(ggml_backend_sycl_context& context,
++    const ggml_tensor* input,const ggml_tensor* prepared_pe,ggml_tensor* output);
++#endif

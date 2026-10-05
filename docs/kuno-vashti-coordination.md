@@ -82,14 +82,61 @@ and nginx upload limits are now verified at 1 GiB. Physical Android acceptance
 is still outstanding.
 
 **New Kuno backend work:** the latest owner handoff is on
-`codex/kuno-image-speed` through `ebd1925`, in
-`/home/jmicko/.codex/worktrees/kuno-image-speed/vashti/docs/kuno-release-handoff.md`.
+`codex/kuno-image-speed` through `ebd1925`, now merged into this checkout.
+See [the release handoff](kuno-release-handoff.md).
 Read its **Selected Intel performance update (2026-10-02)** before the next
 release. It supersedes the earlier `fb2d1d0` residency artifact selection.
 Public contracts are unchanged; package the selected standard gateway and
 managed ABI 2 runtime together. Integrate the entire backend range after shared
 base `4f9b465`, not only the optimization commit. Preserve/commit pending Vashti
-work before merging. This source range is not yet merged into this checkout.
+work before merging.
+
+**Model-only image residency:** see the resident-image receipt
+below. Source, CUDA and installed Intel/runtime acceptance pass; the new
+gateway/runtime is installed on this host. This backend-only change needs no
+Vashti connector or UI change. Do not
+treat the published ABI 1 beta.2 runtime as the new resident worker.
+
+**Selected image performance follow-up (2026-10-02):** the user authorized
+installation of the tested Intel closure and release preparation. Whole-RoPE
+plus the residual-first kernel is selected from production `230d15b`; public
+package pins/build selection are `5351f63`, strict builder validation is `bde8cd0`,
+and the owner source/test integration is `05a95fc`. The exact tested flat runtime
+is now installed
+on this host through `install-image-runtime`. Its manifest is
+`fc169dd2bf4418c2770940c85ec570f5b0a8c5ddaa21e32176cf839b36c88baa`;
+normal archive SHA256 is
+`85d7aecb92e9e27af85f56bf5569d31feffd63d37955e7549ac081ab3e3e54a3`.
+
+A counter-free, compiler-idle eight-request comparison passes full original
+50-step generation/25-step editing on B70/kernel38: warm generation
+132.893→106.523 s (19.84% faster), edit 72.769→61.831 s (15.03% faster).
+Exact native tests, protected SDK-hidden full requests, previews/PNG/privacy,
+resident PID reuse, normal shutdown, cancellation and fresh-worker recovery pass
+with no new classified Xe fault. Installed keyless HTTP generation/edit pass,
+including streamed previews and reuse of one retained worker. The gateway binary,
+Ollama routing, inference deadlines and image API are unchanged; no Vashti
+connector/UI changes are required.
+
+See [the performance receipt](kuno-image-performance.md#whole-rope-combined-worker-and-full-workflow-comparison)
+and [the release handoff](kuno-release-handoff.md). Historical ComfyUI times are
+not a new matched benchmark. Pixel-level equivalence/quality tolerance and
+indefinite stability are not established; identical-runtime edit variation is
+also measured. The exact frozen runtime has been tested and can be packaged
+normally. A future fresh managed CMake rebuild needs a reviewed MKL configuration
+and acceptance of the resulting binary. Standard native inputs and a fresh
+normal gateway build/check/Clippy pass, as do 40 exact CUDA and 40 exact Vulkan
+math cases on the 3060. Four original-resolution two-step
+CUDA generation/edit requests pass previews/PNG/privacy, resident PID reuse and
+normal shutdown. Live Vulkan image acceptance is not claimed for this update; the shared engine patch affects both backends.
+
+Source selection is `05a95fc`, acceptance receipts are `b48d4fb`, on
+`codex/kuno-image-speed`. Integrate the complete Kuno range after shared base
+`4f9b465`, including residency/shared-PE prerequisites, preserving this checkout's
+newer application/coordination work. Do not cherry-pick only the selection commit. Do not replace the standard
+gateway with the SYCL-linked worker or reuse the published ABI1 beta.2 runtime.
+No model/content storage, API, frontend, public release or driver/reset/reboot
+change is part of this performance handoff.
 
 **Status:** Kuno backend, Vashti connector, and conversational image flows are
 implemented and source-tested. Synthetic application flows and installed native
@@ -709,3 +756,112 @@ removal confirmation/cancel and the empty device-only gallery. No GPU generation
 Kuno installation/restart, physical Android export, release, merge or commit was
 performed in this application pass. Integrating the backend source and matching
 release artifacts remains a separate release task.
+### Detailed resident image backend receipt (2026-10-01, historical)
+
+The user approved retaining image models after generation. Implementation lives
+on `codex/kuno-image-residency`, based on `4f9b465`, in the managed worktree
+`/home/jmicko/.codex/worktrees/kuno-image-residency/vashti`. Backend changes through
+`4fb4e58` add the persistent supervisor, private worker ABI 2, native request
+cleanup, retained GPU parameters, cancellation safety, and managed LLM placement.
+See the normative [image residency contract](kuno-images.md#api-and-lifecycle)
+and [private worker ABI](kuno-managed-sycl.md#resident-worker-abi-2).
+
+The public image/discovery API and Vashti storage contracts are unchanged.
+No code in `apps/vashti` or the Hub changed. Metadata keeps the image worker;
+managed inference prefers another GPU and evicts images before unknown or
+unsafe same-device loads. There is one compatible image context, with no idle
+expiry. Cancellation and failure conservatively unload it; useful inference is
+still serialized. This is not an arbitrary workload-sharing guarantee.
+
+**Verified source:** `cargo test --offline --locked -p kuno -p kuno-image -p
+kuno-protocol -- --test-threads=1` passed 205 tests, nine ignored.
+Clippy all targets with warnings denied passed both default and standard
+native-image builds. Formatting/diff checks and eight CPU packaging regressions
+passed. The nine new supervisor tests cover repeated PID, CLEAN gating,
+cancellation/input/output backpressure, malformed output, replacement, and idle
+exit recovery. Both native engine archives rebuild all 57 C++ units; the fresh
+standard archive passes the actual CPU cache/request-cleanup regression.
+
+**Verified CUDA smoke:** in a swap-disabled user service, three 512-square,
+two-step Qwen 2.1 requests reused one process and retained 7.69–8.23 GB in VRAM.
+Times were 11.979, 7.977, and 7.772 seconds. A changed seed changed pixels;
+returning to the original seed reproduced them. Idle shutdown exited normally.
+No images or request content were saved. This is a process-cold smoke with an
+uncontrolled file cache, not a full-workflow/ComfyUI benchmark.
+
+**Prepared artifacts:** exact source/build pins and checksums are in
+[`kuno-image-residency-build.json`](kuno-image-residency-build.json).
+The standard gateway is `target/standard-cargo/release/kuno`; the new ABI 2 flat
+runtime is `target/inference-tests/runtime-flat-resident`, and its verified
+archive is `target/inference-tests/kuno-sycl-resident.tar.gz`, all within the
+resident worktree. All 63 vendor library/license members are unchanged from the
+approved beta.2 closure. Never package the private SYCL worker as the standard
+gateway. Existing ABI 1 installs use the one-shot fallback until the optional
+runtime is upgraded; ABI 2 requires the new gateway.
+
+**Installed acceptance:** the prepared standard gateway and ABI 2 runtime were
+installed transactionally through `install-image-runtime --yes` with the user's
+sudo authorization. Configuration was preserved byte for byte: B70 image PCI,
+model store/collections, Ollama workers/listeners and disabled inference deadlines
+are unchanged. Installed hashes match the build receipt; all 63 vendor
+libraries/notices are unchanged from beta.2. Tests used swap-disabled transient
+clients and the installed no-swap service, with the development SDK hidden.
+Live commands from the resident worktree were `sudo -n /usr/bin/python3 target/inference-tests/install-resident.py`, `run-resident-http.py` and
+`run-resident-final.py` (the latter two with the same interpreter/prefix and
+`target/inference-tests/` path). The wrappers run private clients in collected
+systemd units with `MemorySwapMax=0` and `LimitCORE=0`; final audit is
+`resident-audit.py`. Harnesses and safe numeric receipts remain in that ignored
+directory for operator reproduction.
+
+- Intel 512-square/four-step Qwen 2.1 generation retained one process and about
+  15.62 GB VRAM: 40.604 seconds including initial load, then 2.241 seconds warm.
+  Two-reference editing (CFG 4, two steps) reused it in 25.329 seconds; changing
+  to 640x384/CFG 4 and back to the original recipe also reused it. Editing
+  increased model allocations to about 20.33 GB. Previews and bounded PNGs
+  passed integrity/dimensions/no-metadata checks; outputs remained in RAM.
+- Metadata and a small LLM on the 3060 preserved the image process. The LLM's
+  matching digest was resident on the configured 3060 worker, reporting
+  2,427,128,381 VRAM bytes equal to its runtime size. A different LLM that could
+  not be prepared on that alternate worker evicted the image before B70 load;
+  it reported 2,156,354,599 VRAM bytes equal to runtime size. Both returned
+  successful inference. Catalog file size is not proof of loaded footprint.
+- Reload after LLM handoff passed. Disconnect after a live preview cancelled and
+  reaped the image worker in 1.756 seconds; a new request loaded successfully
+  in 40.100 seconds without recovery intervention. Repeating cancellation
+  passed. Restarting the service with an idle model proved its old PID gone.
+- Switching to native Qwen 2512 and back replaced the old processes normally.
+  Two 512-square/two-step/CFG 5/shift 3.1 legacy requests reused one Vulkan
+  process in 8.691 and 8.562 seconds, retaining about 23.8–24.2 GB VRAM.
+- Final service is active, unpaused, with one idle Qwen 2.1 worker retaining
+  15,620,767,744 VRAM bytes, zero automatic restarts and no recovery latch.
+  IPv4/IPv6/LAN version/discovery pass; keyless image readiness is `ready`,
+  unauthenticated controls remain 401. No new Xe reset/wedge/hang events appeared.
+- Content-free final audit verified zero swap, core limit zero, worker
+  `NoNewPrivs`, no writable regular-file handles, no test prompts/images,
+  control credential or catalog model names/digests in Kuno's journal since the
+  install window. The private SDK is restored; tests retain no images/prompts.
+
+**Limitations:** this is small synthetic residency/transport acceptance, not a
+new ComfyUI/full-workflow performance comparison, useful edit-quality result,
+overnight soak or arbitrary two-model inference-peak guarantee. Intel repeated
+pixels differed by at most one 8-bit channel level: mean 0.003344 after mixed
+jobs versus 0.003307 for an immediate repeat (about 0.33% of channels). This
+supports rounding-scale nondeterminism in these samples, not a universal
+fidelity/tolerance guarantee or proof of its specific kernel. CUDA smoke was
+bitwise repeatable. Native cleanup removes reusable request state, without
+claiming forensic zeroization of every third-party freed allocation.
+Four classified backend diagnostics occurred during the initial legacy Vulkan
+run even though generation/reuse/family switching passed; their internal cause
+is unproven. Harness assertions for the wrong DRM counter name, changing
+KiB/MiB units and unitless zero were corrected; they did not require backend
+changes. Actual per-client GPU allocations and device totals agree.
+
+**Release handoff:** integrate the complete branch range from `4f9b465`, including
+behavior through `4fb4e58`, source/build receipt `418569e` and this installed
+receipt. The main checkout retains an uncommitted pointer to the final receipt
+commit. The new standard binary and ABI 2 runtime must be packaged together;
+see [the release handoff](kuno-release-handoff.md#resident-image-update).
+No public contract or Vashti connector/UI changes are required. This receipt
+records authorized local installation, not publication or application/Android
+acceptance. No merge, push, release or task message was performed. Preserve the
+worktree and ignored producer artifacts until next-release integration.

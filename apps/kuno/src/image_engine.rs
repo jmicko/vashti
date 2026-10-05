@@ -76,7 +76,7 @@ impl RuntimeManifest {
     fn validate(&self) -> Result<()> {
         if self.version != 1
             || self.id != SYCL_RUNTIME
-            || self.worker_abi != 1
+            || !matches!(self.worker_abi, 1 | 2)
             || self.ggml_max_name != 160
             || self.engine_revision != ENGINE_REVISION
             || self.ggml_revision != GGML_REVISION
@@ -358,10 +358,19 @@ pub fn sycl_command(
     models: &str,
     pci: &str,
     previews: bool,
+    resident: bool,
 ) -> std::process::Command {
     let mut command = std::process::Command::new(runtime.worker());
     command
-        .args(["image-worker", models, pci])
+        .args([
+            if resident {
+                "image-worker-resident"
+            } else {
+                "image-worker"
+            },
+            models,
+            pci,
+        ])
         .env_clear()
         .env("PATH", "/usr/bin:/bin")
         .env("HOME", "/nonexistent")
@@ -389,13 +398,16 @@ pub fn sycl_command(
 
 /// Called by the standard executable's single-threaded private entrypoint.
 /// Restrictions survive exec, covering vendor constructors and their threads.
-pub fn launch(id: &str, models: &str, pci: &str, previews: bool) -> Result<()> {
+pub fn launch(id: &str, models: &str, pci: &str, previews: bool, resident: bool) -> Result<()> {
     use std::os::unix::process::CommandExt;
     crate::image_privacy::protect_process()?;
     crate::image_privacy::require_no_swap()?;
     crate::image_privacy::restrict_filesystem()?;
     let runtime = VerifiedRuntime::load(id)?;
-    let _error = sycl_command(&runtime, models, pci, previews).exec();
+    if resident && runtime.manifest.worker_abi != 2 {
+        return Err("image_managed_runtime_incompatible");
+    }
+    let _error = sycl_command(&runtime, models, pci, previews, resident).exec();
     Err("image_managed_runtime_exec_failed")
 }
 
@@ -472,6 +484,8 @@ mod tests {
         assert!(m.validate().is_err());
         let mut m = manifest();
         m.worker_abi = 2;
+        assert!(m.validate().is_ok());
+        m.worker_abi = 3;
         assert!(m.validate().is_err());
         let mut m = manifest();
         m.ggml_max_name = 64;
@@ -682,7 +696,7 @@ mod tests {
             directory: "/synthetic/runtime".into(),
             manifest: manifest(),
         };
-        let c = sycl_command(&runtime, "/models", "0000:2d:00.0", true);
+        let c = sycl_command(&runtime, "/models", "0000:2d:00.0", true, false);
         let env: std::collections::BTreeMap<_, _> = c.get_envs().collect();
         let expected: std::collections::BTreeMap<_, _> = [
             ("PATH", "/usr/bin:/bin"),

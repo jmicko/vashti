@@ -56,6 +56,10 @@ fn main() {
         );
         println!(
             "cargo:rerun-if-changed={}",
+            source.join("src/model/common/rope.hpp").display()
+        );
+        println!(
+            "cargo:rerun-if-changed={}",
             source.join("src/model/te/llm.hpp").display()
         );
         println!(
@@ -145,6 +149,16 @@ fn main() {
             for file in [
                 "CMakeLists.txt",
                 "ggml-sycl.cpp",
+                "binbcast.cpp",
+                "binbcast.hpp",
+                "fusion.cpp",
+                "mul-add-policy.hpp",
+                "repeat-mul-policy.hpp",
+                "whole-rope.cpp",
+                "whole-rope.hpp",
+                "whole-rope-policy.hpp",
+                "whole-rope-dispatch.hpp",
+                "whole-rope-test.h",
                 "convrot.cpp",
                 "convrot.hpp",
                 "convrot-policy.hpp",

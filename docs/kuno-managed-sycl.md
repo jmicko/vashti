@@ -2,15 +2,17 @@
 
 This is an internal Kuno runtime contract. The standard Kuno executable remains
 independent of oneAPI, and its default image engine remains embedded CUDA/Vulkan.
-The optional Intel worker uses the same request pipes, preview framing,
+The optional Intel worker uses the same private request pipes, preview framing,
 cancellation, PCI selection and HTTP API. No Vashti consumer change is required.
 GPU, performance and installed-service acceptance are separate from source tests.
-This runtime is accepted locally for the original B70 generation and edit
-workflows after bounded IM2COL dispatch and wide copy addressing fixes. The
+This runtime family's ABI 1 worker was accepted locally for the original B70
+generation and edit workflows after bounded IM2COL dispatch and wide copy
+addressing fixes. The
 large-decode installation block is superseded by the exact hardware receipts in
 [kuno-image-performance.md](kuno-image-performance.md). It is an explicit optional
-runtime, not a new default or a published website download. Acceptance on other
-GPUs, drivers or Linux baselines is not established.
+runtime, not a new default. The beta.2 distribution contains the historical ABI 1
+worker; ABI 2 model retention requires a newly built and approved bundle.
+Acceptance on other GPUs, drivers or Linux baselines is not established.
 
 ## Configuration
 
@@ -52,7 +54,7 @@ The fixed installed directory is
 {
   "version": 1,
   "id": "qwen21-sycl-2026.1-v1",
-  "worker_abi": 1,
+  "worker_abi": 2,
   "ggml_max_name": 160,
   "engine_revision": "88411ef1e0688ff2df1010aeeb5d92b2d8cea2be",
   "ggml_revision": "4bf5f6000653b7881d00963cd6ddb665ccd62a8d",
@@ -67,10 +69,21 @@ The fixed installed directory is
 ```
 
 The numbers/hashes above are placeholders, not an installable bundle. The schema,
-ID, ABI, 160-byte tensor-name size and revisions are exact. Patch hashes are
-producer source attestations bound into the approved manifest checksum; they do
+ID, 160-byte tensor-name size and revisions are exact. New model-retaining
+bundles use worker ABI 2. The gateway also accepts already installed ABI 1
+bundles, using their one-request-per-process path; it never sends them ABI 2
+frames. Patch hashes are producer source attestations bound into the approved
+manifest checksum; they do
 not independently prove how the compiled worker was built. GPU/source acceptance
 must record that separate evidence.
+
+The selected engine's checked-in
+`apps/kuno/patches/001-qwen-quantized-config.patch` source checksum is
+`ed75739ccb193099f23d4600cc4a8846f9d17fe6c2cec7591a7c9cb30c2d0134`;
+patch003 is `3d1191da4eb004a25c52116fa30421c3a7b617fc4e854d416248b2d7b0070794`.
+These are source-patch checksums, not approved manifest or worker checksums.
+The earlier residency engine001 was `ac51db70...`; historical receipts retain
+their original hashes. See the selected runtime receipt below.
 
 Every member is a root-owned regular file, with no group/world write or set-ID
 bits. The worker must be executable and have a 64-bit little-endian x86-64 ELF
@@ -117,7 +130,8 @@ are rejected before creating a deployment journal or changing services; journal
 writers/readers use the same bound so accepted installations remain recoverable.
 
 The website installer still downloads/extracts only the standard Kuno binary.
-Automatic optional-runtime download/publishing is not implemented here. Do not
+Optional runtime artifacts are published separately, as recorded for beta.2 in
+the release handoff; this backend update adds no automatic runtime download. Do not
 publish the development SYCL-linked executable as the main Kuno binary: its
 eager vendor dependencies would make ordinary gateway/upgrade commands require
 oneAPI on every machine.
@@ -132,6 +146,29 @@ approved independently; packaging does not establish GPU correctness or source
 provenance. No Python dependency is added to the installed service.
 Native notice collection, prepared artifacts and release-owner steps are in
 [kuno-release-handoff.md](kuno-release-handoff.md).
+
+## Selected ABI2 runtime and developer build (2026-10-02)
+
+The selected whole-RoPE/residual runtime retains model-only residency, per-request
+content clearing, the existing image API and the same runtime family/ABI2. Its
+exact approved manifest checksum is
+`fc169dd2bf4418c2770940c85ec570f5b0a8c5ddaa21e32176cf839b36c88baa`;
+normal archive SHA256 is
+`85d7aecb92e9e27af85f56bf5569d31feffd63d37955e7549ac081ab3e3e54a3`.
+It is installed and tested on the B70/kernel38 host. Existing managed-SYCL
+configuration can install this bundle without a configure-image step or frontend
+change. New hosts still select the optional runtime explicitly as above.
+Hardware, cancellation, privacy and performance limits are in the
+[release handoff](kuno-release-handoff.md#selected-intel-performance-update-2026-10-02).
+
+Developers can use [the managed build recipe](../apps/kuno/scripts/README-managed-sycl-build.md).
+It verifies selected sources, rejects extra tracked/untracked/ignored build input,
+uses a fresh output and explicitly selects whole ON; the native source default
+stays OFF. It does not change the standard CUDA/Vulkan builder. The exact tested
+worker was built with verified archive reuse and normal Cargo source checks.
+A fresh CMake/oneAPI build still needs a reviewed MKL configuration and acceptance
+of the resulting binary. Installed users need the verified flat bundle, no
+compiler or development SDK. Do not represent a plan-only check as a fresh build.
 
 ## Worker privacy and errors
 
@@ -173,6 +210,54 @@ requirements and restoration of the full runtime file set on activation failure.
 They do not establish a live library closure, GPU correctness, speed, privacy
 under the vendor driver, cancellation/drain, device loss or installed activation.
 Those require the root-owned hardware/service acceptance pass.
+
+## Resident worker ABI 2
+
+This is a private subprocess protocol, not a new HTTP API. The gateway embeds
+the native worker and launches optional ABI 2 workers through the same protected
+launcher. Requests use `KIR2`, one kind byte, a big-endian u32 payload length,
+then payload. Kind 1 is a bounded JSON image recipe (at most 64 MiB); kind 2 is
+an empty shutdown request. EOF is an orderly shutdown only between requests;
+a partial header or payload is a terminal error.
+
+Responses use `KIP1` with the same nine-byte header. Existing kind 1 previews
+and kind 2 final PNGs keep their payload formats and limits. ABI 2 adds empty
+kind 4 `READY`, empty kind 3 `CLEAN`, and kind 5 classified ASCII error codes
+(at most 128 bytes). `READY` confirms the protected worker can read requests;
+it does not mean model loading or sampling has begun. A final PNG is followed
+by `CLEAN` only after native request cleanup and worker-owned Rust content
+clearing. The supervisor validates the final PNG and waits for this
+acknowledgement before returning success/releasing admission. An error ends
+the worker; malformed, duplicate, oversized, or out-of-order terminal frames
+cannot create reusable residency. Frames and raw errors are never logged.
+
+One successful native model context stays loaded for compatible subsequent
+requests. Qwen 2.1 generation/editing share its context; attention mode and
+model family changes replace it. Prompts, negative prompts, references,
+conditioning/prefix caches, latents, generated images and previews do not
+survive as reusable worker state. Shader/vendor disk caches remain disabled,
+and the existing no-swap, core-dump and filesystem protections apply throughout
+the worker's longer lifetime. Idle shutdown uses the empty shutdown frame and
+pipe closure so the native context destructor can release model resources.
+
+The gateway retains at most one image worker and has no idle expiry. Managed
+LLMs prefer other GPUs and share the image GPU only with an exact prior
+in-process load profile plus sufficient live physical free memory. Unknown
+shared workloads trigger orderly image eviction/reaping before ordinary load
+preparation, and shared failures cannot classify retained image weights as an
+unloaded baseline. Metadata leaves residency intact. Unverified-placement
+fallback, model/runtime identity changes, cancellation, failure, recovery and
+service shutdown release it. Global admission still serializes execution.
+
+ABI 2 source implementation is separate from the historical acceptance below.
+The existing ABI 1 timings and bundle checksums do not prove persistent model
+reuse, cleanup acknowledgements, or speed improvements. New native and managed
+ABI 2 hardware/service acceptance is recorded separately in the
+[resident-image coordination receipt](kuno-vashti-coordination.md#resident-image-backend-receipt-2026-10-01)
+and [exact build receipt](kuno-image-residency-build.json). Historical ABI 1
+receipts below retain their original scope.
+
+### Historical ABI 1 source receipts
 
 Source receipt (2026-10-01 UTC): `cargo test --locked -p kuno -p kuno-protocol
 -p kuno-image -- --test-threads=1` passed 182 tests with nine environment-dependent
