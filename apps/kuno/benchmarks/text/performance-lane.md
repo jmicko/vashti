@@ -1,0 +1,75 @@
+# Fixed-public native memory-containment experiment
+
+This laboratory compares one actual Cargo-selected release executable at host
+memory limits 8/52/52/8 GiB in one persistent user systemd cgroup. File-cache
+charges stay in that cgroup between children rather than being reparented when
+each short-lived unit disappears. It does not flush global caches, move model
+weights, alter production service limits, or accept arbitrary prompts.
+
+Build once **before** measuring. Keep the actual Cargo JSON transcript. Stop
+other inference and source compilation, verify the intended card is free, and
+run one card at a time. Choose a new durable output directory outside the Cargo
+target directory; existing directories/receipts cannot be overwritten:
+
+```bash
+python3 apps/kuno/benchmarks/text/run-native-performance-lab.py \
+  --cargo-artifacts /path/to/completed-release-cargo-artifacts.jsonl \
+  --model /media/jmicko/faststore/ollama/blobs/sha256-89059c880c2f000b24520919d4ba2edd2a8101327c7f8ab33b2280e01addda75 \
+  --card intel --run-id intel-20261006-v1 \
+  --output /media/jmicko/faststore/kuno-development/native-performance-intel-20261006-v1
+```
+
+The launcher copies the hash-verified selected executable and its Cargo transcript
+outside the build target. The exact frozen executable is used for all four
+samples. `plan.json` pins these identities, the original model's path/device/inode/
+size/mtime, the synthetic fixture/reference identities and current source HEAD.
+Source HEAD at freezing is not independent proof of the source used by an older
+binary: preserve the associated build/source receipt as well. No 119-GB model
+payload hash or duplicate is created.
+
+Every child executes the compiled `resident-rainwater` 75-token public prompt,
+seed 424242, greedy temperature 0, 128 output selections, native partition
+`[8,8,8,8,8,8,8,8,8,3]`. Model context remains203. Intel defaults remain 64 expert
+slots/8-GiB static GPU cache/26-GiB reserved device limit; NVIDIA remains
+16 slots/6-GiB cache/10-GiB device limit. Owned transient I/O, cancellation
+checks and complete owning-page zero inspection stay enabled. All optional
+optimization overrides remain unchanged from the accepted public model fixture.
+
+The supervisor changes only its declared enclosing
+`kuno-public-performance-<run-id>.service` through user systemd. Actual
+`memory.max`, zero swap usage/limit and zero soft/hard core limits are checked
+inside every child. The correctness wrapper stays strict 8 GiB. Both lanes share
+only the model/settings/public-ID/full-audit/cancellation validator; performance
+has its own actual 8/52 guard. No guard output is rewritten.
+
+The supervisor samples cgroup current/peak/stat/events/pressure and child `/proc`
+I/O every 0.5 seconds. Numeric-only telemetry is flushed to
+`sample-N-cap-C.telemetry.jsonl`; counters and completed model receipt identity
+are retained separately in `sample-N-cap-C.cgroup.json`. `memory.peak` is
+cumulative for the whole unit; use sampled per-child current peaks with that
+limitation. Counter snapshots around each cap transition distinguish reclaim
+while lowering 52→8 from pressure during actual inference. Check `file`,
+`workingset_refault_file`, `pgscan*`, `pgsteal*`, `memory.events.max`, memory PSI
+totals and child `read_bytes`, together with actual model read/upload timings.
+An OOM, missing receipt, output mismatch or incomplete cleanup rejects the
+sample and ends the sequence. Raw error payloads and generated text are drained
+without persistence. Completed prior samples remain inspectable after failure.
+
+Each child starts without a resident native model. OS file/shader caches remain
+unflushed and change naturally across ABBA; this is model-unloaded cold, not
+cold storage. `model_bind_ms` excludes device setup/lazy model uploads. Prefill
+includes fresh initialization; `generation_ms` measures 127 following graph steps
+with warm in-process weight owners. Cancellation/fresh replay/audits happen after
+those internal timings. These are instrumented explanatory observations, not
+production worker throughput. A true second hot full request is not implemented.
+This experiment quantifies host-limit bias; it does not establish matched
+Ollama performance or permit production native routing. Ollama's configured 4096
+context and true hot uncached-prefix request still need a later matched lane.
+The 3600-second public-unit limit is operator containment, not an inference
+deadline. User-systemd/cgroup-V2 support is required; no sudo is needed.
+
+Host-only checks:
+
+```bash
+python3 -m unittest discover -s apps/kuno/benchmarks/text -p test_native_performance_lab.py -v
+```

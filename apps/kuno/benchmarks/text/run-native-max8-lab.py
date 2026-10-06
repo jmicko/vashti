@@ -62,7 +62,7 @@ def cargo_binary(path):
     return frozen, identity, digest(transcript)
 
 
-def validate_receipt(receipt, card, fixture, count, output):
+def validate_model_receipt(receipt, card, fixture, count, output):
     expected = {
         "resident-bang": [49276, 2349, 1074, 5928],
         "resident-chat": [9419, 0, 2500, 628, 353, 1438, 488, 3242],
@@ -141,7 +141,6 @@ def validate_receipt(receipt, card, fixture, count, output):
     ):
         raise ValueError("Positive and empty cancelled/fresh source-owner audits required")
     required = (
-        "verified_lab_limits swap_max=0 core_soft=0 core_hard=0 memory_max=8589934592",
         "public_mid_token_cancel layer=0 erased=true",
         "public_mid_token_cancel layer=3 erased=true",
         "public_resident_cancel_erased=true poisoned_retry_rejected=true fresh_first_token_matches=true",
@@ -149,6 +148,12 @@ def validate_receipt(receipt, card, fixture, count, output):
     )
     if any(message not in output for message in required):
         raise ValueError("Protected lifecycle completion evidence is incomplete")
+
+
+def validate_receipt(receipt, card, fixture, count, output):
+    if "verified_lab_limits swap_max=0 core_soft=0 core_hard=0 memory_max=8589934592" not in output:
+        raise ValueError("Protected lifecycle completion evidence is incomplete")
+    validate_model_receipt(receipt, card, fixture, count, output)
 
 
 def main():
