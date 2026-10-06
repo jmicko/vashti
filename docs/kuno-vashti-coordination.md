@@ -1728,7 +1728,7 @@ is made. **Required Vashti changes: none.** Long contexts/options/quality,
 physical CPU/GPU expert calibration, private-worker/scheduler/catalog integration
 and a faster matched Ollama comparison remain required goal work.
 
-### CLI separation proposal and approved intentional offload (2026-10-06)
+### Selected port takeover, CLI separation and intentional offload (2026-10-06)
 
 The user wants `kuno run MODEL` to use Kuno while retaining ordinary
 `ollama run MODEL` for direct Ollama inference. The original Ollama executable
@@ -1736,24 +1736,34 @@ has not been replaced: its default listener is currently Kuno on 11434, while
 the original Ollama daemon is loopback 11435. A new command name alone does not
 separate these routes.
 
-**Proposed connection contract; default choice is awaiting the user's answer:**
-normal installation would use Kuno 11433 and original Ollama 11434. `kuno` inference
-commands would select their own endpoint (explicit endpoint, `KUNO_HOST`, installed
-configuration, then the normal Kuno default), independently of `OLLAMA_HOST`.
+**Selected direction:** keep Kuno on the adopted Ollama API listener (normally
+11434) and put original Ollama on private loopback 11433 where available. The
+user prioritizes unchanged API URLs. This supersedes the separate-default-port
+proposal from `501f49e`; separate-listener manual setup remains an option.
+`kuno` inference commands would select their own endpoint (explicit endpoint,
+`KUNO_HOST`, installed configuration, then the normal Kuno API default),
+independently of `OLLAMA_HOST`.
 Convert wildcard bind addresses to usable client addresses. Mirror common
 inference/model commands without changing the Ollama executable. Native selection
 still requires a verified registered adapter; the paused text prototype is not
 production-ready. Inference access remains keyless and separate from privileged
 installation/control operations.
 
-Retain port takeover as an explicitly selected compatibility mode. Existing apps
-using 11434 would reach direct Ollama after separate-port migration; those needing
-Kuno scheduling/images must change their configured URL to 11433. Migration must
-retain Kuno's settings, image runtime, workers and state while restoring the
-original Ollama listener, with rollback and existing interruption-confirmation
-requirements. `takeover-restore` alone removes Kuno and is not the full migration.
-Separate ports prevent competing for the normal listener, but an Ollama update
-can still interrupt Kuno requests using that backend.
+Use a Kuno-owned systemd drop-in for the original Ollama daemon's private bind;
+do not edit/replace the vendor executable or base service file. Its service
+environment does not configure terminal clients. Plain `ollama` still selects
+its own `OLLAMA_HOST` or defaults 11434. Offer a command-scoped CLI helper so
+ordinary interactive `ollama` reaches the private backend while API apps retain
+their existing target. Broadly exporting `OLLAMA_HOST` could also redirect API
+clients launched from that environment; do not assume it affects only the CLI.
+Exact helper/configuration support across shells and scripts remains pending.
+
+This host still uses original Ollama 11435. Preserve its actual recorded port
+until an approved, tested migration; 11433 is not assumed free. Migration must
+retain Kuno's listener/settings, image runtime, workers and state with rollback
+and existing interruption-confirmation requirements. Clients keep their Kuno
+URL. Ollama upgrades may still interrupt requests using that backend; there is
+no guarantee against a later override explicitly changing its bind.
 
 Direct Ollama commands bypass Kuno reservations. Treat that work as external GPU
 consumption; observation alone cannot guarantee serialization of independent
@@ -1772,7 +1782,7 @@ records this intended capability, explicitly labeled unimplemented.
 **Status:** proposal/requirement checkpoint only. Read-only listener/config/source
 inspection passes; no CLI, API, runtime, installation, services, GPUs or client
 settings changed and no implementation tests are claimed. The native performance
-goal remains paused. Required Vashti changes, if separate ports are selected:
-configure/discover the Kuno inference endpoint at the new URL; a tested backend
-migration/API handoff must precede application integration. Shared request schema
-and discovery changes are not yet selected or implemented.
+goal remains paused. Required Vashti endpoint changes: none for the selected
+takeover layout. A tested backend CLI/offload/installation handoff must still
+precede any application feature integration. Shared request schema and discovery
+changes are not yet selected or implemented.

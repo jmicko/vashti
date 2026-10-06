@@ -150,17 +150,31 @@ A Kuno restart loses in-flight work. The caller detects interruption and decides
 whether to resubmit. Do not promise exactly-once execution across restarts, or
 silently replay an operation after it may have executed or emitted output.
 
-## 4. Ollama compatibility and optional port takeover
+## 4. Ollama compatibility and port takeover
 
-Kuno offers two setup modes:
+The selected normal installation adopts the existing Ollama listener so API
+clients retain their URLs. Separate-listener manual setup remains available:
 
 - A separately configured gateway in front of an explicitly selected Ollama
   instance, useful for development and manual installations.
-- Optional takeover of the existing Ollama listener, preserving client URLs.
+- Takeover of the existing Ollama listener, preserving client URLs.
 
-For example, Kuno can inherit `0.0.0.0:11434`, with Ollama relocated to
-`127.0.0.1:11435`. The actual address and private port are discovered and stored;
-neither port is assumed available.
+For example, Kuno can inherit `0.0.0.0:11434`, with original Ollama relocated to
+`127.0.0.1:11433`. The actual address and private port are discovered and stored;
+neither port is assumed available. Existing installations retain their recorded
+private port (this host currently uses 11435) until an approved, tested migration.
+
+The intended CLI split is `kuno run MODEL` to the Kuno inference listener and
+ordinary `ollama run MODEL` to original Ollama. Ollama's CLI selects its host
+from its own process environment; the systemd daemon's `OLLAMA_HOST` setting does
+not propagate to a terminal client or make that client discover the service
+port. Setup must offer a CLI-scoped host helper/configuration independently of
+the service override, without replacing the vendor binary or broadly exporting
+the private backend host to unrelated API apps. A shell helper can invoke the
+original executable with a command-scoped `OLLAMA_HOST`. Exact cross-shell and
+script support remains unimplemented. Kuno's CLI must resolve its own inference
+endpoint independently of `OLLAMA_HOST`; inference remains keyless. Changing
+only the service port is insufficient to claim ordinary CLI separation.
 
 ### Takeover transaction
 
