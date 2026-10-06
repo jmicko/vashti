@@ -100,21 +100,30 @@ production limit/configuration, public contract, frontend or release changed.
 
 ## Practical next steps after the user resumes
 
-1. Review the completed Intel cgroup evidence, then obtain NVIDIA evidence under
+1. Establish basic calculation speed against actual Ollama/ggml before advanced
+   expert scheduling. The user explicitly wants this baseline: same resident
+   original weights, actual matrix shapes, fixed public inputs, precision and
+   batch counts on the same device, with matched CPU workers. Existing operator
+   timing wins compare Rust variants only; CPU physical acceptance makes no
+   speed claim. Separate completed operator timings, full-layer coordination,
+   and whole-model matched GPU/CPU placement; do not subtract nested enqueue
+   timers to infer a compute floor. See the later CLI/offload requirement in the
+   coordination guide; it changes no installed inference behavior yet.
+2. Review the completed Intel cgroup evidence, then obtain NVIDIA evidence under
    the same protocol. All four declared Intel cases have finished; do not replay
    them merely because an earlier observation timed out.
-2. The existing complete native `prefill_chunk(&[token], LastLogits)` can continue
+3. The existing complete native `prefill_chunk(&[token], LastLogits)` can continue
    decode after native prefill on the same owner, retaining GPU-f32 PLE. A strict
    default-off public-lab flag is a small next experiment. Require native MAX8,
    owned transient I/O and complete audits; record observed native/scalar decode
    counts. Once native decode starts, never insert a scalar step then switch back:
    scalar advances the model but not the native PLE workspace cursor.
-3. Keep the independent scalar/higher-precision oracle. Both-card complete
+4. Keep the independent scalar/higher-precision oracle. Both-card complete
    fixtures, all-family cancellation/recovery/full cleanup and score comparisons
    precede an old/new timing comparison. Matching the same native implementation
    against itself is not independent numeric acceptance. MAX8 scratch/bridges
    at count1 can be slower; no benefit is established by source inspection.
-4. Joint CPU/GPU expert source remains integrated but physically unaccepted;
+5. Joint CPU/GPU expert source remains integrated but physically unaccepted;
    preserve the earlier gates below. Long contexts/options/quality/private
    worker, scheduler/catalog/native-default and managed `ollama.` routing remain
    outstanding. No Vashti change, install, public API, release/reset/reboot is

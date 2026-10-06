@@ -315,9 +315,19 @@ and a conservative reserve. Image peaks are evaluated across encoding,
 denoising, and VAE phases. Avoid double-counting memory already accounted for
 when comparing a proposed resident set with current free memory.
 
-Full GPU model placement is the default. Explicit CPU/offload modes, if exposed,
-are separately selected policies. Slow output is not sufficient evidence of CPU
-spill. Combine managed device assignments, runtime diagnostics, residency, and
+Full GPU model placement is the default. Kuno must also support deliberately
+selected mixed CPU/GPU placement for models that require it. The policy must
+distinguish intentional offloading from accidental CPU spill; reported partial
+placement must not be rejected solely for failing a GPU-only condition when
+that model/request is admitted under the mixed policy. Keep CPU-only placement
+and missing/inconsistent residency evidence distinct from partial offloading.
+Account for host RAM as well as GPU reservations, and retain request lifecycle,
+cancellation and privacy requirements. Exact policy configuration and adapter
+acceptance remain to be implemented; the currently installed managed-worker
+path still requires fully GPU-reported placement.
+
+Explicit CPU/offload modes are separately selected policies. Slow output is not
+sufficient evidence of CPU spill. Combine managed device assignments, runtime diagnostics, residency, and
 performance observations. Ollama's [`/api/ps`](https://docs.ollama.com/api/ps)
 reports model/VRAM sizes; it does not prove where every operation executes.
 

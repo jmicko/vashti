@@ -1727,3 +1727,52 @@ routing, install/configuration, driver/reset/reboot, frontend or release change
 is made. **Required Vashti changes: none.** Long contexts/options/quality,
 physical CPU/GPU expert calibration, private-worker/scheduler/catalog integration
 and a faster matched Ollama comparison remain required goal work.
+
+### CLI separation proposal and approved intentional offload (2026-10-06)
+
+The user wants `kuno run MODEL` to use Kuno while retaining ordinary
+`ollama run MODEL` for direct Ollama inference. The original Ollama executable
+has not been replaced: its default listener is currently Kuno on 11434, while
+the original Ollama daemon is loopback 11435. A new command name alone does not
+separate these routes.
+
+**Proposed connection contract; default choice is awaiting the user's answer:**
+normal installation would use Kuno 11433 and original Ollama 11434. `kuno` inference
+commands would select their own endpoint (explicit endpoint, `KUNO_HOST`, installed
+configuration, then the normal Kuno default), independently of `OLLAMA_HOST`.
+Convert wildcard bind addresses to usable client addresses. Mirror common
+inference/model commands without changing the Ollama executable. Native selection
+still requires a verified registered adapter; the paused text prototype is not
+production-ready. Inference access remains keyless and separate from privileged
+installation/control operations.
+
+Retain port takeover as an explicitly selected compatibility mode. Existing apps
+using 11434 would reach direct Ollama after separate-port migration; those needing
+Kuno scheduling/images must change their configured URL to 11433. Migration must
+retain Kuno's settings, image runtime, workers and state while restoring the
+original Ollama listener, with rollback and existing interruption-confirmation
+requirements. `takeover-restore` alone removes Kuno and is not the full migration.
+Separate ports prevent competing for the normal listener, but an Ollama update
+can still interrupt Kuno requests using that backend.
+
+Direct Ollama commands bypass Kuno reservations. Treat that work as external GPU
+consumption; observation alone cannot guarantee serialization of independent
+direct Ollama and Kuno jobs. The requested CLI separation does not silently grant
+Kuno control over ordinary Ollama commands.
+
+**Approved direction:** support intentional mixed CPU/GPU offloading. The current
+installed `worker_cpu_spill_detected` comes from the fully GPU-reported residency
+requirement, not an upstream model error. There is no current per-model offload
+opt-in; removing only that one check would leave other strict checks and placement
+assumptions unresolved. The exact policy/configuration and resource-accounting
+contract needs a reviewed implementation. Preserve protection against unexpected
+spill for models admitted under GPU-only policy. The main specification now
+records this intended capability, explicitly labeled unimplemented.
+
+**Status:** proposal/requirement checkpoint only. Read-only listener/config/source
+inspection passes; no CLI, API, runtime, installation, services, GPUs or client
+settings changed and no implementation tests are claimed. The native performance
+goal remains paused. Required Vashti changes, if separate ports are selected:
+configure/discover the Kuno inference endpoint at the new URL; a tested backend
+migration/API handoff must precede application integration. Shared request schema
+and discovery changes are not yet selected or implemented.
