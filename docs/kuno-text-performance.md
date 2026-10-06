@@ -1450,3 +1450,38 @@ These opposite-card runs were simultaneous and include diagnostic inspections;
 their times are not performance evidence. The existing full 128-token native
 reference acceptance remains separately valid. There is no new public inference,
 model quality, long-context, production-worker, routing or release acceptance.
+
+## Same-binary Intel host-limit evidence (2026-10-06)
+
+The dedicated public diagnostic now completes actual 8/52/52/8-GiB caps in one
+persistent user cgroup. All four children use Cargo-selected frozen binary
+`73ce13b2…`, original borrowed Qwen GGUF, public `resident-rainwater` 75-token
+fixture, seed 424242, temperature 0, native count 8, context 203 and 128 output
+selections. Swap/core0, full owning audits, cancellation, fresh recovery and
+unchanged public-ID checks pass. Launcher/supervisor exit0; no OOM occurs.
+The unit finishes inactive after 1,046.203 seconds. NVIDIA's comparison is pending.
+
+| Sample / host cap | Prefill seconds | 127 following steps seconds | Following tokens/s | Warm weight reads seconds | Warm uploads seconds |
+| --- | --- | --- | --- | --- | --- |
+| 1 / 8 GiB | 91.199 | 128.939 | 0.985 | 65.414 | 8.247 |
+| 2 / 52 GiB | 72.232 | 80.438 | 1.579 | 17.996 | 8.393 |
+| 3 / 52 GiB | 43.520 | 63.189 | 2.010 | 5.063 | 7.560 |
+| 4 / 8 GiB | 91.992 | 130.799 | 0.971 | 66.696 | 8.432 |
+
+Sampled child disk reads are 123.35/35.46/5.79/126.54 GiB. The 8-GiB children
+record 58,052/62,003 cgroup limit events and heavy file reclaim/refault; both 52-GiB
+children have zero limit events. The cap-lowering transition reclaims 35 GiB in
+about 1.29 seconds before sample 4. This demonstrates host-limit/cache bias in
+earlier measurements; the resulting throughput still does not establish a win
+over Ollama. Changing OS cache state confounds an exact cap-only speed estimate.
+
+The [checked Intel receipt](../apps/kuno/benchmarks/text/receipts/rust-native-host-limit-intel-20261006.json)
+preserves actual plan/binary/build/model identities, all four validated model
+receipts and bounded cgroup records, derived per-child counter deltas and hashes
+of durable 0.5-second telemetry. Counters/disk reads cover the whole child,
+including later audits/replay outside measured decode. Per-child current peaks
+and process I/O are sampled; unit peak is cumulative. Each model owner starts
+fresh with unflushed OS/shader caches. The separate [public lane protocol](../apps/kuno/benchmarks/text/performance-lane.md)
+retains actual 8-GiB correctness containment. No production limits or private
+content handling changed. Whole-model bitwise acceptance, a true second hot
+request, matched Ollama contexts/settings and production routing remain pending.

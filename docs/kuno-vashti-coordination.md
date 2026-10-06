@@ -1674,3 +1674,56 @@ installed service/configuration, default, public contract, driver/reset/reboot,
 frontend or release change occurred while finishing this checkpoint.
 **Required Vashti changes: none.** All current source workers and checks have
 finished; goal completion and a speed win remain outstanding.
+
+
+### Native text resumed numerical and host-limit diagnostics (2026-10-06)
+
+The user resumed after the `~/dev` NVMe migration, then requested a break with
+one Intel comparison already running. The latest checkpoint is
+[the native text checkpoint](kuno-native-text-checkpoint.md); it supersedes the
+historical source-only candidate status above. Finish only the declared Intel
+comparison and pause; that comparison has now completed, with no next device job
+started and no native lab job remaining. Resume requires the user's instruction.
+
+On `codex/kuno-native-text`, root integrates `195d8a5` (author candidate
+`2439d73`), named protected CLI `962c37d`, exact numeric validator `80aef9d`
+(author `36d2121`) and the dedicated host-limit diagnostic `5ffffa4` (author
+`13844b5`). Root passes 396 host/offline tests followed by the additional focused
+CLI guard test, strict all-target Clippy, formatting/diff checks, and 22 focused
+Python tests. The original correctness lane still requires actual 8 GiB;
+performance uses a separate actual 8/52 guard with unchanged model/cleanup
+validation. No guard output or numerical tolerance is rewritten.
+
+Actual Cargo-selected/frozen binary `73ce13b2...` completes all eight fresh
+scalar/native owners on each card, full owning maps and explicit audit/erasure,
+with worker and validator exit0. Both cards have exact projected KEY/VALUE;
+Intel's combined layer0 input differs by at most 7.45e-9 and NVIDIA's is exact.
+Injected residual maxima are 1.49e-8/5.96e-8. KEY/VALUE depend on separate token
+embeddings, so equality does not explain residual differences. PLE has definite
+scalar CPU-f64/native GPU-f32 differences; source inspection alone cannot
+attribute Intel's earlier residual drift. Whole-model bitwise and performance
+acceptance remain false. Exact reports/build identities and the pre-GPU initial
+launch-path failure are preserved in
+`apps/kuno/benchmarks/text/receipts/rust-native-numeric-boundaries-device-20261006.json`.
+
+The existing Intel public comparison uses one persistent user cgroup, one frozen
+binary, native count 8 original 75/128 fixture and MemoryMax 8/52/52/8 GiB,
+with swap/core0,
+full cleanup/cancellation and numeric memory/refault/pressure/process-I/O evidence.
+It does not flush global caches or change production limits. NVIDIA's comparison
+is not started. All four Intel samples pass with zero OOM and launcher/supervisor
+exit0; the unit finishes inactive after 1,046.203 seconds, swap peak0. Decode times
+for 127 following steps are 128.939/80.438/63.189/130.799 seconds, respectively
+(0.985/1.579/2.010/0.971 tokens/s). The 8-GiB limit repeatedly reclaims model file
+pages; 52-GiB warm weight reads are much shorter while upload times stay similar.
+Cache order still varies across samples. Exact public receipts/identities and
+telemetry hashes are in
+`apps/kuno/benchmarks/text/receipts/rust-native-host-limit-intel-20261006.json`.
+This remains a host-containment diagnostic, not true hot-full-request or matched
+Ollama performance acceptance. Correctness containment remains 8 GiB.
+
+No production private worker, public API/catalog/native-default or `ollama.`
+routing, install/configuration, driver/reset/reboot, frontend or release change
+is made. **Required Vashti changes: none.** Long contexts/options/quality,
+physical CPU/GPU expert calibration, private-worker/scheduler/catalog integration
+and a faster matched Ollama comparison remain required goal work.

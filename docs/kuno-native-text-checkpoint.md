@@ -1,4 +1,127 @@
-# Native text paused checkpoint, 2026-10-05
+# Native text checkpoint, 2026-10-06
+
+The user resumed after moving `~/dev` to the NVMe, then requested a break while
+one Intel comparison was already running. That comparison has finished with all
+four samples accepted and launcher/supervisor exit0. Work stops at this clean
+checkpoint for the requested pause; no native lab job remains running. Do not
+start another GPU job until the user resumes. The objective remains incomplete.
+
+## Latest integrated source and device evidence
+
+Root worktree/branch remain
+`/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, `codex/kuno-native-text`.
+The original path resolves through the new `~/dev` symlink; managed worktree Git
+pointers, source/read/write access and shared Demons shell are verified.
+
+- `195d8a5`: integrates reviewed numeric candidate `2439d73`.
+- `962c37d`: named protected `resident-numeric-boundaries-probe`, rejecting missing
+  owned I/O/full audits before creating a device; no production route.
+- `80aef9d`: exact aggregate-only numeric validator (author `36d2121`).
+- `5ffffa4`: separate same-binary host-limit diagnostic (author `13844b5`).
+
+396 host/offline tests passed before extracting the explicit CLI guard; its
+additional focused test passed afterward. Strict all-target Clippy, formatting
+and diff checks pass. The numeric validator and memory diagnostic each pass 11
+focused Python tests. No existing correctness tolerance or 8-GiB guard changed.
+
+The Cargo-selected binary is frozen durably outside the build target at
+`/media/jmicko/faststore/kuno-development/public-native-artifacts/73ce13b2b9fdac27cb85b655bc5543960b9decafafb326900d9656ee931a53a2/kuno-text-lab`.
+Its SHA256 is the parent directory name; build snapshot SHA256 is
+`79e0f766678c2fd80b0d9826d78017d1992c783026b2b8295010d94225b04a29`.
+The missing `/tmp` copies were not treated as live artifacts. A durable older
+`110b9926...` release was subsequently found, but the current tests use the new
+binary and its actual Cargo identity.
+
+Both cards complete all eight fresh scalar/native owners, full owning maps,
+audit/erasure and ordinary family acceptance at position0/count1, protected by
+8 GiB, swap0 and core0. All numeric validators and worker units exit0. See
+`apps/kuno/benchmarks/text/receipts/rust-native-numeric-boundaries-device-20261006.json`.
+The first Intel launch failed before GPU work because systemd starts in home and
+the wrapper path was relative; terminal exit2 is retained. The corrected launch
+uses absolute wrapper and frozen executable paths.
+
+| Boundary | Intel bit mismatches / maximum absolute | NVIDIA bit mismatches / maximum absolute |
+| --- | --- | --- |
+| layer0 combined PLE input | 750 / 7.45e-9 | 0 / 0 |
+| projected KEY | 0 / 0 | 0 / 0 |
+| projected VALUE | 0 / 0 | 0 / 0 |
+| injected residual | 6,579 / 1.49e-8 | 4,185 / 5.96e-8 |
+
+KEY/VALUE depend on separate per-layer token embeddings, not the differing
+residual. PLE has known scalar CPU-f64 versus native GPU-f32 topology differences.
+Those cannot explain Intel's already differing input. Same nominal f32 schedules
+in distinct compiled upstream shaders permit contraction/codegen differences;
+source inspection alone does not identify their first offender. These results
+locate differences only in this position0/count1 fixture. Whole-model bitwise
+acceptance and faster-than-Ollama claims remain false; no arithmetic changed.
+
+## Current host-limit diagnostic
+
+The dedicated public lane fixes one actual executable and fixture, changes only
+its declared user cgroup's MemoryMax 8/52/52/8 GiB, keeps swap/core0 and all owning
+cleanup/cancellation gates, and records memory/refault/pressure/process-I/O
+counters. It does not flush global caches or change production limits. Its
+strict 8-GiB correctness checker remains separate. No guard output is fabricated.
+
+The completed Intel experiment is
+`kuno-public-performance-intel-20261006-v1.service`, with durable records under
+`/media/jmicko/faststore/kuno-development/native-performance-intel-20261006-v1`.
+The unit finishes in 1,046.203 seconds, swap peak0, inactive/dead/exit0. All four
+model/public-output/full-cleanup/cancellation checks pass, with no cgroup OOM.
+Exact identities, model receipts, bounded cgroup records and telemetry hashes are
+in `apps/kuno/benchmarks/text/receipts/rust-native-host-limit-intel-20261006.json`.
+
+| Sample / cap | Prefill seconds | 127-step decode seconds | Decode tokens/s | Sampled child disk reads GiB |
+| --- | --- | --- | --- | --- |
+| 1 / 8 GiB | 91.199 | 128.939 | 0.985 | 123.35 |
+| 2 / 52 GiB | 72.232 | 80.438 | 1.579 | 35.46 |
+| 3 / 52 GiB | 43.520 | 63.189 | 2.010 | 5.79 |
+| 4 / 8 GiB | 91.992 | 130.799 | 0.971 | 126.54 |
+
+The 8-GiB runs repeatedly hit the cgroup limit (58,052/62,003 `max` events),
+while both 52-GiB runs have zero such events. Warm weight-read times fall from
+65.414/66.696 seconds to 17.996/5.063; upload times stay 7.560–8.432 seconds.
+The limit materially biases this laboratory through model file-cache reclaim;
+it is not an isolated GPU compute cost. The 52→8 transition also reclaims about
+35 GiB before the last child. Naturally changing caches explain some variation
+within a cap, so this is not a pure cache-controlled cap-only estimate.
+
+No global caches were flushed. Each child starts a fresh owner; sampled disk
+reads and cgroup deltas include later cancellation/fresh replay/audits, outside
+the internal decode interval. Per-child current peaks are sampled; unit
+`memory.peak` is cumulative. NVIDIA's host-limit experiment is not started.
+Matched Ollama production throughput and a true second hot full request remain
+unaccepted. Read `apps/kuno/benchmarks/text/performance-lane.md`.
+
+At checkpoint, no public Kuno laboratory unit or native engine child is running,
+Ollama `/api/ps` is empty, and NVIDIA has returned to desktop-only baseline.
+Main `codex/image-flow-refinements` stays clean and unchanged. No installation,
+production limit/configuration, public contract, frontend or release changed.
+
+## Practical next steps after the user resumes
+
+1. Review the completed Intel cgroup evidence, then obtain NVIDIA evidence under
+   the same protocol. All four declared Intel cases have finished; do not replay
+   them merely because an earlier observation timed out.
+2. The existing complete native `prefill_chunk(&[token], LastLogits)` can continue
+   decode after native prefill on the same owner, retaining GPU-f32 PLE. A strict
+   default-off public-lab flag is a small next experiment. Require native MAX8,
+   owned transient I/O and complete audits; record observed native/scalar decode
+   counts. Once native decode starts, never insert a scalar step then switch back:
+   scalar advances the model but not the native PLE workspace cursor.
+3. Keep the independent scalar/higher-precision oracle. Both-card complete
+   fixtures, all-family cancellation/recovery/full cleanup and score comparisons
+   precede an old/new timing comparison. Matching the same native implementation
+   against itself is not independent numeric acceptance. MAX8 scratch/bridges
+   at count1 can be slower; no benefit is established by source inspection.
+4. Joint CPU/GPU expert source remains integrated but physically unaccepted;
+   preserve the earlier gates below. Long contexts/options/quality/private
+   worker, scheduler/catalog/native-default and managed `ollama.` routing remain
+   outstanding. No Vashti change, install, public API, release/reset/reboot is
+   part of this checkpoint.
+
+## Historical paused checkpoint, 2026-10-05
+
 
 The user explicitly paused the goal and requested completion of current source
 work only. No new GPU benchmark, installation, service/configuration change,

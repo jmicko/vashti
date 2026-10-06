@@ -1,11 +1,17 @@
 # Fixed-public numeric boundary source checkpoint
 
-This fixture is source-only and unselected. The typed entry is
+The original source-only candidate is now integrated and selected only by the
+protected named laboratory mode `resident-numeric-boundaries-probe`. Both-card
+position0/count1 device/audit evidence is recorded in
+[the device receipt](../text/receipts/rust-native-numeric-boundaries-device-20261006.json);
+the latest root state is in [the checkpoint](../../../../docs/kuno-native-text-checkpoint.md).
+No production route,
+whole-model bitwise acceptance or arithmetic change is implied. The typed entry is
 `resident_model::numeric_boundaries::run(file, lifecycle_probe::RunConfig)`.
 The caller must supply the actual once-configured transient client, limits,
-vendor and retirement Arc. The never-invoked main function pointer compiles the
-entry without adding a CLI route. Ordinary collectors are unarmed and perform
-no client, map, audit or admission action.
+vendor and retirement Arc. The protected CLI supplies these after checking owned
+transient I/O and full-audit prerequisites before device creation. Ordinary
+collectors are unarmed and perform no client, map, audit or admission action.
 
 The fixture binds the unchanged original Qwen graph and the existing fixed
 public `!` tokenizer input. It runs four fresh pairs, each serialized on the
@@ -77,7 +83,7 @@ Source checkpoint checks: five focused host tests cover exact one-shot
 packets, full owning extents/inactive/padding/finiteness, raw lease ordering,
 fault/audit failure, full-capacity wipe on unwind, bitwise comparison and
 checked aggregate budgets. Strict all-target Clippy and formatting cover the
-actual connected source. No GPU, model payload, service, CLI execution,
-physical cleanup or numeric acceptance is established by these checks. Parent
-owns protected both-card runs, any later CLI registration and final receipt
-review.
+actual connected source. Those host checks alone establish no GPU execution,
+physical cleanup or numeric acceptance. The parent subsequently registered the
+protected CLI and completed both-card execution, owning cleanup and receipt
+validation as linked above; whole-model bitwise acceptance remains false.
