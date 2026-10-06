@@ -74,6 +74,7 @@ fn transient_resident_mode(mode: &str, raw: Option<&str>) -> Result<bool, &'stat
                     | "resident-chat"
                     | "resident-rainwater"
                     | "resident-lifecycle-probe"
+                    | "resident-numeric-boundaries-probe"
             ) =>
         {
             Ok(true)
@@ -100,6 +101,21 @@ fn public_owned_zero_audit_mode(transient: bool, raw: Option<&str>) -> Result<bo
         Some(_) => Err("KUNO_LAB_OWNED_ZERO_AUDIT must be 0 or 1"),
     }
 }
+fn protected_model_diagnostic(
+    mode: &str,
+    transient: bool,
+    audit: bool,
+) -> Result<(), &'static str> {
+    if matches!(
+        mode,
+        "resident-lifecycle-probe" | "resident-numeric-boundaries-probe"
+    ) && !(transient && audit)
+    {
+        return Err("model diagnostic requires owned transient I/O and complete zero audits");
+    }
+    Ok(())
+}
+
 fn report_public_owned_zero_audit(
     resident: &resident_model::ResidentModel<'_, '_>,
     enabled: bool,
@@ -122,11 +138,6 @@ fn report_public_owned_zero_audit(
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Compile the source-only typed diagnostic entry; no CLI/default selection.
-    let _numeric_boundary_entry: fn(
-        &kuno_text::GgufFile,
-        resident_model::lifecycle_probe::RunConfig,
-    ) -> kuno_text::Result<serde_json::Value> = resident_model::numeric_boundaries::run;
     let vendor = match std::env::args().nth(1).as_deref() {
         Some("intel") => 0x8086,
         Some("nvidia") => 0x10de,
@@ -152,9 +163,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let public_owned_zero_audit =
         public_owned_zero_audit_mode(transient_resident, owned_audit_setting.as_deref())?;
-    if mode == "resident-lifecycle-probe" && (!transient_resident || !public_owned_zero_audit) {
-        return Err("lifecycle probe requires owned transient I/O and complete zero audits".into());
-    }
+    protected_model_diagnostic(&mode, transient_resident, public_owned_zero_audit)?;
     let ordered_setting = match std::env::var("KUNO_LAB_ORDERED_PUBLIC_UPLOAD") {
         Ok(raw) => Some(raw),
         Err(std::env::VarError::NotPresent) => None,
@@ -338,6 +347,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             serde_json::to_writer_pretty(output, &receipt)?;
             println!(
                 "public_actual_model_lifecycle_complete cases=22 owned_cleanup=true context_retired=false performance_claim=false"
+            );
+            return Ok(());
+        }
+        if mode == "resident-numeric-boundaries-probe" {
+            let path = std::env::var_os("KUNO_TEST_GGUF").ok_or("existing GGUF required")?;
+            let file = GgufFile::open(path, GgufLimits::default())?;
+            let retired = transient_context
+                .clone()
+                .ok_or("numeric boundaries require the configured transient stream")?;
+            let mut receipt = resident_model::numeric_boundaries::run(
+                &file,
+                resident_model::lifecycle_probe::RunConfig {
+                    client: client.clone(),
+                    limits: grouped_limits.clone(),
+                    vendor,
+                    retired,
+                },
+            )?;
+            receipt["vendor"] = serde_json::json!(vendor);
+            receipt["weights"] = serde_json::json!("borrowed-unmodified-ollama-blob");
+            receipt["fixed_public_input"] =
+                serde_json::json!("original tokenizer ! position0 count1");
+            receipt["seed"] = serde_json::json!(424242);
+            let target = std::env::var_os("KUNO_PUBLIC_RECEIPT")
+                .ok_or("fixed-public numeric boundary receipt path required")?;
+            let output = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(target)?;
+            serde_json::to_writer_pretty(output, &receipt)?;
+            println!(
+                "public_actual_numeric_boundaries_complete pairs=4 owners=8 owned_cleanup=true whole_model_numeric_accepted=false performance_accepted=false"
             );
             return Ok(());
         }
@@ -1256,6 +1297,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod transient_mode_tests {
+    #[test]
+    fn actual_model_diagnostics_require_both_ownership_and_full_audits() {
+        for mode in [
+            "resident-lifecycle-probe",
+            "resident-numeric-boundaries-probe",
+        ] {
+            assert_eq!(super::transient_resident_mode(mode, Some("1")), Ok(true));
+            for transient in [false, true] {
+                for audit in [false, true] {
+                    assert_eq!(
+                        super::protected_model_diagnostic(mode, transient, audit).is_ok(),
+                        transient && audit
+                    );
+                }
+            }
+        }
+    }
     #[test]
     fn owned_zero_audit_is_explicit_and_requires_secure_fixed_public_mode() {
         use super::public_owned_zero_audit_mode;
