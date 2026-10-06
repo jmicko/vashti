@@ -15,6 +15,7 @@ mod journal;
 mod lifecycle;
 mod observe;
 mod storage;
+pub mod shell_export;
 pub mod systemd;
 pub mod takeover;
 pub mod usage;
