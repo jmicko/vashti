@@ -1786,3 +1786,33 @@ goal remains paused. Required Vashti endpoint changes: none for the selected
 takeover layout. A tested backend CLI/offload/installation handoff must still
 precede any application feature integration. Shared request schema and discovery
 changes are not yet selected or implemented.
+
+### Clark systemd-only CLI port experiment (2026-10-06)
+
+The user authorized a temporary service-port change on Clark to test whether
+ordinary Ollama CLI commands inherit the daemon's systemd environment. Clark
+ran original Ollama 0.32.13, with no shell `OLLAMA_HOST`, alias/function wrapper,
+service drop-in or Kuno listener. The original listener was 127.0.0.1:11434;
+`ollama run lfm2.5-thinking` opened normally before the change.
+
+A temporary runtime systemd drop-in set only the daemon's
+`OLLAMA_HOST=127.0.0.1:11439`. After restart, `/api/version` and the actual
+listener confirmed 11439; 11434 was closed. In the unchanged SSH shell,
+`ollama run lfm2.5-thinking` failed with `could not connect to ollama server`
+and exit status 1. The command-scoped positive control
+`OLLAMA_HOST=http://127.0.0.1:11439 ollama run lfm2.5-thinking` opened normally
+and exited with status 0 after `/bye`. No generation prompt was submitted.
+
+Restoration removed only the temporary drop-in and restarted Ollama. The
+original 11434 listener and version returned, 11439 closed, the base unit's
+SHA-256 remained unchanged, and the service stayed active/enabled. Both service
+and shell again had no `OLLAMA_HOST`. The restored plain CLI opened normally
+and exited with status 0 after `/bye`. The independent automatic rollback timer
+and temporary experiment state were removed after successful restoration.
+
+This live test confirms separate daemon/client endpoint configuration on this
+installation. It does not test model output quality or native performance.
+Only this diagnostic and restoration were performed; Marge's installed ports,
+application APIs and the paused native inference goal are unchanged.
+**Required Vashti changes: none.** The selected CLI/port migration above remains
+unimplemented.
