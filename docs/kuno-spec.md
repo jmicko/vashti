@@ -168,13 +168,33 @@ The intended CLI split is `kuno run MODEL` to the Kuno inference listener and
 ordinary `ollama run MODEL` to original Ollama. Ollama's CLI selects its host
 from its own process environment; the systemd daemon's `OLLAMA_HOST` setting does
 not propagate to a terminal client or make that client discover the service
-port. Setup must offer a CLI-scoped host helper/configuration independently of
-the service override, without replacing the vendor binary or broadly exporting
-the private backend host to unrelated API apps. A shell helper can invoke the
-original executable with a command-scoped `OLLAMA_HOST`. Exact cross-shell and
-script support remains unimplemented. Kuno's CLI must resolve its own inference
-endpoint independently of `OLLAMA_HOST`; inference remains keyless. Changing
-only the service port is insufficient to claim ordinary CLI separation.
+port. **Selected configuration (2026-10-06):** setup configures the selected
+user's shell startup to export `OLLAMA_HOST` to the actual recorded private
+Ollama client endpoint, independently of the service override. Record the
+enrolled non-root user; later root/admin upgrades must not silently enroll a
+different account. For example,
+`export OLLAMA_HOST=http://127.0.0.1:11433` is appropriate only when that is the
+verified private listener. Keep the original executable; no shell function or
+executable wrapper is required. This supersedes the earlier CLI-scoped helper
+proposal.
+
+The user explicitly accepts that applications inheriting and honoring this
+export also connect directly to Ollama and bypass Kuno scheduling. Applications
+explicitly targeting Kuno's adopted listener retain that route. The export
+configures the selected user's shell environment, not all users, existing
+processes or unrelated systemd services. Shell activation instructions must
+explain how to apply it to the current shell and future terminals. Manage a
+marked installer block after endpoint verification, retaining previous user
+settings for restoration while supplying the selected effective host. Record
+the prior state and update/remove only the unchanged owned block; preserve
+unrelated edits and report conflicts. Already-running shells retain their
+environment after uninstall too. Supported-shell
+installation, activation, upgrade and uninstall remain unimplemented.
+
+Kuno's planned CLI resolves its inference endpoint independently of
+`OLLAMA_HOST`: explicit endpoint, `KUNO_HOST`, installed configuration, then the
+normal Kuno API default. Inference remains keyless. Changing only the service
+port is insufficient to claim ordinary CLI separation.
 
 ### Takeover transaction
 

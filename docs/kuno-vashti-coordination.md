@@ -1752,11 +1752,11 @@ installation/control operations.
 Use a Kuno-owned systemd drop-in for the original Ollama daemon's private bind;
 do not edit/replace the vendor executable or base service file. Its service
 environment does not configure terminal clients. Plain `ollama` still selects
-its own `OLLAMA_HOST` or defaults 11434. Offer a command-scoped CLI helper so
-ordinary interactive `ollama` reaches the private backend while API apps retain
-their existing target. Broadly exporting `OLLAMA_HOST` could also redirect API
-clients launched from that environment; do not assume it affects only the CLI.
-Exact helper/configuration support across shells and scripts remains pending.
+its own `OLLAMA_HOST` or defaults 11434. **The later selected shell-export
+contract below supersedes the command-scoped CLI helper proposal.** Applications
+inheriting and honoring the export may also connect directly to Ollama; the
+user accepts that behavior. Exact installation/activation support across shells
+remains pending.
 
 This host still uses original Ollama 11435. Preserve its actual recorded port
 until an approved, tested migration; 11433 is not assumed free. Migration must
@@ -1816,3 +1816,41 @@ Only this diagnostic and restoration were performed; Marge's installed ports,
 application APIs and the paused native inference goal are unchanged.
 **Required Vashti changes: none.** The selected CLI/port migration above remains
 unimplemented.
+
+### Selected persistent Ollama shell export (2026-10-06)
+
+The user selected the ordinary Ollama configuration approach after the restored
+Clark test: export `OLLAMA_HOST` in the selected user's shell startup, using the
+actual recorded private Ollama client endpoint. This supersedes the shell
+function/CLI-only helper recommendation, while retaining the selected Kuno
+takeover layout. Do not replace or wrap the original Ollama executable.
+
+The service's Kuno-owned systemd override sets the daemon's private bind. The
+separate shell export sets the CLI target, for example
+`export OLLAMA_HOST=http://127.0.0.1:11433` after that listener is verified.
+Existing installations keep their actual private port until a tested migration;
+this host's last recorded private port is 11435. Record the enrolled non-root
+user so root/admin upgrades do not silently choose another account. Publish a
+marked installer block only after endpoint verification, retaining prior user
+settings while supplying the selected effective host. Update/remove only the
+unchanged owned block, preserve unrelated edits, and report conflicts. Give
+activation/restoration instructions: already-running shells and apps keep their
+environment until explicitly changed or relaunched. Other users and
+independently configured services are outside that shell export's scope.
+
+Applications inheriting and honoring `OLLAMA_HOST` may bypass Kuno and use
+original Ollama directly. **The user explicitly accepts this.** Apps explicitly
+targeting Kuno's adopted listener continue to use Kuno. Direct Ollama work still
+bypasses Kuno reservations and is external GPU consumption. Kuno's planned CLI
+uses its own endpoint selection (explicit endpoint, `KUNO_HOST`, installed
+configuration, default), independent of `OLLAMA_HOST`.
+Never use `OLLAMA_HOST` as a Kuno endpoint fallback; normalize wildcard Kuno
+listener addresses to usable loopback client addresses.
+
+**Status:** contract/documentation update only; no shell exports, services,
+installation, CLI, API or application behavior changed. The Clark connection
+receipt above verifies command-scoped targeting, not persistent shell setup.
+Supported-shell activation, installer upgrade/uninstall and CLI endpoint
+separation still require implementation and tests. Documentation diff checks
+pass; the native inference goal remains paused. **Required Vashti changes:
+none** when its connector explicitly targets Kuno. No API schema change.
