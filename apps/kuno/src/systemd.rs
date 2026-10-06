@@ -21,6 +21,7 @@ type Result<T> = std::result::Result<T, &'static str>;
 const SETUP: &str = "/var/lib/kuno-setup";
 pub(crate) const READY: &str = "/etc/kuno/activation-ready";
 const BINARY: &str = "/usr/local/lib/kuno/kuno";
+const CLI_LAUNCHER: &str = "#!/bin/sh\nexec /usr/local/lib/kuno/kuno \"$@\"\n";
 const GATEWAY: &str = "kuno.service";
 const RECOVERY_TIMER: &str = "kuno-recovery.timer";
 const RECOVERY_PENDING: &str = "/var/lib/kuno-setup/auto-recovery-pending";
@@ -324,6 +325,15 @@ fn version(address: SocketAddr) -> Result<String> {
         .ok_or("ollama_version_invalid")
 }
 
+fn verify_gateway_version(upstream: SocketAddr, gateway: SocketAddr) -> Result<()> {
+    // The recorded setup version is historical. A normal Ollama upgrade must
+    // not prevent Kuno upgrades or rollback; compare the owned live endpoints.
+    if version(gateway)? != version(upstream)? {
+        return Err("gateway_upstream_mismatch");
+    }
+    Ok(())
+}
+
 fn wait(mut check: impl FnMut() -> Result<()>) -> Result<()> {
     let deadline = Instant::now() + Duration::from_secs(45);
     loop {
@@ -481,6 +491,11 @@ fn base_artifacts(installation: &Installation, executable: Vec<u8>) -> Result<Ve
             bytes: executable,
             mode: 0o755,
         },
+        Artifact {
+            path: "usr/local/bin/kuno".into(),
+            bytes: CLI_LAUNCHER.as_bytes().to_vec(),
+            mode: 0o755,
+        },
     ])
 }
 
@@ -585,9 +600,7 @@ impl Host for SystemdHost {
             {
                 return Err("private_upstream_environment_incorrect");
             }
-            if version(i.config.upstream)? != i.ollama_version {
-                return Err("ollama_version_changed");
-            }
+            version(i.config.upstream)?;
             Ok(())
         })
     }
@@ -613,15 +626,14 @@ impl Host for SystemdHost {
             {
                 return Err("gateway_not_ready");
             }
-            if version(i.config.listen)? != i.ollama_version {
-                return Err("gateway_upstream_mismatch");
-            }
+            verify_gateway_version(i.config.upstream, i.config.listen)?;
             if i.config.listen
                 == SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), i.config.listen.port())
-                && version(SocketAddr::new(
-                    IpAddr::V4(Ipv4Addr::LOCALHOST),
-                    i.config.listen.port(),
-                ))? != i.ollama_version
+                && verify_gateway_version(
+                    i.config.upstream,
+                    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), i.config.listen.port()),
+                )
+                .is_err()
             {
                 return Err("gateway_ipv4_compatibility_failed");
             }
@@ -914,6 +926,10 @@ pub fn configure_timeouts(response_headers: Option<u64>, stream_idle: Option<u64
 }
 
 pub fn install(service: &str, config: &Config) -> Result<()> {
+    install_for_user(service, config, None)
+}
+
+pub fn install_for_user(service: &str, config: &Config, cli_user: Option<&str>) -> Result<()> {
     require_root()?;
     let transaction = Transaction::open(Path::new("/"), Path::new(SETUP))?;
     let phase = transaction.phase()?;
@@ -935,13 +951,20 @@ pub fn install(service: &str, config: &Config) -> Result<()> {
     };
     let executable = fs::read(std::env::current_exe().map_err(|_| "executable_unavailable")?)
         .map_err(|_| "executable_unavailable")?;
+    let cli = crate::shell_export::prepare_for_user(installation.config.upstream, cli_user)?;
     transaction.apply(
         &artifacts(&installation, executable)?,
         &mut SystemdHost { installation },
-    )
+    )?;
+    apply_cli_configuration(cli)?;
+    Ok(())
 }
 
 pub fn upgrade() -> Result<()> {
+    upgrade_for_user(None)
+}
+
+pub fn upgrade_for_user(cli_user: Option<&str>) -> Result<()> {
     require_root()?;
     let transaction = Transaction::open(Path::new("/"), Path::new(SETUP))?;
     transaction.verify_installed()?;
@@ -958,21 +981,73 @@ pub fn upgrade() -> Result<()> {
     }
     let executable = fs::read(std::env::current_exe().map_err(|_| "executable_unavailable")?)
         .map_err(|_| "executable_unavailable")?;
+    let cli = crate::shell_export::prepare_for_user(installation.config.upstream, cli_user)?;
     transaction.replace(
         &artifacts(&installation, executable)?,
         &mut SystemdHost { installation },
-    )
+    )?;
+    apply_cli_configuration(cli)?;
+    Ok(())
+}
+
+/// Enroll or repair the CLI environment without restarting inference services.
+pub fn configure_cli(user: Option<&str>) -> Result<()> {
+    require_root()?;
+    let transaction = Transaction::open(Path::new("/"), Path::new(SETUP))?;
+    transaction.verify_installed()?;
+    let installation = current_installation()?;
+    let cli = crate::shell_export::prepare_for_user(installation.config.upstream, user)?;
+    SystemdHost { installation }.verify_private_upstream()?;
+    apply_cli_configuration(cli)?;
+    Ok(())
+}
+
+fn apply_cli_configuration(cli: crate::shell_export::ShellExportPlan) -> Result<()> {
+    match cli.apply() {
+        Ok(activation) => {
+            report_cli_activation(activation);
+            Ok(())
+        }
+        Err(error) => {
+            eprintln!(
+                "kuno: Inference services passed verification, but CLI environment setup failed. After resolving the reported conflict, retry: sudo kuno configure-cli"
+            );
+            Err(error)
+        }
+    }
+}
+
+fn report_cli_activation(activation: crate::shell_export::Activation) {
+    eprintln!(
+        "kuno: Ollama CLI environment configured for {}.",
+        activation.user
+    );
+    eprintln!(
+        "kuno: Open a new terminal, or run: {}",
+        activation.activation_command()
+    );
 }
 
 pub fn restore() -> Result<()> {
     require_root()?;
     let transaction = Transaction::open(Path::new("/"), Path::new(SETUP))?;
+    let cli = crate::shell_export::prepare_restore()?;
     if matches!(transaction.phase()?, None | Some(Phase::Restored)) {
+        if let Some(cli) = cli {
+            cli.apply()?;
+        }
         return Ok(());
     }
     transaction.restore(&mut SystemdHost {
         installation: load_installation()?,
-    })
+    })?;
+    if let Some(cli) = cli {
+        cli.apply()?;
+    }
+    eprintln!(
+        "kuno: CLI export removed. Existing terminals retain their environment; reopen them or unset OLLAMA_HOST."
+    );
+    Ok(())
 }
 
 /// Explicit operator recovery: restart only the managed runtimes, then clear
@@ -1369,6 +1444,52 @@ pub fn doctor(service: &str, config: &Config) -> Result<serde_json::Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gateway_health_uses_live_upstream_after_an_ollama_upgrade() {
+        fn server(reply: &'static str) -> (SocketAddr, std::thread::JoinHandle<()>) {
+            use std::io::Write;
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let thread = std::thread::spawn(move || {
+                let (mut socket, _) = listener.accept().unwrap();
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut request = [0; 1024];
+                let count = socket.read(&mut request).unwrap();
+                assert!(
+                    std::str::from_utf8(&request[..count])
+                        .unwrap()
+                        .starts_with("GET /api/version ")
+                );
+                write!(
+                    socket,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    reply.len(),
+                    reply
+                )
+                .unwrap();
+            });
+            (address, thread)
+        }
+        // An installation may have recorded 0.34.2. Both owned live endpoints
+        // now serve the upgraded daemon, so verification must accept 0.35.1.
+        for (upstream_reply, gateway_reply, expected) in [
+            (r#"{"version":"0.35.1"}"#, r#"{"version":"0.35.1"}"#, Ok(())),
+            (
+                r#"{"version":"0.35.1"}"#,
+                r#"{"version":"0.34.2"}"#,
+                Err("gateway_upstream_mismatch"),
+            ),
+        ] {
+            let (upstream, a) = server(upstream_reply);
+            let (gateway, b) = server(gateway_reply);
+            assert_eq!(verify_gateway_version(upstream, gateway), expected);
+            a.join().unwrap();
+            b.join().unwrap();
+        }
+    }
 
     fn configured_installation() -> Config {
         Config {

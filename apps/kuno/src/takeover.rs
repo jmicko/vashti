@@ -261,11 +261,25 @@ pub(crate) fn parse_listen(value: &str) -> Result<SocketAddr, &'static str> {
 }
 
 fn free_port_after(original: u16, control: u16) -> Result<u16, &'static str> {
-    for port in original.saturating_add(1)..=original.saturating_add(100) {
+    choose_private_port(original, control, |port| {
+        TcpListener::bind((Ipv4Addr::LOCALHOST, port)).is_ok()
+    })
+}
+
+fn choose_private_port(
+    original: u16,
+    control: u16,
+    mut available: impl FnMut(u16) -> bool,
+) -> Result<u16, &'static str> {
+    // Prefer the selected ordinary layout for new installations. Existing
+    // installations continue using their recorded upstream on upgrade.
+    for port in
+        std::iter::once(11433).chain(original.saturating_add(1)..=original.saturating_add(100))
+    {
         if port == original || port == control {
             continue;
         }
-        if TcpListener::bind((Ipv4Addr::LOCALHOST, port)).is_ok() {
+        if available(port) {
             return Ok(port);
         }
     }
@@ -316,6 +330,21 @@ pub(crate) fn parse_environment(input: &str) -> Result<BTreeMap<String, String>,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn new_private_port_prefers_11433_and_skips_conflicts() {
+        assert_eq!(choose_private_port(11434, 11432, |_| true), Ok(11433));
+        assert_eq!(
+            choose_private_port(11434, 11432, |port| port != 11433),
+            Ok(11435)
+        );
+        assert_eq!(choose_private_port(11433, 11432, |_| true), Ok(11434));
+        assert_eq!(choose_private_port(11434, 11433, |_| true), Ok(11435));
+        assert_eq!(
+            choose_private_port(11434, 11432, |_| false),
+            Err("no_private_port_available")
+        );
+    }
 
     #[test]
     fn image_model_mount_is_read_only_and_escaped() {

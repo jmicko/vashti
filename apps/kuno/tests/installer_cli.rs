@@ -1,6 +1,40 @@
 use std::process::Command;
 
 #[test]
+fn cli_enrollment_validates_user_options_and_never_restarts_services_without_root() {
+    let binary = env!("CARGO_BIN_EXE_kuno");
+    for (args, error) in [
+        (vec!["configure-cli", "--user"], "missing_cli_user"),
+        (
+            vec!["configure-cli", "--user", "one", "--user", "two"],
+            "duplicate_cli_user",
+        ),
+        (vec!["configure-cli", "--yes"], "unknown_argument"),
+        (vec!["upgrade", "--cli-user"], "missing_cli_user"),
+        (
+            vec!["install", "--cli-user", "one", "--cli-user", "two"],
+            "duplicate_cli_user",
+        ),
+    ] {
+        let output = Command::new(binary).args(args).output().unwrap();
+        assert!(!output.status.success());
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(stderr.contains(error));
+        assert!(!stderr.contains("briefly interrupts inference"));
+    }
+    if unsafe { libc::geteuid() } != 0 {
+        let output = Command::new(binary)
+            .args(["configure-cli", "--user", "test-user"])
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(stderr.contains("root_required_run_this_command_with_sudo"));
+        assert!(!stderr.contains("briefly interrupts inference"));
+    }
+}
+
+#[test]
 fn installation_requires_root_before_any_mutation() {
     // A root CI environment must never execute an actual installation here.
     if unsafe { libc::geteuid() } == 0 {

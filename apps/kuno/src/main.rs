@@ -3,7 +3,7 @@ use std::{path::Path, time::Duration};
 use tokio::net::TcpListener;
 
 const HELP: &str = "Kuno — local inference gateway (development)\n\n\
-Usage:\n  kuno [--host URL] [--config FILE] run MODEL [PROMPT] [OLLAMA_OPTIONS]\n  kuno [--host URL] [--config FILE] COMMAND [ARGS]\n    Commands: list (ls), ps, show, pull, push, stop, cp, rm, create\n  kuno fetch-models COLLECTION --directory ABSOLUTE_DIRECTORY\n  kuno serve [--config FILE]\n  kuno resources [--config FILE]\n  kuno check [--config FILE]\n  kuno doctor [--service ollama.service]\n  kuno install [--yes] [--service ollama.service]\n  kuno upgrade [--yes]\n  kuno configure-managed (--workers FILE | --disable) [--yes]\n  kuno configure-image (--settings FILE | --disable) [--yes]\n  kuno install-image-runtime --directory ABSOLUTE_DIRECTORY --manifest-sha256 SHA256 [--yes]\n  kuno configure-timeouts [--response-headers SECONDS] [--stream-idle SECONDS] [--yes]\n  kuno recover [--yes]\n  kuno takeover-restore [--yes]\n  kuno takeover-plan [--config FILE] [--service ollama.service]\n  kuno takeover-bundle --output NEW_DIRECTORY [--config FILE] [--service ollama.service]\n\n\
+Usage:\n  kuno [--host URL] [--config FILE] run MODEL [PROMPT] [OLLAMA_OPTIONS]\n  kuno [--host URL] [--config FILE] COMMAND [ARGS]\n    Commands: list (ls), ps, show, pull, push, stop, cp, rm, create\n  kuno fetch-models COLLECTION --directory ABSOLUTE_DIRECTORY\n  kuno serve [--config FILE]\n  kuno resources [--config FILE]\n  kuno check [--config FILE]\n  kuno doctor [--service ollama.service]\n  kuno install [--yes] [--service ollama.service] [--cli-user USER]\n  kuno upgrade [--yes] [--cli-user USER]\n  kuno configure-cli [--user USER]\n  kuno configure-managed (--workers FILE | --disable) [--yes]\n  kuno configure-image (--settings FILE | --disable) [--yes]\n  kuno install-image-runtime --directory ABSOLUTE_DIRECTORY --manifest-sha256 SHA256 [--yes]\n  kuno configure-timeouts [--response-headers SECONDS] [--stream-idle SECONDS] [--yes]\n  kuno recover [--yes]\n  kuno takeover-restore [--yes]\n  kuno takeover-plan [--config FILE] [--service ollama.service]\n  kuno takeover-bundle --output NEW_DIRECTORY [--config FILE] [--service ollama.service]\n\n\
 Inference CLI endpoint: --host, KUNO_HOST, selected/installed config.listen, then 127.0.0.1:11434.\n\
 The original Ollama client is required on PATH; its readline history starts disabled.\n\
 OLLAMA_HOST never selects Kuno's CLI endpoint.\n\
@@ -216,8 +216,21 @@ async fn run() -> Result<(), &'static str> {
     let mut disable_managed = false;
     let mut response_headers = None;
     let mut stream_idle = None;
+    let mut cli_user = None;
     while let Some(arg) = args.next() {
         match arg.as_str() {
+            "--cli-user" if matches!(command.as_str(), "install" | "upgrade") => {
+                if cli_user.is_some() {
+                    return Err("duplicate_cli_user");
+                }
+                cli_user = Some(args.next().ok_or("missing_cli_user")?);
+            }
+            "--user" if command == "configure-cli" => {
+                if cli_user.is_some() {
+                    return Err("duplicate_cli_user");
+                }
+                cli_user = Some(args.next().ok_or("missing_cli_user")?);
+            }
             "--response-headers" if command == "configure-timeouts" => {
                 if response_headers.is_some() {
                     return Err("duplicate_response_header_timeout");
@@ -317,18 +330,27 @@ async fn run() -> Result<(), &'static str> {
         "serve" => serve(config).await,
         "install" => {
             confirm_interruption(yes)?;
-            tokio::task::spawn_blocking(move || systemd::install(&service, &config))
-                .await
-                .map_err(|_| "installation_task_failed")??;
+            tokio::task::spawn_blocking(move || {
+                systemd::install_for_user(&service, &config, cli_user.as_deref())
+            })
+            .await
+            .map_err(|_| "installation_task_failed")??;
             println!("kuno_installed_and_active");
             Ok(())
         }
         "upgrade" => {
             confirm_interruption(yes)?;
-            tokio::task::spawn_blocking(systemd::upgrade)
+            tokio::task::spawn_blocking(move || systemd::upgrade_for_user(cli_user.as_deref()))
                 .await
                 .map_err(|_| "upgrade_task_failed")??;
             println!("kuno_upgraded_and_active");
+            Ok(())
+        }
+        "configure-cli" => {
+            tokio::task::spawn_blocking(move || systemd::configure_cli(cli_user.as_deref()))
+                .await
+                .map_err(|_| "cli_configuration_task_failed")??;
+            println!("ollama_cli_environment_configured");
             Ok(())
         }
         "configure-managed" => {
