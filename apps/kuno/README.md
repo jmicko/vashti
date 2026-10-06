@@ -38,6 +38,61 @@ confirmation before invoking an unattended command.
 Installation includes health checks. For a separate diagnostic report later, run
 `sudo /usr/local/lib/kuno/kuno doctor`.
 
+## Separate Kuno and Ollama commands
+
+Installation adds `kuno` to `/usr/local/bin` and configures the invoking non-root
+user's Bash startup to export `OLLAMA_HOST` to the verified private Ollama
+endpoint. Open a new terminal, or run the activation export printed by setup:
+
+```sh
+ollama run MODEL   # Original Ollama, bypassing Kuno scheduling
+kuno run MODEL     # Kuno's gateway and current inference policy
+kuno list
+kuno ps
+```
+
+Kuno keeps the adopted API listener (normally 11434), so explicitly configured
+apps retain their URLs. Applications inheriting and honoring `OLLAMA_HOST` use
+original Ollama directly, as selected by the user. Existing installations keep
+their recorded private port; this host uses 11435. New installations prefer
+11433 if it is available.
+
+Kuno CLI endpoint precedence is prefix `--host URL`, then `KUNO_HOST`, then the
+listener in prefix `--config FILE` or `/etc/kuno/config.json`, then
+`http://127.0.0.1:11434` when no installed configuration exists. Wildcard binds
+become loopback client addresses. `OLLAMA_HOST` never selects Kuno's endpoint.
+For example:
+
+```sh
+kuno --host http://192.168.1.164:11434 run MODEL
+```
+
+The inference/model commands invoke the unchanged Ollama client on `PATH`, with
+a command-scoped Kuno endpoint. They preserve streaming, arguments, terminal
+signals and exit status without adding inference deadlines. This compatibility
+client does not enable the paused native text prototype. It disables Ollama
+history by default; Ollama's explicit `/set history`, `/save` and external-editor
+features remain user-controlled local storage, separate from Kuno's content-free
+server persistence.
+
+Automatic shell setup currently supports Linux/Bash, including Bash login and
+SSH noninteractive startup. Setup preserves existing startup text and owns only
+marked export blocks. An upgrade reuses the recorded account. Root installations
+without `SUDO_USER` must select `--cli-user USER`; this option also works with
+`upgrade`. Repair/enroll the export without restarting services with:
+
+```sh
+sudo kuno configure-cli --user USER
+```
+
+If shell publication fails after service verification, inference remains active
+and setup reports partial success with retry instructions. Other users and
+systemd services keep their own environments. Restore removes unchanged owned
+blocks, preserving unrelated edits; existing terminals still need relaunch or
+`unset OLLAMA_HOST`. Unsupported shells require separate shell configuration.
+
+## Inference deadlines and service operation
+
 New configurations have no inference response deadline. To remove the old
 five-minute limits from an existing installation, deploy a current release with:
 

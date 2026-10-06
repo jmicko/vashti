@@ -1854,3 +1854,75 @@ Supported-shell activation, installer upgrade/uninstall and CLI endpoint
 separation still require implementation and tests. Documentation diff checks
 pass; the native inference goal remains paused. **Required Vashti changes:
 none** when its connector explicitly targets Kuno. No API schema change.
+
+### Installed CLI separation and shell export receipt (2026-10-06)
+
+The selected contract above is now implemented and installed on Marge. Backend
+commits are `f1c2848` (independent Kuno compatibility client), `942f965` (persistent
+Bash enrollment) and `686bc46` (installer/upgrade/restore integration, owned CLI
+launcher, new-port selection and current-upstream version verification). These
+are the focused CLI changes after decision `9e04bc1`; this receipt does not
+accept or resume the native text prototype/performance work.
+
+**Exact installed routes:** Kuno retains `[::]:11434`, private original Ollama
+retains `127.0.0.1:11435`, and privileged control retains `127.0.0.1:11432`.
+The enrolled `jmicko` Bash startup exports
+`OLLAMA_HOST=http://127.0.0.1:11435`. Existing API URLs are preserved. New
+installations prefer private 11433 when available; no existing-port migration
+was performed. The original Ollama executable is unchanged.
+
+`kuno` is available through an installer-owned `/usr/local/bin/kuno` launcher.
+Its inference/model commands invoke the original Ollama client on `PATH`, using
+prefix `--host`, then `KUNO_HOST`, then the listener from prefix `--config` or
+the installed configuration, then the 11434 default if no configuration exists.
+Wildcard listeners become loopback. `OLLAMA_HOST` never selects the Kuno route.
+Streaming, arguments, terminal cancellation and exit status remain the client's
+own behavior; no inference deadline is added. History defaults off; explicit
+Ollama local save/history/editor actions remain inherited client features.
+
+Install/upgrade preflight the recorded non-root account and startup ownership
+before interrupting inference, then publish the managed Bash blocks only after
+verified service activation. Explicit root installation can use `--cli-user`;
+later upgrades reuse the enrolled account. `sudo kuno configure-cli [--user
+USER]` repairs/enrolls without restarting services. Restore preflights and
+removes unchanged owned blocks, retaining prior settings and unrelated edits.
+Enrollment records contain only identity/owned blocks, never copies of user
+startup contents. A late publication failure reports active inference plus
+retry guidance; it is not mislabeled a service rollback. Shell file publication
+rechecks snapshots immediately before replacement but cannot guarantee atomic
+comparison against an uncooperative concurrent writer.
+
+The old setup record contained Ollama 0.34.2 while the owned live server was
+0.35.1. Upgrade health now compares the owned live gateway/private endpoints,
+retaining executable/listener/environment ownership checks and the historical
+record. An ordinary Ollama update no longer causes a stale-version rejection.
+New artifact conflicts (including a pre-existing CLI launcher) are rejected
+before stopping services.
+
+**Validation:** `cargo test --locked -p kuno -p kuno-protocol` passes 216 tests,
+with seven environment-dependent tests ignored. This includes 17 shell tests,
+four CLI unit/six CLI integration tests, 13 deployment tests and current-version
+health regression coverage. Strict all-target Clippy, formatting and diff
+checks pass. The standard native-image release build passes against the
+preserved verified CUDA/Vulkan closure; ELF checks reject private Intel
+dependencies and RPATH/RUNPATH.
+
+The prepared/installed binary SHA256 is
+`6c247d9001619117f1cadd2a37499ccd97974c8806d83d0aac47b2f9b4583469`.
+The normal transactional upgrade succeeds with both services active/enabled.
+Semantic configuration, both disabled inference deadlines, original Ollama
+binary and all 65 image-runtime members are unchanged. Fresh interactive/login
+Bash exports pass; installed `list`, `ps` and the public Qwen model's `show`
+pass for both commands. Live connection traces verify original CLI port 11435
+and Kuno CLI port 11434. Repeated enrollment keeps startup file hashes and
+service PIDs unchanged. Clark verifies Kuno's 0.35.1 upstream response through
+`192.168.1.164:11434`. The current shared shell is activated too.
+
+**Limits:** automatic shell setup is Linux/Bash only; existing processes retain
+their environment until explicitly changed or relaunched. Applications
+inheriting and honoring the export intentionally bypass Kuno scheduling.
+Installed uninstall was not performed; restore/crash handling is covered by
+isolated tests. No live generation, GPU benchmark, new image acceptance,
+intentional-offload implementation, native text registration or public release
+is claimed. **Required Vashti changes: none** for explicitly configured Kuno
+connectors; inference API schemas and access controls are unchanged.

@@ -188,13 +188,27 @@ marked installer block after endpoint verification, retaining previous user
 settings for restoration while supplying the selected effective host. Record
 the prior state and update/remove only the unchanged owned block; preserve
 unrelated edits and report conflicts. Already-running shells retain their
-environment after uninstall too. Supported-shell
-installation, activation, upgrade and uninstall remain unimplemented.
+environment after uninstall too. Automatic setup now supports Linux/Bash:
+the selected login startup file and `.bashrc` receive managed blocks, with a
+noninteractive block before Bash's common early return. Other shells require
+separate configuration. Initial root setup without `SUDO_USER` requires
+`--cli-user USER`; later upgrades reuse the recorded account. `configure-cli
+[--user USER]` repairs/enrolls the export without restarting inference services.
+Shell publication happens after verified service activation and may fail
+separately; report the active inference service and `configure-cli` retry rather
+than claiming the entire deployment was rolled back.
 
-Kuno's planned CLI resolves its inference endpoint independently of
+Kuno's CLI resolves its inference endpoint independently of
 `OLLAMA_HOST`: explicit endpoint, `KUNO_HOST`, installed configuration, then the
-normal Kuno API default. Inference remains keyless. Changing only the service
-port is insufficient to claim ordinary CLI separation.
+normal Kuno API default (11434). `--config FILE` selects the configuration source
+below explicit `--host` and `KUNO_HOST`. The supported inference/model commands
+invoke the original Ollama CLI with that endpoint in its child environment,
+preserving terminal streaming/cancellation and exit status. The executable is
+unchanged and must be on `PATH`; this does not register the native text
+prototype. Kuno's client defaults Ollama history off, while explicit local
+Ollama save/history/editor features remain inherited client behavior. Inference
+remains keyless. Changing only the service port is insufficient to claim
+ordinary CLI separation.
 
 ### Takeover transaction
 
