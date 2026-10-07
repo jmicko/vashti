@@ -121,6 +121,46 @@ catches a panic and keeps the server object alive. Many
 spans mean multiple bounded polls, so total cleanup time is not a single
 30-second deadline. Native Wgpu pop_error_scope returns an already-ready future.
 
+### Bounded audit copy/map batching candidate (2026-10-06)
+
+The source candidate keeps the same initial full-span erasure, full zero
+inspection, and final full-span erasure before ledger advancement or release.
+It charges and immediately retains the same one complete MAP_READ verification
+stage for every original Upload/Uniform owner. Original Readback owners are
+inspected directly. All verification clear/copy commands now share one encoder
+and one submission; the subsequent checked map poll drains those copies too.
+No separate per-copy submission poll remains.
+
+Readable spans are inspected in fixed groups of at most 64. Fixed guard slots,
+buffer references and typed callback channels are prepared for the entire group
+before any map request. Every requested map owns an unmap guard before
+`map_async`. One unchanged 30-second deadline per group covers preparation,
+requests, the checked native poll and every callback delivery. Every callback
+must succeed before any full-span scan in that group. A queued success delivered
+after the deadline still rejects. Rejection, disconnection, timeout, nonzero
+padding, allocation/copy/submission error, and panic release no accepted epoch;
+pending/successful maps unmap before the existing final erasure attempts every
+retained original and new stage. Typed first-observed failure and scoped GPU
+errors remain enforced. A synchronous driver call or descheduling can still
+overrun the requested wait bound.
+
+Inspection still requires each mapped view to equal its complete buffer size
+and contain only zero bytes. Source/stage counts, the separate runtime ledger,
+main admission, leases, public weights, ordinary inference waits and external
+APIs are unchanged. `NativeEraser` still performs its existing per-upload
+checked maps and volatile wipes in both erase passes; this checkpoint batches
+only audit copies/read maps. No privacy setting, raw-data export or new metrics
+are introduced.
+
+Added source fixtures use the actual shared preparation and mapping policies
+for 63/64/65 boundaries, multiple/partial groups, all-callback-before-scan order,
+full original/duplicate counts, retained charges, partial allocation/copy,
+submission, callback rejection/disconnection/late delivery, map/poll failure,
+panic, nonzero tails and unmap retirement. Formatting and provenance generation
+are source checks only. Compilation, execution of the new host tests, both-card
+I/O/operator/model/cancellation acceptance and measured improvement remain
+root-owned and unverified for this candidate.
+
 Any cleanup error or panic retires the private stream, retains tracked buffers
 WHILE the owner remains live, returns no success receipt, and requires retiring
 the whole shared context/poisoning its sequences. A future cannot cancel cleanup

@@ -724,12 +724,15 @@ impl AuditCounts {
 }
 trait AuditBackend {
     type Buffer;
-    /// Check the FULL source span and any extra owned staging. No bytes escape.
-    fn inspect_full(
+    /// Retain/charge the SAME full source and extra owned staging before copies.
+    fn prepare_full(
         &mut self,
         buffer: &Self::Buffer,
         kind: Kind,
     ) -> Result<AuditCounts, ServerError>;
+    /// Complete all prepared copies and inspect every full readable span.
+    fn inspect_prepared(&mut self, buffers: &[Tracked<Self::Buffer>]) -> Result<(), ServerError>;
+    fn finish_scopes(&mut self) {}
 }
 fn accepts_clean_epoch(initial_erasure: bool, inspection: bool, final_erasure: bool) -> bool {
     initial_erasure && inspection && final_erasure
@@ -738,11 +741,91 @@ fn inspect_all<A: AuditBackend>(
     audit: &mut A,
     buffers: &[Tracked<A::Buffer>],
 ) -> Result<AuditCounts, ServerError> {
-    let mut counts = AuditCounts::default();
-    for tracked in buffers {
-        counts.add(audit.inspect_full(&tracked.buffer, tracked.kind)?)?;
+    let result = (|| {
+        let mut counts = AuditCounts::default();
+        for tracked in buffers {
+            counts.add(audit.prepare_full(&tracked.buffer, tracked.kind)?)?;
+        }
+        audit.inspect_prepared(buffers)?;
+        Ok(counts)
+    })();
+    // Normal errors also retain their typed scopes for the final erase fence.
+    // The native scope owner's Drop remains LIFO on an actual panic.
+    audit.finish_scopes();
+    result
+}
+
+/// Public fixed metadata bound. No request bytes or variable-length map owner
+/// list is retained here; guards must abort/unmap on every return/unwind.
+const AUDIT_MAP_GROUP: usize = 64;
+trait AuditMapping {
+    type Buffer;
+    type Mapping;
+    fn prepare(&mut self, buffer: &Self::Buffer) -> Result<Self::Mapping, ServerError>;
+    fn request(&mut self, mapping: &mut Self::Mapping) -> Result<(), ServerError>;
+    fn poll_group(&mut self, deadline: Instant) -> Result<(), ServerError>;
+    fn callback(&mut self, mapping: &Self::Mapping, deadline: Instant) -> Result<(), ServerError>;
+    fn inspect(&mut self, mapping: &Self::Mapping) -> Result<(), ServerError>;
+}
+fn inspect_map_group<M: AuditMapping>(
+    mapper: &mut M,
+    buffers: &[Option<&M::Buffer>; AUDIT_MAP_GROUP],
+    count: usize,
+) -> Result<(), ServerError> {
+    if count == 0 || count > AUDIT_MAP_GROUP {
+        return Err(fault("private audit map group extent"));
     }
-    Ok(counts)
+    // Establish every guard slot before requesting the first map. One deadline
+    // covers requests, the checked native poll and ALL callback deliveries.
+    let mut mappings: [Option<M::Mapping>; AUDIT_MAP_GROUP] = std::array::from_fn(|_| None);
+    let deadline = Instant::now() + POLL_TIMEOUT;
+    for i in 0..count {
+        mappings[i] =
+            Some(mapper.prepare(
+                buffers[i].ok_or_else(|| fault("private audit map group missing owner"))?,
+            )?);
+    }
+    for mapping in mappings[..count].iter_mut().flatten() {
+        mapper.request(mapping)?;
+    }
+    mapper.poll_group(deadline)?;
+    // No inspected success is possible from a partially accepted callback set.
+    for mapping in mappings[..count].iter().flatten() {
+        mapper.callback(mapping, deadline)?;
+    }
+    for mapping in mappings[..count].iter().flatten() {
+        mapper.inspect(mapping)?;
+    }
+    // Guards drop here BEFORE final erasure; errors/panics drop them as well.
+    Ok(())
+}
+fn inspect_readable_groups<M: AuditMapping>(
+    mapper: &mut M,
+    originals: &[Tracked<M::Buffer>],
+    stages: &[Tracked<M::Buffer>],
+) -> Result<(), ServerError> {
+    if stages.iter().any(|stage| stage.kind != Kind::Readback) {
+        return Err(fault("private audit stage kind"));
+    }
+    let mut group = [None; AUDIT_MAP_GROUP];
+    let mut count = 0;
+    for tracked in originals
+        .iter()
+        .filter(|tracked| tracked.kind == Kind::Readback)
+        .chain(stages)
+    {
+        group[count] = Some(&tracked.buffer);
+        count += 1;
+        if count == AUDIT_MAP_GROUP {
+            inspect_map_group(mapper, &group, count)?;
+            group.fill(None);
+            count = 0;
+        }
+    }
+    if count != 0 {
+        inspect_map_group(mapper, &group, count)?;
+    }
+    Ok(())
 }
 
 trait EraseBackend {
@@ -860,62 +943,102 @@ impl EraseBackend for NativeEraser<'_> {
     }
 }
 
-/// The inspection hook owns all extra staging in the SAME bounded ledger.
-/// Public weights are never passed here; it cannot return mapped/request bytes.
-struct NativeAudit<'a>(&'a mut TransientIo);
-impl NativeAudit<'_> {
-    fn inspect_readable(&mut self, buffer: &wgpu::Buffer) -> Result<(), ServerError> {
-        struct Unmap<'a> {
-            buffer: &'a wgpu::Buffer,
-            retired: Arc<LeaseTracker>,
+/// All verification copies share one submission. Extra stages remain charged
+/// and retained in the SAME ledger, including partial setup/error/unwind.
+struct NativeAudit<'a> {
+    io: &'a mut TransientIo,
+    encoder: Option<wgpu::CommandEncoder>,
+    scopes: Option<IoScopes>,
+}
+impl<'a> NativeAudit<'a> {
+    fn new(io: &'a mut TransientIo) -> Self {
+        let scopes = IoScopes::new(&io.device);
+        let encoder = io
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("CubeCL private zero audit"),
+            });
+        Self {
+            io,
+            encoder: Some(encoder),
+            scopes: Some(scopes),
         }
-        impl Drop for Unmap<'_> {
-            fn drop(&mut self) {
-                if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.buffer.unmap()))
-                    .is_err()
-                {
-                    self.retired.retire_with(Failure::Unmap);
-                }
-            }
+    }
+}
+/// Own the unmap obligation BEFORE map_async. Pending, rejected and completed
+/// maps all unmap on normal return/error/unwind before the final erase pass.
+struct AuditMapGuard {
+    buffer: wgpu::Buffer,
+    retired: Arc<LeaseTracker>,
+    sender: Option<std::sync::mpsc::SyncSender<Result<(), wgpu::BufferAsyncError>>>,
+    receiver: std::sync::mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>,
+    requested: bool,
+}
+impl Drop for AuditMapGuard {
+    fn drop(&mut self) {
+        if self.requested
+            && std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.buffer.unmap()))
+                .is_err()
+        {
+            self.retired.retire_with(Failure::Unmap);
         }
-        let scopes = IoScopes::new(&self.0.device);
-        let result = (|| {
-            let deadline = Instant::now() + POLL_TIMEOUT;
-            let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-            // Guard established before requesting a map; panic/error/timeout
-            // aborts pending maps, with the tracked buffer retained for erasure.
-            let _unmap = Unmap {
-                buffer,
-                retired: self.0.leases.clone(),
-            };
-            buffer.map_async(wgpu::MapMode::Read, .., move |result| {
+    }
+}
+struct NativeAuditMapping<'a>(&'a TransientIo);
+impl AuditMapping for NativeAuditMapping<'_> {
+    type Buffer = wgpu::Buffer;
+    type Mapping = AuditMapGuard;
+    fn prepare(&mut self, buffer: &wgpu::Buffer) -> Result<AuditMapGuard, ServerError> {
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        Ok(AuditMapGuard {
+            buffer: buffer.clone(),
+            retired: self.0.leases.clone(),
+            sender: Some(sender),
+            receiver,
+            requested: false,
+        })
+    }
+    fn request(&mut self, mapping: &mut AuditMapGuard) -> Result<(), ServerError> {
+        let sender = mapping
+            .sender
+            .take()
+            .ok_or_else(|| fault("private audit map callback missing"))?;
+        mapping.requested = true;
+        mapping
+            .buffer
+            .map_async(wgpu::MapMode::Read, .., move |result| {
                 let _ = sender.try_send(result);
             });
-            if !self.0.poll_map_until(deadline) {
-                self.0.leases.record(Failure::AuditMap);
-                return Err(fault(self.0.leases.reason(Failure::AuditMap)));
-            }
-            if let Err(category) = await_map_callback(&receiver, deadline) {
-                self.0.leases.record(category.audit());
-                return Err(fault(self.0.leases.reason(category.audit())));
-            }
-            let view = buffer.get_mapped_range(..);
-            if view.len() as u64 != buffer.size() || view.iter().any(|byte| *byte != 0) {
-                self.0.leases.record(Failure::AuditNonzero);
-                return Err(fault(self.0.leases.reason(Failure::AuditNonzero)));
-            }
-            // View drops before the unmap guard. No copy/to_vec/format/log exists.
-            Ok(())
-        })();
-        // Include guard-triggered unmap in the typed scopes, also on an error
-        // return. Futures are still accepted at the existing final erase fence.
-        scopes.finish(self.0);
-        result
+        Ok(())
+    }
+    fn poll_group(&mut self, deadline: Instant) -> Result<(), ServerError> {
+        // Wait(None) drains the submitted verification copies AND all requested
+        // maps; no separate per-copy submission poll or inference wait exists.
+        if !self.0.poll_map_until(deadline) {
+            self.0.leases.record(Failure::AuditMap);
+            return Err(fault(self.0.leases.reason(Failure::AuditMap)));
+        }
+        Ok(())
+    }
+    fn callback(&mut self, mapping: &AuditMapGuard, deadline: Instant) -> Result<(), ServerError> {
+        await_map_callback(&mapping.receiver, deadline).map_err(|category| {
+            self.0.leases.record(category.audit());
+            fault(self.0.leases.reason(category.audit()))
+        })
+    }
+    fn inspect(&mut self, mapping: &AuditMapGuard) -> Result<(), ServerError> {
+        let view = mapping.buffer.get_mapped_range(..);
+        if view.len() as u64 != mapping.buffer.size() || view.iter().any(|byte| *byte != 0) {
+            self.0.leases.record(Failure::AuditNonzero);
+            return Err(fault(self.0.leases.reason(Failure::AuditNonzero)));
+        }
+        // View drops before its group guard. No copy/to_vec/format/log exists.
+        Ok(())
     }
 }
 impl AuditBackend for NativeAudit<'_> {
     type Buffer = wgpu::Buffer;
-    fn inspect_full(
+    fn prepare_full(
         &mut self,
         source: &wgpu::Buffer,
         kind: Kind,
@@ -924,45 +1047,51 @@ impl AuditBackend for NativeAudit<'_> {
             bytes: source.size(),
             buffers: 1,
         };
-        if kind == Kind::Readback {
-            self.inspect_readable(source)?;
-        } else {
-            // MAP_WRITE uploads cannot be read directly. Copy full source
-            // spans into an explicitly owned/tracked MAP_READ stage, including
-            // padding, and inspect that stage. No opaque queue upload staging.
-            let scopes = IoScopes::new(&self.0.device);
-            self.0.ledger.check(span(source.size())?).map_err(|_| {
-                self.0.leases.record(Failure::AuditBudget);
-                fault(self.0.leases.reason(Failure::AuditBudget))
+        if kind != Kind::Readback {
+            // Charge the same complete MAP_READ span before any copy, and keep
+            // its owner in io.buffers even if later preparation/submission fails.
+            self.io.ledger.check(span(source.size())?).map_err(|_| {
+                self.io.leases.record(Failure::AuditBudget);
+                fault(self.io.leases.reason(Failure::AuditBudget))
             })?;
             let stage = self
-                .0
+                .io
                 .allocate_audit(Kind::Readback, source.size())
                 .inspect_err(|_| {
-                    self.0.leases.record(Failure::AuditAllocation);
+                    self.io.leases.record(Failure::AuditAllocation);
                 })?;
-            let mut encoder =
-                self.0
-                    .device
-                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        label: Some("CubeCL private zero audit"),
-                    });
+            let encoder = self
+                .encoder
+                .as_mut()
+                .ok_or_else(|| fault("private audit encoder missing"))?;
             encoder.clear_buffer(&stage, 0, None);
             encoder.copy_buffer_to_buffer(source, 0, &stage, 0, source.size());
-            let submitted = self.0.queue.submit([encoder.finish()]);
-            scopes.finish(self.0);
-            if !self.0.poll(Some(submitted)) {
-                return Err(fault(self.0.leases.reason(Failure::DrainTimeout)));
-            }
-            self.inspect_readable(&stage)?;
-            // stage.span is equal to source.span (both bounded powers of two),
-            // and was itself checked in FULL above. It must also be erased.
+            // These are exactly the old source+stage inspection counts. Both
+            // remain owned through full inspection and final checked erasure.
             counts.add(AuditCounts {
                 bytes: stage.size(),
                 buffers: 1,
             })?;
         }
         Ok(counts)
+    }
+    fn inspect_prepared(&mut self, originals: &[Tracked<wgpu::Buffer>]) -> Result<(), ServerError> {
+        let submitted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.io
+                .queue
+                .submit([self.encoder.take().unwrap().finish()])
+        }));
+        if submitted.is_err() {
+            self.io.leases.record(Failure::QueueSubmit);
+            return Err(fault(self.io.leases.reason(Failure::QueueSubmit)));
+        }
+        let mut mapper = NativeAuditMapping(&*self.io);
+        inspect_readable_groups(&mut mapper, originals, &self.io.buffers)
+    }
+    fn finish_scopes(&mut self) {
+        if let Some(scopes) = self.scopes.take() {
+            scopes.finish(self.io);
+        }
     }
 }
 
@@ -1366,7 +1495,7 @@ impl TransientIo {
         let initial_ok = matches!(initial, Ok(true));
         let inspected = if inspect && initial_ok {
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                inspect_all(&mut NativeAudit(self), &buffers)
+                inspect_all(&mut NativeAudit::new(self), &buffers)
             }))
             .map_err(|_| {
                 self.leases.record(Failure::Panic);
@@ -1854,9 +1983,10 @@ mod tests {
         assert!(!tracker.retired.load(Ordering::Acquire));
     }
 
+    #[derive(Clone)]
     struct FakeBuffer {
         kind: Kind,
-        words: RefCell<Vec<u8>>,
+        words: std::rc::Rc<RefCell<Vec<u8>>>,
     }
     struct FakeEraser {
         events: Vec<&'static str>,
@@ -1904,7 +2034,7 @@ mod tests {
                 kind,
                 buffer: FakeBuffer {
                     kind,
-                    words: RefCell::new(vec![0xa7; MIN_BYTES as usize]),
+                    words: std::rc::Rc::new(RefCell::new(vec![0xa7; MIN_BYTES as usize])),
                 },
             })
             .collect()
@@ -2014,10 +2144,11 @@ mod tests {
         ledger: &'a mut Ledger,
         stages: Vec<Tracked<FakeBuffer>>,
         fail: Option<&'static str>,
+        submissions: usize,
     }
     impl AuditBackend for FakeAudit<'_> {
         type Buffer = FakeBuffer;
-        fn inspect_full(
+        fn prepare_full(
             &mut self,
             source: &FakeBuffer,
             kind: Kind,
@@ -2026,16 +2157,15 @@ mod tests {
                 bytes: source.words.borrow().len() as u64,
                 buffers: 1,
             };
-            if kind == Kind::Readback {
-                if source.words.borrow().iter().any(|b| *b != 0) {
-                    return Err(fault("synthetic audit nonzero"));
+            if kind != Kind::Readback {
+                if self.fail == Some("allocation") && !self.stages.is_empty() {
+                    return Err(fault("synthetic audit allocation failed"));
                 }
-            } else {
                 // Same bounded ledger reserve path as the native owned stage.
                 let size = self.ledger.reserve(Kind::Readback, count.bytes)?;
                 let stage = FakeBuffer {
                     kind: Kind::Readback,
-                    words: RefCell::new(vec![0; size as usize]),
+                    words: std::rc::Rc::new(RefCell::new(vec![0; size as usize])),
                 };
                 stage
                     .words
@@ -2045,15 +2175,11 @@ mod tests {
                     buffer: stage,
                     kind: Kind::Readback,
                 });
-                let stage = &self.stages.last().unwrap().buffer;
-                if self.fail == Some("map") {
-                    return Err(fault("synthetic audit map failed"));
+                if self.fail == Some("copy") && self.stages.len() == 2 {
+                    return Err(fault("synthetic audit copy failed"));
                 }
-                if self.fail == Some("nonzero") {
-                    *stage.words.borrow_mut().last_mut().unwrap() = 0x6d;
-                }
-                if stage.words.borrow().iter().any(|b| *b != 0) {
-                    return Err(fault("synthetic audit nonzero"));
+                if self.fail == Some("panic-copy") && self.stages.len() == 2 {
+                    panic!("synthetic audit copy panic");
                 }
                 count.add(AuditCounts {
                     bytes: size,
@@ -2061,6 +2187,21 @@ mod tests {
                 })?;
             }
             Ok(count)
+        }
+        fn inspect_prepared(
+            &mut self,
+            originals: &[Tracked<FakeBuffer>],
+        ) -> Result<(), ServerError> {
+            self.submissions += 1;
+            if self.fail == Some("submit") {
+                return Err(fault("synthetic audit submission failed"));
+            }
+            let failure = match self.fail {
+                Some("map") => Some(BatchFailure::Callback(0)),
+                Some("nonzero") => Some(BatchFailure::Nonzero(0)),
+                _ => None,
+            };
+            inspect_readable_groups(&mut FakeMapper::new(failure), originals, &self.stages)
         }
     }
     #[test]
@@ -2080,6 +2221,7 @@ mod tests {
             ledger: &mut ledger,
             stages: Vec::new(),
             fail: None,
+            submissions: 0,
         };
         let counts = inspect_all(&mut audit, &buffers).unwrap();
         assert_eq!(
@@ -2108,6 +2250,44 @@ mod tests {
         assert_eq!(public, vec![0x47; 19]);
     }
     #[test]
+    fn batched_audit_counts_originals_and_every_duplicate_across_map_groups() {
+        let mut buffers: Vec<_> = (0..34).flat_map(|_| fake_buffers()).collect();
+        let mut ledger = Ledger::new(170 * MIN_BYTES).unwrap();
+        for buffer in &buffers {
+            ledger.reserve(buffer.kind, 19).unwrap();
+        }
+        let mut eraser = FakeEraser {
+            events: Vec::new(),
+            fail: None,
+        };
+        assert!(erase_all(&mut eraser, &buffers, false));
+        let mut audit = FakeAudit {
+            ledger: &mut ledger,
+            stages: Vec::new(),
+            fail: None,
+            submissions: 0,
+        };
+        let counts = inspect_all(&mut audit, &buffers).unwrap();
+        assert_eq!(audit.submissions, 1);
+        assert_eq!(audit.stages.len(), 68);
+        assert_eq!(
+            counts,
+            AuditCounts {
+                bytes: 170 * MIN_BYTES,
+                buffers: 170
+            }
+        );
+        buffers.append(&mut audit.stages);
+        drop(audit);
+        assert!(erase_all(&mut eraser, &buffers, false));
+        assert_eq!(ledger.charged, counts.bytes);
+        let receipt = ledger.after_erasure().unwrap();
+        assert_eq!(
+            receipt.upload_bytes + receipt.uniform_bytes + receipt.readback_bytes,
+            counts.bytes
+        );
+    }
+    #[test]
     fn failed_audit_budget_map_or_padding_never_accepts_and_erases_new_stages() {
         for fail in [Some("map"), Some("nonzero"), None] {
             let mut buffers = fake_buffers();
@@ -2129,6 +2309,7 @@ mod tests {
                 ledger: &mut ledger,
                 stages: Vec::new(),
                 fail,
+                submissions: 0,
             };
             let inspected = inspect_all(&mut audit, &buffers);
             assert!(inspected.is_err());
@@ -2148,6 +2329,326 @@ mod tests {
             assert_eq!(ledger.epoch, 1);
             assert!(ledger.charged >= 4 * MIN_BYTES); // NO reset/release receipt
         }
+    }
+
+    #[test]
+    fn batch_audit_preparation_failures_keep_all_charges_and_attempt_final_erasure() {
+        for failure in ["allocation", "copy", "submit", "panic-copy"] {
+            let mut buffers = fake_buffers();
+            let mut ledger = Ledger::new(5 * MIN_BYTES).unwrap();
+            for buffer in &buffers {
+                ledger.reserve(buffer.kind, 19).unwrap();
+            }
+            let mut eraser = FakeEraser {
+                events: Vec::new(),
+                fail: None,
+            };
+            assert!(erase_all(&mut eraser, &buffers, false));
+            let mut audit = FakeAudit {
+                ledger: &mut ledger,
+                stages: Vec::new(),
+                fail: Some(failure),
+                submissions: 0,
+            };
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                inspect_all(&mut audit, &buffers)
+            }));
+            assert!(!matches!(result, Ok(Ok(_))));
+            assert_eq!(audit.submissions, usize::from(failure == "submit"));
+            assert_eq!(
+                audit.stages.len(),
+                if failure == "allocation" { 1 } else { 2 }
+            );
+            buffers.append(&mut audit.stages);
+            drop(audit);
+            // Even if final best-effort erasure clears every byte, the failed
+            // transaction can never publish counts, advance epoch or release.
+            assert!(!erase_all(&mut eraser, &buffers, true));
+            assert!(
+                buffers
+                    .iter()
+                    .all(|buffer| buffer.buffer.words.borrow().iter().all(|b| *b == 0))
+            );
+            assert_eq!(ledger.epoch, 1);
+            assert_eq!(ledger.charged, buffers.len() as u64 * MIN_BYTES);
+            assert_eq!(ledger.totals[2], (buffers.len() - 2) as u64 * MIN_BYTES);
+        }
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    enum BatchFailure {
+        Prepare(usize),
+        Request(usize),
+        Poll(usize),
+        Callback(usize),
+        Disconnect(usize),
+        Late(usize),
+        Panic(usize),
+        Nonzero(usize),
+        Unmap(usize),
+    }
+    #[derive(Default)]
+    struct BatchState {
+        events: Vec<(&'static str, usize)>,
+        poll_deadline: Option<Instant>,
+        polls: usize,
+    }
+    struct FakeMapGuard {
+        buffer: FakeBuffer,
+        id: usize,
+        requested: bool,
+        sender: Option<std::sync::mpsc::SyncSender<Result<(), wgpu::BufferAsyncError>>>,
+        receiver: std::sync::mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>,
+        state: std::rc::Rc<RefCell<BatchState>>,
+        tracker: Arc<LeaseTracker>,
+        fail: Option<BatchFailure>,
+    }
+    impl Drop for FakeMapGuard {
+        fn drop(&mut self) {
+            if self.requested {
+                self.state.borrow_mut().events.push(("unmap", self.id));
+                if matches!(self.fail, Some(BatchFailure::Unmap(id)) if id == self.id) {
+                    self.tracker.retire_with(Failure::Unmap);
+                }
+            }
+        }
+    }
+    struct FakeMapper {
+        state: std::rc::Rc<RefCell<BatchState>>,
+        tracker: Arc<LeaseTracker>,
+        next: usize,
+        fail: Option<BatchFailure>,
+    }
+    impl FakeMapper {
+        fn new(fail: Option<BatchFailure>) -> Self {
+            Self {
+                state: Default::default(),
+                tracker: Default::default(),
+                next: 0,
+                fail,
+            }
+        }
+    }
+    impl AuditMapping for FakeMapper {
+        type Buffer = FakeBuffer;
+        type Mapping = FakeMapGuard;
+        fn prepare(&mut self, buffer: &FakeBuffer) -> Result<FakeMapGuard, ServerError> {
+            let id = self.next;
+            self.next += 1;
+            self.state.borrow_mut().events.push(("prepare", id));
+            if matches!(self.fail, Some(BatchFailure::Prepare(n)) if n == id) {
+                return Err(fault("synthetic batch bookkeeping failed"));
+            }
+            let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+            Ok(FakeMapGuard {
+                buffer: buffer.clone(),
+                id,
+                requested: false,
+                sender: Some(sender),
+                receiver,
+                state: self.state.clone(),
+                tracker: self.tracker.clone(),
+                fail: self.fail,
+            })
+        }
+        fn request(&mut self, mapping: &mut FakeMapGuard) -> Result<(), ServerError> {
+            mapping.requested = true;
+            self.state.borrow_mut().events.push(("request", mapping.id));
+            if matches!(self.fail, Some(BatchFailure::Panic(id)) if id == mapping.id) {
+                panic!("synthetic requested map panic");
+            }
+            if matches!(self.fail, Some(BatchFailure::Request(id)) if id == mapping.id) {
+                return Err(fault("synthetic requested map failed"));
+            }
+            let sender = mapping.sender.take().unwrap();
+            if matches!(self.fail, Some(BatchFailure::Disconnect(id)) if id == mapping.id) {
+                drop(sender);
+            } else {
+                let result = if matches!(self.fail, Some(BatchFailure::Callback(id)) if id == mapping.id)
+                {
+                    Err(wgpu::BufferAsyncError)
+                } else {
+                    Ok(())
+                };
+                sender.try_send(result).unwrap();
+            }
+            Ok(())
+        }
+        fn poll_group(&mut self, deadline: Instant) -> Result<(), ServerError> {
+            let mut state = self.state.borrow_mut();
+            let group = state.polls;
+            state.polls += 1;
+            state.poll_deadline = Some(deadline);
+            state.events.push(("poll", group));
+            if matches!(self.fail, Some(BatchFailure::Poll(n)) if n == group) {
+                self.tracker.record(Failure::DrainTimeout);
+                return Err(fault(self.tracker.reason(Failure::AuditMap)));
+            }
+            Ok(())
+        }
+        fn callback(
+            &mut self,
+            mapping: &FakeMapGuard,
+            deadline: Instant,
+        ) -> Result<(), ServerError> {
+            assert_eq!(self.state.borrow().poll_deadline, Some(deadline));
+            self.state
+                .borrow_mut()
+                .events
+                .push(("callback", mapping.id));
+            // Model delivery after the group's deadline even with a queued
+            // success. Existing await_map_callback rejects stale acceptance.
+            let deadline = if matches!(self.fail, Some(BatchFailure::Late(id)) if id == mapping.id)
+            {
+                Instant::now() - Duration::from_nanos(1)
+            } else {
+                deadline
+            };
+            await_map_callback(&mapping.receiver, deadline).map_err(|failure| {
+                self.tracker.record(failure.audit());
+                fault(self.tracker.reason(failure.audit()))
+            })
+        }
+        fn inspect(&mut self, mapping: &FakeMapGuard) -> Result<(), ServerError> {
+            self.state.borrow_mut().events.push(("inspect", mapping.id));
+            if matches!(self.fail, Some(BatchFailure::Nonzero(id)) if id == mapping.id) {
+                *mapping.buffer.words.borrow_mut().last_mut().unwrap() = 0x6d;
+            }
+            if mapping.buffer.words.borrow().iter().any(|b| *b != 0) {
+                self.tracker.record(Failure::AuditNonzero);
+                return Err(fault(self.tracker.reason(Failure::AuditNonzero)));
+            }
+            Ok(())
+        }
+    }
+    fn fake_readable(count: usize) -> Vec<Tracked<FakeBuffer>> {
+        (0..count)
+            .map(|_| Tracked {
+                kind: Kind::Readback,
+                buffer: FakeBuffer {
+                    kind: Kind::Readback,
+                    words: std::rc::Rc::new(RefCell::new(vec![0; MIN_BYTES as usize])),
+                },
+            })
+            .collect()
+    }
+    #[test]
+    fn actual_group_policy_rejects_missing_or_invalid_owners_before_maps() {
+        let empty = [None; AUDIT_MAP_GROUP];
+        for count in [0, 1, AUDIT_MAP_GROUP + 1] {
+            let mut mapper = FakeMapper::new(None);
+            assert!(inspect_map_group(&mut mapper, &empty, count).is_err());
+            assert!(mapper.state.borrow().events.is_empty());
+        }
+        let mut stages = fake_readable(1);
+        stages[0].kind = Kind::Upload;
+        let mut mapper = FakeMapper::new(None);
+        assert!(inspect_readable_groups(&mut mapper, &[], &stages).is_err());
+        assert!(mapper.state.borrow().events.is_empty());
+    }
+    #[test]
+    fn actual_group_policy_preallocates_and_accepts_every_callback_before_inspection() {
+        for count in [1, 63, 64, 65, 129] {
+            let buffers = fake_readable(count);
+            let mut mapper = FakeMapper::new(None);
+            inspect_readable_groups(&mut mapper, &buffers, &[]).unwrap();
+            let state = mapper.state.borrow();
+            assert_eq!(state.polls, count.div_ceil(AUDIT_MAP_GROUP));
+            for name in ["prepare", "request", "callback", "inspect", "unmap"] {
+                assert_eq!(
+                    state.events.iter().filter(|event| event.0 == name).count(),
+                    count
+                );
+            }
+            for first in (0..count).step_by(AUDIT_MAP_GROUP) {
+                let last = (first + AUDIT_MAP_GROUP).min(count) - 1;
+                let position = |event| {
+                    state
+                        .events
+                        .iter()
+                        .position(|entry| *entry == event)
+                        .unwrap()
+                };
+                assert!(position(("prepare", last)) < position(("request", first)));
+                assert!(position(("callback", last)) < position(("inspect", first)));
+                assert!(position(("inspect", last)) < position(("unmap", first)));
+                if last + 1 < count {
+                    assert!(position(("unmap", last)) < position(("prepare", last + 1)));
+                }
+            }
+        }
+    }
+    #[test]
+    fn actual_group_policy_failure_or_panic_unmaps_every_requested_owner() {
+        for failure in [
+            BatchFailure::Prepare(17),
+            BatchFailure::Request(17),
+            BatchFailure::Poll(0),
+            BatchFailure::Callback(17),
+            BatchFailure::Disconnect(17),
+            BatchFailure::Late(17),
+            BatchFailure::Panic(17),
+            BatchFailure::Nonzero(17),
+            BatchFailure::Callback(64),
+        ] {
+            let buffers = fake_readable(65);
+            let mut mapper = FakeMapper::new(Some(failure));
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                inspect_readable_groups(&mut mapper, &buffers, &[])
+            }));
+            assert!(!matches!(outcome, Ok(Ok(()))));
+            let events = &mapper.state.borrow().events;
+            let requested: Vec<_> = events
+                .iter()
+                .filter(|event| event.0 == "request")
+                .map(|event| event.1)
+                .collect();
+            let unmapped: Vec<_> = events
+                .iter()
+                .filter(|event| event.0 == "unmap")
+                .map(|event| event.1)
+                .collect();
+            assert_eq!(requested, unmapped, "{failure:?}");
+            if matches!(failure, BatchFailure::Prepare(_)) {
+                assert!(requested.is_empty());
+            }
+            if matches!(
+                failure,
+                BatchFailure::Callback(17) | BatchFailure::Disconnect(_) | BatchFailure::Late(_)
+            ) {
+                assert!(!events.iter().any(|event| event.0 == "inspect"));
+            }
+            let mut eraser = FakeEraser {
+                events: Vec::new(),
+                fail: None,
+            };
+            assert!(!erase_all(&mut eraser, &buffers, true));
+            assert!(
+                buffers
+                    .iter()
+                    .all(|buffer| buffer.buffer.words.borrow().iter().all(|b| *b == 0))
+            );
+        }
+    }
+    #[test]
+    fn group_unmap_failure_retires_and_cannot_accept_even_after_successful_inspection() {
+        let buffers = fake_readable(65);
+        let mut mapper = FakeMapper::new(Some(BatchFailure::Unmap(17)));
+        inspect_readable_groups(&mut mapper, &buffers, &[]).unwrap();
+        assert!(mapper.tracker.retired.load(Ordering::Acquire));
+        assert_eq!(
+            mapper.tracker.reason(Failure::CleanupRejected),
+            Failure::Unmap.code()
+        );
+        let mut eraser = FakeEraser {
+            events: Vec::new(),
+            fail: None,
+        };
+        assert!(!erase_all(
+            &mut eraser,
+            &buffers,
+            mapper.tracker.retired.load(Ordering::Acquire)
+        ));
     }
     #[test]
     fn nested_error_scope_raii_uses_lifo_on_early_return_and_panic() {
