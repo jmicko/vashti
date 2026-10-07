@@ -1,0 +1,247 @@
+{
+  "scope": "fixed-public-native-q4-abba-accepted-not-Ollama-speedup",
+  "source_commit": "79ba326b4de1ff0ee5f7aa4244619bc47378cfb6",
+  "executable_sha256": "9d4f4277efdcbfcc2349657b9c1bc5d6bd7aef8f3a531c756d38099a4a187144",
+  "plan_path": "/media/jmicko/faststore/kuno-development/native-owned-q4-performance-intel-20261007-v1/plan.json",
+  "plan_sha256": "cc39cec72726fde14edbc727a12a5a42113cb116de8d5a6004c4dc91352c0b0a",
+  "abba_receipt_path": "/media/jmicko/faststore/kuno-development/native-owned-q4-performance-intel-20261007-v1/abba-receipt.json",
+  "abba_receipt_sha256": "232c40cbf745c4232a9dd71a7d59fce9e64901f165ca0550e3c65453b44fe9f7",
+  "card": "intel",
+  "fixture": "resident-rainwater",
+  "seed": 424242,
+  "temperature": 0,
+  "prompt_tokens": 75,
+  "output_tokens": 128,
+  "following_decode_steps": 127,
+  "host_cap_gib": 52,
+  "native_decode_projection_tile": 1,
+  "native_prefill_projection_tile": 8,
+  "compiler_idle": true,
+  "swap_max_bytes": 0,
+  "core_limit_bytes": 0,
+  "model_unloaded_before_each_child": true,
+  "global_caches_flushed": false,
+  "true_hot_full_request_implemented": false,
+  "production_limits_changed": false,
+  "matched_q4_performance_accepted": true,
+  "public_upload_old_new_abba_performed": false,
+  "production_accepted": false,
+  "ten_tokens_per_second_target_met": false,
+  "samples": [
+    {
+      "sample_index": 1,
+      "profile": "single-all",
+      "model_receipt_path": "/media/jmicko/faststore/kuno-development/native-owned-q4-performance-intel-20261007-v1/sample-1-cap-52.json",
+      "model_receipt_sha256": "38a2b34850b45304737b0ef47b77ee425af930fe04b6527abd2ae11b6d83c594",
+      "cgroup_receipt_sha256": "5d30929c307f53f51b80d2949914df79eda2396d4345f8592b2fc074fc16b969",
+      "telemetry_sha256": "3278990aff740acd0af5604a75321c1e90d00fabab8c3904518b6e7358a870ff",
+      "accepted": true,
+      "decode_tokens_per_second": 1.402106471770187,
+      "sampled_memory_peak_bytes": 8821927936,
+      "model_bind_ms": 1334,
+      "prefill_ms": 30704,
+      "generation_ms": 90578,
+      "warm_weight_read_ms": 15311,
+      "warm_weight_upload_ms": 155,
+      "warm_expert_hits": 45547,
+      "warm_expert_uploads": 15413,
+      "warm_uploaded_bytes": 50656768000,
+      "public_resident_warm_phase_ns": {
+        "native_attention_and_gr_enqueue": 22211343490,
+        "native_ffn_gr_and_router_enqueue": 1766537829,
+        "native_route_and_expert_enqueue": 30395800070,
+        "native_router_fence": 27427948917,
+        "native_shared_and_ffn_combine_enqueue": 4872621201
+      },
+      "owned_zero_audits": [
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        }
+      ]
+    },
+    {
+      "sample_index": 2,
+      "profile": "single-q4-all",
+      "model_receipt_path": "/media/jmicko/faststore/kuno-development/native-owned-q4-performance-intel-20261007-v1/sample-2-cap-52.json",
+      "model_receipt_sha256": "da9504cd4c437e7826b8d25332f9718dede141f0344b4b8b5a216d02998cf0ce",
+      "cgroup_receipt_sha256": "6b07ab29fc7e8d6d7865486c2d9387be8b777c9371774a2c01c2d1327b9a55b7",
+      "telemetry_sha256": "b6f335a636ca3f69fbb9be227a77f63ce56a79d969b0017887e321002f0650cc",
+      "accepted": true,
+      "decode_tokens_per_second": 1.4204545454545454,
+      "sampled_memory_peak_bytes": 8909398016,
+      "model_bind_ms": 1311,
+      "prefill_ms": 30019,
+      "generation_ms": 89408,
+      "warm_weight_read_ms": 14850,
+      "warm_weight_upload_ms": 156,
+      "warm_expert_hits": 45547,
+      "warm_expert_uploads": 15413,
+      "warm_uploaded_bytes": 50656768000,
+      "public_resident_warm_phase_ns": {
+        "native_attention_and_gr_enqueue": 21564689166,
+        "native_ffn_gr_and_router_enqueue": 1655311552,
+        "native_route_and_expert_enqueue": 29847002557,
+        "native_router_fence": 27535344610,
+        "native_shared_and_ffn_combine_enqueue": 4872300711
+      },
+      "owned_zero_audits": [
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        }
+      ]
+    },
+    {
+      "sample_index": 3,
+      "profile": "single-q4-all",
+      "model_receipt_path": "/media/jmicko/faststore/kuno-development/native-owned-q4-performance-intel-20261007-v1/sample-3-cap-52.json",
+      "model_receipt_sha256": "990e76baf5cb08a82cf0708cdc942eb797ad64fe5a3b4a0ac4c63f37feb84e91",
+      "cgroup_receipt_sha256": "753192090cf95106d504696f7bba22be9dd38d6e293605c9df4349300a289d84",
+      "telemetry_sha256": "8808b6036435ae9e84abad2eff02af65ed7d24ba8f69eee5b7b20bf8e47c6cbe",
+      "accepted": true,
+      "decode_tokens_per_second": 1.431147171512283,
+      "sampled_memory_peak_bytes": 8855044096,
+      "model_bind_ms": 1259,
+      "prefill_ms": 30308,
+      "generation_ms": 88740,
+      "warm_weight_read_ms": 14736,
+      "warm_weight_upload_ms": 157,
+      "warm_expert_hits": 45547,
+      "warm_expert_uploads": 15413,
+      "warm_uploaded_bytes": 50656768000,
+      "public_resident_warm_phase_ns": {
+        "native_attention_and_gr_enqueue": 21374185962,
+        "native_ffn_gr_and_router_enqueue": 1645505291,
+        "native_route_and_expert_enqueue": 29906306177,
+        "native_router_fence": 27099586557,
+        "native_shared_and_ffn_combine_enqueue": 4837233630
+      },
+      "owned_zero_audits": [
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        }
+      ]
+    },
+    {
+      "sample_index": 4,
+      "profile": "single-all",
+      "model_receipt_path": "/media/jmicko/faststore/kuno-development/native-owned-q4-performance-intel-20261007-v1/sample-4-cap-52.json",
+      "model_receipt_sha256": "f2fc061d8486aba7eb0f48877e8182af9094c9b10d2db2ad90b2b9cb45757b1f",
+      "cgroup_receipt_sha256": "1ecbbedd6b22d5a6b5ec6ae2ee6f14e3d55b7a0c3f6b2fa3e5db50947440b859",
+      "telemetry_sha256": "563ed76ee88059eaf80924654224999630a2267c98b95a421969e5fec6877ee6",
+      "accepted": true,
+      "decode_tokens_per_second": 1.4082476741736247,
+      "sampled_memory_peak_bytes": 8867315712,
+      "model_bind_ms": 1321,
+      "prefill_ms": 30281,
+      "generation_ms": 90183,
+      "warm_weight_read_ms": 15026,
+      "warm_weight_upload_ms": 157,
+      "warm_expert_hits": 45547,
+      "warm_expert_uploads": 15413,
+      "warm_uploaded_bytes": 50656768000,
+      "public_resident_warm_phase_ns": {
+        "native_attention_and_gr_enqueue": 22074500637,
+        "native_ffn_gr_and_router_enqueue": 1701023737,
+        "native_route_and_expert_enqueue": 30190775955,
+        "native_router_fence": 27351332073,
+        "native_shared_and_ffn_combine_enqueue": 4934714370
+      },
+      "owned_zero_audits": [
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        }
+      ]
+    }
+  ],
+  "same_all_128_output_ids": true,
+  "mean_decode_tokens_per_second": {
+    "single-all": 1.405177072971906,
+    "single-q4-all": 1.4258008584834143
+  },
+  "q4_observed_relative_mean_rate_change_percent": 1.4677001146830237,
+  "limitations": "Two repetitions per profile on one card; small observed Q4 effect; host cache not flushed, prefill includes lazy loading; each sample uses a new owner. No matched copy-before/after or new Ollama comparison."
+}

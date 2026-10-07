@@ -2048,3 +2048,28 @@ for exact commits, artifact/proof paths, limitations and preserved next proposal
 No GPU/compiler job is left running; installed inference admission is resumed.
 No installed binary/configuration, API, release or application change occurred.
 **Required Vashti changes: none.**
+
+### User-authorized paused-goal optimization pass (2026-10-07)
+
+The goal remains paused; the user explicitly authorized this additional turn.
+`feb76b3` records both-card grouped count1 finite-grid acceptance. `79ba326`
+moves owned original public GGUF weights into the ordinary upload queue without
+redundant Vec copies; private data and ordered-source APIs are unchanged.
+459 native/49 runtime tests, strict all-target Clippy, formatting and full
+18-file patch reconstruction pass. The exact `9d4f4277…` normal binary passes
+both-card52 routed/14-format/12-failure operators and complete short model,
+fresh continuation, cancellation, poisoned retry/recovery and owning erasure.
+
+The complete compiler-idle Intel52-GiB Q4 ABBA also passes all four75/128 fixture
+and lifecycle gates. Generic mean1.4052 and Q4 mean1.4258 decode tokens/s give
+only a small1.47% observed rate change; the10-tokens/s target is not met.
+This comparison does not isolate the upload copy change, repeat Ollama baselines
+or prove hot cross-request reuse. Preserve the dated receipts/artifact hashes,
+physical postflight and next CPU-miss model gates in the
+[latest owner checkpoint](kuno-native-text-checkpoint.md#latest-owned-public-upload-and-long-comparison-2026-10-07).
+This supersedes the previous finite-grid source-only status, not the unaccepted
+whole-model CPU-miss/default routing status. All lab jobs are stopped, admission
+is resumed and both inference listeners respond. Intel physical VRAM is back
+to50,688,000 bytes used; NVIDIA399MiB includes the desktop. No install, driver,
+hardware reset, API/routing, application or release change was made.
+**Required Vashti changes: none.**

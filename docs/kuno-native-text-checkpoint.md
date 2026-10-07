@@ -1,13 +1,91 @@
-# Native text checkpoint, 2026-10-06
+# Native text checkpoint, 2026-10-07
 
 The user intentionally paused the goal again on2026-10-07 to conserve weekly
-usage. The already-running benchmark/source-check block is finished; no GPU
+usage. The additional user-authorized optimization/benchmark block is finished; no GPU
 job or compiler is left running and installed inference admission is resumed.
 The objective remains incomplete. Use **10 decode tokens/s** as the agreed
 working target when resumed and do not repeat Ollama baseline tests. Root owns
 GPU/service operations; source-only agents use isolated worktrees.
 
+## Latest owned-public upload and long comparison, 2026-10-07
+
+`feb76b3` records both-card finite-grid acceptance. `79ba326` adds the narrowly
+scoped `create_public_owned(Vec<u8>)`: move immutable original public model bytes
+into the ordinary server write queue, avoiding redundant host Vec copies.
+Static original GGUF uploads and individual expert sources use it; private-data,
+ordered-source, reused bulk-buffer, admission, error and erasure paths remain
+unchanged. This is not zero-copy GPU staging. The runtime README records the
+exact boundary; the18-file patch SHA is
+`64e243409cde4685bc0207876156b595e0081b8d830c1faf66117bb1deb8278f`.
+It reconstructs against pinned archives with all modified hashes matching.
+459 Rust native tests,49 runtime tests, strict all-target Clippy and formatting
+pass; the Python controls are unchanged from their earlier99-test acceptance.
+
+Normal source `79ba326b4de1ff0ee5f7aa4244619bc47378cfb6` release SHA is
+`9d4f4277efdcbfcc2349657b9c1bc5d6bd7aef8f3a531c756d38099a4a187144`.
+Both adapters pass52 routed/14 original-format/12 expected-failure cases and
+the complete eight-token model, fresh continuation, layer0/3 cancellation,
+poisoned retry rejection, fresh recovery and all four1376-owner/818,249,728-byte
+MAIN audits, source0, normal exit/no retirement. Short observations are
+Intel5,096ms (read884/upload7ms), NVIDIA7,808ms (read613/upload23ms).
+The upload timer is asynchronous enqueue time, not device completion; the
+previous Intel run was profiled. These are not matched copy-before/after timing.
+Exact evidence: `rust-native-owned-public-upload-device-20261007.json` and
+`native-public-owned-build-20261007-v1` under the existing receipt/artifact roots.
+
+The **complete compiler-idle same-binary Intel Q4 ABBA** passes all four original
+75/128-output, seed424242/temperature0 model and lifecycle gates. Every sample
+uses native tile1, prefill MAX8, actual52-GiB host cap/swap0/core0, the same
+borrowed unmodified model, a fresh model owner, and all four original full audits.
+
+| Sample | Profile | Prefill ms | 127-step decode ms | Decode tokens/s |
+| --- | --- | ---: | ---: | ---: |
+| 1 | single-all | 30704 | 90578 | 1.4021 |
+| 2 | single-q4-all | 30019 | 89408 | 1.4205 |
+| 3 | single-q4-all | 30308 | 88740 | 1.4311 |
+| 4 | single-all | 30281 | 90183 | 1.4082 |
+
+Generic mean1.4052, Q4 mean1.4258 tokens/s: a small observed1.47% rate change,
+not the required10 tokens/s. Two repetitions on one card establish only this
+bounded comparison, not broad quality or production selection. OS caches were
+not flushed, prefill includes lazy loading, and this does not measure hot
+cross-request session reuse or the upload copy change in isolation. Process
+model caches do not survive samples. No new Ollama baseline was run.
+All128 output IDs match, no OOM or swap is recorded, and actual cumulative
+unit memory peak is about8.3GiB despite the52-GiB allowance. Preserve numerical
+proofs and telemetry at `native-owned-q4-performance-intel-20261007-v1`;
+aggregate identities/results: `rust-native-owned-q4-abba-intel-20261007.json`.
+
+Each completed public sample uploads50,656,768,000 expert-weight bytes during
+decode:15,413 misses,45,547 hits. Warm original reads take roughly15 seconds;
+phase waits also include queued GPU work and cannot isolate kernel times.
+The next priority is the existing default-off count1 CPU-miss seam's explicit
+whole-model numerical/lifecycle trial, with actual completed-miss evidence,
+separate1378-owner/818,413,568-byte validation and cap0 control. The earlier
+both-card packed CPU/GPU numeric/calibration acceptance below is already done;
+do not rerun that study simply to repeat it. CPU jobs currently join before GPU
+enqueue, so no overlap or automatic placement gain is established. A prepared
+host/pinned positional or mapped public-weight reader and safe persistent CPU
+workers are further measured candidates, not implemented by this pass.
+
+Read-only PCIe inspection identifies Intel's host-facing2b:00.0 bridge and root
+port at8GT/s x16; its internal2c:01.0/2d:00.0 fields report2.5GT/s x1 and should
+not be used alone as the physical host-link bandwidth. NVIDIA's actual endpoint
+reports5GT/s x4 through the chipset. These link fields are not transfer benchmark
+measurements; no hardware setting/reset/unbind/reboot occurred.
+
+The goal remains paused. Installed admission is resumed and verified
+paused=false/recovery_required=false; both Kuno and direct Ollama /api/ps return
+HTTP200 with no models resident, and Kuno /api/tags returns HTTP200. No lab unit
+or compiler remains running. A privileged read-only xe query reports50,688,000
+VRAM bytes used out of34,242,297,856; NVIDIA reports399MiB including the desktop.
+No installed binary/configuration, API/routing,
+Vashti, driver or release change was made; required Vashti changes: none.
+
 ## Clean paused checkpoint, 2026-10-07
+
+This is the earlier checkpoint, before the additional authorized pass above.
+The latest section supersedes its source/artifact and finite-grid status.
 
 Owner branch remains `codex/kuno-native-text` in
 `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`. Source through `d13e95d`

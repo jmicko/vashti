@@ -425,3 +425,12 @@ formatting. Both-card original-blob routed operators and complete model, fresh
 replay, cancellation, poisoned retry/recovery and owning zero audits are required
 before physical acceptance. A CPU leaf sample led to this investigation but
 does not isolate these copies or establish a performance gain.
+
+Both-card physical acceptance is now recorded for normal source `79ba326` /
+`9d4f4277…`:52 routed cases,14 formats,12 failures and the original complete
+short model/fresh replay/cancellation/retry rejection/recovery/full owning audits
+pass without retirement. See
+`../../text/receipts/rust-native-owned-public-upload-device-20261007.json` and
+[the latest checkpoint](../../../../../docs/kuno-native-text-checkpoint.md#latest-owned-public-upload-and-long-comparison-2026-10-07).
+The accepted long Intel Q4 comparison uses this upload path in both profiles;
+it is not a copy-before/after benchmark or a production routing acceptance.
