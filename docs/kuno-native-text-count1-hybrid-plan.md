@@ -239,6 +239,11 @@ join, actual Partials capacity plus padded CPU and owner encoding and all live
 headers must fit that same1MiB. No CPU job/vector is retained in48 Pending
 receipts. One additional1MiB runtime component is conservatively precharged
 alongside the existing64090112-byte maximum, giving65138688 below64MiB.
+The additional component explicitly counts128 full2048-byte INFO envelopes
+(the actual additional clears need96 records), four ownership/inspection copies
+of the160KiB CPU+owner upload, two32KiB packet readback copies and four8KiB
+slab tails:1015808 bytes. Rounded1MiB leaves32768 bytes. This supersedes the
+initial688128-byte estimate, which did not spell out full INFO ownership.
 The mandatory audited router dependency drains the preceding layer before
 scratch reuse; the final original whole-model proof covers the last layer.
 

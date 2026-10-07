@@ -31,6 +31,14 @@ const BLOCK_WORDS: usize = MAX_BATCH * D;
 const HYBRID_MAIN: u64 = 163_840;
 const HYBRID_HOST: usize = 1024 * 1024;
 const HYBRID_RUNTIME: u64 = 1024 * 1024;
+// Two extra scratch clears per layer; replacement merge/fold plus the new
+// owning packet fold have zero net INFO growth. Reserve128 rather than96.
+// Count full INFO source/target/inspection ownership, both bridge upload pages
+// with duplicate inspection, packet readback and duplicated slab padding.
+const HYBRID_IO_DERIVED: u64 = 128 * 2048 + 4 * HYBRID_MAIN + 2 * 32768 + 4 * 8192;
+const {
+    assert!(HYBRID_IO_DERIVED <= HYBRID_RUNTIME);
+}
 
 fn error() -> Error {
     Error::InvalidFormat("native model chunk rejected")
@@ -1402,6 +1410,8 @@ mod tests {
         assert_eq!(1286 + 90 + 2, 1378);
         assert_eq!(HOST_CAP - (HOST_COMPONENTS + HYBRID_HOST), 458752);
         assert_eq!(runtime_bytes(38).unwrap() + HYBRID_RUNTIME, 65138688);
+        assert_eq!(HYBRID_IO_DERIVED, 1015808);
+        assert_eq!(HYBRID_RUNTIME - HYBRID_IO_DERIVED, 32768);
         assert!(
             runtime_bytes(38).unwrap() + HYBRID_RUNTIME <= crate::executor::RESIDENT_RUNTIME_IO_MAX
         );
