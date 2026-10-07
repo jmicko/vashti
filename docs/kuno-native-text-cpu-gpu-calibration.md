@@ -159,6 +159,31 @@ compilation, test execution or device timing accompanies this source handoff.
 
 ## Approved original snapshot
 
+### Protected fixed calibration registration
+
+The owner laboratory registers `resident-cpu-gpu-expert-calibration` separately
+from the unchanged four-case numeric mode. Only the card and compiled mode may
+be passed; a receipt destination and transient I/O plus full owning audits are
+required before device/model access. The protected launcher additionally
+verifies actual8-GiB, swap0/core0 containment. It calls the fixed helper on the
+same configured client, borrowed original blob and shared retirement owner.
+The prior both-card Q5/Q8 complete-expert numeric acceptance is a prerequisite;
+each new exact configuration also completes its own numeric gates before timing.
+
+The receipt uses scope `fixed-public-original-cpu-gpu-expert-calibration`, six
+points, 12 numeric gates and 24 samples. It records the fixed group0/vector0,
+AVX2/16 workers, ten original ranks, original-read warmed-cache scope, existing
+numeric/audit fields, checked integer nanosecond timings, and explicit
+candidate/cleanup/full-with-references walls. Original permits, selections,
+input vectors and model payloads are never serialized. Unexpected timing/mode
+values reject publication. Completion requires final original-file, cancel and
+retirement checks after all helper cleanup; no full-model or automatic placement
+claim follows. A destination write failure can leave an incomplete public lab
+file, but fails without the completion marker and cannot pass the run validator.
+
+The registration's source tests and physical execution are separate acceptance
+steps; see the current owner checkpoint for exact completed results.
+
 Bounded original CPU/GPU expert acceptance and joint calibration
 Source-only proposal, 2026-10-05; implementation awaits approval.
 

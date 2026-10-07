@@ -76,6 +76,7 @@ fn transient_resident_mode(mode: &str, raw: Option<&str>) -> Result<bool, &'stat
                     | "resident-lifecycle-probe"
                     | "resident-numeric-boundaries-probe"
                     | "resident-cpu-gpu-expert-probe"
+                    | "resident-cpu-gpu-expert-calibration"
             ) =>
         {
             Ok(true)
@@ -112,6 +113,7 @@ fn protected_model_diagnostic(
         "resident-lifecycle-probe"
             | "resident-numeric-boundaries-probe"
             | "resident-cpu-gpu-expert-probe"
+            | "resident-cpu-gpu-expert-calibration"
     ) && !(transient && audit)
     {
         return Err("model diagnostic requires owned transient I/O and complete zero audits");
@@ -193,6 +195,77 @@ fn cpu_gpu_expert_numeric_report(
         "metadata_bytes":report.metadata_bytes,"snapshot_bytes":report.snapshot_bytes,
         "operator_numeric_accepted":true,"owned_cleanup_accepted":true
     }))
+}
+
+fn public_duration_ns(duration: std::time::Duration) -> kuno_text::Result<u64> {
+    u64::try_from(duration.as_nanos())
+        .map_err(|_| kuno_text::Error::InvalidFormat("public calibration duration overflow"))
+}
+
+fn cpu_gpu_calibration_metrics(
+    report: &cpu_gpu_expert_probe::Report,
+) -> kuno_text::Result<serde_json::Value> {
+    let mut value = serde_json::json!({
+        "layer":report.layer,"down_dtype":report.down_dtype,"workers":report.workers,
+        "misses":report.misses,"cpu_misses":report.cpu_misses,"gpu_misses":report.gpu_misses,
+        "max_tree_error":report.max_tree_error,"max_legacy_error":report.max_legacy_error,
+        "max_core_error":report.max_core_error,"private_pages":report.private_pages,
+        "private_bytes":report.private_bytes,"bank_bytes":report.bank_bytes,
+        "source_precharge":report.source_precharge,"io_inspected_bytes":report.io_inspected_bytes,
+        "zero_buffers":report.zero_buffers,"zero_bytes":report.zero_bytes,
+        "metadata_bytes":report.metadata_bytes,"snapshot_bytes":report.snapshot_bytes,
+    });
+    match (report.timing, report.bridge_and_merge) {
+        (Some(times), Some(bridge)) => {
+            value["timing_ns"] = serde_json::json!({
+                "cpu":public_duration_ns(times.cpu)?,"gpu":public_duration_ns(times.gpu)?,
+                "joined":public_duration_ns(times.joined)?,"bridge_and_merge":public_duration_ns(bridge)?,
+            });
+        }
+        (None, None) => value["timing_ns"] = serde_json::Value::Null,
+        _ => {
+            return Err(kuno_text::Error::InvalidFormat(
+                "public calibration timing fields incomplete",
+            ));
+        }
+    }
+    Ok(value)
+}
+
+fn cpu_gpu_calibration_points(
+    report: &cpu_gpu_expert_probe::FixedCalibrationReport,
+) -> kuno_text::Result<Vec<serde_json::Value>> {
+    let mut points = Vec::with_capacity(cpu_gpu_expert_probe::FIXED_CALIBRATION_POINTS);
+    for point in &report.points {
+        let numeric = point
+            .numeric
+            .iter()
+            .map(cpu_gpu_calibration_metrics)
+            .collect::<kuno_text::Result<Vec<_>>>()?;
+        let mut samples = Vec::with_capacity(cpu_gpu_expert_probe::FIXED_CALIBRATION_SAMPLES);
+        for sample in &point.samples {
+            let mode = match sample.mode {
+                cpu_gpu_expert_schedule::Mode::Concurrent => "concurrent",
+                cpu_gpu_expert_schedule::Mode::CpuFirst => "cpu-first",
+                _ => {
+                    return Err(kuno_text::Error::InvalidFormat(
+                        "public calibration mode rejected",
+                    ));
+                }
+            };
+            samples.push(serde_json::json!({
+                "mode":mode,"report":cpu_gpu_calibration_metrics(&sample.report)?,
+                "candidate_completed_wall_ns":public_duration_ns(sample.candidate_completed_wall)?,
+                "acceptance_cleanup_wall_ns":public_duration_ns(sample.acceptance_cleanup_wall)?,
+                "full_run_including_references_wall_ns":public_duration_ns(sample.full_run_including_references_wall)?,
+            }));
+        }
+        points.push(
+            serde_json::json!({"down_dtype":point.down_dtype,"cpu_misses":point.cpu_misses,
+            "numeric_modes":["concurrent","cpu-first"],"numeric":numeric,"samples":samples}),
+        );
+    }
+    Ok(points)
 }
 
 fn native_decode_mode(
@@ -348,7 +421,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     protected_model_diagnostic(&mode, transient_resident, public_owned_zero_audit)?;
     // This fixed operator accepts no additional case/configuration arguments.
     // Its receipt destination is required before any device or model access.
-    let cpu_gpu_expert_receipt = if mode == "resident-cpu-gpu-expert-probe" {
+    let cpu_gpu_expert_receipt = if matches!(
+        mode.as_str(),
+        "resident-cpu-gpu-expert-probe" | "resident-cpu-gpu-expert-calibration"
+    ) {
         if std::env::args().count() != 3 {
             return Err("CPU/GPU expert probe accepts only its compiled numeric cases".into());
         }
@@ -598,6 +674,52 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             serde_json::to_writer_pretty(output, &receipt)?;
             println!(
                 "public_cpu_gpu_expert_numeric_complete cases=4 ranks=10 owned_cleanup=true context_retired=false performance_accepted=false"
+            );
+            return Ok(());
+        }
+        if mode == "resident-cpu-gpu-expert-calibration" {
+            let target = cpu_gpu_expert_receipt
+                .ok_or("fixed-public CPU/GPU calibration receipt path required")?;
+            let path = std::env::var_os("KUNO_TEST_GGUF").ok_or("existing GGUF required")?;
+            let file = GgufFile::open(path, GgufLimits::default())?;
+            let model = Qwen4Exp::bind(&file)?;
+            let retired = transient_context
+                .clone()
+                .ok_or("CPU/GPU calibration requires configured transient stream")?;
+            let cancel = AtomicBool::new(false);
+            let reports = cpu_gpu_expert_probe::run_fixed_calibration(
+                &client,
+                &file,
+                model.bound_graph(),
+                &grouped_limits,
+                retired.clone(),
+                &cancel,
+            )?;
+            let points = cpu_gpu_calibration_points(&reports)?;
+            file.verify_file_unchanged()?;
+            if cancel.load(std::sync::atomic::Ordering::Acquire)
+                || retired.load(std::sync::atomic::Ordering::Acquire)
+            {
+                return Err("CPU/GPU calibration did not accept complete cleanup".into());
+            }
+            let receipt = serde_json::json!({
+                "scope":"fixed-public-original-cpu-gpu-expert-calibration",
+                "vendor":vendor,"weights":"borrowed-unmodified-ollama-blob",
+                "fixed_public_points":6,"numeric_gates":12,"timing_samples":24,
+                "ranks_per_case":10,"group":0,"vector":0,"backend":"avx2","workers":16,
+                "cache_scope":"warmed-original-read-operator-only",
+                "source_kind":"original-packed-gguf","points":points,
+                "owned_cleanup_accepted":true,"context_retired":false,
+                "full_model_or_automatic_placement_accepted":false,
+            });
+            use std::io::Write;
+            let mut output = std::fs::OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(target)?;
+            output.write_all(serde_json::to_string_pretty(&receipt)?.as_bytes())?;
+            println!(
+                "public_cpu_gpu_expert_calibration_complete points=6 numeric_gates=12 samples=24 owned_cleanup=true context_retired=false full_model_accepted=false"
             );
             return Ok(());
         }
@@ -1809,6 +1931,7 @@ mod transient_mode_tests {
             "resident-lifecycle-probe",
             "resident-numeric-boundaries-probe",
             "resident-cpu-gpu-expert-probe",
+            "resident-cpu-gpu-expert-calibration",
         ] {
             assert_eq!(super::transient_resident_mode(mode, Some("1")), Ok(true));
             for transient in [false, true] {
