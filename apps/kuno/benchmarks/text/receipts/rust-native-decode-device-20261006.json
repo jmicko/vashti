@@ -1,0 +1,219 @@
+{
+  "scope": "fixed-public-native-decode-continuation-device-and-rejected-comparison",
+  "source_build_commit": "22c1ac6",
+  "source_integrated_through": "9fb6a2b",
+  "host_tests": 400,
+  "clippy_all_targets_warnings_denied": true,
+  "public_fixture_only": true,
+  "native_default_enabled": false,
+  "production_installed": false,
+  "ollama_baseline_repeated": false,
+  "working_decode_target_tokens_per_second": 10,
+  "chat_device_acceptance": [
+    {
+      "card": "intel",
+      "model_receipt_sha256": "19728dfb1442f0f651209f0689e69e41c6716b298993cc57ea479769d3eec32e",
+      "run_record_sha256": "c0fb24925f4514418b32f9a438498f7c62a9ba5eeae19733781ec112ac92ad97",
+      "run_record": {
+        "card": "intel",
+        "cargo_artifacts_sha256": "d2599f29628dbd5f3d1a91108469a0d3febd10121a005628477bba2f6d15f60d",
+        "count": 8,
+        "fixture": "resident-chat",
+        "frozen_executable_sha256": "6dcd3e2e59b2d184ff83b264b2f6110883daac116a1e07c9cf1c01c04cca44fd",
+        "matched_performance_measurement": false,
+        "native_decode": true,
+        "protected_lifecycle_completion_checked": true,
+        "receipt_sha256": "19728dfb1442f0f651209f0689e69e41c6716b298993cc57ea479769d3eec32e",
+        "scope": "fixed-public-model-partition-output-and-lifecycle-fixture-only"
+      },
+      "prefill_ms": 14779,
+      "generation_ms": 12697,
+      "observed_native_steps": 7,
+      "observed_scalar_steps": 0,
+      "expected_public_output_ids_match": true,
+      "full_owning_audits": [
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        }
+      ],
+      "long_context_or_quality_acceptance": false,
+      "throughput_claim": false
+    },
+    {
+      "card": "nvidia",
+      "model_receipt_sha256": "e7821ce0106bd6ee632a50183678683f4fa11e646da7275ec4df394b7688edef",
+      "run_record_sha256": "c6e61007a8f5075d70d9d46040e35c7837067c51c127d2b45cb3582caeb1f953",
+      "run_record": {
+        "card": "nvidia",
+        "cargo_artifacts_sha256": "d2599f29628dbd5f3d1a91108469a0d3febd10121a005628477bba2f6d15f60d",
+        "count": 8,
+        "fixture": "resident-chat",
+        "frozen_executable_sha256": "6dcd3e2e59b2d184ff83b264b2f6110883daac116a1e07c9cf1c01c04cca44fd",
+        "matched_performance_measurement": false,
+        "native_decode": true,
+        "protected_lifecycle_completion_checked": true,
+        "receipt_sha256": "e7821ce0106bd6ee632a50183678683f4fa11e646da7275ec4df394b7688edef",
+        "scope": "fixed-public-model-partition-output-and-lifecycle-fixture-only"
+      },
+      "prefill_ms": 21730,
+      "generation_ms": 13006,
+      "observed_native_steps": 7,
+      "observed_scalar_steps": 0,
+      "expected_public_output_ids_match": true,
+      "full_owning_audits": [
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        }
+      ],
+      "long_context_or_quality_acceptance": false,
+      "throughput_claim": false
+    }
+  ],
+  "partial_intel_comparison": {
+    "aggregate_accepted": false,
+    "planned_samples": 4,
+    "completed_model_receipts": 2,
+    "failed_run_retained": true,
+    "failure_class": "limits-or-worker-or-identity",
+    "failure_location_not_proven": true,
+    "process_io_exit_race_suspected": true,
+    "aggregate_sha256": "e5539efdd5e6a58cb17c33983cfcf7796e8eeee3c054a91659e2768eb8f54475",
+    "samples": [
+      {
+        "index": 1,
+        "model_receipt_sha256": "f79c29c8da6adf6243953f746f8fcbca7b54871b9c76c17b8a073bc24b3bdc27",
+        "native_decode": false,
+        "prefill_ms": 50275,
+        "generation_ms": 71032,
+        "recorded_decode_tokens_per_second": 1.7879265683072418,
+        "all_128_public_output_ids_match_other_sample": true,
+        "model_owning_cleanup_accepted": true,
+        "full_owning_audits": [
+          {
+            "main_buffers": 1376,
+            "main_bytes": 818249728,
+            "source_buffers": 1905,
+            "source_bytes": 70746112
+          },
+          {
+            "main_buffers": 1376,
+            "main_bytes": 818249728,
+            "source_buffers": 0,
+            "source_bytes": 0
+          },
+          {
+            "main_buffers": 1376,
+            "main_bytes": 818249728,
+            "source_buffers": 0,
+            "source_bytes": 0
+          },
+          {
+            "main_buffers": 1376,
+            "main_bytes": 818249728,
+            "source_buffers": 0,
+            "source_bytes": 0
+          }
+        ],
+        "phase_ns": {
+          "attention_combine_and_ffn_gr_enqueue": 5576551603,
+          "attention_enqueue_and_host_fences": 7865595342,
+          "attention_gr_enqueue": 218186260,
+          "expert_upload_and_enqueue": 32428801176,
+          "moe_route_and_upload_enqueue": 53852236179,
+          "ple_and_previous_owner": 866945010,
+          "router_fence": 21030989655
+        },
+        "telemetry_sha256": "8b660dbd4387fc6a76e3c2dcbdd2bfb612a3a6dce1c914940653019745dcbf14",
+        "full_sample_supervisor_accepted": true,
+        "cgroup_record_sha256": "625339a1b9b4d105e5709d50f23ed52dc5adb586cca46d09ee1cd3688d879040"
+      },
+      {
+        "index": 2,
+        "model_receipt_sha256": "858312259e0b795825fb587c416f9449db18c25aec10e1842054f0b1671a10e2",
+        "native_decode": true,
+        "prefill_ms": 38311,
+        "generation_ms": 224924,
+        "recorded_decode_tokens_per_second": 0.564635165655955,
+        "all_128_public_output_ids_match_other_sample": true,
+        "model_owning_cleanup_accepted": true,
+        "full_owning_audits": [
+          {
+            "main_buffers": 1376,
+            "main_bytes": 818249728,
+            "source_buffers": 0,
+            "source_bytes": 0
+          },
+          {
+            "main_buffers": 1376,
+            "main_bytes": 818249728,
+            "source_buffers": 0,
+            "source_bytes": 0
+          },
+          {
+            "main_buffers": 1376,
+            "main_bytes": 818249728,
+            "source_buffers": 0,
+            "source_bytes": 0
+          },
+          {
+            "main_buffers": 1376,
+            "main_bytes": 818249728,
+            "source_buffers": 0,
+            "source_bytes": 0
+          }
+        ],
+        "phase_ns": {
+          "native_attention_and_gr_enqueue": 23941144273,
+          "native_ffn_gr_and_router_enqueue": 1876249867,
+          "native_route_and_expert_enqueue": 36231940622,
+          "native_router_fence": 151756646985,
+          "native_shared_and_ffn_combine_enqueue": 5488726545
+        },
+        "telemetry_sha256": "a335fe40688cfedbac9682285387bca8ff7f335bf34c37a5a36791d52f61be68",
+        "full_sample_supervisor_accepted": false
+      }
+    ]
+  }
+}

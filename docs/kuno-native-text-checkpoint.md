@@ -1,10 +1,52 @@
 # Native text checkpoint, 2026-10-06
 
-The user resumed after moving `~/dev` to the NVMe, then requested a break while
-one Intel comparison was already running. That comparison has finished with all
-four samples accepted and launcher/supervisor exit0. Work stops at this clean
-checkpoint for the requested pause; no native lab job remains running. Do not
-start another GPU job until the user resumes. The objective remains incomplete.
+The user has resumed the goal, authorized both GPUs and asked for continued
+native optimization. The objective remains incomplete. Use **10 decode tokens/s**
+as the agreed working target and do not repeat Ollama baseline tests. The older
+paused receipts below remain historical evidence, not a current instruction to
+stop. Root owns GPU/service operations; source-only agents use isolated worktrees.
+
+## Resumed native continuation evidence, 2026-10-06
+
+Root `codex/kuno-native-text` integrates `3735a2c` aggregate native phase timers,
+`22c1ac6` protected native count1 continuation, `484fe41` same-binary 52-GiB
+decode comparison, and `9fb6a2b` bounded CPU/GPU numeric CLI registration. The
+current source passes 400 host/offline tests and strict all-target Clippy. There
+is no production native worker, routing change, installation or Vashti change.
+
+The release binary built from `22c1ac6` is frozen as SHA256
+`6dcd3e2e59b2d184ff83b264b2f6110883daac116a1e07c9cf1c01c04cca44fd`.
+Both cards pass the protected eight-token chat reference with native prefill
+8+7 and seven native continuation steps, zero scalar steps. Cancellation,
+poisoned retry rejection, fresh first-token recovery, all four original MAIN
+audits (1376 pages/818,249,728 bytes each), source audits and normal cleanup pass.
+The short runs include warm-up and do not establish a throughput improvement.
+See `apps/kuno/benchmarks/text/receipts/rust-native-decode-device-20261006.json`.
+
+The Intel scalar/native/native/scalar comparison ended after its second child,
+with an aggregate supervisor failure. Preserve the complete failed directory
+`/media/jmicko/faststore/kuno-development/native-decode-performance-intel-20261006-v1`.
+Do not claim completed ABBA acceptance or replay it merely to obtain the same
+result. Scalar sample1 is accepted at 71.032 seconds for 127 decode steps
+(1.788 tokens/s). The native sample2 model receipt records 224.924 seconds
+(0.565 tokens/s), the same 128 IDs and all four completed owning audits; its
+supervisor sample record was not published. The exact failure location is not
+proven. A `/proc/<pid>/io` exit race is a source-identified possibility; fix
+bounded process telemetry without weakening model/lifecycle validation.
+
+Native router-fence wall time is 151.757 seconds versus scalar 21.031. These
+timers include dependent queued work, not isolated GPU execution. The native
+eight-token static projection tile is a candidate bottleneck; a protected
+public tile1 experiment is in source development, not yet built/device-accepted.
+Its default must remain eight, prefill stays MAX8, and private count/positions
+must remain runtime data. Independent numeric checks precede timing.
+
+The new CPU/GPU numeric CLI builds but Intel currently rejects its fixed
+operator fixture before aggregate publication. Both failed launches retain
+actual swap0/core0/8-GiB protection and content-free run records under
+`/media/jmicko/faststore/kuno-development/native-cpu-gpu-build-20261006-v1`.
+Do not grant a timing or whole-model placement permit from source tests alone.
+Constant stage diagnostics are being prepared without changing numerical gates.
 
 ## Current priority amendment, 2026-10-06
 
