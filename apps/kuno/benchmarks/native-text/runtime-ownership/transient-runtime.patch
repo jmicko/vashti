@@ -14,10 +14,39 @@
  use cubecl_common::{
      backtrace::BackTrace,
      bytes::{AllocationProperty, Bytes},
-@@ -298,6 +299,139 @@
+@@ -298,6 +299,168 @@
          .unwrap()
          .remove(0)
          .memory
++    }
++
++    /// Move immutable public model bytes into the ordinary upload queue.
++    ///
++    /// This native-lab path must never receive prompts, activations, routing
++    /// packets or other private data. It preserves ordinary resource layout,
++    /// stream ordering and server writes; only redundant host copies disappear.
++    /// Private uploads must continue through `write_private` and its controller.
++    pub fn create_public_owned(&self, data: Vec<u8>) -> Handle {
++        let stream_id = self.stream_id();
++        let shape: Shape = [data.len()].into();
++        let descriptor =
++            MemoryLayoutDescriptor::new(MemoryLayoutStrategy::Contiguous, shape.clone(), 1);
++        let (handle_base, mut layouts) =
++            self.utilities.layout_policy.apply(stream_id, &[descriptor]);
++        let layout = layouts.remove(0);
++        let copy = CopyDescriptor::new(
++            layout.memory.clone().binding(),
++            shape,
++            layout.strides.clone(),
++            1,
++        );
++        let data = Bytes::from_elems(data);
++        let (size, memory) = (handle_base.size(), handle_base.memory);
++        self.device.submit(move |server| {
++            server.initialize_memory(memory, size, stream_id);
++            server.write(vec![(copy, data)], stream_id);
++        });
++        layout.memory
 +    }
 +
 +    /// Enable bounded explicitly owned I/O for this serialized stream.

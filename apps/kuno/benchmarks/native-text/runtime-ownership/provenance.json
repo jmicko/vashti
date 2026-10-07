@@ -49,7 +49,7 @@
   "changed_files": [
     {
       "path": "cubecl-runtime/src/client.rs",
-      "sha256": "ca1b728f890ac42fa1c1c1c95ff242e5bc71edafd3b4aef7c2704c8740bf5b91",
+      "sha256": "a232ba9ffd504174cd72a6e5c6001289dc86726456a266336cb78b303651cda4",
       "original_sha256": "dd25c67906e3db68d05d916d45234e4bdf20cd5b65ac1ad2b00a2ddcb520e85a"
     },
     {
@@ -138,7 +138,7 @@
       "original_sha256": null
     }
   ],
-  "patch_sha256": "0a4d4f09a7b641c4e55580893200173a855ae9686f69e7cee0202e32501cf589",
+  "patch_sha256": "64e243409cde4685bc0207876156b595e0081b8d830c1faf66117bb1deb8278f",
   "lock_sha256": "b63c5bbf0b755839ed0a59bcf0c83c8ca87bb94ebd57933c7fccac21dcfaece5",
   "host_lock_sha256": "b968a383901ba657bdc2b670a0c7d30fc8c6b8c7ae9335c7c231fb827f0b7acf"
 }

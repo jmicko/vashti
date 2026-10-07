@@ -567,7 +567,7 @@ fn fill_source(
         )?
     } else {
         // Immutable PUBLIC weights retain the original ordinary upload policy.
-        client.create_from_slice(&packed)
+        client.create_public_owned(packed)
     };
     copy_words::launch::<WgpuRuntime>(
         client,

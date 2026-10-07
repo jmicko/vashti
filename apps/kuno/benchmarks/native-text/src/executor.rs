@@ -1097,10 +1097,10 @@ impl<'a> GpuExecutor<'a> {
         let started = Instant::now();
         let handle = if let Some(admission) = &self.resident_admission {
             admission.allocate(&[padded as u64], || {
-                Ok(self.client.create_from_slice(&packed))
+                Ok(self.client.create_public_owned(packed))
             })?
         } else {
-            self.client.create_from_slice(&packed)
+            self.client.create_public_owned(packed)
         };
         self.weight_upload_ns += started.elapsed().as_nanos();
         self.uploaded_bytes += padded as u64;

@@ -338,7 +338,7 @@ These are laboratory receipts, without production private-worker or timing
 selection. See [the measured limits](../../../../../docs/kuno-text-performance.md#mapping-callback-completion-repair-2026-10-05).
 The current18-file composed patch reconstructs exactly against pinned original
 archives; its SHA256 is
-`e3aa774114789d47b6d14bc817a2e1f6da0a849020c0324492dd5c21cb2def4a`.
+`64e243409cde4685bc0207876156b595e0081b8d830c1faf66117bb1deb8278f`.
 
 From the repository root, use the standalone host manifest at
 `apps/kuno/benchmarks/native-text/runtime-ownership/host/Cargo.toml` with
@@ -400,3 +400,28 @@ failure. No cleanup attempt, poll bound, allocator or retirement policy changed.
 31 host fixtures and204 native tests pass. The protected default-off96-slot long
 run exposed `upload_map`; further callback/error-scope diagnosis remains open.
 This diagnostic is not evidence of successful erasure after failure.
+
+## Owned public weight upload candidate (2026-10-07)
+
+`ComputeClient::create_public_owned(Vec<u8>)` is a narrowly scoped laboratory
+API for immutable original public model bytes. It moves the caller's existing
+Vec into `Bytes::from_elems` and the ordinary server upload queue, avoiding
+`create_from_slice`'s slice copy, the internal vector copy and possible aligned
+allocation copy. The original contiguous layout policy, one-byte geometry,
+stream selection, memory initialization and ordinary `server.write` are
+preserved. GPU staging/upload still copies; this is not zero-copy device I/O.
+The queue owns the payload until the server processes it.
+
+Only the ordinary original GGUF static-weight path and individual public expert
+source upload call it. Both callers already supply fully initialized padded
+public payloads. Explicit ordered-public source mode, reused bulk-fill buffers,
+private activations/uniforms/router packets and every erasure/admission path are
+unchanged. It must never receive request-derived content or routing metadata.
+The type system does not classify public versus private bytes; this boundary is
+enforced by the narrow reviewed call sites, not a general secure Vec facility.
+
+Source checks pass459 native tests,49 runtime tests, all-target strict Clippy and
+formatting. Both-card original-blob routed operators and complete model, fresh
+replay, cancellation, poisoned retry/recovery and owning zero audits are required
+before physical acceptance. A CPU leaf sample led to this investigation but
+does not isolate these copies or establish a performance gain.
