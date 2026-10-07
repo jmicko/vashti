@@ -287,6 +287,7 @@ impl Drop for Partials {
 pub struct ExpertOperator {
     workers: WorkerPlan,
     backend: Backend,
+    pool: Option<rayon::ThreadPool>,
 }
 
 impl ExpertOperator {
@@ -294,7 +295,53 @@ impl ExpertOperator {
         if backend == Backend::Avx2 && !avx2_available() {
             return Err(Error::InvalidFormat("CPU expert AVX2 unavailable"));
         }
-        Ok(Self { workers, backend })
+        Ok(Self {
+            workers,
+            backend,
+            pool: None,
+        })
+    }
+
+    /// Explicit reusable workers. Only public topology lives between calls.
+    /// Broadcast joins all consumers; scratch and guarded row headers are
+    /// call-owned. Opaque runtime jobs/stacks have the same exclusion as std
+    /// thread internals; no forensic erasure claim is made for either backend.
+    pub fn new_pooled(workers: WorkerPlan, backend: Backend) -> Result<Self> {
+        let mut operator = Self::new(workers, backend)?;
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(operator.workers.count)
+            .build()
+            .map_err(|_| Error::LimitExceeded("CPU expert pool spawn"))?;
+        let setup = pool.broadcast(|context| {
+            if operator.workers.pinned {
+                affinity::pin(operator.workers.cores[context.index()])
+            } else {
+                Ok(())
+            }
+        });
+        for result in setup {
+            result?;
+        }
+        operator.pool = Some(pool);
+        Ok(operator)
+    }
+
+    fn rows(
+        &self,
+        output: &mut [f32],
+        width: usize,
+        cancel: &AtomicBool,
+        hook: &(impl Fn(usize) + Sync),
+        run: impl Fn(usize, &mut Scratch) -> Result<f32> + Sync,
+    ) -> Result<()> {
+        match &self.pool {
+            Some(pool) => pooled_rows(pool, output, width, cancel, hook, run),
+            None => parallel_rows(&self.workers, output, width, cancel, hook, run),
+        }
+    }
+
+    pub fn workers_pooled(&self) -> bool {
+        self.pool.is_some()
     }
 
     pub fn worker_count(&self) -> usize {
@@ -348,8 +395,7 @@ impl ExpertOperator {
             .reader
             .read_range(matrix.tensor, *offset as u64, &mut packed)?;
         offset.zeroize();
-        parallel_rows(
-            &self.workers,
+        self.rows(
             &mut values[..matrix.rows],
             matrix.columns,
             cancel,
@@ -510,8 +556,7 @@ impl ExpertOperator {
             }
         }
         weights.reader.verify_file_unchanged()?;
-        parallel_rows(
-            &self.workers,
+        self.rows(
             &mut activations[..selected.len() * g.feed_forward],
             row_width,
             cancel,
@@ -541,8 +586,7 @@ impl ExpertOperator {
                 )
             },
         )?;
-        parallel_rows(
-            &self.workers,
+        self.rows(
             &mut values[..selected.len() * g.hidden],
             row_width,
             cancel,
@@ -580,9 +624,13 @@ impl ExpertOperator {
 }
 
 fn worker_handle_metadata_bytes() -> Result<usize> {
-    retained_metadata::Owner::<std::thread::ScopedJoinHandle<'static, Result<()>>>::bytes_for(
-        MAX_WORKERS,
-    )
+    let scoped =
+        retained_metadata::Owner::<std::thread::ScopedJoinHandle<'static, Result<()>>>::bytes_for(
+            MAX_WORKERS,
+        )?;
+    let pooled =
+        retained_metadata::Owner::<std::sync::Mutex<RowJob<'static>>>::bytes_for(MAX_WORKERS)?;
+    Ok(scoped.max(pooled))
 }
 
 // Only retained application-owned headers are handled here. Public payloads
@@ -850,6 +898,100 @@ impl Scratch {
             sums: Zeroizing::new([0.; LANES]),
         })
     }
+}
+
+// All retained row pointers, bounds and completions live in the original
+// full-capacity typed header owner, erased only after synchronous broadcast.
+struct RowJob<'a> {
+    first: usize,
+    rows: &'a mut [f32],
+    result: Option<Result<()>>,
+}
+
+fn pooled_rows(
+    pool: &rayon::ThreadPool,
+    output: &mut [f32],
+    width: usize,
+    cancel: &AtomicBool,
+    hook: &(impl Fn(usize) + Sync),
+    run: impl Fn(usize, &mut Scratch) -> Result<f32> + Sync,
+) -> Result<()> {
+    let failed = AtomicBool::new(false);
+    let count = pool.current_num_threads().min(output.len());
+    if count == 0 || count > MAX_WORKERS {
+        return Err(Error::InvalidBufferLength);
+    }
+    let rows_per_worker = output.len().div_ceil(count);
+    let result = (|| {
+        let mut jobs = retained_metadata::Owner::new(MAX_WORKERS)?;
+        let mut live = 0;
+        for (worker, rows) in output.chunks_mut(rows_per_worker).enumerate() {
+            jobs.push(std::sync::Mutex::new(RowJob {
+                first: worker * rows_per_worker,
+                rows,
+                result: None,
+            }))?;
+            live += 1;
+        }
+        // Each broadcast index owns exactly one disjoint chunk. It is never
+        // stolen, and returning unit keeps runtime result storage content-free.
+        // catch_unwind is INSIDE the lock: a user hook panic cannot poison it.
+        pool.broadcast(|context| {
+            if context.index() >= live {
+                return;
+            }
+            let Ok(slot) = jobs.get(context.index()) else {
+                failed.store(true, Ordering::Relaxed);
+                return;
+            };
+            let Ok(mut job) = slot.lock() else {
+                failed.store(true, Ordering::Relaxed);
+                return;
+            };
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let mut scratch = Scratch::new(width)?;
+                let first = job.first;
+                for (local, target) in job.rows.iter_mut().enumerate() {
+                    if failed.load(Ordering::Relaxed) {
+                        return Ok(());
+                    }
+                    check_cancel(cancel)?;
+                    hook(first + local);
+                    *target = run(first + local, &mut scratch)?;
+                }
+                Ok(())
+            }))
+            .unwrap_or(Err(Error::InvalidFormat("CPU expert worker panic")));
+            if result.is_err() {
+                failed.store(true, Ordering::Relaxed);
+            }
+            job.result = Some(result);
+        });
+        // Broadcast has completed every callback before inspection/header drop.
+        let mut first_error = None;
+        for index in 0..live {
+            let result = jobs
+                .get(index)?
+                .lock()
+                .map_err(|_| Error::InvalidFormat("CPU expert pool completion"))?
+                .result
+                .take()
+                .ok_or(Error::InvalidFormat("CPU expert pool incomplete"))?;
+            if let Err(error) = result
+                && first_error.is_none()
+            {
+                first_error = Some(error);
+            }
+        }
+        if failed.load(Ordering::Relaxed) && first_error.is_none() {
+            return Err(Error::InvalidFormat("CPU expert pool incomplete"));
+        }
+        first_error.map_or(Ok(()), Err)
+    })();
+    if result.is_err() {
+        output.zeroize();
+    }
+    result
 }
 
 fn parallel_rows(
@@ -1639,10 +1781,7 @@ mod tests {
             let mut handles = retained_metadata::Owner::new(MAX_WORKERS)
                 .unwrap()
                 .observe(handles_witness.clone());
-            assert_eq!(
-                handles.metadata_bytes().unwrap(),
-                worker_handle_metadata_bytes().unwrap()
-            );
+            assert!(handles.metadata_bytes().unwrap() <= worker_handle_metadata_bytes().unwrap());
             for index in 0..4 {
                 let jobs = &jobs;
                 let alive = &alive;
@@ -2051,6 +2190,187 @@ mod tests {
                     &AtomicBool::new(false)
                 )
                 .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn pooled_original_formats_repeat_without_changing_bits_or_rank_order() {
+        for kind in KINDS {
+            let f = fixture([kind; 3], 256, 256, 3);
+            let reader = f.model.positional_reader().unwrap();
+            let weights = set(&reader, &f);
+            for backend in [Backend::Portable, Backend::Avx2] {
+                if backend == Backend::Avx2 && !avx2_available() {
+                    continue;
+                }
+                let operator =
+                    ExpertOperator::new_pooled(WorkerPlan::portable(3).unwrap(), backend).unwrap();
+                for selected in [&[2, 0][..], &[1][..], &[0, 2, 1][..]] {
+                    let got = operator
+                        .execute(&weights, selected, &input(256), &AtomicBool::new(false))
+                        .unwrap();
+                    same_bits(got.active(), &expected_experts(&f, selected, &input(256)));
+                    assert!(
+                        got.full()[selected.len() * 256..]
+                            .iter()
+                            .all(|v| v.to_bits() == 0)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn pooled_failure_joins_clears_and_leaves_no_request_for_next_call() {
+        let op = ExpertOperator::new_pooled(WorkerPlan::portable(4).unwrap(), Backend::Portable)
+            .unwrap();
+        let alive = AtomicUsize::new(0);
+        struct Live<'a>(&'a AtomicUsize);
+        impl Drop for Live<'_> {
+            fn drop(&mut self) {
+                self.0.fetch_sub(1, Ordering::SeqCst);
+            }
+        }
+        for fault in 0..3 {
+            let cancel = AtomicBool::new(false);
+            let mut output = [7.; 47];
+            let result = op.rows(
+                &mut output,
+                65,
+                &cancel,
+                &|row| {
+                    if row == 3 {
+                        if fault == 0 {
+                            panic!("fixed-public pool panic");
+                        }
+                        if fault == 1 {
+                            cancel.store(true, Ordering::Relaxed);
+                        }
+                    }
+                },
+                |row, _| {
+                    alive.fetch_add(1, Ordering::SeqCst);
+                    let _live = Live(&alive);
+                    if row == 3 && fault == 2 {
+                        return Err(Error::InvalidFormat("fixed-public pool error"));
+                    }
+                    Ok(row as f32)
+                },
+            );
+            assert!(result.is_err());
+            assert_eq!(alive.load(Ordering::SeqCst), 0);
+            assert!(output.iter().all(|v| v.to_bits() == 0));
+            cancel.store(false, Ordering::Relaxed);
+            op.rows(&mut output, 65, &cancel, &|_| {}, |row, _| Ok(row as f32))
+                .unwrap();
+            same_bits(&output, &(0..47).map(|row| row as f32).collect::<Vec<_>>());
+        }
+        let mut empty = [];
+        assert!(
+            op.rows(&mut empty, 65, &AtomicBool::new(false), &|_| {}, |_, _| Ok(
+                0.
+            ))
+            .is_err()
+        );
+        let mut tiny = [9.];
+        assert!(
+            op.rows(&mut tiny, 65, &AtomicBool::new(true), &|_| {}, |_, _| Ok(
+                0.
+            ))
+            .is_err()
+        );
+        assert_eq!(tiny, [0.]);
+    }
+
+    #[test]
+    fn pooled_headers_erase_full_capacity_after_join_and_error() {
+        for error in [false, true] {
+            let witness = std::sync::Arc::new(retained_metadata::Witness::default());
+            let mut output = [7.; 47];
+            let mut owner = retained_metadata::Owner::new(MAX_WORKERS)
+                .unwrap()
+                .observe(witness.clone());
+            owner
+                .push(std::sync::Mutex::new(RowJob {
+                    first: 17,
+                    rows: &mut output,
+                    result: Some(if error {
+                        Err(Error::InvalidFormat("public error"))
+                    } else {
+                        Ok(())
+                    }),
+                }))
+                .unwrap();
+            assert!(owner.metadata_bytes().unwrap() <= worker_handle_metadata_bytes().unwrap());
+            drop(owner);
+            assert_metadata_wiped(
+                &witness,
+                MAX_WORKERS * size_of::<std::sync::Mutex<RowJob<'_>>>(),
+            );
+        }
+    }
+
+    #[test]
+    fn pooled_workers_reuse_fixed_threads_and_preserve_parent_affinity() {
+        let Ok(plan) = WorkerPlan::physical(2) else {
+            return;
+        };
+        let before = affinity::test_allowed().unwrap();
+        let op = ExpertOperator::new_pooled(plan, Backend::Portable).unwrap();
+        let mut original = None;
+        for _ in 0..8 {
+            let ids = std::sync::Mutex::new(std::collections::HashSet::new());
+            op.rows(
+                &mut [0.; 32],
+                65,
+                &AtomicBool::new(false),
+                &|_| {
+                    ids.lock().unwrap().insert(std::thread::current().id());
+                },
+                |row, _| Ok(row as f32),
+            )
+            .unwrap();
+            let ids = ids.into_inner().unwrap();
+            assert_eq!(ids.len(), 2);
+            if let Some(expected) = &original {
+                assert_eq!(&ids, expected);
+            } else {
+                original = Some(ids);
+            }
+            assert_eq!(affinity::test_allowed().unwrap(), before);
+        }
+    }
+
+    #[test]
+    #[ignore = "fixed-public scheduling-only timing; not expert or model throughput"]
+    fn public_worker_scheduling_calibration() {
+        for pooled in [false, true, true, false] {
+            let plan = WorkerPlan::physical(16).unwrap();
+            let op = if pooled {
+                ExpertOperator::new_pooled(plan, Backend::Avx2)
+            } else {
+                ExpertOperator::new(plan, Backend::Avx2)
+            }
+            .unwrap();
+            let cancel = AtomicBool::new(false);
+            let mut output = [0.; 256];
+            let begin = std::time::Instant::now();
+            for _ in 0..64 {
+                for _ in 0..2 {
+                    op.rows(&mut output, 2560, &cancel, &|_| {}, |row, _| Ok(row as f32))
+                        .unwrap();
+                }
+            }
+            println!(
+                "public_scheduling_only pooled={pooled} calls=128 workers=16 elapsed_us={}",
+                begin.elapsed().as_micros()
+            );
+            assert!(
+                output
+                    .iter()
+                    .enumerate()
+                    .all(|(row, value)| *value == row as f32)
             );
         }
     }

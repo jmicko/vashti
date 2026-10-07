@@ -140,15 +140,20 @@ impl Config {
     }
     /// Explicit fixed-public laboratory reservation. Ordinary constructors keep
     /// their original owner inventory; reservation alone never places a rank.
-    pub(crate) fn reserve_count1_hybrid(mut self) -> Result<Self> {
+    pub(crate) fn reserve_count1_hybrid(self) -> Result<Self> {
+        self.reserve_count1_hybrid_workers(false)
+    }
+    pub(crate) fn reserve_count1_hybrid_workers(mut self, pooled: bool) -> Result<Self> {
         use kuno_text::cpu_expert::{Backend, ExpertOperator, WorkerPlan};
         if self.cpu_operator.is_some() || self.tile != 8 {
             return Err(error());
         }
-        self.cpu_operator = Some(Arc::new(ExpertOperator::new(
-            WorkerPlan::physical(16)?,
-            Backend::Avx2,
-        )?));
+        let plan = WorkerPlan::physical(16)?;
+        self.cpu_operator = Some(Arc::new(if pooled {
+            ExpertOperator::new_pooled(plan, Backend::Avx2)?
+        } else {
+            ExpertOperator::new(plan, Backend::Avx2)?
+        }));
         Ok(self)
     }
 }
@@ -608,6 +613,19 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             .ok_or(error())?
             .moe
             .cpu_miss_cap())
+    }
+
+    pub(crate) fn native_cpu_workers_pooled(
+        &self,
+        executor: &GpuExecutor<'f>,
+    ) -> Result<Option<bool>> {
+        self.completed_native_projection_boundary(executor)?;
+        Ok(self
+            .native_batch
+            .as_ref()
+            .ok_or(error())?
+            .moe
+            .cpu_workers_pooled())
     }
 
     /// Aggregate only at a healthy completed original-model boundary. The lab

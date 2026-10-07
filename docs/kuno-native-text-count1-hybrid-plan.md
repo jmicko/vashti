@@ -392,3 +392,45 @@ This supersedes the earlier corrected-constructor physical pending statement
 for the short fixture only. It does not establish full-vocabulary logit gates,
 hybrid late-finality failure gates,75/128 acceptance, repeated long performance,
 CPU/GPU overlap, automatic placement, production routing or10 tokens/s.
+
+## Reusable CPU worker experiment, 2026-10-07
+
+The user authorized worker reuse followed by an overlap experiment. This first
+slice changes only CPU scheduling, with an explicit protected-lab selector
+`KUNO_LAB_CPU_WORKERS=scoped|pooled`. Absent means scoped. Other lab modes,
+unknown values and invalid encodings reject before device/model access. The
+runner pins `--cpu-workers` (default scoped), and requires both requested and
+completed worker modes in the receipt. Historical receipts remain immutable;
+this stronger runner requires the newly explicit fields on new executions.
+There is no gateway, model catalog, API or Vashti change.
+
+`ExpertOperator::new_pooled` builds one bounded 16-worker Rayon pool shared by
+the model's layers. Physical affinity is set and checked on each worker during
+construction; it never changes the parent thread. Each synchronous broadcast
+owns one disjoint original contiguous row chunk per fixed worker index, catches
+worker errors/panics, completes every callback, and inspects every completion
+before returning. A failed call clears all output. Per-call original scratch,
+packed jobs, activations and partials retain their zeroizing ownership; retained
+row pointers/bounds/results use the existing full-capacity typed header erasure.
+The original private precharge conservatively includes the larger of scoped
+handles and pooled row headers. Pool topology survives, request jobs do not.
+Opaque Rayon job storage, OS stacks and compiler/register copies are outside
+the application-owned erasure claim, as opaque std thread storage was before.
+No math, precision, original rank reduction, cancellation, CPU cap or publication
+rules change. This slice still joins CPU before GPU enqueue and claims no overlap.
+
+A fixed-public scheduling-only ABBA control ran 128 calls with 16 physical
+workers and original scratch allocation but no expert arithmetic. Scoped:
+50,534/57,111 microseconds; pooled:1,505/1,500 microseconds. These measurements
+exclude pool construction and establish scheduling savings only, not actual
+model speed. New host checks cover repeated bitwise original seven-format
+results, fixed worker-thread reuse and parent affinity, joined panic/cancel/error
+with subsequent clean work, and full-capacity row-header erasure. Whole-model
+short device comparisons and existing full-logit/late-finality/long gates remain
+required before performance selection.
+
+Source acceptance:464 native-lab tests;110 kuno-text unit/integration tests
+(two installed-model tests and one timing test ignored in the ordinary suite);
+107 Python controls; both crates strict release all-target Clippy; formatting
+and whitespace checks pass. The separate ignored public timing control passed.
+Device acceptance is still pending at this source commit.

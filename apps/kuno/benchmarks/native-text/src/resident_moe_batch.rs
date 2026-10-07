@@ -410,6 +410,9 @@ impl Workspace {
         });
         self.validate_ids(arena)
     }
+    pub(crate) fn cpu_workers_pooled(&self) -> Option<bool> {
+        self.hybrid.as_ref().map(|h| h.operator.workers_pooled())
+    }
     pub(crate) fn cpu_miss_cap(&self) -> Option<usize> {
         self.hybrid.as_ref().and_then(|h| h.cap)
     }

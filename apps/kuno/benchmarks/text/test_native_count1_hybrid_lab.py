@@ -27,7 +27,7 @@ def receipt(card, cap):
                  observed_native_decode_kernels="single-q4-all", resident_private_owned_bytes=818413568,
                  count1_hybrid_cpu_miss_cap=cap, observed_count1_hybrid_cpu_miss_cap=cap,
                  completed_cpu_misses=17 if cap else 0, fresh_completed_cpu_misses=3 if cap else 0,
-                 count1_hybrid_cpu_gpu_overlap=False)
+                 count1_hybrid_cpu_gpu_overlap=False, count1_hybrid_cpu_workers="scoped", observed_count1_hybrid_cpu_workers="scoped")
     for audit in value["owned_zero_audits"]:
         audit.update(main_buffers=1378, main_bytes=818413568, source_buffers=0, source_bytes=0)
     return value
@@ -48,6 +48,23 @@ class HybridLabTests(unittest.TestCase):
         for card in ("intel", "nvidia"):
             for cap in (0, 10):
                 LAB.validate_receipt(receipt(card, cap), card, cap, completion(cap))
+
+    def test_cpu_worker_policy_cannot_be_forged_or_inherited(self):
+        for selected in ("scoped", "pooled"):
+            value = receipt("intel", 10)
+            value.update(count1_hybrid_cpu_workers=selected, observed_count1_hybrid_cpu_workers=selected)
+            LAB.validate_receipt(value, "intel", 10, completion(10), selected)
+            for field in ("count1_hybrid_cpu_workers", "observed_count1_hybrid_cpu_workers"):
+                for bad in (None, True, "auto", "pooled" if selected == "scoped" else "scoped"):
+                    wrong = copy.deepcopy(value)
+                    wrong[field] = bad
+                    with self.assertRaises(ValueError):
+                        LAB.validate_receipt(wrong, "intel", 10, completion(10), selected)
+            with mock.patch.dict(os.environ, {"KUNO_LAB_CPU_WORKERS": "auto"}):
+                env = LAB.worker_environment("/original/model", "/public/receipt", selected)
+            self.assertEqual(env["KUNO_LAB_CPU_WORKERS"], selected)
+        with self.assertRaises(ValueError):
+            LAB.worker_environment("/original/model", "/public/receipt", "auto")
 
     def test_receipt_cannot_select_cap_or_claim_overlap(self):
         for cap in (0, 10):
