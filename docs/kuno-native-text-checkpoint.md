@@ -50,6 +50,39 @@ Constant stage diagnostics are being prepared without changing numerical gates.
 
 ## Current priority amendment, 2026-10-06
 
+### Batched audit and staged CPU-miss acceptance
+
+Root integrates `f9e9006` bounded full audit copy/map batching, `ebd0046`
+staged CPU-miss/GPU-hit numeric selection, `91d4dd9` protected eight-case CLI
+and `793c351` its independent strict receipt validator. Native host/offline
+tests pass436, runtime ownership fixtures pass45, Python controls pass81;
+strict native/runtime-host Clippy and provenance reconstruction pass.
+
+The normal `91d4dd9` release binary is SHA256
+`8f08b872111d04fd97e7bc77c1675242257761386ddfd9a7490fa0d82764cded`.
+Both cards pass10 GDN,52 routed/14 packed-format/12 expected failure cases,
+and the eight original Q5/Q8 staged cases at CPU caps0/1/5/10. The latter
+classifies actual noncontiguous misses, preserves resident GPU hits and merges
+original ranks; it grants no cache publication, model or timing authority.
+Independent validators pin vendor and original layers6/0.
+
+Both complete eight-token `single-q4-all` model/lifecycle runs also pass unchanged
+IDs, seven native continuation steps, fresh continuation replay, queued layer0/3
+cancellation, poisoned retry rejection, fresh recovery and all four full
+1,376-owner /818,249,728-byte MAIN audits. Processes exit normally without
+retirement under actual8-GiB/swap0/core0 containment. Durable evidence is under
+`/media/jmicko/faststore/kuno-development/native-audit-staged-build-20261006-v1`;
+aggregate identities/proofs are in
+`apps/kuno/benchmarks/text/receipts/rust-native-audit-staged-device-20261006.json`.
+
+Short generation observations fell12,017→5,307ms Intel and13,478→8,838ms NVIDIA
+for seven steps. Router-fence wall time fell8.391→1.861s and6.715→2.225s,
+respectively; actual warm file reads remain separately recorded. These are
+short lifecycle observations, not matched long-run throughput acceptance or
+achievement of the10-tokens/s target. Upload erasure batching and the explicit
+whole-model count1 CPU-miss seam remain separate candidates. No production,
+API, Vashti, installation, release, driver or hardware change follows.
+
 ### Q4 block candidate and both-card operator acceptance
 
 Root integrates `3e20935` original Q4 header reuse, `3f38840` strict protected

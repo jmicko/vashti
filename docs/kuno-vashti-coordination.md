@@ -1988,3 +1988,19 @@ Root owns shared
 GPU/service operations; isolated agents perform source work. No further Ollama
 baseline, API/Vashti change, installation or release is part of this work.
 **Required Vashti changes: none.**
+
+### Native audit/staged acceptance follow-up (2026-10-06)
+
+Root integrates through `793c351` on `codex/kuno-native-text`. Full audit
+copy/read-map batching and the bounded original-read staged CPU-miss/GPU-hit
+numeric adapter pass both-card operator and eight-token model/lifecycle gates.
+The exact `91d4dd9` binary,436 native/45 runtime host tests,81 Python controls,
+strict Clippy, numeric inventories, erasure/cancellation/recovery receipts and
+short timing observations are recorded in the
+[current checkpoint](kuno-native-text-checkpoint.md#batched-audit-and-staged-cpu-miss-acceptance).
+Intel/NVIDIA short seven-step generation observes5.307/8.838s, with unchanged
+outputs. This does not establish matched long-run throughput or the10-tokens/s
+target. Upload erasure batching and explicit count1 CPU-miss model connection
+are still separate source candidates. Shared GPUs/services remain root-owned;
+no production, API, install, release or frontend changes are accepted.
+**Required Vashti changes: none.**
