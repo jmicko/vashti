@@ -11,6 +11,9 @@ use crate::{
     resident_gr::batch::full_private,
 };
 use cubecl::server::Handle;
+#[path = "resident_count1_io.rs"]
+mod count1;
+pub(crate) use count1::{Count1RouterInput, read_count1_router_input};
 #[cfg(test)]
 use cubecl_runtime::transient::TransientIoReceipt;
 #[cfg(test)]

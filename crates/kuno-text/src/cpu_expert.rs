@@ -392,12 +392,49 @@ impl ExpertOperator {
         self.execute_with(weights, selected, input, cancel, |_| {})
     }
 
+    /// A caller with live guarded request owners may only subtract from the
+    /// existing one-MiB private envelope. The actual CPU capacities are checked
+    /// against this remainder before any request value is copied or read.
+    /// This grants no scheduling, publication, fallback or timing authority.
+    pub fn execute_with_private_limit(
+        &self,
+        weights: &PackedExperts<'_, '_>,
+        selected: &[usize],
+        input: &[f32],
+        cancel: &AtomicBool,
+        private_limit: usize,
+    ) -> Result<Partials> {
+        if private_limit == 0 || private_limit > MAX_PRIVATE_HOST_BYTES {
+            return Err(Error::LimitExceeded("CPU expert shared private remainder"));
+        }
+        self.execute_with_limit(weights, selected, input, cancel, private_limit, |_| {})
+    }
+
     fn execute_with(
         &self,
         weights: &PackedExperts<'_, '_>,
         selected: &[usize],
         input: &[f32],
         cancel: &AtomicBool,
+        hook: impl Fn(usize) + Sync,
+    ) -> Result<Partials> {
+        self.execute_with_limit(
+            weights,
+            selected,
+            input,
+            cancel,
+            MAX_PRIVATE_HOST_BYTES,
+            hook,
+        )
+    }
+
+    fn execute_with_limit(
+        &self,
+        weights: &PackedExperts<'_, '_>,
+        selected: &[usize],
+        input: &[f32],
+        cancel: &AtomicBool,
+        private_limit: usize,
         hook: impl Fn(usize) + Sync,
     ) -> Result<Partials> {
         let g = &weights.geometry;
@@ -439,7 +476,7 @@ impl ExpertOperator {
             jobs.metadata_bytes()?,
             worker_handle_metadata_bytes()?,
         ])?;
-        if private_bytes > MAX_PRIVATE_HOST_BYTES {
+        if private_bytes > private_limit {
             return Err(Error::LimitExceeded("CPU expert private host capacity"));
         }
         // All actual allocation capacities have been admitted before private fill.
@@ -1834,6 +1871,45 @@ mod tests {
         assert!(matches!(
             error,
             Err(Error::LimitExceeded("CPU expert public packed capacity"))
+        ));
+    }
+
+    #[test]
+    fn caller_private_remainder_rejects_before_reads_and_preserves_original_math() {
+        let f = fixture([TensorType::F32; 3], 32, 32, 3);
+        let reader = f.model.positional_reader().unwrap();
+        let weights = set(&reader, &f);
+        let op = ExpertOperator::new(WorkerPlan::portable(2).unwrap(), Backend::Portable).unwrap();
+        let cancel = AtomicBool::new(false);
+        let x = input(32);
+        let original = op.execute(&weights, &[2, 0], &x, &cancel).unwrap();
+        let bounded = op
+            .execute_with_private_limit(
+                &weights,
+                &[2, 0],
+                &x,
+                &cancel,
+                MAX_PRIVATE_HOST_BYTES - 32768,
+            )
+            .unwrap();
+        same_bits(original.full(), bounded.full());
+        for limit in [0, MAX_PRIVATE_HOST_BYTES + 1, usize::MAX] {
+            assert!(matches!(
+                op.execute_with_private_limit(&weights, &[2, 0], &x, &cancel, limit),
+                Err(Error::LimitExceeded("CPU expert shared private remainder"))
+            ));
+        }
+        // A positional payload read now fails, but an insufficient admitted
+        // remainder must reject before any private input copy or model read.
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&f.path)
+            .unwrap()
+            .set_len(64)
+            .unwrap();
+        assert!(matches!(
+            op.execute_with_private_limit(&weights, &[2, 0], &x, &cancel, 1),
+            Err(Error::LimitExceeded("CPU expert private host capacity"))
         ));
     }
 

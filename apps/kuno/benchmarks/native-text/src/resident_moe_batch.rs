@@ -12,6 +12,12 @@ use crate::{
 use kuno_text::model::{BoundGraph, GraphBindingId};
 use std::sync::atomic::AtomicU64;
 use zeroize::Zeroizing;
+#[path = "native_count1_selection.rs"]
+mod count1;
+#[path = "resident_moe_count1.rs"]
+mod count1_executor;
+#[path = "count1_hybrid_moe.rs"]
+mod hybrid_k;
 const MAX_LAYERS: usize = 64;
 const N: usize = 5;
 const MAP: usize = 0;
@@ -24,6 +30,9 @@ const STATUS: usize = 6;
 const PRIVATE_BYTES: u64 = 1_409_024;
 const IO_INCREMENT: u64 = 512 * 1024;
 const HOST_PRIVATE: u64 = 2 * 1024 * 1024;
+const CPU_WORDS: usize = 10 * 2560;
+const OWNER_WORDS: usize = 4 + 80 * 3;
+const HYBRID_HOST: usize = 1024 * 1024;
 static NEXT: AtomicU64 = AtomicU64::new(1);
 fn err(s: &'static str) -> Error {
     Error::InvalidFormat(s)
@@ -356,8 +365,110 @@ pub(crate) struct Workspace {
     admission: ResidentAdmission,
     poison: Arc<AtomicBool>,
     policy: Policy,
+    hybrid: Option<HybridOwners>,
+}
+struct HybridOwners {
+    ids: Zeroizing<[BufferId; 2]>,
+    operator: Arc<kuno_text::cpu_expert::ExpertOperator>,
+    cap: Option<usize>,
 }
 impl Workspace {
+    pub(crate) fn count1_hybrid_allocation_requests() -> Result<[u64; 2]> {
+        Ok([CPU_WORDS, OWNER_WORDS].map(|n| {
+            BufferLayout::new(n)
+                .expect("fixed count1 owning layout")
+                .owned_bytes as u64
+        }))
+    }
+    pub(crate) fn reserve_count1_hybrid(
+        &mut self,
+        arena: &mut PrivateArena,
+        operator: Arc<kuno_text::cpu_expert::ExpertOperator>,
+    ) -> Result<()> {
+        self.healthy(arena)?;
+        if self.hybrid.is_some()
+            || self.policy.phase != Phase::Idle
+            || *self.policy.chunk != 0
+            || operator.worker_count() != 16
+            || operator.backend() != kuno_text::cpu_expert::Backend::Avx2
+        {
+            return Err(err("native count1 explicit constructor reservation"));
+        }
+        let cpu = arena.allocate_zeroed(CPU_WORDS).map_err(u::fault)?;
+        let owner = arena.allocate_zeroed(OWNER_WORDS).map_err(u::fault)?;
+        self.hybrid = Some(HybridOwners {
+            ids: Zeroizing::new([cpu, owner]),
+            operator,
+            cap: None,
+        });
+        self.validate_ids(arena)
+    }
+    pub(crate) fn cpu_miss_cap(&self) -> Option<usize> {
+        self.hybrid.as_ref().and_then(|h| h.cap)
+    }
+    pub(crate) fn count1_hybrid_owner_ids(&self) -> Option<[BufferId; 2]> {
+        self.hybrid.as_ref().map(|h| *h.ids)
+    }
+    pub(crate) fn set_lab_count1_cpu_misses(
+        &mut self,
+        executor: &GpuExecutor<'_>,
+        graph: BoundGraph<'_, '_>,
+        arena: &PrivateArena,
+        cap: usize,
+        _boundary: &crate::resident_model::batch::CompletedNativeProjectionBoundary,
+    ) -> Result<usize> {
+        self.healthy(arena)?;
+        self.policy.completed_boundary()?;
+        executor.check_resident_admission(&self.admission)?;
+        executor.check_client(arena.client().map_err(u::fault)?)?;
+        graph.verify_unchanged()?;
+        if ![0, 10].contains(&cap)
+            || ![1, 8].contains(&self.layout.tile)
+            || !arena.public_owned_zero_audit_enabled()
+            || executor.batch_moe.is_some()
+            || executor.banks.len() != 48
+            || graph.binding_id() != self.binding
+        {
+            return Err(err("native count1 completed original owner policy"));
+        }
+        executor.check_original_bank_metadata(48, 512 * 1024)?;
+        for layer in 0..48 {
+            let weights = weights(graph, layer)?;
+            let bank = executor
+                .banks
+                .get(weights.gate.info().name())
+                .ok_or(err("native count1 requires all original banks"))?;
+            bank.check_names(weights)?;
+            bank.check_client(arena.client().map_err(u::fault)?)?;
+            if bank.slots.capacity() != self.layout.capacity {
+                return Err(err("native count1 original bank capacity"));
+            }
+            let shards = [bank.gate(), bank.up(), bank.down()];
+            for shard in 0..shards[0].segments().len() {
+                let p = shards
+                    .map(|b| b.segments().get(shard))
+                    .map(|p| p.ok_or(err("native count1 original shards")))
+                    .into_iter()
+                    .collect::<Result<Vec<_>>>()?;
+                self.layout.geometries[layer]
+                    .validate_shard(
+                        p[0].first_slot(),
+                        p[0].capacity(),
+                        [p[0].words(), p[1].words(), p[2].words()],
+                    )
+                    .map_err(err)?;
+            }
+        }
+        let h = self
+            .hybrid
+            .as_mut()
+            .ok_or(err("native count1 reservation absent"))?;
+        if h.cap.is_some_and(|old| old != cap) {
+            return Err(err("native count1 policy needs fresh owner"));
+        }
+        h.cap = Some(cap);
+        Ok(cap)
+    }
     pub(crate) fn allocation_requests(
         graph: BoundGraph<'_, '_>,
         capacity: usize,
@@ -498,6 +609,7 @@ impl Workspace {
                 admission,
                 poison: poison.clone(),
                 policy: Policy::new(graph.geometry().layers)?,
+                hybrid: None,
             };
             out.validate_ids(arena)?;
             u::cancel(cancel)?;
@@ -524,6 +636,17 @@ impl Workspace {
                     != BufferLayout::new(self.layout.words[i]).map_err(u::fault)?
             {
                 return Err(err("native routed stale workspace"));
+            }
+        }
+        if let Some(h) = &self.hybrid {
+            for (i, &id) in h.ids.iter().enumerate() {
+                if self.ids.contains(&id)
+                    || h.ids[..i].contains(&id)
+                    || arena.layout(id).map_err(u::fault)?
+                        != BufferLayout::new([CPU_WORDS, OWNER_WORDS][i]).map_err(u::fault)?
+                {
+                    return Err(err("native count1 stale owning pages"));
+                }
             }
         }
         Ok(())
@@ -589,6 +712,7 @@ pub(crate) struct Pending {
     pins: Vec<Handle>,
     staged: Option<StagedSlots>,
     last: Option<Last>,
+    count1: Option<count1::Proof>,
     waves: Zeroizing<usize>,
     poison: Arc<AtomicBool>,
     armed: bool,
@@ -676,6 +800,9 @@ impl GpuExecutor<'_> {
             self.model.verify_file_unchanged()?;
             w.healthy(arena)?;
             w.layout.geometries[0].validate_count(count).map_err(err)?;
+            if w.cpu_miss_cap().is_some() && count != 1 {
+                return Err(err("native count1 public policy count"));
+            }
             self.check_resident_admission(&w.admission)?;
             self.check_client(arena.client().map_err(u::fault)?)?;
             if self.batch_moe.is_some()
@@ -769,6 +896,7 @@ impl GpuExecutor<'_> {
             || self.batch_experts
             || self.ordered_public_upload
             || self.word_down
+            || w.cpu_miss_cap().is_some()
         {
             return Err(err("native routed chunk binding"));
         }
@@ -1046,6 +1174,7 @@ impl GpuExecutor<'_> {
             pins,
             staged: Some(staged),
             last: final_last,
+            count1: None,
             waves: Zeroizing::new(routes.wave_count()),
             poison: w.poison.clone(),
             armed: true,
@@ -1136,8 +1265,12 @@ fn physical(
 ) -> Result<()> {
     let client = arena.client().map_err(u::fault)?;
     bank.check_client(client)?;
-    let mut all = Zeroizing::new([fault; 8]);
-    all[..7].copy_from_slice(ids);
+    let mut all = Zeroizing::new(Vec::with_capacity(10));
+    all.extend_from_slice(ids);
+    all.push(fault);
+    if let Some(h) = &w.hybrid {
+        all.extend_from_slice(&*h.ids);
+    }
     let banks = [bank.gate(), bank.up(), bank.down()];
     let count = if w.layout.capacity == 96 { 2 } else { 1 };
     if banks.iter().any(|b| b.segments().len() != count)
@@ -1602,7 +1735,7 @@ impl Workspace {
             .last
             .as_ref()
             .ok_or(err("native routed final wave removed"))?;
-        if *last.len == 0
+        if (*last.len == 0 && p.count1.is_none())
             || *last.len > 80
             || *p.waves == 0
             || *p.waves > 8
@@ -1613,6 +1746,14 @@ impl Workspace {
         staged
             .validate_pending(&bank.slots, &last.pending, &last.selected[..*last.len])
             .map_err(|_| err("native routed final bank generation"))?;
+        if let Some(proof) = &p.count1 {
+            if s.stamp.count != 1 || *p.waves != 1 || self.cpu_miss_cap() != Some(proof.cap()) {
+                return Err(err("native count1 foreign pending policy"));
+            }
+            proof.validate_source(&bank.slots, staged, last, true)?;
+        } else if self.cpu_miss_cap().is_some() {
+            return Err(err("native count1 missing compact proof"));
+        }
         let g = self.layout.geometries[*p.layer];
         let ids = self.ids(p.views.ids[0], p.views.ids[1]);
         let v = &p.views.offsets;
@@ -1961,6 +2102,7 @@ mod tests {
             pins: Vec::new(),
             staged: None,
             last: None,
+            count1: None,
             waves: Zeroizing::new(0),
             poison: poison.clone(),
             armed: true,

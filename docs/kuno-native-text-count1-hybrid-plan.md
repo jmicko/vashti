@@ -1,8 +1,9 @@
 # Count1 CPU-miss / resident-GPU plan
 
-Read-only source proposal against root `4195238`, 2026-10-06. Root decides after
-the protected CPU/GPU calibration evidence. This implements none of Stage 3 and
-establishes no speed benefit. The scope is the existing fixed-public whole-model
+Initial source proposal against root `4195238`, 2026-10-06; the refined
+reservation and executable source contract below supersede the original three
+page estimate and overlap sequence. Source establishes no speed benefit.
+The scope is the existing fixed-public whole-model
 lab, with a completed native prefill and count1 continuation. MAX8 prefill,
 production requests, automatic placement and other GPUs are outside this slice.
 The [approved decode plan](kuno-native-text-decode.md) remains the contract.
@@ -202,3 +203,72 @@ whole-model acceptance, timing, performance, production and automatic split
 policy remain explicitly false. File-write failure can leave an incomplete
 public file but emits no completion marker. Formatting and source test coverage
 do not establish compilation or physical acceptance; root owns those checks.
+
+## Approved bounded count1 model source contract
+
+This source slice starts from `91d4dd9`. Ordinary `Config::new` reserves no
+hybrid pages and keeps the exact1376 owners /818249728-byte legacy MAIN plan.
+Only explicit `Config::reserve_count1_hybrid() -> Result<Config>` on an initial
+public tile8 configuration reserves a CPU128KiB owner
+(25600 logical F32 words) and an owner32KiB page (244 logical U32 words).
+The existing4097-word /32KiB router packet holds2560 prepared mixed values,
+512 original router logits, one fault word and zero remainder. Consequently the
+additional MAIN reservation is163840 bytes and two owners, giving1378 owners
+and818413568 bytes. The original three-page estimate above is superseded.
+
+Reservation alone selects no CPU work. Completed original native prefill is
+followed by the existing opaque model boundary proof and a public cap0 or10
+`ResidentModel::set_lab_count1_cpu_misses(executor, cap, cancel) -> Result<usize>`
+setter. `native_cpu_miss_cap() -> Result<Option<usize>>` observes defaultNone or
+the selected public cap. Every other cap and every hybrid count other than1
+rejects. Completed public tile1/8 policies are supported; default
+native prefill/decode and existing modes continue through the unchanged GPU
+path. Future protected CLI exposure and strict receipts are separate work.
+
+The first executable seam intentionally joins the original AVX2/16 physical
+worker operator before parent-only GPU filling and enqueue. It does not claim
+CPU/GPU overlap or speed. All CPU public packed jobs release before the original
+GPU source window; each separately remains within40MiB. Only joined Partials
+survive into padded CPU/owner upload. This supersedes the proposed overlap in
+step4 above; a later scoped overlap experiment needs its own measured proof.
+
+The shared additional private host peak remains1MiB. Before CPU private fill,
+the caller subtracts actual live guarded mixed/logit storage, split/map and
+selection headers from that limit through a subtract-only operator API. After
+join, actual Partials capacity plus padded CPU and owner encoding and all live
+headers must fit that same1MiB. No CPU job/vector is retained in48 Pending
+receipts. One additional1MiB runtime component is conservatively precharged
+alongside the existing64090112-byte maximum, giving65138688 below64MiB.
+The mandatory audited router dependency drains the preceding layer before
+scratch reuse; the final original whole-model proof covers the last layer.
+
+The owner packet has header `[1,cpu_count,gpu_count,0]`, then80 triples
+`[owner,index,ready]`. Active GPU records use owner0/index=original rank/ready0,
+with real readiness only in the existing GPU STATUS. Active CPU records use
+owner1/index=compact CPU ordinal/ready1 only after joined Partials validation.
+The70 inactive records, gaps and owning tail are zero. The GPU804-word map
+contains only canonical GPU groups with original-rank members, while all ten
+original probability bits remain in PROB. A true empty GPU plan is allowed only
+for ten actual CPU misses. No fake slot/readiness or zero-probability omission
+is allowed. Packed gate/down math and64-lane trees remain unchanged; the new
+merge reads one actual owner in rank0..9 order and full fold checks every owning
+view, status, finite value, gap and tail against the original global fault.
+
+Each compact Pending retains the original BankInstance/full physical pins,
+immutable original ranks/probability bits and actual-miss/hit-slot proof, plus
+one canonical GPU subset candidate. The temporary all-ten classification plan
+is destroyed before retaining the Pending. Sequential final preflight rebuilds
+that classification against the unchanged origin under existing working space,
+checks the original-rank ownership and protected hit slots, then destroys it.
+Each Pending stays within32KiB, routed metadata within2MiB and model metadata
+within256KiB. These proofs confer no CPU/GPU publication authority: the original
+whole-model output/fault, second PLE proof,36 GDN/12 QSA/48 MoE preflights and
+GR/shared/cancel/context checks still precede every family commit. Faults,
+panic/cancel or cleanup failure poison and erase the original owner; no retry,
+fallback, private persistence or partial publication is added.
+
+Root must compile/run meaningful host and offline shader checks, then perform
+independent rank/format/status/tail numeric acceptance, actual count1 fixture
+IDs/logits and both-card cancellation/poison/fresh recovery/full owning audits.
+Source-only test additions and integrated operator calibration do not establish
+this model seam or a performance benefit. Timing follows those acceptance gates.

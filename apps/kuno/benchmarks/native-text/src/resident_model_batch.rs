@@ -28,6 +28,9 @@ const HC: usize = 4;
 const ROUTER: usize = 512;
 const RESIDUAL_WORDS: usize = MAX_BATCH * HC * D;
 const BLOCK_WORDS: usize = MAX_BATCH * D;
+const HYBRID_MAIN: u64 = 163_840;
+const HYBRID_HOST: usize = 1024 * 1024;
+const HYBRID_RUNTIME: u64 = 1024 * 1024;
 
 fn error() -> Error {
     Error::InvalidFormat("native model chunk rejected")
@@ -101,6 +104,7 @@ pub(crate) struct Config {
     client: ComputeClient<WgpuRuntime>,
     limits: wgpu::Limits,
     tile: usize,
+    cpu_operator: Option<Arc<kuno_text::cpu_expert::ExpertOperator>>,
 }
 impl Config {
     pub(crate) fn new(
@@ -113,7 +117,22 @@ impl Config {
             client: client.clone(),
             limits: limits.clone(),
             tile,
+            cpu_operator: None,
         })
+    }
+    /// Explicit fixed-public laboratory reservation. Ordinary constructors keep
+    /// their original owner inventory; reservation alone never places a rank.
+    #[allow(dead_code)] // Protected count1 CLI registration is a separate gate.
+    pub(crate) fn reserve_count1_hybrid(mut self) -> Result<Self> {
+        use kuno_text::cpu_expert::{Backend, ExpertOperator, WorkerPlan};
+        if self.cpu_operator.is_some() || self.tile != 8 {
+            return Err(error());
+        }
+        self.cpu_operator = Some(Arc::new(ExpertOperator::new(
+            WorkerPlan::physical(16)?,
+            Backend::Avx2,
+        )?));
+        Ok(self)
     }
 }
 fn validate_limits(l: &wgpu::Limits, tile: usize) -> Result<()> {
@@ -214,7 +233,14 @@ impl Plan {
         ] {
             requests.push(BufferLayout::new(words).map_err(u::fault)?.owned_bytes as u64);
         }
-        if sum(&requests)? != NEW_MAIN || OLD_MAIN.checked_add(sum(&requests)?) != Some(TOTAL_MAIN)
+        let hybrid = config.cpu_operator.is_some();
+        if hybrid {
+            requests.extend(batch_moe::Workspace::count1_hybrid_allocation_requests()?);
+        }
+        let extra = if hybrid { HYBRID_MAIN } else { 0 };
+        if requests.len() != 90 + usize::from(hybrid) * 2
+            || sum(&requests)? != NEW_MAIN + extra
+            || OLD_MAIN.checked_add(sum(&requests)?) != Some(TOTAL_MAIN + extra)
         {
             return Err(error());
         }
@@ -228,9 +254,11 @@ impl Plan {
             return Err(error());
         }
         let head_tiles = (g.vocabulary as u64).div_ceil(tile_rows);
-        let runtime = runtime_bytes(head_tiles)?;
+        let runtime = runtime_bytes(head_tiles)?
+            .checked_add(if hybrid { HYBRID_RUNTIME } else { 0 })
+            .ok_or(Error::ArithmeticOverflow)?;
         if runtime > crate::executor::RESIDENT_RUNTIME_IO_MAX
-            || HOST_COMPONENTS > HOST_CAP
+            || HOST_COMPONENTS + if hybrid { HYBRID_HOST } else { 0 } > HOST_CAP
             || metadata_bytes() > META_CAP
         {
             return Err(Error::LimitExceeded("native model aggregate private plan"));
@@ -364,7 +392,7 @@ impl Workspace {
         )?;
         let qsa =
             qsa::QsaBatchWorkspace::allocate(graph, sequence, &mut model.arena, poison.clone())?;
-        let moe = batch_moe::Workspace::allocate(
+        let mut moe = batch_moe::Workspace::allocate(
             executor,
             graph,
             sequence,
@@ -375,6 +403,9 @@ impl Workspace {
             config.tile,
             &cancel,
         )?;
+        if let Some(operator) = config.cpu_operator {
+            moe.reserve_count1_hybrid(&mut model.arena, operator)?;
+        }
         let shared = shared_batch::Workspace::allocate(graph, &mut model.arena)?;
         let mut alloc = |n| model.arena.allocate_zeroed(n).map_err(u::fault);
         let outer = Zeroizing::new(Outer {
@@ -411,6 +442,11 @@ impl Workspace {
             (model.b.logit_packet, model.graph.geometry().vocabulary + 1),
         ] {
             handles.push(gr::full_private(&model.arena, id, words)?);
+        }
+        if let Some(ids) = self.moe.count1_hybrid_owner_ids() {
+            for (id, words) in ids.into_iter().zip([10 * D, 4 + 80 * 3]) {
+                handles.push(gr::full_private(&model.arena, id, words)?);
+            }
         }
         gr::physical(&model.arena, &handles)?;
         model
@@ -533,6 +569,57 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
     pub(crate) fn native_decode_kernels(&self) -> Result<NativeDecodeKernels> {
         let native = self.native_batch.as_ref().ok_or(error())?;
         native.decode_kernels()
+    }
+
+    #[allow(dead_code)] // Protected count1 receipt registration is separate.
+    pub(crate) fn native_cpu_miss_cap(&self) -> Result<Option<usize>> {
+        Ok(self
+            .native_batch
+            .as_ref()
+            .ok_or(error())?
+            .moe
+            .cpu_miss_cap())
+    }
+
+    /// Explicit reserved count1 lab only. The original completed all-family
+    /// boundary remains the sole authority; this performs no inference/commit.
+    #[allow(dead_code)] // Protected count1 CLI registration is a separate gate.
+    pub(crate) fn set_lab_count1_cpu_misses(
+        &mut self,
+        executor: &mut GpuExecutor<'f>,
+        cap: usize,
+        cancel: &AtomicBool,
+    ) -> Result<usize> {
+        u::cancel(cancel)?;
+        if ![0, 10].contains(&cap) {
+            return Err(error());
+        }
+        let boundary = self.completed_native_projection_boundary(executor)?;
+        let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let native = self.native_batch.as_mut().ok_or(error())?;
+            let observed = native.moe.set_lab_count1_cpu_misses(
+                executor,
+                self.graph,
+                &self.arena,
+                cap,
+                &boundary,
+            )?;
+            u::cancel(cancel)?;
+            Ok(observed)
+        }));
+        match attempt {
+            Ok(Ok(observed)) => Ok(observed),
+            _ => {
+                self.admission
+                    .sequence_poison()
+                    .store(true, Ordering::Release);
+                self.poisoned = true;
+                executor.poison_resident();
+                let _ = self.close();
+                let _ = executor.close_transient_resident();
+                Err(error())
+            }
+        }
     }
 
     pub(crate) fn set_lab_native_decode_kernels(
@@ -735,6 +822,9 @@ impl Workspace {
         // Preflight both single-token families before clears, embeddings or
         // any other layer can enqueue work for this transaction.
         self.decode_kernels()?.validate_count(tokens.len())?;
+        if self.moe.cpu_miss_cap().is_some() && tokens.len() != 1 {
+            return Err(error());
+        }
         if m.poisoned
             || m.retired.load(Ordering::Acquire)
             || !m.pending_qsa.is_empty()
@@ -933,21 +1023,57 @@ impl Workspace {
                 .entry("native_ffn_gr_and_router_enqueue")
                 .or_default() += router_enqueue_start.elapsed().as_nanos();
             let router_fence_start = Instant::now();
-            let logits = batch_io::read_router(
-                m.graph,
-                &m.arena,
-                &m.admission,
-                self.outer.router,
-                self.outer.packet,
-                m.b.fault,
-                batch_io::RouterView {
-                    first: 0,
-                    stride: ROUTER,
-                    words: MAX_BATCH * ROUTER,
-                },
-                *count,
-                cancel,
-            )?;
+            let hybrid_packet = if self.moe.cpu_miss_cap().is_some() {
+                Some(batch_io::read_count1_router_input(
+                    m.graph,
+                    &m.arena,
+                    &m.admission,
+                    prepared.mixed(),
+                    self.outer.router,
+                    self.outer.packet,
+                    m.b.fault,
+                    batch_io::InputView {
+                        first: 0,
+                        stride: D,
+                        words: BLOCK_WORDS,
+                    },
+                    batch_io::RouterView {
+                        first: 0,
+                        stride: ROUTER,
+                        words: MAX_BATCH * ROUTER,
+                    },
+                    *count,
+                    cancel,
+                    layer,
+                    *start as u64,
+                )?)
+            } else {
+                None
+            };
+            let ordinary_logits = if hybrid_packet.is_none() {
+                Some(batch_io::read_router(
+                    m.graph,
+                    &m.arena,
+                    &m.admission,
+                    self.outer.router,
+                    self.outer.packet,
+                    m.b.fault,
+                    batch_io::RouterView {
+                        first: 0,
+                        stride: ROUTER,
+                        words: MAX_BATCH * ROUTER,
+                    },
+                    *count,
+                    cancel,
+                )?)
+            } else {
+                None
+            };
+            let logits = match (&hybrid_packet, &ordinary_logits) {
+                (Some(packet), None) => packet.logits(),
+                (None, Some(logits)) => logits,
+                _ => return Err(error()),
+            };
             *m.phase_ns.entry("native_router_fence").or_default() +=
                 router_fence_start.elapsed().as_nanos();
             let expert_start = Instant::now();
@@ -963,18 +1089,34 @@ impl Workspace {
                 }
             }
             let waves = token_waves::Plan::build(&routes, cancel).map_err(|_| error())?;
-            pending.moe[layer] = Some(e.enqueue_routed_moe_batch(
-                m.graph,
-                &m.arena,
-                &mut self.moe,
-                &session,
-                layer,
-                prepared.mixed(),
-                self.outer.block[0],
-                &spans,
-                &waves,
-                cancel,
-            )?);
+            pending.moe[layer] = Some(if let Some(packet) = &hybrid_packet {
+                e.enqueue_routed_moe_count1_hybrid(
+                    m.graph,
+                    &m.arena,
+                    &mut self.moe,
+                    &session,
+                    layer,
+                    prepared.mixed(),
+                    self.outer.block[0],
+                    &spans,
+                    &waves,
+                    packet,
+                    cancel,
+                )?
+            } else {
+                e.enqueue_routed_moe_batch(
+                    m.graph,
+                    &m.arena,
+                    &mut self.moe,
+                    &session,
+                    layer,
+                    prepared.mixed(),
+                    self.outer.block[0],
+                    &spans,
+                    &waves,
+                    cancel,
+                )?
+            });
             e.check_original_bank_metadata(LAYERS, ORIGINAL_BANK_HOST)?;
             *m.phase_ns
                 .entry("native_route_and_expert_enqueue")
@@ -1224,6 +1366,27 @@ mod tests {
         assert!(metadata_bytes() <= META_CAP);
         assert_eq!(HOST_COMPONENTS, 11075584);
         const { assert!(HOST_COMPONENTS <= HOST_CAP) };
+    }
+    #[test]
+    fn explicit_count1_reservation_reuses_packet_and_stays_under_independent_caps() {
+        assert_eq!(
+            batch_moe::Workspace::count1_hybrid_allocation_requests().unwrap(),
+            [131072, 32768]
+        );
+        assert_eq!(TOTAL_MAIN + HYBRID_MAIN, 818413568);
+        assert_eq!(1286 + 90 + 2, 1378);
+        assert_eq!(HOST_CAP - (HOST_COMPONENTS + HYBRID_HOST), 458752);
+        assert_eq!(runtime_bytes(38).unwrap() + HYBRID_RUNTIME, 65138688);
+        assert!(
+            runtime_bytes(38).unwrap() + HYBRID_RUNTIME <= crate::executor::RESIDENT_RUNTIME_IO_MAX
+        );
+        assert_eq!(
+            BufferLayout::new(MAX_BATCH * ROUTER + 1)
+                .unwrap()
+                .owned_bytes,
+            32768
+        );
+        assert!(D + ROUTER + 1 <= MAX_BATCH * ROUTER + 1);
     }
     #[test]
     fn runtime_packet_covers_counts_boundaries_without_future_or_inactive_values() {
