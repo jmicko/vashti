@@ -37,12 +37,29 @@ impl Zeroize for Data {
 pub(crate) struct Split(Zeroizing<Data>);
 impl Split {
     pub(crate) fn new(ids: &[usize; RANKS], misses: usize, cpu: usize) -> Result<Self> {
-        if misses > RANKS
-            || cpu > misses
+        if misses > RANKS || cpu > misses {
+            return Err(err());
+        }
+        Self::from_actual_misses(ids, &ids[RANKS - misses..], cpu)
+    }
+    /// Canonical cache classification is supplied by the staged owner. Pick
+    /// capped actual misses in original rank order, never a contiguous suffix.
+    /// This value only describes ownership; it grants no bank/fill authority.
+    pub(crate) fn from_actual_misses(
+        ids: &[usize; RANKS],
+        misses: &[usize],
+        cpu_cap: usize,
+    ) -> Result<Self> {
+        if misses.len() > RANKS
+            || cpu_cap > RANKS
             || ids
                 .iter()
                 .enumerate()
                 .any(|(r, &v)| v >= 512 || ids[..r].contains(&v))
+            || misses
+                .iter()
+                .enumerate()
+                .any(|(r, id)| !ids.contains(id) || misses[..r].contains(id))
         {
             return Err(err());
         }
@@ -54,7 +71,7 @@ impl Split {
             ng: 0,
         }));
         for (r, &id) in ids.iter().enumerate() {
-            let c = r >= RANKS - misses && r < RANKS - misses + cpu;
+            let c = misses.contains(&id) && s.0.nc < cpu_cap;
             let i = if c {
                 let i = s.0.nc;
                 s.0.cpu[i] = id;

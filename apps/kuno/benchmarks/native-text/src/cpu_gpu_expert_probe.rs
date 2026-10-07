@@ -2,6 +2,8 @@
 //! file and an exclusively configured transient stream; no path reopen/default.
 //! Reference arithmetic follows bank96_probe and core CPU's original 64 tree.
 //! Numeric success is local operator evidence, never whole-model acceptance.
+#[path = "staged_hybrid.rs"]
+mod staged_hybrid;
 use crate::{
     bank_slots::{Plan, StagedSlots},
     cpu_gpu_expert_schedule::{self as schedule, Mode, Split, Times},
@@ -249,6 +251,131 @@ pub struct FixedCalibrationPoint {
 /// Fixed public subset only; no private tensor, selection or permit is returned.
 pub struct FixedCalibrationReport {
     pub points: [FixedCalibrationPoint; FIXED_CALIBRATION_POINTS],
+}
+
+pub const STAGED_HYBRID_CASES: usize = 8;
+/// Aggregate numeric-only receipts. No selection, vector, bank or timing permit
+/// survives this fixed one-layer acceptance driver.
+pub struct StagedHybridReport {
+    pub cases: [Report; STAGED_HYBRID_CASES],
+}
+#[derive(Clone, Copy)]
+enum Fixture {
+    Contiguous,
+    Staged { miss_mask: u16 },
+}
+impl Fixture {
+    fn is_miss(self, rank: usize, misses: usize) -> bool {
+        match self {
+            Self::Contiguous => rank >= N - misses,
+            Self::Staged { miss_mask } => miss_mask & (1 << rank) != 0,
+        }
+    }
+    fn validate(self, config: Config, numeric: bool) -> Result<()> {
+        if let Self::Staged { miss_mask } = self {
+            if !numeric
+                || miss_mask >= 1 << N
+                || miss_mask.count_ones() as usize != config.misses
+                || config.group != 0
+                || config.vector != 1
+                || config.workers != 16
+                || config.backend != Backend::Avx2
+                || config.mode != Mode::Concurrent
+            {
+                return Err(fault());
+            }
+        }
+        Ok(())
+    }
+}
+fn staged_hybrid_cases() -> [(Config, Fixture); STAGED_HYBRID_CASES] {
+    // Odd-rank actual misses exercise signed-zero rank1 on CPU and rank0 on
+    // GPU. K0 retains the real hit/miss GPU baseline; K10 is a true empty GPU
+    // endpoint. This first slice does not claim every rank/owner permutation.
+    std::array::from_fn(|i| {
+        let down = if i < 4 {
+            TensorType::Q5_0
+        } else {
+            TensorType::Q8_0
+        };
+        let cpu_misses = [0, 1, 5, 10][i % 4];
+        let miss_mask: u16 = if cpu_misses == 10 {
+            0b11_1111_1111
+        } else {
+            0b10_1010_1010
+        };
+        (
+            Config {
+                down,
+                workers: 16,
+                backend: Backend::Avx2,
+                misses: miss_mask.count_ones() as usize,
+                cpu_misses,
+                group: 0,
+                vector: 1,
+                mode: Mode::Concurrent,
+            },
+            Fixture::Staged { miss_mask },
+        )
+    })
+}
+fn staged_hybrid_driver<R>(
+    mut execute: impl FnMut(Config, Fixture) -> Result<R>,
+) -> Result<[R; STAGED_HYBRID_CASES]> {
+    let mut reports = Vec::new();
+    reports
+        .try_reserve_exact(STAGED_HYBRID_CASES)
+        .map_err(|_| fault())?;
+    if reports.capacity() != STAGED_HYBRID_CASES {
+        return Err(fault());
+    }
+    for (config, fixture) in staged_hybrid_cases() {
+        config.validate()?;
+        fixture.validate(config, true)?;
+        reports.push(execute(config, fixture)?);
+    }
+    reports.try_into().map_err(|_| fault())
+}
+/// Original inspected file/graph/configured stream only. Each fresh local bank
+/// is primed through actual completed GPU consumers, then the canonical staged
+/// selector executes actual GPU hits/misses and CPU misses with original rank
+/// merge and independent references. All owners are erased/disposed before a
+/// completed report escapes. No model/cache publication or timing authority.
+pub fn run_staged_hybrid_acceptance<'graph, 'm>(
+    client: &ComputeClient<WgpuRuntime>,
+    file: &'m GgufFile,
+    graph: BoundGraph<'graph, 'm>,
+    device_limits: &wgpu::Limits,
+    retired: Arc<AtomicBool>,
+    cancel: &AtomicBool,
+) -> Result<StagedHybridReport> {
+    let cases = staged_hybrid_driver(|config, fixture| {
+        let mut stage = NumericStage::Config;
+        let mut completed = None;
+        let result = run_inner(
+            client,
+            file,
+            graph,
+            device_limits,
+            retired.clone(),
+            config,
+            Purpose::Numeric,
+            cancel,
+            &mut stage,
+            false,
+            &mut completed,
+            fixture,
+        );
+        let (report, permit) = classified_numeric_result(true, stage, result)?;
+        // A numeric permit for the old contiguous fixture must never authorize
+        // timings of this distinct noncontiguous staged acceptance fixture.
+        drop(permit);
+        if report.timing.is_some() || report.bridge_and_merge.is_some() || completed.is_some() {
+            return Err(fault());
+        }
+        Ok(report)
+    })?;
+    Ok(StagedHybridReport { cases })
 }
 #[derive(Clone, Copy)]
 struct CompletedTimes {
@@ -731,7 +858,7 @@ fn sources(w: RoutedWeights<'_>, n: usize) -> Result<Zeroizing<Vec<u64>>> {
     }
     Ok(v)
 }
-fn plan(b: &mut ExpertBanks, ids: &[usize]) -> Result<(Plan, usize)> {
+fn plan(b: &ExpertBanks, ids: &[usize]) -> Result<(Plan, usize)> {
     let mut staged = StagedSlots::begin(&b.slots).map_err(|_| fault())?;
     let p = staged.plan(&b.slots, ids).map_err(|_| fault())?;
     let bytes = b
@@ -1500,6 +1627,7 @@ fn run_recorded<'graph, 'm>(
         &mut stage,
         collect_wall,
         &mut completed,
+        Fixture::Contiguous,
     );
     let (report, permit) = classified_numeric_result(numeric, stage, result)?;
     if let Some(start) = full_start {
@@ -1520,8 +1648,10 @@ fn run_inner<'graph, 'm>(
     stage: &mut NumericStage,
     collect_wall: bool,
     completed: &mut Option<CompletedTimes>,
+    fixture: Fixture,
 ) -> Result<(Report, NumericPermit<'m>)> {
     config.validate()?;
+    fixture.validate(config, matches!(&purpose, Purpose::Numeric))?;
     *stage = NumericStage::Limits;
     limits(device_limits)?;
     *stage = NumericStage::Control;
@@ -1634,7 +1764,11 @@ fn run_inner<'graph, 'm>(
         *stage = NumericStage::FixtureUpload;
         let ids: Zeroizing<[usize; N]> =
             Zeroizing::new(std::array::from_fn(|r| config.group * N + r));
-        let split = Split::new(&ids, config.misses, config.cpu_misses)?;
+        let legacy_split = if matches!(fixture, Fixture::Contiguous) {
+            Some(Split::new(&ids, config.misses, config.cpu_misses)?)
+        } else {
+            None
+        };
         let mut x = guarded(D, HOST_BRIDGE_LIMIT)?;
         for (i, v) in x.iter_mut().enumerate() {
             *v = if config.vector == 0 {
@@ -1650,14 +1784,16 @@ fn run_inner<'graph, 'm>(
         let prob = &PROBS[config.vector];
         upload_f32(&arena, buffers.ids[X], &x)?;
         upload_f32(&arena, buffers.ids[P], prob)?;
-        upload(&arena, buffers.ids[MAP], split.map())?;
+        if let Some(split) = &legacy_split {
+            upload(&arena, buffers.ids[MAP], split.map())?;
+        }
         // Prime precisely the selected hits, plus unrelated PUBLIC filler IDs. The
         // ten-hit source state is then measured through a real protected plan.
         let primed: Zeroizing<[usize; N]> = Zeroizing::new(std::array::from_fn(|r| {
-            if r < N - config.misses {
-                ids[r]
-            } else {
+            if fixture.is_miss(r, config.misses) {
                 480 + r
+            } else {
+                ids[r]
             }
         }));
         *stage = NumericStage::Priming;
@@ -1696,7 +1832,39 @@ fn run_inner<'graph, 'm>(
         })?;
         let mut metadata = prime_meta;
         *stage = NumericStage::CandidatePlan;
-        let candidate_plan = if split.gpu().is_empty() {
+        let selection = if matches!(fixture, Fixture::Staged { .. }) {
+            banks.check_client(client)?;
+            banks.check_names(weights)?;
+            Some(staged_hybrid::Selection::prepare(
+                &*banks,
+                &ids,
+                config.cpu_misses,
+            )?)
+        } else {
+            None
+        };
+        let split = selection
+            .as_ref()
+            .map(staged_hybrid::Selection::split)
+            .or(legacy_split.as_ref())
+            .ok_or_else(fault)?;
+        if let Some(selection) = &selection {
+            selection.validate(banks)?;
+            metadata = metadata.max(selection.metadata_bytes()?);
+            if selection.misses() != config.misses
+                || split.cpu().len() != config.cpu_misses
+                || selection.gpu_plan().uploads.len() != config.misses - config.cpu_misses
+            {
+                return Err(fault());
+            }
+            for rank in 0..N {
+                if selection.is_miss(rank)? != fixture.is_miss(rank, config.misses) {
+                    return Err(fault());
+                }
+            }
+            upload(&arena, buffers.ids[MAP], split.map())?;
+        }
+        let candidate_plan = if selection.is_some() || split.gpu().is_empty() {
             None
         } else {
             let (p, n) = plan(banks, split.gpu())?;
@@ -1707,12 +1875,14 @@ fn run_inner<'graph, 'm>(
             Some(p)
         };
         // Declared all-selected M is verified separately, even at G==0.
-        let (all_plan, n) = plan(banks, &*ids)?;
-        metadata = metadata.max(n);
-        if all_plan.uploads.len() != config.misses {
-            return Err(fault());
+        if selection.is_none() {
+            let (all_plan, n) = plan(banks, &*ids)?;
+            metadata = metadata.max(n);
+            if all_plan.uploads.len() != config.misses {
+                return Err(fault());
+            }
+            drop(all_plan);
         }
-        drop(all_plan);
         let mut charge = 0;
         *stage = NumericStage::Candidate;
         let candidate_start = collect_wall.then(Instant::now);
@@ -1722,8 +1892,18 @@ fn run_inner<'graph, 'm>(
             !split.cpu().is_empty(),
             || op.execute(&experts, split.cpu(), &x, cancel),
             || {
-                if let Some(p) = &candidate_plan {
+                if let Some(selection) = &selection {
+                    selection.validate(banks)?;
+                }
+                let gpu_plan = selection
+                    .as_ref()
+                    .map(staged_hybrid::Selection::gpu_plan)
+                    .or(candidate_plan.as_ref());
+                if let Some(p) = gpu_plan.filter(|p| !p.slots.is_empty()) {
                     charge = fill(client, &mut ledger, banks, weights, p, cancel)?;
+                    if let Some(selection) = &selection {
+                        selection.validate(banks)?;
+                    }
                     candidate_gpu(
                         &arena,
                         &buffers,
@@ -1749,6 +1929,9 @@ fn run_inner<'graph, 'm>(
             },
         )?;
         check(cancel)?;
+        if let Some(selection) = &selection {
+            selection.validate(banks)?;
+        }
         *stage = NumericStage::CpuPartials;
         if let Some(cpu) = &cpu {
             if cpu.ranks() != split.cpu().len()
@@ -1778,6 +1961,9 @@ fn run_inner<'graph, 'm>(
             &retired,
             cancel,
         )?;
+        if let Some(selection) = &selection {
+            selection.validate(banks)?;
+        }
         let bridge = bridge_start.elapsed();
         let candidate_wall = candidate_start.map(|start| start.elapsed());
         // Calibration reaches here only after both consumers and the original-
@@ -1842,12 +2028,18 @@ fn run_inner<'graph, 'm>(
             )?);
         }
         let cleanup_start = collect_wall.then(Instant::now);
-        immutable(&arena, &buffers, &x, prob, &split)?;
+        immutable(&arena, &buffers, &x, prob, split)?;
         *stage = NumericStage::FinalAudit;
         let last = fence(&arena, &mut ledger, &retired)?;
         check(cancel)?;
         *stage = NumericStage::FileConsistency;
         reader.verify_file_unchanged()?;
+        if let Some(selection) = &selection {
+            // The exact borrowed physical bank and immutable canonical
+            // selection remain live through the final owning preflight.
+            selection.validate(banks)?;
+            physical(&arena, &buffers, banks, flat, &reference_moe, stage)?;
+        }
         // Publication is LOCAL fixture metadata only, after ALL arithmetic/maps and
         // actual cleanup. No model token/cursor or whole-family right is invoked.
         *stage = NumericStage::Metadata;
@@ -1865,6 +2057,10 @@ fn run_inner<'graph, 'm>(
             &y,
         ])?;
         *stage = NumericStage::SlotCommit;
+        // This distinct fixture deliberately publishes neither staged nor
+        // original metadata. Its local bank is disposed after full owning
+        // cleanup; it cannot be reused with partially changed physical slots.
+        drop(selection);
         if let Some(p) = candidate_plan {
             banks.slots.commit(p).map_err(|_| fault())?;
         }
@@ -1954,6 +2150,73 @@ fn run_inner<'graph, 'm>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn staged_driver_has_eight_fixed_numeric_cases_and_no_timing_or_partial_report() {
+        let configs = staged_hybrid_cases();
+        assert_eq!(
+            configs.map(|(c, _)| c.down.gguf_id()),
+            [6, 6, 6, 6, 8, 8, 8, 8]
+        );
+        assert_eq!(
+            configs.map(|(c, _)| c.cpu_misses),
+            [0, 1, 5, 10, 0, 1, 5, 10]
+        );
+        assert_eq!(configs.map(|(c, _)| c.misses), [5, 5, 5, 10, 5, 5, 5, 10]);
+        for (config, fixture) in configs {
+            assert_eq!((config.workers, config.group, config.vector), (16, 0, 1));
+            assert!(config.backend == Backend::Avx2);
+            assert_eq!(config.mode, Mode::Concurrent);
+            fixture.validate(config, true).unwrap();
+            assert!(fixture.validate(config, false).is_err());
+            for rank in 0..N {
+                assert_eq!(
+                    fixture.is_miss(rank, config.misses),
+                    config.misses == 10 || rank % 2 == 1
+                );
+            }
+        }
+        let mut calls = 0;
+        let reports = staged_hybrid_driver(|_, _| {
+            let call = calls;
+            calls += 1;
+            Ok(call)
+        })
+        .unwrap();
+        assert_eq!(reports, [0, 1, 2, 3, 4, 5, 6, 7]);
+        for fail in 0..STAGED_HYBRID_CASES {
+            let mut calls = 0;
+            assert!(
+                staged_hybrid_driver(|_, _| {
+                    let call = calls;
+                    calls += 1;
+                    if call == fail { Err(fault()) } else { Ok(call) }
+                })
+                .is_err()
+            );
+            assert_eq!(calls, fail + 1);
+        }
+        assert!(std::mem::size_of::<StagedHybridReport>() < 32768);
+    }
+    #[test]
+    fn actual_miss_split_is_original_rank_order_and_cannot_offload_a_hit() {
+        let ids = std::array::from_fn(|r| r);
+        let split = Split::from_actual_misses(&ids, &[9, 1, 7, 3, 5], 1).unwrap();
+        assert_eq!(split.cpu(), &[1]);
+        assert_eq!(split.gpu(), &[0, 2, 3, 4, 5, 6, 7, 8, 9]);
+        assert_eq!(
+            split.map(),
+            &[0, 0, 1, 0, 0, 1, 0, 2, 0, 3, 0, 4, 0, 5, 0, 6, 0, 7, 0, 8]
+        );
+        assert!(Split::from_actual_misses(&ids, &[1, 1], 1).is_err());
+        assert!(Split::from_actual_misses(&ids, &[511], 1).is_err());
+        assert!(Split::from_actual_misses(&ids, &[1], 11).is_err());
+        assert!(
+            Split::from_actual_misses(&ids, &[], 10)
+                .unwrap()
+                .cpu()
+                .is_empty()
+        );
+    }
     #[test]
     fn actual_fixed_calibration_driver_keeps_exact_original_permits_and_abba_caps() {
         let configs = fixed_calibration_configs();
@@ -2229,6 +2492,66 @@ mod tests {
             }
         }
         Ok(y)
+    }
+    #[test]
+    fn noncontiguous_original_rank_merge_preserves_signed_zero_ranks_and_rejects_late_nan() {
+        let ids = std::array::from_fn(|r| r);
+        for (misses, cap) in [
+            (&[1, 3, 5, 7, 9][..], 0),
+            (&[1, 3, 5, 7, 9][..], 1),
+            (&[1, 3, 5, 7, 9][..], 5),
+            (&ids[..], 10),
+        ] {
+            let split = Split::from_actual_misses(&ids, misses, cap).unwrap();
+            let mut cpu = [0f32; 30];
+            let mut gpu = [0f32; 30];
+            for (owner, selected) in [(&mut gpu, split.gpu()), (&mut cpu, split.cpu())] {
+                for (index, &id) in selected.iter().enumerate() {
+                    for j in 0..3 {
+                        owner[index * 3 + j] = (id as f32 - 5.) * (j as f32 + 0.5);
+                    }
+                }
+            }
+            let merged = merge_reference(
+                &gpu,
+                &cpu,
+                split.map(),
+                &PROBS[1],
+                3,
+                split.gpu().len(),
+                split.cpu().len(),
+            )
+            .unwrap();
+            let mut expected = [0f32; 3];
+            for (rank, &prob) in PROBS[1].iter().enumerate() {
+                for (j, value) in expected.iter_mut().enumerate() {
+                    *value += prob * ((rank as f32 - 5.) * (j as f32 + 0.5));
+                }
+            }
+            bits(&merged, &expected).unwrap();
+            for zero_rank in [0, 1] {
+                let mut bad_cpu = cpu;
+                let mut bad_gpu = gpu;
+                let index = split.map()[zero_rank * 2 + 1] as usize;
+                if split.map()[zero_rank * 2] == 1 {
+                    bad_cpu[index * 3] = f32::NAN;
+                } else {
+                    bad_gpu[index * 3] = f32::NAN;
+                }
+                assert!(
+                    merge_reference(
+                        &bad_gpu,
+                        &bad_cpu,
+                        split.map(),
+                        &PROBS[1],
+                        3,
+                        split.gpu().len(),
+                        split.cpu().len()
+                    )
+                    .is_err()
+                );
+            }
+        }
     }
     #[test]
     fn original_rank_merge_includes_zero_probability_and_all_split_endpoints() {

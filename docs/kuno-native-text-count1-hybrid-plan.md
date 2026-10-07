@@ -124,3 +124,59 @@ Source anchors: `resident_model_batch.rs` Plan/router/all-family commit,
 staged plans/physical pins/Pending/Acceptance, `bank_slots.rs` canonical source
 validation and `cpu_expert.rs` guarded positional reads/scoped execution. The
 existing fixed-public calibration alone does not connect this model seam.
+
+## Implemented one-layer source slice
+
+The isolated `codex/kuno-one-layer-hybrid` source adds an executable numeric-only
+acceptance adapter; compilation and device acceptance remain owner gates. It
+does not construct a whole-model hybrid workspace or establish a speed benefit.
+The helper is
+`cpu_gpu_expert_probe::run_staged_hybrid_acceptance(client, file, graph, limits,
+retired, cancel) -> Result<StagedHybridReport>` on the original inspected file,
+bound graph and configured client. No model path reopen, hardware/route controls,
+new private diagnostics, timing sample or NumericPermit is returned.
+
+The opaque child `staged_hybrid::Selection::prepare(&ExpertBanks, &[usize; 10],
+cpu_miss_cap)` borrows the real bank. It retains the original BankInstance,
+unchanged StagedSlots origin, canonical all-ten classification plan and a
+separately canonical GPU subset plan. CPU assignment uses the first capped
+actual misses in original rank order. Every selected resident hit remains on
+GPU in its original slot, protected before choosing a GPU miss victim. Its
+immutable split supplies the actual CPU IDs, actual GPU slots and complete
+runtime rank owner/index map to the accepted producer. Neither plan advances or
+publishes the source. Empty CPU/GPU endpoints skip that empty job and use no fake
+slot or readiness bit. Revalidation precedes fill and launch, follows joined
+consumers and merge, and accompanies the final physical/owning preflight. The
+original bank owner remains alive through erasure/audit, then is disposed before
+the completed report; a modified physical bank cannot be reused against its
+unpublished original ledger.
+
+Eight declared cases use actual original Q5_0/Q8_0 down tensors, group 0,
+signed-zero vector 1 and AVX2/16 workers. For each down format, odd ranks
+1/3/5/7/9 are actual noncontiguous misses at CPU caps0/1/5; the cap10 case has
+all ten actual misses and no GPU route. Priming uses completed original GPU
+consumers and a real committed local source ledger. K0 is the real primed
+resident-hit/fetched-miss GPU baseline. All ten original probabilities and ranks
+remain in the unchanged rank0..9 merge, including positive/negative zero.
+Independent packed64-tree/core arithmetic, raw gate/up, activations, unweighted
+partials and the separate original all-GPU reference remain required at the
+existing tolerances. Full owning maps/status/tails, shared fault, file checks,
+public bank sentinels, 18-page MAIN erasure and transient I/O audits precede
+aggregate publication. Errors/panics use the original join, sticky poison,
+drain/erasure and retirement path. This first eight-case slice does not claim
+every rank/owner permutation or whole-model finality.
+
+There is no new MAIN allocation: the existing full-page 16-slot candidate and
+reference bank pair remains 134,217,728 B, with 18 owning private buffers totaling
+884,736 B and the existing 256 MiB aggregate physical gate. The existing 40 MiB
+public source cap, 4 MiB private host envelope and 1 MiB bridge allowance remain.
+Both retained plans, actual canonical-vector/state capacities, fixed split and
+selector headers are conservatively checked within the existing 256 KiB planner
+allowance (shared staged state is deliberately counted twice); no 48-layer
+accumulation or model-budget credit is asserted. Host test sources cover actual
+noncontiguous classification, full-bank victim protection, both empty endpoints,
+foreign bank instance/origin, stale revision, altered canonical plans/ownership,
+capacity rejection, signed-zero nonfinite rejection and all-or-error eight-case
+publication. No host test, compilation or device execution was run by this
+source-only agent. Root must compile/test/review and register a strict protected
+numeric-only mode, then accept both cards before any model seam or timing work.
