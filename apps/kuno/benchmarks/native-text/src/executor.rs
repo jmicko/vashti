@@ -328,6 +328,45 @@ pub(crate) struct ResidentAdmission {
     retired: Arc<AtomicBool>,
     sequence_poison: Arc<AtomicBool>,
 }
+/// Borrowed only inside the existing guarded model allocation callback. This
+/// proves that its MAIN lock is already held; constructor checks must not
+/// reacquire that lock. Not constructible/cloneable by callers or retained.
+pub(crate) struct ModelConstructionAllocation<'a> {
+    admission: &'a ResidentAdmission,
+}
+impl ModelConstructionAllocation<'_> {
+    pub(crate) fn check(&self, admission: &ResidentAdmission) -> Result<()> {
+        checked_construction_origin(
+            &self.admission.ledger,
+            &admission.ledger,
+            &self.admission.retired,
+            &admission.retired,
+            &self.admission.sequence_poison,
+            &admission.sequence_poison,
+        )
+    }
+}
+fn checked_construction_origin<T>(
+    expected_ledger: &Arc<Mutex<T>>,
+    actual_ledger: &Arc<Mutex<T>>,
+    expected_retired: &Arc<AtomicBool>,
+    actual_retired: &Arc<AtomicBool>,
+    expected_poison: &Arc<AtomicBool>,
+    actual_poison: &Arc<AtomicBool>,
+) -> Result<()> {
+    if !Arc::ptr_eq(expected_ledger, actual_ledger)
+        || !Arc::ptr_eq(expected_retired, actual_retired)
+        || !Arc::ptr_eq(expected_poison, actual_poison)
+        || actual_retired.load(Ordering::Acquire)
+        || actual_poison.load(Ordering::Acquire)
+    {
+        return Err(Error::InvalidFormat(
+            "resident model construction origin rejected",
+        ));
+    }
+    Ok(())
+}
+
 impl ResidentAdmission {
     fn with_ledger<T>(&self, f: impl FnOnce(&mut MainAdmission) -> Result<T>) -> Result<T> {
         let mut ledger = self
@@ -366,6 +405,15 @@ impl ResidentAdmission {
             checked_sequence_guard(ledger, &self.sequence_poison, |ledger| {
                 guarded_allocation(ledger, requests, || self.telemetry(), f)
             })
+        })
+    }
+    pub(crate) fn allocate_model<T>(
+        &self,
+        requests: &[u64],
+        f: impl FnOnce(&ModelConstructionAllocation<'_>) -> Result<T>,
+    ) -> Result<T> {
+        self.allocate(requests, || {
+            f(&ModelConstructionAllocation { admission: self })
         })
     }
     pub(crate) fn readback<T>(&self, f: impl FnOnce() -> Result<T>) -> Result<T> {
@@ -2627,5 +2675,76 @@ mod admission_tests {
         assert!(fill_requests([0, 4, 4], 1, false, 8 * 1024 * 1024).is_err());
         assert!(fill_requests([u64::MAX - 3, 4, 4], 1, true, 8 * 1024 * 1024).is_err());
         assert!(fill_requests([4, 4, 4], 1, true, 3 * 1024 * 1024).is_err());
+    }
+}
+
+#[cfg(test)]
+mod construction_lock_tests {
+    use super::*;
+    #[test]
+    fn checked_constructor_origin_completes_while_main_lock_is_held() {
+        let ledger = Arc::new(Mutex::new(()));
+        let retired = Arc::new(AtomicBool::new(false));
+        let poison = Arc::new(AtomicBool::new(false));
+        let held = ledger.lock().unwrap();
+        std::thread::scope(|scope| {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let (ledger_ref, retired_ref, poison_ref) = (&ledger, &retired, &poison);
+            scope.spawn(move || {
+                tx.send(
+                    checked_construction_origin(
+                        ledger_ref,
+                        ledger_ref,
+                        retired_ref,
+                        retired_ref,
+                        poison_ref,
+                        poison_ref,
+                    )
+                    .is_ok(),
+                )
+                .unwrap();
+            });
+            let completed = rx.recv_timeout(std::time::Duration::from_secs(1));
+            drop(held); // Even a regressed callback can exit before assertion.
+            assert!(completed.unwrap());
+        });
+    }
+    #[test]
+    fn construction_proof_rejects_foreign_ledger_stream_sequence_and_poisoned_flags() {
+        let ledger = Arc::new(Mutex::new(()));
+        let foreign_ledger = Arc::new(Mutex::new(()));
+        let retired = Arc::new(AtomicBool::new(false));
+        let poison = Arc::new(AtomicBool::new(false));
+        let foreign = Arc::new(AtomicBool::new(false));
+        assert!(
+            checked_construction_origin(
+                &ledger,
+                &foreign_ledger,
+                &retired,
+                &retired,
+                &poison,
+                &poison
+            )
+            .is_err()
+        );
+        assert!(
+            checked_construction_origin(&ledger, &ledger, &retired, &foreign, &poison, &poison)
+                .is_err()
+        );
+        assert!(
+            checked_construction_origin(&ledger, &ledger, &retired, &retired, &poison, &foreign)
+                .is_err()
+        );
+        retired.store(true, Ordering::Release);
+        assert!(
+            checked_construction_origin(&ledger, &ledger, &retired, &retired, &poison, &poison)
+                .is_err()
+        );
+        retired.store(false, Ordering::Release);
+        poison.store(true, Ordering::Release);
+        assert!(
+            checked_construction_origin(&ledger, &ledger, &retired, &retired, &poison, &poison)
+                .is_err()
+        );
     }
 }

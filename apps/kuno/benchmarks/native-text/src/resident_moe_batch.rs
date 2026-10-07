@@ -384,8 +384,15 @@ impl Workspace {
         &mut self,
         arena: &mut PrivateArena,
         operator: Arc<kuno_text::cpu_expert::ExpertOperator>,
+        allocation: &ModelConstructionAllocation<'_>,
     ) -> Result<()> {
-        self.healthy(arena)?;
+        // The complete model allocation callback holds MAIN admission. Use
+        // its exact borrowed origin proof; healthy() would recursively lock.
+        allocation.check(&self.admission)?;
+        self.validate_ids(arena)?;
+        if self.poison.load(Ordering::Acquire) {
+            return Err(err("native routed sequence poisoned"));
+        }
         if self.hybrid.is_some()
             || self.policy.phase != Phase::Idle
             || *self.policy.chunk != 0

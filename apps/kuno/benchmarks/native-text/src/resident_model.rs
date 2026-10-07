@@ -374,7 +374,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             admission.poison();
             return Err(Error::InvalidFormat("resident public page plan"));
         }
-        admission.allocate(&requests, || {
+        admission.allocate_model(&requests, |allocation| {
             let retired = admission.retired_context();
             let make_arena = |budget| {
                 if admission.transient_io() {
@@ -498,6 +498,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                     executor,
                     key,
                     plan.config,
+                    allocation,
                 )?);
             }
             if model.arena.charged_bytes() as u64 != private_owned {

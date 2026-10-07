@@ -355,3 +355,25 @@ Then complete hybrid-specific late final-layer/second-proof/partial-commit
 fault tests before production selection, followed by matched long timing.
 The current CPU operator joins before GPU enqueue; no overlap, hot-request
 reuse, automatic placement, performance gain or10-tokens/s acceptance is claimed.
+
+
+### Guarded constructor reservation correction
+
+The first protected Intel cap0 trial of `a8cb5e0` caught a recursive MAIN mutex
+acquisition before prefill. `ResidentModel` already held the complete
+`ResidentAdmission::allocate` callback lock; the new reserved hybrid workspace
+called ordinary `healthy()`, which tried `admission.active()` on that same lock.
+It was stopped without a device reset. No whole-model/erasure/performance
+acceptance is inferred from this stopped attempt or its systemd exit status.
+Physical Intel VRAM returned to50688000 bytes and content-free Xe fault
+classification remained zero.
+
+The correction passes a non-cloneable borrowed `ModelConstructionAllocation`
+from inside the existing guarded complete-model allocation callback, through
+native workspace construction to hybrid reservation. It checks exact ledger,
+retirement and sequence-poison identities and flags without locking again.
+Reservation still validates original arena IDs, fresh policy, AVX2/16 workers
+and all page sizes. Ordinary runtime `healthy()` and allocation/fence/cleanup
+locks remain unchanged. A held-mutex regression test requires this exact origin
+validator to complete, with foreign-ledger/stream/sequence and poisoned flags
+rejected. Host checks alone do not establish the corrected physical trial.

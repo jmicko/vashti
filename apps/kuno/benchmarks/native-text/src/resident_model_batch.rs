@@ -386,7 +386,9 @@ impl Workspace {
         executor: &GpuExecutor<'_>,
         sequence: SequenceKey,
         config: Config,
+        allocation: &crate::executor::ModelConstructionAllocation<'_>,
     ) -> Result<Self> {
+        allocation.check(&model.admission)?;
         let graph = model.graph;
         let poison = model.admission.sequence_poison();
         let cancel = AtomicBool::new(false); // Idle zero-state constructor only.
@@ -424,7 +426,7 @@ impl Workspace {
             &cancel,
         )?;
         if let Some(operator) = config.cpu_operator {
-            moe.reserve_count1_hybrid(&mut model.arena, operator)?;
+            moe.reserve_count1_hybrid(&mut model.arena, operator, allocation)?;
         }
         let shared = shared_batch::Workspace::allocate(graph, &mut model.arena)?;
         let mut alloc = |n| model.arena.allocate_zeroed(n).map_err(u::fault);
