@@ -180,6 +180,26 @@ fn count1_overlap(mode: &str, pooled: bool, raw: Option<&str>) -> Result<bool, &
         _ => Err("CPU/GPU overlap requires protected pooled count1 mode and 0 or 1"),
     }
 }
+fn count1_opt_in(mode: &str, raw: Option<&str>) -> Result<bool, &'static str> {
+    match (mode, raw) {
+        (_, None) => Ok(false),
+        ("resident-count1-hybrid-chat", Some("0")) => Ok(false),
+        ("resident-count1-hybrid-chat", Some("1")) => Ok(true),
+        _ => Err("native optimization requires protected count1 mode and 0 or 1"),
+    }
+}
+fn count1_environment_opt_in(mode: &str, name: &str) -> Result<bool, &'static str> {
+    let raw = std::env::var_os(name);
+    count1_opt_in(
+        mode,
+        raw.as_ref()
+            .map(|v| {
+                v.to_str()
+                    .ok_or("native optimization setting encoding rejected")
+            })
+            .transpose()?,
+    )
+}
 fn count1_hybrid_setting(name: &str, raw: Option<&str>) -> Result<(), &'static str> {
     let accepted = match name {
         "KUNO_LAB_NATIVE_MAX8" | "KUNO_LAB_NATIVE_DECODE" | "KUNO_LAB_CANCEL_CHECK" => {
@@ -637,6 +657,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         None
     };
+    let mapped_weights = count1_environment_opt_in(&mode, "KUNO_LAB_MAPPED_WEIGHTS")?;
+    let kernel_profile = count1_environment_opt_in(&mode, "KUNO_LAB_KERNEL_PROFILE")?;
+    if kernel_profile {
+        use cubecl_runtime::config::{
+            CubeClRuntimeConfig, RuntimeConfig, profiling::ProfilingLogLevel,
+        };
+        let mut config = CubeClRuntimeConfig::default();
+        config.profiling.logger.level = ProfilingLogLevel::Basic;
+        config.profiling.logger.stdout = true;
+        // Programmatic config avoids compile-feature-dependent file/env lookup.
+        // Only fixed-public lab kernels are profiled; no request-derived keys.
+        CubeClRuntimeConfig::set(config);
+    }
     // This fixed operator accepts no additional case/configuration arguments.
     // Its receipt destination is required before any device or model access.
     let cpu_gpu_expert_receipt = if matches!(
@@ -761,7 +794,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("Kuno public synthetic Rust kernel"),
                 required_features: adapter.features()
-                    & (wgpu::Features::SHADER_F16 | wgpu::Features::SUBGROUP),
+                    & (wgpu::Features::SHADER_F16
+                        | wgpu::Features::SUBGROUP
+                        | if kernel_profile {
+                            wgpu::Features::TIMESTAMP_QUERY
+                                | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES
+                        } else {
+                            wgpu::Features::empty()
+                        }),
                 required_limits: adapter.limits(),
                 memory_hints: wgpu::MemoryHints::MemoryUsage,
                 trace: wgpu::Trace::Off,
@@ -1592,6 +1632,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let load = Instant::now();
             let file = GgufFile::open(path, GgufLimits::default())?;
             let tokenizer = Qwen35Tokenizer::from_gguf(&file, TokenizerLimits::default())?;
+            if mapped_weights {
+                // SAFETY: this exclusive fixed-public lab borrows the original
+                // immutable Ollama content-addressed blob. No model installer or
+                // in-place writer may run during the complete borrowed session.
+                unsafe {
+                    file.enable_mapped_weights()?;
+                }
+            }
             let model = Qwen4Exp::bind(&file)?;
             let ids = tokenizer.encode(prompt, true)?;
             let mut sequence = model.sequence(ids.len() + limit)?;
@@ -1671,6 +1719,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             let prefill = start.elapsed();
+            if kernel_profile {
+                client.sync().await?;
+            }
             let pre_stats = (
                 executor.matrix_ns,
                 executor.moe_ns,
@@ -1784,6 +1835,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 executor.gdn_calls
             );
             let generation_ms = start.elapsed().as_millis() as u64;
+            if kernel_profile {
+                client.sync().await?;
+            }
             if let Some(r) = &resident {
                 println!("public_resident_warm_phase_ns={:?}", r.phase_ns);
             }
@@ -1817,6 +1871,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "small_cpu_cache_matrices":executor.small_cpu.cached_matrices(), "resident_graph":resident_enabled,"weights":"borrowed-unmodified-ollama-blob"
                 });
                 receipt["fused_matrix_fault"] = serde_json::json!(executor.fused_matrix_fault);
+                receipt["mapped_weights"] = serde_json::json!(mapped_weights);
+                receipt["observed_mapped_weights"] = serde_json::json!(file.weights_mapped());
+                receipt["kernel_profile"] = serde_json::json!(kernel_profile);
                 receipt["word_down"] = serde_json::json!(executor.word_down);
                 receipt["resident_main_admitted_upper_bytes"] =
                     serde_json::json!(executor.admission_upper_bytes()?);
@@ -2276,6 +2333,24 @@ mod transient_mode_tests {
         assert!(super::count1_hybrid_setting("KUNO_LAB_NATIVE_BATCH_COUNT", Some("1")).is_err());
         assert!(super::count1_hybrid_setting("KUNO_LAB_SMALL_CPU", Some("1")).is_err());
         assert!(super::count1_hybrid_setting("unknown", None).is_err());
+    }
+
+    #[test]
+    fn mapped_and_profile_flags_require_explicit_fixed_public_mode() {
+        for mode in [
+            "resident-count1-hybrid-chat",
+            "resident-chat",
+            "matrix-bench",
+            "arbitrary",
+        ] {
+            assert!(!super::count1_opt_in(mode, None).unwrap());
+            for raw in ["0", "1", "auto", "false", "", "2"] {
+                assert_eq!(
+                    super::count1_opt_in(mode, Some(raw)).is_ok(),
+                    mode == "resident-count1-hybrid-chat" && matches!(raw, "0" | "1")
+                );
+            }
+        }
     }
     #[test]
     fn native_decode_tile_requires_exact_public_opt_in() {

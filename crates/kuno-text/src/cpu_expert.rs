@@ -290,6 +290,21 @@ pub struct ExpertOperator {
     pool: Option<rayon::ThreadPool>,
 }
 
+// The full-capacity retained job owner erases these request-derived headers on
+// every exit. Packed payloads themselves are immutable public model bytes.
+enum PackedJob<'m> {
+    Owned(Vec<u8>),
+    Mapped(&'m [u8]),
+}
+impl AsRef<[u8]> for PackedJob<'_> {
+    fn as_ref(&self) -> &[u8] {
+        match self {
+            Self::Owned(v) => v,
+            Self::Mapped(v) => v,
+        }
+    }
+}
+
 impl ExpertOperator {
     pub fn new(workers: WorkerPlan, backend: Backend) -> Result<Self> {
         if backend == Backend::Avx2 && !avx2_available() {
@@ -584,7 +599,7 @@ impl ExpertOperator {
         if public_request > MAX_PUBLIC_PACKED_BYTES {
             return Err(Error::LimitExceeded("CPU expert public packed capacity"));
         }
-        let mut jobs = retained_metadata::Owner::<[Vec<u8>; 3]>::new(MAX_SELECTED)?;
+        let mut jobs = retained_metadata::Owner::<[PackedJob<'_>; 3]>::new(MAX_SELECTED)?;
         let mut private_input = zeroed(g.hidden)?;
         let mut activations = zeroed(MAX_SELECTED * g.feed_forward)?;
         let mut values = zeroed(MAX_SELECTED * g.hidden)?;
@@ -611,9 +626,24 @@ impl ExpertOperator {
             check_cancel(cancel)?;
             // Store empty public Vec headers directly in their guarded owner;
             // subsequent allocation/read failure cannot strand local job metadata.
-            jobs.push(std::array::from_fn(|_| Vec::new()))?;
+            jobs.push(std::array::from_fn(|_| PackedJob::Owned(Vec::new())))?;
             for part in 0..3 {
-                let packed = &mut jobs.get_mut(rank)?[part];
+                let offset = Zeroizing::new(
+                    ids[rank]
+                        .checked_mul(g.packed_bytes[part])
+                        .ok_or(Error::ArithmeticOverflow)?,
+                );
+                if let Some(mapped) = weights.reader.mapped_range(
+                    weights.tensors[part],
+                    *offset as u64,
+                    g.packed_bytes[part],
+                )? {
+                    jobs.get_mut(rank)?[part] = PackedJob::Mapped(mapped);
+                    continue;
+                }
+                let PackedJob::Owned(packed) = &mut jobs.get_mut(rank)?[part] else {
+                    return Err(Error::InvalidFormat("CPU expert packed job state"));
+                };
                 packed
                     .try_reserve_exact(g.packed_bytes[part])
                     .map_err(|_| Error::LimitExceeded("CPU expert public packed allocation"))?;
@@ -624,11 +654,6 @@ impl ExpertOperator {
                     return Err(Error::LimitExceeded("CPU expert public owned capacity"));
                 }
                 packed.resize(g.packed_bytes[part], 0);
-                let offset = Zeroizing::new(
-                    ids[rank]
-                        .checked_mul(g.packed_bytes[part])
-                        .ok_or(Error::ArithmeticOverflow)?,
-                );
                 weights
                     .reader
                     .read_range(weights.tensors[part], *offset as u64, packed)?;
@@ -646,7 +671,7 @@ impl ExpertOperator {
                 let gate = dot_row(
                     self.backend,
                     g.kinds[0],
-                    row(&jobs.get(rank)?[0], feature, g.row_bytes[0])?,
+                    row(jobs.get(rank)?[0].as_ref(), feature, g.row_bytes[0])?,
                     &private_input[..g.hidden],
                     scratch,
                     cancel,
@@ -654,7 +679,7 @@ impl ExpertOperator {
                 let up = dot_row(
                     self.backend,
                     g.kinds[1],
-                    row(&jobs.get(rank)?[1], feature, g.row_bytes[1])?,
+                    row(jobs.get(rank)?[1].as_ref(), feature, g.row_bytes[1])?,
                     &private_input[..g.hidden],
                     scratch,
                     cancel,
@@ -676,7 +701,7 @@ impl ExpertOperator {
                 dot_row(
                     self.backend,
                     g.kinds[2],
-                    row(&jobs.get(rank)?[2], feature, g.row_bytes[2])?,
+                    row(jobs.get(rank)?[2].as_ref(), feature, g.row_bytes[2])?,
                     &activations[rank * g.feed_forward..(rank + 1) * g.feed_forward],
                     scratch,
                     cancel,
@@ -1255,6 +1280,15 @@ mod avx {
         scratch: &mut Scratch,
         cancel: &AtomicBool,
     ) -> Result<f32> {
+        // These layouts have finite integer quants and bounded binary16 scale
+        // products. Decode directly into SIMD registers rather than expanding
+        // every row to a temporary f32 block. Keep separate multiply/add and the
+        // original eight accumulators (64 lanes), including every round point.
+        if matches!(dtype, TensorType::Q4K | TensorType::Q5_0 | TensorType::Q8_0) {
+            // SAFETY: this function has AVX2 enabled and dot_row proved the full
+            // original block geometry. Each helper load is bounded by its block.
+            return unsafe { packed_dot(dtype, packed, input, scratch, cancel) };
+        }
         let mut sums = Zeroizing::new(Sums([_mm256_setzero_ps(); 8]));
         let chunk = (dtype.block_elements() as usize).max(LANES);
         let row_bytes = usize::try_from(dtype.row_bytes(input.len() as u64)?)
@@ -1326,6 +1360,134 @@ mod avx {
         }
         for (bank, vector) in sums.0.iter().enumerate() {
             // SAFETY: each bank selects one disjoint8-float span inside64 values.
+            unsafe {
+                _mm256_storeu_ps(scratch.sums.as_mut_ptr().add(bank * 8), *vector);
+            }
+        }
+        finite(
+            reduce64(&mut scratch.sums),
+            "CPU expert non-finite projection",
+        )
+    }
+
+    #[target_feature(enable = "avx2")]
+    unsafe fn packed_dot(
+        dtype: TensorType,
+        packed: &[u8],
+        input: &[f32],
+        scratch: &mut Scratch,
+        cancel: &AtomicBool,
+    ) -> Result<f32> {
+        let mut sums = Zeroizing::new(Sums([_mm256_setzero_ps(); 8]));
+        let mask = _mm256_set1_epi32(15);
+        let elements = dtype.block_elements() as usize;
+        let block_bytes = dtype.block_bytes() as usize;
+        for (block_index, block) in packed.chunks_exact(block_bytes).enumerate() {
+            check_cancel(cancel)?;
+            let first = block_index * elements;
+            let scale = crate::quant::f16_to_f32(u16::from_le_bytes([block[0], block[1]]));
+            finite(scale, "CPU expert non-finite packed weight")?;
+            if dtype == TensorType::Q4K {
+                let minimum = crate::quant::f16_to_f32(u16::from_le_bytes([block[2], block[3]]));
+                finite(minimum, "CPU expert non-finite packed weight")?;
+                let scales = &block[4..16];
+                for group in 0..4 {
+                    let factors = std::array::from_fn::<_, 2, _>(|side| {
+                        let index = group * 2 + side;
+                        let (s, m) = if index < 4 {
+                            (scales[index] & 63, scales[index + 4] & 63)
+                        } else {
+                            (
+                                (scales[index + 4] & 15) | ((scales[index - 4] >> 6) << 4),
+                                (scales[index + 4] >> 4) | ((scales[index] >> 6) << 4),
+                            )
+                        };
+                        (scale * f32::from(s), minimum * f32::from(m))
+                    });
+                    for vector in 0..4 {
+                        let local = vector * 8;
+                        // SAFETY: 16+group*32+local+8 <= 144.
+                        let bytes = unsafe {
+                            _mm_loadl_epi64(block.as_ptr().add(16 + group * 32 + local).cast())
+                        };
+                        let quants = _mm256_cvtepu8_epi32(bytes);
+                        let q = [
+                            _mm256_and_si256(quants, mask),
+                            _mm256_srli_epi32::<4>(quants),
+                        ];
+                        for side in 0..2 {
+                            let weight = _mm256_sub_ps(
+                                _mm256_mul_ps(
+                                    _mm256_set1_ps(factors[side].0),
+                                    _mm256_cvtepi32_ps(q[side]),
+                                ),
+                                _mm256_set1_ps(factors[side].1),
+                            );
+                            // SAFETY: first+group*64+side*32+local+8 is inside
+                            // the original 256-element input block.
+                            let activation = unsafe {
+                                _mm256_loadu_ps(
+                                    input.as_ptr().add(first + group * 64 + side * 32 + local),
+                                )
+                            };
+                            let bank = side * 4 + vector;
+                            sums.0[bank] =
+                                _mm256_add_ps(sums.0[bank], _mm256_mul_ps(weight, activation));
+                        }
+                    }
+                }
+            } else {
+                let high = if dtype == TensorType::Q5_0 {
+                    u32::from_le_bytes(block[2..6].try_into().unwrap())
+                } else {
+                    0
+                };
+                for vector in 0..4 {
+                    let local = vector * 8;
+                    let quants = if dtype == TensorType::Q8_0 {
+                        // SAFETY: 2+local+8 <= 34, signed bytes are original Q8.
+                        let bytes =
+                            unsafe { _mm_loadl_epi64(block.as_ptr().add(2 + local).cast()) };
+                        _mm256_cvtepi8_epi32(bytes)
+                    } else {
+                        // SAFETY: 6+local%16+8 <= 22.
+                        let bytes =
+                            unsafe { _mm_loadl_epi64(block.as_ptr().add(6 + local % 16).cast()) };
+                        let bytes = _mm256_cvtepu8_epi32(bytes);
+                        let low = if local < 16 {
+                            _mm256_and_si256(bytes, mask)
+                        } else {
+                            _mm256_srli_epi32::<4>(bytes)
+                        };
+                        let shifts = _mm256_setr_epi32(
+                            local as i32,
+                            local as i32 + 1,
+                            local as i32 + 2,
+                            local as i32 + 3,
+                            local as i32 + 4,
+                            local as i32 + 5,
+                            local as i32 + 6,
+                            local as i32 + 7,
+                        );
+                        let bit = _mm256_and_si256(
+                            _mm256_srlv_epi32(_mm256_set1_epi32(high as i32), shifts),
+                            _mm256_set1_epi32(1),
+                        );
+                        _mm256_sub_epi32(
+                            _mm256_or_si256(low, _mm256_slli_epi32::<4>(bit)),
+                            _mm256_set1_epi32(16),
+                        )
+                    };
+                    let weight = _mm256_mul_ps(_mm256_set1_ps(scale), _mm256_cvtepi32_ps(quants));
+                    // SAFETY: first+local+8 <= input.len() by original32 blocks.
+                    let activation = unsafe { _mm256_loadu_ps(input.as_ptr().add(first + local)) };
+                    let bank = ((first + local) % LANES) / 8;
+                    sums.0[bank] = _mm256_add_ps(sums.0[bank], _mm256_mul_ps(weight, activation));
+                }
+            }
+        }
+        for (bank, vector) in sums.0.iter().enumerate() {
+            // SAFETY: each disjoint bank is eight initialized floats in64.
             unsafe {
                 _mm256_storeu_ps(scratch.sums.as_mut_ptr().add(bank * 8), *vector);
             }
@@ -2159,6 +2321,101 @@ mod tests {
                 assert!(got.owned_bytes() <= MAX_PRIVATE_HOST_BYTES);
                 assert!(op.project(&matrix, 2, &x, &AtomicBool::new(false)).is_err());
             }
+        }
+    }
+
+    #[test]
+    fn direct_simd_packed_decode_preserves_round_points_for_varied_half_scales() {
+        if !avx2_available() {
+            return;
+        }
+        let scales = [0u16, 0x8000, 1, 0x83ff, 0x0400, 0x1401, 0xb801, 0x7bff];
+        for kind in [TensorType::Q4K, TensorType::Q5_0, TensorType::Q8_0] {
+            for seed in 0..16 {
+                let (mut packed, _) = encoded_row(kind, 2560, seed);
+                for (block_index, block) in packed
+                    .chunks_exact_mut(kind.block_bytes() as usize)
+                    .enumerate()
+                {
+                    block[..2].copy_from_slice(
+                        &scales[(seed + block_index) % scales.len()].to_le_bytes(),
+                    );
+                    if kind == TensorType::Q4K {
+                        block[2..4].copy_from_slice(
+                            &scales[(seed + block_index + 3) % scales.len()].to_le_bytes(),
+                        );
+                    }
+                }
+                let x: Vec<_> = (0..2560)
+                    .map(|i| ((i * 17 + seed * 31) % 257) as f32 / 129.0 - 1.0)
+                    .collect();
+                let mut scalar = Scratch::new(2560).unwrap();
+                let mut vector = Scratch::new(2560).unwrap();
+                let cancel = AtomicBool::new(false);
+                let expected =
+                    dot_row(Backend::Portable, kind, &packed, &x, &mut scalar, &cancel).unwrap();
+                let actual =
+                    dot_row(Backend::Avx2, kind, &packed, &x, &mut vector, &cancel).unwrap();
+                assert_eq!(
+                    actual.to_bits(),
+                    expected.to_bits(),
+                    "kind={kind:?} seed={seed}"
+                );
+                for bits in [0x7c00u16, 0xfc00, 0x7e01] {
+                    packed[..2].copy_from_slice(&bits.to_le_bytes());
+                    assert!(
+                        dot_row(Backend::Avx2, kind, &packed, &x, &mut vector, &cancel).is_err()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn mapped_expert_jobs_match_read_jobs_and_join_before_borrowed_headers_erase() {
+        for down in [TensorType::Q5_0, TensorType::Q8_0] {
+            let f = fixture([TensorType::Q4K, TensorType::Q4K, down], 256, 256, 3);
+            let reader = f.model.positional_reader().unwrap();
+            let weights = set(&reader, &f);
+            let op = ExpertOperator::new_pooled(WorkerPlan::portable(4).unwrap(), Backend::Avx2)
+                .unwrap();
+            let x = input(256);
+            let cancel = AtomicBool::new(false);
+            let expected = op.execute(&weights, &[2, 0], &x, &cancel).unwrap();
+            // SAFETY: this fixture inode is not modified during any map borrow.
+            unsafe {
+                f.model.enable_mapped_weights().unwrap();
+            }
+            let actual = op.execute(&weights, &[2, 0], &x, &cancel).unwrap();
+            same_bits(actual.full(), expected.full());
+            let witness = std::sync::Arc::new(retained_metadata::Witness::default());
+            {
+                let mut jobs = retained_metadata::Owner::<[PackedJob<'_>; 3]>::new(MAX_SELECTED)
+                    .unwrap()
+                    .observe(witness.clone());
+                jobs.push(std::array::from_fn(|_| {
+                    PackedJob::Mapped(
+                        reader
+                            .mapped_range(f.model.tensor("gate").unwrap(), 0, 144)
+                            .unwrap()
+                            .unwrap(),
+                    )
+                }))
+                .unwrap();
+                std::thread::scope(|scope| {
+                    let jobs = &jobs;
+                    scope.spawn(move || assert_eq!(jobs.get(0).unwrap()[0].as_ref().len(), 144));
+                });
+            }
+            assert_metadata_wiped(&witness, MAX_SELECTED * size_of::<[PackedJob<'_>; 3]>());
+            cancel.store(true, Ordering::Relaxed);
+            assert!(op.execute(&weights, &[2, 0], &x, &cancel).is_err());
+            cancel.store(false, Ordering::Relaxed);
+            same_bits(
+                op.execute(&weights, &[2, 0], &x, &cancel).unwrap().full(),
+                expected.full(),
+            );
         }
     }
 

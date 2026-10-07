@@ -13,6 +13,39 @@ pub struct PositionalReader<'m> {
 }
 
 impl GgufFile {
+    /// Enable one shared read-only map of the already-inspected descriptor.
+    /// Does not prefault, pin pages, copy the model or reopen its path.
+    ///
+    /// # Safety
+    /// The caller must prevent in-place modification and truncation of this
+    /// inode until this GgufFile and all its borrowed consumers are dropped.
+    /// Atomic path replacement is harmless: the inspected descriptor stays
+    /// pinned. Stat checks detect ordinary changes but cannot close the race
+    /// between checking and using a file mapping.
+    #[allow(unsafe_code)]
+    pub unsafe fn enable_mapped_weights(&self) -> Result<()> {
+        let file = self
+            .file
+            .lock()
+            .map_err(|_| Error::InvalidFormat("model reader lock poisoned"))?;
+        self.check_stat(&file)?;
+        if self.mapping.get().is_none() {
+            // SAFETY: the caller guarantees the inode is immutable for the full
+            // model lifetime. Map uses the original fd, never a path lookup.
+            let map = unsafe { memmap2::MmapOptions::new().map(&*file)? };
+            if map.len() as u64 != self.file_len {
+                return Err(Error::InvalidFormat("model mapping extent"));
+            }
+            self.check_stat(&file)?;
+            let _ = self.mapping.set(map);
+        }
+        Ok(())
+    }
+
+    pub fn weights_mapped(&self) -> bool {
+        self.mapping.get().is_some()
+    }
+
     pub fn positional_reader(&self) -> Result<PositionalReader<'_>> {
         #[cfg(not(unix))]
         return Err(Error::InvalidFormat("positional reader requires Unix"));
@@ -41,6 +74,53 @@ impl<'m> PositionalReader<'m> {
 
     pub fn verify_file_unchanged(&self) -> Result<()> {
         self.model.check_stat(&self.file)
+    }
+
+    /// Borrow only the requested original packed span. All consumers must join
+    /// before releasing the model; the returned slice cannot outlive its owner.
+    /// None preserves the positional-read path when mapping was not enabled.
+    pub fn mapped_range(
+        &self,
+        tensor: TensorView<'m>,
+        offset: u64,
+        length: usize,
+    ) -> Result<Option<&'m [u8]>> {
+        if !self.owns(tensor) {
+            return Err(Error::InvalidFormat("positional tensor ownership"));
+        }
+        let length = u64::try_from(length).map_err(|_| Error::ArithmeticOverflow)?;
+        if length > self.model.limits.max_tensor_read_bytes {
+            return Err(Error::LimitExceeded("tensor read bytes"));
+        }
+        if offset
+            .checked_add(length)
+            .ok_or(Error::ArithmeticOverflow)?
+            > tensor.info.byte_len
+        {
+            return Err(Error::OutOfBounds);
+        }
+        let absolute = self
+            .model
+            .data_offset
+            .checked_add(tensor.info.offset)
+            .and_then(|base| base.checked_add(offset))
+            .ok_or(Error::ArithmeticOverflow)?;
+        let end = absolute
+            .checked_add(length)
+            .ok_or(Error::ArithmeticOverflow)?;
+        if end > self.model.file_len {
+            return Err(Error::OutOfBounds);
+        }
+        self.verify_file_unchanged()?;
+        self.model
+            .mapping
+            .get()
+            .map(|map| {
+                let first = usize::try_from(absolute).map_err(|_| Error::ArithmeticOverflow)?;
+                let end = usize::try_from(end).map_err(|_| Error::ArithmeticOverflow)?;
+                map.get(first..end).ok_or(Error::OutOfBounds)
+            })
+            .transpose()
     }
 
     /// Bounds and identity reject before mutation. Any I/O or late consistency
@@ -228,6 +308,52 @@ mod tests {
         let mut ordinary = [0u8; 16];
         tensor.read_row(2, &mut ordinary).unwrap();
         assert_eq!(f32::from_le_bytes(ordinary[..4].try_into().unwrap()), 8.);
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn mapped_spans_share_original_inode_and_enforce_owner_bounds_and_limits() {
+        let f = fixture(96);
+        let other = fixture(96);
+        let reader = f.model.positional_reader().unwrap();
+        let tensor = f.model.tensor("w").unwrap();
+        assert!(reader.mapped_range(tensor, 0, 16).unwrap().is_none());
+        // SAFETY: fixture payload stays immutable until all consumers drop.
+        unsafe {
+            f.model.enable_mapped_weights().unwrap();
+        }
+        assert!(f.model.weights_mapped());
+        let original = reader.mapped_range(tensor, 16, 16).unwrap().unwrap();
+        let mut read = [0u8; 16];
+        reader.read_range(tensor, 16, &mut read).unwrap();
+        assert_eq!(original, read);
+        assert!(
+            reader
+                .mapped_range(other.model.tensor("w").unwrap(), 0, 16)
+                .is_err()
+        );
+        assert!(reader.mapped_range(tensor, 95, 2).is_err());
+        assert!(reader.mapped_range(tensor, u64::MAX, 2).is_err());
+        assert!(reader.mapped_range(tensor, 0, 97).is_err());
+        std::fs::rename(&f.path, f.path.with_extension("pinned")).unwrap();
+        std::fs::write(&f.path, b"replacement inode is unrelated").unwrap();
+        assert_eq!(
+            reader
+                .mapped_range(tensor, 16, 16)
+                .unwrap()
+                .unwrap()
+                .as_ptr(),
+            original.as_ptr()
+        );
+        std::fs::remove_file(f.path.with_extension("pinned")).unwrap();
+        std::thread::scope(|scope| {
+            for _ in 0..4 {
+                let reader = &reader;
+                scope.spawn(move || {
+                    assert_eq!(reader.mapped_range(tensor, 16, 16).unwrap().unwrap(), read)
+                });
+            }
+        });
     }
 
     #[test]

@@ -1,5 +1,46 @@
 # Native scalar decode: Rust CPU co-execution and mixed-GPU plan
 
+## Foundational optimization pass, 2026-10-07
+
+The user authorized a substantial pass on placement, routing, arithmetic,
+weight access and execution overhead, using10 decode tokens/s as the working
+target without repeating Ollama baselines. The implementation below remains
+laboratory-only until actual connected output, lifecycle and timing acceptance.
+The original ordinary engine settings and installed gateway stay unchanged.
+
+The AVX2 CPU expert operator now directly decodes original Q4_K, Q5_0 and Q8_0
+weights into vector registers. It retains F32 activations, separate multiply/add,
+all64 lane round points and the original reduction tree. Other layouts use the
+existing decoder. This is exact CPU arithmetic optimization, not activation
+requantization or a foreign engine.
+
+`KUNO_LAB_MAPPED_WEIGHTS=1` is an explicit protected count1 opt-in. One read-only
+mapping uses the originally inspected GGUF descriptor, with no path reopen,
+model copy, page prefault or pinning. CPU expert jobs borrow bounded original
+packed spans, replacing their per-call payload allocation and read/copy. Their
+request-derived headers retain the full-capacity erased owner and joined worker
+lifetimes. The40-MiB public selected-span bound and1-MiB private host bound still
+apply; virtual mapping length and OS-managed public file pages are separate
+from private request buffers. Ordinary positional reads remain the default.
+
+Mapping requires preventing in-place writes/truncation of the pinned inode for
+the full model lifetime; an unsafe constructor states this obligation. Atomic
+path replacement cannot redirect the original map. Stat/ownership/span checks
+remain but cannot prevent a concurrent truncate or same-stat malicious rewrite.
+This first lab uses the existing immutable content-addressed Ollama blob under
+exclusive model-installation access. Production enforcement is still required.
+
+`KUNO_LAB_KERNEL_PROFILE=1` explicitly configures basic kernel timing for the
+fixed-public count1 fixture only. No arbitrary request profiler, prompt logging,
+compilation dump or persisted route history is introduced. Profiling changes
+execution timing and never establishes an unprofiled speed claim. Both options
+are0/1, rejected outside the protected fixture, and recorded in its receipt.
+
+Placement and reusable joined workers are already connected. Host CPU expert
+execution still needs the per-layer router/input dependency. GPU routing,
+subgroup reductions and an additional device cache must be separately connected
+and measured; no claim follows merely from source existing.
+
 Source-only proposal, 2026-10-05. Prepared by the resident-MoE child after the native MAX8 adapter handoff. No code, GPU, service, model-payload read, benchmark or default change accompanies this proposal. Parent owns whole-model batching correctness, admission, device acceptance and integration. This is a later decode experiment; MAX8 prompt batching alone cannot establish faster hot decode.
 
 ## Evidence and first decision

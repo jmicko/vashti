@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::time::SystemTime;
 
 use crate::{Error, Result, TensorType};
@@ -141,6 +141,7 @@ impl TensorInfo {
 /// intentionally omitted: metadata may include model-defined templates.
 pub struct GgufFile {
     file: Mutex<File>,
+    mapping: OnceLock<memmap2::Mmap>,
     file_len: u64,
     modified: Option<SystemTime>,
     version: u32,
@@ -281,6 +282,7 @@ impl GgufFile {
             return Err(Error::FileChanged);
         }
         Ok(Self {
+            mapping: OnceLock::new(),
             file: Mutex::new(file),
             file_len,
             modified,

@@ -44,6 +44,26 @@ def completion(cap):
 
 
 class HybridLabTests(unittest.TestCase):
+    def test_mapping_and_profiling_are_explicit_observed_and_never_inherited(self):
+        for mapped in (False, True):
+            for profile in (False, True):
+                value = receipt("intel", 10)
+                value.update(mapped_weights=mapped, observed_mapped_weights=mapped, kernel_profile=profile)
+                LAB.validate_receipt(value, "intel", 10, completion(10), mapped=mapped, profile=profile)
+                for field, selected in (("mapped_weights", mapped), ("observed_mapped_weights", mapped), ("kernel_profile", profile)):
+                    for bad in (0, "false", None, not selected):
+                        wrong = copy.deepcopy(value)
+                        wrong[field] = bad
+                        with self.assertRaises(ValueError):
+                            LAB.validate_receipt(wrong, "intel", 10, completion(10), mapped=mapped, profile=profile)
+                with mock.patch.dict(os.environ, {"KUNO_LAB_MAPPED_WEIGHTS":"auto","KUNO_LAB_KERNEL_PROFILE":"auto"}):
+                    env = LAB.worker_environment("/original/model", "/public/receipt", mapped=mapped, profile=profile)
+                self.assertEqual(env["KUNO_LAB_MAPPED_WEIGHTS"],"1" if mapped else "0")
+                self.assertEqual(env["KUNO_LAB_KERNEL_PROFILE"],"1" if profile else "0")
+        for bad in (1,"1",None):
+            with self.assertRaises(ValueError):
+                LAB.worker_environment("/original/model", "/public/receipt", mapped=bad)
+
     def test_both_caps_and_cards_require_fixed_inventory_and_actual_cpu_work(self):
         for card in ("intel", "nvidia"):
             for cap in (0, 10):
