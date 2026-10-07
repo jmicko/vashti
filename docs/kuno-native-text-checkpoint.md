@@ -6,6 +6,25 @@ four samples accepted and launcher/supervisor exit0. Work stops at this clean
 checkpoint for the requested pause; no native lab job remains running. Do not
 start another GPU job until the user resumes. The objective remains incomplete.
 
+## Current priority amendment, 2026-10-06
+
+The user selected **10 decode tokens/s** as the working native performance target
+and explicitly deferred additional/repeated Ollama baseline tests to conserve
+development usage. Prioritize measured Rust-engine optimizations after the
+applicable numerical/lifecycle checks; expanding the Ollama matrix is not a
+resume prerequisite. The completed Intel host-limit experiment must not be
+replayed merely to establish the same cache-reclaim result. A corresponding
+NVIDIA containment study can wait unless it answers a concrete optimization
+question. Preserve historical receipts and label results against the agreed
+target rather than claiming a new matched Ollama comparison.
+
+The goal was still paused when this amendment was recorded. No source/runtime
+change, GPU load, benchmark or service operation accompanies it. A read-only
+source review is preparing the existing native count1 continuation path as a
+candidate; acceptance and performance remain unmeasured. Read the
+[measurement decision](kuno-text-performance.md#baseline-variability-and-next-comparison-2026-10-06)
+before interpreting the historical practical steps and gates below.
+
 ## Latest integrated source and device evidence
 
 Root worktree/branch remain
@@ -252,10 +271,11 @@ lowering.
    Hot full-prefill comparisons require zero Ollama cached prompt tokens. The
    previous repeat reused 71 tokens and is not a fresh-native-prefill comparator.
    Compile outside measured runs and preserve actual binary/source/settings.
-   Follow the [repeated baseline plan](kuno-text-performance.md#baseline-variability-and-next-comparison-2026-10-06):
-   the original 7.6–8.0 tokens/s receipt is not Ollama's ceiling. Include repeated
-   short/long warm lanes, separate prefix reuse and numeric stream-gap/cache-I/O
-   observations before claiming a matched engine speedup.
+   Follow the [current measurement decision](kuno-text-performance.md#baseline-variability-and-next-comparison-2026-10-06):
+   use 10 tokens/s as the practical target, without further Ollama baseline runs.
+   The original 7.6–8.0 tokens/s receipt is not Ollama's ceiling. Preserve native
+   timing/identity/cache-state evidence and include observed stalls rather than
+   claiming a new matched-engine speedup from the working target alone.
 5. Only then connect measured CPU/GPU splits into the complete Rust model and
    establish quality/options/tools/long contexts/private worker acceptance,
    scheduler integration and native-default/managed `ollama.` catalog routing.

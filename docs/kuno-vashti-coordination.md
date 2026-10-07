@@ -1947,3 +1947,29 @@ prove the cause of these stalls. The benchmark fixture/receipts are unchanged.
 **Status:** documentation-only benchmark-plan/checkpoint update; no engine,
 API, installation, service or GPU operation. The native goal remains paused.
 Diff checks pass; no runtime tests are claimed. **Required Vashti changes: none.**
+
+### Native optimization priority amendment (2026-10-06)
+
+The user superseded the expanded Ollama benchmark proposal above: **use 10
+decode tokens/s as a working target and skip further/repeated Ollama baseline
+runs**. Concentrate remaining usage on correct Rust-engine optimizations and
+native before/after evidence. Historical receipts remain unchanged; 10 tokens/s
+is not a newly reproduced Ollama measurement. Numerical, privacy, cleanup and
+long-inference constraints remain in force. Native performance observations
+must retain exact public fixture/seed, actual binary/source/settings, host
+allowance and output counts; an operator win is not a whole-model win.
+
+See the [amended checkpoint](kuno-native-text-checkpoint.md#current-priority-amendment-2026-10-06)
+and [measurement decision](kuno-text-performance.md#baseline-variability-and-next-comparison-2026-10-06).
+The goal was still paused when recorded. Only documentation and a read-only
+next-candidate source review are authorized preparation here; no GPU jobs,
+production behavior, installation, API or application changes are claimed.
+Diff checks pass. **Required Vashti changes: none.**
+
+The user subsequently resumed the goal and refreshed sudo. Backend source and
+protected native GPU testing may proceed under the existing constraints; no
+additional Ollama baseline is required. The next isolated candidate is an
+explicit default-off native count1 continuation after native prefill, with
+mode-aware exact source/full-arena audit validation. It is not yet implemented
+or accepted. Root owns all shared GPU/service operations; other agents perform
+isolated source work only.

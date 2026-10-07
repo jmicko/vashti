@@ -61,6 +61,16 @@ logging; this explicit operator benchmark does not introduce a request logger.
 
 ## Baseline variability and next comparison, 2026-10-06
 
+**Current user decision:** use **10 decode tokens/s** as the practical native
+engine target. Skip additional/repeated Ollama baseline runs and spend the
+remaining development budget on correct Rust inference and measured native
+optimizations. This supersedes the expanded comparison protocol below as a
+prerequisite. Ten tokens/s is an agreed working target, not a newly measured
+Ollama receipt or proof of an exact matched-engine speedup. Keep historical
+receipts unchanged. Native tests still record public fixture/seed, source and
+binary identity, memory allowance, timings, actual output counts and cleanup;
+correctness, privacy and lifecycle gates are not waived.
+
 The initial 7.602–7.973 tokens/s warm receipt is specific to one fixture and
 sequence, **not Ollama's throughput ceiling**. The user supplied the following
 interactive timing counters and separately reported warm fresh-chat throughput
@@ -107,7 +117,8 @@ changes and storage reads are hypotheses for the observed warm-up/stalls, not
 measured explanations. Do not claim MTP is enabled: the inspected artifact has
 no MTP/draft tensors. The stored original receipt remains unchanged.
 
-**Next benchmark protocol (planned, not yet implemented or run):**
+**Historical expanded comparison proposal (not run; superseded as a
+prerequisite by the decision above):**
 
 1. Pin the actual model, engine/backend versions, source/binary identities,
    GPU placement and driver, prompt framing, seed, sampling, thinking mode,
