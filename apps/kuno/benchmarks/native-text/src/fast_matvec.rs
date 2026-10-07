@@ -2,7 +2,7 @@
 //! and tree, with two logical lanes per physical lane and subgroup shuffles.
 //! Requires enabled subgroup support,16..32 subgroup bounds and128 cube lanes.
 //! Original MAX8 owners, spans, finite faults and erasure remain with the caller.
-use super::{BF16, F16, Q4_K, Q5_0, Q6_K, Q8_0, binary16, packed_value};
+use super::{Q4_K, binary16, packed_value};
 use cubecl::prelude::*;
 
 pub const ROWS_PER_CUBE: usize = 4;
@@ -141,20 +141,9 @@ pub fn packed_single(
     #[comptime] rows: usize,
     #[comptime] columns: usize,
     #[comptime] dtype: u32,
+    #[comptime] row_bytes: usize,
 ) {
     let row = CUBE_POS_X as usize * ROWS_PER_CUBE + local_row();
-    let mut row_bytes = columns * 4;
-    if comptime!(dtype == F16 || dtype == BF16) {
-        row_bytes = columns * 2;
-    } else if comptime!(dtype == Q5_0) {
-        row_bytes = columns / 32 * 22;
-    } else if comptime!(dtype == Q8_0) {
-        row_bytes = columns / 32 * 34;
-    } else if comptime!(dtype == Q4_K) {
-        row_bytes = columns / 256 * 144;
-    } else if comptime!(dtype == Q6_K) {
-        row_bytes = columns / 256 * 210;
-    }
     let active = row < rows && count == 1;
     let value = dot(
         packed,
@@ -180,6 +169,7 @@ pub fn cube() -> CubeDim {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::quant_matvec::{BF16, F16, Q5_0, Q6_K, Q8_0};
     #[test]
     fn all_original_formats_lower_to_valid_subgroup_wgsl_with_runtime_spans() {
         use cubecl::compute::KernelBuilder;
@@ -214,8 +204,12 @@ mod tests {
                 x,
                 y,
                 7,
-                256,
+                if dtype == F16 { 4 } else { 256 },
                 dtype,
+                kuno_text::TensorType::from_gguf_id(dtype)
+                    .unwrap()
+                    .row_bytes(if dtype == F16 { 4 } else { 256 })
+                    .unwrap() as usize,
             );
             let source = WgslCompiler::default()
                 .compile(
@@ -231,6 +225,9 @@ mod tests {
                 .unwrap()
                 .to_string();
             let module = wgpu::naga::front::wgsl::parse_str(&source).unwrap();
+            if dtype == F16 {
+                assert!(source.contains("* u32(8)"));
+            }
             wgpu::naga::valid::Validator::new(
                 wgpu::naga::valid::ValidationFlags::all(),
                 wgpu::naga::valid::Capabilities::SUBGROUP,

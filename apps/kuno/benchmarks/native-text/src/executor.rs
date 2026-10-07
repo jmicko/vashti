@@ -1593,6 +1593,7 @@ impl<'a> GpuExecutor<'a> {
                         g.rows(),
                         g.columns(),
                         g.dtype(),
+                        g.row_bytes(),
                     );
                     self.fast_dense_calls += 1;
                 } else {

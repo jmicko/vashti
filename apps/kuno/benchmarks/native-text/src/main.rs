@@ -1303,6 +1303,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         rows,
                         cols,
                         dtype,
+                        tensor.info().row_bytes() as usize,
                     );
                     let fast_bytes = ScrubPublicRead(client.read_one(y.clone())?);
                     let fast_values = f32::from_bytes(&fast_bytes.0);
