@@ -147,10 +147,10 @@ overrun the requested wait bound.
 Inspection still requires each mapped view to equal its complete buffer size
 and contain only zero bytes. Source/stage counts, the separate runtime ledger,
 main admission, leases, public weights, ordinary inference waits and external
-APIs are unchanged. `NativeEraser` still performs its existing per-upload
-checked maps and volatile wipes in both erase passes; this checkpoint batches
-only audit copies/read maps. No privacy setting, raw-data export or new metrics
-are introduced.
+APIs are unchanged. This first checkpoint batched only audit copies/read maps;
+the subsequent source candidate below batches eraser WRITE maps while retaining
+the same full-span volatile writes. No privacy setting, raw-data export or new
+metrics are introduced.
 
 Added source fixtures use the actual shared preparation and mapping policies
 for 63/64/65 boundaries, multiple/partial groups, all-callback-before-scan order,
@@ -160,6 +160,46 @@ panic, nonzero tails and unmap retirement. Formatting and provenance generation
 are source checks only. Compilation, execution of the new host tests, both-card
 I/O/operator/model/cancellation acceptance and measured improvement remain
 root-owned and unverified for this candidate.
+
+### Bounded upload eraser map batching candidate (2026-10-06)
+
+The next source candidate preserves both full erase passes and the accepted
+audit policy above. Upload owners now use fixed groups of at most 64 WRITE
+maps. Every available full owner/channel/unmap guard in a group is prepared
+before its first map request. Each group shares one unchanged 30-second deadline
+across setup, requests, one checked native poll and every callback delivery;
+there is no per-owner map retry or renewed deadline. No uploads means no group
+poll. Each successfully mapped view must equal its complete API-visible buffer
+size before every byte is written through the existing volatile wipe and
+compiler fence. Full mapped views drop before unmap.
+
+Erasure remains best effort across every owner. Individual preparation,
+request, poll, callback, view/wipe or unmap error/panic is recorded without
+skipping later available owners, groups, destination clears or final submission
+and scoped-error acceptance. Successfully delivered callbacks can still grant a
+best-effort wipe after a different owner's failure; they cannot grant a clean
+transaction. Every requested/pending owner gets an explicitly checked unmap
+before later groups or destination commands. Guard Drop retains the fallback
+unmap obligation during failures/unwind; unmap failure permanently retires the
+stream. The first typed callback/poll/failure category remains authoritative.
+
+One failure prevents epoch advancement, receipt publication and buffer release,
+even if later operations clear all bytes. Owners, full spans, charges, scope
+futures, initial drain and final checked submission remain unchanged. Audit
+verification copies/read maps are untouched. Ordinary inference/readback waits,
+external APIs, configuration and public weights are unchanged; this affects
+only explicit cleanup and the existing best-effort owner Drop cleanup.
+
+Four source fixtures exercise the actual shared upload group policy at
+0/1/63/64/65/129 boundaries, full sentinel tails, all-guards-before-requests,
+callbacks-before-wipes and all unmaps before later groups/clears. They inject
+nth-owner setup/request/callback/wipe/unmap errors and panics, poll error/panic,
+rejected/disconnected/missing/late callbacks, wrong view extent, invalid/missing
+group owners and partial final groups. Assertions require later-owner wipes,
+every requested unmap, both destination clears/final submission, typed first
+failure, retirement and unchanged failed epoch/charges. Existing audit fixtures
+remain intact. Formatting/provenance checks are source-only; root owns compiler,
+host-test, both-card/operator/model/cancellation and timing acceptance.
 
 Any cleanup error or panic retires the private stream, retains tracked buffers
 WHILE the owner remains live, returns no success receipt, and requires retiring

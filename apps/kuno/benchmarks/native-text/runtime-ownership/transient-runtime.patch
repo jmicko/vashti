@@ -2199,7 +2199,7 @@
          self.mem_manage.memory_cleanup(false);
 --- /dev/null
 +++ b/cubecl-wgpu/src/compute/transient_io.rs
-@@ -0,0 +1,2698 @@
+@@ -0,0 +1,3219 @@
 +// Modified for Kuno's laboratory transient-I/O ownership/erasure patch (2026-10-05).
 +//! Opt-in bounded, explicitly owned transient I/O. No device creation in tests.
 +//!
@@ -3033,7 +3033,7 @@
 +trait EraseBackend {
 +    type Buffer;
 +    fn drain(&mut self) -> bool;
-+    fn erase_upload_full_span(&mut self, buffer: &Self::Buffer) -> bool;
++    fn erase_uploads_full_spans(&mut self, buffers: &[Tracked<Self::Buffer>]) -> bool;
 +    fn clear_copy_destination_full_span(&mut self, buffer: &Self::Buffer) -> bool;
 +    fn finish_and_accept_errors(&mut self) -> bool;
 +}
@@ -3044,11 +3044,7 @@
 +) -> bool {
 +    let mut failed = previous_error;
 +    failed |= !eraser.drain();
-+    for tracked in buffers {
-+        if tracked.kind == Kind::Upload {
-+            failed |= !eraser.erase_upload_full_span(&tracked.buffer);
-+        }
-+    }
++    failed |= !eraser.erase_uploads_full_spans(buffers);
 +    for tracked in buffers {
 +        if tracked.kind != Kind::Upload {
 +            failed |= !eraser.clear_copy_destination_full_span(&tracked.buffer);
@@ -3056,6 +3052,191 @@
 +    }
 +    failed |= !eraser.finish_and_accept_errors();
 +    !failed
++}
++
++/// Upload erasure is best effort across EVERY owner, unlike audit acceptance.
++/// One failed preparation/map/callback/wipe/unmap cannot skip later owners or
++/// destination clears. Fixed group bookkeeping never contains request bytes.
++const UPLOAD_MAP_GROUP: usize = 64;
++trait UploadMapping {
++    type Buffer;
++    type Mapping;
++    fn prepare(&mut self, buffer: &Self::Buffer) -> Result<Self::Mapping, ServerError>;
++    fn request(&mut self, mapping: &mut Self::Mapping) -> Result<(), ServerError>;
++    fn poll_group(&mut self, deadline: Instant) -> Result<(), ServerError>;
++    fn callback(&mut self, mapping: &Self::Mapping, deadline: Instant) -> Result<(), ServerError>;
++    fn wipe(&mut self, mapping: &Self::Mapping) -> Result<(), ServerError>;
++    fn unmap(&mut self, mapping: &mut Self::Mapping) -> Result<(), ServerError>;
++    fn failure(&mut self, category: Failure);
++}
++fn attempt_upload<M: UploadMapping, T>(
++    mapper: &mut M,
++    category: Failure,
++    operation: impl FnOnce(&mut M) -> Result<T, ServerError>,
++) -> Option<T> {
++    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| operation(mapper))) {
++        Ok(Ok(value)) => Some(value),
++        _ => {
++            // Native methods can record a more precise typed callback/poll
++            // category first; the tracker never overwrites that first failure.
++            mapper.failure(category);
++            None
++        }
++    }
++}
++fn erase_upload_map_group<M: UploadMapping>(
++    mapper: &mut M,
++    buffers: &[Option<&M::Buffer>; UPLOAD_MAP_GROUP],
++    count: usize,
++) -> bool {
++    if count == 0 || count > UPLOAD_MAP_GROUP {
++        mapper.failure(Failure::UploadMap);
++        return false;
++    }
++    let deadline = Instant::now() + POLL_TIMEOUT;
++    let mut mappings: [Option<M::Mapping>; UPLOAD_MAP_GROUP] = std::array::from_fn(|_| None);
++    let mut requested = [false; UPLOAD_MAP_GROUP];
++    let mut ready = [false; UPLOAD_MAP_GROUP];
++    let mut failed = false;
++    // Prepare ALL channels and unmap owners before the first map request. A
++    // failed slot does not stop preparing or requesting the other full owners.
++    for i in 0..count {
++        mappings[i] = attempt_upload(mapper, Failure::UploadMap, |mapper| {
++            mapper.prepare(buffers[i].ok_or_else(|| fault("private upload map missing owner"))?)
++        });
++        failed |= mappings[i].is_none();
++    }
++    for (i, mapping) in mappings[..count].iter_mut().enumerate() {
++        if let Some(mapping) = mapping {
++            requested[i] =
++                attempt_upload(mapper, Failure::UploadMap, |mapper| mapper.request(mapping))
++                    .is_some();
++            failed |= !requested[i];
++        }
++    }
++    if mappings[..count].iter().any(Option::is_some) {
++        failed |= attempt_upload(mapper, Failure::UploadMap, |mapper| {
++            mapper.poll_group(deadline)
++        })
++        .is_none();
++    }
++    // The SAME deadline applies independently to every callback. Continue on
++    // rejection/disconnection/timeout; never grant a fresh per-owner timeout.
++    for (i, mapping) in mappings[..count].iter().enumerate() {
++        if requested[i] {
++            ready[i] = attempt_upload(mapper, Failure::UploadMap, |mapper| {
++                mapper.callback(mapping.as_ref().unwrap(), deadline)
++            })
++            .is_some();
++            failed |= !ready[i];
++        }
++    }
++    for (i, mapping) in mappings[..count].iter().enumerate() {
++        if ready[i] {
++            failed |= attempt_upload(mapper, Failure::UploadWipe, |mapper| {
++                mapper.wipe(mapping.as_ref().unwrap())
++            })
++            .is_none();
++        }
++    }
++    // Explicitly check EVERY requested/pending unmap before destination clears
++    // or the next group. Guard Drop supplies the unwind/failure fallback too.
++    for mapping in mappings[..count].iter_mut().flatten() {
++        failed |= attempt_upload(mapper, Failure::Unmap, |mapper| mapper.unmap(mapping)).is_none();
++    }
++    !failed
++}
++fn erase_upload_groups<M: UploadMapping>(mapper: &mut M, buffers: &[Tracked<M::Buffer>]) -> bool {
++    let mut group = [None; UPLOAD_MAP_GROUP];
++    let mut count = 0;
++    let mut failed = false;
++    for tracked in buffers
++        .iter()
++        .filter(|tracked| tracked.kind == Kind::Upload)
++    {
++        group[count] = Some(&tracked.buffer);
++        count += 1;
++        if count == UPLOAD_MAP_GROUP {
++            failed |= !erase_upload_map_group(mapper, &group, count);
++            group.fill(None);
++            count = 0;
++        }
++    }
++    if count != 0 {
++        failed |= !erase_upload_map_group(mapper, &group, count);
++    }
++    !failed
++}
++
++/// Same pre-owned unmap guard as audits; UploadMapping chooses WRITE maps and
++/// volatile full-span writes instead of read inspection. Audit policy is unchanged.
++struct NativeUploadMapping<'a>(&'a TransientIo);
++impl UploadMapping for NativeUploadMapping<'_> {
++    type Buffer = wgpu::Buffer;
++    type Mapping = AuditMapGuard;
++    fn prepare(&mut self, buffer: &wgpu::Buffer) -> Result<AuditMapGuard, ServerError> {
++        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
++        Ok(AuditMapGuard {
++            buffer: buffer.clone(),
++            retired: self.0.leases.clone(),
++            sender: Some(sender),
++            receiver,
++            requested: false,
++        })
++    }
++    fn request(&mut self, mapping: &mut AuditMapGuard) -> Result<(), ServerError> {
++        let sender = mapping
++            .sender
++            .take()
++            .ok_or_else(|| fault("private upload map callback missing"))?;
++        mapping.requested = true;
++        mapping
++            .buffer
++            .map_async(wgpu::MapMode::Write, .., move |result| {
++                let _ = sender.try_send(result);
++            });
++        Ok(())
++    }
++    fn poll_group(&mut self, deadline: Instant) -> Result<(), ServerError> {
++        if !self.0.poll_map_until(deadline) {
++            return Err(fault(self.0.leases.reason(Failure::UploadMap)));
++        }
++        Ok(())
++    }
++    fn callback(&mut self, mapping: &AuditMapGuard, deadline: Instant) -> Result<(), ServerError> {
++        await_map_callback(&mapping.receiver, deadline).map_err(|category| {
++            self.0.leases.record(category.upload());
++            fault(self.0.leases.reason(category.upload()))
++        })
++    }
++    fn wipe(&mut self, mapping: &AuditMapGuard) -> Result<(), ServerError> {
++        let mut view = mapping.buffer.get_mapped_range_mut(..);
++        if view.len() as u64 != mapping.buffer.size() {
++            return Err(fault("private upload wipe extent"));
++        }
++        let pointer = view.slice(..).as_raw_element_ptr().as_ptr();
++        for i in 0..view.len() {
++            // SAFETY: exclusive full WRITE view, exact owned API-visible span.
++            unsafe { pointer.add(i).write_volatile(0) };
++        }
++        std::sync::atomic::compiler_fence(Ordering::SeqCst);
++        // The full view drops before checked explicit unmap/guard fallback.
++        Ok(())
++    }
++    fn unmap(&mut self, mapping: &mut AuditMapGuard) -> Result<(), ServerError> {
++        if mapping.requested {
++            mapping.buffer.unmap();
++            mapping.requested = false;
++        }
++        Ok(())
++    }
++    fn failure(&mut self, category: Failure) {
++        if matches!(category, Failure::Unmap) {
++            self.0.leases.retire_with(category);
++        } else {
++            self.0.leases.record(category);
++        }
++    }
 +}
 +
 +struct NativeEraser<'a> {
@@ -3068,47 +3249,8 @@
 +    fn drain(&mut self) -> bool {
 +        self.io.poll(None)
 +    }
-+    fn erase_upload_full_span(&mut self, buffer: &wgpu::Buffer) -> bool {
-+        let attempted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-+            // Mapping, polling and callback delivery share one bounded window.
-+            // No second map attempt or extra full timeout is permitted.
-+            let deadline = Instant::now() + POLL_TIMEOUT;
-+            let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-+            buffer.map_async(wgpu::MapMode::Write, .., move |r| {
-+                let _ = sender.try_send(r);
-+            });
-+            if !self.io.poll_map_until(deadline) {
-+                self.io.leases.record(Failure::UploadMap);
-+                return false;
-+            }
-+            if let Err(category) = await_map_callback(&receiver, deadline) {
-+                self.io.leases.record(category.upload());
-+                return false;
-+            }
-+            {
-+                let mut view = buffer.get_mapped_range_mut(..);
-+                let pointer = view.slice(..).as_raw_element_ptr().as_ptr();
-+                for i in 0..view.len() {
-+                    // SAFETY: exclusively mapped full WRITE region retained.
-+                    unsafe { pointer.add(i).write_volatile(0) };
-+                }
-+                std::sync::atomic::compiler_fence(Ordering::SeqCst);
-+            }
-+            buffer.unmap();
-+            true
-+        }));
-+        if matches!(attempted, Ok(true)) {
-+            true
-+        } else {
-+            if attempted.is_err() {
-+                self.io.leases.record(Failure::UploadWipe);
-+            }
-+            // Always abort failed/pending mapping. Never report success here.
-+            if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| buffer.unmap())).is_err() {
-+                self.io.leases.record(Failure::Unmap);
-+            }
-+            false
-+        }
++    fn erase_uploads_full_spans(&mut self, buffers: &[Tracked<wgpu::Buffer>]) -> bool {
++        erase_upload_groups(&mut NativeUploadMapping(&*self.io), buffers)
 +    }
 +    fn clear_copy_destination_full_span(&mut self, buffer: &wgpu::Buffer) -> bool {
 +        let accepted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -4200,15 +4342,22 @@
 +            self.events.push("drain");
 +            self.fail != Some("drain")
 +        }
-+        fn erase_upload_full_span(&mut self, b: &FakeBuffer) -> bool {
-+            assert_eq!(b.kind, Kind::Upload);
-+            self.events.push("map-write-full-upload");
-+            if self.fail == Some("upload-map") {
-+                return false;
++        fn erase_uploads_full_spans(&mut self, buffers: &[Tracked<FakeBuffer>]) -> bool {
++            let mut failed = false;
++            for tracked in buffers
++                .iter()
++                .filter(|tracked| tracked.kind == Kind::Upload)
++            {
++                assert_eq!(tracked.buffer.kind, Kind::Upload);
++                self.events.push("map-write-full-upload");
++                if self.fail == Some("upload-map") {
++                    failed = true;
++                    continue;
++                }
++                tracked.buffer.words.borrow_mut().fill(0);
++                self.events.push("unmap-flush-upload");
 +            }
-+            b.words.borrow_mut().fill(0);
-+            self.events.push("unmap-flush-upload");
-+            true
++            !failed
 +        }
 +        fn clear_copy_destination_full_span(&mut self, b: &FakeBuffer) -> bool {
 +            self.events.push(match b.kind {
@@ -4580,14 +4729,22 @@
 +    #[derive(Clone, Copy, Debug)]
 +    enum BatchFailure {
 +        Prepare(usize),
++        PreparePanic(usize),
 +        Request(usize),
 +        Poll(usize),
++        PollPanic(usize),
 +        Callback(usize),
++        CallbackPanic(usize),
 +        Disconnect(usize),
++        Pending(usize),
 +        Late(usize),
 +        Panic(usize),
 +        Nonzero(usize),
++        Wipe(usize),
++        WipePanic(usize),
++        ShortView(usize),
 +        Unmap(usize),
++        UnmapPanic(usize),
 +    }
 +    #[derive(Default)]
 +    struct BatchState {
@@ -4722,6 +4879,370 @@
 +            }
 +            Ok(())
 +        }
++    }
++    /// Inject failures through the SAME best-effort group helper as native
++    /// uploads. Reuse only public fake owner/channel bookkeeping from audits.
++    struct FakeUploadMapper(FakeMapper);
++    impl FakeUploadMapper {
++        fn new(fail: Option<BatchFailure>) -> Self {
++            Self(FakeMapper::new(fail))
++        }
++    }
++    impl UploadMapping for FakeUploadMapper {
++        type Buffer = FakeBuffer;
++        type Mapping = FakeMapGuard;
++        fn prepare(&mut self, buffer: &FakeBuffer) -> Result<FakeMapGuard, ServerError> {
++            let mapping = AuditMapping::prepare(&mut self.0, buffer)?;
++            if matches!(self.0.fail, Some(BatchFailure::PreparePanic(id)) if id == mapping.id) {
++                panic!("synthetic upload bookkeeping panic");
++            }
++            Ok(mapping)
++        }
++        fn request(&mut self, mapping: &mut FakeMapGuard) -> Result<(), ServerError> {
++            if matches!(self.0.fail, Some(BatchFailure::Pending(id)) if id == mapping.id) {
++                mapping.requested = true;
++                self.0
++                    .state
++                    .borrow_mut()
++                    .events
++                    .push(("request", mapping.id));
++                // Keep the sender alive without delivering: a successful poll
++                // alone does not make this callback acceptable.
++                Ok(())
++            } else {
++                AuditMapping::request(&mut self.0, mapping)
++            }
++        }
++        fn poll_group(&mut self, deadline: Instant) -> Result<(), ServerError> {
++            let group = self.0.state.borrow().polls;
++            let result = AuditMapping::poll_group(&mut self.0, deadline);
++            if matches!(self.0.fail, Some(BatchFailure::PollPanic(id)) if id == group) {
++                panic!("synthetic upload poll panic");
++            }
++            result
++        }
++        fn callback(
++            &mut self,
++            mapping: &FakeMapGuard,
++            deadline: Instant,
++        ) -> Result<(), ServerError> {
++            assert_eq!(self.0.state.borrow().poll_deadline, Some(deadline));
++            self.0
++                .state
++                .borrow_mut()
++                .events
++                .push(("callback", mapping.id));
++            if matches!(self.0.fail, Some(BatchFailure::CallbackPanic(id)) if id == mapping.id) {
++                panic!("synthetic upload callback panic");
++            }
++            let deadline = match self.0.fail {
++                Some(BatchFailure::Late(id)) if id == mapping.id => {
++                    Instant::now() - Duration::from_nanos(1)
++                }
++                Some(BatchFailure::Pending(id)) if id == mapping.id => {
++                    Instant::now() + Duration::from_millis(2)
++                }
++                _ => deadline,
++            };
++            await_map_callback(&mapping.receiver, deadline).map_err(|category| {
++                self.0.tracker.record(category.upload());
++                fault(self.0.tracker.reason(category.upload()))
++            })
++        }
++        fn wipe(&mut self, mapping: &FakeMapGuard) -> Result<(), ServerError> {
++            self.0.state.borrow_mut().events.push(("wipe", mapping.id));
++            if matches!(self.0.fail, Some(BatchFailure::WipePanic(id)) if id == mapping.id) {
++                panic!("synthetic full upload wipe panic");
++            }
++            if matches!(self.0.fail, Some(BatchFailure::Wipe(id) | BatchFailure::ShortView(id)) if id == mapping.id)
++            {
++                return Err(fault("synthetic full upload wipe extent failed"));
++            }
++            assert_eq!(mapping.buffer.words.borrow().len(), MIN_BYTES as usize);
++            // Fake sentinel tails are private-owner stand-ins, never live data.
++            mapping.buffer.words.borrow_mut().fill(0);
++            Ok(())
++        }
++        fn unmap(&mut self, mapping: &mut FakeMapGuard) -> Result<(), ServerError> {
++            if mapping.requested {
++                self.0.state.borrow_mut().events.push(("unmap", mapping.id));
++                if matches!(self.0.fail, Some(BatchFailure::UnmapPanic(id)) if id == mapping.id) {
++                    panic!("synthetic upload unmap panic");
++                }
++                if matches!(self.0.fail, Some(BatchFailure::Unmap(id)) if id == mapping.id) {
++                    return Err(fault("synthetic upload unmap failure"));
++                }
++                mapping.requested = false;
++            }
++            Ok(())
++        }
++        fn failure(&mut self, category: Failure) {
++            if matches!(category, Failure::Unmap) {
++                self.0.tracker.retire_with(category);
++            } else {
++                self.0.tracker.record(category);
++            }
++        }
++    }
++    struct FakeBatchedEraser {
++        mapper: FakeUploadMapper,
++    }
++    impl EraseBackend for FakeBatchedEraser {
++        type Buffer = FakeBuffer;
++        fn drain(&mut self) -> bool {
++            self.mapper.0.state.borrow_mut().events.push(("drain", 0));
++            true
++        }
++        fn erase_uploads_full_spans(&mut self, buffers: &[Tracked<FakeBuffer>]) -> bool {
++            erase_upload_groups(&mut self.mapper, buffers)
++        }
++        fn clear_copy_destination_full_span(&mut self, buffer: &FakeBuffer) -> bool {
++            self.mapper.0.state.borrow_mut().events.push((
++                match buffer.kind {
++                    Kind::Uniform => "clear-full-uniform",
++                    Kind::Readback => "clear-full-readback",
++                    Kind::Upload => panic!("upload cannot use COPY_DST"),
++                },
++                0,
++            ));
++            buffer.words.borrow_mut().fill(0);
++            true
++        }
++        fn finish_and_accept_errors(&mut self) -> bool {
++            self.mapper
++                .0
++                .state
++                .borrow_mut()
++                .events
++                .push(("submit-wait-errors", 0));
++            true
++        }
++    }
++    fn fake_uploads(count: usize) -> Vec<Tracked<FakeBuffer>> {
++        (0..count)
++            .map(|_| Tracked {
++                kind: Kind::Upload,
++                buffer: FakeBuffer {
++                    kind: Kind::Upload,
++                    words: std::rc::Rc::new(RefCell::new(vec![0xa7; MIN_BYTES as usize])),
++                },
++            })
++            .collect()
++    }
++    #[test]
++    fn upload_groups_bound_polls_prepare_all_maps_and_unmap_before_later_groups_or_clears() {
++        for count in [0, 1, 63, 64, 65, 129] {
++            let mut buffers = fake_uploads(count);
++            buffers.extend(
++                fake_buffers()
++                    .into_iter()
++                    .filter(|buffer| buffer.kind != Kind::Upload),
++            );
++            let mut eraser = FakeBatchedEraser {
++                mapper: FakeUploadMapper::new(None),
++            };
++            assert!(erase_all(&mut eraser, &buffers, false));
++            let state = eraser.mapper.0.state.borrow();
++            assert_eq!(state.polls, count.div_ceil(UPLOAD_MAP_GROUP));
++            for name in ["prepare", "request", "callback", "wipe", "unmap"] {
++                assert_eq!(
++                    state.events.iter().filter(|event| event.0 == name).count(),
++                    count
++                );
++            }
++            let position = |event| {
++                state
++                    .events
++                    .iter()
++                    .position(|entry| *entry == event)
++                    .unwrap()
++            };
++            for first in (0..count).step_by(UPLOAD_MAP_GROUP) {
++                let last = (first + UPLOAD_MAP_GROUP).min(count) - 1;
++                assert!(position(("prepare", last)) < position(("request", first)));
++                assert!(position(("callback", last)) < position(("wipe", first)));
++                assert!(position(("wipe", last)) < position(("unmap", first)));
++                if last + 1 < count {
++                    assert!(position(("unmap", last)) < position(("prepare", last + 1)));
++                }
++            }
++            if count != 0 {
++                assert!(position(("unmap", count - 1)) < position(("clear-full-uniform", 0)));
++            }
++            assert!(position(("clear-full-readback", 0)) < position(("submit-wait-errors", 0)));
++            assert!(
++                buffers.iter().all(|buffer| buffer
++                    .buffer
++                    .words
++                    .borrow()
++                    .iter()
++                    .all(|byte| *byte == 0))
++            );
++        }
++    }
++    #[test]
++    fn upload_group_policy_attempts_all_later_owners_and_destinations_after_every_error_or_panic() {
++        for failure in [
++            BatchFailure::Prepare(17),
++            BatchFailure::PreparePanic(17),
++            BatchFailure::Request(17),
++            BatchFailure::Panic(17),
++            BatchFailure::Poll(0),
++            BatchFailure::PollPanic(0),
++            BatchFailure::Callback(17),
++            BatchFailure::CallbackPanic(17),
++            BatchFailure::Disconnect(17),
++            BatchFailure::Pending(17),
++            BatchFailure::Late(17),
++            BatchFailure::Wipe(17),
++            BatchFailure::WipePanic(17),
++            BatchFailure::ShortView(17),
++            BatchFailure::Unmap(17),
++            BatchFailure::UnmapPanic(17),
++            BatchFailure::Callback(64),
++            BatchFailure::WipePanic(128),
++        ] {
++            let mut buffers = fake_uploads(129);
++            buffers.extend(
++                fake_buffers()
++                    .into_iter()
++                    .filter(|buffer| buffer.kind != Kind::Upload),
++            );
++            let mut ledger = Ledger::new(buffers.len() as u64 * MIN_BYTES).unwrap();
++            for buffer in &buffers {
++                ledger.reserve(buffer.kind, 19).unwrap();
++            }
++            let before = (ledger.epoch, ledger.charged, ledger.totals);
++            let mut eraser = FakeBatchedEraser {
++                mapper: FakeUploadMapper::new(Some(failure)),
++            };
++            assert!(!erase_all(&mut eraser, &buffers, false), "{failure:?}");
++            let state = eraser.mapper.0.state.borrow();
++            assert_eq!(state.polls, 3, "{failure:?}");
++            assert_eq!(
++                state
++                    .events
++                    .iter()
++                    .filter(|event| event.0 == "prepare")
++                    .count(),
++                129
++            );
++            let missing = if matches!(
++                failure,
++                BatchFailure::Prepare(_) | BatchFailure::PreparePanic(_)
++            ) {
++                1
++            } else {
++                0
++            };
++            assert_eq!(
++                state
++                    .events
++                    .iter()
++                    .filter(|event| event.0 == "request")
++                    .count(),
++                129 - missing
++            );
++            for id in [18, 63, 65, 127] {
++                assert!(state.events.contains(&("wipe", id)), "{failure:?}");
++                assert!(state.events.contains(&("unmap", id)), "{failure:?}");
++                assert!(
++                    buffers[id]
++                        .buffer
++                        .words
++                        .borrow()
++                        .iter()
++                        .all(|byte| *byte == 0)
++                );
++            }
++            for &(_, id) in state.events.iter().filter(|event| event.0 == "request") {
++                assert!(state.events.contains(&("unmap", id)), "{failure:?}");
++            }
++            let position = |event| {
++                state
++                    .events
++                    .iter()
++                    .position(|entry| *entry == event)
++                    .unwrap()
++            };
++            assert!(position(("unmap", 128)) < position(("clear-full-uniform", 0)));
++            assert!(state.events.contains(&("clear-full-readback", 0)));
++            assert!(state.events.contains(&("submit-wait-errors", 0)));
++            assert_eq!((ledger.epoch, ledger.charged, ledger.totals), before);
++            if matches!(
++                failure,
++                BatchFailure::Unmap(_) | BatchFailure::UnmapPanic(_)
++            ) {
++                assert!(eraser.mapper.0.tracker.retired.load(Ordering::Acquire));
++                assert_eq!(
++                    eraser.mapper.0.tracker.reason(Failure::CleanupRejected),
++                    Failure::Unmap.code()
++                );
++            }
++        }
++    }
++    #[test]
++    fn upload_callback_failures_keep_typed_first_cause_and_reject_later_clean_pass() {
++        for (failure, expected) in [
++            (BatchFailure::Callback(17), Failure::UploadMapRejected),
++            (BatchFailure::Disconnect(17), Failure::UploadMapDisconnected),
++            (BatchFailure::Pending(17), Failure::UploadMapCallbackTimeout),
++            (BatchFailure::Late(17), Failure::UploadMapCallbackTimeout),
++            (BatchFailure::Poll(0), Failure::DrainTimeout),
++        ] {
++            let mut buffers = fake_uploads(65);
++            buffers.extend(
++                fake_buffers()
++                    .into_iter()
++                    .filter(|buffer| buffer.kind != Kind::Upload),
++            );
++            let mut eraser = FakeBatchedEraser {
++                mapper: FakeUploadMapper::new(Some(failure)),
++            };
++            assert!(!erase_all(&mut eraser, &buffers, false));
++            assert_eq!(
++                eraser.mapper.0.tracker.reason(Failure::CleanupRejected),
++                expected.code()
++            );
++            eraser.mapper.0.fail = None;
++            assert!(!erase_all(&mut eraser, &buffers, true));
++            assert_eq!(
++                eraser.mapper.0.tracker.reason(Failure::CleanupRejected),
++                expected.code()
++            );
++            assert!(
++                buffers.iter().all(|buffer| buffer
++                    .buffer
++                    .words
++                    .borrow()
++                    .iter()
++                    .all(|byte| *byte == 0))
++            );
++        }
++    }
++    #[test]
++    fn upload_group_rejects_invalid_or_missing_extents_without_skipping_present_owner() {
++        let empty = [None; UPLOAD_MAP_GROUP];
++        for count in [0, UPLOAD_MAP_GROUP + 1] {
++            let mut mapper = FakeUploadMapper::new(None);
++            assert!(!erase_upload_map_group(&mut mapper, &empty, count));
++            assert!(mapper.0.state.borrow().events.is_empty());
++        }
++        let buffers = fake_uploads(1);
++        let mut group = [None; UPLOAD_MAP_GROUP];
++        group[1] = Some(&buffers[0].buffer);
++        let mut mapper = FakeUploadMapper::new(None);
++        assert!(!erase_upload_map_group(&mut mapper, &group, 2));
++        assert!(mapper.0.state.borrow().events.contains(&("wipe", 0)));
++        assert!(mapper.0.state.borrow().events.contains(&("unmap", 0)));
++        assert!(
++            buffers[0]
++                .buffer
++                .words
++                .borrow()
++                .iter()
++                .all(|byte| *byte == 0)
++        );
 +    }
 +    fn fake_readable(count: usize) -> Vec<Tracked<FakeBuffer>> {
 +        (0..count)
