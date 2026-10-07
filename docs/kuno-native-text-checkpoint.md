@@ -252,6 +252,10 @@ lowering.
    Hot full-prefill comparisons require zero Ollama cached prompt tokens. The
    previous repeat reused 71 tokens and is not a fresh-native-prefill comparator.
    Compile outside measured runs and preserve actual binary/source/settings.
+   Follow the [repeated baseline plan](kuno-text-performance.md#baseline-variability-and-next-comparison-2026-10-06):
+   the original 7.6–8.0 tokens/s receipt is not Ollama's ceiling. Include repeated
+   short/long warm lanes, separate prefix reuse and numeric stream-gap/cache-I/O
+   observations before claiming a matched engine speedup.
 5. Only then connect measured CPU/GPU splits into the complete Rust model and
    establish quality/options/tools/long contexts/private worker acceptance,
    scheduler integration and native-default/managed `ollama.` catalog routing.

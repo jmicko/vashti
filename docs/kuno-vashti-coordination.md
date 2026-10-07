@@ -1926,3 +1926,24 @@ isolated tests. No live generation, GPU benchmark, new image acceptance,
 intentional-offload implementation, native text registration or public release
 is claimed. **Required Vashti changes: none** for explicitly configured Kuno
 connectors; inference API schemas and access controls are unchanged.
+
+### Native text baseline variability follow-up (2026-10-06)
+
+The user's interactive timing counters show decode rates of 3.58, 10.11 and
+3.98 tokens/s for unequal-length responses, with reported pauses in the longest
+response and separate warm observations up to 12.68 tokens/s. These are
+unreproduced observations; only numeric aggregates, never private prompts,
+outputs or topic summaries, are retained in the
+[measurement update](kuno-text-performance.md#baseline-variability-and-next-comparison-2026-10-06).
+The original 7.6–8.0 tokens/s fixture receipt is not a general Ollama ceiling.
+
+The next comparison must match actual memory allowance and placement, distinguish
+weight/file-cache warmth from KV prefix reuse, and include repeated short and
+long public synthetic requests plus numeric within-stream gap and cache/I/O
+telemetry. The existing client does not yet capture those gaps. Qwen's sparse
+PLE lookups and expert routing make cache behavior worth measuring; they do not
+prove the cause of these stalls. The benchmark fixture/receipts are unchanged.
+
+**Status:** documentation-only benchmark-plan/checkpoint update; no engine,
+API, installation, service or GPU operation. The native goal remains paused.
+Diff checks pass; no runtime tests are claimed. **Required Vashti changes: none.**

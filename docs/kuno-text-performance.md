@@ -59,6 +59,100 @@ digests are retained. Output text/thinking, raw backend errors and private
 requests are not retained. Production Kuno still forbids prompt/seed/output
 logging; this explicit operator benchmark does not introduce a request logger.
 
+## Baseline variability and next comparison, 2026-10-06
+
+The initial 7.602–7.973 tokens/s warm receipt is specific to one fixture and
+sequence, **not Ollama's throughput ceiling**. The user supplied the following
+interactive timing counters and separately reported warm fresh-chat throughput
+up to 12.68 tokens/s. Only numeric counters are recorded here; the private
+prompts, generated text and subject matter are not retained.
+
+| Interactive turn | Reported load | Total prompt / cached | Uncached prompt | Output | Decode time | Decode rate |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 1.836402 ms | 15 / unspecified | Unconfirmed | 105 | 29.310036 s | 3.58 tokens/s |
+| 2 | 1.947002 ms | 136 / 119 | 17 | 121 | 11.963622 s | 10.11 tokens/s |
+| 3 | 35.535911 ms | 272 / 256 | 16 | 545 | 136.918420 s | 3.98 tokens/s |
+
+These are user-reported observations, not locally reproduced benchmark receipts.
+The user observed long pauses within the third response. Millisecond reported
+load durations do not establish model-unloaded cold performance or prove that
+all needed model pages were already in RAM. Prefix reuse explains reduced
+prefill work; it does not establish the cause of the decode-rate variation.
+The user runs include thinking, whereas the original controlled fixture uses
+greedy, raw, non-thinking generation. Current placement, context, sampling,
+host-memory allowance and storage/cache pressure have not been verified for
+these observations. Do not average unequal-length request rates or substitute
+the reported maximum as a matched baseline.
+
+There are two distinct model-specific memory mechanisms. Qwen's 125B backbone
+selects ten of 512 routed experts per layer, plus a shared expert; approximately
+6B backbone parameters are active for each token. The additional 51B-parameter
+PLE n-gram table performs sparse lookups rather than a dense multiplication
+through every table entry. This makes that table suitable for off-accelerator
+storage. The inspected Q5_0 GGUF contains a 32.783 GiB PLE tensor in addition to
+75.0 GiB of routed expert tensors; see the
+[artifact accounting](kuno-text-engine-research.md#reuse-the-downloaded-ollama-model)
+and [official model overview](https://huggingface.co/Qwen/Qwen3.8-Flash-Next#model-overview).
+Ollama 0.35.1 [pins llama.cpp b11232](https://github.com/ollama/ollama/blob/v0.35.1/LLAMA_CPP_VERSION).
+That revision's [Qwen implementation](https://github.com/ggml-org/llama.cpp/blob/b11232/src/models/qwen4exp.cpp)
+marks the PLE table for lazy reads and gathers selected rows. The
+[loader](https://github.com/ggml-org/llama.cpp/blob/b11232/src/llama-model-loader.cpp)
+can use a CPU file mapping for that large tensor, with backend-dependent
+automatic selection. The [mapper](https://github.com/ggml-org/llama.cpp/blob/b11232/src/llama-mmap.cpp)
+excludes lazy ranges from whole-table prefetch. This establishes source/default
+behavior, not current live confirmation of lazy mode in the user's session.
+Which pages actually come from disk, remain in RAM, or are resident on a GPU
+depends on the engine and memory pressure. OS file caching, expert working-set
+changes and storage reads are hypotheses for the observed warm-up/stalls, not
+measured explanations. Do not claim MTP is enabled: the inspected artifact has
+no MTP/draft tensors. The stored original receipt remains unchanged.
+
+**Next benchmark protocol (planned, not yet implemented or run):**
+
+1. Pin the actual model, engine/backend versions, source/binary identities,
+   GPU placement and driver, prompt framing, seed, sampling, thinking mode,
+   context, batch and CPU threads. Preserve the seed-424242 fixture as a
+   historical continuity case. Use only reviewed public synthetic prompts.
+   Compare the same production-representative host-memory allowance, with swap
+   and core dumps disabled. Keep the separate 8-GiB correctness containment;
+   performance testing does not weaken privacy protections.
+2. Measure at least two model-unloaded starts per engine, with OS file caches
+   explicitly unflushed. A fresh chat or an interactive CLI's first displayed
+   request is not automatically a cold load. Retain actual cache state and
+   request order; no global cache dropping or GPU reset is needed.
+3. Separate warm same-prefix reuse from warm full-prefill requests. Use an
+   unscored warm-up, then at least three scored repeats in each short lane.
+   Confirm zero cached input tokens in the full-prefill lane; a new chat alone
+   does not prove that. Pair the exact public fixtures across engines and
+   alternate engine order in later comparison blocks to expose cache/thermal
+   order effects. Do not compare a native worker that clears prefix state with
+   Ollama's cached total as though their prefill work were equal.
+4. Add at least two warm requests with a 512-token output cap and a reviewed
+   public multi-turn sequence, then a small additional public prompt set to
+   exercise different expert working sets. Record actual output count and
+   early EOS; a cap does not promise that many tokens. Match thinking/framing
+   within each comparison. Full native multi-turn support and equivalent
+   state handling are acceptance gates, not assumed capabilities.
+5. Report per-request load, uncached prefill, first content, decode and total
+   latency, plus median/range for repeated comparable requests. Extend the
+   benchmark client with numeric content-bearing stream-gap maximum, p95 and
+   counts above declared thresholds. Call them **chunk gaps**, not token
+   latency: a streamed record can contain more than one token. Keep late stalls
+   in both decode and end-to-end results; do not remove them as outliers or
+   declare a win from the fastest isolated request.
+6. Correlate gaps with bounded numeric storage-read, major-fault,
+   cgroup file-refault/reclaim/pressure and CPU/GPU activity/memory samples.
+   Record monitoring overhead and avoid intrusive driver probes. No private
+   prompts, output, token IDs, per-request expert-routing histories or raw
+   backend errors belong in these receipts. Generation still has no arbitrary
+   wall-clock or idle deadline. Compare sustained speed and stalls separately
+   from correctness and numerical-precision acceptance.
+
+The existing operator client records first content, final counters and stream
+record count, but not within-response gaps or correlated cache/I/O telemetry.
+This update changes the measurement plan only. No benchmark, service restart,
+model load or installed behavior change occurred; the native goal remains paused.
+
 ## Benchmark client validation
 
 `python3 -m unittest discover -s apps/kuno/scripts -p test_benchmark_text.py -v`
