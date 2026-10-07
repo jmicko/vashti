@@ -50,6 +50,35 @@ Constant stage diagnostics are being prepared without changing numerical gates.
 
 ## Current priority amendment, 2026-10-06
 
+### Q4 block candidate and both-card operator acceptance
+
+Root integrates `3e20935` original Q4 header reuse, `3f38840` strict protected
+profile/comparison controls, `cfe8fa0` completed model-boundary selection and
+`22a2413` a narrowly normalized shader-declaration test. 426 Rust host/offline
+tests, strict all-target Clippy, formatting and diff checks pass. The existing
+62 Python control tests passed at `3f38840`; no later Python change is part of
+this build. The count1 CPU-miss plan at `dc440d8` is still a proposal.
+
+The normal `22a2413` release binary has SHA256
+`b8008cfe72009a2f8856b9bc39ba6d5c543cee371130365507a0c410e4b1f7da`.
+Both cards pass 52 routed-MoE cases, 14 independent packed-format cases and
+12 expected failure cases. Six Q4Block cases per card retain paired generic
+tile1 references for both down formats and capacities16/64/96, including the
+cross-segment boundary. Observed generic maximum absolute error is zero in all
+twelve comparisons; the original numerical tolerances are unchanged.
+Full owning offsets/tails/status, independent tree/core/scalar references,
+unaltered bank ledgers and erasure remain enforced. Each probe audits1,078 MAIN
+owners /153,944,064 bytes; controlled host scratch is17,543,168 bytes. Each process
+exits normally under actual8-GiB, swap0/core0 containment without retirement.
+
+Durable build/run evidence is under
+`/media/jmicko/faststore/kuno-development/native-q4-build-20261006-v1`; aggregate
+identities and proofs are in
+`apps/kuno/benchmarks/text/receipts/rust-native-q4-block-operator-device-20261006.json`.
+This is operator acceptance. Complete-model `single-q4-all`, full75/128 timing,
+batched audit cleanup and a real staged CPU/GPU model seam remain unaccepted.
+No production/default/API/Vashti, install, release or hardware change follows.
+
 ### Later owner acceptance
 
 Root integrates `64027cf` public static projection tiles, `dd4aac7` protected

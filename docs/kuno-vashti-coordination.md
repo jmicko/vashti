@@ -1967,18 +1967,23 @@ production behavior, installation, API or application changes are claimed.
 Diff checks pass. **Required Vashti changes: none.**
 
 The user subsequently resumed the goal and refreshed sudo. Root now integrates
-through `4195238` on `codex/kuno-native-text`: protected native continuation,
+through `22a2413` on `codex/kuno-native-text`: protected native continuation,
 public projection/profile controls, single-token MoE and GDN, actual queued
 cancellation/recovery, narrow full-page CPU/GPU lab banks and bounded fixed
-calibration. 420 host/offline tests, strict all-target Clippy and60 Python lab
-tests pass. Both-card operators and `single-all` eight-token model/lifecycle
+calibration and explicit Q4 header reuse. 426 host/offline tests and strict
+all-target Clippy pass; 62 Python control tests passed at `3f38840`.
+Both-card operators and `single-all` eight-token model/lifecycle
 checks pass without a useful short-run speed gain. Both-card warmed original-read
 CPU/GPU calibration completes12 numeric gates and24 samples per card with a
 narrow operator benefit; see the
 [current owner checkpoint](kuno-native-text-checkpoint.md#later-owner-acceptance)
 for exact artifacts, failed-run evidence and limitations. No full-model throughput
 win, private native worker, default routing or automatic placement is accepted.
-Q4 header reuse and a CPU-miss/GPU-hit owner proposal are source candidates only.
+The `22a2413` Q4 binary passes52 routed/14 packed-format cases on each card,
+including all six paired generic/Q4Block comparisons with observed zero maximum
+absolute error. Complete-model Q4 acceptance and throughput remain separate.
+The count1 CPU-miss/GPU-hit plan at `dc440d8` is a proposal; a staged one-layer
+numeric adapter and batched full I/O inspection are being developed in isolation.
 Root owns shared
 GPU/service operations; isolated agents perform source work. No further Ollama
 baseline, API/Vashti change, installation or release is part of this work.
