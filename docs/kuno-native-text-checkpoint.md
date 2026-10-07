@@ -52,6 +52,21 @@ Constant stage diagnostics are being prepared without changing numerical gates.
 
 ### Batched audit and staged CPU-miss acceptance
 
+Root subsequently integrates `4d4ecbe` one mandatory full audited admission
+readback, preserving completed lease drop, ordered-source release, context/
+cancellation/sequence checks, telemetry and MAIN fence credit. Ordinary
+readbacks remain unchanged; there is no general empty-epoch skip. All439 native
+host tests and strict all-target Clippy pass. Runtime49 and Python81 fixture
+sources are unchanged by this seam. Normal release SHA256 is
+`3b192df34bf0c9cfa45d462afc14e341cd270c7cdf03f64ffd7197d3a035d71a`.
+Both-card eight-token model/fresh replay/cancellation/recovery/full erasure
+checks pass; short generation observes4,820ms Intel and8,701ms NVIDIA. See
+`rust-native-audited-fence-device-20261006.json` in the receipt directory below
+and `/media/jmicko/faststore/kuno-development/native-audited-fence-build-20261006-v1`.
+The longer75/128 Intel fixture is running; no completed long-run or matched
+performance acceptance is claimed here. Explicit public count1 dense dispatch
+and CPU-miss whole-model connection remain separate source candidates.
+
 The subsequent upload-erasure batching commit `200b38a` also passes all of the
 same both-card10/52/14/12/eight-case operator inventories and complete eight-token
 model/cancellation/recovery/erasure gates. Native host tests pass436 and runtime

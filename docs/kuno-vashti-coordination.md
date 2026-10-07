@@ -1991,6 +1991,15 @@ baseline, API/Vashti change, installation or release is part of this work.
 
 ### Native upload-erasure acceptance follow-up (2026-10-06)
 
+The subsequent internal `4d4ecbe` admission seam runs the same mandatory full
+audit once after map lease drop, then retains ordered-source release, health,
+telemetry and MAIN fence credit. Both-card short model/cancellation/recovery/
+full erasure acceptance passes with439 native host tests and strict Clippy.
+The [checkpoint](kuno-native-text-checkpoint.md#batched-audit-and-staged-cpu-miss-acceptance)
+pins the normal `3b192df…` binary and exact proofs; the longer Intel fixture is
+running and grants no current performance acceptance. Ordinary inference,
+APIs, installed services and Vashti are unchanged.
+
 The internal `200b38a` upload-wipe batching candidate passes the same both-card
 operator and complete eight-token native model/cancellation/recovery/full
 erasure inventories as the audit-only candidate. Runtime fault tests now pass49;
