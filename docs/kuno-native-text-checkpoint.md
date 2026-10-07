@@ -105,6 +105,35 @@ GPU overlap win is claimed. The normal shared target binary is still the
   [WGSL subgroup specification](https://www.w3.org/TR/WGSL/#subgroups) and
   [shuffle semantics](https://www.w3.org/TR/WGSL/#subgroupshuffle-builtin).
 
+## Additional finite-grid device acceptance, 2026-10-07
+
+The user authorized another bounded optimization turn while leaving the goal
+paused. The normal `91efea6a87b05b475a16aa4dfb8e8fa9cba03fef` artifact is
+`d6b834687ac0865bd81f2c1eb732c69d4434a849bb3228487a3cfd9dd2ad6018`.
+The count1 grouped finite/reducer grids now pass all52 routed cases,
+14 original-format cases and12 expected failures on both actual Vulkan adapters.
+The independent strict Q4 validator accepts original Q5 layer6/Q8 layer0.
+Operator erasure covers1078 owners/153,944,064 bytes, with normal exit and
+actual8-GiB/swap0/core0 protection. The operator run proofs now preserve the
+actual public adapter marker and independently check the expected vendor.
+
+Both complete eight-token chat/lifecycle runs pass the original IDs, seven
+native steps, fresh prefill/second-token replay, layer0/3 queued cancellation,
+poisoned retry rejection, fresh recovery and all four1376-owner/818,249,728-byte
+MAIN audits with source0. NVIDIA short generation observes8,525ms, read545ms,
+upload767ms. Intel observes5,739ms, read962ms, upload363ms, but its run overlaps
+CPU profiling and is **not** a comparable unprofiled timing. The CPU sample
+covers30 seconds spanning startup/prefill/decode and possibly recovery/cleanup:
+30.64% of leaf samples are memmove,10.97% memset. This is a lead, not isolated
+decode attribution or permission to remove private clearing. No copy-path or
+whole-model speed gain follows from these results.
+
+Exact identities, receipts, owning audits and CPU sample scope are recorded in
+`apps/kuno/benchmarks/text/receipts/rust-native-single-finite-device-20261007.json`
+and the durable `native-single-finite-build-20261007-v1` artifact directory.
+The experimental hybrid seam remains unexposed and device-unaccepted. There
+is no API, installed service, Vashti, release, driver or hardware reset change.
+
 ## Resumed native continuation evidence, 2026-10-06
 
 Root `codex/kuno-native-text` integrates `3735a2c` aggregate native phase timers,
