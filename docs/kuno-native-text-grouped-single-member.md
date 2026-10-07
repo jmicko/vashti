@@ -88,3 +88,23 @@ load/binding/runtime/barrier invariants and add the Q4Block header-reuse case.
 No build, tests, GPU execution or timing was run for this source handoff. Parent
 must integrate protected model controls and establish both-card numerical and
 full-model fresh/cancel/recovery acceptance before timing the candidate.
+
+The separate `apps/kuno/benchmarks/text/validate-native-q4-operator.py` validator
+accepts only this current52-case receipt and the exact14 format cases, with no
+legacy fallback. Its `validate_receipt(receipt, expected_layers=(q5, q8))` API
+requires caller-pinned original layer IDs (currently6,0); card, manifest, binary
+and cgroup proof remain separate. The typed ordered inventory independently
+selects policy, including six immediately paired generic/Q4Block tile1 cases.
+Every declared guard, limit, bank page charge and complete cleanup count is
+exact:64 successful combined arena resets including recovery,12 failed grouped
+resets and14 compact resets yield153,944,064 bytes across1,078 full MAIN buffers.
+
+Reported error maxima must be finite nonnegative f32-range numbers, with a
+generic comparison required only for Q4Block. Zero error is not an acceptance
+requirement. The producing operator retains its per-element
+`1e-4 + 3e-4*abs(reference)` checks and core
+`1e-3 + 3e-3*abs(reference)` checks. Maxima omit reference magnitudes, so the
+validator cannot reconstruct those relative comparisons or prove them without
+the producer's independently established run identity. Its strict schema and
+inventory do not establish full-model, opaque driver erasure or speed acceptance.
+The existing numeric-boundary validator and archived formats are unchanged.
