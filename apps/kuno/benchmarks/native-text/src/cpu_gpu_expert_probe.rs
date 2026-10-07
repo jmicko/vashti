@@ -272,18 +272,17 @@ impl Fixture {
         }
     }
     fn validate(self, config: Config, numeric: bool) -> Result<()> {
-        if let Self::Staged { miss_mask } = self {
-            if !numeric
+        if let Self::Staged { miss_mask } = self
+            && (!numeric
                 || miss_mask >= 1 << N
                 || miss_mask.count_ones() as usize != config.misses
                 || config.group != 0
                 || config.vector != 1
                 || config.workers != 16
                 || config.backend != Backend::Avx2
-                || config.mode != Mode::Concurrent
-            {
-                return Err(fault());
-            }
+                || config.mode != Mode::Concurrent)
+        {
+            return Err(fault());
         }
         Ok(())
     }
