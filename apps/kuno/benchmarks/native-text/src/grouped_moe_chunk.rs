@@ -983,7 +983,7 @@ impl Owner {
         unsafe {
             k::grouped_reduce::launch_unchecked::<WgpuRuntime>(
                 c,
-                CubeCount::Static(g.hidden().div_ceil(64) as u32, 8, 1),
+                g.reduce_grid(),
                 CubeDim::new_1d(64),
                 self.arg(arena, PART)?,
                 self.arg(arena, PROB)?,
@@ -1001,11 +1001,7 @@ impl Owner {
             );
             k::grouped_finite::launch_unchecked::<WgpuRuntime>(
                 c,
-                CubeCount::Static(
-                    g.hidden().div_ceil(64).max(g.ff().div_ceil(64)) as u32,
-                    80,
-                    4,
-                ),
+                g.finite_grid(),
                 CubeDim::new_1d(64),
                 self.arg(arena, INPUT)?,
                 self.arg(arena, ACT)?,

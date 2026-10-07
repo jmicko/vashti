@@ -1435,7 +1435,7 @@ fn launch_reduce(
     unsafe {
         k::grouped_reduce::launch_unchecked::<WgpuRuntime>(
             c,
-            CubeCount::Static(g.hidden().div_ceil(64) as u32, 8, 1),
+            g.reduce_grid(),
             CubeDim::new_1d(64),
             arg(arena, ids[PART])?,
             arg(arena, ids[PROB])?,
@@ -1464,11 +1464,7 @@ fn launch_finite(
     unsafe {
         k::grouped_finite::launch_unchecked::<WgpuRuntime>(
             c,
-            CubeCount::Static(
-                g.hidden().div_ceil(64).max(g.ff().div_ceil(64)) as u32,
-                80,
-                4,
-            ),
+            g.finite_grid(),
             CubeDim::new_1d(64),
             arg(arena, ids[INPUT])?,
             arg(arena, ids[ACT])?,

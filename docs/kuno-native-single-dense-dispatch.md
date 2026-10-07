@@ -35,3 +35,14 @@ post-reset erasure. The additional guarded full output snapshot is bounded to
 Host tests cover public-policy/count rejection and MAX8-to-count1 nonzero tail
 preservation. Compilation, operator/device lifecycle and performance acceptance
 belong to the physical owner; source inspection establishes no speedup.
+
+The separate grouped follow-up uses the existing public tile1 member capacity
+for finite and rank-reduction dispatch too. Tile1 finite grid Y is ten and
+reducer grid Y is one; default tile4/8 grids remain eighty and eight. Both
+shader bodies, original rank order, unconditional finite barriers and full
+MAX80 status offsets remain unchanged. Removed inactive cubes have no storage
+writes. Full clears, owning spans, tail checks and final fault folds still cover
+all MAX8/MAX80 pages. Production and the existing 52-case grouped operator
+probe share these grid helpers; the six paired Q4 cases retain their ordinary
+generic references and original tolerances. Host source tests check active
+storage-write coverage, full-span rejection and policy/count isolation.

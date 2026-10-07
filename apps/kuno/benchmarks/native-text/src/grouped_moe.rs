@@ -262,6 +262,24 @@ impl Geometry {
             (self.member_capacity() / self.tile) as u32,
         ))
     }
+    /// Explicit public member policy only; runtime count remains a guarded
+    /// operand. Inactive reducer cubes never write storage output.
+    pub fn reduce_grid(self) -> CubeCount {
+        CubeCount::Static(
+            self.hidden.div_ceil(LANES) as u32,
+            self.member_capacity() as u32,
+            1,
+        )
+    }
+    /// All ten routes for every admitted public member, with unchanged full
+    /// MAX80 status owners. Inactive finite cubes only touch workgroup scratch.
+    pub fn finite_grid(self) -> CubeCount {
+        CubeCount::Static(
+            self.hidden.div_ceil(LANES).max(self.ff.div_ceil(LANES)) as u32,
+            (self.member_capacity() * RANKS) as u32,
+            4,
+        )
+    }
     pub fn status_words(self) -> usize {
         MAX_ROUTES * 2
             + MAX_BATCH * self.hidden.div_ceil(LANES)
@@ -1106,8 +1124,9 @@ pub fn grouped_reduce(
 }
 
 /// Full active input/activation/partial/output finite sweeps. Public grid
-/// =(max(ceilD/64,ceilFF/64),MAX80,4); every barrier is unconditional. Ready
-/// flags at0..159 are never overwritten by a finite sweep or later wave.
+/// =(max(ceilD/64,ceilFF/64),public_members*10,4); every barrier is unconditional.
+/// Default public_members remains MAX8. Ready flags at0..159 are never
+/// overwritten by a finite sweep or later wave; full status offsets stay MAX80.
 #[cube(launch, launch_unchecked)]
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::collapsible_if, clippy::manual_range_contains)]
@@ -1486,6 +1505,118 @@ mod tests {
             map.words[index] = bad;
             assert!(map.validate_geometry(single).is_err());
             map.words[index] = old;
+        }
+    }
+
+    #[test]
+    fn finite_and_reduce_grids_use_only_public_members_and_keep_full_owners() {
+        for down in [Q5_0, Q8_0] {
+            let projections = [
+                Projection::new(Q4_K, 2560, 640, 512).unwrap(),
+                Projection::new(Q4_K, 2560, 640, 512).unwrap(),
+                Projection::new(down, 640, 2560, 512).unwrap(),
+            ];
+            for capacity in [16, 64, 96] {
+                let default = Geometry::new(projections, 8, capacity).unwrap();
+                let single = Geometry::new(projections, 1, capacity).unwrap();
+                let blocked = single.with_q4_block().unwrap();
+                for tile in [4, 8] {
+                    let g = Geometry::new(projections, tile, capacity).unwrap();
+                    assert!(matches!(g.reduce_grid(), CubeCount::Static(40, 8, 1)));
+                    assert!(matches!(g.finite_grid(), CubeCount::Static(40, 80, 4)));
+                    for count in [1, 3, 5, 8] {
+                        g.validate_count(count).unwrap();
+                    }
+                }
+                let spans = Spans::new([5, 7, 2563, 11, 643, 13, 2567, 3, 17, 2569, 19]);
+                let full_words = [
+                    5 + MAP_WORDS,
+                    7 + 7 * 2563 + 2560,
+                    11 + 79 * 643 + 640,
+                    13 + 79 * 2567 + 2560,
+                    3 + MAX_ROUTES,
+                    17 + 7 * 2569 + 2560,
+                    19 + default.status_words(),
+                ];
+                for g in [default, single, blocked] {
+                    spans.validate(g, full_words).unwrap();
+                    assert_eq!(g.status_words(), 4800);
+                    assert_eq!(g.scratch_bytes(true), default.scratch_bytes(true));
+                    for field in 0..full_words.len() {
+                        let mut short = full_words;
+                        short[field] -= 1;
+                        assert!(spans.validate(g, short).is_err());
+                    }
+                }
+                for g in [single, blocked] {
+                    assert!(matches!(g.reduce_grid(), CubeCount::Static(40, 1, 1)));
+                    assert!(matches!(g.finite_grid(), CubeCount::Static(40, 10, 4)));
+                    g.validate_count(1).unwrap();
+                    for count in [0, 2, 3, 5, 8, usize::MAX] {
+                        assert!(g.validate_count(count).is_err());
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn removed_count1_cubes_have_no_output_or_status_storage_effect() {
+        let default = geometry(F32, 2560, 640, 8, 16);
+        let single = geometry(F32, 2560, 640, 1, 16);
+        // Enumerate the unchanged shader's storage-write coordinates. The
+        // expected active ranges are separate full-MAX80 status sections;
+        // all ready flags and inactive locations retain their prior bits.
+        let d = default.hidden().div_ceil(LANES);
+        let f = default.ff().div_ceil(LANES);
+        let starts = [
+            MAX_ROUTES * 2,
+            MAX_ROUTES * 2 + MAX_BATCH * d,
+            MAX_ROUTES * 2 + MAX_BATCH * d + MAX_ROUTES * f,
+            MAX_ROUTES * 2 + MAX_BATCH * d + MAX_ROUTES * f + MAX_ROUTES * d,
+        ];
+        let mut expected_status = vec![false; default.status_words()];
+        for (stage, length) in [d, RANKS * f, RANKS * d, d].into_iter().enumerate() {
+            expected_status[starts[stage]..starts[stage] + length].fill(true);
+        }
+        let mut expected_output = vec![false; MAX_BATCH * default.hidden()];
+        expected_output[..default.hidden()].fill(true);
+        for g in [default, single] {
+            let CubeCount::Static(chunks, rows, stages) = g.finite_grid() else {
+                panic!("fixed public finite grid");
+            };
+            let mut status_writes = vec![false; g.status_words()];
+            for stage in 0..stages as usize {
+                for row in 0..rows as usize {
+                    for chunk in 0..chunks as usize {
+                        let (active_rows, width) = match stage {
+                            0 | 3 => (1, d),
+                            1 => (RANKS, f),
+                            2 => (RANKS, d),
+                            _ => panic!("finite stage"),
+                        };
+                        if row < active_rows && chunk < width {
+                            let index = starts[stage] + row * width + chunk;
+                            assert!(!status_writes[index]);
+                            status_writes[index] = true;
+                        }
+                    }
+                }
+            }
+            assert_eq!(status_writes, expected_status);
+            let CubeCount::Static(chunks, rows, depth) = g.reduce_grid() else {
+                panic!("fixed public reducer grid");
+            };
+            assert_eq!(depth, 1);
+            let mut output_writes = vec![false; MAX_BATCH * g.hidden()];
+            for token in 0..rows as usize {
+                for feature in 0..chunks as usize * LANES {
+                    if token < 1 && feature < g.hidden() {
+                        output_writes[token * g.hidden() + feature] = true;
+                    }
+                }
+            }
+            assert_eq!(output_writes, expected_output);
         }
     }
 
