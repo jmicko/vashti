@@ -20,7 +20,7 @@ TILE_ONE_COMPLETION = (
     "public_native_tile1_mid_token_cancel layer=0 erased=true",
     "public_native_tile1_mid_token_cancel layer=3 erased=true",
 )
-KERNEL_PROFILES = ("chunk", "single-moe", "single-gdn", "single-all")
+KERNEL_PROFILES = ("chunk", "single-moe", "single-gdn", "single-all", "single-q4-all")
 
 
 def kernel_completion(profile):

@@ -1854,7 +1854,7 @@ mod transient_mode_tests {
                         "chunk"
                     );
                 }
-                for profile in ["single-moe", "single-gdn", "single-all"] {
+                for profile in ["single-moe", "single-gdn", "single-all", "single-q4-all"] {
                     let selected = super::native_decode_kernels(Some(profile), native, tile);
                     assert_eq!(selected.is_ok(), native && tile == 1);
                     if let Ok(selected) = selected {

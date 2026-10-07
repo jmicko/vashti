@@ -13,6 +13,7 @@ lifecycle, or performance acceptance; those remain separate physical gates.
 | `single-moe` | Single-member tile | Existing chunk |
 | `single-gdn` | Existing member tile | Single-streaming recurrence |
 | `single-all` | Single-member tile | Single-streaming recurrence |
+| `single-q4-all` | Q4 block single-member tile | Single-streaming recurrence |
 
 Any non-`chunk` label requires protected native decoding and projection tile 1:
 `KUNO_LAB_NATIVE_DECODE=1`, `KUNO_LAB_NATIVE_DECODE_TILE=1`, native MAX8, owned
@@ -62,3 +63,15 @@ completion line and receipt must independently agree. Other comparison scopes
 retain their existing schedules and pin `chunk`. The original 75/128 fixed
 public fixture, seed 424242 and temperature 0 are unchanged. Numeric lifecycle
 acceptance and matched timing acceptance must be reported separately.
+
+`--native-decode-q4-comparison` instead creates the exact scope
+`fixed-public-native-decode-q4-abba-only`, using profiles `single-all`,
+`single-q4-all`, `single-q4-all`, `single-all`. All four children use the same
+binary, 52-GiB cap, native decoding and tile 1. GDN remains single-streaming in
+both profiles; the comparison changes only the public grouped gate/up policy
+from generic single-member to the Q4 block candidate. Original Q4_K gate/up
+metadata is required by the kernel owner. The same independent profile
+declarations, exact three profile recovery markers, fixture IDs and four complete
+owning audits apply. The older kernel comparison and other scopes retain their
+original schedules. Source registration does not establish a timing improvement
+or whole-model Q4 acceptance.
