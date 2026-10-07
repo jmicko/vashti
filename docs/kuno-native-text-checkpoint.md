@@ -7,6 +7,55 @@ The objective remains incomplete. Use **10 decode tokens/s** as the agreed
 working target when resumed and do not repeat Ollama baseline tests. Root owns
 GPU/service operations; source-only agents use isolated worktrees.
 
+## Joined overlap short ABBA checkpoint, 2026-10-07
+
+The user-authorized pooled-worker and overlap block is finished. Goal remains
+paused; no GPU/compiler job is running and installed admission is resumed.
+Source`44fd9bc506eedfd701f68c71cb07f47c423cb533` adds explicit pooled count1 CPU/GPU
+submission overlap, bounded borrowed orchestrator/parent header capacity, joined
+failure paths and unchanged original rank merge/all-family publication.111 core
+unit/integration tests,465 native tests,108 Python controls, strict release
+all-target Clippy for both crates and formatting pass. Four actual normal-binary
+invalid worker/overlap configurations reject before adapter/model access.
+
+Normal artifact SHA`ae9c293443445458ff02faaa79bd88aa29d3222b5dfc3144ab5fa0caa21a61f9`;
+source/build`native-count1-overlap-build-20261007-v1`; physical samples/postflight
+`native-count1-overlap-device-20261007-v1`, both under faststore's
+`kuno-development`. All eight compiler-idle same-artifact cap10 pooled
+serial/overlap/overlap/serial short fixtures pass original output IDs, actual CPU
+miss counts/fresh continuation, layer0/3 cancellation, poison/recovery and all
+four1378-owner/818413568-byte owning erasure audits/source0. Same-stream flush
+submits GPU expert work before CPU join; it is not a completion proof or an
+instrumented physical-kernel simultaneity claim. The protected serial control
+uses the same post-join CPU upload ordering as the overlap candidate.
+
+| Card | Serial short decode ms | Overlap short decode ms | Mean duration difference |
+| --- | --- | --- | --- |
+| B70 | 4777,4861 | 4653,4796 | 1.96% shorter |
+| 3060 | 6460,5979 | 6075,5941 | 3.40% shorter |
+
+These small differences overlap the observed sample variation, especially the
+active NVIDIA desktop. Do not select overlap as a reliable performance win or
+multiply percentages across distinct artifacts. Pooled worker reuse's prior
+short paired benefit remains7.22%/8.31%; overlap is an opt-in scheduling
+experiment. Current overlap short rates are approximately1.48 B70 /1.17 NVIDIA
+accepted following steps/s, far below the10-token/s working target. No new
+Ollama baseline ran. Full-vocabulary logit, hybrid late-finality and original
+75/128 gates remain unaccepted, followed by matched repeated long comparisons
+and profiling of the remaining GPU/fence work. Short eight IDs do not prove
+full numerical equivalence or long stability. Defaults/production are unchanged.
+
+Exact aggregate/source/hash/sample receipt:
+`apps/kuno/benchmarks/text/receipts/rust-native-count1-overlap-20261007.json`.
+Postflight Intel physical memory returns50688000/34242297856B and Xe classified
+wedged/timeout/reset/memory-fault counts remain zero on the same boot. NVIDIA
+retains desktop allocations. Both inference listeners respond with no loaded
+models; admission active=false/waiting0/paused=false/recovery_required=false.
+Sudo cache was refreshed throughout. No installed binary/configuration change,
+service restart, hardware reset/reboot, public API/catalog, Vashti or release
+change. Required Vashti changes:none. Source is isolated on
+`codex/kuno-native-text`; preserve the canonical frontend checkout.
+
 ## Pooled worker short ABBA acceptance, 2026-10-07
 
 User-authorized bounded optimization while the goal remains paused. Source

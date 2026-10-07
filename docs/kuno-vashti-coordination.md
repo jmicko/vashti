@@ -2126,3 +2126,18 @@ no10-token/s or production claim. Exact artifact/source/receipts and postflight
 are in the [checkpoint](kuno-native-text-checkpoint.md#pooled-worker-short-abba-acceptance-2026-10-07).
 Admission is restored and physical Intel memory recovers. No installed binary,
 configuration, API, release or Vashti change. Required Vashti changes:none.
+
+### Joined CPU/GPU overlap short checkpoint (2026-10-07)
+
+Source44fd9bc adds explicit protected-lab pooled CPU/parent-GPU submission
+overlap with bounded joined ownership and unchanged final math/publication.111
+core,465 native and108 Python controls, strict Clippy and normal build pass.
+Eight same-artifact short serial/overlap ABBA samples on both cards pass output,
+actual CPU work, fresh/cancel/poison/recovery and owning-erasure gates. Observed
+mean duration differences1.96% B70 /3.40%3060 fall within short sample variation;
+overlap is not selected as a reliable speed win. Full-logit, late-finality and
+long gates remain. Exact commits/artifact/receipts, source-contract details and
+postflight are in the [checkpoint](kuno-native-text-checkpoint.md#joined-overlap-short-abba-checkpoint-2026-10-07).
+Admission resumed, both inference listeners respond and Intel physical memory
+recovers without classified faults. No installed service/configuration, public
+API/catalog, application or release change. Required Vashti changes:none.

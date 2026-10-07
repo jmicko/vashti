@@ -481,3 +481,11 @@ and long gates remain outstanding before selection, even if short outputs pass.
 Source gate:111 core unit/integration tests,465 native tests and108 Python
 controls pass; both crates strict release all-target Clippy, formatting and
 whitespace pass. Physical overlap execution remains pending at this source commit.
+
+Both-card protected short ABBA execution now passes for44fd9bc and normal
+artifactae9c2934. All output/lifecycle/owning erasure checks pass. Observed mean
+duration differences are1.96% B70 and3.40%3060, within sample variation; no
+reliable overlap speed selection, long/production or full-logit claim. See the
+[latest checkpoint](kuno-native-text-checkpoint.md#joined-overlap-short-abba-checkpoint-2026-10-07)
+and exact rust-native-count1-overlap-20261007.json receipt. Admission is restored
+and physical Intel memory recovers without classified Xe faults.
