@@ -101,6 +101,62 @@ stage tests continue to reject a logical-sized backing. Formatting/whitespace
 and source review are separate from root-owned compilation, protected device
 acceptance and any timing result.
 
+## Fixed-public calibration helper source, 2026-10-06
+
+`cpu_gpu_expert_probe::run_fixed_calibration(client, file, graph, limits,
+retired_arc, cancel)` is a separate explicit laboratory entry. It borrows the
+already inspected original file and caller graph, the existing configured
+client/limits and actual shared retirement owner. Main registration, protected
+physical execution and both-card numerical acceptance remain root-owned. This
+source handoff must be integrated with root's complete physical-bank allocation
+fix (`1946020`); it does not replace that invariant or enable a production path.
+
+The compiled subset is Q5_0 and Q8_0 down, original group 0/vector 0, AVX2 with
+16 proven physical-core workers, ten misses and CPU miss counts 0/5/10. Each of
+the six points first completes separate Concurrent and CPU-first numeric runs
+for those exact configurations. It then takes four samples in
+Concurrent/CPU-first/CPU-first/Concurrent order: **12 numeric gates and 24 timing
+samples total**, two timing tickets per original permit. Each point retains its
+two original sealed NumericPermits until all matching samples finish; returned
+calibration permits are dropped. The existing exact file/client/graph/config,
+retirement Arc/thread identity and shared 16-ticket ceiling are unchanged. No
+caller-supplied group, worker, route, split, mode or sample count is accepted.
+
+The helper returns fixed-size typed point/sample arrays containing the existing
+aggregate Report, explicit mode and three separate wall intervals. Existing
+numeric-only Report fields and the old four numeric CLI cases stay unchanged:
+
+- `Report.timing` contains completed CPU, GPU and joined scheduling intervals;
+  `Report.bridge_and_merge` measures the completed CPU upload/original-rank
+  merge, finite/fault owning maps and checked I/O.
+- `candidate_completed_wall` spans the start of the joined schedule through
+  CPU partial validation and completed merge. It excludes independent oracles.
+- `acceptance_cleanup_wall` begins after reference computation and numerical
+  comparisons, before immutable owner maps, then covers final fences/file
+  checks, local slot publication, public sentinels, full MAIN erasure and final
+  checked I/O. It also excludes independent oracles.
+- `full_run_including_references_wall` spans the entire typed run, including
+  setup, priming, original reads, references/oracles, numerical acceptance,
+  cleanup, final file verification and local owner destruction.
+
+Candidate and cleanup are separate intervals with references between them;
+their sum is not a contiguous full-run wall. The helper preserves every launch,
+owning map, fence, comparison, reference ordering, source/main/runtime/private
+host charge and final cleanup gate. Timing observations are stack/public
+metadata; bounded aggregate reports are under 32 KiB and contain no private
+vectors or IDs. No report is returned until all six points complete cleanup and
+the original graph/file/retirement owner pass final consistency checks. The
+helper performs no logging, file publication or automatic split selection.
+
+Original numeric gates, required priming and earlier post-run references warm
+OS/host/device caches. Fixed group 0 is a narrow warmed original-read operator
+experiment, not the 32-group working-set study, prepared-host performance,
+storage-cold timing or full-model decode speed. Parent must retain compiler-idle
+protected execution and numerical/lifecycle evidence before interpreting
+results. Host test sources exercise the same fixed-point driver for gate
+failures, exact permit reuse, ABBA/sample bounds and publication intervals. No
+compilation, test execution or device timing accompanies this source handoff.
+
 ## Approved original snapshot
 
 Bounded original CPU/GPU expert acceptance and joint calibration

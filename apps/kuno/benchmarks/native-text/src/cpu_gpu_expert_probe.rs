@@ -22,6 +22,7 @@ use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
+use std::time::{Duration, Instant};
 use zeroize::{Zeroize, Zeroizing};
 const D: usize = 2560;
 const FF: usize = 640;
@@ -214,6 +215,218 @@ pub struct Report {
     pub bridge_and_merge: Option<std::time::Duration>,
     pub metadata_bytes: usize,
     pub snapshot_bytes: usize,
+}
+pub const FIXED_CALIBRATION_POINTS: usize = 6;
+pub const FIXED_CALIBRATION_SAMPLES: usize = 4;
+const CALIBRATION_ABBA: [Mode; FIXED_CALIBRATION_SAMPLES] = [
+    Mode::Concurrent,
+    Mode::CpuFirst,
+    Mode::CpuFirst,
+    Mode::Concurrent,
+];
+/// Separate from the original numeric-only Report. None of these intervals is
+/// an enqueue-only measurement or a full-model decode throughput measurement.
+pub struct FixedCalibrationSample {
+    pub mode: Mode,
+    pub report: Report,
+    /// Start/join, real reads/fills, owning candidate maps/checks, CPU partial
+    /// validation, upload and completed original-rank merge. Excludes oracles.
+    pub candidate_completed_wall: Duration,
+    /// Immutable owner maps, final fences/consistency, local publication,
+    /// public sentinels, full MAIN erasure and final checked I/O. Excludes oracles.
+    pub acceptance_cleanup_wall: Duration,
+    /// Entire typed run, including setup/priming, independent oracle/reference
+    /// work, all numerical acceptance, cleanup and final file verification.
+    pub full_run_including_references_wall: Duration,
+}
+pub struct FixedCalibrationPoint {
+    pub down_dtype: u32,
+    pub cpu_misses: usize,
+    /// Concurrent then CPU-first; both complete before any sample at this point.
+    pub numeric: [Report; 2],
+    pub samples: [FixedCalibrationSample; FIXED_CALIBRATION_SAMPLES],
+}
+/// Fixed public subset only; no private tensor, selection or permit is returned.
+pub struct FixedCalibrationReport {
+    pub points: [FixedCalibrationPoint; FIXED_CALIBRATION_POINTS],
+}
+#[derive(Clone, Copy)]
+struct CompletedTimes {
+    candidate: Duration,
+    cleanup: Duration,
+    full_run: Duration,
+}
+struct RecordedReport {
+    report: Report,
+    completed: Option<CompletedTimes>,
+}
+fn fixed_calibration_configs() -> [Config; FIXED_CALIBRATION_POINTS] {
+    [
+        (TensorType::Q5_0, 0),
+        (TensorType::Q5_0, 5),
+        (TensorType::Q5_0, 10),
+        (TensorType::Q8_0, 0),
+        (TensorType::Q8_0, 5),
+        (TensorType::Q8_0, 10),
+    ]
+    .map(|(down, cpu_misses)| Config {
+        down,
+        workers: 16,
+        backend: Backend::Avx2,
+        misses: 10,
+        cpu_misses,
+        group: 0,
+        vector: 0,
+        mode: Mode::Concurrent,
+    })
+}
+/// Used by the actual helper and injected host tests. Each exact configuration
+/// has one original numeric permit. A calibration result's replacement permit
+/// is dropped, so it cannot restart or substitute the original ticket counter.
+fn fixed_calibration_point<P, R>(
+    base: Config,
+    mut run: impl FnMut(Config, Option<&P>) -> Result<(R, P)>,
+) -> Result<([R; 2], [R; FIXED_CALIBRATION_SAMPLES])> {
+    base.validate()?;
+    if base.mode != Mode::Concurrent {
+        return Err(fault());
+    }
+    let mut serial = base;
+    serial.mode = Mode::CpuFirst;
+    let (numeric_a, permit_a) = run(base, None)?;
+    let (numeric_b, permit_b) = run(serial, None)?;
+    let mut samples = Vec::with_capacity(FIXED_CALIBRATION_SAMPLES);
+    for mode in CALIBRATION_ABBA {
+        let mut config = base;
+        config.mode = mode;
+        let permit = if mode == Mode::Concurrent {
+            &permit_a
+        } else {
+            &permit_b
+        };
+        let (sample, replacement) = run(config, Some(permit))?;
+        drop(replacement);
+        samples.push(sample);
+    }
+    Ok((
+        [numeric_a, numeric_b],
+        samples.try_into().map_err(|_| fault())?,
+    ))
+}
+fn validate_calibration_report(
+    config: Config,
+    recorded: &RecordedReport,
+    timed: bool,
+) -> Result<()> {
+    let r = &recorded.report;
+    let errors = [r.max_tree_error, r.max_legacy_error, r.max_core_error];
+    if r.layer >= 48
+        || r.down_dtype != config.down.gguf_id()
+        || r.workers != config.workers
+        || r.misses != config.misses
+        || r.cpu_misses != config.cpu_misses
+        || r.gpu_misses != config.misses - config.cpu_misses
+        || r.private_pages != 18
+        || r.private_bytes != PRIVATE_BYTES
+        || r.bank_bytes != BANK_BYTES
+        || r.source_precharge != r.gpu_misses as u64 * 4 * MIB
+        || r.io_inspected_bytes == 0
+        || r.io_inspected_bytes > IO_COMPONENT_BYTES / 2
+        || r.zero_buffers != 18
+        || r.zero_bytes != PRIVATE_BYTES
+        || r.metadata_bytes > HOST_BRIDGE_LIMIT
+        || r.snapshot_bytes > HOST_ORACLE_LIMIT
+        || errors.iter().any(|v| !v.is_finite() || *v < 0.)
+        || r.timing.is_some() != timed
+        || r.bridge_and_merge.is_some() != timed
+        || recorded.completed.is_some() != timed
+    {
+        return Err(fault());
+    }
+    if let (Some(times), Some(bridge), Some(wall)) =
+        (r.timing, r.bridge_and_merge, recorded.completed)
+    {
+        let completed = times.joined.checked_add(bridge).ok_or_else(fault)?;
+        let candidate_and_cleanup = wall.candidate.checked_add(wall.cleanup).ok_or_else(fault)?;
+        if wall.candidate < completed
+            || wall.full_run < candidate_and_cleanup
+            || (config.cpu_misses == 0 && times.cpu != Duration::ZERO)
+        {
+            return Err(fault());
+        }
+    }
+    Ok(())
+}
+/// Explicit laboratory entry only. The protected owner must establish required
+/// both-card numeric acceptance before invoking this timing helper. It accepts
+/// no arbitrary route, hardware policy, mode, group, worker or sample controls.
+/// Six original Q5/Q8 points, M10/K0,5,10, group0/vector0, AVX2/16 physical cores:
+/// two exact-mode numeric gates then four Concurrent/CPU-first ABBA samples per
+/// point. The original permits remain local; at most two of each permit's 16
+/// tickets are consumed. No partial report is returned on any failure.
+#[allow(clippy::too_many_arguments)]
+pub fn run_fixed_calibration<'graph, 'm>(
+    client: &ComputeClient<WgpuRuntime>,
+    file: &'m GgufFile,
+    graph: BoundGraph<'graph, 'm>,
+    device_limits: &wgpu::Limits,
+    retired: Arc<AtomicBool>,
+    cancel: &AtomicBool,
+) -> Result<FixedCalibrationReport> {
+    check(cancel)?;
+    graph.verify_unchanged()?;
+    file.verify_file_unchanged()?;
+    let mut points = Vec::with_capacity(FIXED_CALIBRATION_POINTS);
+    for base in fixed_calibration_configs() {
+        let (numeric, samples) =
+            fixed_calibration_point(base, |config, permit: Option<&NumericPermit<'m>>| {
+                let timed = permit.is_some();
+                let purpose = match permit {
+                    Some(p) => Purpose::Calibration(p),
+                    None => Purpose::Numeric,
+                };
+                let (report, next, completed) = run_recorded(
+                    client,
+                    file,
+                    graph,
+                    device_limits,
+                    retired.clone(),
+                    config,
+                    purpose,
+                    cancel,
+                    timed,
+                )?;
+                let recorded = RecordedReport { report, completed };
+                validate_calibration_report(config, &recorded, timed)?;
+                Ok((recorded, next))
+            })?;
+        let mut accepted = Vec::with_capacity(FIXED_CALIBRATION_SAMPLES);
+        for (mode, recorded) in CALIBRATION_ABBA.into_iter().zip(samples) {
+            let wall = recorded.completed.ok_or_else(fault)?;
+            accepted.push(FixedCalibrationSample {
+                mode,
+                report: recorded.report,
+                candidate_completed_wall: wall.candidate,
+                acceptance_cleanup_wall: wall.cleanup,
+                full_run_including_references_wall: wall.full_run,
+            });
+        }
+        points.push(FixedCalibrationPoint {
+            down_dtype: base.down.gguf_id(),
+            cpu_misses: base.cpu_misses,
+            numeric: numeric.map(|r| r.report),
+            samples: accepted.try_into().map_err(|_| fault())?,
+        });
+    }
+    graph.verify_unchanged()?;
+    file.verify_file_unchanged()?;
+    check(cancel)?;
+    if retired.load(Ordering::Acquire) {
+        return Err(fault());
+    }
+    Ok(FixedCalibrationReport {
+        points: points.try_into().map_err(|_| fault())?,
+    })
 }
 fn same_config(a: Config, b: Config) -> bool {
     a.down == b.down
@@ -1245,7 +1458,35 @@ pub fn run<'graph, 'm>(
     purpose: Purpose<'_, 'm>,
     cancel: &AtomicBool,
 ) -> Result<(Report, NumericPermit<'m>)> {
+    let (report, permit, _) = run_recorded(
+        client,
+        file,
+        graph,
+        device_limits,
+        retired,
+        config,
+        purpose,
+        cancel,
+        false,
+    )?;
+    Ok((report, permit))
+}
+#[allow(clippy::too_many_arguments)]
+fn run_recorded<'graph, 'm>(
+    client: &ComputeClient<WgpuRuntime>,
+    file: &'m GgufFile,
+    graph: BoundGraph<'graph, 'm>,
+    device_limits: &wgpu::Limits,
+    retired: Arc<AtomicBool>,
+    config: Config,
+    purpose: Purpose<'_, 'm>,
+    cancel: &AtomicBool,
+    collect_wall: bool,
+) -> Result<(Report, NumericPermit<'m>, Option<CompletedTimes>)> {
     let numeric = matches!(&purpose, Purpose::Numeric);
+    let collect_wall = collect_wall && !numeric;
+    let full_start = collect_wall.then(Instant::now);
+    let mut completed = None;
     let mut stage = NumericStage::Config;
     let result = run_inner(
         client,
@@ -1257,8 +1498,14 @@ pub fn run<'graph, 'm>(
         purpose,
         cancel,
         &mut stage,
+        collect_wall,
+        &mut completed,
     );
-    classified_numeric_result(numeric, stage, result)
+    let (report, permit) = classified_numeric_result(numeric, stage, result)?;
+    if let Some(start) = full_start {
+        completed.as_mut().ok_or_else(fault)?.full_run = start.elapsed();
+    }
+    Ok((report, permit, completed))
 }
 #[allow(clippy::too_many_arguments)]
 fn run_inner<'graph, 'm>(
@@ -1271,6 +1518,8 @@ fn run_inner<'graph, 'm>(
     purpose: Purpose<'_, 'm>,
     cancel: &AtomicBool,
     stage: &mut NumericStage,
+    collect_wall: bool,
+    completed: &mut Option<CompletedTimes>,
 ) -> Result<(Report, NumericPermit<'m>)> {
     config.validate()?;
     *stage = NumericStage::Limits;
@@ -1466,6 +1715,7 @@ fn run_inner<'graph, 'm>(
         drop(all_plan);
         let mut charge = 0;
         *stage = NumericStage::Candidate;
+        let candidate_start = collect_wall.then(Instant::now);
         let (cpu, gpu, times) = schedule::pair(
             config.mode,
             cancel,
@@ -1529,6 +1779,7 @@ fn run_inner<'graph, 'm>(
             cancel,
         )?;
         let bridge = bridge_start.elapsed();
+        let candidate_wall = candidate_start.map(|start| start.elapsed());
         // Calibration reaches here only after both consumers and the original-
         // rank bridge completed owning maps/fault checks and audited cleanup.
         // Required real priming and prior samples can still condition caches.
@@ -1590,6 +1841,7 @@ fn run_inner<'graph, 'm>(
                 3e-4,
             )?);
         }
+        let cleanup_start = collect_wall.then(Instant::now);
         immutable(&arena, &buffers, &x, prob, &split)?;
         *stage = NumericStage::FinalAudit;
         let last = fence(&arena, &mut ledger, &retired)?;
@@ -1636,6 +1888,13 @@ fn run_inner<'graph, 'm>(
         let zero = arena.owned_zero_audit_receipt().ok_or_else(fault)?;
         if zero.buffers != 18 || zero.bytes != PRIVATE_BYTES {
             return Err(fault());
+        }
+        if let (Some(candidate), Some(start)) = (candidate_wall, cleanup_start) {
+            *completed = Some(CompletedTimes {
+                candidate,
+                cleanup: start.elapsed(),
+                full_run: Duration::ZERO, // filled only after run_inner fully returns
+            });
         }
         Ok(Report {
             layer,
@@ -1695,6 +1954,151 @@ fn run_inner<'graph, 'm>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn actual_fixed_calibration_driver_keeps_exact_original_permits_and_abba_caps() {
+        let configs = fixed_calibration_configs();
+        assert_eq!(configs.map(|c| c.cpu_misses), [0, 5, 10, 0, 5, 10]);
+        assert_eq!(configs.map(|c| c.down.gguf_id()), [6, 6, 6, 8, 8, 8]);
+        for base in configs {
+            assert_eq!(base.workers, 16);
+            assert!(base.backend == Backend::Avx2);
+            assert_eq!((base.misses, base.group, base.vector), (10, 0, 0));
+            let mut calls = Vec::new();
+            let tickets: [std::sync::atomic::AtomicUsize; 2] =
+                std::array::from_fn(|_| std::sync::atomic::AtomicUsize::new(0));
+            let (numeric, samples) =
+                fixed_calibration_point(base, |config, permit: Option<&usize>| {
+                    let call = calls.len();
+                    let mut expected = base;
+                    expected.mode = config.mode;
+                    assert!(same_config(config, expected));
+                    let original = usize::from(config.mode == Mode::CpuFirst);
+                    if let Some(&id) = permit {
+                        assert!(call >= 2);
+                        assert_eq!(id, original); // returned replacement IDs are never reused
+                        sample_ticket(&tickets[id])?;
+                    } else {
+                        assert_eq!(call, original);
+                    }
+                    calls.push((config.mode, permit.copied()));
+                    Ok((call, if call < 2 { original } else { call + 100 }))
+                })
+                .unwrap();
+            assert_eq!(numeric, [0, 1]);
+            assert_eq!(samples, [2, 3, 4, 5]);
+            assert_eq!(
+                tickets.each_ref().map(|n| n.load(Ordering::Acquire)),
+                [2, 2]
+            );
+            assert_eq!(calls.len(), 2 + FIXED_CALIBRATION_SAMPLES);
+            assert_eq!(
+                calls[2..].iter().map(|c| c.0).collect::<Vec<_>>(),
+                CALIBRATION_ABBA.to_vec()
+            );
+        }
+        assert_eq!(configs.len() * FIXED_CALIBRATION_SAMPLES, 24);
+        assert!(std::mem::size_of::<FixedCalibrationReport>() < 32768);
+    }
+    #[test]
+    fn actual_fixed_calibration_driver_rejects_each_failed_gate_without_partial_report() {
+        let base = fixed_calibration_configs()[1];
+        for fail in 0..2 + FIXED_CALIBRATION_SAMPLES {
+            let mut calls = 0;
+            let result = fixed_calibration_point(base, |_: Config, _: Option<&usize>| {
+                let call = calls;
+                calls += 1;
+                if call == fail {
+                    return Err(fault());
+                }
+                Ok((call, call))
+            });
+            assert!(result.is_err());
+            assert_eq!(calls, fail + 1);
+        }
+        let mut wrong = base;
+        wrong.mode = Mode::GpuFirst;
+        let mut called = false;
+        assert!(
+            fixed_calibration_point(wrong, |_: Config, _: Option<&usize>| {
+                called = true;
+                Ok((0, 0))
+            })
+            .is_err()
+        );
+        assert!(!called);
+    }
+    fn calibration_report_fixture(config: Config, timed: bool) -> RecordedReport {
+        RecordedReport {
+            report: Report {
+                layer: 0,
+                down_dtype: config.down.gguf_id(),
+                workers: config.workers,
+                misses: config.misses,
+                cpu_misses: config.cpu_misses,
+                gpu_misses: config.misses - config.cpu_misses,
+                max_tree_error: 0.,
+                max_legacy_error: 0.,
+                max_core_error: 0.,
+                private_pages: 18,
+                private_bytes: PRIVATE_BYTES,
+                bank_bytes: BANK_BYTES,
+                source_precharge: (config.misses - config.cpu_misses) as u64 * 4 * MIB,
+                io_inspected_bytes: 8192,
+                zero_buffers: 18,
+                zero_bytes: PRIVATE_BYTES,
+                timing: timed.then_some(Times {
+                    cpu: if config.cpu_misses == 0 {
+                        Duration::ZERO
+                    } else {
+                        Duration::from_millis(2)
+                    },
+                    gpu: Duration::from_millis(3),
+                    joined: Duration::from_millis(4),
+                }),
+                bridge_and_merge: timed.then_some(Duration::from_millis(1)),
+                metadata_bytes: 4096,
+                snapshot_bytes: 4096,
+            },
+            completed: timed.then_some(CompletedTimes {
+                candidate: Duration::from_millis(6),
+                cleanup: Duration::from_millis(7),
+                full_run: Duration::from_millis(20),
+            }),
+        }
+    }
+    #[test]
+    fn calibration_publication_requires_complete_audits_and_separate_completed_intervals() {
+        for config in fixed_calibration_configs() {
+            for timed in [false, true] {
+                validate_calibration_report(
+                    config,
+                    &calibration_report_fixture(config, timed),
+                    timed,
+                )
+                .unwrap();
+                let mut r = calibration_report_fixture(config, timed);
+                r.report.zero_buffers = 17;
+                assert!(validate_calibration_report(config, &r, timed).is_err());
+                let mut r = calibration_report_fixture(config, timed);
+                r.report.max_tree_error = f32::NAN;
+                assert!(validate_calibration_report(config, &r, timed).is_err());
+                assert!(
+                    validate_calibration_report(
+                        config,
+                        &calibration_report_fixture(config, !timed),
+                        timed
+                    )
+                    .is_err()
+                );
+            }
+            let mut r = calibration_report_fixture(config, true);
+            r.completed.as_mut().unwrap().candidate = Duration::from_millis(4);
+            assert!(validate_calibration_report(config, &r, true).is_err());
+            let mut r = calibration_report_fixture(config, true);
+            r.completed.as_mut().unwrap().full_run = Duration::from_millis(12);
+            assert!(validate_calibration_report(config, &r, true).is_err());
+        }
+    }
     #[test]
     fn numeric_stage_classification_discards_original_errors_without_changing_calibration() {
         let result = classified_numeric_result::<()>(
