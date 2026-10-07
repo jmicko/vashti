@@ -83,6 +83,7 @@ pub struct ResidentModel<'m, 'f> {
     ple_batch_pending: Option<ple_batch::Anchor>,
     ple_batch_poison: Option<Arc<AtomicBool>>,
     position: usize,
+    completed_cpu_misses: Zeroizing<u64>,
     context: usize,
     poisoned: bool,
     retired: Arc<AtomicBool>,
@@ -481,6 +482,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 ple_batch_pending: None,
                 ple_batch_poison: None,
                 position: 0,
+                completed_cpu_misses: Zeroizing::new(0),
                 context,
                 poisoned: false,
                 retired,
@@ -548,6 +550,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
     /// It never resets/reuses the admission ledger or emits a clean receipt.
     pub fn close(&mut self) -> Result<()> {
         self.poisoned = true;
+        self.completed_cpu_misses.zeroize();
         if let Some(poison) = &self.ple_batch_poison {
             poison.store(true, Ordering::Release);
         }

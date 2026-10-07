@@ -1778,6 +1778,7 @@ impl Workspace {
             self.check(e, s, arena)?;
             e.model.verify_file_unchanged()?;
             let mut seen = Zeroizing::new(0u64);
+            let mut cpu_misses = Zeroizing::new(0u64);
             for p in pending {
                 self.check_pending(e, s, arena, p)?;
                 let bit = 1u64 << *p.layer;
@@ -1785,15 +1786,23 @@ impl Workspace {
                     return Err(err("native routed duplicate pending receipt"));
                 }
                 *seen |= bit;
+                // Count only actual joined/source-validated original Pending
+                // proofs. No dispatch attempt or requested policy is evidence.
+                let count = p.count1.as_ref().map_or(0, |proof| proof.cpu_count());
+                *cpu_misses = cpu_misses
+                    .checked_add(u64::try_from(count).map_err(|_| Error::ArithmeticOverflow)?)
+                    .ok_or(Error::ArithmeticOverflow)?;
             }
             self.policy.preflight(*seen)?;
-            u::cancel(cancel)
+            u::cancel(cancel)?;
+            Ok(cpu_misses)
         });
         if result.is_err() {
             e.poison_resident()
         }
-        result?;
+        let cpu_misses = result?;
         Ok(Acceptance {
+            cpu_misses,
             workspace: self,
             executor: e,
             session: s,
@@ -1804,12 +1813,16 @@ impl Workspace {
 /// Exclusive sealed all-layer permit: original BankSlots remain inaccessible
 /// to scalar entry/cache replacement until ALL publications and finish succeed.
 pub(crate) struct Acceptance<'a, 'f> {
+    cpu_misses: Zeroizing<u64>,
     workspace: &'a mut Workspace,
     executor: &'a mut GpuExecutor<'f>,
     session: &'a mut Session,
     armed: bool,
 }
 impl Acceptance<'_, '_> {
+    pub(crate) fn completed_cpu_misses(&self) -> u64 {
+        *self.cpu_misses
+    }
     pub(crate) fn commit(
         &mut self,
         mut p: Pending,

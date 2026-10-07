@@ -1,0 +1,134 @@
+"""Protected fixed-public whole-model CPU-miss acceptance, not production inference.
+
+Requires externally coordinated exclusive GPU/admission access. Does not obtain
+sudo, stop services, reset hardware or accept arbitrary prompts. Device output
+and timings establish nothing until every output/lifecycle/owning audit passes.
+"""
+import argparse
+import importlib.util
+import json
+import pathlib
+import re
+import subprocess
+import sys
+
+HERE = pathlib.Path(__file__).resolve().parent
+SPEC = importlib.util.spec_from_file_location("native_max8_lab", HERE / "run-native-max8-lab.py")
+BASE = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(BASE)
+MODE = "resident-count1-hybrid-chat"
+GUARD = "verified_lab_limits swap_max=0 core_soft=0 core_hard=0 memory_max=8589934592"
+
+
+def validate_cap(cap):
+    if type(cap) is not int or cap not in (0, 10):
+        raise ValueError("CPU miss cap must be independently selected as integer 0 or 10")
+
+
+def completion(cap):
+    validate_cap(cap)
+    return (
+        f"public_count1_hybrid_fresh_continuation cap={cap} matches=true",
+        f"public_count1_hybrid_mid_token_cancel cap={cap} layer=0 erased=true",
+        f"public_count1_hybrid_mid_token_cancel cap={cap} layer=3 erased=true",
+    )
+
+
+def validate_receipt(receipt, card, cap, output):
+    validate_cap(cap)
+    if GUARD not in output.splitlines():
+        raise ValueError("Protected execution limits missing")
+    for field in ("count1_hybrid_cpu_miss_cap", "observed_count1_hybrid_cpu_miss_cap"):
+        if type(receipt.get(field)) is not int or receipt[field] != cap:
+            raise ValueError("Requested and completed hybrid cap mismatch")
+    if receipt.get("count1_hybrid_cpu_gpu_overlap") is not False:
+        raise ValueError("This CPU-first model seam cannot claim overlap")
+    for field, limit in (("completed_cpu_misses", 7 * 48 * 10),
+                         ("fresh_completed_cpu_misses", 48 * 10)):
+        value = receipt.get(field)
+        if type(value) is not int or not 0 <= value <= limit:
+            raise ValueError("Completed CPU work outside accepted fixture bounds")
+        if cap == 0 and value != 0 or cap == 10 and value == 0:
+            raise ValueError("Actual completed CPU-miss evidence missing or incompatible")
+    if any(type(receipt.get(field)) is not int for field in (
+        "resident_private_owned_bytes", "prompt_tokens", "seed", "temperature", "native_public_chunk_count"
+    )) or not isinstance(receipt.get("public_generated_ids"), list) or any(
+        type(token) is not int for token in receipt["public_generated_ids"]
+    ):
+        raise ValueError("Hybrid fixture and inventory must use integer counts")
+    audits = receipt.get("owned_zero_audits")
+    if not isinstance(audits, list) or len(audits) != 4 or any(
+        not isinstance(audit, dict) or any(type(audit.get(field)) is not int
+            for field in ("main_buffers", "main_bytes", "source_buffers", "source_bytes"))
+        for audit in audits
+    ):
+        raise ValueError("Four typed complete hybrid owner audits required")
+    BASE._validate_model_receipt(
+        receipt, card, "resident-chat", 8, output,
+        owner_inventory=(1378, 818413568), reported_fixture=MODE,
+        native_decode=True, native_decode_tile=1, native_decode_kernels="single-q4-all",
+    )
+    if any(marker not in output.splitlines() for marker in completion(cap)):
+        raise ValueError("Hybrid continuation and both cancellation proofs required")
+
+
+def worker_environment(model, receipt):
+    return BASE.worker_environment(model, receipt, 8, True, 1, "single-q4-all")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--cargo-artifacts", type=pathlib.Path, required=True)
+    parser.add_argument("--model", type=pathlib.Path, required=True)
+    parser.add_argument("--card", choices=("intel", "nvidia"), required=True)
+    parser.add_argument("--cpu-miss-cap", type=int, choices=(0, 10), required=True)
+    parser.add_argument("--run-id", required=True)
+    parser.add_argument("--receipt", type=pathlib.Path, required=True)
+    args = parser.parse_args()
+    if not re.fullmatch(r"[a-z0-9-]{1,48}", args.run_id):
+        parser.error("run-id must be 1..48 lowercase letters, digits or hyphens")
+    target = args.receipt.resolve()
+    metadata = target.with_suffix(target.suffix + ".run.json")
+    if target.exists() or metadata.exists():
+        parser.error("Refusing to replace an existing receipt or run record")
+    frozen, identity, artifacts_identity = BASE.cargo_binary(args.cargo_artifacts)
+    command = [
+        "systemd-run", "--user", "--unit=kuno-user-" + args.run_id,
+        "--collect", "--wait", "--pipe", "--property=MemorySwapMax=0",
+        "--property=LimitCORE=0", "--property=MemoryMax=8G",
+        "--property=RuntimeMaxSec=900",
+        "--property=UnsetEnvironment=KUNO_LAB_BLOCK_KERNEL KUNO_LAB_EXPERT_SLOTS "
+        "KUNO_LAB_STATIC_CACHE_BYTES KUNO_LAB_EXPERT_BATCH_BYTES KUNO_LAB_EXPERT_SCATTER",
+    ]
+    command.extend("--setenv=" + key + "=" + value
+                   for key, value in worker_environment(args.model.resolve(), target).items())
+    command.extend([sys.executable, str(HERE / "protected-lab-exec.py"), str(frozen),
+                    args.card, MODE, str(args.cpu_miss_cap)])
+    print("verified_cargo_executable_sha256=" + identity, flush=True)
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    lines = []
+    for line in process.stdout:
+        print(line, end="", flush=True)
+        lines.append(line)
+    if process.wait() != 0:
+        raise SystemExit("Protected hybrid fixture failed; no acceptance recorded")
+    if not target.is_file():
+        raise SystemExit("Missing whole-model hybrid receipt")
+    snapshot = target.read_bytes()
+    receipt = json.loads(snapshot)
+    validate_receipt(receipt, args.card, args.cpu_miss_cap, "".join(lines))
+    record = {
+        "scope": "fixed-public-count1-hybrid-output-and-lifecycle-only",
+        "cargo_artifacts_sha256": artifacts_identity, "frozen_executable_sha256": identity,
+        "card": args.card, "fixture": MODE, "cpu_miss_cap": args.cpu_miss_cap,
+        "receipt_sha256": BASE.digest(snapshot), "protected_lifecycle_completion_checked": True,
+        "matched_performance_measurement": False, "cpu_gpu_overlap": False,
+    }
+    with metadata.open("x") as output:
+        json.dump(record, output, indent=2, sort_keys=True)
+        output.write("\n")
+    print("verified_native_count1_hybrid_receipt=true", flush=True)
+
+
+if __name__ == "__main__":
+    main()

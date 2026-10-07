@@ -72,6 +72,7 @@ fn transient_resident_mode(mode: &str, raw: Option<&str>) -> Result<bool, &'stat
                 mode,
                 "resident-bang"
                     | "resident-chat"
+                    | "resident-count1-hybrid-chat"
                     | "resident-rainwater"
                     | "resident-lifecycle-probe"
                     | "resident-numeric-boundaries-probe"
@@ -111,7 +112,8 @@ fn protected_model_diagnostic(
 ) -> Result<(), &'static str> {
     if matches!(
         mode,
-        "resident-lifecycle-probe"
+        "resident-count1-hybrid-chat"
+            | "resident-lifecycle-probe"
             | "resident-numeric-boundaries-probe"
             | "resident-cpu-gpu-expert-probe"
             | "resident-cpu-gpu-expert-calibration"
@@ -148,6 +150,43 @@ const STAGED_HYBRID_MODEL_SETTINGS: [&str; 20] = [
     "KUNO_LAB_EXPERT_BATCH_BYTES",
     "KUNO_LAB_EXPERT_SCATTER",
 ];
+fn count1_hybrid_registration(
+    argc: usize,
+    receipt: bool,
+    cap: Option<&str>,
+) -> Result<usize, &'static str> {
+    if argc != 4 || !receipt {
+        return Err("count1 hybrid requires card, fixed mode, cap and receipt destination");
+    }
+    match cap {
+        Some("0") => Ok(0),
+        Some("10") => Ok(10),
+        _ => Err("count1 hybrid cap must be exactly 0 or 10"),
+    }
+}
+fn count1_hybrid_setting(name: &str, raw: Option<&str>) -> Result<(), &'static str> {
+    let accepted = match name {
+        "KUNO_LAB_NATIVE_MAX8" | "KUNO_LAB_NATIVE_DECODE" | "KUNO_LAB_CANCEL_CHECK" => {
+            raw == Some("1")
+        }
+        "KUNO_LAB_NATIVE_DECODE_TILE" => raw == Some("1"),
+        "KUNO_LAB_NATIVE_DECODE_KERNELS" => raw == Some("single-q4-all"),
+        "KUNO_LAB_NATIVE_BATCH_COUNT" => matches!(raw, None | Some("8")),
+        "KUNO_LAB_BLOCK_KERNEL" => matches!(raw, None | Some("1")),
+        "KUNO_LAB_EXPERT_SLOTS"
+        | "KUNO_LAB_STATIC_CACHE_BYTES"
+        | "KUNO_LAB_EXPERT_BATCH_BYTES"
+        | "KUNO_LAB_EXPERT_SCATTER" => raw.is_none(),
+        _ if STAGED_HYBRID_MODEL_SETTINGS.contains(&name) => matches!(raw, None | Some("0")),
+        _ => false,
+    };
+    if accepted {
+        Ok(())
+    } else {
+        Err("count1 hybrid fixed model settings rejected")
+    }
+}
+
 fn staged_hybrid_registration(argc: usize, receipt: bool) -> Result<(), &'static str> {
     if argc != 3 || !receipt {
         return Err("staged hybrid numeric probe requires only card, mode and receipt destination");
@@ -369,7 +408,10 @@ fn native_decode_mode(
         Some("1")
             if matches!(
                 mode,
-                "resident-bang" | "resident-chat" | "resident-rainwater"
+                "resident-bang"
+                    | "resident-chat"
+                    | "resident-rainwater"
+                    | "resident-count1-hybrid-chat"
             ) && native_max8
                 && transient
                 && audit =>
@@ -436,6 +478,24 @@ fn apply_native_decode_kernels<'f>(
         ));
     }
     Ok(observed)
+}
+
+fn apply_count1_hybrid_cap<'f>(
+    resident: &mut resident_model::ResidentModel<'_, 'f>,
+    executor: &mut executor::GpuExecutor<'f>,
+    selected: Option<usize>,
+    cancel: &AtomicBool,
+) -> kuno_text::Result<()> {
+    if let Some(cap) = selected
+        && (resident.completed_cpu_misses(executor)? != 0
+            || resident.set_lab_count1_cpu_misses(executor, cap, cancel)? != cap
+            || resident.native_cpu_miss_cap()? != Some(cap))
+    {
+        return Err(kuno_text::Error::InvalidFormat(
+            "count1 hybrid completed prefill policy rejected",
+        ));
+    }
+    Ok(())
 }
 
 // The generation and terminal cancellation checks use the same dispatch.
@@ -526,6 +586,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             staged_hybrid_setting(name, value)?;
         }
     }
+    let count1_hybrid_cap = if mode == "resident-count1-hybrid-chat" {
+        let cap = count1_hybrid_registration(
+            std::env::args().count(),
+            std::env::var_os("KUNO_PUBLIC_RECEIPT").is_some(),
+            std::env::args().nth(3).as_deref(),
+        )?;
+        for name in STAGED_HYBRID_MODEL_SETTINGS {
+            let raw = std::env::var_os(name);
+            let value = raw
+                .as_ref()
+                .map(|v| v.to_str().ok_or("count1 hybrid setting encoding rejected"))
+                .transpose()?;
+            count1_hybrid_setting(name, value)?;
+        }
+        Some(cap)
+    } else {
+        None
+    };
     // This fixed operator accepts no additional case/configuration arguments.
     // Its receipt destination is required before any device or model access.
     let cpu_gpu_expert_receipt = if matches!(
@@ -1446,11 +1524,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 8
             };
             let native_config = if native_max8 {
-                Some(resident_model::batch::Config::new(
-                    &client,
-                    &grouped_limits,
-                    8,
-                )?)
+                let config = resident_model::batch::Config::new(&client, &grouped_limits, 8)?;
+                Some(if count1_hybrid_cap.is_some() {
+                    config.reserve_count1_hybrid()?
+                } else {
+                    config
+                })
             } else {
                 None
             };
@@ -1462,7 +1541,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let fixture_mode = mode.strip_prefix("resident-").unwrap_or(&mode);
             let (prompt, limit) = match fixture_mode {
                 "bang" => ("!", 4usize),
-                "chat" => (
+                "chat" | "count1-hybrid-chat" => (
                     "<|im_start|>user\nSay hello.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
                     8,
                 ),
@@ -1584,6 +1663,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         &cancel,
                     )?;
                 }
+                apply_count1_hybrid_cap(r, &mut executor, count1_hybrid_cap, &cancel)?;
                 r.phase_ns.clear();
             }
             let start = Instant::now();
@@ -1628,6 +1708,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if observed_native_decode_kernels != native_decode_kernels {
                 return Err("completed native decode kernel observation mismatch".into());
             }
+            let completed_cpu_misses = if let Some(cap) = count1_hybrid_cap {
+                let r = resident.as_ref().ok_or("count1 hybrid owner absent")?;
+                let completed = r.completed_cpu_misses(&executor)?;
+                if r.native_cpu_miss_cap()? != Some(cap)
+                    || completed > native_decode_steps * 480
+                    || (cap == 0 && completed != 0)
+                    || (cap == 10 && completed == 0)
+                {
+                    return Err("count1 hybrid did not complete actual CPU miss work".into());
+                }
+                Some(completed)
+            } else {
+                None
+            };
+            let mut fresh_completed_cpu_misses = None;
             println!(
                 "gpu_prefill_ms={} gpu_generation_ms={} synthetic_gpu_tokens={generated:?} cache_bytes={} reserved_bytes={} weight_upload_bytes={} cache_hits={} gpu_matvec_calls={}",
                 prefill.as_millis(),
@@ -1689,6 +1784,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 receipt["resident_main_admitted_upper_bytes"] =
                     serde_json::json!(executor.admission_upper_bytes()?);
                 receipt["prefill_last_head"] = serde_json::json!(prefill_last_head);
+                if let Some(cap) = count1_hybrid_cap {
+                    receipt["count1_hybrid_cpu_miss_cap"] = serde_json::json!(cap);
+                    receipt["observed_count1_hybrid_cpu_miss_cap"] = serde_json::json!(
+                        resident
+                            .as_ref()
+                            .ok_or("count1 hybrid owner absent")?
+                            .native_cpu_miss_cap()?
+                    );
+                    receipt["completed_cpu_misses"] = serde_json::json!(completed_cpu_misses);
+                    receipt["count1_hybrid_cpu_gpu_overlap"] = serde_json::json!(false);
+                }
                 receipt["native_max8"] = serde_json::json!(native_max8);
                 receipt["native_decode"] = serde_json::json!(native_decode);
                 receipt["native_decode_steps"] = serde_json::json!(native_decode_steps);
@@ -1831,6 +1937,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         native_decode_kernels,
                         &cancel,
                     )?;
+                    apply_count1_hybrid_cap(&mut fresh, &mut executor, count1_hybrid_cap, &cancel)?;
                     fresh_logits = resident_decode_step(
                         &mut fresh,
                         &mut executor,
@@ -1848,6 +1955,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if fresh.native_decode_kernels()?.label() != native_decode_kernels {
                         return Err("fresh native kernel continuation policy mismatch".into());
                     }
+                }
+                if let Some(cap) = count1_hybrid_cap {
+                    let completed = fresh.completed_cpu_misses(&executor)?;
+                    if fresh.native_cpu_miss_cap()? != Some(cap)
+                        || completed > 480
+                        || (cap == 0 && completed != 0)
+                        || (cap == 10 && completed == 0)
+                    {
+                        return Err("fresh count1 hybrid actual completion missing".into());
+                    }
+                    fresh_completed_cpu_misses = Some(completed);
+                    println!("public_count1_hybrid_fresh_continuation cap={cap} matches=true");
                 }
                 if public_owned_zero_audit {
                     fresh.close()?;
@@ -1900,6 +2019,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             &cancel,
                         )?;
                     }
+                    apply_count1_hybrid_cap(
+                        &mut partial,
+                        &mut executor,
+                        count1_hybrid_cap,
+                        &cancel,
+                    )?;
                     partial.arm_public_mid_token_cancel(layer)?;
                     let failed = if tile1_recovery {
                         resident_decode_step(
@@ -1932,6 +2057,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if tile1_recovery && !cancel.load(std::sync::atomic::Ordering::Acquire) {
                         return Err(
                             "native tile1 cancellation did not reach the requested layer".into(),
+                        );
+                    }
+                    if let Some(cap) = count1_hybrid_cap {
+                        if partial.completed_cpu_misses(&executor).is_ok() {
+                            return Err("failed count1 hybrid exposed completion".into());
+                        }
+                        println!(
+                            "public_count1_hybrid_mid_token_cancel cap={cap} layer={layer} erased=true"
                         );
                     }
                     report_public_owned_zero_audit(
@@ -1982,6 +2115,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 use std::io::Write;
                 receipt["owned_io_cleanup_accepted"] = serde_json::json!(transient_resident);
                 receipt["owned_zero_audits"] = serde_json::json!(owned_zero_audits);
+                if count1_hybrid_cap.is_some() {
+                    receipt["fresh_completed_cpu_misses"] = serde_json::json!(
+                        fresh_completed_cpu_misses
+                            .ok_or("count1 hybrid fresh completion missing")?
+                    );
+                }
                 if ordered_public_upload {
                     receipt["ordered_public_source_pending_bytes_after_cleanup"] =
                         serde_json::json!(executor.ordered_source_pending_bytes());
@@ -1999,6 +2138,51 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod transient_mode_tests {
+    #[test]
+    fn count1_hybrid_rejects_unprotected_arguments_and_overrides_before_device_creation() {
+        for argc in [0, 3, 4, 5] {
+            for receipt in [false, true] {
+                for cap in [
+                    None,
+                    Some("0"),
+                    Some("10"),
+                    Some("1"),
+                    Some("01"),
+                    Some(" 10"),
+                    Some("10 "),
+                ] {
+                    assert_eq!(
+                        super::count1_hybrid_registration(argc, receipt, cap).is_ok(),
+                        argc == 4 && receipt && matches!(cap, Some("0" | "10"))
+                    );
+                }
+            }
+        }
+        for (name, accepted) in [
+            ("KUNO_LAB_NATIVE_MAX8", "1"),
+            ("KUNO_LAB_NATIVE_DECODE", "1"),
+            ("KUNO_LAB_CANCEL_CHECK", "1"),
+            ("KUNO_LAB_NATIVE_DECODE_TILE", "1"),
+            ("KUNO_LAB_NATIVE_DECODE_KERNELS", "single-q4-all"),
+        ] {
+            assert!(super::count1_hybrid_setting(name, Some(accepted)).is_ok());
+            for wrong in [None, Some("0"), Some("01"), Some("true"), Some("chunk")] {
+                assert!(super::count1_hybrid_setting(name, wrong).is_err());
+            }
+        }
+        for name in [
+            "KUNO_LAB_EXPERT_SLOTS",
+            "KUNO_LAB_STATIC_CACHE_BYTES",
+            "KUNO_LAB_EXPERT_BATCH_BYTES",
+            "KUNO_LAB_EXPERT_SCATTER",
+        ] {
+            assert!(super::count1_hybrid_setting(name, None).is_ok());
+            assert!(super::count1_hybrid_setting(name, Some("0")).is_err());
+        }
+        assert!(super::count1_hybrid_setting("KUNO_LAB_NATIVE_BATCH_COUNT", Some("1")).is_err());
+        assert!(super::count1_hybrid_setting("KUNO_LAB_SMALL_CPU", Some("1")).is_err());
+        assert!(super::count1_hybrid_setting("unknown", None).is_err());
+    }
     #[test]
     fn native_decode_tile_requires_exact_public_opt_in() {
         for native in [false, true] {
@@ -2052,6 +2236,7 @@ mod transient_mode_tests {
         for mode in [
             "resident-bang",
             "resident-chat",
+            "resident-count1-hybrid-chat",
             "resident-rainwater",
             "resident-lifecycle-probe",
             "resident-numeric-boundaries-probe",
@@ -2072,7 +2257,10 @@ mod transient_mode_tests {
                         }
                         let permitted = matches!(
                             mode,
-                            "resident-bang" | "resident-chat" | "resident-rainwater"
+                            "resident-bang"
+                                | "resident-chat"
+                                | "resident-rainwater"
+                                | "resident-count1-hybrid-chat"
                         ) && native
                             && transient
                             && audit;
@@ -2099,6 +2287,7 @@ mod transient_mode_tests {
     #[test]
     fn actual_model_diagnostics_require_both_ownership_and_full_audits() {
         for mode in [
+            "resident-count1-hybrid-chat",
             "resident-lifecycle-probe",
             "resident-numeric-boundaries-probe",
             "resident-cpu-gpu-expert-probe",

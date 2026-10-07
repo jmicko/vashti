@@ -40,6 +40,16 @@ const _: () = {
     assert!(HYBRID_IO_DERIVED <= HYBRID_RUNTIME);
 };
 
+fn checked_cpu_miss_total(current: u64, completed_chunk: u64) -> Result<Zeroizing<u64>> {
+    if completed_chunk > (LAYERS * 10) as u64 {
+        return Err(error());
+    }
+    current
+        .checked_add(completed_chunk)
+        .map(Zeroizing::new)
+        .ok_or(Error::ArithmeticOverflow)
+}
+
 fn error() -> Error {
     Error::InvalidFormat("native model chunk rejected")
 }
@@ -130,7 +140,6 @@ impl Config {
     }
     /// Explicit fixed-public laboratory reservation. Ordinary constructors keep
     /// their original owner inventory; reservation alone never places a rank.
-    #[allow(dead_code)] // Protected count1 CLI registration is a separate gate.
     pub(crate) fn reserve_count1_hybrid(mut self) -> Result<Self> {
         use kuno_text::cpu_expert::{Backend, ExpertOperator, WorkerPlan};
         if self.cpu_operator.is_some() || self.tile != 8 {
@@ -590,7 +599,6 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         Ok(native.dense_member_capacity)
     }
 
-    #[allow(dead_code)] // Protected count1 receipt registration is separate.
     pub(crate) fn native_cpu_miss_cap(&self) -> Result<Option<usize>> {
         Ok(self
             .native_batch
@@ -600,9 +608,15 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             .cpu_miss_cap())
     }
 
+    /// Aggregate only at a healthy completed original-model boundary. The lab
+    /// may publish it for the compiled public fixture; private requests may not.
+    pub(crate) fn completed_cpu_misses(&self, executor: &GpuExecutor<'f>) -> Result<u64> {
+        self.completed_native_projection_boundary(executor)?;
+        Ok(*self.completed_cpu_misses)
+    }
+
     /// Explicit reserved count1 lab only. The original completed all-family
     /// boundary remains the sole authority; this performs no inference/commit.
-    #[allow(dead_code)] // Protected count1 CLI registration is a separate gate.
     pub(crate) fn set_lab_count1_cpu_misses(
         &mut self,
         executor: &mut GpuExecutor<'f>,
@@ -1310,6 +1324,10 @@ impl Workspace {
         {
             return Err(error());
         }
+        // Prepare the checked counter before ANY family publication. The
+        // guarded proposal is discarded on all late failure/cancellation paths.
+        let completed_cpu_misses =
+            checked_cpu_miss_total(*m.completed_cpu_misses, ma.completed_cpu_misses())?;
         // Every actual-family permit has now preflighted. Remaining cancellation
         // or fallible commit failure terminally destroys the whole model; it
         // cannot publish output/cursor or resume a partially changed sequence.
@@ -1346,6 +1364,7 @@ impl Workspace {
         if self.poison.load(Ordering::Acquire) || m.retired.load(Ordering::Acquire) || m.poisoned {
             return Err(error());
         }
+        *m.completed_cpu_misses = *completed_cpu_misses;
         m.position = *end;
         Ok(output)
     }
@@ -1354,6 +1373,18 @@ impl Workspace {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn completed_counter_preflight_rejects_overflow_and_impossible_chunk_without_publication() {
+        assert_eq!(*checked_cpu_miss_total(7, 480).unwrap(), 487);
+        assert_eq!(*checked_cpu_miss_total(u64::MAX, 0).unwrap(), u64::MAX);
+        assert!(checked_cpu_miss_total(u64::MAX, 1).is_err());
+        assert!(checked_cpu_miss_total(0, 481).is_err());
+        // The current value is never borrowed mutably during preflight: a
+        // prepared proposal can be abandoned after any family failure.
+        let current = Zeroizing::new(7u64);
+        drop(checked_cpu_miss_total(*current, 480).unwrap());
+        assert_eq!(*current, 7);
+    }
     #[test]
     fn public_decode_profiles_are_strict_and_preflight_single_counts() {
         for (label, profile) in [

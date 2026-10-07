@@ -138,8 +138,12 @@ def validate_decode_tile(receipt, native_decode, native_decode_tile, allow_legac
         raise ValueError("Observed decode tile did not match the selected public experiment")
 
 
-def validate_model_receipt(receipt, card, fixture, count, output, *, native_decode=False,
-                           native_decode_tile=8, native_decode_kernels="chunk", allow_legacy_decode=False):
+def _validate_model_receipt(receipt, card, fixture, count, output, *, owner_inventory,
+                            reported_fixture, native_decode=False, native_decode_tile=8,
+                            native_decode_kernels="chunk", allow_legacy_decode=False):
+    # Only the ordinary public entry below and the separately fixed hybrid
+    # validator supply these constants. A receipt cannot select its inventory.
+    owner_buffers, owner_bytes = owner_inventory
     expected = {
         "resident-bang": [49276, 2349, 1074, 5928],
         "resident-chat": [9419, 0, 2500, 628, 353, 1438, 488, 3242],
@@ -187,7 +191,7 @@ def validate_model_receipt(receipt, card, fixture, count, output, *, native_deco
            or receipt[key] != value for key, value in expected_settings.items()):
         raise ValueError("Effective native/device/default configuration did not match")
     if (
-        receipt.get("fixture") != fixture
+        receipt.get("fixture") != reported_fixture
         or receipt.get("native_max8") is not True
         or receipt.get("native_public_chunk_count") != count
         or receipt.get("native_public_chunk_partition") != partition
@@ -195,7 +199,7 @@ def validate_model_receipt(receipt, card, fixture, count, output, *, native_deco
         or receipt.get("seed") != 424242
         or receipt.get("temperature") != 0
         or receipt.get("public_generated_ids") != expected
-        or receipt.get("resident_private_owned_bytes") != 818249728
+        or receipt.get("resident_private_owned_bytes") != owner_bytes
         or receipt.get("owned_io_cleanup_accepted") is not True
     ):
         raise ValueError("Native compiled fixture/model receipt did not match")
@@ -205,7 +209,7 @@ def validate_model_receipt(receipt, card, fixture, count, output, *, native_deco
                             allow_legacy_decode)
     audits = receipt.get("owned_zero_audits", [])
     if len(audits) != 4 or any(not isinstance(item, dict) or
-        item.get("main_buffers") != 1376 or item.get("main_bytes") != 818249728 or
+        item.get("main_buffers") != owner_buffers or item.get("main_bytes") != owner_bytes or
         any(type(item.get(key)) is not int for key in ("source_buffers", "source_bytes")) or
         item["source_buffers"] < 0 or item["source_bytes"] < 0 or
         (item["source_buffers"] == 0) != (item["source_bytes"] == 0) or
@@ -232,6 +236,17 @@ def validate_model_receipt(receipt, card, fixture, count, output, *, native_deco
         raise ValueError("Native tile1 continuation/recovery completion evidence is incomplete")
     if any(message not in output.splitlines() for message in kernel_completion(native_decode_kernels)):
         raise ValueError("Native kernel profile continuation/recovery completion evidence is incomplete")
+
+
+def validate_model_receipt(receipt, card, fixture, count, output, *, native_decode=False,
+                           native_decode_tile=8, native_decode_kernels="chunk", allow_legacy_decode=False):
+    # Ordinary acceptance remains exactly 1376 owners; no hybrid opt-in or
+    # caller/receipt-selected inventory is exposed by this entry.
+    _validate_model_receipt(receipt, card, fixture, count, output,
+                           owner_inventory=(1376, 818249728), reported_fixture=fixture,
+                           native_decode=native_decode, native_decode_tile=native_decode_tile,
+                           native_decode_kernels=native_decode_kernels,
+                           allow_legacy_decode=allow_legacy_decode)
 
 
 def validate_receipt(receipt, card, fixture, count, output, *, native_decode=False,

@@ -223,7 +223,8 @@ setter. `native_cpu_miss_cap() -> Result<Option<usize>>` observes defaultNone or
 the selected public cap. Every other cap and every hybrid count other than1
 rejects. Completed public tile1/8 policies are supported; default
 native prefill/decode and existing modes continue through the unchanged GPU
-path. Future protected CLI exposure and strict receipts are separate work.
+path. The protected whole-model CLI and strict receipt described below are
+now source/host-tested; physical whole-model acceptance remains separate.
 
 The first executable seam intentionally joins the original AVX2/16 physical
 worker operator before parent-only GPU filling and enqueue. It does not claim
@@ -293,3 +294,64 @@ independent rank/format/status/tail numeric acceptance, actual count1 fixture
 IDs/logits and both-card cancellation/poison/fresh recovery/full owning audits.
 Source-only test additions and integrated operator calibration do not establish
 this model seam or a performance benefit. Timing follows those acceptance gates.
+
+
+## Protected whole-model registration, 2026-10-07
+
+Implemented internal laboratory entry (not gateway/API inference):
+`kuno-text-lab intel|nvidia resident-count1-hybrid-chat 0|10`.
+Exactly four argv entries and a fresh `KUNO_PUBLIC_RECEIPT` destination are
+required. Before any adapter creation/model payload access, require owned
+transient I/O and full zero audits, native MAX8/decode/cancellation checks,
+decode tile1 and `single-q4-all`. Prefill batch count is exactly8; the default
+block kernel remains enabled. Bank slots/static cache/source-window/scatter
+cannot be overridden. The other model/ordered/scalar/block-MoE/word-down/fused
+fault/token-checkpoint controls remain disabled. The wrapper pins these settings
+rather than copying the ambient environment.
+
+This mode constructs `Config::reserve_count1_hybrid()`, runs the original
+15-token chat prompt in8/7 chunks, then selects dense1/SingleQ4All and the
+requested cap at the completed original prefill boundary. The fixture is
+seed424242/temperature0, eight output IDs
+`[9419,0,2500,628,353,1438,488,3242]`, with seven actual decode transactions.
+No arbitrary prompt, routing trace, model rewrite, production policy or new
+HTTP route is added. Ordinary constructors/modes still use1376 MAIN owners.
+
+A transient `Zeroizing<u64>` completion counter starts at zero. The exclusive
+all48-MoE acceptance permit derives its checked delta from the actual Pending
+proofs only after joined CPU/source/bank validation and duplicate rejection.
+All48 layers must preflight. Counter overflow and the480-expert per-token
+maximum are checked before ANY family commit. The proposal is published only
+alongside accepted model position, after all GDN/QSA/MoE finishes, PLE commit,
+original bank metadata, health and cancellation checks. A failed/partial
+transaction does not advance it; explicit cleanup erases it. Its getter requires
+a healthy completed original-model boundary. No counter is persisted for
+private inference.
+
+Only this compiled public fixture can emit the new aggregate receipt fields:
+`count1_hybrid_cpu_miss_cap`, `observed_count1_hybrid_cpu_miss_cap`,
+`completed_cpu_misses`, `fresh_completed_cpu_misses`, and
+`count1_hybrid_cpu_gpu_overlap=false`. Cap0 requires both counts zero; cap10
+requires both positive, bounded by3360 and480 respectively. Fresh recovery
+must run the same cap and match the next original token, not just replay prefill.
+Layer0/3 cancellation probes also select the same cap and reject the failed
+owner's completion getter. Existing pre-cancel, poisoned retry rejection and
+fresh-first-token checks remain required. Four full1378-owner/818413568-byte
+MAIN audits, empty source audits and normal cleanup/no retirement precede
+receipt persistence. No per-layer counts, expert IDs, masks or probability
+bits may appear in the receipt.
+
+`run-native-count1-hybrid-lab.py` separately pins this inventory, exact original
+outputs, observed policy, actual completed work, swap0/core0/8-GiB limits and
+all ordinary plus hybrid lifecycle markers. The ordinary public MAX8 validator
+still pins1376/818249728; it cannot opt into hybrid inventory. Both entries
+share only an internal validation helper with independently supplied constants.
+Malformed/incomplete receipts cannot create an accepted run record.
+
+Host/offline tests and a normal build are separate from physical acceptance.
+Run cap0 and cap10 sequentially on each card after coordinating exclusive
+admission and verifying memory; do not time concurrently with compilation.
+Then complete hybrid-specific late final-layer/second-proof/partial-commit
+fault tests before production selection, followed by matched long timing.
+The current CPU operator joins before GPU enqueue; no overlap, hot-request
+reuse, automatic placement, performance gain or10-tokens/s acceptance is claimed.
