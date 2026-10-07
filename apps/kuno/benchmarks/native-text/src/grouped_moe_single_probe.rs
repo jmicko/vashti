@@ -204,6 +204,7 @@ fn launch(
             ga.row_bytes(),
             up.row_bytes(),
             g.tile(),
+            g.gate_policy() == k::GatePolicy::Q4Block,
         );
         k::grouped_down::launch_unchecked::<WgpuRuntime>(
             client,

@@ -29,8 +29,8 @@ merge. MAX8/MAX80 private pages, route/probability maps, status regions, complet
 finite sweeps, fault folds, source windows and original bank retirement stay
 unchanged. These source counts do not establish a speed benefit.
 
-The existing `grouped-moe-chunk-probe` now includes46 actual Q4 gate/up with
-Q5/Q8 down cases: the previous40 plus count1/tile1 at capacities16/64/96, including
+The existing `grouped-moe-chunk-probe` now includes52 actual Q4 gate/up with
+Q5/Q8 down cases: the previous40 plus generic and Q4Block count1/tile1 at capacities16/64/96, including
 the existing segmented boundary fixture. It also runs14 fixed-public compact
 operator cases across F32/F16/BF16/Q4_K/Q5_0/Q6_K/Q8_0 at tiles8/1. Compact public
 bank rows repeat two block-aligned original GGUF slices; they are not full model
@@ -44,3 +44,47 @@ Host tests cover invalid count/wave/member policy, unchanged full-page envelopes
 completed-boundary guards and independent rank arithmetic. Checked/unchecked
 offline WGSL cases now include tile1 for every decoder and original segmented
 shapes. These tests and the new GPU cases are unrun in this source-only handoff.
+
+## Public Q4 block gate/up candidate
+
+`Geometry::new` keeps `GatePolicy::Generic`, including generic tile1 for a
+same-binary control. The explicit `with_q4_block()` constructor admits only
+tile1 and two Q4_K gate/up projections. Its public `GatePolicy::Q4Block` alone
+selects the new compile-time branch; no token count, slot, route or input changes
+a shader key. Other formats and generic tiles1/4/8 keep their original decoder.
+
+The candidate copies the existing scalar `moe_block` field reconstruction.
+Each lane loads the original Q4_K header and three scale words once per256-value
+block, then consumes four quant bytes. Columns remain
+`block*256 + pair*64 + lane`; factor/quant/minimum arithmetic, accumulation,
+the64-lane tree, sign-stable SiLU, original-rank output and status stores remain
+in their original order. All runtime shard/route/address guards, finite sweeps,
+MAX8/MAX80 owners, maps, limits and full erasure/audits are unchanged. This
+removes repeated explicit header conversion; it does not establish speed.
+
+`Workspace::gate_policy()` reports actual public policy.
+`set_lab_single_q4_decode(executor, arena, &CompletedNativeProjectionBoundary)`
+has the existing healthy/completed/full-audit owner checks and returns tile1.
+It validates all48 replacement geometries in fixed public stack storage before
+installing any, so an incompatible late layer leaves every layer unchanged.
+The existing single-member setter still selects generic tile1.
+
+Each of the six new original-model operator cases follows its matching generic
+tile1 case after full arena reset and bank cleanup. The Q4Block case compares
+every active activation, down partial and output with independent decoding/tree
+and core references, scalar GPU, and the retained generic GPU snapshot at the
+unchanged tolerances. Full status, inactive/page tails, read-only/public banks,
+original ledger and owning erasure remain required. Only one full Zeroizing
+generic host snapshot survives between cases; no GPU owner overlaps. Its actual
+lengths/capacities are checked against1,671,168 bytes and explicitly included in
+the17,543,168-byte host scratch bound under the unchanged32MiB cap. Every failure
+or unwind wipes the retained snapshot. Receipts add public gate policy and
+generic comparison error, and require52 total cases including six Q4Block.
+
+New host tests cover public-policy rejection, all-or-error48-layer replacement,
+independent Q4 field/column/lane arithmetic at shard edges and actual retained
+snapshot capacity. Checked/unchecked offline shaders retain all existing generic
+load/binding/runtime/barrier invariants and add the Q4Block header-reuse case.
+No build, tests, GPU execution or timing was run for this source handoff. Parent
+must integrate protected model controls and establish both-card numerical and
+full-model fresh/cancel/recovery acceptance before timing the candidate.

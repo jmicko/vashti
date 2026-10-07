@@ -9,7 +9,7 @@
 //! No bank fill, commit, graph hook, CPU fallback or device action lives here.
 //! Parent owns physical owner/alias/epoch/device-limit validation and acceptance.
 
-use super::packed_value;
+use super::{Q4_K, binary16, packed_value};
 use cubecl::prelude::*;
 use zeroize::Zeroize;
 
@@ -126,6 +126,13 @@ impl Projection {
 }
 
 /// Public kernel policy; never stores the runtime group/route map.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum GatePolicy {
+    #[default]
+    Generic,
+    Q4Block,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Geometry {
     projections: [Projection; 3],
@@ -133,6 +140,7 @@ pub struct Geometry {
     ff: usize,
     tile: usize,
     capacity: usize,
+    gate_policy: GatePolicy,
 }
 impl Geometry {
     pub fn new(
@@ -179,6 +187,7 @@ impl Geometry {
             ff: gate.rows,
             tile,
             capacity,
+            gate_policy: GatePolicy::Generic,
         })
     }
     pub fn projections(self) -> [Projection; 3] {
@@ -192,6 +201,18 @@ impl Geometry {
     }
     pub fn tile(self) -> usize {
         self.tile
+    }
+    pub fn gate_policy(self) -> GatePolicy {
+        self.gate_policy
+    }
+    /// Explicit public decode specialization; never selected from a route count.
+    pub fn with_q4_block(mut self) -> Result<Self, &'static str> {
+        if self.tile != 1 || self.projections[0].dtype != Q4_K || self.projections[1].dtype != Q4_K
+        {
+            return Err("grouped Q4 block public policy");
+        }
+        self.gate_policy = GatePolicy::Q4Block;
+        Ok(self)
     }
     /// Public launch capacity; MAX8 owning spans remain unchanged for tile1.
     pub fn member_capacity(self) -> usize {
@@ -761,6 +782,29 @@ fn grouped_silu(value: f32) -> f32 {
     value * sigmoid
 }
 
+// Original Q4_K field reconstruction from moe_block. A block's header and
+// scale words are loaded once per lane; only its four quant bytes vary.
+#[cube]
+fn q4_word_byte(word: u32, byte: usize) -> u32 {
+    (word >> ((byte * 8) as u32)) & 255
+}
+#[cube]
+fn q4_block_scale(scales0: u32, scales2: u32, group: usize) -> u32 {
+    if group < 4 {
+        q4_word_byte(scales0, group) & 63
+    } else {
+        (q4_word_byte(scales2, group - 4) & 15) | ((q4_word_byte(scales0, group - 4) >> 6) << 4)
+    }
+}
+#[cube]
+fn q4_block_minimum(scales1: u32, scales2: u32, group: usize) -> u32 {
+    if group < 4 {
+        q4_word_byte(scales1, group) & 63
+    } else {
+        (q4_word_byte(scales2, group - 4) >> 4) | ((q4_word_byte(scales1, group - 4) >> 6) << 4)
+    }
+}
+
 /// Six storage buffers plus INFO. Public CubeDim64, grid=(FF,groups,8/tile).
 /// Full spans/immutable shard packing and group validation must precede launch.
 #[cube(launch, launch_unchecked)]
@@ -787,6 +831,7 @@ pub fn grouped_gate_up(
     #[comptime] gate_row_bytes: usize,
     #[comptime] up_row_bytes: usize,
     #[comptime] tile: usize,
+    #[comptime] q4_block: bool,
 ) {
     let feature = CUBE_POS_X as usize;
     let group = CUBE_POS_Y as usize;
@@ -812,21 +857,70 @@ pub fn grouped_gate_up(
         let row = slot * ff + feature;
         let gate_offset = row * gate_row_bytes;
         let up_offset = row * up_row_bytes;
-        for column_tile in 0..comptime!(hidden.div_ceil(LANES)) {
-            let column = column_tile * LANES + lane;
-            if column < hidden {
-                // Decode each original weight only ONCE, reused across RHS.
-                let g = packed_value(gate, gate_offset, column, gate_dtype);
-                let u = packed_value(up, up_offset, column, up_dtype);
+        if comptime!(q4_block) {
+            // Geometry::with_q4_block proves tile1 and two whole-block Q4_K
+            // rows. Slot/route/bases remain the validated runtime packet.
+            let route = map[map_first + MEMBERS + group * MAX_BATCH] as usize;
+            let input_base = input_first + route / RANKS * input_stride;
+            let gate_row_word = row * gate_row_bytes / 4;
+            let up_row_word = row * up_row_bytes / 4;
+            let quarter_lane = lane % 32;
+            let odd_group = lane / 32;
+            for block in 0..comptime!(hidden / 256) {
+                let gate_base = gate_row_word + block * 36;
+                let up_base = up_row_word + block * 36;
+                let gate_header = gate[gate_base];
+                let up_header = up[up_base];
+                let gate_d = binary16(gate_header & 65535);
+                let gate_dmin = binary16(gate_header >> 16);
+                let up_d = binary16(up_header & 65535);
+                let up_dmin = binary16(up_header >> 16);
+                let gate_scales0 = gate[gate_base + 1];
+                let gate_scales1 = gate[gate_base + 2];
+                let gate_scales2 = gate[gate_base + 3];
+                let up_scales0 = up[up_base + 1];
+                let up_scales1 = up[up_base + 2];
+                let up_scales2 = up[up_base + 3];
                 #[unroll]
-                for member in 0..tile {
-                    if first_member + member < length {
-                        let route = map
-                            [map_first + MEMBERS + group * MAX_BATCH + first_member + member]
-                            as usize;
-                        let x = input[input_first + route / RANKS * input_stride + column];
-                        gates[member] += g * x;
-                        ups[member] += u * x;
+                for pair in 0..4_usize {
+                    let sub_group = pair * 2 + odd_group;
+                    let quant_offset = 4 + pair * 8 + quarter_lane / 4;
+                    let gate_byte = q4_word_byte(gate[gate_base + quant_offset], quarter_lane & 3);
+                    let up_byte = q4_word_byte(up[up_base + quant_offset], quarter_lane & 3);
+                    let gate_quant = (gate_byte >> ((odd_group * 4) as u32)) & 15;
+                    let up_quant = (up_byte >> ((odd_group * 4) as u32)) & 15;
+                    let gate_factor =
+                        gate_d * q4_block_scale(gate_scales0, gate_scales2, sub_group) as f32;
+                    let gate_bias =
+                        gate_dmin * q4_block_minimum(gate_scales1, gate_scales2, sub_group) as f32;
+                    let up_factor = up_d * q4_block_scale(up_scales0, up_scales2, sub_group) as f32;
+                    let up_bias =
+                        up_dmin * q4_block_minimum(up_scales1, up_scales2, sub_group) as f32;
+                    let g = gate_factor * gate_quant as f32 - gate_bias;
+                    let u = up_factor * up_quant as f32 - up_bias;
+                    let column = block * 256 + pair * LANES + lane;
+                    let x = input[input_base + column];
+                    gates[0] += g * x;
+                    ups[0] += u * x;
+                }
+            }
+        } else {
+            for column_tile in 0..comptime!(hidden.div_ceil(LANES)) {
+                let column = column_tile * LANES + lane;
+                if column < hidden {
+                    // Decode each original weight only ONCE, reused across RHS.
+                    let g = packed_value(gate, gate_offset, column, gate_dtype);
+                    let u = packed_value(up, up_offset, column, up_dtype);
+                    #[unroll]
+                    for member in 0..tile {
+                        if first_member + member < length {
+                            let route = map
+                                [map_first + MEMBERS + group * MAX_BATCH + first_member + member]
+                                as usize;
+                            let x = input[input_first + route / RANKS * input_stride + column];
+                            gates[member] += g * x;
+                            ups[member] += u * x;
+                        }
                     }
                 }
             }
@@ -1363,6 +1457,7 @@ mod tests {
             ff: 4096,
             tile: 8,
             capacity: 16,
+            gate_policy: GatePolicy::Generic,
         };
         assert_eq!(g.scratch_bytes(true).unwrap(), 4480 * 1024);
     }
@@ -1391,6 +1486,136 @@ mod tests {
             map.words[index] = bad;
             assert!(map.validate_geometry(single).is_err());
             map.words[index] = old;
+        }
+    }
+
+    #[test]
+    fn q4_block_is_explicit_public_tile1_policy_with_unchanged_owners() {
+        assert_eq!(GatePolicy::default(), GatePolicy::Generic);
+        for tile in [1, 4, 8] {
+            for dtype in [F32, F16, BF16, Q4_K, Q5_0, Q6_K, Q8_0] {
+                let g = geometry(dtype, 256, 256, tile, 16);
+                assert_eq!(g.gate_policy(), GatePolicy::Generic);
+                let blocked = g.with_q4_block();
+                assert_eq!(blocked.is_ok(), tile == 1 && dtype == Q4_K);
+                if let Ok(b) = blocked {
+                    assert_eq!(b.gate_policy(), GatePolicy::Q4Block);
+                    assert_eq!(b.scratch_bytes(true), g.scratch_bytes(true));
+                    assert_eq!(b.status_words(), g.status_words());
+                    assert_eq!(b.projections(), g.projections());
+                    b.validate_count(1).unwrap();
+                    assert!(b.validate_count(2).is_err());
+                }
+            }
+        }
+        let q4 = Projection::new(Q4_K, 256, 256, 512).unwrap();
+        let q8 = Projection::new(Q8_0, 256, 256, 512).unwrap();
+        for p in [[q4, q8, q8], [q8, q4, q8]] {
+            assert!(Geometry::new(p, 1, 16).unwrap().with_q4_block().is_err());
+        }
+    }
+
+    fn q4_test_block(seed: usize) -> Vec<u8> {
+        let mut packed = vec![0u8; 144];
+        packed[..2].copy_from_slice(&0x2800u16.to_le_bytes());
+        packed[2..4].copy_from_slice(&0x2400u16.to_le_bytes());
+        for group in 0..8 {
+            let scale = ((group * 19 + seed * 7) % 64) as u8;
+            let minimum = ((group * 29 + seed * 11) % 64) as u8;
+            if group < 4 {
+                packed[4 + group] |= scale;
+                packed[8 + group] |= minimum;
+            } else {
+                packed[8 + group] = (scale & 15) | ((minimum & 15) << 4);
+                packed[group] |= (scale >> 4) << 6;
+                packed[4 + group] |= (minimum >> 4) << 6;
+            }
+        }
+        for column in 0..256 {
+            let group = column / 32;
+            packed[16 + (group / 2) * 32 + column % 32] |=
+                (((column * 7 + group + seed * 3) % 16) as u8) << ((group % 2) * 4);
+        }
+        packed
+    }
+    fn q4_block_dot(words: &[u32], row: usize, x: &[f32]) -> f32 {
+        let blocks = x.len() / 256;
+        let mut sums = [0f32; LANES];
+        for (lane, sum) in sums.iter_mut().enumerate() {
+            for block in 0..blocks {
+                let base = row * blocks * 36 + block * 36;
+                let d = binary16(words[base] & 65535);
+                let dmin = binary16(words[base] >> 16);
+                let scales = [words[base + 1], words[base + 2], words[base + 3]];
+                for pair in 0..4 {
+                    let group = pair * 2 + lane / 32;
+                    let byte = q4_word_byte(words[base + 4 + pair * 8 + (lane % 32) / 4], lane & 3);
+                    let quant = (byte >> ((lane / 32) * 4)) & 15;
+                    let factor = d * q4_block_scale(scales[0], scales[2], group) as f32;
+                    let bias = dmin * q4_block_minimum(scales[1], scales[2], group) as f32;
+                    let weight = factor * quant as f32 - bias;
+                    let column = block * 256 + pair * LANES + lane;
+                    *sum += weight * x[column];
+                }
+            }
+        }
+        for stride in [32, 16, 8, 4, 2, 1] {
+            for lane in 0..stride {
+                sums[lane] += sums[lane + stride];
+            }
+        }
+        sums[0]
+    }
+    #[test]
+    fn q4_block_fields_and_lane_order_match_independent_decoder_at_shard_edges() {
+        use kuno_text::TensorType;
+        for hidden in [256, 512] {
+            let blocks = hidden / 256;
+            let packed = (0..96 * blocks).flat_map(q4_test_block).collect::<Vec<_>>();
+            let words = super::super::pack_le_words(&packed);
+            let x = (0..hidden)
+                .map(|i| ((i % 17) as f32 - 8.) / 16.)
+                .collect::<Vec<_>>();
+            for row in [0, 63, 64, 95, 1, 62, 65, 94, 31, 32] {
+                let mut decoded = vec![0f32; hidden];
+                TensorType::Q4K
+                    .decode(
+                        &packed[row * blocks * 144..(row + 1) * blocks * 144],
+                        &mut decoded,
+                    )
+                    .unwrap();
+                let mut lanes = [0f32; LANES];
+                for (column, (&weight, &input)) in decoded.iter().zip(&x).enumerate() {
+                    lanes[column % LANES] += weight * input;
+                }
+                for stride in [32, 16, 8, 4, 2, 1] {
+                    for lane in 0..stride {
+                        lanes[lane] += lanes[lane + stride];
+                    }
+                }
+                let original = lanes[0];
+                let candidate = q4_block_dot(&words, row, &x);
+                assert_eq!(candidate.to_bits(), original.to_bits());
+                let f64 = decoded
+                    .iter()
+                    .zip(&x)
+                    .map(|(&w, &v)| f64::from(w) * f64::from(v))
+                    .sum::<f64>() as f32;
+                assert_eq!(candidate.to_bits(), f64.to_bits());
+                assert_eq!(
+                    grouped_silu(candidate).to_bits(),
+                    kuno_text::ops::silu(original).to_bits()
+                );
+                // Every original column, including the bank's final word.
+                for column in 0..hidden {
+                    let mut basis = vec![0f32; hidden];
+                    basis[column] = 1.;
+                    assert_eq!(
+                        q4_block_dot(&words, row, &basis).to_bits(),
+                        decoded[column].to_bits()
+                    );
+                }
+            }
         }
     }
 
@@ -1701,6 +1926,7 @@ mod tests {
                     g.projections[0].row_bytes,
                     g.projections[1].row_bytes,
                     g.tile,
+                    g.gate_policy == GatePolicy::Q4Block,
                 );
             }
             1 => {
@@ -1923,6 +2149,28 @@ mod tests {
             )
             .unwrap();
             validate_shader(&shader(0, mixed, mode), 8, true);
+        }
+    }
+    #[test]
+    fn offline_q4_block_headers_are_reused_without_new_bindings_or_runtime_keys() {
+        use cubecl::server::ExecutionMode;
+        for mode in [ExecutionMode::Checked, ExecutionMode::Unchecked] {
+            let generic = geometry(Q4_K, 256, 256, 1, 16);
+            let blocked = generic.with_q4_block().unwrap();
+            let source = shader(0, blocked, mode);
+            validate_shader(&source, 8, true);
+            for buffer in 0..2 {
+                // Four header/scale word loads and four quant word loads.
+                // The block loop is runtime; the four pairs are unrolled.
+                assert_eq!(
+                    source.matches(&format!("buffer_{buffer}_global[")).count(),
+                    8
+                );
+            }
+            // Other stages are byte-for-byte the same public pipeline.
+            for kind in 1..4 {
+                assert_eq!(shader(kind, blocked, mode), shader(kind, generic, mode));
+            }
         }
     }
 
@@ -2234,7 +2482,7 @@ mod tests {
         // IR/runtime scalar checks and the independent numeric tests above.
         let source = include_str!("grouped_moe.rs");
         for (name, public_args) in [
-            ("grouped_gate_up", 7),
+            ("grouped_gate_up", 8),
             ("grouped_down", 5),
             ("grouped_reduce", 1),
             ("grouped_finite", 2),

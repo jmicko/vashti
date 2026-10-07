@@ -200,6 +200,22 @@ struct Layout {
     words: [usize; N],
     capacity: usize,
     tile: usize,
+    gate_policy: k::GatePolicy,
+}
+fn install_q4_geometries(geometries: &mut [k::Geometry]) -> Result<()> {
+    if geometries.len() != 48 {
+        return Err(err("native routed Q4 layer inventory"));
+    }
+    // Public metadata only, fixed stack storage. An incompatible late layer
+    // cannot leave an earlier layer switched to the candidate policy.
+    let mut replacements = [geometries[0]; 48];
+    for (next, g) in replacements.iter_mut().zip(geometries.iter()) {
+        *next = k::Geometry::new(g.projections(), 1, g.capacity())
+            .and_then(k::Geometry::with_q4_block)
+            .map_err(err)?;
+    }
+    geometries.copy_from_slice(&replacements);
+    Ok(())
 }
 impl Layout {
     fn new(graph: BoundGraph<'_, '_>, capacity: usize, tile: usize) -> Result<Self> {
@@ -265,6 +281,7 @@ impl Layout {
             words,
             capacity,
             tile,
+            gate_policy: k::GatePolicy::Generic,
         };
         if l.requests()?.into_iter().sum::<u64>() != PRIVATE_BYTES {
             return Err(err("native routed exact scratch"));
@@ -358,6 +375,9 @@ impl Workspace {
     pub(crate) fn projection_tile(&self) -> usize {
         self.layout.tile
     }
+    pub(crate) fn gate_policy(&self) -> k::GatePolicy {
+        self.layout.gate_policy
+    }
     /// The model alone constructs this proof after its completed all-family
     /// cursor boundary. No buffers, ledgers, launches or audits are changed.
     pub(crate) fn set_lab_single_member_decode(
@@ -382,6 +402,27 @@ impl Workspace {
             *g = k::Geometry::new(g.projections(), 1, g.capacity()).map_err(err)?;
         }
         self.layout.tile = 1;
+        self.layout.gate_policy = k::GatePolicy::Generic;
+        Ok(self.projection_tile())
+    }
+    /// The same completed, fully audited model owner; every layer's public
+    /// replacement is proved before any policy is changed. No new allocation.
+    pub(crate) fn set_lab_single_q4_decode(
+        &mut self,
+        executor: &GpuExecutor<'_>,
+        arena: &PrivateArena,
+        _boundary: &crate::resident_model::batch::CompletedNativeProjectionBoundary,
+    ) -> Result<usize> {
+        self.healthy(arena)?;
+        self.policy.completed_boundary()?;
+        executor.check_resident_admission(&self.admission)?;
+        executor.check_client(arena.client().map_err(u::fault)?)?;
+        if executor.batch_moe.is_some() || !arena.public_owned_zero_audit_enabled() {
+            return Err(err("native routed Q4 single-member owner policy"));
+        }
+        install_q4_geometries(&mut self.layout.geometries)?;
+        self.layout.tile = 1;
+        self.layout.gate_policy = k::GatePolicy::Q4Block;
         Ok(self.projection_tile())
     }
     #[allow(clippy::too_many_arguments)]
@@ -1222,6 +1263,7 @@ fn launch_wave(
                 gate.row_bytes(),
                 up.row_bytes(),
                 g.tile(),
+                g.gate_policy() == k::GatePolicy::Q4Block,
             );
             k::grouped_down::launch_unchecked::<WgpuRuntime>(
                 client,
@@ -1734,6 +1776,35 @@ mod tests {
             sequence: SequenceKey::new().unwrap(),
             fault: BufferId::metadata_fixture(3, 5, 19),
             ids: std::array::from_fn(|i| BufferId::metadata_fixture(3, 5, i)),
+        }
+    }
+    #[test]
+    fn q4_replacements_validate_every_layer_before_any_installation() {
+        for capacity in [16, 64, 96] {
+            let mut layers = [geometry(capacity); 48];
+            let original = layers;
+            install_q4_geometries(&mut layers).unwrap();
+            for (candidate, old) in layers.iter().zip(original) {
+                assert_eq!(candidate.tile(), 1);
+                assert_eq!(candidate.gate_policy(), k::GatePolicy::Q4Block);
+                assert_eq!(candidate.projections(), old.projections());
+                assert_eq!(candidate.status_words(), old.status_words());
+                assert_eq!(candidate.scratch_bytes(true), old.scratch_bytes(true));
+            }
+        }
+        let mut layers = [geometry(16); 48];
+        layers[47] = k::Geometry::new(
+            [k::Projection::new(crate::quant_matvec::F32, 256, 256, 512).unwrap(); 3],
+            8,
+            16,
+        )
+        .unwrap();
+        let before = layers;
+        assert!(install_q4_geometries(&mut layers).is_err());
+        assert_eq!(layers, before);
+        for count in [0, 1, 47] {
+            assert!(install_q4_geometries(&mut layers[..count]).is_err());
+            assert_eq!(layers, before);
         }
     }
     #[test]

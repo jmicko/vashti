@@ -5,6 +5,7 @@ use crate::{
     grouped_moe_chunk as c,
     main_admission::{self, MainAdmission},
     private_arena::{BufferId, PrivateArena},
+    quant_matvec::grouped_moe as k,
     resident_moe::{MoeLayout, ResidentMoe},
     token_waves,
 };
@@ -128,11 +129,13 @@ fn input_image(l: &c::Layout, count: usize, late: bool) -> Zeroizing<Vec<u32>> {
     x
 }
 fn host_bound() -> Result<usize> {
-    // At most candidate BEFORE/ACTUAL/previous-wave pages +original eighty-rank tree/core
+    // Candidate BEFORE/ACTUAL/previous-wave plus one retained full generic
+    // snapshot for the paired Q4 case; every Snapshot has Zeroizing owners.
+    // Original eighty-rank tree/core
     // expectations +one original expert decoded working set +packed bytes +
     // scalar snapshots +guarded metadata. No per-case oracle cache persists.
     let parts = [
-        3 * 1_671_168,
+        4 * 1_671_168,
         80 * 640 * 4,
         80 * 2560 * 4,
         2 * 8 * 2560 * 4,
@@ -540,6 +543,62 @@ fn compare_scalar(
     }
     Ok(max)
 }
+fn retained_snapshot_bytes(l: &c::Layout, snapshot: &c::Snapshot) -> Result<usize> {
+    let mut bytes = 0usize;
+    for (values, words) in snapshot.0.iter().zip(l.words) {
+        let owned = crate::private_arena::BufferLayout::new(words)?;
+        if values.len() != owned.owned_words {
+            return Err("grouped retained generic owning extent".into());
+        }
+        bytes = bytes
+            .checked_add(
+                values
+                    .capacity()
+                    .checked_mul(4)
+                    .ok_or("grouped retained capacity")?,
+            )
+            .ok_or("grouped retained capacity")?;
+    }
+    if bytes > l.page_bytes()? || bytes > 1_671_168 {
+        return Err("grouped retained generic host envelope".into());
+    }
+    host_bound()?;
+    Ok(bytes)
+}
+fn compare_generic(l: &c::Layout, actual: &c::Snapshot, old: &c::Snapshot) -> Result<f32> {
+    retained_snapshot_bytes(l, old)?;
+    let mut max = 0f32;
+    for (field, first, stride, width, ranks) in [
+        (c::ACT, l.spans.act_first(), l.spans.act_stride(), 640, 10),
+        (
+            c::PART,
+            l.spans.partial_first(),
+            l.spans.partial_stride(),
+            2560,
+            10,
+        ),
+        (
+            c::OUTPUT,
+            l.spans.output_first(),
+            l.spans.output_stride(),
+            2560,
+            1,
+        ),
+    ] {
+        for rank in 0..ranks {
+            for column in 0..width {
+                let index = first + rank * stride + column;
+                max = max.max(compare(
+                    f32::from_bits(actual.0[field][index]),
+                    f32::from_bits(old.0[field][index]),
+                    1e-4,
+                    3e-4,
+                )?);
+            }
+        }
+    }
+    Ok(max)
+}
 fn sentinels(
     client: &ComputeClient<WgpuRuntime>,
     banks: &ExpertBanks,
@@ -602,6 +661,45 @@ fn correct(
     dtype: TensorType,
     case: Case,
 ) -> Result<serde_json::Value> {
+    correct_recorded(
+        client,
+        limits,
+        arena,
+        retired,
+        graph,
+        layer,
+        dtype,
+        case,
+        k::GatePolicy::Generic,
+        None,
+    )
+    .map(|(report, _)| report)
+}
+#[allow(clippy::too_many_arguments)]
+fn correct_recorded(
+    client: &ComputeClient<WgpuRuntime>,
+    limits: &wgpu::Limits,
+    arena: &mut PrivateArena,
+    retired: &Arc<AtomicBool>,
+    graph: BoundGraph<'_, '_>,
+    layer: usize,
+    dtype: TensorType,
+    case: Case,
+    policy: k::GatePolicy,
+    generic: Option<&c::Snapshot>,
+) -> Result<(serde_json::Value, c::Snapshot)> {
+    if (policy == k::GatePolicy::Q4Block) != generic.is_some()
+        || (policy == k::GatePolicy::Q4Block && (case.tile != 1 || case.count != 1))
+    {
+        return Err("grouped paired Q4 public policy".into());
+    }
+    let mut l = c::Layout::original(dtype, case.tile, case.capacity)?;
+    if policy == k::GatePolicy::Q4Block {
+        l.geometry = l.geometry.with_q4_block()?;
+    }
+    if let Some(old) = generic {
+        retained_snapshot_bytes(&l, old)?;
+    }
     let w = c::original_weights(graph, layer)?;
     let mut ledger = preflight(client, w, dtype, case, limits)?;
     let mut b = c::OriginalBank::allocate(graph, layer, client, &mut ledger, case.capacity)?;
@@ -611,7 +709,6 @@ fn correct(
         prime(graph, arena, &mut ledger, b.fixture_bank_mut(), &mut scalar)?;
     }
     let routes = plan(case)?;
-    let l = c::Layout::original(dtype, case.tile, case.capacity)?;
     let x = input_image(&l, case.count, false);
     let want = oracle(w, &routes)?;
     let mut owner = c::Owner::allocate(
@@ -630,6 +727,7 @@ fn correct(
     }
     let cancel = AtomicBool::new(false);
     let mut errors = [0.; 4];
+    let mut generic_error = None;
     let actual = owner.execute(
         graph,
         arena,
@@ -639,6 +737,9 @@ fn correct(
         c::Failure::Never,
         |layout, v| {
             errors = compare_oracle(layout, v, &want, case.count)?;
+            if let Some(old) = generic {
+                generic_error = Some(compare_generic(layout, v, old)?);
+            }
             Ok(())
         },
     )?;
@@ -646,6 +747,7 @@ fn correct(
         return Err("grouped operator phase".into());
     }
     owner.original_ledger_unchanged()?;
+    retained_snapshot_bytes(owner.layout(), &actual)?;
     let mut max_scalar = 0f32;
     for t in 0..case.count {
         let row = routes.token(t).ok_or("grouped scalar route token")?;
@@ -672,12 +774,14 @@ fn correct(
     drop(owner);
     drop(flat);
     client.memory_cleanup();
-    Ok(
+    Ok((
         serde_json::json!({"count":case.count,"overlap":case.overlap,"tile":case.tile,"capacity":case.capacity,
+        "gate_policy":if policy == k::GatePolicy::Q4Block {"q4-block"} else {"generic"},"generic_max_abs_error":generic_error,
         "cross_segment_boundary":case.boundary,"bank_full_pages":expected_bank_bytes(dtype,case.capacity)?,"down_dtype":dtype.gguf_id(),"layer":layer,
         "tree_activation_partial_output_max_abs_errors":errors[..3],"core_output_max_abs_error":errors[3],"scalar_max_abs_error":max_scalar,
         "all_ten_ranks":true,"all_full_guards_and_inactive_tails":true,"original_bank_ledger_unchanged":true,"operator_only_no_publication":true}),
-    )
+        actual,
+    ))
 }
 #[derive(Clone, Copy)]
 enum PhysicalFailure {
@@ -818,11 +922,45 @@ pub fn run(client: &ComputeClient<WgpuRuntime>, limits: &wgpu::Limits) -> Result
         let mut reports = Vec::new();
         let single_reports = single::run(client, limits, &file, &mut arena, &retired)?;
         let mut failures = 0;
+        let mut q4_cases = 0;
         for (layer, dtype) in layers {
             for case in cases() {
-                reports.push(correct(
-                    client, limits, &mut arena, &retired, graph, layer, dtype, case,
-                )?);
+                if case.tile == 1 {
+                    let (report, generic) = correct_recorded(
+                        client,
+                        limits,
+                        &mut arena,
+                        &retired,
+                        graph,
+                        layer,
+                        dtype,
+                        case,
+                        k::GatePolicy::Generic,
+                        None,
+                    )?;
+                    reports.push(report);
+                    // The generic GPU owners/banks have closed before the
+                    // candidate allocates. Only this bounded Zeroizing full
+                    // snapshot survives, and every early return wipes it.
+                    let (report, _) = correct_recorded(
+                        client,
+                        limits,
+                        &mut arena,
+                        &retired,
+                        graph,
+                        layer,
+                        dtype,
+                        case,
+                        k::GatePolicy::Q4Block,
+                        Some(&generic),
+                    )?;
+                    reports.push(report);
+                    q4_cases += 1;
+                } else {
+                    reports.push(correct(
+                        client, limits, &mut arena, &retired, graph, layer, dtype, case,
+                    )?);
+                }
             }
             for how in [
                 PhysicalFailure::Runtime(c::Failure::BeforePlan),
@@ -856,6 +994,9 @@ pub fn run(client: &ComputeClient<WgpuRuntime>, limits: &wgpu::Limits) -> Result
                 failures += 1;
             }
         }
+        if reports.len() != 52 || q4_cases != 6 {
+            return Err("grouped complete public Q4 case inventory".into());
+        }
         Ok((reports, failures, single_reports))
     }));
     retire_failed_attempt(&attempt, &retired);
@@ -868,6 +1009,7 @@ pub fn run(client: &ComputeClient<WgpuRuntime>, limits: &wgpu::Limits) -> Result
     file.verify_file_unchanged()
         .map_err(|_| "grouped original file changed")?;
     let report = serde_json::json!({"scope":"fixed-public-grouped-routed-MoE-operator-only","cases":reports,"failure_cases":failures,
+        "q4_block_cases":6,"generic_tile1_cases":6,
         "all_format_single_member_cases":single_reports,
         "main_limit_bytes":c::MAIN_CAP,"private_limit_bytes":c::PRIVATE_CAP,"combined_private_pages":1_998_848,"io_cap_bytes":c::IO_CAP,"io_checkpoint_bound":c::IO_CHECKPOINT_BOUND,
         "host_scratch_upper_bound":host,"main_erased_bytes":audit.bytes,"main_erased_buffers":audit.buffers,
@@ -882,7 +1024,7 @@ pub fn run(client: &ComputeClient<WgpuRuntime>, limits: &wgpu::Limits) -> Result
         out.write_all(serde_json::to_string_pretty(&report)?.as_bytes())?;
     }
     println!(
-        "public_grouped_routed_acceptance cases=46 failures={} main_bytes={} main_buffers={}",
+        "public_grouped_routed_acceptance cases=52 failures={} main_bytes={} main_buffers={}",
         failures, audit.bytes, audit.buffers
     );
     Ok(())
@@ -908,7 +1050,7 @@ mod tests {
                 q8 * MIB
             );
         }
-        assert_eq!(host_bound().unwrap(), 15_872_000);
+        assert_eq!(host_bound().unwrap(), 17_543_168);
         assert!(host_bound().unwrap() < c::HOST_CAP);
         assert_eq!(
             MoeLayout::new(2560, 640).unwrap().owned_bytes().unwrap() + 65536,
@@ -927,6 +1069,13 @@ mod tests {
     fn fixed_matrix_cases_pin_actual_waves_and_boundary_slots_without_pruning() {
         let all = cases();
         assert_eq!(all.len(), 23);
+        assert_eq!(
+            all.iter()
+                .filter(|c| c.tile == 1)
+                .map(|c| c.capacity)
+                .collect::<Vec<_>>(),
+            [16, 64, 96]
+        );
         let mut boundary = 0;
         for case in all {
             let p = plan(case).unwrap();
@@ -962,6 +1111,23 @@ mod tests {
             }
         }
         assert_eq!(boundary, 2);
+    }
+    #[test]
+    fn retained_generic_snapshot_checks_full_extent_and_actual_capacity() {
+        let l = c::Layout::original(TensorType::Q8_0, 1, 16).unwrap();
+        let mut snapshot = c::Snapshot(l.words.map(|n| {
+            let words = crate::private_arena::BufferLayout::new(n)
+                .unwrap()
+                .owned_words;
+            Zeroizing::new(vec![0u32; words])
+        }));
+        assert_eq!(retained_snapshot_bytes(&l, &snapshot).unwrap(), 1_671_168);
+        snapshot.0[0].pop();
+        assert!(retained_snapshot_bytes(&l, &snapshot).is_err());
+        snapshot.0[0].push(0);
+        let len = snapshot.0[0].len();
+        snapshot.0[0].reserve_exact(len);
+        assert!(retained_snapshot_bytes(&l, &snapshot).is_err());
     }
     #[test]
     fn independent_tree_is_original_schedule_and_numeric_comparator_rejects_nonfinite() {
