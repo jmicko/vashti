@@ -581,6 +581,10 @@ impl PrivateArena {
         self.public_zero_audit = true;
         Ok(())
     }
+    /// Configuration only; successful erasure credit still requires close.
+    pub(crate) fn public_owned_zero_audit_enabled(&self) -> bool {
+        self.io_policy == IoPolicy::OwnedTransient && self.public_zero_audit
+    }
     /// Accepted counts are available only AFTER checked explicit close. A
     /// failed/retired context cannot emit prior successful partial audit credit.
     pub(crate) fn owned_zero_audit_receipt(&self) -> Option<OwnedZeroAudit> {

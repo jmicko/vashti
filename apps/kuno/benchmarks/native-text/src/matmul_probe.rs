@@ -26,6 +26,8 @@ const MAIN_BUDGET: usize = 8 * 1024 * 1024;
 const IO_BUDGET: u64 = 32 * 1024 * 1024;
 const OUTPUT_GAP: f32 = -12345.0;
 const INPUT_GAP: f32 = 31415.0;
+const NUMERIC_COUNTS: [usize; 4] = [1, 3, 5, 8];
+const NUMERIC_TILES: [usize; 3] = [1, 4, 8];
 const FORMATS: [TensorType; 7] = [
     TensorType::F32,
     TensorType::F16,
@@ -364,10 +366,11 @@ fn cases(
     matrices: &[PublicMatrix],
     retired: &AtomicBool,
 ) -> Result<Vec<serde_json::Value>> {
-    let mut reports = Vec::with_capacity(56);
+    let mut reports =
+        Vec::with_capacity(FORMATS.len() * NUMERIC_COUNTS.len() * NUMERIC_TILES.len());
     for matrix in matrices {
-        for count in [1, 3, 5, 8] {
-            for tile in [4, 8] {
+        for count in NUMERIC_COUNTS {
+            for tile in NUMERIC_TILES {
                 let geometry =
                     MatrixGeometry::new(matrix.kind.gguf_id(), matrix.rows, matrix.columns, tile)?;
                 let layout = fixture_layout(geometry.rows(), geometry.columns())?;
@@ -1055,7 +1058,7 @@ mod tests {
         );
         let layout = fixture_layout(rows, columns).unwrap();
         let full = BufferLayout::new(layout.output_words).unwrap().owned_bytes;
-        for count in [1, 3, 5, 8] {
+        for count in NUMERIC_COUNTS {
             let input = input_fixture(layout, columns, count);
             let expected = expectations(rows, columns, &decoded, &input, layout, count).unwrap();
             let mut bytes = Zeroizing::new(vec![0_u8; full]);

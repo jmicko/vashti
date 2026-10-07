@@ -44,6 +44,12 @@ static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 fn error() -> Error {
     Error::InvalidFormat("native PLE chunk owner/transition")
 }
+fn completed_projection_cursor(next: usize, position: usize, pending: bool) -> Result<()> {
+    if next == 0 || next != position || pending {
+        return Err(error());
+    }
+    Ok(())
+}
 fn guarded<T>(poison: &AtomicBool, f: impl FnOnce() -> Result<T>) -> Result<T> {
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
         Ok(Ok(v)) => Ok(v),
@@ -317,6 +323,15 @@ impl PleBatchWorkspace {
             return Err(error());
         }
         self.validate_ids(&model.arena)
+    }
+    /// PLE advances this cursor only in the all-family accepted commit. Scalar
+    /// continuation leaves it behind and therefore cannot change native policy.
+    pub(super) fn validate_completed_projection_boundary(
+        &self,
+        model: &ResidentModel<'_, '_>,
+    ) -> Result<()> {
+        self.healthy(model, &AtomicBool::new(false))?;
+        completed_projection_cursor(self.next, model.position, self.pending)
     }
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn enqueue(
@@ -1164,6 +1179,19 @@ fn audit(arena: &PrivateArena, retired: &AtomicBool) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn projection_switch_requires_an_accepted_matching_idle_native_cursor() {
+        use super::completed_projection_cursor;
+        for position in [1, 3, 8, 80, 4096] {
+            assert!(completed_projection_cursor(position, position, false).is_ok());
+            assert!(completed_projection_cursor(position, position, true).is_err());
+            assert!(completed_projection_cursor(position, position + 1, false).is_err());
+            assert!(completed_projection_cursor(position, position - 1, false).is_err());
+        }
+        assert!(completed_projection_cursor(0, 0, false).is_err());
+        assert!(completed_projection_cursor(0, 1, false).is_err());
+    }
+
     use super::*;
     #[test]
     fn exact_full_pages_and_separate_component_bound_are_pinned() {

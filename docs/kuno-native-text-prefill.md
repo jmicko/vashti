@@ -142,3 +142,41 @@ will accelerate real prefill.
 Production request ownership, worker teardown/recovery, long contexts, supported
 sampling/tool/vision behavior and managed native/`ollama.` routing remain separate
 acceptance requirements. Nothing here authorizes a production route or release.
+
+## Public static projection tile experiment
+
+The laboratory executor now permits public packed-projection tiles 1/4/8 and
+defaults to 8 for each fresh resident admission. This policy affects only the
+static original packed matrices queued by `enqueue_matrix_batch`; grouped routed
+MoE keeps its existing tile configuration. The fixed allocation capacity remains
+MAX8, and count, weight/activation bases and strides remain runtime uniforms.
+No shader key or tile choice depends on a private count.
+
+`ResidentModel::set_lab_native_projection_tile(&mut executor, tile)` returns the
+observed tile only between completed native chunks on the original owner. It
+checks the model/client/admission and private-owner health, owned transient I/O,
+full owning zero-audit configuration, absent pending work and a nonzero committed
+native PLE cursor equal to the model cursor. A fresh owner or scalar continuation
+cannot supply that boundary proof. Changing policy adds no launch, map, fence,
+source owner, buffer allocation or audit credit. Existing finite checks,
+all-family acceptance, runtime budgets and full-span retirement remain required.
+The fixed-public CLI control may restrict the core's allowed tiles further.
+
+Tile 1 specializes one accumulator and 64 shared f32 values (256 bytes) per
+workgroup instead of tile 8's eight accumulators and 512 shared f32 values
+(2048 bytes). Its public grid is `(rows,8,1)` instead of `(rows,1,1)`. Inactive
+groups perform no weight/input/output access, but retain unconditional zero
+reductions and barriers. The experiment changes workgroup pressure and
+parallelism; it does not reduce the fixed MAX8 grid's total scratch capacity.
+Every active token retains the same packed decoding, column order, 64 lanes and
+reduction strides 32/16/8/4/2/1. This is a concrete count 1 projection experiment,
+not an accepted speedup or an automatic policy.
+
+Source tests cover all seven formats/tiles and counts 1..8, independent decoding
+and exact 64-lane results, runtime offset/tail bounds, fixed MAX8 grids, invalid
+tiles, committed cursor guards and both checked/unchecked offline shader modes.
+The existing fixed-public `matmul-probe` now adds tile 1 for all seven formats at
+counts 1/3/5/8, bringing it to 84 numeric cases with unchanged tolerances and owning
+offset/tail/erasure checks. These new cases require physical acceptance on both
+GPUs before whole-model numeric/lifecycle checks and compiler-idle paired decode
+timings. Earlier tile 4/8 receipts do not accept tile 1.

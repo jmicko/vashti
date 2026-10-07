@@ -121,12 +121,17 @@ close successfully; failed audit ownership is quarantined until process exit.
 Receipts are written after explicit cleanup succeeds. Opaque driver memory and
 general private worker/host lifecycle remain outside this proof.
 
-`matmul-probe` configures owned I/O itself and validates all seven original packed
-formats at counts 1/3/5/8 and tiles 4/8. Do not set `KUNO_LAB_TRANSIENT_IO` for this
-mode. `KUNO_LAB_MATMUL_TIMING=1` adds a fixed cached eight-vector ABBA comparison
-against eight legacy cooperative launches. Both cards pass numeric/full-span
-checks and show a cached operator gain. The isolated operator does not establish
-whole-engine speedup; the connected model experiment is described below.
+`matmul-probe` configures owned I/O itself and exercises all seven original packed
+formats at counts 1/3/5/8 and tiles 1/4/8 (84 numeric cases), with the same nonzero
+packed/input/output offsets, irregular strides, inactive tails and full-page
+checks. Do not set `KUNO_LAB_TRANSIENT_IO` for this mode. Tile 1 is a source-only
+candidate pending independent numeric acceptance on both cards; previous
+numeric/full-span receipts cover tiles 4/8. `KUNO_LAB_MATMUL_TIMING=1` retains its
+fixed cached eight-vector ABBA comparison against eight legacy cooperative
+launches, which showed a cached operator gain on both cards. The isolated
+operator does not establish whole-engine speedup; the connected model experiment
+is described below and its tile policy is documented in
+[the prefill boundary](../../../../docs/kuno-native-text-prefill.md#public-static-projection-tile-experiment).
 
 `moe-word-probe`/`moe-word-bench` test the optional exact-schedule 16-thread down
 kernel. `KUNO_LAB_WORD_DOWN=1` can select it in full fixtures, but measured cached

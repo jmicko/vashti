@@ -4,7 +4,7 @@
 //! default/API/catalog change, replay, fallback or private checkpoint export.
 use super::*;
 use crate::{
-    executor::{GpuExecutor, batch_moe},
+    executor::{GpuExecutor, NativeProjectionTile, batch_moe},
     quant_matvec::matmul::{BatchSpans, MAX_BATCH},
     resident_batch_projection::{BatchedResidentProjector, ResidentBatchProjection},
     resident_gdn::{BoundProjection, batch as gdn},
@@ -31,6 +31,12 @@ const BLOCK_WORDS: usize = MAX_BATCH * D;
 
 fn error() -> Error {
     Error::InvalidFormat("native model chunk rejected")
+}
+
+/// Not Clone/Copy and constructible only after the model's completed boundary
+/// validation below. It is consumed immediately by the matching executor.
+pub(crate) struct CompletedNativeProjectionBoundary {
+    _private: (),
 }
 fn sum(pages: &[u64]) -> Result<u64> {
     pages.iter().try_fold(0_u64, |n, &p| {
@@ -409,6 +415,40 @@ impl Drop for Flight {
 }
 
 impl<'m, 'f> ResidentModel<'m, 'f> {
+    /// Fixed-public laboratory experiment, called between completed native
+    /// chunks. A fresh/scalar owner, pending work or missing full owning audit
+    /// cannot change policy. This adds no launch, map, fence or device allocation.
+    pub(crate) fn set_lab_native_projection_tile(
+        &mut self,
+        executor: &mut GpuExecutor<'f>,
+        tile: usize,
+    ) -> Result<usize> {
+        let tile = NativeProjectionTile::new(tile)?;
+        if self.poisoned
+            || self.retired.load(Ordering::Acquire)
+            || !self.pending_qsa.is_empty()
+            || !self.pending_moe.is_empty()
+            || self.ple_batch_pending.is_some()
+            || !self.admission.transient_io()
+            || !self.arena.public_owned_zero_audit_enabled()
+            || !self.io.public_owned_zero_audit_enabled()
+        {
+            return Err(error());
+        }
+        self.graph.verify_unchanged()?;
+        executor.check_client(self.arena.client().map_err(u::fault)?)?;
+        self.admission
+            .check_client(self.io.client().map_err(u::fault)?)?;
+        executor.check_resident_admission(&self.admission)?;
+        let native = self.native_batch.as_ref().ok_or(error())?;
+        native.prove_outer(self)?;
+        native.gr.validate_all_consumers_queued()?;
+        native.shared.validate_all_consumers_queued()?;
+        native.ple.validate_completed_projection_boundary(self)?;
+        executor
+            .set_native_projection_tile(tile, CompletedNativeProjectionBoundary { _private: () })
+    }
+
     pub(crate) fn new_with_native_batch(
         graph: BoundGraph<'m, 'f>,
         client: ComputeClient<WgpuRuntime>,

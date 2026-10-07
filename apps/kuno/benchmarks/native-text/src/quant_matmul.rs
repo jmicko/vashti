@@ -1,7 +1,7 @@
 //! Bounded packed W[R,K] times token-major X[B,K], producing Y[B,R].
 //!
 //! This is a single multi-RHS operation: each lane decodes a weight ONCE per
-//! column, then reuses it across four/eight independent token accumulators.
+//! column, then uses it across one/four/eight independent token accumulators.
 //! Every token retains the existing 64-lane column order and reduction tree.
 //! Original seven-format decoding is inherited from the parent; no full-weight
 //! conversion, activation quantization, foreign engine or extra dependency.
@@ -40,7 +40,7 @@ impl MatrixGeometry {
         columns: usize,
         tile_tokens: usize,
     ) -> Result<Self, &'static str> {
-        if !matches!(tile_tokens, 4 | 8) || rows > MAX_GRID_X {
+        if !matches!(tile_tokens, 1 | 4 | 8) || rows > MAX_GRID_X {
             return Err("unsupported public batch tile or row grid");
         }
         let (elements, bytes) = super::block_layout(dtype).ok_or("unsupported GGUF dtype")?;
@@ -424,7 +424,7 @@ mod tests {
                 .unwrap()
                 .decode(&packed, &mut decoded)
                 .unwrap();
-            for tile_tokens in [4, 8] {
+            for tile_tokens in [1, 4, 8] {
                 let geometry = MatrixGeometry::new(dtype, rows, columns, tile_tokens).unwrap();
                 let packed_first = if dtype == F32 { 12 } else { 3 };
                 let packed_words = (packed_first + packed.len()).div_ceil(4);
@@ -484,7 +484,10 @@ mod tests {
             (99, 1, 1, 4),
             (F32, 0, 1, 4),
             (F32, 1, 0, 4),
+            (F32, 1, 1, 0),
             (F32, 1, 1, 2),
+            (F32, 1, 1, 3),
+            (F32, 1, 1, 16),
             (F32, 65536, 1, 4),
             (F32, 1, usize::MAX, 4),
             (Q4_K, 1, 255, 4),
@@ -614,9 +617,10 @@ mod tests {
         use cubecl::server::ExecutionMode;
         for dtype in [F32, F16, BF16, Q5_0, Q8_0, Q4_K, Q6_K] {
             for mode in [ExecutionMode::Checked, ExecutionMode::Unchecked] {
+                let one = shader(MatrixGeometry::new(dtype, 3, 256, 1).unwrap(), mode);
                 let a = shader(MatrixGeometry::new(dtype, 3, 256, 4).unwrap(), mode);
                 let b = shader(MatrixGeometry::new(dtype, 3, 256, 8).unwrap(), mode);
-                for source in [&a, &b] {
+                for source in [&one, &a, &b] {
                     assert!(source.contains("@compute") && source.contains("workgroupBarrier"));
                     let module = wgpu::naga::front::wgsl::parse_str(source).unwrap();
                     wgpu::naga::valid::Validator::new(
@@ -635,11 +639,17 @@ mod tests {
                 let a_loads = a.matches("buffer_0_global[").count();
                 let b_loads = b.matches("buffer_0_global[").count();
                 assert!(a_loads > 0);
+                assert_eq!(one.matches("buffer_0_global[").count(), a_loads);
                 assert_eq!(a_loads, b_loads, "weight decode multiplied with token tile");
+                assert_eq!(
+                    a.matches("buffer_1_global[").count(),
+                    4 * one.matches("buffer_1_global[").count()
+                );
                 assert_eq!(
                     b.matches("buffer_1_global[").count(),
                     2 * a.matches("buffer_1_global[").count()
                 );
+                assert_eq!(one.matches("buffer_2_global[").count(), 1);
                 assert_eq!(a.matches("buffer_2_global[").count(), 4);
                 assert_eq!(b.matches("buffer_2_global[").count(), 8);
             }
@@ -680,5 +690,19 @@ mod tests {
             assert!(runtime.contains(&format!("{field}: usize")));
         }
         assert_eq!(signature.matches("#[comptime]").count(), 4);
+    }
+
+    #[test]
+    fn each_public_tile_keeps_max8_grid_independent_of_active_count() {
+        for tile in [1, 4, 8] {
+            let geometry = MatrixGeometry::new(F32, 3, 65, tile).unwrap();
+            for count in [1, 3, 5, 8] {
+                let spans = BatchSpans::new(count, 12, 9, 76, 7, 8);
+                geometry.validate_spans(&spans, 198, 617, 71).unwrap();
+                assert!(
+                    matches!(geometry.grid(), CubeCount::Static(3, y, 1) if y == (MAX_BATCH / tile) as u32)
+                );
+            }
+        }
     }
 }

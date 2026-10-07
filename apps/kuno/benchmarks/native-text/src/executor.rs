@@ -27,6 +27,33 @@ pub(crate) const RESIDENT_IO_MAX: u64 = 64 * 1024 * 1024;
 /// Separate runtime upload/uniform/readback ownership. Not main-pool telemetry.
 pub(crate) const RESIDENT_RUNTIME_IO_MAX: u64 = 64 * 1024 * 1024;
 
+/// Public static-projection specialization, never selected from active count.
+/// Existing MAX8 workspaces and grouped MoE retain their original capacities.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum NativeProjectionTile {
+    One,
+    Four,
+    #[default]
+    Eight,
+}
+impl NativeProjectionTile {
+    pub(crate) fn new(tile: usize) -> Result<Self> {
+        match tile {
+            1 => Ok(Self::One),
+            4 => Ok(Self::Four),
+            8 => Ok(Self::Eight),
+            _ => Err(Error::InvalidFormat("native public projection tile")),
+        }
+    }
+    fn tokens(self) -> usize {
+        match self {
+            Self::One => 1,
+            Self::Four => 4,
+            Self::Eight => 8,
+        }
+    }
+}
+
 fn cleanup_failure_category(code: &str) -> Option<&'static str> {
     // Forward fixed infrastructure categories only, never backend descriptions,
     // shader source, metadata values or request content.
@@ -413,6 +440,7 @@ pub struct GpuExecutor<'a> {
     tick: u64,
     banks: BTreeMap<String, ExpertBanks>,
     batch_moe: Option<batch_moe::Registry>,
+    native_projection_tile: NativeProjectionTile,
     bank_reserved: usize,
     bank_slots: usize,
     reserved_limit: usize,
@@ -517,6 +545,7 @@ impl<'a> GpuExecutor<'a> {
             tick: 0,
             banks: BTreeMap::new(),
             batch_moe: None,
+            native_projection_tile: NativeProjectionTile::default(),
             bank_reserved: 0,
             bank_slots,
             reserved_limit,
@@ -740,6 +769,8 @@ impl<'a> GpuExecutor<'a> {
             )),
         };
         self.resident_admission = Some(admission.clone());
+        // A fresh logical owner must never inherit a previous decode experiment.
+        self.native_projection_tile = NativeProjectionTile::default();
         Ok(admission)
     }
     pub(crate) fn check_resident_admission(&self, owner: &ResidentAdmission) -> Result<()> {
@@ -751,6 +782,26 @@ impl<'a> GpuExecutor<'a> {
                 Err(Error::InvalidFormat("resident admission owner mismatch"))
             }
         }
+    }
+    pub(crate) fn native_projection_tile(&self) -> usize {
+        self.native_projection_tile.tokens()
+    }
+    /// Only a completed original native model owner can construct this proof.
+    /// No queued work, buffers, runtime ledgers or cache entries are changed.
+    pub(crate) fn set_native_projection_tile(
+        &mut self,
+        tile: NativeProjectionTile,
+        _boundary: crate::resident_model::batch::CompletedNativeProjectionBoundary,
+    ) -> Result<usize> {
+        if self.batch_moe.is_some() || self.transient_resident.is_none() {
+            return Err(Error::InvalidFormat("native projection policy boundary"));
+        }
+        self.resident_admission
+            .as_ref()
+            .ok_or(Error::InvalidFormat("native projection admission"))?
+            .active()?;
+        self.native_projection_tile = tile;
+        Ok(self.native_projection_tile())
     }
     pub(crate) fn admission_upper_bytes(&self) -> Result<Option<u64>> {
         self.resident_admission
@@ -1272,7 +1323,7 @@ impl<'a> GpuExecutor<'a> {
                 tensor.info().dtype().gguf_id(),
                 rows,
                 m.inputs(),
-                8,
+                self.native_projection_tile(),
             )
             .map_err(|_| Error::InvalidFormat("resident batch matrix geometry"))?;
             let packet = quant_matvec::matmul::BatchSpans::new(
@@ -1659,6 +1710,18 @@ impl Drop for GpuExecutor<'_> {
 
 #[cfg(test)]
 mod admission_tests {
+    #[test]
+    fn native_projection_policy_is_public_bounded_and_default_eight() {
+        use super::NativeProjectionTile;
+        assert_eq!(NativeProjectionTile::default().tokens(), 8);
+        for tile in [1, 4, 8] {
+            assert_eq!(NativeProjectionTile::new(tile).unwrap().tokens(), tile);
+        }
+        for tile in [0, 2, 3, 7, 16, usize::MAX] {
+            assert!(NativeProjectionTile::new(tile).is_err());
+        }
+    }
+
     #[test]
     fn cleanup_categories_discard_backend_descriptions_and_private_values() {
         use super::cleanup_failure_category;
