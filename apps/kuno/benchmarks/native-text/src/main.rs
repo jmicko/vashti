@@ -75,6 +75,7 @@ fn transient_resident_mode(mode: &str, raw: Option<&str>) -> Result<bool, &'stat
                     | "resident-rainwater"
                     | "resident-lifecycle-probe"
                     | "resident-numeric-boundaries-probe"
+                    | "resident-cpu-gpu-expert-probe"
             ) =>
         {
             Ok(true)
@@ -108,12 +109,90 @@ fn protected_model_diagnostic(
 ) -> Result<(), &'static str> {
     if matches!(
         mode,
-        "resident-lifecycle-probe" | "resident-numeric-boundaries-probe"
+        "resident-lifecycle-probe"
+            | "resident-numeric-boundaries-probe"
+            | "resident-cpu-gpu-expert-probe"
     ) && !(transient && audit)
     {
         return Err("model diagnostic requires owned transient I/O and complete zero audits");
     }
     Ok(())
+}
+
+/// Compiled public subset only: ten original ranks, both actual down formats,
+/// mixed work plus GPU-only/CPU-only endpoints. No timing permit is consumed.
+fn cpu_gpu_expert_numeric_cases() -> [cpu_gpu_expert_probe::Config; 4] {
+    [
+        (TensorType::Q5_0, 0, 1),
+        (TensorType::Q5_0, 5, 1),
+        (TensorType::Q8_0, 5, 0),
+        (TensorType::Q8_0, 10, 1),
+    ]
+    .map(|(down, cpu_misses, vector)| cpu_gpu_expert_probe::Config {
+        down,
+        workers: 16,
+        backend: kuno_text::cpu_expert::Backend::Avx2,
+        misses: 10,
+        cpu_misses,
+        group: 0,
+        vector,
+        mode: cpu_gpu_expert_schedule::Mode::Concurrent,
+    })
+}
+
+/// The producer has already completed owning maps, numerical checks, full MAIN
+/// erasure, I/O audits and file verification. Refuse incomplete/timed reports at
+/// this narrow publication seam; never expose its returned calibration permit.
+fn cpu_gpu_expert_numeric_report(
+    config: cpu_gpu_expert_probe::Config,
+    report: cpu_gpu_expert_probe::Report,
+) -> Result<serde_json::Value, &'static str> {
+    use cpu_gpu_expert_probe::{BANK_BYTES, IO_COMPONENT_BYTES, PRIVATE_BYTES};
+    let gpu_misses = config
+        .misses
+        .checked_sub(config.cpu_misses)
+        .ok_or("fixed-public CPU/GPU numeric report split invalid")?;
+    let errors = [
+        report.max_tree_error,
+        report.max_legacy_error,
+        report.max_core_error,
+    ];
+    if report.timing.is_some()
+        || report.bridge_and_merge.is_some()
+        || report.layer >= 48
+        || report.down_dtype != config.down.gguf_id()
+        || report.workers != config.workers
+        || report.misses != config.misses
+        || report.cpu_misses != config.cpu_misses
+        || report.gpu_misses != gpu_misses
+        || report.private_pages != 18
+        || report.private_bytes != PRIVATE_BYTES
+        || report.bank_bytes != BANK_BYTES
+        || report.source_precharge != report.gpu_misses as u64 * 4 * 1024 * 1024
+        || report.io_inspected_bytes == 0
+        || report.io_inspected_bytes > IO_COMPONENT_BYTES / 2
+        || report.zero_buffers != 18
+        || report.zero_bytes != PRIVATE_BYTES
+        || report.metadata_bytes > 1024 * 1024
+        || report.snapshot_bytes > 2 * 1024 * 1024
+        || errors.iter().any(|v| !v.is_finite() || *v < 0.)
+    {
+        return Err("fixed-public CPU/GPU numeric report did not accept complete cleanup");
+    }
+    Ok(serde_json::json!({
+        "layer":report.layer,"down_dtype":report.down_dtype,
+        "workers":report.workers,"backend":"avx2","mode":"concurrent",
+        "ranks":10,"misses":report.misses,"cpu_misses":report.cpu_misses,
+        "gpu_misses":report.gpu_misses,"group":config.group,"vector":config.vector,
+        "max_tree_error":report.max_tree_error,
+        "max_legacy_error":report.max_legacy_error,"max_core_error":report.max_core_error,
+        "private_pages":report.private_pages,"private_bytes":report.private_bytes,
+        "bank_bytes":report.bank_bytes,"source_precharge":report.source_precharge,
+        "io_inspected_bytes":report.io_inspected_bytes,
+        "zero_buffers":report.zero_buffers,"zero_bytes":report.zero_bytes,
+        "metadata_bytes":report.metadata_bytes,"snapshot_bytes":report.snapshot_bytes,
+        "operator_numeric_accepted":true,"owned_cleanup_accepted":true
+    }))
 }
 
 fn native_decode_mode(
@@ -212,6 +291,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let public_owned_zero_audit =
         public_owned_zero_audit_mode(transient_resident, owned_audit_setting.as_deref())?;
     protected_model_diagnostic(&mode, transient_resident, public_owned_zero_audit)?;
+    // This fixed operator accepts no additional case/configuration arguments.
+    // Its receipt destination is required before any device or model access.
+    let cpu_gpu_expert_receipt = if mode == "resident-cpu-gpu-expert-probe" {
+        if std::env::args().count() != 3 {
+            return Err("CPU/GPU expert probe accepts only its compiled numeric cases".into());
+        }
+        Some(
+            std::env::var_os("KUNO_PUBLIC_RECEIPT")
+                .ok_or("fixed-public CPU/GPU expert receipt path required")?,
+        )
+    } else {
+        None
+    };
     let native_max8 = std::env::var("KUNO_LAB_NATIVE_MAX8").as_deref() == Ok("1");
     let native_decode_setting = match std::env::var("KUNO_LAB_NATIVE_DECODE") {
         Ok(raw) => Some(raw),
@@ -377,6 +469,63 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         if mode == "transient-io-probe" {
             transient_probe::run(&client)?;
+            return Ok(());
+        }
+        if mode == "resident-cpu-gpu-expert-probe" {
+            let target = cpu_gpu_expert_receipt
+                .ok_or("fixed-public CPU/GPU expert receipt path required")?;
+            let path = std::env::var_os("KUNO_TEST_GGUF").ok_or("existing GGUF required")?;
+            let file = GgufFile::open(path, GgufLimits::default())?;
+            let model = Qwen4Exp::bind(&file)?;
+            let retired = transient_context
+                .clone()
+                .ok_or("CPU/GPU expert probe requires the configured transient stream")?;
+            let cancel = AtomicBool::new(false);
+            let mut reports = Vec::with_capacity(4);
+            for config in cpu_gpu_expert_numeric_cases() {
+                let (report, permit) = cpu_gpu_expert_probe::run(
+                    &client,
+                    &file,
+                    model.bound_graph(),
+                    &grouped_limits,
+                    retired.clone(),
+                    config,
+                    cpu_gpu_expert_probe::Purpose::Numeric,
+                    &cancel,
+                )?;
+                // Numeric evidence is not authorization to run Calibration.
+                // The returned permit retains only this file/client/config.
+                drop(permit);
+                reports.push(cpu_gpu_expert_numeric_report(config, report)?);
+            }
+            file.verify_file_unchanged()?;
+            if cancel.load(std::sync::atomic::Ordering::Acquire)
+                || retired.load(std::sync::atomic::Ordering::Acquire)
+            {
+                return Err("CPU/GPU expert probe did not accept complete cleanup".into());
+            }
+            // No partial receipt: every sequential operator has returned only
+            // after owning maps, full erasure, I/O audit and final consistency.
+            let receipt = serde_json::json!({
+                "scope":"fixed-public-original-cpu-gpu-expert-numeric",
+                "vendor":vendor,"weights":"borrowed-unmodified-ollama-blob",
+                "fixed_public_cases":4,"purpose":"numeric","ranks_per_case":10,
+                "private_bytes_per_case":cpu_gpu_expert_probe::PRIVATE_BYTES,
+                "physical_limit_bytes":cpu_gpu_expert_probe::PHYSICAL_LIMIT,
+                "runtime_io_limit_bytes":executor::RESIDENT_RUNTIME_IO_MAX,
+                "cases":reports,"operator_numeric_accepted":true,
+                "owned_cleanup_accepted":true,"context_retired":false,
+                "whole_model_numeric_accepted":false,"performance_accepted":false,
+                "automatic_split_policy_enabled":false
+            });
+            let output = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(target)?;
+            serde_json::to_writer_pretty(output, &receipt)?;
+            println!(
+                "public_cpu_gpu_expert_numeric_complete cases=4 ranks=10 owned_cleanup=true context_retired=false performance_accepted=false"
+            );
             return Ok(());
         }
         if mode == "resident-lifecycle-probe" {
@@ -1386,6 +1535,7 @@ mod transient_mode_tests {
             "resident-rainwater",
             "resident-lifecycle-probe",
             "resident-numeric-boundaries-probe",
+            "resident-cpu-gpu-expert-probe",
             "resident-qsa-probe",
             "probe",
             "bang",
@@ -1430,6 +1580,7 @@ mod transient_mode_tests {
         for mode in [
             "resident-lifecycle-probe",
             "resident-numeric-boundaries-probe",
+            "resident-cpu-gpu-expert-probe",
         ] {
             assert_eq!(super::transient_resident_mode(mode, Some("1")), Ok(true));
             for transient in [false, true] {
@@ -1440,6 +1591,91 @@ mod transient_mode_tests {
                     );
                 }
             }
+        }
+    }
+    #[test]
+    fn compiled_expert_numeric_subset_keeps_all_ten_ranks_and_fixed_endpoints() {
+        use crate::cpu_gpu_expert_schedule::{Mode, Split};
+        use kuno_text::{TensorType, cpu_expert::Backend};
+        let cases = super::cpu_gpu_expert_numeric_cases();
+        let ids = std::array::from_fn(|rank| rank);
+        for config in cases {
+            assert!(config.backend == Backend::Avx2);
+            assert_eq!(config.workers, 16);
+            assert_eq!(config.misses, 10);
+            assert_eq!(config.group, 0);
+            assert_eq!(config.mode, Mode::Concurrent);
+            let split = Split::new(&ids, config.misses, config.cpu_misses).unwrap();
+            assert_eq!(split.cpu().len() + split.gpu().len(), 10);
+            assert_eq!(split.cpu().len(), config.cpu_misses);
+        }
+        assert_eq!(cases.map(|c| c.cpu_misses), [0, 5, 5, 10]);
+        assert_eq!(cases.map(|c| c.vector), [1, 1, 0, 1]);
+        assert_eq!(
+            cases.map(|c| c.down),
+            [
+                TensorType::Q5_0,
+                TensorType::Q5_0,
+                TensorType::Q8_0,
+                TensorType::Q8_0
+            ]
+        );
+    }
+
+    fn completed_expert_numeric_report() -> crate::cpu_gpu_expert_probe::Report {
+        use crate::cpu_gpu_expert_probe::{BANK_BYTES, PRIVATE_BYTES, Report, SOURCE_BYTES};
+        Report {
+            layer: 6,
+            down_dtype: kuno_text::TensorType::Q5_0.gguf_id(),
+            workers: 16,
+            misses: 10,
+            cpu_misses: 0,
+            gpu_misses: 10,
+            max_tree_error: 0.,
+            max_legacy_error: 0.,
+            max_core_error: 0.,
+            private_pages: 18,
+            private_bytes: PRIVATE_BYTES,
+            bank_bytes: BANK_BYTES,
+            source_precharge: SOURCE_BYTES,
+            io_inspected_bytes: 32768,
+            zero_buffers: 18,
+            zero_bytes: PRIVATE_BYTES,
+            timing: None,
+            bridge_and_merge: None,
+            metadata_bytes: 32768,
+            snapshot_bytes: 32768,
+        }
+    }
+
+    #[test]
+    fn expert_numeric_publication_rejects_timing_incomplete_audits_and_nonfinite_errors() {
+        use crate::cpu_gpu_expert_schedule::Times;
+        let config = super::cpu_gpu_expert_numeric_cases()[0];
+        let report =
+            super::cpu_gpu_expert_numeric_report(config, completed_expert_numeric_report())
+                .unwrap();
+        assert_eq!(report["ranks"], 10);
+        assert_eq!(report["owned_cleanup_accepted"], true);
+        assert!(report.get("timing").is_none());
+        for failure in 0..7 {
+            let mut report = completed_expert_numeric_report();
+            match failure {
+                0 => report.zero_buffers -= 1,
+                1 => report.zero_bytes -= 1,
+                2 => report.io_inspected_bytes = 0,
+                3 => report.max_tree_error = f32::NAN,
+                4 => report.source_precharge -= 1,
+                5 => {
+                    report.timing = Some(Times {
+                        cpu: std::time::Duration::ZERO,
+                        gpu: std::time::Duration::ZERO,
+                        joined: std::time::Duration::ZERO,
+                    })
+                }
+                _ => report.bridge_and_merge = Some(std::time::Duration::ZERO),
+            }
+            assert!(super::cpu_gpu_expert_numeric_report(config, report).is_err());
         }
     }
     #[test]

@@ -37,6 +37,28 @@ unit. The8 GiB cap is an acceptance-test limit, not a matched performance
 configuration. Exact run settings and frozen identities belong in receipts;
 do not use unit wall time or inconsistent MemoryPeak output as benchmark data.
 
+The source-only `resident-cpu-gpu-expert-probe` registers the bounded original
+[CPU/GPU expert numeric operator](../../../../docs/kuno-native-text-cpu-gpu-calibration.md).
+It requires `KUNO_LAB_TRANSIENT_IO=1`, `KUNO_LAB_OWNED_ZERO_AUDIT=1` and a fresh
+`KUNO_PUBLIC_RECEIPT` destination; missing protections reject before device or
+model access. Run the frozen executable through the same protected wrapper,
+with the existing original `KUNO_TEST_GGUF`, selected vendor and this fixed mode.
+There are no extra case, split, worker or prompt arguments. One already-open
+GGUF, one bound graph, the configured client/limits and one shared retirement
+owner serve four sequential Numeric-only cases: Q5 down with M10/K0 and M10/K5,
+Q8 down with M10/K5 and M10/K10, where M is misses and K is CPU misses. Every
+case retains all ten ranks, uses public group0, explicit AVX2/16 distinct
+physical workers and Concurrent scheduling. Endpoints and the Q5 mixed case
+use the signed/zero-rich public vector, including zero-probability ranks; the
+Q8 mixed case uses the other fixed public vector. Unsupported CPU topology/ISA
+rejects without fallback. Each producer completes owning maps, numerical gates,
+18-page/884,736-byte MAIN erasure, checked I/O cleanup and file consistency.
+The returned timing permit is discarded. Only aggregate errors, declared
+settings, charges and counts-only cleanup evidence are written after all four
+cases complete; an existing receipt is never overwritten. This narrow subset
+has source registration only: both-card physical acceptance, other splits,
+timing, automatic placement and whole-model CPU dispatch remain unaccepted.
+
 The `bang` and `chat` fixtures use seed 424242, temperature zero and greedy
 sampling (the RNG is unused). Simple greedy equality is only an initial graph
 acceptance check; longer contexts, QSA sparsity, options, templates/tool calling,
