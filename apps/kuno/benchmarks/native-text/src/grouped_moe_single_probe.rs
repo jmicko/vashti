@@ -325,7 +325,7 @@ pub(super) fn run(
                     .read_one(handle.clone().offset_end((wire.len() - 16) as u64))
                     .map_err(|_| "single-member public upload completion")?,
             );
-            if &*sentinel.0 != &wire[..16] {
+            if *sentinel.0 != wire[..16] {
                 return Err("single-member public upload sentinel".into());
             }
             drop(sentinel);

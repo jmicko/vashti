@@ -1328,10 +1328,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     };
                 }
             }
-            if let Some(r) = &resident {
-                if native_max8 {
-                    observed_native_decode_kernels = r.native_decode_kernels()?.label();
-                }
+            if let Some(r) = &resident
+                && native_max8
+            {
+                observed_native_decode_kernels = r.native_decode_kernels()?.label();
             }
             if observed_native_decode_kernels != native_decode_kernels {
                 return Err("completed native decode kernel observation mismatch".into());
