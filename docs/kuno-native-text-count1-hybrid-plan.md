@@ -259,6 +259,22 @@ is allowed. Packed gate/down math and64-lane trees remain unchanged; the new
 merge reads one actual owner in rank0..9 order and full fold checks every owning
 view, status, finite value, gap and tail against the original global fault.
 
+The explicit hybrid packet's existing owning input scan normalizes only the
+seven inactive logical MIXED rows before copying the active row. Original GR
+scratch legitimately retains prior MAX8 rows; GR's count1 mix overwrites row0
+and its combine consumes neither MIXED nor inactive rows. The clear therefore
+uses the actual validated base/stride and touches only rows1..7, establishing
+the hybrid full-fold zero-inactive invariant without changing active arithmetic.
+Count1 and the complete MAX8 view are checked before launch and again before
+the shader's only input store. Active finite checks, prefix/stride gaps, logical
+trailing gaps, allocator padding, original router words and the full fault page
+remain inspected and cannot be normalized into acceptance. Default GPU scratch
+is unchanged; no owner, dispatch, source/readback capacity or audit is added.
+Regression source fixtures cover preserved MAX8 values, signed-zero row0,
+corrupt active/gap/tail and malformed count/view, plus actual offline shader
+lowering. Host/offline execution and physical MAX8-to-count1 acceptance remain
+root's gates; source fixtures alone do not prove device mutation or speed.
+
 Each compact Pending retains the original BankInstance/full physical pins,
 immutable original ranks/probability bits and actual-miss/hit-slot proof, plus
 one canonical GPU subset candidate. The temporary all-ten classification plan
