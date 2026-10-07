@@ -850,7 +850,7 @@ mod tests {
                 }
             }
             let old_bits = f.old.iter().map(|v| v.to_bits()).collect::<Vec<_>>();
-            let inputs = [&*f.query, &*f.key, &*f.value, &*f.controls, &*f.old];
+            let inputs: [&[f32]; 5] = [&f.query, &f.key, &f.value, &f.controls, &f.old];
             let streaming = chunk::streaming_lane_reference(shape, s, inputs).unwrap();
             let ordinary = chunk::lane_reference(shape, s, inputs).unwrap();
             assert_eq!(streaming, ordinary);

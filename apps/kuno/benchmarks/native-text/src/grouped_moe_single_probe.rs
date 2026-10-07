@@ -374,7 +374,7 @@ pub(super) fn run(
             let plan = token_waves::Plan::build(&input, &AtomicBool::new(false))
                 .map_err(|_| "single-member fixed wave planning")?;
             let packet = c::Packet::from_plan(&plan)?;
-            let bank_slots = BankSlots::new(CAP)?;
+            let bank_slots = BankSlots::new(CAP, 512)?;
             let mut staged = StagedSlots::begin(&bank_slots)?;
             let wave = plan.wave(0).ok_or("single-member missing pinned wave")?;
             let selected = Zeroizing::new(

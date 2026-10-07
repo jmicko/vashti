@@ -38,6 +38,52 @@ fn error() -> Error {
 pub(crate) struct CompletedNativeProjectionBoundary {
     _private: (),
 }
+
+/// Public fixed-fixture policy, selected only between completed transactions.
+/// Runtime token counts never select a shader specialization.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum NativeDecodeKernels {
+    #[default]
+    Chunk,
+    SingleMoe,
+    SingleGdn,
+    SingleAll,
+}
+impl NativeDecodeKernels {
+    pub(crate) fn parse(value: &str) -> Result<Self> {
+        match value {
+            "chunk" => Ok(Self::Chunk),
+            "single-moe" => Ok(Self::SingleMoe),
+            "single-gdn" => Ok(Self::SingleGdn),
+            "single-all" => Ok(Self::SingleAll),
+            _ => Err(error()),
+        }
+    }
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Chunk => "chunk",
+            Self::SingleMoe => "single-moe",
+            Self::SingleGdn => "single-gdn",
+            Self::SingleAll => "single-all",
+        }
+    }
+    fn single_moe(self) -> bool {
+        matches!(self, Self::SingleMoe | Self::SingleAll)
+    }
+    fn recurrence(self) -> crate::gdn_chunk::RecurrencePolicy {
+        if matches!(self, Self::SingleGdn | Self::SingleAll) {
+            crate::gdn_chunk::RecurrencePolicy::SingleStreaming
+        } else {
+            crate::gdn_chunk::RecurrencePolicy::Chunk
+        }
+    }
+    fn validate_count(self, count: usize) -> Result<()> {
+        if !(1..=MAX_BATCH).contains(&count) || self != Self::Chunk && count != 1 {
+            return Err(error());
+        }
+        Ok(())
+    }
+}
 fn sum(pages: &[u64]) -> Result<u64> {
     pages.iter().try_fold(0_u64, |n, &p| {
         n.checked_add(p).ok_or(Error::ArithmeticOverflow)
@@ -264,6 +310,21 @@ pub(super) struct Workspace {
     poison: Arc<AtomicBool>,
 }
 impl Workspace {
+    fn decode_kernels(&self) -> Result<NativeDecodeKernels> {
+        let single_moe = match self.moe.projection_tile() {
+            1 => true,
+            4 | 8 => false,
+            _ => return Err(error()),
+        };
+        let single_gdn =
+            self.gdn.recurrence_policy() == crate::gdn_chunk::RecurrencePolicy::SingleStreaming;
+        Ok(match (single_moe, single_gdn) {
+            (false, false) => NativeDecodeKernels::Chunk,
+            (true, false) => NativeDecodeKernels::SingleMoe,
+            (false, true) => NativeDecodeKernels::SingleGdn,
+            (true, true) => NativeDecodeKernels::SingleAll,
+        })
+    }
     pub(super) fn allocate(
         model: &mut ResidentModel<'_, '_>,
         executor: &GpuExecutor<'_>,
@@ -424,6 +485,14 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         tile: usize,
     ) -> Result<usize> {
         let tile = NativeProjectionTile::new(tile)?;
+        let boundary = self.completed_native_projection_boundary(executor)?;
+        executor.set_native_projection_tile(tile, boundary)
+    }
+
+    fn completed_native_projection_boundary(
+        &self,
+        executor: &GpuExecutor<'f>,
+    ) -> Result<CompletedNativeProjectionBoundary> {
         if self.poisoned
             || self.retired.load(Ordering::Acquire)
             || !self.pending_qsa.is_empty()
@@ -445,8 +514,68 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         native.gr.validate_all_consumers_queued()?;
         native.shared.validate_all_consumers_queued()?;
         native.ple.validate_completed_projection_boundary(self)?;
-        executor
-            .set_native_projection_tile(tile, CompletedNativeProjectionBoundary { _private: () })
+        Ok(CompletedNativeProjectionBoundary { _private: () })
+    }
+
+    /// Read the actual installed family policies rather than echoing an env
+    /// selection. No private metadata or model state is exposed.
+    pub(crate) fn native_decode_kernels(&self) -> Result<NativeDecodeKernels> {
+        let native = self.native_batch.as_ref().ok_or(error())?;
+        native.decode_kernels()
+    }
+
+    pub(crate) fn set_lab_native_decode_kernels(
+        &mut self,
+        executor: &mut GpuExecutor<'f>,
+        policy: NativeDecodeKernels,
+        cancel: &AtomicBool,
+    ) -> Result<NativeDecodeKernels> {
+        u::cancel(cancel)?;
+        let boundary = self.completed_native_projection_boundary(executor)?;
+        let observed = self.native_decode_kernels()?;
+        // Each fixture has one public continuation policy. Repeated same-policy
+        // selection is allowed; a fresh owner is required for another sample.
+        if observed != NativeDecodeKernels::Chunk && observed != policy
+            || policy != NativeDecodeKernels::Chunk && executor.native_projection_tile() != 1
+        {
+            return Err(error());
+        }
+        let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let native = self.native_batch.as_mut().ok_or(error())?;
+            native.gdn.set_lab_recurrence_policy(
+                executor,
+                &self.arena,
+                policy.recurrence(),
+                &boundary,
+                cancel,
+            )?;
+            if policy.single_moe() {
+                native
+                    .moe
+                    .set_lab_single_member_decode(executor, &self.arena, &boundary)?;
+            }
+            let actual = self.native_decode_kernels()?;
+            if actual != policy {
+                return Err(error());
+            }
+            u::cancel(cancel)?;
+            Ok(actual)
+        }));
+        match attempt {
+            Ok(Ok(actual)) => Ok(actual),
+            _ => {
+                // A failed multi-family policy publication cannot leave an
+                // owner usable under a partially selected experiment.
+                self.admission
+                    .sequence_poison()
+                    .store(true, Ordering::Release);
+                self.poisoned = true;
+                executor.poison_resident();
+                let _ = self.close();
+                let _ = executor.close_transient_resident();
+                Err(error())
+            }
+        }
     }
 
     pub(crate) fn new_with_native_batch(
@@ -588,6 +717,9 @@ impl Workspace {
         e.check_resident_admission(&m.admission)?;
         m.graph.verify_unchanged()?;
         u::cancel(cancel)?;
+        // Preflight both single-token families before clears, embeddings or
+        // any other layer can enqueue work for this transaction.
+        self.decode_kernels()?.validate_count(tokens.len())?;
         if m.poisoned
             || m.retired.load(Ordering::Acquire)
             || !m.pending_qsa.is_empty()
@@ -1032,6 +1164,36 @@ impl Workspace {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn public_decode_profiles_are_strict_and_preflight_single_counts() {
+        for (label, profile) in [
+            ("chunk", NativeDecodeKernels::Chunk),
+            ("single-moe", NativeDecodeKernels::SingleMoe),
+            ("single-gdn", NativeDecodeKernels::SingleGdn),
+            ("single-all", NativeDecodeKernels::SingleAll),
+        ] {
+            assert_eq!(NativeDecodeKernels::parse(label).unwrap(), profile);
+            assert_eq!(profile.label(), label);
+            for count in [0, 1, 3, 5, 8, 9, usize::MAX] {
+                assert_eq!(
+                    profile.validate_count(count).is_ok(),
+                    (1..=MAX_BATCH).contains(&count)
+                        && (profile == NativeDecodeKernels::Chunk || count == 1)
+                );
+            }
+        }
+        for label in [
+            "",
+            "1",
+            "SingleAll",
+            " single-all",
+            "single-all\n",
+            "chunk ",
+        ] {
+            assert!(NativeDecodeKernels::parse(label).is_err());
+        }
+        assert_eq!(NativeDecodeKernels::default(), NativeDecodeKernels::Chunk);
+    }
     #[test]
     fn aggregate_plan_counts_original_owners_once_and_independent_runtime_head_tiles() {
         assert_eq!(TOTAL_MAIN, 818249728);
