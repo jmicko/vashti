@@ -37,7 +37,7 @@ UI or change its user-data storage.
 - [CPU/GPU calibration lab](kuno-native-text-cpu-gpu-calibration.md): approved
   bounded real-read operator, original-rank merge and completed joint controls;
   source/device/timing acceptance remain separate.
-- [Paused native text checkpoint](kuno-native-text-checkpoint.md): current
+- [Native text checkpoint](kuno-native-text-checkpoint.md): current
   integrated source, isolated diagnostic candidate, completed checks and the
   next physical acceptance gates. Resume from this checkpoint first.
 - [Image engine contract](kuno-images.md): supported execution and image API.
@@ -1966,10 +1966,17 @@ next-candidate source review are authorized preparation here; no GPU jobs,
 production behavior, installation, API or application changes are claimed.
 Diff checks pass. **Required Vashti changes: none.**
 
-The user subsequently resumed the goal and refreshed sudo. Backend source and
-protected native GPU testing may proceed under the existing constraints; no
-additional Ollama baseline is required. The next isolated candidate is an
-explicit default-off native count1 continuation after native prefill, with
-mode-aware exact source/full-arena audit validation. It is not yet implemented
-or accepted. Root owns all shared GPU/service operations; other agents perform
-isolated source work only.
+The user subsequently resumed the goal and refreshed sudo. Root now integrates
+through `1946020` on `codex/kuno-native-text`: protected native continuation,
+public projection tile1 controls, exact independent validators, actual queued
+tile1 cancellation/recovery and narrow full-page CPU/GPU lab bank allocation.
+409 host/offline tests, strict all-target Clippy and 51 Python lab tests pass.
+Both-card projection, short native continuation/lifecycle and four fixed joint
+CPU/GPU numeric cases pass; see the
+[current owner checkpoint](kuno-native-text-checkpoint.md#later-owner-acceptance)
+for exact artifacts, failed-run evidence and limitations. No throughput win,
+private native worker, default routing or automatic placement is accepted.
+Single-member MoE and streaming GDN are source candidates only. Root owns shared
+GPU/service operations; isolated agents perform source work. No further Ollama
+baseline, API/Vashti change, installation or release is part of this work.
+**Required Vashti changes: none.**

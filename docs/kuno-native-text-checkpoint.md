@@ -50,6 +50,52 @@ Constant stage diagnostics are being prepared without changing numerical gates.
 
 ## Current priority amendment, 2026-10-06
 
+### Later owner acceptance
+
+Root integrates `64027cf` public static projection tiles, `dd4aac7` protected
+tile controls/exact validators/bounded telemetry exit-race handling, `3122e44`
+constant CPU/GPU numeric failure stages, `e7bc6d4` actual tile1 recovery proofs,
+and `1946020` narrow full-page public bank allocation for the CPU/GPU lab. The
+latest source passes **409 host/offline tests**, strict all-target Clippy,
+formatting/diff checks, and **51 Python native laboratory tests**.
+
+Both cards pass **84 projection cases** (all seven original formats, counts
+1/3/5/8, public tiles1/4/8), retaining the independent oracle, gaps/tails,
+original-weight preservation and full owning erasure. Maximum absolute error
+is 1.193e-7 on both cards. Frozen operator binary from `3122e44` is
+`51581ade3fa1d2e0fe6ccd9a1ff89c31249721f85f76befd7bee9bfe78690ba5`.
+
+Both cards also pass tile1 whole-model eight-token chat, fresh **tile1** second
+token replay and cancellation after queued **tile1** work at layers0/3, with
+all four original audits and zero scalar source owners. Frozen `e7bc6d4` binary
+is `fe74ea739a03cfa4e1e3a555af912db65d1617c4d17bacc7cbaa243cc2e88ef3`.
+Short generation durations are 13.012 seconds Intel and 14.187 seconds NVIDIA
+for seven continuations; they include warm-up/cache effects and show no useful
+improvement over the earlier short native tile8 runs. No long tile1-only ABBA
+was started. Do not claim a matched throughput gain from these correctness runs.
+
+The joint expert fixture failure is localized to strict public-bank physical
+extent checks. Logical `client.empty(n)` requests did not guarantee a complete
+power-of-two backing allocation under the exclusive allocator's rolling mean.
+`1946020` requests the already charged full pages in this fixed lab and retains
+the original bounded logical shader views. Ordinary model-bank allocation,
+numerical tolerances, budgets and strict physical/nonalias checks are unchanged.
+Frozen binary
+`bf25aa3ae587b2364871496e8057baf168d9ed487b440a50b7a5aa4b893b9d2b`
+passes all four numeric configurations on both cards: Q5 GPU-only/mixed,
+Q8 mixed/CPU-only, original ranks0..9 including zero probabilities, concurrent
+AVX2/16 physical workers. Every case completes18 MAIN pages/884,736 bytes plus
+I/O audits. This permits only the stated subset's operator numeric claim;
+other groups/splits/workers, timing, automatic placement and whole-model CPU
+dispatch are still unaccepted.
+
+All live jobs use actual8-GiB memory/swap0/core0 guards. Detailed identities,
+hashes, counters and limitations are in
+`apps/kuno/benchmarks/text/receipts/rust-native-tile-and-cpu-gpu-device-20261006.json`.
+Single-member grouped MoE and streaming single-token GDN are the next isolated
+source candidates; both remain default-off and need owner acceptance. No new
+Ollama runs, frontend/API/routing, installation, release or hardware reset occurs.
+
 The user selected **10 decode tokens/s** as the working native performance target
 and explicitly deferred additional/repeated Ollama baseline tests to conserve
 development usage. Prioritize measured Rust-engine optimizations after the
