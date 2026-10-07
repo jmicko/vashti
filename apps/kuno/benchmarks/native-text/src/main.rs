@@ -116,6 +116,54 @@ fn protected_model_diagnostic(
     Ok(())
 }
 
+fn native_decode_mode(
+    mode: &str,
+    raw: Option<&str>,
+    native_max8: bool,
+    transient: bool,
+    audit: bool,
+) -> Result<bool, &'static str> {
+    match raw {
+        None | Some("0") => Ok(false),
+        Some("1")
+            if matches!(
+                mode,
+                "resident-bang" | "resident-chat" | "resident-rainwater"
+            ) && native_max8
+                && transient
+                && audit =>
+        {
+            Ok(true)
+        }
+        Some("1") => Err(
+            "native decode requires a fixed resident fixture, native MAX8, owned transient I/O and complete zero audits",
+        ),
+        Some(_) => Err("KUNO_LAB_NATIVE_DECODE must be 0 or 1"),
+    }
+}
+
+// The generation and terminal cancellation checks use the same dispatch.
+// A native continuation never falls back to scalar: its PLE cursor must stay
+// aligned with the model position through the entire accepted sequence.
+fn resident_decode_step<'f>(
+    resident: &mut resident_model::ResidentModel<'_, 'f>,
+    executor: &mut executor::GpuExecutor<'f>,
+    token: u32,
+    cancel: &AtomicBool,
+    native_decode: bool,
+) -> kuno_text::Result<zeroize::Zeroizing<Vec<f32>>> {
+    if native_decode {
+        resident.prefill_chunk(
+            executor,
+            &[token],
+            resident_model::batch::Purpose::LastLogits,
+            cancel,
+        )
+    } else {
+        resident.step(executor, token, cancel)
+    }
+}
+
 fn report_public_owned_zero_audit(
     resident: &resident_model::ResidentModel<'_, '_>,
     enabled: bool,
@@ -164,6 +212,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let public_owned_zero_audit =
         public_owned_zero_audit_mode(transient_resident, owned_audit_setting.as_deref())?;
     protected_model_diagnostic(&mode, transient_resident, public_owned_zero_audit)?;
+    let native_max8 = std::env::var("KUNO_LAB_NATIVE_MAX8").as_deref() == Ok("1");
+    let native_decode_setting = match std::env::var("KUNO_LAB_NATIVE_DECODE") {
+        Ok(raw) => Some(raw),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(_) => return Err("KUNO_LAB_NATIVE_DECODE must be 0 or 1".into()),
+    };
+    // Reject an unprotected or malformed opt-in before creating a device or
+    // reading model payload. The ordinary native/scalar defaults are unchanged.
+    let native_decode = native_decode_mode(
+        &mode,
+        native_decode_setting.as_deref(),
+        native_max8,
+        transient_resident,
+        public_owned_zero_audit,
+    )?;
     let ordered_setting = match std::env::var("KUNO_LAB_ORDERED_PUBLIC_UPLOAD") {
         Ok(raw) => Some(raw),
         Err(std::env::VarError::NotPresent) => None,
@@ -852,7 +915,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let fixture: serde_json::Value =
                 serde_json::from_str(include_str!("../../text/qwen38-baseline.json"))?;
             let resident_enabled = mode.starts_with("resident-");
-            let native_max8 = std::env::var("KUNO_LAB_NATIVE_MAX8").as_deref() == Ok("1");
             if native_max8 && (!resident_enabled || transient_context.is_none()) {
                 return Err(
                     "native MAX8 requires fixed resident fixture and owned transient I/O".into(),
@@ -996,6 +1058,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             let start = Instant::now();
             let mut generated = Vec::new();
+            // Count actual successful generation continuations only. Prompt
+            // chunks, cancellation attempts and fresh replay are excluded.
+            let mut native_decode_steps = 0u64;
+            let mut scalar_decode_steps = 0u64;
             let mut decoder = tokenizer.stream_decoder();
             for n in 0..limit {
                 let token = greedy(&logits)?;
@@ -1008,10 +1074,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if n + 1 < limit {
                     logits.zeroize();
                     logits = if let Some(r) = &mut resident {
-                        let mut output = r.step(&mut executor, token, &cancel)?;
+                        let mut output =
+                            resident_decode_step(r, &mut executor, token, &cancel, native_decode)?;
+                        if native_decode {
+                            native_decode_steps += 1;
+                        } else {
+                            scalar_decode_steps += 1;
+                        }
                         std::mem::take(&mut *output)
                     } else {
-                        model.step(&mut executor, &mut sequence, token, &cancel, |_| {})?
+                        let output =
+                            model.step(&mut executor, &mut sequence, token, &cancel, |_| {})?;
+                        scalar_decode_steps += 1;
+                        output
                     };
                 }
             }
@@ -1077,6 +1152,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     serde_json::json!(executor.admission_upper_bytes()?);
                 receipt["prefill_last_head"] = serde_json::json!(prefill_last_head);
                 receipt["native_max8"] = serde_json::json!(native_max8);
+                receipt["native_decode"] = serde_json::json!(native_decode);
+                receipt["native_decode_steps"] = serde_json::json!(native_decode_steps);
+                receipt["scalar_decode_steps"] = serde_json::json!(scalar_decode_steps);
                 receipt["native_public_chunk_count"] = serde_json::json!(if native_max8 {
                     Some(native_count)
                 } else {
@@ -1142,11 +1220,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     return Err("resident cancellation check requires resident fixture".into());
                 };
                 cancel.store(true, std::sync::atomic::Ordering::Release);
-                if r.step(&mut executor, ids[0], &cancel).is_ok() || !r.erased_after_failure() {
+                if resident_decode_step(r, &mut executor, ids[0], &cancel, native_decode).is_ok()
+                    || !r.erased_after_failure()
+                {
                     return Err("resident cancellation cleanup failed".into());
                 }
                 cancel.store(false, std::sync::atomic::Ordering::Release);
-                if r.step(&mut executor, ids[0], &cancel).is_ok() {
+                if resident_decode_step(r, &mut executor, ids[0], &cancel, native_decode).is_ok() {
                     return Err("poisoned resident sequence reused".into());
                 }
                 report_public_owned_zero_audit(r, public_owned_zero_audit, &mut owned_zero_audits)?;
@@ -1297,6 +1377,54 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod transient_mode_tests {
+    #[test]
+    fn native_decode_is_explicit_and_requires_all_fixed_public_protections() {
+        use super::native_decode_mode;
+        for mode in [
+            "resident-bang",
+            "resident-chat",
+            "resident-rainwater",
+            "resident-lifecycle-probe",
+            "resident-numeric-boundaries-probe",
+            "resident-qsa-probe",
+            "probe",
+            "bang",
+        ] {
+            for native in [false, true] {
+                for transient in [false, true] {
+                    for audit in [false, true] {
+                        for raw in [None, Some("0")] {
+                            assert_eq!(
+                                native_decode_mode(mode, raw, native, transient, audit),
+                                Ok(false)
+                            );
+                        }
+                        let permitted = matches!(
+                            mode,
+                            "resident-bang" | "resident-chat" | "resident-rainwater"
+                        ) && native
+                            && transient
+                            && audit;
+                        assert_eq!(
+                            native_decode_mode(mode, Some("1"), native, transient, audit).is_ok(),
+                            permitted
+                        );
+                        for raw in ["", "true", "01", "2", " 1", "1 "] {
+                            assert!(
+                                native_decode_mode(mode, Some(raw), native, transient, audit)
+                                    .is_err()
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            native_decode_mode("resident-chat", Some("1"), true, true, true),
+            Ok(true)
+        );
+    }
+
     #[test]
     fn actual_model_diagnostics_require_both_ownership_and_full_audits() {
         for mode in [

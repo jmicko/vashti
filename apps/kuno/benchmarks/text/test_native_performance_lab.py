@@ -16,6 +16,10 @@ SPEC.loader.exec_module(LANE)
 class PerformanceLaneTests(unittest.TestCase):
     def setUp(self):
         self.receipt = json.loads((HERE / "receipts/rust-native-model-full-intel-20261005.json").read_text())["report"]
+        # Represent the current binary's explicit scalar mode; the archived
+        # receipt itself is unchanged and its offline compatibility is separate.
+        self.receipt.update(native_decode=False, native_decode_steps=0,
+                            scalar_decode_steps=len(self.receipt["public_generated_ids"]) - 1)
         self.output = "\n".join((
             "public_mid_token_cancel layer=0 erased=true",
             "public_mid_token_cancel layer=3 erased=true",
@@ -36,6 +40,7 @@ class PerformanceLaneTests(unittest.TestCase):
         self.assertNotIn("PRIVATE_TOKEN", env)
         self.assertNotIn("KUNO_LAB_EXPERT_SLOTS", env)
         self.assertEqual(env["KUNO_LAB_NATIVE_BATCH_COUNT"], "8")
+        self.assertEqual(env["KUNO_LAB_NATIVE_DECODE"], "0")
         self.assertEqual(env["KUNO_LAB_TRANSIENT_IO"], "1")
         self.assertEqual(env["KUNO_LAB_OWNED_ZERO_AUDIT"], "1")
         self.assertEqual(env["KUNO_LAB_CANCEL_CHECK"], "1")
@@ -82,6 +87,12 @@ class PerformanceLaneTests(unittest.TestCase):
             LANE.accepted_result(self.receipt, self.marker(cap) + self.output, "intel", cap,
                                  0, self.before, self.before)
 
+    def test_live_performance_worker_requires_new_explicit_decode_fields(self):
+        archived = json.loads((HERE / "receipts/rust-native-model-full-intel-20261005.json").read_text())["report"]
+        with self.assertRaises(ValueError):
+            LANE.accepted_result(archived, self.marker(52) + self.output, "intel", 52,
+                                 0, self.before, self.before)
+
     def test_failed_child_missing_cleanup_or_wrong_guard_reject(self):
         for output, status in ((self.marker(52) + self.output, 1),
                                (self.marker(8) + self.output, 0),
@@ -98,6 +109,8 @@ class PerformanceLaneTests(unittest.TestCase):
         for key, value in (("resident_runtime_io_limit_bytes", 100000000),
                            ("seed", 1), ("native_public_chunk_count", 1),
                            ("resident_owned_zero_audit_enabled", False),
+                           ("native_decode", True), ("native_decode_steps", 127),
+                           ("scalar_decode_steps", True),
                            ("public_generated_ids", [1]), ("owned_zero_audits", [])):
             receipt = copy.deepcopy(self.receipt)
             receipt[key] = value

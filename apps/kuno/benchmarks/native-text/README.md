@@ -157,6 +157,20 @@ audits per run inspect1,376 private pages/818,249,728 B. Longer whole-model
 contexts, complete options/quality, production private workers and matched
 faster-than-Ollama performance remain pending. This flag stays off by default.
 
+The source-only `KUNO_LAB_NATIVE_DECODE=1` experiment continues generation through
+native count1 `LastLogits` chunks on that same owner, retaining GPU-f32 PLE. It
+requires native MAX8, owned transient I/O, complete zero audits and a compiled
+resident bang/chat/rainwater fixture; invalid settings reject before device
+creation. Decode, cancellation and poisoned retry use one selected path without
+scalar fallback. Receipts record observed successful generation-only native and
+scalar steps; all four MAIN audits and exact scalar source-page counts remain
+required. Add `--native-decode` to the public runner below to select it. Existing
+runners explicitly pin it off. Device/numeric acceptance and a speed benefit are
+unestablished; mandatory native maps/proofs and count1 MAX8 overhead remain.
+Live runners require all new decode receipt fields. Offline archived-receipt
+inspection alone may pass `allow_legacy_decode=True` when all three fields are
+absent and scalar decode is selected; archived receipt files are unchanged.
+
 The fixed-public runner selects the **actual `kuno-text-lab` executable from Cargo
 compiler-artifact JSON** and freezes its bytes by SHA256. Do not select the old
 `kuno-rust-gpu-probe` filename: it can remain in a reused target directory and its

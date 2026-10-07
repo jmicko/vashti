@@ -62,7 +62,31 @@ def cargo_binary(path):
     return frozen, identity, digest(transcript)
 
 
-def validate_model_receipt(receipt, card, fixture, count, output):
+def decode_counts(receipt, steps, native_decode, allow_legacy_decode):
+    if type(native_decode) is not bool or type(allow_legacy_decode) is not bool:
+        raise ValueError("Decode validation settings must be explicit booleans")
+    fields = ("native_decode", "native_decode_steps", "scalar_decode_steps")
+    present = [field in receipt for field in fields]
+    if not any(present):
+        # Offline inspection of archived pre-flag receipts only. Live runners
+        # never select this compatibility path, and it cannot accept native decode.
+        if allow_legacy_decode and not native_decode:
+            return 0, steps
+        raise ValueError("Successful generation decode counts are required")
+    if not all(present):
+        raise ValueError("Decode mode and both observed counts are required together")
+    native = receipt["native_decode_steps"]
+    scalar = receipt["scalar_decode_steps"]
+    if (type(receipt["native_decode"]) is not bool or receipt["native_decode"] is not native_decode
+        or type(native) is not int or type(scalar) is not int
+        or native != (steps if native_decode else 0)
+        or scalar != (0 if native_decode else steps)):
+        raise ValueError("Observed decode mode/counts did not match the selected public experiment")
+    return native, scalar
+
+
+def validate_model_receipt(receipt, card, fixture, count, output, *, native_decode=False,
+                           allow_legacy_decode=False):
     expected = {
         "resident-bang": [49276, 2349, 1074, 5928],
         "resident-chat": [9419, 0, 2500, 628, 353, 1438, 488, 3242],
@@ -122,6 +146,7 @@ def validate_model_receipt(receipt, card, fixture, count, output):
         or receipt.get("owned_io_cleanup_accepted") is not True
     ):
         raise ValueError("Native compiled fixture/model receipt did not match")
+    _, scalar_steps = decode_counts(receipt, len(expected) - 1, native_decode, allow_legacy_decode)
     audits = receipt.get("owned_zero_audits", [])
     if len(audits) != 4 or any(not isinstance(item, dict) or
         item.get("main_buffers") != 1376 or item.get("main_bytes") != 818249728 or
@@ -133,13 +158,12 @@ def validate_model_receipt(receipt, card, fixture, count, output):
         raise ValueError("Four complete private-owner audits are required")
     # Source counts accumulate checked resets, not simultaneous live residency.
     # Each original scalar continuation audits15 buffers/17 full32-KiB pages;
-    # native prompt chunks use their separate owned runtime sources.
-    scalar_steps = len(expected) - 1
+    # Native prompt/decode chunks use their separate owned runtime sources.
     if (audits[0]["source_buffers"] != scalar_steps * 15 or
         audits[0]["source_bytes"] != scalar_steps * 17 * 32768) or any(
         item["source_buffers"] != 0 for item in audits[1:]
     ):
-        raise ValueError("Positive and empty cancelled/fresh source-owner audits required")
+        raise ValueError("Exact observed scalar and empty cancelled/fresh source-owner audits required")
     required = (
         "public_mid_token_cancel layer=0 erased=true",
         "public_mid_token_cancel layer=3 erased=true",
@@ -150,10 +174,34 @@ def validate_model_receipt(receipt, card, fixture, count, output):
         raise ValueError("Protected lifecycle completion evidence is incomplete")
 
 
-def validate_receipt(receipt, card, fixture, count, output):
+def validate_receipt(receipt, card, fixture, count, output, *, native_decode=False,
+                     allow_legacy_decode=False):
     if "verified_lab_limits swap_max=0 core_soft=0 core_hard=0 memory_max=8589934592" not in output:
         raise ValueError("Protected lifecycle completion evidence is incomplete")
-    validate_model_receipt(receipt, card, fixture, count, output)
+    validate_model_receipt(receipt, card, fixture, count, output, native_decode=native_decode,
+                           allow_legacy_decode=allow_legacy_decode)
+
+
+def worker_environment(model, receipt, count, native_decode=False):
+    if type(native_decode) is not bool:
+        raise ValueError("Native decode selection must be an explicit boolean")
+    env = {
+        "XDG_RUNTIME_DIR": "/run/user/" + str(os.getuid()),
+        "CUBECL_DEBUG_LOG": "0",
+        "KUNO_PUBLIC_RECEIPT": str(receipt),
+        "KUNO_TEST_GGUF": str(model),
+        "KUNO_LAB_TRANSIENT_IO": "1",
+        "KUNO_LAB_NATIVE_MAX8": "1",
+        "KUNO_LAB_NATIVE_BATCH_COUNT": str(count),
+        "KUNO_LAB_NATIVE_DECODE": "1" if native_decode else "0",
+        "KUNO_LAB_CANCEL_CHECK": "1",
+        "KUNO_LAB_OWNED_ZERO_AUDIT": "1",
+    }
+    for suffix in ("BLOCK_MOE", "BATCH_EXPERTS", "WORD_DOWN", "ORDERED_PUBLIC_UPLOAD",
+                   "FUSED_MATRIX_FAULT", "SMALL_CPU", "CPU_GDN", "PREFILL_LAST_HEAD",
+                   "IO_TOKEN_CHECKPOINT"):
+        env["KUNO_LAB_" + suffix] = "0"
+    return env
 
 
 def main():
@@ -163,6 +211,8 @@ def main():
     parser.add_argument("--card", choices=("intel", "nvidia"), required=True)
     parser.add_argument("--fixture", choices=("resident-bang", "resident-chat", "resident-rainwater"), required=True)
     parser.add_argument("--count", type=int, choices=(1, 3, 5, 8), required=True)
+    parser.add_argument("--native-decode", action="store_true",
+                        help="Continue generation using native count1 chunks on the same owner")
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--receipt", type=pathlib.Path, required=True)
     args = parser.parse_args()
@@ -173,21 +223,7 @@ def main():
     if target.exists() or metadata.exists():
         parser.error("Refusing to replace an existing receipt or run record")
     frozen, identity, artifacts_identity = cargo_binary(args.cargo_artifacts)
-    env = {
-        "XDG_RUNTIME_DIR": "/run/user/" + str(os.getuid()),
-        "CUBECL_DEBUG_LOG": "0",
-        "KUNO_PUBLIC_RECEIPT": str(target),
-        "KUNO_TEST_GGUF": str(args.model.resolve()),
-        "KUNO_LAB_TRANSIENT_IO": "1",
-        "KUNO_LAB_NATIVE_MAX8": "1",
-        "KUNO_LAB_NATIVE_BATCH_COUNT": str(args.count),
-        "KUNO_LAB_CANCEL_CHECK": "1",
-        "KUNO_LAB_OWNED_ZERO_AUDIT": "1",
-    }
-    for suffix in ("BLOCK_MOE", "BATCH_EXPERTS", "WORD_DOWN", "ORDERED_PUBLIC_UPLOAD",
-                   "FUSED_MATRIX_FAULT", "SMALL_CPU", "CPU_GDN", "PREFILL_LAST_HEAD",
-                   "IO_TOKEN_CHECKPOINT"):
-        env["KUNO_LAB_" + suffix] = "0"
+    env = worker_environment(args.model.resolve(), target, args.count, args.native_decode)
     command = [
         "systemd-run", "--user", "--unit=kuno-user-" + args.run_id,
         "--collect", "--wait", "--pipe", "--property=MemorySwapMax=0",
@@ -213,12 +249,14 @@ def main():
         raise SystemExit("Missing native model receipt; successful probe exit is insufficient")
     receipt_snapshot = target.read_bytes()
     receipt = json.loads(receipt_snapshot)
-    validate_receipt(receipt, args.card, args.fixture, args.count, "".join(lines))
+    validate_receipt(receipt, args.card, args.fixture, args.count, "".join(lines),
+                     native_decode=args.native_decode)
     record = {
         "scope": "fixed-public-model-partition-output-and-lifecycle-fixture-only",
         "cargo_artifacts_sha256": artifacts_identity,
         "frozen_executable_sha256": identity,
         "card": args.card, "fixture": args.fixture, "count": args.count,
+        "native_decode": args.native_decode,
         "receipt_sha256": digest(receipt_snapshot),
         "protected_lifecycle_completion_checked": True,
         "matched_performance_measurement": False,

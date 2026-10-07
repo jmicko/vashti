@@ -138,7 +138,7 @@ def main():
     }
     for suffix in ("BLOCK_MOE", "BATCH_EXPERTS", "WORD_DOWN", "ORDERED_PUBLIC_UPLOAD",
                    "FUSED_MATRIX_FAULT", "SMALL_CPU", "CPU_GDN", "PREFILL_LAST_HEAD",
-                   "IO_TOKEN_CHECKPOINT", "INFO_SLAB_BYTES", "NATIVE_MAX8"):
+                   "IO_TOKEN_CHECKPOINT", "INFO_SLAB_BYTES", "NATIVE_MAX8", "NATIVE_DECODE"):
         env["KUNO_LAB_" + suffix] = "0"
     command = [
         "systemd-run", "--user", "--unit=kuno-user-" + args.run_id,

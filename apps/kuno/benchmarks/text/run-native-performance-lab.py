@@ -103,6 +103,7 @@ def worker_environment(plan, receipt):
            "XDG_RUNTIME_DIR": f"/run/user/{os.getuid()}", "CUBECL_DEBUG_LOG": "0",
            "KUNO_TEST_GGUF": plan["model"]["path"], "KUNO_PUBLIC_RECEIPT": str(receipt),
            "KUNO_LAB_TRANSIENT_IO": "1", "KUNO_LAB_NATIVE_MAX8": "1",
+           "KUNO_LAB_NATIVE_DECODE": "0",
            "KUNO_LAB_NATIVE_BATCH_COUNT": "8", "KUNO_LAB_CANCEL_CHECK": "1",
            "KUNO_LAB_OWNED_ZERO_AUDIT": "1"}
     for suffix in ("BLOCK_MOE", "BATCH_EXPERTS", "WORD_DOWN", "ORDERED_PUBLIC_UPLOAD",
