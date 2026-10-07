@@ -34,7 +34,8 @@ fn error() -> Error {
 }
 
 /// Not Clone/Copy and constructible only after the model's completed boundary
-/// validation below. It is consumed immediately by the matching executor.
+/// validation below. Public policy setters borrow it or immediately consume it;
+/// no caller can construct or retain a copy of this completed-boundary proof.
 pub(crate) struct CompletedNativeProjectionBoundary {
     _private: (),
 }
@@ -48,6 +49,7 @@ pub(crate) enum NativeDecodeKernels {
     SingleMoe,
     SingleGdn,
     SingleAll,
+    SingleQ4All,
 }
 impl NativeDecodeKernels {
     pub(crate) fn parse(value: &str) -> Result<Self> {
@@ -56,6 +58,7 @@ impl NativeDecodeKernels {
             "single-moe" => Ok(Self::SingleMoe),
             "single-gdn" => Ok(Self::SingleGdn),
             "single-all" => Ok(Self::SingleAll),
+            "single-q4-all" => Ok(Self::SingleQ4All),
             _ => Err(error()),
         }
     }
@@ -65,13 +68,14 @@ impl NativeDecodeKernels {
             Self::SingleMoe => "single-moe",
             Self::SingleGdn => "single-gdn",
             Self::SingleAll => "single-all",
+            Self::SingleQ4All => "single-q4-all",
         }
     }
     fn single_moe(self) -> bool {
-        matches!(self, Self::SingleMoe | Self::SingleAll)
+        matches!(self, Self::SingleMoe | Self::SingleAll | Self::SingleQ4All)
     }
     fn recurrence(self) -> crate::gdn_chunk::RecurrencePolicy {
-        if matches!(self, Self::SingleGdn | Self::SingleAll) {
+        if matches!(self, Self::SingleGdn | Self::SingleAll | Self::SingleQ4All) {
             crate::gdn_chunk::RecurrencePolicy::SingleStreaming
         } else {
             crate::gdn_chunk::RecurrencePolicy::Chunk
@@ -318,11 +322,15 @@ impl Workspace {
         };
         let single_gdn =
             self.gdn.recurrence_policy() == crate::gdn_chunk::RecurrencePolicy::SingleStreaming;
-        Ok(match (single_moe, single_gdn) {
-            (false, false) => NativeDecodeKernels::Chunk,
-            (true, false) => NativeDecodeKernels::SingleMoe,
-            (false, true) => NativeDecodeKernels::SingleGdn,
-            (true, true) => NativeDecodeKernels::SingleAll,
+        let q4_block =
+            self.moe.gate_policy() == crate::quant_matvec::grouped_moe::GatePolicy::Q4Block;
+        Ok(match (single_moe, single_gdn, q4_block) {
+            (false, false, false) => NativeDecodeKernels::Chunk,
+            (true, false, false) => NativeDecodeKernels::SingleMoe,
+            (false, true, false) => NativeDecodeKernels::SingleGdn,
+            (true, true, false) => NativeDecodeKernels::SingleAll,
+            (true, true, true) => NativeDecodeKernels::SingleQ4All,
+            _ => return Err(error()),
         })
     }
     pub(super) fn allocate(
@@ -484,6 +492,9 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         executor: &mut GpuExecutor<'f>,
         tile: usize,
     ) -> Result<usize> {
+        if tile != 1 && self.native_decode_kernels()? != NativeDecodeKernels::Chunk {
+            return Err(error());
+        }
         let tile = NativeProjectionTile::new(tile)?;
         let boundary = self.completed_native_projection_boundary(executor)?;
         executor.set_native_projection_tile(tile, boundary)
@@ -549,7 +560,11 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 &boundary,
                 cancel,
             )?;
-            if policy.single_moe() {
+            if policy == NativeDecodeKernels::SingleQ4All {
+                native
+                    .moe
+                    .set_lab_single_q4_decode(executor, &self.arena, &boundary)?;
+            } else if policy.single_moe() {
                 native
                     .moe
                     .set_lab_single_member_decode(executor, &self.arena, &boundary)?;
@@ -1171,6 +1186,7 @@ mod tests {
             ("single-moe", NativeDecodeKernels::SingleMoe),
             ("single-gdn", NativeDecodeKernels::SingleGdn),
             ("single-all", NativeDecodeKernels::SingleAll),
+            ("single-q4-all", NativeDecodeKernels::SingleQ4All),
         ] {
             assert_eq!(NativeDecodeKernels::parse(label).unwrap(), profile);
             assert_eq!(profile.label(), label);
