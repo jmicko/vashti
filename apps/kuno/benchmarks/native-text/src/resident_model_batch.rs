@@ -36,9 +36,9 @@ const HYBRID_RUNTIME: u64 = 1024 * 1024;
 // Count full INFO source/target/inspection ownership, both bridge upload pages
 // with duplicate inspection, packet readback and duplicated slab padding.
 const HYBRID_IO_DERIVED: u64 = 128 * 2048 + 4 * HYBRID_MAIN + 2 * 32768 + 4 * 8192;
-const {
+const _: () = {
     assert!(HYBRID_IO_DERIVED <= HYBRID_RUNTIME);
-}
+};
 
 fn error() -> Error {
     Error::InvalidFormat("native model chunk rejected")
