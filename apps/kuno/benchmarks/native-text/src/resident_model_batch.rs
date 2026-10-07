@@ -1211,7 +1211,8 @@ impl Workspace {
             };
             *m.phase_ns.entry("native_router_fence").or_default() +=
                 router_fence_start.elapsed().as_nanos();
-            if e.gpu_router {
+            let use_gpu_router = e.gpu_router && hybrid_packet.is_some();
+            if use_gpu_router {
                 if hybrid_packet
                     .as_ref()
                     .and_then(|packet| packet.gpu_selection())
@@ -1228,7 +1229,7 @@ impl Workspace {
             let mut routes = token_waves::Input::new(*count, self.moe.capacity(), ROUTER)
                 .map_err(|_| error())?;
             for token in 0..*count {
-                let selection = if e.gpu_router {
+                let selection = if use_gpu_router {
                     None
                 } else {
                     Some(ops::router_topk_guarded(logits.row(token)?, 10, true).map_err(u::fault)?)
