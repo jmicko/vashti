@@ -123,6 +123,7 @@ impl Count1RouterInput {
 
 #[cube(launch)]
 #[allow(clippy::collapsible_if)] // Nested guards prevent eager CubeCL indexing.
+#[allow(clippy::neg_cmp_op_on_partial_ord)] // This f32 comparison also rejects NaN in CubeCL.
 fn owning_count1_fold(
     input: &mut Array<u32>,
     router: &Array<u32>,

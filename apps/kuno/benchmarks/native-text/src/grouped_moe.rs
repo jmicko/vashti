@@ -1586,7 +1586,7 @@ mod tests {
                 panic!("fixed public finite grid");
             };
             let mut status_writes = vec![false; g.status_words()];
-            for stage in 0..stages as usize {
+            for (stage, &start) in starts.iter().enumerate().take(stages as usize) {
                 for row in 0..rows as usize {
                     for chunk in 0..chunks as usize {
                         let (active_rows, width) = match stage {
@@ -1596,7 +1596,7 @@ mod tests {
                             _ => panic!("finite stage"),
                         };
                         if row < active_rows && chunk < width {
-                            let index = starts[stage] + row * width + chunk;
+                            let index = start + row * width + chunk;
                             assert!(!status_writes[index]);
                             status_writes[index] = true;
                         }
