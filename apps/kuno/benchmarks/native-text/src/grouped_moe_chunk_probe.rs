@@ -20,6 +20,8 @@ use std::sync::{
 };
 use zeroize::Zeroizing;
 type Result<T> = c::Result<T>;
+#[path = "grouped_moe_single_probe.rs"]
+mod single;
 const PROB: [f32; 10] = [0.05, 0.07, 0.09, 0.1, 0.11, 0.12, 0.13, 0.15, 0.1, 0.08];
 const BOUNDARY: [usize; 10] = [0, 63, 64, 95, 1, 62, 65, 94, 31, 32];
 const MIB: u64 = 1024 * 1024;
@@ -38,7 +40,7 @@ struct Case {
     boundary: bool,
 }
 fn cases() -> Vec<Case> {
-    let mut all = Vec::with_capacity(20);
+    let mut all = Vec::with_capacity(23);
     for count in [1, 3, 5, 8] {
         for overlap in [true, false] {
             for tile in [4, 8] {
@@ -51,6 +53,15 @@ fn cases() -> Vec<Case> {
                 });
             }
         }
+    }
+    for capacity in [16, 64, 96] {
+        all.push(Case {
+            count: 1,
+            overlap: false,
+            tile: 1,
+            capacity,
+            boundary: capacity == 96,
+        });
     }
     for capacity in [64, 96] {
         for overlap in [true, false] {
@@ -805,6 +816,7 @@ pub fn run(client: &ComputeClient<WgpuRuntime>, limits: &wgpu::Limits) -> Result
     arena.enable_public_owned_zero_audit()?;
     let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<_> {
         let mut reports = Vec::new();
+        let single_reports = single::run(client, limits, &file, &mut arena, &retired)?;
         let mut failures = 0;
         for (layer, dtype) in layers {
             for case in cases() {
@@ -844,17 +856,19 @@ pub fn run(client: &ComputeClient<WgpuRuntime>, limits: &wgpu::Limits) -> Result
                 failures += 1;
             }
         }
-        Ok((reports, failures))
+        Ok((reports, failures, single_reports))
     }));
     retire_failed_attempt(&attempt, &retired);
     let closed = arena.close();
-    let (reports, failures) = finish(attempt, closed.is_ok(), retired.load(Ordering::Acquire))?;
+    let (reports, failures, single_reports) =
+        finish(attempt, closed.is_ok(), retired.load(Ordering::Acquire))?;
     let audit = arena
         .owned_zero_audit_receipt()
         .ok_or("grouped missing full MAIN cleanup audit")?;
     file.verify_file_unchanged()
         .map_err(|_| "grouped original file changed")?;
     let report = serde_json::json!({"scope":"fixed-public-grouped-routed-MoE-operator-only","cases":reports,"failure_cases":failures,
+        "all_format_single_member_cases":single_reports,
         "main_limit_bytes":c::MAIN_CAP,"private_limit_bytes":c::PRIVATE_CAP,"combined_private_pages":1_998_848,"io_cap_bytes":c::IO_CAP,"io_checkpoint_bound":c::IO_CHECKPOINT_BOUND,
         "host_scratch_upper_bound":host,"main_erased_bytes":audit.bytes,"main_erased_buffers":audit.buffers,
         "full_model_96_nvidia_rejected":true,"all_ten_original_ranks_and_probabilities":true,"no_original_ledger_publication":true,"shared_expert_or_FFN_or_full_graph_accepted":false,
@@ -868,7 +882,7 @@ pub fn run(client: &ComputeClient<WgpuRuntime>, limits: &wgpu::Limits) -> Result
         out.write_all(serde_json::to_string_pretty(&report)?.as_bytes())?;
     }
     println!(
-        "public_grouped_routed_acceptance cases=40 failures={} main_bytes={} main_buffers={}",
+        "public_grouped_routed_acceptance cases=46 failures={} main_bytes={} main_buffers={}",
         failures, audit.bytes, audit.buffers
     );
     Ok(())
@@ -912,7 +926,7 @@ mod tests {
     #[test]
     fn fixed_matrix_cases_pin_actual_waves_and_boundary_slots_without_pruning() {
         let all = cases();
-        assert_eq!(all.len(), 20);
+        assert_eq!(all.len(), 23);
         let mut boundary = 0;
         for case in all {
             let p = plan(case).unwrap();
@@ -947,7 +961,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(boundary, 1);
+        assert_eq!(boundary, 2);
     }
     #[test]
     fn independent_tree_is_original_schedule_and_numeric_comparator_rejects_nonfinite() {

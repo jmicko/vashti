@@ -2,7 +2,8 @@
 //!
 //! Original PUBLIC banks stay tightly packed and unchanged. Every selection,
 //! slot, group/member map, count, activation address and probability is runtime
-//! private data. Geometry/dtypes and tile4/8 alone may specialize pipelines.
+//! private data. Geometry/dtypes and public tile policy alone specialize.
+//! Tile1 is an explicit single-member decode policy, not a private count choice.
 //! A caller must pin BOTH its immutable token wave and actual pending BankSlots
 //! protection through completed use; a borrowed raw slot slice is not that proof.
 //! No bank fill, commit, graph hook, CPU fallback or device action lives here.
@@ -140,7 +141,7 @@ impl Geometry {
         capacity: usize,
     ) -> Result<Self, &'static str> {
         let [gate, up, down] = projections;
-        if !matches!(tile, 4 | 8)
+        if !matches!(tile, 1 | 4 | 8)
             || !crate::bank_slots::routed_capacity(capacity)
             || gate.columns != up.columns
             || gate.rows != up.rows
@@ -192,6 +193,16 @@ impl Geometry {
     pub fn tile(self) -> usize {
         self.tile
     }
+    /// Public launch capacity; MAX8 owning spans remain unchanged for tile1.
+    pub fn member_capacity(self) -> usize {
+        if self.tile == 1 { 1 } else { MAX_BATCH }
+    }
+    pub fn validate_count(self, count: usize) -> Result<(), &'static str> {
+        if !(1..=self.member_capacity()).contains(&count) {
+            return Err("grouped public member policy count");
+        }
+        Ok(())
+    }
     pub fn capacity(self) -> usize {
         self.capacity
     }
@@ -227,7 +238,7 @@ impl Geometry {
         Ok(CubeCount::Static(
             if down { self.hidden } else { self.ff } as u32,
             groups as u32,
-            (MAX_BATCH / self.tile) as u32,
+            (self.member_capacity() / self.tile) as u32,
         ))
     }
     pub fn status_words(self) -> usize {
@@ -359,6 +370,22 @@ impl<'a> GroupMap<'a> {
     }
     pub fn groups(&self) -> usize {
         self.words[3] as usize
+    }
+    /// Check explicit public policy before any map upload or grouped launch.
+    /// Canonical route/probability validation remains separately mandatory.
+    pub fn validate_geometry(&self, geometry: Geometry) -> Result<(), &'static str> {
+        geometry.validate_count(self.count())?;
+        if geometry.tile() == 1
+            && (self.words[1] != 0
+                || self.words[2] != 1
+                || self.groups() != RANKS
+                || self.words[LENGTHS..LENGTHS + self.groups()]
+                    .iter()
+                    .any(|&length| length != 1))
+        {
+            return Err("grouped single-member wave policy");
+        }
+        Ok(())
     }
     pub fn validate(
         &self,
@@ -632,10 +659,10 @@ pub fn validate_status(
     first: usize,
     values: &[u32],
 ) -> Result<(), &'static str> {
-    if !(1..=MAX_BATCH).contains(&count)
-        || first
-            .checked_add(geometry.status_words())
-            .is_none_or(|end| end > values.len())
+    geometry.validate_count(count)?;
+    if first
+        .checked_add(geometry.status_words())
+        .is_none_or(|end| end > values.len())
     {
         return Err("grouped status owning span");
     }
@@ -678,6 +705,7 @@ fn group_active(
     group: usize,
     first_slot: usize,
     slot_count: usize,
+    #[comptime] tile: usize,
 ) -> bool {
     let mut active = false;
     if first <= map.len() {
@@ -700,6 +728,11 @@ fn group_active(
                 if length >= 1 && length <= wave_count && slot >= first_slot {
                     if slot - first_slot < slot_count {
                         active = true;
+                        if comptime!(tile == 1) {
+                            if count != 1 || wave_first != 0 || wave_count != 1 || length != 1 {
+                                active = false;
+                            }
+                        }
                         for member in 0..length {
                             let route = map[first + MEMBERS + group * MAX_BATCH + member] as usize;
                             if route >= count * RANKS
@@ -759,7 +792,8 @@ pub fn grouped_gate_up(
     let group = CUBE_POS_Y as usize;
     let first_member = CUBE_POS_Z as usize * tile;
     let lane = UNIT_POS_X as usize;
-    let mut active = group_active(map, map_first, group, first_slot, slot_count) && feature < ff;
+    let mut active =
+        group_active(map, map_first, group, first_slot, slot_count, tile) && feature < ff;
     if active {
         if first_member >= map[map_first + LENGTHS + group] as usize {
             active = false;
@@ -863,7 +897,7 @@ pub fn grouped_down(
     let first_member = CUBE_POS_Z as usize * tile;
     let lane = UNIT_POS_X as usize;
     let mut active =
-        group_active(map, map_first, group, first_slot, slot_count) && feature < hidden;
+        group_active(map, map_first, group, first_slot, slot_count, tile) && feature < hidden;
     if active {
         if first_member >= map[map_first + LENGTHS + group] as usize {
             active = false;
@@ -1334,6 +1368,33 @@ mod tests {
     }
 
     #[test]
+    fn explicit_single_member_grid_rejects_other_counts_waves_and_members() {
+        let single = geometry(F32, 256, 256, 1, 16);
+        let original = geometry(F32, 256, 256, 8, 16);
+        assert_eq!(single.member_capacity(), 1);
+        assert_eq!(single.status_words(), original.status_words());
+        assert_eq!(single.scratch_bytes(true), original.scratch_bytes(true));
+        assert!(matches!(
+            single.grid(10, false).unwrap(),
+            CubeCount::Static(256, 10, 1)
+        ));
+        single.validate_count(1).unwrap();
+        for count in [0, 2, 3, 5, 8, usize::MAX] {
+            assert!(single.validate_count(count).is_err());
+        }
+        let (experts, p) = selections(1, true);
+        let union = protected(&experts, 0, 1);
+        let mut map = GroupMap::new(1, 0, 1, &experts, &p, &union, 16).unwrap();
+        map.validate_geometry(single).unwrap();
+        for (index, bad) in [(0, 3), (1, 1), (2, 2), (3, u32::MAX), (LENGTHS, 2)] {
+            let old = map.words[index];
+            map.words[index] = bad;
+            assert!(map.validate_geometry(single).is_err());
+            map.words[index] = old;
+        }
+    }
+
+    #[test]
     fn missing_ready_or_late_nonfinite_and_every_inactive_tail_reject_acceptance() {
         let g = geometry(F32, 65, 7, 8, 16);
         for count in [1, 3, 5, 8] {
@@ -1427,13 +1488,16 @@ mod tests {
                         tree_dot(&down, &scalar_act[route * ff..(route + 1) * ff]);
                 }
             }
-            for tile in [4, 8] {
+            for tile in [1, 4, 8] {
+                if tile == 1 && count != 1 {
+                    continue;
+                }
                 let mut acts = vec![0f32; count * 10 * ff];
                 let mut parts = vec![0f32; count * 10 * hidden];
                 for (group, &(expert, _)) in union.iter().enumerate().take(map.groups()) {
                     let length = map.words[LENGTHS + group] as usize;
                     let expert = expert as usize;
-                    for first in (0..8).step_by(tile) {
+                    for first in (0..if tile == 1 { 1 } else { 8 }).step_by(tile) {
                         for feature in 0..ff {
                             let mut gates = vec![[0f32; 64]; tile];
                             let mut ups = vec![[0f32; 64]; tile];
@@ -1797,15 +1861,22 @@ mod tests {
             for mode in [ExecutionMode::Checked, ExecutionMode::Unchecked] {
                 let a = geometry(dtype, 256, 256, 4, 16);
                 let b = geometry(dtype, 256, 256, 8, 16);
+                let single = geometry(dtype, 256, 256, 1, 16);
                 for kind in [0, 1] {
+                    let one = shader(kind, single, mode);
                     let four = shader(kind, a, mode);
                     let eight = shader(kind, b, mode);
+                    validate_shader(&one, 8, true);
                     validate_shader(&four, 8, true);
                     validate_shader(&eight, 8, true);
                     let weights = if kind == 0 { 2 } else { 1 };
                     for buffer in 0..weights {
                         let pattern = format!("buffer_{buffer}_global[");
                         assert!(four.matches(&pattern).count() > 0);
+                        assert_eq!(
+                            one.matches(&pattern).count(),
+                            four.matches(&pattern).count()
+                        );
                         assert_eq!(
                             four.matches(&pattern).count(),
                             eight.matches(&pattern).count(),
@@ -1814,6 +1885,10 @@ mod tests {
                     }
                     let input_buffer = if kind == 0 { 2 } else { 1 };
                     let pattern = format!("buffer_{input_buffer}_global[");
+                    assert_eq!(
+                        four.matches(&pattern).count(),
+                        4 * one.matches(&pattern).count()
+                    );
                     assert_eq!(
                         eight.matches(&pattern).count(),
                         2 * four.matches(&pattern).count()
@@ -1825,7 +1900,7 @@ mod tests {
             let g = geometry(F32, 65, 7, 4, 16);
             validate_shader(&shader(2, g, mode), 7, false);
             validate_shader(&shader(3, g, mode), 10, true);
-            for tile in [4, 8] {
+            for tile in [1, 4, 8] {
                 for down in [Q5_0, Q8_0] {
                     let p = [
                         Projection::new(Q4_K, 2560, 640, 512).unwrap(),

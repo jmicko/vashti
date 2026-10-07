@@ -158,7 +158,7 @@ impl Drop for Packet {
 /// Adapter pins the borrowed immutable wave AND the actual pending generation.
 /// Full plan canonical validation precedes any victim fill, including every
 /// window in a union larger than ten. It does not make a raw tuple trustworthy.
-struct ProtectedWave<'a> {
+pub(crate) struct ProtectedWave<'a> {
     wave: token_waves::WaveView<'a>,
     pending: &'a BankPlan,
     staged: &'a StagedSlots,
@@ -168,7 +168,7 @@ struct ProtectedWave<'a> {
     len: usize,
 }
 impl<'a> ProtectedWave<'a> {
-    fn new(
+    pub(crate) fn new(
         wave: token_waves::WaveView<'a>,
         pending: &'a BankPlan,
         staged: &'a StagedSlots,
@@ -194,7 +194,7 @@ impl<'a> ProtectedWave<'a> {
         p.validate()?;
         Ok(p)
     }
-    fn validate(&self) -> Result<()> {
+    pub(crate) fn validate(&self) -> Result<()> {
         self.staged
             .validate_pending(self.bank, self.pending, &self.selected[..self.len])?;
         for (i, &e) in self.wave.protected_experts().iter().enumerate() {
@@ -215,7 +215,7 @@ impl<'a> ProtectedWave<'a> {
         }
         Ok(())
     }
-    fn map(&self, packet: &Packet) -> Result<k::GroupMap<'_>> {
+    pub(crate) fn map(&self, packet: &Packet) -> Result<k::GroupMap<'_>> {
         self.validate()?;
         let tokens = self.wave.tokens();
         Ok(k::GroupMap::new(
@@ -758,6 +758,7 @@ impl Owner {
             return Err("grouped chunk waves".into());
         }
         let w = weights(graph, self.layer)?;
+        self.layout.geometry.validate_count(packet.count)?;
         let mut expected_map = Zeroizing::new(vec![0u32; self.layout.words[MAP]]);
         let mut expected_prob = Zeroizing::new(vec![0u32; self.layout.words[PROB]]);
         let mut processed = 0;
@@ -825,6 +826,7 @@ impl Owner {
                 &packet.probabilities[..packet.count * 10],
                 self.banks.slots.capacity(),
             )?;
+            map.validate_geometry(self.layout.geometry)?;
             expected_map.fill(0);
             expected_prob.fill(0);
             expected_map
@@ -1036,7 +1038,9 @@ impl Drop for Owner {
 /// Full physical allocations are distinct. Original PUBLIC banks may own a
 /// backing span between their exact logical bytes and the charged exclusive-bin
 /// upper bound. Every PRIVATE page must equal its exact full owning span.
-fn validate_physical_pages<I: Eq>(pages: &[(I, u64, u64, u64, u64, u64, bool)]) -> Result<()> {
+pub(crate) fn validate_physical_pages<I: Eq>(
+    pages: &[(I, u64, u64, u64, u64, u64, bool)],
+) -> Result<()> {
     for (i, (identity, offset, size, physical, logical, bound, private)) in pages.iter().enumerate()
     {
         if *offset != 0

@@ -130,6 +130,18 @@ impl Policy {
         self.phase = Phase::Idle;
         Ok(())
     }
+    fn completed_boundary(&self) -> Result<()> {
+        if self.phase != Phase::Idle
+            || *self.chunk == 0
+            || *self.issued != 0
+            || *self.committed != 0
+            || *self.start != 0
+            || *self.count != 0
+        {
+            return Err(err("native routed projection policy boundary"));
+        }
+        Ok(())
+    }
 }
 #[derive(Clone, PartialEq, Eq)]
 struct Stamp {
@@ -191,6 +203,10 @@ struct Layout {
 }
 impl Layout {
     fn new(graph: BoundGraph<'_, '_>, capacity: usize, tile: usize) -> Result<Self> {
+        // A model owner cannot start with the decode-only specialization.
+        if !matches!(tile, 4 | 8) {
+            return Err(err("native routed initial public tile"));
+        }
         graph.verify_unchanged()?;
         let g = graph.geometry();
         if g.layers != 48
@@ -338,6 +354,35 @@ impl Workspace {
     /// Public configured policy for the original token-wave planner.
     pub(crate) fn capacity(&self) -> usize {
         self.layout.capacity
+    }
+    pub(crate) fn projection_tile(&self) -> usize {
+        self.layout.tile
+    }
+    /// The model alone constructs this proof after its completed all-family
+    /// cursor boundary. No buffers, ledgers, launches or audits are changed.
+    pub(crate) fn set_lab_single_member_decode(
+        &mut self,
+        executor: &GpuExecutor<'_>,
+        arena: &PrivateArena,
+        _boundary: &crate::resident_model::batch::CompletedNativeProjectionBoundary,
+    ) -> Result<usize> {
+        self.healthy(arena)?;
+        self.policy.completed_boundary()?;
+        executor.check_resident_admission(&self.admission)?;
+        executor.check_client(arena.client().map_err(u::fault)?)?;
+        if executor.batch_moe.is_some() || !arena.public_owned_zero_audit_enabled() {
+            return Err(err("native routed single-member owner policy"));
+        }
+        // Validate every replacement before mutating any public geometry. The
+        // second pass uses only these same immutable checked values, no alloc.
+        for g in &self.layout.geometries {
+            k::Geometry::new(g.projections(), 1, g.capacity()).map_err(err)?;
+        }
+        for g in &mut self.layout.geometries {
+            *g = k::Geometry::new(g.projections(), 1, g.capacity()).map_err(err)?;
+        }
+        self.layout.tile = 1;
+        Ok(self.projection_tile())
     }
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn allocate(
@@ -589,6 +634,7 @@ impl GpuExecutor<'_> {
             graph.verify_unchanged()?;
             self.model.verify_file_unchanged()?;
             w.healthy(arena)?;
+            w.layout.geometries[0].validate_count(count).map_err(err)?;
             self.check_resident_admission(&w.admission)?;
             self.check_client(arena.client().map_err(u::fault)?)?;
             if self.batch_moe.is_some()
@@ -686,6 +732,7 @@ impl GpuExecutor<'_> {
             return Err(err("native routed chunk binding"));
         }
         let g = *w.layout.geometries.get(layer).ok_or(Error::OutOfBounds)?;
+        g.validate_count(routes.count()).map_err(err)?;
         let weights = weights(graph, layer)?;
         if [weights.gate, weights.up, weights.down]
             .into_iter()
@@ -856,6 +903,7 @@ impl GpuExecutor<'_> {
                 bank.slots.capacity(),
             )
             .map_err(err)?;
+            map.validate_geometry(g).map_err(err)?;
             write_words(arena, ids[MAP], map.words(), &w.poison)?;
             let mut probs = Zeroizing::new([0u32; 80]);
             for (i, &p) in map.probabilities().iter().enumerate() {
@@ -1730,7 +1778,9 @@ mod tests {
     fn entire_family_preflight_precedes_every_original_publication() {
         for count in [1, 3, 5, 8] {
             let mut p = Policy::new(48).unwrap();
+            assert!(p.completed_boundary().is_err());
             p.begin(0, count).unwrap();
+            assert!(p.completed_boundary().is_err());
             assert!(p.commit(0).is_err());
             for bad in [64, u32::MAX as usize + 1, usize::MAX] {
                 assert!(p.commit(bad).is_err());
@@ -1747,8 +1797,10 @@ mod tests {
                 }
             }
             p.finish().unwrap();
+            p.completed_boundary().unwrap();
             let previous = *p.chunk;
             p.begin(count as u64, count).unwrap();
+            assert!(p.completed_boundary().is_err());
             assert!(*p.chunk > previous);
             assert_eq!(*p.issued, 0);
         }
