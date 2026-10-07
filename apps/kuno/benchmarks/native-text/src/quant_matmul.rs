@@ -98,7 +98,7 @@ impl MatrixGeometry {
     pub fn grid(self) -> CubeCount {
         CubeCount::Static(
             self.rows as u32,
-            (self.member_capacity / self.tile_tokens) as u32,
+            (self.member_capacity() / self.tile_tokens) as u32,
             1,
         )
     }
@@ -111,7 +111,7 @@ impl MatrixGeometry {
         input_words: usize,
         output_words: usize,
     ) -> Result<(), &'static str> {
-        if !(1..=self.member_capacity).contains(&spans.count)
+        if !(1..=self.member_capacity()).contains(&spans.count)
             || spans.input_stride < self.columns
             || spans.output_stride < self.rows
         {
