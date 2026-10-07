@@ -668,6 +668,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let kernel_profile = count1_environment_opt_in(&mode, "KUNO_LAB_KERNEL_PROFILE")?;
     let fast_gpu = count1_environment_opt_in(&mode, "KUNO_LAB_FAST_GPU")?;
     let long_fixture = count1_environment_opt_in(&mode, "KUNO_LAB_LONG_FIXTURE")?;
+    let cpu_q8 = count1_environment_opt_in(&mode, "KUNO_LAB_CPU_Q8")?;
+    let large_weight_cache = count1_environment_opt_in(&mode, "KUNO_LAB_LARGE_WEIGHT_CACHE")?;
+    if large_weight_cache && !mapped_weights {
+        return Err("Larger public weight cache requires explicit mapped weights".into());
+    }
+    if cpu_q8 && !count1_pooled {
+        return Err("Q8 CPU activation arithmetic requires explicit pooled workers".into());
+    }
     if kernel_profile {
         use cubecl_runtime::config::{
             CubeClRuntimeConfig, RuntimeConfig, profiling::ProfilingLogLevel,
@@ -1660,7 +1668,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let config = resident_model::batch::Config::new(&client, &grouped_limits, 8)?;
                 Some(if count1_hybrid_cap.is_some() {
                     if count1_pooled {
-                        config.reserve_count1_hybrid_execution(true, count1_overlap)?
+                        config.reserve_count1_hybrid_arithmetic(true, count1_overlap, cpu_q8)?
                     } else {
                         config.reserve_count1_hybrid()?
                     }
@@ -1942,6 +1950,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 receipt["fast_gpu"] = serde_json::json!(fast_gpu);
                 receipt["observed_fast_dense_calls"] = serde_json::json!(executor.fast_dense_calls);
                 receipt["long_fixture"] = serde_json::json!(long_fixture);
+                receipt["cpu_q8_activations"] = serde_json::json!(cpu_q8);
+                receipt["large_weight_cache"] = serde_json::json!(large_weight_cache);
                 if long_fixture {
                     receipt["fixture"] = serde_json::json!("resident-count1-hybrid-rainwater");
                 }
@@ -1950,6 +1960,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     serde_json::json!(executor.admission_upper_bytes()?);
                 receipt["prefill_last_head"] = serde_json::json!(prefill_last_head);
                 if let Some(cap) = count1_hybrid_cap {
+                    receipt["observed_cpu_q8_activations"] = serde_json::json!(
+                        resident
+                            .as_ref()
+                            .ok_or("count1 hybrid owner absent")?
+                            .native_cpu_q8_activations(&executor)?
+                            .ok_or("count1 hybrid arithmetic absent")?
+                    );
                     receipt["count1_hybrid_cpu_miss_cap"] = serde_json::json!(cap);
                     receipt["observed_count1_hybrid_cpu_miss_cap"] = serde_json::json!(
                         resident

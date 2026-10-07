@@ -44,6 +44,39 @@ def completion(cap):
 
 
 class HybridLabTests(unittest.TestCase):
+    def test_q8_requires_pooled_workers_and_exact_completed_arithmetic_evidence(self):
+        value = receipt("intel",10)
+        value.update(count1_hybrid_cpu_workers="pooled",observed_count1_hybrid_cpu_workers="pooled",cpu_q8_activations=True,observed_cpu_q8_activations=True)
+        LAB.validate_receipt(value,"intel",10,completion(10),workers="pooled",cpu_q8=True)
+        for field in ("cpu_q8_activations","observed_cpu_q8_activations"):
+            for bad in (None,False,1,"true"):
+                wrong=copy.deepcopy(value);wrong[field]=bad
+                with self.assertRaises(ValueError):
+                    LAB.validate_receipt(wrong,"intel",10,completion(10),workers="pooled",cpu_q8=True)
+        with self.assertRaises(ValueError):
+            LAB.worker_environment("/original/model","/public/receipt",cpu_q8=True)
+        env=LAB.worker_environment("/original/model","/public/receipt",workers="pooled",cpu_q8=True)
+        self.assertEqual(env["KUNO_LAB_CPU_Q8"],"1")
+
+    def test_larger_model_cache_requires_mapping_and_actual_bounded_no_swap_cgroup(self):
+        spec=importlib.util.spec_from_file_location("protected_lab",HERE/"protected-lab-exec.py")
+        guard=importlib.util.module_from_spec(spec);spec.loader.exec_module(guard)
+        env={"KUNO_LAB_LARGE_WEIGHT_CACHE":"1","KUNO_LAB_MAPPED_WEIGHTS":"1"}
+        args=["/frozen/binary","intel",LAB.MODE,"10"]
+        self.assertEqual(guard.memory_limit(env,args),48*1024**3)
+        self.assertEqual(guard.memory_limit({},args),8*1024**3)
+        for bad in ("auto","48","",True):
+            with self.assertRaises(ValueError):guard.memory_limit(dict(env,KUNO_LAB_LARGE_WEIGHT_CACHE=bad),args)
+        for badargs in (args[:-1],[*args,"arbitrary"],[args[0],"cpu",LAB.MODE,"10"],[args[0],"intel","arbitrary","10"],[args[0],"intel",LAB.MODE,"1"]):
+            with self.assertRaises(ValueError):guard.memory_limit(env,badargs)
+        with self.assertRaises(ValueError):guard.memory_limit(dict(env,KUNO_LAB_MAPPED_WEIGHTS="0"),args)
+        value=receipt("intel",10);value.update(mapped_weights=True,observed_mapped_weights=True,large_weight_cache=True)
+        output=completion(10).replace("8589934592","51539607552")
+        LAB.validate_receipt(value,"intel",10,output,mapped=True,large_cache=True)
+        for wrong in (completion(10),output.replace("51539607552","max"),output.replace("51539607552","55834574848")):
+            with self.assertRaises(ValueError):LAB.validate_receipt(value,"intel",10,wrong,mapped=True,large_cache=True)
+        with self.assertRaises(ValueError):LAB.worker_environment("/original/model","/public/receipt",large_cache=True)
+
     def test_fast_gpu_requires_actual_dispatches_and_separate_long_selection(self):
         value = receipt("intel",10)
         value.update(fast_gpu=True,observed_fast_dense_calls=5264,long_fixture=False)

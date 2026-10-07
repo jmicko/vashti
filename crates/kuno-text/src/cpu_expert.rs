@@ -1,7 +1,8 @@
 //! Explicit, bounded packed Rust CPU experts for a source-only decode experiment.
 //!
-//! All seven original formats retain F32 activations and the GPU's 64-lane dot
-//! schedule. Returns unweighted original-rank partials; routing, probability
+//! By default all seven original formats retain F32 activations and the GPU's
+//! 64-lane dot schedule. Explicit pooled Q8 activation arithmetic is a separate
+//! approximate experiment. Returns unweighted original-rank partials; routing, probability
 //! multiplication, shared experts and whole-model acceptance remain the caller's.
 //! No scalar executor/default, GPU integration or persistent request cache changes.
 //! Owning host buffers wipe on error/unwind; scoped workers finish before their
@@ -22,6 +23,8 @@ const MAX_FEED_FORWARD: usize = 1024;
 const MAX_EXPERTS: usize = 512;
 const WORKER_FIXED_PRIVATE_BYTES: usize = (256 + LANES) * size_of::<f32>() + 4096;
 const MAX_WORKER_PRIVATE_BYTES: usize = 32 * 1024;
+#[path = "cpu_quantized.rs"]
+mod quantized;
 
 /// ISA selection is explicit and never a response to inference/GPU failure.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -288,6 +291,7 @@ pub struct ExpertOperator {
     workers: WorkerPlan,
     backend: Backend,
     pool: Option<rayon::ThreadPool>,
+    q8_activations: bool,
 }
 
 // The full-capacity retained job owner erases these request-derived headers on
@@ -314,6 +318,7 @@ impl ExpertOperator {
             workers,
             backend,
             pool: None,
+            q8_activations: false,
         })
     }
 
@@ -359,6 +364,19 @@ impl ExpertOperator {
         self.pool.is_some()
     }
 
+    /// Explicit approximate activation arithmetic; original weight bytes stay
+    /// unchanged. No automatic selection/failure fallback, no original64 claim.
+    pub fn with_q8_activations(mut self) -> Result<Self> {
+        if self.backend != Backend::Avx2 || self.pool.is_none() {
+            return Err(Error::InvalidFormat("CPU quantized requires pooled AVX2"));
+        }
+        self.q8_activations = true;
+        Ok(self)
+    }
+    pub fn q8_activations(&self) -> bool {
+        self.q8_activations
+    }
+
     pub fn worker_count(&self) -> usize {
         self.workers.count
     }
@@ -373,6 +391,11 @@ impl ExpertOperator {
         input: &[f32],
         cancel: &AtomicBool,
     ) -> Result<ProjectionOutput> {
+        if self.q8_activations {
+            return Err(Error::InvalidFormat(
+                "CPU quantized requires complete experts",
+            ));
+        }
         if expert >= matrix.experts || input.len() != matrix.columns {
             return Err(Error::InvalidBufferLength);
         }
@@ -578,6 +601,9 @@ impl ExpertOperator {
         hook: impl Fn(usize) + Sync,
     ) -> Result<Partials> {
         let g = &weights.geometry;
+        if self.q8_activations && g.kinds.iter().any(|&kind| !quantized::supported(kind)) {
+            return Err(Error::InvalidFormat("CPU quantized format unsupported"));
+        }
         if selected.is_empty() || selected.len() > MAX_SELECTED || input.len() != g.hidden {
             return Err(Error::InvalidBufferLength);
         }
@@ -603,6 +629,13 @@ impl ExpertOperator {
         let mut private_input = zeroed(g.hidden)?;
         let mut activations = zeroed(MAX_SELECTED * g.feed_forward)?;
         let mut values = zeroed(MAX_SELECTED * g.hidden)?;
+        let mut quantized_inputs = if self.q8_activations {
+            Some(retained_metadata::Owner::<quantized::Input>::new(
+                MAX_SELECTED + 1,
+            )?)
+        } else {
+            None
+        };
         let row_width = g.hidden.max(g.feed_forward);
         let worker_bytes = MAX_WORKER_PRIVATE_BYTES
             .checked_mul(self.workers.count)
@@ -615,12 +648,19 @@ impl ExpertOperator {
             size_of::<[usize; MAX_SELECTED]>() + 4096,
             jobs.metadata_bytes()?,
             worker_handle_metadata_bytes()?,
+            quantized_inputs
+                .as_ref()
+                .map_or(Ok(0), |owner| owner.metadata_bytes())?,
         ])?;
         if private_bytes > private_limit {
             return Err(Error::LimitExceeded("CPU expert private host capacity"));
         }
         // All actual allocation capacities have been admitted before private fill.
         private_input[..g.hidden].copy_from_slice(input);
+        if let Some(owner) = &mut quantized_inputs {
+            owner.push(quantized::Input::empty())?;
+            owner.get_mut(0)?.fill(&private_input[..g.hidden], cancel)?;
+        }
         let mut public_owned = Zeroizing::new(0usize);
         for rank in 0..selected.len() {
             check_cancel(cancel)?;
@@ -668,28 +708,55 @@ impl ExpertOperator {
             |index, scratch| {
                 let rank = index / g.feed_forward;
                 let feature = index % g.feed_forward;
-                let gate = dot_row(
-                    self.backend,
-                    g.kinds[0],
-                    row(jobs.get(rank)?[0].as_ref(), feature, g.row_bytes[0])?,
-                    &private_input[..g.hidden],
-                    scratch,
-                    cancel,
-                )?;
-                let up = dot_row(
-                    self.backend,
-                    g.kinds[1],
-                    row(jobs.get(rank)?[1].as_ref(), feature, g.row_bytes[1])?,
-                    &private_input[..g.hidden],
-                    scratch,
-                    cancel,
-                )?;
+                let gate = if let Some(owner) = &quantized_inputs {
+                    quantized::dot(
+                        g.kinds[0],
+                        row(jobs.get(rank)?[0].as_ref(), feature, g.row_bytes[0])?,
+                        owner.get(0)?,
+                        cancel,
+                    )?
+                } else {
+                    dot_row(
+                        self.backend,
+                        g.kinds[0],
+                        row(jobs.get(rank)?[0].as_ref(), feature, g.row_bytes[0])?,
+                        &private_input[..g.hidden],
+                        scratch,
+                        cancel,
+                    )?
+                };
+                let up = if let Some(owner) = &quantized_inputs {
+                    quantized::dot(
+                        g.kinds[1],
+                        row(jobs.get(rank)?[1].as_ref(), feature, g.row_bytes[1])?,
+                        owner.get(0)?,
+                        cancel,
+                    )?
+                } else {
+                    dot_row(
+                        self.backend,
+                        g.kinds[1],
+                        row(jobs.get(rank)?[1].as_ref(), feature, g.row_bytes[1])?,
+                        &private_input[..g.hidden],
+                        scratch,
+                        cancel,
+                    )?
+                };
                 finite(
                     crate::ops::silu(gate) * up,
                     "CPU expert non-finite activation",
                 )
             },
         )?;
+        if let Some(owner) = &mut quantized_inputs {
+            for rank in 0..selected.len() {
+                owner.push(quantized::Input::empty())?;
+                owner.get_mut(rank + 1)?.fill(
+                    &activations[rank * g.feed_forward..(rank + 1) * g.feed_forward],
+                    cancel,
+                )?;
+            }
+        }
         self.rows(
             &mut values[..selected.len() * g.hidden],
             row_width,
@@ -698,14 +765,23 @@ impl ExpertOperator {
             |index, scratch| {
                 let rank = index / g.hidden;
                 let feature = index % g.hidden;
-                dot_row(
-                    self.backend,
-                    g.kinds[2],
-                    row(jobs.get(rank)?[2].as_ref(), feature, g.row_bytes[2])?,
-                    &activations[rank * g.feed_forward..(rank + 1) * g.feed_forward],
-                    scratch,
-                    cancel,
-                )
+                if let Some(owner) = &quantized_inputs {
+                    quantized::dot(
+                        g.kinds[2],
+                        row(jobs.get(rank)?[2].as_ref(), feature, g.row_bytes[2])?,
+                        owner.get(rank + 1)?,
+                        cancel,
+                    )
+                } else {
+                    dot_row(
+                        self.backend,
+                        g.kinds[2],
+                        row(jobs.get(rank)?[2].as_ref(), feature, g.row_bytes[2])?,
+                        &activations[rank * g.feed_forward..(rank + 1) * g.feed_forward],
+                        scratch,
+                        cancel,
+                    )
+                }
             },
         )?;
         check_cancel(cancel)?;
@@ -2417,6 +2493,103 @@ mod tests {
                 expected.full(),
             );
         }
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn quantized_complete_experts_match_independent_approximate_oracle_and_clear_failed_calls() {
+        if !avx2_available() {
+            return;
+        }
+        fn oracle(weights: &[f32], values: &[f32]) -> f32 {
+            let mut result = 0f64;
+            for (w, x) in weights.chunks_exact(32).zip(values.chunks_exact(32)) {
+                let scale = x.iter().map(|v| v.abs()).fold(0f32, f32::max) / 127.;
+                for (&weight, &value) in w.iter().zip(x) {
+                    let q = if scale > 0. {
+                        (value / scale).round_ties_even().clamp(-127., 127.)
+                    } else {
+                        0.
+                    };
+                    result += f64::from(weight) * f64::from(q) * f64::from(scale);
+                }
+            }
+            result as f32
+        }
+        for down in [TensorType::Q5_0, TensorType::Q8_0] {
+            let f = fixture([TensorType::Q4K, TensorType::Q4K, down], 256, 256, 2);
+            // SAFETY: this test exclusively owns the immutable temporary inode.
+            unsafe {
+                f.model.enable_mapped_weights().unwrap();
+            }
+            let reader = f.model.positional_reader().unwrap();
+            let weights = set(&reader, &f);
+            let values = input(256);
+            let op = ExpertOperator::new_pooled(WorkerPlan::portable(4).unwrap(), Backend::Avx2)
+                .unwrap()
+                .with_q8_activations()
+                .unwrap();
+            assert!(op.q8_activations());
+            let cancel = AtomicBool::new(false);
+            let mut expected = Vec::new();
+            for expert in [1, 0] {
+                let mut activations = vec![0.; 256];
+                for (row, value) in activations.iter_mut().enumerate() {
+                    let first = (expert * 256 + row) * 256;
+                    let gate = oracle(&f.expected[0][first..first + 256], &values);
+                    let up = oracle(&f.expected[1][first..first + 256], &values);
+                    *value = crate::ops::silu(gate) * up;
+                }
+                for row in 0..256 {
+                    let first = (expert * 256 + row) * 256;
+                    expected.push(oracle(&f.expected[2][first..first + 256], &activations));
+                }
+            }
+            let first = op.execute(&weights, &[1, 0], &values, &cancel).unwrap();
+            for (&actual, &reference) in first.active().iter().zip(&expected) {
+                assert!((actual - reference).abs() <= 0.01 + reference.abs() * 0.0005);
+            }
+            assert!(first.full()[512..].iter().all(|v| v.to_bits() == 0));
+            assert!(
+                op.execute_with(&weights, &[1, 0], &values, &cancel, |_| panic!(
+                    "fixed public panic"
+                ))
+                .is_err()
+            );
+            assert!(
+                op.execute_with(&weights, &[1, 0], &values, &cancel, |_| cancel
+                    .store(true, Ordering::Release))
+                    .is_err()
+            );
+            cancel.store(false, Ordering::Release);
+            let fresh = op.execute(&weights, &[1, 0], &values, &cancel).unwrap();
+            same_bits(first.full(), fresh.full());
+        }
+        assert!(
+            ExpertOperator::new(WorkerPlan::portable(2).unwrap(), Backend::Avx2)
+                .unwrap()
+                .with_q8_activations()
+                .is_err()
+        );
+        assert!(
+            ExpertOperator::new_pooled(WorkerPlan::portable(2).unwrap(), Backend::Portable)
+                .unwrap()
+                .with_q8_activations()
+                .is_err()
+        );
+        let witness = std::sync::Arc::new(retained_metadata::Witness::default());
+        {
+            let mut owner = retained_metadata::Owner::new(MAX_SELECTED + 1)
+                .unwrap()
+                .observe(witness.clone());
+            owner.push(quantized::Input::empty()).unwrap();
+            owner
+                .get_mut(0)
+                .unwrap()
+                .fill(&[1.; 256], &AtomicBool::new(false))
+                .unwrap();
+        }
+        assert_metadata_wiped(&witness, (MAX_SELECTED + 1) * size_of::<quantized::Input>());
     }
 
     #[test]

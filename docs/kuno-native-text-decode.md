@@ -59,6 +59,34 @@ previously accepted token IDs,127 actual decode steps, original inventory and
 the same fresh/cancel/poison/erasure gates. Longer timing is needed to separate
 count1 shader startup from sustained decode. The default remains short chat.
 
+`KUNO_LAB_CPU_Q8=1` explicitly selects a second CPU arithmetic mode, restricted
+to pooled AVX2 workers and the original Q4_K/Q5_0/Q8_0 expert triple. Each32-value
+activation block is requantized once with a finite amax/127 scale, ties-to-even
+rounding and clipping to[-127,127]. Zero and underflowed blocks become zero.
+Packed original weights remain unchanged. AVX2 integer dot products include
+Q4 minimum corrections and Q5 centering; Q8 uses unsigned absolute weights with
+signed activations, avoiding maddubs saturation even at weight=-128. This
+changes activation precision and reduction order, and is NOT original64
+numerical equivalence. Original F32 arithmetic remains the default. Unsupported
+layouts/ISA/worker policy reject; inference failure never selects this mode.
+All quantized inputs (up to11 fixed owners) are charged before private fill and
+their complete capacity is erased after joined consumers on every exit. The
+1-MiB private CPU cap remains unchanged. Tests compare integer dots with an
+independent decoded-weight/dequantized-activation oracle, extreme signed codes,
+non-finite scales, cancellation, panic/retry and complete-owner erasure. Greedy
+fixture IDs, fresh continuation and cleanup still must pass device validation;
+full-vocabulary numerical/quality acceptance is separately outstanding.
+
+`KUNO_LAB_LARGE_WEIGHT_CACHE=1` and runner `--large-weight-cache` explicitly
+allow a48-GiB whole-process cgroup for immutable mapped model pages. They require
+the fixed mapped count1 fixture. The wrapper independently verifies the actual
+51539607552-byte hard limit, swap0 and core0 before native execution; a receipt
+cannot grant an unbounded allowance. The ordinary8-GiB protected limit remains
+unchanged for all other modes. Private CPU/GPU/IO ledgers are NOT enlarged.
+This addresses observed model-page reclaim under the8-GiB process allowance,
+not private request caching. It is a local64-GiB-host benchmark option, not
+production hardware sizing or an automatic memory policy.
+
 Source-only proposal, 2026-10-05. Prepared by the resident-MoE child after the native MAX8 adapter handoff. No code, GPU, service, model-payload read, benchmark or default change accompanies this proposal. Parent owns whole-model batching correctness, admission, device acceptance and integration. This is a later decode experiment; MAX8 prompt batching alone cannot establish faster hot decode.
 
 ## Evidence and first decision

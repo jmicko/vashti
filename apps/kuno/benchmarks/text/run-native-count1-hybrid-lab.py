@@ -34,9 +34,9 @@ def completion(cap):
     )
 
 
-def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False):
+def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False):
     validate_cap(cap)
-    for field, selected in (("mapped_weights", mapped), ("observed_mapped_weights", mapped), ("kernel_profile", profile), ("fast_gpu", fast), ("long_fixture", long)):
+    for field, selected in (("mapped_weights", mapped), ("observed_mapped_weights", mapped), ("kernel_profile", profile), ("fast_gpu", fast), ("long_fixture", long), ("cpu_q8_activations", cpu_q8), ("observed_cpu_q8_activations", cpu_q8), ("large_weight_cache", large_cache)):
         if type(selected) is not bool or (selected or field in receipt) and receipt.get(field) is not selected:
             raise ValueError("Explicit optimization selection and completed receipt must match")
     calls = receipt.get("observed_fast_dense_calls", 0)
@@ -44,10 +44,15 @@ def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False
         raise ValueError("Actual count1 fast dense dispatch evidence must match explicit selection")
     if workers not in ("scoped", "pooled"):
         raise ValueError("Unknown CPU worker mode")
+    if cpu_q8 and workers != "pooled":
+        raise ValueError("Q8 CPU activation arithmetic requires pooled workers")
     for field in ("count1_hybrid_cpu_workers", "observed_count1_hybrid_cpu_workers"):
         if receipt.get(field) != workers:
             raise ValueError("Requested and completed CPU workers must match explicit selection")
-    if GUARD not in output.splitlines():
+    if large_cache and not mapped:
+        raise ValueError("Larger public cache requires mapped weights")
+    guard = GUARD.replace("8589934592", "51539607552") if large_cache else GUARD
+    if guard not in output.splitlines():
         raise ValueError("Protected execution limits missing")
     for field in ("count1_hybrid_cpu_miss_cap", "observed_count1_hybrid_cpu_miss_cap"):
         if type(receipt.get(field)) is not int or receipt[field] != cap:
@@ -86,13 +91,17 @@ def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False
         raise ValueError("Hybrid continuation and both cancellation proofs required")
 
 
-def worker_environment(model, receipt, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False):
+def worker_environment(model, receipt, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False):
     if workers not in ("scoped", "pooled"):
         raise ValueError("Unknown CPU worker mode")
     if type(overlap) is not bool or (overlap and workers != "pooled"):
         raise ValueError("Overlap requires explicit pooled workers")
-    if any(type(value) is not bool for value in (mapped,profile,fast,long)):
+    if any(type(value) is not bool for value in (mapped,profile,fast,long,cpu_q8,large_cache)):
         raise ValueError("Explicit boolean optimization selections required")
+    if cpu_q8 and workers != "pooled":
+        raise ValueError("Q8 CPU activation arithmetic requires pooled workers")
+    if large_cache and not mapped:
+        raise ValueError("Larger public cache requires mapped weights")
     env = BASE.worker_environment(model, receipt, 8, True, 1, "single-q4-all")
     env["KUNO_LAB_CPU_WORKERS"] = workers
     env["KUNO_LAB_CPU_GPU_OVERLAP"] = "1" if overlap else "0"
@@ -100,6 +109,8 @@ def worker_environment(model, receipt, workers="scoped", overlap=False, mapped=F
     env["KUNO_LAB_KERNEL_PROFILE"] = "1" if profile else "0"
     env["KUNO_LAB_FAST_GPU"] = "1" if fast else "0"
     env["KUNO_LAB_LONG_FIXTURE"] = "1" if long else "0"
+    env["KUNO_LAB_CPU_Q8"] = "1" if cpu_q8 else "0"
+    env["KUNO_LAB_LARGE_WEIGHT_CACHE"] = "1" if large_cache else "0"
     return env
 
 
@@ -115,11 +126,17 @@ def main():
     parser.add_argument("--kernel-profile", action="store_true")
     parser.add_argument("--fast-gpu", action="store_true")
     parser.add_argument("--long-fixture", action="store_true")
+    parser.add_argument("--cpu-q8", action="store_true")
+    parser.add_argument("--large-weight-cache", action="store_true")
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--receipt", type=pathlib.Path, required=True)
     args = parser.parse_args()
     if args.cpu_gpu_overlap and args.cpu_workers != "pooled":
         parser.error("CPU/GPU overlap requires --cpu-workers pooled")
+    if args.cpu_q8 and args.cpu_workers != "pooled":
+        parser.error("Q8 CPU activation arithmetic requires --cpu-workers pooled")
+    if args.large_weight_cache and not args.mapped_weights:
+        parser.error("Larger public cache requires --mapped-weights")
     if not re.fullmatch(r"[a-z0-9-]{1,48}", args.run_id):
         parser.error("run-id must be 1..48 lowercase letters, digits or hyphens")
     target = args.receipt.resolve()
@@ -130,13 +147,13 @@ def main():
     command = [
         "systemd-run", "--user", "--unit=kuno-user-" + args.run_id,
         "--collect", "--wait", "--pipe", "--property=MemorySwapMax=0",
-        "--property=LimitCORE=0", "--property=MemoryMax=8G",
+        "--property=LimitCORE=0", "--property=MemoryMax=" + ("48G" if args.large_weight_cache else "8G"),
         "--property=RuntimeMaxSec=900",
         "--property=UnsetEnvironment=KUNO_LAB_BLOCK_KERNEL KUNO_LAB_EXPERT_SLOTS "
         "KUNO_LAB_STATIC_CACHE_BYTES KUNO_LAB_EXPERT_BATCH_BYTES KUNO_LAB_EXPERT_SCATTER",
     ]
     command.extend("--setenv=" + key + "=" + value
-                   for key, value in worker_environment(args.model.resolve(), target, args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture).items())
+                   for key, value in worker_environment(args.model.resolve(), target, args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache).items())
     command.extend([sys.executable, str(HERE / "protected-lab-exec.py"), str(frozen),
                     args.card, MODE, str(args.cpu_miss_cap)])
     print("verified_cargo_executable_sha256=" + identity, flush=True)
@@ -151,7 +168,7 @@ def main():
         raise SystemExit("Missing whole-model hybrid receipt")
     snapshot = target.read_bytes()
     receipt = json.loads(snapshot)
-    validate_receipt(receipt, args.card, args.cpu_miss_cap, "".join(lines), args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture)
+    validate_receipt(receipt, args.card, args.cpu_miss_cap, "".join(lines), args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache)
     record = {
         "scope": "fixed-public-count1-hybrid-output-and-lifecycle-only",
         "cargo_artifacts_sha256": artifacts_identity, "frozen_executable_sha256": identity,
@@ -161,6 +178,8 @@ def main():
         "mapped_weights": args.mapped_weights, "kernel_profile": args.kernel_profile,
         "fast_gpu": args.fast_gpu,
         "long_fixture": args.long_fixture,
+        "cpu_q8_activations": args.cpu_q8,
+        "large_weight_cache": args.large_weight_cache,
     }
     with metadata.open("x") as output:
         json.dump(record, output, indent=2, sort_keys=True)

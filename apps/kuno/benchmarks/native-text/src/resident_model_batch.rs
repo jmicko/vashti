@@ -149,19 +149,32 @@ impl Config {
         self.reserve_count1_hybrid_execution(pooled, false)
     }
     pub(crate) fn reserve_count1_hybrid_execution(
-        mut self,
+        self,
         pooled: bool,
         overlap: bool,
     ) -> Result<Self> {
+        self.reserve_count1_hybrid_arithmetic(pooled, overlap, false)
+    }
+    pub(crate) fn reserve_count1_hybrid_arithmetic(
+        mut self,
+        pooled: bool,
+        overlap: bool,
+        q8: bool,
+    ) -> Result<Self> {
         use kuno_text::cpu_expert::{Backend, ExpertOperator, WorkerPlan};
-        if self.cpu_operator.is_some() || self.tile != 8 || (overlap && !pooled) {
+        if self.cpu_operator.is_some() || self.tile != 8 || ((overlap || q8) && !pooled) {
             return Err(error());
         }
         let plan = WorkerPlan::physical(16)?;
-        self.cpu_operator = Some(Arc::new(if pooled {
+        let operator = if pooled {
             ExpertOperator::new_pooled(plan, Backend::Avx2)?
         } else {
             ExpertOperator::new(plan, Backend::Avx2)?
+        };
+        self.cpu_operator = Some(Arc::new(if q8 {
+            operator.with_q8_activations()?
+        } else {
+            operator
         }));
         self.cpu_gpu_overlap = overlap;
         Ok(self)
@@ -641,6 +654,19 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             .ok_or(error())?
             .moe
             .cpu_workers_pooled())
+    }
+
+    pub(crate) fn native_cpu_q8_activations(
+        &self,
+        executor: &GpuExecutor<'f>,
+    ) -> Result<Option<bool>> {
+        self.completed_native_projection_boundary(executor)?;
+        Ok(self
+            .native_batch
+            .as_ref()
+            .ok_or(error())?
+            .moe
+            .cpu_q8_activations())
     }
 
     pub(crate) fn native_cpu_gpu_overlap(
