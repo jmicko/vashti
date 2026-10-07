@@ -288,7 +288,7 @@ pub(crate) fn read_count1_router_input(
             rv.first,
         );
         let retired = admission.retired_context();
-        admission.readback_audited(cancel, || {
+        admission.readback_count1_bridge(cancel, || {
             let mut out = Count1RouterInput::zero()?;
             let mut out = completed_map(
                 || read(arena, packet_handle, &retired),

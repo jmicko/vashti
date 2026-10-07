@@ -668,6 +668,19 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             .moe
             .cpu_q8_activations())
     }
+    pub(crate) fn native_deferred_router_reads(
+        &self,
+        executor: &GpuExecutor<'f>,
+    ) -> Result<(bool, u64)> {
+        self.completed_native_projection_boundary(executor)?;
+        if self.native_cpu_miss_cap()?.is_none() {
+            return Err(error());
+        }
+        Ok((
+            self.admission.deferred_token_io(),
+            self.admission.deferred_router_reads(),
+        ))
+    }
 
     pub(crate) fn native_cpu_gpu_overlap(
         &self,

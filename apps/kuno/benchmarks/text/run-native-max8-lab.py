@@ -140,10 +140,14 @@ def validate_decode_tile(receipt, native_decode, native_decode_tile, allow_legac
 
 def _validate_model_receipt(receipt, card, fixture, count, output, *, owner_inventory,
                             reported_fixture, native_decode=False, native_decode_tile=8,
-                            native_decode_kernels="chunk", allow_legacy_decode=False):
+                            native_decode_kernels="chunk", allow_legacy_decode=False, audit_count=4, deferred_io=False):
     # Only the ordinary public entry below and the separately fixed hybrid
     # validator supply these constants. A receipt cannot select its inventory.
     owner_buffers, owner_bytes = owner_inventory
+    if type(audit_count) is not int or audit_count not in (4,5):
+        raise ValueError("Only fixed ordinary or deferred hybrid audit inventories are accepted")
+    if type(deferred_io) is not bool or audit_count!=(5 if deferred_io else 4):
+        raise ValueError("Audit inventory must match the independently selected IO cadence")
     expected = {
         "resident-bang": [49276, 2349, 1074, 5928],
         "resident-chat": [9419, 0, 2500, 628, 353, 1438, 488, 3242],
@@ -187,6 +191,7 @@ def _validate_model_receipt(receipt, card, fixture, count, output, *, owner_inve
                     "fused_matrix_fault", "small_cpu_enabled", "gpu_gdn_cpu_state_owner",
                     "prefill_last_head", "io_token_checkpoint"):
         expected_settings[setting] = False
+    expected_settings["io_token_checkpoint"]=deferred_io
     if any(key not in receipt or type(receipt[key]) is not type(value)
            or receipt[key] != value for key, value in expected_settings.items()):
         raise ValueError("Effective native/device/default configuration did not match")
@@ -208,7 +213,7 @@ def _validate_model_receipt(receipt, card, fixture, count, output, *, owner_inve
     validate_kernel_profile(receipt, native_decode, native_decode_tile, native_decode_kernels,
                             allow_legacy_decode)
     audits = receipt.get("owned_zero_audits", [])
-    if len(audits) != 4 or any(not isinstance(item, dict) or
+    if len(audits) != audit_count or any(not isinstance(item, dict) or
         item.get("main_buffers") != owner_buffers or item.get("main_bytes") != owner_bytes or
         any(type(item.get(key)) is not int for key in ("source_buffers", "source_bytes")) or
         item["source_buffers"] < 0 or item["source_bytes"] < 0 or

@@ -15,7 +15,7 @@ use kuno_text::{Error, GgufFile, Result, TensorView};
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use zeroize::Zeroize;
@@ -203,6 +203,15 @@ fn checked_audited_boundary(
 fn checkpoint_needed(intermediate: bool, token_checkpoint: bool, ordered_router: bool) -> bool {
     ordered_router || !intermediate || !token_checkpoint
 }
+fn deferred_bridge_allowed(
+    transient: bool,
+    token: bool,
+    ordered: bool,
+    retired: bool,
+    cancelled: bool,
+) -> bool {
+    transient && token && !ordered && !retired && !cancelled
+}
 type OrderedSources = Rc<RefCell<crate::ordered_public::PendingSources<Handle>>>;
 fn release_ordered_sources(
     client: &ComputeClient<WgpuRuntime>,
@@ -327,6 +336,7 @@ pub(crate) struct ResidentAdmission {
     ordered_sources: Option<OrderedSources>,
     retired: Arc<AtomicBool>,
     sequence_poison: Arc<AtomicBool>,
+    deferred_router_reads: Arc<AtomicU64>,
 }
 /// Borrowed only inside the existing guarded model allocation callback. This
 /// proves that its MAIN lock is already held; constructor checks must not
@@ -483,6 +493,50 @@ impl ResidentAdmission {
                 )
             })
         })
+    }
+    /// Explicit token-owned intermediate bridge. All raw runtime buffers stay
+    /// charged/tracked until mandatory final logit/fault audit or owning close.
+    /// No map/source release, audit success or private erasure is claimed here.
+    pub(crate) fn readback_count1_bridge<T>(
+        &self,
+        cancel: &AtomicBool,
+        f: impl FnOnce() -> Result<T>,
+    ) -> Result<T> {
+        if !self.token_io_checkpoint {
+            return self.readback_audited(cancel, f);
+        }
+        if !deferred_bridge_allowed(
+            self.transient_io,
+            self.token_io_checkpoint,
+            self.ordered_sources.is_some(),
+            self.retired.load(Ordering::Acquire),
+            cancel.load(Ordering::Acquire),
+        ) {
+            self.poison();
+            return Err(Error::InvalidFormat("deferred count1 bridge inactive"));
+        }
+        self.readback_intermediate(|| {
+            let out = f()?;
+            if !deferred_bridge_allowed(
+                self.transient_io,
+                self.token_io_checkpoint,
+                self.ordered_sources.is_some(),
+                self.retired.load(Ordering::Acquire),
+                cancel.load(Ordering::Acquire),
+            ) {
+                return Err(Error::InvalidFormat("deferred count1 bridge invalidated"));
+            }
+            self.deferred_router_reads
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+                .map_err(|_| Error::ArithmeticOverflow)?;
+            Ok(out)
+        })
+    }
+    pub(crate) fn deferred_router_reads(&self) -> u64 {
+        self.deferred_router_reads.load(Ordering::Relaxed)
+    }
+    pub(crate) fn deferred_token_io(&self) -> bool {
+        self.token_io_checkpoint
     }
     /// Completed intermediate maps still drop their guarded Bytes immediately.
     /// Deferred I/O remains tracked and charged in the separate hard runtime
@@ -943,6 +997,7 @@ impl<'a> GpuExecutor<'a> {
         )
         .map_err(admission_error)?;
         let admission = ResidentAdmission {
+            deferred_router_reads: Arc::new(AtomicU64::new(0)),
             sequence_poison: Arc::new(AtomicBool::new(false)),
             client: self.client.clone(),
             transient_io: self.transient_resident.is_some(),
@@ -2039,6 +2094,32 @@ mod admission_tests {
     }
 
     use super::*;
+    #[test]
+    fn only_owned_live_unordered_token_epochs_can_defer_count1_bridges() {
+        for transient in [false, true] {
+            for token in [false, true] {
+                for ordered in [false, true] {
+                    for retired in [false, true] {
+                        for cancelled in [false, true] {
+                            assert_eq!(
+                                deferred_bridge_allowed(
+                                    transient, token, ordered, retired, cancelled
+                                ),
+                                [transient, token, ordered, retired, cancelled]
+                                    == [true, true, false, false, false]
+                            );
+                            if deferred_bridge_allowed(
+                                transient, token, ordered, retired, cancelled,
+                            ) {
+                                assert!(!checkpoint_needed(true, token, ordered));
+                                assert!(checkpoint_needed(false, token, ordered));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     use std::cell::{Cell, RefCell};
     const PAGE: u64 = main_admission::MIN_PAGE_BYTES;
     fn failure<T>() -> Result<T> {

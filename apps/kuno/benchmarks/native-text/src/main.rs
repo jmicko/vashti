@@ -676,6 +676,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let large_weight_cache = count1_environment_opt_in(&mode, "KUNO_LAB_LARGE_WEIGHT_CACHE")?;
     let compact_info = count1_environment_opt_in(&mode, "KUNO_LAB_COMPACT_INFO")?;
     let batch_tasks = count1_environment_opt_in(&mode, "KUNO_LAB_BATCH_TASKS")?;
+    let defer_router_io = count1_environment_opt_in(&mode, "KUNO_LAB_DEFER_ROUTER_IO")?;
+    if defer_router_io && (!compact_info || count1_hybrid_cap != Some(10)) {
+        return Err("Deferred router IO requires compact protected cap10 hybrid mode".into());
+    }
     if mode == "resident-count1-hybrid-chat" {
         let raw = std::env::var_os("KUNO_LAB_INFO_SLAB_BYTES");
         let expected = if compact_info { "4096" } else { "0" };
@@ -1813,6 +1817,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             executor.fast_dense = fast_gpu;
             executor.fast_dense_fault = fast_gpu_fault;
+            executor.token_io_checkpoint = token_checkpoint || defer_router_io;
             let cancel = AtomicBool::new(false);
             let mut resident = if resident_enabled {
                 Some(resident_model::ResidentModel::new_for_lab_fixture(
@@ -2038,6 +2043,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 receipt["compact_info"] = serde_json::json!(compact_info);
                 receipt["info_slab_bytes"] = serde_json::json!(if compact_info { 4096 } else { 0 });
                 receipt["batch_tasks"] = serde_json::json!(batch_tasks);
+                receipt["defer_router_io"] = serde_json::json!(defer_router_io);
                 receipt["runtime_tasks_max"] =
                     serde_json::json!(if batch_tasks { 256 } else { 32 });
                 if long_fixture {
@@ -2048,6 +2054,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     serde_json::json!(executor.admission_upper_bytes()?);
                 receipt["prefill_last_head"] = serde_json::json!(prefill_last_head);
                 if let Some(cap) = count1_hybrid_cap {
+                    let (observed, reads) = resident
+                        .as_ref()
+                        .ok_or("count1 hybrid owner absent")?
+                        .native_deferred_router_reads(&executor)?;
+                    receipt["observed_defer_router_io"] = serde_json::json!(observed);
+                    receipt["observed_deferred_router_reads"] = serde_json::json!(reads);
                     receipt["observed_cpu_q8_activations"] = serde_json::json!(
                         resident
                             .as_ref()
@@ -2113,7 +2125,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 receipt["resident_transient_io"] = serde_json::json!(transient_resident);
                 receipt["resident_owned_zero_audit_enabled"] =
                     serde_json::json!(public_owned_zero_audit);
-                receipt["io_token_checkpoint"] = serde_json::json!(token_checkpoint);
+                receipt["io_token_checkpoint"] =
+                    serde_json::json!(token_checkpoint || defer_router_io);
                 receipt["resident_runtime_io_limit_bytes"] = serde_json::json!(
                     transient_resident.then_some(executor::RESIDENT_RUNTIME_IO_MAX)
                 );
@@ -2185,6 +2198,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 executor.fast_dense = fast_gpu;
                 executor.fast_dense_fault = fast_gpu_fault;
+                executor.token_io_checkpoint = token_checkpoint || defer_router_io;
                 let mut fresh = resident_model::ResidentModel::new_for_lab_fixture(
                     model.bound_graph(),
                     client.clone(),
@@ -2272,7 +2286,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
                 drop(fresh);
-                for layer in [0, 3] {
+                for &layer in if defer_router_io {
+                    &[0, 3, 47][..]
+                } else {
+                    &[0, 3][..]
+                } {
                     executor = executor::GpuExecutor::new(
                         &file,
                         client.clone(),
@@ -2285,6 +2303,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     executor.fast_dense = fast_gpu;
                     executor.fast_dense_fault = fast_gpu_fault;
+                    executor.token_io_checkpoint = token_checkpoint || defer_router_io;
                     let mut partial = resident_model::ResidentModel::new_for_lab_fixture(
                         model.bound_graph(),
                         client.clone(),

@@ -118,6 +118,33 @@ before whole-model work; the receipt requires actual fused dispatch counts
 equal to the actual fast projection counts. This is a kernel fusion experiment,
 not permission to skip numerical faults or change output owner extents.
 
+### Explicit token-owned IO experiment
+
+The user-authorized overhead pass may select `KUNO_LAB_DEFER_ROUTER_IO=1`
+(`--defer-router-io`) only for the protected cap10 count1 hybrid fixture with
+compact INFO slabs and owned transient IO. This is an explicit amendment to
+Stage3's immediate bridge audit, NOT a change to the default or public API.
+The intermediate map must complete, its host guard/lease must wipe/drop, and
+context/cancellation/sequence checks must pass before CPU consumers. Its raw
+GPU IO buffers remain owned and fully charged in the existing128-MiB runtime
+ledger; neither a map nor MAIN fence credit releases/reuses those buffers.
+Ordered public uploads cannot participate. Intermediate QSA reads use the same
+existing token cadence. Final logit and both finality proofs still perform the
+mandatory full audit before token publication/state commit. Cancellation,
+failure and abandonment retain everything for the same complete owning close;
+there is no empty-epoch audit skip, hard-limit expansion, cross-request private
+cache, swap, disk persistence or new arbitrary input.
+
+The completed receipt must record the actual token cadence and exactly
+48 deferred router bridges per completed decode step. Validation additionally
+requires cancellation at layer47 and FIVE complete MAIN/source zero audits,
+so a early-only cancellation test cannot certify the largest deferred epoch.
+Bound exhaustion must reject/poison/erase without fallback. A larger epoch may
+cost more to audit at the final boundary; only actual protected measurements
+can establish a benefit. GPU routing and whole-layer CPU/GPU placement remain
+separate unimplemented strategies; deferred IO cannot remove mixed-expert host
+dependencies by itself.
+
 Source-only proposal, 2026-10-05. Prepared by the resident-MoE child after the native MAX8 adapter handoff. No code, GPU, service, model-payload read, benchmark or default change accompanies this proposal. Parent owns whole-model batching correctness, admission, device acceptance and integration. This is a later decode experiment; MAX8 prompt batching alone cannot establish faster hot decode.
 
 ## Evidence and first decision

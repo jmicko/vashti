@@ -44,6 +44,25 @@ def completion(cap):
 
 
 class HybridLabTests(unittest.TestCase):
+    def test_deferred_epochs_require_actual_bridges_late_cancel_and_five_owning_audits(self):
+        value=receipt("intel",10)
+        value.update(compact_info=True,info_slab_bytes=4096,defer_router_io=True,observed_defer_router_io=True,observed_deferred_router_reads=336,io_token_checkpoint=True)
+        value["owned_zero_audits"].append(copy.deepcopy(value["owned_zero_audits"][-1]))
+        output=completion(10)+"\npublic_count1_hybrid_mid_token_cancel cap=10 layer=47 erased=true"
+        LAB.validate_receipt(value,"intel",10,output,compact_info=True,deferred=True)
+        for field,bads in (("defer_router_io",(False,1,None)),("observed_defer_router_io",(False,1,None)),("observed_deferred_router_reads",(335,337,True,None)),("io_token_checkpoint",(False,1,None))):
+            for bad in bads:
+                wrong=copy.deepcopy(value);wrong[field]=bad
+                with self.assertRaises(ValueError):LAB.validate_receipt(wrong,"intel",10,output,compact_info=True,deferred=True)
+        wrong=copy.deepcopy(value);wrong["owned_zero_audits"].pop()
+        with self.assertRaises(ValueError):LAB.validate_receipt(wrong,"intel",10,output,compact_info=True,deferred=True)
+        with self.assertRaises(ValueError):LAB.validate_receipt(value,"intel",10,completion(10),compact_info=True,deferred=True)
+        with self.assertRaises(ValueError):LAB.validate_receipt(value,"intel",0,output,compact_info=True,deferred=True)
+        with self.assertRaises(ValueError):LAB.worker_environment("/original/model","/public/receipt",deferred=True)
+        env=LAB.worker_environment("/original/model","/public/receipt",compact_info=True,deferred=True)
+        self.assertEqual(env["KUNO_LAB_DEFER_ROUTER_IO"],"1")
+        self.assertEqual(env["KUNO_LAB_IO_TOKEN_CHECKPOINT"],"0") # Original flag cannot silently select protected policy.
+
     def test_fused_finite_requires_every_dispatch_and_all_format_fault_probes(self):
         value=receipt("intel",10)
         value.update(fast_gpu=True,observed_fast_dense_calls=5264,fast_gpu_fault=True,observed_fast_dense_fault_calls=5264)

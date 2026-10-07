@@ -25,20 +25,27 @@ def validate_cap(cap):
         raise ValueError("CPU miss cap must be independently selected as integer 0 or 10")
 
 
-def completion(cap):
+def completion(cap, deferred=False):
     validate_cap(cap)
     return (
         f"public_count1_hybrid_fresh_continuation cap={cap} matches=true",
         f"public_count1_hybrid_mid_token_cancel cap={cap} layer=0 erased=true",
         f"public_count1_hybrid_mid_token_cancel cap={cap} layer=3 erased=true",
-    )
+    ) + ((f"public_count1_hybrid_mid_token_cancel cap={cap} layer=47 erased=true",) if deferred else ())
 
 
-def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False):
+def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False):
     validate_cap(cap)
-    for field, selected in (("mapped_weights", mapped), ("observed_mapped_weights", mapped), ("kernel_profile", profile), ("fast_gpu", fast), ("long_fixture", long), ("cpu_q8_activations", cpu_q8), ("observed_cpu_q8_activations", cpu_q8), ("large_weight_cache", large_cache), ("compact_info", compact_info), ("batch_tasks", batch_tasks), ("fast_gpu_fault", fast_fault)):
+    for field, selected in (("mapped_weights", mapped), ("observed_mapped_weights", mapped), ("kernel_profile", profile), ("fast_gpu", fast), ("long_fixture", long), ("cpu_q8_activations", cpu_q8), ("observed_cpu_q8_activations", cpu_q8), ("large_weight_cache", large_cache), ("compact_info", compact_info), ("batch_tasks", batch_tasks), ("fast_gpu_fault", fast_fault), ("defer_router_io",deferred), ("observed_defer_router_io",deferred)):
         if type(selected) is not bool or (selected or field in receipt) and receipt.get(field) is not selected:
             raise ValueError("Explicit optimization selection and completed receipt must match")
+    if deferred and (not compact_info or cap!=10):
+        raise ValueError("Deferred router IO requires compact protected cap10 hybrid mode")
+    reads=receipt.get("observed_deferred_router_reads",0)
+    if type(reads) is not int or reads!=((127 if long else 7)*48 if deferred else 0):
+        raise ValueError("Actual deferred router bridges must cover every completed native layer")
+    if deferred and receipt.get("io_token_checkpoint") is not True:
+        raise ValueError("Completed token IO cadence missing")
     for field, expected, selected in (("info_slab_bytes",4096 if compact_info else 0,compact_info),("runtime_tasks_max",256 if batch_tasks else 32,batch_tasks)):
         if (selected or field in receipt) and (type(receipt.get(field)) is not int or receipt[field]!=expected):
             raise ValueError("Completed bounded runtime configuration must match explicit selection")
@@ -84,7 +91,7 @@ def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False
     ):
         raise ValueError("Hybrid fixture and inventory must use integer counts")
     audits = receipt.get("owned_zero_audits")
-    if not isinstance(audits, list) or len(audits) != 4 or any(
+    if not isinstance(audits, list) or len(audits) != (5 if deferred else 4) or any(
         not isinstance(audit, dict) or any(type(audit.get(field)) is not int
             for field in ("main_buffers", "main_bytes", "source_buffers", "source_bytes"))
         for audit in audits
@@ -94,17 +101,19 @@ def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False
         receipt, card, "resident-rainwater" if long else "resident-chat", 8, output,
         owner_inventory=(1378, 818413568), reported_fixture="resident-count1-hybrid-rainwater" if long else MODE,
         native_decode=True, native_decode_tile=1, native_decode_kernels="single-q4-all",
+        audit_count=5 if deferred else 4,
+        deferred_io=deferred,
     )
-    if any(marker not in output.splitlines() for marker in completion(cap)):
+    if any(marker not in output.splitlines() for marker in completion(cap,deferred)):
         raise ValueError("Hybrid continuation and both cancellation proofs required")
 
 
-def worker_environment(model, receipt, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False):
+def worker_environment(model, receipt, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False):
     if workers not in ("scoped", "pooled"):
         raise ValueError("Unknown CPU worker mode")
     if type(overlap) is not bool or (overlap and workers != "pooled"):
         raise ValueError("Overlap requires explicit pooled workers")
-    if any(type(value) is not bool for value in (mapped,profile,fast,long,cpu_q8,large_cache,compact_info,batch_tasks,fast_fault)):
+    if any(type(value) is not bool for value in (mapped,profile,fast,long,cpu_q8,large_cache,compact_info,batch_tasks,fast_fault,deferred)):
         raise ValueError("Explicit boolean optimization selections required")
     if cpu_q8 and workers != "pooled":
         raise ValueError("Q8 CPU activation arithmetic requires pooled workers")
@@ -112,6 +121,8 @@ def worker_environment(model, receipt, workers="scoped", overlap=False, mapped=F
         raise ValueError("Larger public cache requires mapped weights")
     if fast_fault and not fast:
         raise ValueError("Fused finite checks require fast GPU projections")
+    if deferred and not compact_info:
+        raise ValueError("Deferred router IO requires compact INFO")
     env = BASE.worker_environment(model, receipt, 8, True, 1, "single-q4-all")
     env["KUNO_LAB_CPU_WORKERS"] = workers
     env["KUNO_LAB_CPU_GPU_OVERLAP"] = "1" if overlap else "0"
@@ -125,6 +136,7 @@ def worker_environment(model, receipt, workers="scoped", overlap=False, mapped=F
     env["KUNO_LAB_INFO_SLAB_BYTES"] = "4096" if compact_info else "0"
     env["KUNO_LAB_BATCH_TASKS"] = "1" if batch_tasks else "0"
     env["KUNO_LAB_FAST_GPU_FAULT"] = "1" if fast_fault else "0"
+    env["KUNO_LAB_DEFER_ROUTER_IO"] = "1" if deferred else "0"
     return env
 
 
@@ -145,6 +157,7 @@ def main():
     parser.add_argument("--compact-info", action="store_true")
     parser.add_argument("--batch-tasks", action="store_true")
     parser.add_argument("--fast-gpu-fault", action="store_true")
+    parser.add_argument("--defer-router-io", action="store_true")
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--receipt", type=pathlib.Path, required=True)
     args = parser.parse_args()
@@ -156,6 +169,8 @@ def main():
         parser.error("Larger public cache requires --mapped-weights")
     if args.fast_gpu_fault and not args.fast_gpu:
         parser.error("Fused finite checks require --fast-gpu")
+    if args.defer_router_io and (not args.compact_info or args.cpu_miss_cap!=10):
+        parser.error("Deferred router IO requires --compact-info and --cpu-miss-cap 10")
     if not re.fullmatch(r"[a-z0-9-]{1,48}", args.run_id):
         parser.error("run-id must be 1..48 lowercase letters, digits or hyphens")
     target = args.receipt.resolve()
@@ -172,7 +187,7 @@ def main():
         "KUNO_LAB_STATIC_CACHE_BYTES KUNO_LAB_EXPERT_BATCH_BYTES KUNO_LAB_EXPERT_SCATTER",
     ]
     command.extend("--setenv=" + key + "=" + value
-                   for key, value in worker_environment(args.model.resolve(), target, args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault).items())
+                   for key, value in worker_environment(args.model.resolve(), target, args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault,args.defer_router_io).items())
     command.extend([sys.executable, str(HERE / "protected-lab-exec.py"), str(frozen),
                     args.card, MODE, str(args.cpu_miss_cap)])
     print("verified_cargo_executable_sha256=" + identity, flush=True)
@@ -187,7 +202,7 @@ def main():
         raise SystemExit("Missing whole-model hybrid receipt")
     snapshot = target.read_bytes()
     receipt = json.loads(snapshot)
-    validate_receipt(receipt, args.card, args.cpu_miss_cap, "".join(lines), args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault)
+    validate_receipt(receipt, args.card, args.cpu_miss_cap, "".join(lines), args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault,args.defer_router_io)
     record = {
         "scope": "fixed-public-count1-hybrid-output-and-lifecycle-only",
         "cargo_artifacts_sha256": artifacts_identity, "frozen_executable_sha256": identity,
@@ -202,6 +217,7 @@ def main():
         "compact_info": args.compact_info,
         "batch_tasks": args.batch_tasks,
         "fast_gpu_fault": args.fast_gpu_fault,
+        "defer_router_io":args.defer_router_io,
     }
     with metadata.open("x") as output:
         json.dump(record, output, indent=2, sort_keys=True)
