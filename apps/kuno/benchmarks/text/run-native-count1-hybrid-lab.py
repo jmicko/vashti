@@ -34,7 +34,7 @@ def completion(cap):
     )
 
 
-def validate_receipt(receipt, card, cap, output, workers="scoped"):
+def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False):
     validate_cap(cap)
     if workers not in ("scoped", "pooled"):
         raise ValueError("Unknown CPU worker mode")
@@ -46,8 +46,11 @@ def validate_receipt(receipt, card, cap, output, workers="scoped"):
     for field in ("count1_hybrid_cpu_miss_cap", "observed_count1_hybrid_cpu_miss_cap"):
         if type(receipt.get(field)) is not int or receipt[field] != cap:
             raise ValueError("Requested and completed hybrid cap mismatch")
-    if receipt.get("count1_hybrid_cpu_gpu_overlap") is not False:
-        raise ValueError("This CPU-first model seam cannot claim overlap")
+    if type(overlap) is not bool or (overlap and workers != "pooled"):
+        raise ValueError("Overlap requires explicit pooled workers")
+    for field in ("count1_hybrid_cpu_gpu_overlap", "observed_count1_hybrid_cpu_gpu_overlap"):
+        if receipt.get(field) is not overlap:
+            raise ValueError("Requested and completed overlap policy mismatch")
     for field, limit in (("completed_cpu_misses", 7 * 48 * 10),
                          ("fresh_completed_cpu_misses", 48 * 10)):
         value = receipt.get(field)
@@ -77,11 +80,14 @@ def validate_receipt(receipt, card, cap, output, workers="scoped"):
         raise ValueError("Hybrid continuation and both cancellation proofs required")
 
 
-def worker_environment(model, receipt, workers="scoped"):
+def worker_environment(model, receipt, workers="scoped", overlap=False):
     if workers not in ("scoped", "pooled"):
         raise ValueError("Unknown CPU worker mode")
+    if type(overlap) is not bool or (overlap and workers != "pooled"):
+        raise ValueError("Overlap requires explicit pooled workers")
     env = BASE.worker_environment(model, receipt, 8, True, 1, "single-q4-all")
     env["KUNO_LAB_CPU_WORKERS"] = workers
+    env["KUNO_LAB_CPU_GPU_OVERLAP"] = "1" if overlap else "0"
     return env
 
 
@@ -92,9 +98,12 @@ def main():
     parser.add_argument("--card", choices=("intel", "nvidia"), required=True)
     parser.add_argument("--cpu-miss-cap", type=int, choices=(0, 10), required=True)
     parser.add_argument("--cpu-workers", choices=("scoped", "pooled"), default="scoped")
+    parser.add_argument("--cpu-gpu-overlap", action="store_true")
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--receipt", type=pathlib.Path, required=True)
     args = parser.parse_args()
+    if args.cpu_gpu_overlap and args.cpu_workers != "pooled":
+        parser.error("CPU/GPU overlap requires --cpu-workers pooled")
     if not re.fullmatch(r"[a-z0-9-]{1,48}", args.run_id):
         parser.error("run-id must be 1..48 lowercase letters, digits or hyphens")
     target = args.receipt.resolve()
@@ -111,7 +120,7 @@ def main():
         "KUNO_LAB_STATIC_CACHE_BYTES KUNO_LAB_EXPERT_BATCH_BYTES KUNO_LAB_EXPERT_SCATTER",
     ]
     command.extend("--setenv=" + key + "=" + value
-                   for key, value in worker_environment(args.model.resolve(), target, args.cpu_workers).items())
+                   for key, value in worker_environment(args.model.resolve(), target, args.cpu_workers, args.cpu_gpu_overlap).items())
     command.extend([sys.executable, str(HERE / "protected-lab-exec.py"), str(frozen),
                     args.card, MODE, str(args.cpu_miss_cap)])
     print("verified_cargo_executable_sha256=" + identity, flush=True)
@@ -126,13 +135,13 @@ def main():
         raise SystemExit("Missing whole-model hybrid receipt")
     snapshot = target.read_bytes()
     receipt = json.loads(snapshot)
-    validate_receipt(receipt, args.card, args.cpu_miss_cap, "".join(lines), args.cpu_workers)
+    validate_receipt(receipt, args.card, args.cpu_miss_cap, "".join(lines), args.cpu_workers, args.cpu_gpu_overlap)
     record = {
         "scope": "fixed-public-count1-hybrid-output-and-lifecycle-only",
         "cargo_artifacts_sha256": artifacts_identity, "frozen_executable_sha256": identity,
         "card": args.card, "fixture": MODE, "cpu_miss_cap": args.cpu_miss_cap,
         "receipt_sha256": BASE.digest(snapshot), "protected_lifecycle_completion_checked": True,
-        "matched_performance_measurement": False, "cpu_gpu_overlap": False, "cpu_workers": args.cpu_workers,
+        "matched_performance_measurement": False, "cpu_gpu_overlap": args.cpu_gpu_overlap, "cpu_workers": args.cpu_workers,
     }
     with metadata.open("x") as output:
         json.dump(record, output, indent=2, sort_keys=True)

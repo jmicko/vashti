@@ -1,5 +1,5 @@
 //! Explicit count1 model seam; ordinary native MAX8 remains unchanged.
-//! CPU execution joins before GPU source filling. No overlap/timing claim.
+//! Explicit serial/overlap scheduling; all consumers join before acceptance.
 use super::*;
 use crate::resident_model::batch_io::Count1RouterInput;
 use kuno_text::cpu_expert::PackedExperts;
@@ -57,6 +57,7 @@ impl GpuExecutor<'_> {
             .as_ref()
             .ok_or(err("native count1 reservation absent"))?;
         let cap = h.cap.ok_or(err("native count1 policy absent"))?;
+        let overlap = h.overlap;
         if ![0, 10].contains(&cap)
             || routes.count() != 1
             || s.stamp.count != 1
@@ -176,25 +177,150 @@ impl GpuExecutor<'_> {
         for &id in w.ids.iter().chain(owner_ids.iter()) {
             u::zero(arena, id)?;
         }
-        // No admission lock is held during the original scoped CPU worker join.
-        // Jobs, worker handles, private input and ACT drop before GPU source fill.
-        let partials = if split.cpu().is_empty() {
-            None
+        // GPU application encoding can coexist with the CPU owner. Precharge
+        // both actual owning header pages plus conservative parent frame bytes;
+        // the core additionally subtracts its 32-KiB orchestrator allowance.
+        let concurrent_gpu_host =
+            [ids[MAP], ids[PROB]]
+                .into_iter()
+                .try_fold(4096usize, |n, id| {
+                    n.checked_add(arena.layout(id).map_err(u::fault)?.owned_bytes)
+                        .ok_or(Error::ArithmeticOverflow)
+                })?;
+        let cpu_limit = if overlap {
+            private_limit
+                .checked_sub(concurrent_gpu_host)
+                .filter(|&n| n > 0)
+                .ok_or(Error::LimitExceeded("native count1 concurrent host"))?
+        } else {
+            private_limit
+        };
+        let parent = || -> Result<expert_banks::FillStats> {
+            let mut stats = expert_banks::FillStats::default();
+            for window in last.pending.uploads.chunks(10) {
+                proof.validate_source(&bank.slots, &staged, &last, false)?;
+                u::cancel(cancel)?;
+                let requests = fill_requests(
+                    [bank.gate(), bank.up(), bank.down()].map(|b| b.expert_bytes() as u64),
+                    window.len(),
+                    false,
+                    self.expert_batch_bytes,
+                )?;
+                let charged = requests.iter().try_fold(0u64, |n, &b| {
+                    n.checked_add(main_admission::page_bytes(b).map_err(admission_error)?)
+                        .ok_or(Error::ArithmeticOverflow)
+                })?;
+                if charged > 40 * 1024 * 1024 {
+                    return Err(Error::LimitExceeded("native count1 real GPU source"));
+                }
+                let add = w.admission.allocate(&requests, || {
+                    let mut add = expert_banks::FillStats::default();
+                    for &(expert, slot) in window {
+                        for (packed, tensor) in [
+                            (bank.gate(), weights.gate),
+                            (bank.up(), weights.up),
+                            (bank.down(), weights.down),
+                        ] {
+                            proof.validate_source(&bank.slots, &staged, &last, false)?;
+                            u::cancel(cancel)?;
+                            if w.poison.load(Ordering::Acquire) {
+                                return Err(err("native count1 aborted GPU fill"));
+                            }
+                            let (bytes, read, upload) = expert_banks::fill(
+                                &self.client,
+                                packed,
+                                tensor,
+                                expert,
+                                slot,
+                                cancel,
+                            )?;
+                            add.bytes = add
+                                .bytes
+                                .checked_add(bytes)
+                                .ok_or(Error::ArithmeticOverflow)?;
+                            add.read_ns = add
+                                .read_ns
+                                .checked_add(read)
+                                .ok_or(Error::ArithmeticOverflow)?;
+                            add.upload_ns = add
+                                .upload_ns
+                                .checked_add(upload)
+                                .ok_or(Error::ArithmeticOverflow)?;
+                        }
+                        add.experts += 1;
+                    }
+                    Ok(add)
+                })?;
+                stats.bytes = stats
+                    .bytes
+                    .checked_add(add.bytes)
+                    .ok_or(Error::ArithmeticOverflow)?;
+                stats.read_ns = stats
+                    .read_ns
+                    .checked_add(add.read_ns)
+                    .ok_or(Error::ArithmeticOverflow)?;
+                stats.upload_ns = stats
+                    .upload_ns
+                    .checked_add(add.upload_ns)
+                    .ok_or(Error::ArithmeticOverflow)?;
+                stats.experts = stats
+                    .experts
+                    .checked_add(add.experts)
+                    .ok_or(Error::ArithmeticOverflow)?;
+            }
+            proof.validate_source(&bank.slots, &staged, &last, false)?;
+            write_gpu_header(arena, ids[MAP], map.words(), &w.poison)?;
+            let mut probs = Zeroizing::new([0u32; 80]);
+            for (i, &p) in map.probabilities().iter().enumerate() {
+                probs[i] = p.to_bits();
+            }
+            write_gpu_header(arena, ids[PROB], &*probs, &w.poison)?;
+            physical(arena, bank, g, &ids, s.stamp.fault, w)?;
+            if !split.gpu().is_empty() {
+                launch_wave(arena, bank, g, &spans, &ids, 10)?;
+            }
+            launch_finite(arena, g, &spans, &ids)?;
+            if overlap {
+                // Submit on the original parent stream without waiting for GPU
+                // completion. The original router/whole-model proofs still drain
+                // and audit every consumer before publication or scratch reuse.
+                self.client.flush().map_err(u::fault)?;
+            }
+            Ok(stats)
+        };
+        // Parent work never joins a CPU consumer inside its admission allocation
+        // closure. CPU/parent error or panic finishes all borrowed CPU jobs before
+        // the enclosing sticky poison/drain/erase path can dispose model owners.
+        let (partials, stats) = if split.cpu().is_empty() {
+            (None, parent()?)
         } else {
             let reader = self.model.positional_reader()?;
             let cpu_weights = PackedExperts::new(&reader, weights.gate, weights.up, weights.down)?;
             reader.verify_file_unchanged()?;
-            let result = operator.execute_with_private_limit(
-                &cpu_weights,
-                split.cpu(),
-                packet.mixed(),
-                cancel,
-                private_limit,
-            )?;
+            let (result, stats) = if overlap {
+                operator.execute_with_private_limit_alongside(
+                    &cpu_weights,
+                    split.cpu(),
+                    packet.mixed(),
+                    cancel,
+                    cpu_limit,
+                    parent,
+                )?
+            } else {
+                let result = operator.execute_with_private_limit(
+                    &cpu_weights,
+                    split.cpu(),
+                    packet.mixed(),
+                    cancel,
+                    cpu_limit,
+                )?;
+                (result, parent()?)
+            };
             reader.verify_file_unchanged()?;
-            Some(result)
+            (Some(result), stats)
         };
         proof.complete(partials.as_ref())?;
+        proof.validate_source(&bank.slots, &staged, &last, true)?;
         map.complete_cpu(partials.as_ref(), g.hidden())
             .map_err(err)?;
         let partial_bytes = partials.as_ref().map_or(0, |p| p.owned_bytes());
@@ -207,89 +333,11 @@ impl GpuExecutor<'_> {
         {
             return Err(Error::LimitExceeded("native count1 joined bridge host"));
         }
-        // Validate before encoding any private result. CPU upload precedes the
-        // ready owner packet and its actual merge consumers on the same stream.
+        // CPU readiness/results enter distinct owners only AFTER all CPU jobs
+        // finish. The original rank0..9 merge is ordered after both producers.
         write_cpu(arena, owner_ids[0], partials.as_ref(), live, &w.poison)?;
         write_words(arena, owner_ids[1], map.owner_words(), &w.poison)?;
         drop(partials);
-        let mut stats = expert_banks::FillStats::default();
-        for window in last.pending.uploads.chunks(10) {
-            proof.validate_source(&bank.slots, &staged, &last, true)?;
-            u::cancel(cancel)?;
-            let requests = fill_requests(
-                [bank.gate(), bank.up(), bank.down()].map(|b| b.expert_bytes() as u64),
-                window.len(),
-                false,
-                self.expert_batch_bytes,
-            )?;
-            let charged = requests.iter().try_fold(0u64, |n, &b| {
-                n.checked_add(main_admission::page_bytes(b).map_err(admission_error)?)
-                    .ok_or(Error::ArithmeticOverflow)
-            })?;
-            if charged > 40 * 1024 * 1024 {
-                return Err(Error::LimitExceeded("native count1 real GPU source"));
-            }
-            let add = w.admission.allocate(&requests, || {
-                let mut add = expert_banks::FillStats::default();
-                for &(expert, slot) in window {
-                    for (packed, tensor) in [
-                        (bank.gate(), weights.gate),
-                        (bank.up(), weights.up),
-                        (bank.down(), weights.down),
-                    ] {
-                        proof.validate_source(&bank.slots, &staged, &last, true)?;
-                        u::cancel(cancel)?;
-                        if w.poison.load(Ordering::Acquire) {
-                            return Err(err("native count1 aborted GPU fill"));
-                        }
-                        let (bytes, read, upload) =
-                            expert_banks::fill(&self.client, packed, tensor, expert, slot, cancel)?;
-                        add.bytes = add
-                            .bytes
-                            .checked_add(bytes)
-                            .ok_or(Error::ArithmeticOverflow)?;
-                        add.read_ns = add
-                            .read_ns
-                            .checked_add(read)
-                            .ok_or(Error::ArithmeticOverflow)?;
-                        add.upload_ns = add
-                            .upload_ns
-                            .checked_add(upload)
-                            .ok_or(Error::ArithmeticOverflow)?;
-                    }
-                    add.experts += 1;
-                }
-                Ok(add)
-            })?;
-            stats.bytes = stats
-                .bytes
-                .checked_add(add.bytes)
-                .ok_or(Error::ArithmeticOverflow)?;
-            stats.read_ns = stats
-                .read_ns
-                .checked_add(add.read_ns)
-                .ok_or(Error::ArithmeticOverflow)?;
-            stats.upload_ns = stats
-                .upload_ns
-                .checked_add(add.upload_ns)
-                .ok_or(Error::ArithmeticOverflow)?;
-            stats.experts = stats
-                .experts
-                .checked_add(add.experts)
-                .ok_or(Error::ArithmeticOverflow)?;
-        }
-        proof.validate_source(&bank.slots, &staged, &last, true)?;
-        write_words(arena, ids[MAP], map.words(), &w.poison)?;
-        let mut probs = Zeroizing::new([0u32; 80]);
-        for (i, &p) in map.probabilities().iter().enumerate() {
-            probs[i] = p.to_bits();
-        }
-        write_words(arena, ids[PROB], &*probs, &w.poison)?;
-        physical(arena, bank, g, &ids, s.stamp.fault, w)?;
-        if !split.gpu().is_empty() {
-            launch_wave(arena, bank, g, &spans, &ids, 10)?;
-        }
-        launch_finite(arena, g, &spans, &ids)?;
         hybrid_k::merge(
             arena,
             g,
@@ -389,6 +437,42 @@ impl GpuExecutor<'_> {
             .ok_or(Error::ArithmeticOverflow)?;
         Ok(out)
     }
+}
+
+// Unlike the ordinary serial header helper, this seam checks actual capacity
+// against the public owning-page charge before any private header is encoded.
+fn write_gpu_header(
+    arena: &PrivateArena,
+    id: BufferId,
+    words: &[u32],
+    poison: &AtomicBool,
+) -> Result<()> {
+    let l = arena.layout(id).map_err(u::fault)?;
+    if l.logical_words != words.len() {
+        return Err(Error::InvalidBufferLength);
+    }
+    let mut bytes = Zeroizing::new(Vec::new());
+    bytes
+        .try_reserve_exact(l.owned_bytes)
+        .map_err(|_| Error::LimitExceeded("native count1 GPU header allocation"))?;
+    if bytes.capacity() != l.owned_bytes {
+        return Err(Error::LimitExceeded("native count1 GPU header capacity"));
+    }
+    bytes.resize(l.owned_bytes, 0);
+    for (index, value) in words.iter().enumerate() {
+        bytes[index * 4..index * 4 + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    arena
+        .client()
+        .map_err(u::fault)?
+        .write_private(
+            arena.handle(id).map_err(u::fault)?.clone(),
+            std::mem::take(&mut *bytes),
+        )
+        .map_err(|_| {
+            poison.store(true, Ordering::Release);
+            err("native count1 GPU header upload")
+        })
 }
 
 fn write_cpu(

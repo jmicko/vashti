@@ -123,6 +123,7 @@ pub(crate) struct Config {
     limits: wgpu::Limits,
     tile: usize,
     cpu_operator: Option<Arc<kuno_text::cpu_expert::ExpertOperator>>,
+    cpu_gpu_overlap: bool,
 }
 impl Config {
     pub(crate) fn new(
@@ -136,6 +137,7 @@ impl Config {
             limits: limits.clone(),
             tile,
             cpu_operator: None,
+            cpu_gpu_overlap: false,
         })
     }
     /// Explicit fixed-public laboratory reservation. Ordinary constructors keep
@@ -143,9 +145,16 @@ impl Config {
     pub(crate) fn reserve_count1_hybrid(self) -> Result<Self> {
         self.reserve_count1_hybrid_workers(false)
     }
-    pub(crate) fn reserve_count1_hybrid_workers(mut self, pooled: bool) -> Result<Self> {
+    pub(crate) fn reserve_count1_hybrid_workers(self, pooled: bool) -> Result<Self> {
+        self.reserve_count1_hybrid_execution(pooled, false)
+    }
+    pub(crate) fn reserve_count1_hybrid_execution(
+        mut self,
+        pooled: bool,
+        overlap: bool,
+    ) -> Result<Self> {
         use kuno_text::cpu_expert::{Backend, ExpertOperator, WorkerPlan};
-        if self.cpu_operator.is_some() || self.tile != 8 {
+        if self.cpu_operator.is_some() || self.tile != 8 || (overlap && !pooled) {
             return Err(error());
         }
         let plan = WorkerPlan::physical(16)?;
@@ -154,6 +163,7 @@ impl Config {
         } else {
             ExpertOperator::new(plan, Backend::Avx2)?
         }));
+        self.cpu_gpu_overlap = overlap;
         Ok(self)
     }
 }
@@ -431,7 +441,12 @@ impl Workspace {
             &cancel,
         )?;
         if let Some(operator) = config.cpu_operator {
-            moe.reserve_count1_hybrid(&mut model.arena, operator, allocation)?;
+            moe.reserve_count1_hybrid(
+                &mut model.arena,
+                operator,
+                config.cpu_gpu_overlap,
+                allocation,
+            )?;
         }
         let shared = shared_batch::Workspace::allocate(graph, &mut model.arena)?;
         let mut alloc = |n| model.arena.allocate_zeroed(n).map_err(u::fault);
@@ -626,6 +641,19 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             .ok_or(error())?
             .moe
             .cpu_workers_pooled())
+    }
+
+    pub(crate) fn native_cpu_gpu_overlap(
+        &self,
+        executor: &GpuExecutor<'f>,
+    ) -> Result<Option<bool>> {
+        self.completed_native_projection_boundary(executor)?;
+        Ok(self
+            .native_batch
+            .as_ref()
+            .ok_or(error())?
+            .moe
+            .cpu_gpu_overlap())
     }
 
     /// Aggregate only at a healthy completed original-model boundary. The lab

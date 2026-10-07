@@ -371,6 +371,7 @@ struct HybridOwners {
     ids: Zeroizing<[BufferId; 2]>,
     operator: Arc<kuno_text::cpu_expert::ExpertOperator>,
     cap: Option<usize>,
+    overlap: bool,
 }
 impl Workspace {
     pub(crate) fn count1_hybrid_allocation_requests() -> Result<[u64; 2]> {
@@ -384,6 +385,7 @@ impl Workspace {
         &mut self,
         arena: &mut PrivateArena,
         operator: Arc<kuno_text::cpu_expert::ExpertOperator>,
+        overlap: bool,
         allocation: &ModelConstructionAllocation<'_>,
     ) -> Result<()> {
         // The complete model allocation callback holds MAIN admission. Use
@@ -396,6 +398,7 @@ impl Workspace {
         if self.hybrid.is_some()
             || self.policy.phase != Phase::Idle
             || *self.policy.chunk != 0
+            || (overlap && !operator.workers_pooled())
             || operator.worker_count() != 16
             || operator.backend() != kuno_text::cpu_expert::Backend::Avx2
         {
@@ -407,8 +410,12 @@ impl Workspace {
             ids: Zeroizing::new([cpu, owner]),
             operator,
             cap: None,
+            overlap,
         });
         self.validate_ids(arena)
+    }
+    pub(crate) fn cpu_gpu_overlap(&self) -> Option<bool> {
+        self.hybrid.as_ref().map(|h| h.overlap)
     }
     pub(crate) fn cpu_workers_pooled(&self) -> Option<bool> {
         self.hybrid.as_ref().map(|h| h.operator.workers_pooled())

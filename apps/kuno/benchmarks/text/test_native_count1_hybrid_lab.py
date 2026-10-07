@@ -27,7 +27,7 @@ def receipt(card, cap):
                  observed_native_decode_kernels="single-q4-all", resident_private_owned_bytes=818413568,
                  count1_hybrid_cpu_miss_cap=cap, observed_count1_hybrid_cpu_miss_cap=cap,
                  completed_cpu_misses=17 if cap else 0, fresh_completed_cpu_misses=3 if cap else 0,
-                 count1_hybrid_cpu_gpu_overlap=False, count1_hybrid_cpu_workers="scoped", observed_count1_hybrid_cpu_workers="scoped")
+                 count1_hybrid_cpu_gpu_overlap=False, observed_count1_hybrid_cpu_gpu_overlap=False, count1_hybrid_cpu_workers="scoped", observed_count1_hybrid_cpu_workers="scoped")
     for audit in value["owned_zero_audits"]:
         audit.update(main_buffers=1378, main_bytes=818413568, source_buffers=0, source_bytes=0)
     return value
@@ -48,6 +48,25 @@ class HybridLabTests(unittest.TestCase):
         for card in ("intel", "nvidia"):
             for cap in (0, 10):
                 LAB.validate_receipt(receipt(card, cap), card, cap, completion(cap))
+
+    def test_overlap_policy_pins_both_observations_and_cannot_enable_scoped_workers(self):
+        for overlap in (False, True):
+            value = receipt("intel", 10)
+            value.update(count1_hybrid_cpu_workers="pooled", observed_count1_hybrid_cpu_workers="pooled",
+                         count1_hybrid_cpu_gpu_overlap=overlap, observed_count1_hybrid_cpu_gpu_overlap=overlap)
+            LAB.validate_receipt(value, "intel", 10, completion(10), "pooled", overlap)
+            for field in ("count1_hybrid_cpu_gpu_overlap", "observed_count1_hybrid_cpu_gpu_overlap"):
+                for bad in (None, 0, "false", not overlap):
+                    wrong = copy.deepcopy(value)
+                    wrong[field] = bad
+                    with self.assertRaises(ValueError):
+                        LAB.validate_receipt(wrong, "intel", 10, completion(10), "pooled", overlap)
+            with mock.patch.dict(os.environ, {"KUNO_LAB_CPU_GPU_OVERLAP": "auto"}):
+                env = LAB.worker_environment("/original/model", "/public/receipt", "pooled", overlap)
+            self.assertEqual(env["KUNO_LAB_CPU_GPU_OVERLAP"], "1" if overlap else "0")
+        for workers, overlap in (("scoped", True), ("pooled", 1), ("pooled", "1")):
+            with self.assertRaises(ValueError):
+                LAB.worker_environment("/original/model", "/public/receipt", workers, overlap)
 
     def test_cpu_worker_policy_cannot_be_forged_or_inherited(self):
         for selected in ("scoped", "pooled"):

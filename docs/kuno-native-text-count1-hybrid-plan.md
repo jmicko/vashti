@@ -434,3 +434,50 @@ Source acceptance:464 native-lab tests;110 kuno-text unit/integration tests
 107 Python controls; both crates strict release all-target Clippy; formatting
 and whitespace checks pass. The separate ignored public timing control passed.
 Device acceptance is still pending at this source commit.
+
+## Explicit joined CPU/GPU overlap slice, 2026-10-07
+
+The separately approved next experiment adds `KUNO_LAB_CPU_GPU_OVERLAP=0|1`
+(default absent/0). Only the protected count1 hybrid mode accepts this setting;
+1 requires pooled workers. The runner explicitly pins `--cpu-gpu-overlap` and
+validates requested/completed booleans together with the worker selection.
+Unknown encodings, other modes and scoped+overlap reject before device access.
+No production/default, public API, model catalog or Vashti change is selected.
+
+A single original scoped orchestrator borrows the existing reader/selection/
+input, invokes the pooled core operator, and joins all pool callbacks. Its
+handle uses the original typed full-capacity metadata owner and an additional
+32-KiB charge subtracted from the same1-MiB CPU/private remainder. The parent
+stays on the original GPU stream and exclusively fills actual GPU misses,
+encodes original map/probability owning pages with exact-capacity checks, and
+launches the real GPU subset/finite check. Both actual owning header capacities
+plus4096B parent frame are additionally subtracted before concurrent CPU fill.
+Public CPU packed jobs remain at most40MiB; simultaneous GPU public source
+precharge remains separately bounded at40MiB. Existing MAIN and independent
+runtime-I/O hard caps do not change. Parent flush submits original stream work
+without waiting; it does not grant completion, release source debt, remove a
+fence, publish bank state or reuse scratch.
+
+Before CPU join, dispatch uses the existing original-source/canonical-plan
+validation with `require_join=false`; this supplies no acceptance authority.
+After join, `Proof::complete` and the unchanged joined source proof are mandatory
+before encoding CPU results/readiness. CPU readiness and results use distinct
+original owners; rank0..9 multiply/add, shared path and whole-model all-family
+publication remain unchanged. The final pending/owning/PLE/fault proofs still
+require the actual joined CPU owner. Both serial and overlap controls use the
+same GPU-subset preparation and post-join CPU upload ordering; only concurrent
+execution/early flush differs.
+
+Parent error or panic is held until the CPU orchestrator joins outside admission
+locks; CPU error/panic/cancellation likewise prevents both outputs returning.
+No failed GPU work falls back to CPU, no partial token is accepted, and original
+sticky poison/drain/erase/retirement applies. A bounded fixed-public host test
+synchronizes a live CPU row with parent work and checks success, parent error/
+panic, cancellation and CPU panic followed by clean pool reuse. Physical device
+submission overlap is a scheduling capability, not an instrumented claim of
+simultaneous kernel execution or a speed improvement. Full-logit, late-finality
+and long gates remain outstanding before selection, even if short outputs pass.
+
+Source gate:111 core unit/integration tests,465 native tests and108 Python
+controls pass; both crates strict release all-target Clippy, formatting and
+whitespace pass. Physical overlap execution remains pending at this source commit.

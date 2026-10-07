@@ -456,6 +456,85 @@ impl ExpertOperator {
         self.execute_with_limit(weights, selected, input, cancel, private_limit, |_| {})
     }
 
+    /// Explicit pooled CPU/GPU laboratory seam. The caller owns parent-work
+    /// capacity and GPU authority. Every CPU consumer finishes outside admission
+    /// locks even if parent work errors or panics; neither side can publish here.
+    #[allow(clippy::too_many_arguments)]
+    pub fn execute_with_private_limit_alongside<R>(
+        &self,
+        weights: &PackedExperts<'_, '_>,
+        selected: &[usize],
+        input: &[f32],
+        cancel: &AtomicBool,
+        private_limit: usize,
+        parent: impl FnOnce() -> Result<R>,
+    ) -> Result<(Partials, R)> {
+        self.execute_alongside_with(
+            weights,
+            selected,
+            input,
+            cancel,
+            private_limit,
+            parent,
+            |_| {},
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn execute_alongside_with<R>(
+        &self,
+        weights: &PackedExperts<'_, '_>,
+        selected: &[usize],
+        input: &[f32],
+        cancel: &AtomicBool,
+        private_limit: usize,
+        parent: impl FnOnce() -> Result<R>,
+        hook: impl Fn(usize) + Sync,
+    ) -> Result<(Partials, R)> {
+        const ORCHESTRATOR_PRIVATE: usize = 32 * 1024;
+        if self.pool.is_none() || private_limit > MAX_PRIVATE_HOST_BYTES {
+            return Err(Error::LimitExceeded("CPU expert concurrent public policy"));
+        }
+        let remainder = private_limit
+            .checked_sub(ORCHESTRATOR_PRIVATE)
+            .filter(|&n| n > 0)
+            .ok_or(Error::LimitExceeded("CPU expert concurrent host remainder"))?;
+        check_cancel(cancel)?;
+        let hook = &hook;
+        std::thread::scope(|scope| {
+            let mut handles = retained_metadata::Owner::new(1)?;
+            if handles.metadata_bytes()? > ORCHESTRATOR_PRIVATE {
+                return Err(Error::LimitExceeded(
+                    "CPU expert concurrent header capacity",
+                ));
+            }
+            let task = std::thread::Builder::new()
+                .spawn_scoped(scope, || {
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        self.execute_with_limit(weights, selected, input, cancel, remainder, hook)
+                    }))
+                    .unwrap_or(Err(Error::InvalidFormat("CPU expert orchestrator panic")))
+                })
+                .map_err(|_| Error::LimitExceeded("CPU expert orchestrator spawn"))?;
+            handles.push(task)?;
+            // Parent remains on the original GPU/stream thread. Its returned
+            // static error and CPU completion are both checked only after join.
+            let parent_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(parent))
+                .unwrap_or(Err(Error::InvalidFormat("CPU expert parent work panic")));
+            let handle = handles
+                .take_first()
+                .ok_or(Error::InvalidFormat("CPU expert missing orchestrator"))?;
+            let cpu_result = handle
+                .join()
+                .unwrap_or(Err(Error::InvalidFormat("CPU expert orchestrator panic")));
+            drop(handles);
+            let partials = cpu_result?;
+            let parent_output = parent_result?;
+            check_cancel(cancel)?;
+            Ok((partials, parent_output))
+        })
+    }
+
     fn execute_with(
         &self,
         weights: &PackedExperts<'_, '_>,
@@ -2307,6 +2386,96 @@ mod tests {
             assert_metadata_wiped(
                 &witness,
                 MAX_WORKERS * size_of::<std::sync::Mutex<RowJob<'_>>>(),
+            );
+        }
+    }
+
+    #[test]
+    fn concurrent_cpu_really_runs_with_parent_and_joins_all_failure_paths() {
+        let f = fixture(
+            [TensorType::Q4K, TensorType::Q4K, TensorType::Q8_0],
+            256,
+            256,
+            2,
+        );
+        let reader = f.model.positional_reader().unwrap();
+        let weights = set(&reader, &f);
+        let op = ExpertOperator::new_pooled(WorkerPlan::portable(2).unwrap(), Backend::Portable)
+            .unwrap();
+        for failure in 0..5 {
+            let cancel = AtomicBool::new(false);
+            let started = AtomicBool::new(false);
+            let release = AtomicBool::new(false);
+            let parent_done = AtomicBool::new(false);
+            let result = op.execute_alongside_with(
+                &weights,
+                &[1, 0],
+                &input(256),
+                &cancel,
+                MAX_PRIVATE_HOST_BYTES,
+                || {
+                    // A bounded public host-test synchronization only. No engine
+                    // timeout or private request instrumentation is introduced.
+                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+                    while !started.load(Ordering::Acquire) {
+                        assert!(std::time::Instant::now() < deadline);
+                        std::thread::yield_now();
+                    }
+                    release.store(true, Ordering::Release);
+                    parent_done.store(true, Ordering::Release);
+                    match failure {
+                        1 => Err(Error::InvalidFormat("fixed-public parent error")),
+                        2 => panic!("fixed-public parent panic"),
+                        3 => {
+                            cancel.store(true, Ordering::Relaxed);
+                            Ok(17)
+                        }
+                        _ => Ok(17),
+                    }
+                },
+                |row| {
+                    if row == 0 {
+                        started.store(true, Ordering::Release);
+                        while !release.load(Ordering::Acquire) {
+                            std::thread::yield_now();
+                        }
+                        if failure == 4 {
+                            panic!("fixed-public CPU panic");
+                        }
+                    }
+                },
+            );
+            assert!(parent_done.load(Ordering::Acquire));
+            if failure == 0 {
+                let (got, parent) = result.unwrap();
+                assert_eq!(parent, 17);
+                same_bits(got.active(), &expected_experts(&f, &[1, 0], &input(256)));
+            } else {
+                assert!(result.is_err());
+            }
+            // The reusable pool has no abandoned callback/request after error.
+            cancel.store(false, Ordering::Relaxed);
+            let got = op.execute(&weights, &[0], &input(256), &cancel).unwrap();
+            same_bits(got.active(), &expected_experts(&f, &[0], &input(256)));
+        }
+        let scoped =
+            ExpertOperator::new(WorkerPlan::portable(2).unwrap(), Backend::Portable).unwrap();
+        for (operator, limit) in [
+            (&scoped, MAX_PRIVATE_HOST_BYTES),
+            (&op, 32768),
+            (&op, MAX_PRIVATE_HOST_BYTES + 1),
+        ] {
+            assert!(
+                operator
+                    .execute_with_private_limit_alongside(
+                        &weights,
+                        &[0],
+                        &input(256),
+                        &AtomicBool::new(false),
+                        limit,
+                        || -> Result<()> { panic!("must reject before parent work") }
+                    )
+                    .is_err()
             );
         }
     }

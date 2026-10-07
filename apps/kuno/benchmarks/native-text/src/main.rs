@@ -172,6 +172,14 @@ fn count1_worker_pool(mode: &str, raw: Option<&str>) -> Result<bool, &'static st
         _ => Err("CPU workers require protected count1 hybrid mode and scoped or pooled"),
     }
 }
+fn count1_overlap(mode: &str, pooled: bool, raw: Option<&str>) -> Result<bool, &'static str> {
+    match (mode, pooled, raw) {
+        (_, _, None) => Ok(false),
+        ("resident-count1-hybrid-chat", _, Some("0")) => Ok(false),
+        ("resident-count1-hybrid-chat", true, Some("1")) => Ok(true),
+        _ => Err("CPU/GPU overlap requires protected pooled count1 mode and 0 or 1"),
+    }
+}
 fn count1_hybrid_setting(name: &str, raw: Option<&str>) -> Result<(), &'static str> {
     let accepted = match name {
         "KUNO_LAB_NATIVE_MAX8" | "KUNO_LAB_NATIVE_DECODE" | "KUNO_LAB_CANCEL_CHECK" => {
@@ -600,6 +608,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         cpu_workers_raw
             .as_ref()
             .map(|v| v.to_str().ok_or("CPU worker setting encoding rejected"))
+            .transpose()?,
+    )?;
+    let overlap_raw = std::env::var_os("KUNO_LAB_CPU_GPU_OVERLAP");
+    let count1_overlap = count1_overlap(
+        &mode,
+        count1_pooled,
+        overlap_raw
+            .as_ref()
+            .map(|v| v.to_str().ok_or("CPU/GPU overlap encoding rejected"))
             .transpose()?,
     )?;
     let count1_hybrid_cap = if mode == "resident-count1-hybrid-chat" {
@@ -1543,7 +1560,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let config = resident_model::batch::Config::new(&client, &grouped_limits, 8)?;
                 Some(if count1_hybrid_cap.is_some() {
                     if count1_pooled {
-                        config.reserve_count1_hybrid_workers(true)?
+                        config.reserve_count1_hybrid_execution(true, count1_overlap)?
                     } else {
                         config.reserve_count1_hybrid()?
                     }
@@ -1813,7 +1830,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             .native_cpu_miss_cap()?
                     );
                     receipt["completed_cpu_misses"] = serde_json::json!(completed_cpu_misses);
-                    receipt["count1_hybrid_cpu_gpu_overlap"] = serde_json::json!(false);
+                    receipt["count1_hybrid_cpu_gpu_overlap"] = serde_json::json!(count1_overlap);
+                    receipt["observed_count1_hybrid_cpu_gpu_overlap"] = serde_json::json!(
+                        resident
+                            .as_ref()
+                            .ok_or("count1 hybrid owner absent")?
+                            .native_cpu_gpu_overlap(&executor)?
+                            .ok_or("count1 hybrid schedule absent")?
+                    );
                     receipt["count1_hybrid_cpu_workers"] =
                         serde_json::json!(if count1_pooled { "pooled" } else { "scoped" });
                     receipt["observed_count1_hybrid_cpu_workers"] = serde_json::json!(if resident
@@ -2170,6 +2194,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod transient_mode_tests {
+    #[test]
+    fn overlap_requires_explicit_pooled_hybrid_selection_before_device_access() {
+        for mode in ["resident-count1-hybrid-chat", "resident-chat"] {
+            for pooled in [false, true] {
+                assert_eq!(super::count1_overlap(mode, pooled, None), Ok(false));
+                for raw in ["0", "1", "", "auto", "true"] {
+                    let result = super::count1_overlap(mode, pooled, Some(raw));
+                    if mode == "resident-count1-hybrid-chat"
+                        && (raw == "0" || (raw == "1" && pooled))
+                    {
+                        assert_eq!(result, Ok(raw == "1"));
+                    } else {
+                        assert!(result.is_err());
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn cpu_worker_selection_is_explicit_and_rejects_before_device_access() {
         for mode in [
