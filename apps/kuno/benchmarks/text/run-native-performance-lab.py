@@ -1,4 +1,4 @@
-"""Fixed-public, same-binary ABBA memory-containment experiment; never a request logger."""
+"""Fixed-public, same-binary memory or native-decode ABBA experiment; never a request logger."""
 
 import argparse
 import hashlib
@@ -15,6 +15,18 @@ import time
 
 HERE = pathlib.Path(__file__).resolve().parent
 ABBA = (8, 52, 52, 8)
+MEMORY_SCOPE = "fixed-public-native-cgroup-abba-only"
+DECODE_SCOPE = "fixed-public-native-decode-abba-only"
+DECODE_CAPS = (52, 52, 52, 52)
+DECODE_FLAGS = (False, True, True, False)
+FIXED_PLAN = {"fixture": "resident-rainwater", "prompt_tokens": 75, "output_tokens": 128,
+              "seed": 424242, "temperature": 0, "native_count": 8,
+              "native_context": 203, "model_unloaded_before_each_child": True,
+              "private_main_pages": 1376, "private_main_bytes": 818249728,
+              "runtime_io_cap_bytes": 67108864}
+PLAN_IDENTITIES = {"card", "unit", "model", "executable", "executable_sha256",
+                   "cargo_artifacts_sha256", "cargo_executable_at_build", "fixture_sha256",
+                   "reference_sha256", "supervisor_sha256", "source_head_at_freeze"}
 MODEL_NAME = "sha256-89059c880c2f000b24520919d4ba2edd2a8101327c7f8ab33b2280e01addda75"
 MODEL_SIZE = 119150722112
 UNIT_PATTERN = r"kuno-public-performance-[a-z0-9-]{1,40}\.service"
@@ -62,7 +74,8 @@ def cgroup_path():
 
 
 def verify_limits(cgroup, unit, cap, core=None):
-    if not re.fullmatch(UNIT_PATTERN, unit) or cgroup.name != unit or cap not in ABBA:
+    if (not re.fullmatch(UNIT_PATTERN, unit) or cgroup.name != unit
+        or type(cap) is not int or cap not in ABBA):
         raise ValueError("Unexpected laboratory unit or memory cap")
     core = resource.getrlimit(resource.RLIMIT_CORE) if core is None else core
     if (cgroup / "memory.max").read_text().strip() != str(cap * 1024**3):
@@ -98,12 +111,45 @@ def model_identity(path):
             "size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
 
 
-def worker_environment(plan, receipt):
+def experiment_schedule(plan):
+    scope = plan.get("scope")
+    if scope == MEMORY_SCOPE:
+        caps, flags = ABBA, (False,) * 4
+        # Historical memory plans predate this explicit field. They retain only
+        # their original all-scalar schedule; completed plans still cannot replay.
+        declared_flags = plan.get("native_decode_flags", list(flags))
+    elif scope == DECODE_SCOPE:
+        caps, flags = DECODE_CAPS, DECODE_FLAGS
+        declared_flags = plan.get("native_decode_flags")
+    else:
+        raise ValueError("Unknown fixed-public experiment scope")
+    declared_caps = plan.get("caps_gib")
+    if (type(declared_caps) is not list or any(type(cap) is not int for cap in declared_caps)
+        or declared_caps != list(caps) or type(declared_flags) is not list
+        or any(type(flag) is not bool for flag in declared_flags) or declared_flags != list(flags)):
+        raise ValueError("Fixed cap/decode schedule did not match the experiment scope")
+    return tuple(zip(caps, flags))
+
+
+def selected_sample(plan, index, cap=None):
+    schedule = experiment_schedule(plan)
+    if type(index) is not int or not 1 <= index <= len(schedule):
+        raise ValueError("Invalid public sample index")
+    selected_cap, native_decode = schedule[index - 1]
+    if cap is not None and (type(cap) is not int or cap != selected_cap):
+        raise ValueError("Sample cap did not match its declared index")
+    return selected_cap, native_decode
+
+
+def worker_environment(plan, receipt, index=None):
+    if plan.get("scope") == DECODE_SCOPE and index is None:
+        raise ValueError("Native decode comparison requires an indexed child")
+    native_decode = selected_sample(plan, index)[1] if index is not None else False
     env = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(pathlib.Path.home()),
            "XDG_RUNTIME_DIR": f"/run/user/{os.getuid()}", "CUBECL_DEBUG_LOG": "0",
            "KUNO_TEST_GGUF": plan["model"]["path"], "KUNO_PUBLIC_RECEIPT": str(receipt),
            "KUNO_LAB_TRANSIENT_IO": "1", "KUNO_LAB_NATIVE_MAX8": "1",
-           "KUNO_LAB_NATIVE_DECODE": "0",
+           "KUNO_LAB_NATIVE_DECODE": "1" if native_decode else "0",
            "KUNO_LAB_NATIVE_BATCH_COUNT": "8", "KUNO_LAB_CANCEL_CHECK": "1",
            "KUNO_LAB_OWNED_ZERO_AUDIT": "1"}
     for suffix in ("BLOCK_MOE", "BATCH_EXPERTS", "WORD_DOWN", "ORDERED_PUBLIC_UPLOAD",
@@ -115,10 +161,39 @@ def worker_environment(plan, receipt):
 
 def load_plan(path):
     plan = json.loads(pathlib.Path(path).read_text())
-    if (plan.get("scope") != "fixed-public-native-cgroup-abba-only" or
-        plan.get("caps_gib") != list(ABBA) or plan.get("card") not in ("intel", "nvidia") or
+    if type(plan) is not dict:
+        raise ValueError("Public laboratory plan must be an object")
+    experiment_schedule(plan)
+    if (plan.get("card") not in ("intel", "nvidia") or type(plan.get("unit")) is not str or
         not re.fullmatch(UNIT_PATTERN, plan.get("unit", ""))):
         raise ValueError("Invalid public laboratory plan")
+    if plan["scope"] == DECODE_SCOPE:
+        expected_keys = set(FIXED_PLAN) | PLAN_IDENTITIES | {"scope", "caps_gib", "native_decode_flags"}
+        if set(plan) != expected_keys or any(
+            key not in plan or type(plan[key]) is not type(value) or plan[key] != value
+            for key, value in FIXED_PLAN.items()
+        ):
+            raise ValueError("Native decode requires the exact fixed public plan")
+        model = plan["model"]
+        if (type(model) is not dict or set(model) != {"path", "device", "inode", "size", "mtime_ns"}
+            or type(model["path"]) is not str or not model["path"]
+            or any(type(model[key]) is not int or model[key] < 0
+                   for key in ("device", "inode", "size", "mtime_ns"))):
+            raise ValueError("Invalid original model identity")
+        for key in ("executable_sha256", "cargo_artifacts_sha256", "fixture_sha256",
+                    "reference_sha256", "supervisor_sha256"):
+            if type(plan[key]) is not str or not re.fullmatch(r"[0-9a-f]{64}", plan[key]):
+                raise ValueError("Invalid public plan hash")
+        if (type(plan["source_head_at_freeze"]) is not str
+            or not re.fullmatch(r"[0-9a-f]{40}", plan["source_head_at_freeze"])
+            or any(type(plan[key]) is not str or not plan[key]
+                   for key in ("executable", "cargo_executable_at_build"))):
+            raise ValueError("Invalid public source/artifact identity")
+        if (plan["fixture_sha256"] != sha((HERE / "qwen38-baseline.json").read_bytes())
+            or plan["reference_sha256"] != sha(
+                (HERE / "receipts/rust-full-resident-rainwater-intel-20261005.json").read_bytes())
+            or plan["supervisor_sha256"] != sha(pathlib.Path(__file__).read_bytes())):
+            raise ValueError("Public fixture/reference/supervisor identity changed")
     if model_identity(plan["model"]["path"]) != plan["model"]:
         raise ValueError("Original model identity changed")
     executable = pathlib.Path(plan["executable"])
@@ -129,38 +204,56 @@ def load_plan(path):
     return plan
 
 
-def guard(plan_path, cap):
+def guard(plan_path, cap, index):
     plan = load_plan(plan_path)
+    _, native_decode = selected_sample(plan, index, cap)
     verify_limits(cgroup_path(), plan["unit"], cap)
+    if os.environ.get("KUNO_LAB_NATIVE_DECODE") != ("1" if native_decode else "0"):
+        raise ValueError("Worker decode setting did not match the indexed plan")
     print(f"verified_performance_limits swap_max=0 core_soft=0 core_hard=0 memory_max={cap * 1024**3}", flush=True)
+    print(f"verified_performance_sample sample_index={index} native_decode={int(native_decode)}", flush=True)
     os.execv(plan["executable"], [plan["executable"], plan["card"], "resident-rainwater"])
 
 
-def accepted_result(receipt, output, card, cap, status, before, after):
+def accepted_result(receipt, output, card, cap, status, before, after, *, native_decode=False, index=None):
+    if type(native_decode) is not bool or type(cap) is not int or cap not in ABBA or native_decode and cap != 52:
+        raise ValueError("Invalid expected public decode mode/cap")
+    if native_decode and index is None:
+        raise ValueError("Native decode requires a protected indexed sample")
     marker = f"verified_performance_limits swap_max=0 core_soft=0 core_hard=0 memory_max={cap * 1024**3}"
     if status != 0 or marker not in output:
         raise ValueError("Protected public worker did not finish")
+    if index is not None:
+        sample_marker = f"verified_performance_sample sample_index={index} native_decode={int(native_decode)}"
+        if type(index) is not int or not 1 <= index <= 4 or sample_marker not in output:
+            raise ValueError("Protected sample index/decode proof did not match")
     for key in ("oom", "oom_kill", "oom_group_kill"):
         if after["memory.events"].get(key, 0) != before["memory.events"].get(key, 0):
             raise ValueError("Cgroup OOM occurred during the worker")
-    ACCEPTANCE.validate_model_receipt(receipt, card, "resident-rainwater", 8, output)
+    ACCEPTANCE.validate_model_receipt(receipt, card, "resident-rainwater", 8, output,
+                                      native_decode=native_decode)
+    if (type(receipt.get("generation_ms")) is not int or receipt["generation_ms"] <= 0
+        or type(receipt.get("prefill_ms")) is not int or receipt["prefill_ms"] < 0):
+        raise ValueError("Completed public timing must be nonnegative with positive generation time")
 
 
 def run_child(plan, plan_path, index, cap, cgroup):
+    _, native_decode = selected_sample(plan, index, cap)
+    verify_limits(cgroup, plan["unit"], cap)
     target = plan_path.parent / f"sample-{index}-cap-{cap}.json"
     if any(path.exists() for path in (target, target.with_suffix(".cgroup.json"),
                                      target.with_suffix(".telemetry.jsonl"))):
         raise ValueError("Refusing to overwrite a sample")
     before = snapshot(cgroup)
-    command = [sys.executable, str(pathlib.Path(__file__).resolve()), "--guard", str(plan_path), str(cap)]
-    process = subprocess.Popen(command, env=worker_environment(plan, target),
+    command = [sys.executable, str(pathlib.Path(__file__).resolve()), "--guard", str(plan_path), str(cap), str(index)]
+    process = subprocess.Popen(command, env=worker_environment(plan, target, index),
                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     # Never retain raw backend errors, generated text or arbitrary output.
     markers = []
     def drain():
         for raw in iter(lambda: process.stdout.readline(4096), b""):
             text = raw.decode("utf-8", errors="replace").strip()
-            if text.startswith(("verified_performance_limits ", "public_mid_token_cancel ",
+            if text.startswith(("verified_performance_limits ", "verified_performance_sample ", "public_mid_token_cancel ",
                                 "public_resident_cancel_erased=", "public_resident_owned_cleanup=")):
                 if len(markers) < 8:
                     markers.append(text)
@@ -178,7 +271,8 @@ def run_child(plan, plan_path, index, cap, cgroup):
         drainer.join()
         after = snapshot(cgroup)
         verify_limits(cgroup, plan["unit"], cap)
-        result = {"sample_index": index, "cap_gib": cap, "exit_status": process.returncode,
+        result = {"sample_index": index, "cap_gib": cap, "native_decode": native_decode,
+                  "exit_status": process.returncode,
                   "before": before, "after": after, "samples": samples,
                   "sampled_memory_peak_bytes": max([before["memory.current"], after["memory.current"]] +
                                                     [s["memory.current"] for s in samples]),
@@ -191,11 +285,15 @@ def run_child(plan, plan_path, index, cap, cgroup):
         try:
             if receipt is None:
                 raise ValueError("Missing checked model receipt")
-            accepted_result(receipt, "\n".join(markers), plan["card"], cap, process.returncode, before, after)
+            accepted_result(receipt, "\n".join(markers), plan["card"], cap, process.returncode, before, after,
+                            native_decode=native_decode, index=index)
             result["accepted"] = True
             result["prefill_ms"] = receipt["prefill_ms"]
             result["generation_ms"] = receipt["generation_ms"]
             result["following_decode_steps"] = 127
+            result["decode_tokens_per_second"] = 127000 / receipt["generation_ms"]
+            result["native_decode_steps"] = receipt["native_decode_steps"]
+            result["scalar_decode_steps"] = receipt["scalar_decode_steps"]
         except (ValueError, KeyError, TypeError):
             result["failure_class"] = "worker-or-model-or-cleanup-validation"
         write_new(target.with_suffix(".cgroup.json"), result)
@@ -218,17 +316,20 @@ def run_child(plan, plan_path, index, cap, cgroup):
 def supervise(plan_path):
     plan_path = pathlib.Path(plan_path).resolve(strict=True)
     plan = load_plan(plan_path)
+    schedule = experiment_schedule(plan)
     if (plan_path.parent / "abba-receipt.json").exists():
         raise ValueError("Refusing to replay a completed or failed experiment")
     cgroup = cgroup_path()
-    verify_limits(cgroup, plan["unit"], 8)
+    verify_limits(cgroup, plan["unit"], schedule[0][0])
     results = []
     record = {"scope": plan["scope"], "plan_sha256": sha(plan_path.read_bytes()),
               "cgroup": str(cgroup), "accepted": False, "results": results,
               "global_caches_flushed": False, "true_hot_full_request_implemented": False,
               "production_limits_changed": False}
+    record["caps_gib"] = [cap for cap, _ in schedule]
+    record["native_decode_flags"] = [native for _, native in schedule]
     try:
-        for index, cap in enumerate(ABBA, 1):
+        for index, (cap, native_decode) in enumerate(schedule, 1):
             transition_before = snapshot(cgroup)
             # Only this declared, currently enclosing, public unit can be changed.
             if cgroup.name != plan["unit"] or not re.fullmatch(UNIT_PATTERN, plan["unit"]):
@@ -238,7 +339,7 @@ def supervise(plan_path):
                            stderr=subprocess.DEVNULL)
             verify_limits(cgroup, plan["unit"], cap)
             transition_after = snapshot(cgroup)
-            print(f"public_abba_sample={index} cap_gib={cap}", flush=True)
+            print(f"public_abba_sample={index} cap_gib={cap} native_decode={int(native_decode)}", flush=True)
             result = run_child(plan, plan_path, index, cap, cgroup)
             result["cap_transition_before"] = transition_before
             result["cap_transition_after"] = transition_after
@@ -256,6 +357,8 @@ def supervise(plan_path):
 def launch(args):
     if not re.fullmatch(r"[a-z0-9-]{1,40}", args.run_id):
         raise ValueError("run-id must be1..40 lowercase letters, digits or hyphens")
+    if type(args.native_decode_comparison) is not bool:
+        raise ValueError("Native decode comparison must be an explicit boolean")
     output = args.output.resolve()
     output.mkdir(mode=0o700, parents=True, exist_ok=False)
     # Actual Cargo release metadata selection is unchanged from correctness.
@@ -275,7 +378,11 @@ def launch(args):
     artifact_copy = output / "cargo-artifacts.jsonl"
     with artifact_copy.open("xb") as stream:
         stream.write(args.cargo_artifacts.read_bytes())
-    plan = {"scope": "fixed-public-native-cgroup-abba-only", "caps_gib": list(ABBA),
+    native_comparison = args.native_decode_comparison
+    caps = DECODE_CAPS if native_comparison else ABBA
+    flags = DECODE_FLAGS if native_comparison else (False,) * 4
+    plan = {"scope": DECODE_SCOPE if native_comparison else MEMORY_SCOPE, "caps_gib": list(caps),
+            "native_decode_flags": list(flags),
             "card": args.card, "unit": "kuno-public-performance-" + args.run_id + ".service",
             "model": model_identity(args.model), "executable": str(frozen),
             "executable_sha256": identity, "cargo_artifacts_sha256": artifacts_sha,
@@ -285,15 +392,11 @@ def launch(args):
             "supervisor_sha256": sha(pathlib.Path(__file__).read_bytes()),
             "source_head_at_freeze": subprocess.check_output(
                 ["git", "-C", str(HERE), "rev-parse", "HEAD"], text=True).strip(),
-            "fixture": "resident-rainwater", "prompt_tokens": 75, "output_tokens": 128,
-            "seed": 424242, "temperature": 0, "native_count": 8,
-            "native_context": 203, "model_unloaded_before_each_child": True,
-            "private_main_pages": 1376, "private_main_bytes": 818249728,
-            "runtime_io_cap_bytes": 67108864}
+            **FIXED_PLAN}
     plan_path = output / "plan.json"
     write_new(plan_path, plan)
     command = ["systemd-run", "--user", "--unit=" + plan["unit"], "--collect", "--wait", "--pipe",
-               "--property=MemorySwapMax=0", "--property=LimitCORE=0", "--property=MemoryMax=8G",
+               "--property=MemorySwapMax=0", "--property=LimitCORE=0", f"--property=MemoryMax={caps[0]}G",
                "--property=RuntimeMaxSec=3600", "--setenv=XDG_RUNTIME_DIR=/run/user/" + str(os.getuid()),
                "--setenv=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/" + str(os.getuid()) + "/bus",
                sys.executable, str(pathlib.Path(__file__).resolve()), "--supervise", str(plan_path)]
@@ -307,9 +410,9 @@ def main():
             raise ValueError("Invalid supervisor arguments")
         supervise(sys.argv[2])
     elif len(sys.argv) > 1 and sys.argv[1] == "--guard":
-        if len(sys.argv) != 4:
+        if len(sys.argv) != 5:
             raise ValueError("Invalid guard arguments")
-        guard(sys.argv[2], int(sys.argv[3]))
+        guard(sys.argv[2], int(sys.argv[3]), int(sys.argv[4]))
     else:
         parser = argparse.ArgumentParser(description=__doc__)
         parser.add_argument("--cargo-artifacts", type=pathlib.Path, required=True)
@@ -317,6 +420,8 @@ def main():
         parser.add_argument("--card", choices=("intel", "nvidia"), required=True)
         parser.add_argument("--run-id", required=True)
         parser.add_argument("--output", type=pathlib.Path, required=True)
+        parser.add_argument("--native-decode-comparison", action="store_true",
+                            help="Compare scalar/native/native/scalar decode at the fixed 52-GiB host cap")
         launch(parser.parse_args())
 
 

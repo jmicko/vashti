@@ -6,6 +6,18 @@ charges stay in that cgroup between children rather than being reparented when
 each short-lived unit disappears. It does not flush global caches, move model
 weights, alter production service limits, or accept arbitrary prompts.
 
+The explicit `--native-decode-comparison` option instead fixes all four host caps
+at 52 GiB and selects scalar/native/native/scalar continuation on one frozen
+binary. Its separate `fixed-public-native-decode-abba-only` scope requires an
+exact fixed-public plan, typed flags and caps. Each indexed child proves its
+actual host/swap/core limits and selected decode environment before execution;
+receipt validation independently requires the selected mode and observed
+successful generation counts. All four MAIN audits, exact scalar source counts,
+public IDs and cancellation/recovery checks remain mandatory. The ordinary
+memory ABBA default and strict 8-GiB correctness lane retain their own limits.
+The native comparison keeps the existing 64-slot Intel defaults and changes
+only the continuation flag. No Ollama baseline runs are part of this option.
+
 Build once **before** measuring. Keep the actual Cargo JSON transcript. Stop
 other inference and source compilation, verify the intended card is free, and
 run one card at a time. Choose a new durable output directory outside the Cargo
@@ -55,6 +67,14 @@ An OOM, missing receipt, output mismatch or incomplete cleanup rejects the
 sample and ends the sequence. Raw error payloads and generated text are drained
 without persistence. Completed prior samples remain inspectable after failure.
 
+Each sample records its selected mode, completed prefill/generation milliseconds,
+127 following decode steps and derived tokens/s alongside numeric telemetry.
+These per-sample observations establish neither a 10-token/s result nor a
+production speed claim. Historical memory plans without the new flags retain
+their explicit scalar-only schedule; native comparison plans require all new
+keys. Live model receipt validation remains strict, with archived receipt
+compatibility available only through the separate offline validator option.
+
 Each child starts without a resident native model. OS file/shader caches remain
 unflushed and change naturally across ABBA; this is model-unloaded cold, not
 cold storage. `model_bind_ms` excludes device setup/lazy model uploads. Prefill
@@ -62,9 +82,10 @@ includes fresh initialization; `generation_ms` measures 127 following graph step
 with warm in-process weight owners. Cancellation/fresh replay/audits happen after
 those internal timings. These are instrumented explanatory observations, not
 production worker throughput. A true second hot full request is not implemented.
-This experiment quantifies host-limit bias; it does not establish matched
-Ollama performance or permit production native routing. Ollama's configured 4096
-context and true hot uncached-prefix request still need a later matched lane.
+The default experiment quantifies host-limit bias; the opt-in experiment compares
+native and scalar continuation at one fixed host cap. Neither establishes matched
+Ollama performance or permits production native routing. The working native
+target is 10 tokens/s; new or repeated Ollama baselines are outside this work.
 The 3600-second public-unit limit is operator containment, not an inference
 deadline. User-systemd/cgroup-V2 support is required; no sudo is needed.
 
