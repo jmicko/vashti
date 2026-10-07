@@ -1000,7 +1000,7 @@ mod tests {
             p[9] = value;
             assert!(Map::new(&ids(), &p, &original, &gpu, 16).is_err());
         }
-        assert!(Map::new(&ids(), &probabilities(), &original, &gpu, 15).is_err());
+        assert!(Map::new(&ids(), &probabilities(), &original, &gpu, 9).is_err());
     }
 
     #[test]
