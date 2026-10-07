@@ -7,6 +7,74 @@ The objective remains incomplete. Use **10 decode tokens/s** as the agreed
 working target when resumed and do not repeat Ollama baseline tests. Root owns
 GPU/service operations; source-only agents use isolated worktrees.
 
+## No-root CPU-miss model registration checkpoint, 2026-10-07
+
+The goal remains paused. The user authorized a bounded source/host pass while
+at work, with no sudo or sudo workarounds. Source `a8cb5e00b00f6bb8938df59bc819cef68ad0a7ca`
+on `codex/kuno-native-text` registers the separately protected fixed-public
+`resident-count1-hybrid-chat` entry. It reserves the existing original count1
+CPU-miss workspace, keeps8/7 native prefill, then selects SingleQ4All/dense1 and
+cap exactly0 or10 at the completed original boundary. Default inference and
+ordinary1376-owner constructors are unchanged.
+
+An actual all48 joined/source-validated MoE permit supplies the checked
+zeroizing CPU-miss delta. Overflow is preflighted before any family commit;
+the count advances only with final accepted model position after all finishes,
+PLE, original bank metadata and health/cancel checks. Cleanup erases it and
+failed owners cannot expose it. The compiled public fixture alone records
+aggregate counts, never expert/rank traces. Cap10 must prove actual CPU work
+both in original decode and fresh continuation; cap0 must prove zero. Both
+layer0/3 cancellation probes run the selected cap. The separate validator pins
+four1378-owner/818413568-byte audits and all original and hybrid lifecycle
+proofs, preserving ordinary1376-owner acceptance.
+
+**Completed without root:**461 Rust host/offline tests,106 Python rejection/
+runner controls, strict release all-target Clippy, formatting/diff checks and
+normal Cargo release build. Four actual normal-binary negative entry cases
+reject missing protections, invalid cap, extra argv and disabled-policy override
+before adapter/model access, without a receipt. Python synthetic documents are
+validator controls, not hybrid device evidence. The normal binary SHA is
+`1c44a37a3c2cd44d41a03946bdd2286bfdab1c727c0843fbe925619cf0ff2197`;
+artifact directory is
+`/media/jmicko/faststore/kuno-development/native-count1-hybrid-build-20261007-v1`.
+It contains the pinned binary, successful Cargo transcript, source identity and
+`predevice-rejections.json`. Aggregate source-only receipt:
+`apps/kuno/benchmarks/text/receipts/rust-native-count1-hybrid-source-20261007.json`.
+The shared normal target executable now belongs to this new build; do not use
+it with older9d4f4277 build transcripts. Earlier frozen/durable evidence remains
+unchanged.
+
+**Next requires sudo/shared GPU coordination:** pause installed inference
+admission, unload/verify actual memory and exclude other GPU work. Run cap0 and
+cap10 sequentially on each card using the exact new artifact, for example:
+
+```sh
+python3 apps/kuno/benchmarks/text/run-native-count1-hybrid-lab.py \
+  --cargo-artifacts /media/jmicko/faststore/kuno-development/native-count1-hybrid-build-20261007-v1/cargo-artifacts.jsonl \
+  --model /path/to/the-existing-original-Ollama-blob \
+  --card intel --cpu-miss-cap 10 --run-id hybrid-intel-10 \
+  --receipt /media/jmicko/faststore/kuno-development/hybrid-intel-10.json
+```
+
+The wrapper itself never acquires sudo, pauses services or claims exclusive GPU
+access. It verifies swap0/core0/8-GiB execution and exact public eight-token
+outputs, then records acceptance only after full lifecycle/audit validation.
+Continue hybrid-specific late-final-layer, second-proof and partial-family-
+commit fault gates before production selection; matched long timing follows
+numerical/lifecycle acceptance. These remain physically unaccepted. CPU jobs
+still join before GPU enqueue: no overlap, persistent CPU pool, mapped public
+reader, automatic split, hot-request reuse or speed win is established.
+The10-token/s target remains unmet; preserve the earlier1.4258 Q4 observation
+and do not repeat Ollama baselines.
+
+No GPU/model job, sudo operation, service restart/pause, installation, driver/
+hardware reset, API/catalog/routing or Vashti change occurred in this pass.
+No compiler or lab job started by this pass remains running. Installed health
+and physical GPU memory were not re-audited this turn. Required Vashti changes:
+none. This section supersedes the earlier unexposed CPU-miss registration and
+counter proposals; it does not supersede their remaining physical acceptance
+or introduce a production capability.
+
 ## Latest owned-public upload and long comparison, 2026-10-07
 
 `feb76b3` records both-card finite-grid acceptance. `79ba326` adds the narrowly

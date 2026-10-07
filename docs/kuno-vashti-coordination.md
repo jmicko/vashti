@@ -2073,3 +2073,23 @@ is resumed and both inference listeners respond. Intel physical VRAM is back
 to50,688,000 bytes used; NVIDIA399MiB includes the desktop. No install, driver,
 hardware reset, API/routing, application or release change was made.
 **Required Vashti changes: none.**
+
+
+### No-root native CPU-miss registration pass (2026-10-07)
+
+The goal remains paused; the user authorized source/host work without sudo.
+`a8cb5e0` on `codex/kuno-native-text` exposes only the protected fixed-public
+whole-model `resident-count1-hybrid-chat` lab, with cap0/10, actual accepted
+CPU-miss counters, fresh continuation and layer0/3 cancellation policy checks.
+Its separate validator requires four1378-owner/818413568-byte audits and exact
+original output/lifecycle proofs; ordinary1376-owner validation is preserved.
+461 native host/offline tests,106 Python controls, strict all-target Clippy,
+formatting, a normal release build and four actual predevice rejection cases
+pass. Exact `1c44a37a…` artifact/host receipts and sudo-dependent next numerical,
+hybrid late-fault and performance gates are in the
+[latest checkpoint](kuno-native-text-checkpoint.md#no-root-cpu-miss-model-registration-checkpoint-2026-10-07)
+and [registration contract](kuno-native-text-count1-hybrid-plan.md#protected-whole-model-registration-2026-10-07).
+Whole-model hybrid device execution and speed remain unaccepted; CPU joins
+before GPU enqueue, so no overlap claim. No GPU test, sudo, installed service,
+API/catalog/routing, application or release change was made.
+**Required Vashti changes: none.**
