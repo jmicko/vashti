@@ -1315,6 +1315,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         if !got.is_finite()
                             || (got - reference).abs() > 1e-4 + 3e-4 * reference.abs()
                         {
+                            println!(
+                                "fixed_public_fast_numeric_failure dtype={dtype} got_bits={} expected_bits={}",
+                                got.to_bits(),
+                                reference.to_bits()
+                            );
                             return Err("fixed public subgroup packed numeric parity".into());
                         }
                     }
