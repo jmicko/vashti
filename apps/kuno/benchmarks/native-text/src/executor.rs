@@ -595,6 +595,8 @@ struct Cached {
 /// The lifetime of this executor is one fixed synthetic experiment. Its cache
 /// keys/ranks must never be persisted or reused as private request history.
 pub struct GpuExecutor<'a> {
+    pub fast_dense: bool,
+    pub fast_dense_calls: u64,
     model: &'a GgufFile,
     pub block_kernel: bool,
     pub block_large_only: bool,
@@ -725,6 +727,8 @@ impl<'a> GpuExecutor<'a> {
             tick: 0,
             banks: BTreeMap::new(),
             batch_moe: None,
+            fast_dense: false,
+            fast_dense_calls: 0,
             native_projection_tile: NativeProjectionTile::default(),
             native_projection_members: quant_matvec::matmul::MAX_BATCH,
             bank_reserved: 0,
@@ -1571,24 +1575,46 @@ impl<'a> GpuExecutor<'a> {
             // SAFETY: same original packed row proof as scalar enqueue; caller
             // owns disjoint x/y, and the exact runtime spans passed validation.
             unsafe {
-                quant_matvec::matmul::packed_matmul::launch_unchecked::<WgpuRuntime>(
-                    &self.client,
-                    g.grid(),
-                    CubeDim::new_1d(64),
-                    ArrayArg::from_raw_parts(weights, words),
-                    ArrayArg::from_raw_parts(x.clone(), input_words),
-                    ArrayArg::from_raw_parts(y.clone(), output_words),
-                    packet.count(),
-                    packet.packed_first(),
-                    packet.input_first(),
-                    packet.input_stride(),
-                    packet.output_first(),
-                    packet.output_stride(),
-                    g.rows(),
-                    g.columns(),
-                    g.dtype(),
-                    g.tile_tokens(),
-                );
+                if self.fast_dense && self.native_projection_members == 1 && g.tile_tokens() == 1 {
+                    if !packet.packed_first().is_multiple_of(4) {
+                        return Err(Error::InvalidBufferLength);
+                    }
+                    quant_matvec::fast::packed_single::launch_unchecked::<WgpuRuntime>(
+                        &self.client,
+                        quant_matvec::fast::grid(g.rows()),
+                        quant_matvec::fast::cube(),
+                        ArrayArg::from_raw_parts(weights, words),
+                        ArrayArg::from_raw_parts(x.clone(), input_words),
+                        ArrayArg::from_raw_parts(y.clone(), output_words),
+                        packet.count(),
+                        packet.packed_first(),
+                        packet.input_first(),
+                        packet.output_first(),
+                        g.rows(),
+                        g.columns(),
+                        g.dtype(),
+                    );
+                    self.fast_dense_calls += 1;
+                } else {
+                    quant_matvec::matmul::packed_matmul::launch_unchecked::<WgpuRuntime>(
+                        &self.client,
+                        g.grid(),
+                        CubeDim::new_1d(64),
+                        ArrayArg::from_raw_parts(weights, words),
+                        ArrayArg::from_raw_parts(x.clone(), input_words),
+                        ArrayArg::from_raw_parts(y.clone(), output_words),
+                        packet.count(),
+                        packet.packed_first(),
+                        packet.input_first(),
+                        packet.input_stride(),
+                        packet.output_first(),
+                        packet.output_stride(),
+                        g.rows(),
+                        g.columns(),
+                        g.dtype(),
+                        g.tile_tokens(),
+                    );
+                }
             }
             self.calls += 1;
         }

@@ -52,6 +52,13 @@ use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 use zeroize::Zeroize;
 
+struct ScrubPublicRead(cubecl::bytes::Bytes);
+impl Drop for ScrubPublicRead {
+    fn drop(&mut self) {
+        self.0.zeroize();
+    }
+}
+
 #[cube(launch)]
 fn matvec<F: Float>(matrix: &Array<F>, input: &Array<F>, output: &mut Array<F>, columns: usize) {
     let row = ABSOLUTE_POS;
@@ -659,6 +666,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let mapped_weights = count1_environment_opt_in(&mode, "KUNO_LAB_MAPPED_WEIGHTS")?;
     let kernel_profile = count1_environment_opt_in(&mode, "KUNO_LAB_KERNEL_PROFILE")?;
+    let fast_gpu = count1_environment_opt_in(&mode, "KUNO_LAB_FAST_GPU")?;
+    let long_fixture = count1_environment_opt_in(&mode, "KUNO_LAB_LONG_FIXTURE")?;
     if kernel_profile {
         use cubecl_runtime::config::{
             CubeClRuntimeConfig, RuntimeConfig, profiling::ProfilingLogLevel,
@@ -786,6 +795,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         let adapter = candidates.remove(0);
         let info = adapter.get_info();
+        if fast_gpu
+            && (!adapter.features().contains(wgpu::Features::SUBGROUP)
+                || info.subgroup_min_size < 16
+                || info.subgroup_max_size > 32
+                || adapter.limits().max_compute_invocations_per_workgroup < 128
+                || adapter.limits().max_compute_workgroup_size_x < 128)
+        {
+            return Err(
+                "fast count1 GPU requires enabled16..32 subgroups and128 workgroup lanes".into(),
+            );
+        }
         println!(
             "adapter={} vendor={:04x} device={:04x} backend={:?}",
             info.name, info.vendor, info.device, info.backend
@@ -1243,15 +1263,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     &client,
                     CubeCount::Static(rows as u32, 1, 1),
                     CubeDim::new_1d(64),
-                    unsafe { ArrayArg::from_raw_parts(w, words.len()) },
-                    unsafe { ArrayArg::from_raw_parts(x, input.len()) },
+                    unsafe { ArrayArg::from_raw_parts(w.clone(), words.len()) },
+                    unsafe { ArrayArg::from_raw_parts(x.clone(), input.len()) },
                     unsafe { ArrayArg::from_raw_parts(y.clone(), rows) },
                     rows,
                     cols,
                     dtype,
                     0,
                 );
-                let actual_bytes = client.read_one(y)?;
+                let actual_bytes = client.read_one(y.clone())?;
                 let actual = f32::from_bytes(&actual_bytes);
                 let max_error = actual
                     .iter()
@@ -1268,6 +1288,40 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!(
                     "rust_packed_matvec dtype={dtype} rows={rows} cols={cols} max_abs_error={max_error}"
                 );
+                if fast_gpu {
+                    quant_matvec::fast::packed_single::launch::<WgpuRuntime>(
+                        &client,
+                        quant_matvec::fast::grid(rows),
+                        quant_matvec::fast::cube(),
+                        unsafe { ArrayArg::from_raw_parts(w.clone(), words.len()) },
+                        unsafe { ArrayArg::from_raw_parts(x.clone(), input.len()) },
+                        unsafe { ArrayArg::from_raw_parts(y.clone(), rows) },
+                        1,
+                        0,
+                        0,
+                        0,
+                        rows,
+                        cols,
+                        dtype,
+                    );
+                    let fast_bytes = ScrubPublicRead(client.read_one(y.clone())?);
+                    let fast_values = f32::from_bytes(&fast_bytes.0);
+                    if fast_values.len() != rows {
+                        return Err("fixed public subgroup packed result extent".into());
+                    }
+                    let mut fast_error = 0f32;
+                    for (&got, &reference) in fast_values.iter().zip(&expected) {
+                        fast_error = fast_error.max((got - reference).abs());
+                        if !got.is_finite()
+                            || (got - reference).abs() > 1e-4 + 3e-4 * reference.abs()
+                        {
+                            return Err("fixed public subgroup packed numeric parity".into());
+                        }
+                    }
+                    println!(
+                        "rust_fast_packed_matvec dtype={dtype} rows={rows} cols={cols} max_abs_error={fast_error}"
+                    );
+                }
                 drop(actual_bytes);
                 if transient_resident {
                     executor::sanitize_resident_io(&client)?;
@@ -1615,7 +1669,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if prefill_last_head && !resident_enabled {
                 return Err("last-head prefill requires a resident fixture".into());
             }
-            let fixture_mode = mode.strip_prefix("resident-").unwrap_or(&mode);
+            let fixture_mode = if long_fixture {
+                "rainwater"
+            } else {
+                mode.strip_prefix("resident-").unwrap_or(&mode)
+            };
             let (prompt, limit) = match fixture_mode {
                 "bang" => ("!", 4usize),
                 "chat" | "count1-hybrid-chat" => (
@@ -1660,6 +1718,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Some(retired) = &transient_context {
                 executor.enable_transient_resident(retired.clone())?;
             }
+            executor.fast_dense = fast_gpu;
             let cancel = AtomicBool::new(false);
             let mut resident = if resident_enabled {
                 Some(resident_model::ResidentModel::new_for_lab_fixture(
@@ -1874,6 +1933,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 receipt["mapped_weights"] = serde_json::json!(mapped_weights);
                 receipt["observed_mapped_weights"] = serde_json::json!(file.weights_mapped());
                 receipt["kernel_profile"] = serde_json::json!(kernel_profile);
+                receipt["fast_gpu"] = serde_json::json!(fast_gpu);
+                receipt["observed_fast_dense_calls"] = serde_json::json!(executor.fast_dense_calls);
+                receipt["long_fixture"] = serde_json::json!(long_fixture);
+                if long_fixture {
+                    receipt["fixture"] = serde_json::json!("resident-count1-hybrid-rainwater");
+                }
                 receipt["word_down"] = serde_json::json!(executor.word_down);
                 receipt["resident_main_admitted_upper_bytes"] =
                     serde_json::json!(executor.admission_upper_bytes()?);
@@ -2007,6 +2072,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if let Some(retired) = &transient_context {
                     executor.enable_transient_resident(retired.clone())?;
                 }
+                executor.fast_dense = fast_gpu;
                 let mut fresh = resident_model::ResidentModel::new_for_lab_fixture(
                     model.bound_graph(),
                     client.clone(),
@@ -2105,6 +2171,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if let Some(retired) = &transient_context {
                         executor.enable_transient_resident(retired.clone())?;
                     }
+                    executor.fast_dense = fast_gpu;
                     let mut partial = resident_model::ResidentModel::new_for_lab_fixture(
                         model.bound_graph(),
                         client.clone(),

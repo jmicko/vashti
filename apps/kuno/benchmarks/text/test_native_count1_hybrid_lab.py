@@ -44,6 +44,20 @@ def completion(cap):
 
 
 class HybridLabTests(unittest.TestCase):
+    def test_fast_gpu_requires_actual_dispatches_and_separate_long_selection(self):
+        value = receipt("intel",10)
+        value.update(fast_gpu=True,observed_fast_dense_calls=5264,long_fixture=False)
+        LAB.validate_receipt(value,"intel",10,completion(10),fast=True)
+        for field, bads in (("fast_gpu",(False,1,"true")),("observed_fast_dense_calls",(0,True,"5264",100001)),("long_fixture",(True,1,"false"))):
+            for bad in bads:
+                wrong=copy.deepcopy(value);wrong[field]=bad
+                with self.assertRaises(ValueError):
+                    LAB.validate_receipt(wrong,"intel",10,completion(10),fast=True)
+        with mock.patch.dict(os.environ,{"KUNO_LAB_FAST_GPU":"auto","KUNO_LAB_LONG_FIXTURE":"auto"}):
+            env=LAB.worker_environment("/original/model","/public/receipt",fast=True,long=False)
+        self.assertEqual(env["KUNO_LAB_FAST_GPU"],"1")
+        self.assertEqual(env["KUNO_LAB_LONG_FIXTURE"],"0")
+
     def test_mapping_and_profiling_are_explicit_observed_and_never_inherited(self):
         for mapped in (False, True):
             for profile in (False, True):

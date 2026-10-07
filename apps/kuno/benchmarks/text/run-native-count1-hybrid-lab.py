@@ -34,11 +34,14 @@ def completion(cap):
     )
 
 
-def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False, mapped=False, profile=False):
+def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False):
     validate_cap(cap)
-    for field, selected in (("mapped_weights", mapped), ("observed_mapped_weights", mapped), ("kernel_profile", profile)):
+    for field, selected in (("mapped_weights", mapped), ("observed_mapped_weights", mapped), ("kernel_profile", profile), ("fast_gpu", fast), ("long_fixture", long)):
         if type(selected) is not bool or (selected or field in receipt) and receipt.get(field) is not selected:
             raise ValueError("Explicit optimization selection and completed receipt must match")
+    calls = receipt.get("observed_fast_dense_calls", 0)
+    if type(calls) is not int or not 0 <= calls <= 100000 or (calls > 0) is not fast:
+        raise ValueError("Actual count1 fast dense dispatch evidence must match explicit selection")
     if workers not in ("scoped", "pooled"):
         raise ValueError("Unknown CPU worker mode")
     for field in ("count1_hybrid_cpu_workers", "observed_count1_hybrid_cpu_workers"):
@@ -54,7 +57,7 @@ def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False
     for field in ("count1_hybrid_cpu_gpu_overlap", "observed_count1_hybrid_cpu_gpu_overlap"):
         if receipt.get(field) is not overlap:
             raise ValueError("Requested and completed overlap policy mismatch")
-    for field, limit in (("completed_cpu_misses", 7 * 48 * 10),
+    for field, limit in (("completed_cpu_misses", (127 if long else 7) * 48 * 10),
                          ("fresh_completed_cpu_misses", 48 * 10)):
         value = receipt.get(field)
         if type(value) is not int or not 0 <= value <= limit:
@@ -75,26 +78,28 @@ def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False
     ):
         raise ValueError("Four typed complete hybrid owner audits required")
     BASE._validate_model_receipt(
-        receipt, card, "resident-chat", 8, output,
-        owner_inventory=(1378, 818413568), reported_fixture=MODE,
+        receipt, card, "resident-rainwater" if long else "resident-chat", 8, output,
+        owner_inventory=(1378, 818413568), reported_fixture="resident-count1-hybrid-rainwater" if long else MODE,
         native_decode=True, native_decode_tile=1, native_decode_kernels="single-q4-all",
     )
     if any(marker not in output.splitlines() for marker in completion(cap)):
         raise ValueError("Hybrid continuation and both cancellation proofs required")
 
 
-def worker_environment(model, receipt, workers="scoped", overlap=False, mapped=False, profile=False):
+def worker_environment(model, receipt, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False):
     if workers not in ("scoped", "pooled"):
         raise ValueError("Unknown CPU worker mode")
     if type(overlap) is not bool or (overlap and workers != "pooled"):
         raise ValueError("Overlap requires explicit pooled workers")
-    if type(mapped) is not bool or type(profile) is not bool:
+    if any(type(value) is not bool for value in (mapped,profile,fast,long)):
         raise ValueError("Explicit boolean optimization selections required")
     env = BASE.worker_environment(model, receipt, 8, True, 1, "single-q4-all")
     env["KUNO_LAB_CPU_WORKERS"] = workers
     env["KUNO_LAB_CPU_GPU_OVERLAP"] = "1" if overlap else "0"
     env["KUNO_LAB_MAPPED_WEIGHTS"] = "1" if mapped else "0"
     env["KUNO_LAB_KERNEL_PROFILE"] = "1" if profile else "0"
+    env["KUNO_LAB_FAST_GPU"] = "1" if fast else "0"
+    env["KUNO_LAB_LONG_FIXTURE"] = "1" if long else "0"
     return env
 
 
@@ -108,6 +113,8 @@ def main():
     parser.add_argument("--cpu-gpu-overlap", action="store_true")
     parser.add_argument("--mapped-weights", action="store_true")
     parser.add_argument("--kernel-profile", action="store_true")
+    parser.add_argument("--fast-gpu", action="store_true")
+    parser.add_argument("--long-fixture", action="store_true")
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--receipt", type=pathlib.Path, required=True)
     args = parser.parse_args()
@@ -129,7 +136,7 @@ def main():
         "KUNO_LAB_STATIC_CACHE_BYTES KUNO_LAB_EXPERT_BATCH_BYTES KUNO_LAB_EXPERT_SCATTER",
     ]
     command.extend("--setenv=" + key + "=" + value
-                   for key, value in worker_environment(args.model.resolve(), target, args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile).items())
+                   for key, value in worker_environment(args.model.resolve(), target, args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture).items())
     command.extend([sys.executable, str(HERE / "protected-lab-exec.py"), str(frozen),
                     args.card, MODE, str(args.cpu_miss_cap)])
     print("verified_cargo_executable_sha256=" + identity, flush=True)
@@ -144,7 +151,7 @@ def main():
         raise SystemExit("Missing whole-model hybrid receipt")
     snapshot = target.read_bytes()
     receipt = json.loads(snapshot)
-    validate_receipt(receipt, args.card, args.cpu_miss_cap, "".join(lines), args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile)
+    validate_receipt(receipt, args.card, args.cpu_miss_cap, "".join(lines), args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture)
     record = {
         "scope": "fixed-public-count1-hybrid-output-and-lifecycle-only",
         "cargo_artifacts_sha256": artifacts_identity, "frozen_executable_sha256": identity,
@@ -152,6 +159,8 @@ def main():
         "receipt_sha256": BASE.digest(snapshot), "protected_lifecycle_completion_checked": True,
         "matched_performance_measurement": False, "cpu_gpu_overlap": args.cpu_gpu_overlap, "cpu_workers": args.cpu_workers,
         "mapped_weights": args.mapped_weights, "kernel_profile": args.kernel_profile,
+        "fast_gpu": args.fast_gpu,
+        "long_fixture": args.long_fixture,
     }
     with metadata.open("x") as output:
         json.dump(record, output, indent=2, sort_keys=True)

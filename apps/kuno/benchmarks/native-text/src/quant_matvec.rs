@@ -478,6 +478,8 @@ pub mod moe;
 #[path = "block_matvec.rs"]
 pub mod block;
 
+#[path = "fast_matvec.rs"]
+pub mod fast;
 #[path = "quant_matmul.rs"]
 pub mod matmul;
 #[path = "moe_block.rs"]

@@ -41,6 +41,24 @@ execution still needs the per-layer router/input dependency. GPU routing,
 subgroup reductions and an additional device cache must be separately connected
 and measured; no claim follows merely from source existing.
 
+The next explicit protected option, `KUNO_LAB_FAST_GPU=1`, replaces count1
+dense projections with four rows per128-thread workgroup. Each row uses32
+physical lanes, each accumulating two of the original64 logical lanes, then
+performs the original stride32/16/8/4/2/1 tree using shared memory and subgroup
+shuffles. Logical lane numbering comes from subgroup ID/size, so no hidden
+mapping from local invocation indices is assumed. The adapter must advertise
+enabled subgroups with bounds16..32 and128-thread workgroups. Q4_K shares block
+headers and nibble bytes; other original formats use the existing decoder.
+Prefill remains the original MAX8 path and private arena/fault/cleanup owners
+are unchanged. The completed receipt records actual fast projection dispatches.
+
+`KUNO_LAB_LONG_FIXTURE=1` selects the existing fixed-public75-token rainwater
+prompt and128 outputs through the same hybrid model path. No arbitrary prompt,
+variable generation limit or private trace is accepted. Validation uses all128
+previously accepted token IDs,127 actual decode steps, original inventory and
+the same fresh/cancel/poison/erasure gates. Longer timing is needed to separate
+count1 shader startup from sustained decode. The default remains short chat.
+
 Source-only proposal, 2026-10-05. Prepared by the resident-MoE child after the native MAX8 adapter handoff. No code, GPU, service, model-payload read, benchmark or default change accompanies this proposal. Parent owns whole-model batching correctness, admission, device acceptance and integration. This is a later decode experiment; MAX8 prompt batching alone cannot establish faster hot decode.
 
 ## Evidence and first decision
