@@ -45,7 +45,7 @@ fn fault() -> Error {
 }
 /// Numeric-only infrastructure classification. Never retain or format the
 /// original error, selected ranks, private values or backend payloads.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NumericStage {
     Config,
     Limits,
@@ -58,6 +58,18 @@ enum NumericStage {
     HostBudget,
     Allocation,
     PhysicalOwners,
+    PhysicalClient,
+    PhysicalMetadata,
+    PhysicalPrivateOwner,
+    PhysicalReferenceOwner,
+    PhysicalBankOwner,
+    PhysicalResource,
+    PhysicalPrivateExtent,
+    PhysicalReferenceExtent,
+    PhysicalBankOffset,
+    PhysicalBankSize,
+    PhysicalBankBacking,
+    PhysicalAlias,
     FixtureUpload,
     Priming,
     Reference,
@@ -87,6 +99,28 @@ impl NumericStage {
             Self::HostBudget => "public CPU/GPU numeric host-budget rejected",
             Self::Allocation => "public CPU/GPU numeric allocation rejected",
             Self::PhysicalOwners => "public CPU/GPU numeric physical-owners rejected",
+            Self::PhysicalClient => "public CPU/GPU numeric physical-client rejected",
+            Self::PhysicalMetadata => "public CPU/GPU numeric physical-metadata rejected",
+            Self::PhysicalPrivateOwner => "public CPU/GPU numeric physical-private-owner rejected",
+            Self::PhysicalReferenceOwner => {
+                "public CPU/GPU numeric physical-reference-owner rejected"
+            }
+            Self::PhysicalBankOwner => "public CPU/GPU numeric physical-public-bank-owner rejected",
+            Self::PhysicalResource => "public CPU/GPU numeric physical-resource rejected",
+            Self::PhysicalPrivateExtent => {
+                "public CPU/GPU numeric physical-private-extent rejected"
+            }
+            Self::PhysicalReferenceExtent => {
+                "public CPU/GPU numeric physical-reference-extent rejected"
+            }
+            Self::PhysicalBankOffset => {
+                "public CPU/GPU numeric physical-public-bank-offset rejected"
+            }
+            Self::PhysicalBankSize => "public CPU/GPU numeric physical-public-bank-size rejected",
+            Self::PhysicalBankBacking => {
+                "public CPU/GPU numeric physical-public-bank-backing rejected"
+            }
+            Self::PhysicalAlias => "public CPU/GPU numeric physical-alias rejected",
             Self::FixtureUpload => "public CPU/GPU numeric fixture-upload rejected",
             Self::Priming => "public CPU/GPU numeric priming rejected",
             Self::Reference => "public CPU/GPU numeric reference rejected",
@@ -641,6 +675,21 @@ fn extent(offset: u64, size: u64, backing: u64, logical: u64, page: u64) -> Resu
     }
     Ok(())
 }
+/// Classifies only a rejected fixed inventory extent, without retaining any
+/// address/size. The full-span invariant in extent() remains unchanged.
+fn physical_extent_stage(index: usize, offset: u64, size: u64, logical: u64) -> NumericStage {
+    if index < 13 {
+        NumericStage::PhysicalPrivateExtent
+    } else if index < 18 {
+        NumericStage::PhysicalReferenceExtent
+    } else if offset != 0 {
+        NumericStage::PhysicalBankOffset
+    } else if logical == 0 || size != logical {
+        NumericStage::PhysicalBankSize
+    } else {
+        NumericStage::PhysicalBankBacking
+    }
+}
 fn permit_health(
     actual: &Arc<AtomicBool>,
     supplied: &Arc<AtomicBool>,
@@ -669,13 +718,17 @@ fn physical(
     banks: &ExpertBanks,
     other: &ExpertBanks,
     reference: &ResidentMoe,
+    stage: &mut NumericStage,
 ) -> Result<()> {
+    *stage = NumericStage::PhysicalClient;
     let c = a.client().map_err(|_| fault())?;
     banks.check_client(c)?;
     other.check_client(c)?;
     let stream = a.handle(b.ids[0]).map_err(|_| fault())?.stream;
+    *stage = NumericStage::PhysicalMetadata;
     let mut handles = schedule::Metadata::new(24)?;
     for (i, &id) in b.ids.iter().enumerate() {
+        *stage = NumericStage::PhysicalPrivateOwner;
         if b.ids[..i].contains(&id) {
             return Err(fault());
         }
@@ -687,6 +740,7 @@ fn physical(
         handles.push((h, layout.owned_bytes as u64, layout.owned_bytes as u64))?;
     }
     for (id, n) in reference.fixed_public_probe_owners() {
+        *stage = NumericStage::PhysicalReferenceOwner;
         let l = a.layout(id).map_err(|_| fault())?;
         let h = a.handle(id).map_err(|_| fault())?.clone();
         if l.logical_words != n
@@ -700,6 +754,7 @@ fn physical(
     }
     for banks in [banks, other] {
         for bank in [banks.gate(), banks.up(), banks.down()] {
+            *stage = NumericStage::PhysicalBankOwner;
             let segment = bank.single()?;
             let n = (segment.words() * 4) as u64;
             let h = segment.handle().clone();
@@ -709,16 +764,19 @@ fn physical(
             handles.push((h, n, main_admission::page_bytes(n).map_err(|_| fault())?))?;
         }
     }
+    *stage = NumericStage::PhysicalMetadata;
     if handles.len() != 24 {
         return Err(fault());
     }
     let mut resources = schedule::Metadata::new(24)?;
     for i in 0..handles.len() {
+        *stage = NumericStage::PhysicalResource;
         resources.push(
             c.get_resource(handles.get(i)?.0.clone())
                 .map_err(|_| fault())?,
         )?;
     }
+    *stage = NumericStage::PhysicalMetadata;
     if handles
         .metadata_bytes()?
         .checked_add(resources.metadata_bytes()?)
@@ -727,11 +785,16 @@ fn physical(
         return Err(fault());
     }
     for i in 0..resources.len() {
+        *stage = NumericStage::PhysicalResource;
         let r = resources.get(i)?.resource();
         let h = handles.get(i)?;
-        extent(r.offset, r.size, r.buffer.size(), h.1, h.2)?;
+        if let Err(error) = extent(r.offset, r.size, r.buffer.size(), h.1, h.2) {
+            *stage = physical_extent_stage(i, r.offset, r.size, h.1);
+            return Err(error);
+        }
         for j in 0..i {
             if resources.get(j)?.resource().buffer == r.buffer {
+                *stage = NumericStage::PhysicalAlias;
                 return Err(fault());
             }
         }
@@ -1104,7 +1167,7 @@ fn allocate_bank(
     observe(l, c)?;
     l.precharge(&ExpertBanks::allocation_requests(w, 16)?)
         .map_err(|_| fault())?;
-    let b = ExpertBanks::new(c, w, 16)?;
+    let b = ExpertBanks::new_full_pages_for_cpu_gpu_lab(c, w)?;
     observe(l, c)?;
     Ok(b)
 }
@@ -1318,7 +1381,7 @@ fn run_inner<'graph, 'm>(
         }
         observe(&mut ledger, client)?;
         *stage = NumericStage::PhysicalOwners;
-        physical(&arena, &buffers, banks, flat, &reference_moe)?;
+        physical(&arena, &buffers, banks, flat, &reference_moe, stage)?;
         *stage = NumericStage::FixtureUpload;
         let ids: Zeroizing<[usize; N]> =
             Zeroizing::new(std::array::from_fn(|r| config.group * N + r));
@@ -1678,8 +1741,10 @@ mod tests {
                 "public CPU/GPU numeric config rejected"
             ))
         ));
-        let mut unsupported = wgpu::Limits::default();
-        unsupported.max_storage_buffers_per_shader_stage = 6;
+        let unsupported = wgpu::Limits {
+            max_storage_buffers_per_shader_stage: 6,
+            ..Default::default()
+        };
         let device = classified_numeric_result(true, NumericStage::Limits, limits(&unsupported));
         assert!(matches!(
             device,
@@ -1900,6 +1965,37 @@ mod tests {
         }
         assert!(sample_ticket(&count).is_err());
         assert_eq!(count.load(Ordering::Acquire), 16);
+    }
+    #[test]
+    fn rejected_physical_extent_preserves_checks_and_identifies_fixed_owner_class() {
+        let logical = 14_745_600;
+        let page = 16_777_216;
+        // A logical-sized original allocation is still rejected; diagnostics
+        // must not make it equivalent to the required complete physical page.
+        assert!(extent(0, logical, logical, logical, page).is_err());
+        for index in 0..24 {
+            assert_eq!(
+                physical_extent_stage(index, 0, logical, logical),
+                if index < 13 {
+                    NumericStage::PhysicalPrivateExtent
+                } else if index < 18 {
+                    NumericStage::PhysicalReferenceExtent
+                } else {
+                    NumericStage::PhysicalBankBacking
+                }
+            );
+        }
+        assert!(extent(0, logical, page, logical, page).is_ok());
+        assert!(extent(4, logical, page, logical, page).is_err());
+        assert_eq!(
+            physical_extent_stage(18, 4, logical, logical),
+            NumericStage::PhysicalBankOffset
+        );
+        assert!(extent(0, page, page, logical, page).is_err());
+        assert_eq!(
+            physical_extent_stage(18, 0, page, logical),
+            NumericStage::PhysicalBankSize
+        );
     }
     #[test]
     fn sealed_gate_binds_actual_retirement_arc_and_worker_thread() {

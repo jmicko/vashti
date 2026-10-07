@@ -74,6 +74,33 @@ and I/O caps, original math and ownership cleanup remain unchanged. Root still
 owns compilation and protected physical reruns; the labels locate a failed gate
 and do not establish numerical or performance acceptance.
 
+The physical-owner stage is further split into client/metadata, private and
+reference owner shape, public-bank owner shape, resource lookup, private and
+reference physical extents, public-bank offset/size/backing, and alias checks.
+These remain constant labels without offsets, addresses or payload dumps.
+
+## Fixed-public full-page bank allocation follow-up (2026-10-06)
+
+Source review found that the original `ExpertBanks::new` requests logical bank
+bytes from an exclusive pool whose backing allocation can be smaller than the
+conservative power-of-two page charge. Such an allocation does not satisfy this
+operator's existing exact physical-page invariant. The focused operator now
+uses `new_full_pages_for_cpu_gpu_lab`: original Q4 gate/up and Q5/Q8 down metadata,
+exactly 16 slots, and only the original 14,745,600/18,022,400/27,852,800-byte logical
+component lengths. It requests the complete 16/32-MiB page and retains that owner
+through an offset-zero handle whose end is clipped to the original logical span.
+Original bank capacities, packed launch lengths, read/fill paths and math are
+unchanged. The ordinary `ExpertBanks::new` constructor keeps its original
+allocation behavior.
+
+Existing full-page precharges already account for two 64-MiB bank triples. The
+physical extent/backing/nonaliasing checks and 256-MiB envelope are unchanged.
+Host test sources exercise the actual allocation/view helper for both down
+formats and reject foreign extents or malformed full owners before use. The
+stage tests continue to reject a logical-sized backing. Formatting/whitespace
+and source review are separate from root-owned compilation, protected device
+acceptance and any timing result.
+
 ## Approved original snapshot
 
 Bounded original CPU/GPU expert acceptance and joint calibration

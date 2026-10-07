@@ -152,6 +152,34 @@ fn validate_segmented_metadata(parts: [(TensorType, &[u64]); 3]) -> Result<()> {
     }
     Ok(())
 }
+/// Only the three original 16-slot component extents used by the fixed-public
+/// CPU/GPU laboratory. A full-bin request proves the complete physical owner;
+/// shaders continue to bind the original logical packed bytes only.
+fn fixed_lab_page_bytes(logical_bytes: usize) -> Result<usize> {
+    if !matches!(logical_bytes, 14_745_600 | 18_022_400 | 27_852_800) {
+        return Err(Error::InvalidFormat("fixed-public expert bank extent"));
+    }
+    usize::try_from(
+        crate::main_admission::page_bytes(logical_bytes as u64)
+            .map_err(|_| Error::ArithmeticOverflow)?,
+    )
+    .map_err(|_| Error::ArithmeticOverflow)
+}
+fn fixed_lab_full_page_handle(
+    logical_bytes: usize,
+    allocate: impl FnOnce(usize) -> Handle,
+) -> Result<Handle> {
+    let owned_bytes = fixed_lab_page_bytes(logical_bytes)?;
+    let owner = allocate(owned_bytes);
+    if owner.size() != owned_bytes as u64
+        || owner.size_in_used() != owner.size()
+        || owner.offset_start.unwrap_or(0) != 0
+        || owner.offset_end.unwrap_or(0) != 0
+    {
+        return Err(Error::InvalidFormat("fixed-public expert bank full owner"));
+    }
+    Ok(owner.offset_end((owned_bytes - logical_bytes) as u64))
+}
 pub fn configured_static_cache(raw: Option<&str>, default: usize) -> Result<usize> {
     let bytes = match raw {
         None => default,
@@ -305,6 +333,27 @@ impl ExpertBanks {
         weights: RoutedWeights<'_>,
         capacity: usize,
     ) -> Result<Self> {
+        Self::new_inner(client, weights, capacity, false)
+    }
+    /// Narrow operator-lab seam: original Q4 gate/up and Q5/Q8 down, exactly
+    /// sixteen slots. The original constructor/model allocation is unchanged.
+    pub(crate) fn new_full_pages_for_cpu_gpu_lab(
+        client: &ComputeClient<WgpuRuntime>,
+        weights: RoutedWeights<'_>,
+    ) -> Result<Self> {
+        validate_segmented_metadata(
+            [weights.gate, weights.up, weights.down]
+                .map(|tensor| (tensor.info().dtype(), tensor.info().dimensions())),
+        )
+        .map_err(|_| Error::InvalidFormat("fixed-public original expert bank metadata"))?;
+        Self::new_inner(client, weights, 16, true)
+    }
+    fn new_inner(
+        client: &ComputeClient<WgpuRuntime>,
+        weights: RoutedWeights<'_>,
+        capacity: usize,
+        full_lab_pages: bool,
+    ) -> Result<Self> {
         let gate = Matrix::new(weights.gate)?;
         let up = Matrix::new(weights.up)?;
         let down = Matrix::new(weights.down)?;
@@ -330,7 +379,11 @@ impl ExpertBanks {
             for bytes in sizes {
                 let count = bytes / expert_bytes;
                 segments.push(BankSegment {
-                    handle: client.empty(bytes),
+                    handle: if full_lab_pages {
+                        fixed_lab_full_page_handle(bytes, |owned| client.empty(owned))?
+                    } else {
+                        client.empty(bytes)
+                    },
                     first_slot,
                     capacity: count,
                     words: bytes / 4,
@@ -1231,6 +1284,62 @@ pub fn execute(
     })();
     clear(client, &scratch);
     result
+}
+
+#[cfg(test)]
+mod fixed_lab_page_tests {
+    use super::*;
+    use std::cell::Cell;
+
+    #[test]
+    fn original_sixteen_slot_q5_q8_banks_own_full_pages_with_exact_logical_views() {
+        let stream = cubecl::stream_id::StreamId::current();
+        for down_expert in [1_126_400usize, 1_740_800] {
+            let mut charged = 0usize;
+            for expert in [921_600usize, 921_600, down_expert] {
+                let logical = 16 * expert;
+                let page = logical.next_power_of_two();
+                let requested = Cell::new(0);
+                let view = fixed_lab_full_page_handle(logical, |bytes| {
+                    requested.set(bytes);
+                    Handle::new(stream, bytes as u64)
+                })
+                .unwrap();
+                assert_eq!(requested.get(), page);
+                assert_eq!(view.size(), page as u64);
+                assert_eq!(view.size_in_used(), logical as u64);
+                assert_eq!(view.offset_start.unwrap_or(0), 0);
+                assert_eq!(view.offset_end, Some((page - logical) as u64));
+                assert_eq!(view.stream, stream);
+                assert_eq!(view.size_in_used() as usize / expert, 16);
+                charged += page;
+            }
+            assert_eq!(charged, 64 * 1024 * 1024);
+            assert_eq!(charged * 2, 134_217_728);
+        }
+    }
+    #[test]
+    fn full_page_lab_rejects_nonoriginal_extents_and_sliced_or_wrong_sized_owners() {
+        let stream = cubecl::stream_id::StreamId::current();
+        for logical in [0, 4, 14_745_604, 16 * 1024 * 1024, usize::MAX] {
+            assert!(
+                fixed_lab_full_page_handle(logical, |_| {
+                    panic!("nonoriginal extent reached allocation")
+                })
+                .is_err()
+            );
+        }
+        for bad in 0..3 {
+            assert!(
+                fixed_lab_full_page_handle(14_745_600, |page| match bad {
+                    0 => Handle::new(stream, page as u64 + 32768),
+                    1 => Handle::new(stream, page as u64).offset_start(4),
+                    _ => Handle::new(stream, page as u64).offset_end(4),
+                })
+                .is_err()
+            );
+        }
+    }
 }
 
 #[cfg(test)]
