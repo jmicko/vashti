@@ -340,6 +340,7 @@ pub(super) struct Workspace {
     shared: shared_batch::Workspace,
     outer: Zeroizing<Outer>,
     poison: Arc<AtomicBool>,
+    dense_member_capacity: usize,
 }
 impl Workspace {
     fn decode_kernels(&self) -> Result<NativeDecodeKernels> {
@@ -352,14 +353,16 @@ impl Workspace {
             self.gdn.recurrence_policy() == crate::gdn_chunk::RecurrencePolicy::SingleStreaming;
         let q4_block =
             self.moe.gate_policy() == crate::quant_matvec::grouped_moe::GatePolicy::Q4Block;
-        Ok(match (single_moe, single_gdn, q4_block) {
-            (false, false, false) => NativeDecodeKernels::Chunk,
-            (true, false, false) => NativeDecodeKernels::SingleMoe,
-            (false, true, false) => NativeDecodeKernels::SingleGdn,
-            (true, true, false) => NativeDecodeKernels::SingleAll,
-            (true, true, true) => NativeDecodeKernels::SingleQ4All,
-            _ => return Err(error()),
-        })
+        Ok(
+            match (single_moe, single_gdn, q4_block, self.dense_member_capacity) {
+                (false, false, false, 8) => NativeDecodeKernels::Chunk,
+                (true, false, false, 8) => NativeDecodeKernels::SingleMoe,
+                (false, true, false, 8) => NativeDecodeKernels::SingleGdn,
+                (true, true, false, 1) => NativeDecodeKernels::SingleAll,
+                (true, true, true, 1) => NativeDecodeKernels::SingleQ4All,
+                _ => return Err(error()),
+            },
+        )
     }
     pub(super) fn allocate(
         model: &mut ResidentModel<'_, '_>,
@@ -424,6 +427,7 @@ impl Workspace {
             shared,
             outer,
             poison,
+            dense_member_capacity: 8,
         };
         result.prove_outer(model)?;
         Ok(result)
@@ -571,6 +575,13 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         native.decode_kernels()
     }
 
+    #[allow(dead_code)] // Protected receipt exposure is owned separately.
+    pub(crate) fn native_dense_member_capacity(&self) -> Result<usize> {
+        let native = self.native_batch.as_ref().ok_or(error())?;
+        native.decode_kernels()?;
+        Ok(native.dense_member_capacity)
+    }
+
     #[allow(dead_code)] // Protected count1 receipt registration is separate.
     pub(crate) fn native_cpu_miss_cap(&self) -> Result<Option<usize>> {
         Ok(self
@@ -656,6 +667,16 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 native
                     .moe
                     .set_lab_single_member_decode(executor, &self.arena, &boundary)?;
+            }
+            if matches!(
+                policy,
+                NativeDecodeKernels::SingleAll | NativeDecodeKernels::SingleQ4All
+            ) {
+                native.dense_member_capacity =
+                    executor.set_lab_native_single_dense_dispatch(&boundary)?;
+            }
+            if native.dense_member_capacity != executor.native_projection_member_capacity() {
+                return Err(error());
             }
             let actual = self.native_decode_kernels()?;
             if actual != policy {
@@ -818,6 +839,9 @@ impl Workspace {
         self.prove_outer(m)?;
         e.check_client(m.arena.client().map_err(u::fault)?)?;
         e.check_resident_admission(&m.admission)?;
+        if self.dense_member_capacity != e.native_projection_member_capacity() {
+            return Err(error());
+        }
         m.graph.verify_unchanged()?;
         u::cancel(cancel)?;
         // Preflight both single-token families before clears, embeddings or
