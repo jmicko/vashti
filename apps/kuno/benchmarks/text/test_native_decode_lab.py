@@ -40,7 +40,9 @@ def current_receipt(native_decode, card="intel", tile=8):
 
 class NativeDecodeLabTests(unittest.TestCase):
     def validate(self, receipt, native_decode=False, card="intel", **options):
-        LAB.validate_receipt(receipt, card, "resident-rainwater", 8, OUTPUT,
+        output = options.pop("output", OUTPUT + "\n" + "\n".join(LAB.TILE_ONE_COMPLETION)
+                             if options.get("native_decode_tile", 8) == 1 else OUTPUT)
+        LAB.validate_receipt(receipt, card, "resident-rainwater", 8, output,
                              native_decode=native_decode, **options)
 
     def test_both_selected_modes_accept_exact_counts_and_unchanged_main_audits_on_both_cards(self):
@@ -99,19 +101,19 @@ class NativeDecodeLabTests(unittest.TestCase):
                 self.validate(archived_receipt(), allow_legacy_decode=bad)
 
     def test_every_main_owner_and_exact_source_counts_remain_required(self):
-        for native in (False, True):
-            original = current_receipt(native)
+        for native, tile in ((False, 8), (True, 8), (True, 1)):
+            original = current_receipt(native, tile=tile)
             for owner in range(4):
                 for field in ("main_buffers", "main_bytes", "source_buffers", "source_bytes"):
                     receipt = copy.deepcopy(original)
                     receipt["owned_zero_audits"][owner][field] += 1
                     with self.assertRaises(ValueError):
-                        self.validate(receipt, native)
+                        self.validate(receipt, native, native_decode_tile=tile)
             for missing in range(4):
                 receipt = copy.deepcopy(original)
                 del receipt["owned_zero_audits"][missing]
                 with self.assertRaises(ValueError):
-                    self.validate(receipt, native)
+                    self.validate(receipt, native, native_decode_tile=tile)
 
     def test_native_decode_does_not_relax_fixture_limits_or_lifecycle_markers(self):
         original = current_receipt(True)
@@ -153,7 +155,8 @@ class NativeDecodeLabTests(unittest.TestCase):
                 def launch(command, **options):
                     command_seen.extend(command)
                     target.write_text(json.dumps(current_receipt(native, tile=tile)))
-                    return SimpleNamespace(stdout=io.StringIO(OUTPUT + "\n"), wait=lambda: 0)
+                    markers = "\n".join(LAB.TILE_ONE_COMPLETION) if tile == 1 else ""
+                    return SimpleNamespace(stdout=io.StringIO(OUTPUT + "\n" + markers + "\n"), wait=lambda: 0)
                 args = [str(HERE / "run-native-max8-lab.py"), "--cargo-artifacts", "/public/artifacts",
                         "--model", "/original/blob", "--card", "intel", "--fixture", "resident-rainwater",
                         "--count", "8", "--run-id", "fixture", "--receipt", str(target)]
@@ -216,6 +219,23 @@ class NativeDecodeLabTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 LAB.main()
             cargo.assert_not_called()
+
+    def test_tile_one_requires_exact_fresh_continuation_and_both_queued_layer_proofs(self):
+        tile1 = current_receipt(True, tile=1)
+        complete = OUTPUT + "\n" + "\n".join(LAB.TILE_ONE_COMPLETION)
+        self.validate(tile1, True, native_decode_tile=1, output=complete)
+        for missing in LAB.TILE_ONE_COMPLETION:
+            for substitute in ("", missing + " extra", "prefix_" + missing):
+                with self.assertRaises(ValueError):
+                    self.validate(tile1, True, native_decode_tile=1,
+                                  output=complete.replace(missing, substitute))
+        with self.assertRaises(ValueError):
+            self.validate(tile1, True, native_decode_tile=1, output=OUTPUT, allow_legacy_decode=True)
+        for native in (False, True):
+            # Existing tile8 acceptance does not demand tile1 diagnostics.
+            self.validate(current_receipt(native), native, output=OUTPUT)
+            with self.assertRaises(ValueError):
+                self.validate(current_receipt(native), native, native_decode_tile=1, output=complete)
 
 
 if __name__ == "__main__":

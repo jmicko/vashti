@@ -15,6 +15,13 @@ import sys
 import tomllib
 
 
+TILE_ONE_COMPLETION = (
+    "public_native_tile1_fresh_continuation_matches=true",
+    "public_native_tile1_mid_token_cancel layer=0 erased=true",
+    "public_native_tile1_mid_token_cancel layer=3 erased=true",
+)
+
+
 def digest(data):
     return hashlib.sha256(data).hexdigest()
 
@@ -188,6 +195,8 @@ def validate_model_receipt(receipt, card, fixture, count, output, *, native_deco
     )
     if any(message not in output for message in required):
         raise ValueError("Protected lifecycle completion evidence is incomplete")
+    if native_decode_tile == 1 and any(message not in output.splitlines() for message in TILE_ONE_COMPLETION):
+        raise ValueError("Native tile1 continuation/recovery completion evidence is incomplete")
 
 
 def validate_receipt(receipt, card, fixture, count, output, *, native_decode=False,

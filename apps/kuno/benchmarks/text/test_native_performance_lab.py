@@ -525,7 +525,7 @@ class PerformanceLaneTests(unittest.TestCase):
                        native_decode_projection_tile=1)
         receipt["owned_zero_audits"][0].update(source_buffers=0, source_bytes=0)
         proof = "verified_performance_sample sample_index=2 native_decode=1 native_decode_tile=1\n"
-        output = self.marker(52) + proof + self.output
+        output = self.marker(52) + proof + self.output + "\n" + "\n".join(LANE.ACCEPTANCE.TILE_ONE_COMPLETION)
         LANE.accepted_result(receipt, output, "intel", 52, 0, self.before, self.before,
                              native_decode=True, native_decode_tile=1, index=2)
         for selected in (8, True, 1.0, "1", 4):
@@ -535,6 +535,39 @@ class PerformanceLaneTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             LANE.accepted_result(receipt, output, "intel", 52, 0, self.before, self.before,
                                  native_decode=False, native_decode_tile=1, index=2)
+
+    def test_tile_child_retains_all_nine_exact_proofs_and_rejects_each_missing_recovery_proof(self):
+        receipt = copy.deepcopy(self.receipt)
+        receipt.update(native_decode=True, native_decode_steps=127, scalar_decode_steps=0,
+                       native_decode_projection_tile=1, generation_ms=63500)
+        receipt["owned_zero_audits"][0].update(source_buffers=0, source_bytes=0)
+        proof = "verified_performance_sample sample_index=2 native_decode=1 native_decode_tile=1\n"
+        complete = self.marker(52) + proof + self.output + "\n" + "\n".join(LANE.ACCEPTANCE.TILE_ONE_COMPLETION)
+        for missing in LANE.ACCEPTANCE.TILE_ONE_COMPLETION:
+            with self.assertRaises(ValueError):
+                LANE.accepted_result(receipt, complete.replace(missing, ""), "intel", 52, 0,
+                                     self.before, self.before, native_decode=True,
+                                     native_decode_tile=1, index=2)
+        with tempfile.TemporaryDirectory() as directory:
+            plan_path, plan, cgroup, _ = self.supervisor_fixture(directory, tile_comparison=True)
+            plan["card"] = "intel"
+            state = {**self.before, "memory.current": 123}
+            # Prefix/suffix payloads must not fill the bounded proof list.
+            stdout = "\n".join(message + " private-test-fragment" for message in LANE.ACCEPTANCE.TILE_ONE_COMPLETION)
+            stdout += "\n" + complete
+            def launch(command, **options):
+                self.assertEqual(options["env"]["KUNO_LAB_NATIVE_DECODE_TILE"], "1")
+                (pathlib.Path(directory) / "sample-2-cap-52.json").write_text(json.dumps(receipt))
+                return SimpleNamespace(stdout=io.BytesIO(stdout.encode()), poll=lambda: 0,
+                                       returncode=0, pid=123)
+            with mock.patch.object(LANE.subprocess, "Popen", side_effect=launch), \
+                 mock.patch.object(LANE, "snapshot", return_value=state), \
+                 mock.patch.object(LANE.resource, "getrlimit", return_value=(0, 0)):
+                result = LANE.run_child(plan, plan_path, 2, 52, cgroup)
+            self.assertTrue(result["accepted"])
+            self.assertEqual(result["native_decode_steps"], 127)
+            self.assertEqual(result["decode_tokens_per_second"], 2.0)
+            self.assertNotIn("private-test-fragment", json.dumps(result))
 
 
 if __name__ == "__main__":

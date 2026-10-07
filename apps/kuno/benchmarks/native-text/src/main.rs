@@ -1456,9 +1456,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if greedy(&fresh_logits)? != generated[0] {
                     return Err("fresh resident sequence mismatch".into());
                 }
+                let tile1_recovery = native_decode && native_decode_tile == 1;
+                if tile1_recovery {
+                    if fresh.set_lab_native_projection_tile(&mut executor, 1)? != 1 {
+                        return Err("fresh native tile1 policy mismatch".into());
+                    }
+                    fresh_logits = resident_decode_step(
+                        &mut fresh,
+                        &mut executor,
+                        generated[0],
+                        &cancel,
+                        true,
+                    )?;
+                    if greedy(&fresh_logits)?
+                        != *generated
+                            .get(1)
+                            .ok_or("native tile1 replay requires a second public output")?
+                    {
+                        return Err("fresh native tile1 continuation mismatch".into());
+                    }
+                }
                 if public_owned_zero_audit {
                     fresh.close()?;
                     report_public_owned_zero_audit(&fresh, true, &mut owned_zero_audits)?;
+                }
+                if tile1_recovery {
+                    println!("public_native_tile1_fresh_continuation_matches=true");
                 }
                 drop(fresh);
                 for layer in [0, 3] {
@@ -1480,8 +1503,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         public_owned_zero_audit,
                         native_config.clone(),
                     )?;
+                    if tile1_recovery {
+                        // Complete a default-tile8 native transaction before
+                        // selecting the public tile1 continuation policy.
+                        partial.prefill_chunk(
+                            &mut executor,
+                            &ids[..1],
+                            resident_model::batch::Purpose::LastLogits,
+                            &cancel,
+                        )?;
+                        if partial.set_lab_native_projection_tile(&mut executor, 1)? != 1 {
+                            return Err("partial native tile1 policy mismatch".into());
+                        }
+                    }
                     partial.arm_public_mid_token_cancel(layer)?;
-                    let failed = if native_max8 {
+                    let failed = if tile1_recovery {
+                        resident_decode_step(
+                            &mut partial,
+                            &mut executor,
+                            generated[0],
+                            &cancel,
+                            true,
+                        )
+                        .is_err()
+                    } else if native_max8 {
                         partial
                             .prefill_chunk(
                                 &mut executor,
@@ -1500,6 +1545,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if !failed || !partial.erased_after_failure() {
                         return Err("partially queued resident cancellation failed".into());
                     }
+                    if tile1_recovery && !cancel.load(std::sync::atomic::Ordering::Acquire) {
+                        return Err(
+                            "native tile1 cancellation did not reach the requested layer".into(),
+                        );
+                    }
                     report_public_owned_zero_audit(
                         &partial,
                         public_owned_zero_audit,
@@ -1507,6 +1557,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     )?;
                     cancel.store(false, std::sync::atomic::Ordering::Release);
                     println!("public_mid_token_cancel layer={layer} erased=true");
+                    if tile1_recovery {
+                        println!("public_native_tile1_mid_token_cancel layer={layer} erased=true");
+                    }
                 }
                 println!(
                     "public_resident_cancel_erased=true poisoned_retry_rejected=true fresh_first_token_matches=true"

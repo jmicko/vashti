@@ -25,6 +25,9 @@ exact typed tile/cap/mode vectors. Each indexed guard proves its selected tile
 environment before execution, and receipt acceptance independently requires
 that tile alongside observed prefill tile8 and127 native decode steps. This
 option retains the same64-slot defaults, full audits and numerical tolerances.
+Tile1 acceptance also requires constant completion proofs for a fresh native
+continuation matching the second public output and queued tile1 cancellation at
+layers0/3; these diagnostics run after generation timing/count snapshots.
 The two comparison options are mutually exclusive; ordinary memory and prior
 native/scalar comparisons keep tile8.
 

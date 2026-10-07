@@ -207,10 +207,14 @@ do not select shader keys. The public runner accepts
 Receipts retain observed prefill tile8 and record the observed decode tile;
 validators require the independently selected tile. Offline legacy inspection
 may explicitly accept a missing decode tile only as8, including older counted
-native-decode receipts. It never accepts a missing tile1 proof. Device numeric
-and speed acceptance remain pending. Existing fresh replay uses a new tile8
-owner, and the pre-enqueue cancellation check does not prove a partially queued
-tile1 decode failure.
+native-decode receipts. It never accepts a missing tile1 proof. Tile1 recovery
+additionally replays the full prompt at8, selects1 and verifies the next public
+output through native continuation before the fresh owner's normal close/audit.
+Each layer0/3 cancellation owner first completes one public token at8, selects1
+and reaches its armed cancellation point during native continuation. Three
+constant completion markers after those audits are mandatory only when the
+caller independently selects1. These checks do not affect generation counters
+or timings. Device numeric and speed acceptance remain pending.
 
 The fixed-public runner selects the **actual `kuno-text-lab` executable from Cargo
 compiler-artifact JSON** and freezes its bytes by SHA256. Do not select the old

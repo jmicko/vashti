@@ -297,8 +297,8 @@ def run_child(plan, plan_path, index, cap, cgroup):
         for raw in iter(lambda: process.stdout.readline(4096), b""):
             text = raw.decode("utf-8", errors="replace").strip()
             if text.startswith(("verified_performance_limits ", "verified_performance_sample ", "public_mid_token_cancel ",
-                                "public_resident_cancel_erased=", "public_resident_owned_cleanup=")):
-                if len(markers) < 8:
+                                "public_resident_cancel_erased=", "public_resident_owned_cleanup=")) or text in ACCEPTANCE.TILE_ONE_COMPLETION:
+                if len(markers) < 9:
                     markers.append(text)
     drainer = threading.Thread(target=drain, daemon=True)
     drainer.start()
