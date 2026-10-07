@@ -606,6 +606,7 @@ impl Workspace {
         )?;
         let mut current = Zeroizing::new(0usize);
         drive_layers(cancel, |layer| {
+            let attention_start = Instant::now();
             if layer == 1 {
                 m.numeric_boundary.observe(
                     numeric_boundaries::Boundary::Input,
@@ -701,11 +702,18 @@ impl Workspace {
             }
             prepared.combine(self.outer.block[0], self.outer.residual[1 - *current])?;
             *current = 1 - *current;
+            // Public laboratory aggregates only. These wall-clock enqueue
+            // intervals include any internal dependency waits; they are not
+            // isolated GPU kernel times or additional completion proofs.
+            *m.phase_ns
+                .entry("native_attention_and_gr_enqueue")
+                .or_default() += attention_start.elapsed().as_nanos();
             if m.cancel_after_attention == Some(layer) {
                 m.cancel_after_attention = None;
                 cancel.store(true, Ordering::Release);
                 u::cancel(cancel)?;
             }
+            let router_enqueue_start = Instant::now();
             let prepared = self.gr.read(
                 m.graph,
                 &m.arena,
@@ -734,6 +742,10 @@ impl Workspace {
                 &BatchSpans::new(*count, 0, 0, D, 0, ROUTER),
                 cancel,
             )?;
+            *m.phase_ns
+                .entry("native_ffn_gr_and_router_enqueue")
+                .or_default() += router_enqueue_start.elapsed().as_nanos();
+            let router_fence_start = Instant::now();
             let logits = batch_io::read_router(
                 m.graph,
                 &m.arena,
@@ -749,6 +761,9 @@ impl Workspace {
                 *count,
                 cancel,
             )?;
+            *m.phase_ns.entry("native_router_fence").or_default() +=
+                router_fence_start.elapsed().as_nanos();
+            let expert_start = Instant::now();
             let mut routes = token_waves::Input::new(*count, self.moe.capacity(), ROUTER)
                 .map_err(|_| error())?;
             for token in 0..*count {
@@ -774,6 +789,10 @@ impl Workspace {
                 cancel,
             )?);
             e.check_original_bank_metadata(LAYERS, ORIGINAL_BANK_HOST)?;
+            *m.phase_ns
+                .entry("native_route_and_expert_enqueue")
+                .or_default() += expert_start.elapsed().as_nanos();
+            let shared_start = Instant::now();
             let mut projector = ResidentBatchProjection {
                 executor: e,
                 fault: m.b.fault,
@@ -793,6 +812,9 @@ impl Workspace {
             )?;
             prepared.combine(self.outer.block[1], self.outer.residual[1 - *current])?;
             *current = 1 - *current;
+            *m.phase_ns
+                .entry("native_shared_and_ffn_combine_enqueue")
+                .or_default() += shared_start.elapsed().as_nanos();
             // Fixed-public lab hook: actual routed/shared consumers and HC
             // combine are already queued; no family has published its state.
             m.lifecycle_hooks.late_combine(layer)?;
