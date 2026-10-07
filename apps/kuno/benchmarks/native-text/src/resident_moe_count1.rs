@@ -1,7 +1,7 @@
 //! Explicit count1 model seam; ordinary native MAX8 remains unchanged.
 //! CPU execution joins before GPU source filling. No overlap/timing claim.
 use super::*;
-use crate::resident_batch_io::Count1RouterInput;
+use crate::resident_model::batch_io::Count1RouterInput;
 use kuno_text::cpu_expert::PackedExperts;
 
 impl GpuExecutor<'_> {

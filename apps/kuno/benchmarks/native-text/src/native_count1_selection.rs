@@ -109,10 +109,7 @@ impl Proof {
                     && p.active().iter().all(|v| v.is_finite())
                     && p.full()[p.active().len()..]
                         .iter()
-                        .all(|v| v.to_bits() == 0) =>
-            {
-                ()
-            }
+                        .all(|v| v.to_bits() == 0) => {}
             _ => return Err(err("native count1 actual joined CPU owner")),
         }
         *self.joined = true;

@@ -194,7 +194,11 @@ fn owner_header(owners: &Array<u32>, first: usize, count: usize) -> bool {
 /// Exactly one original rank-order multiply/add. No factoring, subset-order
 /// sum, zero-probability skip or fake GPU readiness is permitted.
 #[cube(launch, launch_unchecked)]
-#[allow(clippy::too_many_arguments, clippy::collapsible_if)]
+#[allow(
+    clippy::too_many_arguments,
+    clippy::collapsible_if,
+    clippy::neg_cmp_op_on_partial_ord
+)]
 pub(super) fn hybrid_merge(
     gpu: &Array<f32>,
     cpu: &Array<f32>,
@@ -279,7 +283,14 @@ fn active_coordinate(i: usize, first: usize, stride: usize, count: usize, width:
 /// Full API-visible views, including all inactive MAX8/MAX80 capacity, row
 /// gaps and owning padding. It only ORs the existing whole-model fault bit4.
 #[cube(launch, launch_unchecked)]
-#[allow(clippy::too_many_arguments, clippy::collapsible_if)]
+#[allow(
+    clippy::too_many_arguments,
+    clippy::collapsible_if,
+    clippy::neg_cmp_op_on_partial_ord,
+    clippy::if_same_then_else,
+    clippy::manual_range_contains,
+    clippy::manual_is_multiple_of
+)]
 pub(super) fn hybrid_fold(
     input: &Array<u32>,
     act: &Array<u32>,
@@ -310,7 +321,7 @@ pub(super) fn hybrid_fold(
     #[comptime] ff: usize,
     #[comptime] capacity: usize,
 ) {
-    let i = ABSOLUTE_POS as usize;
+    let i = ABSOLUTE_POS;
     let mut valid = owner_header(owners, owner_first, count);
     let mut cpu_count = 0usize;
     let mut gpu_count = 0usize;
@@ -1007,6 +1018,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::needless_range_loop)]
     fn original_rank_oracle_catches_subset_reordering_and_compact_gpu_indices() {
         let mask = 0b0101010101;
         let map = Map::new(&ids(), &probabilities(), &split(mask), &pairs(mask), 16).unwrap();

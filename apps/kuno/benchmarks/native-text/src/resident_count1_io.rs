@@ -44,6 +44,7 @@ impl Count1RouterInput {
             + MAX_BATCH * EXPERTS * 4
             + MIXED_WORDS * 4
     }
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn validate_for(
         &self,
         graph: BoundGraph<'_, '_>,
@@ -89,6 +90,7 @@ impl Count1RouterInput {
 }
 
 #[cube(launch)]
+#[allow(clippy::collapsible_if)] // Nested guards prevent eager CubeCL indexing.
 fn owning_count1_fold(
     input: &Array<u32>,
     router: &Array<u32>,

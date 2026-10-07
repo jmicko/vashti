@@ -595,18 +595,19 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             return Err(error());
         }
         let boundary = self.completed_native_projection_boundary(executor)?;
-        let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let native = self.native_batch.as_mut().ok_or(error())?;
-            let observed = native.moe.set_lab_count1_cpu_misses(
-                executor,
-                self.graph,
-                &self.arena,
-                cap,
-                &boundary,
-            )?;
-            u::cancel(cancel)?;
-            Ok(observed)
-        }));
+        let attempt =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<usize> {
+                let native = self.native_batch.as_mut().ok_or(error())?;
+                let observed = native.moe.set_lab_count1_cpu_misses(
+                    executor,
+                    self.graph,
+                    &self.arena,
+                    cap,
+                    &boundary,
+                )?;
+                u::cancel(cancel)?;
+                Ok(observed)
+            }));
         match attempt {
             Ok(Ok(observed)) => Ok(observed),
             _ => {
@@ -1386,7 +1387,7 @@ mod tests {
                 .owned_bytes,
             32768
         );
-        assert!(D + ROUTER + 1 <= MAX_BATCH * ROUTER + 1);
+        const { assert!(D + ROUTER <= MAX_BATCH * ROUTER) };
     }
     #[test]
     fn runtime_packet_covers_counts_boundaries_without_future_or_inactive_values() {
