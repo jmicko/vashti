@@ -1,5 +1,6 @@
 import copy
 import contextlib
+import errno
 import importlib.util
 import io
 import json
@@ -21,7 +22,8 @@ class PerformanceLaneTests(unittest.TestCase):
         # Represent the current binary's explicit scalar mode; the archived
         # receipt itself is unchanged and its offline compatibility is separate.
         self.receipt.update(native_decode=False, native_decode_steps=0,
-                            scalar_decode_steps=len(self.receipt["public_generated_ids"]) - 1)
+                            scalar_decode_steps=len(self.receipt["public_generated_ids"]) - 1,
+                            native_decode_projection_tile=8)
         self.output = "\n".join((
             "public_mid_token_cancel layer=0 erased=true",
             "public_mid_token_cancel layer=3 erased=true",
@@ -43,6 +45,7 @@ class PerformanceLaneTests(unittest.TestCase):
         self.assertNotIn("KUNO_LAB_EXPERT_SLOTS", env)
         self.assertEqual(env["KUNO_LAB_NATIVE_BATCH_COUNT"], "8")
         self.assertEqual(env["KUNO_LAB_NATIVE_DECODE"], "0")
+        self.assertEqual(env["KUNO_LAB_NATIVE_DECODE_TILE"], "8")
         self.assertEqual(env["KUNO_LAB_TRANSIENT_IO"], "1")
         self.assertEqual(env["KUNO_LAB_OWNED_ZERO_AUDIT"], "1")
         self.assertEqual(env["KUNO_LAB_CANCEL_CHECK"], "1")
@@ -128,18 +131,19 @@ class PerformanceLaneTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 LANE.ACCEPTANCE.validate_receipt(self.receipt, "intel", "resident-rainwater", 8, output)
 
-    def supervisor_fixture(self, directory, native_comparison=False):
+    def supervisor_fixture(self, directory, native_comparison=False, tile_comparison=False):
         unit = "kuno-public-performance-fixture.service"
         cgroup = pathlib.Path(directory) / unit
         cgroup.mkdir()
-        (cgroup / "memory.max").write_text(str((52 if native_comparison else 8) * 1024**3))
+        (cgroup / "memory.max").write_text(str((52 if native_comparison or tile_comparison else 8) * 1024**3))
         (cgroup / "memory.swap.max").write_text("0")
         (cgroup / "memory.swap.current").write_text("0")
         plan_path = pathlib.Path(directory) / "plan.json"
         plan_path.write_text("{}")
-        plan = {"unit": unit, "scope": LANE.DECODE_SCOPE if native_comparison else LANE.MEMORY_SCOPE,
-                "caps_gib": list(LANE.DECODE_CAPS if native_comparison else LANE.ABBA),
-                "native_decode_flags": list(LANE.DECODE_FLAGS if native_comparison else (False,) * 4),
+        plan = {"unit": unit, "scope": LANE.TILE_SCOPE if tile_comparison else LANE.DECODE_SCOPE if native_comparison else LANE.MEMORY_SCOPE,
+                "caps_gib": list(LANE.DECODE_CAPS if native_comparison or tile_comparison else LANE.ABBA),
+                "native_decode_flags": list(LANE.TILE_FLAGS if tile_comparison else LANE.DECODE_FLAGS if native_comparison else (False,) * 4),
+                "native_decode_tiles": list(LANE.TILE_TILES if tile_comparison else (8,) * 4),
                 "model": {"path": "/declared/original"}}
         def set_property(command, **kwargs):
             self.assertEqual(command[:5], ["systemctl", "--user", "set-property", "--runtime", unit])
@@ -187,20 +191,28 @@ class PerformanceLaneTests(unittest.TestCase):
             self.assertEqual(worker.call_count, 2)
             receipt = json.loads((pathlib.Path(directory) / "abba-receipt.json").read_text())
             self.assertFalse(receipt["accepted"])
+            self.assertEqual(receipt["failure_stage"], "sample-worker")
+            self.assertEqual(receipt["failed_sample_index"], 2)
             self.assertEqual(len(receipt["results"]), 1)
             self.assertNotIn("missing cleanup", json.dumps(receipt))
 
     def test_scopes_pin_typed_caps_and_decode_flags_without_cross_mode_fallback(self):
-        for scope, caps, flags in ((LANE.MEMORY_SCOPE, LANE.ABBA, (False,) * 4),
-                                   (LANE.DECODE_SCOPE, LANE.DECODE_CAPS, LANE.DECODE_FLAGS)):
-            original = {"scope": scope, "caps_gib": list(caps), "native_decode_flags": list(flags)}
+        for scope, caps, flags, tiles in ((LANE.MEMORY_SCOPE, LANE.ABBA, (False,) * 4, (8,) * 4),
+                                          (LANE.DECODE_SCOPE, LANE.DECODE_CAPS, LANE.DECODE_FLAGS, (8,) * 4),
+                                          (LANE.TILE_SCOPE, LANE.DECODE_CAPS, LANE.TILE_FLAGS, LANE.TILE_TILES)):
+            original = {"scope": scope, "caps_gib": list(caps), "native_decode_flags": list(flags),
+                        "native_decode_tiles": list(tiles)}
             self.assertEqual(LANE.experiment_schedule(original), tuple(zip(caps, flags)))
             for field, bad in (("scope", "unknown"), ("caps_gib", [52] * 3),
                                ("caps_gib", [float(cap) for cap in caps]),
                                ("caps_gib", [True] * 4),
                                ("native_decode_flags", [int(flag) for flag in flags]),
                                ("native_decode_flags", list(flags)[:-1]),
-                               ("native_decode_flags", [not flag for flag in flags])):
+                               ("native_decode_flags", [not flag for flag in flags]),
+                               ("native_decode_tiles", [True] * 4),
+                               ("native_decode_tiles", [float(tile) for tile in tiles]),
+                               ("native_decode_tiles", [4] * 4),
+                               ("native_decode_tiles", list(tiles)[:-1])):
                 plan = copy.deepcopy(original)
                 plan[field] = bad
                 with self.assertRaises(ValueError):
@@ -223,6 +235,7 @@ class PerformanceLaneTests(unittest.TestCase):
             self.assertEqual(LANE.selected_sample(plan, index, 52), (52, native))
             env = LANE.worker_environment(plan, "/public/receipt", index)
             self.assertEqual(env["KUNO_LAB_NATIVE_DECODE"], "1" if native else "0")
+            self.assertEqual(env["KUNO_LAB_NATIVE_DECODE_TILE"], "8")
         for index in (True, False, 0, 5, -1, 2.0, "2", None):
             with self.assertRaises(ValueError):
                 LANE.selected_sample(plan, index)
@@ -247,13 +260,13 @@ class PerformanceLaneTests(unittest.TestCase):
                 with mock.patch.object(LANE, "load_plan", return_value=plan), \
                      mock.patch.object(LANE, "cgroup_path", return_value=cgroup), \
                      mock.patch.object(LANE.resource, "getrlimit", return_value=(0, 0)), \
-                     mock.patch.dict("os.environ", {"KUNO_LAB_NATIVE_DECODE": env}), \
+                     mock.patch.dict("os.environ", {"KUNO_LAB_NATIVE_DECODE": env, "KUNO_LAB_NATIVE_DECODE_TILE": "8"}), \
                      mock.patch.object(LANE.os, "execv") as execute, \
                      contextlib.redirect_stdout(io.StringIO()) as output:
                     if accepted:
                         LANE.guard("/public/plan.json", cap, index)
                         execute.assert_called_once_with("/public/frozen", ["/public/frozen", "intel", "resident-rainwater"])
-                        self.assertIn(f"sample_index={index} native_decode={int(env)}", output.getvalue())
+                        self.assertIn(f"sample_index={index} native_decode={int(env)} native_decode_tile=8", output.getvalue())
                     else:
                         with self.assertRaises(ValueError):
                             LANE.guard("/public/plan.json", cap, index)
@@ -263,7 +276,7 @@ class PerformanceLaneTests(unittest.TestCase):
         receipt = copy.deepcopy(self.receipt)
         receipt.update(native_decode=True, native_decode_steps=127, scalar_decode_steps=0)
         receipt["owned_zero_audits"][0].update(source_buffers=0, source_bytes=0)
-        proof = "verified_performance_sample sample_index=2 native_decode=1\n"
+        proof = "verified_performance_sample sample_index=2 native_decode=1 native_decode_tile=8\n"
         output = self.marker(52) + proof + self.output
         LANE.accepted_result(receipt, output, "intel", 52, 0, self.before, self.before,
                              native_decode=True, index=2)
@@ -387,7 +400,7 @@ class PerformanceLaneTests(unittest.TestCase):
             receipt.update(native_decode=True, native_decode_steps=127, scalar_decode_steps=0,
                            generation_ms=63500)
             receipt["owned_zero_audits"][0].update(source_buffers=0, source_bytes=0)
-            stdout = self.marker(52) + "verified_performance_sample sample_index=2 native_decode=1\n" + self.output
+            stdout = self.marker(52) + "verified_performance_sample sample_index=2 native_decode=1 native_decode_tile=8\n" + self.output
             state = {**self.before, "memory.current": 123}
             def launch(command, **options):
                 self.assertEqual(command[-3:], [str(plan_path), "52", "2"])
@@ -408,7 +421,7 @@ class PerformanceLaneTests(unittest.TestCase):
             self.assertNotIn("public_resident", json.dumps(sample))
 
     def test_launcher_selects_52g_only_for_explicit_native_comparison(self):
-        for native in (False, True):
+        for native, tile_comparison in ((False, False), (True, False), (False, True)):
             with tempfile.TemporaryDirectory() as directory:
                 build = pathlib.Path(directory) / "target/release/kuno-text-lab"
                 build.parent.mkdir(parents=True)
@@ -417,7 +430,7 @@ class PerformanceLaneTests(unittest.TestCase):
                 transcript.write_text(json.dumps({"reason": "compiler-artifact", "target": {"name": "kuno-text-lab"},
                                                   "executable": str(build)}) + "\n")
                 args = SimpleNamespace(run_id="fixture", output=pathlib.Path(directory) / "records",
-                                       native_decode_comparison=native, cargo_artifacts=transcript,
+                                       native_decode_comparison=native, native_decode_tile_comparison=tile_comparison, cargo_artifacts=transcript,
                                        model=pathlib.Path("/original/blob"), card="intel")
                 model = {"path": "/original/blob", "device": 1, "inode": 2,
                          "size": LANE.MODEL_SIZE, "mtime_ns": 3}
@@ -429,11 +442,99 @@ class PerformanceLaneTests(unittest.TestCase):
                      contextlib.redirect_stdout(io.StringIO()):
                     LANE.launch(args)
                     plan = LANE.load_plan(args.output / "plan.json")
-                self.assertEqual(plan["scope"], LANE.DECODE_SCOPE if native else LANE.MEMORY_SCOPE)
-                self.assertEqual(plan["native_decode_flags"], list(LANE.DECODE_FLAGS if native else (False,) * 4))
-                self.assertIn(f"--property=MemoryMax={52 if native else 8}G", service.call_args.args[0])
+                self.assertEqual(plan["scope"], LANE.TILE_SCOPE if tile_comparison else LANE.DECODE_SCOPE if native else LANE.MEMORY_SCOPE)
+                self.assertEqual(plan["native_decode_flags"], list(LANE.TILE_FLAGS if tile_comparison else LANE.DECODE_FLAGS if native else (False,) * 4))
+                self.assertEqual(plan["native_decode_tiles"], list(LANE.TILE_TILES if tile_comparison else (8,) * 4))
+                self.assertIn(f"--property=MemoryMax={52 if native or tile_comparison else 8}G", service.call_args.args[0])
                 self.assertIn("--property=MemorySwapMax=0", service.call_args.args[0])
                 self.assertIn("--property=LimitCORE=0", service.call_args.args[0])
+
+    def test_process_io_exit_race_keeps_only_numeric_errno_and_does_not_mask_other_io(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cgroup = pathlib.Path(directory)
+            for name in ("memory.current", "memory.peak", "memory.swap.current", "memory.max"):
+                (cgroup / name).write_text("0")
+            (cgroup / "memory.stat").write_text("file 0\n")
+            (cgroup / "memory.events").write_text("oom 0\n")
+            (cgroup / "memory.pressure").write_text("some avg10=0.00 avg60=0.00 avg300=0.00 total=0\n")
+            original_read = pathlib.Path.read_text
+            for number in (errno.ESRCH, errno.ENOENT, errno.EACCES, errno.EPERM, errno.EIO):
+                def read(path, *args, **options):
+                    if str(path) == "/proc/123/io":
+                        raise OSError(number, "raw error must not be retained")
+                    return original_read(path, *args, **options)
+                with mock.patch.object(LANE.pathlib.Path, "read_text", read):
+                    if number == errno.EIO:
+                        with self.assertRaises(OSError):
+                            LANE.snapshot(cgroup, 123)
+                    else:
+                        value = LANE.snapshot(cgroup, 123)
+                        self.assertIsNone(value["process_io"])
+                        self.assertEqual(value["process_io_errno"], number)
+                        self.assertNotIn("raw error", json.dumps(value))
+
+    def test_tile_guard_requires_the_indexed_public_tile_before_execution(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _, plan, cgroup, _ = self.supervisor_fixture(directory, tile_comparison=True)
+            plan.update(card="intel", executable="/public/frozen")
+            for index, raw_tile, permitted in ((1, "8", True), (2, "1", True), (3, "1", True),
+                                               (4, "8", True), (1, "1", False), (2, "8", False),
+                                               (2, "01", False), (2, None, False)):
+                env = {"KUNO_LAB_NATIVE_DECODE": "1"}
+                if raw_tile is not None:
+                    env["KUNO_LAB_NATIVE_DECODE_TILE"] = raw_tile
+                with mock.patch.object(LANE, "load_plan", return_value=plan), \
+                     mock.patch.object(LANE, "cgroup_path", return_value=cgroup), \
+                     mock.patch.object(LANE.resource, "getrlimit", return_value=(0, 0)), \
+                     mock.patch.dict("os.environ", env, clear=True), \
+                     mock.patch.object(LANE.os, "execv") as execute, \
+                     contextlib.redirect_stdout(io.StringIO()):
+                    if permitted:
+                        LANE.guard("/public/plan", 52, index)
+                        execute.assert_called_once()
+                    else:
+                        with self.assertRaises(ValueError):
+                            LANE.guard("/public/plan", 52, index)
+                        execute.assert_not_called()
+
+    def test_tile_scope_requires_full_typed_plan_and_preserves_native_only_52g_schedule(self):
+        with tempfile.TemporaryDirectory() as directory:
+            plan = self.full_decode_plan(directory)
+            plan.update(scope=LANE.TILE_SCOPE, native_decode_flags=list(LANE.TILE_FLAGS),
+                        native_decode_tiles=list(LANE.TILE_TILES))
+            path = pathlib.Path(directory) / "plan.json"
+            path.write_text(json.dumps(plan))
+            with mock.patch.object(LANE, "model_identity", return_value=plan["model"]):
+                self.assertEqual(LANE.load_plan(path), plan)
+                for index, tile in enumerate(LANE.TILE_TILES, 1):
+                    self.assertEqual(LANE.selected_sample(plan, index), (52, True))
+                    self.assertEqual(LANE.selected_tile(plan, index), tile)
+                    self.assertEqual(LANE.worker_environment(plan, "/receipt", index)
+                                     ["KUNO_LAB_NATIVE_DECODE_TILE"], str(tile))
+                for changed in ({key: value for key, value in plan.items() if key != "native_decode_tiles"},
+                                {**plan, "native_decode_flags": list(LANE.DECODE_FLAGS)},
+                                {**plan, "native_decode_tiles": [8] * 4},
+                                {**plan, "caps_gib": list(LANE.ABBA)}):
+                    path.write_text(json.dumps(changed))
+                    with self.assertRaises(ValueError):
+                        LANE.load_plan(path)
+
+    def test_tile_acceptance_cannot_follow_receipt_selected_tile_or_scalar_lane(self):
+        receipt = copy.deepcopy(self.receipt)
+        receipt.update(native_decode=True, native_decode_steps=127, scalar_decode_steps=0,
+                       native_decode_projection_tile=1)
+        receipt["owned_zero_audits"][0].update(source_buffers=0, source_bytes=0)
+        proof = "verified_performance_sample sample_index=2 native_decode=1 native_decode_tile=1\n"
+        output = self.marker(52) + proof + self.output
+        LANE.accepted_result(receipt, output, "intel", 52, 0, self.before, self.before,
+                             native_decode=True, native_decode_tile=1, index=2)
+        for selected in (8, True, 1.0, "1", 4):
+            with self.assertRaises(ValueError):
+                LANE.accepted_result(receipt, output, "intel", 52, 0, self.before, self.before,
+                                     native_decode=True, native_decode_tile=selected, index=2)
+        with self.assertRaises(ValueError):
+            LANE.accepted_result(receipt, output, "intel", 52, 0, self.before, self.before,
+                                 native_decode=False, native_decode_tile=1, index=2)
 
 
 if __name__ == "__main__":

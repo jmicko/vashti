@@ -198,6 +198,20 @@ Live runners require all new decode receipt fields. Offline archived-receipt
 inspection alone may pass `allow_legacy_decode=True` when all three fields are
 absent and scalar decode is selected; archived receipt files are unchanged.
 
+The explicit `KUNO_LAB_NATIVE_DECODE_TILE=1` experiment additionally requires
+protected native decode; its default is8 and only1/8 are accepted publicly.
+Prefill retains tile8. After completed prefill, the owner selects the public
+projection policy once before native count1 continuation; private token counts
+do not select shader keys. The public runner accepts
+`--native-decode --native-decode-tile 1`, while other modes explicitly pin8.
+Receipts retain observed prefill tile8 and record the observed decode tile;
+validators require the independently selected tile. Offline legacy inspection
+may explicitly accept a missing decode tile only as8, including older counted
+native-decode receipts. It never accepts a missing tile1 proof. Device numeric
+and speed acceptance remain pending. Existing fresh replay uses a new tile8
+owner, and the pre-enqueue cancellation check does not prove a partially queued
+tile1 decode failure.
+
 The fixed-public runner selects the **actual `kuno-text-lab` executable from Cargo
 compiler-artifact JSON** and freezes its bytes by SHA256. Do not select the old
 `kuno-rust-gpu-probe` filename: it can remain in a reused target directory and its

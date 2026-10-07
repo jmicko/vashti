@@ -221,6 +221,18 @@ fn native_decode_mode(
     }
 }
 
+fn native_decode_tile(
+    raw: Option<&str>,
+    protected_native_decode: bool,
+) -> Result<usize, &'static str> {
+    match raw {
+        None | Some("8") => Ok(8),
+        Some("1") if protected_native_decode => Ok(1),
+        Some("1") => Err("native decode tile1 requires protected native decode"),
+        Some(_) => Err("KUNO_LAB_NATIVE_DECODE_TILE must be 1 or 8"),
+    }
+}
+
 // The generation and terminal cancellation checks use the same dispatch.
 // A native continuation never falls back to scalar: its PLE cursor must stay
 // aligned with the model position through the entire accepted sequence.
@@ -319,6 +331,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         transient_resident,
         public_owned_zero_audit,
     )?;
+    let native_decode_tile_setting = match std::env::var("KUNO_LAB_NATIVE_DECODE_TILE") {
+        Ok(raw) => Some(raw),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(_) => return Err("KUNO_LAB_NATIVE_DECODE_TILE must be 1 or 8".into()),
+    };
+    let native_decode_tile =
+        native_decode_tile(native_decode_tile_setting.as_deref(), native_decode)?;
     let ordered_setting = match std::env::var("KUNO_LAB_ORDERED_PUBLIC_UPLOAD") {
         Ok(raw) => Some(raw),
         Err(std::env::VarError::NotPresent) => None,
@@ -1201,8 +1220,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 executor.expert_hits,
                 executor.expert_uploads,
             );
+            let native_prefill_projection_tile = executor.native_projection_tile();
+            let mut native_decode_projection_tile = native_prefill_projection_tile;
             executor.by_tensor.clear();
             if let Some(r) = &mut resident {
+                if native_decode {
+                    // A public laboratory policy, selected once at a completed
+                    // prefill boundary. Prefill remains tile8; no private count
+                    // chooses the projection specialization or shader key.
+                    native_decode_projection_tile =
+                        r.set_lab_native_projection_tile(&mut executor, native_decode_tile)?;
+                }
                 r.phase_ns.clear();
             }
             let start = Instant::now();
@@ -1319,7 +1347,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     None
                 });
                 receipt["native_public_max_batch"] = serde_json::json!(8);
-                receipt["native_projection_tile"] = serde_json::json!(8);
+                receipt["native_projection_tile"] =
+                    serde_json::json!(native_prefill_projection_tile);
+                receipt["native_decode_projection_tile"] =
+                    serde_json::json!(native_decode_projection_tile);
                 receipt["resident_transient_io"] = serde_json::json!(transient_resident);
                 receipt["resident_owned_zero_audit_enabled"] =
                     serde_json::json!(public_owned_zero_audit);
@@ -1526,6 +1557,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod transient_mode_tests {
+    #[test]
+    fn native_decode_tile_requires_exact_public_opt_in() {
+        for native in [false, true] {
+            assert_eq!(super::native_decode_tile(None, native), Ok(8));
+            assert_eq!(super::native_decode_tile(Some("8"), native), Ok(8));
+            assert_eq!(super::native_decode_tile(Some("1"), native).is_ok(), native);
+            for raw in ["", "0", "4", "01", "08", "true", " 1", "1 "] {
+                assert!(super::native_decode_tile(Some(raw), native).is_err());
+            }
+        }
+        assert_eq!(super::native_decode_tile(Some("1"), true), Ok(1));
+    }
+
     #[test]
     fn native_decode_is_explicit_and_requires_all_fixed_public_protections() {
         use super::native_decode_mode;

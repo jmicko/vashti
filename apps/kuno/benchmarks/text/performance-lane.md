@@ -18,6 +18,16 @@ memory ABBA default and strict 8-GiB correctness lane retain their own limits.
 The native comparison keeps the existing 64-slot Intel defaults and changes
 only the continuation flag. No Ollama baseline runs are part of this option.
 
+The separate `--native-decode-tile-comparison` option keeps all four children
+native at52 GiB and selects public decode projection tiles8/1/1/8 on the same
+frozen binary. Its `fixed-public-native-decode-tile-abba-only` scope requires
+exact typed tile/cap/mode vectors. Each indexed guard proves its selected tile
+environment before execution, and receipt acceptance independently requires
+that tile alongside observed prefill tile8 and127 native decode steps. This
+option retains the same64-slot defaults, full audits and numerical tolerances.
+The two comparison options are mutually exclusive; ordinary memory and prior
+native/scalar comparisons keep tile8.
+
 Build once **before** measuring. Keep the actual Cargo JSON transcript. Stop
 other inference and source compilation, verify the intended card is free, and
 run one card at a time. Choose a new durable output directory outside the Cargo
@@ -66,13 +76,18 @@ totals and child `read_bytes`, together with actual model read/upload timings.
 An OOM, missing receipt, output mismatch or incomplete cleanup rejects the
 sample and ends the sequence. Raw error payloads and generated text are drained
 without persistence. Completed prior samples remain inspectable after failure.
+If a child exits while its process-I/O counters are being sampled, only
+ENOENT/ESRCH/EACCES/EPERM are recorded as numeric `process_io_errno` with absent
+counters; unexpected I/O errors still reject. Aggregate failures record an
+allowlisted stage and sample index without retaining exception text.
 
 Each sample records its selected mode, completed prefill/generation milliseconds,
 127 following decode steps and derived tokens/s alongside numeric telemetry.
 These per-sample observations establish neither a 10-token/s result nor a
-production speed claim. Historical memory plans without the new flags retain
-their explicit scalar-only schedule; native comparison plans require all new
-keys. Live model receipt validation remains strict, with archived receipt
+production speed claim. Historical memory plans without mode flags retain
+their explicit scalar-only schedule. Historical memory/native plans without
+tile fields mean tile8; tile comparison plans require their exact new keys.
+Live model receipt validation remains strict, with archived receipt
 compatibility available only through the separate offline validator option.
 
 Each child starts without a resident native model. OS file/shader caches remain
@@ -82,8 +97,8 @@ includes fresh initialization; `generation_ms` measures 127 following graph step
 with warm in-process weight owners. Cancellation/fresh replay/audits happen after
 those internal timings. These are instrumented explanatory observations, not
 production worker throughput. A true second hot full request is not implemented.
-The default experiment quantifies host-limit bias; the opt-in experiment compares
-native and scalar continuation at one fixed host cap. Neither establishes matched
+The default experiment quantifies host-limit bias; the opt-in experiments compare
+native/scalar continuation or public decode tiles at one fixed host cap. None establishes matched
 Ollama performance or permits production native routing. The working native
 target is 10 tokens/s; new or repeated Ollama baselines are outside this work.
 The 3600-second public-unit limit is operator containment, not an inference

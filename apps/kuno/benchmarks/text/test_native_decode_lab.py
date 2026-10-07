@@ -28,11 +28,11 @@ def archived_receipt(card="intel"):
     return json.loads((HERE / f"receipts/rust-native-model-full-{card}-20261005.json").read_text())["report"]
 
 
-def current_receipt(native_decode, card="intel"):
+def current_receipt(native_decode, card="intel", tile=8):
     receipt = archived_receipt(card)
     steps = len(receipt["public_generated_ids"]) - 1
     receipt.update(native_decode=native_decode, native_decode_steps=steps if native_decode else 0,
-                   scalar_decode_steps=0 if native_decode else steps)
+                   scalar_decode_steps=0 if native_decode else steps, native_decode_projection_tile=tile)
     if native_decode:
         receipt["owned_zero_audits"][0].update(source_buffers=0, source_bytes=0)
     return receipt
@@ -133,10 +133,12 @@ class NativeDecodeLabTests(unittest.TestCase):
                                  OUTPUT.replace("8589934592", "55834574848"), native_decode=True)
 
     def test_runner_uses_explicit_selection_and_does_not_copy_ambient_settings(self):
-        with mock.patch.dict("os.environ", {"KUNO_LAB_NATIVE_DECODE": "1", "PRIVATE_TOKEN": "never-forward"}):
+        with mock.patch.dict("os.environ", {"KUNO_LAB_NATIVE_DECODE": "1", "KUNO_LAB_NATIVE_DECODE_TILE": "1",
+                                            "PRIVATE_TOKEN": "never-forward"}):
             for native in (False, True):
                 env = LAB.worker_environment("/original/blob", "/public/receipt", 8, native)
                 self.assertEqual(env["KUNO_LAB_NATIVE_DECODE"], "1" if native else "0")
+                self.assertEqual(env["KUNO_LAB_NATIVE_DECODE_TILE"], "8")
                 self.assertEqual(env["KUNO_LAB_NATIVE_MAX8"], "1")
                 self.assertEqual(env["KUNO_LAB_TRANSIENT_IO"], "1")
                 self.assertEqual(env["KUNO_LAB_OWNED_ZERO_AUDIT"], "1")
@@ -144,27 +146,76 @@ class NativeDecodeLabTests(unittest.TestCase):
                 self.assertNotIn("PRIVATE_TOKEN", env)
 
     def test_live_cli_pins_selected_mode_and_validates_current_receipt_before_recording(self):
-        for native in (False, True):
+        for native, tile in ((False, 8), (True, 8), (True, 1)):
             with tempfile.TemporaryDirectory() as directory:
                 target = pathlib.Path(directory) / "receipt.json"
                 command_seen = []
                 def launch(command, **options):
                     command_seen.extend(command)
-                    target.write_text(json.dumps(current_receipt(native)))
+                    target.write_text(json.dumps(current_receipt(native, tile=tile)))
                     return SimpleNamespace(stdout=io.StringIO(OUTPUT + "\n"), wait=lambda: 0)
                 args = [str(HERE / "run-native-max8-lab.py"), "--cargo-artifacts", "/public/artifacts",
                         "--model", "/original/blob", "--card", "intel", "--fixture", "resident-rainwater",
                         "--count", "8", "--run-id", "fixture", "--receipt", str(target)]
                 if native:
                     args.append("--native-decode")
+                if tile == 1:
+                    args.extend(("--native-decode-tile", "1"))
                 with mock.patch("sys.argv", args), \
                      mock.patch.object(LAB, "cargo_binary", return_value=("/public/frozen", "a" * 64, "b" * 64)), \
                      mock.patch.object(LAB.subprocess, "Popen", side_effect=launch), \
                      contextlib.redirect_stdout(io.StringIO()):
                     LAB.main()
                 self.assertIn("--setenv=KUNO_LAB_NATIVE_DECODE=" + ("1" if native else "0"), command_seen)
+                self.assertIn("--setenv=KUNO_LAB_NATIVE_DECODE_TILE=" + str(tile), command_seen)
                 record = json.loads(target.with_suffix(".json.run.json").read_text())
                 self.assertIs(record["native_decode"], native)
+                self.assertEqual(record["native_decode_projection_tile"], tile)
+
+    def test_expected_decode_tile_is_independent_and_prefill_stays_eight(self):
+        for card in ("intel", "nvidia"):
+            self.validate(current_receipt(True, card, 1), True, card, native_decode_tile=1)
+            for observed, selected in ((1, 8), (8, 1)):
+                with self.assertRaises(ValueError):
+                    self.validate(current_receipt(True, card, observed), True, card, native_decode_tile=selected)
+            receipt = current_receipt(True, card, 1)
+            receipt["native_projection_tile"] = 1
+            with self.assertRaises(ValueError):
+                self.validate(receipt, True, card, native_decode_tile=1)
+        with self.assertRaises(ValueError):
+            self.validate(current_receipt(False, tile=1), native_decode_tile=1)
+
+    def test_tile_types_missing_fields_and_legacy_eight_cannot_admit_tile_one(self):
+        for native in (False, True):
+            for bad in (True, False, 1.0, 8.0, "1", "8", 4, 0, None):
+                receipt = current_receipt(native)
+                receipt["native_decode_projection_tile"] = bad
+                with self.assertRaises(ValueError):
+                    self.validate(receipt, native)
+                with self.assertRaises(ValueError):
+                    self.validate(current_receipt(native), native, native_decode_tile=bad)
+            receipt = current_receipt(native)
+            del receipt["native_decode_projection_tile"]
+            with self.assertRaises(ValueError):
+                self.validate(receipt, native)
+            self.validate(receipt, native, allow_legacy_decode=True)
+            with self.assertRaises(ValueError):
+                self.validate(receipt, native, native_decode_tile=1, allow_legacy_decode=True)
+
+    def test_tile_one_environment_and_cli_require_explicit_native_mode(self):
+        self.assertEqual(LAB.worker_environment("/original", "/receipt", 8, True, 1)
+                         ["KUNO_LAB_NATIVE_DECODE_TILE"], "1")
+        for tile in (1, True, 1.0, "1", 4):
+            with self.assertRaises(ValueError):
+                LAB.worker_environment("/original", "/receipt", 8, False, tile)
+        args = ["runner", "--cargo-artifacts", "/public/artifacts", "--model", "/original/blob",
+                "--card", "intel", "--fixture", "resident-rainwater", "--count", "8",
+                "--run-id", "fixture", "--receipt", "/public/receipt", "--native-decode-tile", "1"]
+        with mock.patch("sys.argv", args), mock.patch.object(LAB, "cargo_binary") as cargo, \
+             contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                LAB.main()
+            cargo.assert_not_called()
 
 
 if __name__ == "__main__":
