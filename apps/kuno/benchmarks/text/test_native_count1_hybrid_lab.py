@@ -44,6 +44,20 @@ def completion(cap):
 
 
 class HybridLabTests(unittest.TestCase):
+    def test_compact_info_and_larger_submission_groups_require_typed_matching_bounds(self):
+        for compact in (False,True):
+            for batch in (False,True):
+                value=receipt("intel",10)
+                value.update(compact_info=compact,info_slab_bytes=4096 if compact else 0,batch_tasks=batch,runtime_tasks_max=256 if batch else 32)
+                LAB.validate_receipt(value,"intel",10,completion(10),compact_info=compact,batch_tasks=batch)
+                for field in ("compact_info","info_slab_bytes","batch_tasks","runtime_tasks_max"):
+                    for bad in (None,"1",True if type(value[field]) is int else 1):
+                        wrong=copy.deepcopy(value);wrong[field]=bad
+                        with self.assertRaises(ValueError):LAB.validate_receipt(wrong,"intel",10,completion(10),compact_info=compact,batch_tasks=batch)
+                env=LAB.worker_environment("/original/model","/public/receipt",compact_info=compact,batch_tasks=batch)
+                self.assertEqual(env["KUNO_LAB_INFO_SLAB_BYTES"],"4096" if compact else "0")
+                self.assertEqual(env["KUNO_LAB_BATCH_TASKS"],"1" if batch else "0")
+
     def test_q8_requires_pooled_workers_and_exact_completed_arithmetic_evidence(self):
         value = receipt("intel",10)
         value.update(count1_hybrid_cpu_workers="pooled",observed_count1_hybrid_cpu_workers="pooled",cpu_q8_activations=True,observed_cpu_q8_activations=True)

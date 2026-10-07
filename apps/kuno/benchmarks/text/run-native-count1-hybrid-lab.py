@@ -34,11 +34,14 @@ def completion(cap):
     )
 
 
-def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False):
+def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False):
     validate_cap(cap)
-    for field, selected in (("mapped_weights", mapped), ("observed_mapped_weights", mapped), ("kernel_profile", profile), ("fast_gpu", fast), ("long_fixture", long), ("cpu_q8_activations", cpu_q8), ("observed_cpu_q8_activations", cpu_q8), ("large_weight_cache", large_cache)):
+    for field, selected in (("mapped_weights", mapped), ("observed_mapped_weights", mapped), ("kernel_profile", profile), ("fast_gpu", fast), ("long_fixture", long), ("cpu_q8_activations", cpu_q8), ("observed_cpu_q8_activations", cpu_q8), ("large_weight_cache", large_cache), ("compact_info", compact_info), ("batch_tasks", batch_tasks)):
         if type(selected) is not bool or (selected or field in receipt) and receipt.get(field) is not selected:
             raise ValueError("Explicit optimization selection and completed receipt must match")
+    for field, expected, selected in (("info_slab_bytes",4096 if compact_info else 0,compact_info),("runtime_tasks_max",256 if batch_tasks else 32,batch_tasks)):
+        if (selected or field in receipt) and (type(receipt.get(field)) is not int or receipt[field]!=expected):
+            raise ValueError("Completed bounded runtime configuration must match explicit selection")
     calls = receipt.get("observed_fast_dense_calls", 0)
     if type(calls) is not int or not 0 <= calls <= 100000 or (calls > 0) is not fast:
         raise ValueError("Actual count1 fast dense dispatch evidence must match explicit selection")
@@ -91,12 +94,12 @@ def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False
         raise ValueError("Hybrid continuation and both cancellation proofs required")
 
 
-def worker_environment(model, receipt, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False):
+def worker_environment(model, receipt, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False):
     if workers not in ("scoped", "pooled"):
         raise ValueError("Unknown CPU worker mode")
     if type(overlap) is not bool or (overlap and workers != "pooled"):
         raise ValueError("Overlap requires explicit pooled workers")
-    if any(type(value) is not bool for value in (mapped,profile,fast,long,cpu_q8,large_cache)):
+    if any(type(value) is not bool for value in (mapped,profile,fast,long,cpu_q8,large_cache,compact_info,batch_tasks)):
         raise ValueError("Explicit boolean optimization selections required")
     if cpu_q8 and workers != "pooled":
         raise ValueError("Q8 CPU activation arithmetic requires pooled workers")
@@ -111,6 +114,9 @@ def worker_environment(model, receipt, workers="scoped", overlap=False, mapped=F
     env["KUNO_LAB_LONG_FIXTURE"] = "1" if long else "0"
     env["KUNO_LAB_CPU_Q8"] = "1" if cpu_q8 else "0"
     env["KUNO_LAB_LARGE_WEIGHT_CACHE"] = "1" if large_cache else "0"
+    env["KUNO_LAB_COMPACT_INFO"] = "1" if compact_info else "0"
+    env["KUNO_LAB_INFO_SLAB_BYTES"] = "4096" if compact_info else "0"
+    env["KUNO_LAB_BATCH_TASKS"] = "1" if batch_tasks else "0"
     return env
 
 
@@ -128,6 +134,8 @@ def main():
     parser.add_argument("--long-fixture", action="store_true")
     parser.add_argument("--cpu-q8", action="store_true")
     parser.add_argument("--large-weight-cache", action="store_true")
+    parser.add_argument("--compact-info", action="store_true")
+    parser.add_argument("--batch-tasks", action="store_true")
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--receipt", type=pathlib.Path, required=True)
     args = parser.parse_args()
@@ -153,7 +161,7 @@ def main():
         "KUNO_LAB_STATIC_CACHE_BYTES KUNO_LAB_EXPERT_BATCH_BYTES KUNO_LAB_EXPERT_SCATTER",
     ]
     command.extend("--setenv=" + key + "=" + value
-                   for key, value in worker_environment(args.model.resolve(), target, args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache).items())
+                   for key, value in worker_environment(args.model.resolve(), target, args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks).items())
     command.extend([sys.executable, str(HERE / "protected-lab-exec.py"), str(frozen),
                     args.card, MODE, str(args.cpu_miss_cap)])
     print("verified_cargo_executable_sha256=" + identity, flush=True)
@@ -168,7 +176,7 @@ def main():
         raise SystemExit("Missing whole-model hybrid receipt")
     snapshot = target.read_bytes()
     receipt = json.loads(snapshot)
-    validate_receipt(receipt, args.card, args.cpu_miss_cap, "".join(lines), args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache)
+    validate_receipt(receipt, args.card, args.cpu_miss_cap, "".join(lines), args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks)
     record = {
         "scope": "fixed-public-count1-hybrid-output-and-lifecycle-only",
         "cargo_artifacts_sha256": artifacts_identity, "frozen_executable_sha256": identity,
@@ -180,6 +188,8 @@ def main():
         "long_fixture": args.long_fixture,
         "cpu_q8_activations": args.cpu_q8,
         "large_weight_cache": args.large_weight_cache,
+        "compact_info": args.compact_info,
+        "batch_tasks": args.batch_tasks,
     }
     with metadata.open("x") as output:
         json.dump(record, output, indent=2, sort_keys=True)

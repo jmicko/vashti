@@ -670,6 +670,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let long_fixture = count1_environment_opt_in(&mode, "KUNO_LAB_LONG_FIXTURE")?;
     let cpu_q8 = count1_environment_opt_in(&mode, "KUNO_LAB_CPU_Q8")?;
     let large_weight_cache = count1_environment_opt_in(&mode, "KUNO_LAB_LARGE_WEIGHT_CACHE")?;
+    let compact_info = count1_environment_opt_in(&mode, "KUNO_LAB_COMPACT_INFO")?;
+    let batch_tasks = count1_environment_opt_in(&mode, "KUNO_LAB_BATCH_TASKS")?;
+    if mode == "resident-count1-hybrid-chat" {
+        let raw = std::env::var_os("KUNO_LAB_INFO_SLAB_BYTES");
+        let expected = if compact_info { "4096" } else { "0" };
+        if raw.as_ref().is_some_and(|v| v != expected) || (compact_info && raw.is_none()) {
+            return Err("Compact INFO policy must match explicit bounded runtime slab".into());
+        }
+    }
     if large_weight_cache && !mapped_weights {
         return Err("Larger public weight cache requires explicit mapped weights".into());
     }
@@ -847,7 +856,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 backend: wgpu::Backend::Vulkan,
             },
             RuntimeOptions {
-                tasks_max: 32,
+                tasks_max: if batch_tasks { 256 } else { 32 },
                 memory_config: private_arena::required_memory_configuration(),
             },
         );
@@ -1952,6 +1961,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 receipt["long_fixture"] = serde_json::json!(long_fixture);
                 receipt["cpu_q8_activations"] = serde_json::json!(cpu_q8);
                 receipt["large_weight_cache"] = serde_json::json!(large_weight_cache);
+                receipt["compact_info"] = serde_json::json!(compact_info);
+                receipt["info_slab_bytes"] = serde_json::json!(if compact_info { 4096 } else { 0 });
+                receipt["batch_tasks"] = serde_json::json!(batch_tasks);
+                receipt["runtime_tasks_max"] =
+                    serde_json::json!(if batch_tasks { 256 } else { 32 });
                 if long_fixture {
                     receipt["fixture"] = serde_json::json!("resident-count1-hybrid-rainwater");
                 }

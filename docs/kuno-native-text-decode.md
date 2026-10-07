@@ -87,6 +87,23 @@ This addresses observed model-page reclaim under the8-GiB process allowance,
 not private request caching. It is a local64-GiB-host benchmark option, not
 production hardware sizing or an automatic memory policy.
 
+`KUNO_LAB_COMPACT_INFO=1` and `--compact-info` connect the existing bounded
+4096-byte runtime INFO slab to this hybrid fixture. The requested runtime
+`KUNO_LAB_INFO_SLAB_BYTES` must exactly match4096 (ordinary mode0); neither is
+inherited by the runner. Records use separate aligned non-overlapping slices;
+full slab gaps/tails and all upload/readback/INFO owning spans still undergo
+the same mandatory audits at every model readback. There is no audit skip,
+deferred private cleanup or cross-epoch private owner cache. The slab-specific
+public multi-record/cancellation/retained-lease probe and whole-model gates
+are needed on the actual devices before selecting it.
+
+`KUNO_LAB_BATCH_TASKS=1` and `--batch-tasks` explicitly increase the runtime
+submission group from32 to256 compute dispatches. Dependency readbacks still
+flush the same stream. Model/arena/fault/cancellation/span/erasure/admission
+proofs and all private hard limits remain unchanged. This is bounded scheduling,
+not a cached command graph or a claim of device-side routing. Completed receipts
+pin both selections and their numerical runtime bounds.
+
 Source-only proposal, 2026-10-05. Prepared by the resident-MoE child after the native MAX8 adapter handoff. No code, GPU, service, model-payload read, benchmark or default change accompanies this proposal. Parent owns whole-model batching correctness, admission, device acceptance and integration. This is a later decode experiment; MAX8 prompt batching alone cannot establish faster hot decode.
 
 ## Evidence and first decision
