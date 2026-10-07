@@ -77,6 +77,7 @@ fn transient_resident_mode(mode: &str, raw: Option<&str>) -> Result<bool, &'stat
                     | "resident-numeric-boundaries-probe"
                     | "resident-cpu-gpu-expert-probe"
                     | "resident-cpu-gpu-expert-calibration"
+                    | "resident-staged-hybrid-expert"
             ) =>
         {
             Ok(true)
@@ -114,11 +115,99 @@ fn protected_model_diagnostic(
             | "resident-numeric-boundaries-probe"
             | "resident-cpu-gpu-expert-probe"
             | "resident-cpu-gpu-expert-calibration"
+            | "resident-staged-hybrid-expert"
     ) && !(transient && audit)
     {
         return Err("model diagnostic requires owned transient I/O and complete zero audits");
     }
     Ok(())
+}
+
+// This numeric-only entry has no model/executor policy, variable route count,
+// private input, cache layout or timing selection. Runtime INFO slab policy is
+// still the independently protected transient-I/O setting.
+const STAGED_HYBRID_MODEL_SETTINGS: [&str; 20] = [
+    "KUNO_LAB_NATIVE_MAX8",
+    "KUNO_LAB_NATIVE_DECODE",
+    "KUNO_LAB_NATIVE_DECODE_TILE",
+    "KUNO_LAB_NATIVE_DECODE_KERNELS",
+    "KUNO_LAB_NATIVE_BATCH_COUNT",
+    "KUNO_LAB_PREFILL_LAST_HEAD",
+    "KUNO_LAB_CANCEL_CHECK",
+    "KUNO_LAB_ORDERED_PUBLIC_UPLOAD",
+    "KUNO_LAB_BATCH_EXPERTS",
+    "KUNO_LAB_BLOCK_MOE",
+    "KUNO_LAB_WORD_DOWN",
+    "KUNO_LAB_SMALL_CPU",
+    "KUNO_LAB_FUSED_MATRIX_FAULT",
+    "KUNO_LAB_CPU_GDN",
+    "KUNO_LAB_IO_TOKEN_CHECKPOINT",
+    "KUNO_LAB_BLOCK_KERNEL",
+    "KUNO_LAB_EXPERT_SLOTS",
+    "KUNO_LAB_STATIC_CACHE_BYTES",
+    "KUNO_LAB_EXPERT_BATCH_BYTES",
+    "KUNO_LAB_EXPERT_SCATTER",
+];
+fn staged_hybrid_registration(argc: usize, receipt: bool) -> Result<(), &'static str> {
+    if argc != 3 || !receipt {
+        return Err("staged hybrid numeric probe requires only card, mode and receipt destination");
+    }
+    Ok(())
+}
+fn staged_hybrid_setting(name: &str, raw: Option<&str>) -> Result<(), &'static str> {
+    let accepted = match name {
+        "KUNO_LAB_NATIVE_DECODE_TILE" => matches!(raw, None | Some("8")),
+        "KUNO_LAB_NATIVE_DECODE_KERNELS" => matches!(raw, None | Some("chunk")),
+        "KUNO_LAB_NATIVE_BATCH_COUNT"
+        | "KUNO_LAB_EXPERT_SLOTS"
+        | "KUNO_LAB_STATIC_CACHE_BYTES"
+        | "KUNO_LAB_EXPERT_BATCH_BYTES"
+        | "KUNO_LAB_EXPERT_SCATTER" => raw.is_none(),
+        _ if STAGED_HYBRID_MODEL_SETTINGS.contains(&name) => matches!(raw, None | Some("0")),
+        _ => false,
+    };
+    if !accepted {
+        return Err("staged hybrid numeric probe accepts no model or native policy selection");
+    }
+    Ok(())
+}
+
+/// Independent publication inventory, not receipt-selected configurations.
+fn staged_hybrid_numeric_cases() -> [cpu_gpu_expert_probe::Config; 8] {
+    std::array::from_fn(|i| cpu_gpu_expert_probe::Config {
+        down: if i < 4 {
+            TensorType::Q5_0
+        } else {
+            TensorType::Q8_0
+        },
+        workers: 16,
+        backend: kuno_text::cpu_expert::Backend::Avx2,
+        misses: if i % 4 == 3 { 10 } else { 5 },
+        cpu_misses: [0, 1, 5, 10][i % 4],
+        group: 0,
+        vector: 1,
+        mode: cpu_gpu_expert_schedule::Mode::Concurrent,
+    })
+}
+fn staged_hybrid_numeric_reports(
+    reports: cpu_gpu_expert_probe::StagedHybridReport,
+) -> Result<Vec<serde_json::Value>, &'static str> {
+    if reports.cases.len() != 8 {
+        return Err("staged hybrid numeric inventory is not the fixed eight cases");
+    }
+    staged_hybrid_numeric_cases()
+        .into_iter()
+        .zip(reports.cases)
+        .map(|(config, report)| {
+            if report.metadata_bytes == 0
+                || report.metadata_bytes > 256 * 1024
+                || report.snapshot_bytes == 0
+            {
+                return Err("staged hybrid retained plan metadata exceeds its fixed bound");
+            }
+            cpu_gpu_expert_numeric_report(config, report)
+        })
+        .collect()
 }
 
 /// Compiled public subset only: ten original ranks, both actual down formats,
@@ -419,11 +508,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let public_owned_zero_audit =
         public_owned_zero_audit_mode(transient_resident, owned_audit_setting.as_deref())?;
     protected_model_diagnostic(&mode, transient_resident, public_owned_zero_audit)?;
+    if mode == "resident-staged-hybrid-expert" {
+        staged_hybrid_registration(
+            std::env::args().count(),
+            std::env::var_os("KUNO_PUBLIC_RECEIPT").is_some(),
+        )?;
+        for name in STAGED_HYBRID_MODEL_SETTINGS {
+            let raw = std::env::var_os(name);
+            let value = raw
+                .as_ref()
+                .map(|value| {
+                    value
+                        .to_str()
+                        .ok_or("staged hybrid model setting encoding rejected")
+                })
+                .transpose()?;
+            staged_hybrid_setting(name, value)?;
+        }
+    }
     // This fixed operator accepts no additional case/configuration arguments.
     // Its receipt destination is required before any device or model access.
     let cpu_gpu_expert_receipt = if matches!(
         mode.as_str(),
-        "resident-cpu-gpu-expert-probe" | "resident-cpu-gpu-expert-calibration"
+        "resident-cpu-gpu-expert-probe"
+            | "resident-cpu-gpu-expert-calibration"
+            | "resident-staged-hybrid-expert"
     ) {
         if std::env::args().count() != 3 {
             return Err("CPU/GPU expert probe accepts only its compiled numeric cases".into());
@@ -720,6 +829,67 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             output.write_all(serde_json::to_string_pretty(&receipt)?.as_bytes())?;
             println!(
                 "public_cpu_gpu_expert_calibration_complete points=6 numeric_gates=12 samples=24 owned_cleanup=true context_retired=false full_model_accepted=false"
+            );
+            return Ok(());
+        }
+        if mode == "resident-staged-hybrid-expert" {
+            let target =
+                cpu_gpu_expert_receipt.ok_or("fixed-public staged hybrid receipt path required")?;
+            let path = std::env::var_os("KUNO_TEST_GGUF").ok_or("existing GGUF required")?;
+            let file = GgufFile::open(path, GgufLimits::default())?;
+            let model = Qwen4Exp::bind(&file)?;
+            let retired = transient_context
+                .clone()
+                .ok_or("staged hybrid probe requires configured transient stream")?;
+            let cancel = AtomicBool::new(false);
+            let reports = cpu_gpu_expert_probe::run_staged_hybrid_acceptance(
+                &client,
+                &file,
+                model.bound_graph(),
+                &grouped_limits,
+                retired.clone(),
+                &cancel,
+            )?;
+            let cases = staged_hybrid_numeric_reports(reports)?;
+            file.verify_file_unchanged()?;
+            if cancel.load(std::sync::atomic::Ordering::Acquire)
+                || retired.load(std::sync::atomic::Ordering::Acquire)
+            {
+                return Err("staged hybrid probe did not accept complete cleanup".into());
+            }
+            let receipt = serde_json::json!({
+                "scope":"fixed-public-original-staged-cpu-gpu-expert-numeric",
+                "vendor":vendor,"weights":"borrowed-unmodified-ollama-blob",
+                "source_kind":"original-packed-gguf","fixed_public_cases":8,
+                "purpose":"numeric","ranks_per_case":10,"group":0,"vector":1,
+                "backend":"avx2","workers":16,"bank_slots_per_owner":16,
+                "private_pages_per_case":18,
+                "private_bytes_per_case":cpu_gpu_expert_probe::PRIVATE_BYTES,
+                "bank_bytes_per_case":cpu_gpu_expert_probe::BANK_BYTES,
+                "physical_limit_bytes":cpu_gpu_expert_probe::PHYSICAL_LIMIT,
+                "source_window_limit_bytes":cpu_gpu_expert_probe::SOURCE_BYTES,
+                "runtime_io_limit_bytes":executor::RESIDENT_RUNTIME_IO_MAX,
+                "runtime_io_component_limit_bytes":cpu_gpu_expert_probe::IO_COMPONENT_BYTES,
+                "private_host_limit_bytes":cpu_gpu_expert_probe::HOST_PRIVATE_LIMIT,
+                "cpu_private_host_limit_bytes":kuno_text::cpu_expert::MAX_PRIVATE_HOST_BYTES,
+                "public_cpu_packed_limit_bytes":kuno_text::cpu_expert::MAX_PUBLIC_PACKED_BYTES,
+                "bridge_host_limit_bytes":1048576,"oracle_host_limit_bytes":2097152,
+                "retained_plan_limit_bytes":262144,"cases":cases,
+                "operator_numeric_accepted":true,"owned_cleanup_accepted":true,
+                "context_retired":false,"cache_publication_accepted":false,
+                "whole_model_numeric_accepted":false,"timing_accepted":false,
+                "performance_accepted":false,"production_accepted":false,
+                "automatic_split_policy_enabled":false
+            });
+            // Every operator's complete cleanup precedes publication. Storage
+            // failure can leave an incomplete public file but emits no marker.
+            let output = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(target)?;
+            serde_json::to_writer_pretty(output, &receipt)?;
+            println!(
+                "public_staged_hybrid_expert_numeric_complete cases=8 ranks=10 owned_cleanup=true context_retired=false performance_accepted=false"
             );
             return Ok(());
         }
@@ -1886,6 +2056,7 @@ mod transient_mode_tests {
             "resident-lifecycle-probe",
             "resident-numeric-boundaries-probe",
             "resident-cpu-gpu-expert-probe",
+            "resident-staged-hybrid-expert",
             "resident-qsa-probe",
             "probe",
             "bang",
@@ -1932,6 +2103,7 @@ mod transient_mode_tests {
             "resident-numeric-boundaries-probe",
             "resident-cpu-gpu-expert-probe",
             "resident-cpu-gpu-expert-calibration",
+            "resident-staged-hybrid-expert",
         ] {
             assert_eq!(super::transient_resident_mode(mode, Some("1")), Ok(true));
             for transient in [false, true] {
@@ -2027,6 +2199,123 @@ mod transient_mode_tests {
                 _ => report.bridge_and_merge = Some(std::time::Duration::ZERO),
             }
             assert!(super::cpu_gpu_expert_numeric_report(config, report).is_err());
+        }
+    }
+    #[test]
+    fn staged_hybrid_registration_has_no_variable_arguments_or_model_policies() {
+        assert_eq!(super::staged_hybrid_registration(3, true), Ok(()));
+        for argc in [0, 1, 2, 4, 5] {
+            assert!(super::staged_hybrid_registration(argc, true).is_err());
+        }
+        assert!(super::staged_hybrid_registration(3, false).is_err());
+        for name in super::STAGED_HYBRID_MODEL_SETTINGS {
+            assert_eq!(super::staged_hybrid_setting(name, None), Ok(()));
+            for raw in ["", "1", "true", "01", " 0", "0 ", "single-all"] {
+                assert!(super::staged_hybrid_setting(name, Some(raw)).is_err());
+            }
+        }
+        assert_eq!(
+            super::staged_hybrid_setting("KUNO_LAB_NATIVE_DECODE_TILE", Some("8")),
+            Ok(())
+        );
+        assert_eq!(
+            super::staged_hybrid_setting("KUNO_LAB_NATIVE_DECODE_KERNELS", Some("chunk")),
+            Ok(())
+        );
+        for name in [
+            "KUNO_LAB_NATIVE_BATCH_COUNT",
+            "KUNO_LAB_EXPERT_SLOTS",
+            "KUNO_LAB_STATIC_CACHE_BYTES",
+            "KUNO_LAB_EXPERT_BATCH_BYTES",
+            "KUNO_LAB_EXPERT_SCATTER",
+        ] {
+            for raw in ["0", "8", "16", "64", "1048576"] {
+                assert!(super::staged_hybrid_setting(name, Some(raw)).is_err());
+            }
+        }
+        for name in ["KUNO_LAB_NATIVE_MAX8", "KUNO_LAB_BLOCK_MOE"] {
+            assert_eq!(super::staged_hybrid_setting(name, Some("0")), Ok(()));
+        }
+        assert!(super::staged_hybrid_setting("KUNO_PRIVATE_INPUT", None).is_err());
+    }
+    fn completed_staged_hybrid_reports() -> crate::cpu_gpu_expert_probe::StagedHybridReport {
+        crate::cpu_gpu_expert_probe::StagedHybridReport {
+            cases: std::array::from_fn(|i| {
+                let config = super::staged_hybrid_numeric_cases()[i];
+                let mut report = completed_expert_numeric_report();
+                report.layer = if i < 4 { 6 } else { 0 };
+                report.down_dtype = config.down.gguf_id();
+                report.misses = config.misses;
+                report.cpu_misses = config.cpu_misses;
+                report.gpu_misses = config.misses - config.cpu_misses;
+                report.source_precharge = report.gpu_misses as u64 * 4 * 1024 * 1024;
+                report
+            }),
+        }
+    }
+    #[test]
+    fn staged_hybrid_publication_requires_fixed_inventory_without_timings_or_private_data() {
+        let reports =
+            super::staged_hybrid_numeric_reports(completed_staged_hybrid_reports()).unwrap();
+        assert_eq!(reports.len(), 8);
+        for (i, report) in reports.iter().enumerate() {
+            assert_eq!(report["down_dtype"], if i < 4 { 6 } else { 8 });
+            assert_eq!(report["misses"], if i % 4 == 3 { 10 } else { 5 });
+            assert_eq!(report["cpu_misses"], [0, 1, 5, 10][i % 4]);
+            assert_eq!(report["gpu_misses"], [5, 4, 0, 0][i % 4]);
+            assert_eq!(
+                report["source_precharge"],
+                [20971520, 16777216, 0, 0][i % 4]
+            );
+            assert_eq!(report["group"], 0);
+            assert_eq!(report["vector"], 1);
+            assert_eq!(report["ranks"], 10);
+            assert_eq!(report["owned_cleanup_accepted"], true);
+            for field in [
+                "timing",
+                "timing_ns",
+                "ids",
+                "miss_mask",
+                "slots",
+                "map",
+                "input",
+                "partials",
+            ] {
+                assert!(report.get(field).is_none());
+            }
+        }
+        let mut swapped = completed_staged_hybrid_reports();
+        swapped.cases.swap(0, 1);
+        assert!(super::staged_hybrid_numeric_reports(swapped).is_err());
+        let mut swapped = completed_staged_hybrid_reports();
+        swapped.cases.swap(0, 4);
+        assert!(super::staged_hybrid_numeric_reports(swapped).is_err());
+        for index in 0..8 {
+            for failure in 0..16 {
+                let mut reports = completed_staged_hybrid_reports();
+                let report = &mut reports.cases[index];
+                match failure {
+                    0 => report.misses += 1,
+                    1 => report.cpu_misses += 1,
+                    2 => report.gpu_misses += 1,
+                    3 => report.down_dtype = 0,
+                    4 => report.zero_buffers -= 1,
+                    5 => report.zero_bytes -= 1,
+                    6 => report.source_precharge += 1,
+                    7 => report.io_inspected_bytes = 0,
+                    8 => {
+                        report.io_inspected_bytes = crate::cpu_gpu_expert_probe::IO_COMPONENT_BYTES
+                    }
+                    9 => report.max_tree_error = f32::NAN,
+                    10 => report.max_legacy_error = f32::INFINITY,
+                    11 => report.metadata_bytes = 256 * 1024 + 1,
+                    12 => report.snapshot_bytes = 2 * 1024 * 1024 + 1,
+                    13 => report.bridge_and_merge = Some(std::time::Duration::ZERO),
+                    14 => report.metadata_bytes = 0,
+                    _ => report.snapshot_bytes = 0,
+                }
+                assert!(super::staged_hybrid_numeric_reports(reports).is_err());
+            }
         }
     }
     #[test]

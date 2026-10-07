@@ -180,3 +180,25 @@ capacity rejection, signed-zero nonfinite rejection and all-or-error eight-case
 publication. No host test, compilation or device execution was run by this
 source-only agent. Root must compile/test/review and register a strict protected
 numeric-only mode, then accept both cards before any model seam or timing work.
+
+### Protected one-layer numeric registration
+
+The separate `resident-staged-hybrid-expert` mode accepts only card and mode,
+requires `KUNO_PUBLIC_RECEIPT`, `KUNO_LAB_TRANSIENT_IO=1` and
+`KUNO_LAB_OWNED_ZERO_AUDIT=1` before device/model access, and rejects model/native
+policy selections. The tile/profile defaults may be pinned to `8`/`chunk`;
+runtime INFO slab configuration remains the independently protected I/O policy.
+No route, miss-cap, worker, probability or input override is read. Main opens and
+binds the original GGUF once, then calls the fixed helper on the same configured
+client, limits and shared retirement owner. It rechecks file/cancel/retirement
+after all eight complete owning cleanups before writing a new public receipt.
+
+Scope `fixed-public-original-staged-cpu-gpu-expert-numeric` contains exactly the
+eight independently checked configurations and existing exact bounds. Reports
+with timings, unexpected splits, incomplete audits, nonfinite errors or exceeded
+actual-capacity bounds reject the aggregate. No selected IDs, masks, slots,
+ownership maps, vectors, permits or tensors are serialized. Cache publication,
+whole-model acceptance, timing, performance, production and automatic split
+policy remain explicitly false. File-write failure can leave an incomplete
+public file but emits no completion marker. Formatting and source test coverage
+do not establish compilation or physical acceptance; root owns those checks.
