@@ -4,7 +4,7 @@
 //! Retained main handles below are used ONLY to inspect post-erasure zeros,
 //! never for inference after an arena reset. Receipts contain numeric stats.
 
-use crate::private_arena::{BufferLayout, PrivateArena};
+use crate::private_arena::{BufferId, BufferLayout, PrivateArena};
 use crate::quant_matvec::matmul::{BatchSpans, MAX_BATCH, MatrixGeometry, packed_matmul};
 use cubecl::prelude::*;
 use cubecl::server::Handle;
@@ -28,6 +28,7 @@ const OUTPUT_GAP: f32 = -12345.0;
 const INPUT_GAP: f32 = 31415.0;
 const NUMERIC_COUNTS: [usize; 4] = [1, 3, 5, 8];
 const NUMERIC_TILES: [usize; 3] = [1, 4, 8];
+const REPLAY_SNAPSHOT_BYTES: usize = 32768;
 const FORMATS: [TensorType; 7] = [
     TensorType::F32,
     TensorType::F16,
@@ -360,6 +361,167 @@ fn regions_overlap(a: u64, a_len: u64, b: u64, b_len: u64) -> Result<bool> {
     Ok(a < end_b && b < end_a)
 }
 
+#[allow(clippy::too_many_arguments)]
+fn launch_case(
+    client: &ComputeClient<WgpuRuntime>,
+    arena: &PrivateArena,
+    matrix: &PublicMatrix,
+    geometry: MatrixGeometry,
+    spans: &BatchSpans,
+    x: BufferId,
+    y: BufferId,
+) -> Result<()> {
+    let x_layout = arena.layout(x)?;
+    let y_layout = arena.layout(y)?;
+    geometry.validate_spans(
+        spans,
+        matrix.words,
+        x_layout.owned_words,
+        y_layout.owned_words,
+    )?;
+    verify_bindings(
+        client,
+        [&matrix.handle, arena.handle(x)?, arena.handle(y)?],
+        [
+            matrix.wire.len(),
+            x_layout.owned_bytes,
+            y_layout.owned_bytes,
+        ],
+    )?;
+    packed_matmul::launch::<WgpuRuntime>(
+        client,
+        geometry.grid(),
+        CubeDim::new_1d(64),
+        unsafe { ArrayArg::from_raw_parts(matrix.handle.clone(), matrix.words) },
+        unsafe { ArrayArg::from_raw_parts(arena.handle(x)?.clone(), x_layout.owned_words) },
+        unsafe { ArrayArg::from_raw_parts(arena.handle(y)?.clone(), y_layout.owned_words) },
+        spans.count(),
+        spans.packed_first(),
+        spans.input_first(),
+        spans.input_stride(),
+        spans.output_first(),
+        spans.output_stride(),
+        geometry.rows(),
+        geometry.columns(),
+        geometry.dtype(),
+        geometry.tile_tokens(),
+    );
+    Ok(())
+}
+
+fn write_input(
+    client: &ComputeClient<WgpuRuntime>,
+    arena: &PrivateArena,
+    x: BufferId,
+    input: &[f32],
+) -> Result<()> {
+    let layout = arena.layout(x)?;
+    if input.len() != layout.logical_words {
+        return Err("public replay input owning length".into());
+    }
+    let mut upload = Zeroizing::new(vec![0_u8; layout.owned_bytes]);
+    for (bytes, value) in upload.chunks_exact_mut(4).zip(input) {
+        bytes.copy_from_slice(&value.to_le_bytes());
+    }
+    client
+        .write_private(arena.handle(x)?.clone(), std::mem::take(&mut *upload))
+        .map_err(|_| "public owned write failed")?;
+    Ok(())
+}
+
+fn output_values(bytes: &[u8], words: usize) -> Result<Zeroizing<Vec<f32>>> {
+    if bytes.len() < words.checked_mul(4).ok_or("public replay overflow")? {
+        return Err("public replay owning output short".into());
+    }
+    Ok(Zeroizing::new(
+        bytes[..words * 4]
+            .chunks_exact(4)
+            .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
+            .collect(),
+    ))
+}
+
+/// Reuse the SAME full owners across real MAX8 prefill and count1. Preserve
+/// the actual GPU prefill's inactive bits, which need not equal CPU roundoff.
+/// The ordinary tile1 count1 dispatch is an independent paired GPU reference.
+struct ReplayReference {
+    expected: Zeroizing<Vec<f32>>,
+    paired: Zeroizing<Vec<f32>>,
+}
+fn single_replay_reference(
+    client: &ComputeClient<WgpuRuntime>,
+    arena: &PrivateArena,
+    matrix: &PublicMatrix,
+    x: BufferId,
+    y: BufferId,
+    input: &mut [f32],
+) -> Result<ReplayReference> {
+    let l = fixture_layout(matrix.rows, matrix.columns)?;
+    let full = arena.layout(y)?.owned_bytes;
+    let spans = |count| {
+        BatchSpans::new(
+            count,
+            matrix.packed_first,
+            l.input_first,
+            l.input_stride,
+            l.output_first,
+            l.output_stride,
+        )
+    };
+    let geometry = MatrixGeometry::new(matrix.kind.gguf_id(), matrix.rows, matrix.columns, 8)?;
+    launch_case(client, arena, matrix, geometry, &spans(MAX_BATCH), x, y)?;
+    let prefill = client
+        .read_one(arena.handle(y)?.clone())
+        .map_err(|_| "public replay prefill read failed")?;
+    let prefill_expected = expectations(
+        matrix.rows,
+        matrix.columns,
+        &matrix.decoded,
+        input,
+        l,
+        MAX_BATCH,
+    )?;
+    check_output(&prefill, &prefill_expected, matrix.rows, l, MAX_BATCH, full)?;
+    let mut seed = Zeroizing::new(prefill.to_vec());
+    if seed.len() > REPLAY_SNAPSHOT_BYTES || seed.capacity() > REPLAY_SNAPSHOT_BYTES {
+        return Err("public replay host snapshot exceeded fixed owner bound".into());
+    }
+    let preserved = output_values(&seed, l.output_words)?;
+    drop(prefill);
+    audited(client)?;
+    for column in 0..matrix.columns {
+        input[l.input_first + column] = -input[l.input_first + column] + 0.0625;
+    }
+    let mut expected = expectations(matrix.rows, matrix.columns, &matrix.decoded, input, l, 1)?;
+    for i in 0..expected.len() {
+        if !(l.output_first..l.output_first + matrix.rows).contains(&i) {
+            expected[i] = preserved[i];
+        }
+    }
+    write_input(client, arena, x, input)?;
+    launch_case(
+        client,
+        arena,
+        matrix,
+        MatrixGeometry::new(matrix.kind.gguf_id(), matrix.rows, matrix.columns, 1)?,
+        &spans(1),
+        x,
+        y,
+    )?;
+    let baseline = client
+        .read_one(arena.handle(y)?.clone())
+        .map_err(|_| "public replay baseline read failed")?;
+    check_output(&baseline, &expected, matrix.rows, l, 1, full)?;
+    let paired = output_values(&baseline, l.output_words)?;
+    drop(baseline);
+    audited(client)?;
+    // Restore the exact accepted prefill owning span before the candidate.
+    client
+        .write_private(arena.handle(y)?.clone(), std::mem::take(&mut *seed))
+        .map_err(|_| "public replay prefill restore failed")?;
+    Ok(ReplayReference { expected, paired })
+}
+
 fn cases(
     client: &ComputeClient<WgpuRuntime>,
     arena: &mut PrivateArena,
@@ -367,12 +529,19 @@ fn cases(
     retired: &AtomicBool,
 ) -> Result<Vec<serde_json::Value>> {
     let mut reports =
-        Vec::with_capacity(FORMATS.len() * NUMERIC_COUNTS.len() * NUMERIC_TILES.len());
+        Vec::with_capacity(FORMATS.len() * (NUMERIC_COUNTS.len() * NUMERIC_TILES.len() + 1));
     for matrix in matrices {
         for count in NUMERIC_COUNTS {
-            for tile in NUMERIC_TILES {
-                let geometry =
+            for (tile, single) in NUMERIC_TILES
+                .into_iter()
+                .map(|tile| (tile, false))
+                .chain((count == 1).then_some((1, true)))
+            {
+                let mut geometry =
                     MatrixGeometry::new(matrix.kind.gguf_id(), matrix.rows, matrix.columns, tile)?;
+                if single {
+                    geometry = geometry.with_single_member()?;
+                }
                 let layout = fixture_layout(geometry.rows(), geometry.columns())?;
                 let spans = BatchSpans::new(
                     count,
@@ -382,8 +551,12 @@ fn cases(
                     layout.output_first,
                     layout.output_stride,
                 );
-                let input = input_fixture(layout, geometry.columns(), spans.count());
-                let expected = expectations(
+                let mut input = input_fixture(
+                    layout,
+                    geometry.columns(),
+                    if single { MAX_BATCH } else { spans.count() },
+                );
+                let mut expected = expectations(
                     geometry.rows(),
                     geometry.columns(),
                     &matrix.decoded,
@@ -417,41 +590,20 @@ fn cases(
                         y_layout.owned_bytes,
                     ],
                 )?;
+                let paired = if single {
+                    let replay = single_replay_reference(client, arena, matrix, x, y, &mut input)?;
+                    expected = replay.expected;
+                    Some(replay.paired)
+                } else {
+                    None
+                };
                 // Leave one explicitly owned upload live for the device audit.
                 // Move the guarded host allocation without any ordinary copy.
-                let mut upload = Zeroizing::new(vec![0_u8; x_layout.owned_bytes]);
-                for (bytes, value) in upload.chunks_exact_mut(4).zip(input.iter()) {
-                    bytes.copy_from_slice(&value.to_le_bytes());
-                }
-                let owned = std::mem::take(&mut *upload);
-                client
-                    .write_private(retained_x.clone(), owned)
-                    .map_err(|_| "public owned write failed")?;
+                write_input(client, arena, x, &input)?;
                 // SAFETY: all same-client full spans are independently allocated;
                 // public cache is retained, private IDs/lengths and spans checked
                 // immediately above; fixed cube/grid match validated geometry.
-                packed_matmul::launch::<WgpuRuntime>(
-                    client,
-                    geometry.grid(),
-                    CubeDim::new_1d(64),
-                    unsafe { ArrayArg::from_raw_parts(matrix.handle.clone(), matrix.words) },
-                    unsafe {
-                        ArrayArg::from_raw_parts(arena.handle(x)?.clone(), x_layout.owned_words)
-                    },
-                    unsafe {
-                        ArrayArg::from_raw_parts(arena.handle(y)?.clone(), y_layout.owned_words)
-                    },
-                    spans.count(),
-                    spans.packed_first(),
-                    spans.input_first(),
-                    spans.input_stride(),
-                    spans.output_first(),
-                    spans.output_stride(),
-                    geometry.rows(),
-                    geometry.columns(),
-                    geometry.dtype(),
-                    geometry.tile_tokens(),
-                );
+                launch_case(client, arena, matrix, geometry, &spans, x, y)?;
                 let output = client
                     .read_one(retained_y.clone())
                     .map_err(|_| "public output readback failed")?;
@@ -463,6 +615,19 @@ fn cases(
                     spans.count(),
                     y_layout.owned_bytes,
                 )?;
+                let paired_error = paired
+                    .as_ref()
+                    .map(|reference| {
+                        check_output(
+                            &output,
+                            reference,
+                            geometry.rows(),
+                            layout,
+                            1,
+                            y_layout.owned_bytes,
+                        )
+                    })
+                    .transpose()?;
                 drop(output); // release readback lease BEFORE audited cleanup
                 let io = audited(client)?;
                 if io.upload_bytes == 0 || io.uniform_bytes == 0 || io.readback_bytes == 0 {
@@ -498,10 +663,16 @@ fn cases(
                 }
                 drop(original);
                 let cache_audit = audited(client)?;
-                reports.push(serde_json::json!({"dtype":geometry.dtype(),"rows":geometry.rows(),"columns":geometry.columns(),
+                let mut report = serde_json::json!({"dtype":geometry.dtype(),"rows":geometry.rows(),"columns":geometry.columns(),
                     "count":spans.count(),"tile_tokens":geometry.tile_tokens(),"max_abs_error":max_error,
                     "main_full_span_bytes":x_layout.owned_bytes+y_layout.owned_bytes,"gaps_and_inactive_preserved":true,
-                    "main_erased":true,"public_cache_preserved":true,"io":receipt(io),"main_audit":receipt(main_audit),"cache_audit":receipt(cache_audit)}));
+                    "main_erased":true,"public_cache_preserved":true,"io":receipt(io),"main_audit":receipt(main_audit),"cache_audit":receipt(cache_audit)});
+                if let Some(error) = paired_error {
+                    report["member_capacity"] = serde_json::json!(1);
+                    report["max8_prefill_reused"] = serde_json::json!(true);
+                    report["generic_max_abs_error"] = serde_json::json!(error);
+                }
+                reports.push(report);
                 println!(
                     "public_packed_matmul dtype={} rows={} columns={} count={} tile={} max_abs_error={max_error}",
                     geometry.dtype(),
@@ -512,6 +683,15 @@ fn cases(
                 );
             }
         }
+    }
+    if reports.len() != FORMATS.len() * (NUMERIC_COUNTS.len() * NUMERIC_TILES.len() + 1)
+        || reports
+            .iter()
+            .filter(|case| case.get("member_capacity") == Some(&serde_json::json!(1)))
+            .count()
+            != FORMATS.len()
+    {
+        return Err("public projection case inventory incomplete".into());
     }
     Ok(reports)
 }
@@ -557,7 +737,7 @@ pub fn run(client: &ComputeClient<WgpuRuntime>) -> Result<()> {
     if let Some(path) = std::env::var_os("KUNO_PUBLIC_RECEIPT") {
         use std::io::Write;
         let report = serde_json::json!({"scope":"fixed-public-synthetic-operator-test-only","fixture":"packed-matmul-probe",
-            "borrowed_original_gguf":true,"format_count":FORMATS.len(),"case_count":reports.len(),"cases":reports,
+            "borrowed_original_gguf":true,"format_count":FORMATS.len(),"case_count":reports.len(),"single_member_cases":FORMATS.len(),"cases":reports,
             "private_uploads_owned":true,"context_retired":false,"operator_timings":timings,
             "proof_scope":"owned API-visible main and I/O spans; not opaque physical driver padding"});
         let mut out = std::fs::OpenOptions::new()
@@ -1045,6 +1225,41 @@ mod tests {
                 + BufferLayout::new(layout.output_words).unwrap().owned_bytes
                 < MAIN_BUDGET
         );
+        assert_eq!(
+            BufferLayout::new(layout.output_words).unwrap().owned_bytes,
+            REPLAY_SNAPSHOT_BYTES
+        );
+    }
+
+    #[test]
+    fn replay_checker_retains_actual_nonzero_max8_tails_without_accepting_corruption() {
+        let l = fixture_layout(3, 137).unwrap();
+        let full = BufferLayout::new(l.output_words).unwrap().owned_bytes;
+        let mut bytes = Zeroizing::new(vec![0_u8; full]);
+        let mut expected = Zeroizing::new(vec![OUTPUT_GAP; l.output_words]);
+        for token in 0..MAX_BATCH {
+            for row in 0..3 {
+                expected[l.output_first + token * l.output_stride + row] =
+                    token as f32 + row as f32 / 8. + 0.25;
+            }
+        }
+        for (b, value) in bytes.chunks_exact_mut(4).zip(expected.iter()) {
+            b.copy_from_slice(&value.to_le_bytes());
+        }
+        let actual_seed = output_values(&bytes, l.output_words).unwrap();
+        assert_eq!(
+            check_output(&bytes, &actual_seed, 3, l, 1, full).unwrap(),
+            0.
+        );
+        for index in [0, l.output_first + l.output_stride, l.output_words - 1] {
+            let saved = bytes[index * 4..index * 4 + 4].to_vec();
+            bytes[index * 4..index * 4 + 4].copy_from_slice(&(-17_f32).to_le_bytes());
+            assert!(check_output(&bytes, &actual_seed, 3, l, 1, full).is_err());
+            bytes[index * 4..index * 4 + 4].copy_from_slice(&saved);
+        }
+        bytes[full - 1] = 1;
+        assert!(check_output(&bytes, &actual_seed, 3, l, 1, full).is_err());
+        assert!(output_values(&bytes[..3], l.output_words).is_err());
     }
 
     #[test]

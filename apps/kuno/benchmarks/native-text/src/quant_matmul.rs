@@ -29,6 +29,7 @@ pub struct MatrixGeometry {
     rows: usize,
     columns: usize,
     tile_tokens: usize,
+    member_capacity: usize,
     row_bytes: usize,
     total_bytes: usize,
 }
@@ -57,6 +58,7 @@ impl MatrixGeometry {
             rows,
             columns,
             tile_tokens,
+            member_capacity: MAX_BATCH,
             row_bytes,
             total_bytes,
         })
@@ -73,6 +75,18 @@ impl MatrixGeometry {
     pub fn tile_tokens(self) -> usize {
         self.tile_tokens
     }
+    /// Explicit public count1 dispatch; storage owners remain complete MAX8
+    /// bindings. This is never selected from a runtime/private token count.
+    pub fn with_single_member(mut self) -> Result<Self, &'static str> {
+        if self.tile_tokens != 1 {
+            return Err("single-member projection requires public tile1");
+        }
+        self.member_capacity = 1;
+        Ok(self)
+    }
+    pub fn member_capacity(self) -> usize {
+        self.member_capacity
+    }
     pub fn row_bytes(self) -> usize {
         self.row_bytes
     }
@@ -82,7 +96,11 @@ impl MatrixGeometry {
     /// Fixed public capacity grid, including inactive tail tiles. Actual count
     /// cannot change pipeline geometry; inactive tokens perform no I/O.
     pub fn grid(self) -> CubeCount {
-        CubeCount::Static(self.rows as u32, (MAX_BATCH / self.tile_tokens) as u32, 1)
+        CubeCount::Static(
+            self.rows as u32,
+            (self.member_capacity / self.tile_tokens) as u32,
+            1,
+        )
     }
     /// Check byte/element addressing BEFORE constructing unchecked ArrayArgs.
     /// Buffer lengths describe complete bindings, not temporary sliced handles.
@@ -93,7 +111,7 @@ impl MatrixGeometry {
         input_words: usize,
         output_words: usize,
     ) -> Result<(), &'static str> {
-        if !(1..=MAX_BATCH).contains(&spans.count)
+        if !(1..=self.member_capacity).contains(&spans.count)
             || spans.input_stride < self.columns
             || spans.output_stride < self.rows
         {
@@ -368,7 +386,7 @@ mod tests {
         output: &mut [f32],
     ) -> Vec<usize> {
         let mut visits = vec![0; decoded.len()];
-        for tile_first in (0..MAX_BATCH).step_by(geometry.tile_tokens) {
+        for tile_first in (0..geometry.member_capacity).step_by(geometry.tile_tokens) {
             if tile_first >= spans.count {
                 continue;
             }
@@ -702,6 +720,85 @@ mod tests {
                 assert!(
                     matches!(geometry.grid(), CubeCount::Static(3, y, 1) if y == (MAX_BATCH / tile) as u32)
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn explicit_single_member_policy_keeps_full_bindings_and_rejects_other_counts() {
+        for dtype in [F32, F16, BF16, Q5_0, Q8_0, Q4_K, Q6_K] {
+            let original = MatrixGeometry::new(dtype, 3, 256, 1).unwrap();
+            let single = original.with_single_member().unwrap();
+            assert_eq!(original.member_capacity(), MAX_BATCH);
+            assert_eq!(single.member_capacity(), 1);
+            assert_eq!(single.total_bytes(), original.total_bytes());
+            assert!(matches!(single.grid(), CubeCount::Static(3, 1, 1)));
+            assert!(matches!(original.grid(), CubeCount::Static(3, 8, 1)));
+            for count in [0, 1, 2, 3, 5, 8, usize::MAX] {
+                let spans = BatchSpans::new(count, 0, 9, 267, 7, 8);
+                assert_eq!(
+                    single
+                        .validate_spans(&spans, original.total_bytes().div_ceil(4), 2145, 71)
+                        .is_ok(),
+                    count == 1
+                );
+            }
+            for tile in [4, 8] {
+                assert!(
+                    MatrixGeometry::new(dtype, 3, 256, tile)
+                        .unwrap()
+                        .with_single_member()
+                        .is_err()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn single_member_after_max8_prefill_preserves_every_inactive_word_and_original_math() {
+        for dtype in [F32, F16, BF16, Q5_0, Q8_0, Q4_K, Q6_K] {
+            let columns = 256;
+            let rows = 3;
+            let packed = fixture(dtype, rows, columns);
+            let mut decoded = vec![0.; rows * columns];
+            TensorType::from_gguf_id(dtype)
+                .unwrap()
+                .decode(&packed, &mut decoded)
+                .unwrap();
+            let original = MatrixGeometry::new(dtype, rows, columns, 1).unwrap();
+            let single = original.with_single_member().unwrap();
+            let mut input = vec![31415.; 9 + MAX_BATCH * 267];
+            for token in 0..MAX_BATCH {
+                for column in 0..columns {
+                    input[9 + token * 267 + column] =
+                        ((column * 3 + token * 5) % 17) as f32 / 17. - 8. / 17.;
+                }
+            }
+            let mut prefill = vec![-12345.; 7 + MAX_BATCH * 8];
+            emulate(
+                MatrixGeometry::new(dtype, rows, columns, 8).unwrap(),
+                &BatchSpans::new(8, 0, 9, 267, 7, 8),
+                &decoded,
+                &input,
+                &mut prefill,
+            );
+            let before = prefill.clone();
+            for column in 0..columns {
+                input[9 + column] = -input[9 + column] + 0.0625;
+            }
+            let spans = BatchSpans::new(1, 0, 9, 267, 7, 8);
+            let mut old = before.clone();
+            let mut actual = before.clone();
+            emulate(original, &spans, &decoded, &input, &mut old);
+            emulate(single, &spans, &decoded, &input, &mut actual);
+            assert_eq!(
+                actual.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                old.iter().map(|v| v.to_bits()).collect::<Vec<_>>()
+            );
+            for (i, value) in actual.iter().enumerate() {
+                if !(7..10).contains(&i) {
+                    assert_eq!(value.to_bits(), before[i].to_bits());
+                }
             }
         }
     }

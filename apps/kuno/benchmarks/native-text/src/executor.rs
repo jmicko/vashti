@@ -572,6 +572,7 @@ pub struct GpuExecutor<'a> {
     banks: BTreeMap<String, ExpertBanks>,
     batch_moe: Option<batch_moe::Registry>,
     native_projection_tile: NativeProjectionTile,
+    native_projection_members: usize,
     bank_reserved: usize,
     bank_slots: usize,
     reserved_limit: usize,
@@ -677,6 +678,7 @@ impl<'a> GpuExecutor<'a> {
             banks: BTreeMap::new(),
             batch_moe: None,
             native_projection_tile: NativeProjectionTile::default(),
+            native_projection_members: quant_matvec::matmul::MAX_BATCH,
             bank_reserved: 0,
             bank_slots,
             reserved_limit,
@@ -902,6 +904,7 @@ impl<'a> GpuExecutor<'a> {
         self.resident_admission = Some(admission.clone());
         // A fresh logical owner must never inherit a previous decode experiment.
         self.native_projection_tile = NativeProjectionTile::default();
+        self.native_projection_members = quant_matvec::matmul::MAX_BATCH;
         Ok(admission)
     }
     pub(crate) fn check_resident_admission(&self, owner: &ResidentAdmission) -> Result<()> {
@@ -916,6 +919,28 @@ impl<'a> GpuExecutor<'a> {
     }
     pub(crate) fn native_projection_tile(&self) -> usize {
         self.native_projection_tile.tokens()
+    }
+    pub(crate) fn native_projection_member_capacity(&self) -> usize {
+        self.native_projection_members
+    }
+    /// The model alone constructs this completed, full-audit native boundary.
+    /// No private count selects policy, and no owner or fault scan is narrowed.
+    pub(crate) fn set_lab_native_single_dense_dispatch(
+        &mut self,
+        _boundary: &crate::resident_model::batch::CompletedNativeProjectionBoundary,
+    ) -> Result<usize> {
+        if self.native_projection_tile() != 1
+            || self.batch_moe.is_some()
+            || self.transient_resident.is_none()
+        {
+            return Err(Error::InvalidFormat("native single projection boundary"));
+        }
+        self.resident_admission
+            .as_ref()
+            .ok_or(Error::InvalidFormat("native projection admission"))?
+            .active()?;
+        self.native_projection_members = 1;
+        Ok(self.native_projection_member_capacity())
     }
     /// Only a completed original native model owner can construct this proof.
     /// No queued work, buffers, runtime ledgers or cache entries are changed.
@@ -1407,6 +1432,11 @@ impl<'a> GpuExecutor<'a> {
         spans: &quant_matvec::matmul::BatchSpans,
         cancel: &AtomicBool,
     ) -> Result<()> {
+        // Reject before weights/cache mutation or any launch. The public model
+        // policy is fixed between completed chunks, never chosen from count.
+        if self.native_projection_members == 1 && spans.count() != 1 {
+            return Err(Error::InvalidFormat("native single projection count"));
+        }
         if !tensor.belongs_to(self.model) || spans.packed_first() != 0 {
             return Err(Error::InvalidFormat(
                 "resident batch artifact/packed binding",
@@ -1450,13 +1480,18 @@ impl<'a> GpuExecutor<'a> {
                 return Err(Error::InvalidFormat("resident batch cancelled"));
             }
             let rows = per_tile.min(m.outputs() - first);
-            let g = quant_matvec::matmul::MatrixGeometry::new(
+            let mut g = quant_matvec::matmul::MatrixGeometry::new(
                 tensor.info().dtype().gguf_id(),
                 rows,
                 m.inputs(),
                 self.native_projection_tile(),
             )
             .map_err(|_| Error::InvalidFormat("resident batch matrix geometry"))?;
+            if self.native_projection_members == 1 {
+                g = g
+                    .with_single_member()
+                    .map_err(|_| Error::InvalidFormat("resident single matrix geometry"))?;
+            }
             let packet = quant_matvec::matmul::BatchSpans::new(
                 spans.count(),
                 0,
