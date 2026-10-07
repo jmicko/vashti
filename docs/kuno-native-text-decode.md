@@ -104,6 +104,20 @@ proofs and all private hard limits remain unchanged. This is bounded scheduling,
 not a cached command graph or a claim of device-side routing. Completed receipts
 pin both selections and their numerical runtime bounds.
 
+`KUNO_LAB_FAST_GPU_FAULT=1` / `--fast-gpu-fault` requires the explicit fast
+subgroup path. Each producer atomically folds its finite result into the same
+global model fault. Only the last public packed row tile checks the entire
+remaining logical output, excluding the full active matrix interval because
+each producer has already checked it. Thus other tiles can never race a tail
+check, and large heads do not rescan every inactive MAX8 tail for every tile.
+The old complete logical finite check remains for prefill and all non-fused
+projections. Full owning padding/erasure checks, original arithmetic/rounding,
+fault lifetime and final acceptance remain unchanged. Every format must pass
+fixed-public active-overwrite, inactive-NaN, bad-input and sticky-poison tests
+before whole-model work; the receipt requires actual fused dispatch counts
+equal to the actual fast projection counts. This is a kernel fusion experiment,
+not permission to skip numerical faults or change output owner extents.
+
 Source-only proposal, 2026-10-05. Prepared by the resident-MoE child after the native MAX8 adapter handoff. No code, GPU, service, model-payload read, benchmark or default change accompanies this proposal. Parent owns whole-model batching correctness, admission, device acceptance and integration. This is a later decode experiment; MAX8 prompt batching alone cannot establish faster hot decode.
 
 ## Evidence and first decision

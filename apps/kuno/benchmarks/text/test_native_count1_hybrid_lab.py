@@ -44,6 +44,19 @@ def completion(cap):
 
 
 class HybridLabTests(unittest.TestCase):
+    def test_fused_finite_requires_every_dispatch_and_all_format_fault_probes(self):
+        value=receipt("intel",10)
+        value.update(fast_gpu=True,observed_fast_dense_calls=5264,fast_gpu_fault=True,observed_fast_dense_fault_calls=5264)
+        output=completion(10)+"\n"+"\n".join(f"rust_fast_packed_fused_fault dtype={dtype} cases=4 passed=true" for dtype in (0,1,30,12,6,14,8))
+        LAB.validate_receipt(value,"intel",10,output,fast=True,fast_fault=True)
+        for bad in (True,0,5263,5265,None):
+            wrong=copy.deepcopy(value);wrong["observed_fast_dense_fault_calls"]=bad
+            with self.assertRaises(ValueError):LAB.validate_receipt(wrong,"intel",10,output,fast=True,fast_fault=True)
+        for dtype in (0,1,30,12,6,14,8):
+            wrong=output.replace(f"rust_fast_packed_fused_fault dtype={dtype} cases=4 passed=true","")
+            with self.assertRaises(ValueError):LAB.validate_receipt(value,"intel",10,wrong,fast=True,fast_fault=True)
+        with self.assertRaises(ValueError):LAB.worker_environment("/original/model","/public/receipt",fast_fault=True)
+
     def test_compact_info_and_larger_submission_groups_require_typed_matching_bounds(self):
         for compact in (False,True):
             for batch in (False,True):

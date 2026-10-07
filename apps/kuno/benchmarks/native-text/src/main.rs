@@ -667,6 +667,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mapped_weights = count1_environment_opt_in(&mode, "KUNO_LAB_MAPPED_WEIGHTS")?;
     let kernel_profile = count1_environment_opt_in(&mode, "KUNO_LAB_KERNEL_PROFILE")?;
     let fast_gpu = count1_environment_opt_in(&mode, "KUNO_LAB_FAST_GPU")?;
+    let fast_gpu_fault = count1_environment_opt_in(&mode, "KUNO_LAB_FAST_GPU_FAULT")?;
+    if fast_gpu_fault && !fast_gpu {
+        return Err("Fused subgroup finite checks require the explicit fast GPU path".into());
+    }
     let long_fixture = count1_environment_opt_in(&mode, "KUNO_LAB_LONG_FIXTURE")?;
     let cpu_q8 = count1_environment_opt_in(&mode, "KUNO_LAB_CPU_Q8")?;
     let large_weight_cache = count1_environment_opt_in(&mode, "KUNO_LAB_LARGE_WEIGHT_CACHE")?;
@@ -1344,6 +1348,72 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!(
                         "rust_fast_packed_matvec dtype={dtype} rows={rows} cols={cols} max_abs_error={fast_error}"
                     );
+                    if fast_gpu_fault {
+                        for case in 0..4 {
+                            let mut initial = vec![0f32; 16];
+                            initial[2..2 + rows].fill(f32::NAN);
+                            if case == 1 {
+                                initial[15] = f32::NAN;
+                            }
+                            let mut fixture_input = input.clone();
+                            if case == 2 {
+                                fixture_input[0] = f32::NAN;
+                            }
+                            let initial_fault = if case == 3 { 8u32 } else { 0 };
+                            let out = client.create_from_slice(f32::as_bytes(&initial));
+                            let fixture_x = client.create_from_slice(f32::as_bytes(&fixture_input));
+                            let fault = client.create_from_slice(&initial_fault.to_le_bytes());
+                            quant_matvec::fast::packed_single_fault::launch::<WgpuRuntime>(
+                                &client,
+                                quant_matvec::fast::fault_grid(rows, 16, true),
+                                quant_matvec::fast::cube(),
+                                unsafe { ArrayArg::from_raw_parts(w.clone(), words.len()) },
+                                unsafe { ArrayArg::from_raw_parts(fixture_x, input.len()) },
+                                unsafe { ArrayArg::from_raw_parts(out.clone(), 16) },
+                                unsafe { ArrayArg::from_raw_parts(fault.clone(), 1) },
+                                1,
+                                0,
+                                0,
+                                2,
+                                2,
+                                rows,
+                                cols,
+                                dtype,
+                                tensor.info().row_bytes() as usize,
+                                rows,
+                                true,
+                            );
+                            let out_bytes = ScrubPublicRead(client.read_one(out)?);
+                            let values = f32::from_bytes(&out_bytes.0);
+                            let fault_bytes = ScrubPublicRead(client.read_one(fault)?);
+                            let expected_fault: u32 = match case {
+                                0 => 0,
+                                3 => 8,
+                                _ => 1,
+                            };
+                            if fault_bytes.0[..] != expected_fault.to_le_bytes()
+                                || values.len() != 16
+                            {
+                                return Err(
+                                    "Fixed public fused packed fault/tail parity failed".into()
+                                );
+                            }
+                            if case != 2
+                                && values[2..2 + rows].iter().zip(&expected).any(
+                                    |(&got, &reference)| {
+                                        !got.is_finite()
+                                            || (got - reference).abs()
+                                                > 1e-4 + 3e-4 * reference.abs()
+                                    },
+                                )
+                            {
+                                return Err(
+                                    "Fixed public fused packed numeric parity failed".into()
+                                );
+                            }
+                        }
+                        println!("rust_fast_packed_fused_fault dtype={dtype} cases=4 passed=true");
+                    }
                 }
                 drop(actual_bytes);
                 if transient_resident {
@@ -1742,6 +1812,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 executor.enable_transient_resident(retired.clone())?;
             }
             executor.fast_dense = fast_gpu;
+            executor.fast_dense_fault = fast_gpu_fault;
             let cancel = AtomicBool::new(false);
             let mut resident = if resident_enabled {
                 Some(resident_model::ResidentModel::new_for_lab_fixture(
@@ -1958,6 +2029,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 receipt["kernel_profile"] = serde_json::json!(kernel_profile);
                 receipt["fast_gpu"] = serde_json::json!(fast_gpu);
                 receipt["observed_fast_dense_calls"] = serde_json::json!(executor.fast_dense_calls);
+                receipt["fast_gpu_fault"] = serde_json::json!(fast_gpu_fault);
+                receipt["observed_fast_dense_fault_calls"] =
+                    serde_json::json!(executor.fast_dense_fault_calls);
                 receipt["long_fixture"] = serde_json::json!(long_fixture);
                 receipt["cpu_q8_activations"] = serde_json::json!(cpu_q8);
                 receipt["large_weight_cache"] = serde_json::json!(large_weight_cache);
@@ -2110,6 +2184,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     executor.enable_transient_resident(retired.clone())?;
                 }
                 executor.fast_dense = fast_gpu;
+                executor.fast_dense_fault = fast_gpu_fault;
                 let mut fresh = resident_model::ResidentModel::new_for_lab_fixture(
                     model.bound_graph(),
                     client.clone(),
@@ -2209,6 +2284,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         executor.enable_transient_resident(retired.clone())?;
                     }
                     executor.fast_dense = fast_gpu;
+                    executor.fast_dense_fault = fast_gpu_fault;
                     let mut partial = resident_model::ResidentModel::new_for_lab_fixture(
                         model.bound_graph(),
                         client.clone(),

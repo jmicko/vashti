@@ -99,20 +99,23 @@ impl BatchedResidentProjector for ResidentBatchProjection<'_, '_> {
         )?;
         // SAFETY: live distinct arena IDs are exclusive actual physical owners;
         // the enclosing owner retains them through completion and erasure.
-        unsafe {
+        let fused = unsafe {
             self.executor.enqueue_matrix_batch(
                 projection.tensor,
                 &u::handle(arena, input)?,
                 input_words,
                 &u::handle(arena, output)?,
                 output_words,
+                &u::handle(arena, self.fault)?,
                 spans,
                 cancel,
-            )?;
-        }
+            )?
+        };
         // Preserve the whole-token output fault decision. Unused owned logical
         // columns are zero-initialized; a prior failed chunk cannot be reused.
-        u::validate(arena, output, self.fault)?;
+        if !fused {
+            u::validate(arena, output, self.fault)?;
+        }
         u::cancel(cancel)
     }
 }

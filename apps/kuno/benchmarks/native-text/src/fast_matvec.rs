@@ -166,6 +166,87 @@ pub fn cube() -> CubeDim {
     CubeDim::new_1d((ROWS_PER_CUBE * PHYSICAL_LANES) as u32)
 }
 
+#[cube]
+#[allow(clippy::collapsible_if)]
+pub fn active_output(index: usize, first: usize, #[comptime] rows: usize) -> bool {
+    let mut active = false;
+    if index >= first {
+        if index - first < rows {
+            active = true;
+        }
+    }
+    active
+}
+
+/// Every produced value folds its own finite decision. The last public row
+/// tile ALSO inspects every other logical output value once, preserving the
+/// old full-MAX8 finite check without racing other active tile writes. Only
+/// the entire active matrix interval is excluded, never a caller-sliced tail.
+#[cube(launch, launch_unchecked)]
+#[allow(
+    clippy::too_many_arguments,
+    clippy::collapsible_if,
+    clippy::neg_cmp_op_on_partial_ord
+)] // Cube comparison must reject NaN without a host-only partial_cmp.
+pub fn packed_single_fault(
+    packed: &Array<u32>,
+    input: &Array<f32>,
+    output: &mut Array<f32>,
+    fault: &mut Array<Atomic<u32>>,
+    count: usize,
+    packed_first: usize,
+    input_first: usize,
+    output_first: usize,
+    matrix_first: usize,
+    #[comptime] rows: usize,
+    #[comptime] columns: usize,
+    #[comptime] dtype: u32,
+    #[comptime] row_bytes: usize,
+    #[comptime] matrix_rows: usize,
+    #[comptime] check_tail: bool,
+) {
+    let row = CUBE_POS_X as usize * ROWS_PER_CUBE + local_row();
+    let active = row < rows && count == 1;
+    let value = dot(
+        packed,
+        input,
+        packed_first + row * row_bytes,
+        input_first,
+        active,
+        columns,
+        dtype,
+    );
+    if lane() == 0 && active {
+        output[output_first + row] = value;
+        if !(value.abs() <= f32::MAX) {
+            fault[0].fetch_or(1);
+        }
+    }
+    if comptime!(check_tail) {
+        let index = ABSOLUTE_POS;
+        if index < output.len() {
+            if !active_output(index, matrix_first, matrix_rows) {
+                if !(output[index].abs() <= f32::MAX) {
+                    fault[0].fetch_or(1);
+                }
+            }
+        }
+    }
+    if lane() == 0 && count != 1 {
+        fault[0].fetch_or(1);
+    }
+}
+
+pub fn fault_grid(rows: usize, output_words: usize, check_tail: bool) -> CubeCount {
+    let cubes = rows.div_ceil(ROWS_PER_CUBE);
+    let cubes = if check_tail {
+        cubes.max(output_words.div_ceil(ROWS_PER_CUBE * PHYSICAL_LANES))
+    } else {
+        cubes
+    };
+    CubeCount::Static(cubes as u32, 1, 1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -235,6 +316,95 @@ mod tests {
             .validate(&module)
             .unwrap();
             assert!(source.contains("subgroupShuffleDown") && source.contains("workgroupBarrier"));
+            for check_tail in [false, true] {
+                let mut b = KernelBuilder::default();
+                b.scope.register_type::<u32>(uint);
+                b.scope.register_type::<usize>(uint);
+                b.scope.register_type::<f32>(float);
+                b.scope
+                    .register_type::<i32>(StorageType::Scalar(ElemType::Int(IntKind::I32)));
+                b.scope
+                    .register_type::<bool>(StorageType::Scalar(ElemType::Bool));
+                let packed = b.input_array(Type::new(uint)).into();
+                let input = b.input_array(Type::new(float)).into();
+                let output = b.output_array(Type::new(float)).into();
+                let fault = b
+                    .output_array(Type::new(StorageType::Atomic(ElemType::UInt(
+                        UIntKind::U32,
+                    ))))
+                    .into();
+                let count = b.scalar(uint).into();
+                let first = b.scalar(uint).into();
+                let x = b.scalar(uint).into();
+                let y = b.scalar(uint).into();
+                let mf = b.scalar(uint).into();
+                packed_single_fault::expand(
+                    &mut b.scope,
+                    packed,
+                    input,
+                    output,
+                    fault,
+                    count,
+                    first,
+                    x,
+                    y,
+                    mf,
+                    7,
+                    256,
+                    dtype,
+                    kuno_text::TensorType::from_gguf_id(dtype)
+                        .unwrap()
+                        .row_bytes(256)
+                        .unwrap() as usize,
+                    11,
+                    check_tail,
+                );
+                let source = WgslCompiler::default()
+                    .compile(
+                        b.build(
+                            KernelSettings::default()
+                                .cube_dim(cube())
+                                .kernel_name("fixed_public_fused_subgroup"),
+                        ),
+                        &WgpuCompilationOptions::default(),
+                        cubecl::server::ExecutionMode::Unchecked,
+                        uint,
+                    )
+                    .unwrap()
+                    .to_string();
+                let module = wgpu::naga::front::wgsl::parse_str(&source).unwrap();
+                wgpu::naga::valid::Validator::new(
+                    wgpu::naga::valid::ValidationFlags::all(),
+                    wgpu::naga::valid::Capabilities::SUBGROUP,
+                )
+                .validate(&module)
+                .unwrap();
+                assert!(source.contains("atomicOr") && source.contains("subgroupShuffleDown"));
+            }
+        }
+    }
+    #[test]
+    fn fused_tail_coverage_excludes_entire_active_matrix_and_never_future_tile_writes() {
+        for words in [17usize, 1024, 8 * 152064] {
+            for first in [0usize, 3, 16] {
+                let rows = 7;
+                if first + rows > words {
+                    continue;
+                }
+                let CubeCount::Static(x, 1, 1) = fault_grid(rows, words, true) else {
+                    panic!()
+                };
+                assert!((x as usize) * 128 >= words);
+                for index in 0..words {
+                    let protected = index >= first && index - first < rows;
+                    let expected = (first..first + rows).contains(&index);
+                    assert_eq!(protected, expected);
+                }
+                let CubeCount::Static(x, 1, 1) = fault_grid(rows, words, false) else {
+                    panic!()
+                };
+                assert_eq!(x as usize, rows.div_ceil(4));
+            }
         }
     }
     #[test]

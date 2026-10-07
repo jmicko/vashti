@@ -597,6 +597,8 @@ struct Cached {
 pub struct GpuExecutor<'a> {
     pub fast_dense: bool,
     pub fast_dense_calls: u64,
+    pub fast_dense_fault: bool,
+    pub fast_dense_fault_calls: u64,
     model: &'a GgufFile,
     pub block_kernel: bool,
     pub block_large_only: bool,
@@ -729,6 +731,8 @@ impl<'a> GpuExecutor<'a> {
             batch_moe: None,
             fast_dense: false,
             fast_dense_calls: 0,
+            fast_dense_fault: false,
+            fast_dense_fault_calls: 0,
             native_projection_tile: NativeProjectionTile::default(),
             native_projection_members: quant_matvec::matmul::MAX_BATCH,
             bank_reserved: 0,
@@ -1481,9 +1485,10 @@ impl<'a> GpuExecutor<'a> {
         input_words: usize,
         y: &Handle,
         output_words: usize,
+        fault: &Handle,
         spans: &quant_matvec::matmul::BatchSpans,
         cancel: &AtomicBool,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         // Reject before weights/cache mutation or any launch. The public model
         // policy is fixed between completed chunks, never chosen from count.
         if self.native_projection_members == 1 && spans.count() != 1 {
@@ -1516,11 +1521,17 @@ impl<'a> GpuExecutor<'a> {
             output_words,
         )?;
         if x.stream != y.stream
+            || fault.stream != x.stream
+            || fault.size_in_used() != 4
             || x.size_in_used() < (input_words as u64) * 4
             || y.size_in_used() < (output_words as u64) * 4
         {
             return Err(Error::InvalidBufferLength);
         }
+        let fused = self.fast_dense_fault
+            && self.fast_dense
+            && self.native_projection_members == 1
+            && self.native_projection_tile() == 1;
         let row_bytes =
             usize::try_from(tensor.info().row_bytes()).map_err(|_| Error::ArithmeticOverflow)?;
         if row_bytes == 0 || row_bytes > TILE_BYTES {
@@ -1579,22 +1590,47 @@ impl<'a> GpuExecutor<'a> {
                     if !packet.packed_first().is_multiple_of(4) {
                         return Err(Error::InvalidBufferLength);
                     }
-                    quant_matvec::fast::packed_single::launch_unchecked::<WgpuRuntime>(
-                        &self.client,
-                        quant_matvec::fast::grid(g.rows()),
-                        quant_matvec::fast::cube(),
-                        ArrayArg::from_raw_parts(weights, words),
-                        ArrayArg::from_raw_parts(x.clone(), input_words),
-                        ArrayArg::from_raw_parts(y.clone(), output_words),
-                        packet.count(),
-                        packet.packed_first(),
-                        packet.input_first(),
-                        packet.output_first(),
-                        g.rows(),
-                        g.columns(),
-                        g.dtype(),
-                        g.row_bytes(),
-                    );
+                    if fused {
+                        let tail = first + rows == m.outputs();
+                        quant_matvec::fast::packed_single_fault::launch_unchecked::<WgpuRuntime>(
+                            &self.client,
+                            quant_matvec::fast::fault_grid(g.rows(), output_words, tail),
+                            quant_matvec::fast::cube(),
+                            ArrayArg::from_raw_parts(weights, words),
+                            ArrayArg::from_raw_parts(x.clone(), input_words),
+                            ArrayArg::from_raw_parts(y.clone(), output_words),
+                            ArrayArg::from_raw_parts(fault.clone(), 1),
+                            packet.count(),
+                            packet.packed_first(),
+                            packet.input_first(),
+                            packet.output_first(),
+                            spans.output_first(),
+                            g.rows(),
+                            g.columns(),
+                            g.dtype(),
+                            g.row_bytes(),
+                            m.outputs(),
+                            tail,
+                        );
+                        self.fast_dense_fault_calls += 1;
+                    } else {
+                        quant_matvec::fast::packed_single::launch_unchecked::<WgpuRuntime>(
+                            &self.client,
+                            quant_matvec::fast::grid(g.rows()),
+                            quant_matvec::fast::cube(),
+                            ArrayArg::from_raw_parts(weights, words),
+                            ArrayArg::from_raw_parts(x.clone(), input_words),
+                            ArrayArg::from_raw_parts(y.clone(), output_words),
+                            packet.count(),
+                            packet.packed_first(),
+                            packet.input_first(),
+                            packet.output_first(),
+                            g.rows(),
+                            g.columns(),
+                            g.dtype(),
+                            g.row_bytes(),
+                        );
+                    }
                     self.fast_dense_calls += 1;
                 } else {
                     quant_matvec::matmul::packed_matmul::launch_unchecked::<WgpuRuntime>(
@@ -1622,7 +1658,7 @@ impl<'a> GpuExecutor<'a> {
         if cancel.load(Ordering::Acquire) {
             return Err(Error::InvalidFormat("resident batch cancelled"));
         }
-        Ok(())
+        Ok(fused)
     }
 
     #[allow(clippy::too_many_arguments)]
