@@ -8,6 +8,7 @@ use crate::{
 use cubecl::prelude::*;
 use cubecl::server::Handle;
 use cubecl::wgpu::WgpuRuntime;
+use cubecl_runtime::transient::TransientIoReceipt;
 use kuno_text::cpu::Matrix;
 use kuno_text::model::{MatrixExecutor, RoutedWeights};
 use kuno_text::{Error, GgufFile, Result, TensorView};
@@ -132,6 +133,71 @@ fn checked_transient_cleanup(
         };
     }
     Ok(())
+}
+
+pub(crate) fn checked_resident_io_audit(
+    retired: &AtomicBool,
+    audit: impl FnOnce() -> Result<TransientIoReceipt>,
+) -> Result<()> {
+    checked_transient_cleanup(retired, || {
+        let receipt = audit()?;
+        let total = receipt
+            .upload_bytes
+            .checked_add(receipt.uniform_bytes)
+            .and_then(|n| n.checked_add(receipt.readback_bytes));
+        if total.is_none_or(|n| n == 0 || n != receipt.inspected_bytes)
+            || receipt.inspected_buffers == 0
+        {
+            return Err(Error::InvalidFormat(
+                "resident runtime I/O audit incomplete",
+            ));
+        }
+        Ok(())
+    })
+}
+
+/// Same policy for the real admission and fault-injected host fixtures. The
+/// completed raw lease is already gone. Audit success alone cannot release an
+/// ordered source: cancellation/sequence health must still accept this boundary.
+fn audited_source_cleanup<H: Clone>(
+    sources: Option<&mut crate::ordered_public::PendingSources<H>>,
+    retired: &AtomicBool,
+    sequence_poison: &AtomicBool,
+    cancel: &AtomicBool,
+    audit: impl FnOnce() -> Result<TransientIoReceipt>,
+) -> Result<()> {
+    let complete = || {
+        checked_resident_io_audit(retired, audit)?;
+        // Healthy cancellation poisons the logical owner, not the GPU context.
+        if cancel.load(Ordering::Acquire) {
+            return Err(Error::InvalidFormat("GPU execution cancelled"));
+        }
+        if retired.load(Ordering::Acquire) || sequence_poison.load(Ordering::Acquire) {
+            return Err(Error::InvalidFormat("resident sequence poisoned"));
+        }
+        Ok(())
+    };
+    match sources {
+        Some(sources) => sources.after_completed_read(complete),
+        None => complete(),
+    }
+}
+
+/// A bookkeeping/unmap callback panic retains the previous retirement policy.
+/// Ordinary cancellation/sequence errors still leave a healthy context usable
+/// by a fresh logical owner after its separate erasure/cleanup has completed.
+fn checked_audited_boundary(
+    retired: &AtomicBool,
+    operation: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(operation)) {
+        Ok(Err(error)) => Err(error),
+        Ok(Ok(())) if !retired.load(Ordering::Acquire) => Ok(()),
+        _ => {
+            retired.store(true, Ordering::Release);
+            Err(Error::InvalidFormat("resident runtime I/O cleanup failed"))
+        }
+    }
 }
 
 fn checkpoint_needed(intermediate: bool, token_checkpoint: bool, ordered_router: bool) -> bool {
@@ -304,6 +370,71 @@ impl ResidentAdmission {
     }
     pub(crate) fn readback<T>(&self, f: impl FnOnce() -> Result<T>) -> Result<T> {
         self.readback_with_cadence(false, false, f)
+    }
+    /// Mandatory full audited cleanup is the ONE admission cleanup callback.
+    /// No caller receipt/hook or token cadence can bypass that audit. Ordered
+    /// sources release only after the same completed map, audit and health
+    /// checks; telemetry/MAIN fence credit remains last and unchanged.
+    pub(crate) fn readback_audited<T>(
+        &self,
+        cancel: &AtomicBool,
+        f: impl FnOnce() -> Result<T>,
+    ) -> Result<T> {
+        if !self.transient_io
+            || self.retired.load(Ordering::Acquire)
+            || cancel.load(Ordering::Acquire)
+        {
+            self.poison();
+            return Err(Error::InvalidFormat("resident audited readback inactive"));
+        }
+        self.with_ledger(|ledger| {
+            checked_sequence_guard(ledger, &self.sequence_poison, |ledger| {
+                guarded_readback(
+                    ledger,
+                    f,
+                    || {
+                        checked_audited_boundary(&self.retired, || {
+                            let audit = || {
+                                cubecl::future::block_on(
+                                    self.client.sanitize_transient_io_audited(),
+                                )
+                                .map_err(|error| match error {
+                                    cubecl_runtime::server::ServerError::Generic {
+                                        reason, ..
+                                    } => Error::InvalidFormat(
+                                        reason
+                                            .strip_prefix("kuno_private_io_failure:")
+                                            .and_then(cleanup_failure_category)
+                                            .unwrap_or("resident runtime I/O audit failed"),
+                                    ),
+                                    _ => Error::InvalidFormat("resident runtime I/O audit failed"),
+                                })
+                            };
+                            if let Some(sources) = &self.ordered_sources {
+                                audited_source_cleanup(
+                                    Some(&mut *sources.borrow_mut()),
+                                    &self.retired,
+                                    &self.sequence_poison,
+                                    cancel,
+                                    audit,
+                                )?;
+                                self.client.memory_cleanup();
+                                Ok(())
+                            } else {
+                                audited_source_cleanup::<Handle>(
+                                    None,
+                                    &self.retired,
+                                    &self.sequence_poison,
+                                    cancel,
+                                    audit,
+                                )
+                            }
+                        })
+                    },
+                    || self.telemetry(),
+                )
+            })
+        })
     }
     /// Completed intermediate maps still drop their guarded Bytes immediately.
     /// Deferred I/O remains tracked and charged in the separate hard runtime
@@ -1844,6 +1975,200 @@ mod admission_tests {
         assert_eq!(*owned, vec![1.0_f32]);
         assert_eq!(*events.borrow(), ["read lease", "sanitize", "telemetry"]);
         assert_eq!(ledger.upper_bytes(), PAGE);
+    }
+
+    fn completed_audit_receipt() -> TransientIoReceipt {
+        TransientIoReceipt {
+            epoch: 7,
+            upload_bytes: 32768,
+            uniform_bytes: 512,
+            readback_bytes: 32768,
+            inspected_bytes: 66048,
+            inspected_buffers: 4,
+        }
+    }
+    #[test]
+    fn audited_readback_runs_one_full_cleanup_before_source_release_and_fence_credit() {
+        struct Lease<'a>(&'a Cell<bool>, &'a RefCell<Vec<&'static str>>);
+        impl Drop for Lease<'_> {
+            fn drop(&mut self) {
+                self.0.set(false);
+                self.1.borrow_mut().push("lease drop");
+            }
+        }
+        for ordered in [false, true] {
+            let leased = Cell::new(false);
+            let audits = Cell::new(0);
+            let events = RefCell::new(Vec::new());
+            let retired = AtomicBool::new(false);
+            let poison = AtomicBool::new(false);
+            let cancel = AtomicBool::new(false);
+            let sources = RefCell::new(crate::ordered_public::PendingSources::new());
+            sources
+                .borrow_mut()
+                .enqueue(vec![0; PAGE as usize], Ok, |_, _| Ok(()))
+                .unwrap();
+            let mut ledger = MainAdmission::new(4 * PAGE, PAGE).unwrap();
+            ledger.precharge(&[PAGE]).unwrap();
+            let value = guarded_readback(
+                &mut ledger,
+                || {
+                    leased.set(true);
+                    let _lease = Lease(&leased, &events);
+                    events.borrow_mut().push("read/decode");
+                    Ok(zeroize::Zeroizing::new(vec![17_u32]))
+                },
+                || {
+                    checked_audited_boundary(&retired, || {
+                        let audit = || {
+                            assert!(!leased.get());
+                            events.borrow_mut().push("full audit");
+                            audits.set(audits.get() + 1);
+                            Ok(completed_audit_receipt())
+                        };
+                        if ordered {
+                            audited_source_cleanup(
+                                Some(&mut *sources.borrow_mut()),
+                                &retired,
+                                &poison,
+                                &cancel,
+                                audit,
+                            )?;
+                            events.borrow_mut().push("sources released");
+                        } else {
+                            audited_source_cleanup::<usize>(
+                                None, &retired, &poison, &cancel, audit,
+                            )?;
+                        }
+                        Ok(())
+                    })
+                },
+                || {
+                    assert_eq!(sources.borrow().bytes(), if ordered { 0 } else { PAGE });
+                    events.borrow_mut().push("telemetry");
+                    Ok(PAGE)
+                },
+            )
+            .unwrap();
+            assert_eq!(*value, vec![17]);
+            assert_eq!(audits.get(), 1); // no second non-audited/empty checkpoint
+            let mut expected = vec!["read/decode", "lease drop", "full audit"];
+            if ordered {
+                expected.push("sources released");
+            }
+            expected.push("telemetry");
+            assert_eq!(*events.borrow(), expected);
+            assert_eq!(ledger.upper_bytes(), PAGE);
+            assert!(!retired.load(Ordering::Acquire));
+            // This unconsumed fake source belongs to the separately modeled
+            // ordinary path; explicit teardown avoids abandoned-owner leakage.
+            sources
+                .borrow_mut()
+                .after_completed_read(|| Ok(()))
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn audited_readback_failures_never_credit_and_health_failure_retains_ordered_sources() {
+        for failure in 0..8 {
+            let retired = AtomicBool::new(false);
+            let poison = AtomicBool::new(false);
+            let cancel = AtomicBool::new(false);
+            let audits = Cell::new(0);
+            let sampled = Cell::new(false);
+            let sources = RefCell::new(crate::ordered_public::PendingSources::new());
+            sources
+                .borrow_mut()
+                .enqueue(vec![0; PAGE as usize], Ok, |_, _| Ok(()))
+                .unwrap();
+            let mut ledger = MainAdmission::new(4 * PAGE, PAGE).unwrap();
+            ledger.precharge(&[PAGE]).unwrap();
+            let result = guarded_readback(
+                &mut ledger,
+                || {
+                    if failure == 0 {
+                        Err(Error::InvalidBufferLength)
+                    } else {
+                        Ok(17)
+                    }
+                },
+                || {
+                    checked_audited_boundary(&retired, || {
+                        audited_source_cleanup(
+                            Some(&mut *sources.borrow_mut()),
+                            &retired,
+                            &poison,
+                            &cancel,
+                            || {
+                                audits.set(audits.get() + 1);
+                                let mut receipt = completed_audit_receipt();
+                                match failure {
+                                    1 => return Err(Error::InvalidBufferLength),
+                                    2 => panic!("public injected audited cleanup panic"),
+                                    3 => receipt.inspected_bytes -= 1,
+                                    4 => cancel.store(true, Ordering::Release),
+                                    5 => poison.store(true, Ordering::Release),
+                                    6 => retired.store(true, Ordering::Release),
+                                    _ => {}
+                                }
+                                Ok(receipt)
+                            },
+                        )
+                    })
+                },
+                || {
+                    sampled.set(true);
+                    Err(Error::InvalidBufferLength) // failure7: no fence credit
+                },
+            );
+            assert!(result.is_err());
+            assert_eq!(audits.get(), usize::from(failure != 0));
+            assert_eq!(sampled.get(), failure == 7);
+            assert_eq!(
+                sources.borrow().bytes(),
+                if failure == 7 { 0 } else { PAGE }
+            );
+            assert_eq!(
+                retired.load(Ordering::Acquire),
+                matches!(failure, 1 | 2 | 3 | 6)
+            );
+            assert!(ledger.is_poisoned());
+            assert_eq!(ledger.upper_bytes(), 2 * PAGE);
+            // Failed logical owners never retry; only explicit source teardown
+            // is modeled here. Cancellation/poison alone keeps the GPU healthy.
+            sources
+                .borrow_mut()
+                .after_completed_read(|| Ok(()))
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn audited_boundary_preserves_typed_failure_and_retires_bookkeeping_panic() {
+        let retired = AtomicBool::new(false);
+        let result = checked_audited_boundary(&retired, || {
+            checked_resident_io_audit(&retired, || Err(Error::InvalidFormat("audit_nonzero")))
+        });
+        assert!(matches!(result, Err(Error::InvalidFormat("audit_nonzero"))));
+        assert!(retired.load(Ordering::Acquire));
+
+        let retired = AtomicBool::new(false);
+        assert!(matches!(
+            checked_audited_boundary(&retired, || Err(Error::InvalidFormat(
+                "GPU execution cancelled"
+            ))),
+            Err(Error::InvalidFormat("GPU execution cancelled"))
+        ));
+        assert!(!retired.load(Ordering::Acquire));
+
+        let retired = AtomicBool::new(false);
+        assert!(checked_audited_boundary(&retired, || panic!("public bookkeeping panic")).is_err());
+        assert!(retired.load(Ordering::Acquire));
+
+        let retired = AtomicBool::new(true);
+        assert!(checked_audited_boundary(&retired, || Ok(())).is_err());
+        assert!(retired.load(Ordering::Acquire));
     }
 
     #[test]

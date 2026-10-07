@@ -1,14 +1,17 @@
 //! Owning I/O for the future actual MAX8 model coordinator. No state commit,
 //! scalar helper change, default selection, source cache or additional MAIN.
-//! Every completed map drops its raw lease and audits runtime I/O INSIDE the
-//! actual admission callback, before its forced normal checkpoint/MAIN credit.
+//! Every completed map drops its raw lease before the actual admission's ONE
+//! mandatory audited cleanup, ordered source release and MAIN fence credit.
 #![allow(dead_code)] // Native whole-model coordinator/device acceptance pending.
 use super::*;
+#[cfg(test)]
+use crate::executor::checked_resident_io_audit;
 use crate::{
     quant_matvec::matmul::MAX_BATCH, resident_batch_projection::validate_view,
     resident_gr::batch::full_private,
 };
 use cubecl::server::Handle;
+#[cfg(test)]
 use cubecl_runtime::transient::TransientIoReceipt;
 #[cfg(test)]
 use kuno_text::TensorType;
@@ -304,13 +307,11 @@ impl Drop for Bytes {
 fn completed_map<L: AsRef<[u8]>, T>(
     read: impl FnOnce() -> Result<L>,
     decode: impl FnOnce(&[u8]) -> Result<T>,
-    audit: impl FnOnce() -> Result<()>,
 ) -> Result<T> {
     let result = {
         let lease = read()?;
         decode(lease.as_ref())?
     };
-    audit()?;
     Ok(result)
 }
 fn read(arena: &PrivateArena, handle: Handle, retired: &AtomicBool) -> Result<Bytes> {
@@ -323,40 +324,6 @@ fn read(arena: &PrivateArena, handle: Handle, retired: &AtomicBool) -> Result<By
             retired.store(true, Ordering::Release);
             error()
         })
-}
-fn audit_receipt(r: &TransientIoReceipt) -> Result<()> {
-    let total = r
-        .upload_bytes
-        .checked_add(r.uniform_bytes)
-        .and_then(|n| n.checked_add(r.readback_bytes));
-    if total.is_none_or(|n| n == 0 || n != r.inspected_bytes) || r.inspected_buffers == 0 {
-        return Err(error());
-    }
-    Ok(())
-}
-fn audit(arena: &PrivateArena, retired: &AtomicBool) -> Result<()> {
-    checked_audit(retired, || {
-        cubecl::future::block_on(
-            arena
-                .client()
-                .map_err(u::fault)?
-                .sanitize_transient_io_audited(),
-        )
-        .map_err(u::fault)
-    })
-}
-fn checked_audit(
-    retired: &AtomicBool,
-    f: impl FnOnce() -> Result<TransientIoReceipt>,
-) -> Result<()> {
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| audit_receipt(&f()?)));
-    match result {
-        Ok(Ok(())) => Ok(()),
-        _ => {
-            retired.store(true, Ordering::Release);
-            Err(error())
-        }
-    }
 }
 fn word(bytes: &[u8], i: usize) -> Result<u32> {
     let start = i.checked_mul(4).ok_or(Error::ArithmeticOverflow)?;
@@ -452,18 +419,14 @@ pub(crate) fn read_router(
             view.stride,
         );
         let retired = admission.retired_context();
-        // .readback is mandatory cleanup even when token cadence is enabled.
-        admission.readback(|| {
+        // The admission owns mandatory audit even under token-only cadence.
+        admission.readback_audited(cancel, || {
             let mut out = RouterLogits::zero(count)?;
             completed_map(
                 || read(arena, packet_handle, &retired),
                 |bytes| {
                     out.accept(bytes)?;
                     Ok(out)
-                },
-                || {
-                    audit(arena, &retired)?;
-                    active(arena, admission, cancel)
                 },
             )
         })
@@ -518,14 +481,10 @@ pub(crate) fn read_last_logits(
             VOCABULARY,
         );
         let retired = admission.retired_context();
-        admission.readback(|| {
+        admission.readback_audited(cancel, || {
             completed_map(
                 || read(arena, packet_handle, &retired),
                 |bytes| accept_output(bytes, VOCABULARY),
-                || {
-                    audit(arena, &retired)?;
-                    active(arena, admission, cancel)
-                },
             )
         })
     })
@@ -547,15 +506,8 @@ pub(crate) fn read_fault(
         active(arena, admission, cancel)?;
         let [handle] = physical(arena, [fault], [1], [ROUTER_BYTES])?;
         let retired = admission.retired_context();
-        admission.readback(|| {
-            completed_map(
-                || read(arena, handle, &retired),
-                accept_fault,
-                || {
-                    audit(arena, &retired)?;
-                    active(arena, admission, cancel)
-                },
-            )
+        admission.readback_audited(cancel, || {
+            completed_map(|| read(arena, handle, &retired), accept_fault)
         })
     })
 }
@@ -765,8 +717,8 @@ mod tests {
         }
     }
     #[test]
-    fn actual_completed_map_producer_drops_lease_before_audit_and_no_error_can_credit() {
-        for failure in 0..4 {
+    fn actual_completed_map_producer_drops_lease_before_admission_and_no_error_can_return() {
+        for failure in 0..3 {
             let events = Rc::new(RefCell::new(Vec::new()));
             let result = completed_map(
                 || {
@@ -786,32 +738,14 @@ mod tests {
                     }
                     Ok(Box::new(Zeroizing::new([17f32; 16])))
                 },
-                || {
-                    events.borrow_mut().push("audit");
-                    assert_eq!(events.borrow().iter().filter(|&&e| e == "drop").count(), 1);
-                    if failure == 3 {
-                        return Err(error());
-                    }
-                    Ok(())
-                },
             );
-            if result.is_ok() {
-                events.borrow_mut().push("forced checkpoint");
-                events.borrow_mut().push("credit");
-                assert_eq!(
-                    &*events.borrow(),
-                    &[
-                        "read",
-                        "decode",
-                        "drop",
-                        "audit",
-                        "forced checkpoint",
-                        "credit"
-                    ]
-                );
+            assert_eq!(result.is_ok(), failure == 0);
+            let expected: &[&str] = if failure == 1 {
+                &["read"]
             } else {
-                assert!(!events.borrow().contains(&"credit"));
-            }
+                &["read", "decode", "drop"]
+            };
+            assert_eq!(&*events.borrow(), expected);
         }
     }
     #[test]
@@ -865,7 +799,7 @@ mod tests {
             inspected_buffers: 4,
         };
         let retired = AtomicBool::new(false);
-        checked_audit(&retired, || Ok(good)).unwrap();
+        checked_resident_io_audit(&retired, || Ok(good)).unwrap();
         assert!(!retired.load(Ordering::Acquire));
         for bad in [
             TransientIoReceipt {
@@ -889,14 +823,16 @@ mod tests {
             },
         ] {
             let retired = AtomicBool::new(false);
-            assert!(checked_audit(&retired, || Ok(bad)).is_err());
+            assert!(checked_resident_io_audit(&retired, || Ok(bad)).is_err());
             assert!(retired.load(Ordering::Acquire));
         }
         let retired = AtomicBool::new(false);
-        assert!(checked_audit(&retired, || Err(error())).is_err());
+        assert!(checked_resident_io_audit(&retired, || Err(error())).is_err());
         assert!(retired.load(Ordering::Acquire));
         let retired = AtomicBool::new(false);
-        assert!(checked_audit(&retired, || panic!("fixed public audit panic")).is_err());
+        assert!(
+            checked_resident_io_audit(&retired, || panic!("fixed public audit panic")).is_err()
+        );
         assert!(retired.load(Ordering::Acquire));
     }
     #[test]
