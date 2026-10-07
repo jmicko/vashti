@@ -9,7 +9,7 @@
 use super::*;
 use crate::{
     gdn_batch_pointwise as point,
-    gdn_chunk::{self, ChunkBuffers, ChunkSpans, StateSpan, TokenSpan},
+    gdn_chunk::{self, ChunkBuffers, ChunkSpans, RecurrencePolicy, StateSpan, TokenSpan},
     quant_matvec::matmul::{BatchSpans, MAX_BATCH},
     resident_batch_projection::{BatchedResidentProjector, validate_view},
     resident_util as u,
@@ -365,6 +365,18 @@ impl Policy {
         self.phase = ChunkPhase::Idle;
         Ok(())
     }
+    fn completed_boundary(&self) -> Result<()> {
+        if self.phase != ChunkPhase::Idle
+            || *self.chunk == 0
+            || *self.issued != 0
+            || *self.committed != 0
+        {
+            return Err(fault(
+                "native GDN recurrence policy requires completed chunk",
+            ));
+        }
+        Ok(())
+    }
 }
 // Real arena retains each full GPU owner before this receives its opaque ID.
 // Fixed guarded ID metadata never grows or releases those owners on failure.
@@ -411,6 +423,7 @@ pub(crate) struct GdnBatchWorkspace {
     fault: Option<BufferId>,
     poison: Arc<AtomicBool>,
     policy: Policy,
+    recurrence_policy: RecurrencePolicy,
 }
 impl GdnBatchWorkspace {
     pub(crate) fn allocation_requests(graph: BoundGraph<'_, '_>) -> Result<[u64; N]> {
@@ -460,11 +473,35 @@ impl GdnBatchWorkspace {
                 fault: None,
                 poison: poison.clone(),
                 policy: Policy::new(expected),
+                recurrence_policy: RecurrencePolicy::Chunk,
             };
             workspace.validate_ids(arena)?;
             cancelled(cancel)?;
             Ok(workspace)
         })
+    }
+    pub(crate) fn recurrence_policy(&self) -> RecurrencePolicy {
+        self.recurrence_policy
+    }
+    /// Public lab policy only, after the enclosing model proved its completed
+    /// boundary. This performs no enqueue, map, fence or allocation and keeps
+    /// every MAX8 scratch/state owner and metadata reservation unchanged.
+    pub(crate) fn set_lab_recurrence_policy(
+        &mut self,
+        executor: &crate::executor::GpuExecutor<'_>,
+        arena: &PrivateArena,
+        policy: RecurrencePolicy,
+        _boundary: &crate::resident_model::batch::CompletedNativeProjectionBoundary,
+        cancel: &AtomicBool,
+    ) -> Result<RecurrencePolicy> {
+        self.healthy(arena, cancel)?;
+        self.policy.completed_boundary()?;
+        if !arena.public_owned_zero_audit_enabled() {
+            return Err(fault("native GDN recurrence policy requires full audit"));
+        }
+        executor.check_client(arena.client().map_err(arena_fault)?)?;
+        self.recurrence_policy = policy;
+        Ok(self.recurrence_policy)
     }
     fn healthy(&self, arena: &PrivateArena, cancel: &AtomicBool) -> Result<()> {
         cancelled(cancel)?;
@@ -731,6 +768,7 @@ impl ResidentGdn<'_> {
         cancel: &AtomicBool,
     ) -> Result<PendingGdnBatch> {
         workspace.healthy(arena, cancel)?;
+        workspace.recurrence_policy.validate_count(spans.count())?;
         graph.verify_unchanged()?;
         let count = spans.count();
         let layout = workspace.layout;
@@ -920,7 +958,7 @@ impl ResidentGdn<'_> {
                     p.shape.value_heads,
                     p.shape.value_heads,
                 ),
-                Operation::Recurrence => gdn_chunk::enqueue(
+                Operation::Recurrence => gdn_chunk::enqueue_with_policy(
                     arena,
                     p.shape,
                     layout.chunk(count)?,
@@ -935,6 +973,7 @@ impl ResidentGdn<'_> {
                         ids[STATUS + 3],
                     ]),
                     cancel,
+                    workspace.recurrence_policy,
                 )?,
                 Operation::Closing => point::output_gate::launch::<WgpuRuntime>(
                     client,
@@ -1323,6 +1362,20 @@ mod tests {
         }
     }
     #[test]
+    fn public_recurrence_policy_requires_a_completed_idle_chunk() {
+        let mut p = Policy::new(1);
+        assert!(p.completed_boundary().is_err());
+        let (chunk, generation) = p.issue(0, 100, 0, 1, 4096).unwrap();
+        let s = stamp(0, 100, chunk, generation, 1);
+        assert!(p.completed_boundary().is_err());
+        p.accept(1).unwrap();
+        assert!(p.completed_boundary().is_err());
+        p.commit(s).unwrap();
+        assert!(p.completed_boundary().is_err());
+        p.finish().unwrap();
+        p.completed_boundary().unwrap();
+    }
+    #[test]
     fn duplicate_mixed_missing_and_overflowed_chunk_policy_reject() {
         let mut p = Policy::new(0b101);
         assert!(p.issue(2, 9, 0, 3, 4096).is_err());
@@ -1663,6 +1716,7 @@ mod tests {
             ),
             (include_str!("gdn_batch_pointwise.rs"), "output_gate", 5, 10),
             (include_str!("gdn_chunk.rs"), "gdn_chunk", 8, 21),
+            (include_str!("gdn_chunk.rs"), "gdn_single_streaming", 8, 21),
             (include_str!("quant_matmul.rs"), "packed_matmul", 3, 6),
             (
                 include_str!("resident_util.rs"),

@@ -2,7 +2,9 @@
 //! Same physical client throughout; counts/errors only. Every input/source,
 //! candidate and GPU comparison image belongs to an audited transient arena.
 use crate::{
-    gdn_chunk::{self as chunk, ChunkBuffers, ChunkSpans, MAX_BATCH, StateSpan, TokenSpan},
+    gdn_chunk::{
+        self as chunk, ChunkBuffers, ChunkSpans, MAX_BATCH, RecurrencePolicy, StateSpan, TokenSpan,
+    },
     gdn_gpu::{self, GdnLayout},
     private_arena::{BufferId, BufferLayout, PrivateArena},
 };
@@ -336,7 +338,9 @@ fn case(
     shape: GdnShape,
     count: usize,
     retired: &AtomicBool,
+    policy: RecurrencePolicy,
 ) -> Result<serde_json::Value> {
+    policy.validate_count(count)?;
     let f = fixture(shape, count)?;
     let spans = f.spans;
     let l = GdnLayout::new(shape)?;
@@ -354,13 +358,20 @@ fn case(
         arena.upload_u32(&status_init)?,
     ]);
     let cancel = AtomicBool::new(true);
-    if chunk::enqueue(arena, shape, spans, &b, &cancel).is_ok() {
+    if chunk::enqueue_with_policy(arena, shape, spans, &b, &cancel, policy).is_ok() {
         return Err("GDN chunk accepted pre-enqueue cancellation".into());
     }
     cancel.store(false, Ordering::Release);
+    if policy == RecurrencePolicy::SingleStreaming {
+        let mut forbidden = spans;
+        forbidden.count = 3;
+        if chunk::enqueue_with_policy(arena, shape, forbidden, &b, &cancel, policy).is_ok() {
+            return Err("GDN streaming accepted a nonsingle runtime count".into());
+        }
+    }
     let mut alias = ChunkBuffers(b.0);
     alias.0[5] = b.0[4];
-    if chunk::enqueue(arena, shape, spans, &alias, &cancel).is_ok() {
+    if chunk::enqueue_with_policy(arena, shape, spans, &alias, &cancel, policy).is_ok() {
         return Err("GDN chunk accepted old/next alias".into());
     }
     // Retain a complete owned upload of every source through the chunk read:
@@ -371,7 +382,7 @@ fn case(
     {
         write(client, arena, b.0[i], data)?;
     }
-    chunk::enqueue(arena, shape, spans, &b, &cancel)?;
+    chunk::enqueue_with_policy(arena, shape, spans, &b, &cancel, policy)?;
     let next = floats(client, arena, b.0[5])?;
     let output = floats(client, arena, b.0[6])?;
     let status = statuses(client, arena, b.0[7])?;
@@ -403,6 +414,40 @@ fn case(
     let old = floats(client, arena, b.0[4])?;
     untouched_floats(&f.old, &old, |_| false)?;
     audited(client, retired)?;
+    if policy == RecurrencePolicy::SingleStreaming {
+        // Exercise direct-old finite rejection on the actual device too. The
+        // failed column must be zero and the deliberately invalid old image
+        // must remain bitwise immutable through maps and checked cleanup.
+        let mut invalid_old = Zeroizing::new(f.old.to_vec());
+        invalid_old[spans.old.at(0, 0, 0)] = f32::NAN;
+        write(client, arena, b.0[3], &f.controls)?;
+        write(client, arena, b.0[4], &invalid_old)?;
+        chunk::enqueue_with_policy(arena, shape, spans, &b, &cancel, policy)?;
+        let failed_next = floats(client, arena, b.0[5])?;
+        let failed_out = floats(client, arena, b.0[6])?;
+        let failed_status = statuses(client, arena, b.0[7])?;
+        if chunk::validate_download(
+            shape,
+            spans,
+            &failed_next,
+            &failed_out,
+            &failed_status,
+            &cancel,
+        )
+        .is_ok()
+            || failed_status[spans.status.base] != 0
+            || failed_out[spans.output.base].to_bits() != 0
+            || (0..shape.head_dim).any(|i| failed_next[spans.next.at(0, i, 0)].to_bits() != 0)
+        {
+            return Err(
+                "GDN streaming accepted nonfinite old state or retained a candidate".into(),
+            );
+        }
+        let old = floats(client, arena, b.0[4])?;
+        untouched_floats(&invalid_old, &old, |_| false)?;
+        audited(client, retired)?;
+        write(client, arena, b.0[4], &f.old)?;
+    }
     let mut oracle = GdnState::new(shape)?;
     oracle.set_values(&f.initial)?;
     let mut single = ChunkBuffers([
@@ -457,12 +502,35 @@ fn case(
     max_core = max_core.max(compare(&final_chunk, oracle.values())?);
     max_single = max_single.max(compare(&final_chunk, &ref_final)?);
     oracle.reset();
+    let mut max_chunk = 0_f32;
+    if policy == RecurrencePolicy::SingleStreaming {
+        // Independently execute the unchanged count1 chunk on the same immutable
+        // old state, without changing any layout or allocating another owner.
+        chunk::enqueue(arena, shape, spans, &b, &cancel)?;
+        let ordinary_next = floats(client, arena, b.0[5])?;
+        let ordinary_out = floats(client, arena, b.0[6])?;
+        let ordinary_status = statuses(client, arena, b.0[7])?;
+        chunk::validate_download(
+            shape,
+            spans,
+            &ordinary_next,
+            &ordinary_out,
+            &ordinary_status,
+            &cancel,
+        )?;
+        max_chunk = compare(
+            &packed_state(shape, spans.next, &ordinary_next),
+            &final_chunk,
+        )?
+        .max(compare(&ordinary_out, &output)?);
+        audited(client, retired)?;
+    }
     // A finite invalid control must reject the WHOLE chunk, including earlier
     // per-token statuses. Old state still remains bitwise immutable.
     let mut invalid = Zeroizing::new(f.controls.to_vec());
     invalid[spans.controls.at(count - 1)] = 0.1;
     write(client, arena, b.0[3], &invalid)?;
-    chunk::enqueue(arena, shape, spans, &b, &cancel)?;
+    chunk::enqueue_with_policy(arena, shape, spans, &b, &cancel, policy)?;
     let failed_next = floats(client, arena, b.0[5])?;
     let failed_out = floats(client, arena, b.0[6])?;
     let failed_status = statuses(client, arena, b.0[7])?;
@@ -478,6 +546,20 @@ fn case(
     {
         return Err("GDN chunk accepted invalid controls".into());
     }
+    for j in 0..shape.head_dim {
+        for t in 0..count {
+            if failed_status[spans.status.at(t) + j] != 0
+                || failed_out[spans.output.at(t) + j].to_bits() != 0
+            {
+                return Err("GDN invalid control retained a candidate output".into());
+            }
+        }
+        for i in 0..shape.head_dim {
+            if failed_next[spans.next.at(0, i, j)].to_bits() != 0 {
+                return Err("GDN invalid control retained a candidate state".into());
+            }
+        }
+    }
     let old = floats(client, arena, b.0[4])?;
     untouched_floats(&f.old, &old, |_| false)?;
     audited(client, retired)?;
@@ -491,6 +573,9 @@ fn case(
     }
     Ok(
         serde_json::json!({"head_dim":shape.head_dim,"key_heads":shape.key_heads,"value_heads":shape.value_heads,"count":count,
+        "recurrence_policy":policy.label(),"max_abs_chunk_error":max_chunk,
+        "non_single_policy_count_rejected":policy==RecurrencePolicy::SingleStreaming,
+        "nonfinite_old_state_rejected":policy==RecurrencePolicy::SingleStreaming,
         "max_batch":MAX_BATCH,"max_abs_single_error":max_single,"max_abs_core_error":max_core,"main_full_span_bytes":full,
         "runtime_spans":io,"immutable_old":true,"inactive_gaps_padding_preserved":true,"finite_control_failure_rejected":true,
         "cancel_before_enqueue_and_after_fence_rejected":true,"old_next_alias_rejected":true,"full_main_zero_audit":true}),
@@ -503,11 +588,26 @@ pub fn run(client: &ComputeClient<WgpuRuntime>) -> Result<()> {
         PrivateArena::new_transient(client.clone(), MAIN_BUDGET, IO_BUDGET, retired.clone())?;
     arena.enable_public_owned_zero_audit()?;
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<_> {
-        let mut reports = Vec::with_capacity(8);
+        let mut reports = Vec::with_capacity(10);
         for shape in [GdnShape::new(7, 2, 6)?, GdnShape::qwen38()] {
             for count in [1, 3, 5, 8] {
-                reports.push(case(client, &mut arena, shape, count, &retired)?);
+                reports.push(case(
+                    client,
+                    &mut arena,
+                    shape,
+                    count,
+                    &retired,
+                    RecurrencePolicy::Chunk,
+                )?);
             }
+            reports.push(case(
+                client,
+                &mut arena,
+                shape,
+                1,
+                &retired,
+                RecurrencePolicy::SingleStreaming,
+            )?);
         }
         Ok(reports)
     }));
@@ -528,7 +628,7 @@ pub fn run(client: &ComputeClient<WgpuRuntime>) -> Result<()> {
         "production_private_worker_accepted":false,"whole_graph_batched_prefill":false,
         "proof_scope":"owned API-visible full pages and I/O; not opaque driver allocations or private register/spill storage"});
     println!(
-        "public_gdn_chunk_acceptance cases=8 main_buffers={} main_bytes={} context_retired=false",
+        "public_gdn_chunk_acceptance cases=10 main_buffers={} main_bytes={} context_retired=false",
         full.buffers, full.bytes
     );
     if let Some(path) = std::env::var_os("KUNO_PUBLIC_RECEIPT") {
@@ -575,6 +675,15 @@ mod tests {
                     [&f.query, &f.key, &f.value, &f.controls, &f.old],
                 )
                 .unwrap();
+                if count == 1 {
+                    let streaming = chunk::streaming_lane_reference(
+                        shape,
+                        spans,
+                        [&f.query, &f.key, &f.value, &f.controls, &f.old],
+                    )
+                    .unwrap();
+                    assert_eq!(streaming, (next.clone(), out.clone(), status.clone()));
+                }
                 chunk::validate_download(
                     shape,
                     spans,
@@ -681,6 +790,85 @@ mod tests {
             value_heads: 1,
         };
         assert!(valid.old.validate(empty).is_err());
+    }
+    #[test]
+    fn public_streaming_policy_rejects_non_single_counts_and_retains_default_chunk() {
+        assert_eq!(RecurrencePolicy::default(), RecurrencePolicy::Chunk);
+        for count in [0, 1, 3, 5, 8, 9, usize::MAX] {
+            assert_eq!(
+                RecurrencePolicy::Chunk.validate_count(count).is_ok(),
+                (1..=8).contains(&count)
+            );
+            assert_eq!(
+                RecurrencePolicy::SingleStreaming
+                    .validate_count(count)
+                    .is_ok(),
+                count == 1
+            );
+            if count != 1 && (1..=8).contains(&count) {
+                let f = fixture(GdnShape::new(7, 2, 6).unwrap(), count).unwrap();
+                assert!(
+                    chunk::streaming_lane_reference(
+                        GdnShape::new(7, 2, 6).unwrap(),
+                        f.spans,
+                        [&f.query, &f.key, &f.value, &f.controls, &f.old]
+                    )
+                    .is_err()
+                );
+            }
+        }
+    }
+    #[test]
+    fn streaming_bad_controls_old_prediction_and_readout_zero_candidates_without_mutating_old() {
+        let shape = GdnShape::new(7, 2, 6).unwrap();
+        for which in 0..8 {
+            let mut f = fixture(shape, 1).unwrap();
+            let s = f.spans;
+            match which {
+                0 => f.controls[s.controls.base] = 0.1,
+                1 => f.controls[s.controls.base + shape.value_heads] = 1.1,
+                2 => f.controls[s.controls.base] = f32::NAN,
+                3 => f.old[s.old.at(0, 0, 0)] = f32::NAN,
+                4 => f.old[s.old.at(0, 0, 0)] = f32::INFINITY,
+                5 => f.value[s.value.base] = f32::INFINITY,
+                6 => {
+                    for i in 0..shape.head_dim {
+                        f.old[s.old.at(0, i, 0)] = f32::MAX;
+                        f.key[s.key.base + i] = 1.;
+                    }
+                }
+                _ => {
+                    f.query[s.query.base] = f32::MAX;
+                    f.query[s.query.base + 1] = f32::MAX;
+                    f.old[s.old.at(0, 0, 0)] = f32::MAX / 4.;
+                    f.old[s.old.at(0, 1, 0)] = f32::MAX / 4.;
+                    f.controls[s.controls.base] = 0.;
+                    f.controls[s.controls.base + shape.value_heads] = 0.;
+                    for i in 0..shape.head_dim {
+                        f.key[s.key.base + i] = 0.;
+                    }
+                }
+            }
+            let old_bits = f.old.iter().map(|v| v.to_bits()).collect::<Vec<_>>();
+            let inputs = [&*f.query, &*f.key, &*f.value, &*f.controls, &*f.old];
+            let streaming = chunk::streaming_lane_reference(shape, s, inputs).unwrap();
+            let ordinary = chunk::lane_reference(shape, s, inputs).unwrap();
+            assert_eq!(streaming, ordinary);
+            let (next, out, status) = streaming;
+            assert_eq!(status[s.status.base], 0);
+            assert_eq!(out[s.output.base].to_bits(), 0);
+            for i in 0..shape.head_dim {
+                assert_eq!(next[s.next.at(0, i, 0)].to_bits(), 0);
+            }
+            assert!(
+                chunk::validate_download(shape, s, &next, &out, &status, &AtomicBool::new(false))
+                    .is_err()
+            );
+            assert_eq!(
+                old_bits,
+                f.old.iter().map(|v| v.to_bits()).collect::<Vec<_>>()
+            );
+        }
     }
     #[test]
     fn invalid_last_controls_or_nonfinite_intermediate_reject_whole_chunk_and_preserve_old() {
@@ -808,7 +996,11 @@ mod tests {
         }
         assert!(info.finish(address).data.len() * 8 <= 512);
     }
-    fn shader(shape: GdnShape, mode: cubecl::server::ExecutionMode) -> String {
+    fn shader(
+        shape: GdnShape,
+        mode: cubecl::server::ExecutionMode,
+        policy: RecurrencePolicy,
+    ) -> String {
         use cubecl::compute::KernelBuilder;
         use cubecl::ir::{ElemType, FloatKind, StorageType, Type, UIntKind};
         use cubecl::wgpu::WgslCompiler;
@@ -832,47 +1024,58 @@ mod tests {
         let scalars = (0..21)
             .map(|_| b.scalar(uint).into())
             .collect::<Vec<cubecl::frontend::NativeExpand<usize>>>();
-        chunk::gdn_chunk::expand(
-            &mut b.scope,
-            q,
-            k,
-            v,
-            c,
-            old,
-            next,
-            out,
-            status,
-            scalars[0].clone(),
-            scalars[1].clone(),
-            scalars[2].clone(),
-            scalars[3].clone(),
-            scalars[4].clone(),
-            scalars[5].clone(),
-            scalars[6].clone(),
-            scalars[7].clone(),
-            scalars[8].clone(),
-            scalars[9].clone(),
-            scalars[10].clone(),
-            scalars[11].clone(),
-            scalars[12].clone(),
-            scalars[13].clone(),
-            scalars[14].clone(),
-            scalars[15].clone(),
-            scalars[16].clone(),
-            scalars[17].clone(),
-            scalars[18].clone(),
-            scalars[19].clone(),
-            scalars[20].clone(),
-            shape.head_dim,
-            shape.key_heads,
-            shape.value_heads,
-        );
+        macro_rules! expand {
+            ($kernel:ident) => {
+                chunk::$kernel::expand(
+                    &mut b.scope,
+                    q,
+                    k,
+                    v,
+                    c,
+                    old,
+                    next,
+                    out,
+                    status,
+                    scalars[0].clone(),
+                    scalars[1].clone(),
+                    scalars[2].clone(),
+                    scalars[3].clone(),
+                    scalars[4].clone(),
+                    scalars[5].clone(),
+                    scalars[6].clone(),
+                    scalars[7].clone(),
+                    scalars[8].clone(),
+                    scalars[9].clone(),
+                    scalars[10].clone(),
+                    scalars[11].clone(),
+                    scalars[12].clone(),
+                    scalars[13].clone(),
+                    scalars[14].clone(),
+                    scalars[15].clone(),
+                    scalars[16].clone(),
+                    scalars[17].clone(),
+                    scalars[18].clone(),
+                    scalars[19].clone(),
+                    scalars[20].clone(),
+                    shape.head_dim,
+                    shape.key_heads,
+                    shape.value_heads,
+                )
+            };
+        }
+        match policy {
+            RecurrencePolicy::Chunk => expand!(gdn_chunk),
+            RecurrencePolicy::SingleStreaming => expand!(gdn_single_streaming),
+        }
         WgslCompiler::default()
             .compile(
                 b.build(
                     KernelSettings::default()
                         .cube_dim(CubeDim::new_1d(64))
-                        .kernel_name("gdn_chunk"),
+                        .kernel_name(match policy {
+                            RecurrencePolicy::Chunk => "gdn_chunk",
+                            RecurrencePolicy::SingleStreaming => "gdn_single_streaming",
+                        }),
                 ),
                 &WgpuCompilationOptions::default(),
                 mode,
@@ -888,9 +1091,35 @@ mod tests {
                 cubecl::server::ExecutionMode::Checked,
                 cubecl::server::ExecutionMode::Unchecked,
             ] {
-                let wgsl = shader(shape, mode);
+                let wgsl = shader(shape, mode, RecurrencePolicy::Chunk);
                 assert!(wgsl.contains("exp("));
                 assert!(wgsl.contains("array<f32,"));
+                assert!(!wgsl.contains("workgroupBarrier"));
+                assert!(!wgsl.contains("fma("));
+                assert!(!wgsl.contains("array<f64"));
+                for scalar in 0..21 {
+                    assert!(wgsl.contains(&format!("scalars_u32[{scalar}]")));
+                }
+                let module = wgpu::naga::front::wgsl::parse_str(&wgsl).unwrap();
+                wgpu::naga::valid::Validator::new(
+                    wgpu::naga::valid::ValidationFlags::all(),
+                    wgpu::naga::valid::Capabilities::empty(),
+                )
+                .validate(&module)
+                .unwrap();
+            }
+        }
+    }
+    #[test]
+    fn offline_streaming_wgsl_uses_runtime_spans_without_private_column_array() {
+        for shape in [GdnShape::new(7, 2, 6).unwrap(), GdnShape::qwen38()] {
+            for mode in [
+                cubecl::server::ExecutionMode::Checked,
+                cubecl::server::ExecutionMode::Unchecked,
+            ] {
+                let wgsl = shader(shape, mode, RecurrencePolicy::SingleStreaming);
+                assert!(wgsl.contains("exp("));
+                assert!(!wgsl.contains("array<f32,"));
                 assert!(!wgsl.contains("workgroupBarrier"));
                 assert!(!wgsl.contains("fma("));
                 assert!(!wgsl.contains("array<f64"));

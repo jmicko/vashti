@@ -1,7 +1,7 @@
 //! Bounded consecutive-token GDN recurrence candidate, not a model graph.
 //! Q/K are already normalized and Q scaled. GGUF head pairing stays h%K.
 //! Only public GdnShape specializes; count and EVERY base/stride are runtime.
-//! One lane retains a private state column and repeats gdn_step's exact f32
+//! Default Chunk retains a private state column and repeats gdn_step's exact f32
 //! decay/prediction/delta/update/readout order. Old state is immutable. No state
 //! commit is provided here: every active output/status AND final state must
 //! pass acceptance after completion, cancellation and checked owner cleanup.
@@ -17,6 +17,28 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub const MAX_BATCH: usize = 8;
 pub const MAX_HEAD_DIM: usize = 128;
 const LANES: usize = 64;
+/// Explicit public laboratory policy. Never infer a specialization from a
+/// private token count; the streaming policy rejects every count except one.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum RecurrencePolicy {
+    #[default]
+    Chunk,
+    SingleStreaming,
+}
+impl RecurrencePolicy {
+    pub(crate) fn validate_count(self, count: usize) -> Result<()> {
+        if !(1..=MAX_BATCH).contains(&count) || self == Self::SingleStreaming && count != 1 {
+            return Err(fault());
+        }
+        Ok(())
+    }
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Chunk => "chunk",
+            Self::SingleStreaming => "single-streaming",
+        }
+    }
+}
 fn fault() -> Error {
     Error::InvalidFormat("GDN chunk invalid layout or result")
 }
@@ -293,8 +315,27 @@ pub fn enqueue(
     buffers: &ChunkBuffers,
     cancel: &AtomicBool,
 ) -> Result<()> {
+    enqueue_with_policy(
+        arena,
+        shape,
+        spans,
+        buffers,
+        cancel,
+        RecurrencePolicy::Chunk,
+    )
+}
+
+pub(crate) fn enqueue_with_policy(
+    arena: &PrivateArena,
+    shape: GdnShape,
+    spans: ChunkSpans,
+    buffers: &ChunkBuffers,
+    cancel: &AtomicBool,
+    policy: RecurrencePolicy,
+) -> Result<()> {
     let layout = GdnLayout::new(shape).map_err(|_| fault())?;
     spans.validate(layout)?;
+    policy.validate_count(spans.count)?;
     if cancel.load(Ordering::Acquire) {
         return Err(Error::InvalidFormat("GDN chunk cancelled"));
     }
@@ -313,43 +354,51 @@ pub fn enqueue(
     if cancel.load(Ordering::Acquire) {
         return Err(Error::InvalidFormat("GDN chunk cancelled"));
     }
-    gdn_chunk::launch::<WgpuRuntime>(
-        client,
-        CubeCount::Static(layout.workgroups_x, 1, 1),
-        CubeDim::new_1d(LANES as u32),
-        arg(0)?,
-        arg(1)?,
-        arg(2)?,
-        arg(3)?,
-        arg(4)?,
-        arg(5)?,
-        arg(6)?,
-        arg(7)?,
-        spans.count,
-        spans.query.base,
-        spans.query.stride,
-        spans.key.base,
-        spans.key.stride,
-        spans.value.base,
-        spans.value.stride,
-        spans.controls.base,
-        spans.controls.stride,
-        spans.old.base,
-        spans.old.head_stride,
-        spans.old.key_stride,
-        spans.old.column_stride,
-        spans.next.base,
-        spans.next.head_stride,
-        spans.next.key_stride,
-        spans.next.column_stride,
-        spans.output.base,
-        spans.output.stride,
-        spans.status.base,
-        spans.status.stride,
-        shape.head_dim,
-        shape.key_heads,
-        shape.value_heads,
-    );
+    macro_rules! launch {
+        ($kernel:ident) => {
+            $kernel::launch::<WgpuRuntime>(
+                client,
+                CubeCount::Static(layout.workgroups_x, 1, 1),
+                CubeDim::new_1d(LANES as u32),
+                arg(0)?,
+                arg(1)?,
+                arg(2)?,
+                arg(3)?,
+                arg(4)?,
+                arg(5)?,
+                arg(6)?,
+                arg(7)?,
+                spans.count,
+                spans.query.base,
+                spans.query.stride,
+                spans.key.base,
+                spans.key.stride,
+                spans.value.base,
+                spans.value.stride,
+                spans.controls.base,
+                spans.controls.stride,
+                spans.old.base,
+                spans.old.head_stride,
+                spans.old.key_stride,
+                spans.old.column_stride,
+                spans.next.base,
+                spans.next.head_stride,
+                spans.next.key_stride,
+                spans.next.column_stride,
+                spans.output.base,
+                spans.output.stride,
+                spans.status.base,
+                spans.status.stride,
+                shape.head_dim,
+                shape.key_heads,
+                shape.value_heads,
+            )
+        };
+    }
+    match policy {
+        RecurrencePolicy::Chunk => launch!(gdn_chunk),
+        RecurrencePolicy::SingleStreaming => launch!(gdn_single_streaming),
+    }
     Ok(())
 }
 
@@ -512,4 +561,178 @@ pub fn gdn_chunk(
             }
         }
     }
+}
+
+/// Public count1 candidate: two direct immutable-old passes retain the original
+/// per-column f32 arithmetic, without a head_dim-sized private lane array.
+/// The host rejects count!=1 before launch. Runtime bases/strides and complete
+/// MAX8 owning handles are identical to the ordinary chunk kernel.
+#[allow(clippy::manual_range_contains)]
+#[cube(launch)]
+pub fn gdn_single_streaming(
+    query: &Array<f32>,
+    key: &Array<f32>,
+    value: &Array<f32>,
+    controls: &Array<f32>,
+    old: &Array<f32>,
+    next: &mut Array<f32>,
+    output: &mut Array<f32>,
+    status: &mut Array<u32>,
+    count: usize,
+    q_base: usize,
+    q_stride: usize,
+    k_base: usize,
+    k_stride: usize,
+    v_base: usize,
+    v_stride: usize,
+    c_base: usize,
+    c_stride: usize,
+    old_base: usize,
+    old_head: usize,
+    old_key: usize,
+    old_column: usize,
+    next_base: usize,
+    next_head: usize,
+    next_key: usize,
+    next_column: usize,
+    out_base: usize,
+    out_stride: usize,
+    status_base: usize,
+    status_stride: usize,
+    #[comptime] head_dim: usize,
+    #[comptime] key_heads: usize,
+    #[comptime] value_heads: usize,
+) {
+    let lane = ABSOLUTE_POS;
+    if lane < value_heads * head_dim {
+        let h = lane / head_dim;
+        let j = lane % head_dim;
+        let kh = h % key_heads;
+        for token in 0..count {
+            let qi = q_base + token * q_stride + kh * head_dim;
+            let ki = k_base + token * k_stride + kh * head_dim;
+            let ci = c_base + token * c_stride;
+            let log_decay = controls[ci + h];
+            let beta = controls[ci + value_heads + h];
+            let decay = log_decay.exp();
+            let mut valid = count == 1
+                && finite(log_decay)
+                && log_decay <= 0.0_f32
+                && finite(beta)
+                && beta >= 0.0_f32
+                && beta <= 1.0_f32;
+            status[status_base + token * status_stride + lane] = 0;
+            output[out_base + token * out_stride + lane] = 0.0_f32;
+            let mut predicted = 0.0_f32;
+            for i in 0..head_dim {
+                let old_value = old[old_base + h * old_head + i * old_key + j * old_column];
+                valid = valid && finite(old_value);
+                next[next_base + h * next_head + i * next_key + j * next_column] = 0.0_f32;
+                let decayed = old_value * decay;
+                predicted += decayed * key[ki + i];
+            }
+            let delta = (value[v_base + token * v_stride + lane] - predicted) * beta;
+            valid = valid && finite(predicted) && finite(delta);
+            if valid {
+                let mut readout = 0.0_f32;
+                for i in 0..head_dim {
+                    let decayed =
+                        old[old_base + h * old_head + i * old_key + j * old_column] * decay;
+                    let updated = decayed + key[ki + i] * delta;
+                    valid = valid && finite(updated);
+                    next[next_base + h * next_head + i * next_key + j * next_column] = updated;
+                    readout += updated * query[qi + i];
+                }
+                valid = valid && finite(readout);
+                if valid {
+                    output[out_base + token * out_stride + lane] = readout;
+                    status[status_base + token * status_stride + lane] = 1;
+                } else {
+                    for i in 0..head_dim {
+                        next[next_base + h * next_head + i * next_key + j * next_column] = 0.0_f32;
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn streaming_lane_reference(
+    shape: GdnShape,
+    spans: ChunkSpans,
+    inputs: [&[f32]; 5],
+) -> Result<(Vec<f32>, Vec<f32>, Vec<u32>)> {
+    let l = GdnLayout::new(shape).map_err(|_| fault())?;
+    spans.validate(l)?;
+    RecurrencePolicy::SingleStreaming.validate_count(spans.count)?;
+    if inputs.iter().zip(spans.words()).any(|(s, n)| s.len() != n) {
+        return Err(fault());
+    }
+    let [q, k, v, c, old] = inputs;
+    let mut next = vec![
+        0.;
+        BufferLayout::new(spans.next.words)
+            .map_err(|_| fault())?
+            .owned_words
+    ];
+    next[..spans.next.words].fill(-173.25);
+    let mut out = vec![
+        0.;
+        BufferLayout::new(spans.output.words)
+            .map_err(|_| fault())?
+            .owned_words
+    ];
+    out[..spans.output.words].fill(-173.25);
+    let mut status = vec![
+        0;
+        BufferLayout::new(spans.status.words)
+            .map_err(|_| fault())?
+            .owned_words
+    ];
+    status[..spans.status.words].fill(0x53aa_9267);
+    for lane in 0..l.value_elements {
+        let h = lane / shape.head_dim;
+        let j = lane % shape.head_dim;
+        let kh = h % shape.key_heads;
+        let qi = spans.query.base + kh * shape.head_dim;
+        let ki = spans.key.base + kh * shape.head_dim;
+        let log = c[spans.controls.base + h];
+        let beta = c[spans.controls.base + shape.value_heads + h];
+        let decay = log.exp();
+        let mut valid =
+            log.is_finite() && log <= 0. && beta.is_finite() && (0.0..=1.0).contains(&beta);
+        status[spans.status.base + lane] = 0;
+        out[spans.output.base + lane] = 0.;
+        let mut predicted = 0_f32;
+        for i in 0..shape.head_dim {
+            let old_value = old[spans.old.at(h, i, j)];
+            valid = valid && old_value.is_finite();
+            next[spans.next.at(h, i, j)] = 0.;
+            let decayed = old_value * decay;
+            predicted += decayed * k[ki + i];
+        }
+        let delta = (v[spans.value.base + lane] - predicted) * beta;
+        valid = valid && predicted.is_finite() && delta.is_finite();
+        if valid {
+            let mut readout = 0_f32;
+            for i in 0..shape.head_dim {
+                let decayed = old[spans.old.at(h, i, j)] * decay;
+                let updated = decayed + k[ki + i] * delta;
+                valid = valid && updated.is_finite();
+                next[spans.next.at(h, i, j)] = updated;
+                readout += updated * q[qi + i];
+            }
+            valid = valid && readout.is_finite();
+            if valid {
+                out[spans.output.base + lane] = readout;
+                status[spans.status.base + lane] = 1;
+            } else {
+                for i in 0..shape.head_dim {
+                    next[spans.next.at(h, i, j)] = 0.;
+                }
+            }
+        }
+    }
+    Ok((next, out, status))
 }

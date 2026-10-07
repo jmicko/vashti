@@ -164,6 +164,16 @@ owning-page cleanup. Both cards pass; actual-shape recurrence is bit-identical
 to the scalar GPU in these fixtures. This mode does not batch convolution,
 projections, closing gates or the complete model, and emits no timing claim.
 
+The probe source additionally contains two explicit count1 `SingleStreaming`
+cases (ten total), comparing direct-old recurrence against the unchanged chunk,
+scalar GPU and independent higher-precision Rust core. This public lab policy
+removes the private head-sized lane array while retaining the same f32 column
+order, runtime spans, MAX8 pages, invalid-candidate zeroing and owning I/O/audits.
+Its workspace setter requires a healthy completed model boundary and full audit;
+runtime counts other than1 reject before launch. Default recurrence remains
+`Chunk`, and no main/runner flag selects streaming yet. New host/offline shader
+and device cases require owner validation before any timing or numeric claim.
+
 `bank96-probe` borrows the original GGUF and owns a separate bounded one-layer
 96+10 comparison; leave expert overrides unset for this mode. Both cards pass
 Q5/Q8 cross-segment numerical, cancellation, poison and full cleanup checks.

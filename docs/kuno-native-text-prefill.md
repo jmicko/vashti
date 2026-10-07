@@ -57,6 +57,19 @@ and returns one candidate final state. Preserve per-head RMS and sigmoid gate
 before batched output projection. Candidate raw history advances by exactly the
 active count. A chunk recurrence alone does not cover convolution/projections.
 
+The isolated default-off public `SingleStreaming` recurrence candidate is only
+for native count1 continuation. Its explicit policy is set after the model's
+completed boundary; it is never inferred from private count. It reads immutable
+old state in two direct passes instead of retaining a head-sized private lane
+array, preserving each f32 decay/prediction/delta/update/readout operation and
+order. Count other than1 rejects before adapter work or recurrence dispatch.
+Original MAX8 owning state/scratch, runtime bases/strides, status folds, invalid
+candidate zeroing, cancellation, full I/O/audits and whole-chunk state acceptance
+remain mandatory. Default prompt/decode recurrence stays `Chunk`; operator
+source is groundwork until independent core/scalar/chunk parity and lifecycle
+acceptance pass on both GPUs. A later protected model flag requires its own
+mode-aware receipt and full recovery checks before speed measurement.
+
 **QSA:** batch projections, normalization and original Rust rotary-table reads.
 Each query sees only committed KV plus its own and earlier chunk columns.
 Pooling includes only complete groups of four raw indexer keys, before
