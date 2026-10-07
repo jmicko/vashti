@@ -1996,9 +1996,14 @@ audit once after map lease drop, then retains ordered-source release, health,
 telemetry and MAIN fence credit. Both-card short model/cancellation/recovery/
 full erasure acceptance passes with439 native host tests and strict Clippy.
 The [checkpoint](kuno-native-text-checkpoint.md#batched-audit-and-staged-cpu-miss-acceptance)
-pins the normal `3b192df…` binary and exact proofs; the longer Intel fixture is
-running and grants no current performance acceptance. Ordinary inference,
-APIs, installed services and Vashti are unchanged.
+pins the normal `3b192df…` binary and exact proofs. The longer Intel75/128
+fixture now passes output/lifecycle/full-erasure gates at1.311 decode tokens/s
+(127steps/96.865s), below the10-token/s target; it is not a matched performance
+comparison. Root source through `97d50bc` passes450 native host/offline tests
+and includes the explicitly reserved count1 CPU-miss seam. That seam remains
+unexposed and physically unaccepted, with CPU joins before GPU enqueue and no
+overlap/speed claim. Ordinary inference, APIs, installed services and Vashti are
+unchanged. **Required Vashti changes: none.**
 
 The internal `200b38a` upload-wipe batching candidate passes the same both-card
 operator and complete eight-token native model/cancellation/recovery/full

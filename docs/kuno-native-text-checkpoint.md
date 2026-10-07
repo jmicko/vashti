@@ -63,9 +63,23 @@ Both-card eight-token model/fresh replay/cancellation/recovery/full erasure
 checks pass; short generation observes4,820ms Intel and8,701ms NVIDIA. See
 `rust-native-audited-fence-device-20261006.json` in the receipt directory below
 and `/media/jmicko/faststore/kuno-development/native-audited-fence-build-20261006-v1`.
-The longer75/128 Intel fixture is running; no completed long-run or matched
-performance acceptance is claimed here. Explicit public count1 dense dispatch
-and CPU-miss whole-model connection remain separate source candidates.
+The longer75-token/128-output Intel fixture also passes the same exact output,
+native continuation, fresh replay, cancellation/recovery and four full owning
+audits under actual8-GiB/swap0/core0 containment. Prefill is33,486ms;127 decode
+steps take96,865ms (**1.311 tokens/s**). Weight reads/uploads are13,858/7,441ms.
+See `rust-native-audited-fence-long-intel-20261006.json`. This is a protected
+lifecycle observation, not matched ABBA performance acceptance; the10-token/s
+target remains unmet. Explicit public count1 dense dispatch remains a separate
+source candidate.
+
+Root source through `97d50bc` adds the default-off, explicitly reserved count1
+CPU-miss seam (`fc5fea3`, `b9b3f19`, compiler wiring `f391168`, corrected invalid
+capacity fixture `97d50bc`). All450 native host/offline tests pass; strict
+all-target Clippy passed at `f391168`. This source is not CLI-exposed or
+device-accepted. Its selected path joins bounded CPU misses before GPU enqueue;
+no CPU/GPU overlap or whole-model speed gain is claimed. Default owners remain
+1376/818,249,728 bytes; explicit reservation adds two owners,1378/818,413,568.
+No production, API, installation or Vashti behavior changes.
 
 The subsequent upload-erasure batching commit `200b38a` also passes all of the
 same both-card10/52/14/12/eight-case operator inventories and complete eight-token
