@@ -7,6 +7,37 @@ The objective remains incomplete. Use **10 decode tokens/s** as the agreed
 working target when resumed and do not repeat Ollama baseline tests. Root owns
 GPU/service operations; source-only agents use isolated worktrees.
 
+## Pooled worker short ABBA acceptance, 2026-10-07
+
+User-authorized bounded optimization while the goal remains paused. Source
+`408abb9e26ed873e740f264db264297025e28539` adds explicit scoped/pooled CPU workers
+without changing arithmetic, default execution, frontend or gateway.110 core
+unit/integration tests,464 native tests,107 Python controls, strict release
+all-target Clippy for both crates and formatting pass. Fixed-public scheduling
+control establishes worker setup savings only. Normal artifact SHA
+`926abe803dab2d8cb92789ddfda10690a7a1aeb1438a03499cf3d0f4c62132cf`, build
+`native-count1-pool-build-20261007-v1`; eight protected compiler-idle same-artifact
+short cap10 scoped/pooled/pooled/scoped samples under
+`native-count1-pool-device-20261007-v1` (both directories in faststore's
+`kuno-development`). All outputs, actual CPU-miss counts, fresh continuation,
+layer0/3 cancel, poison/recovery and four complete1378-owner erasure audits pass.
+
+| Card | Scoped short decode ms | Pooled short decode ms | Mean duration reduction |
+| --- | --- | --- | --- |
+| B70 | 5318,5374 | 4978,4942 | 7.22% |
+| 3060 | 6903,6493 | 6173,6110 | 8.31% |
+
+These are seven-step short repeated comparisons, not long throughput or the
+10-token/s target. Full-vocabulary logits, hybrid late-finality and75/128 gates
+remain unaccepted. Exact receipts:
+`apps/kuno/benchmarks/text/receipts/rust-native-count1-pool-20261007.json`.
+Intel physical memory recovered to50688000B; content-free Xe classifications
+remain zero. NVIDIA retains the active desktop. Admission resumed with no
+active/waiting work or recovery latch. No installation/config/service restart,
+hardware reset/reboot, API or Vashti change. The next separately authorized
+slice is concurrent CPU work and parent GPU expert submission, with bounded
+joined ownership and unchanged final merge. No overlap is implemented by408abb9.
+
 ## Both-card short hybrid acceptance and constructor correction, 2026-10-07
 
 The user restored sudo and authorized this bounded GPU block; the goal remains

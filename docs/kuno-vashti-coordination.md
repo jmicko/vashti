@@ -2114,3 +2114,15 @@ Admission is resumed, both live inference listeners respond and Intel physical
 VRAM recovered with no classified Xe fault. No hardware reset/reboot, installed
 binary/configuration, API/catalog, Vashti or release change was made.
 **Required Vashti changes: none.**
+
+### Pooled CPU-worker short acceptance (2026-10-07)
+
+Source408abb9 adds explicit protected-lab worker reuse with unchanged math and
+defaults.110 core,464 native and107 Python tests plus strict Clippy pass. Eight
+compiler-idle scoped/pooled ABBA short samples pass on both cards with full
+original output/lifecycle/erasure proofs: mean duration improves7.22% B70 and
+8.31%3060. Full-logit, late-finality and long acceptance remain outstanding;
+no10-token/s or production claim. Exact artifact/source/receipts and postflight
+are in the [checkpoint](kuno-native-text-checkpoint.md#pooled-worker-short-abba-acceptance-2026-10-07).
+Admission is restored and physical Intel memory recovers. No installed binary,
+configuration, API, release or Vashti change. Required Vashti changes:none.

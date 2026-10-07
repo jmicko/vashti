@@ -1,0 +1,463 @@
+{
+  "scope": "fixed-public-count1-short-pooled-workers-ABBA-output-lifecycle-and-owning-erasure",
+  "source_commit": "408abb9e26ed873e740f264db264297025e28539",
+  "executable_sha256": "926abe803dab2d8cb92789ddfda10690a7a1aeb1438a03499cf3d0f4c62132cf",
+  "cargo_artifacts_sha256": "ba1ba00bf1705e805b46b16053526e1547d100b12314d2767503c884e06dad78",
+  "source_tests": {
+    "native": 464,
+    "kuno_text": 110,
+    "python": 107,
+    "strict_clippy": true
+  },
+  "scheduling_only_control": {
+    "calls": 128,
+    "workers": 16,
+    "scoped_us": [
+      50534,
+      57111
+    ],
+    "pooled_us": [
+      1505,
+      1500
+    ],
+    "expert_arithmetic": false
+  },
+  "short_ABBA_summary": {
+    "intel": {
+      "scoped_mean_generation_ms": 5346.0,
+      "pooled_mean_generation_ms": 4960.0,
+      "duration_reduction_percent": 7.22035166479611,
+      "pooled_short_decode_steps_per_second": 1.4112903225806452
+    },
+    "nvidia": {
+      "scoped_mean_generation_ms": 6698.0,
+      "pooled_mean_generation_ms": 6141.5,
+      "duration_reduction_percent": 8.308450283666767,
+      "pooled_short_decode_steps_per_second": 1.1397866970609787
+    }
+  },
+  "runs": [
+    {
+      "card": "intel",
+      "sample": 1,
+      "workers": "scoped",
+      "receipt_path": "/media/jmicko/faststore/kuno-development/native-count1-pool-device-20261007-v1/intel-1-scoped.json",
+      "receipt_sha256": "aeef4f95fb5ce62367eedb383f14418610ab25d4d44a7ff52eb9f512867bdc9c",
+      "run_record_sha256": "67d7fcf86005c4399d5523d20b2d33bbb0b4bbe52202398927212c82f36bfe8a",
+      "log_sha256": "35e94d2f325083448e5375d5d8ecf13573fcf0cf514d12bc6507fe8f13385df1",
+      "generation_ms": 5318,
+      "prefill_ms": 6553,
+      "completed_cpu_misses": 1256,
+      "fresh_completed_cpu_misses": 102,
+      "public_generated_ids": [
+        9419,
+        0,
+        2500,
+        628,
+        353,
+        1438,
+        488,
+        3242
+      ],
+      "owned_zero_audits": [
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        }
+      ]
+    },
+    {
+      "card": "intel",
+      "sample": 2,
+      "workers": "pooled",
+      "receipt_path": "/media/jmicko/faststore/kuno-development/native-count1-pool-device-20261007-v1/intel-2-pooled.json",
+      "receipt_sha256": "7fb7eb84c25db8b2b2c367be8ae2381ebf27ef2cbacd9c4c5bdcd855ffad31ad",
+      "run_record_sha256": "7d3ba7cc7f936d739a905cd5aa5455b9b28e6d098c4c59fb4a973031491f5cfd",
+      "log_sha256": "982ea47b81e48606d6603a1a91aad223fcc7e23d7d7060be9f68aef439521e02",
+      "generation_ms": 4978,
+      "prefill_ms": 5794,
+      "completed_cpu_misses": 1256,
+      "fresh_completed_cpu_misses": 102,
+      "public_generated_ids": [
+        9419,
+        0,
+        2500,
+        628,
+        353,
+        1438,
+        488,
+        3242
+      ],
+      "owned_zero_audits": [
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        }
+      ]
+    },
+    {
+      "card": "intel",
+      "sample": 3,
+      "workers": "pooled",
+      "receipt_path": "/media/jmicko/faststore/kuno-development/native-count1-pool-device-20261007-v1/intel-3-pooled.json",
+      "receipt_sha256": "006987319c730783a8b293bfb3ec4d4ca1f2193488ea43cf670dca725d31ebc9",
+      "run_record_sha256": "b36d825fb924cbebbd55ede5a0336ce84de9934a323cbb7fcb1ab96037ae7f16",
+      "log_sha256": "ac8472d74f02deb8c780d4db3787d042b463aa4b2e799e78a25d00f898756f24",
+      "generation_ms": 4942,
+      "prefill_ms": 5431,
+      "completed_cpu_misses": 1256,
+      "fresh_completed_cpu_misses": 102,
+      "public_generated_ids": [
+        9419,
+        0,
+        2500,
+        628,
+        353,
+        1438,
+        488,
+        3242
+      ],
+      "owned_zero_audits": [
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        }
+      ]
+    },
+    {
+      "card": "intel",
+      "sample": 4,
+      "workers": "scoped",
+      "receipt_path": "/media/jmicko/faststore/kuno-development/native-count1-pool-device-20261007-v1/intel-4-scoped.json",
+      "receipt_sha256": "99f79ca9214164b8e2ea966c810132c558f926df59593d7670c4a54255d8d32e",
+      "run_record_sha256": "82889c85a054a75f684b6b17fe17340d20ff6ed96d0b62006a5b3615c66b0358",
+      "log_sha256": "ea6c9c86cc07e9e5f8190d53fedadf807348f805a9cd92b8259af1cf13cda71c",
+      "generation_ms": 5374,
+      "prefill_ms": 5505,
+      "completed_cpu_misses": 1256,
+      "fresh_completed_cpu_misses": 102,
+      "public_generated_ids": [
+        9419,
+        0,
+        2500,
+        628,
+        353,
+        1438,
+        488,
+        3242
+      ],
+      "owned_zero_audits": [
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        }
+      ]
+    },
+    {
+      "card": "nvidia",
+      "sample": 1,
+      "workers": "scoped",
+      "receipt_path": "/media/jmicko/faststore/kuno-development/native-count1-pool-device-20261007-v1/nvidia-1-scoped.json",
+      "receipt_sha256": "a9ecd1079c3cfef5150e0d981e5082d0b529f95543b7ae45027915be0d15ae2b",
+      "run_record_sha256": "9bc64e24e295171fd4d948959788338404b39421f1759603262caed7977e543a",
+      "log_sha256": "8d03d65d6f52ff243f932c2e5c5aede0ab0f1c7510b1f8c7699aba4903485fc3",
+      "generation_ms": 6903,
+      "prefill_ms": 16322,
+      "completed_cpu_misses": 2259,
+      "fresh_completed_cpu_misses": 273,
+      "public_generated_ids": [
+        9419,
+        0,
+        2500,
+        628,
+        353,
+        1438,
+        488,
+        3242
+      ],
+      "owned_zero_audits": [
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        }
+      ]
+    },
+    {
+      "card": "nvidia",
+      "sample": 2,
+      "workers": "pooled",
+      "receipt_path": "/media/jmicko/faststore/kuno-development/native-count1-pool-device-20261007-v1/nvidia-2-pooled.json",
+      "receipt_sha256": "cf766e932c48115913ee15f508721208f6a54f7a5113f5722b15f58b6ac5cdd3",
+      "run_record_sha256": "52cdd7846aa97b04e9a128db582f4053d47e3cfc51b252a2690bb3d5f2714ea6",
+      "log_sha256": "6201b93878ae7b99d67f83c1e13c6dfef29d2fb9291ec445b6e9f1158a3daacb",
+      "generation_ms": 6173,
+      "prefill_ms": 15544,
+      "completed_cpu_misses": 2259,
+      "fresh_completed_cpu_misses": 273,
+      "public_generated_ids": [
+        9419,
+        0,
+        2500,
+        628,
+        353,
+        1438,
+        488,
+        3242
+      ],
+      "owned_zero_audits": [
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        }
+      ]
+    },
+    {
+      "card": "nvidia",
+      "sample": 3,
+      "workers": "pooled",
+      "receipt_path": "/media/jmicko/faststore/kuno-development/native-count1-pool-device-20261007-v1/nvidia-3-pooled.json",
+      "receipt_sha256": "58abf6fd92f7583f512c07cf1c7f42c7c726f9fa2ddd6e45ba0d0bc8bbbe12a8",
+      "run_record_sha256": "45e794dbc7eaa9bb86efa4bf82098dbecdc58995a56eb59a89ab303e0291921c",
+      "log_sha256": "d6c006765aae4ed8ad1f269d2477679138412f1768cf34593c9b6e3de6cac358",
+      "generation_ms": 6110,
+      "prefill_ms": 15289,
+      "completed_cpu_misses": 2259,
+      "fresh_completed_cpu_misses": 273,
+      "public_generated_ids": [
+        9419,
+        0,
+        2500,
+        628,
+        353,
+        1438,
+        488,
+        3242
+      ],
+      "owned_zero_audits": [
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        }
+      ]
+    },
+    {
+      "card": "nvidia",
+      "sample": 4,
+      "workers": "scoped",
+      "receipt_path": "/media/jmicko/faststore/kuno-development/native-count1-pool-device-20261007-v1/nvidia-4-scoped.json",
+      "receipt_sha256": "5945a4a229ea123a275b21f5f9ecccb73ce3fcc5318d831f2e5513898845e2f3",
+      "run_record_sha256": "7f7a97cc2062b9d26dd73c9c656ea1822be872b6c2ce0d92c557e2cc16839fb4",
+      "log_sha256": "0e6c268cafee31773af0da79595faa1e2b45d3824abe843b4dac07e98666e596",
+      "generation_ms": 6493,
+      "prefill_ms": 15279,
+      "completed_cpu_misses": 2259,
+      "fresh_completed_cpu_misses": 273,
+      "public_generated_ids": [
+        9419,
+        0,
+        2500,
+        628,
+        353,
+        1438,
+        488,
+        3242
+      ],
+      "owned_zero_audits": [
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1378,
+          "main_bytes": 818413568,
+          "source_buffers": 0,
+          "source_bytes": 0
+        }
+      ]
+    }
+  ],
+  "full_vocabulary_logits_accepted": false,
+  "late_hybrid_finality_accepted": false,
+  "long_fixture_accepted": false,
+  "production_accepted": false,
+  "cpu_gpu_overlap": false,
+  "new_ollama_baseline": false,
+  "installed_change": false,
+  "postflight": {
+    "xe": {
+      "scope": "read-only-xe-physical-vram-query",
+      "pci": "0000:2d:00.0",
+      "total_bytes": 34242297856,
+      "used_bytes": 50688000,
+      "root_query": true
+    },
+    "kernel": {
+      "scope": "read-only-content-free-xe-kernel-classification",
+      "boot_id": "665344a9-0e39-4e45-90de-465fa11df0ca",
+      "kernel": "7.0.0-38-generic",
+      "utc": "2026-10-07T20:17:42.625410+00:00",
+      "classified_messages": {
+        "wedged": 0,
+        "timeout": 0,
+        "gt_reset": 0,
+        "memory_fault": 0
+      }
+    },
+    "nvidia": "390 MiB, 12288 MiB, 17 %",
+    "admission_resumed": true
+  }
+}
