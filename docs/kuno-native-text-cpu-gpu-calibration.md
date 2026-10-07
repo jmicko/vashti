@@ -56,6 +56,24 @@ includes a separate 4,096-byte scoped-control/header reservation, for 870,400
 bytes. No duplicate model binding, converted weights or prepared payload cache
 is introduced.
 
+## Numeric-only failure classification (2026-10-06)
+
+The fixed-public producer now replaces a failed `Purpose::Numeric` result with
+one constant stage label. Stages distinguish configuration, device limits,
+control/worker proof, geometry/original banks, startup I/O/capacity/host budget,
+allocation/physical owners, fixture upload/priming/references, candidate planning
+and joined work, CPU partial checks, merge/numerical acceptance, final audit,
+file consistency, metadata/slot commit, sentinels and erasure. For example,
+`public CPU/GPU numeric startup-capacity rejected` identifies that boundary
+without recording a memory value or the original backend error.
+
+The stage labels add no log output, raw error formatting, tensor values, rank
+trace or partial receipt. Calibration retains its existing errors and performs
+no diagnostic logging I/O. Successful reports, numerical tolerances, allocation
+and I/O caps, original math and ownership cleanup remain unchanged. Root still
+owns compilation and protected physical reruns; the labels locate a failed gate
+and do not establish numerical or performance acceptance.
+
 ## Approved original snapshot
 
 Bounded original CPU/GPU expert acceptance and joint calibration

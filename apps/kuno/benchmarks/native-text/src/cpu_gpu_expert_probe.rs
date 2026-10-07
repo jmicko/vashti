@@ -1,4 +1,4 @@
-//! Unregistered fixed-public original expert lab. Caller supplies an inspected
+//! Fixed-public original expert lab. Caller supplies an inspected
 //! file and an exclusively configured transient stream; no path reopen/default.
 //! Reference arithmetic follows bank96_probe and core CPU's original 64 tree.
 //! Numeric success is local operator evidence, never whole-model acceptance.
@@ -42,6 +42,74 @@ const PROBS: [[f32; N]; 2] = [
 ];
 fn fault() -> Error {
     Error::InvalidFormat("public CPU/GPU expert fixture rejected")
+}
+/// Numeric-only infrastructure classification. Never retain or format the
+/// original error, selected ranks, private values or backend payloads.
+#[derive(Clone, Copy)]
+enum NumericStage {
+    Config,
+    Limits,
+    Control,
+    Workers,
+    Geometry,
+    OriginalBanks,
+    StartupIo,
+    StartupCapacity,
+    HostBudget,
+    Allocation,
+    PhysicalOwners,
+    FixtureUpload,
+    Priming,
+    Reference,
+    CandidatePlan,
+    Candidate,
+    CpuPartials,
+    Merge,
+    NumericAcceptance,
+    FinalAudit,
+    FileConsistency,
+    Metadata,
+    SlotCommit,
+    Sentinels,
+    Erasure,
+}
+impl NumericStage {
+    fn error(self) -> Error {
+        Error::InvalidFormat(match self {
+            Self::Config => "public CPU/GPU numeric config rejected",
+            Self::Limits => "public CPU/GPU numeric limits rejected",
+            Self::Control => "public CPU/GPU numeric control rejected",
+            Self::Workers => "public CPU/GPU numeric workers rejected",
+            Self::Geometry => "public CPU/GPU numeric geometry rejected",
+            Self::OriginalBanks => "public CPU/GPU numeric original-banks rejected",
+            Self::StartupIo => "public CPU/GPU numeric startup-io rejected",
+            Self::StartupCapacity => "public CPU/GPU numeric startup-capacity rejected",
+            Self::HostBudget => "public CPU/GPU numeric host-budget rejected",
+            Self::Allocation => "public CPU/GPU numeric allocation rejected",
+            Self::PhysicalOwners => "public CPU/GPU numeric physical-owners rejected",
+            Self::FixtureUpload => "public CPU/GPU numeric fixture-upload rejected",
+            Self::Priming => "public CPU/GPU numeric priming rejected",
+            Self::Reference => "public CPU/GPU numeric reference rejected",
+            Self::CandidatePlan => "public CPU/GPU numeric candidate-plan rejected",
+            Self::Candidate => "public CPU/GPU numeric candidate rejected",
+            Self::CpuPartials => "public CPU/GPU numeric cpu-partials rejected",
+            Self::Merge => "public CPU/GPU numeric merge rejected",
+            Self::NumericAcceptance => "public CPU/GPU numeric acceptance rejected",
+            Self::FinalAudit => "public CPU/GPU numeric final-audit rejected",
+            Self::FileConsistency => "public CPU/GPU numeric file-consistency rejected",
+            Self::Metadata => "public CPU/GPU numeric metadata rejected",
+            Self::SlotCommit => "public CPU/GPU numeric slot-commit rejected",
+            Self::Sentinels => "public CPU/GPU numeric sentinels rejected",
+            Self::Erasure => "public CPU/GPU numeric erasure rejected",
+        })
+    }
+}
+fn classified_numeric_result<T>(
+    numeric: bool,
+    stage: NumericStage,
+    result: Result<T>,
+) -> Result<T> {
+    result.map_err(|original| if numeric { stage.error() } else { original })
 }
 fn check(cancel: &AtomicBool) -> Result<()> {
     if cancel.load(Ordering::Acquire) {
@@ -1114,8 +1182,37 @@ pub fn run<'graph, 'm>(
     purpose: Purpose<'_, 'm>,
     cancel: &AtomicBool,
 ) -> Result<(Report, NumericPermit<'m>)> {
+    let numeric = matches!(&purpose, Purpose::Numeric);
+    let mut stage = NumericStage::Config;
+    let result = run_inner(
+        client,
+        file,
+        graph,
+        device_limits,
+        retired,
+        config,
+        purpose,
+        cancel,
+        &mut stage,
+    );
+    classified_numeric_result(numeric, stage, result)
+}
+#[allow(clippy::too_many_arguments)]
+fn run_inner<'graph, 'm>(
+    client: &ComputeClient<WgpuRuntime>,
+    file: &'m GgufFile,
+    graph: BoundGraph<'graph, 'm>,
+    device_limits: &wgpu::Limits,
+    retired: Arc<AtomicBool>,
+    config: Config,
+    purpose: Purpose<'_, 'm>,
+    cancel: &AtomicBool,
+    stage: &mut NumericStage,
+) -> Result<(Report, NumericPermit<'m>)> {
     config.validate()?;
+    *stage = NumericStage::Limits;
     limits(device_limits)?;
+    *stage = NumericStage::Control;
     check(cancel)?;
     if retired.load(Ordering::Acquire) {
         return Err(fault());
@@ -1136,8 +1233,10 @@ pub fn run<'graph, 'm>(
         }
     };
     // Hardware setup and CPU affinity proof are deliberately before allocations.
+    *stage = NumericStage::Workers;
     let op = ExpertOperator::new(WorkerPlan::physical(config.workers)?, config.backend)?;
     let portable = ExpertOperator::new(WorkerPlan::portable(1)?, Backend::Portable)?;
+    *stage = NumericStage::Geometry;
     let reader = file.positional_reader()?;
     graph.verify_unchanged()?;
     let geometry = graph.geometry();
@@ -1166,6 +1265,7 @@ pub fn run<'graph, 'm>(
     {
         return Err(fault());
     }
+    *stage = NumericStage::OriginalBanks;
     original(weights, config.down)?;
     let experts = PackedExperts::new(&reader, weights.gate, weights.up, weights.down)?;
     // Existing unrelated pending IO cannot be carried into this envelope.
@@ -1174,6 +1274,7 @@ pub fn run<'graph, 'm>(
         retired: &retired,
         armed: true,
     };
+    *stage = NumericStage::StartupIo;
     cubecl::future::block_on(client.sync()).map_err(|_| fault())?;
     let initial =
         cubecl::future::block_on(client.sanitize_transient_io_audited()).map_err(|_| fault())?;
@@ -1190,9 +1291,12 @@ pub fn run<'graph, 'm>(
     // Prior successful runner dropped its banks only after completed audit;
     // cleanup now releases those free MAIN pages before a fresh aggregate.
     client.memory_cleanup();
+    *stage = NumericStage::StartupCapacity;
     let baseline = sample(client)?;
     startup(baseline)?;
+    *stage = NumericStage::HostBudget;
     host_preflight()?;
+    *stage = NumericStage::Allocation;
     let mut ledger =
         MainAdmission::new(PHYSICAL_LIMIT - 64 * MIB, baseline).map_err(|_| fault())?;
     let mut arena =
@@ -1213,7 +1317,9 @@ pub fn run<'graph, 'm>(
             return Err(fault());
         }
         observe(&mut ledger, client)?;
+        *stage = NumericStage::PhysicalOwners;
         physical(&arena, &buffers, banks, flat, &reference_moe)?;
+        *stage = NumericStage::FixtureUpload;
         let ids: Zeroizing<[usize; N]> =
             Zeroizing::new(std::array::from_fn(|r| config.group * N + r));
         let split = Split::new(&ids, config.misses, config.cpu_misses)?;
@@ -1242,6 +1348,7 @@ pub fn run<'graph, 'm>(
                 480 + r
             }
         }));
+        *stage = NumericStage::Priming;
         let (_, prime_meta) = reference(
             graph,
             &arena,
@@ -1254,6 +1361,7 @@ pub fn run<'graph, 'm>(
             prob,
             cancel,
         )?;
+        *stage = NumericStage::Reference;
         let references = ReferenceWindow::before(timed, || {
             verified_references(
                 graph,
@@ -1275,6 +1383,7 @@ pub fn run<'graph, 'm>(
             )
         })?;
         let mut metadata = prime_meta;
+        *stage = NumericStage::CandidatePlan;
         let candidate_plan = if split.gpu().is_empty() {
             None
         } else {
@@ -1293,6 +1402,7 @@ pub fn run<'graph, 'm>(
         }
         drop(all_plan);
         let mut charge = 0;
+        *stage = NumericStage::Candidate;
         let (cpu, gpu, times) = schedule::pair(
             config.mode,
             cancel,
@@ -1326,6 +1436,7 @@ pub fn run<'graph, 'm>(
             },
         )?;
         check(cancel)?;
+        *stage = NumericStage::CpuPartials;
         if let Some(cpu) = &cpu {
             if cpu.ranks() != split.cpu().len()
                 || cpu.hidden() != D
@@ -1340,6 +1451,7 @@ pub fn run<'graph, 'm>(
                 return Err(fault());
             }
         }
+        *stage = NumericStage::Merge;
         let bridge_start = std::time::Instant::now();
         if let Some(cpu) = &cpu {
             upload_f32(&arena, buffers.ids[CPU], cpu.full())?;
@@ -1357,6 +1469,7 @@ pub fn run<'graph, 'm>(
         // Calibration reaches here only after both consumers and the original-
         // rank bridge completed owning maps/fault checks and audited cleanup.
         // Required real priming and prior samples can still condition caches.
+        *stage = NumericStage::Reference;
         let (expected_full, expected, reference_meta) = references.after(|| {
             verified_references(
                 graph,
@@ -1378,6 +1491,7 @@ pub fn run<'graph, 'm>(
             )
         })?;
         metadata = metadata.max(reference_meta);
+        *stage = NumericStage::NumericAcceptance;
         let mut tree_error = compare(&expected_full.act, &expected.act, 1e-4, 3e-4)?
             .max(compare(&expected_full.part, &expected.part, 1e-4, 3e-4)?)
             .max(compare(&expected_full.out, &expected.out, 1e-4, 3e-4)?);
@@ -1414,11 +1528,14 @@ pub fn run<'graph, 'm>(
             )?);
         }
         immutable(&arena, &buffers, &x, prob, &split)?;
+        *stage = NumericStage::FinalAudit;
         let last = fence(&arena, &mut ledger, &retired)?;
         check(cancel)?;
+        *stage = NumericStage::FileConsistency;
         reader.verify_file_unchanged()?;
         // Publication is LOCAL fixture metadata only, after ALL arithmetic/maps and
         // actual cleanup. No model token/cursor or whole-family right is invoked.
+        *stage = NumericStage::Metadata;
         let snapshots = snapshot_bytes(&[
             &expected.act,
             &expected.part,
@@ -1432,13 +1549,17 @@ pub fn run<'graph, 'm>(
             &gpu.out,
             &y,
         ])?;
+        *stage = NumericStage::SlotCommit;
         if let Some(p) = candidate_plan {
             banks.slots.commit(p).map_err(|_| fault())?;
         }
+        *stage = NumericStage::Sentinels;
         let mut sentinels = public_sentinels(client, banks)?;
         sentinels.extend(public_sentinels(client, flat)?);
         fence(&arena, &mut ledger, &retired)?;
+        *stage = NumericStage::Erasure;
         arena.close().map_err(|_| fault())?;
+        *stage = NumericStage::Sentinels;
         for (h, expected) in sentinels {
             let actual = client.read_one(h).map_err(|_| fault())?;
             if actual[..] != expected {
@@ -1446,7 +1567,9 @@ pub fn run<'graph, 'm>(
             }
             drop(actual);
         }
+        *stage = NumericStage::FinalAudit;
         audit(client, &retired)?;
+        *stage = NumericStage::Erasure;
         let zero = arena.owned_zero_audit_receipt().ok_or_else(fault)?;
         if zero.buffers != 18 || zero.bytes != PRIVATE_BYTES {
             return Err(fault());
@@ -1476,6 +1599,7 @@ pub fn run<'graph, 'm>(
     }));
     match attempt {
         Ok(Ok(report)) if !retired.load(Ordering::Acquire) && !cancel.load(Ordering::Acquire) => {
+            *stage = NumericStage::FileConsistency;
             file.verify_file_unchanged()?;
             check(cancel)?;
             if retired.load(Ordering::Acquire) {
@@ -1508,6 +1632,70 @@ pub fn run<'graph, 'm>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn numeric_stage_classification_discards_original_errors_without_changing_calibration() {
+        let result = classified_numeric_result::<()>(
+            true,
+            NumericStage::Merge,
+            Err(Error::InvalidFormat("synthetic backend detail")),
+        );
+        assert!(matches!(
+            result,
+            Err(Error::InvalidFormat(
+                "public CPU/GPU numeric merge rejected"
+            ))
+        ));
+        let calibration = classified_numeric_result::<()>(
+            false,
+            NumericStage::Merge,
+            Err(Error::LimitExceeded("synthetic original limit")),
+        );
+        assert!(matches!(
+            calibration,
+            Err(Error::LimitExceeded("synthetic original limit"))
+        ));
+        assert_eq!(
+            classified_numeric_result(true, NumericStage::Erasure, Ok(17usize)).unwrap(),
+            17
+        );
+    }
+    #[test]
+    fn numeric_real_preflight_failures_have_distinct_fixed_stages() {
+        let invalid = Config {
+            down: TensorType::Q5_0,
+            workers: 3,
+            backend: Backend::Portable,
+            misses: 10,
+            cpu_misses: 5,
+            group: 0,
+            vector: 0,
+            mode: Mode::Concurrent,
+        };
+        let config = classified_numeric_result(true, NumericStage::Config, invalid.validate());
+        assert!(matches!(
+            config,
+            Err(Error::InvalidFormat(
+                "public CPU/GPU numeric config rejected"
+            ))
+        ));
+        let mut unsupported = wgpu::Limits::default();
+        unsupported.max_storage_buffers_per_shader_stage = 6;
+        let device = classified_numeric_result(true, NumericStage::Limits, limits(&unsupported));
+        assert!(matches!(
+            device,
+            Err(Error::InvalidFormat(
+                "public CPU/GPU numeric limits rejected"
+            ))
+        ));
+        let capacity =
+            classified_numeric_result(true, NumericStage::StartupCapacity, startup(PHYSICAL_LIMIT));
+        assert!(matches!(
+            capacity,
+            Err(Error::InvalidFormat(
+                "public CPU/GPU numeric startup-capacity rejected"
+            ))
+        ));
+    }
     #[test]
     fn calibration_defers_exactly_one_reference_and_retains_error_gates() {
         use std::cell::RefCell;
