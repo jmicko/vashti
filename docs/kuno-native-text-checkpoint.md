@@ -1,10 +1,109 @@
 # Native text checkpoint, 2026-10-06
 
-The user has resumed the goal, authorized both GPUs and asked for continued
-native optimization. The objective remains incomplete. Use **10 decode tokens/s**
-as the agreed working target and do not repeat Ollama baseline tests. The older
-paused receipts below remain historical evidence, not a current instruction to
-stop. Root owns GPU/service operations; source-only agents use isolated worktrees.
+The user intentionally paused the goal again on2026-10-07 to conserve weekly
+usage. The already-running benchmark/source-check block is finished; no GPU
+job or compiler is left running and installed inference admission is resumed.
+The objective remains incomplete. Use **10 decode tokens/s** as the agreed
+working target when resumed and do not repeat Ollama baseline tests. Root owns
+GPU/service operations; source-only agents use isolated worktrees.
+
+## Clean paused checkpoint, 2026-10-07
+
+Owner branch remains `codex/kuno-native-text` in
+`/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`. Source through `d13e95d`
+passes459 native Rust host/offline tests, strict all-target Clippy, formatting
+and diff checks. All99 Python native-lab tests pass; runtime49 fixture sources
+are unchanged. The ordinary main checkout and installed binaries/configuration
+are unchanged; installed admission reports paused=false, recovery_required=false.
+All source-only agents stopped with clean isolated branches.
+
+**Physically accepted dense candidate:** `b0c83c9`, `ee9434c`, `0741420` remove
+seven inactive tile1 dense dispatch slices at the completed `SingleAll`/
+`SingleQ4All` boundary, observe actual capacity and reject mismatches before
+private clears. Prefill remains MAX8; active packed math, complete owners,
+inactive stored values and fault/audit scopes are unchanged. The exact normal
+`0741420` binary SHA256 is
+`3098e9cb84ed7563f5160030717e9868a759932ee60769492d764a536337ad36`.
+
+Both cards pass all91 matmul cases (84 prior cases plus7 real same-owner MAX8
+prefill/count1 replays). The replay's paired GPU maximum absolute error is zero
+on both cards; maximum CPU error is1.1920928955078125e-7. The independent strict
+validator `7df78cd` passes both actual receipts against shapes independently
+read from the original GGUF header. Operator receipts have no vendor field;
+actual vendor selection is joined through the pinned unique-discrete-adapter
+selection and separate same-binary model receipt. Per-element numerical gates
+remain producer checks; aggregate maxima cannot reconstruct their relative
+threshold. No timing authority follows from this validator.
+
+Both complete eight-token chat runs pass the same IDs, seven actual native
+continuations, fresh prefill/second-token replay, layer0/3 queued cancellation,
+poisoned retry rejection, fresh recovery and all four1376-owner/818,249,728-byte
+MAIN audits with source0, normal exit and no retirement under actual8-GiB/
+swap0/core0 protection. Intel generation is5,563ms (read962/upload392ms);
+NVIDIA8,675ms (read540/upload770ms). No additional speed gain is established;
+Intel has more read time than the prior short run. Exact proofs and identities:
+`apps/kuno/benchmarks/text/receipts/rust-native-single-dense-device-20261007.json`,
+backed by `/media/jmicko/faststore/kuno-development/native-single-dense-build-20261007-v1`.
+The earlier long Intel75/128 fixture at `4d4ecbe` remains1.311tokens/s; it is
+neither this new binary's long result nor matched ABBA performance acceptance.
+
+**Source-only follow-ups, not physically accepted:**
+
+- `ec0cae5` narrows count1 grouped finite/reducer public grids toY10/Y1, keeping
+  defaultY80/Y8, the same kernel bodies, complete MAX80 owners/status/fault
+  scans and active storage writes. Before timing, run the existing52 routed/
+  14-format/12-failure numeric inventory and original complete model/lifecycle
+  gates on both cards from a fresh normal binary.
+- `b6269b4` plus stable assertion fix `3d65a44` derives the unchanged additional
+  1MiB bridge runtime envelope (1,015,808bytes). `7546186` normalizes only
+  validated inactive logical MIXED rows1..7 in the experimental count1 input
+  scan; active arithmetic, owning gaps/padding and router/fault checks remain.
+  `d13e95d` keeps the grid fixture and necessary CubeCL NaN/guard spelling
+  lint-clean. This hybrid path is still unexposed and device-unaccepted; the
+  default GPU path uses its original owners. Do not infer hybrid acceptance
+  from ordinary dense tests.
+
+No production native worker/default routing, API, installation, release,
+Vashti change or hardware reset/reboot is accepted. No new long timing or CPU/
+GPU overlap win is claimed. The normal shared target binary is still the
+`3098e9cb…` artifact; Clippy/test binaries are not a new normal Cargo build.
+
+**Next source proposals preserved, implementation not started:**
+
+- After finite device gates, an explicit fixed-public `resident-count1-hybrid-chat`
+  CLI can pin cap exactly0|10, SingleQ4All/dense1, the original chat/seed424242/
+  temperature0/eight outputs, full zero audit and cancellation checks. It needs
+  a separate strict1378-owner/818,413,568-byte receipt rather than weakening the
+  ordinary1376-owner validator. Require actual completed CPU-miss count>0 for
+  cap10 and zero for cap0; no routing IDs/masks/per-layer content may persist.
+- A private zeroizing completed CPU-miss counter can derive a checked delta
+  only after all48 actual joined/source/bank proofs pass, check overflow before
+  any family commit, and publish only alongside final accepted position after
+  all commits/finish/PLE/health/cancel checks. Failed or partial attempts never
+  advance it; a healthy completed-boundary getter is required. This is a
+  proposal, not a current counter or CLI capability.
+- Existing one-shot lifecycle sites can test late_combine47, second-proof
+  error/panic after actual PLE preparation, and cancellation after the first
+  genuine GDN commit. Each needs exact-site evidence, terminal erasure/retry
+  rejection and fresh-owner replay. Existing layer0/3 tests alone do not prove
+  joined hybrid work or late publication safety.
+- A standalone exact-tree subgroup proposal can first publish64 original lane
+  partials to shared memory, keep one unconditional barrier, reconstruct the
+  exact original tree independently within each complete16/32/64 subgroup,
+  use uniform explicit shuffles (never subgroupAdd), and keep a second
+  unconditional barrier. Original local lane0 either publishes its subgroup
+  root or performs the exact serial shared-tree fallback. Unsupported/incomplete
+  shuffles target each invocation's own active lane; final target0 is selected
+  only for complete groups. Feature absence selects the untouched original
+  kernel. Never assume local/subgroup lane mapping or width. Require offline
+  WGSL/Naga uniformity, paired bitwise finite roots, signed-zero/nonfinite
+  classification, forced fallback and actual width/mask/device/full-owner
+  gates before dense or grouped integration; GDN sequential sums stay unchanged.
+  No source files were created on the isolated `codex/kuno-exact-tree-shuffle`
+  branch at `b6269b4`. Pinned source supports PLANE_DIM/UNIT_POS_PLANE/
+  plane_ballot/plane_shuffle, but actual card widths are unverified. See the
+  [WGSL subgroup specification](https://www.w3.org/TR/WGSL/#subgroups) and
+  [shuffle semantics](https://www.w3.org/TR/WGSL/#subgroupshuffle-builtin).
 
 ## Resumed native continuation evidence, 2026-10-06
 

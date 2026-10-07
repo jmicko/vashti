@@ -2032,3 +2032,19 @@ target. Upload erasure batching and explicit count1 CPU-miss model connection
 are still separate source candidates. Shared GPUs/services remain root-owned;
 no production, API, install, release or frontend changes are accepted.
 **Required Vashti changes: none.**
+
+### Paused native optimization checkpoint (2026-10-07)
+
+The user intentionally paused further work to conserve usage after the active
+block. Root `codex/kuno-native-text` source through `d13e95d` passes459 Rust
+host/offline tests,99 Python tests and strict Clippy. The exact `0741420` /
+`3098e9cb…` dense binary passes both-card91-case operators and complete short
+model/cancellation/recovery/full-erasure gates. No additional throughput gain
+is established. Grouped count1 grid trimming and the experimental CPU-miss
+input-tail fix are source-tested but physically unaccepted; no hybrid CLI or
+native-default capability is exposed. See the
+[clean owner checkpoint](kuno-native-text-checkpoint.md#clean-paused-checkpoint-2026-10-07)
+for exact commits, artifact/proof paths, limitations and preserved next proposals.
+No GPU/compiler job is left running; installed inference admission is resumed.
+No installed binary/configuration, API, release or application change occurred.
+**Required Vashti changes: none.**
