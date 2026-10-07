@@ -1,0 +1,584 @@
+{
+  "scope": "fixed-public-single-token-kernel-operator-acceptance",
+  "source_commit": "1b486e779b41e3e8397576a2f81b17eec9abe20f",
+  "whole_model_accepted": false,
+  "performance_accepted": false,
+  "cards": [
+    {
+      "card": "intel",
+      "operators": [
+        {
+          "mode": "gdn-chunk-probe",
+          "receipt_path": "/media/jmicko/faststore/kuno-development/native-single-operator-build-20261006-v1/gdn-chunk-probe-intel.json",
+          "receipt_sha256": "18e995271b3c103f2ed20968ad59e443803bb71d627072ff76812a5894874f56",
+          "run_proof": {
+            "scope": "fixed-public-kernel-operator-numeric-only",
+            "card": "intel",
+            "mode": "gdn-chunk-probe",
+            "executable_sha256": "61aee450ea2b0b8bd2fbd57feb310a7268607929e8f681f6fbc0d85efa353a35",
+            "cargo_artifacts_sha256": "610a7d474f765f390f8712ab3dc29384c7c8e54bdbed82dbdfca60d7c60c8bd4",
+            "source_commit": "1b486e779b41e3e8397576a2f81b17eec9abe20f",
+            "worker_exit_status": 0,
+            "markers": [
+              "verified_lab_limits swap_max=0 core_soft=0 core_hard=0 memory_max=8589934592",
+              "public_gdn_chunk_acceptance cases=10 main_buffers=160 main_bytes=113868800 context_retired=false",
+              "Finished with result: success",
+              "Main processes terminated with: code=exited/status=0",
+              "Service runtime: 1.935s",
+              "Memory peak: 256.0K",
+              "Memory swap peak: 0B"
+            ],
+            "model_receipt_exists": true
+          },
+          "run_record_sha256": "cb1c62ee1ff8ac556751e95f23b4f02ed3e8dcde592da13d9d2409bc0e9c77b3",
+          "case_count": 10,
+          "streaming_cases": [
+            {
+              "cancel_before_enqueue_and_after_fence_rejected": true,
+              "count": 1,
+              "finite_control_failure_rejected": true,
+              "full_main_zero_audit": true,
+              "head_dim": 7,
+              "immutable_old": true,
+              "inactive_gaps_padding_preserved": true,
+              "key_heads": 2,
+              "main_full_span_bytes": 524288,
+              "max_abs_chunk_error": 0.0,
+              "max_abs_core_error": 1.4901161193847656e-08,
+              "max_abs_single_error": 1.4901161193847656e-08,
+              "max_batch": 8,
+              "non_single_policy_count_rejected": true,
+              "nonfinite_old_state_rejected": true,
+              "old_next_alias_rejected": true,
+              "recurrence_policy": "single-streaming",
+              "runtime_spans": {
+                "inspected_buffers": 17,
+                "inspected_bytes": 427008,
+                "readback_bytes": 262656,
+                "uniform_bytes": 256,
+                "upload_bytes": 164096
+              },
+              "value_heads": 6
+            },
+            {
+              "cancel_before_enqueue_and_after_fence_rejected": true,
+              "count": 1,
+              "finite_control_failure_rejected": true,
+              "full_main_zero_audit": true,
+              "head_dim": 128,
+              "immutable_old": true,
+              "inactive_gaps_padding_preserved": true,
+              "key_heads": 16,
+              "main_full_span_bytes": 22249472,
+              "max_abs_chunk_error": 0.0,
+              "max_abs_core_error": 1.862645149230957e-08,
+              "max_abs_single_error": 0.0,
+              "max_batch": 8,
+              "non_single_policy_count_rejected": true,
+              "nonfinite_old_state_rejected": true,
+              "old_next_alias_rejected": true,
+              "recurrence_policy": "single-streaming",
+              "runtime_spans": {
+                "inspected_buffers": 17,
+                "inspected_bytes": 22610944,
+                "readback_bytes": 13664768,
+                "uniform_bytes": 256,
+                "upload_bytes": 8945920
+              },
+              "value_heads": 48
+            }
+          ],
+          "main_zero_bytes": 113868800,
+          "main_zero_buffers": 160
+        },
+        {
+          "mode": "grouped-moe-chunk-probe",
+          "receipt_path": "/media/jmicko/faststore/kuno-development/native-single-operator-build-20261006-v1/grouped-moe-chunk-probe-intel.json",
+          "receipt_sha256": "6a123b6bdfd4885c9aaafb507816e60467ba70648e8e158593358f5dad4dee5c",
+          "run_proof": {
+            "scope": "fixed-public-kernel-operator-numeric-only",
+            "card": "intel",
+            "mode": "grouped-moe-chunk-probe",
+            "executable_sha256": "61aee450ea2b0b8bd2fbd57feb310a7268607929e8f681f6fbc0d85efa353a35",
+            "cargo_artifacts_sha256": "610a7d474f765f390f8712ab3dc29384c7c8e54bdbed82dbdfca60d7c60c8bd4",
+            "source_commit": "1b486e779b41e3e8397576a2f81b17eec9abe20f",
+            "worker_exit_status": 0,
+            "markers": [
+              "verified_lab_limits swap_max=0 core_soft=0 core_hard=0 memory_max=8589934592",
+              "public_grouped_routed_acceptance cases=46 failures=12 main_bytes=141950976 main_buffers=994",
+              "Finished with result: success",
+              "Main processes terminated with: code=exited/status=0",
+              "Service runtime: 56.082s",
+              "Memory peak: 256.0K",
+              "Memory swap peak: 0B"
+            ],
+            "model_receipt_exists": true
+          },
+          "run_record_sha256": "c4b6b021ee88053d645753b9f0d9346c920fc8a905a2204d7d04b672cd5b6551",
+          "routed_cases": 46,
+          "expected_failure_cases": 12,
+          "all_format_cases": [
+            {
+              "all_ten_ranks": true,
+              "count": 1,
+              "dtype": 0,
+              "full_offset_tail_status_and_erasure_checks": true,
+              "groups": 10,
+              "max_abs_activation_error": 1.4210854715202004e-14,
+              "max_abs_partial_error": 1.4210854715202004e-14,
+              "max_abs_rank_merge_error": 5.329070518200751e-15,
+              "private_pages_bytes": 425984,
+              "tile": 8
+            },
+            {
+              "all_ten_ranks": true,
+              "count": 1,
+              "dtype": 0,
+              "full_offset_tail_status_and_erasure_checks": true,
+              "groups": 10,
+              "max_abs_activation_error": 1.4210854715202004e-14,
+              "max_abs_partial_error": 1.4210854715202004e-14,
+              "max_abs_rank_merge_error": 5.329070518200751e-15,
+              "private_pages_bytes": 425984,
+              "tile": 1
+            },
+            {
+              "all_ten_ranks": true,
+              "count": 1,
+              "dtype": 1,
+              "full_offset_tail_status_and_erasure_checks": true,
+              "groups": 10,
+              "max_abs_activation_error": 0.0,
+              "max_abs_partial_error": 1.3877787807814457e-17,
+              "max_abs_rank_merge_error": 1.3877787807814457e-17,
+              "private_pages_bytes": 425984,
+              "tile": 8
+            },
+            {
+              "all_ten_ranks": true,
+              "count": 1,
+              "dtype": 1,
+              "full_offset_tail_status_and_erasure_checks": true,
+              "groups": 10,
+              "max_abs_activation_error": 0.0,
+              "max_abs_partial_error": 1.3877787807814457e-17,
+              "max_abs_rank_merge_error": 1.3877787807814457e-17,
+              "private_pages_bytes": 425984,
+              "tile": 1
+            },
+            {
+              "all_ten_ranks": true,
+              "count": 1,
+              "dtype": 30,
+              "full_offset_tail_status_and_erasure_checks": true,
+              "groups": 10,
+              "max_abs_activation_error": 0.0,
+              "max_abs_partial_error": 2.842170943040401e-14,
+              "max_abs_rank_merge_error": 1.4210854715202004e-14,
+              "private_pages_bytes": 425984,
+              "tile": 8
+            },
+            {
+              "all_ten_ranks": true,
+              "count": 1,
+              "dtype": 30,
+              "full_offset_tail_status_and_erasure_checks": true,
+              "groups": 10,
+              "max_abs_activation_error": 0.0,
+              "max_abs_partial_error": 2.842170943040401e-14,
+              "max_abs_rank_merge_error": 1.4210854715202004e-14,
+              "private_pages_bytes": 425984,
+              "tile": 1
+            },
+            {
+              "all_ten_ranks": true,
+              "count": 1,
+              "dtype": 12,
+              "full_offset_tail_status_and_erasure_checks": true,
+              "groups": 10,
+              "max_abs_activation_error": 0.0,
+              "max_abs_partial_error": 8.881784197001252e-16,
+              "max_abs_rank_merge_error": 6.661338147750939e-16,
+              "private_pages_bytes": 425984,
+              "tile": 8
+            },
+            {
+              "all_ten_ranks": true,
+              "count": 1,
+              "dtype": 12,
+              "full_offset_tail_status_and_erasure_checks": true,
+              "groups": 10,
+              "max_abs_activation_error": 0.0,
+              "max_abs_partial_error": 8.881784197001252e-16,
+              "max_abs_rank_merge_error": 6.661338147750939e-16,
+              "private_pages_bytes": 425984,
+              "tile": 1
+            },
+            {
+              "all_ten_ranks": true,
+              "count": 1,
+              "dtype": 6,
+              "full_offset_tail_status_and_erasure_checks": true,
+              "groups": 10,
+              "max_abs_activation_error": 9.094947017729282e-13,
+              "max_abs_partial_error": 7.275957614183426e-12,
+              "max_abs_rank_merge_error": 7.275957614183426e-12,
+              "private_pages_bytes": 425984,
+              "tile": 8
+            },
+            {
+              "all_ten_ranks": true,
+              "count": 1,
+              "dtype": 6,
+              "full_offset_tail_status_and_erasure_checks": true,
+              "groups": 10,
+              "max_abs_activation_error": 9.094947017729282e-13,
+              "max_abs_partial_error": 7.275957614183426e-12,
+              "max_abs_rank_merge_error": 7.275957614183426e-12,
+              "private_pages_bytes": 425984,
+              "tile": 1
+            },
+            {
+              "all_ten_ranks": true,
+              "count": 1,
+              "dtype": 14,
+              "full_offset_tail_status_and_erasure_checks": true,
+              "groups": 10,
+              "max_abs_activation_error": 1.1368683772161603e-13,
+              "max_abs_partial_error": 5.684341886080802e-14,
+              "max_abs_rank_merge_error": 3.197442310920451e-14,
+              "private_pages_bytes": 425984,
+              "tile": 8
+            },
+            {
+              "all_ten_ranks": true,
+              "count": 1,
+              "dtype": 14,
+              "full_offset_tail_status_and_erasure_checks": true,
+              "groups": 10,
+              "max_abs_activation_error": 1.1368683772161603e-13,
+              "max_abs_partial_error": 5.684341886080802e-14,
+              "max_abs_rank_merge_error": 3.197442310920451e-14,
+              "private_pages_bytes": 425984,
+              "tile": 1
+            },
+            {
+              "all_ten_ranks": true,
+              "count": 1,
+              "dtype": 8,
+              "full_offset_tail_status_and_erasure_checks": true,
+              "groups": 10,
+              "max_abs_activation_error": 3.552713678800501e-15,
+              "max_abs_partial_error": 2.220446049250313e-16,
+              "max_abs_rank_merge_error": 2.220446049250313e-16,
+              "private_pages_bytes": 425984,
+              "tile": 8
+            },
+            {
+              "all_ten_ranks": true,
+              "count": 1,
+              "dtype": 8,
+              "full_offset_tail_status_and_erasure_checks": true,
+              "groups": 10,
+              "max_abs_activation_error": 3.552713678800501e-15,
+              "max_abs_partial_error": 2.220446049250313e-16,
+              "max_abs_rank_merge_error": 2.220446049250313e-16,
+              "private_pages_bytes": 425984,
+              "tile": 1
+            }
+          ],
+          "main_zero_bytes": 141950976,
+          "main_zero_buffers": 994
+        }
+      ]
+    },
+    {
+      "card": "nvidia",
+      "operators": [
+        {
+          "mode": "gdn-chunk-probe",
+          "receipt_path": "/media/jmicko/faststore/kuno-development/native-single-operator-build-20261006-v1/gdn-chunk-probe-nvidia.json",
+          "receipt_sha256": "a858720a9f63ca30af9ca98fe07ad8b40efa07ca62c549b61fc22c92ab5ad876",
+          "run_proof": {
+            "scope": "fixed-public-kernel-operator-numeric-only",
+            "card": "nvidia",
+            "mode": "gdn-chunk-probe",
+            "executable_sha256": "61aee450ea2b0b8bd2fbd57feb310a7268607929e8f681f6fbc0d85efa353a35",
+            "cargo_artifacts_sha256": "610a7d474f765f390f8712ab3dc29384c7c8e54bdbed82dbdfca60d7c60c8bd4",
+            "source_commit": "1b486e779b41e3e8397576a2f81b17eec9abe20f",
+            "worker_exit_status": 0,
+            "markers": [
+              "verified_lab_limits swap_max=0 core_soft=0 core_hard=0 memory_max=8589934592",
+              "public_gdn_chunk_acceptance cases=10 main_buffers=160 main_bytes=113868800 context_retired=false",
+              "Finished with result: success",
+              "Main processes terminated with: code=exited/status=0",
+              "Service runtime: 2.670s",
+              "Memory peak: 256.0K",
+              "Memory swap peak: 0B"
+            ],
+            "model_receipt_exists": true
+          },
+          "run_record_sha256": "6c65c0fa27a4b495894bee3c727e5101c910436fd9cee05d359b8f877b109b60",
+          "case_count": 10,
+          "streaming_cases": [
+            {
+              "cancel_before_enqueue_and_after_fence_rejected": true,
+              "count": 1,
+              "finite_control_failure_rejected": true,
+              "full_main_zero_audit": true,
+              "head_dim": 7,
+              "immutable_old": true,
+              "inactive_gaps_padding_preserved": true,
+              "key_heads": 2,
+              "main_full_span_bytes": 524288,
+              "max_abs_chunk_error": 0.0,
+              "max_abs_core_error": 1.4901161193847656e-08,
+              "max_abs_single_error": 0.0,
+              "max_batch": 8,
+              "non_single_policy_count_rejected": true,
+              "nonfinite_old_state_rejected": true,
+              "old_next_alias_rejected": true,
+              "recurrence_policy": "single-streaming",
+              "runtime_spans": {
+                "inspected_buffers": 17,
+                "inspected_bytes": 427008,
+                "readback_bytes": 262656,
+                "uniform_bytes": 256,
+                "upload_bytes": 164096
+              },
+              "value_heads": 6
+            },
+            {
+              "cancel_before_enqueue_and_after_fence_rejected": true,
+              "count": 1,
+              "finite_control_failure_rejected": true,
+              "full_main_zero_audit": true,
+              "head_dim": 128,
+              "immutable_old": true,
+              "inactive_gaps_padding_preserved": true,
+              "key_heads": 16,
+              "main_full_span_bytes": 22249472,
+              "max_abs_chunk_error": 0.0,
+              "max_abs_core_error": 1.862645149230957e-08,
+              "max_abs_single_error": 0.0,
+              "max_batch": 8,
+              "non_single_policy_count_rejected": true,
+              "nonfinite_old_state_rejected": true,
+              "old_next_alias_rejected": true,
+              "recurrence_policy": "single-streaming",
+              "runtime_spans": {
+                "inspected_buffers": 17,
+                "inspected_bytes": 22610944,
+                "readback_bytes": 13664768,
+                "uniform_bytes": 256,
+                "upload_bytes": 8945920
+              },
+              "value_heads": 48
+            }
+          ],
+          "main_zero_bytes": 113868800,
+          "main_zero_buffers": 160
+        },
+        {
+          "mode": "grouped-moe-chunk-probe",
+          "receipt_path": "/media/jmicko/faststore/kuno-development/native-single-operator-build-20261006-v1/grouped-moe-chunk-probe-nvidia.json",
+          "receipt_sha256": "4c33aeb40f54162ad34c5273bb67dc4c50c11981808c91e389355bb3e5ac4342",
+          "run_proof": {
+            "scope": "fixed-public-kernel-operator-numeric-only",
+            "card": "nvidia",
+            "mode": "grouped-moe-chunk-probe",
+            "executable_sha256": "61aee450ea2b0b8bd2fbd57feb310a7268607929e8f681f6fbc0d85efa353a35",
+            "cargo_artifacts_sha256": "610a7d474f765f390f8712ab3dc29384c7c8e54bdbed82dbdfca60d7c60c8bd4",
+            "source_commit": "1b486e779b41e3e8397576a2f81b17eec9abe20f",
+            "worker_exit_status": 0,
+            "markers": [
+              "verified_lab_limits swap_max=0 core_soft=0 core_hard=0 memory_max=8589934592",
+              "public_grouped_routed_acceptance cases=46 failures=12 main_bytes=141950976 main_buffers=994",
+              "Finished with result: success",
+              "Main processes terminated with: code=exited/status=0",
+              "Service runtime: 58.555s",
+              "Memory peak: 256.0K",
+              "Memory swap peak: 0B"
+            ],
+            "model_receipt_exists": true
+          },
+          "run_record_sha256": "1ba0b9c5d5424430d4e30ac80242913076a81f355ff8b0ef59384fa395d3e7a8",
+          "routed_cases": 46,
+          "expected_failure_cases": 12,
+          "all_format_cases": [
+            {
+              "all_ten_ranks": true,
+              "count": 1,
+              "dtype": 0,
+              "full_offset_tail_status_and_erasure_checks": true,
+              "groups": 10,
+              "max_abs_activation_error": 1.4210854715202004e-14,
+              "max_abs_partial_error": 1.4210854715202004e-14,
+              "max_abs_rank_merge_error": 5.329070518200751e-15,
+              "private_pages_bytes": 425984,
+              "tile": 8
+            },
+            {
+              "all_ten_ranks": true,
+              "count": 1,
+              "dtype": 0,
+              "full_offset_tail_status_and_erasure_checks": true,
+              "groups": 10,
+              "max_abs_activation_error": 1.4210854715202004e-14,
+              "max_abs_partial_error": 1.4210854715202004e-14,
+              "max_abs_rank_merge_error": 5.329070518200751e-15,
+              "private_pages_bytes": 425984,
+              "tile": 1
+            },
+            {
+              "all_ten_ranks": true,
+              "count": 1,
+              "dtype": 1,
+              "full_offset_tail_status_and_erasure_checks": true,
+              "groups": 10,
+              "max_abs_activation_error": 1.1102230246251565e-16,
+              "max_abs_partial_error": 2.7755575615628914e-17,
+              "max_abs_rank_merge_error": 0.0,
+              "private_pages_bytes": 425984,
+              "tile": 8
+            },
+            {
+              "all_ten_ranks": true,
+              "count": 1,
+              "dtype": 1,
+              "full_offset_tail_status_and_erasure_checks": true,
+              "groups": 10,
+              "max_abs_activation_error": 1.1102230246251565e-16,
+              "max_abs_partial_error": 2.7755575615628914e-17,
+              "max_abs_rank_merge_error": 0.0,
+              "private_pages_bytes": 425984,
+              "tile": 1
+            },
+            {
+              "all_ten_ranks": true,
+              "count": 1,
+              "dtype": 30,
+              "full_offset_tail_status_and_erasure_checks": true,
+              "groups": 10,
+              "max_abs_activation_error": 0.0,
+              "max_abs_partial_error": 2.842170943040401e-14,
+              "max_abs_rank_merge_error": 1.4210854715202004e-14,
+              "private_pages_bytes": 425984,
+              "tile": 8
+            },
+            {
+              "all_ten_ranks": true,
+              "count": 1,
+              "dtype": 30,
+              "full_offset_tail_status_and_erasure_checks": true,
+              "groups": 10,
+              "max_abs_activation_error": 0.0,
+              "max_abs_partial_error": 2.842170943040401e-14,
+              "max_abs_rank_merge_error": 1.4210854715202004e-14,
+              "private_pages_bytes": 425984,
+              "tile": 1
+            },
+            {
+              "all_ten_ranks": true,
+              "count": 1,
+              "dtype": 12,
+              "full_offset_tail_status_and_erasure_checks": true,
+              "groups": 10,
+              "max_abs_activation_error": 3.552713678800501e-15,
+              "max_abs_partial_error": 8.881784197001252e-16,
+              "max_abs_rank_merge_error": 6.661338147750939e-16,
+              "private_pages_bytes": 425984,
+              "tile": 8
+            },
+            {
+              "all_ten_ranks": true,
+              "count": 1,
+              "dtype": 12,
+              "full_offset_tail_status_and_erasure_checks": true,
+              "groups": 10,
+              "max_abs_activation_error": 3.552713678800501e-15,
+              "max_abs_partial_error": 8.881784197001252e-16,
+              "max_abs_rank_merge_error": 6.661338147750939e-16,
+              "private_pages_bytes": 425984,
+              "tile": 1
+            },
+            {
+              "all_ten_ranks": true,
+              "count": 1,
+              "dtype": 6,
+              "full_offset_tail_status_and_erasure_checks": true,
+              "groups": 10,
+              "max_abs_activation_error": 9.094947017729282e-13,
+              "max_abs_partial_error": 7.275957614183426e-12,
+              "max_abs_rank_merge_error": 0.0,
+              "private_pages_bytes": 425984,
+              "tile": 8
+            },
+            {
+              "all_ten_ranks": true,
+              "count": 1,
+              "dtype": 6,
+              "full_offset_tail_status_and_erasure_checks": true,
+              "groups": 10,
+              "max_abs_activation_error": 9.094947017729282e-13,
+              "max_abs_partial_error": 7.275957614183426e-12,
+              "max_abs_rank_merge_error": 0.0,
+              "private_pages_bytes": 425984,
+              "tile": 1
+            },
+            {
+              "all_ten_ranks": true,
+              "count": 1,
+              "dtype": 14,
+              "full_offset_tail_status_and_erasure_checks": true,
+              "groups": 10,
+              "max_abs_activation_error": 0.0,
+              "max_abs_partial_error": 7.105427357601002e-14,
+              "max_abs_rank_merge_error": 3.8191672047105385e-14,
+              "private_pages_bytes": 425984,
+              "tile": 8
+            },
+            {
+              "all_ten_ranks": true,
+              "count": 1,
+              "dtype": 14,
+              "full_offset_tail_status_and_erasure_checks": true,
+              "groups": 10,
+              "max_abs_activation_error": 0.0,
+              "max_abs_partial_error": 7.105427357601002e-14,
+              "max_abs_rank_merge_error": 3.8191672047105385e-14,
+              "private_pages_bytes": 425984,
+              "tile": 1
+            },
+            {
+              "all_ten_ranks": true,
+              "count": 1,
+              "dtype": 8,
+              "full_offset_tail_status_and_erasure_checks": true,
+              "groups": 10,
+              "max_abs_activation_error": 3.552713678800501e-15,
+              "max_abs_partial_error": 2.220446049250313e-16,
+              "max_abs_rank_merge_error": 2.220446049250313e-16,
+              "private_pages_bytes": 425984,
+              "tile": 8
+            },
+            {
+              "all_ten_ranks": true,
+              "count": 1,
+              "dtype": 8,
+              "full_offset_tail_status_and_erasure_checks": true,
+              "groups": 10,
+              "max_abs_activation_error": 3.552713678800501e-15,
+              "max_abs_partial_error": 2.220446049250313e-16,
+              "max_abs_rank_merge_error": 2.220446049250313e-16,
+              "private_pages_bytes": 425984,
+              "tile": 1
+            }
+          ],
+          "main_zero_bytes": 141950976,
+          "main_zero_buffers": 994
+        }
+      ]
+    }
+  ]
+}

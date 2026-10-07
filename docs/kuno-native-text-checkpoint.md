@@ -93,8 +93,36 @@ All live jobs use actual8-GiB memory/swap0/core0 guards. Detailed identities,
 hashes, counters and limitations are in
 `apps/kuno/benchmarks/text/receipts/rust-native-tile-and-cpu-gpu-device-20261006.json`.
 Single-member grouped MoE and streaming single-token GDN are the next isolated
-source candidates; both remain default-off and need owner acceptance. No new
-Ollama runs, frontend/API/routing, installation, release or hardware reset occurs.
+candidates. Their later operator acceptance follows below; whole-model and
+performance acceptance remain separate. No new Ollama runs, frontend/API/routing,
+installation, release or hardware reset occurs.
+
+### Single-token kernel operator acceptance
+
+Root integrates streaming GDN `a0b9d5f`, single-member MoE `d07154f`, and
+model-boundary policy/count gates with two probe compile corrections `1b486e7`.
+416 host tests pass. Independent source reviews cover both candidates and the
+model seam. The profile controls and their strict validators are still being
+integrated; no production selection changes.
+
+The exact normal release build at `1b486e7` has SHA256
+`61aee450ea2b0b8bd2fbd57feb310a7268607929e8f681f6fbc0d85efa353a35`.
+Both GPUs pass the ten-case GDN probe, including odd/actual single-streaming
+shapes against unchanged chunk, scalar GPU and independent core references.
+Both pass 46 routed-MoE cases, 12 expected failure cases, and 14 independent
+packed-format cases (seven original formats, tiles8/1). Count/map guards,
+immutable old state, finite checks, inactive offsets/tails/status, full owning
+erasure and runtime I/O audits remain enforced. GDN audits160 MAIN owners /
+113,868,800 bytes; grouped MoE audits994 /141,950,976 bytes across the probe.
+Every protected process exits normally with actual8-GiB, swap0/core0 guards and
+no context retirement. These are numerical receipts, not benchmark samples.
+
+Durable build/transcript/run records are under
+`/media/jmicko/faststore/kuno-development/native-single-operator-build-20261006-v1`;
+aggregate hashes and numerical proofs are in
+`apps/kuno/benchmarks/text/receipts/rust-native-single-kernel-operator-20261006.json`.
+Full model continuation/cancellation/recovery and compiler-idle timing still
+need acceptance before selecting either candidate.
 
 The user selected **10 decode tokens/s** as the working native performance target
 and explicitly deferred additional/repeated Ollama baseline tests to conserve
