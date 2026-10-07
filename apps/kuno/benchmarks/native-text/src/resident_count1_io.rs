@@ -41,6 +41,8 @@ pub(crate) struct Count1RouterInput {
     logits: RouterLogits,
     mixed: Box<Zeroizing<[f32; MIXED_WORDS]>>,
     origin: Option<Origin>,
+    gpu_selection: Zeroizing<[(u32, f32); 10]>,
+    gpu_selected: bool,
 }
 struct Origin {
     binding: kuno_text::model::GraphBindingId,
@@ -54,6 +56,8 @@ impl Count1RouterInput {
             logits: RouterLogits::zero(1)?,
             mixed: Box::new(Zeroizing::new([0.; MIXED_WORDS])),
             origin: None,
+            gpu_selection: Zeroizing::new([(0, 0.); 10]),
+            gpu_selected: false,
         };
         if out
             .owned_bytes()
@@ -66,6 +70,9 @@ impl Count1RouterInput {
     }
     pub(crate) fn logits(&self) -> &RouterLogits {
         &self.logits
+    }
+    pub(crate) fn gpu_selection(&self) -> Option<&[(u32, f32); 10]> {
+        self.gpu_selected.then_some(&self.gpu_selection)
     }
     pub(crate) fn mixed(&self) -> &[f32; MIXED_WORDS] {
         &self.mixed
@@ -97,7 +104,7 @@ impl Count1RouterInput {
         }
         Ok(())
     }
-    fn accept(&mut self, bytes: &[u8]) -> Result<()> {
+    fn accept(&mut self, bytes: &[u8], gpu_router: bool) -> Result<()> {
         if bytes.len() != ROUTER_BYTES || word(bytes, FAULT_FIRST)? != 0 {
             return Err(error());
         }
@@ -113,12 +120,60 @@ impl Count1RouterInput {
                 } else {
                     self.logits.rows[0][i - LOGIT_FIRST] = value;
                 }
+            } else if gpu_router && (crate::router_gpu::FIRST..crate::router_gpu::END).contains(&i)
+            {
+                let local = i - crate::router_gpu::FIRST;
+                if local.is_multiple_of(2) {
+                    self.gpu_selection[local / 2].0 = bits;
+                } else {
+                    self.gpu_selection[local / 2].1 = f32::from_bits(bits);
+                }
             } else if bits != 0 {
                 return Err(error());
             }
         }
+        if gpu_router {
+            validate_gpu_selection(&self.logits.rows[0], &self.gpu_selection)?;
+            self.gpu_selected = true;
+        }
         Ok(())
     }
+}
+fn validate_gpu_selection(logits: &[f32; EXPERTS], selected: &[(u32, f32); 10]) -> Result<()> {
+    if logits.iter().any(|value| !value.is_finite()) {
+        return Err(error());
+    }
+    let mut sum = Zeroizing::new(0.0_f32);
+    for (rank, &(id, weight)) in selected.iter().enumerate() {
+        if id as usize >= EXPERTS
+            || !weight.is_finite()
+            || !(0. ..=1.).contains(&weight)
+            || selected[..rank].iter().any(|&(old, _)| old == id)
+        {
+            return Err(error());
+        }
+        if rank > 0 {
+            let previous = selected[rank - 1].0 as usize;
+            if logits[previous] < logits[id as usize]
+                || (logits[previous] == logits[id as usize] && previous > id as usize)
+            {
+                return Err(error());
+            }
+        }
+        *sum += weight;
+    }
+    if (*sum - 1.).abs() > 2e-5 {
+        return Err(error());
+    }
+    let last = selected[9].0 as usize;
+    for (id, &value) in logits.iter().enumerate() {
+        if !selected.iter().any(|&(chosen, _)| chosen as usize == id)
+            && (value > logits[last] || (value == logits[last] && id < last))
+        {
+            return Err(error());
+        }
+    }
+    Ok(())
 }
 
 #[cube(launch)]
@@ -244,6 +299,7 @@ pub(crate) fn read_count1_router_input(
     cancel: &AtomicBool,
     layer: usize,
     start: u64,
+    gpu_router: bool,
 ) -> Result<Count1RouterInput> {
     guarded(admission, || {
         active(arena, admission, cancel)?;
@@ -287,13 +343,23 @@ pub(crate) fn read_count1_router_input(
             iv.first,
             rv.first,
         );
+        if gpu_router {
+            crate::router_gpu::top10::launch::<WgpuRuntime>(
+                client,
+                CubeCount::Static(1, 1, 1),
+                CubeDim::new_1d(64),
+                u::raw_arg(full_private(arena, router, rv.words)?, ROUTER_BYTES / 4)?,
+                u::raw_arg(packet_handle.clone(), ROUTER_BYTES / 4)?,
+                rv.first,
+            );
+        }
         let retired = admission.retired_context();
         admission.readback_count1_bridge(cancel, || {
             let mut out = Count1RouterInput::zero()?;
             let mut out = completed_map(
                 || read(arena, packet_handle, &retired),
                 |bytes| {
-                    out.accept(bytes)?;
+                    out.accept(bytes, gpu_router)?;
                     Ok(out)
                 },
             )?;
@@ -312,6 +378,60 @@ pub(crate) fn read_count1_router_input(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn gpu_packet_selection_is_typed_sorted_unique_normalized_and_fully_bounded() {
+        let mut bytes = vec![0_u8; ROUTER_BYTES];
+        for rank in 0..10 {
+            let at = crate::router_gpu::FIRST + rank * 2;
+            bytes[at * 4..at * 4 + 4].copy_from_slice(&(rank as u32).to_le_bytes());
+            bytes[at * 4 + 4..at * 4 + 8].copy_from_slice(&0.1_f32.to_bits().to_le_bytes());
+        }
+        let mut out = Count1RouterInput::zero().unwrap();
+        out.accept(&bytes, true).unwrap();
+        assert_eq!(out.gpu_selection().unwrap()[9], (9, 0.1));
+        assert!(out.owned_bytes() + ROUTER_BYTES <= ROUTER_HOST_CAP);
+        assert!(
+            Count1RouterInput::zero()
+                .unwrap()
+                .accept(&bytes, false)
+                .is_err()
+        );
+        for (at, bits) in [
+            (crate::router_gpu::FIRST, 512),
+            (crate::router_gpu::FIRST + 2, 0),
+            (crate::router_gpu::FIRST + 18, 19),
+            (crate::router_gpu::FIRST + 1, f32::NAN.to_bits()),
+            (crate::router_gpu::FIRST + 1, (-0.1_f32).to_bits()),
+            (crate::router_gpu::FIRST + 1, 0.2_f32.to_bits()),
+            (crate::router_gpu::END, 1),
+            (FAULT_FIRST, 1),
+            (8191, 1),
+        ] {
+            let mut bad = bytes.clone();
+            bad[at * 4..at * 4 + 4].copy_from_slice(&bits.to_le_bytes());
+            assert!(
+                Count1RouterInput::zero()
+                    .unwrap()
+                    .accept(&bad, true)
+                    .is_err()
+            );
+        }
+    }
+    #[test]
+    fn gpu_router_eligibility_checks_all_logits_and_preserves_zero_weight_ranks() {
+        let mut logits = [0.; EXPERTS];
+        logits[17] = 1e20;
+        let mut selected = [(0_u32, 0.); 10];
+        selected[0] = (17, 1.);
+        for (rank, entry) in selected.iter_mut().enumerate().skip(1) {
+            *entry = ((rank - 1) as u32, 0.);
+        }
+        validate_gpu_selection(&logits, &selected).unwrap();
+        logits[30] = 1.;
+        assert!(validate_gpu_selection(&logits, &selected).is_err());
+        logits[30] = f32::NAN;
+        assert!(validate_gpu_selection(&logits, &selected).is_err());
+    }
     fn fixture() -> Vec<u8> {
         let mut bytes = vec![0; ROUTER_BYTES];
         for i in 0..FAULT_FIRST {
@@ -328,7 +448,7 @@ mod tests {
     fn reused_packet_preserves_signed_values_and_rejects_full_fault_tail() {
         let bytes = fixture();
         let mut out = Count1RouterInput::zero().unwrap();
-        out.accept(&bytes).unwrap();
+        out.accept(&bytes, false).unwrap();
         assert_eq!(out.mixed()[0].to_bits(), (-0f32).to_bits());
         assert!(out.owned_bytes() + ROUTER_BYTES <= ROUTER_HOST_CAP);
         for at in [0, LOGIT_FIRST, FAULT_FIRST, FAULT_FIRST + 1, 4096, 8191] {
@@ -339,7 +459,12 @@ mod tests {
                 1
             };
             changed[at * 4..at * 4 + 4].copy_from_slice(&value.to_le_bytes());
-            assert!(Count1RouterInput::zero().unwrap().accept(&changed).is_err());
+            assert!(
+                Count1RouterInput::zero()
+                    .unwrap()
+                    .accept(&changed, false)
+                    .is_err()
+            );
         }
     }
 

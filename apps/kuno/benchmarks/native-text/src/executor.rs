@@ -649,6 +649,8 @@ struct Cached {
 /// The lifetime of this executor is one fixed synthetic experiment. Its cache
 /// keys/ranks must never be persisted or reused as private request history.
 pub struct GpuExecutor<'a> {
+    pub gpu_router: bool,
+    pub gpu_router_calls: u64,
     pub fast_dense: bool,
     pub fast_dense_calls: u64,
     pub fast_dense_fault: bool,
@@ -783,6 +785,8 @@ impl<'a> GpuExecutor<'a> {
             tick: 0,
             banks: BTreeMap::new(),
             batch_moe: None,
+            gpu_router: false,
+            gpu_router_calls: 0,
             fast_dense: false,
             fast_dense_calls: 0,
             fast_dense_fault: false,

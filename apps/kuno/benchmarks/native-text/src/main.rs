@@ -41,6 +41,7 @@ mod resident_qsa;
 mod resident_util;
 mod residual_batch_gpu;
 mod residual_gpu;
+mod router_gpu;
 mod small_cpu;
 mod token_waves;
 mod transient_probe;
@@ -676,6 +677,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let large_weight_cache = count1_environment_opt_in(&mode, "KUNO_LAB_LARGE_WEIGHT_CACHE")?;
     let compact_info = count1_environment_opt_in(&mode, "KUNO_LAB_COMPACT_INFO")?;
     let batch_tasks = count1_environment_opt_in(&mode, "KUNO_LAB_BATCH_TASKS")?;
+    let gpu_router = count1_environment_opt_in(&mode, "KUNO_LAB_GPU_ROUTER")?;
+    if gpu_router && count1_hybrid_cap != Some(10) {
+        return Err("GPU routing requires protected cap10 hybrid mode".into());
+    }
     let defer_router_io = count1_environment_opt_in(&mode, "KUNO_LAB_DEFER_ROUTER_IO")?;
     if defer_router_io && (!compact_info || count1_hybrid_cap != Some(10)) {
         return Err("Deferred router IO requires compact protected cap10 hybrid mode".into());
@@ -1154,6 +1159,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "public_actual_numeric_boundaries_complete pairs=4 owners=8 owned_cleanup=true whole_model_numeric_accepted=false performance_accepted=false"
             );
             return Ok(());
+        }
+        if gpu_router {
+            router_gpu::probe(&client)?;
+            cubecl::future::block_on(client.sanitize_transient_io_audited())?;
         }
         for (rows, cols) in [(3usize, 5usize), (137, 257)] {
             let weights: Vec<f32> = (0..rows * cols)
@@ -1815,6 +1824,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Some(retired) = &transient_context {
                 executor.enable_transient_resident(retired.clone())?;
             }
+            executor.gpu_router = gpu_router;
             executor.fast_dense = fast_gpu;
             executor.fast_dense_fault = fast_gpu_fault;
             executor.token_io_checkpoint = token_checkpoint || defer_router_io;
@@ -2032,6 +2042,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 receipt["mapped_weights"] = serde_json::json!(mapped_weights);
                 receipt["observed_mapped_weights"] = serde_json::json!(file.weights_mapped());
                 receipt["kernel_profile"] = serde_json::json!(kernel_profile);
+                receipt["gpu_router"] = serde_json::json!(gpu_router);
+                receipt["observed_gpu_router_calls"] = serde_json::json!(executor.gpu_router_calls);
                 receipt["fast_gpu"] = serde_json::json!(fast_gpu);
                 receipt["observed_fast_dense_calls"] = serde_json::json!(executor.fast_dense_calls);
                 receipt["fast_gpu_fault"] = serde_json::json!(fast_gpu_fault);
@@ -2196,6 +2208,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if let Some(retired) = &transient_context {
                     executor.enable_transient_resident(retired.clone())?;
                 }
+                executor.gpu_router = gpu_router;
                 executor.fast_dense = fast_gpu;
                 executor.fast_dense_fault = fast_gpu_fault;
                 executor.token_io_checkpoint = token_checkpoint || defer_router_io;
@@ -2301,6 +2314,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if let Some(retired) = &transient_context {
                         executor.enable_transient_resident(retired.clone())?;
                     }
+                    executor.gpu_router = gpu_router;
                     executor.fast_dense = fast_gpu;
                     executor.fast_dense_fault = fast_gpu_fault;
                     executor.token_io_checkpoint = token_checkpoint || defer_router_io;

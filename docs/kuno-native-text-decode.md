@@ -141,9 +141,30 @@ requires cancellation at layer47 and FIVE complete MAIN/source zero audits,
 so a early-only cancellation test cannot certify the largest deferred epoch.
 Bound exhaustion must reject/poison/erase without fallback. A larger epoch may
 cost more to audit at the final boundary; only actual protected measurements
-can establish a benefit. GPU routing and whole-layer CPU/GPU placement remain
-separate unimplemented strategies; deferred IO cannot remove mixed-expert host
-dependencies by itself.
+can establish a benefit. Deferred IO cannot remove mixed-expert host dependencies
+by itself. Whole-layer CPU/GPU placement remains separately unimplemented.
+
+### Explicit GPU top-k routing experiment
+
+`KUNO_LAB_GPU_ROUTER=1` / `--gpu-router` selects GPU top10 routing only in the
+protected count1 cap10 hybrid fixture. A64-lane workgroup selects the ten
+largest original router logits with lowest expert ID breaking equal-logit ties,
+then computes selected-expert softmax in f32. The existing owning router packet
+contains the ten IDs and weights in a defined additional20-word interval;
+every other owning word, mixed input, original logits and fault are still
+validated. No new private buffer, extra MAIN or unbounded expert count is added.
+Completed maps, guarded host selection ownership, cancellation, finality and
+full erasure stay mandatory. Prefill and ordinary routing remain unchanged.
+
+This changes softmax precision from the reference's f64 intermediates and can
+resolve extremely close probability ties differently. Fixed-public routing
+probes must check IDs, ties, finite nonnegative normalized weights and a declared
+absolute/relative tolerance against the independent CPU router before model
+work. Original full short/long output IDs remain acceptance gates; failures do
+not fall back or relax the validator. The receipt records actual completed
+GPU router bridges, exactly48 per accepted decode step. CPU-assigned experts
+still require a completed bridge; this alone does not eliminate host dependency,
+establish whole-layer placement or certify production quality/throughput.
 
 Source-only proposal, 2026-10-05. Prepared by the resident-MoE child after the native MAX8 adapter handoff. No code, GPU, service, model-payload read, benchmark or default change accompanies this proposal. Parent owns whole-model batching correctness, admission, device acceptance and integration. This is a later decode experiment; MAX8 prompt batching alone cannot establish faster hot decode.
 

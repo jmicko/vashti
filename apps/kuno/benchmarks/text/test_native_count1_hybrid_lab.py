@@ -157,6 +157,21 @@ class HybridLabTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 LAB.worker_environment("/original/model", "/public/receipt", mapped=bad)
 
+    def test_gpu_routing_pins_device_controls_actual_calls_and_finite_fixture(self):
+        value=receipt("intel",10)
+        value.update(gpu_router=True,observed_gpu_router_calls=336)
+        output=completion(10)+"\nrust_gpu_router cases=6 ranks=10 numeric_and_owning_checks=true\n"
+        LAB.validate_receipt(value,"intel",10,output,gpu_router=True)
+        for field,bads in (("gpu_router",(False,1,"true")),("observed_gpu_router_calls",(0,True,"336",335,337))):
+            for bad in bads:
+                wrong=copy.deepcopy(value);wrong[field]=bad
+                with self.assertRaises(ValueError):LAB.validate_receipt(wrong,"intel",10,output,gpu_router=True)
+        with self.assertRaises(ValueError):LAB.validate_receipt(value,"intel",10,completion(10),gpu_router=True)
+        with self.assertRaises(ValueError):LAB.validate_receipt(value,"intel",0,output,gpu_router=True)
+        with mock.patch.dict(os.environ,{"KUNO_LAB_GPU_ROUTER":"auto"}):
+            self.assertEqual(LAB.worker_environment("/original/model","/public/receipt",gpu_router=False)["KUNO_LAB_GPU_ROUTER"],"0")
+            self.assertEqual(LAB.worker_environment("/original/model","/public/receipt",gpu_router=True)["KUNO_LAB_GPU_ROUTER"],"1")
+
     def test_both_caps_and_cards_require_fixed_inventory_and_actual_cpu_work(self):
         for card in ("intel", "nvidia"):
             for cap in (0, 10):

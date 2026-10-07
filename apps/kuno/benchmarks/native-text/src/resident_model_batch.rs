@@ -1180,6 +1180,7 @@ impl Workspace {
                     cancel,
                     layer,
                     *start as u64,
+                    e.gpu_router,
                 )?)
             } else {
                 None
@@ -1210,13 +1211,34 @@ impl Workspace {
             };
             *m.phase_ns.entry("native_router_fence").or_default() +=
                 router_fence_start.elapsed().as_nanos();
+            if e.gpu_router {
+                if hybrid_packet
+                    .as_ref()
+                    .and_then(|packet| packet.gpu_selection())
+                    .is_none()
+                {
+                    return Err(error());
+                }
+                e.gpu_router_calls = e
+                    .gpu_router_calls
+                    .checked_add(1)
+                    .ok_or(Error::ArithmeticOverflow)?;
+            }
             let expert_start = Instant::now();
             let mut routes = token_waves::Input::new(*count, self.moe.capacity(), ROUTER)
                 .map_err(|_| error())?;
             for token in 0..*count {
-                let selection =
-                    ops::router_topk_guarded(logits.row(token)?, 10, true).map_err(u::fault)?;
-                for (rank, &(expert, probability)) in selection.as_slice().iter().enumerate() {
+                let selection = if e.gpu_router {
+                    None
+                } else {
+                    Some(ops::router_topk_guarded(logits.row(token)?, 10, true).map_err(u::fault)?)
+                };
+                let selected = match (&selection, &hybrid_packet) {
+                    (Some(selection), _) => selection.as_slice(),
+                    (None, Some(packet)) => packet.gpu_selection().ok_or(error())?.as_slice(),
+                    _ => return Err(error()),
+                };
+                for (rank, &(expert, probability)) in selected.iter().enumerate() {
                     routes
                         .set(token, rank, expert, probability)
                         .map_err(|_| error())?;
@@ -1283,6 +1305,7 @@ impl Workspace {
             m.lifecycle_hooks.late_combine(layer)?;
             Ok(())
         })?;
+        let final_head_start = Instant::now();
         if purpose == Purpose::LastLogits {
             let mut projector = ResidentBatchProjection {
                 executor: e,
@@ -1302,8 +1325,11 @@ impl Workspace {
                 )?
                 .enqueue_final_head(m.graph, &mut projector, m.b.logits)?;
         }
+        *m.phase_ns.entry("native_final_head_enqueue").or_default() +=
+            final_head_start.elapsed().as_nanos();
         self.gr.validate_all_consumers_queued()?;
         self.shared.validate_all_consumers_queued()?;
+        let final_proof_start = Instant::now();
         let (output, ple) = completed_proof(
             || {
                 Ok(if purpose == Purpose::LastLogits {
@@ -1348,6 +1374,10 @@ impl Workspace {
                 batch_io::read_fault(&m.arena, &m.admission, m.b.fault, cancel)
             },
         )?;
+        *m.phase_ns
+            .entry("native_completed_final_proofs")
+            .or_default() += final_proof_start.elapsed().as_nanos();
+        let family_start = Instant::now();
         let mut ga = {
             let (first_stage, first_receipt) = match (&m.layers[0], pending.gdn[0].as_ref()) {
                 (Layer::Gdn(s, _), Some(r)) => (s.as_ref(), r),
@@ -1415,6 +1445,9 @@ impl Workspace {
         // guarded proposal is discarded on all late failure/cancellation paths.
         let completed_cpu_misses =
             checked_cpu_miss_total(*m.completed_cpu_misses, ma.completed_cpu_misses())?;
+        *m.phase_ns.entry("native_all_family_preflight").or_default() +=
+            family_start.elapsed().as_nanos();
+        let commit_start = Instant::now();
         // Every actual-family permit has now preflighted. Remaining cancellation
         // or fallible commit failure terminally destroys the whole model; it
         // cannot publish output/cursor or resume a partially changed sequence.
@@ -1446,6 +1479,8 @@ impl Workspace {
         qa.finish(&m.arena, cancel)?;
         ma.finish(&m.arena, cancel)?;
         ple.commit(cancel)?;
+        *m.phase_ns.entry("native_all_family_commit").or_default() +=
+            commit_start.elapsed().as_nanos();
         e.check_original_bank_metadata(LAYERS, ORIGINAL_BANK_HOST)?;
         u::cancel(cancel)?;
         if self.poison.load(Ordering::Acquire) || m.retired.load(Ordering::Acquire) || m.poisoned {
