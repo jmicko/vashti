@@ -1,0 +1,286 @@
+{
+  "scope": "fixed-public-upload-eraser-batching-acceptance",
+  "source_commit": "200b38a80bd187a9cbb93989a209a342e08255ae",
+  "executable_sha256": "3ce1dbd109d0251a6e6c6a72ea67bdc779a41451accfce2fea41b00f45db3b68",
+  "native_host_tests": 436,
+  "runtime_host_tests": 49,
+  "python_native_lab_tests": 81,
+  "strict_native_clippy_accepted": true,
+  "full_75_128_fixture_accepted": false,
+  "matched_performance_accepted": false,
+  "production_accepted": false,
+  "cards": [
+    {
+      "card": "intel",
+      "operators": [
+        {
+          "mode": "gdn-chunk-probe",
+          "receipt_path": "/media/jmicko/faststore/kuno-development/native-erase-batch-build-20261006-v1/gdn-chunk-probe-intel.json",
+          "receipt_sha256": "18e995271b3c103f2ed20968ad59e443803bb71d627072ff76812a5894874f56",
+          "run_record_sha256": "d81a0256edc6e0952c4f89ff397d81dda1482a3b95b8e56080b5c00419d65c69",
+          "run_proof": {
+            "scope": "fixed-public-kernel-operator-numeric-only",
+            "card": "intel",
+            "mode": "gdn-chunk-probe",
+            "executable_sha256": "3ce1dbd109d0251a6e6c6a72ea67bdc779a41451accfce2fea41b00f45db3b68",
+            "cargo_artifacts_sha256": "e089c3563b646d45bf8954baa3cd5168ec6aa707ebb34a4e5b3587b7d97f467f",
+            "source_commit": "200b38a80bd187a9cbb93989a209a342e08255ae",
+            "worker_exit_status": 0,
+            "markers": [
+              "verified_lab_limits swap_max=0 core_soft=0 core_hard=0 memory_max=8589934592",
+              "public_gdn_chunk_acceptance cases=10 main_buffers=160 main_bytes=113868800 context_retired=false",
+              "Finished with result: success",
+              "Main processes terminated with: code=exited/status=0",
+              "Service runtime: 1.813s",
+              "Memory peak: 256.0K",
+              "Memory swap peak: 0B"
+            ],
+            "model_receipt_exists": true
+          }
+        },
+        {
+          "mode": "grouped-moe-chunk-probe",
+          "receipt_path": "/media/jmicko/faststore/kuno-development/native-erase-batch-build-20261006-v1/grouped-moe-chunk-probe-intel.json",
+          "receipt_sha256": "b0f7bda5fc44d45aff9332de8f80fa92f9100a98ac84d3db76a85de0100d59ff",
+          "run_record_sha256": "94c74fe98db01ee85cf28598838a60aebe42e14588b9440c0d6289f55c1d12a2",
+          "run_proof": {
+            "scope": "fixed-public-kernel-operator-numeric-only",
+            "card": "intel",
+            "mode": "grouped-moe-chunk-probe",
+            "executable_sha256": "3ce1dbd109d0251a6e6c6a72ea67bdc779a41451accfce2fea41b00f45db3b68",
+            "cargo_artifacts_sha256": "e089c3563b646d45bf8954baa3cd5168ec6aa707ebb34a4e5b3587b7d97f467f",
+            "source_commit": "200b38a80bd187a9cbb93989a209a342e08255ae",
+            "worker_exit_status": 0,
+            "markers": [
+              "verified_lab_limits swap_max=0 core_soft=0 core_hard=0 memory_max=8589934592",
+              "public_grouped_routed_acceptance cases=52 failures=12 main_bytes=153944064 main_buffers=1078",
+              "Finished with result: success",
+              "Main processes terminated with: code=exited/status=0",
+              "Service runtime: 55.770s",
+              "Memory peak: 256.0K",
+              "Memory swap peak: 0B"
+            ],
+            "model_receipt_exists": true
+          }
+        },
+        {
+          "mode": "resident-staged-hybrid-expert",
+          "receipt_path": "/media/jmicko/faststore/kuno-development/native-erase-batch-build-20261006-v1/resident-staged-hybrid-expert-intel.json",
+          "receipt_sha256": "89dd6fc115a71e75b0f8497b91a7d9479024dfcd235f94807ddf3ebd8d8909f8",
+          "run_record_sha256": "ef3e1d0d3eab2383a03f845d4fc0e355cf377e84948e3fb81b02a0d07737f0f9",
+          "run_proof": {
+            "scope": "fixed-public-staged-hybrid-expert-numeric-only",
+            "card": "intel",
+            "mode": "resident-staged-hybrid-expert",
+            "executable_sha256": "3ce1dbd109d0251a6e6c6a72ea67bdc779a41451accfce2fea41b00f45db3b68",
+            "cargo_artifacts_sha256": "e089c3563b646d45bf8954baa3cd5168ec6aa707ebb34a4e5b3587b7d97f467f",
+            "source_commit": "200b38a80bd187a9cbb93989a209a342e08255ae",
+            "worker_exit_status": 0,
+            "markers": [
+              "verified_lab_limits swap_max=0 core_soft=0 core_hard=0 memory_max=8589934592",
+              "public_staged_hybrid_expert_numeric_complete cases=8 ranks=10 owned_cleanup=true context_retired=false performance_accepted=false",
+              "Finished with result: success",
+              "Main processes terminated with: code=exited/status=0",
+              "Service runtime: 5.254s",
+              "Memory peak: 512.0K",
+              "Memory swap peak: 0B"
+            ],
+            "model_receipt_exists": true
+          }
+        }
+      ],
+      "model": {
+        "receipt_path": "/media/jmicko/faststore/kuno-development/native-erase-batch-build-20261006-v1/chat-intel.json",
+        "receipt_sha256": "177b3f558dd1dc443810dc95241efa81d7270d0bf1cdb910ad4ed0b02706370e",
+        "run_record_sha256": "506bf93dcb85f36c0bab1ea74ca07a1329893c4c5487b974a7c394f1a5a465b8",
+        "run_proof": {
+          "card": "intel",
+          "cargo_artifacts_sha256": "e089c3563b646d45bf8954baa3cd5168ec6aa707ebb34a4e5b3587b7d97f467f",
+          "count": 8,
+          "fixture": "resident-chat",
+          "frozen_executable_sha256": "3ce1dbd109d0251a6e6c6a72ea67bdc779a41451accfce2fea41b00f45db3b68",
+          "matched_performance_measurement": false,
+          "native_decode": true,
+          "native_decode_kernels": "single-q4-all",
+          "native_decode_projection_tile": 1,
+          "protected_lifecycle_completion_checked": true,
+          "receipt_sha256": "177b3f558dd1dc443810dc95241efa81d7270d0bf1cdb910ad4ed0b02706370e",
+          "scope": "fixed-public-model-partition-output-and-lifecycle-fixture-only"
+        },
+        "generation_ms": 4916,
+        "prefill_ms": 9108,
+        "warm_weight_read_ms": 241,
+        "warm_weight_upload_ms": 383,
+        "public_resident_warm_phase_ns": {
+          "native_attention_and_gr_enqueue": 1220279294,
+          "native_ffn_gr_and_router_enqueue": 91175139,
+          "native_route_and_expert_enqueue": 1445576251,
+          "native_router_fence": 1602111557,
+          "native_shared_and_ffn_combine_enqueue": 308918474
+        },
+        "owned_zero_audits": [
+          {
+            "main_buffers": 1376,
+            "main_bytes": 818249728,
+            "source_buffers": 0,
+            "source_bytes": 0
+          },
+          {
+            "main_buffers": 1376,
+            "main_bytes": 818249728,
+            "source_buffers": 0,
+            "source_bytes": 0
+          },
+          {
+            "main_buffers": 1376,
+            "main_bytes": 818249728,
+            "source_buffers": 0,
+            "source_bytes": 0
+          },
+          {
+            "main_buffers": 1376,
+            "main_bytes": 818249728,
+            "source_buffers": 0,
+            "source_bytes": 0
+          }
+        ]
+      }
+    },
+    {
+      "card": "nvidia",
+      "operators": [
+        {
+          "mode": "gdn-chunk-probe",
+          "receipt_path": "/media/jmicko/faststore/kuno-development/native-erase-batch-build-20261006-v1/gdn-chunk-probe-nvidia.json",
+          "receipt_sha256": "a858720a9f63ca30af9ca98fe07ad8b40efa07ca62c549b61fc22c92ab5ad876",
+          "run_record_sha256": "0d687bac1cc9ce21fc182480660af67f256cfd91e8e40cda46df970404b11aa2",
+          "run_proof": {
+            "scope": "fixed-public-kernel-operator-numeric-only",
+            "card": "nvidia",
+            "mode": "gdn-chunk-probe",
+            "executable_sha256": "3ce1dbd109d0251a6e6c6a72ea67bdc779a41451accfce2fea41b00f45db3b68",
+            "cargo_artifacts_sha256": "e089c3563b646d45bf8954baa3cd5168ec6aa707ebb34a4e5b3587b7d97f467f",
+            "source_commit": "200b38a80bd187a9cbb93989a209a342e08255ae",
+            "worker_exit_status": 0,
+            "markers": [
+              "verified_lab_limits swap_max=0 core_soft=0 core_hard=0 memory_max=8589934592",
+              "public_gdn_chunk_acceptance cases=10 main_buffers=160 main_bytes=113868800 context_retired=false",
+              "Finished with result: success",
+              "Main processes terminated with: code=exited/status=0",
+              "Service runtime: 2.535s",
+              "Memory peak: 512.0K",
+              "Memory swap peak: 0B"
+            ],
+            "model_receipt_exists": true
+          }
+        },
+        {
+          "mode": "grouped-moe-chunk-probe",
+          "receipt_path": "/media/jmicko/faststore/kuno-development/native-erase-batch-build-20261006-v1/grouped-moe-chunk-probe-nvidia.json",
+          "receipt_sha256": "8e6e727ad2e7b3c5041f71d1393ab83e2f4725e5d6a3e196b21ea4b43cd4be3a",
+          "run_record_sha256": "9a1f8611086287434eba24b714fb3804cb4616560df6c2dd02fa9c69fffbafcf",
+          "run_proof": {
+            "scope": "fixed-public-kernel-operator-numeric-only",
+            "card": "nvidia",
+            "mode": "grouped-moe-chunk-probe",
+            "executable_sha256": "3ce1dbd109d0251a6e6c6a72ea67bdc779a41451accfce2fea41b00f45db3b68",
+            "cargo_artifacts_sha256": "e089c3563b646d45bf8954baa3cd5168ec6aa707ebb34a4e5b3587b7d97f467f",
+            "source_commit": "200b38a80bd187a9cbb93989a209a342e08255ae",
+            "worker_exit_status": 0,
+            "markers": [
+              "verified_lab_limits swap_max=0 core_soft=0 core_hard=0 memory_max=8589934592",
+              "public_grouped_routed_acceptance cases=52 failures=12 main_bytes=153944064 main_buffers=1078",
+              "Finished with result: success",
+              "Main processes terminated with: code=exited/status=0",
+              "Service runtime: 1min 4.490s",
+              "Memory peak: 256.0K",
+              "Memory swap peak: 0B"
+            ],
+            "model_receipt_exists": true
+          }
+        },
+        {
+          "mode": "resident-staged-hybrid-expert",
+          "receipt_path": "/media/jmicko/faststore/kuno-development/native-erase-batch-build-20261006-v1/resident-staged-hybrid-expert-nvidia.json",
+          "receipt_sha256": "ad42f684d67cf082c547f74b137c8a45aaa4bb492b12314723729ca3e0c6d648",
+          "run_record_sha256": "81f2bc70833f9f4b345c3954719016d0e19608b5674e2e194118f57eaab48724",
+          "run_proof": {
+            "scope": "fixed-public-staged-hybrid-expert-numeric-only",
+            "card": "nvidia",
+            "mode": "resident-staged-hybrid-expert",
+            "executable_sha256": "3ce1dbd109d0251a6e6c6a72ea67bdc779a41451accfce2fea41b00f45db3b68",
+            "cargo_artifacts_sha256": "e089c3563b646d45bf8954baa3cd5168ec6aa707ebb34a4e5b3587b7d97f467f",
+            "source_commit": "200b38a80bd187a9cbb93989a209a342e08255ae",
+            "worker_exit_status": 0,
+            "markers": [
+              "verified_lab_limits swap_max=0 core_soft=0 core_hard=0 memory_max=8589934592",
+              "public_staged_hybrid_expert_numeric_complete cases=8 ranks=10 owned_cleanup=true context_retired=false performance_accepted=false",
+              "Finished with result: success",
+              "Main processes terminated with: code=exited/status=0",
+              "Service runtime: 5.447s",
+              "Memory peak: 512.0K",
+              "Memory swap peak: 0B"
+            ],
+            "model_receipt_exists": true
+          }
+        }
+      ],
+      "model": {
+        "receipt_path": "/media/jmicko/faststore/kuno-development/native-erase-batch-build-20261006-v1/chat-nvidia.json",
+        "receipt_sha256": "051ecea97a82ad19598aa086cf378a949713f4bbc9d2fb0a88f5e9d02475126b",
+        "run_record_sha256": "2d75c5db22c3dc26d55e66a6883e60de7fd31fc30d4b9625add994189b51fbf4",
+        "run_proof": {
+          "card": "nvidia",
+          "cargo_artifacts_sha256": "e089c3563b646d45bf8954baa3cd5168ec6aa707ebb34a4e5b3587b7d97f467f",
+          "count": 8,
+          "fixture": "resident-chat",
+          "frozen_executable_sha256": "3ce1dbd109d0251a6e6c6a72ea67bdc779a41451accfce2fea41b00f45db3b68",
+          "matched_performance_measurement": false,
+          "native_decode": true,
+          "native_decode_kernels": "single-q4-all",
+          "native_decode_projection_tile": 1,
+          "protected_lifecycle_completion_checked": true,
+          "receipt_sha256": "051ecea97a82ad19598aa086cf378a949713f4bbc9d2fb0a88f5e9d02475126b",
+          "scope": "fixed-public-model-partition-output-and-lifecycle-fixture-only"
+        },
+        "generation_ms": 9418,
+        "prefill_ms": 20386,
+        "warm_weight_read_ms": 1205,
+        "warm_weight_upload_ms": 765,
+        "public_resident_warm_phase_ns": {
+          "native_attention_and_gr_enqueue": 1404923734,
+          "native_ffn_gr_and_router_enqueue": 74300621,
+          "native_route_and_expert_enqueue": 4939881907,
+          "native_router_fence": 2223545961,
+          "native_shared_and_ffn_combine_enqueue": 384005520
+        },
+        "owned_zero_audits": [
+          {
+            "main_buffers": 1376,
+            "main_bytes": 818249728,
+            "source_buffers": 0,
+            "source_bytes": 0
+          },
+          {
+            "main_buffers": 1376,
+            "main_bytes": 818249728,
+            "source_buffers": 0,
+            "source_bytes": 0
+          },
+          {
+            "main_buffers": 1376,
+            "main_bytes": 818249728,
+            "source_buffers": 0,
+            "source_bytes": 0
+          },
+          {
+            "main_buffers": 1376,
+            "main_bytes": 818249728,
+            "source_buffers": 0,
+            "source_bytes": 0
+          }
+        ]
+      }
+    }
+  ]
+}

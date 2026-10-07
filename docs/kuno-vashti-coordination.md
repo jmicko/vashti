@@ -1989,6 +1989,20 @@ GPU/service operations; isolated agents perform source work. No further Ollama
 baseline, API/Vashti change, installation or release is part of this work.
 **Required Vashti changes: none.**
 
+### Native upload-erasure acceptance follow-up (2026-10-06)
+
+The internal `200b38a` upload-wipe batching candidate passes the same both-card
+operator and complete eight-token native model/cancellation/recovery/full
+erasure inventories as the audit-only candidate. Runtime fault tests now pass49;
+native tests remain436, Python controls81 and strict Clippy/provenance pass.
+See the [checkpoint](kuno-native-text-checkpoint.md#batched-audit-and-staged-cpu-miss-acceptance)
+for exact `3ce1dbd…` binary and numeric receipts. Intel short generation
+observes4.916s for seven steps; NVIDIA9.418s, with no additional NVIDIA speed
+gain established. Matched long-run throughput, single audited admission fence
+and CPU-miss model integration remain separate. This internal lab change
+requires no API, frontend, installation or release changes.
+**Required Vashti changes: none.**
+
 ### Native audit/staged acceptance follow-up (2026-10-06)
 
 Root integrates through `793c351` on `codex/kuno-native-text`. Full audit

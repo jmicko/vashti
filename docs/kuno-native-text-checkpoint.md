@@ -52,6 +52,21 @@ Constant stage diagnostics are being prepared without changing numerical gates.
 
 ### Batched audit and staged CPU-miss acceptance
 
+The subsequent upload-erasure batching commit `200b38a` also passes all of the
+same both-card10/52/14/12/eight-case operator inventories and complete eight-token
+model/cancellation/recovery/erasure gates. Native host tests pass436 and runtime
+fault fixtures pass49; strict native/runtime-host Clippy and provenance pass.
+Its normal release binary is SHA256
+`3ce1dbd109d0251a6e6c6a72ea67bdc779a41451accfce2fea41b00f45db3b68`.
+Exact build/run evidence is under
+`/media/jmicko/faststore/kuno-development/native-erase-batch-build-20261006-v1`,
+with aggregate `rust-native-erase-batch-device-20261006.json` in the receipt
+directory below. Intel short generation observes4,916ms with router fence1.602s;
+NVIDIA observes9,418ms with fence2.224s. The latter has greater route/read time
+and establishes no additional gain. These short observations do not grant
+matched performance acceptance. One mandatory audited admission fence and
+whole-model count1 CPU-miss connection are the next separate source candidates.
+
 Root integrates `f9e9006` bounded full audit copy/map batching, `ebd0046`
 staged CPU-miss/GPU-hit numeric selection, `91d4dd9` protected eight-case CLI
 and `793c351` its independent strict receipt validator. Native host/offline

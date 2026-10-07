@@ -157,9 +157,14 @@ for 63/64/65 boundaries, multiple/partial groups, all-callback-before-scan order
 full original/duplicate counts, retained charges, partial allocation/copy,
 submission, callback rejection/disconnection/late delivery, map/poll failure,
 panic, nonzero tails and unmap retirement. Formatting and provenance generation
-are source checks only. Compilation, execution of the new host tests, both-card
-I/O/operator/model/cancellation acceptance and measured improvement remain
-root-owned and unverified for this candidate.
+are source checks only. Root subsequently compiles and executes45 runtime host
+fixtures and436 native host/offline tests with strict Clippy. Both cards pass10
+GDN,52 routed/14 packed-format/12 expected failures, eight staged CPU-miss cases
+and the complete eight-token native model/cancellation/recovery/full owning
+erasure gates with the normal `91d4dd9` binary. See the
+[owner checkpoint](../../../../../docs/kuno-native-text-checkpoint.md#batched-audit-and-staged-cpu-miss-acceptance)
+for exact artifact identities and short timing observations. Matched long-run
+performance and production integration remain unaccepted.
 
 ### Bounded upload eraser map batching candidate (2026-10-06)
 
@@ -198,8 +203,12 @@ rejected/disconnected/missing/late callbacks, wrong view extent, invalid/missing
 group owners and partial final groups. Assertions require later-owner wipes,
 every requested unmap, both destination clears/final submission, typed first
 failure, retirement and unchanged failed epoch/charges. Existing audit fixtures
-remain intact. Formatting/provenance checks are source-only; root owns compiler,
-host-test, both-card/operator/model/cancellation and timing acceptance.
+remain intact. Root subsequently accepts49 runtime fixtures,436 native host
+tests, strict Clippy and provenance, plus the same both-card operator and
+complete eight-token model/cancellation/recovery/erasure inventories using the
+normal `200b38a` binary. Exact artifacts and short observations are in the owner
+checkpoint linked above. No matched long-run timing or production authority
+follows.
 
 Any cleanup error or panic retires the private stream, retains tracked buffers
 WHILE the owner remains live, returns no success receipt, and requires retiring
