@@ -7,6 +7,84 @@ The objective remains incomplete. Use **10 decode tokens/s** as the agreed
 working target when resumed and do not repeat Ollama baseline tests. Root owns
 GPU/service operations; source-only agents use isolated worktrees.
 
+## Both-card short hybrid acceptance and constructor correction, 2026-10-07
+
+The user restored sudo and authorized this bounded GPU block; the goal remains
+paused. The initial `a8cb5e0` Intel cap0 trial stalled during model construction:
+the outer complete-model allocation held MAIN admission while hybrid reservation
+called `healthy()` -> `admission.active()` on that same non-reentrant mutex.
+The user lab unit was stopped after181 seconds, with no accepted receipt or
+owning-erasure claim. Intel physical VRAM returned to50688000 bytes and the
+content-free Xe fault classification stayed zero. Preserve that failed attempt
+at `native-count1-hybrid-device-20261007-v1`; do not count its misleading systemd
+"success"/TERM summary as model acceptance.
+
+Correction `ff3c7d186b5828b6e7b43e9a68b99f048167ca70` supplies a borrowed sealed
+construction-allocation proof from inside the existing guarded callback. It
+binds the original ledger/stream/sequence and checks poison/retirement flags
+without relocking. Arena IDs, worker plan and page checks remain in place;
+normal runtime locks and all acceptance/cleanup checks are unchanged.
+463 Rust host/offline tests, strict release all-target Clippy, formatting and a
+normal Cargo release build pass. The Python validator source is unchanged from
+its106-control acceptance, and all four actual receipts pass it again.
+
+Normal binary SHA:
+`4382edf25862e600c82eaf59a141fdba37a8fc056a47105da601a9dc3654de4c`.
+Build/provenance: `native-count1-hybrid-build-20261007-v2`; physical receipts,
+logs, run records and postflight: `native-count1-hybrid-device-20261007-v2`, both
+under `/media/jmicko/faststore/kuno-development`. The shared normal target now
+contains this new binary; use its own Cargo transcript, never the earlier one.
+Aggregate receipt:
+`apps/kuno/benchmarks/text/receipts/rust-native-count1-hybrid-device-20261007.json`.
+
+The corrected same-binary cap0 and cap10 short fixtures pass on **both cards**:
+original15-token8/7 prefill and all eight chat output IDs, seed424242/temperature0,
+seven accepted native steps/scalar0, original SingleQ4All/tile1 policy, actual
+completed CPU counts, pre-cancel/poisoned retry rejection, fresh-first and next
+output matches, layer0/3 cancellation, all four1378-owner/818413568-byte MAIN
+zero audits/source0, normal exit, no retirement and swap0/core0 execution.
+
+| Card | CPU cap | Seven-step decode ms | Completed CPU misses | Fresh CPU misses | Warm expert-weight uploads |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Intel B70 | 0 | 5440 | 0 | 0 | 2619187200 B |
+| Intel B70 | 10 | 5448 | 1256 | 102 | 0 B |
+| NVIDIA3060 | 0 | 9056 | 0 | 0 | 4829081600 B |
+| NVIDIA3060 | 10 | 6849 | 2259 | 273 | 0 B |
+
+These are **single-order, compiler-idle short observations**, not repeated ABBA,
+long throughput, cold-load or production selection. Intel is effectively
+unchanged in this pair; NVIDIA duration is24.37% shorter. CPU reads and private
+activation/result bridges still occur, so zero expert-weight uploads is not
+zero I/O. CPU-assigned misses remain outside the GPU bank; later actual miss
+counts differ from cap0, as designed. No routing trace or private vectors are
+saved. Scope is the fixed public fixture only. No new Ollama baseline was run;
+the10-tokens/s target is unmet and the earlier long1.4258 result remains the
+applicable accepted long observation.
+
+**Still outstanding before selection:** full-vocabulary relative logit gates,
+hybrid late-layer/second-proof/error/panic/partial-family-commit failure gates,
+and the original75/128 whole-model fixture, followed by repeated long cap0/10
+ABBA. The short cap10 outputs are not full-vocabulary numerical acceptance.
+CPU jobs still join before GPU enqueue, and `cpu_expert::parallel_rows` still
+starts/joins two16-worker scopes for each nonempty CPU operator call. A reusable
+scoped worker pool or better overlap remains a measured next optimization;
+this inspection does not isolate their costs or establish an improvement.
+Preserve bounded job/scratch/header ownership and failure joins when changing
+workers; do not silently change activation precision or original reduction order.
+
+All four lab units exited; no lab/compiler job from this block remains running.
+Installed Kuno admission is restored and verified active=false/waiting0/
+paused=false/recovery_required=false. Kuno11434 and the currently configured
+direct Ollama11435 both return HTTP200 `/api/ps` with no loaded models (11433
+is not the current upstream; no port configuration was changed here). Root xe
+query reports50688000/34242297856 bytes; NVIDIA has388/391MiB in two postflight
+snapshots including the active desktop. Xe kernel7.0.0-38 classifications for
+wedged/timeout/GT-reset/memory-fault messages are all zero in the same boot.
+No reset/unbind/reboot, service restart, installed binary/configuration, public
+API/catalog/routing, application or release change occurred. Required Vashti
+changes: none. This section supersedes the prior source-only status only for
+corrected **short** whole-model output/lifecycle/erasure acceptance.
+
 ## No-root CPU-miss model registration checkpoint, 2026-10-07
 
 The goal remains paused. The user authorized a bounded source/host pass while

@@ -2093,3 +2093,24 @@ Whole-model hybrid device execution and speed remain unaccepted; CPU joins
 before GPU enqueue, so no overlap claim. No GPU test, sudo, installed service,
 API/catalog/routing, application or release change was made.
 **Required Vashti changes: none.**
+
+
+### Both-card short CPU-miss acceptance (2026-10-07)
+
+After sudo was restored, `ff3c7d1` corrects a recursive admission mutex call
+found in the first unaccepted hybrid constructor trial. Its borrowed original
+construction proof preserves locking, binding/poison and all page checks.
+463 native host/offline tests, strict all-target Clippy, formatting and a normal
+`4382edf2…` release binary pass. Cap0/10 protected short whole-model tests pass
+on both GPUs, including actual CPU work, exact eight output IDs, fresh next
+output, layer0/3 cancellation, poisoned retry/recovery and all four1378-owner
+zero audits/source0. Intel short decode stays5.440/5.448s; NVIDIA observes
+9.056/6.849s (24.37% shorter). These single-order seven-step pairs do not
+establish repeated/long throughput or the10-token/s target. Full-logit and
+hybrid late-finality gates remain separate. Exact commits, failures, receipts,
+remaining gates and postflight are in the
+[latest checkpoint](kuno-native-text-checkpoint.md#both-card-short-hybrid-acceptance-and-constructor-correction-2026-10-07).
+Admission is resumed, both live inference listeners respond and Intel physical
+VRAM recovered with no classified Xe fault. No hardware reset/reboot, installed
+binary/configuration, API/catalog, Vashti or release change was made.
+**Required Vashti changes: none.**

@@ -377,3 +377,18 @@ and all page sizes. Ordinary runtime `healthy()` and allocation/fence/cleanup
 locks remain unchanged. A held-mutex regression test requires this exact origin
 validator to complete, with foreign-ledger/stream/sequence and poisoned flags
 rejected. Host checks alone do not establish the corrected physical trial.
+
+
+### Corrected short physical acceptance
+
+The `ff3c7d1` normal `4382edf2…` build passes the protected cap0/10 chat fixture
+on both Intel and NVIDIA: all eight original output IDs, seven native steps,
+actual cap0 count0 and cap10 counts1256/2259, fresh continuation counts102/273,
+pre/mid cancellation, poisoned retry/fresh recovery, four complete1378-owner
+MAIN zero audits/source0, normal cleanup and no context retirement. Exact
+receipts and limits are recorded in the
+[latest checkpoint](kuno-native-text-checkpoint.md#both-card-short-hybrid-acceptance-and-constructor-correction-2026-10-07).
+This supersedes the earlier corrected-constructor physical pending statement
+for the short fixture only. It does not establish full-vocabulary logit gates,
+hybrid late-finality failure gates,75/128 acceptance, repeated long performance,
+CPU/GPU overlap, automatic placement, production routing or10 tokens/s.
