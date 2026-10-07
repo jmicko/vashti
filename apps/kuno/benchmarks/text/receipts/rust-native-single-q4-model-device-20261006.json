@@ -1,0 +1,150 @@
+{
+  "scope": "fixed-public-single-q4-all-native-model-lifecycle",
+  "source_commit": "22a2413999f7a0226d90cd6819a2fba94a4f8a70",
+  "performance_accepted": false,
+  "full_75_128_fixture_accepted": false,
+  "cards": [
+    {
+      "card": "intel",
+      "receipt_path": "/media/jmicko/faststore/kuno-development/native-q4-build-20261006-v1/chat-intel.json",
+      "receipt_sha256": "62d89401c634e563d9857a135d9d7249da7a54c180bb94dbf2c488b98ff125bf",
+      "run_record_sha256": "b5aa1052348dda7c905d9a91634b2176bbfb81ab29506bfe32bb050b0e520f6a",
+      "run_proof": {
+        "card": "intel",
+        "cargo_artifacts_sha256": "d59358451153c11e10aac3d4f21446359d5c12a291a95cffcec893d1940772e5",
+        "count": 8,
+        "fixture": "resident-chat",
+        "frozen_executable_sha256": "b8008cfe72009a2f8856b9bc39ba6d5c543cee371130365507a0c410e4b1f7da",
+        "matched_performance_measurement": false,
+        "native_decode": true,
+        "native_decode_kernels": "single-q4-all",
+        "native_decode_projection_tile": 1,
+        "protected_lifecycle_completion_checked": true,
+        "receipt_sha256": "62d89401c634e563d9857a135d9d7249da7a54c180bb94dbf2c488b98ff125bf",
+        "scope": "fixed-public-model-partition-output-and-lifecycle-fixture-only"
+      },
+      "public_generated_ids": [
+        9419,
+        0,
+        2500,
+        628,
+        353,
+        1438,
+        488,
+        3242
+      ],
+      "generation_ms": 12017,
+      "prefill_ms": 11369,
+      "native_decode_steps": 7,
+      "scalar_decode_steps": 0,
+      "native_decode_kernels": "single-q4-all",
+      "observed_native_decode_kernels": "single-q4-all",
+      "public_resident_warm_phase_ns": {
+        "native_attention_and_gr_enqueue": 1351523112,
+        "native_ffn_gr_and_router_enqueue": 87922646,
+        "native_route_and_expert_enqueue": 1489827908,
+        "native_router_fence": 8391333196,
+        "native_shared_and_ffn_combine_enqueue": 363163106
+      },
+      "warm_weight_read_ms": 237,
+      "warm_weight_upload_ms": 409,
+      "owned_zero_audits": [
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        }
+      ]
+    },
+    {
+      "card": "nvidia",
+      "receipt_path": "/media/jmicko/faststore/kuno-development/native-q4-build-20261006-v1/chat-nvidia.json",
+      "receipt_sha256": "9e202827abcd539d741ffa196a9c72385bad74f69c4a83a25e5816b386ab1308",
+      "run_record_sha256": "20e5a993d666235953bfed1f31ef926c9affaafe50ff527d1731b64bedd248e9",
+      "run_proof": {
+        "card": "nvidia",
+        "cargo_artifacts_sha256": "d59358451153c11e10aac3d4f21446359d5c12a291a95cffcec893d1940772e5",
+        "count": 8,
+        "fixture": "resident-chat",
+        "frozen_executable_sha256": "b8008cfe72009a2f8856b9bc39ba6d5c543cee371130365507a0c410e4b1f7da",
+        "matched_performance_measurement": false,
+        "native_decode": true,
+        "native_decode_kernels": "single-q4-all",
+        "native_decode_projection_tile": 1,
+        "protected_lifecycle_completion_checked": true,
+        "receipt_sha256": "9e202827abcd539d741ffa196a9c72385bad74f69c4a83a25e5816b386ab1308",
+        "scope": "fixed-public-model-partition-output-and-lifecycle-fixture-only"
+      },
+      "public_generated_ids": [
+        9419,
+        0,
+        2500,
+        628,
+        353,
+        1438,
+        488,
+        3242
+      ],
+      "generation_ms": 13478,
+      "prefill_ms": 21757,
+      "native_decode_steps": 7,
+      "scalar_decode_steps": 0,
+      "native_decode_kernels": "single-q4-all",
+      "observed_native_decode_kernels": "single-q4-all",
+      "public_resident_warm_phase_ns": {
+        "native_attention_and_gr_enqueue": 1426167908,
+        "native_ffn_gr_and_router_enqueue": 75833878,
+        "native_route_and_expert_enqueue": 4440521726,
+        "native_router_fence": 6715139965,
+        "native_shared_and_ffn_combine_enqueue": 390662016
+      },
+      "warm_weight_read_ms": 532,
+      "warm_weight_upload_ms": 775,
+      "owned_zero_audits": [
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        },
+        {
+          "main_buffers": 1376,
+          "main_bytes": 818249728,
+          "source_buffers": 0,
+          "source_bytes": 0
+        }
+      ]
+    }
+  ]
+}

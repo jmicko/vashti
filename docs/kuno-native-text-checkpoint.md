@@ -75,9 +75,23 @@ Durable build/run evidence is under
 `/media/jmicko/faststore/kuno-development/native-q4-build-20261006-v1`; aggregate
 identities and proofs are in
 `apps/kuno/benchmarks/text/receipts/rust-native-q4-block-operator-device-20261006.json`.
-This is operator acceptance. Complete-model `single-q4-all`, full75/128 timing,
-batched audit cleanup and a real staged CPU/GPU model seam remain unaccepted.
-No production/default/API/Vashti, install, release or hardware change follows.
+Both-card complete-model eight-token `single-q4-all` now also passes original
+IDs, seven actual native continuation steps, full fresh prefill plus second-token
+replay, queued cancellation at layers0/3, poisoned retry rejection and four full
+1,376-owner /818,249,728-byte MAIN audits. Original source audits remain empty;
+explicit normal cleanup passes without retirement. The exact additional profile
+proofs and actual8-GiB/swap0/core0 protection are checked by the public runner.
+See `rust-native-single-q4-model-device-20261006.json` in the same receipt directory.
+
+Generation observations are12,017ms Intel and13,478ms NVIDIA for seven steps.
+Intel warm weight-read time fell from1,018 to237ms versus the earlier short
+single-all run, so its lower wall time does not establish a kernel improvement;
+NVIDIA is essentially unchanged. No long Q4 ABBA is launched from these short
+checks. Full75/128 timing, batched audit cleanup and a real staged CPU/GPU model
+seam remain unaccepted. Strict Q4 operator validation is integrated at `abf9b9e`;
+both actual reports pass and all72 Python native-lab tests pass. No production,
+default/API/Vashti, install, release or hardware change follows. Admission is
+resumed and verified quiescent while the next source candidate is prepared.
 
 ### Later owner acceptance
 
