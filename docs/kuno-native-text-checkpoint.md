@@ -121,8 +121,77 @@ Durable build/transcript/run records are under
 `/media/jmicko/faststore/kuno-development/native-single-operator-build-20261006-v1`;
 aggregate hashes and numerical proofs are in
 `apps/kuno/benchmarks/text/receipts/rust-native-single-kernel-operator-20261006.json`.
-Full model continuation/cancellation/recovery and compiler-idle timing still
-need acceptance before selecting either candidate.
+The following later model acceptance supersedes that gate for `single-all`;
+compiler-idle matched timing remains separate.
+
+### Combined single-token model acceptance
+
+Controls `1d174d3` and lint fixes `776d58e` connect the public `single-all`
+profile. Source tests pass417 Rust /60 Python and strict all-target Clippy.
+The exact normal model build at `776d58e`, SHA256
+`f05ab6e17de098d4c9f714a39839a5274695f68ab044bb9536ce400b1c2e6142`,
+passes both-card original eight-token chat, seven native continuation steps,
+actual observed single-all policies, full fresh prefill plus second-token
+continuation, queued native cancellations at layers0/3, poisoned retry rejection,
+all four complete1376-owner /818,249,728-byte audits, and explicit normal cleanup
+without retirement. Each source audit is empty. Actual8-GiB, swap0/core0
+containment and the three additional profile completion proofs pass.
+
+Seven-step generation observations are Intel13,053ms and NVIDIA13,566ms,
+essentially unchanged from prior short chunk runs. These are correctness/lifecycle
+samples with file-cache/JIT variability, not a matched throughput result.
+No long kernel-only ABBA is run or speed win selected. Intel's warm weight
+read/upload observations total1,018/415ms while the router fence accumulator is
+8,508,872,971ns; dependent kernel work and readback also require investigation.
+Timers are host interval observations, not isolated GPU kernel execution.
+
+Durable build and records are under
+`/media/jmicko/faststore/kuno-development/native-single-model-build-20261006-v1`;
+the exact aggregate is
+`apps/kuno/benchmarks/text/receipts/rust-native-single-all-model-device-20261006.json`.
+Independent whole-model acceptance of the two single-family profiles is not
+claimed. The full75/128 fixture and performance selection remain unaccepted.
+
+Root subsequently integrates `cc82731` fixed public CPU/GPU calibration helper
+and `4195238` protected registration, preserving `1946020` complete public banks.
+420 Rust tests and strict all-target Clippy pass; earlier60 Python tests still
+cover unchanged controls. The following bounded timing acceptance is complete.
+No production worker/default/API/frontend/install changes.
+
+### Fixed original-read CPU/GPU calibration
+
+The exact normal `4195238` build has SHA256
+`b0a2cacda8b3dff0b4b14e2891870f1f9ff6424e9c294aa736e5b78929f82393`.
+Both cards complete six fixed Q5/Q8 points, 12 exact-mode numeric gates and24
+Concurrent/CPU-first/CPU-first/Concurrent samples, retaining each original
+permit through its two tickets. All cases preserve ten original ranks, complete
+18 MAIN owners /884,736 bytes plus I/O audits, unchanged tolerances and file
+identity. Processes exit normally with actual8-GiB/swap0/core0 guards and no
+retirement. No discarded or partial successful sample is accepted.
+
+Two Concurrent samples per point give these **completed candidate** means in
+milliseconds (including reads/fills, joined work, private candidate validation
+and completed bridge/merge; excluding independent references and final erasure):
+
+| Card / down | GPU10 / CPU0 | GPU5 / CPU5 | GPU0 / CPU10 |
+| --- | ---: | ---: | ---: |
+| Intel Q5 | 37.180 | 30.782 | 26.970 |
+| Intel Q8 | 48.290 | 34.844 | 32.918 |
+| NVIDIA Q5 | 40.265 | 33.174 | 25.447 |
+| NVIDIA Q8 | 55.296 | 41.922 | 29.205 |
+
+Fixed group0/vector0 and prior numeric/reference work warm the original weight
+working set. This narrow operator trial supports further CPU-miss integration;
+it is not prepared-host, cold storage, the32-group study, automatic placement or
+full-model token throughput. Cleanup and full-with-reference walls are separately
+recorded. No private-worker/native-default integration follows from these data.
+
+Durable records are under
+`/media/jmicko/faststore/kuno-development/native-cpu-gpu-calibration-build-20261006-v1`;
+raw bounded samples, numeric gates, exact identities and hashes are in
+`apps/kuno/benchmarks/text/receipts/rust-native-cpu-gpu-calibration-device-20261006.json`.
+Next source work is an explicit single-token Q4 header-reuse candidate and a
+reviewed CPU-miss/GPU-hit owner/ledger proposal. They remain unaccepted.
 
 The user selected **10 decode tokens/s** as the working native performance target
 and explicitly deferred additional/repeated Ollama baseline tests to conserve
