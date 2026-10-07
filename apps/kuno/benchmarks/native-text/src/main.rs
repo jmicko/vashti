@@ -233,6 +233,49 @@ fn native_decode_tile(
     }
 }
 
+fn native_decode_kernels(
+    raw: Option<&str>,
+    protected_native_decode: bool,
+    projection_tile: usize,
+) -> kuno_text::Result<resident_model::batch::NativeDecodeKernels> {
+    let policy = resident_model::batch::NativeDecodeKernels::parse(raw.unwrap_or("chunk"))?;
+    if policy.label() != "chunk" && (!protected_native_decode || projection_tile != 1) {
+        return Err(kuno_text::Error::InvalidFormat(
+            "native decode kernels require protected native decode and projection tile1",
+        ));
+    }
+    Ok(policy)
+}
+
+fn apply_native_decode_kernels<'f>(
+    resident: &mut resident_model::ResidentModel<'_, 'f>,
+    executor: &mut executor::GpuExecutor<'f>,
+    selected: &str,
+    cancel: &AtomicBool,
+) -> kuno_text::Result<&'static str> {
+    if selected != "chunk"
+        && resident
+            .set_lab_native_decode_kernels(
+                executor,
+                resident_model::batch::NativeDecodeKernels::parse(selected)?,
+                cancel,
+            )?
+            .label()
+            != selected
+    {
+        return Err(kuno_text::Error::InvalidFormat(
+            "native decode kernel selection mismatch",
+        ));
+    }
+    let observed = resident.native_decode_kernels()?.label();
+    if observed != selected {
+        return Err(kuno_text::Error::InvalidFormat(
+            "native decode kernel observation mismatch",
+        ));
+    }
+    Ok(observed)
+}
+
 // The generation and terminal cancellation checks use the same dispatch.
 // A native continuation never falls back to scalar: its PLE cursor must stay
 // aligned with the model position through the entire accepted sequence.
@@ -338,6 +381,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let native_decode_tile =
         native_decode_tile(native_decode_tile_setting.as_deref(), native_decode)?;
+    let native_decode_kernel_setting = match std::env::var("KUNO_LAB_NATIVE_DECODE_KERNELS") {
+        Ok(raw) => Some(raw),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(_) => return Err("invalid public native decode kernel profile".into()),
+    };
+    let native_decode_kernels = native_decode_kernels(
+        native_decode_kernel_setting.as_deref(),
+        native_decode,
+        native_decode_tile,
+    )?
+    .label();
     let ordered_setting = match std::env::var("KUNO_LAB_ORDERED_PUBLIC_UPLOAD") {
         Ok(raw) => Some(raw),
         Err(std::env::VarError::NotPresent) => None,
@@ -1222,6 +1276,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
             let native_prefill_projection_tile = executor.native_projection_tile();
             let mut native_decode_projection_tile = native_prefill_projection_tile;
+            let mut observed_native_decode_kernels = "chunk";
             executor.by_tensor.clear();
             if let Some(r) = &mut resident {
                 if native_decode {
@@ -1230,6 +1285,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     // chooses the projection specialization or shader key.
                     native_decode_projection_tile =
                         r.set_lab_native_projection_tile(&mut executor, native_decode_tile)?;
+                    observed_native_decode_kernels = apply_native_decode_kernels(
+                        r,
+                        &mut executor,
+                        native_decode_kernels,
+                        &cancel,
+                    )?;
                 }
                 r.phase_ns.clear();
             }
@@ -1266,6 +1327,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         output
                     };
                 }
+            }
+            if let Some(r) = &resident {
+                if native_max8 {
+                    observed_native_decode_kernels = r.native_decode_kernels()?.label();
+                }
+            }
+            if observed_native_decode_kernels != native_decode_kernels {
+                return Err("completed native decode kernel observation mismatch".into());
             }
             println!(
                 "gpu_prefill_ms={} gpu_generation_ms={} synthetic_gpu_tokens={generated:?} cache_bytes={} reserved_bytes={} weight_upload_bytes={} cache_hits={} gpu_matvec_calls={}",
@@ -1332,6 +1401,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 receipt["native_decode"] = serde_json::json!(native_decode);
                 receipt["native_decode_steps"] = serde_json::json!(native_decode_steps);
                 receipt["scalar_decode_steps"] = serde_json::json!(scalar_decode_steps);
+                receipt["native_decode_kernels"] = serde_json::json!(native_decode_kernels);
+                receipt["observed_native_decode_kernels"] =
+                    serde_json::json!(observed_native_decode_kernels);
                 receipt["native_public_chunk_count"] = serde_json::json!(if native_max8 {
                     Some(native_count)
                 } else {
@@ -1461,6 +1533,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if fresh.set_lab_native_projection_tile(&mut executor, 1)? != 1 {
                         return Err("fresh native tile1 policy mismatch".into());
                     }
+                    apply_native_decode_kernels(
+                        &mut fresh,
+                        &mut executor,
+                        native_decode_kernels,
+                        &cancel,
+                    )?;
                     fresh_logits = resident_decode_step(
                         &mut fresh,
                         &mut executor,
@@ -1475,6 +1553,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     {
                         return Err("fresh native tile1 continuation mismatch".into());
                     }
+                    if fresh.native_decode_kernels()?.label() != native_decode_kernels {
+                        return Err("fresh native kernel continuation policy mismatch".into());
+                    }
                 }
                 if public_owned_zero_audit {
                     fresh.close()?;
@@ -1482,6 +1563,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 if tile1_recovery {
                     println!("public_native_tile1_fresh_continuation_matches=true");
+                    if native_decode_kernels != "chunk" {
+                        println!(
+                            "public_native_kernel_fresh_continuation profile={native_decode_kernels} matches=true"
+                        );
+                    }
                 }
                 drop(fresh);
                 for layer in [0, 3] {
@@ -1515,6 +1601,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         if partial.set_lab_native_projection_tile(&mut executor, 1)? != 1 {
                             return Err("partial native tile1 policy mismatch".into());
                         }
+                        apply_native_decode_kernels(
+                            &mut partial,
+                            &mut executor,
+                            native_decode_kernels,
+                            &cancel,
+                        )?;
                     }
                     partial.arm_public_mid_token_cancel(layer)?;
                     let failed = if tile1_recovery {
@@ -1559,6 +1651,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("public_mid_token_cancel layer={layer} erased=true");
                     if tile1_recovery {
                         println!("public_native_tile1_mid_token_cancel layer={layer} erased=true");
+                        if native_decode_kernels != "chunk" {
+                            println!(
+                                "public_native_kernel_mid_token_cancel profile={native_decode_kernels} layer={layer} erased=true"
+                            );
+                        }
                     }
                 }
                 println!(
@@ -1621,6 +1718,40 @@ mod transient_mode_tests {
             }
         }
         assert_eq!(super::native_decode_tile(Some("1"), true), Ok(1));
+    }
+
+    #[test]
+    fn native_decode_kernels_require_explicit_protected_tile_one() {
+        for native in [false, true] {
+            for tile in [1, 8] {
+                for raw in [None, Some("chunk")] {
+                    assert_eq!(
+                        super::native_decode_kernels(raw, native, tile)
+                            .unwrap()
+                            .label(),
+                        "chunk"
+                    );
+                }
+                for profile in ["single-moe", "single-gdn", "single-all"] {
+                    let selected = super::native_decode_kernels(Some(profile), native, tile);
+                    assert_eq!(selected.is_ok(), native && tile == 1);
+                    if let Ok(selected) = selected {
+                        assert_eq!(selected.label(), profile);
+                    }
+                }
+                for raw in [
+                    "",
+                    "0",
+                    "1",
+                    "CHUNK",
+                    "single",
+                    " single-all",
+                    "single-all ",
+                ] {
+                    assert!(super::native_decode_kernels(Some(raw), native, tile).is_err());
+                }
+            }
+        }
     }
 
     #[test]

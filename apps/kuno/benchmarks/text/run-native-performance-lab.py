@@ -19,10 +19,13 @@ ABBA = (8, 52, 52, 8)
 MEMORY_SCOPE = "fixed-public-native-cgroup-abba-only"
 DECODE_SCOPE = "fixed-public-native-decode-abba-only"
 TILE_SCOPE = "fixed-public-native-decode-tile-abba-only"
+KERNEL_SCOPE = "fixed-public-native-decode-kernel-abba-only"
 DECODE_CAPS = (52, 52, 52, 52)
 DECODE_FLAGS = (False, True, True, False)
 TILE_FLAGS = (True,) * 4
 TILE_TILES = (8, 1, 1, 8)
+KERNEL_TILES = (1,) * 4
+KERNEL_PROFILES = ("chunk", "single-all", "single-all", "chunk")
 FIXED_PLAN = {"fixture": "resident-rainwater", "prompt_tokens": 75, "output_tokens": 128,
               "seed": 424242, "temperature": 0, "native_count": 8,
               "native_context": 203, "model_unloaded_before_each_child": True,
@@ -128,7 +131,7 @@ def experiment_schedule(plan):
     elif scope == DECODE_SCOPE:
         caps, flags = DECODE_CAPS, DECODE_FLAGS
         declared_flags = plan.get("native_decode_flags")
-    elif scope == TILE_SCOPE:
+    elif scope in (TILE_SCOPE, KERNEL_SCOPE):
         caps, flags = DECODE_CAPS, TILE_FLAGS
         declared_flags = plan.get("native_decode_flags")
     else:
@@ -139,13 +142,14 @@ def experiment_schedule(plan):
         or any(type(flag) is not bool for flag in declared_flags) or declared_flags != list(flags)):
         raise ValueError("Fixed cap/decode schedule did not match the experiment scope")
     projection_tiles(plan)
+    kernel_profiles(plan)
     return tuple(zip(caps, flags))
 
 
 def projection_tiles(plan):
     scope = plan.get("scope")
-    if scope == TILE_SCOPE:
-        expected = TILE_TILES
+    if scope in (TILE_SCOPE, KERNEL_SCOPE):
+        expected = KERNEL_TILES if scope == KERNEL_SCOPE else TILE_TILES
         declared = plan.get("native_decode_tiles")
     elif scope in (MEMORY_SCOPE, DECODE_SCOPE):
         expected = (8,) * 4
@@ -157,6 +161,24 @@ def projection_tiles(plan):
     if (type(declared) is not list or any(type(tile) is not int for tile in declared)
         or declared != list(expected)):
         raise ValueError("Fixed projection tiles did not match the experiment scope")
+    return expected
+
+
+def kernel_profiles(plan):
+    scope = plan.get("scope")
+    if scope == KERNEL_SCOPE:
+        expected = KERNEL_PROFILES
+        declared = plan.get("native_decode_kernels")
+    elif scope in (MEMORY_SCOPE, DECODE_SCOPE, TILE_SCOPE):
+        expected = ("chunk",) * 4
+        # Historical plans retain only their original default kernels. Live
+        # receipt acceptance still requires the new observed profile fields.
+        declared = plan.get("native_decode_kernels", list(expected))
+    else:
+        raise ValueError("Unknown fixed-public kernel experiment scope")
+    if (type(declared) is not list or any(type(profile) is not str for profile in declared)
+        or declared != list(expected)):
+        raise ValueError("Fixed kernel profiles did not match the experiment scope")
     return expected
 
 
@@ -175,17 +197,24 @@ def selected_tile(plan, index):
     return projection_tiles(plan)[index - 1]
 
 
+def selected_kernel(plan, index):
+    selected_sample(plan, index)
+    return kernel_profiles(plan)[index - 1]
+
+
 def worker_environment(plan, receipt, index=None):
-    if plan.get("scope") in (DECODE_SCOPE, TILE_SCOPE) and index is None:
+    if plan.get("scope") in (DECODE_SCOPE, TILE_SCOPE, KERNEL_SCOPE) and index is None:
         raise ValueError("Native decode comparison requires an indexed child")
     native_decode = selected_sample(plan, index)[1] if index is not None else False
     native_decode_tile = selected_tile(plan, index) if index is not None else 8
+    native_decode_kernels = selected_kernel(plan, index) if index is not None else "chunk"
     env = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(pathlib.Path.home()),
            "XDG_RUNTIME_DIR": f"/run/user/{os.getuid()}", "CUBECL_DEBUG_LOG": "0",
            "KUNO_TEST_GGUF": plan["model"]["path"], "KUNO_PUBLIC_RECEIPT": str(receipt),
            "KUNO_LAB_TRANSIENT_IO": "1", "KUNO_LAB_NATIVE_MAX8": "1",
            "KUNO_LAB_NATIVE_DECODE": "1" if native_decode else "0",
            "KUNO_LAB_NATIVE_DECODE_TILE": str(native_decode_tile),
+           "KUNO_LAB_NATIVE_DECODE_KERNELS": native_decode_kernels,
            "KUNO_LAB_NATIVE_BATCH_COUNT": "8", "KUNO_LAB_CANCEL_CHECK": "1",
            "KUNO_LAB_OWNED_ZERO_AUDIT": "1"}
     for suffix in ("BLOCK_MOE", "BATCH_EXPERTS", "WORD_DOWN", "ORDERED_PUBLIC_UPLOAD",
@@ -203,10 +232,12 @@ def load_plan(path):
     if (plan.get("card") not in ("intel", "nvidia") or type(plan.get("unit")) is not str or
         not re.fullmatch(UNIT_PATTERN, plan.get("unit", ""))):
         raise ValueError("Invalid public laboratory plan")
-    if plan["scope"] in (DECODE_SCOPE, TILE_SCOPE):
+    if plan["scope"] in (DECODE_SCOPE, TILE_SCOPE, KERNEL_SCOPE):
         expected_keys = set(FIXED_PLAN) | PLAN_IDENTITIES | {"scope", "caps_gib", "native_decode_flags"}
-        if plan["scope"] == TILE_SCOPE or "native_decode_tiles" in plan:
+        if plan["scope"] in (TILE_SCOPE, KERNEL_SCOPE) or "native_decode_tiles" in plan:
             expected_keys.add("native_decode_tiles")
+        if plan["scope"] == KERNEL_SCOPE or "native_decode_kernels" in plan:
+            expected_keys.add("native_decode_kernels")
         if set(plan) != expected_keys or any(
             key not in plan or type(plan[key]) is not type(value) or plan[key] != value
             for key, value in FIXED_PLAN.items()
@@ -246,34 +277,39 @@ def guard(plan_path, cap, index):
     plan = load_plan(plan_path)
     _, native_decode = selected_sample(plan, index, cap)
     native_decode_tile = selected_tile(plan, index)
+    native_decode_kernels = selected_kernel(plan, index)
     verify_limits(cgroup_path(), plan["unit"], cap)
     if os.environ.get("KUNO_LAB_NATIVE_DECODE") != ("1" if native_decode else "0"):
         raise ValueError("Worker decode setting did not match the indexed plan")
     if os.environ.get("KUNO_LAB_NATIVE_DECODE_TILE") != str(native_decode_tile):
         raise ValueError("Worker decode tile did not match the indexed plan")
+    if os.environ.get("KUNO_LAB_NATIVE_DECODE_KERNELS") != native_decode_kernels:
+        raise ValueError("Worker decode kernels did not match the indexed plan")
     print(f"verified_performance_limits swap_max=0 core_soft=0 core_hard=0 memory_max={cap * 1024**3}", flush=True)
-    print(f"verified_performance_sample sample_index={index} native_decode={int(native_decode)} native_decode_tile={native_decode_tile}", flush=True)
+    print(f"verified_performance_sample sample_index={index} native_decode={int(native_decode)} native_decode_tile={native_decode_tile} native_decode_kernels={native_decode_kernels}", flush=True)
     os.execv(plan["executable"], [plan["executable"], plan["card"], "resident-rainwater"])
 
 
 def accepted_result(receipt, output, card, cap, status, before, after, *, native_decode=False,
-                    native_decode_tile=8, index=None):
+                    native_decode_tile=8, native_decode_kernels="chunk", index=None):
     if type(native_decode) is not bool or type(cap) is not int or cap not in ABBA or native_decode and cap != 52:
         raise ValueError("Invalid expected public decode mode/cap")
     if native_decode and index is None:
         raise ValueError("Native decode requires a protected indexed sample")
+    ACCEPTANCE.validate_kernel_selection(native_decode_kernels, native_decode, native_decode_tile)
     marker = f"verified_performance_limits swap_max=0 core_soft=0 core_hard=0 memory_max={cap * 1024**3}"
     if status != 0 or marker not in output:
         raise ValueError("Protected public worker did not finish")
     if index is not None:
-        sample_marker = f"verified_performance_sample sample_index={index} native_decode={int(native_decode)} native_decode_tile={native_decode_tile}"
-        if type(index) is not int or not 1 <= index <= 4 or sample_marker not in output:
+        sample_marker = f"verified_performance_sample sample_index={index} native_decode={int(native_decode)} native_decode_tile={native_decode_tile} native_decode_kernels={native_decode_kernels}"
+        if type(index) is not int or not 1 <= index <= 4 or sample_marker not in output.splitlines():
             raise ValueError("Protected sample index/decode proof did not match")
     for key in ("oom", "oom_kill", "oom_group_kill"):
         if after["memory.events"].get(key, 0) != before["memory.events"].get(key, 0):
             raise ValueError("Cgroup OOM occurred during the worker")
     ACCEPTANCE.validate_model_receipt(receipt, card, "resident-rainwater", 8, output,
-                                      native_decode=native_decode, native_decode_tile=native_decode_tile)
+                                      native_decode=native_decode, native_decode_tile=native_decode_tile,
+                                      native_decode_kernels=native_decode_kernels)
     if (type(receipt.get("generation_ms")) is not int or receipt["generation_ms"] <= 0
         or type(receipt.get("prefill_ms")) is not int or receipt["prefill_ms"] < 0):
         raise ValueError("Completed public timing must be nonnegative with positive generation time")
@@ -282,6 +318,7 @@ def accepted_result(receipt, output, card, cap, status, before, after, *, native
 def run_child(plan, plan_path, index, cap, cgroup):
     _, native_decode = selected_sample(plan, index, cap)
     native_decode_tile = selected_tile(plan, index)
+    native_decode_kernels = selected_kernel(plan, index)
     verify_limits(cgroup, plan["unit"], cap)
     target = plan_path.parent / f"sample-{index}-cap-{cap}.json"
     if any(path.exists() for path in (target, target.with_suffix(".cgroup.json"),
@@ -297,8 +334,8 @@ def run_child(plan, plan_path, index, cap, cgroup):
         for raw in iter(lambda: process.stdout.readline(4096), b""):
             text = raw.decode("utf-8", errors="replace").strip()
             if text.startswith(("verified_performance_limits ", "verified_performance_sample ", "public_mid_token_cancel ",
-                                "public_resident_cancel_erased=", "public_resident_owned_cleanup=")) or text in ACCEPTANCE.TILE_ONE_COMPLETION:
-                if len(markers) < 9:
+                                "public_resident_cancel_erased=", "public_resident_owned_cleanup=")) or text in ACCEPTANCE.TILE_ONE_COMPLETION + ACCEPTANCE.kernel_completion(native_decode_kernels):
+                if len(markers) < 12:
                     markers.append(text)
     drainer = threading.Thread(target=drain, daemon=True)
     drainer.start()
@@ -316,6 +353,7 @@ def run_child(plan, plan_path, index, cap, cgroup):
         verify_limits(cgroup, plan["unit"], cap)
         result = {"sample_index": index, "cap_gib": cap, "native_decode": native_decode,
                   "native_decode_projection_tile": native_decode_tile,
+                  "native_decode_kernels": native_decode_kernels,
                   "exit_status": process.returncode,
                   "before": before, "after": after, "samples": samples,
                   "sampled_memory_peak_bytes": max([before["memory.current"], after["memory.current"]] +
@@ -330,7 +368,8 @@ def run_child(plan, plan_path, index, cap, cgroup):
             if receipt is None:
                 raise ValueError("Missing checked model receipt")
             accepted_result(receipt, "\n".join(markers), plan["card"], cap, process.returncode, before, after,
-                            native_decode=native_decode, native_decode_tile=native_decode_tile, index=index)
+                            native_decode=native_decode, native_decode_tile=native_decode_tile,
+                            native_decode_kernels=native_decode_kernels, index=index)
             result["accepted"] = True
             result["prefill_ms"] = receipt["prefill_ms"]
             result["generation_ms"] = receipt["generation_ms"]
@@ -339,6 +378,7 @@ def run_child(plan, plan_path, index, cap, cgroup):
             result["native_decode_steps"] = receipt["native_decode_steps"]
             result["scalar_decode_steps"] = receipt["scalar_decode_steps"]
             result["native_prefill_projection_tile"] = receipt["native_projection_tile"]
+            result["observed_native_decode_kernels"] = receipt["observed_native_decode_kernels"]
         except (ValueError, KeyError, TypeError):
             result["failure_class"] = "worker-or-model-or-cleanup-validation"
         write_new(target.with_suffix(".cgroup.json"), result)
@@ -374,6 +414,7 @@ def supervise(plan_path):
     record["caps_gib"] = [cap for cap, _ in schedule]
     record["native_decode_flags"] = [native for _, native in schedule]
     record["native_decode_tiles"] = list(projection_tiles(plan))
+    record["native_decode_kernels"] = list(kernel_profiles(plan))
     stage = "sample-transition"
     try:
         for index, (cap, native_decode) in enumerate(schedule, 1):
@@ -387,7 +428,7 @@ def supervise(plan_path):
                            stderr=subprocess.DEVNULL)
             verify_limits(cgroup, plan["unit"], cap)
             transition_after = snapshot(cgroup)
-            print(f"public_abba_sample={index} cap_gib={cap} native_decode={int(native_decode)} native_decode_tile={selected_tile(plan, index)}", flush=True)
+            print(f"public_abba_sample={index} cap_gib={cap} native_decode={int(native_decode)} native_decode_tile={selected_tile(plan, index)} native_decode_kernels={selected_kernel(plan, index)}", flush=True)
             stage = "sample-worker"
             result = run_child(plan, plan_path, index, cap, cgroup)
             result["cap_transition_before"] = transition_before
@@ -412,7 +453,9 @@ def launch(args):
         raise ValueError("run-id must be1..40 lowercase letters, digits or hyphens")
     if type(args.native_decode_comparison) is not bool:
         raise ValueError("Native decode comparison must be an explicit boolean")
-    if type(args.native_decode_tile_comparison) is not bool or args.native_decode_comparison and args.native_decode_tile_comparison:
+    comparisons = (args.native_decode_comparison, args.native_decode_tile_comparison,
+                   args.native_decode_kernel_comparison)
+    if any(type(value) is not bool for value in comparisons) or sum(comparisons) > 1:
         raise ValueError("Select only one explicit native comparison mode")
     output = args.output.resolve()
     output.mkdir(mode=0o700, parents=True, exist_ok=False)
@@ -435,13 +478,16 @@ def launch(args):
         stream.write(args.cargo_artifacts.read_bytes())
     native_comparison = args.native_decode_comparison
     tile_comparison = args.native_decode_tile_comparison
-    caps = DECODE_CAPS if native_comparison or tile_comparison else ABBA
-    flags = TILE_FLAGS if tile_comparison else DECODE_FLAGS if native_comparison else (False,) * 4
-    tiles = TILE_TILES if tile_comparison else (8,) * 4
-    scope = TILE_SCOPE if tile_comparison else DECODE_SCOPE if native_comparison else MEMORY_SCOPE
+    kernel_comparison = args.native_decode_kernel_comparison
+    caps = DECODE_CAPS if any(comparisons) else ABBA
+    flags = TILE_FLAGS if tile_comparison or kernel_comparison else DECODE_FLAGS if native_comparison else (False,) * 4
+    tiles = KERNEL_TILES if kernel_comparison else TILE_TILES if tile_comparison else (8,) * 4
+    kernels = KERNEL_PROFILES if kernel_comparison else ("chunk",) * 4
+    scope = KERNEL_SCOPE if kernel_comparison else TILE_SCOPE if tile_comparison else DECODE_SCOPE if native_comparison else MEMORY_SCOPE
     plan = {"scope": scope, "caps_gib": list(caps),
             "native_decode_flags": list(flags),
             "native_decode_tiles": list(tiles),
+            "native_decode_kernels": list(kernels),
             "card": args.card, "unit": "kuno-public-performance-" + args.run_id + ".service",
             "model": model_identity(args.model), "executable": str(frozen),
             "executable_sha256": identity, "cargo_artifacts_sha256": artifacts_sha,
@@ -484,6 +530,8 @@ def main():
                             help="Compare scalar/native/native/scalar decode at the fixed 52-GiB host cap")
         comparison.add_argument("--native-decode-tile-comparison", action="store_true",
                                 help="Compare native tile8/tile1/tile1/tile8 at the fixed 52-GiB host cap")
+        comparison.add_argument("--native-decode-kernel-comparison", action="store_true",
+                                help="Compare chunk/single-all/single-all/chunk with native tile1 at52GiB")
         launch(parser.parse_args())
 
 

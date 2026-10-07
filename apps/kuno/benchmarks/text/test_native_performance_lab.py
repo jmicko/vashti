@@ -23,7 +23,8 @@ class PerformanceLaneTests(unittest.TestCase):
         # receipt itself is unchanged and its offline compatibility is separate.
         self.receipt.update(native_decode=False, native_decode_steps=0,
                             scalar_decode_steps=len(self.receipt["public_generated_ids"]) - 1,
-                            native_decode_projection_tile=8)
+                            native_decode_projection_tile=8, native_decode_kernels="chunk",
+                            observed_native_decode_kernels="chunk")
         self.output = "\n".join((
             "public_mid_token_cancel layer=0 erased=true",
             "public_mid_token_cancel layer=3 erased=true",
@@ -39,13 +40,15 @@ class PerformanceLaneTests(unittest.TestCase):
         self.assertEqual(LANE.ABBA, (8, 52, 52, 8))
 
     def test_environment_has_only_fixed_public_options(self):
-        with mock.patch.dict("os.environ", {"KUNO_LAB_EXPERT_SLOTS": "96", "PRIVATE_TOKEN": "never-forward"}):
+        with mock.patch.dict("os.environ", {"KUNO_LAB_EXPERT_SLOTS": "96", "PRIVATE_TOKEN": "never-forward",
+                                            "KUNO_LAB_NATIVE_DECODE_KERNELS": "single-all"}):
             env = LANE.worker_environment({"model": {"path": "/original/blob"}}, "/public/numeric.json")
         self.assertNotIn("PRIVATE_TOKEN", env)
         self.assertNotIn("KUNO_LAB_EXPERT_SLOTS", env)
         self.assertEqual(env["KUNO_LAB_NATIVE_BATCH_COUNT"], "8")
         self.assertEqual(env["KUNO_LAB_NATIVE_DECODE"], "0")
         self.assertEqual(env["KUNO_LAB_NATIVE_DECODE_TILE"], "8")
+        self.assertEqual(env["KUNO_LAB_NATIVE_DECODE_KERNELS"], "chunk")
         self.assertEqual(env["KUNO_LAB_TRANSIENT_IO"], "1")
         self.assertEqual(env["KUNO_LAB_OWNED_ZERO_AUDIT"], "1")
         self.assertEqual(env["KUNO_LAB_CANCEL_CHECK"], "1")
@@ -260,7 +263,8 @@ class PerformanceLaneTests(unittest.TestCase):
                 with mock.patch.object(LANE, "load_plan", return_value=plan), \
                      mock.patch.object(LANE, "cgroup_path", return_value=cgroup), \
                      mock.patch.object(LANE.resource, "getrlimit", return_value=(0, 0)), \
-                     mock.patch.dict("os.environ", {"KUNO_LAB_NATIVE_DECODE": env, "KUNO_LAB_NATIVE_DECODE_TILE": "8"}), \
+                     mock.patch.dict("os.environ", {"KUNO_LAB_NATIVE_DECODE": env, "KUNO_LAB_NATIVE_DECODE_TILE": "8",
+                                                    "KUNO_LAB_NATIVE_DECODE_KERNELS": "chunk"}), \
                      mock.patch.object(LANE.os, "execv") as execute, \
                      contextlib.redirect_stdout(io.StringIO()) as output:
                     if accepted:
@@ -276,7 +280,7 @@ class PerformanceLaneTests(unittest.TestCase):
         receipt = copy.deepcopy(self.receipt)
         receipt.update(native_decode=True, native_decode_steps=127, scalar_decode_steps=0)
         receipt["owned_zero_audits"][0].update(source_buffers=0, source_bytes=0)
-        proof = "verified_performance_sample sample_index=2 native_decode=1 native_decode_tile=8\n"
+        proof = "verified_performance_sample sample_index=2 native_decode=1 native_decode_tile=8 native_decode_kernels=chunk\n"
         output = self.marker(52) + proof + self.output
         LANE.accepted_result(receipt, output, "intel", 52, 0, self.before, self.before,
                              native_decode=True, index=2)
@@ -400,7 +404,7 @@ class PerformanceLaneTests(unittest.TestCase):
             receipt.update(native_decode=True, native_decode_steps=127, scalar_decode_steps=0,
                            generation_ms=63500)
             receipt["owned_zero_audits"][0].update(source_buffers=0, source_bytes=0)
-            stdout = self.marker(52) + "verified_performance_sample sample_index=2 native_decode=1 native_decode_tile=8\n" + self.output
+            stdout = self.marker(52) + "verified_performance_sample sample_index=2 native_decode=1 native_decode_tile=8 native_decode_kernels=chunk\n" + self.output
             state = {**self.before, "memory.current": 123}
             def launch(command, **options):
                 self.assertEqual(command[-3:], [str(plan_path), "52", "2"])
@@ -421,7 +425,9 @@ class PerformanceLaneTests(unittest.TestCase):
             self.assertNotIn("public_resident", json.dumps(sample))
 
     def test_launcher_selects_52g_only_for_explicit_native_comparison(self):
-        for native, tile_comparison in ((False, False), (True, False), (False, True)):
+        for native, tile_comparison, kernel_comparison in (
+            (False, False, False), (True, False, False), (False, True, False), (False, False, True)
+        ):
             with tempfile.TemporaryDirectory() as directory:
                 build = pathlib.Path(directory) / "target/release/kuno-text-lab"
                 build.parent.mkdir(parents=True)
@@ -431,6 +437,7 @@ class PerformanceLaneTests(unittest.TestCase):
                                                   "executable": str(build)}) + "\n")
                 args = SimpleNamespace(run_id="fixture", output=pathlib.Path(directory) / "records",
                                        native_decode_comparison=native, native_decode_tile_comparison=tile_comparison, cargo_artifacts=transcript,
+                                       native_decode_kernel_comparison=kernel_comparison,
                                        model=pathlib.Path("/original/blob"), card="intel")
                 model = {"path": "/original/blob", "device": 1, "inode": 2,
                          "size": LANE.MODEL_SIZE, "mtime_ns": 3}
@@ -442,10 +449,11 @@ class PerformanceLaneTests(unittest.TestCase):
                      contextlib.redirect_stdout(io.StringIO()):
                     LANE.launch(args)
                     plan = LANE.load_plan(args.output / "plan.json")
-                self.assertEqual(plan["scope"], LANE.TILE_SCOPE if tile_comparison else LANE.DECODE_SCOPE if native else LANE.MEMORY_SCOPE)
-                self.assertEqual(plan["native_decode_flags"], list(LANE.TILE_FLAGS if tile_comparison else LANE.DECODE_FLAGS if native else (False,) * 4))
-                self.assertEqual(plan["native_decode_tiles"], list(LANE.TILE_TILES if tile_comparison else (8,) * 4))
-                self.assertIn(f"--property=MemoryMax={52 if native or tile_comparison else 8}G", service.call_args.args[0])
+                self.assertEqual(plan["scope"], LANE.KERNEL_SCOPE if kernel_comparison else LANE.TILE_SCOPE if tile_comparison else LANE.DECODE_SCOPE if native else LANE.MEMORY_SCOPE)
+                self.assertEqual(plan["native_decode_flags"], list(LANE.TILE_FLAGS if tile_comparison or kernel_comparison else LANE.DECODE_FLAGS if native else (False,) * 4))
+                self.assertEqual(plan["native_decode_tiles"], list(LANE.KERNEL_TILES if kernel_comparison else LANE.TILE_TILES if tile_comparison else (8,) * 4))
+                self.assertEqual(plan["native_decode_kernels"], list(LANE.KERNEL_PROFILES) if kernel_comparison else ["chunk"] * 4)
+                self.assertIn(f"--property=MemoryMax={52 if native or tile_comparison or kernel_comparison else 8}G", service.call_args.args[0])
                 self.assertIn("--property=MemorySwapMax=0", service.call_args.args[0])
                 self.assertIn("--property=LimitCORE=0", service.call_args.args[0])
 
@@ -480,7 +488,7 @@ class PerformanceLaneTests(unittest.TestCase):
             for index, raw_tile, permitted in ((1, "8", True), (2, "1", True), (3, "1", True),
                                                (4, "8", True), (1, "1", False), (2, "8", False),
                                                (2, "01", False), (2, None, False)):
-                env = {"KUNO_LAB_NATIVE_DECODE": "1"}
+                env = {"KUNO_LAB_NATIVE_DECODE": "1", "KUNO_LAB_NATIVE_DECODE_KERNELS": "chunk"}
                 if raw_tile is not None:
                     env["KUNO_LAB_NATIVE_DECODE_TILE"] = raw_tile
                 with mock.patch.object(LANE, "load_plan", return_value=plan), \
@@ -524,7 +532,7 @@ class PerformanceLaneTests(unittest.TestCase):
         receipt.update(native_decode=True, native_decode_steps=127, scalar_decode_steps=0,
                        native_decode_projection_tile=1)
         receipt["owned_zero_audits"][0].update(source_buffers=0, source_bytes=0)
-        proof = "verified_performance_sample sample_index=2 native_decode=1 native_decode_tile=1\n"
+        proof = "verified_performance_sample sample_index=2 native_decode=1 native_decode_tile=1 native_decode_kernels=chunk\n"
         output = self.marker(52) + proof + self.output + "\n" + "\n".join(LANE.ACCEPTANCE.TILE_ONE_COMPLETION)
         LANE.accepted_result(receipt, output, "intel", 52, 0, self.before, self.before,
                              native_decode=True, native_decode_tile=1, index=2)
@@ -541,7 +549,7 @@ class PerformanceLaneTests(unittest.TestCase):
         receipt.update(native_decode=True, native_decode_steps=127, scalar_decode_steps=0,
                        native_decode_projection_tile=1, generation_ms=63500)
         receipt["owned_zero_audits"][0].update(source_buffers=0, source_bytes=0)
-        proof = "verified_performance_sample sample_index=2 native_decode=1 native_decode_tile=1\n"
+        proof = "verified_performance_sample sample_index=2 native_decode=1 native_decode_tile=1 native_decode_kernels=chunk\n"
         complete = self.marker(52) + proof + self.output + "\n" + "\n".join(LANE.ACCEPTANCE.TILE_ONE_COMPLETION)
         for missing in LANE.ACCEPTANCE.TILE_ONE_COMPLETION:
             with self.assertRaises(ValueError):
@@ -568,6 +576,112 @@ class PerformanceLaneTests(unittest.TestCase):
             self.assertEqual(result["native_decode_steps"], 127)
             self.assertEqual(result["decode_tokens_per_second"], 2.0)
             self.assertNotIn("private-test-fragment", json.dumps(result))
+
+    def kernel_plan(self):
+        return {"scope": LANE.KERNEL_SCOPE, "caps_gib": [52] * 4,
+                "native_decode_flags": [True] * 4, "native_decode_tiles": [1] * 4,
+                "native_decode_kernels": list(LANE.KERNEL_PROFILES), "model": {"path": "/original/blob"}}
+
+    def test_kernel_scope_pins_only_exact_profiles_native_tiles_and_host_caps(self):
+        plan = self.kernel_plan()
+        for index, profile in enumerate(LANE.KERNEL_PROFILES, 1):
+            self.assertEqual(LANE.selected_sample(plan, index), (52, True))
+            self.assertEqual(LANE.selected_tile(plan, index), 1)
+            self.assertEqual(LANE.selected_kernel(plan, index), profile)
+            env = LANE.worker_environment(plan, "/receipt", index)
+            self.assertEqual(env["KUNO_LAB_NATIVE_DECODE_KERNELS"], profile)
+        for field, value in (("caps_gib", list(LANE.ABBA)), ("native_decode_flags", list(LANE.DECODE_FLAGS)),
+                             ("native_decode_tiles", list(LANE.TILE_TILES)),
+                             ("native_decode_kernels", ["chunk"] * 4),
+                             ("native_decode_kernels", [1, 1, 1, 1]),
+                             ("native_decode_kernels", ["chunk", "single-moe", "single-moe", "chunk"]),
+                             ("native_decode_kernels", list(LANE.KERNEL_PROFILES)[:-1])):
+            with self.assertRaises(ValueError):
+                LANE.experiment_schedule({**plan, field: value})
+        with self.assertRaises(ValueError):
+            LANE.experiment_schedule({key: value for key, value in plan.items()
+                                      if key != "native_decode_kernels"})
+        with self.assertRaises(ValueError):
+            LANE.worker_environment(plan, "/receipt")
+        for scope in (LANE.MEMORY_SCOPE, LANE.DECODE_SCOPE, LANE.TILE_SCOPE):
+            with self.assertRaises(ValueError):
+                LANE.kernel_profiles({"scope": scope, "native_decode_kernels": list(LANE.KERNEL_PROFILES)})
+
+    def test_kernel_guard_rejects_ambient_profile_mismatch_before_exec(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _, _, cgroup, _ = self.supervisor_fixture(directory, tile_comparison=True)
+            plan = {**self.kernel_plan(), "unit": cgroup.name, "card": "intel", "executable": "/public/frozen"}
+            for index, actual, accepted in ((1, "chunk", True), (2, "single-all", True),
+                                            (2, "chunk", False), (1, "single-all", False),
+                                            (2, "single-gdn", False), (2, None, False)):
+                env = {"KUNO_LAB_NATIVE_DECODE": "1", "KUNO_LAB_NATIVE_DECODE_TILE": "1"}
+                if actual is not None:
+                    env["KUNO_LAB_NATIVE_DECODE_KERNELS"] = actual
+                with mock.patch.object(LANE, "load_plan", return_value=plan), \
+                     mock.patch.object(LANE, "cgroup_path", return_value=cgroup), \
+                     mock.patch.object(LANE.resource, "getrlimit", return_value=(0, 0)), \
+                     mock.patch.dict("os.environ", env, clear=True), \
+                     mock.patch.object(LANE.os, "execv") as execute, \
+                     contextlib.redirect_stdout(io.StringIO()) as output:
+                    if accepted:
+                        LANE.guard("/plan", 52, index)
+                        execute.assert_called_once()
+                        self.assertIn("native_decode_kernels=" + actual, output.getvalue())
+                    else:
+                        with self.assertRaises(ValueError):
+                            LANE.guard("/plan", 52, index)
+                        execute.assert_not_called()
+
+    def test_kernel_acceptance_requires_all_profile_proofs_and_independent_observation(self):
+        receipt = copy.deepcopy(self.receipt)
+        receipt.update(native_decode=True, native_decode_steps=127, scalar_decode_steps=0,
+                       native_decode_projection_tile=1, native_decode_kernels="single-all",
+                       observed_native_decode_kernels="single-all", generation_ms=63500)
+        receipt["owned_zero_audits"][0].update(source_buffers=0, source_bytes=0)
+        proof = "verified_performance_sample sample_index=2 native_decode=1 native_decode_tile=1 native_decode_kernels=single-all\n"
+        markers = LANE.ACCEPTANCE.TILE_ONE_COMPLETION + LANE.ACCEPTANCE.kernel_completion("single-all")
+        complete = self.marker(52) + proof + self.output + "\n" + "\n".join(markers)
+        selected = dict(native_decode=True, native_decode_tile=1, native_decode_kernels="single-all", index=2)
+        LANE.accepted_result(receipt, complete, "intel", 52, 0, self.before, self.before, **selected)
+        for marker in markers:
+            with self.assertRaises(ValueError):
+                LANE.accepted_result(receipt, complete.replace(marker, ""), "intel", 52, 0,
+                                     self.before, self.before, **selected)
+        for key in ("native_decode_kernels", "observed_native_decode_kernels"):
+            wrong = {**receipt, key: "chunk"}
+            with self.assertRaises(ValueError):
+                LANE.accepted_result(wrong, complete, "intel", 52, 0, self.before, self.before, **selected)
+        with tempfile.TemporaryDirectory() as directory:
+            plan_path, _, cgroup, _ = self.supervisor_fixture(directory, tile_comparison=True)
+            plan = {**self.kernel_plan(), "unit": cgroup.name, "card": "intel"}
+            state = {**self.before, "memory.current": 123}
+            stdout = "\n".join(marker + " private-test-fragment" for marker in markers) + "\n" + complete
+            def launch(command, **options):
+                self.assertEqual(options["env"]["KUNO_LAB_NATIVE_DECODE_KERNELS"], "single-all")
+                (pathlib.Path(directory) / "sample-2-cap-52.json").write_text(json.dumps(receipt))
+                return SimpleNamespace(stdout=io.BytesIO(stdout.encode()), poll=lambda: 0, returncode=0, pid=123)
+            with mock.patch.object(LANE.subprocess, "Popen", side_effect=launch), \
+                 mock.patch.object(LANE, "snapshot", return_value=state), \
+                 mock.patch.object(LANE.resource, "getrlimit", return_value=(0, 0)):
+                result = LANE.run_child(plan, plan_path, 2, 52, cgroup)
+            self.assertTrue(result["accepted"])
+            self.assertEqual(result["observed_native_decode_kernels"], "single-all")
+            self.assertEqual(result["decode_tokens_per_second"], 2.0)
+            self.assertNotIn("private-test-fragment", json.dumps(result))
+
+    def test_kernel_scope_load_requires_exact_full_plan_and_profile_schedule(self):
+        with tempfile.TemporaryDirectory() as directory:
+            plan = self.full_decode_plan(directory)
+            plan.update(scope=LANE.KERNEL_SCOPE, native_decode_flags=[True] * 4,
+                        native_decode_tiles=[1] * 4, native_decode_kernels=list(LANE.KERNEL_PROFILES))
+            path = pathlib.Path(directory) / "plan.json"
+            path.write_text(json.dumps(plan))
+            with mock.patch.object(LANE, "model_identity", return_value=plan["model"]):
+                self.assertEqual(LANE.load_plan(path), plan)
+                for missing in ("native_decode_tiles", "native_decode_kernels", "native_decode_flags"):
+                    path.write_text(json.dumps({key: value for key, value in plan.items() if key != missing}))
+                    with self.assertRaises(ValueError):
+                        LANE.load_plan(path)
 
 
 if __name__ == "__main__":

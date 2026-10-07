@@ -20,6 +20,37 @@ TILE_ONE_COMPLETION = (
     "public_native_tile1_mid_token_cancel layer=0 erased=true",
     "public_native_tile1_mid_token_cancel layer=3 erased=true",
 )
+KERNEL_PROFILES = ("chunk", "single-moe", "single-gdn", "single-all")
+
+
+def kernel_completion(profile):
+    return (
+        f"public_native_kernel_fresh_continuation profile={profile} matches=true",
+        f"public_native_kernel_mid_token_cancel profile={profile} layer=0 erased=true",
+        f"public_native_kernel_mid_token_cancel profile={profile} layer=3 erased=true",
+    ) if profile != "chunk" else ()
+
+
+def validate_kernel_selection(profile, native_decode, native_decode_tile):
+    if (type(profile) is not str or profile not in KERNEL_PROFILES
+        or type(native_decode) is not bool or type(native_decode_tile) is not int
+        or native_decode_tile not in (1, 8)
+        or native_decode_tile == 1 and not native_decode
+        or profile != "chunk" and (not native_decode or native_decode_tile != 1)):
+        raise ValueError("Decode kernel profile requires an explicit protected native tile1 selection")
+
+
+def validate_kernel_profile(receipt, native_decode, native_decode_tile, profile, allow_legacy_decode):
+    validate_kernel_selection(profile, native_decode, native_decode_tile)
+    fields = ("native_decode_kernels", "observed_native_decode_kernels")
+    present = [field in receipt for field in fields]
+    if not any(present) and allow_legacy_decode and profile == "chunk":
+        # Explicit offline historical inspection only. Live new-binary runners
+        # never accept missing profile observations or any non-chunk fallback.
+        return
+    if not all(present) or any(type(receipt[field]) is not str or receipt[field] != profile
+                               for field in fields):
+        raise ValueError("Selected and observed decode kernel profiles did not match the caller")
 
 
 def digest(data):
@@ -108,7 +139,7 @@ def validate_decode_tile(receipt, native_decode, native_decode_tile, allow_legac
 
 
 def validate_model_receipt(receipt, card, fixture, count, output, *, native_decode=False,
-                           native_decode_tile=8, allow_legacy_decode=False):
+                           native_decode_tile=8, native_decode_kernels="chunk", allow_legacy_decode=False):
     expected = {
         "resident-bang": [49276, 2349, 1074, 5928],
         "resident-chat": [9419, 0, 2500, 628, 353, 1438, 488, 3242],
@@ -170,6 +201,8 @@ def validate_model_receipt(receipt, card, fixture, count, output, *, native_deco
         raise ValueError("Native compiled fixture/model receipt did not match")
     _, scalar_steps = decode_counts(receipt, len(expected) - 1, native_decode, allow_legacy_decode)
     validate_decode_tile(receipt, native_decode, native_decode_tile, allow_legacy_decode)
+    validate_kernel_profile(receipt, native_decode, native_decode_tile, native_decode_kernels,
+                            allow_legacy_decode)
     audits = receipt.get("owned_zero_audits", [])
     if len(audits) != 4 or any(not isinstance(item, dict) or
         item.get("main_buffers") != 1376 or item.get("main_bytes") != 818249728 or
@@ -197,22 +230,27 @@ def validate_model_receipt(receipt, card, fixture, count, output, *, native_deco
         raise ValueError("Protected lifecycle completion evidence is incomplete")
     if native_decode_tile == 1 and any(message not in output.splitlines() for message in TILE_ONE_COMPLETION):
         raise ValueError("Native tile1 continuation/recovery completion evidence is incomplete")
+    if any(message not in output.splitlines() for message in kernel_completion(native_decode_kernels)):
+        raise ValueError("Native kernel profile continuation/recovery completion evidence is incomplete")
 
 
 def validate_receipt(receipt, card, fixture, count, output, *, native_decode=False,
-                     native_decode_tile=8, allow_legacy_decode=False):
+                     native_decode_tile=8, native_decode_kernels="chunk", allow_legacy_decode=False):
     if "verified_lab_limits swap_max=0 core_soft=0 core_hard=0 memory_max=8589934592" not in output:
         raise ValueError("Protected lifecycle completion evidence is incomplete")
     validate_model_receipt(receipt, card, fixture, count, output, native_decode=native_decode,
-                           native_decode_tile=native_decode_tile, allow_legacy_decode=allow_legacy_decode)
+                           native_decode_tile=native_decode_tile, native_decode_kernels=native_decode_kernels,
+                           allow_legacy_decode=allow_legacy_decode)
 
 
-def worker_environment(model, receipt, count, native_decode=False, native_decode_tile=8):
+def worker_environment(model, receipt, count, native_decode=False, native_decode_tile=8,
+                       native_decode_kernels="chunk"):
     if type(native_decode) is not bool:
         raise ValueError("Native decode selection must be an explicit boolean")
     if (type(native_decode_tile) is not int or native_decode_tile not in (1, 8)
         or native_decode_tile == 1 and not native_decode):
         raise ValueError("Native decode tile1 requires explicit native decode")
+    validate_kernel_selection(native_decode_kernels, native_decode, native_decode_tile)
     env = {
         "XDG_RUNTIME_DIR": "/run/user/" + str(os.getuid()),
         "CUBECL_DEBUG_LOG": "0",
@@ -223,6 +261,7 @@ def worker_environment(model, receipt, count, native_decode=False, native_decode
         "KUNO_LAB_NATIVE_BATCH_COUNT": str(count),
         "KUNO_LAB_NATIVE_DECODE": "1" if native_decode else "0",
         "KUNO_LAB_NATIVE_DECODE_TILE": str(native_decode_tile),
+        "KUNO_LAB_NATIVE_DECODE_KERNELS": native_decode_kernels,
         "KUNO_LAB_CANCEL_CHECK": "1",
         "KUNO_LAB_OWNED_ZERO_AUDIT": "1",
     }
@@ -244,11 +283,15 @@ def main():
                         help="Continue generation using native count1 chunks on the same owner")
     parser.add_argument("--native-decode-tile", type=int, choices=(1, 8), default=8,
                         help="Public decode projection tile; tile1 requires --native-decode")
+    parser.add_argument("--native-decode-kernels", choices=KERNEL_PROFILES, default="chunk",
+                        help="Public kernel profile; non-chunk requires protected native tile1 decode")
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--receipt", type=pathlib.Path, required=True)
     args = parser.parse_args()
     if args.native_decode_tile == 1 and not args.native_decode:
         parser.error("--native-decode-tile 1 requires --native-decode")
+    if args.native_decode_kernels != "chunk" and (not args.native_decode or args.native_decode_tile != 1):
+        parser.error("--native-decode-kernels requires --native-decode and --native-decode-tile 1")
     if not re.fullmatch(r"[a-z0-9-]{1,48}", args.run_id):
         parser.error("run-id must be 1..48 lowercase letters, digits or hyphens")
     target = args.receipt.resolve()
@@ -256,7 +299,8 @@ def main():
     if target.exists() or metadata.exists():
         parser.error("Refusing to replace an existing receipt or run record")
     frozen, identity, artifacts_identity = cargo_binary(args.cargo_artifacts)
-    env = worker_environment(args.model.resolve(), target, args.count, args.native_decode, args.native_decode_tile)
+    env = worker_environment(args.model.resolve(), target, args.count, args.native_decode,
+                             args.native_decode_tile, args.native_decode_kernels)
     command = [
         "systemd-run", "--user", "--unit=kuno-user-" + args.run_id,
         "--collect", "--wait", "--pipe", "--property=MemorySwapMax=0",
@@ -283,7 +327,8 @@ def main():
     receipt_snapshot = target.read_bytes()
     receipt = json.loads(receipt_snapshot)
     validate_receipt(receipt, args.card, args.fixture, args.count, "".join(lines),
-                     native_decode=args.native_decode, native_decode_tile=args.native_decode_tile)
+                     native_decode=args.native_decode, native_decode_tile=args.native_decode_tile,
+                     native_decode_kernels=args.native_decode_kernels)
     record = {
         "scope": "fixed-public-model-partition-output-and-lifecycle-fixture-only",
         "cargo_artifacts_sha256": artifacts_identity,
@@ -291,6 +336,7 @@ def main():
         "card": args.card, "fixture": args.fixture, "count": args.count,
         "native_decode": args.native_decode,
         "native_decode_projection_tile": args.native_decode_tile,
+        "native_decode_kernels": args.native_decode_kernels,
         "receipt_sha256": digest(receipt_snapshot),
         "protected_lifecycle_completion_checked": True,
         "matched_performance_measurement": False,

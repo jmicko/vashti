@@ -136,6 +136,7 @@ def main():
         "KUNO_TEST_GGUF": str(args.model.resolve()),
         "KUNO_LAB_TRANSIENT_IO": "1", "KUNO_LAB_OWNED_ZERO_AUDIT": "1",
         "KUNO_LAB_NATIVE_DECODE_TILE": "8",
+        "KUNO_LAB_NATIVE_DECODE_KERNELS": "chunk",
     }
     for suffix in ("BLOCK_MOE", "BATCH_EXPERTS", "WORD_DOWN", "ORDERED_PUBLIC_UPLOAD",
                    "FUSED_MATRIX_FAULT", "SMALL_CPU", "CPU_GDN", "PREFILL_LAST_HEAD",
