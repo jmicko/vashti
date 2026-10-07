@@ -2167,11 +2167,78 @@ mod tests {
                     8
                 );
             }
-            // Other stages are byte-for-byte the same public pipeline.
+            // CubeCL may enumerate uninitialized mutable declarations in a
+            // different order. Compare exact shader text after sorting only
+            // contiguous declarations at the same indentation; no operation,
+            // initializer, binding or scope boundary may move.
             for kind in 1..4 {
-                assert_eq!(shader(kind, blocked, mode), shader(kind, generic, mode));
+                assert_eq!(
+                    canonical_declaration_order(&shader(kind, blocked, mode)),
+                    canonical_declaration_order(&shader(kind, generic, mode))
+                );
             }
         }
+    }
+
+    fn canonical_declaration_order(source: &str) -> String {
+        let mut lines = Vec::new();
+        let mut declarations = Vec::new();
+        let mut indentation = None;
+        for line in source.lines() {
+            let trimmed = line.trim_start();
+            let prefix = &line[..line.len() - trimmed.len()];
+            let uninitialized = trimmed.starts_with("var l_mut_")
+                && trimmed.ends_with(';')
+                && trimmed.contains(':')
+                && !trimmed.contains(['=', '{', '}']);
+            if !uninitialized || indentation.is_some_and(|previous| previous != prefix) {
+                declarations.sort_unstable();
+                lines.append(&mut declarations);
+                indentation = None;
+            }
+            if uninitialized {
+                indentation = Some(prefix);
+                declarations.push(line);
+            } else {
+                lines.push(line);
+            }
+        }
+        declarations.sort_unstable();
+        lines.append(&mut declarations);
+        let mut canonical = lines.join("\n");
+        if source.ends_with('\n') {
+            canonical.push('\n');
+        }
+        canonical
+    }
+
+    #[test]
+    fn declaration_normalization_preserves_initializers_operations_and_scope() {
+        let original =
+            "fn main() {\n    var l_mut_8: f32;\n    var l_mut_1: bool;\n    let value = 1.;\n}\n";
+        let reordered =
+            "fn main() {\n    var l_mut_1: bool;\n    var l_mut_8: f32;\n    let value = 1.;\n}\n";
+        assert_eq!(
+            canonical_declaration_order(original),
+            canonical_declaration_order(reordered)
+        );
+        for changed in [
+            "fn main() {\n    var l_mut_1: bool;\n    var l_mut_8: f32 = 0.;\n    let value = 1.;\n}\n",
+            "fn main() {\n    var l_mut_1: bool;\n    let value = 1.;\n    var l_mut_8: f32;\n}\n",
+            "fn main() {\n    var l_mut_1: bool;\n    if true {\n        var l_mut_8: f32;\n    }\n    let value = 1.;\n}\n",
+            "fn main() {\n    var l_mut_1: bool;\n    var l_mut_8: f32;\n    let value = 2.;\n}\n",
+        ] {
+            assert_ne!(
+                canonical_declaration_order(original),
+                canonical_declaration_order(changed)
+            );
+        }
+        let initialized = "var l_mut_8: f32 = 0.;\nvar l_mut_1: f32;\n";
+        let moved = "var l_mut_1: f32;\nvar l_mut_8: f32 = 0.;\n";
+        assert_ne!(
+            canonical_declaration_order(initialized),
+            canonical_declaration_order(moved)
+        );
     }
 
     fn packed_fixture(dtype: u32, rows: usize, columns: usize, phase: usize) -> Vec<u8> {
