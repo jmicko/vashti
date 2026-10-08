@@ -132,6 +132,15 @@ impl Kernel {
     }
 }
 impl KernelMetadata for Kernel {
+    fn name(&self) -> &'static str {
+        if !self.down {
+            "NextMoeGateUp"
+        } else if self.dtype == 6 {
+            "NextMoeDownQ5"
+        } else {
+            "NextMoeDownQ8"
+        }
+    }
     fn id(&self) -> KernelId {
         KernelId::new::<Self>()
             .info(*self)

@@ -13,7 +13,7 @@ baselines are needed. Backend work belongs in the owner worktree
 
 ## Active overnight offload run, 2026-10-08
 
-The current accepted best is5.5955 tokens/s (144 slots, original full fixture);
+The current accepted best is5.6034 tokens/s (144 slots, original full fixture);
 10 tokens/s remains unmet. The preceding block established3.5006 tokens/s. Source
 `4cf40f3` adds specialized F16C original CPU packed loops with120 core tests,
 3 ignored and strict Clippy. Its normal frozen direct-device artifact
@@ -1499,4 +1499,14 @@ pass. This does not meet10 tokens/s or establish a paired speed comparison.
 The next candidate shares the same three typed GPU error scopes across each
 already-owned single-stream scheduler batch. It adds no deferred task queue or
 private owner and preserves all before-acceptance errors/fences. Source/physical
-acceptance pending.
+acceptance source4495d8f/artifactb64b9cc5 passes all original128 IDs and
+owning/fresh/lifecycle gates:22665ms decode (5.6034 tokens/s),16890ms
+prefill. This is essentially the same observed speed as5.5955; no meaningful
+speed benefit is established.53 runtime tests/two logger controls,492 native
+tests/both shaders,33 Python controls and strict Clippy pass. Physical memory
+returns50688000B.
+
+The next diagnostic replaces ambiguous custom `Kernel` profiler names with
+static public operator/packing families. No arithmetic, identity, owner or
+speed-selection change. First-following profiling remains excluded from speed
+selection.

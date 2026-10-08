@@ -121,6 +121,18 @@ impl Kernel {
     }
 }
 impl KernelMetadata for Kernel {
+    fn name(&self) -> &'static str {
+        match self {
+            Self::Matrix(spec) | Self::MatrixFault(spec, _) => match spec.dtype {
+                12 => "NextDenseQ4K",
+                14 => "NextDenseQ6K",
+                6 | 8 => "NextDenseQ5Q8",
+                _ => "NextDenseFloat",
+            },
+            Self::Router => "NextRouter",
+            Self::Gdn(_) => "NextGdn",
+        }
+    }
     fn id(&self) -> KernelId {
         KernelId::new::<Self>()
             .info(*self)

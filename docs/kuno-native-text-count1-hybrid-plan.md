@@ -1018,3 +1018,12 @@ path also keeps original per-call guards. No new queue, host/private allowance,
 API/default, unbounded wait, or early acceptance is introduced. Host scheduler
 order checks, original LIFO/error tests and the complete128-ID/owning/lifecycle
 fixture are required before accepting timing.
+
+### Public kernel family labels for one-step profiling
+
+The bounded first-following-step diagnostic distinguishes shared dense Q4K/
+Q6K/Q5Q8/float, MoE gate/up and Q5/Q8 down, GDN and router families with static
+names. These are public model/operator classes; labels contain no rows, source
+spans, routing, request values or timestamps. Shader source/arithmetic and
+compilation identity are unchanged. Profiled runs remain excluded from speed
+selection and subject to the original I/O/full-model/owning checks.
