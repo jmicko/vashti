@@ -3,6 +3,10 @@ name = "kuno-text-lab"
 version = "0.1.0"
 edition = "2024"
 
+[[bin]]
+name = "ornith-resident-lab"
+path = "src/ornith_main.rs"
+
 [dependencies]
 cubecl-runtime = "=0.10.0"
 serde_json = "1"
