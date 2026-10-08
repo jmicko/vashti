@@ -233,6 +233,23 @@ A narrow immutable positional reader is a prerequisite for real concurrent I/O. 
 
 ## Stage 2: measurement before split policy
 
+### Exact CPU reduction in registers, 2026-10-08
+
+The packed F32-activation AVX2 path now finishes its eight original vector
+accumulators directly in registers. Add strides remain32,16,8,4,2,1, with the
+same operands, f32 round points and final nonfinite rejection as the portable
+64-lane tree. There is no FMA, activation quantization or reassociation. It
+avoids storing64 lanes and calling the general mutable-array reduction for
+every projected row. The original guarded accumulators still erase on Drop;
+unquantized partial tails retain their existing guarded scratch path.
+
+An adversarial host gate compares signed zero, subnormals, overflowing finite
+inputs, all nonfinite lane positions and2048 fixed finite bit patterns against
+the original tree, requiring exact final bits or rejection. Existing seven
+format and repeated pooled whole-expert host gates also pass. Complete-model
+device acceptance and throughput remain pending at this source checkpoint.
+This is an internal Rust arithmetic change; no public API or service is changed.
+
 Use fixed-public data only, numerical acceptance first. Warm the compilation paths, pools, public fixture pages and clocks outside timed samples. Use payload working sets larger than the CPU last-level cache, rotating public experts without saving real request routing. Record device/driver/artifact/binary/CPU worker count, actual page charges, every sample and numeric checks. No heavy concurrent compilation.
 
 Measure for each actual down format and misses 0..10:

@@ -1333,6 +1333,39 @@ mod avx {
         }
     }
 
+    /// The original64-lane tree, entirely in registers: strides32,16,8,4,2,1.
+    /// Every add has the same two operands and f32 round point as reduce64.
+    /// In particular, this is neither a horizontal sum nor reassociation/FMA.
+    #[target_feature(enable = "avx2")]
+    unsafe fn finish(sums: &Sums) -> Result<f32> {
+        let a0 = _mm256_add_ps(sums.0[0], sums.0[4]);
+        let a1 = _mm256_add_ps(sums.0[1], sums.0[5]);
+        let a2 = _mm256_add_ps(sums.0[2], sums.0[6]);
+        let a3 = _mm256_add_ps(sums.0[3], sums.0[7]);
+        let b0 = _mm256_add_ps(a0, a2);
+        let b1 = _mm256_add_ps(a1, a3);
+        let c = _mm256_add_ps(b0, b1);
+        let d = _mm_add_ps(_mm256_castps256_ps128(c), _mm256_extractf128_ps::<1>(c));
+        let e = _mm_add_ps(d, _mm_movehl_ps(d, d));
+        let f = _mm_add_ss(e, _mm_shuffle_ps::<0x55>(e, e));
+        finite(_mm_cvtss_f32(f), "CPU expert non-finite projection")
+    }
+
+    #[cfg(test)]
+    #[allow(unsafe_code)]
+    pub(super) fn test_reduce(values: &[f32; LANES]) -> Result<f32> {
+        if !avx2_available() {
+            return Err(Error::InvalidFormat("CPU expert AVX2 unavailable"));
+        }
+        let mut sums = Zeroizing::new(Sums([unsafe { std::mem::zeroed() }; 8]));
+        for (bank, vector) in sums.0.iter_mut().enumerate() {
+            // SAFETY: detected AVX2, eight complete disjoint owning lane spans.
+            *vector = unsafe { _mm256_loadu_ps(values.as_ptr().add(bank * 8)) };
+        }
+        // SAFETY: detected AVX2 and the original64 complete lanes above.
+        unsafe { finish(&sums) }
+    }
+
     pub(super) fn dot(
         dtype: TensorType,
         packed: &[u8],
@@ -1434,16 +1467,8 @@ mod avx {
             }
             column += elements;
         }
-        for (bank, vector) in sums.0.iter().enumerate() {
-            // SAFETY: each bank selects one disjoint8-float span inside64 values.
-            unsafe {
-                _mm256_storeu_ps(scratch.sums.as_mut_ptr().add(bank * 8), *vector);
-            }
-        }
-        finite(
-            reduce64(&mut scratch.sums),
-            "CPU expert non-finite projection",
-        )
+        // SAFETY: run has AVX2 enabled; sums owns all original64 lane results.
+        unsafe { finish(&sums) }
     }
 
     #[target_feature(enable = "avx2")]
@@ -1451,7 +1476,7 @@ mod avx {
         dtype: TensorType,
         packed: &[u8],
         input: &[f32],
-        scratch: &mut Scratch,
+        _scratch: &mut Scratch,
         cancel: &AtomicBool,
     ) -> Result<f32> {
         let mut sums = Zeroizing::new(Sums([_mm256_setzero_ps(); 8]));
@@ -1557,16 +1582,8 @@ mod avx {
                 }
             }
         }
-        for (bank, vector) in sums.0.iter().enumerate() {
-            // SAFETY: each disjoint bank is eight initialized floats in64.
-            unsafe {
-                _mm256_storeu_ps(scratch.sums.as_mut_ptr().add(bank * 8), *vector);
-            }
-        }
-        finite(
-            reduce64(&mut scratch.sums),
-            "CPU expert non-finite projection",
-        )
+        // SAFETY: packed_dot has AVX2 enabled and preserves original64 lanes.
+        unsafe { finish(&sums) }
     }
 
     #[inline(always)]
@@ -2405,6 +2422,57 @@ mod tests {
                 assert!(got.owned_bytes() <= MAX_PRIVATE_HOST_BYTES);
                 assert!(op.project(&matrix, 2, &x, &AtomicBool::new(false)).is_err());
             }
+        }
+    }
+
+    #[test]
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    fn register_reduction_preserves_original_tree_bits_and_nonfinite_rejection() {
+        if !avx2_available() {
+            return;
+        }
+        let compare = |lanes: [f32; LANES]| {
+            let mut original = lanes;
+            let expected = reduce64(&mut original);
+            let actual = avx::test_reduce(&lanes);
+            if expected.is_finite() {
+                assert_eq!(actual.unwrap().to_bits(), expected.to_bits());
+            } else {
+                assert!(actual.is_err());
+            }
+        };
+        compare([0.; LANES]);
+        compare([-0.; LANES]);
+        compare([f32::from_bits(1); LANES]);
+        compare([f32::MAX; LANES]);
+        let mut order = [0.; LANES];
+        order[0] = 1e20;
+        order[16] = -1e20;
+        order[32] = 1.;
+        let mut scalar = order;
+        assert_eq!(reduce64(&mut scalar), 0.);
+        compare(order);
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            for lane in 0..LANES {
+                let mut values = [1.; LANES];
+                values[lane] = bad;
+                compare(values);
+            }
+        }
+        let mut bits = 0x3d11_713du32;
+        for _ in 0..2048 {
+            let values = std::array::from_fn(|_| {
+                bits = bits.wrapping_mul(1664525).wrapping_add(1013904223);
+                // All finite exponents, including subnormals and magnitudes
+                // that overflow intermediate adds. This also varies signs.
+                let finite_bits = if bits & 0x7f80_0000 == 0x7f80_0000 {
+                    bits ^ 0x0080_0000
+                } else {
+                    bits
+                };
+                f32::from_bits(finite_bits)
+            });
+            compare(values);
         }
     }
 
