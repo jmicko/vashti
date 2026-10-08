@@ -333,7 +333,7 @@ impl Workspace {
         u::zero_many(arena, &*clear_ids)?;
         r::grouped_rms_norm::launch::<WgpuRuntime>(
             client,
-            CubeCount::Static(l.streams as u32, MAX_BATCH as u32, 1),
+            CubeCount::Static(l.streams as u32, count as u32, 1),
             CubeDim::new_1d(64),
             u::arg(arena, residual)?,
             u::raw_arg(gamma, l.streams * l.width)?,
@@ -363,7 +363,7 @@ impl Workspace {
         )?;
         r::activate_down::launch::<WgpuRuntime>(
             client,
-            CubeCount::Static(l.low.div_ceil(64) as u32, MAX_BATCH as u32, 1),
+            CubeCount::Static(l.low.div_ceil(64) as u32, count as u32, 1),
             CubeDim::new_1d(64),
             u::arg(arena, self.ids[DOWN])?,
             u::arg(arena, self.ids[LOW])?,
@@ -391,7 +391,7 @@ impl Workspace {
         )?;
         r::mix::launch::<WgpuRuntime>(
             client,
-            CubeCount::Static(l.width.div_ceil(64) as u32, MAX_BATCH as u32, 1),
+            CubeCount::Static(l.width.div_ceil(64) as u32, count as u32, 1),
             CubeDim::new_1d(64),
             u::arg(arena, self.ids[NORM])?,
             u::arg(arena, self.ids[UP])?,
@@ -523,7 +523,7 @@ impl Prepared<'_, '_> {
             self.arena.client().map_err(u::fault)?,
             CubeCount::Static(
                 (l.streams * l.width).div_ceil(64) as u32,
-                MAX_BATCH as u32,
+                self.count[0] as u32,
                 1,
             ),
             CubeDim::new_1d(64),

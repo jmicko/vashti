@@ -1088,3 +1088,16 @@ byte and padding for groups2/3/4, verify unselected owners remain unchanged, and
 reject duplicate IDs before encoding. Exact typed selected/observed counters,
 probe markers, original output IDs and owning/lifecycle completion are mandatory
 for receipt acceptance. This remains an internal laboratory option.
+
+### Active-row dispatch bounds
+
+GR, GDN and QSA batch consumers, plus active-status folds, may dispatch only
+the already-validated active token rows1..8 instead of always dispatching eight
+rows. Original kernel bodies, active arithmetic, runtime spans, full MAX8
+allocations and all clear/erasure/ownership bounds remain. Omitted rows previously
+performed only workgroup-local reductions or guarded no-op work; original status
+and output stores are inside the same active-token condition. QSA causal token
+spans, cache append order and fixed per-token selectors remain. This is dispatch
+geometry only; no request value enters a compilation key or persistent trace.
+The fixed-public full fixture, fresh continuation and original owning/lifecycle
+gates are required before accepting speed.

@@ -926,7 +926,7 @@ impl ResidentGdn<'_> {
                     client,
                     CubeCount::Static(
                         (2 * p.shape.key_heads + p.shape.value_heads) as u32,
-                        MAX_BATCH as u32,
+                        count as u32,
                         1,
                     ),
                     dim,
@@ -953,7 +953,7 @@ impl ResidentGdn<'_> {
                 ),
                 Operation::Controls => point::prepare_controls::launch::<WgpuRuntime>(
                     client,
-                    CubeCount::Static(p.shape.value_heads.div_ceil(64) as u32, MAX_BATCH as u32, 1),
+                    CubeCount::Static(p.shape.value_heads.div_ceil(64) as u32, count as u32, 1),
                     dim,
                     arg(ALPHA)?,
                     arg(BETA)?,
@@ -1015,7 +1015,7 @@ impl ResidentGdn<'_> {
                 }
                 Operation::Closing => point::output_gate::launch::<WgpuRuntime>(
                     client,
-                    CubeCount::Static(p.shape.value_heads as u32, MAX_BATCH as u32, 1),
+                    CubeCount::Static(p.shape.value_heads as u32, count as u32, 1),
                     dim,
                     arg(RECURRENT)?,
                     arg(Z)?,

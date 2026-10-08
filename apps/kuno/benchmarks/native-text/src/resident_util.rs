@@ -217,7 +217,7 @@ pub fn status_batch(
     };
     verify_status_batch::launch::<WgpuRuntime>(
         arena.client().map_err(fault)?,
-        CubeCount::Static(x, crate::quant_matvec::matmul::MAX_BATCH as u32, 1),
+        CubeCount::Static(x, count as u32, 1),
         CubeDim::new_1d(64),
         arg(arena, region)?,
         arg(arena, fault_id)?,

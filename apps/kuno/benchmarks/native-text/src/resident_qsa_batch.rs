@@ -1162,7 +1162,7 @@ impl ResidentQsa<'_> {
         let a = |i| u::arg(arena, ids[i]);
         let cache = || u::arg(arena, self.ids[CACHE]);
         let pos = || u::arg(arena, self.ids[POSITIONS]);
-        let gr = |x| CubeCount::Static(x as u32, MAX_BATCH as u32, 1);
+        let gr = |x| CubeCount::Static(x as u32, count as u32, 1);
         let gamma = |i: usize| {
             u::raw_arg(
                 public.vectors[i].clone(),
