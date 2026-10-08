@@ -75,8 +75,11 @@ def validate_secondary(receipt, selected, output, long):
     if not selected:
         return
     hits=receipt.get("secondary_expert_calls"); calls=receipt.get("secondary_gpu_calls")
+    primary=receipt.get("warm_expert_hits"); cpu=receipt.get("completed_cpu_misses")
     if (type(hits) is not int or type(calls) is not int or not 0 < calls <= (127 if long else 7)*48
         or not calls <= hits <= calls*10 or receipt.get("secondary_bank_shards") != [32,16]
+        or type(primary) is not int or primary < 0 or type(cpu) is not int or cpu < 0
+        or primary + cpu + hits != (127 if long else 7)*48*10
         or receipt.get("secondary_bank_allocation_bytes") != 9*1024**3
         or type(receipt.get("secondary_bank_setup_ms")) is not int
         or type(receipt.get("secondary_weight_upload_bytes")) is not int
@@ -613,6 +616,7 @@ def main():
         "fused_experts": args.fused_experts,
         "gpu_expert_limit": args.gpu_expert_limit,
         "integer_experts": args.integer_experts,
+        "secondary_experts": args.secondary_experts,
         "fast_gpu": args.fast_gpu, "next_shared_kernels": args.next_shared_kernels, "next_shared_gdn": args.next_shared_gdn,
         "long_fixture": args.long_fixture,
         "cpu_q8_activations": args.cpu_q8,
