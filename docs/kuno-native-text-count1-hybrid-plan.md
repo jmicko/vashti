@@ -1396,6 +1396,24 @@ publication order remain unchanged. Without a request capability, PLE retains
 its original independent full audit. Calling that full sanitizer inside the
 selected scope would prematurely erase the entire token pool and defeat reuse.
 
+The follow-up experiment interns identical read-only INFO records within this
+same request scope. Exact length and byte equality are required; a hash is only
+a lookup accelerator. Kernel buffer handles are separate and are never inferred
+from matching INFO. Original zero initialization and pending copy order precede
+the first consumer. Cached Uniform pages are pinned against overwrite, pool
+reuse and COPY_DST pretransition until the full audit, even when only one region
+of a page is cached. Pending pages can append only before their first submission.
+Upload sources can recycle after the original completed consumer checkpoint.
+
+The cache is bounded to512 entries and64KiB of guarded key allocations, within
+the existing256KiB actual-capacity bookkeeping allowance. Saturation falls back
+to ordinary owned INFO before adding a key; no eviction or cross-request cache.
+Keys and capacity are wiped and cached resource references dropped before full
+GPU cleanup. Numeric hit/miss/new-page-pin aggregates establish actual use;
+they never contain keys, hashes, prompts or outputs. Readback owners may also
+join the completed COPY_DST transition batch after every raw lease has unmapped;
+mapped Upload owners remain excluded. Physical speed acceptance is separate.
+
 The new explicit `--request-io-reuse` laboratory mode targets allocation and
 cleanup overhead, preserving original packed arithmetic and model outputs.
 It requires mapped cap10 count1, deferred router I/O, batched INFO and inline

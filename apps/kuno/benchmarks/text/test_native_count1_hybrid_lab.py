@@ -47,13 +47,15 @@ class HybridLabTests(unittest.TestCase):
     def test_request_io_reuse_requires_actual_close_and_bounded_checkpoints(self):
         marker="public_request_io_reuse closed=true full_audit=true"
         value=dict(request_io_reuse=True, request_io_closed_and_audited=True,
-                   observed_request_io_checkpoints=381, observed_request_io_reuses=1234, request_io_close_ms=42)
+                   observed_request_io_checkpoints=381, observed_request_io_reuses=1234, request_io_close_ms=42,
+                   warm_info_cache_stats=[1000, 100, 20])
         LAB.validate_request_io_reuse(value, True, marker)
         for field, bads in [("request_io_reuse",[False,1,None]),
                             ("request_io_closed_and_audited",[False,1,None]),
                             ("observed_request_io_checkpoints",[0,True,None,-1,1000001]),
                             ("request_io_close_ms",[-1,True,None,900001]),
-                            ("observed_request_io_reuses",[0,True,None,-1,10000001])]:
+                            ("observed_request_io_reuses",[0,True,None,-1,10000001]),
+                            ("warm_info_cache_stats",[None,[],[1,2],[0,1,2],[1,0,2],[1,2,0],[True,1,2],[1,-1,2],[1,2,10000001]])]:
             for bad in bads:
                 wrong=dict(value);wrong[field]=bad
                 with self.assertRaises(ValueError): LAB.validate_request_io_reuse(wrong,True,marker)

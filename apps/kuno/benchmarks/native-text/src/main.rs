@@ -2338,6 +2338,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let pre_inline_read_batches = cubecl::wgpu::transient_inline_readback_batches();
             let pre_request_io_reuses = cubecl::wgpu::transient_request_io_reuses();
             let pre_scoped_read_ns = cubecl::wgpu::transient_scoped_read_ns();
+            let pre_info_cache_stats = cubecl::wgpu::transient_info_cache_stats();
             let reclaim_start = Instant::now();
             let gpu_source_advised_bytes = if reclaim_gpu_sources {
                 resident
@@ -2543,6 +2544,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 );
                 receipt["request_io_closed_and_audited"] = serde_json::json!(request_io_reuse);
                 receipt["request_io_close_ms"] = serde_json::json!(request_io_close_ms);
+                let info_cache_stats = cubecl::wgpu::transient_info_cache_stats();
+                receipt["warm_info_cache_stats"] = serde_json::json!([
+                    info_cache_stats.0.checked_sub(pre_info_cache_stats.0)
+                        .ok_or("INFO cache hit counter overflow")?,
+                    info_cache_stats.1.checked_sub(pre_info_cache_stats.1)
+                        .ok_or("INFO cache miss counter overflow")?,
+                    info_cache_stats.2.checked_sub(pre_info_cache_stats.2)
+                        .ok_or("INFO cache page counter overflow")?,
+                ]);
+                println!("public_warm_info_cache_stats={}", receipt["warm_info_cache_stats"]);
                 let scoped_read_ns = cubecl::wgpu::transient_scoped_read_ns();
                 receipt["warm_scoped_read_host_ns"] = serde_json::json!([
                     scoped_read_ns.0.checked_sub(pre_scoped_read_ns.0)

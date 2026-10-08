@@ -149,6 +149,60 @@
       "warm_uploaded_bytes": 0,
       "warm_weight_read_ms": 0,
       "warm_weight_upload_ms": 0
+    },
+    {
+      "run": "cpu-144-request-batch-reuse-long-v47",
+      "role": "slow-uniform-transition-control",
+      "source_commit": "58a171477c571053033ab478357772dbf5a54799",
+      "frozen_executable_sha256": "542815177211de5f01664b1b0d295d2ce4a1c06d14b08ca6ab6dd8b7d78909a6",
+      "raw_receipt_sha256": "813433bd50f7b00eb5c06880a4cd066740b973c08200508c341263ac49f2d45b",
+      "run_record_sha256": "458670c645a5618e9ee9b3c310b220c92aec61061e881d326505a2c90a837d5a",
+      "original_generated_id_count": 128,
+      "decode_tokens_per_second": 5.717115332673089,
+      "accepted_output_owning_and_lifecycle": true,
+      "generation_ms": 22214,
+      "prefill_ms": 15462,
+      "native_decode_steps": 127,
+      "seed": 424242,
+      "temperature": 0,
+      "request_io_reuse": true,
+      "request_io_close_ms": 25,
+      "request_io_closed_and_audited": true,
+      "observed_request_io_reuses": 84673,
+      "observed_request_io_checkpoints": 381,
+      "public_resident_warm_phase_ns": {
+        "native_all_family_commit": 141557540,
+        "native_all_family_preflight": 114908604,
+        "native_attention_and_gr_enqueue": 5850349664,
+        "native_completed_final_proofs": 1216566246,
+        "native_ffn_gr_and_router_enqueue": 189557221,
+        "native_final_head_enqueue": 9357971,
+        "native_route_and_expert_enqueue": 4803500298,
+        "native_router_fence": 9682195228,
+        "native_shared_and_ffn_combine_enqueue": 100454455
+      },
+      "warm_scoped_read_host_ns": [
+        13618093,
+        362216053,
+        9828431603
+      ],
+      "warm_host_resource_delta": {
+        "major_faults": 0,
+        "minor_faults": 178319,
+        "read_bytes": 0,
+        "system_ticks": 648,
+        "user_ticks": 3783,
+        "write_bytes": 0
+      },
+      "warm_cpu_operator_host_phase_ns": [
+        344125273,
+        1259330754,
+        906476752,
+        2559510974
+      ],
+      "warm_uploaded_bytes": 0,
+      "warm_weight_read_ms": 0,
+      "warm_weight_upload_ms": 0
     }
   ]
 }

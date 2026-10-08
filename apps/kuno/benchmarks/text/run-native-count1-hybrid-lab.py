@@ -49,6 +49,13 @@ def validate_request_io_reuse(receipt, selected, output):
         raise ValueError("Request I/O reuse requires actual checkpoints and full closing audit")
     if selected and "public_request_io_reuse closed=true full_audit=true" not in output.splitlines():
         raise ValueError("Completed request I/O closing audit missing")
+    if selected or "warm_info_cache_stats" in receipt:
+        stats = receipt.get("warm_info_cache_stats")
+        if (type(stats) is not list or len(stats) != 3
+            or any(type(n) is not int or not 0 <= n <= 10000000 for n in stats)
+            or selected and not all(n > 0 for n in stats)
+            or not selected and any(stats)):
+            raise ValueError("Immutable INFO reuse requires actual bounded hits, misses and page pins")
 
 
 def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False, metadata=False, banks="standard", shared=False, shared_gdn=False, info_batch_upload=False, dispatch="threaded", cpu_fma=False, reclaim_gpu_sources=False, native_scratch_clear=False, cpu_q8_residual=False, cpu_mapped_prefetch=False, pageout_gpu_sources=False, cpu_threads=16, cpu_q8_two_pass=False, cpu_buffered_weights=False, compute_scratch_clear=False, grouped_status=False, readback_reuse=False, gpu_upload_clear=False, inline_readback=False, cpu_work_stealing=False, request_io_reuse=False):
