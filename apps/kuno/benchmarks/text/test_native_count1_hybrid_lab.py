@@ -75,6 +75,23 @@ class HybridLabTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 LAB.validate_request_io_reuse(dict(value, warm_upload_transfer_bytes=stats), True, marker)
 
+    def test_private_upload_phases_are_paired_and_conserve_bytes(self):
+        LAB.validate_private_upload_phases({})  # Historical frozen artifacts.
+        fields = ("model_bind_private_upload_bytes", "prefill_private_upload_bytes")
+        good = dict(zip(fields, ([32768, 0, 32768], [65536, 1024, 64512])))
+        LAB.validate_private_upload_phases(good)
+        LAB.validate_private_upload_phases(dict.fromkeys(fields, [0, 0, 0]))
+        for key in fields:
+            missing = dict(good)
+            del missing[key]
+            with self.assertRaises(ValueError):
+                LAB.validate_private_upload_phases(missing)
+            for bad in (None, [], [1, 1], [1, 1, 1], [True, 1, 0],
+                        [32768, -1, 32769], [2**64, 0, 2**64]):
+                wrong = dict(good, **{key: bad})
+                with self.assertRaises(ValueError):
+                    LAB.validate_private_upload_phases(wrong)
+
     def test_request_io_reuse_is_explicit_and_has_no_unsafe_mode(self):
         selection=dict(mapped=True,deferred=True,compact_info=True,info_batch_upload=True,
                        inline_readback=True,dispatch="inline",request_io_reuse=True)

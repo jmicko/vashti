@@ -584,3 +584,12 @@ passed. A speed improvement is not established. It starts only after completed
 prefill, so no startup/model-loading benefit is claimed. Encoded command bytes
 are not a PCIe hardware traffic counter; numeric evidence remains in the
 count1 request-reuse aggregate.
+
+
+The private-initialization extension applies the same byte-exact transfer plan
+outside request reuse as well. This supersedes the earlier unscoped-upload
+exclusion, but does not enable reuse or change independent cleanup lifetimes.
+Original bounds and whole destinations remain mandatory. Ordinary public
+weight writes remain unchanged. A separate unscoped aggregate counter supports
+bind/prefill measurement; the original scoped counter is unchanged. See the
+count1 contract and current checkpoint for physical acceptance and limitations.

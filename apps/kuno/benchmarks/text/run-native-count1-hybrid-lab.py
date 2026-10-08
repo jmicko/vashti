@@ -67,9 +67,23 @@ def validate_request_io_reuse(receipt, selected, output):
             raise ValueError("Scoped upload bytes must conserve copied and GPU-cleared spans")
 
 
+def validate_private_upload_phases(receipt):
+    # Optional for earlier frozen artifacts; new artifacts report both phases.
+    fields = ("model_bind_private_upload_bytes", "prefill_private_upload_bytes")
+    if not any(key in receipt for key in fields):
+        return
+    for key in fields:
+        values = receipt.get(key)
+        if (type(values) is not list or len(values) != 3
+            or any(type(n) is not int or not 0 <= n < 2**64 for n in values)
+            or values[0] != values[1] + values[2]):
+            raise ValueError("Private upload phases require original/copied/cleared byte conservation")
+
+
 def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False, metadata=False, banks="standard", shared=False, shared_gdn=False, info_batch_upload=False, dispatch="threaded", cpu_fma=False, reclaim_gpu_sources=False, native_scratch_clear=False, cpu_q8_residual=False, cpu_mapped_prefetch=False, pageout_gpu_sources=False, cpu_threads=16, cpu_q8_two_pass=False, cpu_buffered_weights=False, compute_scratch_clear=False, grouped_status=False, readback_reuse=False, gpu_upload_clear=False, inline_readback=False, cpu_work_stealing=False, request_io_reuse=False):
     validate_cap(cap)
     validate_request_io_reuse(receipt, request_io_reuse, output)
+    validate_private_upload_phases(receipt)
     if request_io_reuse and cap != 10:
         raise ValueError("Request I/O reuse requires cap10")
     if cpu_work_stealing or "cpu_work_stealing" in receipt:

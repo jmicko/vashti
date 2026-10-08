@@ -1521,3 +1521,35 @@ with identical byte totals. The first run measures9.4839818 tokens/s; neither
 establishes a zero-tail speed benefit. See the final Astra checkpoint for exact
 artifact, tests, exclusions and completed host restoration. The10-token/s target
 remains unmet; goal stays paused.
+
+
+### Private initialization zero-tail extension (2026-10-08)
+
+This extends the preceding request-only transfer policy to all configured
+private uploads, including constructor initialization and prefill. It does not
+extend request-owned I/O reuse, INFO caching or buffer retention to these
+phases. Every original completion, ownership and full erasure gate remains.
+The common upload planner validates the original destination/source span before
+examining exact byte tails. Nonzero prefix copies and GPU tail clears remain
+ordered in the same encoder. Each allocated stage remains fully initialized,
+charged and audited; an all-zero write needs no stage but still initializes its
+entire original destination. Original maximum/overflow checks remain mandatory.
+
+Dense public model-weight writes through `create_from_slice` and ordinary
+`queue.write_buffer` remain unchanged. Most dense tensors do not offer a long
+zero suffix, and this work makes no weight compression or physical PCIe claim.
+The existing scoped transfer getter retains its exact semantics; a separate
+`transient_unscoped_upload_transfer_stats` getter counts encoded private bytes
+outside reuse. Fixed-public receipt fields `model_bind_private_upload_bytes`
+and `prefill_private_upload_bytes` each report original/copied/cleared byte
+conservation. They must both be present on new receipts, remain optional for
+historical frozen artifacts and do not contain offsets, contents or per-tensor
+identities. Public weight uploads are excluded. Bind measurements include the
+fixture's startup probes/constructor, and prefill remains a separate phase;
+these are not cold-storage end-to-end loading measurements.
+
+Runtime host controls pass 92 unit, three allocator and two logger tests, plus
+strict release all-target Clippy. The original 2048 byte-model cases cover the
+common planner. Parent source review found no blocker. Complete model output,
+lifecycle, recovery and measured timing acceptance are recorded in the next
+checkpoint; no installed service, API or frontend behavior changes.

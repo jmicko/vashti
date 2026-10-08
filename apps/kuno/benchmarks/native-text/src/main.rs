@@ -2139,6 +2139,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
             let path = std::env::var_os("KUNO_TEST_GGUF").ok_or("existing GGUF required")?;
             let load = Instant::now();
+            let before_bind_uploads = cubecl::wgpu::transient_unscoped_upload_transfer_stats();
             let file = GgufFile::open(path, GgufLimits::default())?;
             let tokenizer = Qwen35Tokenizer::from_gguf(&file, TokenizerLimits::default())?;
             if mapped_weights {
@@ -2216,6 +2217,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("resident_private_owned_bytes={}", r.owned_bytes());
             }
             let model_bind_ms = load.elapsed().as_millis() as u64;
+            let after_bind_uploads = cubecl::wgpu::transient_unscoped_upload_transfer_stats();
             println!(
                 "gpu_fixture={mode} prompt_tokens={} seed=424242 temperature=0 load_ms={}",
                 ids.len(),
@@ -2258,6 +2260,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             let prefill = start.elapsed();
+            let after_prefill_uploads = cubecl::wgpu::transient_unscoped_upload_transfer_stats();
             if kernel_profile {
                 client.sync().await?;
             }
@@ -2535,6 +2538,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 receipt["mapped_weights"] = serde_json::json!(mapped_weights);
                 receipt["count1_bank_profile"] = serde_json::json!(count1_banks.label());
                 receipt["observed_mapped_weights"] = serde_json::json!(file.weights_mapped());
+                // Private upload command extents only. Packed public weight
+                // uploads use a separate path and are not included here.
+                for (name, before, after) in [
+                    (
+                        "model_bind_private_upload_bytes",
+                        before_bind_uploads,
+                        after_bind_uploads,
+                    ),
+                    (
+                        "prefill_private_upload_bytes",
+                        after_bind_uploads,
+                        after_prefill_uploads,
+                    ),
+                ] {
+                    receipt[name] = serde_json::json!([
+                        after
+                            .0
+                            .checked_sub(before.0)
+                            .ok_or("private upload original counter overflow")?,
+                        after
+                            .1
+                            .checked_sub(before.1)
+                            .ok_or("private upload copy counter overflow")?,
+                        after
+                            .2
+                            .checked_sub(before.2)
+                            .ok_or("private upload clear counter overflow")?,
+                    ]);
+                    println!("public_{name}={}", receipt[name]);
+                }
                 receipt["request_io_reuse"] = serde_json::json!(request_io_reuse);
                 receipt["observed_request_io_checkpoints"] =
                     serde_json::json!(request_io_checkpoints);
@@ -2547,34 +2580,61 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 receipt["request_io_close_ms"] = serde_json::json!(request_io_close_ms);
                 let info_cache_stats = cubecl::wgpu::transient_info_cache_stats();
                 receipt["warm_info_cache_stats"] = serde_json::json!([
-                    info_cache_stats.0.checked_sub(pre_info_cache_stats.0)
+                    info_cache_stats
+                        .0
+                        .checked_sub(pre_info_cache_stats.0)
                         .ok_or("INFO cache hit counter overflow")?,
-                    info_cache_stats.1.checked_sub(pre_info_cache_stats.1)
+                    info_cache_stats
+                        .1
+                        .checked_sub(pre_info_cache_stats.1)
                         .ok_or("INFO cache miss counter overflow")?,
-                    info_cache_stats.2.checked_sub(pre_info_cache_stats.2)
+                    info_cache_stats
+                        .2
+                        .checked_sub(pre_info_cache_stats.2)
                         .ok_or("INFO cache page counter overflow")?,
                 ]);
-                println!("public_warm_info_cache_stats={}", receipt["warm_info_cache_stats"]);
+                println!(
+                    "public_warm_info_cache_stats={}",
+                    receipt["warm_info_cache_stats"]
+                );
                 let upload_transfer = cubecl::wgpu::transient_upload_transfer_stats();
                 receipt["warm_upload_transfer_bytes"] = serde_json::json!([
-                    upload_transfer.0.checked_sub(pre_upload_transfer.0)
+                    upload_transfer
+                        .0
+                        .checked_sub(pre_upload_transfer.0)
                         .ok_or("upload original byte counter overflow")?,
-                    upload_transfer.1.checked_sub(pre_upload_transfer.1)
+                    upload_transfer
+                        .1
+                        .checked_sub(pre_upload_transfer.1)
                         .ok_or("upload copied byte counter overflow")?,
-                    upload_transfer.2.checked_sub(pre_upload_transfer.2)
+                    upload_transfer
+                        .2
+                        .checked_sub(pre_upload_transfer.2)
                         .ok_or("upload cleared byte counter overflow")?,
                 ]);
-                println!("public_warm_upload_transfer_bytes={}", receipt["warm_upload_transfer_bytes"]);
+                println!(
+                    "public_warm_upload_transfer_bytes={}",
+                    receipt["warm_upload_transfer_bytes"]
+                );
                 let scoped_read_ns = cubecl::wgpu::transient_scoped_read_ns();
                 receipt["warm_scoped_read_host_ns"] = serde_json::json!([
-                    scoped_read_ns.0.checked_sub(pre_scoped_read_ns.0)
+                    scoped_read_ns
+                        .0
+                        .checked_sub(pre_scoped_read_ns.0)
                         .ok_or("scoped read setup counter overflow")?,
-                    scoped_read_ns.1.checked_sub(pre_scoped_read_ns.1)
+                    scoped_read_ns
+                        .1
+                        .checked_sub(pre_scoped_read_ns.1)
                         .ok_or("scoped read flush counter overflow")?,
-                    scoped_read_ns.2.checked_sub(pre_scoped_read_ns.2)
+                    scoped_read_ns
+                        .2
+                        .checked_sub(pre_scoped_read_ns.2)
                         .ok_or("scoped read map counter overflow")?,
                 ]);
-                println!("public_warm_scoped_read_host_ns={}", receipt["warm_scoped_read_host_ns"]);
+                println!(
+                    "public_warm_scoped_read_host_ns={}",
+                    receipt["warm_scoped_read_host_ns"]
+                );
                 receipt["kernel_profile"] = serde_json::json!(kernel_profile);
                 receipt["kernel_profile_scope"] = serde_json::json!(if kernel_profile {
                     "first-following-decode"
