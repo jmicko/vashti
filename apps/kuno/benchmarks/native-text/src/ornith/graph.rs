@@ -179,6 +179,7 @@ pub struct Graph {
     pub load_millis: u128,
     pub block_dot: bool,
     pub vector_dot: bool,
+    pub parallel_router: bool,
     subgroup_max: u32,
 }
 
@@ -195,6 +196,11 @@ impl Graph {
             Err(std::env::VarError::NotPresent) => false,
             Ok(value) if value == "1" => true,
             _ => return Err("Explicit resident vector-dot selection rejected".into()),
+        };
+        let parallel_router = match std::env::var("KUNO_LAB_ORNITH_PARALLEL_ROUTER") {
+            Err(std::env::VarError::NotPresent) => false,
+            Ok(value) if value == "1" => true,
+            _ => return Err("Explicit resident parallel routing selection rejected".into()),
         };
         let mut gpu = Gpu::new()?;
         if gpu.info.subgroup_min_size < 16 || gpu.info.subgroup_max_size > 32 {
@@ -247,6 +253,7 @@ impl Graph {
             load_millis: 0,
             block_dot,
             vector_dot,
+            parallel_router,
             subgroup_max,
         };
         graph.construct()?;
@@ -576,8 +583,16 @@ impl Graph {
                 false,
             )?;
             self.op(
-                "router",
-                include_str!("router.wgsl"),
+                if self.parallel_router {
+                    "router-parallel"
+                } else {
+                    "router"
+                },
+                if self.parallel_router {
+                    include_str!("router_parallel.wgsl")
+                } else {
+                    include_str!("router.wgsl")
+                },
                 0,
                 "",
                 None,
@@ -868,6 +883,7 @@ mod tests {
             include_str!("qsa.wgsl"),
             include_str!("scores.wgsl"),
             include_str!("router.wgsl"),
+            include_str!("router_parallel.wgsl"),
             include_str!("argmax.wgsl"),
         ];
         for dtype in [0, 12, 14] {

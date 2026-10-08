@@ -133,8 +133,91 @@ pub fn run(file: &GgufFile) -> Result<serde_json::Value> {
             }
         }
     }
+    let mut routing_cases = Vec::new();
+    for case in 0..3 {
+        let scores = Zeroizing::new(
+            (0..256usize)
+                .map(|i| match case {
+                    0 => ((i * 17 % 257) as i32 - 128) as f32 / 64.0,
+                    1 => 1.0,
+                    _ => (i % 13) as f32 / 16.0,
+                })
+                .collect::<Vec<_>>(),
+        );
+        let mut ids = (0u32..256).collect::<Vec<_>>();
+        ids.sort_by(|&a, &b| {
+            scores[b as usize]
+                .total_cmp(&scores[a as usize])
+                .then(a.cmp(&b))
+        });
+        ids.truncate(8);
+        let maximum = scores[ids[0] as usize];
+        let mut weights = ids
+            .iter()
+            .map(|&i| ((scores[i as usize] - maximum) as f64).exp() as f32)
+            .collect::<Vec<_>>();
+        let sum = weights.iter().sum::<f32>();
+        for w in &mut weights {
+            *w /= sum;
+        }
+        let bytes = Zeroizing::new(
+            scores
+                .iter()
+                .flat_map(|v| v.to_le_bytes())
+                .collect::<Vec<_>>(),
+        );
+        gpu.queue.write_buffer(&gpu.arena, 0, &bytes);
+        let mut previous: Option<Zeroizing<Vec<u8>>> = None;
+        for parallel in [false, true] {
+            let pipeline = gpu.pipeline(
+                &format!("public-router-{parallel}"),
+                graph::shader(
+                    0,
+                    "",
+                    if parallel {
+                        include_str!("router_parallel.wgsl")
+                    } else {
+                        include_str!("router.wgsl")
+                    },
+                ),
+            );
+            let step = gpu.step(pipeline, None, None, None, [0; 8], [1, 1, 1]);
+            let mut encoder = gpu.device.create_command_encoder(&Default::default());
+            {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: None,
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(&step.pipeline);
+                pass.set_bind_group(0, &step.bindings, &[]);
+                pass.dispatch_workgroups(1, 1, 1);
+            }
+            gpu.queue.submit([encoder.finish()]);
+            let actual = gpu.public_read(&gpu.routing, 0, 64)?;
+            let values = actual
+                .chunks_exact(4)
+                .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+                .collect::<Vec<_>>();
+            if values[..8] != ids
+                || values[8..]
+                    .iter()
+                    .zip(&weights)
+                    .any(|(&bits, &expected)| (f32::from_bits(bits) - expected).abs() > 2e-6)
+            {
+                return Err("Fixed public GPU router disagrees with independent ranking".into());
+            }
+            if previous
+                .as_ref()
+                .is_some_and(|old| old.as_slice() != actual.as_slice())
+            {
+                return Err("Parallel GPU router differs from scalar selections/weights".into());
+            }
+            previous = Some(actual);
+            routing_cases.push(serde_json::json!({"public_score_case":case,"parallel":parallel,"exact_scalar_agreement":parallel}));
+        }
+    }
     gpu.clear()?;
     Ok(
-        serde_json::json!({"fixed_public_projection_probe":true,"reference":"Rust original GGUF decoded rows with f64 accumulation","absolute_tolerance":5e-4,"relative_tolerance":5e-5,"cases":cases,"normal_private_clear_completed":true}),
+        serde_json::json!({"fixed_public_projection_probe":true,"reference":"Rust original GGUF decoded rows with f64 accumulation","absolute_tolerance":5e-4,"relative_tolerance":5e-5,"cases":cases,"routing_cases":routing_cases,"normal_private_clear_completed":true}),
     )
 }
