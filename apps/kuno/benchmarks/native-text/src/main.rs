@@ -804,6 +804,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("Fused subgroup finite checks require the explicit fast GPU path".into());
     }
     let long_fixture = count1_environment_opt_in(&mode, "KUNO_LAB_LONG_FIXTURE")?;
+    let cpu_mapped_prefetch = count1_environment_opt_in(&mode, "KUNO_LAB_CPU_MAPPED_PREFETCH")?;
+    if cpu_mapped_prefetch && (!mapped_weights || !count1_pooled) {
+        return Err("CPU source prefetch requires explicitly mapped pooled workers".into());
+    }
     let cpu_q8 = count1_environment_opt_in(&mode, "KUNO_LAB_CPU_Q8")?;
     let cpu_q8_residual = count1_environment_opt_in(&mode, "KUNO_LAB_CPU_Q8_RESIDUAL")?;
     if cpu_q8_residual && !cpu_q8 {
@@ -1938,6 +1942,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             count1_overlap,
                             cpu_q8,
                             cpu_q8_residual,
+                            cpu_mapped_prefetch,
                         )?
                     } else {
                         config.reserve_count1_hybrid()?
@@ -2116,6 +2121,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 apply_count1_hybrid_cap(r, &mut executor, count1_hybrid_cap, &cancel)?;
                 r.phase_ns.clear();
             }
+            let pre_cpu_prefetch_calls = if count1_hybrid_cap.is_some() {
+                resident
+                    .as_ref()
+                    .ok_or("CPU prefetch owner absent")?
+                    .native_cpu_mapped_prefetch(&executor)?
+                    .ok_or("CPU prefetch operator absent")?
+                    .1
+            } else {
+                0
+            };
             let pre_metadata_calls = resident_util::metadata_calls();
             let pre_scratch_clear_calls = resident_util::native_scratch_clear_calls();
             let reclaim_start = Instant::now();
@@ -2165,6 +2180,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             let warm_resources =
                 public_resources::delta(resources_before, public_resources::snapshot());
+            let observed_cpu_prefetch = if count1_hybrid_cap.is_some() {
+                let (enabled, calls) = resident
+                    .as_ref()
+                    .ok_or("CPU prefetch owner absent")?
+                    .native_cpu_mapped_prefetch(&executor)?
+                    .ok_or("CPU prefetch operator absent")?;
+                (
+                    enabled,
+                    calls
+                        .checked_sub(pre_cpu_prefetch_calls)
+                        .ok_or("CPU prefetch counter overflow")?,
+                )
+            } else {
+                (false, 0)
+            };
             if let Some(r) = &resident
                 && native_max8
             {
@@ -2280,6 +2310,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 receipt["long_fixture"] = serde_json::json!(long_fixture);
                 receipt["cpu_q8_activations"] = serde_json::json!(cpu_q8);
                 receipt["cpu_q8_residual"] = serde_json::json!(cpu_q8_residual);
+                receipt["cpu_mapped_prefetch"] = serde_json::json!(cpu_mapped_prefetch);
+                receipt["observed_cpu_mapped_prefetch"] =
+                    serde_json::json!(observed_cpu_prefetch.0);
+                receipt["warm_cpu_prefetch_calls"] = serde_json::json!(observed_cpu_prefetch.1);
                 receipt["cpu_fma_arithmetic"] = serde_json::json!(cfg!(feature = "cpu-fma"));
                 receipt["warm_host_resource_delta"] = serde_json::json!(warm_resources);
                 receipt["reclaim_gpu_sources"] = serde_json::json!(reclaim_gpu_sources);

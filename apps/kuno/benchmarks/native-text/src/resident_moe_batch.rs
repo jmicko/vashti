@@ -425,6 +425,11 @@ impl Workspace {
     pub(crate) fn cpu_workers_pooled(&self) -> Option<bool> {
         self.hybrid.as_ref().map(|h| h.operator.workers_pooled())
     }
+    pub(crate) fn cpu_mapped_prefetch(&self) -> Option<(bool, u64)> {
+        self.hybrid
+            .as_ref()
+            .map(|h| (h.operator.mapped_prefetch(), h.operator.prefetch_calls()))
+    }
     pub(crate) fn cpu_q8_residual(&self) -> Option<bool> {
         self.hybrid.as_ref().map(|h| h.operator.q8_residual())
     }

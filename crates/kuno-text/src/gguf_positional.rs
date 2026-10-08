@@ -163,6 +163,61 @@ impl<'m> PositionalReader<'m> {
         self.model.check_stat(&self.file)
     }
 
+    /// Best-effort Linux64 read-ahead for an already selected original packed
+    /// span. No path reopen, private staging, history or model copy is created.
+    #[allow(unsafe_code)]
+    pub fn prefetch_range(&self, tensor: TensorView<'m>, offset: u64, length: usize) -> Result<()> {
+        // Reuse all existing ownership/extent/read-limit and mapped guards.
+        if length == 0 || self.mapped_range(tensor, offset, length)?.is_none() {
+            return Err(Error::InvalidFormat(
+                "CPU source prefetch requires mapped original span",
+            ));
+        }
+        #[cfg(all(
+            target_os = "linux",
+            target_pointer_width = "64",
+            not(target_arch = "s390x")
+        ))]
+        {
+            use std::os::fd::AsRawFd;
+            unsafe extern "C" {
+                fn posix_fadvise(
+                    fd: std::ffi::c_int,
+                    offset: i64,
+                    length: i64,
+                    advice: std::ffi::c_int,
+                ) -> std::ffi::c_int;
+            }
+            let absolute = self
+                .model
+                .data_offset
+                .checked_add(tensor.info.offset)
+                .and_then(|n| n.checked_add(offset))
+                .ok_or(Error::ArithmeticOverflow)?;
+            if absolute
+                .checked_add(length as u64)
+                .is_none_or(|n| n > i64::MAX as u64)
+            {
+                return Err(Error::OutOfBounds);
+            }
+            self.verify_file_unchanged()?;
+            // SAFETY: original immutable read-only pinned fd and validated
+            // bounded tensor span, Linux64 off_t ABI; WILLNEED only reads public
+            // model pages. No mapping invalidation or private memory mutation.
+            let result =
+                unsafe { posix_fadvise(self.file.as_raw_fd(), absolute as i64, length as i64, 3) };
+            if result != 0 {
+                return Err(std::io::Error::from_raw_os_error(result).into());
+            }
+            self.verify_file_unchanged()
+        }
+        #[cfg(not(all(
+            target_os = "linux",
+            target_pointer_width = "64",
+            not(target_arch = "s390x")
+        )))]
+        Err(Error::InvalidFormat("CPU source prefetch requires Linux64"))
+    }
     /// Borrow only the requested original packed span. All consumers must join
     /// before releasing the model; the returned slice cannot outlive its owner.
     /// None preserves the positional-read path when mapping was not enabled.
@@ -498,6 +553,42 @@ mod tests {
         );
     }
 
+    #[cfg(all(
+        target_os = "linux",
+        target_pointer_width = "64",
+        not(target_arch = "s390x")
+    ))]
+    #[test]
+    #[allow(unsafe_code)]
+    fn selected_public_read_ahead_preserves_identity_extent_and_bytes() {
+        let f = fixture(96);
+        let other = fixture(96);
+        let reader = f.model.positional_reader().unwrap();
+        let tensor = f.model.tensor("w").unwrap();
+        assert!(reader.prefetch_range(tensor, 0, 16).is_err());
+        // SAFETY: test exclusively owns immutable temporary inode.
+        unsafe {
+            f.model.enable_mapped_weights().unwrap();
+        }
+        let before = reader
+            .mapped_range(tensor, 16, 16)
+            .unwrap()
+            .unwrap()
+            .to_vec();
+        reader.prefetch_range(tensor, 16, 16).unwrap();
+        assert_eq!(
+            reader.mapped_range(tensor, 16, 16).unwrap().unwrap(),
+            before
+        );
+        assert!(
+            reader
+                .prefetch_range(other.model.tensor("w").unwrap(), 0, 16)
+                .is_err()
+        );
+        for (offset, len) in [(0, 0), (96, 16), (u64::MAX, 16), (0, 97)] {
+            assert!(reader.prefetch_range(tensor, offset, len).is_err());
+        }
+    }
     #[test]
     fn identity_extent_limit_and_overflow_reject_before_mutation() {
         let a = fixture(16);

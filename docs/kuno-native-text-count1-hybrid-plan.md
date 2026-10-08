@@ -790,3 +790,21 @@ and the constructed operator. Q8 disabled/mismatched/ambient flags reject before
 inference. No installed/default/consumer changes. Host gates pass124 core tests
 (3 ignored),486 native tests plus two shader suites,27 Python controls and strict
 all-target Clippy. Complete physical correctness and speed remain pending.
+
+
+### Selected CPU source read-ahead, 2026-10-08
+
+Protected `--cpu-mapped-prefetch` requires independently selected mapped weights
+and pooled workers. Before launching existing joined consumers, it calls Linux64
+POSIX_FADV_WILLNEED on each selected original gate/up/down packed expert span.
+Existing inode, ownership, extent and read limits are checked; the mapping and
+original bytes remain unchanged. No future routing is predicted, no model is
+copied or requantized, and private jobs/inputs retain their original full-owning
+admission and erasure. This advisory operation is not proof of residency or a
+speed improvement. Installed inference and public APIs are unchanged.
+
+The selected and constructed operator booleans must match independently pinned
+runner flags; ambient flags are overwritten. Numeric-only warm advice counts
+must equal three times completed CPU misses (zero when disabled). Counter reads
+occur outside the measured process resource window. Mandatory original128 IDs,
+fresh/poison and full-owning audits remain. Device efficacy is pending.

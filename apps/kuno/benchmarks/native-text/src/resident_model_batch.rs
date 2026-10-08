@@ -153,7 +153,7 @@ impl Config {
         pooled: bool,
         overlap: bool,
     ) -> Result<Self> {
-        self.reserve_count1_hybrid_arithmetic(pooled, overlap, false, false)
+        self.reserve_count1_hybrid_arithmetic(pooled, overlap, false, false, false)
     }
     pub(crate) fn reserve_count1_hybrid_arithmetic(
         mut self,
@@ -161,6 +161,7 @@ impl Config {
         overlap: bool,
         q8: bool,
         residual: bool,
+        prefetch: bool,
     ) -> Result<Self> {
         use kuno_text::cpu_expert::{Backend, ExpertOperator, WorkerPlan};
         if self.cpu_operator.is_some()
@@ -180,6 +181,11 @@ impl Config {
             ExpertOperator::new_pooled(plan, backend)?
         } else {
             ExpertOperator::new(plan, backend)?
+        };
+        let operator = if prefetch {
+            operator.with_mapped_prefetch()
+        } else {
+            operator
         };
         self.cpu_operator = Some(Arc::new(if residual {
             operator.with_q8_residual()?
@@ -675,6 +681,18 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             .cpu_workers_pooled())
     }
 
+    pub(crate) fn native_cpu_mapped_prefetch(
+        &self,
+        executor: &GpuExecutor<'f>,
+    ) -> Result<Option<(bool, u64)>> {
+        self.completed_native_projection_boundary(executor)?;
+        Ok(self
+            .native_batch
+            .as_ref()
+            .ok_or(error())?
+            .moe
+            .cpu_mapped_prefetch())
+    }
     pub(crate) fn native_cpu_q8_residual(
         &self,
         executor: &GpuExecutor<'f>,

@@ -296,6 +296,8 @@ pub struct ExpertOperator {
     pool: Option<rayon::ThreadPool>,
     q8_activations: bool,
     q8_residual: bool,
+    mapped_prefetch: bool,
+    prefetch_calls: std::sync::atomic::AtomicU64,
 }
 
 // The full-capacity retained job owner erases these request-derived headers on
@@ -327,6 +329,8 @@ impl ExpertOperator {
             pool: None,
             q8_activations: false,
             q8_residual: false,
+            mapped_prefetch: false,
+            prefetch_calls: std::sync::atomic::AtomicU64::new(0),
         })
     }
 
@@ -387,6 +391,18 @@ impl ExpertOperator {
         let mut this = self.with_q8_activations()?;
         this.q8_residual = true;
         Ok(this)
+    }
+    /// Explicit actual-selection-only source read-ahead. Requires mapped
+    /// immutable weights at every call; failures are not swallowed/fallbacks.
+    pub fn with_mapped_prefetch(mut self) -> Self {
+        self.mapped_prefetch = true;
+        self
+    }
+    pub fn mapped_prefetch(&self) -> bool {
+        self.mapped_prefetch
+    }
+    pub fn prefetch_calls(&self) -> u64 {
+        self.prefetch_calls.load(Ordering::Relaxed)
     }
     pub fn q8_residual(&self) -> bool {
         self.q8_residual
@@ -702,8 +718,25 @@ impl ExpertOperator {
                     *offset as u64,
                     g.packed_bytes[part],
                 )? {
+                    if self.mapped_prefetch {
+                        weights.reader.prefetch_range(
+                            weights.tensors[part],
+                            *offset as u64,
+                            g.packed_bytes[part],
+                        )?;
+                        self.prefetch_calls
+                            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+                                n.checked_add(1)
+                            })
+                            .map_err(|_| Error::ArithmeticOverflow)?;
+                    }
                     jobs.get_mut(rank)?[part] = PackedJob::Mapped(mapped);
                     continue;
+                }
+                if self.mapped_prefetch {
+                    return Err(Error::InvalidFormat(
+                        "CPU source prefetch requires mapped weights",
+                    ));
                 }
                 let PackedJob::Owned(packed) = &mut jobs.get_mut(rank)?[part] else {
                     return Err(Error::InvalidFormat("CPU expert packed job state"));
@@ -3023,6 +3056,49 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[cfg(all(
+        target_os = "linux",
+        target_pointer_width = "64",
+        not(target_arch = "s390x")
+    ))]
+    #[test]
+    #[allow(unsafe_code)]
+    fn selected_mapped_prefetch_preserves_results_counts_and_cancel_boundary() {
+        let f = fixture(
+            [TensorType::Q4K, TensorType::Q4K, TensorType::Q5_0],
+            256,
+            256,
+            3,
+        );
+        let reader = f.model.positional_reader().unwrap();
+        let weights = set(&reader, &f);
+        let control =
+            ExpertOperator::new_pooled(WorkerPlan::portable(4).unwrap(), Backend::Portable)
+                .unwrap();
+        let candidate =
+            ExpertOperator::new_pooled(WorkerPlan::portable(4).unwrap(), Backend::Portable)
+                .unwrap()
+                .with_mapped_prefetch();
+        let x = input(256);
+        let cancel = AtomicBool::new(false);
+        assert!(!control.mapped_prefetch());
+        assert!(candidate.mapped_prefetch());
+        assert!(candidate.execute(&weights, &[2, 0], &x, &cancel).is_err());
+        assert_eq!(candidate.prefetch_calls(), 0);
+        // SAFETY: test exclusively owns immutable temporary inode.
+        unsafe {
+            f.model.enable_mapped_weights().unwrap();
+        }
+        let expected = control.execute(&weights, &[2, 0], &x, &cancel).unwrap();
+        let actual = candidate.execute(&weights, &[2, 0], &x, &cancel).unwrap();
+        same_bits(actual.full(), expected.full());
+        assert_eq!(candidate.prefetch_calls(), 6);
+        assert_eq!(control.prefetch_calls(), 0);
+        cancel.store(true, Ordering::Relaxed);
+        assert!(candidate.execute(&weights, &[2, 0], &x, &cancel).is_err());
+        assert_eq!(candidate.prefetch_calls(), 6);
     }
 
     #[test]

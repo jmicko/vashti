@@ -44,6 +44,19 @@ def completion(cap):
 
 
 class HybridLabTests(unittest.TestCase):
+    def test_cpu_prefetch_requires_mapped_actual_typed_selected_source_counts(self):
+        value=receipt("intel",10);value.update(cpu_mapped_prefetch=True,observed_cpu_mapped_prefetch=True,warm_cpu_prefetch_calls=51,mapped_weights=True,observed_mapped_weights=True,count1_hybrid_cpu_workers="pooled",observed_count1_hybrid_cpu_workers="pooled")
+        LAB.validate_receipt(value,"intel",10,completion(10),workers="pooled",mapped=True,cpu_mapped_prefetch=True)
+        for field,bads in [("cpu_mapped_prefetch",[False,1,None]),("observed_cpu_mapped_prefetch",[False,1,None]),("warm_cpu_prefetch_calls",[50,True,None,-1])]:
+            for bad in bads:
+                wrong=copy.deepcopy(value);wrong[field]=bad
+                with self.assertRaises(ValueError):LAB.validate_receipt(wrong,"intel",10,completion(10),workers="pooled",mapped=True,cpu_mapped_prefetch=True)
+        for kw in ({},{"mapped":True},{"workers":"pooled"}):
+            with self.assertRaises(ValueError):LAB.worker_environment("/original","/receipt",cpu_mapped_prefetch=True,**kw)
+        with mock.patch.dict(os.environ,{"KUNO_LAB_CPU_MAPPED_PREFETCH":"1"}):
+            self.assertEqual(LAB.worker_environment("/original","/receipt")["KUNO_LAB_CPU_MAPPED_PREFETCH"],"0")
+        self.assertEqual(LAB.worker_environment("/original","/receipt",workers="pooled",mapped=True,cpu_mapped_prefetch=True)["KUNO_LAB_CPU_MAPPED_PREFETCH"],"1")
+
     def test_residual_q8_requires_explicit_selected_and_observed_arithmetic(self):
         value=receipt("intel",10);value.update(cpu_q8_activations=True,observed_cpu_q8_activations=True,cpu_q8_residual=True,observed_cpu_q8_residual=True,count1_hybrid_cpu_workers="pooled",observed_count1_hybrid_cpu_workers="pooled")
         LAB.validate_receipt(value,"intel",10,completion(10),workers="pooled",cpu_q8=True,cpu_q8_residual=True)
