@@ -1590,3 +1590,15 @@ three completed PLE diagnostic readbacks, retaining every original validation
 and enforcing the simultaneous peak against the unchanged4MiB host cap.
 496 native tests, both shaders and strict Clippy pass; physical acceptance
 pending. Installed inference and public contracts remain unchanged.
+
+PLE batch source7a2dab6/artifact23c4ccf7ab5775995f449f1f4ac40f167b93211324110091bc3f807f5aafad94
+passes all original75/128 output, fresh, full-owning and lifecycle gates:
+17745ms decode (7.1569 tokens/s),15431ms prefill. No measurable gain in this
+single sample; B70 returns50688000B. The same source recompiled for original
+compiled two-pass CPU Q8 (artifact3885e2a9aa2ef3e2e6f001ea85753876d06abe7aff03e3d3bac4b9d02fb2c6c0)
+also passes all original gates, but18358ms decode (6.9179 tokens/s),16022ms
+prefill is slower. Its CPU operator total rises3006→3686ms against v30 and warm
+disk reads remain zero; retain original float FMA as the control. Both feature
+sets pass496 native tests, both shader suites and strict Clippy. The next
+candidate factors original Q4_K vector dots for dense/expert kernels; independent
+rows and full original device acceptance are pending. No API/installed changes.

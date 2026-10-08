@@ -1165,3 +1165,14 @@ vectors and existing history, with the original64KiB metadata reserve. Runtime
 readback/full-audit reservations and original owning inventories are unchanged.
 The unselected path retains separate reads. Original full-model128 IDs and
 fresh/poison/full-owning/lifecycle gates are mandatory before timing acceptance.
+
+### Factored original Q4_K vector dots
+
+The selected Next shared dense and expert kernels may factor each original
+Q4_K dot into nibble-vector/input dots and input sums multiplied by the same
+original block scale/minimum. Packed byte accesses, bindings, supported shapes,
+source owners, runtime INFO, all finite/sticky fault handling and full owning
+spans remain. This changes floating round points without requantizing weights.
+Original independent f64 row controls and complete128-ID/fresh/poison/owning/
+lifecycle gates remain mandatory; no tolerance or output gate is relaxed.
+The separate fully resident Ornith path keeps its current arithmetic.

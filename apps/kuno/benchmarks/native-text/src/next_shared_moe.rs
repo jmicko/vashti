@@ -28,7 +28,7 @@ impl Kernel {
             .split_once("fn sigmoid")
             .unwrap()
             .1;
-        let vector = include_str!("ornith/matrix_vector.wgsl");
+        let vector = crate::next_shared::packed_vector_source();
         let helpers = vector.split_once("@compute").unwrap().0;
         let arithmetic = vector
             .split_once("    var sum=0.0;")
