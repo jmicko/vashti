@@ -1091,6 +1091,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
         );
         let client = WgpuRuntime::client(&selected);
+        if kernel_profile {
+            client.set_profiling_paused(true);
+        }
         if mode == "grouped-moe-chunk-probe" {
             return grouped_moe_chunk_probe::run(&client, &grouped_limits);
         }
@@ -2207,6 +2210,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Count actual successful generation continuations only. Prompt
             // chunks, cancellation attempts and fresh replay are excluded.
             let mut native_decode_steps = 0u64;
+            let mut profiled_native_decode_steps = 0u64;
             let mut scalar_decode_steps = 0u64;
             let resources_before = public_resources::snapshot();
             let mut decoder = tokenizer.stream_decoder();
@@ -2219,6 +2223,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let text = decoder.push_bytes(tokenizer.token_bytes(token)?)?;
                 println!("synthetic_gpu_token={token} synthetic_gpu_text={text:?}");
                 if n + 1 < limit {
+                    struct PausedProfileOnDrop<'a>(&'a cubecl::prelude::ComputeClient<WgpuRuntime>);
+                    impl Drop for PausedProfileOnDrop<'_> {
+                        fn drop(&mut self) {
+                            self.0.set_profiling_paused(true);
+                        }
+                    }
+                    let profile_guard = if kernel_profile && n == 0 {
+                        client.set_profiling_paused(false);
+                        Some(PausedProfileOnDrop(&client))
+                    } else {
+                        None
+                    };
                     logits.zeroize();
                     logits = if let Some(r) = &mut resident {
                         let mut output =
@@ -2235,6 +2251,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         scalar_decode_steps += 1;
                         output
                     };
+                    if profile_guard.is_some() {
+                        profiled_native_decode_steps += 1;
+                    }
+                    drop(profile_guard);
                 }
             }
             let warm_resources =
@@ -2356,6 +2376,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 receipt["count1_bank_profile"] = serde_json::json!(count1_banks.label());
                 receipt["observed_mapped_weights"] = serde_json::json!(file.weights_mapped());
                 receipt["kernel_profile"] = serde_json::json!(kernel_profile);
+                receipt["kernel_profile_scope"] = serde_json::json!(if kernel_profile {
+                    "first-following-decode"
+                } else {
+                    "disabled"
+                });
+                receipt["profiled_native_decode_steps"] =
+                    serde_json::json!(profiled_native_decode_steps);
                 receipt["observed_shared_overlap_calls"] =
                     serde_json::json!(executor.shared_overlap_calls);
                 receipt["gpu_router"] = serde_json::json!(gpu_router);

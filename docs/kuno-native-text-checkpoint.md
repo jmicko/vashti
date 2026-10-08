@@ -187,7 +187,17 @@ or acceptance claim, and no budget bypass. Physical memory returns50688000B.
 A further buffered original CPU job candidate keeps mapped GPU sources, but
 uses bounded call-local original packed vectors for actual CPU positional reads.
 127 core tests (3 ignored),491 native tests plus both shader suites,31 Python
-controls and strict all-target Clippy pass; physical acceptance remains pending.
+controls and strict all-target Clippy pass; physical acceptance now passes: source14a1c92/artifact1864cd13 completes all128 IDs,
+original owning/fresh/lifecycle gates with51413ms decode (2.4702 tokens/s),
+50962ms prefill and49233 actual original CPU reads. Major faults drop to361,
+but readbytes12011974656 and copy/allocation costs worsen wall time. Mapped
+reads remain selected. B70 returns50688000B.
+
+The next diagnostic pauses profiling through initialization/prefill, and arms
+only the first following native decode with a drop guard. No I/O/admission cap
+or original owner proof is changed. Original full-lifetime profiling is rejected
+and excluded from timing selection. Host/source controls and physical acceptance
+of the bounded diagnostic are pending.
 
 The user granted exclusive GPUs. Installed Kuno had an idle managed worker
 holding15978409984 B70 bytes with no active request; a graceful Kuno restart

@@ -992,6 +992,12 @@ impl<R: Runtime> ComputeClient<R> {
         }
     }
 
+    /// Pause or resume only an explicitly configured per-client profiler.
+    /// No device work, private allocation, fence or ownership transition occurs.
+    pub fn set_profiling_paused(&self, paused: bool) {
+        self.utilities.logger.set_profiling_paused(paused);
+    }
+
     /// Flush all outstanding commands.
     pub fn flush(&self) -> Result<(), ServerError> {
         let stream_id = self.stream_id();

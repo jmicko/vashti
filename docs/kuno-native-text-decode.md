@@ -35,7 +35,8 @@ This first lab uses the existing immutable content-addressed Ollama blob under
 exclusive model-installation access. Production enforcement is still required.
 
 `KUNO_LAB_KERNEL_PROFILE=1` explicitly configures basic kernel timing for the
-fixed-public count1 fixture only. No arbitrary request profiler, prompt logging,
+first following decode step of the fixed-public count1 fixture only. Timing is
+paused through startup, probes, prefill and all later/fresh/cleanup steps. No arbitrary request profiler, prompt logging,
 compilation dump or persisted route history is introduced. Profiling changes
 execution timing and never establishes an unprofiled speed claim. Both options
 are0/1, rejected outside the protected fixture, and recorded in its receipt.

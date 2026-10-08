@@ -73,13 +73,18 @@
     },
     {
       "path": "cubecl-runtime/src/client.rs",
-      "sha256": "74be39db639839b61c47e22f0340d239865524a33a476f05741010286baee480",
+      "sha256": "7dbb22d4ea267158f44fe756d3af5cb524b6efae3e94eeaff8ccc0f528169ecc",
       "original_sha256": "dd25c67906e3db68d05d916d45234e4bdf20cd5b65ac1ad2b00a2ddcb520e85a"
     },
     {
       "path": "cubecl-runtime/src/lib.rs",
       "sha256": "90db6b6a2f984a47e225d3260acfb5066a5ab4cc920ec864d1404e63cce86d68",
       "original_sha256": "634dc81833a5fc97bff56f433043948dba17dc6dfdfb81841cfed29df25fa5ab"
+    },
+    {
+      "path": "cubecl-runtime/src/logging/server.rs",
+      "sha256": "c0a398ca40095f13fdccba71b281d08f54f93554f19f3bcb2f36bf7cc2a903a6",
+      "original_sha256": "53873f447e8b05829950a7ac7aa9681d46a27622da72c68cb28b29c39cd53319"
     },
     {
       "path": "cubecl-runtime/src/server/base.rs",
@@ -162,7 +167,7 @@
       "original_sha256": null
     }
   ],
-  "patch_sha256": "0f4137174f5de0e53caf1e30fc517c6e9822ca1861ca628080a78045e707b0d9",
+  "patch_sha256": "68c45a4dc86afd0f428a28e39d96976bf920551a56f0f9f91e70dbee36f9d194",
   "lock_sha256": "83550fa6c6d790fdfb62df390fd96b7c9d75b367c1ee6712b980ab2ff67c7288",
   "host_lock_sha256": "b968a383901ba657bdc2b670a0c7d30fc8c6b8c7ae9335c7c231fb827f0b7acf"
 }

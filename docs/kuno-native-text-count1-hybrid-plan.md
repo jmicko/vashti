@@ -926,3 +926,17 @@ per-row mmap fault stalls; its allocation/copy cost can instead worsen speed.
 Original numerical results must be identical to the same arithmetic mode,
 including all128 reference IDs, unchanged full owning/erasure/fresh gates and
 physical recovery. This is an unaccepted laboratory hypothesis until measured.
+
+### Warm-only GPU timing diagnostic
+
+The existing full-lifetime profiler exhausted the unchanged private-I/O cap
+before inference because it flushed each initialization dispatch's INFO page.
+The revised explicit fixed-public `--kernel-profile` keeps timing paused through
+startup, probes and prefill. It arms only the first following decode step,
+pauses on every return/unwind before further inference or cleanup, and reports
+exactly one profiled original native decode step. This changes diagnostic scope,
+not timing acceptance: profiled runs remain excluded from clean speed selection.
+Per-client shared atomic pause state changes no kernel arithmetic, existing
+source/target ownership, scope/fence, admission limit or retirement rule. All
+profiling allocations remain subject to the original I/O guard; any overflow
+still terminally rejects. Original complete fixture/erasure gates are mandatory.

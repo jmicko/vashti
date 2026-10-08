@@ -487,3 +487,16 @@ pass without retirement. See
 [the latest checkpoint](../../../../../docs/kuno-native-text-checkpoint.md#latest-owned-public-upload-and-long-comparison-2026-10-07).
 The accepted long Intel Q4 comparison uses this upload path in both profiles;
 it is not a copy-before/after benchmark or a production routing acceptance.
+
+### Bounded warm-only profiling
+
+The fixed-public native lab uses shared per-client `set_profiling_paused` to
+pause its explicitly configured logger through initialization and prefill,
+then profile only its first following decode. A disabled logger stays disabled;
+pausing preserves the originally configured level. The flag adds no device
+work, private owners or capacity. A drop guard pauses before subsequent work
+and terminal cleanup on error/unwind. Existing I/O/source/admission bounds and
+audits apply to every profiling flush; exhaustion still rejects the fixture.
+Profiling remains diagnostic and cannot establish unprofiled speed. Two
+process-isolated logger tests exercise enabled and disabled configurations
+without adapters, files or private content. Physical efficacy is pending.

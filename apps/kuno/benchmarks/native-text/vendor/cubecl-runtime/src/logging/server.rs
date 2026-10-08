@@ -25,6 +25,7 @@ enum LogMessage {
 #[derive(Debug)]
 pub struct ServerLogger {
     profile_level: Option<ProfileLevel>,
+    profile_paused: core::sync::atomic::AtomicBool,
     log_compile_info: bool,
     log_streaming: StreamingLogLevel,
     log_channel: Option<Sender<LogMessage>>,
@@ -50,6 +51,7 @@ impl Default for ServerLogger {
         if disabled {
             return Self {
                 profile_level: None,
+                profile_paused: core::sync::atomic::AtomicBool::new(false),
                 log_compile_info: false,
                 log_streaming: StreamingLogLevel::Disabled,
                 log_channel: None,
@@ -85,6 +87,7 @@ impl Default for ServerLogger {
 
         Self {
             profile_level,
+            profile_paused: core::sync::atomic::AtomicBool::new(false),
             log_compile_info,
             log_streaming,
             log_memory,
@@ -96,7 +99,22 @@ impl Default for ServerLogger {
 impl ServerLogger {
     /// Returns the profile level, none if profiling is deactivated.
     pub fn profile_level(&self) -> Option<ProfileLevel> {
-        self.profile_level
+        if self.profile_level.is_none()
+            || self
+                .profile_paused
+                .load(core::sync::atomic::Ordering::Acquire)
+        {
+            None
+        } else {
+            self.profile_level
+        }
+    }
+
+    /// Pause an explicitly configured profiler without changing graph execution,
+    /// ownership or I/O limits. Disabled loggers cannot be armed by this method.
+    pub fn set_profiling_paused(&self, paused: bool) {
+        self.profile_paused
+            .store(paused, core::sync::atomic::Ordering::Release);
     }
 
     /// Returns true if compilation info should be logged.

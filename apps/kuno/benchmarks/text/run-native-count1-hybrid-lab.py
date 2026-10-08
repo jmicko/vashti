@@ -46,6 +46,9 @@ def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False
         passes=receipt.get("observed_cpu_q8_residual_passes")
         if type(passes) is not int or passes!=(2 if cpu_q8_two_pass else 3 if cpu_q8_residual else 0):
             raise ValueError("Completed residual activation pass count mismatch")
+    if profile or "kernel_profile_scope" in receipt:
+        if receipt.get("kernel_profile_scope") != ("first-following-decode" if profile else "disabled") or type(receipt.get("profiled_native_decode_steps")) is not int or receipt.get("profiled_native_decode_steps") != (1 if profile else 0):
+            raise ValueError("GPU timing must cover only one independently selected native decode step")
     if cpu_buffered_weights or "cpu_buffered_weights" in receipt:
         calls=receipt.get("warm_cpu_buffered_reads");misses=receipt.get("completed_cpu_misses")
         if type(cpu_buffered_weights) is not bool or (cpu_buffered_weights and (not mapped or workers!="pooled" or cpu_mapped_prefetch)) or receipt.get("cpu_buffered_weights") is not cpu_buffered_weights or receipt.get("observed_cpu_buffered_weights") is not cpu_buffered_weights or type(calls) is not int or type(misses) is not int or calls != (3*misses if cpu_buffered_weights else 0):

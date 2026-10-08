@@ -69,6 +69,14 @@ class HybridLabTests(unittest.TestCase):
             self.assertEqual(LAB.worker_environment("/original","/receipt")["KUNO_LAB_PAGEOUT_GPU_SOURCES"],"0")
         self.assertEqual(LAB.worker_environment("/original","/receipt",mapped=True,reclaim_gpu_sources=True,pageout_gpu_sources=True)["KUNO_LAB_PAGEOUT_GPU_SOURCES"],"1")
 
+    def test_gpu_profiling_is_bounded_to_one_explicit_native_decode(self):
+        value=receipt("intel",10);value.update(kernel_profile=True,kernel_profile_scope="first-following-decode",profiled_native_decode_steps=1)
+        LAB.validate_receipt(value,"intel",10,completion(10),profile=True)
+        for field,bads in [("kernel_profile_scope",["prefill","full",None]),("profiled_native_decode_steps",[0,2,True,None])]:
+            for bad in bads:
+                wrong=copy.deepcopy(value);wrong[field]=bad
+                with self.assertRaises(ValueError):LAB.validate_receipt(wrong,"intel",10,completion(10),profile=True)
+
     def test_buffered_cpu_requires_actual_typed_original_reads_without_prefetch(self):
         value=receipt("intel",10);value.update(cpu_buffered_weights=True,observed_cpu_buffered_weights=True,warm_cpu_buffered_reads=51,mapped_weights=True,observed_mapped_weights=True,count1_hybrid_cpu_workers="pooled",observed_count1_hybrid_cpu_workers="pooled")
         LAB.validate_receipt(value,"intel",10,completion(10),workers="pooled",mapped=True,cpu_buffered_weights=True)
@@ -303,7 +311,7 @@ class HybridLabTests(unittest.TestCase):
         for mapped in (False, True):
             for profile in (False, True):
                 value = receipt("intel", 10)
-                value.update(mapped_weights=mapped, observed_mapped_weights=mapped, kernel_profile=profile)
+                value.update(mapped_weights=mapped, observed_mapped_weights=mapped, kernel_profile=profile, kernel_profile_scope="first-following-decode" if profile else "disabled", profiled_native_decode_steps=1 if profile else 0)
                 LAB.validate_receipt(value, "intel", 10, completion(10), mapped=mapped, profile=profile)
                 for field, selected in (("mapped_weights", mapped), ("observed_mapped_weights", mapped), ("kernel_profile", profile)):
                     for bad in (0, "false", None, not selected):
