@@ -741,6 +741,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let fast_gpu = count1_environment_opt_in(&mode, "KUNO_LAB_FAST_GPU")?;
     let fast_gpu_fault = count1_environment_opt_in(&mode, "KUNO_LAB_FAST_GPU_FAULT")?;
     let next_shared = count1_environment_opt_in(&mode, "KUNO_LAB_NEXT_SHARED")?;
+    let shared_gdn = count1_environment_opt_in(&mode, "KUNO_LAB_NEXT_SHARED_GDN")?;
+    if shared_gdn && !next_shared {
+        return Err("Shared GDN requires protected shared Next kernels".into());
+    }
     if next_shared && (!fast_gpu || fast_gpu_fault || count1_hybrid_cap != Some(10)) {
         return Err(
             "Shared Next kernels require protected cap10 fast GPU mode without fused faults".into(),
@@ -1905,6 +1909,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let device_budget = if vendor == 0x8086 { 26 } else { 10 } * 1024 * 1024 * 1024;
             if next_shared {
                 next_shared::probe(&client, &file)?;
+                if shared_gdn {
+                    next_shared::probe_gdn(&client, model.bound_graph().geometry().gdn)?;
+                }
             }
             let bank_charge = expert_banks::preflight_residency(
                 model.bound_graph(),
@@ -1926,6 +1933,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             executor.fast_dense = fast_gpu;
             executor.fast_dense_fault = fast_gpu_fault;
             executor.shared_kernels = next_shared;
+            executor.shared_gdn = shared_gdn;
             executor.token_io_checkpoint = token_checkpoint || defer_router_io;
             let cancel = AtomicBool::new(false);
             let mut resident = if resident_enabled {
@@ -2155,6 +2163,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 receipt["observed_gpu_router_calls"] = serde_json::json!(executor.gpu_router_calls);
                 receipt["fast_gpu"] = serde_json::json!(fast_gpu);
                 receipt["next_shared_kernels"] = serde_json::json!(next_shared);
+                receipt["next_shared_gdn"] = serde_json::json!(shared_gdn);
+                receipt["observed_shared_gdn_calls"] = serde_json::json!(
+                    resident
+                        .as_ref()
+                        .ok_or("missing native shared GDN owner")?
+                        .shared_gdn_calls()?
+                );
                 receipt["observed_shared_dense_calls"] =
                     serde_json::json!(executor.shared_dense_calls);
                 receipt["observed_fast_dense_calls"] = serde_json::json!(executor.fast_dense_calls);
@@ -2324,6 +2339,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 executor.fast_dense = fast_gpu;
                 executor.fast_dense_fault = fast_gpu_fault;
                 executor.shared_kernels = next_shared;
+                executor.shared_gdn = shared_gdn;
                 executor.token_io_checkpoint = token_checkpoint || defer_router_io;
                 let mut fresh = resident_model::ResidentModel::new_for_lab_fixture(
                     model.bound_graph(),
@@ -2431,6 +2447,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     executor.fast_dense = fast_gpu;
                     executor.fast_dense_fault = fast_gpu_fault;
                     executor.shared_kernels = next_shared;
+                    executor.shared_gdn = shared_gdn;
                     executor.token_io_checkpoint = token_checkpoint || defer_router_io;
                     let mut partial = resident_model::ResidentModel::new_for_lab_fixture(
                         model.bound_graph(),

@@ -71,18 +71,23 @@ impl MatrixSpec {
 enum Kernel {
     Matrix(MatrixSpec),
     Router,
+    Gdn([usize; 3]),
 }
 impl Kernel {
     fn dimension(self) -> CubeDim {
-        CubeDim::new_1d(if matches!(self, Self::Router) {
-            256
-        } else {
-            128
+        CubeDim::new_1d(match self {
+            Self::Router => 256,
+            Self::Gdn(_) => 32,
+            Self::Matrix(_) => 128,
         })
     }
     fn source(self) -> String {
         match self {
             Self::Matrix(spec) => spec.source(),
+            Self::Gdn([head, key, value]) => format!(
+                "const HEAD_DIM:u32={head}u; const KEY_HEADS:u32={key}u; const VALUE_HEADS:u32={value}u;\n{}",
+                include_str!("next_gdn.wgsl")
+            ),
             Self::Router => {
                 let body = include_str!("ornith/router_parallel.wgsl")
                     .replace("arena[p.a+e]", "bitcast<f32>(logits[p.a+e])")
@@ -279,6 +284,256 @@ pub(crate) fn probe(client: &ComputeClient<WgpuRuntime>, file: &GgufFile) -> Res
     Ok(())
 }
 
+fn gdn_geometry(
+    shape: kuno_text::ops::GdnShape,
+    spans: crate::gdn_chunk::ChunkSpans,
+) -> Result<()> {
+    let layout = crate::gdn_gpu::GdnLayout::new(shape)
+        .map_err(|_| Error::InvalidFormat("shared GDN geometry"))?;
+    spans.validate(layout)?;
+    if spans.count != 1
+        || shape.head_dim != 128
+        || spans.old.column_stride != 1
+        || spans.next.column_stride != 1
+        || [
+            spans.old.base,
+            spans.old.head_stride,
+            spans.old.key_stride,
+            spans.next.base,
+            spans.next.head_stride,
+            spans.next.key_stride,
+            spans.value.base,
+            spans.output.base,
+        ]
+        .iter()
+        .any(|n| !n.is_multiple_of(4))
+        || spans.words().iter().any(|n| !n.is_multiple_of(4))
+    {
+        return Err(Error::InvalidFormat("shared count1 GDN vector spans"));
+    }
+    Ok(())
+}
+
+/// Original parent proves eight distinct complete owners before this call.
+pub(crate) fn gdn(
+    client: &ComputeClient<WgpuRuntime>,
+    shape: kuno_text::ops::GdnShape,
+    spans: crate::gdn_chunk::ChunkSpans,
+    handles: [Handle; 8],
+) -> Result<()> {
+    gdn_geometry(shape, spans)?;
+    if handles
+        .iter()
+        .zip(spans.words())
+        .any(|(h, n)| h.stream != handles[0].stream || h.size_in_used() < n as u64 * 4)
+    {
+        return Err(Error::InvalidBufferLength);
+    }
+    let words = [
+        spans.query.base,
+        spans.key.base,
+        spans.value.base,
+        spans.controls.base,
+        spans.old.base,
+        spans.old.head_stride,
+        spans.old.key_stride,
+        spans.old.column_stride,
+        spans.next.base,
+        spans.next.head_stride,
+        spans.next.key_stride,
+        spans.next.column_stride,
+        spans.output.base,
+        spans.status.base,
+        0,
+        0,
+    ];
+    let info = words
+        .chunks_exact(2)
+        .map(|pair| pair[0] as u64 | ((pair[1] as u64) << 32))
+        .collect();
+    let mut args = KernelArguments::new();
+    for handle in handles {
+        args = args.with_buffer(handle.binding());
+    }
+    args = args.with_info(MetadataBindingInfo::custom(info));
+    // SAFETY: count1, head128, complete runtime span proofs, contiguous aligned
+    // vec4 columns and distinct original owners. One cube owns one full head;
+    // all query/key loads and state/input/output/status stores are inside them.
+    unsafe {
+        client.launch_unchecked(
+            Box::new(Kernel::Gdn([
+                shape.head_dim,
+                shape.key_heads,
+                shape.value_heads,
+            ])),
+            CubeCount::Static(shape.value_heads as u32, 1, 1),
+            args,
+        );
+    }
+    Ok(())
+}
+
+pub(crate) fn probe_gdn(
+    client: &ComputeClient<WgpuRuntime>,
+    shape: kuno_text::ops::GdnShape,
+) -> Result<()> {
+    use crate::gdn_chunk::{ChunkSpans, MAX_BATCH, StateSpan, TokenSpan};
+    let layout = crate::gdn_gpu::GdnLayout::new(shape)
+        .map_err(|_| Error::InvalidFormat("shared public GDN shape"))?;
+    let token = |n| TokenSpan {
+        base: 4,
+        stride: n + 4,
+        words: 4 + MAX_BATCH * (n + 4) + 4,
+    };
+    let state = StateSpan {
+        base: 4,
+        head_stride: shape.head_dim * shape.head_dim,
+        key_stride: shape.head_dim,
+        column_stride: 1,
+        words: layout.state_elements + 8,
+    };
+    let spans = ChunkSpans {
+        count: 1,
+        query: token(layout.qk_elements),
+        key: token(layout.qk_elements),
+        value: token(layout.value_elements),
+        controls: token(layout.control_elements),
+        old: state,
+        next: state,
+        output: token(layout.value_elements),
+        status: token(layout.value_elements),
+    };
+    gdn_geometry(shape, spans)?;
+    for case in 0..3 {
+        let mut inputs: [Zeroizing<Vec<f32>>; 5] =
+            std::array::from_fn(|i| Zeroizing::new(vec![3.5; spans.words()[i]]));
+        for (i, (view, width)) in [
+            (spans.query, layout.qk_elements),
+            (spans.key, layout.qk_elements),
+            (spans.value, layout.value_elements),
+            (spans.controls, layout.control_elements),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            for j in 0..width {
+                inputs[i][view.base + j] = ((j * 17 % 47) as f32 - 23.) / 211.;
+            }
+        }
+        for h in 0..shape.value_heads {
+            inputs[3][spans.controls.base + h] = -0.03;
+            inputs[3][spans.controls.base + shape.value_heads + h] =
+                if case == 1 { 0.0 } else { 0.41 };
+        }
+        for i in 0..layout.state_elements {
+            inputs[4][state.base + i] = ((i * 31 % 113) as f32 - 56.) / 97.;
+        }
+        if case == 2 {
+            inputs[4][state.base + 1] = f32::NAN;
+            inputs[3][spans.controls.base + shape.value_heads + 1] = f32::INFINITY;
+        }
+        let handles: [Handle; 5] =
+            std::array::from_fn(|i| client.create_from_slice(f32::as_bytes(&inputs[i])));
+        let initial_next = Zeroizing::new(vec![1.0f32; spans.next.words]);
+        let initial_out = Zeroizing::new(vec![1.0f32; spans.output.words]);
+        let initial_status = Zeroizing::new(vec![0x51515151u32; spans.status.words]);
+        let make_outputs = || {
+            [
+                client.create_from_slice(f32::as_bytes(&initial_next)),
+                client.create_from_slice(f32::as_bytes(&initial_out)),
+                client.create_from_slice(u32::as_bytes(&initial_status)),
+            ]
+        };
+        let reference = make_outputs();
+        let vector = make_outputs();
+        // Independent original checked scalar implementation, including invalid
+        // column zeroing. Nonzero prefix/tails prove the complete write interval.
+        unsafe {
+            crate::gdn_chunk::gdn_single_streaming::launch::<WgpuRuntime>(
+                client,
+                CubeCount::Static(layout.workgroups_x, 1, 1),
+                CubeDim::new_1d(64),
+                cubecl::prelude::ArrayArg::from_raw_parts(handles[0].clone(), spans.query.words),
+                cubecl::prelude::ArrayArg::from_raw_parts(handles[1].clone(), spans.key.words),
+                cubecl::prelude::ArrayArg::from_raw_parts(handles[2].clone(), spans.value.words),
+                cubecl::prelude::ArrayArg::from_raw_parts(handles[3].clone(), spans.controls.words),
+                cubecl::prelude::ArrayArg::from_raw_parts(handles[4].clone(), spans.old.words),
+                cubecl::prelude::ArrayArg::from_raw_parts(reference[0].clone(), spans.next.words),
+                cubecl::prelude::ArrayArg::from_raw_parts(reference[1].clone(), spans.output.words),
+                cubecl::prelude::ArrayArg::from_raw_parts(reference[2].clone(), spans.status.words),
+                1,
+                spans.query.base,
+                spans.query.stride,
+                spans.key.base,
+                spans.key.stride,
+                spans.value.base,
+                spans.value.stride,
+                spans.controls.base,
+                spans.controls.stride,
+                state.base,
+                state.head_stride,
+                state.key_stride,
+                1,
+                state.base,
+                state.head_stride,
+                state.key_stride,
+                1,
+                spans.output.base,
+                spans.output.stride,
+                spans.status.base,
+                spans.status.stride,
+                shape.head_dim,
+                shape.key_heads,
+                shape.value_heads,
+            );
+        }
+        let all = std::array::from_fn(|i| {
+            if i < 5 {
+                handles[i].clone()
+            } else {
+                vector[i - 5].clone()
+            }
+        });
+        gdn(client, shape, spans, all)?;
+        for i in 0..3 {
+            let mut expected = client
+                .read_one(reference[i].clone())
+                .map_err(|_| Error::InvalidFormat("shared GDN reference read"))?;
+            let mut actual = client
+                .read_one(vector[i].clone())
+                .map_err(|_| Error::InvalidFormat("shared GDN vector read"))?;
+            let failed = if i == 2 {
+                expected != actual
+            } else {
+                f32::from_bytes(&expected)
+                    .iter()
+                    .zip(f32::from_bytes(&actual))
+                    .any(|(&a, &b)| {
+                        !a.is_finite() || !b.is_finite() || (a - b).abs() > 5e-5 + 1e-4 * a.abs()
+                    })
+                    || expected.len() != actual.len()
+            };
+            expected.zeroize();
+            actual.zeroize();
+            if failed {
+                return Err(Error::InvalidFormat("shared GDN numeric/owning probe"));
+            }
+        }
+        let mut old = client
+            .read_one(handles[4].clone())
+            .map_err(|_| Error::InvalidFormat("shared GDN old owner read"))?;
+        let changed = &old[..] != f32::as_bytes(&inputs[4]);
+        old.zeroize();
+        if changed {
+            return Err(Error::InvalidFormat(
+                "shared GDN changed immutable old owner",
+            ));
+        }
+    }
+    println!("next_shared_gdn cases=3 numeric_and_owning_checks=true");
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -299,6 +554,14 @@ mod tests {
         wgpu::naga::valid::Validator::new(
             wgpu::naga::valid::ValidationFlags::all(),
             wgpu::naga::valid::Capabilities::SUBGROUP,
+        )
+        .validate(&module)
+        .unwrap();
+        let module =
+            wgpu::naga::front::wgsl::parse_str(&Kernel::Gdn([128, 16, 32]).source()).unwrap();
+        wgpu::naga::valid::Validator::new(
+            wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::empty(),
         )
         .validate(&module)
         .unwrap();

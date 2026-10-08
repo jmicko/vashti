@@ -702,6 +702,15 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         Ok(*self.completed_cpu_misses)
     }
 
+    pub(crate) fn shared_gdn_calls(&self) -> Result<u64> {
+        Ok(self
+            .native_batch
+            .as_ref()
+            .ok_or(error())?
+            .gdn
+            .shared_vector_calls)
+    }
+
     /// Explicit reserved count1 lab only. The original completed all-family
     /// boundary remains the sole authority; this performs no inference/commit.
     pub(crate) fn set_lab_count1_cpu_misses(

@@ -517,3 +517,18 @@ tests, both separate offline shader suites,20 hybrid Python controls and strict
 release all-bin Clippy pass. Complete-model device acceptance and timing are
 pending at this source checkpoint. No installed service, consumer or release
 change; required Vashti changes: none.
+
+The further explicit `KUNO_LAB_NEXT_SHARED_GDN=1` requires shared Next kernels
+and replaces only the count1 recurrent update. Four adjacent columns execute
+per invocation, with query/key vectors cached once per head. Sequential f32
+decay/prediction/update/readout order, immutable old state, per-column failure
+zeroing and original status/finite/all-family gates remain. The original eight
+full distinct owners and every MAX8 extent are checked before dispatch; the
+new shader additionally requires head128 and aligned contiguous vec4 columns.
+Runtime bases/strides use the original transient64-byte INFO ownership. No
+state/publication or cleanup authority is granted to this arithmetic function.
+The counter must cover all36 recurrent stages in each completed decode step.
+Startup compares full candidate/output/status owners and unchanged old state
+against the original checked scalar shader for normal, zero-beta and nonfinite
+columns, including nonzero surrounding intervals. Source gates pass; device
+acceptance and whole-model performance remain pending for this additional mode.

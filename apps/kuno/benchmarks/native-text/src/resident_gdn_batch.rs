@@ -424,6 +424,8 @@ pub(crate) struct GdnBatchWorkspace {
     poison: Arc<AtomicBool>,
     policy: Policy,
     recurrence_policy: RecurrencePolicy,
+    shared_vector: bool,
+    pub(crate) shared_vector_calls: u64,
 }
 impl GdnBatchWorkspace {
     pub(crate) fn allocation_requests(graph: BoundGraph<'_, '_>) -> Result<[u64; N]> {
@@ -474,6 +476,8 @@ impl GdnBatchWorkspace {
                 poison: poison.clone(),
                 policy: Policy::new(expected),
                 recurrence_policy: RecurrencePolicy::Chunk,
+                shared_vector: false,
+                shared_vector_calls: 0,
             };
             workspace.validate_ids(arena)?;
             cancelled(cancel)?;
@@ -501,6 +505,7 @@ impl GdnBatchWorkspace {
         }
         executor.check_client(arena.client().map_err(arena_fault)?)?;
         self.recurrence_policy = policy;
+        self.shared_vector = executor.shared_gdn && policy == RecurrencePolicy::SingleStreaming;
         Ok(self.recurrence_policy)
     }
     fn healthy(&self, arena: &PrivateArena, cancel: &AtomicBool) -> Result<()> {
@@ -958,23 +963,48 @@ impl ResidentGdn<'_> {
                     p.shape.value_heads,
                     p.shape.value_heads,
                 ),
-                Operation::Recurrence => gdn_chunk::enqueue_with_policy(
-                    arena,
-                    p.shape,
-                    layout.chunk(count)?,
-                    &ChunkBuffers([
-                        ids[Q],
-                        ids[K],
-                        ids[V],
-                        ids[CONTROL],
-                        self.buffers.recurrent[0],
-                        self.buffers.recurrent[1],
-                        ids[RECURRENT],
-                        ids[STATUS + 3],
-                    ]),
-                    cancel,
-                    workspace.recurrence_policy,
-                )?,
+                Operation::Recurrence => {
+                    if workspace.shared_vector {
+                        gdn_chunk::enqueue_shared_count1(
+                            arena,
+                            p.shape,
+                            layout.chunk(count)?,
+                            &ChunkBuffers([
+                                ids[Q],
+                                ids[K],
+                                ids[V],
+                                ids[CONTROL],
+                                self.buffers.recurrent[0],
+                                self.buffers.recurrent[1],
+                                ids[RECURRENT],
+                                ids[STATUS + 3],
+                            ]),
+                            cancel,
+                        )?;
+                        workspace.shared_vector_calls = workspace
+                            .shared_vector_calls
+                            .checked_add(1)
+                            .ok_or(Error::ArithmeticOverflow)?;
+                    } else {
+                        gdn_chunk::enqueue_with_policy(
+                            arena,
+                            p.shape,
+                            layout.chunk(count)?,
+                            &ChunkBuffers([
+                                ids[Q],
+                                ids[K],
+                                ids[V],
+                                ids[CONTROL],
+                                self.buffers.recurrent[0],
+                                self.buffers.recurrent[1],
+                                ids[RECURRENT],
+                                ids[STATUS + 3],
+                            ]),
+                            cancel,
+                            workspace.recurrence_policy,
+                        )?
+                    }
+                }
                 Operation::Closing => point::output_gate::launch::<WgpuRuntime>(
                     client,
                     CubeCount::Static(p.shape.value_heads as u32, MAX_BATCH as u32, 1),

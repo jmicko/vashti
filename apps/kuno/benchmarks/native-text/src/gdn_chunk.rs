@@ -402,6 +402,32 @@ pub(crate) fn enqueue_with_policy(
     Ok(())
 }
 
+pub(crate) fn enqueue_shared_count1(
+    arena: &PrivateArena,
+    shape: GdnShape,
+    spans: ChunkSpans,
+    buffers: &ChunkBuffers,
+    cancel: &AtomicBool,
+) -> Result<()> {
+    let layout = GdnLayout::new(shape).map_err(|_| fault())?;
+    spans.validate(layout)?;
+    RecurrencePolicy::SingleStreaming.validate_count(spans.count)?;
+    if cancel.load(Ordering::Acquire) {
+        return Err(fault());
+    }
+    validate_bindings(arena, buffers, spans.words())?;
+    let mut handles = Vec::with_capacity(8);
+    for id in buffers.0 {
+        handles.push(arena.handle(id).map_err(|_| fault())?.clone());
+    }
+    crate::next_shared::gdn(
+        arena.client().map_err(|_| fault())?,
+        shape,
+        spans,
+        handles.try_into().map_err(|_| fault())?,
+    )
+}
+
 pub fn validate_download(
     shape: GdnShape,
     spans: ChunkSpans,

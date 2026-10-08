@@ -69,6 +69,15 @@ class HybridLabTests(unittest.TestCase):
                 LAB.worker_environment("/original/model", "/public/receipt", **kwargs)
         env = LAB.worker_environment("/original/model", "/public/receipt", fast=True, gpu_router=True, shared=True)
         self.assertEqual(env["KUNO_LAB_NEXT_SHARED"], "1")
+        value.update(next_shared_gdn=True, observed_shared_gdn_calls=252)
+        output += "\nnext_shared_gdn cases=3 numeric_and_owning_checks=true"
+        LAB.validate_receipt(value, "intel", 10, output, fast=True, gpu_router=True, shared=True, shared_gdn=True)
+        for bad in (0, 251, 253, True, None):
+            wrong=copy.deepcopy(value);wrong["observed_shared_gdn_calls"]=bad
+            with self.assertRaises(ValueError):
+                LAB.validate_receipt(wrong, "intel", 10, output, fast=True, gpu_router=True, shared=True, shared_gdn=True)
+        with self.assertRaises(ValueError):
+            LAB.worker_environment("/original/model", "/public/receipt", shared_gdn=True)
 
     def test_deferred_epochs_require_actual_bridges_late_cancel_and_five_owning_audits(self):
         value=receipt("intel",10)
