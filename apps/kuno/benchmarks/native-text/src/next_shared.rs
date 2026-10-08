@@ -58,12 +58,15 @@ impl MatrixSpec {
         if self.dtype == 12 && self.columns <= 4096 {
             // Same exact dequant/dot/reduction schedule, sharing only unchanged
             // F32 input values among rows. The public 16KiB bound fits the
-            // baseline native device limit. Every lane reaches the barrier.
+            // baseline native device limit. Skip input loads in groups without
+            // an active row, including extra full-owner finite-scan groups.
+            // num_subgroups describes the whole workgroup; keep the original
+            // barrier unconditional, independent of subgroup uniformity analysis.
             body = body
                 .replace("input4[", "cached_input[")
                 .replace("(input+", "(")
-                .replace("@builtin(workgroup_id) group:vec3<u32>,", "@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) local:u32,")
-                .replace("    let row=", "    for(var i=local;i<COLUMNS/4u;i+=128u) {cached_input[i]=input4[p.a/4u+i];}\n    workgroupBarrier();\n    let row=");
+                .replace("@builtin(workgroup_id) group:vec3<u32>,", "@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) local:u32,@builtin(num_subgroups) subgroups:u32,")
+                .replace("    let row=", "    if group.x*subgroups<ROWS {\n        for(var i=local;i<COLUMNS/4u;i+=128u) {cached_input[i]=input4[p.a/4u+i];}\n    }\n    workgroupBarrier();\n    let row=");
             body = format!(
                 "var<workgroup> cached_input:array<vec4<f32>,{}>;\n{body}",
                 self.columns / 4
@@ -726,6 +729,69 @@ mod tests {
             source.contains("num_workgroups")
                 && !spec.source_fault(false).contains("let index=group.x")
         );
+    }
+
+    #[test]
+    fn q4_input_sharing_skips_only_groups_without_active_rows() {
+        // Both native subgroup sizes admitted by the protected device owner.
+        // Include partial groups and grids enlarged for full owning tail checks.
+        for width in [16usize, 32] {
+            let subgroups = 128 / width;
+            for rows in [1usize, 7, 8, 9, 31, 640, 2560] {
+                for words in [rows, rows * 8, 8192usize.max(rows)] {
+                    let grid = rows.div_ceil(4).max(words.div_ceil(128));
+                    for group in 0..grid {
+                        let load = group * subgroups < rows;
+                        assert_eq!(
+                            load,
+                            (0..subgroups).any(|sg| group * (128 / width) + sg < rows)
+                        );
+                        if load {
+                            for columns in [256usize, 2560, 4096] {
+                                let mut loaded = vec![0usize; columns / 4];
+                                for local in 0..128 {
+                                    for i in (local..columns / 4).step_by(128) {
+                                        loaded[i] += 1;
+                                    }
+                                }
+                                assert!(loaded.into_iter().all(|n| n == 1));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        for columns in [256, 2560, 4096, 8192] {
+            let spec = MatrixSpec::new(7, columns, 12).unwrap();
+            for source in [
+                spec.source(),
+                spec.source_fault(false),
+                spec.source_fault(true),
+            ] {
+                let module = wgpu::naga::front::wgsl::parse_str(&source).unwrap();
+                wgpu::naga::valid::Validator::new(
+                    wgpu::naga::valid::ValidationFlags::all(),
+                    wgpu::naga::valid::Capabilities::SUBGROUP
+                        | wgpu::naga::valid::Capabilities::SHADER_FLOAT16_IN_FLOAT32,
+                )
+                .validate(&module)
+                .unwrap();
+                if columns <= 4096 {
+                    assert!(source.contains("@builtin(num_subgroups) subgroups:u32"));
+                    assert!(source.contains("if group.x*subgroups<ROWS {"));
+                    // The guard ends before the only barrier. The later full
+                    // owner tail scan remains outside the guarded preload.
+                    assert!(source.contains("}\n    }\n    workgroupBarrier();\n    let row="));
+                    assert_eq!(source.matches("workgroupBarrier()").count(), 1);
+                    if let Some(tail) = source.find("let index=group.x") {
+                        assert!(tail > source.find("workgroupBarrier()").unwrap());
+                    }
+                } else {
+                    assert!(!source.contains("cached_input"));
+                    assert!(!source.contains("num_subgroups"));
+                }
+            }
+        }
     }
 
     #[test]
