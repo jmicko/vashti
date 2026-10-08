@@ -2195,6 +2195,17 @@ impl TransientIo {
                             }),
                         std::iter::empty(),
                     );
+                    // Legacy clean readbacks end with a real GPU write after
+                    // CPU inspection. Preserve that physical last-writer state
+                    // in one cohort too: a tracker transition alone does not
+                    // touch coherent, host-cached readback cachelines. All raw
+                    // leases are gone. This grants no erasure credit and does
+                    // not replace the constructor clear or terminal full audit.
+                    for owner in &self.buffers {
+                        if owner.kind == Kind::Readback {
+                            encoder.clear_buffer(&owner.buffer, 0, None);
+                        }
+                    }
                     self.queue.submit([encoder.finish()]);
                 }
                 Ok(())
