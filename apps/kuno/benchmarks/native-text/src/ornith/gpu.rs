@@ -194,8 +194,11 @@ impl Gpu {
             // are checked before dispatch. Each subgroup row is guarded, routed
             // ranks select IDs0..255, and all fixed arena ranges fit524288f32.
             // GDN uses24576+32*128*128f32; full KV uses2*4096*512f32.
-            // Public probes admit32 rows, columns2048, and original exact row
-            // extents. No external geometry or production request reaches here.
+            // Ornith probes admit32 rows/columns2048. The Next operator port
+            // admits only original slabs with columns2560/640, checked row-byte
+            // extents/padding and <=248320rows. Its router admits512/10 and an
+            // 80-byte paired output in the4096-byte route owner. No external
+            // geometry or production request reaches this shared laboratory.
             unsafe {
                 self.device.create_shader_module_trusted(
                     descriptor,

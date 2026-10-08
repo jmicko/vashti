@@ -3,6 +3,8 @@
 mod gpu;
 #[path = "ornith/graph.rs"]
 mod graph;
+#[path = "ornith/kernels.rs"]
+mod kernels;
 #[path = "ornith/probe.rs"]
 mod probe;
 use gpu::Result;

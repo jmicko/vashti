@@ -25,6 +25,16 @@ fn q4_minimum(b:u32,c:u32,g:u32)->f32 {
 }
 fn packed(base:u32, col:u32)->f32 {
     if DTYPE==0u { return bitcast<f32>(weight[base/4u+col]); }
+    if DTYPE==1u {return wh(base+col*2u);}
+    if DTYPE==30u {let b=base+col*2u;return bitcast<f32>((wb(b)|(wb(b+1u)<<8u))<<16u);}
+    if DTYPE==8u {let b=base+(col/32u)*34u;return wh(b)*signed(wb(b+2u+col%32u));}
+    if DTYPE==6u {
+        let b=base+(col/32u)*22u;let ix=col%32u;
+        let qh=wb(b+2u)|(wb(b+3u)<<8u)|(wb(b+4u)<<16u)|(wb(b+5u)<<24u);
+        let low=wb(b+6u+ix%16u);
+        let q=((low>>((ix/16u)*4u))&15u)|(((qh>>ix)&1u)<<4u);
+        return wh(b)*f32(i32(q)-16);
+    }
     if DTYPE==12u {
         let b=base+(col/256u)*144u; let ix=col%256u; let g=ix/32u;
         var sc:u32; var mn:u32;

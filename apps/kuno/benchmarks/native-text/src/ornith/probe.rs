@@ -173,7 +173,7 @@ pub fn run(file: &GgufFile) -> Result<serde_json::Value> {
                 &format!("public-router-{parallel}"),
                 graph::shader(
                     0,
-                    "",
+                    super::kernels::ORNITH_ROUTER,
                     if parallel {
                         include_str!("router_parallel.wgsl")
                     } else {

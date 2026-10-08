@@ -35,6 +35,7 @@ fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(subgroup_id) sg:u32,
         } else if DTYPE==14u {
             for(var blockgroup=0u;blockgroup<COLUMNS/256u;blockgroup+=width/16u) {
                 let block=blockgroup+lane/16u;let word=lane%16u;
+                if block<COLUMNS/256u {
                 let half=word/8u;let i=(word%8u)*4u;
                 let b=base+block*210u;let d=wh(b+208u);
                 let l0=bytes4(word_at(b+half*64u+i));let l1=bytes4(word_at(b+half*64u+32u+i));
@@ -48,6 +49,37 @@ fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(subgroup_id) sg:u32,
                 sum+=(d*signed(wb(sc+2u)))*dot(vec4<f32>(q1),arena4[col+8u]);
                 sum+=(d*signed(wb(sc+4u)))*dot(vec4<f32>(q2),arena4[col+16u]);
                 sum+=(d*signed(wb(sc+6u)))*dot(vec4<f32>(q3),arena4[col+24u]);
+                }
+            }
+        } else if DTYPE==6u {
+            for(var group=0u;group<COLUMNS/32u;group+=width/4u) {
+                let block=group+lane/4u;let i=(lane%4u)*4u;
+                if block<COLUMNS/32u {
+                    let b=base+block*22u;let d=wh(b);let high=word_at(b+2u);
+                    let low=bytes4(word_at(b+6u+i));
+                    let shifts=vec4<u32>(i,i+1u,i+2u,i+3u);
+                    let q0=vec4<i32>((low&vec4<u32>(15u))|(((vec4<u32>(high)>>shifts)&vec4<u32>(1u))<<vec4<u32>(4u)))-vec4<i32>(16);
+                    let q1=vec4<i32>((low>>vec4<u32>(4u))|(((vec4<u32>(high)>>(shifts+vec4<u32>(16u)))&vec4<u32>(1u))<<vec4<u32>(4u)))-vec4<i32>(16);
+                    let col=(input+block*32u+i)/4u;
+                    sum+=d*(dot(vec4<f32>(q0),arena4[col])+dot(vec4<f32>(q1),arena4[col+4u]));
+                }
+            }
+        } else if DTYPE==8u {
+            for(var group=0u;group<COLUMNS/32u;group+=width/8u) {
+                let block=group+lane/8u;let i=(lane%8u)*4u;
+                if block<COLUMNS/32u {
+                    let b=base+block*34u;let bytes=bytes4(word_at(b+2u+i));
+                    let q=vec4<i32>(bytes)-select(vec4<i32>(0),vec4<i32>(256),bytes>=vec4<u32>(128u));
+                    sum+=wh(b)*dot(vec4<f32>(q),arena4[(input+block*32u+i)/4u]);
+                }
+            }
+        } else if DTYPE==1u || DTYPE==30u {
+            for(var c=lane*4u;c<COLUMNS;c+=width*4u) {
+                let b=base/4u+c/2u;let a=weight[b];let z=weight[b+1u];
+                var w:vec4<f32>;
+                if DTYPE==1u {w=vec4<f32>(unpack2x16float(a),unpack2x16float(z));}
+                else {w=bitcast<vec4<f32>>(vec4<u32>(a<<16u,a&0xffff0000u,z<<16u,z&0xffff0000u));}
+                sum+=dot(w,arena4[(input+c)/4u]);
             }
         } else {
             for(var c=lane*4u;c<COLUMNS;c+=width*4u) {

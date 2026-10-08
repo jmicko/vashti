@@ -7,6 +7,10 @@ edition = "2024"
 name = "ornith-resident-lab"
 path = "src/ornith_main.rs"
 
+[[bin]]
+name = "flash-kernel-lab"
+path = "src/flash_fast_main.rs"
+
 [dependencies]
 cubecl-runtime = "=0.10.0"
 serde_json = "1"

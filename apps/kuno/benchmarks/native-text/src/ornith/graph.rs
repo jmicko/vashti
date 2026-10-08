@@ -1,5 +1,6 @@
 //! Complete text-only qwen35moe token graph. No CPU experts or weight eviction.
 use super::gpu::{Gpu, Result, Step, words};
+pub(super) use super::kernels::{matrix_shader, shader};
 use kuno_text::{GgufFile, MetadataValue, TensorType};
 use std::collections::BTreeMap;
 use std::time::Instant;
@@ -146,22 +147,6 @@ pub fn validate(file: &GgufFile) -> Result<()> {
         }
     }
     Ok(())
-}
-
-pub(super) fn shader(dtype: u32, constants: &str, body: &str) -> String {
-    format!(
-        "const DTYPE:u32={dtype}u;\n{constants}\n{}\n{body}",
-        include_str!("common.wgsl")
-    )
-}
-
-pub(super) fn matrix_shader(dtype: u32, constants: &str, vector: bool) -> String {
-    if vector {
-        shader(dtype, constants, include_str!("matrix_vector.wgsl"))
-            .replace("arena:array<f32>", "arena4:array<vec4<f32>>")
-    } else {
-        shader(dtype, constants, include_str!("matrix.wgsl"))
-    }
 }
 
 struct Weight {
@@ -594,7 +579,7 @@ impl Graph {
                     include_str!("router.wgsl")
                 },
                 0,
-                "",
+                super::kernels::ORNITH_ROUTER,
                 None,
                 None,
                 None,
@@ -939,7 +924,7 @@ mod tests {
             for body in bodies {
                 let code = shader(
                     dtype,
-                    "const ROWS:u32=2048u;const COLUMNS:u32=2048u;const ROW_BYTES:u32=1152u;const ROUTED:bool=true;const RANKED_INPUT:bool=false;const BLOCK_DOT:bool=true;const OP:u32=0u;",
+                    "const ROWS:u32=2048u;const COLUMNS:u32=2048u;const ROW_BYTES:u32=1152u;const ROUTED:bool=true;const RANKED_INPUT:bool=false;const BLOCK_DOT:bool=true;const OP:u32=0u;const EXPERTS:u32=256u;const RANKS:u32=8u;const ROUTE_FIRST:u32=0u;const PAIRED:bool=false;",
                     body,
                 );
                 let module = wgpu::naga::front::wgsl::parse_str(&code)
