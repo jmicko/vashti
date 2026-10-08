@@ -2895,8 +2895,13 @@ impl TransientIo {
             logical,
         )?;
         let buffer = self.allocate(Kind::Readback, copy_len)?;
-        // No pooled page tails: initialize the full owned direct buffer.
-        encoder.clear_buffer(&buffer, 0, None);
+        // A complete offset-zero copy initializes the entire owned span. Only
+        // partial copies need a preceding clear to initialize all page tails.
+        // The owner is already retained if encoding/submission/map later fails;
+        // completed checkpoint clearing and the terminal full audit are separate.
+        if copy_len != buffer.size() {
+            encoder.clear_buffer(&buffer, 0, None);
+        }
         encoder.copy_buffer_to_buffer(&resource.buffer, resource.offset, &buffer, 0, copy_len);
         let ticket = LeaseTicket::new(self.leases.clone())?;
         let lease = ReadbackLease {
