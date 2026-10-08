@@ -883,6 +883,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if readback_reuse && !info_batch_upload {
         return Err("readback reuse requires protected batched INFO".into());
     }
+    let gpu_upload_clear = count1_environment_opt_in(&mode, "KUNO_LAB_GPU_UPLOAD_CLEAR")?;
+    if gpu_upload_clear && !info_batch_upload {
+        return Err("GPU upload clear requires protected batched INFO".into());
+    }
     let batch_tasks = count1_environment_opt_in(&mode, "KUNO_LAB_BATCH_TASKS")?;
     let gpu_router = count1_environment_opt_in(&mode, "KUNO_LAB_GPU_ROUTER")?;
     if next_shared && !gpu_router {
@@ -1072,6 +1076,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "fast count1 GPU requires enabled16..32 subgroups and128 workgroup lanes".into(),
             );
         }
+        if gpu_upload_clear
+            && !adapter
+                .features()
+                .contains(wgpu::Features::MAPPABLE_PRIMARY_BUFFERS)
+        {
+            return Err("GPU upload clear requires native primary mapping support".into());
+        }
         println!(
             "adapter={} vendor={:04x} device={:04x} backend={:?}",
             info.name, info.vendor, info.device, info.backend
@@ -1081,6 +1092,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 label: Some("Kuno public synthetic Rust kernel"),
                 required_features: adapter.features()
                     & (wgpu::Features::SHADER_F16
+                        | if gpu_upload_clear {
+                            wgpu::Features::MAPPABLE_PRIMARY_BUFFERS
+                        } else {
+                            wgpu::Features::empty()
+                        }
                         | wgpu::Features::SUBGROUP
                         | if kernel_profile {
                             wgpu::Features::TIMESTAMP_QUERY
@@ -2283,6 +2299,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let pre_compute_scratch_clear_calls = resident_util::compute_scratch_clear_calls();
             let pre_grouped_status_calls = status_fold_batch::calls();
             let pre_readback_reuses = cubecl::wgpu::transient_readback_reuses();
+            let pre_gpu_upload_clears = cubecl::wgpu::transient_gpu_upload_clears();
             let reclaim_start = Instant::now();
             let gpu_source_advised_bytes = if reclaim_gpu_sources {
                 resident
@@ -2573,6 +2590,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 receipt["info_batch_upload"] = serde_json::json!(info_batch_upload);
                 receipt["device_dispatch"] = serde_json::json!(device_dispatch);
                 receipt["observed_inline_device_dispatch"] = serde_json::json!(inline_dispatch);
+                receipt["gpu_upload_clear"] = serde_json::json!(gpu_upload_clear);
+                receipt["observed_gpu_upload_clears"] = serde_json::json!(
+                    cubecl::wgpu::transient_gpu_upload_clears()
+                        .checked_sub(pre_gpu_upload_clears)
+                        .ok_or("GPU upload clear counter regression")?
+                );
                 receipt["readback_reuse"] = serde_json::json!(readback_reuse);
                 receipt["observed_clean_readback_reuses"] = serde_json::json!(
                     cubecl::wgpu::transient_readback_reuses()

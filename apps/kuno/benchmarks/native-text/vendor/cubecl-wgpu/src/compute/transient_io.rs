@@ -52,6 +52,47 @@ fn configured_readback_reuse(raw: Option<&str>, batch: bool) -> Result<bool, Ser
         _ => Err(fault("readback reuse requires explicit batched INFO")),
     }
 }
+static GPU_UPLOAD_CLEARS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// Fixed-public numeric laboratory evidence only.
+pub fn transient_gpu_upload_clears() -> u64 {
+    GPU_UPLOAD_CLEARS.load(Ordering::Relaxed)
+}
+fn configured_gpu_upload_clear(
+    raw: Option<&str>,
+    batch: bool,
+    primary: bool,
+) -> Result<bool, ServerError> {
+    match raw {
+        None | Some("0") => Ok(false),
+        Some("1") if batch && primary => Ok(true),
+        _ => Err(fault(
+            "GPU upload clear requires batched INFO and primary mapping",
+        )),
+    }
+}
+fn needs_audit_stage(kind: Kind, gpu_upload_clear: bool) -> bool {
+    kind == Kind::Uniform || kind == Kind::Upload && !gpu_upload_clear
+}
+fn allocation_usage(kind: Kind, gpu_upload_clear: bool) -> wgpu::BufferUsages {
+    match kind {
+        Kind::Upload => {
+            wgpu::BufferUsages::MAP_WRITE
+                | wgpu::BufferUsages::COPY_SRC
+                | if gpu_upload_clear {
+                    wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST
+                } else {
+                    wgpu::BufferUsages::empty()
+                }
+        }
+        Kind::Uniform => {
+            wgpu::BufferUsages::UNIFORM
+                | wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC
+        }
+        Kind::Readback => wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+    }
+}
 const POLL_TIMEOUT: Duration = Duration::from_secs(30);
 pub(crate) type ErrorFuture = Pin<Box<dyn Future<Output = Option<wgpu::Error>> + Send>>;
 
@@ -763,6 +804,7 @@ pub(crate) struct TransientIo {
     info_policy: Option<InfoPolicy>,
     info_slab: Option<InfoSlab>,
     info_batch: bool,
+    gpu_upload_clear: bool,
     pending_info: Vec<(wgpu::Buffer, wgpu::Buffer)>,
 }
 impl std::fmt::Debug for TransientIo {
@@ -910,10 +952,19 @@ fn inspect_map_group<M: AuditMapping>(
     // Guards drop here BEFORE final erasure; errors/panics drop them as well.
     Ok(())
 }
+#[cfg(test)]
 fn inspect_readable_groups<M: AuditMapping>(
     mapper: &mut M,
     originals: &[Tracked<M::Buffer>],
     stages: &[Tracked<M::Buffer>],
+) -> Result<(), ServerError> {
+    inspect_readable_groups_selected(mapper, originals, stages, false)
+}
+fn inspect_readable_groups_selected<M: AuditMapping>(
+    mapper: &mut M,
+    originals: &[Tracked<M::Buffer>],
+    stages: &[Tracked<M::Buffer>],
+    gpu_upload_clear: bool,
 ) -> Result<(), ServerError> {
     if stages.iter().any(|stage| stage.kind != Kind::Readback) {
         return Err(fault("private audit stage kind"));
@@ -922,7 +973,7 @@ fn inspect_readable_groups<M: AuditMapping>(
     let mut count = 0;
     for tracked in originals
         .iter()
-        .filter(|tracked| tracked.kind == Kind::Readback)
+        .filter(|tracked| !needs_audit_stage(tracked.kind, gpu_upload_clear))
         .chain(stages)
     {
         group[count] = Some(&tracked.buffer);
@@ -1157,6 +1208,21 @@ impl EraseBackend for NativeEraser<'_> {
         self.io.poll(None)
     }
     fn erase_uploads_full_spans(&mut self, buffers: &[Tracked<wgpu::Buffer>]) -> bool {
+        if self.io.gpu_upload_clear {
+            let mut accepted = true;
+            for tracked in buffers.iter().filter(|b| b.kind == Kind::Upload) {
+                let cleared = tracked
+                    .buffer
+                    .usage()
+                    .contains(wgpu::BufferUsages::COPY_DST)
+                    && self.clear_copy_destination_full_span(&tracked.buffer);
+                accepted &= cleared;
+                if cleared {
+                    GPU_UPLOAD_CLEARS.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+            return accepted;
+        }
         erase_upload_groups(&mut NativeUploadMapping(&*self.io), buffers)
     }
     fn clear_copy_destination_full_span(&mut self, buffer: &wgpu::Buffer) -> bool {
@@ -1262,7 +1328,7 @@ impl<'a> NativeAudit<'a> {
             Some(audit_stage_plan(
                 originals
                     .iter()
-                    .filter(|b| b.kind != Kind::Readback)
+                    .filter(|b| needs_audit_stage(b.kind, io.gpu_upload_clear))
                     .map(|b| b.buffer.size()),
             )?)
         } else {
@@ -1367,7 +1433,15 @@ impl AuditBackend for NativeAudit<'_> {
             bytes: source.size(),
             buffers: 1,
         };
-        if kind != Kind::Readback {
+        if kind == Kind::Upload
+            && self.io.gpu_upload_clear
+            && !source
+                .usage()
+                .contains(allocation_usage(Kind::Upload, true))
+        {
+            return Err(fault("primary upload audit usage mismatch"));
+        }
+        if needs_audit_stage(kind, self.io.gpu_upload_clear) {
             // Charge the same complete MAP_READ span before any copy, and keep
             // its owner in io.buffers even if later preparation/submission fails.
             self.io.ledger.check(span(source.size())?).map_err(|_| {
@@ -1458,7 +1532,12 @@ impl AuditBackend for NativeAudit<'_> {
             return Err(fault(self.io.leases.reason(Failure::QueueSubmit)));
         }
         let mut mapper = NativeAuditMapping(&*self.io);
-        inspect_readable_groups(&mut mapper, originals, &self.io.buffers)
+        inspect_readable_groups_selected(
+            &mut mapper,
+            originals,
+            &self.io.buffers,
+            self.io.gpu_upload_clear,
+        )
     }
     fn finish_scopes(&mut self) {
         if let Some(scopes) = self.scopes.take() {
@@ -1510,6 +1589,25 @@ impl TransientIo {
                     .transpose()?,
                 info_batch,
             )?;
+            let raw_gpu = std::env::var_os("KUNO_LAB_GPU_UPLOAD_CLEAR");
+            let gpu_upload_clear = configured_gpu_upload_clear(
+                raw_gpu
+                    .as_ref()
+                    .map(|v| {
+                        v.to_str()
+                            .ok_or_else(|| fault("GPU upload clear setting encoding"))
+                    })
+                    .transpose()?,
+                info_batch,
+                device
+                    .features()
+                    .contains(wgpu::Features::MAPPABLE_PRIMARY_BUFFERS),
+            )?;
+            if gpu_upload_clear {
+                println!(
+                    "private_primary_upload_clear enabled=true two_gpu_passes=true direct_full_cpu_inspection=true"
+                );
+            }
             let clean_readbacks = CleanReadbacks::new(reuse)?;
             if reuse {
                 println!(
@@ -1539,6 +1637,7 @@ impl TransientIo {
                 info_policy,
                 info_slab: None,
                 info_batch,
+                gpu_upload_clear,
                 pending_info: Vec::new(),
             })
         }
@@ -1738,16 +1837,7 @@ impl TransientIo {
         let owned = self.ledger.reserve(kind, logical).inspect_err(|_| {
             self.leases.record(Failure::AllocationBudget);
         })?;
-        let usage = match kind {
-            Kind::Upload => wgpu::BufferUsages::MAP_WRITE | wgpu::BufferUsages::COPY_SRC,
-            Kind::Uniform => {
-                wgpu::BufferUsages::UNIFORM
-                    | wgpu::BufferUsages::STORAGE
-                    | wgpu::BufferUsages::COPY_DST
-                    | wgpu::BufferUsages::COPY_SRC
-            }
-            Kind::Readback => wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-        };
+        let usage = allocation_usage(kind, self.gpu_upload_clear);
         let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("CubeCL owned private I/O"),
             size: owned,
@@ -2017,7 +2107,7 @@ impl TransientIo {
             let plan = audit_stage_plan(
                 self.buffers
                     .iter()
-                    .filter(|b| b.kind != Kind::Readback)
+                    .filter(|b| needs_audit_stage(b.kind, self.gpu_upload_clear))
                     .map(|b| b.buffer.size()),
             )?;
             let bytes = plan
@@ -3573,6 +3663,31 @@ mod tests {
         assert!(mapper.state.borrow().events.is_empty());
     }
     #[test]
+    fn primary_upload_inspection_covers_every_original_owner_and_rejects_poison() {
+        for failure in [
+            None,
+            Some(BatchFailure::Nonzero(17)),
+            Some(BatchFailure::Callback(17)),
+        ] {
+            let mut buffers = fake_readable(65);
+            for buffer in &mut buffers {
+                buffer.kind = Kind::Upload;
+            }
+            let mut mapper = FakeMapper::new(failure);
+            let accepted =
+                inspect_readable_groups_selected(&mut mapper, &buffers, &[], true).is_ok();
+            assert_eq!(accepted, failure.is_none());
+            let events = &mapper.state.borrow().events;
+            assert_eq!(
+                events.iter().filter(|e| e.0 == "request").count(),
+                events.iter().filter(|e| e.0 == "unmap").count()
+            );
+            if accepted {
+                assert_eq!(events.iter().filter(|e| e.0 == "inspect").count(), 65);
+            }
+        }
+    }
+    #[test]
     fn actual_group_policy_preallocates_and_accepts_every_callback_before_inspection() {
         for count in [1, 63, 64, 65, 129] {
             let buffers = fake_readable(count);
@@ -3802,5 +3917,44 @@ mod clean_readback_metadata_tests {
                 <= 4096
         );
         assert!(CleanReadbacks::<[u8; 4096]>::new(true).is_err());
+    }
+}
+
+#[cfg(test)]
+mod gpu_upload_clear_policy_tests {
+    use super::*;
+    #[test]
+    fn requires_explicit_compatible_capability_and_batched_info() {
+        for raw in [None, Some("0")] {
+            assert!(!configured_gpu_upload_clear(raw, false, false).unwrap());
+        }
+        assert!(configured_gpu_upload_clear(Some("1"), true, true).unwrap());
+        for (batch, primary) in [(false, false), (false, true), (true, false)] {
+            assert!(configured_gpu_upload_clear(Some("1"), batch, primary).is_err());
+        }
+        for raw in [Some("2"), Some(""), Some("true")] {
+            assert!(configured_gpu_upload_clear(raw, true, true).is_err());
+        }
+    }
+    #[test]
+    fn only_primary_uploads_change_usage_and_receive_direct_full_inspection() {
+        for kind in [Kind::Upload, Kind::Uniform, Kind::Readback] {
+            let ordinary = allocation_usage(kind, false);
+            let primary = allocation_usage(kind, true);
+            if kind == Kind::Upload {
+                assert_eq!(
+                    primary,
+                    ordinary | wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST
+                );
+                assert!(needs_audit_stage(kind, false));
+                assert!(!needs_audit_stage(kind, true));
+            } else {
+                assert_eq!(primary, ordinary);
+                assert_eq!(
+                    needs_audit_stage(kind, false),
+                    needs_audit_stage(kind, true)
+                );
+            }
+        }
     }
 }

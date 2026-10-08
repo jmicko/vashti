@@ -1654,3 +1654,23 @@ B70 returns50688000B. The prefill regression is recorded, not attributed or
 hidden;10 tokens/s remains unmet. Next candidate retains up to64 small owners
 in the same8MiB cap, with explicit actual pointer storage plus owner header
 limited to the original4KiB envelope before content. Device acceptance pending.
+
+Small Readback pool source4d17149/artifactef05a2f88c95184639f18c1d45e7eec384f5c3b9055fd6b575918422d3083801
+passes all original128-ID/owning/fresh/lifecycle gates with17643ms decode
+(7.1983 tokens/s),15251ms prefill,7948 warm reuses. Source gates496 native/two
+shaders,62 runtime/three allocator/two logger controls,36 Python controls and
+strict Clippy pass. B70 returns50688000B. More reuse does not establish a speed
+gain; the existing single best remains v37 at7.2609.
+
+Next candidate uses native primary mapping only for Upload owners: full GPU
+clearing twice and direct CPU READ mapping/full zero inspection between passes.
+It removes repeated WRITE remaps and Upload verification stages while retaining
+all original source bytes, both erase passes, error fences and failure retirement.
+Exact capability and original complete-model acceptance are pending; never relax
+the original owning gates or budgets. Installed execution remains unchanged.
+
+Primary Upload source gates pass496 native/two shader suites,65 runtime/three
+actual allocator/two logger controls,37 Python controls and strict all-target
+Clippy. Regenerated23-file provenance patch
+f46b89e75ba029cd435f3b0cd0a71715300c306fb4377b69dfa003414d8efd6a
+retains original upstream archives/licenses and both locks. Device pending.

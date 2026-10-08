@@ -543,3 +543,14 @@ fence/error completion and zero returned/map leases precede retention. All
 retained bytes remain inside the unchanged64MiB I/O ledger ceiling. Exact-size
 activation moves existing charge; every newly dirty cohort repeats all original
 wipes/audits. Source/device acceptance is recorded in the owner checkpoint.
+
+### Primary Upload clearing candidate
+
+An explicit protected batched-INFO opt-in may request native primary mapping
+and add MAP_READ/COPY_DST only to dedicated Uploads. Two full GPU erase passes
+retain original drained/scoped fences. The original Upload buffer is directly
+CPU READ mapped and completely inspected between them, replacing its audit
+copy stage. Uniform/Readback inspection and all guarded callbacks/unmaps/error
+retirement remain. Nonselected volatile CPU Upload erasure remains unchanged.
+The original64MiB cap and conservative duplicate headroom are preserved. See the
+count1 contract for pinned actual-map/source evidence and pending acceptance.

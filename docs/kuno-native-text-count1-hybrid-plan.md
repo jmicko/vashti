@@ -1239,3 +1239,30 @@ The subsequent selected laboratory pool allows up to64 exact-size clean
 Readback owners within the same8MiB cap. Actual preallocated pointer capacity
 plus pool header must fit4KiB before any content. This supersedes the preceding
 16-entry candidate ceiling; all original cleanup/charge/lease gates remain.
+
+### Primary mapped Upload GPU erasure laboratory
+
+Explicit `--gpu-upload-clear` selects `KUNO_LAB_GPU_UPLOAD_CLEAR=1`, requiring
+protected batched INFO and actual native MAPPABLE_PRIMARY_BUFFERS capability.
+Only dedicated Upload usage gains MAP_READ and COPY_DST. Public weights, MAIN
+owners, Uniform and Readback allocation usages remain unchanged. The pinned
+wgpu29.0.4 core directly maps a MAP_WRITE buffer at creation, rather than creating
+its alternate hidden initialization stage; Vulkan's MAP_READ+MAP_WRITE location
+remains CpuToGpu as with existing MAP_WRITE-only uploads. This is a capability
+selected experiment, not a portable performance claim.
+
+Both original full Upload erase passes become full GPU clear commands at the
+same drained/scoped completion boundaries. Between them the original Upload
+buffer itself is mapped READ, and its complete actual API-visible span must
+be zero, using original guarded map callbacks/timeouts/full-word inspection and
+unmap failure retirement. This direct CPU visibility proof replaces only the
+Upload verification-copy stage; every Uniform still receives its original full
+stage copy/padding check. Readback owners remain directly inspected. All maps
+are dropped before the final full GPU erase/fence/error acceptance. No pass or
+source byte is omitted; failed completion/inspection retains owners and retires
+the context. Nonselected uploads retain original volatile mapped WRITE erasure.
+
+The original64MiB cap and conservative Upload/Uniform duplicate preflight remain;
+no owner is credited early or transferred to a pool. Exact policy/capability and
+bounded positive warm clear evidence must accompany unchanged128 original IDs
+and full fresh/poison/owning/lifecycle acceptance. No service/API/frontend change.

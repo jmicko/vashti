@@ -15,4 +15,5 @@ mod transient_io;
 pub use server::*;
 pub use storage::*;
 
+pub use transient_io::transient_gpu_upload_clears;
 pub use transient_io::transient_readback_reuses;
