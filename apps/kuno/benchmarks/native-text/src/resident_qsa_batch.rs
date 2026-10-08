@@ -1173,7 +1173,15 @@ impl ResidentQsa<'_> {
         let cos = || u::raw_arg(public.vectors[5].clone(), qsa::ROPE_TABLE_WORDS);
         queue_stage(count, start as usize, cancel, |op| {
             match op {
-                Operation::Clear(i) => u::zero(arena, ids[i])?,
+                Operation::Clear(i) => {
+                    if u::native_scratch_clear_enabled() {
+                        if i == 0 {
+                            u::zero_many(arena, &**ids)?;
+                        }
+                    } else {
+                        u::zero(arena, ids[i])?;
+                    }
+                }
                 Operation::Positions => positions_batch::launch::<WgpuRuntime>(
                     client,
                     CubeCount::Static(1, 1, 1),

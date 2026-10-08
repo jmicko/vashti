@@ -84,8 +84,21 @@ faults: no effective reduction or speed win. Recovery returns50688000B.
 The next candidate is explicit `intel128`: two original64-slot shards, exact
 24GiB bank charge,5GiB static cache and31GiB reserved ceiling. Existing profiles
 retain their26/10GiB ceiling. The original source metadata, all-ten-rank merge,
-private inventories and owning proof gates remain. Host and physical acceptance
-are pending; this may improve GPU hit fraction but is not a measured win yet.
+private inventories and owning proof gates remain. Source83002c9 first rejects at the original512KiB host ledger guard before
+allocation. Correction6925024 accounts640KiB separately within the unchanged
+12MiB parent envelope. Artifact4f777e06… passes all128 IDs and original owning/
+lifecycle gates:35075ms decode (3.6208 tokens/s),49375ms prefill,19238 CPU
+misses and41722 GPU hits. Warm decode still reads11150995456 bytes and incurs
+63966 major faults. The modest single-sample gain does not meet10 tokens/s or
+establish significance. B70 recovers50688000B.486 native tests plus two shader
+suites,25 Python controls and strict all-target Clippy pass.
+
+The next explicit candidate uses original full-owner native clears across
+GDN/QSA/GR and coordinator scratch, batching adjacent clears within16 owners/
+64MiB. Larger public spans keep the original shader path. Final arena erasure,
+parent fences and every original full-owning audit remain unchanged. Host gates
+pass486 native tests plus two shader suites,26 Python controls and strictClippy;
+physical efficacy is pending.
 
 The user granted exclusive GPUs. Installed Kuno had an idle managed worker
 holding15978409984 B70 bytes with no active request; a graceful Kuno restart

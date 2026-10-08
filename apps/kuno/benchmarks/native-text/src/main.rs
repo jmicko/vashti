@@ -820,6 +820,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "GPU source cache hint requires mapped static cap10 protected count1 mode".into(),
         );
     }
+    let native_scratch_clear = count1_environment_opt_in(&mode, "KUNO_LAB_NATIVE_SCRATCH_CLEAR")?;
     let compact_info = count1_environment_opt_in(&mode, "KUNO_LAB_COMPACT_INFO")?;
     let info_batch_upload = count1_environment_opt_in(&mode, "KUNO_LAB_INFO_BATCH_UPLOAD")?;
     if info_batch_upload && (!compact_info || count1_hybrid_cap.is_none_or(|cap| cap > 10)) {
@@ -1904,6 +1905,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // retain their original submission semantics. Only this guarded
             // complete-model fixture selects active transient metadata lookup.
             resident_util::select_retained_metadata(retained_metadata);
+            resident_util::select_native_scratch_clear(native_scratch_clear);
             let fixture: serde_json::Value =
                 serde_json::from_str(include_str!("../../text/qwen38-baseline.json"))?;
             let resident_enabled = mode.starts_with("resident-");
@@ -2106,6 +2108,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 r.phase_ns.clear();
             }
             let pre_metadata_calls = resident_util::metadata_calls();
+            let pre_scratch_clear_calls = resident_util::native_scratch_clear_calls();
             let reclaim_start = Instant::now();
             let gpu_source_advised_bytes = if reclaim_gpu_sources {
                 resident
@@ -2273,6 +2276,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 receipt["gpu_source_advised_bytes"] = serde_json::json!(gpu_source_advised_bytes);
                 receipt["gpu_source_advice_ms"] = serde_json::json!(gpu_source_advice_ms);
                 receipt["large_weight_cache"] = serde_json::json!(large_weight_cache);
+                receipt["native_scratch_clear"] = serde_json::json!(native_scratch_clear);
+                receipt["observed_native_scratch_clear_calls"] = serde_json::json!(
+                    resident_util::native_scratch_clear_calls()
+                        .checked_sub(pre_scratch_clear_calls)
+                        .ok_or("scratch clear counter regression")?
+                );
                 receipt["compact_info"] = serde_json::json!(compact_info);
                 receipt["info_batch_upload"] = serde_json::json!(info_batch_upload);
                 receipt["device_dispatch"] = serde_json::json!(device_dispatch);

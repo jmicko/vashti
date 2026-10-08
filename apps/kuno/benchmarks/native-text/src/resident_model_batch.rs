@@ -995,21 +995,18 @@ impl Workspace {
         let mut pending = Pending::new()?;
         self.gr.validate_all_consumers_queued()?;
         self.shared.validate_all_consumers_queued()?;
-        for id in self
-            .outer
-            .residual
-            .into_iter()
-            .chain(self.outer.block)
-            .chain([
-                self.outer.router,
-                self.outer.packet,
-                m.b.fault,
-                m.b.logits,
-                m.b.logit_packet,
-            ])
-        {
-            u::zero(&m.arena, id)?;
-        }
+        let clear_ids = Zeroizing::new([
+            self.outer.residual[0],
+            self.outer.residual[1],
+            self.outer.block[0],
+            self.outer.block[1],
+            self.outer.router,
+            self.outer.packet,
+            m.b.fault,
+            m.b.logits,
+            m.b.logit_packet,
+        ]);
+        u::zero_many(&m.arena, &*clear_ids)?;
         batch_io::enqueue_embedding(
             m.graph,
             &m.arena,
@@ -1157,8 +1154,7 @@ impl Workspace {
                 m.b.fault,
                 cancel,
             )?;
-            u::zero(&m.arena, self.outer.router)?;
-            u::zero(&m.arena, self.outer.packet)?;
+            u::zero_many(&m.arena, &[self.outer.router, self.outer.packet])?;
             let tensor = m
                 .graph
                 .tensor(&format!("blk.{layer}.ffn_gate_inp.weight"))?;

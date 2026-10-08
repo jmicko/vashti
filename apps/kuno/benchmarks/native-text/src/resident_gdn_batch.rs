@@ -867,7 +867,15 @@ impl ResidentGdn<'_> {
         let arg = |i: usize| u::arg(arena, ids[i]);
         queue_stage(cancel, |operation| {
             match operation {
-                Operation::Clear(i) => u::zero(arena, ids[i])?,
+                Operation::Clear(i) => {
+                    if u::native_scratch_clear_enabled() {
+                        if i == 0 {
+                            u::zero_many(arena, &**ids)?;
+                        }
+                    } else {
+                        u::zero(arena, ids[i])?;
+                    }
+                }
                 Operation::Projection(i) => {
                     let (projection, target) = [
                         (self.projections.qkv, QKV),

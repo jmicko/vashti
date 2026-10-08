@@ -44,6 +44,17 @@ def completion(cap):
 
 
 class HybridLabTests(unittest.TestCase):
+    def test_native_scratch_clear_requires_completed_typed_evidence_and_explicit_environment(self):
+        value=receipt("intel",10);value.update(native_scratch_clear=True,observed_native_scratch_clear_calls=18000)
+        LAB.validate_receipt(value,"intel",10,completion(10),native_scratch_clear=True)
+        for field,bads in [("native_scratch_clear",[False,1,None]),("observed_native_scratch_clear_calls",[0,True,None,-1,1000001])]:
+            for bad in bads:
+                wrong=copy.deepcopy(value);wrong[field]=bad
+                with self.assertRaises(ValueError):LAB.validate_receipt(wrong,"intel",10,completion(10),native_scratch_clear=True)
+        with mock.patch.dict(os.environ,{"KUNO_LAB_NATIVE_SCRATCH_CLEAR":"1"}):
+            self.assertEqual(LAB.worker_environment("/original","/receipt")["KUNO_LAB_NATIVE_SCRATCH_CLEAR"],"0")
+        self.assertEqual(LAB.worker_environment("/original","/receipt",native_scratch_clear=True)["KUNO_LAB_NATIVE_SCRATCH_CLEAR"],"1")
+
     def test_source_advice_requires_actual_bounded_evidence_and_static_bank_mapping(self):
         value=receipt("intel",10)
         value.update(reclaim_gpu_sources=True,gpu_source_advised_bytes=19*1024**3,gpu_source_advice_ms=150,mapped_weights=True,observed_mapped_weights=True)

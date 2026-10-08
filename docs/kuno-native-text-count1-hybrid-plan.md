@@ -738,3 +738,26 @@ at every existing boundary and remains within the original12MiB total parent
 host envelope (11206656 bytes accounted). Original2MiB staged MoE candidates
 and1MiB CPU-private limit are unchanged. This is an explicit capacity charge,
 not bypassing the failed guard. No performance acceptance follows that launch.
+
+
+### Ordered full scratch clears, 2026-10-08
+
+The explicit protected `--native-scratch-clear` choice uses the already checked
+same-stream native buffer clear for complete original GDN/QSA/GR/coordinator
+scratch owners. Only consecutive initial clear operations are batched, at most
+16 owners/64MiB; public geometry beyond these limits retains the original shader
+clear. Original stage producers still check cancellation and queue every consumer
+in the same order. No status/output owner or inactive tail is omitted, no parent
+fence is removed and the private arena's final owning erasure/audit is unchanged.
+The existing physical full-handle, extent, same-stream and no-alias checks apply
+before any command. The native clear closes earlier compute passes and schedules
+earlier consumers before resetting scratch. This is an implementation dispatch
+change, not permission to publish or reuse private data before completion.
+
+`native_scratch_clear` must match independent opt-in; the numeric-only
+`observed_native_scratch_clear_calls` must be positive when enabled (at most
+1000000 for the bounded fixture) and zero otherwise. No request metadata enters
+these counters or cache keys. Full128 output IDs, fresh/poison checks and original
+owning audits plus physical recovery remain mandatory. No installed or API/
+consumer change. Host gates pass486 native tests plus two offline shader suites,
+26 Python controls and strict all-target Clippy before physical efficacy testing.

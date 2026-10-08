@@ -329,9 +329,8 @@ impl Workspace {
         let client = arena.client().map_err(u::fault)?;
         // Missing active status stores must not inherit success from a prior
         // layer. Floating scratch is fully overwritten for every active row.
-        for index in [SN, SL, SM] {
-            u::zero(arena, self.ids[index])?;
-        }
+        let clear_ids = Zeroizing::new([self.ids[SN], self.ids[SL], self.ids[SM]]);
+        u::zero_many(arena, &*clear_ids)?;
         r::grouped_rms_norm::launch::<WgpuRuntime>(
             client,
             CubeCount::Static(l.streams as u32, MAX_BATCH as u32, 1),

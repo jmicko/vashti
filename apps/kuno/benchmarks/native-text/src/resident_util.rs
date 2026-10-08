@@ -8,6 +8,18 @@ use kuno_text::{Error, Result};
 use std::sync::atomic::{AtomicBool, Ordering};
 use zeroize::{Zeroize, Zeroizing};
 static METADATA_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static NATIVE_SCRATCH_CLEAR: AtomicBool = AtomicBool::new(false);
+static NATIVE_SCRATCH_CLEAR_CALLS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+pub(crate) fn select_native_scratch_clear(selected: bool) {
+    NATIVE_SCRATCH_CLEAR.store(selected, Ordering::Release);
+}
+pub(crate) fn native_scratch_clear_enabled() -> bool {
+    NATIVE_SCRATCH_CLEAR.load(Ordering::Acquire)
+}
+pub(crate) fn native_scratch_clear_calls() -> u64 {
+    NATIVE_SCRATCH_CLEAR_CALLS.load(Ordering::Relaxed)
+}
 static RETAINED_METADATA: AtomicBool = AtomicBool::new(false);
 pub(crate) fn select_retained_metadata(selected: bool) {
     RETAINED_METADATA.store(selected, Ordering::Release);
@@ -203,6 +215,13 @@ pub fn status_batch(
 }
 pub fn zero(arena: &PrivateArena, id: BufferId) -> Result<()> {
     let layout = arena.layout(id).map_err(fault)?;
+    if native_scratch_clear_enabled() && layout.owned_bytes <= 64 * 1024 * 1024 {
+        zero_batch(arena, &[id])?;
+        NATIVE_SCRATCH_CLEAR_CALLS
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+            .map_err(|_| Error::ArithmeticOverflow)?;
+        return Ok(());
+    }
     crate::private_arena::erase_full_span::launch::<WgpuRuntime>(
         arena.client().map_err(fault)?,
         CubeCount::Static(layout.workgroups_x, layout.workgroups_y, 1),
@@ -211,6 +230,28 @@ pub fn zero(arena: &PrivateArena, id: BufferId) -> Result<()> {
             ArrayArg::from_raw_parts(arena.handle(id).map_err(fault)?.clone(), layout.owned_words)
         },
     );
+    Ok(())
+}
+/// Batch only consecutive full-owner scratch clears at the existing stream
+/// boundary. Public16-owner/64MiB limits remain; larger public spans retain
+/// the original shader clear. Never changes final private arena erasure.
+pub fn zero_many(arena: &PrivateArena, ids: &[BufferId]) -> Result<()> {
+    for chunk in ids.chunks(16) {
+        let bytes = chunk.iter().try_fold(0usize, |n, &id| {
+            n.checked_add(arena.layout(id).map_err(fault)?.owned_bytes)
+                .ok_or(Error::ArithmeticOverflow)
+        })?;
+        if native_scratch_clear_enabled() && bytes <= 64 * 1024 * 1024 {
+            zero_batch(arena, chunk)?;
+            NATIVE_SCRATCH_CLEAR_CALLS
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+                .map_err(|_| Error::ArithmeticOverflow)?;
+        } else {
+            for &id in chunk {
+                zero(arena, id)?;
+            }
+        }
+    }
     Ok(())
 }
 /// Ordered native clears of original full owning scratch pages. The parent
