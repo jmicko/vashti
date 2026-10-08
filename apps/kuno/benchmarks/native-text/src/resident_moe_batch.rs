@@ -373,6 +373,9 @@ struct HybridOwners {
     cap: Option<usize>,
     overlap: bool,
 }
+fn hybrid_worker_geometry(count: usize, pooled: bool) -> bool {
+    matches!(count, 4 | 8 | 16) && (count == 16 || pooled)
+}
 impl Workspace {
     pub(crate) fn count1_hybrid_allocation_requests() -> Result<[u64; 2]> {
         Ok([CPU_WORDS, OWNER_WORDS].map(|n| {
@@ -399,7 +402,7 @@ impl Workspace {
             || self.policy.phase != Phase::Idle
             || *self.policy.chunk != 0
             || (overlap && !operator.workers_pooled())
-            || operator.worker_count() != 16
+            || !hybrid_worker_geometry(operator.worker_count(), operator.workers_pooled())
             || operator.backend()
                 != if cfg!(feature = "cpu-fma") {
                     kuno_text::cpu_expert::Backend::Avx2Fma
@@ -1948,6 +1951,19 @@ impl Drop for Acceptance<'_, '_> {
 mod tests {
     use super::*;
     use crate::bank_slots::BankSlots;
+    #[test]
+    fn constructed_hybrid_worker_geometry_admits_only_checked_public_pools() {
+        for count in [4, 8, 16] {
+            assert!(hybrid_worker_geometry(count, true));
+        }
+        assert!(hybrid_worker_geometry(16, false));
+        for count in [0, 1, 3, 4, 8, 17, usize::MAX] {
+            assert!(!hybrid_worker_geometry(count, false));
+        }
+        for count in [0, 1, 3, 17, usize::MAX] {
+            assert!(!hybrid_worker_geometry(count, true));
+        }
+    }
     fn geometry(capacity: usize) -> k::Geometry {
         k::Geometry::new(
             [

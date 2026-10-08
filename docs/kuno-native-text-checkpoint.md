@@ -140,6 +140,14 @@ full original owning and fresh/lifecycle gates pass with34343ms decode
 58553 major faults remain.487 native tests plus two shader suites,29 Python
 controls and strict all-target Clippy pass. This remains below10 tokens/s.
 
+Source de6d086 adds explicit4/8/16 physical worker calibration and separate
+compiled two-pass residual Q8.127 core tests (3 ignored),487 native tests plus
+both shader suites and30 Python controls pass. The first8-worker launch
+(artifact00215ff3) rejects at the original fixed16-worker constructor guard,
+before model inference; no accepted speed receipt. Recovery returns50688000B.
+The correction retains a typed4/8/16 maximum, requires pooled4/8 and independently
+observes actual constructed geometry. Two-pass physical acceptance is pending.
+
 The user granted exclusive GPUs. Installed Kuno had an idle managed worker
 holding15978409984 B70 bytes with no active request; a graceful Kuno restart
 released it and physical VRAM returned50688000. There was no GPU reset/unbind
