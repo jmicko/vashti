@@ -748,6 +748,8 @@ pub struct GpuExecutor<'a> {
     pub shared_overlap_calls: u64,
     pub gpu_router: bool,
     pub fused_experts: bool,
+    pub gpu_expert_limit: usize,
+    pub cpu_resident_expert_calls: u64,
     pub fused_expert_calls: u64,
     pub gpu_router_calls: u64,
     pub fast_dense: bool,
@@ -890,6 +892,8 @@ impl<'a> GpuExecutor<'a> {
             shared_overlap_calls: 0,
             gpu_router: false,
             fused_experts: false,
+            gpu_expert_limit: 10,
+            cpu_resident_expert_calls: 0,
             fused_expert_calls: 0,
             gpu_router_calls: 0,
             fast_dense: false,
@@ -1048,7 +1052,7 @@ impl<'a> GpuExecutor<'a> {
                 })
                 .ok_or(Error::ArithmeticOverflow)?;
         }
-        for bank in self.banks.values() {
+        for bank in self.banks.values().filter(|_| self.gpu_expert_limit == 10) {
             for slot in 0..bank.slots.capacity() {
                 let expert = zeroize::Zeroizing::new(
                     bank.slots

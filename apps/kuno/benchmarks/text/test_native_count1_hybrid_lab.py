@@ -44,6 +44,16 @@ def completion(cap):
 
 
 class HybridLabTests(unittest.TestCase):
+    def test_resident_balancing_requires_mapped_pooled_overlap(self):
+        for limit in (-1, 11, True):
+            with self.assertRaises(ValueError):
+                LAB.worker_environment("/original", "/receipt", gpu_expert_limit=limit)
+        with self.assertRaises(ValueError):
+            LAB.worker_environment("/original", "/receipt", gpu_expert_limit=6)
+        env = LAB.worker_environment("/original", "/receipt", gpu_expert_limit=6, mapped=True, workers="pooled", overlap=True)
+        self.assertEqual(env["KUNO_LAB_GPU_EXPERT_LIMIT"], "6")
+        self.assertEqual(LAB.worker_environment("/original", "/receipt")["KUNO_LAB_GPU_EXPERT_LIMIT"], "10")
+
     def test_fused_experts_requires_shared_and_keeps_control_explicit(self):
         with self.assertRaises(ValueError):
             LAB.worker_environment("/original", "/receipt", fused_experts=True)

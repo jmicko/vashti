@@ -50,6 +50,19 @@ impl Split {
         misses: &[usize],
         cpu_cap: usize,
     ) -> Result<Self> {
+        Self::with_gpu_limit(ids, misses, cpu_cap, RANKS)
+    }
+    /// Explicit static-bank co-execution: CPU can also compute resident hits.
+    /// Cache residency, actual misses and compute placement remain distinct.
+    pub(crate) fn with_gpu_limit(
+        ids: &[usize; RANKS],
+        misses: &[usize],
+        cpu_cap: usize,
+        gpu_limit: usize,
+    ) -> Result<Self> {
+        if gpu_limit > RANKS || (gpu_limit < RANKS && cpu_cap != RANKS) {
+            return Err(err());
+        }
         if misses.len() > RANKS
             || cpu_cap > RANKS
             || ids
@@ -71,7 +84,7 @@ impl Split {
             ng: 0,
         }));
         for (r, &id) in ids.iter().enumerate() {
-            let c = misses.contains(&id) && s.0.nc < cpu_cap;
+            let c = (misses.contains(&id) && s.0.nc < cpu_cap) || s.0.ng >= gpu_limit;
             let i = if c {
                 let i = s.0.nc;
                 s.0.cpu[i] = id;

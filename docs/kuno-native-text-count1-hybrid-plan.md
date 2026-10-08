@@ -1737,3 +1737,34 @@ reject a requested trial with no observed execution. Compare same-binary off/on
 full original 75/128 fixture and original expected IDs/lifecycle checks before
 selection. This is a kernel trial, not completed FreeToken cache scheduling or
 Strata speculation. Public APIs, workers, model file and Vashti stay unchanged.
+
+### Resident expert CPU balancing trial (2026-10-08, pending)
+
+`--gpu-expert-limit N` / `KUNO_LAB_GPU_EXPERT_LIMIT=N` (default 10) is an
+explicit count1 cap10/mapped/pooled/overlap laboratory policy. Keep the first N
+resident hits in original rank order on GPU; send all actual misses and
+remaining resident hits to the existing joined CPU operator. No GPU misses are
+uploaded and no bank is unloaded. Original ten-rank probabilities, mixed input,
+partial-owner readiness and rank0..9 merge remain unchanged. Classify and prove
+actual misses separately from CPU-resident work; rederive the same bounded split
+at preflight against the original bank instance/revision and hit slots. GPU
+subset upload count must remain zero. Total CPU ranks never exceeds 10; all
+original host, MAIN and runtime budgets, ownership and erasure gates remain.
+
+Retain bank source pages as potential CPU inputs when N<10 instead of advising
+all GPU-bank originals out of RAM after prefill. Dense-only source advice still
+applies. Observe physical page pressure and warm disk reads; this can increase
+public weight-cache demand, not private content persistence. Record numeric
+CPU-resident dispatch count and requested limit. Compare against the unchanged
+10-hit policy with original fixture/IDs/proofs before any selection. No automatic
+hardware tuning or general production routing is claimed by a fixed limit.
+
+The fused-128 trial `048426b` passes full acceptance but is not selected:
+normal artifact `b91344b7988f54767ca94ac4ba9945ca47265b4de1f9d50c56b6e89b25d41518`
+measures 11677ms/127 steps (10.8761 tokens/s), versus same-binary warm off
+11548ms (10.9976). First post-reboot off takes 20018ms while reading
+9867210752 bytes; it is a cold-cache control, not a matched warm comparison.
+Fused first use reads 5955584 bytes and writes 40960 bytes in aggregate; these
+counters are not evidence of private content storage. Subsequent off reads and
+writes zero. Preserve the opt-in for later instruction/register investigation;
+keep the accepted original shader selected. No speed gain established.

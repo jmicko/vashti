@@ -907,6 +907,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let batch_tasks = count1_environment_opt_in(&mode, "KUNO_LAB_BATCH_TASKS")?;
     let gpu_router = count1_environment_opt_in(&mode, "KUNO_LAB_GPU_ROUTER")?;
     let fused_experts = count1_environment_opt_in(&mode, "KUNO_LAB_FUSED_EXPERTS")?;
+    let gpu_expert_limit = match std::env::var("KUNO_LAB_GPU_EXPERT_LIMIT") {
+        Err(std::env::VarError::NotPresent) => 10,
+        Ok(value) if mode == "resident-count1-hybrid-chat" => value
+            .parse::<usize>()
+            .ok()
+            .filter(|&v| v <= 10)
+            .ok_or("GPU expert limit must be 0 through 10")?,
+        _ => return Err("GPU expert limit requires protected count1 mode".into()),
+    };
+    if gpu_expert_limit < 10
+        && (count1_hybrid_cap != Some(10) || !mapped_weights || !count1_pooled || !count1_overlap)
+    {
+        return Err("GPU expert balancing requires mapped cap10 pooled overlap".into());
+    }
+
     if fused_experts && !next_shared {
         return Err("Fused experts require protected shared kernels".into());
     }
@@ -2204,6 +2219,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             executor.gpu_router = gpu_router;
             executor.fused_experts = fused_experts;
+            executor.gpu_expert_limit = gpu_expert_limit;
             executor.fast_dense = fast_gpu;
             executor.fast_dense_fault = fast_gpu_fault;
             executor.shared_kernels = next_shared;
@@ -2353,6 +2369,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let pre_info_cache_stats = cubecl::wgpu::transient_info_cache_stats();
             let pre_binding_cache_stats = cubecl::wgpu::transient_binding_cache_stats();
             let pre_fused_expert_calls = executor.fused_expert_calls;
+            let pre_cpu_resident_expert_calls = executor.cpu_resident_expert_calls;
             let pre_upload_transfer = cubecl::wgpu::transient_upload_transfer_stats();
             let reclaim_start = Instant::now();
             let gpu_source_advised_bytes = if reclaim_gpu_sources {
@@ -2582,6 +2599,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 receipt["request_io_reuse"] = serde_json::json!(request_io_reuse);
                 receipt["bind_group_reuse"] = serde_json::json!(bind_group_reuse);
                 receipt["fused_experts"] = serde_json::json!(fused_experts);
+                receipt["gpu_expert_limit"] = serde_json::json!(gpu_expert_limit);
+                receipt["observed_cpu_resident_expert_calls"] = serde_json::json!(
+                    executor
+                        .cpu_resident_expert_calls
+                        .checked_sub(pre_cpu_resident_expert_calls)
+                        .ok_or("CPU resident counter overflow")?
+                );
                 receipt["observed_fused_expert_calls"] = serde_json::json!(
                     executor
                         .fused_expert_calls
@@ -2963,6 +2987,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 executor.gpu_router = gpu_router;
                 executor.fused_experts = fused_experts;
+                executor.gpu_expert_limit = gpu_expert_limit;
                 executor.fast_dense = fast_gpu;
                 executor.fast_dense_fault = fast_gpu_fault;
                 executor.shared_kernels = next_shared;
@@ -3078,6 +3103,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     executor.gpu_router = gpu_router;
                     executor.fused_experts = fused_experts;
+                    executor.gpu_expert_limit = gpu_expert_limit;
                     executor.fast_dense = fast_gpu;
                     executor.fast_dense_fault = fast_gpu_fault;
                     executor.shared_kernels = next_shared;

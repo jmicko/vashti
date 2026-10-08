@@ -9,6 +9,7 @@ pub(super) struct Proof {
     ids: Zeroizing<[usize; 10]>,
     probabilities: Zeroizing<[u32; 10]>,
     cap: Zeroizing<usize>,
+    gpu_limit: Zeroizing<usize>,
     misses: Zeroizing<u16>,
     hit_slots: Zeroizing<[usize; 10]>,
     cpu_count: Zeroizing<usize>,
@@ -20,6 +21,7 @@ impl Proof {
         ids: &[usize; 10],
         probabilities: &[f32; 10],
         cap: usize,
+        gpu_limit: usize,
     ) -> Result<(Self, StagedSlots, Last, Split)> {
         if cap > 10 || probabilities.iter().any(|p| !p.is_finite() || *p < 0.) {
             return Err(err("native count1 fixed miss policy"));
@@ -38,11 +40,12 @@ impl Proof {
         for (i, &(id, _)) in all.uploads.iter().enumerate() {
             misses[i] = id;
         }
-        let split = Split::from_actual_misses(ids, &misses[..all.uploads.len()], cap)?;
+        let split = Split::with_gpu_limit(ids, &misses[..all.uploads.len()], cap, gpu_limit)?;
         let mut proof = Self {
             ids: Zeroizing::new(*ids),
             probabilities: Zeroizing::new(probabilities.map(f32::to_bits)),
             cap: Zeroizing::new(cap),
+            gpu_limit: Zeroizing::new(gpu_limit),
             misses: Zeroizing::new(0),
             hit_slots: Zeroizing::new([0; 10]),
             cpu_count: Zeroizing::new(split.cpu().len()),
@@ -89,8 +92,14 @@ impl Proof {
     pub(super) fn misses(&self) -> usize {
         self.misses.count_ones() as usize
     }
+    pub(super) fn cpu_miss_count(&self) -> usize {
+        self.misses().min(*self.cap)
+    }
     pub(super) fn cpu_count(&self) -> usize {
         *self.cpu_count
+    }
+    pub(super) fn gpu_limit(&self) -> usize {
+        *self.gpu_limit
     }
     pub(super) fn cap(&self) -> usize {
         *self.cap
@@ -151,11 +160,21 @@ impl Proof {
         for (i, &(id, _)) in all.uploads.iter().enumerate() {
             misses[i] = id;
         }
-        let split = Split::from_actual_misses(&self.ids, &misses[..all.uploads.len()], *self.cap)?;
+        let split = Split::with_gpu_limit(
+            &self.ids,
+            &misses[..all.uploads.len()],
+            *self.cap,
+            *self.gpu_limit,
+        )?;
+        let cpu_misses = split
+            .cpu()
+            .iter()
+            .filter(|id| misses[..all.uploads.len()].contains(id))
+            .count();
         if split.cpu().len() != *self.cpu_count
             || split.gpu() != &last.selected[..*last.len]
             || last.selected[*last.len..].iter().any(|&x| x != 0)
-            || last.pending.uploads.len() != all.uploads.len() - split.cpu().len()
+            || last.pending.uploads.len() != all.uploads.len() - cpu_misses
         {
             return Err(err("native count1 actual miss ownership changed"));
         }
@@ -164,13 +183,9 @@ impl Proof {
             if misses[..all.uploads.len()].contains(&id) {
                 *mask |= 1 << rank;
             } else {
-                let index = split
-                    .gpu()
-                    .iter()
-                    .position(|&v| v == id)
-                    .ok_or(err("native count1 resident hit moved to CPU"))?;
+                let index = split.gpu().iter().position(|&v| v == id);
                 if self.hit_slots[rank] != all.slots[rank]
-                    || last.pending.slots[index] != all.slots[rank]
+                    || index.is_some_and(|index| last.pending.slots[index] != all.slots[rank])
                 {
                     return Err(err("native count1 protected hit slot changed"));
                 }
@@ -188,6 +203,35 @@ mod tests {
     use super::*;
     use crate::bank_slots::BankSlots;
     #[test]
+    fn resident_balancing_keeps_actual_misses_and_canonical_bank_separate() {
+        let mut source = BankSlots::new(16, 512).unwrap();
+        let ids = std::array::from_fn(|r| r);
+        let prime = source.plan(&ids[..8]).unwrap();
+        source.commit(prime).unwrap();
+        for limit in 0..=10 {
+            let (mut proof, staged, last, split) =
+                Proof::prepare(&source, &ids, &[0.1; 10], 10, limit).unwrap();
+            assert_eq!(proof.misses(), 2);
+            assert_eq!(proof.cpu_miss_count(), 2);
+            assert_eq!(split.gpu(), &ids[..limit.min(8)]);
+            assert_eq!(split.cpu().len(), 10 - limit.min(8));
+            assert!(last.pending.uploads.is_empty());
+            proof
+                .validate_source(&source, &staged, &last, false)
+                .unwrap();
+            *proof.gpu_limit = (limit + 1) % 11;
+            if limit < 8 || limit == 10 {
+                assert!(
+                    proof
+                        .validate_source(&source, &staged, &last, false)
+                        .is_err()
+                );
+            }
+        }
+        assert!(Proof::prepare(&source, &ids, &[0.1; 10], 9, 6).is_err());
+        assert!(Proof::prepare(&source, &ids, &[0.1; 10], 10, 11).is_err());
+    }
+    #[test]
     fn compact_noncontiguous_misses_keep_original_gpu_ranks_and_hit_slots() {
         for cap in 0..=10 {
             let mut source = BankSlots::new(16, 512).unwrap();
@@ -198,7 +242,7 @@ mod tests {
             let ids = std::array::from_fn(|r| r);
             let probabilities = [0.1; 10];
             let (mut p, staged, last, split) =
-                Proof::prepare(&source, &ids, &probabilities, cap).unwrap();
+                Proof::prepare(&source, &ids, &probabilities, cap, 10).unwrap();
             assert_eq!(p.misses(), 5);
             assert_eq!(split.cpu(), &[1, 3, 5, 7, 9][..cap.min(5)]);
             assert_eq!(last.pending.uploads.len(), 5 - cap.min(5));
@@ -224,14 +268,14 @@ mod tests {
     fn real_empty_gpu_plan_requires_all_cpu_and_rejects_stale_origin() {
         let mut source = BankSlots::new(16, 512).unwrap();
         let ids = std::array::from_fn(|r| r);
-        let (p, staged, last, split) = Proof::prepare(&source, &ids, &[0.1; 10], 10).unwrap();
+        let (p, staged, last, split) = Proof::prepare(&source, &ids, &[0.1; 10], 10, 10).unwrap();
         assert!(split.gpu().is_empty());
         assert_eq!(*last.len, 0);
         p.validate_source(&source, &staged, &last, false).unwrap();
         let update = source.plan(&[481]).unwrap();
         source.commit(update).unwrap();
         assert!(p.validate_source(&source, &staged, &last, false).is_err());
-        assert!(Proof::prepare(&source, &ids, &[0.1; 10], 11).is_err());
+        assert!(Proof::prepare(&source, &ids, &[0.1; 10], 11, 10).is_err());
     }
 
     #[test]
@@ -240,7 +284,7 @@ mod tests {
         let ids = std::array::from_fn(|rank| rank);
         for cap in 0..=10 {
             let (mut proof, staged, last, split) =
-                Proof::prepare(&source, &ids, &[0.1; 10], cap).unwrap();
+                Proof::prepare(&source, &ids, &[0.1; 10], cap, 10).unwrap();
             assert_eq!(split.cpu(), &ids[..cap]);
             assert_eq!(split.gpu(), &ids[cap..]);
             assert_eq!(last.pending.uploads.len(), 10 - cap);

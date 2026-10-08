@@ -59,6 +59,8 @@ impl GpuExecutor<'_> {
         let cap = h.cap.ok_or(err("native count1 policy absent"))?;
         let overlap = h.overlap;
         if cap > 10
+            || self.gpu_expert_limit > 10
+            || self.gpu_expert_limit < 10 && (cap != 10 || !overlap || !self.model.weights_mapped())
             || self.fused_experts && !self.shared_kernels
             || routes.count() != 1
             || s.stamp.count != 1
@@ -136,8 +138,13 @@ impl GpuExecutor<'_> {
             experts[rank] = v.expert() as usize;
             probabilities[rank] = v.probability();
         }
-        let (mut proof, staged, last, split) =
-            count1::Proof::prepare(&bank.slots, &experts, &probabilities, cap)?;
+        let (mut proof, staged, last, split) = count1::Proof::prepare(
+            &bank.slots,
+            &experts,
+            &probabilities,
+            cap,
+            self.gpu_expert_limit,
+        )?;
         let mut pairs = Zeroizing::new([(0u32, 0u32); 10]);
         for (i, &id) in split.gpu().iter().enumerate() {
             pairs[i] = (id as u32, last.pending.slots[i] as u32);
@@ -467,6 +474,10 @@ impl GpuExecutor<'_> {
             ));
         }
         let misses = proof.misses();
+        self.cpu_resident_expert_calls = self
+            .cpu_resident_expert_calls
+            .checked_add((proof.cpu_count() - proof.cpu_miss_count()) as u64)
+            .ok_or(Error::ArithmeticOverflow)?;
         let out = Pending {
             views: Views {
                 ids: Zeroizing::new([input, output]),

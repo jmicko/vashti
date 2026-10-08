@@ -1831,7 +1831,11 @@ impl Workspace {
             .validate_pending(&bank.slots, &last.pending, &last.selected[..*last.len])
             .map_err(|_| err("native routed final bank generation"))?;
         if let Some(proof) = &p.count1 {
-            if s.stamp.count != 1 || *p.waves != 1 || self.cpu_miss_cap() != Some(proof.cap()) {
+            if s.stamp.count != 1
+                || *p.waves != 1
+                || self.cpu_miss_cap() != Some(proof.cap())
+                || proof.gpu_limit() != e.gpu_expert_limit
+            {
                 return Err(err("native count1 foreign pending policy"));
             }
             proof.validate_source(&bank.slots, staged, last, true)?;
@@ -1876,7 +1880,7 @@ impl Workspace {
                 *seen |= bit;
                 // Count only actual joined/source-validated original Pending
                 // proofs. No dispatch attempt or requested policy is evidence.
-                let count = p.count1.as_ref().map_or(0, |proof| proof.cpu_count());
+                let count = p.count1.as_ref().map_or(0, |proof| proof.cpu_miss_count());
                 *cpu_misses = cpu_misses
                     .checked_add(u64::try_from(count).map_err(|_| Error::ArithmeticOverflow)?)
                     .ok_or(Error::ArithmeticOverflow)?;
