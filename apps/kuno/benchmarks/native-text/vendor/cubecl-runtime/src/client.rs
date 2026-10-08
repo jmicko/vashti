@@ -367,6 +367,29 @@ impl<R: Runtime> ComputeClient<R> {
         layout.memory
     }
 
+    /// Move immutable original public model-weight bytes into existing views.
+    ///
+    /// This native-lab path uses the same ordinary PUBLIC upload policy as
+    /// [`Self::create_public_owned`], without allocating or initializing MAIN
+    /// resources. It must never receive prompts, activations, routing packets
+    /// or other private data; private uploads retain [`Self::write_private`].
+    /// Every view must be an initialized same-stream, four-byte-aligned span
+    /// matching its payload. The caller proves original weight/slot identity,
+    /// retains each full bank owner, precharges all sources and excludes live
+    /// consumers until its existing audited owning completion. Success means
+    /// scheduling only: backend errors and completion require that readback.
+    pub fn write_public_owned_batch(
+        &self,
+        writes: Vec<(Handle, Vec<u8>)>,
+    ) -> Result<(), ServerError> {
+        let stream_id = self.stream_id();
+        let descriptors = public_write_descriptors(writes, stream_id)?;
+        self.device.submit(move |server| {
+            server.write(descriptors, stream_id);
+        });
+        Ok(())
+    }
+
     /// Enable bounded explicitly owned I/O for this serialized stream.
     /// Use create_private for ALL private uploads; legacy create/create_from_slice
     /// remain PUBLIC APIs and can contain unguarded host/opaque GPU copies.
@@ -1307,5 +1330,98 @@ impl<R: Runtime> ComputeClient<R> {
         let num_candidates = max.trailing_zeros() + 1;
 
         (0..num_candidates).map(|i| 2usize.pow(i)).rev()
+    }
+}
+
+fn public_write_descriptors(
+    writes: Vec<(Handle, Vec<u8>)>,
+    stream: StreamId,
+) -> Result<Vec<(CopyDescriptor, Bytes)>, ServerError> {
+    // Validate the entire batch before moving payloads or scheduling any write.
+    // Avoid size_in_used(): forged offsets can underflow its subtraction.
+    if writes.is_empty()
+        || writes.iter().any(|(handle, data)| {
+            let first = handle.offset_start.unwrap_or(0);
+            let span = handle
+                .size()
+                .checked_sub(first)
+                .and_then(|size| size.checked_sub(handle.offset_end.unwrap_or(0)));
+            handle.stream != stream
+                || data.is_empty()
+                || !first.is_multiple_of(4)
+                || !data.len().is_multiple_of(4)
+                || u64::try_from(data.len()).ok() != span
+        })
+    {
+        return Err(ServerError::Generic {
+            reason: "public weight write requires exact aligned same-stream views".into(),
+            backtrace: BackTrace::capture(),
+        });
+    }
+    Ok(writes
+        .into_iter()
+        .map(|(handle, data)| {
+            let descriptor = handle.copy_descriptor([data.len()].into(), [1].into(), 1);
+            (descriptor, Bytes::from_elems(data))
+        })
+        .collect())
+}
+
+#[cfg(test)]
+mod public_write_tests {
+    use super::*;
+
+    #[test]
+    fn public_write_preserves_existing_views_and_moves_payloads() {
+        let stream = StreamId { value: 37 };
+        let owner = Handle::new(stream, 32768);
+        let view = owner.clone().offset_start(16).offset_end(32768 - 24);
+        let data = vec![1u8; 8];
+        let pointer = data.as_ptr();
+        let descriptors = public_write_descriptors(
+            vec![(view, data), (owner.clone(), vec![2u8; 32768])],
+            stream,
+        )
+        .unwrap();
+        assert_eq!(descriptors.len(), 2);
+        let (descriptor, bytes) = &descriptors[0];
+        assert_eq!(
+            descriptor.handle.memory.descriptor().id,
+            owner.memory.descriptor().id
+        );
+        assert_eq!(descriptor.handle.size(), owner.size());
+        assert_eq!(descriptor.handle.offset_start, Some(16));
+        assert_eq!(descriptor.handle.offset_end, Some(32768 - 24));
+        assert_eq!(descriptor.handle.size_in_used(), 8);
+        assert_eq!(descriptor.shape.as_slice(), &[8]);
+        assert_eq!(descriptor.strides.as_ref(), &[1]);
+        assert_eq!(descriptor.elem_size, 1);
+        assert_eq!(bytes.as_ptr(), pointer);
+        assert_eq!(descriptors[1].0.handle.size_in_used(), 32768);
+    }
+
+    #[test]
+    fn public_write_rejects_invalid_batches_before_scheduling() {
+        let stream = StreamId { value: 37 };
+        let owner = Handle::new(stream, 32);
+        assert!(public_write_descriptors(Vec::new(), stream).is_err());
+        for (view, length) in [
+            (owner.clone(), 0),
+            (owner.clone(), 28),
+            (owner.clone().offset_start(1).offset_end(3), 28),
+            (owner.clone().offset_start(4).offset_end(3), 25),
+            (owner.clone().offset_start(u64::MAX), 4),
+            (owner.clone().offset_end(u64::MAX), 4),
+            (owner.clone().offset_start(20).offset_end(20), 4),
+            (Handle::new(StreamId { value: 38 }, 32), 32),
+        ] {
+            assert!(
+                public_write_descriptors(
+                    vec![(owner.clone(), vec![1; 32]), (view, vec![2; length])],
+                    stream,
+                )
+                .is_err()
+            );
+        }
     }
 }
