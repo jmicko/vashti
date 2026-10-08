@@ -21,3 +21,5 @@ pub use transient_io::transient_readback_reuses;
 pub use transient_io::transient_request_io_reuses;
 
 pub use transient_io::transient_scoped_read_ns;
+
+pub use transient_io::transient_info_cache_stats;

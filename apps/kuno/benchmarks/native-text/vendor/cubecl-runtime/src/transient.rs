@@ -156,6 +156,14 @@ impl PrivateHostAllocation {
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
         &mut self.data
     }
+    /// Borrow initialized bytes without cloning private storage.
+    pub fn as_slice(&self) -> &[u8] {
+        &self.data
+    }
+    /// Actual allocation capacity for bounded private-owner accounting.
+    pub fn capacity(&self) -> usize {
+        self.data.capacity()
+    }
     /// Logical initialized length.
     pub fn len(&self) -> usize {
         self.data.len()

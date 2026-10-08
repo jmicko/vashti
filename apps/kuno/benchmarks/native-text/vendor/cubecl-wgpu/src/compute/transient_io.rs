@@ -272,6 +272,7 @@ struct InfoPlan {
 struct InfoSlab {
     buffer: wgpu::Buffer,
     source: Option<wgpu::Buffer>,
+    owner_index: usize,
     cursor: u64,
     epoch: u64,
 }
@@ -286,6 +287,7 @@ impl Drop for InfoSlab {
         // Cursor is request-derived host bookkeeping, not a persistent key.
         // SAFETY: exclusively owned fields, with no references surviving Drop.
         unsafe {
+            core::ptr::addr_of_mut!(self.owner_index).write_volatile(0);
             core::ptr::addr_of_mut!(self.cursor).write_volatile(0);
             core::ptr::addr_of_mut!(self.epoch).write_volatile(0);
         }
@@ -757,6 +759,8 @@ struct Tracked<B = wgpu::Buffer> {
     // A completed scope fence may authorize reuse, never ownership release.
     reuse_ready: bool,
     next_free: usize,
+    // A cached exact INFO record pins the entire page until the full audit.
+    info_pinned: bool,
     // Includes unused remaps retained across checkpoints. This obligation
     // survives selection and partial producers until the actual unmap succeeds.
     upload_mapped: bool,
@@ -834,12 +838,20 @@ impl ReuseIndex {
         // Validate the entire cohort before publishing any reusable owner.
         for owner in buffers.iter() {
             Self::bucket(size(&owner.buffer))?;
+            if owner.info_pinned && owner.kind != Kind::Uniform {
+                return Err(fault("private INFO pin owner mismatch"));
+            }
             if owner.kind == Kind::Upload && !owner.upload_mapped {
                 return Err(fault("private reuse upload remap incomplete"));
             }
         }
         // Reverse insertion preserves the former first-owner allocation order.
         for (index, owner) in buffers.iter_mut().enumerate().rev() {
+            if owner.info_pinned {
+                owner.next_free = NO_REUSE_INDEX;
+                owner.reuse_ready = false;
+                continue;
+            }
             let head = &mut self.heads[owner.kind.slot()][Self::bucket(size(&owner.buffer))?];
             owner.next_free = *head;
             owner.reuse_ready = true;
@@ -863,6 +875,7 @@ impl ReuseIndex {
             .get_mut(index)
             .ok_or_else(|| fault("private reuse index owner missing"))?;
         if !owner.reuse_ready
+            || owner.info_pinned
             || owner.kind != kind
             || size(&owner.buffer) != bytes
             || kind == Kind::Upload && !owner.upload_mapped
@@ -880,18 +893,154 @@ struct PendingInfo<B = wgpu::Buffer> {
     target: B,
     source_index: usize,
 }
-fn reuse_metadata_capacity<T>(capacity: usize, pending_capacity: usize) -> Result<(), ServerError> {
+fn reuse_metadata_capacity<T>(
+    capacity: usize,
+    pending_capacity: usize,
+    cache_bytes: usize,
+) -> Result<(), ServerError> {
     if capacity
         .checked_mul(std::mem::size_of::<Tracked<T>>())
         .and_then(|n| {
             n.checked_add(pending_capacity.checked_mul(std::mem::size_of::<PendingInfo<T>>())?)
         })
         .and_then(|n| n.checked_add(std::mem::size_of::<ReuseScope>()))
+        .and_then(|n| n.checked_add(cache_bytes))
         .is_none_or(|n| n > REUSE_METADATA_MAX)
     {
         return Err(fault("private reuse metadata limit"));
     }
     Ok(())
+}
+const INFO_KEY_BYTES: usize = 64 * 1024;
+const INFO_CACHE_ENTRIES: usize = 512;
+static INFO_CACHE_STATS: [AtomicU64; 3] = [const { AtomicU64::new(0) }; 3];
+/// Cumulative exact INFO hits, misses (including uncached saturation), page pins.
+/// Numeric only; never exposes hashes, keys, buffer IDs, or request identifiers.
+pub fn transient_info_cache_stats() -> (u64, u64, u64) {
+    (
+        INFO_CACHE_STATS[0].load(Ordering::Relaxed),
+        INFO_CACHE_STATS[1].load(Ordering::Relaxed),
+        INFO_CACHE_STATS[2].load(Ordering::Relaxed),
+    )
+}
+fn record_info_cache_stat(slot: usize) {
+    let _ = INFO_CACHE_STATS[slot].fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+        Some(n.saturating_add(1))
+    });
+}
+fn info_hash(data: &[u8]) -> u64 {
+    data.iter().fold(0xcbf29ce484222325u64, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+    })
+}
+struct InfoEntry<R> {
+    hash: u64,
+    key_start: usize,
+    key_len: usize,
+    owner_index: usize,
+    resource: R,
+}
+struct InfoCache<R = WgpuResource> {
+    keys: PrivateHostAllocation,
+    used: usize,
+    entries: Vec<InfoEntry<R>>,
+}
+impl<R> InfoCache<R> {
+    fn reserved_bytes() -> usize {
+        INFO_KEY_BYTES
+            + INFO_CACHE_ENTRIES * std::mem::size_of::<InfoEntry<R>>()
+            + std::mem::size_of::<Self>()
+    }
+    fn new() -> Result<Self, ServerError> {
+        let mut cache = Self {
+            keys: PrivateHostAllocation::zeroed(INFO_KEY_BYTES)
+                .map_err(|_| fault("private INFO key allocation"))?,
+            used: 0,
+            entries: Vec::new(),
+        };
+        cache
+            .entries
+            .try_reserve_exact(INFO_CACHE_ENTRIES)
+            .map_err(|_| fault("private INFO entry allocation"))?;
+        if cache.keys.capacity() > INFO_KEY_BYTES || cache.entries.capacity() > INFO_CACHE_ENTRIES {
+            return Err(fault("private INFO cache actual capacity"));
+        }
+        // Every future private key/header stays inside these two fixed owners.
+        reuse_metadata_capacity::<wgpu::Buffer>(0, 0, cache.host_bytes())?;
+        Ok(cache)
+    }
+    fn host_bytes(&self) -> usize {
+        // Construction bounds both capacities; their sum cannot overflow.
+        self.keys.capacity()
+            + self.entries.capacity() * std::mem::size_of::<InfoEntry<R>>()
+            + std::mem::size_of::<Self>()
+    }
+    fn lookup(&self, data: &[u8], hash: u64) -> Option<&InfoEntry<R>> {
+        self.entries.iter().find(|entry| {
+            entry.hash == hash
+                && entry.key_len == data.len()
+                && self.keys.as_slice()[entry.key_start..entry.key_start + entry.key_len] == *data
+        })
+    }
+    fn has_room(&self, data: &[u8]) -> bool {
+        !data.is_empty()
+            && self.entries.len() < INFO_CACHE_ENTRIES
+            && self
+                .used
+                .checked_add(data.len())
+                .is_some_and(|end| end <= INFO_KEY_BYTES)
+    }
+    fn insert(&mut self, data: &[u8], hash: u64, owner_index: usize, resource: R) -> bool {
+        if !self.has_room(data) {
+            return false;
+        }
+        let key_start = self.used;
+        self.keys.as_mut_slice()[key_start..key_start + data.len()].copy_from_slice(data);
+        self.used += data.len();
+        // Capacity was admitted before any private key existed; never reallocates.
+        self.entries.push(InfoEntry {
+            hash,
+            key_start,
+            key_len: data.len(),
+            owner_index,
+            resource,
+        });
+        true
+    }
+    fn clear_private(&mut self) {
+        // Release initialized GPU references before overwriting the raw allocation.
+        // No live Rust object is zeroed, and spare capacity is only written, not read.
+        self.entries.clear();
+        // Successful construction requires the key slab's logical span to equal
+        // its actual capacity. Constructor failures have never copied private keys;
+        // PrivateHostAllocation's Drop still wipes all spare capacity as well.
+        let keys = self.keys.as_mut_slice();
+        // SAFETY: this initialized exclusive slice remains owned throughout wipe.
+        unsafe {
+            cubecl_runtime::transient::wipe_mapped_full_span(keys.as_mut_ptr(), keys.len());
+        }
+        let pointer = self.entries.as_mut_ptr().cast::<u8>();
+        let bytes = self.entries.capacity() * std::mem::size_of::<InfoEntry<R>>();
+        for index in 0..bytes {
+            // SAFETY: this Vec exclusively owns all allocation capacity. Length
+            // is zero, all initialized values have dropped, and writes cover only
+            // its writable allocation, including never-initialized spare bytes.
+            unsafe {
+                pointer.add(index).write_volatile(0);
+            }
+        }
+        // SAFETY: the request-derived used header belongs exclusively to self.
+        unsafe {
+            core::ptr::addr_of_mut!(self.used).write_volatile(0);
+        }
+        std::sync::atomic::compiler_fence(Ordering::SeqCst);
+    }
+}
+impl<R> Drop for InfoCache<R> {
+    fn drop(&mut self) {
+        self.clear_private();
+        // PrivateHostAllocation then wipes its complete capacity on Drop.
+    }
 }
 static SCOPED_READ_NS: [AtomicU64; 3] = [const { AtomicU64::new(0) }; 3];
 /// Scoped-only aggregate host nanoseconds: setup, submission flush, map/callback.
@@ -994,6 +1143,7 @@ pub(crate) struct TransientIo {
     clean_readbacks: CleanReadbacks<wgpu::Buffer>,
     reuse_scope: ReuseScope,
     audit_retained_capacity: usize,
+    info_cache: Option<InfoCache>,
     leases: Arc<LeaseTracker>,
     errors: Vec<ErrorFuture>,
     info_policy: Option<InfoPolicy>,
@@ -1892,6 +2042,7 @@ impl TransientIo {
                 clean_readbacks,
                 reuse_scope: ReuseScope::default(),
                 audit_retained_capacity: 0,
+                info_cache: None,
                 leases: Arc::default(),
                 errors: Vec::new(),
                 info_policy,
@@ -1958,13 +2109,15 @@ impl TransientIo {
         let empty = self.buffers.is_empty()
             && self.ledger.charged == 0
             && self.pending_info.is_empty()
-            && self.info_slab.is_none();
+            && self.info_slab.is_none()
+            && self.info_cache.is_none();
         if !empty || self.leases() != 0 || self.reuse_scope.nonce.is_some() {
             return Err(fault("private reuse begin requires empty exclusive owner"));
         }
         reuse_metadata_capacity::<wgpu::Buffer>(
             self.buffers.capacity(),
             self.pending_info.capacity(),
+            self.info_cache.as_ref().map_or(0, InfoCache::host_bytes),
         )?;
         self.drain_accept_errors()?;
         self.reuse_scope.free.reset();
@@ -2019,17 +2172,23 @@ impl TransientIo {
                 }
                 // Hoist old shader-read -> copy-destination dependencies out of
                 // each later INFO submission into this one completed checkpoint.
+                // Completed, lease-free Readbacks likewise leave MAP_READ once,
+                // before later copies. Immutable pinned INFO stays shader-readable.
                 // Uploads remain MAP_WRITE mapped and must never enter this batch.
-                if self.buffers.iter().any(|owner| owner.kind == Kind::Uniform) {
+                if self
+                    .buffers
+                    .iter()
+                    .any(|owner| owner.kind != Kind::Upload && !owner.info_pinned)
+                {
                     let mut encoder =
                         self.device
                             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                                label: Some("CubeCL private reuse INFO transitions"),
+                                label: Some("CubeCL private reuse copy transitions"),
                             });
                     encoder.transition_resources(
                         self.buffers
                             .iter()
-                            .filter(|owner| owner.kind == Kind::Uniform)
+                            .filter(|owner| owner.kind != Kind::Upload && !owner.info_pinned)
                             .map(|owner| wgpu::BufferTransition {
                                 buffer: &owner.buffer,
                                 state: wgpu::BufferUses::COPY_DST,
@@ -2064,7 +2223,8 @@ impl TransientIo {
             && self.ledger.charged == 0
             && self.pending_info.is_empty()
             && self.info_slab.is_none()
-            && self.errors.is_empty();
+            && self.errors.is_empty()
+            && self.info_cache.is_none();
         self.reuse_scope.finish(nonce, empty, self.leases())?;
         self.reuse_scope.free.reset();
         Ok(())
@@ -2157,6 +2317,55 @@ impl TransientIo {
         if !plan.slab {
             return Err(fault("batched INFO record exceeds fixed page"));
         }
+        let cache_hash = if self.reuse_active() {
+            if self.info_cache.is_none() {
+                // Admit both fixed allocations before creating the optional cache.
+                reuse_metadata_capacity::<wgpu::Buffer>(
+                    self.buffers.capacity(),
+                    self.pending_info.capacity(),
+                    InfoCache::<WgpuResource>::reserved_bytes(),
+                )?;
+                let cache = InfoCache::new()?;
+                reuse_metadata_capacity::<wgpu::Buffer>(
+                    self.buffers.capacity(),
+                    self.pending_info.capacity(),
+                    cache.host_bytes(),
+                )?;
+                self.info_cache = Some(cache);
+            }
+            let hash = info_hash(data);
+            if let Some(entry) = self.info_cache.as_ref().unwrap().lookup(data, hash) {
+                let owner = self
+                    .buffers
+                    .get(entry.owner_index)
+                    .ok_or_else(|| fault("private INFO cached owner missing"))?;
+                if owner.kind != Kind::Uniform
+                    || !owner.info_pinned
+                    || owner.buffer != entry.resource.buffer
+                    || entry.resource.size != logical
+                {
+                    return Err(fault("private INFO cached owner mismatch"));
+                }
+                copy_bounds(
+                    logical,
+                    entry.resource.offset,
+                    owner.buffer.size(),
+                    data.len(),
+                )?;
+                record_info_cache_stat(0);
+                // A hit before first submission deliberately leaves pending_info
+                // intact: its initial full copy still precedes every consumer.
+                return Ok(WgpuResource {
+                    buffer: entry.resource.buffer.clone(),
+                    offset: entry.resource.offset,
+                    size: entry.resource.size,
+                });
+            }
+            record_info_cache_stat(1);
+            Some(hash)
+        } else {
+            None
+        };
         let source_charge = if plan.existing { 0 } else { plan.target_bytes };
         self.ledger
             .check_info_audit_group(
@@ -2173,6 +2382,7 @@ impl TransientIo {
                 reuse_metadata_capacity::<wgpu::Buffer>(
                     self.buffers.capacity(),
                     self.pending_info.len() + 1,
+                    self.info_cache.as_ref().map_or(0, InfoCache::host_bytes),
                 )?;
                 self.pending_info
                     .try_reserve_exact(1)
@@ -2180,13 +2390,14 @@ impl TransientIo {
                 reuse_metadata_capacity::<wgpu::Buffer>(
                     self.buffers.capacity(),
                     self.pending_info.capacity(),
+                    self.info_cache.as_ref().map_or(0, InfoCache::host_bytes),
                 )?;
             } else {
                 self.pending_info
                     .try_reserve(1)
                     .map_err(|_| fault("batched INFO pointer allocation"))?;
             }
-            let target = self.allocate(Kind::Uniform, plan.target_bytes)?;
+            let (target, target_index) = self.allocate_indexed(Kind::Uniform, plan.target_bytes)?;
             let (source, source_index) = self.allocate_indexed(Kind::Upload, source_charge)?;
             {
                 let mut map = source.get_mapped_range_mut(..);
@@ -2200,6 +2411,7 @@ impl TransientIo {
             self.info_slab = Some(InfoSlab {
                 buffer: target,
                 source: Some(source),
+                owner_index: target_index,
                 cursor: 0,
                 epoch: self.ledger.epoch,
             });
@@ -2221,11 +2433,47 @@ impl TransientIo {
             map.slice(plan.offset as usize..plan.offset as usize + data.len())
                 .copy_from_slice(data);
         }
-        Ok(WgpuResource {
+        let resource = WgpuResource {
             buffer: page.buffer.clone(),
             offset: plan.offset,
             size: plan.logical,
-        })
+        };
+        if let Some(hash) = cache_hash {
+            let cache = self.info_cache.as_mut().unwrap();
+            if cache.has_room(data) {
+                let owner = self
+                    .buffers
+                    .get_mut(page.owner_index)
+                    .ok_or_else(|| fault("private INFO cache target missing"))?;
+                if owner.kind != Kind::Uniform
+                    || owner.buffer != resource.buffer
+                    || owner.reuse_ready
+                {
+                    return Err(fault("private INFO cache target mismatch"));
+                }
+                // Pin the full target before publishing its first cached range.
+                // Its append source exists only until the original first submit.
+                let new_pin = !owner.info_pinned;
+                owner.info_pinned = true;
+                if !cache.insert(
+                    data,
+                    hash,
+                    page.owner_index,
+                    WgpuResource {
+                        buffer: resource.buffer.clone(),
+                        offset: resource.offset,
+                        size: resource.size,
+                    },
+                ) {
+                    return Err(fault("private INFO cache admitted capacity changed"));
+                }
+                if new_pin {
+                    record_info_cache_stat(2);
+                }
+            }
+            // Saturation retains all old keys/pins and takes the ordinary path.
+        }
+        Ok(resource)
     }
     pub fn retire(&self) {
         self.leases.retire_with(Failure::ContextRetired);
@@ -2317,6 +2565,7 @@ impl TransientIo {
                     .and_then(|n| n.checked_add(self.audit_retained_capacity))
                     .ok_or_else(|| fault("private reuse metadata overflow"))?,
                 self.pending_info.capacity(),
+                self.info_cache.as_ref().map_or(0, InfoCache::host_bytes),
             )?;
             self.buffers
                 .try_reserve_exact(1)
@@ -2327,6 +2576,7 @@ impl TransientIo {
                     .checked_add(self.audit_retained_capacity)
                     .ok_or_else(|| fault("private reuse metadata overflow"))?,
                 self.pending_info.capacity(),
+                self.info_cache.as_ref().map_or(0, InfoCache::host_bytes),
             )?;
         } else {
             self.buffers.try_reserve(1).map_err(|_| {
@@ -2345,6 +2595,7 @@ impl TransientIo {
             self.buffers.push(Tracked {
                 reuse_ready: false,
                 next_free: NO_REUSE_INDEX,
+                info_pinned: false,
                 upload_mapped: false,
                 buffer: buffer.clone(),
                 kind,
@@ -2366,6 +2617,7 @@ impl TransientIo {
         self.buffers.push(Tracked {
             reuse_ready: false,
             next_free: NO_REUSE_INDEX,
+            info_pinned: false,
             upload_mapped: kind == Kind::Upload,
             buffer: buffer.clone(),
             kind,
@@ -2457,12 +2709,13 @@ impl TransientIo {
                 .buffer
                 .clone()
         } else {
-            let buffer = self.allocate(Kind::Uniform, plan.target_bytes)?;
+            let (buffer, owner_index) = self.allocate_indexed(Kind::Uniform, plan.target_bytes)?;
             encoder.clear_buffer(&buffer, 0, None);
             if plan.slab {
                 self.info_slab = Some(InfoSlab {
                     buffer: buffer.clone(),
                     source: None,
+                    owner_index,
                     cursor: 0,
                     epoch: self.ledger.epoch,
                 });
@@ -2607,6 +2860,9 @@ impl TransientIo {
         previous_error: bool,
         inspect: bool,
     ) -> Result<TransientIoReceipt, ServerError> {
+        // Drop cached references and wipe all key/header capacities before any
+        // full sanitizer touches original GPU owners. Those remain charged here.
+        self.info_cache = None;
         // Audit invalidates every intrusive index before moving or releasing owners.
         self.reuse_scope.free.reset();
         // Failed submission/preparation can leave append sources mapped. Their
@@ -2614,6 +2870,7 @@ impl TransientIo {
         // available to the existing remap/wipe eraser on every failure path.
         for tracked in &mut self.buffers {
             tracked.reuse_ready = false;
+            tracked.info_pinned = false;
             if tracked.kind == Kind::Upload && tracked.upload_mapped {
                 tracked.buffer.unmap();
                 tracked.upload_mapped = false;
@@ -2664,7 +2921,11 @@ impl TransientIo {
                         )
                         .checked_add(stages)
                         .ok_or_else(|| fault("private audit metadata overflow"))?;
-                    reuse_metadata_capacity::<wgpu::Buffer>(total, self.pending_info.capacity())?;
+                    reuse_metadata_capacity::<wgpu::Buffer>(
+                        total,
+                        self.pending_info.capacity(),
+                        self.info_cache.as_ref().map_or(0, InfoCache::host_bytes),
+                    )?;
                 }
                 buffers
                     .try_reserve_exact(stages)
@@ -2674,7 +2935,11 @@ impl TransientIo {
                         .capacity()
                         .checked_add(stages)
                         .ok_or_else(|| fault("private audit metadata overflow"))?;
-                    reuse_metadata_capacity::<wgpu::Buffer>(total, self.pending_info.capacity())?;
+                    reuse_metadata_capacity::<wgpu::Buffer>(
+                        total,
+                        self.pending_info.capacity(),
+                        self.info_cache.as_ref().map_or(0, InfoCache::host_bytes),
+                    )?;
                 }
                 Ok::<(), ServerError>(())
             })();
@@ -3329,6 +3594,7 @@ mod tests {
             .map(|kind| Tracked {
                 reuse_ready: false,
                 next_free: NO_REUSE_INDEX,
+                info_pinned: false,
                 upload_mapped: false,
                 // Include sentinel-filled tails beyond19 logical bytes. The shared
                 // full-span erasure policy must clear those tails before release.
@@ -3475,6 +3741,7 @@ mod tests {
                 self.stages.push(Tracked {
                     reuse_ready: false,
                     next_free: NO_REUSE_INDEX,
+                    info_pinned: false,
                     upload_mapped: false,
                     buffer: stage,
                     kind: Kind::Readback,
@@ -3976,6 +4243,7 @@ mod tests {
             .map(|_| Tracked {
                 reuse_ready: false,
                 next_free: NO_REUSE_INDEX,
+                info_pinned: false,
                 upload_mapped: false,
                 kind: Kind::Upload,
                 buffer: FakeBuffer {
@@ -4069,8 +4337,8 @@ mod tests {
         );
         assert_eq!(ledger.charged, 0);
         assert_eq!(ledger.epoch, original.2 + 1);
-        assert!(reuse_metadata_capacity::<wgpu::Buffer>(2048, 64).is_ok());
-        assert!(reuse_metadata_capacity::<wgpu::Buffer>(usize::MAX, 0).is_err());
+        assert!(reuse_metadata_capacity::<wgpu::Buffer>(2048, 64, 0).is_ok());
+        assert!(reuse_metadata_capacity::<wgpu::Buffer>(usize::MAX, 0, 0).is_err());
     }
     #[test]
     fn indexed_reuse_preserves_kind_span_order_and_rejects_double_claim() {
@@ -4180,11 +4448,132 @@ mod tests {
         let fixed = std::mem::size_of::<ReuseScope>();
         let per = std::mem::size_of::<Tracked<wgpu::Buffer>>();
         let max = (REUSE_METADATA_MAX - fixed) / per;
-        assert!(reuse_metadata_capacity::<wgpu::Buffer>(max, 0).is_ok());
-        assert!(reuse_metadata_capacity::<wgpu::Buffer>(max + 1, 0).is_err());
-        assert!(reuse_metadata_capacity::<wgpu::Buffer>(max, 1).is_err());
-        assert!(reuse_metadata_capacity::<wgpu::Buffer>(0, usize::MAX).is_err());
+        assert!(reuse_metadata_capacity::<wgpu::Buffer>(max, 0, 0).is_ok());
+        assert!(reuse_metadata_capacity::<wgpu::Buffer>(max + 1, 0, 0).is_err());
+        assert!(reuse_metadata_capacity::<wgpu::Buffer>(max, 1, 0).is_err());
+        assert!(reuse_metadata_capacity::<wgpu::Buffer>(0, usize::MAX, 0).is_err());
         assert!(std::mem::size_of::<ReuseIndex>() <= 512);
+    }
+    #[test]
+    fn info_cache_exact_bytes_and_length_decide_hits_even_with_hash_collision() {
+        let mut cache = InfoCache::new().unwrap();
+        assert!(cache.insert(&[1, 2, 3], 7, 12, 91u32));
+        let hit = cache.lookup(&[1, 2, 3], 7).unwrap();
+        assert_eq!((hit.owner_index, hit.resource), (12, 91));
+        assert!(cache.lookup(&[1, 2, 4], 7).is_none());
+        assert!(cache.lookup(&[1, 2], 7).is_none());
+        assert!(cache.lookup(&[1, 2, 3, 0], 7).is_none());
+        assert!(cache.lookup(&[1, 2, 3], 8).is_none());
+        assert_eq!(cache.entries.len(), 1);
+        assert_eq!(cache.used, 3);
+    }
+    #[test]
+    fn info_cache_saturation_falls_back_without_eviction_mutation_or_growth() {
+        let mut cache = InfoCache::new().unwrap();
+        let original = cache.host_bytes();
+        for i in 0..INFO_CACHE_ENTRIES {
+            let bytes = (i as u32).to_le_bytes();
+            assert!(cache.insert(&bytes, info_hash(&bytes), i, ()));
+        }
+        assert!(!cache.insert(&[9; 5], 0, 0, ()));
+        assert_eq!(cache.host_bytes(), original);
+        assert_eq!(cache.entries.len(), INFO_CACHE_ENTRIES);
+        for i in 0..INFO_CACHE_ENTRIES {
+            let bytes = (i as u32).to_le_bytes();
+            assert_eq!(
+                cache.lookup(&bytes, info_hash(&bytes)).unwrap().owner_index,
+                i
+            );
+        }
+        let mut full = InfoCache::new().unwrap();
+        let bytes = [0x73; INFO_KEY_BYTES];
+        assert!(full.insert(&bytes, 8, 42, ()));
+        assert!(!full.insert(&[1], 9, 99, ()));
+        assert!(!full.insert(&[], 9, 99, ()));
+        assert_eq!(full.lookup(&bytes, 8).unwrap().owner_index, 42);
+        assert_eq!(full.entries.len(), 1);
+        assert_eq!(full.used, INFO_KEY_BYTES);
+    }
+    #[test]
+    fn info_cache_cleanup_drops_resources_before_wiping_full_key_header_capacities() {
+        struct DropCount(std::rc::Rc<std::cell::Cell<usize>>);
+        impl Drop for DropCount {
+            fn drop(&mut self) {
+                self.0.set(self.0.get() + 1);
+            }
+        }
+        let dropped = std::rc::Rc::new(std::cell::Cell::new(0));
+        let mut cache = InfoCache::new().unwrap();
+        assert!(cache.insert(&[0xa7; 19], 0xbeef, 37, DropCount(dropped.clone())));
+        cache.keys.as_mut_slice()[19..].fill(0xbd);
+        // Fill never-initialized spare headers so the test proves full capacity,
+        // not only the logical entry range. No live object is overwritten.
+        let initialized = cache.entries.len() * std::mem::size_of::<InfoEntry<DropCount>>();
+        let total = cache.entries.capacity() * std::mem::size_of::<InfoEntry<DropCount>>();
+        let pointer = cache.entries.as_mut_ptr().cast::<u8>();
+        for i in initialized..total {
+            // SAFETY: exclusively owned spare allocation, never read as a value.
+            unsafe {
+                pointer.add(i).write(0xca);
+            }
+        }
+        cache.clear_private();
+        assert_eq!(dropped.get(), 1);
+        assert_eq!(cache.used, 0);
+        assert!(cache.entries.is_empty());
+        assert_eq!(cache.keys.capacity(), INFO_KEY_BYTES);
+        assert!(cache.keys.as_slice().iter().all(|byte| *byte == 0));
+        // SAFETY: clear_private initialized every capacity byte while retaining
+        // the allocation; no Rust entry remains live and all bytes are readable.
+        let headers = unsafe { std::slice::from_raw_parts(pointer, total) };
+        assert!(headers.iter().all(|byte| *byte == 0));
+        drop(cache);
+        assert_eq!(dropped.get(), 1);
+    }
+    #[test]
+    fn info_cache_actual_capacities_share_original_metadata_allowance() {
+        let cache = InfoCache::<WgpuResource>::new().unwrap();
+        let actual = cache.keys.capacity()
+            + cache.entries.capacity() * std::mem::size_of::<InfoEntry<WgpuResource>>()
+            + std::mem::size_of_val(&cache);
+        assert_eq!(cache.host_bytes(), actual);
+        assert_eq!(InfoCache::<WgpuResource>::reserved_bytes(), actual);
+        assert!(actual > INFO_KEY_BYTES);
+        assert!(actual < REUSE_METADATA_MAX);
+        assert!(reuse_metadata_capacity::<wgpu::Buffer>(0, 0, actual).is_ok());
+        assert!(reuse_metadata_capacity::<wgpu::Buffer>(4096, 64, actual).is_err());
+        assert!(reuse_metadata_capacity::<wgpu::Buffer>(0, 0, usize::MAX).is_err());
+    }
+    #[test]
+    fn info_pins_exclude_full_uniform_owner_from_recycling_until_audit_reset() {
+        let mut buffers = fake_buffers();
+        buffers[0].upload_mapped = true;
+        buffers[1].info_pinned = true;
+        let size = |b: &FakeBuffer| b.words.borrow().len() as u64;
+        let mut free = ReuseIndex::default();
+        free.rebuild(&mut buffers, size).unwrap();
+        assert!(!free.available(Kind::Uniform, MIN_BYTES).unwrap());
+        assert!(!buffers[1].reuse_ready);
+        assert_eq!(
+            free.take(&mut buffers, Kind::Upload, MIN_BYTES, size)
+                .unwrap(),
+            Some(0)
+        );
+        assert_eq!(
+            free.take(&mut buffers, Kind::Readback, MIN_BYTES, size)
+                .unwrap(),
+            Some(2)
+        );
+        buffers[1].info_pinned = false; // Original audit clears pins before erase.
+        free.rebuild(&mut buffers, size).unwrap();
+        assert_eq!(
+            free.take(&mut buffers, Kind::Uniform, MIN_BYTES, size)
+                .unwrap(),
+            Some(1)
+        );
+        buffers[2].info_pinned = true;
+        assert!(free.rebuild(&mut buffers, size).is_err());
+        assert!(!free.available(Kind::Uniform, MIN_BYTES).unwrap());
     }
     #[test]
     fn reuse_upload_maps_transfer_only_after_all_callbacks_without_wipe_or_unmap() {
@@ -4476,6 +4865,7 @@ mod tests {
             .map(|_| Tracked {
                 reuse_ready: false,
                 next_free: NO_REUSE_INDEX,
+                info_pinned: false,
                 upload_mapped: false,
                 kind: Kind::Readback,
                 buffer: FakeBuffer {
