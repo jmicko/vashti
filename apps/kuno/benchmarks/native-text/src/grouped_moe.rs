@@ -171,8 +171,7 @@ impl Geometry {
             return Err("grouped segmented original metadata");
         }
         for projection in projections {
-            for count in crate::bank_slots::segmented_capacities(capacity).unwrap_or([capacity, 0])
-            {
+            for &count in crate::bank_slots::segmented_capacities(capacity).unwrap_or(&[capacity]) {
                 if count != 0 {
                     projection.segment_words(count)?;
                 }
@@ -232,13 +231,14 @@ impl Geometry {
         slot_count: usize,
         binding_words: [usize; 3],
     ) -> Result<(), &'static str> {
-        let valid =
-            if let Some([first, second]) = crate::bank_slots::segmented_capacities(self.capacity) {
-                (first_slot == 0 && slot_count == first)
-                    || (first_slot == first && slot_count == second)
-            } else {
-                first_slot == 0 && slot_count == self.capacity
-            };
+        let flat = [self.capacity];
+        let parts = crate::bank_slots::segmented_capacities(self.capacity).unwrap_or(&flat);
+        let mut start = 0;
+        let valid = parts.iter().any(|&count| {
+            let matches = first_slot == start && slot_count == count;
+            start += count;
+            matches
+        });
         if !valid {
             return Err("grouped original shard geometry");
         }
@@ -1227,6 +1227,27 @@ pub fn grouped_finite(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn original160_shards_check_all_boundaries_and_exact_three_projection_bindings() {
+        let projections = [
+            Projection::new(super::super::Q4_K, 2560, 640, 512).unwrap(),
+            Projection::new(super::super::Q4_K, 2560, 640, 512).unwrap(),
+            Projection::new(super::super::Q8_0, 640, 2560, 512).unwrap(),
+        ];
+        let g = Geometry::new(projections, 8, 160).unwrap();
+        for (first, count) in [(0, 72), (72, 72), (144, 16)] {
+            let words = projections.map(|p| p.segment_words(count).unwrap());
+            g.validate_shard(first, count, words).unwrap();
+            let mut bad = words;
+            bad[2] -= 1;
+            assert!(g.validate_shard(first, count, bad).is_err());
+        }
+        for (first, count) in [(64, 64), (144, 15), (160, 16), (0, 160), (144, 72)] {
+            let words = projections.map(|p| p.segment_words(count).unwrap_or(0));
+            assert!(g.validate_shard(first, count, words).is_err());
+        }
+    }
+
     use super::super::{BF16, F16, F32, Q4_K, Q5_0, Q6_K, Q8_0};
     use super::*;
 

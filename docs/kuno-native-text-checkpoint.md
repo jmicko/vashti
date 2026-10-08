@@ -146,7 +146,11 @@ both shader suites and30 Python controls pass. The first8-worker launch
 (artifact00215ff3) rejects at the original fixed16-worker constructor guard,
 before model inference; no accepted speed receipt. Recovery returns50688000B.
 The correction retains a typed4/8/16 maximum, requires pooled4/8 and independently
-observes actual constructed geometry. Two-pass physical acceptance is pending.
+observes actual constructed geometry. The corrected source5295faf/artifactcbe79139 passes all128 IDs and original
+owning/fresh/lifecycle gates with8 actual workers:35199ms decode
+(3.6081 tokens/s),51175ms prefill. User/system CPU ticks drop to3237/751,
+but readbytes10334400512 remain and wall speed does not improve. Sixteen workers
+remain the control. Two-pass physical acceptance is pending.
 
 The user granted exclusive GPUs. Installed Kuno had an idle managed worker
 holding15978409984 B70 bytes with no active request; a graceful Kuno restart

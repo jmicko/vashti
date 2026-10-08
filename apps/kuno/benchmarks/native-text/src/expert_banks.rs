@@ -304,7 +304,9 @@ pub fn preflight_residency(
     }
     if segmented_capacity(capacity)
         && total
-            != (if capacity == 144 {
+            != (if capacity == 160 {
+                27
+            } else if capacity == 144 {
                 24
             } else {
                 capacity / 32 * 6
@@ -314,8 +316,10 @@ pub fn preflight_residency(
     {
         return Err(Error::InvalidFormat("segmented full graph page charge"));
     }
-    if matches!(capacity, 128 | 144) {
-        if cache_bytes != 5 * 1024 * 1024 * 1024 || device_bytes != 31 * 1024 * 1024 * 1024 {
+    if matches!(capacity, 128 | 144 | 160) {
+        if cache_bytes != (if capacity == 160 { 3 } else { 5 }) * 1024 * 1024 * 1024
+            || device_bytes != 31 * 1024 * 1024 * 1024
+        {
             return Err(Error::InvalidFormat("expanded fixed residency envelope"));
         }
         validate_residency_budget_with_limit(
@@ -1965,6 +1969,34 @@ mod segmented_tests {
     use super::*;
     const MIB: usize = 1024 * 1024;
     const GIB: usize = 1024 * MIB;
+    #[test]
+    fn expanded160_adds_only_one_original_sixteen_slot_shard_with_full_page_charge() {
+        assert_eq!(segment_capacities(160).unwrap(), [72, 72, 16]);
+        for down in [440, 680] {
+            let mut total = 0;
+            for (row, rows) in [(1440, 640), (1440, 640), (down, 2560)] {
+                let (_, parts) = packed_segments(row, rows, 160).unwrap();
+                assert_eq!(parts, [row * rows * 72, row * rows * 72, row * rows * 16]);
+                total += parts
+                    .into_iter()
+                    .map(usize::next_power_of_two)
+                    .sum::<usize>();
+            }
+            assert_eq!(48 * total, 27 * GIB);
+            validate_residency_budget_with_limit(48 * total, 3 * GIB, 31 * GIB, 31 * GIB).unwrap();
+            assert!(
+                validate_residency_budget_with_limit(48 * total, 5 * GIB, 31 * GIB, 31 * GIB)
+                    .is_err()
+            );
+        }
+        for (slot, index) in [(0, 0), (71, 0), (72, 1), (143, 1), (144, 2), (159, 2)] {
+            assert_eq!(
+                resolve_segment([(0, 72), (72, 72), (144, 16)], slot).unwrap(),
+                index
+            );
+        }
+        assert!(resolve_segment([(0, 72), (72, 72), (144, 16)], 160).is_err());
+    }
     #[test]
     fn expanded144_reuses_the_same_complete_pools_and_bounds_both_shards() {
         assert_eq!(segment_capacities(144).unwrap(), [72, 72]);

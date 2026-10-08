@@ -259,6 +259,7 @@ enum Count1Banks {
     Intel96,
     Intel128,
     Intel144,
+    Intel160,
 }
 impl Count1Banks {
     fn parse(mode: &str, vendor: u32, raw: Option<&str>) -> Result<Self, &'static str> {
@@ -276,6 +277,9 @@ impl Count1Banks {
             Some("intel144") if mode == "resident-count1-hybrid-chat" && vendor == 0x8086 => {
                 Ok(Self::Intel144)
             }
+            Some("intel160") if mode == "resident-count1-hybrid-chat" && vendor == 0x8086 => {
+                Ok(Self::Intel160)
+            }
             _ => Err("fixed count1 bank profile rejected"),
         }
     }
@@ -286,11 +290,14 @@ impl Count1Banks {
             Self::Intel96 => "intel96",
             Self::Intel128 => "intel128",
             Self::Intel144 => "intel144",
+            Self::Intel160 => "intel160",
         }
     }
     fn setting(self, name: &str, raw: Option<&str>) -> Result<(), &'static str> {
-        if matches!(self, Self::Intel96 | Self::Intel128 | Self::Intel144)
-            && name == "KUNO_LAB_BLOCK_MOE"
+        if matches!(
+            self,
+            Self::Intel96 | Self::Intel128 | Self::Intel144 | Self::Intel160
+        ) && name == "KUNO_LAB_BLOCK_MOE"
         {
             return if raw == Some("1") {
                 Ok(())
@@ -298,11 +305,15 @@ impl Count1Banks {
                 Err("segmented count1 bank block setting rejected")
             };
         }
-        if matches!(self, Self::Intel96 | Self::Intel128 | Self::Intel144)
-            && name == "KUNO_LAB_STATIC_CACHE_BYTES"
+        if matches!(
+            self,
+            Self::Intel96 | Self::Intel128 | Self::Intel144 | Self::Intel160
+        ) && name == "KUNO_LAB_STATIC_CACHE_BYTES"
         {
             return if raw
-                == Some(if matches!(self, Self::Intel128 | Self::Intel144) {
+                == Some(if self == Self::Intel160 {
+                    "3221225472"
+                } else if matches!(self, Self::Intel128 | Self::Intel144) {
                     "5368709120"
                 } else {
                     "6442450944"
@@ -320,6 +331,7 @@ impl Count1Banks {
             Self::Intel96 => 96,
             Self::Intel128 => 128,
             Self::Intel144 => 144,
+            Self::Intel160 => 160,
             Self::Standard => {
                 if vendor == 0x8086 {
                     64
@@ -2020,16 +2032,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let model = Qwen4Exp::bind(&file)?;
             let ids = tokenizer.encode(prompt, true)?;
             let mut sequence = model.sequence(ids.len() + limit)?;
-            let device_budget =
-                if matches!(count1_banks, Count1Banks::Intel128 | Count1Banks::Intel144) {
-                    31
-                } else if vendor == 0x8086 {
-                    26
-                } else {
-                    10
-                } * 1024
-                    * 1024
-                    * 1024;
+            let device_budget = if matches!(
+                count1_banks,
+                Count1Banks::Intel128 | Count1Banks::Intel144 | Count1Banks::Intel160
+            ) {
+                31
+            } else if vendor == 0x8086 {
+                26
+            } else {
+                10
+            } * 1024
+                * 1024
+                * 1024;
             if next_shared {
                 next_shared::probe(&client, &file)?;
                 if shared_gdn {
@@ -2892,6 +2906,7 @@ mod transient_mode_tests {
             ("intel96", 96),
             ("intel128", 128),
             ("intel144", 144),
+            ("intel160", 160),
         ] {
             let p = B::parse("resident-count1-hybrid-chat", 0x8086, Some(raw)).unwrap();
             assert_eq!(p.slots(0x8086), slots);

@@ -869,3 +869,21 @@ original-float expert checks bound error by1e-3+1e-4 times infinity norm. These
 synthetic bounds are not model-quality claims. The original full128-token gate
 remains mandatory and unchanged before any physical speed acceptance. No
 installed/API/default change. Device efficacy pending.
+
+
+### Original 160-slot profile, bounded three-shard capacity experiment
+
+Protected Intel-only `intel160` uses the original72+72+16 packed shards, with
+unchanged exclusive power-of-two allocator bins. Conservative bank charge is
+27GiB; explicit static dense cache is3GiB and the device ceiling stays31GiB.
+All original public-shape and original complete constructor capacity/admission
+checks precede allocation. The smaller dense cache can evict/reload weights;
+this tradeoff is measured rather than assumed to improve speed. It grants no
+extra private budget and changes no rank/selection/output or installed policy.
+
+One checked public shard table governs logical source extents, GPU bindings,
+slot bounds and receipt inventory. Original inactive/whole-owner audits remain;
+all three last-slot boundaries are tested independently. Original host ledger
+capacity remains separately checked within640KiB / original12MiB parent.
+Full128 original IDs, mandatory numerical probes and full private/source owning
+proofs plus physical recovery still precede acceptance. Device efficacy pending.
