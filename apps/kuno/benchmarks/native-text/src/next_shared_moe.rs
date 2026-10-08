@@ -14,6 +14,7 @@ use kuno_text::{Error, Result};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct Kernel {
     down: bool,
+    fused: bool,
     dtype: u32,
     row_bytes: usize,
     first_slot: usize,
@@ -132,11 +133,15 @@ impl Kernel {
             )
         };
         if self.split_slots == 0 {
-            return source;
+            return if self.fused {
+                fused_source(source, self.down)
+            } else {
+                source
+            };
         }
         let split = self.split_slots;
         let source = format!("const SPLIT_SLOTS:u32={split}u;\n{source}");
-        if self.down {
+        let source = if self.down {
             source.replace("@binding(5) var<uniform>", "@binding(6) var<uniform>")
                 .replace("@compute @workgroup_size(128)", &format!(
                     "@group(0) @binding(5) var<storage,read> down_second:array<u32>;\n{}\n@compute @workgroup_size(128)",
@@ -152,9 +157,86 @@ impl Kernel {
                     projection("up_second", 640, 2560, 12, 1440)))
                 .replace("let base=(slot*640u+row)*1440u;", "if slot>=SPLIT_SLOTS {let base=((slot-SPLIT_SLOTS)*640u+row)*1440u;a=project_gate_second(row,base,p.b,lane,width);b=project_up_second(row,base,p.b,lane,width);}else{let base=(slot*640u+row)*1440u;")
                 .replace("b=project_up(row,base,p.b,lane,width);}", "b=project_up(row,base,p.b,lane,width);}}")
+        };
+        if self.fused {
+            fused_source(source, self.down)
+        } else {
+            source
         }
     }
 }
+
+/// Original per-projection arithmetic, interleaved to expose independent
+/// gate/up instruction streams. Private input is workgroup-local only.
+fn fused_projection(suffix: &str) -> String {
+    format!(
+        r#"
+fn project_fused{suffix}(row:u32,base:u32,lane:u32,width:u32)->vec2<f32> {{
+    var gate_sum=0.0; var up_sum=0.0;
+    if row<640u {{
+        for(var block=0u;block<10u;block++) {{
+            let b=base/4u+block*36u;
+            let gf=unpack2x16float(gate{suffix}[b]);
+            let uf=unpack2x16float(up{suffix}[b]);
+            let ga=gate{suffix}[b+1u];let gz=gate{suffix}[b+2u];let gs=gate{suffix}[b+3u];
+            let ua=up{suffix}[b+1u];let uz=up{suffix}[b+2u];let us=up{suffix}[b+3u];
+            for(var word=lane;word<32u;word+=width) {{
+                let pair=word/8u;let i=(word%8u)*4u;
+                let gq=gate{suffix}_bytes4(gate{suffix}[b+4u+word]);
+                let uq=up{suffix}_bytes4(up{suffix}[b+4u+word]);
+                let gl=vec4<f32>(gq&vec4<u32>(15u))*gf.x*gate{suffix}_q4_scale(ga,gs,pair*2u)
+                    -vec4<f32>(gf.y*gate{suffix}_q4_minimum(gz,gs,pair*2u));
+                let gh=vec4<f32>(gq>>vec4<u32>(4u))*gf.x*gate{suffix}_q4_scale(ga,gs,pair*2u+1u)
+                    -vec4<f32>(gf.y*gate{suffix}_q4_minimum(gz,gs,pair*2u+1u));
+                let ul=vec4<f32>(uq&vec4<u32>(15u))*uf.x*up{suffix}_q4_scale(ua,us,pair*2u)
+                    -vec4<f32>(uf.y*up{suffix}_q4_minimum(uz,us,pair*2u));
+                let uh=vec4<f32>(uq>>vec4<u32>(4u))*uf.x*up{suffix}_q4_scale(ua,us,pair*2u+1u)
+                    -vec4<f32>(uf.y*up{suffix}_q4_minimum(uz,us,pair*2u+1u));
+                let col=(block*256u+pair*64u+i)/4u;
+                let low=cached_input[col];let high=cached_input[col+8u];
+                gate_sum+=dot(gl,low)+dot(gh,high);
+                up_sum+=dot(ul,low)+dot(uh,high);
+            }}
+        }}
+    }}
+    return vec2<f32>(subgroupAdd(gate_sum),subgroupAdd(up_sum));
+}}
+"#
+    )
+}
+fn fused_source(mut source: String, down: bool) -> String {
+    let columns = if down { 640 } else { 2560 };
+    let loader = if down { "p.b+route*p.c" } else { "p.b" };
+    // Only private input reads inside projection helpers become local reads.
+    // Copy the vector once for all row subgroups, then use the original offsets
+    // relative to that vector. Inactive groups participate in the same barrier.
+    if down {
+        source = source
+            .replace("input4[", "cached_input[")
+            .replace("(input+", "(");
+    } else {
+        source = source
+            .replace("a=project_gate(row,base,p.b,lane,width);b=project_up(row,base,p.b,lane,width);",
+                "let pair=project_fused(row,base,lane,width);a=pair.x;b=pair.y;")
+            .replace("a=project_gate_second(row,base,p.b,lane,width);b=project_up_second(row,base,p.b,lane,width);",
+                "let pair=project_fused_second(row,base,lane,width);a=pair.x;b=pair.y;");
+        source.push_str(&fused_projection(""));
+        if source.contains("var<storage,read> gate_second") {
+            source.push_str(&fused_projection("_second"));
+        }
+    }
+    source = source
+        .replace("@builtin(workgroup_id) g:vec3<u32>,", "@builtin(workgroup_id) g:vec3<u32>,@builtin(local_invocation_index) local:u32,")
+        .replace("var sum=0.0;if valid", &format!(
+            "if valid {{for(var i=local;i<{}u;i+=128u) {{cached_input[i]=input4[({loader})/4u+i];}}}}\nworkgroupBarrier();\nvar sum=0.0;if valid", columns / 4))
+        .replace("var a=0.0;var b=0.0;if valid", &format!(
+            "if valid {{for(var i=local;i<{}u;i+=128u) {{cached_input[i]=input4[({loader})/4u+i];}}}}\nworkgroupBarrier();\nvar a=0.0;var b=0.0;if valid", columns / 4));
+    format!(
+        "var<workgroup> cached_input:array<vec4<f32>,{}>;\n{source}",
+        columns / 4
+    )
+}
+
 impl KernelMetadata for Kernel {
     fn name(&self) -> &'static str {
         if !self.down {
@@ -194,6 +276,7 @@ impl CubeTask<AutoCompiler> for Kernel {
 }
 // Parent validates full original allocation identity, extent, aliasing, bank
 // origin and transaction before this narrowed count1 vector seam.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn launch(
     client: &ComputeClient<WgpuRuntime>,
     g: Geometry,
@@ -202,8 +285,11 @@ pub(crate) fn launch(
     owners: [Handle; 7],
     first_slot: usize,
     slots: usize,
+    fused: bool,
 ) -> Result<()> {
-    launch_banks(client, g, s, banks, None, owners, first_slot, slots, 0)
+    launch_banks(
+        client, g, s, banks, None, owners, first_slot, slots, 0, fused,
+    )
 }
 
 pub(crate) fn launch_pair(
@@ -213,6 +299,7 @@ pub(crate) fn launch_pair(
     banks: [[Handle; 3]; 2],
     owners: [Handle; 7],
     capacities: [usize; 2],
+    fused: bool,
 ) -> Result<()> {
     let [first, second] = banks;
     let total = capacities[0]
@@ -231,6 +318,7 @@ pub(crate) fn launch_pair(
         0,
         total,
         capacities[0],
+        fused,
     )
 }
 
@@ -245,6 +333,7 @@ fn launch_banks(
     first_slot: usize,
     slots: usize,
     split_slots: usize,
+    fused: bool,
 ) -> Result<()> {
     let [gate, up, down] = g.projections();
     if g.hidden() != 2560
@@ -362,6 +451,7 @@ fn launch_banks(
             client.launch_unchecked(
                 Box::new(Kernel {
                     down: is_down != 0,
+                    fused,
                     dtype: down.dtype(),
                     row_bytes: down.row_bytes(),
                     first_slot,
@@ -389,23 +479,26 @@ mod tests {
                 (0, 128, 64),
                 (0, 144, 72),
             ] {
-                let source = Kernel {
-                    down,
-                    dtype,
-                    row_bytes,
-                    first_slot,
-                    slots,
-                    split_slots,
+                for fused in [false, true] {
+                    let source = Kernel {
+                        fused,
+                        down,
+                        dtype,
+                        row_bytes,
+                        first_slot,
+                        slots,
+                        split_slots,
+                    }
+                    .source();
+                    let module = wgpu::naga::front::wgsl::parse_str(&source).unwrap();
+                    wgpu::naga::valid::Validator::new(
+                        wgpu::naga::valid::ValidationFlags::all(),
+                        wgpu::naga::valid::Capabilities::SUBGROUP
+                            | wgpu::naga::valid::Capabilities::SHADER_FLOAT16_IN_FLOAT32,
+                    )
+                    .validate(&module)
+                    .unwrap();
                 }
-                .source();
-                let module = wgpu::naga::front::wgsl::parse_str(&source).unwrap();
-                wgpu::naga::valid::Validator::new(
-                    wgpu::naga::valid::ValidationFlags::all(),
-                    wgpu::naga::valid::Capabilities::SUBGROUP
-                        | wgpu::naga::valid::Capabilities::SHADER_FLOAT16_IN_FLOAT32,
-                )
-                .validate(&module)
-                .unwrap();
             }
         }
     }

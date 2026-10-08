@@ -906,6 +906,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let batch_tasks = count1_environment_opt_in(&mode, "KUNO_LAB_BATCH_TASKS")?;
     let gpu_router = count1_environment_opt_in(&mode, "KUNO_LAB_GPU_ROUTER")?;
+    let fused_experts = count1_environment_opt_in(&mode, "KUNO_LAB_FUSED_EXPERTS")?;
+    if fused_experts && !next_shared {
+        return Err("Fused experts require protected shared kernels".into());
+    }
     if next_shared && !gpu_router {
         return Err("Shared Next kernels require GPU routing".into());
     }
@@ -2199,6 +2203,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 executor.enable_transient_resident(retired.clone())?;
             }
             executor.gpu_router = gpu_router;
+            executor.fused_experts = fused_experts;
             executor.fast_dense = fast_gpu;
             executor.fast_dense_fault = fast_gpu_fault;
             executor.shared_kernels = next_shared;
@@ -2347,6 +2352,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let pre_scoped_read_ns = cubecl::wgpu::transient_scoped_read_ns();
             let pre_info_cache_stats = cubecl::wgpu::transient_info_cache_stats();
             let pre_binding_cache_stats = cubecl::wgpu::transient_binding_cache_stats();
+            let pre_fused_expert_calls = executor.fused_expert_calls;
             let pre_upload_transfer = cubecl::wgpu::transient_upload_transfer_stats();
             let reclaim_start = Instant::now();
             let gpu_source_advised_bytes = if reclaim_gpu_sources {
@@ -2575,6 +2581,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 receipt["request_io_reuse"] = serde_json::json!(request_io_reuse);
                 receipt["bind_group_reuse"] = serde_json::json!(bind_group_reuse);
+                receipt["fused_experts"] = serde_json::json!(fused_experts);
+                receipt["observed_fused_expert_calls"] = serde_json::json!(
+                    executor
+                        .fused_expert_calls
+                        .checked_sub(pre_fused_expert_calls)
+                        .ok_or("fused expert counter overflow")?
+                );
                 let binding_stats = cubecl::wgpu::transient_binding_cache_stats();
                 let binding_delta = binding_stats
                     .into_iter()
@@ -2949,6 +2962,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     executor.enable_transient_resident(retired.clone())?;
                 }
                 executor.gpu_router = gpu_router;
+                executor.fused_experts = fused_experts;
                 executor.fast_dense = fast_gpu;
                 executor.fast_dense_fault = fast_gpu_fault;
                 executor.shared_kernels = next_shared;
@@ -3063,6 +3077,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         executor.enable_transient_resident(retired.clone())?;
                     }
                     executor.gpu_router = gpu_router;
+                    executor.fused_experts = fused_experts;
                     executor.fast_dense = fast_gpu;
                     executor.fast_dense_fault = fast_gpu_fault;
                     executor.shared_kernels = next_shared;

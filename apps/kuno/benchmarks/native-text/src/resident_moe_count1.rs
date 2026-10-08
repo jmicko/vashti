@@ -59,6 +59,7 @@ impl GpuExecutor<'_> {
         let cap = h.cap.ok_or(err("native count1 policy absent"))?;
         let overlap = h.overlap;
         if cap > 10
+            || self.fused_experts && !self.shared_kernels
             || routes.count() != 1
             || s.stamp.count != 1
             || views.count() != 1
@@ -322,6 +323,7 @@ impl GpuExecutor<'_> {
                             banks,
                             owners()?,
                             capacities,
+                            self.fused_experts,
                         )?;
                     } else {
                         for shard in 0..bank.gate().segments().len() {
@@ -348,6 +350,7 @@ impl GpuExecutor<'_> {
                                 ],
                                 ga.first_slot(),
                                 ga.capacity(),
+                                self.fused_experts,
                             )?;
                         }
                     }
@@ -507,6 +510,12 @@ impl GpuExecutor<'_> {
             .weight_upload_ns
             .checked_add(stats.upload_ns)
             .ok_or(Error::ArithmeticOverflow)?;
+        if self.fused_experts && !split.gpu().is_empty() {
+            self.fused_expert_calls = self
+                .fused_expert_calls
+                .checked_add(1)
+                .ok_or(Error::ArithmeticOverflow)?;
+        }
         self.moe_calls = self
             .moe_calls
             .checked_add(1)

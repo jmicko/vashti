@@ -747,6 +747,8 @@ struct Cached {
 pub struct GpuExecutor<'a> {
     pub shared_overlap_calls: u64,
     pub gpu_router: bool,
+    pub fused_experts: bool,
+    pub fused_expert_calls: u64,
     pub gpu_router_calls: u64,
     pub fast_dense: bool,
     pub fast_dense_calls: u64,
@@ -887,6 +889,8 @@ impl<'a> GpuExecutor<'a> {
             batch_moe: None,
             shared_overlap_calls: 0,
             gpu_router: false,
+            fused_experts: false,
+            fused_expert_calls: 0,
             gpu_router_calls: 0,
             fast_dense: false,
             fast_dense_calls: 0,

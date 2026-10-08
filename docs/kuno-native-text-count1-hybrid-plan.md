@@ -1717,3 +1717,23 @@ for source checks, trial exclusions, unchanged privacy boundaries and restored
 host state. Required production worker, API/catalog and Vashti changes: none
 for this laboratory selection. Production integration, broad quality, context,
 sampling and soak acceptance remain outstanding; installed Kuno is unchanged.
+
+### Fused resident expert trial (2026-10-08, pending laboratory acceptance)
+
+The next opt-in trial, `KUNO_LAB_FUSED_EXPERTS=1` / `--fused-experts`, targets
+resident GPU experts without changing cache placement. Interleave the existing
+Q4_K gate/up row dot products in one loop with independent F32 accumulators,
+original operation/reduction order per projection, and an unchanged SiLU/product.
+Cooperatively cache the unchanged input vector inside each workgroup; preserve
+both original segmented banks, original rank map/status, all finite/fault folds,
+whole-model publication and full owned-memory erasure. Pipeline identity adds
+only a public boolean. No expert routes or values become a shader/cache key.
+Workgroup storage is bounded at 10 KiB (gate/up) and 2.5 KiB (down); no new
+private MAIN or runtime owners. Down keeps the original packed arithmetic.
+
+Require explicitly selected protected count1 shared kernels. Record requested
+selection and actual warm dispatch count in the content-free public receipt;
+reject a requested trial with no observed execution. Compare same-binary off/on
+full original 75/128 fixture and original expected IDs/lifecycle checks before
+selection. This is a kernel trial, not completed FreeToken cache scheduling or
+Strata speculation. Public APIs, workers, model file and Vashti stay unchanged.

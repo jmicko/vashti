@@ -44,6 +44,13 @@ def completion(cap):
 
 
 class HybridLabTests(unittest.TestCase):
+    def test_fused_experts_requires_shared_and_keeps_control_explicit(self):
+        with self.assertRaises(ValueError):
+            LAB.worker_environment("/original", "/receipt", fused_experts=True)
+        env = LAB.worker_environment("/original", "/receipt", fused_experts=True, shared=True, fast=True, gpu_router=True)
+        self.assertEqual(env["KUNO_LAB_FUSED_EXPERTS"], "1")
+        self.assertEqual(LAB.worker_environment("/original", "/receipt")["KUNO_LAB_FUSED_EXPERTS"], "0")
+
     def test_request_io_reuse_requires_actual_close_and_bounded_checkpoints(self):
         marker="public_request_io_reuse closed=true full_audit=true"
         value=dict(request_io_reuse=True, request_io_closed_and_audited=True,
