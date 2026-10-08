@@ -691,6 +691,21 @@ impl Secondary {
         }
         if values[10 * H] != 0 {
             println!("public_secondary_fault flags={}", values[10 * H]);
+            if values[10 * H] & 8 != 0 {
+                let status = Readback(
+                    self.client
+                        .read_one(self.arena.handle(self.ids[6]).map_err(u::fault)?.clone())
+                        .map_err(u::fault)?,
+                );
+                let v = u32::from_bytes(&status.0);
+                println!(
+                    "public_secondary_status gate_ones={} down_ones={} other_nonzero={}",
+                    v[..80].iter().filter(|&&n| n == 1).count(),
+                    v[80..160].iter().filter(|&&n| n == 1).count(),
+                    v[160..].iter().filter(|&&n| n != 0).count()
+                );
+            }
+
             return Err(Error::InvalidFormat("secondary full-owner device fold"));
         }
         if values[10 * H + 1..].iter().any(|&v| v != 0) {
