@@ -4207,10 +4207,104 @@
       "seed": 424242,
       "source_commit": "ceb88d94251a3494ffd5106c5c0b2c1eb59a4697",
       "temperature": 0
+    },
+    {
+      "artifact_directory": "next-offload-build-20261008-v44-q4-input-sharing",
+      "bank_profile": "intel144",
+      "eligible_for_warm_speed_selection": true,
+      "features": [
+        "cpu-fma",
+        "cpu-work-stealing",
+        "direct-device"
+      ],
+      "following_decode_steps": 127,
+      "frozen_executable_sha256": "9e41bc5ed1f870d4649db476a9e4ee5b03323213ed1d076518ea4cb7c44a75f2",
+      "measurements": {
+        "completed_cpu_misses": 16411,
+        "device_reserved_limit_bytes": 33285996544,
+        "expert_bank_accounted_limit_bytes": 25769803776,
+        "generation_ms": 16247,
+        "observed_retained_metadata_calls": 225683,
+        "owned_zero_audits": [
+          {
+            "main_buffers": 1378,
+            "main_bytes": 818413568,
+            "source_buffers": 0,
+            "source_bytes": 0
+          },
+          {
+            "main_buffers": 1378,
+            "main_bytes": 818413568,
+            "source_buffers": 0,
+            "source_bytes": 0
+          },
+          {
+            "main_buffers": 1378,
+            "main_bytes": 818413568,
+            "source_buffers": 0,
+            "source_bytes": 0
+          },
+          {
+            "main_buffers": 1378,
+            "main_bytes": 818413568,
+            "source_buffers": 0,
+            "source_bytes": 0
+          },
+          {
+            "main_buffers": 1378,
+            "main_bytes": 818413568,
+            "source_buffers": 0,
+            "source_bytes": 0
+          }
+        ],
+        "prefill_ms": 15464,
+        "public_resident_warm_phase_ns": {
+          "native_all_family_commit": 139299321,
+          "native_all_family_preflight": 117105040,
+          "native_attention_and_gr_enqueue": 4301063732,
+          "native_completed_final_proofs": 2848373413,
+          "native_ffn_gr_and_router_enqueue": 178234366,
+          "native_final_head_enqueue": 8805570,
+          "native_route_and_expert_enqueue": 4632723036,
+          "native_router_fence": 3855274184,
+          "native_shared_and_ffn_combine_enqueue": 89114930
+        },
+        "resident_private_owned_bytes": 818413568,
+        "resident_runtime_io_limit_bytes": 67108864,
+        "warm_cpu_operator_host_phase_ns": [
+          318021084,
+          1210520352,
+          885005669,
+          2468771666
+        ],
+        "warm_expert_hits": 44549,
+        "warm_expert_uploads": 0,
+        "warm_host_resource_delta": {
+          "major_faults": 91,
+          "minor_faults": 215643,
+          "read_bytes": 16384,
+          "system_ticks": 655,
+          "user_ticks": 3812,
+          "write_bytes": 57344
+        },
+        "warm_uploaded_bytes": 0,
+        "warm_weight_read_ms": 0,
+        "warm_weight_upload_ms": 0
+      },
+      "observed_decode_tokens_per_second": 7.816827722040992,
+      "original_ids_checked": 128,
+      "profiled": false,
+      "protected_lifecycle_completion_checked": true,
+      "receipt_sha256": "d735fa2e91b5cdd29fc5ae89841c46754185e5e16d06bc97f21233209c1a8f00",
+      "run": "cpu-144-q4-input-sharing-long-v44",
+      "run_record_sha256": "62527b34645b0567e8956e7ad80f0602863a23abe6f1b2ff14b58acec52c3f03",
+      "seed": 424242,
+      "source_commit": "7c401893b481d006067d502cc19274b40bc7536f",
+      "temperature": 0
     }
   ],
-  "best_observed_decode_tokens_per_second": 7.739183424741012,
-  "best_observed_run": "cpu-144-work-stealing-long-v43",
+  "best_observed_decode_tokens_per_second": 7.816827722040992,
+  "best_observed_run": "cpu-144-q4-input-sharing-long-v44",
   "date": "2026-10-08",
   "known_rejections_excluded_from_acceptance": [
     "intel128 initial640KiB metadata precharge missing, corrected in subsequent source",
@@ -4220,7 +4314,7 @@
   ],
   "last_verified_physical_recovery": {
     "boot_id": "665344a9-0e39-4e45-90de-465fa11df0ca",
-    "classified_faults_zero_as_of_utc": "2026-10-08T15:05:57.749639+00:00",
+    "classified_faults_zero_as_of_utc": "2026-10-08T15:25:46.933226+00:00",
     "intel_vram_bytes": 50688000,
     "kernel": "7.0.0-38-generic"
   },
@@ -4242,7 +4336,7 @@
     "exclusive_allocator_host_controls_passed": 3,
     "isolated_logger_tests_passed": 2,
     "native_offline_shader_suites_passed": 2,
-    "native_tests_passed": 497,
+    "native_tests_passed": 498,
     "python_count1_controls_passed": 39,
     "runtime_host_tests_passed": 66,
     "strict_native_all_targets_clippy_passed": true

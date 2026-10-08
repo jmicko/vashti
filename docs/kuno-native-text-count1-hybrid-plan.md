@@ -1345,3 +1345,17 @@ matrices retain direct loads. No persistent activation cache, extra host/private
 owner, weight copy or budget increase. Independent original row/guard probes
 and unchanged128-ID/full owning/lifecycle acceptance remain mandatory. No
 installed/default execution or API/frontend change.
+
+### Fixed16-lane Q4 row geometry laboratory
+
+The opt-in shared Q4 projection may use64 invocations containing exactly four
+logical16-lane rows, independent of native subgroup16/32. Four XOR shuffles
+(8,4,2,1) reduce within each logical row; host enumerations prove no cross-row
+source for either native width. Packed dequantization and per-lane accumulation
+remain unchanged; reduction ordering may change, requiring independent original
+row/guard checks and unchanged128 output IDs. Full inactive-owner finite scanning
+uses the actual64-lane geometry, covering every original allocator byte outside
+active writers. All lanes reach any activation preload barrier. Other dtypes
+retain128 invocations. Public fixed geometry alone affects pipeline keys;
+runtime input/rank bounds and all owning/cleanup/lifecycle gates stay unchanged.
+No extra private owner, budget change, API or installed/default execution.

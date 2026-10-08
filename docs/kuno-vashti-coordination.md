@@ -2291,3 +2291,24 @@ The next lab candidate partitions recurrent key reductions within a bounded
 workgroup. Independent numeric/invalid-column probes and original unchanged
 128 IDs remain required; device acceptance is pending. No installed services,
 API, routing, frontend or release changes. Required Vashti changes: none.
+
+### Current overnight optimization continuation
+
+The Kuno owner remains `codex/kuno-native-text`. Following inline readbacks,
+sourceaa3681c partitions recurrent reductions (full original acceptance, no
+measured overall gain);07308b8 pairs existing expert-bank shards;ceb88d9 adds
+a separately compiled, explicitly selected joined work-stealing CPU row mode;
+7c40189 shares bounded original Q4 activations. Best accepted artifact
+9e41bc5ed1f870d4649db476a9e4ee5b03323213ed1d076518ea4cb7c44a75f2
+completes127 steps in16247ms (7.8162 tokens/s), prefill15464ms. All unchanged
+128 IDs, independent arithmetic/guard checks and owning/fresh/poison/lifecycle
+gates pass. Single samples only;10-token/s goal remains active and unmet.
+
+The pending candidate uses fixed16-lane Q4 row groups and actual64-lane tail
+coverage.498 native controls/two shader suites,128 core controls (three ignored)
+in ordinary and work-stealing modes,39 Python controls and strict Clippy pass.
+Complete candidate device acceptance is pending. The aggregate contains49
+accepted fixtures, including excluded profiles. B70 returns50688000B; same-boot
+Xe classifications remain zero through2026-10-08T15:25:46.933226+00:00.
+No installed services/configuration, original model blob, public API/catalog,
+Vashti application or release changes. Required Vashti changes: none.

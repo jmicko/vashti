@@ -1741,3 +1741,16 @@ Q4 activation-sharing source gates pass497 native tests/two shaders and strict
 all-target Clippy on the separately selected work-stealing build. Shared-input
 load spans are runtime-checked and unchanged original row/guard probes remain
 required on device. Whole-model device acceptance is pending.
+
+Q4 sharing source7c40189/artifact9e41bc5ed1f870d4649db476a9e4ee5b03323213ed1d076518ea4cb7c44a75f2
+passes original128 IDs and all owning/fresh/poison/lifecycle gates:16247ms decode,
+15464ms prefill. B70 returns50688000B. Next candidate packs four fixed16-lane
+Q4 rows into64 invocations, eliminating unused trailing workgroups independently
+of the native subgroup width. Reduction order changes; original full acceptance
+remains mandatory. Source/device pending;10 tokens/s remains unmet.
+
+Fixed16 Q4 source gates pass498 native controls/two shaders,39 Python controls
+and strict all-target Clippy. Tail enumeration covers both64/128 threads and
+16/32 native subgroups; every inactive owner index is read exactly once and
+active writers are excluded. Fixed16 shuffle peers remain in their own logical
+row; shaders validate at256/4096/8192 columns. Device acceptance pending.

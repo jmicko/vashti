@@ -43,6 +43,9 @@ impl MatrixSpec {
             row_bytes,
         })
     }
+    fn group_threads(self) -> usize {
+        if self.dtype == 12 { 64 } else { 128 }
+    }
     fn source(self) -> String {
         // Reuse the exact arithmetic that passed original Next slabs. Only its
         // binding ABI changes: separate input/output owners and a16-byte INFO.
@@ -69,6 +72,20 @@ impl MatrixSpec {
                 self.columns / 4
             );
         }
+        if self.dtype == 12 {
+            if self.columns > 4096 {
+                body = body.replace("@builtin(workgroup_id) group:vec3<u32>,", "@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) local:u32,");
+            }
+            // Four fixed16-lane rows, independent of native subgroup16/32.
+            // XOR8/4/2/1 never crosses a logical row inside either subgroup.
+            body = body
+                .replace("@workgroup_size(128)", "@workgroup_size(64)")
+                .replace("i+=128u", "i+=64u")
+                .replace("@builtin(subgroup_invocation_id) lane:u32", "@builtin(subgroup_invocation_id) physical_lane:u32")
+                .replace("@builtin(subgroup_size) width:u32", "@builtin(subgroup_size) physical_width:u32")
+                .replace("let row=group.x*(128u/width)+sg;", "let row=group.x*4u+local/16u;let lane=local%16u;let width=16u;")
+                .replace("let total=subgroupAdd(sum);", "var total=sum;total+=subgroupShuffleXor(total,8u);total+=subgroupShuffleXor(total,4u);total+=subgroupShuffleXor(total,2u);total+=subgroupShuffleXor(total,1u);");
+        }
         format!(
             "const DTYPE:u32={}u; const ROWS:u32={}u; const COLUMNS:u32={}u; const ROW_BYTES:u32={}u;\n\
              struct Params {{ a:u32, b:u32, c:u32, d:u32 }}\n\
@@ -85,11 +102,20 @@ impl MatrixSpec {
                 "@group(0) @binding(4) var<uniform> p:Params;\n@group(0) @binding(3) var<storage,read_write> fault:array<atomic<u32>>;")
             .replace("@builtin(subgroup_size) width:u32)", "@builtin(subgroup_size) width:u32,@builtin(num_workgroups) dispatched:vec3<u32>)")
             .replace("output[out]=total;", "output[out]=total; if !(abs(total)<=3.4028234663852886e38) {atomicOr(&fault[0],1u);}");
+        if self.dtype == 12 {
+            source = source.replace("@builtin(subgroup_size) physical_width:u32)", "@builtin(subgroup_size) physical_width:u32,@builtin(num_workgroups) dispatched:vec3<u32>)");
+        }
         if tail {
             let end = source.rfind('}').expect("shared matrix entrypoint end");
             // Independent of subgroup width: every lane covers a distinct
             // owner index. Never read any active row written by another group.
-            source.insert_str(end, "\nlet index=group.x*128u+sg*width+lane;\nlet end=p.d+p.c;\nfor(var i=index;i<arrayLength(&output);i+=128u*dispatched.x) {\nif i<p.d || i>=end {if !(abs(output[i])<=3.4028234663852886e38) {atomicOr(&fault[0],1u);}}\n}\n");
+            let index = if self.dtype == 12 {
+                "local"
+            } else {
+                "sg*width+lane"
+            };
+            let threads = self.group_threads();
+            source.insert_str(end, &format!("\nlet index=group.x*{threads}u+{index};\nlet end=p.d+p.c;\nfor(var i=index;i<arrayLength(&output);i+={threads}u*dispatched.x) {{\nif i<p.d || i>=end {{if !(abs(output[i])<=3.4028234663852886e38) {{atomicOr(&fault[0],1u);}}}}\n}}\n"));
         }
         source
     }
@@ -109,7 +135,7 @@ impl Kernel {
             Self::Router => 256,
             Self::Gdn(_) => 128,
             Self::GrNorm(_) => 64,
-            Self::Matrix(_) | Self::MatrixFault(_, _) => 128,
+            Self::Matrix(spec) | Self::MatrixFault(spec, _) => spec.group_threads() as u32,
         })
     }
     fn source(self) -> String {
@@ -290,7 +316,7 @@ fn matrix_inner(
             return Err(Error::InvalidBufferLength);
         }
         if *tail {
-            grid = grid.max(output_words.div_ceil(128));
+            grid = grid.max(output_words.div_ceil(spec.group_threads()));
         }
         (
             Kernel::MatrixFault(spec, *tail),
@@ -694,18 +720,20 @@ mod tests {
     }
     #[test]
     fn fused_tail_grid_reads_every_inactive_owner_index_and_no_active_writer() {
-        for width in [16usize, 32] {
+        for (threads, width) in [(64usize, 16usize), (64, 32), (128, 16), (128, 32)] {
             for (rows, first, total, words) in [
                 (7usize, 3usize, 7usize, 26usize),
                 (11, 7, 75, 512),
                 (1, 0, 1, 8192),
             ] {
-                let grid = rows.div_ceil(4).max(words.div_ceil(128));
+                let grid = rows.div_ceil(4).max(words.div_ceil(threads));
                 let mut seen = vec![0usize; words];
                 for group in 0..grid {
-                    for sg in 0..128 / width {
+                    for sg in 0..threads / width {
                         for lane in 0..width {
-                            for i in (group * 128 + sg * width + lane..words).step_by(grid * 128) {
+                            for i in
+                                (group * threads + sg * width + lane..words).step_by(grid * threads)
+                            {
                                 if i < first || i >= first + total {
                                     seen[i] += 1;
                                 }
@@ -728,6 +756,33 @@ mod tests {
         );
     }
 
+    #[test]
+    fn fixed_q4_lanes_keep_shuffle_sources_in_their_own_row() {
+        for physical_width in [16usize, 32] {
+            for local in 0..64 {
+                let row = local / 16;
+                let physical_group = local / physical_width;
+                for shift in [8usize, 4, 2, 1] {
+                    let peer = physical_group * physical_width + ((local % physical_width) ^ shift);
+                    assert_eq!(peer / 16, row);
+                }
+            }
+        }
+        for columns in [256usize, 4096, 8192] {
+            let spec = MatrixSpec::new(7, columns, 12).unwrap();
+            assert_eq!(spec.group_threads(), 64);
+            let source = spec.source_fault(true);
+            let module = wgpu::naga::front::wgsl::parse_str(&source).unwrap();
+            wgpu::naga::valid::Validator::new(
+                wgpu::naga::valid::ValidationFlags::all(),
+                wgpu::naga::valid::Capabilities::SUBGROUP
+                    | wgpu::naga::valid::Capabilities::SHADER_FLOAT16_IN_FLOAT32,
+            )
+            .validate(&module)
+            .unwrap();
+            assert!(source.contains("i+=64u*dispatched.x"));
+        }
+    }
     #[test]
     fn all_original_formats_and_router_validate_without_private_pipeline_keys() {
         for dtype in [0, 1, 30, 6, 8, 12, 14] {
