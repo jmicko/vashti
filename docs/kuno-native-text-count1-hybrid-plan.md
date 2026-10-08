@@ -729,3 +729,12 @@ Both prefill and decode use these original banks; CPU cap10 remains static after
 prefill. Full128 output IDs and all original owning/lifecycle gates still precede
 acceptance. This does not assert that the total model fits in RAM or that the
 expanded bank will improve performance. No API/Vashti/installed changes.
+
+
+The first128 device launch rejects safely before bank allocation because its
+544128-byte committed host ledger exceeds the prior512KiB reserve. The corrected
+source reserves640KiB separately for original BankSlots, checks actual capacities
+at every existing boundary and remains within the original12MiB total parent
+host envelope (11206656 bytes accounted). Original2MiB staged MoE candidates
+and1MiB CPU-private limit are unchanged. This is an explicit capacity charge,
+not bypassing the failed guard. No performance acceptance follows that launch.

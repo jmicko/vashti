@@ -596,19 +596,19 @@ mod tests {
 
     #[test]
     fn original_state_bound_includes_actual_capacity_and_inline_counters() {
-        let mut bank = BankSlots::new(96, 512).unwrap();
-        let bound = BankSlots::bounded_original_metadata_bytes(96, 512).unwrap();
+        let mut bank = BankSlots::new(128, 512).unwrap();
+        let bound = BankSlots::bounded_original_metadata_bytes(128, 512).unwrap();
         assert_eq!(bank.original_metadata_bytes().unwrap(), bound);
-        assert!(48 * bound <= 512 * 1024);
+        assert!(48 * bound <= 640 * 1024);
         #[cfg(target_pointer_width = "64")]
-        assert_eq!(48 * bound, 507_264);
+        assert_eq!(48 * bound, 544_128);
         assert_eq!(
             bound,
             std::mem::size_of::<BankSlots>()
-                + 96 * std::mem::size_of::<Option<Resident>>()
+                + 128 * std::mem::size_of::<Option<Resident>>()
                 + 512 * std::mem::size_of::<Option<usize>>()
         );
-        bank.state.slots.reserve(96);
+        bank.state.slots.reserve(128);
         assert!(bank.original_metadata_bytes().unwrap() > bound);
         assert!(BankSlots::bounded_original_metadata_bytes(MAX_CAPACITY + 1, 512).is_err());
     }

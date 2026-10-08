@@ -456,7 +456,8 @@ impl Workspace {
         {
             return Err(err("native count1 completed original owner policy"));
         }
-        executor.check_original_bank_metadata(48, 512 * 1024)?;
+        executor
+            .check_original_bank_metadata(48, crate::resident_model::batch::ORIGINAL_BANK_HOST)?;
         for layer in 0..48 {
             let weights = weights(graph, layer)?;
             let bank = executor

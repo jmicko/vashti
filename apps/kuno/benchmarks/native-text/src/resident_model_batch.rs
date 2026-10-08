@@ -19,7 +19,7 @@ const NEW_MAIN: u64 = 33_062_912;
 const TOTAL_MAIN: u64 = OLD_MAIN + NEW_MAIN;
 const PUBLIC_MAIN: u64 = 25_165_824;
 const HOST_CAP: usize = 12 * 1024 * 1024;
-const ORIGINAL_BANK_HOST: usize = 512 * 1024;
+pub(crate) const ORIGINAL_BANK_HOST: usize = 640 * 1024;
 const HOST_COMPONENTS: usize = 10_551_296 + ORIGINAL_BANK_HOST;
 const META_CAP: usize = 256 * 1024;
 const LAYERS: usize = 48;
@@ -1613,7 +1613,7 @@ mod tests {
         assert!(runtime_bytes(u64::MAX).is_err());
         assert!(runtime_bytes(4096).unwrap() > crate::executor::RESIDENT_RUNTIME_IO_MAX);
         assert!(metadata_bytes() <= META_CAP);
-        assert_eq!(HOST_COMPONENTS, 11075584);
+        assert_eq!(HOST_COMPONENTS, 11206656);
         const { assert!(HOST_COMPONENTS <= HOST_CAP) };
     }
     #[test]
@@ -1624,7 +1624,7 @@ mod tests {
         );
         assert_eq!(TOTAL_MAIN + HYBRID_MAIN, 818413568);
         assert_eq!(1286 + 90 + 2, 1378);
-        assert_eq!(HOST_CAP - (HOST_COMPONENTS + HYBRID_HOST), 458752);
+        assert_eq!(HOST_CAP - (HOST_COMPONENTS + HYBRID_HOST), 327680);
         assert_eq!(runtime_bytes(38).unwrap() + HYBRID_RUNTIME, 65138688);
         assert_eq!(HYBRID_IO_DERIVED, 1015808);
         assert_eq!(HYBRID_RUNTIME - HYBRID_IO_DERIVED, 32768);

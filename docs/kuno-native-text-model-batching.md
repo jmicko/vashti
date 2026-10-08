@@ -101,3 +101,12 @@ After plan approval: first guarded router prerequisite, then pure aggregate cons
 The original plan below used a conservative embedding8-INFO category but omitted explicit accounting for nine outer/scalar startup clears. The implemented aggregate adds18,432 audited runtime bytes without reducing another category: actual Q6 head64,000,000 B, worst F32 head64,090,112 B, margin3,018,752 B under the unchanged64 MiB cap.
 
 Original48 committed BankSlots receive a separate512 KiB application host reservation; actual Vec capacities are checked at constructor, each native filled layer and after publication. The64-bit max96/512 bound is507,264 B. Existing native MoE2 MiB candidate/next reserve remains intact. Complete controlled private application reservation is11,075,584 B under12 MiB, margin1,507,328 B. Private MAIN remains1,376 full pages/818,249,728 B; sealed original public vectors remain379entries/25,165,824 B. These implemented totals supersede the earlier plan figures. No component cap or public/default contract changed.
+
+
+The explicit128-slot experiment increases the separately checked original48
+committed BankSlots reservation to640KiB. Actual max128/512 ledgers charge
+544128 bytes on this64-bit host, within that cap. Controlled application-host
+reservation becomes11206656 bytes under the unchanged12MiB ceiling; original
+MoE2MiB candidates, CPU1MiB envelope and full owning GPU inventories remain
+unchanged. This supersedes the512KiB original-ledger reservation above only for
+the current experimental source, without deployment or consumer API changes.
