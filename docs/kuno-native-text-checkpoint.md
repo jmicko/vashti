@@ -1,19 +1,23 @@
 # Native text checkpoint, 2026-10-08
 
-The concentrated Astra optimization pass is complete. Selected engine source
-**79739d174af41990258a9571c1a8e720d77edc8a** measures **9.484–9.550 decode tokens/s**
-on two complete fixed-public Flash-Next fixtures, versus the preceding best
-7.817 tokens/s. The approved 10-token/s Ollama reference remains unmet; no new
-Ollama baseline was run. See **Astra pass complete** at the end of this file for
-selected code, artifact, tests and restoration. Earlier candidates and pending
-statements below are historical and superseded by that acceptance.
+The user-requested private startup-upload extension and pinned llama.cpp review
+are complete. Selected source is **3b701d4d9bbeb794351502022b21c30734d501eb**;
+the complete fixed-public fixture measures **9.5943 decode tokens/s**, with all
+original output, ownership and lifecycle gates passing. This falls within the
+preceding timing range and does not establish an additional speed improvement.
+The approved10-token/s reference remains unmet; no new Ollama baseline was run.
 
-The user explicitly selected the zero-tail upload reduction despite no measured
-extra throughput gain: encoded upload-copy bytes fall about 87%, but this path
-starts after prefill and has no established startup benefit. All lab jobs have
-exited and normal inference admission is restored. The goal controller remains
-paused, and no additional benchmark is scheduled. No installed service, API,
-frontend or release changes were made.
+Zero-tail uploads now cover private constructor/prefill transfers outside
+request reuse. Measured prefill private-copy bytes fall about75%; model-bind
+copy bytes are unchanged. Public packed weight uploads are unchanged. No
+startup time gain or hardware PCIe-traffic reduction is claimed. See **Private
+startup uploads accepted** at the end for exact measurements and restoration.
+Earlier pending statements and selected versions are historical.
+
+Normal inference is restored and all lab jobs exited. The goal remains paused;
+no more physical work is scheduled. Installed binaries/settings, public API,
+Vashti and release artifacts are unchanged. The highest-priority new decode
+candidate is measured, bounded binding-object reuse; it is not yet implemented.
 
 Backend owner:
 `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
@@ -2004,3 +2008,69 @@ readback and CPU expert costs, preserving complete output/privacy acceptance.
 Warm expert-weight upload/read counters are zero for this fixture; this does
 not establish that all transfer costs are irrelevant. Extending zero-tail
 handling to loading would require separate correctness and startup measurements.
+
+
+### Private startup uploads accepted, 2026-10-08
+
+User requested extending the retained zero-tail optimization to loading and
+comparing current Kuno with installed Ollama/llama.cpp again. Runtime change
+`909ab3b` (reviewed agent source `80f058e`) and instrumentation/provenance
+`3b701d4` extend byte-exact prefix/ordered-clear planning to every configured
+private upload. Independent constructor/prefill completion and erasure remain;
+request reuse is not broadened. Public original weight uploads remain on their
+original path. Bounds, full destination ownership, source guards and stage
+initialization/audits remain unchanged. No math or model artifact changes.
+
+Frozen normal locked release source
+`3b701d4d9bbeb794351502022b21c30734d501eb`, features
+`direct-device,cpu-fma,cpu-work-stealing`, artifact SHA256
+`26871ebd5f3518f2d8e8e0734dd171527edd6865d68f1e4208e2b55c49a11178`, completes
+`cpu-144-startup-zero-tail-long-v47` with all original128 IDs, independent
+numerical/finite/guard checks, fresh continuation, actual mid-token cancellation,
+poison recovery, all five owning audits and protected lifecycle acceptance.
+Swap remains zero and core dumps disabled. Bind1365ms, prefill15324ms,
+127 following decode steps13237ms (9.59431895 tokens/s), including9ms closing
+audit. This single sample does not establish a further throughput/startup win
+against the preceding selected13391/13298ms samples;10 remains unmet.
+
+| Encoded private upload phase | Original bytes | Copied bytes | GPU-cleared tail bytes |
+| --- | ---: | ---: | ---: |
+| Model bind/probes/constructor | 20643840 | 20643840 | 0 |
+| Prefill | 58982400 | 14672064 | 44310336 |
+| Warm decode | 1747845120 | 229218304 | 1518626816 |
+
+Prefill private copy payload falls75.12%; bind has no saving in this fixture.
+These are encoded command extents, not hardware PCIe measurements. Dense public
+weight uploads are excluded; do not describe this as compressing the model.
+Bind includes the lab's startup probes, and prefill includes lazy weight use;
+neither is a cold-storage end-to-end startup benchmark.
+
+Source gates:498 native controls plus two one-test shader suites;92 runtime
+controls plus three allocator/two logger fixtures;43 Python runner controls;
+strict release all-target Clippy for native and runtime. The common byte planner
+passes2048 byte-model cases plus dense/empty/original-maximum/overflow/counter
+separation cases. Parent source review found no blocker. Runtime composed patch
+SHA256 `8d32c58ea7f78118e01e57773e4d9f93408d6d723851b18db6735fd7699ab457`;
+23 modified vendor files and original dependency/lock/license pins remain.
+Exact raw/run/Cargo/artifact hashes and numeric results are in
+[the receipt](../apps/kuno/benchmarks/text/receipts/next-startup-zero-tail-20261008.json).
+
+The [updated source comparison](kuno-native-text-count1-hybrid-plan.md#updated-ollamallamacpp-comparison-2026-10-08-research-only)
+pins installed Ollama0.35.1 to llama.cpp b11232. First recommended experiment:
+cache identical GPU binding objects within the existing request scope, measuring
+hits and construction cost. Both backends already pool descriptor storage;
+Kuno still rebuilds/validates each binding object, while llama retains descriptor
+sets across graph evaluations but updates them per dispatch. Complete binding
+memoization is a proposed Kuno optimization, not an established upstream feature
+or measured speedup. Further candidates are register-resident recurrent state,
+retesting refined CPU integer dots after the disk-fault fix, then overlapping
+device-resident expert launch with CPU routing readback. No comparison candidate
+was implemented; no new Ollama benchmark or arbitrary-prompt collection ran.
+
+All benchmark processes exited and B70 returned50688000B. Root same-boot Xe
+classification at2026-10-08T18:43:11.889831+00:00 reports zero wedged, timeout,
+GT-reset and memory-fault messages on kernel7.0.0-38-generic, boot
+665344a9-0e39-4e45-90de-465fa11df0ca. Admission resumed with active=false,
+waiting=0, paused=false, recovery_required=false. Kuno11434, direct Ollama11435
+and Vashti7771 return HTTP200. No reset/reboot or installed service change.
+Goal remains paused. Required Vashti changes: none.

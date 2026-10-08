@@ -2370,3 +2370,32 @@ and Vashti 7771 return HTTP 200. Installed binaries/configuration, original
 model blob, API/catalog/default routing and Vashti remain unchanged. No release
 or installation performed. **Required Vashti changes: none.** Goal remains
 paused; no further physical work is scheduled.
+
+
+### Active handoff: private startup uploads and upstream review complete (2026-10-08)
+
+This supersedes the previous selected-source handoff. Kuno owner source
+`3b701d4d9bbeb794351502022b21c30734d501eb` includes runtime`909ab3b` and separate
+bind/prefill transfer measurement. Zero-tail planning now covers all configured
+private uploads, without extending request reuse or changing any erasure gate.
+Public packed model-weight uploads are unchanged. Full original128-output and
+owning/lifecycle acceptance passes: bind1365ms, prefill15324ms,127 decode steps
+13237ms (9.5943 tokens/s). Prefill private copy payload falls75.12%; bind saves
+no copy bytes in this fixture. No additional throughput/startup-time gain is
+established, and the10-token/s reference remains unmet.
+
+See [current checkpoint](kuno-native-text-checkpoint.md#private-startup-uploads-accepted-2026-10-08),
+[contract and pinned upstream comparison](kuno-native-text-count1-hybrid-plan.md#updated-ollamallamacpp-comparison-2026-10-08-research-only),
+and [numeric receipt](../apps/kuno/benchmarks/text/receipts/next-startup-zero-tail-20261008.json)
+for exact source/artifacts, tests and limitations. Tests pass498 native plus two
+shader suites,92 runtime plus three allocator/two logger fixtures,43 Python
+controls and strict Clippy. Next recommended experiment is bounded request-local
+reuse of identical GPU binding objects; not implemented or timed. Both wgpu and
+llama already pool descriptor storage, so this targets repeated object creation,
+validation and set allocation/update rather than missing pool support.
+
+All lab jobs exited; B70 returned50688000B; Xe classifications remain zero
+through2026-10-08T18:43:11.889831+00:00. Admission resumed without active/queued
+work or recovery latch; Kuno11434/Ollama11435/Vashti7771 answer HTTP200. Installed
+services, model blob, public API/catalog/default routing, Vashti and release
+artifacts remain unchanged. Goal stays paused. **Required Vashti changes: none.**

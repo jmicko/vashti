@@ -1553,3 +1553,69 @@ strict release all-target Clippy. The original 2048 byte-model cases cover the
 common planner. Parent source review found no blocker. Complete model output,
 lifecycle, recovery and measured timing acceptance are recorded in the next
 checkpoint; no installed service, API or frontend behavior changes.
+
+
+### Updated Ollama/llama.cpp comparison (2026-10-08; research only)
+
+The directly queried installed daemon is Ollama0.35.1. Its official
+[version pin](https://github.com/ollama/ollama/blob/v0.35.1/LLAMA_CPP_VERSION)
+is llama.cpp b11232; comparison is pinned to that revision, not moving main.
+No new Ollama benchmark was run. Current Kuno already has device top10 routing,
+shared recurrent kernels, CPU/GPU overlap, persistent16-worker stealing,
+request-owned transient I/O reuse and mapped original weights. Older comparison
+claims that those features are missing are superseded.
+
+The selected preceding 13298-ms fixture reports 3847ms attention/GR enqueue,
+4366ms route/expert work, 3480ms router fence and 973ms final proofs. The2115ms
+mapped-read wait and2407ms CPU operator measurements overlap or nest within
+other phases; do not add them as independent GPU times. Warm expert uploads,
+weight-read time and the repeat's process disk-read bytes are zero. More cold
+weight-transfer optimization is therefore not evidence of a warm decode gain.
+
+1. **First experiment: bounded request-local reuse of identical GPU binding
+   objects.** `vendor/cubecl-wgpu/src/compute/stream.rs::register_pipeline`
+   creates entries, obtains the layout and calls `create_bind_group` on every
+   nonempty dispatch. Pipeline/INFO caches do not cache the complete bind group.
+   Both runtimes already pool descriptor storage: wgpu29.0.4 uses
+   gpu-descriptor0.3.2. However, each new wgpu group still validates bindings,
+   constructs trackers/objects and allocates one Vulkan descriptor set.
+   Upstream [descriptor allocation](https://github.com/ggml-org/llama.cpp/blob/b11232/ggml/src/ggml-vulkan/ggml-vulkan.cpp#L839-L885)
+   retains actual sets; graph cleanup resets indices and backend cleanup
+   destroys them. Its [dispatch](https://github.com/ggml-org/llama.cpp/blob/b11232/ggml/src/ggml-vulkan/ggml-vulkan-common.h)
+   still updates descriptors each time. Exact bind-group memoization is a Kuno
+   candidate, not a claim that llama.cpp implements identical memoization.
+   Actual hits/misses, construction time and total decode must establish value;
+   INFO hit counts and the approximately0.6s remaining target gap do not prove
+   a speedup. No binding-cache change is implemented at this checkpoint.
+2. **Keep recurrent state shards in registers.** `src/next_gdn.wgsl` reads each
+   old state vector during prediction and again during the update. The pinned
+   [GDN shader](https://github.com/ggml-org/llama.cpp/blob/b11232/ggml/src/ggml-vulkan/vulkan-shaders/gated_delta_net.comp)
+   retains its shard through update. Try preserving original arithmetic while
+   avoiding the second load; inspect register pressure/spills before assuming
+   a gain. Kuno's existing four-way partition is already implemented.
+3. **Revisit integer CPU dots only with the existing correctness gates.**
+   The pinned [CPU traits](https://github.com/ggml-org/llama.cpp/blob/b11232/ggml/src/ggml-cpu/ggml-cpu.c)
+   and [x86 dots](https://github.com/ggml-org/llama.cpp/blob/b11232/ggml/src/ggml-cpu/arch/x86/quants.c)
+   use Q8 activation/integer products; selected Kuno unpacks original weights
+   into float/FMA operations. One-pass Q8 already failed unchanged128 output
+   IDs. Refined residual variants passed but were measured under disk faults;
+   a bounded post-page-fault-fix retest is defensible, not a new safe default.
+4. **Longer-term routing scheduling.** Our completed CPU routing/input bridge
+   precedes the shared GPU/CPU expert launch. The upstream
+   [backend scheduler](https://github.com/ggml-org/llama.cpp/blob/b11232/ggml/src/ggml-backend.cpp)
+   uses graph splits, asynchronous copies and events. Device-resident experts
+   could begin from device routing before CPU misses arrive, then join at the
+   original rank merge. This requires a bounded device residency table and
+   substantial scheduling changes. CPU misses still require a readback; this
+   does not justify removing every routing fence.
+
+For binding reuse, keys must match exact pipeline/layout identity and ordered
+bindings' owning buffer identity, offset and effective size, including uniform
+page identity. Hold owners so identities cannot be recycled underneath keys.
+Never substitute content hashes, INFO bytes, raw addresses or logical slots
+for exact identity. Same-owner contents may change without descriptor changes;
+owner replacement, request exit, epoch transition/error/poison must drop cached
+groups. Bound actual metadata within the existing reservation and fall back to
+uncached creation at capacity; do not retain extra private owners beyond their
+proved lifetime. Wipe private key metadata and retain every original scheduling,
+fence, dirty-owner and full audit obligation. Measure before promoting.

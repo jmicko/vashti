@@ -1,0 +1,97 @@
+{
+  "scope": "fixed-public-private-initialization-zero-tail-lab-only",
+  "run": "cpu-144-startup-zero-tail-long-v47",
+  "source_commit": "3b701d4d9bbeb794351502022b21c30734d501eb",
+  "frozen_executable_sha256": "26871ebd5f3518f2d8e8e0734dd171527edd6865d68f1e4208e2b55c49a11178",
+  "raw_receipt_sha256": "635ca993ed496ff9e47b2ca84f8dc16ba1e479a3cf687dadbbef48b69b10923e",
+  "run_record_sha256": "9120afa34038aebd23d10d45fabdae03b92c158742ab3b1c86f44f705d38e9c7",
+  "cargo_artifacts_sha256": "3335a23a0a909f62bec00478b2612f0baf79e0ac3edfd034b0b4188704f30e15",
+  "runtime_patch_sha256": "8d32c58ea7f78118e01e57773e4d9f93408d6d723851b18db6735fd7699ab457",
+  "seed": 424242,
+  "temperature": 0,
+  "original_generated_id_count": 128,
+  "all_original_output_owning_and_lifecycle_gates_pass": true,
+  "measurements": {
+    "model_bind_ms": 1365,
+    "prefill_ms": 15324,
+    "generation_ms": 13237,
+    "native_decode_steps": 127,
+    "model_bind_private_upload_bytes": [
+      20643840,
+      20643840,
+      0
+    ],
+    "prefill_private_upload_bytes": [
+      58982400,
+      14672064,
+      44310336
+    ],
+    "warm_upload_transfer_bytes": [
+      1747845120,
+      229218304,
+      1518626816
+    ],
+    "request_io_close_ms": 9,
+    "request_io_closed_and_audited": true,
+    "warm_host_resource_delta": {
+      "major_faults": 84,
+      "minor_faults": 185809,
+      "read_bytes": 0,
+      "system_ticks": 751,
+      "user_ticks": 3611,
+      "write_bytes": 0
+    }
+  },
+  "decode_tokens_per_second": 9.594318954445871,
+  "prefill_private_upload_copy_reduction_fraction": 0.7512467447916666,
+  "startup_or_decode_time_improvement_established": false,
+  "user_reference_decode_tokens_per_second": 10,
+  "target_met": false,
+  "preceding_selected_runs": [
+    "cpu-144-zero-tail-long-v47",
+    "cpu-144-zero-tail-repeat-long-v47"
+  ],
+  "source_tests": {
+    "native_controls": 498,
+    "one_test_shader_suites": 2,
+    "runtime_host": 92,
+    "runtime_allocator": 3,
+    "runtime_logger": 2,
+    "python_controls": 43,
+    "strict_release_all_target_clippy_passed": true
+  },
+  "limitations": [
+    "one fixed-public full fixture",
+    "model-bind private copy bytes unchanged",
+    "public packed weight-upload path unchanged and excluded from counters",
+    "encoded command extents are not hardware PCIe traffic",
+    "no cold-storage end-to-end loading, general quality, long-context or soak acceptance",
+    "binding reuse and other upstream comparison candidates not implemented"
+  ],
+  "restoration": {
+    "all_lab_jobs_exited": true,
+    "intel_memory_used_bytes": 50688000,
+    "kernel_classified_at_utc": "2026-10-08T18:43:11.889831+00:00",
+    "boot_id": "665344a9-0e39-4e45-90de-465fa11df0ca",
+    "kernel_release": "7.0.0-38-generic",
+    "xe_counts": {
+      "wedged": 0,
+      "timeout": 0,
+      "gt_reset": 0,
+      "memory_fault": 0
+    },
+    "admission": {
+      "active": false,
+      "waiting": 0,
+      "paused": false,
+      "recovery_required": false
+    },
+    "http_status": {
+      "kuno_11434": 200,
+      "ollama_11435": 200,
+      "vashti_7771": 200
+    },
+    "installed_services_changed": false,
+    "goal_status": "paused"
+  }
+}
