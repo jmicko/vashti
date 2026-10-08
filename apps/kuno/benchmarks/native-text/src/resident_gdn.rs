@@ -974,10 +974,17 @@ fn validate_physical_regions(
     if handles.iter().any(|handle| handle.stream != stream) {
         return Err(fault("resident GDN cross-stream allocation"));
     }
-    let resources = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        crate::resident_util::resources(client, handles)
-    }))
-    .map_err(|_| fault("retained physical metadata channel"))??;
+    let mut resources = Vec::new();
+    resources
+        .try_reserve_exact(handles.len())
+        .map_err(|_| Error::LimitExceeded("GDN region metadata"))?;
+    for handle in handles {
+        let resource =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| client.get_resource(handle)))
+                .map_err(|_| fault("GDN buffer resource lookup failed"))?
+                .map_err(|_| fault("GDN buffer resource lookup failed"))?;
+        resources.push(resource);
+    }
     for (i, left) in resources.iter().enumerate() {
         let left = left.resource();
         let left_end = left

@@ -804,10 +804,14 @@ fn check_regions(
 ) -> Result<()> {
     let mut handles = private.to_vec();
     handles.extend(public.iter().map(|h| (*h).clone()));
-    let resources = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        crate::resident_util::resources(client, handles)
-    }))
-    .map_err(|_| fault("retained physical metadata channel"))??;
+    let mut resources = Vec::with_capacity(handles.len());
+    for h in handles {
+        resources.push(
+            client
+                .get_resource(h)
+                .map_err(|_| fault("resident MoE resource lookup"))?,
+        );
+    }
     for (i, l) in resources.iter().enumerate() {
         let l = l.resource();
         let end = l

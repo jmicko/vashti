@@ -668,7 +668,10 @@ fn owning_views(
         {
             return Err(launch_error());
         }
-        let resource = client.get_resource(handle.clone()).map_err(u::fault)?;
+        let mut metadata = u::resources(client, vec![handle.clone()])?;
+        let resource = metadata
+            .pop()
+            .ok_or(kuno_text::Error::InvalidBufferLength)?;
         let view = resource.resource();
         if view.offset != 0
             || view.size != bytes

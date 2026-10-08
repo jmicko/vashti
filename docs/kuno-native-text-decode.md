@@ -302,7 +302,9 @@ Batching these readonly checks removes repeated host channel crossings. The
 policy is selected once for the guarded complete-model fixture after public
 startup operator controls; those controls retain their original public arena
 and submission behavior. An inactive transient backend still rejects the new
-API rather than silently falling back to ordinary lookup.
+API rather than silently falling back to ordinary lookup. Legacy scalar
+constructors retain ordinary lookup for their logical public vector views;
+only native full-owner physical validators select the new API.
 
 All allocations/telemetry retain their original admission checks. All writes,
 reads, data dependencies, full owning erasure, final fault/state validation,

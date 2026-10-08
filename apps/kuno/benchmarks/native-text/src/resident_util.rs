@@ -23,7 +23,9 @@ pub fn resources(
     handles: Vec<Handle>,
 ) -> Result<Vec<ManagedResource<cubecl::wgpu::WgpuResource>>> {
     if RETAINED_METADATA.load(Ordering::Acquire) {
-        let result = client.retained_resource_metadata(handles).map_err(fault)?;
+        let result = client
+            .retained_resource_metadata(handles)
+            .map_err(|_| Error::InvalidFormat("resident retained metadata lookup rejected"))?;
         METADATA_CALLS
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
             .map_err(|_| Error::ArithmeticOverflow)?;
