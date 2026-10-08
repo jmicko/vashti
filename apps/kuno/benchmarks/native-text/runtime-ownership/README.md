@@ -65,6 +65,20 @@ checkpoint; the original cap10 receipts remain valid historical measurements.
 
 ## Small public ownership API
 
+The protected shared-kernel count1 candidate also uses
+`clear_private_owners(Vec<Handle>) -> Result<(), ServerError>` for its seven
+original MoE scratch owners. This is ordered native `clear_buffer` work on the
+same encoder, not erasure/completion credit. The caller retains original full
+owners until the unchanged completed fences and full-zero audits. Both client
+and server reject slices, cross-stream/unaligned/empty owners, more than16
+owners and over64MiB total. WGPU additionally checks physical extents,
+COPY_DST usage and overlapping resources before encoding any clear; errors
+and abandoned mutations retire the same private stream. Earlier consumers are
+encoded before clearing, and the prior compute pass ends first. No request
+payload, staging buffer, scratch allocation or private uniform is introduced.
+Unsupported/unconfigured backends reject it. Device acceptance is recorded in
+the owner checkpoint rather than inferred from host tests.
+
 The existing `ComputeClient` gains:
 
 ```rust

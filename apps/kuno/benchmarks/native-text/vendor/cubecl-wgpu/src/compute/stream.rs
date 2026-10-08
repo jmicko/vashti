@@ -482,6 +482,55 @@ impl WgpuStream {
             .active()
     }
 
+    pub(crate) fn clear_private_owners(
+        &mut self,
+        resources: &[cubecl_runtime::storage::ManagedResource<crate::WgpuResource>],
+    ) -> Result<(), ServerError> {
+        self.private_io_active()?;
+        let mutation = self.private_mutation_guard();
+        // All extents/aliases are checked before mutating the encoder. Clear
+        // only the complete retained owning resource, never allocation gaps.
+        for (i, managed) in resources.iter().enumerate() {
+            let r = managed.resource();
+            let end = r
+                .offset
+                .checked_add(r.size)
+                .ok_or_else(|| super::transient_io::fault("private clear extent overflow"))?;
+            if r.size == 0
+                || !r.offset.is_multiple_of(4)
+                || !r.size.is_multiple_of(4)
+                || end > r.buffer.size()
+                || !r.buffer.usage().contains(wgpu::BufferUsages::COPY_DST)
+            {
+                return Err(super::transient_io::fault("private clear physical extent"));
+            }
+            for other in &resources[..i] {
+                let other = other.resource();
+                if r.buffer == other.buffer
+                    && r.offset < other.offset + other.size
+                    && other.offset < end
+                {
+                    return Err(super::transient_io::fault(
+                        "private clear overlapping owners",
+                    ));
+                }
+            }
+        }
+        let scopes = super::transient_io::IoScopes::new(&self.device);
+        self.compute_pass = None;
+        for managed in resources {
+            let r = managed.resource();
+            self.encoder.clear_buffer(&r.buffer, r.offset, Some(r.size));
+            self.tasks_count += 1;
+        }
+        scopes.finish(self.transient_io.as_mut().unwrap());
+        self.flush_if_needed();
+        if let Some(mutation) = mutation {
+            mutation.accept();
+        }
+        Ok(())
+    }
+
     pub(crate) fn sanitize_transient_io(
         &mut self,
         inspect: bool,

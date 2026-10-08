@@ -213,6 +213,29 @@ pub fn zero(arena: &PrivateArena, id: BufferId) -> Result<()> {
     );
     Ok(())
 }
+/// Ordered native clears of original full owning scratch pages. The parent
+/// retains the arena through original completed-fence/full-zero acceptance.
+pub fn zero_batch(arena: &PrivateArena, ids: &[BufferId]) -> Result<()> {
+    if ids.is_empty() || ids.len() > 16 {
+        return Err(Error::InvalidBufferLength);
+    }
+    let mut handles = Vec::with_capacity(ids.len());
+    for &id in ids {
+        let layout = arena.layout(id).map_err(fault)?;
+        let handle = arena.handle(id).map_err(fault)?;
+        if handle.size() != layout.owned_bytes as u64
+            || handle.size_in_used() != layout.owned_bytes as u64
+        {
+            return Err(Error::InvalidBufferLength);
+        }
+        handles.push(handle.clone());
+    }
+    arena
+        .client()
+        .map_err(fault)?
+        .clear_private_owners(handles)
+        .map_err(fault)
+}
 /// Source allocations remain tracked until I/O arena reset after a fence.
 pub fn upload_f32(
     io: &mut PrivateArena,
@@ -493,6 +516,35 @@ mod tests {
                 .offset_end(last);
             assert!(validate(&[h.binding()], stream).is_err());
         }
+    }
+    #[test]
+    fn native_clear_rejects_slices_foreign_empty_unaligned_and_excess_owners() {
+        use cubecl::stream_id::StreamId;
+        use cubecl_runtime::transient::clear_owner_bindings as validate;
+        let stream = StreamId { value: 73 };
+        let owner = |size| Handle::new(stream, size).binding();
+        assert!(validate(&[owner(32768)], stream).is_ok());
+        assert!(validate(&[], stream).is_err());
+        assert!(
+            validate(
+                &(0..16).map(|_| owner(4 * 1024 * 1024)).collect::<Vec<_>>(),
+                stream
+            )
+            .is_ok()
+        );
+        for size in [0, 3, 64 * 1024 * 1024 + 4, u64::MAX] {
+            assert!(validate(&[owner(size)], stream).is_err());
+        }
+        assert!(validate(&(0..17).map(|_| owner(4)).collect::<Vec<_>>(), stream).is_err());
+        for (start, end) in [(Some(4), None), (None, Some(4))] {
+            let mut b = owner(32768);
+            b.offset_start = start;
+            b.offset_end = end;
+            assert!(validate(&[b], stream).is_err());
+        }
+        let mut b = owner(32768);
+        b.stream = StreamId { value: 74 };
+        assert!(validate(&[b], stream).is_err());
     }
     #[test]
     fn fault_only_fence_accepts_exact_zero_and_rejects_all_failure_bits() {

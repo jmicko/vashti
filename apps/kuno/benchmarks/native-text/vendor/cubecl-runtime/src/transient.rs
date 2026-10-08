@@ -64,6 +64,28 @@ pub fn retained_metadata_bindings(
     Ok(())
 }
 
+/// Original scratch owners only, bounded independently of kernel binding
+/// limits. Never accepts a sliced, unaligned or cross-stream owner.
+pub fn clear_owner_bindings(
+    bindings: &[crate::server::Binding],
+    stream: cubecl_common::stream_id::StreamId,
+) -> Result<(), crate::server::ServerError> {
+    retained_metadata_bindings(bindings, stream)?;
+    if bindings.len() > 16
+        || bindings.iter().any(|b| !b.size.is_multiple_of(4))
+        || bindings
+            .iter()
+            .try_fold(0u64, |n, b| n.checked_add(b.size))
+            .is_none_or(|n| n > 64 * 1024 * 1024)
+    {
+        return Err(crate::server::ServerError::Generic {
+            reason: "private clear bounded owning spans".into(),
+            backtrace: cubecl_common::backtrace::BackTrace::capture(),
+        });
+    }
+    Ok(())
+}
+
 /// Checked sanitizer completion for the explicitly owned transient I/O buffers.
 /// This is not a production privacy certificate or device/driver memory proof.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

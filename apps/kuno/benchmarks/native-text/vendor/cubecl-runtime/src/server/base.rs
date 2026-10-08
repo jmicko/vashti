@@ -442,9 +442,24 @@ where
         &mut self,
         _bindings: Vec<Binding>,
         _stream_id: StreamId,
-    ) -> Result<Vec<ManagedResource<<Self::Storage as ComputeStorage>::Resource>>, ServerError> {
+    ) -> Result<Vec<ManagedResource<<Self::Storage as ComputeStorage>::Resource>>, ServerError>
+    {
         Err(ServerError::Generic {
             reason: "retained resource metadata unsupported".into(),
+            backtrace: BackTrace::capture(),
+        })
+    }
+
+    /// Enqueue full retained private-owner clears on the configured stream.
+    /// This is ordered work, not completed-erasure credit. The caller retains
+    /// original full owners until its normal checked completion fence.
+    fn clear_private_owners(
+        &mut self,
+        _bindings: Vec<Binding>,
+        _stream_id: StreamId,
+    ) -> Result<(), ServerError> {
+        Err(ServerError::Generic {
+            reason: "private owner clearing unsupported".into(),
             backtrace: BackTrace::capture(),
         })
     }

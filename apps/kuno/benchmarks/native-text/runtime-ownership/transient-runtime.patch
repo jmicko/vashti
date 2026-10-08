@@ -43,7 +43,7 @@
  use cubecl_common::{
      backtrace::BackTrace,
      bytes::{AllocationProperty, Bytes},
-@@ -207,6 +208,24 @@
+@@ -207,6 +208,43 @@
          self.device
              .submit_blocking(move |state| state.get_resource(binding, stream_id))
              .unwrap()
@@ -56,19 +56,38 @@
 +    pub fn retained_resource_metadata(
 +        &self,
 +        handles: Vec<Handle>,
-+    ) -> Result<Vec<ManagedResource<<<R::Server as ComputeServer>::Storage as ComputeStorage>::Resource>>, ServerError> {
++    ) -> Result<
++        Vec<ManagedResource<<<R::Server as ComputeServer>::Storage as ComputeStorage>::Resource>>,
++        ServerError,
++    > {
 +        let stream_id = self.stream_id();
 +        let bindings: Vec<_> = handles.into_iter().map(Handle::binding).collect();
 +        crate::transient::retained_metadata_bindings(&bindings, stream_id)?;
-+        self.device.submit_blocking(move |server| server.retained_resource_metadata(bindings, stream_id))
++        self.device
++            .submit_blocking(move |server| server.retained_resource_metadata(bindings, stream_id))
 +            .map_err(|_| ServerError::Generic {
 +                reason: "retained metadata channel unavailable".into(),
++                backtrace: BackTrace::capture(),
++            })?
++    }
++
++    /// Ordered full-owner scratch clearing, without shader/INFO allocations.
++    /// Requires configured private I/O; the owning caller must retain these
++    /// allocations through its normal completion and whole-owner audit.
++    pub fn clear_private_owners(&self, handles: Vec<Handle>) -> Result<(), ServerError> {
++        let stream_id = self.stream_id();
++        let bindings: Vec<_> = handles.into_iter().map(Handle::binding).collect();
++        crate::transient::clear_owner_bindings(&bindings, stream_id)?;
++        self.device
++            .submit_blocking(move |server| server.clear_private_owners(bindings, stream_id))
++            .map_err(|_| ServerError::Generic {
++                reason: "private clear channel unavailable".into(),
 +                backtrace: BackTrace::capture(),
 +            })?
      }
  
      fn do_create_from_slices(
-@@ -298,6 +317,168 @@
+@@ -298,6 +336,168 @@
          .unwrap()
          .remove(0)
          .memory
@@ -260,7 +279,7 @@
  use super::Handle;
  use crate::{
      client::ComputeClient,
-@@ -360,12 +361,93 @@
+@@ -360,12 +361,108 @@
      /// Wait for the completion of every task in the server.
      fn sync(&mut self, stream_id: StreamId) -> DynFut<Result<(), ServerError>>;
  
@@ -345,16 +364,31 @@
 +        &mut self,
 +        _bindings: Vec<Binding>,
 +        _stream_id: StreamId,
-+    ) -> Result<Vec<ManagedResource<<Self::Storage as ComputeStorage>::Resource>>, ServerError> {
++    ) -> Result<Vec<ManagedResource<<Self::Storage as ComputeStorage>::Resource>>, ServerError>
++    {
 +        Err(ServerError::Generic {
 +            reason: "retained resource metadata unsupported".into(),
++            backtrace: BackTrace::capture(),
++        })
++    }
++
++    /// Enqueue full retained private-owner clears on the configured stream.
++    /// This is ordered work, not completed-erasure credit. The caller retains
++    /// original full owners until its normal checked completion fence.
++    fn clear_private_owners(
++        &mut self,
++        _bindings: Vec<Binding>,
++        _stream_id: StreamId,
++    ) -> Result<(), ServerError> {
++        Err(ServerError::Generic {
++            reason: "private owner clearing unsupported".into(),
 +            backtrace: BackTrace::capture(),
 +        })
 +    }
  
      /// Executes the `kernel` over the given memory `handles`.
      ///
-@@ -812,12 +894,38 @@
+@@ -812,12 +909,38 @@
  ///
  /// The [`ComputeServer`] is responsible to convert those info into actual [`Binding`] when launching
  /// kernels.
@@ -396,7 +430,7 @@
  impl MetadataBindingInfo {
 --- /dev/null
 +++ b/cubecl-runtime/src/transient.rs
-@@ -0,0 +1,315 @@
+@@ -0,0 +1,337 @@
 +// Modified for Kuno's laboratory transient-I/O ownership/erasure patch (2026-10-05).
 +//! Laboratory-only private upload ownership and transient-I/O receipt.
 +//!
@@ -457,6 +491,28 @@
 +    {
 +        return Err(crate::server::ServerError::Generic {
 +            reason: "retained metadata full same-stream binding".into(),
++            backtrace: cubecl_common::backtrace::BackTrace::capture(),
++        });
++    }
++    Ok(())
++}
++
++/// Original scratch owners only, bounded independently of kernel binding
++/// limits. Never accepts a sliced, unaligned or cross-stream owner.
++pub fn clear_owner_bindings(
++    bindings: &[crate::server::Binding],
++    stream: cubecl_common::stream_id::StreamId,
++) -> Result<(), crate::server::ServerError> {
++    retained_metadata_bindings(bindings, stream)?;
++    if bindings.len() > 16
++        || bindings.iter().any(|b| !b.size.is_multiple_of(4))
++        || bindings
++            .iter()
++            .try_fold(0u64, |n, b| n.checked_add(b.size))
++            .is_none_or(|n| n > 64 * 1024 * 1024)
++    {
++        return Err(crate::server::ServerError::Generic {
++            reason: "private clear bounded owning spans".into(),
 +            backtrace: cubecl_common::backtrace::BackTrace::capture(),
 +        });
 +    }
@@ -1857,7 +1913,7 @@
      }
  
      fn get_resource(
-@@ -348,6 +494,27 @@
+@@ -348,6 +494,56 @@
          Ok(ManagedResource::new(memory, resource))
      }
  
@@ -1870,8 +1926,9 @@
 +        let stream = self.scheduler.stream(&stream_id);
 +        stream.private_io_active()?;
 +        let mut resources = Vec::new();
-+        resources.try_reserve_exact(bindings.len()).map_err(|_|
-+            super::transient_io::fault("retained metadata bounded host allocation"))?;
++        resources
++            .try_reserve_exact(bindings.len())
++            .map_err(|_| super::transient_io::fault("retained metadata bounded host allocation"))?;
 +        for binding in bindings {
 +            let memory = binding.memory.clone();
 +            let resource = stream.mem_manage.get_resource(binding)?;
@@ -1882,10 +1939,38 @@
 +        Ok(resources)
 +    }
 +
++    fn clear_private_owners(
++        &mut self,
++        bindings: Vec<Binding>,
++        stream_id: StreamId,
++    ) -> Result<(), ServerError> {
++        cubecl_runtime::transient::clear_owner_bindings(&bindings, stream_id)?;
++        let mutation = self.scheduler.stream(&stream_id).private_mutation_guard();
++        self.scheduler.stream(&stream_id).private_io_active()?;
++        // Enqueue earlier scheduled consumers first; no submission or wait.
++        self.scheduler.execute_streams(vec![stream_id]);
++        let stream = self.scheduler.stream(&stream_id);
++        let mut resources = Vec::with_capacity(bindings.len());
++        for binding in bindings {
++            let size = binding.size;
++            let memory = binding.memory.clone();
++            let resource = stream.mem_manage.get_resource(binding)?;
++            if resource.size != size {
++                return Err(super::transient_io::fault("private clear owning extent"));
++            }
++            resources.push(ManagedResource::new(memory, resource));
++        }
++        stream.clear_private_owners(&resources)?;
++        if let Some(mutation) = mutation {
++            mutation.accept();
++        }
++        Ok(())
++    }
++
      unsafe fn launch(
          &mut self,
          kernel: Self::Kernel,
-@@ -356,6 +523,7 @@
+@@ -356,6 +552,7 @@
          mode: ExecutionMode,
          stream_id: StreamId,
      ) {
@@ -1893,7 +1978,7 @@
          let pipeline = match self.pipeline(kernel, &args, mode) {
              Ok(val) => val,
              Err(err) => {
-@@ -387,25 +555,40 @@
+@@ -387,25 +584,40 @@
          };
  
          self.scheduler.register(stream_id, task, &self.streams_pool);
@@ -1903,12 +1988,16 @@
      }
  
      fn flush(&mut self, stream_id: StreamId) -> Result<(), ServerError> {
-+        let mutation = self.scheduler.stream(&stream_id).private_mutation_guard();
-         self.scheduler.execute_streams(vec![stream_id]);
- 
-         let stream = self.scheduler.stream(&stream_id);
- 
+-        self.scheduler.execute_streams(vec![stream_id]);
+-
+-        let stream = self.scheduler.stream(&stream_id);
+-
 -        stream.flush(StreamErrorMode {
++        let mutation = self.scheduler.stream(&stream_id).private_mutation_guard();
++        self.scheduler.execute_streams(vec![stream_id]);
++
++        let stream = self.scheduler.stream(&stream_id);
++
 +        let result = stream.flush(StreamErrorMode {
              ignore: false,
              flush: true,
@@ -1924,11 +2013,14 @@
  
      /// Returns the total time of GPU work this sync completes.
      fn sync(&mut self, stream_id: StreamId) -> DynFut<Result<(), ServerError>> {
-+        let mutation = self.scheduler.stream(&stream_id).private_mutation_guard();
-         self.scheduler.execute_streams(vec![stream_id]);
-         let stream = self.scheduler.stream(&stream_id);
- 
+-        self.scheduler.execute_streams(vec![stream_id]);
+-        let stream = self.scheduler.stream(&stream_id);
+-
 -        stream.sync()
++        let mutation = self.scheduler.stream(&stream_id).private_mutation_guard();
++        self.scheduler.execute_streams(vec![stream_id]);
++        let stream = self.scheduler.stream(&stream_id);
++
 +        let result = stream.sync();
 +        if let Some(mutation) = mutation {
 +            mutation.accept();
@@ -2049,7 +2141,7 @@
          self.compute_pass = None;
          let mut staging_info = Vec::with_capacity(descriptors.len());
          let mut callbacks = Vec::with_capacity(descriptors.len());
-@@ -363,6 +423,247 @@
+@@ -363,6 +423,296 @@
          })
      }
  
@@ -2110,6 +2202,55 @@
 +            .as_ref()
 +            .ok_or_else(|| super::transient_io::fault("private I/O not configured"))?
 +            .active()
++    }
++
++    pub(crate) fn clear_private_owners(
++        &mut self,
++        resources: &[cubecl_runtime::storage::ManagedResource<crate::WgpuResource>],
++    ) -> Result<(), ServerError> {
++        self.private_io_active()?;
++        let mutation = self.private_mutation_guard();
++        // All extents/aliases are checked before mutating the encoder. Clear
++        // only the complete retained owning resource, never allocation gaps.
++        for (i, managed) in resources.iter().enumerate() {
++            let r = managed.resource();
++            let end = r
++                .offset
++                .checked_add(r.size)
++                .ok_or_else(|| super::transient_io::fault("private clear extent overflow"))?;
++            if r.size == 0
++                || !r.offset.is_multiple_of(4)
++                || !r.size.is_multiple_of(4)
++                || end > r.buffer.size()
++                || !r.buffer.usage().contains(wgpu::BufferUsages::COPY_DST)
++            {
++                return Err(super::transient_io::fault("private clear physical extent"));
++            }
++            for other in &resources[..i] {
++                let other = other.resource();
++                if r.buffer == other.buffer
++                    && r.offset < other.offset + other.size
++                    && other.offset < end
++                {
++                    return Err(super::transient_io::fault(
++                        "private clear overlapping owners",
++                    ));
++                }
++            }
++        }
++        let scopes = super::transient_io::IoScopes::new(&self.device);
++        self.compute_pass = None;
++        for managed in resources {
++            let r = managed.resource();
++            self.encoder.clear_buffer(&r.buffer, r.offset, Some(r.size));
++            self.tasks_count += 1;
++        }
++        scopes.finish(self.transient_io.as_mut().unwrap());
++        self.flush_if_needed();
++        if let Some(mutation) = mutation {
++            mutation.accept();
++        }
++        Ok(())
 +    }
 +
 +    pub(crate) fn sanitize_transient_io(
@@ -2297,7 +2438,7 @@
      /// Allocates a new empty buffer using the main memory pool.
      pub fn empty(&mut self, size: u64) -> Result<ManagedMemoryHandle, IoError> {
          self.mem_manage.reserve(size)
-@@ -373,10 +674,24 @@
+@@ -373,10 +723,24 @@
          self.errors.push(error);
      }
  
@@ -2326,7 +2467,7 @@
      }
  
      // Nb: this function submits a command to the _queue_ not to the encoder,
-@@ -441,9 +756,16 @@
+@@ -441,9 +805,16 @@
              #[cfg(not(target_family = "wasm"))]
              if let Err(e) = self.device.poll(wgpu::PollType::Wait {
                  submission_index: Some(index),
@@ -2345,7 +2486,7 @@
              }
  
              self.pending_write_count = 0;
-@@ -465,7 +787,29 @@
+@@ -465,7 +836,29 @@
      }
  
      pub fn flush(&mut self, mode: StreamErrorMode) -> Result<(), ServerError> {
@@ -2376,7 +2517,7 @@
              return self.flush_errors(mode);
          }
  
-@@ -484,10 +828,22 @@
+@@ -484,10 +877,22 @@
          };
  
          // This will _first_ fire off all pending write_buffer work.

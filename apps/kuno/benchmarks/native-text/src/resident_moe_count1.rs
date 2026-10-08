@@ -174,8 +174,21 @@ impl GpuExecutor<'_> {
             .filter(|&n| n > 0)
             .ok_or(Error::LimitExceeded("native count1 shared CPU host"))?;
         w.policy.issue(layer)?;
-        for &id in w.ids.iter().chain(owner_ids.iter()) {
-            u::zero(arena, id)?;
+        if self.shared_kernels {
+            let ids = Zeroizing::new([
+                w.ids[0],
+                w.ids[1],
+                w.ids[2],
+                w.ids[3],
+                w.ids[4],
+                owner_ids[0],
+                owner_ids[1],
+            ]);
+            u::zero_batch(arena, &ids[..])?;
+        } else {
+            for &id in w.ids.iter().chain(owner_ids.iter()) {
+                u::zero(arena, id)?;
+            }
         }
         // GPU application encoding can coexist with the CPU owner. Precharge
         // both actual owning header pages plus conservative parent frame bytes;

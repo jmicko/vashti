@@ -503,8 +503,9 @@ impl ComputeServer for WgpuServer {
         let stream = self.scheduler.stream(&stream_id);
         stream.private_io_active()?;
         let mut resources = Vec::new();
-        resources.try_reserve_exact(bindings.len()).map_err(|_|
-            super::transient_io::fault("retained metadata bounded host allocation"))?;
+        resources
+            .try_reserve_exact(bindings.len())
+            .map_err(|_| super::transient_io::fault("retained metadata bounded host allocation"))?;
         for binding in bindings {
             let memory = binding.memory.clone();
             let resource = stream.mem_manage.get_resource(binding)?;
@@ -513,6 +514,34 @@ impl ComputeServer for WgpuServer {
         // No execute_streams/flush/sync/cleanup/queue operation. The retained
         // bindings prevent relocation/reuse of these already initialized spans.
         Ok(resources)
+    }
+
+    fn clear_private_owners(
+        &mut self,
+        bindings: Vec<Binding>,
+        stream_id: StreamId,
+    ) -> Result<(), ServerError> {
+        cubecl_runtime::transient::clear_owner_bindings(&bindings, stream_id)?;
+        let mutation = self.scheduler.stream(&stream_id).private_mutation_guard();
+        self.scheduler.stream(&stream_id).private_io_active()?;
+        // Enqueue earlier scheduled consumers first; no submission or wait.
+        self.scheduler.execute_streams(vec![stream_id]);
+        let stream = self.scheduler.stream(&stream_id);
+        let mut resources = Vec::with_capacity(bindings.len());
+        for binding in bindings {
+            let size = binding.size;
+            let memory = binding.memory.clone();
+            let resource = stream.mem_manage.get_resource(binding)?;
+            if resource.size != size {
+                return Err(super::transient_io::fault("private clear owning extent"));
+            }
+            resources.push(ManagedResource::new(memory, resource));
+        }
+        stream.clear_private_owners(&resources)?;
+        if let Some(mutation) = mutation {
+            mutation.accept();
+        }
+        Ok(())
     }
 
     unsafe fn launch(

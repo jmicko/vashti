@@ -217,13 +217,32 @@ impl<R: Runtime> ComputeClient<R> {
     pub fn retained_resource_metadata(
         &self,
         handles: Vec<Handle>,
-    ) -> Result<Vec<ManagedResource<<<R::Server as ComputeServer>::Storage as ComputeStorage>::Resource>>, ServerError> {
+    ) -> Result<
+        Vec<ManagedResource<<<R::Server as ComputeServer>::Storage as ComputeStorage>::Resource>>,
+        ServerError,
+    > {
         let stream_id = self.stream_id();
         let bindings: Vec<_> = handles.into_iter().map(Handle::binding).collect();
         crate::transient::retained_metadata_bindings(&bindings, stream_id)?;
-        self.device.submit_blocking(move |server| server.retained_resource_metadata(bindings, stream_id))
+        self.device
+            .submit_blocking(move |server| server.retained_resource_metadata(bindings, stream_id))
             .map_err(|_| ServerError::Generic {
                 reason: "retained metadata channel unavailable".into(),
+                backtrace: BackTrace::capture(),
+            })?
+    }
+
+    /// Ordered full-owner scratch clearing, without shader/INFO allocations.
+    /// Requires configured private I/O; the owning caller must retain these
+    /// allocations through its normal completion and whole-owner audit.
+    pub fn clear_private_owners(&self, handles: Vec<Handle>) -> Result<(), ServerError> {
+        let stream_id = self.stream_id();
+        let bindings: Vec<_> = handles.into_iter().map(Handle::binding).collect();
+        crate::transient::clear_owner_bindings(&bindings, stream_id)?;
+        self.device
+            .submit_blocking(move |server| server.clear_private_owners(bindings, stream_id))
+            .map_err(|_| ServerError::Generic {
+                reason: "private clear channel unavailable".into(),
                 backtrace: BackTrace::capture(),
             })?
     }

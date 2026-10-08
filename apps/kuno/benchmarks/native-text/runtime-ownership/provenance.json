@@ -73,7 +73,7 @@
     },
     {
       "path": "cubecl-runtime/src/client.rs",
-      "sha256": "49056dc3696baf4ca2c89bd9e6f98bf978dfdacdb709d7ac1a6e580c4f57d146",
+      "sha256": "74be39db639839b61c47e22f0340d239865524a33a476f05741010286baee480",
       "original_sha256": "dd25c67906e3db68d05d916d45234e4bdf20cd5b65ac1ad2b00a2ddcb520e85a"
     },
     {
@@ -83,12 +83,12 @@
     },
     {
       "path": "cubecl-runtime/src/server/base.rs",
-      "sha256": "d6475e2243490a5dff3ec3597ad23058677b8e15f74bf41f0312f2b5626d3ac2",
+      "sha256": "d250b0700e18c109da7f5909fd062ce0bd0aab91bf6249c3a2ab191463690cee",
       "original_sha256": "c6292c16d5a73d7a1570776ffd25ec10afc339b942dbc5a693d8c791feb8ef5b"
     },
     {
       "path": "cubecl-runtime/src/transient.rs",
-      "sha256": "83e5df994d95fc8dc4d216964979757f68f37af472c6903bb6da7e4573c3a74e",
+      "sha256": "94a9c04de4cacff02f922022ba0b116b3533e53485dfcc88244ef247ff1f309d",
       "original_sha256": null
     },
     {
@@ -148,12 +148,12 @@
     },
     {
       "path": "cubecl-wgpu/src/compute/server.rs",
-      "sha256": "86d38cc24b42633a7bebd247b13bbf5e92b86af38ed1091106bc6c15a5b0db5e",
+      "sha256": "72a7ff0a8cc5b94047ba0aadb31b49b377d753474a437652a1f16d1ae0d82bad",
       "original_sha256": "a4840cd40e4541b27d93f0f08a211af96a0b50e272903fe97b74eec7a29a5903"
     },
     {
       "path": "cubecl-wgpu/src/compute/stream.rs",
-      "sha256": "a9b261717c63ef3bc0061d12dca3a0917922e93e1122eb500c2c9d13f19d467c",
+      "sha256": "70add7f548c43b2346dac6c2bf60bbd4a22cad9e353d9a3b12c3c6238ccdfe9f",
       "original_sha256": "97501594e0424c70cd65cbebfedf3b1f1578ecccb4b7ef1e3a873e85141cc35e"
     },
     {
@@ -162,7 +162,7 @@
       "original_sha256": null
     }
   ],
-  "patch_sha256": "1beb915493b35a0eaace620548f4252f8cf4c962c6ae5f04c82d317344b38363",
+  "patch_sha256": "0f4137174f5de0e53caf1e30fc517c6e9822ca1861ca628080a78045e707b0d9",
   "lock_sha256": "83550fa6c6d790fdfb62df390fd96b7c9d75b367c1ee6712b980ab2ff67c7288",
   "host_lock_sha256": "b968a383901ba657bdc2b670a0c7d30fc8c6b8c7ae9335c7c231fb827f0b7acf"
 }
