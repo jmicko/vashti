@@ -1468,3 +1468,20 @@ before and after poll and its remainder bounds the fallback wait. Errors never
 retry. Default execution, full audit/remap drains, GPU error scopes and output
 acceptance remain unchanged. This trades a bounded amount of active CPU time
 for potentially lower handoff latency. Physical speed acceptance is separate.
+
+
+### Remove unused CPU scratch and overwritten clears (2026-10-08 candidate)
+
+CPU SIMD rows do not use the full-row decoded vector. Its allocation becomes
+lazy for the Portable path, while a checked logical width retains the original
+bounds and conservative worker budget. Actual allocated Portable capacity must
+still fit the original cap; all scratch remains call-owned and fully wiped.
+No arithmetic, input, worker placement, reduction or finite-check change.
+
+A Readback constructor can omit its redundant GPU clear only when the checked
+source copy starts at destination0 and covers exactly the entire owning buffer.
+This includes all padding; any partial copy still clears the complete buffer
+first. The original full-copy source bounds and initialized-source tracking,
+completed maps and callback/error checks remain. Completed request-recycle
+Readback clears and final two-pass CPU-inspected audits remain unchanged.
+No dirty capacity or erasure credit is granted by this initialization shortcut.

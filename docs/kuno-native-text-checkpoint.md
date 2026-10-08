@@ -1894,3 +1894,20 @@ native polling only in request-scoped inline readback. Host integration passes
 bounds, original map callbacks, completed errors and terminal audits are
 unchanged. Normal/default paths retain blocking waits. Integrated native gates
 and the protected full device fixture are the remaining acceptance steps.
+
+
+The combined candidate5df607c/frozenba9844cafee773457a9ac1efa5f5db000fcda2bb22b12b1a72131f9a38dde589
+passes twice:127 steps13277/13234ms (about9.57/9.60 tokens/s), with original128
+IDs, numeric/finite/owning/fresh/poison/cancellation/lifecycle acceptance intact.
+Physical B70 returns50688000B after both runs. One final bounded candidate
+removes the SIMD worker's unused decoded-row allocation and constructor GPU
+clears that are completely overwritten by full-span Readback copies. Tests and
+physical acceptance of those changes remain pending; target10 is still unmet.
+
+
+Source708f5fe removes only fully overwritten constructor clears;9b51ace makes
+CPU decoded scratch lazy for Portable. Runtime88+3 allocator+2 logger controls
+and strictClippy pass. Core131 controls (three intentional ignored) pass in
+both default and cpu-work-stealing-lab modes, with strict all-targetClippy in
+both. The original conservative private budget remains. Integrated498/native
+shader validation, frozen normal build and protected physical run are next.

@@ -132,12 +132,15 @@ never returned or logged by the audit.
 ## Ownership and cleanup order
 
 Private upload staging uses MAP_WRITE|COPY_SRC mapped-at-creation buffers. Full
-API-visible spans are initialized before a logical copy. It bypasses
+API-visible spans are fully initialized before any CPU exposure. It bypasses
 Queue::write_buffer[_with]; Wgpu's native mapped-at-creation MAP_WRITE branch
 maps the original buffer directly, whereas its non-MAP_WRITE branch constructs
 an implicit StagingBuffer. Uniforms use directly owned UNIFORM|STORAGE|COPY_DST|
 COPY_SRC buffers, with full clear then owned upload. Readbacks use directly owned
-MAP_READ|COPY_DST buffers, with full clear before source copy. Bounds include
+MAP_READ|COPY_DST buffers. An exact full-span source copy initializes every
+byte directly; partial copies retain a full destination clear first. Allocation,
+alignment, source ownership, completion and map checks still precede exposure.
+Completed request-recycle clears remain separate and unchanged. Bounds include
 checked alignment, offset overflow, and actual backing-buffer size.
 
 Returned readback futures hold cancellation/unmap leases. Successful readbacks

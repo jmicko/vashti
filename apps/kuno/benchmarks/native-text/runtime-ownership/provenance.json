@@ -173,11 +173,11 @@
     },
     {
       "path": "cubecl-wgpu/src/compute/transient_io.rs",
-      "sha256": "88a11c6a74177b217dcdeda3609ed001bfa53415a87a5e010557613538497ab8",
+      "sha256": "b9e14b8a67a6cbec491a552a9c2aa81212d38cf8c0930159ed79c9320740e497",
       "original_sha256": null
     }
   ],
-  "patch_sha256": "f803b9e000e6494b6859b2c71b434021cccada2161c61f929fba965b41127cfd",
+  "patch_sha256": "a439e5439aa193c1df0b7c9cb5d3f18cb0947c44ba9e38ba90207d2328ba9b2a",
   "lock_sha256": "83550fa6c6d790fdfb62df390fd96b7c9d75b367c1ee6712b980ab2ff67c7288",
   "host_lock_sha256": "b968a383901ba657bdc2b670a0c7d30fc8c6b8c7ae9335c7c231fb827f0b7acf"
 }
