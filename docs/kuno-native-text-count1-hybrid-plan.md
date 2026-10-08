@@ -1676,8 +1676,44 @@ performance fails, retain the accepted float path.
 
 
 The retained-shard trial passes all original output and owning/lifecycle gates
-at12086ms/127 steps (10.5079 tokens/s), compared with11933ms for binding reuse
+at12086ms/127 steps (10.5080 tokens/s), compared with11933ms for binding reuse
 alone. This single ordered sample provides no extra performance win. Withdraw
 its shader from selection and restore original double-read GDN; keep the exact
 trial commit/receipt for later register/spill investigation. Binding reuse stays
 selected while refined CPU variants are tested.
+
+
+### Ranked optimization selection (2026-10-08, accepted laboratory only)
+
+This supersedes the pending trial states above. Select bounded binding reuse
+with the original GDN shader and float/FMA CPU arithmetic; disable residual Q8.
+Engine source `89ea1bc03ab22c1e834363d46c2736627d03b8da` is byte-equivalent to
+initial binding engine `37fe3ca`, after withdrawing GDN trial `f73970f`.
+Normal locked `direct-device,cpu-fma,cpu-work-stealing` builds produce the same
+frozen artifact `04f01a611209fb1bb526d48613deade7e2ec7413b9d6b69e7f03de1b9ea61d8b`.
+
+Full original public 75/128 fixtures measure 11933 and 11836 ms for 127 decode
+steps (10.6428 and 10.7300 tokens/s), including original close/audit. The
+same-binary binding-off control takes 13324 ms (9.5317). This is an observed
+11.66–12.57% throughput gain and meets the approved 10-token/s reference on
+this fixture; no new Ollama baseline or broader speed claim. All samples retain
+seed 424242, temperature 0, `intel144`, CPU cap 10 and 16 work-stealing workers.
+Prefill remains separate: selected samples 15272/15887 ms, control 15051 ms.
+
+GDN retained state takes 12086 ms (10.5080), with no additional gain established
+and no register/spill measurement. Existing refined Q8 trials observe actual
+three-/two-pass execution, taking 13014/12663 ms (9.7587/10.0292). Both are
+excluded. Their approximate activation arithmetic remains explicitly compiled/
+selected laboratory options, not a fallback or a new default. No tolerance,
+expected token, packed model file, private budget or publication gate changed.
+
+All six full fixtures pass original 128 IDs, numerical/finite guards, fresh
+continuation, mid-token cancellation, poison recovery, full owner erasure and
+protected lifecycle checks. Numeric cache counters and exact source/artifact/
+raw/run/Cargo hashes are in the
+[aggregate](../apps/kuno/benchmarks/text/receipts/next-ranked-optimizations-20261008.json).
+See the [checkpoint](kuno-native-text-checkpoint.md#ranked-optimization-pass-complete-2026-10-08)
+for source checks, trial exclusions, unchanged privacy boundaries and restored
+host state. Required production worker, API/catalog and Vashti changes: none
+for this laboratory selection. Production integration, broad quality, context,
+sampling and soak acceptance remain outstanding; installed Kuno is unchanged.

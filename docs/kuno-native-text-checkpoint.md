@@ -1,23 +1,24 @@
 # Native text checkpoint, 2026-10-08
 
-The user-requested private startup-upload extension and pinned llama.cpp review
-are complete. Selected source is **3b701d4d9bbeb794351502022b21c30734d501eb**;
-the complete fixed-public fixture measures **9.5943 decode tokens/s**, with all
-original output, ownership and lifecycle gates passing. This falls within the
-preceding timing range and does not establish an additional speed improvement.
-The approved10-token/s reference remains unmet; no new Ollama baseline was run.
+All three user-approved ranked optimizations have been tried. Selected engine
+source is **89ea1bc03ab22c1e834363d46c2736627d03b8da**, with bounded request-owned
+GPU binding reuse, the original GDN shader and float/FMA CPU arithmetic.
+Two complete fixed-public fixtures measure **10.6428 and 10.7300 decode
+tokens/s**, versus **9.5317** with binding reuse disabled in the same binary.
+The approved **10-token/s reference is met on this fixture**. No new Ollama
+baseline was run, and these results do not establish general prompt performance.
 
-Zero-tail uploads now cover private constructor/prefill transfers outside
-request reuse. Measured prefill private-copy bytes fall about75%; model-bind
-copy bytes are unchanged. Public packed weight uploads are unchanged. No
-startup time gain or hardware PCIe-traffic reduction is claimed. See **Private
-startup uploads accepted** at the end for exact measurements and restoration.
+Retained GDN state and three-/two-pass residual Q8 CPU arithmetic pass the
+unchanged acceptance gates but do not improve the selected timing. They are
+excluded; no arithmetic tolerance or privacy gate was relaxed. The retained
+startup zero-tail change remains. See **Ranked optimization pass complete** at
+the end for exact source/artifacts, six numeric receipts and limitations.
 Earlier pending statements and selected versions are historical.
 
 Normal inference is restored and all lab jobs exited. The goal remains paused;
-no more physical work is scheduled. Installed binaries/settings, public API,
-Vashti and release artifacts are unchanged. The highest-priority new decode
-candidate is measured, bounded binding-object reuse; it is not yet implemented.
+no more physical work is scheduled. This remains a standalone native laboratory.
+Installed binaries/settings, public API, Vashti and release artifacts are
+unchanged. Required Vashti changes: none.
 
 Backend owner:
 `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
@@ -2074,3 +2075,96 @@ GT-reset and memory-fault messages on kernel7.0.0-38-generic, boot
 waiting=0, paused=false, recovery_required=false. Kuno11434, direct Ollama11435
 and Vashti7771 return HTTP200. No reset/reboot or installed service change.
 Goal remains paused. Required Vashti changes: none.
+
+
+### Ranked optimization pass complete, 2026-10-08
+
+User authorized the three ranked experiments from the pinned upstream review.
+Binding reuse `37fe3ca843abdb41c5b47a7b39c002c3ec67fee5` is selected. Retained
+GDN trial `f73970f9706a2a99835495850c8a77cdb7571213` is preserved in history but
+withdrawn by `89ea1bc03ab22c1e834363d46c2736627d03b8da`; its original shader is
+restored byte-for-byte. That source also documents retesting the existing refined
+CPU integer paths, without new CPU arithmetic changes. Current engine sources
+equal the initial binding candidate; the final normal locked rebuild produces
+the same executable bytes. No production dependency, API or consumer changed.
+
+All samples use the original public 75-token/128-output fixture, seed 424242,
+temperature 0, B70 `intel144`, cap 10 and 16 joined work-stealing CPU workers.
+Generation measures the 127 following decode steps and original closing audit.
+Binding, prefill, CPU phases and encoded transfer bytes remain separate.
+
+| Run | Change from selected float + binding path | Decode ms | Tokens/s | Prefill ms | Selection |
+| --- | --- | ---: | ---: | ---: | --- |
+| v48 binding | Initial binding reuse | 11933 | 10.6428 | 15272 | Selected |
+| v48 off control | Binding reuse disabled, same executable | 13324 | 9.5317 | 15051 | Control |
+| v49 GDN shard | Retain decayed state products across GDN prediction/update | 12086 | 10.5080 | 15809 | Excluded |
+| v50 Q8 three | Three-pass residual Q8 activations, original packed weights | 13014 | 9.7587 | 15065 | Excluded |
+| v51 Q8 two | Compiled two-pass residual Q8 activations | 12663 | 10.0292 | 15490 | Excluded |
+| v52 binding | Original float/GDN selected path rebuilt and repeated | 11836 | 10.7300 | 15887 | Selected |
+
+Selected throughput is 11.66–12.57% above the same-binary off control. This
+clears the user's 10-token/s reference on the fixed fixture, without another
+Ollama baseline or a claim of broad model/quality/soak acceptance. GDN is one
+ordered trial; actual register pressure/spills were not measured, so it provides
+no established extra gain. Q8 preparation takes 582–715 million host ns versus
+308–310 million for float; whole CPU operator time is 3.11–3.36 s versus
+2.38–2.40 s. These overlap GPU work and cannot be summed into decode time.
+The original float path remains selected. No single-pass Q8 or changed output
+expectation was accepted. Actual residual pass counts are respectively 3 and 2.
+
+The cache retains exact pipeline/buffer identities and ordered offsets/sizes
+for at most 256 entries/32 bindings/512 buckets inside the unchanged 256 KiB
+metadata cap. Required owner/INFO growth drops the optional cache first. Keys
+are fully wiped and retained handles dropped before original full erasure.
+Original completion/error scopes and dirty-owner/publication checks remain.
+Each selected warm run records 216192 hits, 146831 misses and 256 inserts;
+creation is about 1.30 s and lookup 66 ms of host time. The off control records
+all zeros. Warm expert-weight upload/read and process disk-read bytes are zero
+in all six samples; that is not a claim that all transfers are irrelevant.
+
+Frozen normal locked release artifact for v48 and v52 is
+`04f01a611209fb1bb526d48613deade7e2ec7413b9d6b69e7f03de1b9ea61d8b`, features
+`direct-device,cpu-fma,cpu-work-stealing`. GDN v49 artifact is
+`64669a1b8c63e775eb8f2ca9265edf60d2d6d1146a54f7d8b7d7e0cb7fbbddc5`.
+Q8 v50 artifact is
+`88fb8aa7cd55e001b57458ba746bf8dc7ddaa614d6404926ea8f489eeeed89b4`, features
+`direct-device,cpu-work-stealing`; v51 is
+`a18fbb04b6a99ade0640d3596b683aa7924637718aa64d0ff0bb34c569512355`, adding
+`cpu-q8-two-pass`. Q8 builds deliberately omit incompatible `cpu-fma`.
+
+All six complete fixtures pass original 128 output IDs, independent numerical/
+finite/guard checks, fresh continuation, actual mid-token cancellation, poison
+recovery, full owned-memory audits and protected lifecycle completion. Swap is
+zero and core dumps disabled. Final request close/audit is 8–9 ms. No private
+prompt/image or generated private content is saved. Only the fixed public lab
+fixture and content-free numeric/provenance receipts are retained.
+
+Source checks: 498 native controls plus two one-test shader suites; 97 runtime
+host controls plus three allocator/two logger fixtures; 44 Python hybrid
+controls. The two-pass/work-stealing core combination passes 131 controls with
+three intentionally ignored. Existing ordinary/work-stealing core modes remain
+unchanged. Strict release all-target Clippy passes for runtime, native standard
+and Q8-two builds, and the two-pass/work-stealing core build. Formatting and
+whitespace/provenance checks pass. No new external agent review was performed
+for this pass. Runtime provenance records 24 modified vendor files and the four
+unchanged published dependency pins/licenses; composed patch SHA256 is
+`5af5a45bbc3d11c976411a2d89408fc9995fd9de3f751306e1634e3767af0ade`.
+
+The [six-sample numeric aggregate](../apps/kuno/benchmarks/text/receipts/next-ranked-optimizations-20261008.json)
+records exact source, frozen executable, Cargo transcript, raw receipt and run
+proof hashes. Original raw/run files are in
+`/media/jmicko/faststore/kuno-development/next-offload-device-20261008`; normal
+frozen builds are sibling `next-offload-build-20261008-v48-binding` through
+`next-offload-build-20261008-v52-binding-selected` directories. Longer context,
+multiple prompts, nondeterministic sampling, mixed-card execution, general
+quality, soak and installed-worker integration are not established here.
+
+All benchmark jobs exited. Physical B70 memory returned 50688000 bytes after
+every trial and the final repeat. Root Xe classification at
+`2026-10-08T19:21:59.447749+00:00`, boot
+`665344a9-0e39-4e45-90de-465fa11df0ca`, kernel `7.0.0-38-generic`, reports zero
+wedged, timeout, GT-reset and memory-fault messages. Public admission is resumed:
+active=false, waiting=0, paused=false, recovery_required=false. Kuno 11434,
+direct Ollama 11435 and Vashti 7771 return HTTP 200. No reset/unbind/reboot,
+clock/driver or installed-service/configuration change. The goal remains paused;
+this user-authorized pass is complete. Required Vashti changes: none.

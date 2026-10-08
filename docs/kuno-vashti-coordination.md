@@ -2399,3 +2399,39 @@ through2026-10-08T18:43:11.889831+00:00. Admission resumed without active/queued
 work or recovery latch; Kuno11434/Ollama11435/Vashti7771 answer HTTP200. Installed
 services, model blob, public API/catalog/default routing, Vashti and release
 artifacts remain unchanged. Goal stays paused. **Required Vashti changes: none.**
+
+
+### Active handoff: ranked native optimizations complete (2026-10-08)
+
+This supersedes the startup-upload handoff and its pending binding experiment.
+Kuno owner stays `codex/kuno-native-text` in the dedicated Kuno worktree.
+All three user-approved candidates were tried; bounded request-owned binding
+reuse `37fe3ca` is selected, with original GDN/float arithmetic restored in
+`89ea1bc03ab22c1e834363d46c2736627d03b8da`. GDN retained-state trial `f73970f`
+and existing three-/two-pass residual Q8 paths pass original acceptance but
+provide no further timing improvement and are excluded. No new CPU arithmetic
+source change, public API/catalog/default routing or production-worker change.
+
+Selected normal locked artifact
+`04f01a611209fb1bb526d48613deade7e2ec7413b9d6b69e7f03de1b9ea61d8b`, features
+`direct-device,cpu-fma,cpu-work-stealing`, measures 10.6428/10.7300 decode
+tokens/s on two full fixed-public Qwen3.8 Next fixtures; same-binary binding-off
+control measures 9.5317. The user's 10-token/s reference is met on this fixture.
+No new Ollama baseline or general quality/context/soak acceptance is claimed.
+
+See [current checkpoint](kuno-native-text-checkpoint.md#ranked-optimization-pass-complete-2026-10-08),
+[exact internal contract](kuno-native-text-count1-hybrid-plan.md#ranked-optimization-selection-2026-10-08-accepted-laboratory-only)
+and [six-sample numeric aggregate](../apps/kuno/benchmarks/text/receipts/next-ranked-optimizations-20261008.json)
+for exact changed commits/artifacts, controls, tests and limitations. All six
+fixtures pass original 128 IDs, numerical/guard/fresh/cancel/poison checks and
+full owned-memory/lifecycle acceptance. Source gates: 498 native plus two shader
+suites; 97 runtime plus three allocator/two logger fixtures; 44 Python controls;
+131 core controls (three ignored) in the two-pass/work-stealing combination;
+strict release all-target Clippy, formatting/provenance and whitespace checks.
+
+All lab jobs exited; B70 returned 50688000 bytes. Same-boot Xe classifications
+are zero through `2026-10-08T19:21:59.447749+00:00`. Admission resumed with no
+active/queued work or recovery latch; Kuno11434/Ollama11435/Vashti7771 answer
+HTTP200. No GPU reset, reboot, installed service/configuration change or release
+performed. Goal remains paused. **Required Vashti changes: none.** This is an
+internal standalone laboratory selection, not a production inference handoff.

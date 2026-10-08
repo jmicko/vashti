@@ -593,3 +593,33 @@ Original bounds and whole destinations remain mandatory. Ordinary public
 weight writes remain unchanged. A separate unscoped aggregate counter supports
 bind/prefill measurement; the original scoped counter is unchanged. See the
 count1 contract and current checkpoint for physical acceptance and limitations.
+
+### Bounded request-owned binding reuse, 2026-10-08
+
+Explicit protected `--bind-group-reuse` / `KUNO_LAB_BIND_GROUP_REUSE=1`
+requires the original exclusive request-I/O reuse transaction. It memoizes
+binding objects by actual pipeline/buffer identity and ordered offset/size;
+hashes only select buckets and every hit requires exact equality. Retained
+handles prevent identity recycling. Contents are never cache keys or logged.
+The fixed cache permits at most 256 entries, 32 bindings per entry and 512
+buckets. Actual key/entry capacities share the original 256 KiB metadata cap
+with owner/INFO bookkeeping, including INFO's next capacity. Required ownership
+growth drops the optional cache first; saturation/allocation failure uses normal
+binding creation without raising any budget.
+
+Every dispatch retains its original resource tracking, compute pass, completion
+and error scopes. Cache handles are released and full key capacities wiped
+before original final erasure/audits; entries cannot survive request exit or
+poison recovery. Original Upload/Uniform/Readback and main-arena audits remain.
+Five RAM-only warm counters record hits, misses, insertions, creation and lookup
+nanoseconds, without identities or private metadata. These are host counters,
+not GPU timings.
+
+Full fixed-public B70 model and lifecycle acceptance passes with unchanged 128
+output IDs. Binding reuse is selected after a same-binary off control and a
+repeat; retained GDN state and residual Q8 CPU arithmetic trials provide no
+additional speed win and remain excluded. See the
+[current checkpoint](../../../../../docs/kuno-native-text-checkpoint.md) and
+[numeric aggregate](../../text/receipts/next-ranked-optimizations-20261008.json)
+for exact artifacts, measurements, tests and limitations. This remains a
+standalone laboratory, with no installed worker, API or Vashti change.
