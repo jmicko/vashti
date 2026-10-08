@@ -944,3 +944,16 @@ Per-client shared atomic pause state changes no kernel arithmetic, existing
 source/target ownership, scope/fence, admission limit or retirement rule. All
 profiling allocations remain subject to the original I/O guard; any overflow
 still terminally rejects. Original complete fixture/erasure gates are mandatory.
+
+
+### Successful CPU operator host phase diagnostic
+
+Only the fixed-public native lab enables RAM-only aggregate CPU host durations.
+The four numeric counters cover successful-call preparation, parallel gate/up,
+parallel down, and total through the final finite/tail/file guards. Clock reads
+and counters are disabled on ordinary core operators. Joined CPU calls may
+overlap GPU work; these intervals are not additive GPU/wall time. Quantization
+and final guards account for the difference from the summed component times.
+No ranks, pointers, weight spans, prompt/output values or request history are
+retained; original private envelopes and all publication/cleanup gates remain.
+Receipts subtract before/after counters at completed model boundaries.

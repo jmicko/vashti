@@ -193,6 +193,7 @@ impl Config {
         } else {
             operator
         };
+        let operator = operator.with_phase_diagnostics();
         self.cpu_operator = Some(Arc::new(if residual {
             operator.with_q8_residual()?
         } else if q8 {
@@ -702,6 +703,18 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             .ok_or(error())?
             .moe
             .cpu_arithmetic_geometry())
+    }
+    pub(crate) fn native_cpu_phase_ns(
+        &self,
+        executor: &GpuExecutor<'f>,
+    ) -> Result<Option<[u64; 4]>> {
+        self.completed_native_projection_boundary(executor)?;
+        Ok(self
+            .native_batch
+            .as_ref()
+            .ok_or(error())?
+            .moe
+            .cpu_phase_ns())
     }
     pub(crate) fn native_cpu_buffered_weights(
         &self,

@@ -72,6 +72,13 @@ class HybridLabTests(unittest.TestCase):
             self.assertEqual(LAB.worker_environment("/original","/receipt")["KUNO_LAB_PAGEOUT_GPU_SOURCES"],"0")
         self.assertEqual(LAB.worker_environment("/original","/receipt",mapped=True,reclaim_gpu_sources=True,pageout_gpu_sources=True)["KUNO_LAB_PAGEOUT_GPU_SOURCES"],"1")
 
+    def test_cpu_successful_host_phases_are_numeric_bounded_and_nested(self):
+        value=receipt("intel",10);value["warm_cpu_operator_host_phase_ns"]=[20,30,40,100]
+        LAB.validate_receipt(value,"intel",10,completion(10))
+        for bad in (None, [20,30,40], [20,30,40,89], [True,0,0,1], [0,0,0,900_000_000_001], [0,-1,0,0]):
+            wrong=copy.deepcopy(value);wrong["warm_cpu_operator_host_phase_ns"]=bad
+            with self.assertRaises(ValueError):LAB.validate_receipt(wrong,"intel",10,completion(10))
+
     def test_gpu_profiling_is_bounded_to_one_explicit_native_decode(self):
         value=receipt("intel",10);value.update(kernel_profile=True,kernel_profile_scope="first-following-decode",profiled_native_decode_steps=1)
         LAB.validate_receipt(value,"intel",10,completion(10),profile=True)

@@ -300,6 +300,8 @@ pub struct ExpertOperator {
     prefetch_calls: std::sync::atomic::AtomicU64,
     buffered_weights: bool,
     buffered_reads: std::sync::atomic::AtomicU64,
+    phase_diagnostics: bool,
+    phase_ns: [std::sync::atomic::AtomicU64; 4],
 }
 
 // The full-capacity retained job owner erases these request-derived headers on
@@ -335,6 +337,8 @@ impl ExpertOperator {
             prefetch_calls: std::sync::atomic::AtomicU64::new(0),
             buffered_weights: false,
             buffered_reads: std::sync::atomic::AtomicU64::new(0),
+            phase_diagnostics: false,
+            phase_ns: std::array::from_fn(|_| std::sync::atomic::AtomicU64::new(0)),
         })
     }
 
@@ -435,6 +439,18 @@ impl ExpertOperator {
     }
     pub fn q8_activations(&self) -> bool {
         self.q8_activations
+    }
+
+    /// Explicit fixed-public lab diagnostic. RAM-only aggregate successful-call
+    /// host durations: prepare, gate/up, down, whole operator. No values, ranks,
+    /// model identifiers or request history. Disabled on ordinary operators.
+    pub fn with_phase_diagnostics(mut self) -> Self {
+        self.phase_diagnostics = true;
+        self
+    }
+    pub fn phase_ns(&self) -> Option<[u64; 4]> {
+        self.phase_diagnostics
+            .then(|| std::array::from_fn(|i| self.phase_ns[i].load(Ordering::Relaxed)))
     }
 
     pub fn worker_count(&self) -> usize {
@@ -668,6 +684,8 @@ impl ExpertOperator {
         private_limit: usize,
         hook: impl Fn(usize) + Sync,
     ) -> Result<Partials> {
+        let phase_start = self.phase_diagnostics.then(std::time::Instant::now);
+        let mut phases = [0u64; 4];
         let g = &weights.geometry;
         if self.buffered_weights && self.mapped_prefetch {
             return Err(Error::InvalidFormat("CPU conflicting source policies"));
@@ -801,6 +819,14 @@ impl ExpertOperator {
             }
         }
         weights.reader.verify_file_unchanged()?;
+        let activation_start = self.phase_diagnostics.then(std::time::Instant::now);
+        if let (Some(start), Some(end)) = (phase_start, activation_start) {
+            phases[0] = end
+                .duration_since(start)
+                .as_nanos()
+                .try_into()
+                .map_err(|_| Error::ArithmeticOverflow)?;
+        }
         self.rows(
             &mut activations[..selected.len() * g.feed_forward],
             row_width,
@@ -849,6 +875,13 @@ impl ExpertOperator {
                 )
             },
         )?;
+        if let Some(start) = activation_start {
+            phases[1] = start
+                .elapsed()
+                .as_nanos()
+                .try_into()
+                .map_err(|_| Error::ArithmeticOverflow)?;
+        }
         if let Some(owner) = &mut quantized_inputs {
             for rank in 0..selected.len() {
                 owner.push(quantized::Input::empty())?;
@@ -860,6 +893,7 @@ impl ExpertOperator {
                 }
             }
         }
+        let down_start = self.phase_diagnostics.then(std::time::Instant::now);
         self.rows(
             &mut values[..selected.len() * g.hidden],
             row_width,
@@ -887,6 +921,13 @@ impl ExpertOperator {
                 }
             },
         )?;
+        if let Some(start) = down_start {
+            phases[2] = start
+                .elapsed()
+                .as_nanos()
+                .try_into()
+                .map_err(|_| Error::ArithmeticOverflow)?;
+        }
         check_cancel(cancel)?;
         weights.reader.verify_file_unchanged()?;
         if values[selected.len() * g.hidden..]
@@ -897,6 +938,20 @@ impl ExpertOperator {
                 .any(|value| value.to_bits() != 0)
         {
             return Err(Error::InvalidFormat("CPU expert inactive tail"));
+        }
+        if let Some(start) = phase_start {
+            phases[3] = start
+                .elapsed()
+                .as_nanos()
+                .try_into()
+                .map_err(|_| Error::ArithmeticOverflow)?;
+            for (counter, elapsed) in self.phase_ns.iter().zip(phases) {
+                counter
+                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+                        n.checked_add(elapsed)
+                    })
+                    .map_err(|_| Error::ArithmeticOverflow)?;
+            }
         }
         Ok(Partials {
             hidden: g.hidden,
@@ -2787,6 +2842,41 @@ mod tests {
                 reference_dot(&weights, &x).to_bits()
             );
         }
+    }
+
+    #[test]
+    fn explicit_successful_cpu_phase_counts_do_not_change_results_or_failed_calls() {
+        let f = fixture([TensorType::F32; 3], 32, 32, 3);
+        let reader = f.model.positional_reader().unwrap();
+        let weights = set(&reader, &f);
+        let control =
+            ExpertOperator::new_pooled(WorkerPlan::portable(2).unwrap(), Backend::Portable)
+                .unwrap();
+        assert_eq!(control.phase_ns(), None);
+        let measured =
+            ExpertOperator::new_pooled(WorkerPlan::portable(2).unwrap(), Backend::Portable)
+                .unwrap()
+                .with_phase_diagnostics();
+        assert_eq!(measured.phase_ns(), Some([0; 4]));
+        let cancel = AtomicBool::new(false);
+        let x = input(32);
+        same_bits(
+            measured
+                .execute(&weights, &[2, 0], &x, &cancel)
+                .unwrap()
+                .full(),
+            control
+                .execute(&weights, &[2, 0], &x, &cancel)
+                .unwrap()
+                .full(),
+        );
+        let before = measured.phase_ns().unwrap();
+        assert!(before.iter().all(|&n| n > 0));
+        assert!(before[3] >= before[..3].iter().sum());
+        cancel.store(true, Ordering::Release);
+        assert!(measured.execute(&weights, &[2, 0], &x, &cancel).is_err());
+        assert_eq!(measured.phase_ns(), Some(before));
+        assert_eq!(control.phase_ns(), None);
     }
 
     #[test]

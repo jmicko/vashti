@@ -13,7 +13,7 @@ baselines are needed. Backend work belongs in the owner worktree
 
 ## Active overnight offload run, 2026-10-08
 
-The current accepted best is3.6980 tokens/s (144 slots, original full fixture);
+The current accepted best is4.2342 tokens/s (144 slots, original full fixture);
 10 tokens/s remains unmet. The preceding block established3.5006 tokens/s. Source
 `4cf40f3` adds specialized F16C original CPU packed loops with120 core tests,
 3 ignored and strict Clippy. Its normal frozen direct-device artifact
@@ -213,7 +213,19 @@ budget is changed. A live borrowed slice across full interior pages must refault
 identical bytes at the same address; the receipt distinguishes this method from
 historical pageout.127 core tests (3 ignored),491 native tests plus both shader
 suites,32 Python controls and strict all-target Clippy pass. Physical
-speed/reclamation remain pending.
+source02e1a9b/artifactd53c7a5c passes all128 IDs and original owning/fresh/
+lifecycle gates with29994ms decode (4.2342 tokens/s),19879ms prefill. Warm
+readbytes fall to5560762368, majorfaults31597, user/systemticks4493/981.
+Advice covers25519091712 bytes in1195ms, not an actual freed-byte receipt.
+A single ordered sample improves the observed rate; matched significance is
+not claimed. Physical B70 returns50688000B.
+
+Next, aggregate successful-call CPU prepare/gate-up/down/total host intervals
+are explicitly enabled only in the fixed-public native lab. This isolates
+CPU math/read wait from the broader host enqueue interval; no private trace
+or installed/API change.128 core tests (3 ignored),491 native tests and both
+shader suites,33 Python controls and strict all-target Clippy pass. Physical
+diagnostic remains pending.
 
 The user granted exclusive GPUs. Installed Kuno had an idle managed worker
 holding15978409984 B70 bytes with no active request; a graceful Kuno restart

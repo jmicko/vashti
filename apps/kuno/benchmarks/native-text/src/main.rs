@@ -2173,6 +2173,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 apply_count1_hybrid_cap(r, &mut executor, count1_hybrid_cap, &cancel)?;
                 r.phase_ns.clear();
             }
+            let pre_cpu_phase_ns = if count1_hybrid_cap.is_some() {
+                resident
+                    .as_ref()
+                    .ok_or("CPU phase owner absent")?
+                    .native_cpu_phase_ns(&executor)?
+                    .ok_or("CPU phases absent")?
+            } else {
+                [0; 4]
+            };
             let pre_cpu_buffered_reads = if count1_hybrid_cap.is_some() {
                 resident
                     .as_ref()
@@ -2425,6 +2434,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 receipt["cpu_buffered_weights"] = serde_json::json!(cpu_buffered_weights);
                 receipt["observed_cpu_buffered_weights"] =
                     serde_json::json!(observed_cpu_buffered.0);
+                if count1_hybrid_cap.is_some() {
+                    let current = resident
+                        .as_ref()
+                        .ok_or("CPU phase owner absent")?
+                        .native_cpu_phase_ns(&executor)?
+                        .ok_or("CPU phases absent")?;
+                    let mut delta = [0u64; 4];
+                    for i in 0..4 {
+                        delta[i] = current[i]
+                            .checked_sub(pre_cpu_phase_ns[i])
+                            .ok_or("CPU phase counter regression")?;
+                    }
+                    receipt["warm_cpu_operator_host_phase_ns"] = serde_json::json!(delta);
+                }
                 receipt["warm_cpu_buffered_reads"] = serde_json::json!(observed_cpu_buffered.1);
                 receipt["cpu_mapped_prefetch"] = serde_json::json!(cpu_mapped_prefetch);
                 receipt["observed_cpu_mapped_prefetch"] =

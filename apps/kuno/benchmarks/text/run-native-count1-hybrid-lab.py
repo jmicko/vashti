@@ -64,6 +64,10 @@ def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False
         calls=receipt.get("observed_native_scratch_clear_calls")
         if receipt.get("native_scratch_clear") is not native_scratch_clear or type(calls) is not int or not 0<=calls<=1000000 or (calls>0) is not native_scratch_clear:
             raise ValueError("Native full scratch clear must match completed bounded evidence")
+    if "warm_cpu_operator_host_phase_ns" in receipt:
+        phases=receipt["warm_cpu_operator_host_phase_ns"]
+        if type(phases) is not list or len(phases)!=4 or any(type(n) is not int or not 0<=n<=900_000_000_000 for n in phases) or sum(phases[:3])>phases[3]:
+            raise ValueError("Successful CPU phase counters require bounded numeric host intervals")
     if pageout_gpu_sources or "pageout_gpu_sources" in receipt:
         if receipt.get("pageout_gpu_sources") is not pageout_gpu_sources or (pageout_gpu_sources and (not reclaim_gpu_sources or receipt.get("gpu_source_mapping_advice") != "discard-clean-file-ptes")):
             raise ValueError("Mapped GPU source pageout requires explicit actual source reclaim")

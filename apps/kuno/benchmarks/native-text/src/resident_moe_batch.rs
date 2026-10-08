@@ -433,6 +433,9 @@ impl Workspace {
             .as_ref()
             .map(|h| (h.operator.worker_count(), h.operator.q8_residual_passes()))
     }
+    pub(crate) fn cpu_phase_ns(&self) -> Option<[u64; 4]> {
+        self.hybrid.as_ref().and_then(|h| h.operator.phase_ns())
+    }
     pub(crate) fn cpu_buffered_weights(&self) -> Option<(bool, u64)> {
         self.hybrid.as_ref().map(|h| {
             (
