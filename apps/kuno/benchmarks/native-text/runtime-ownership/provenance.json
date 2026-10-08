@@ -87,6 +87,11 @@
       "original_sha256": "53873f447e8b05829950a7ac7aa9681d46a27622da72c68cb28b29c39cd53319"
     },
     {
+      "path": "cubecl-runtime/src/memory_management/memory_pool/exclusive_pool.rs",
+      "sha256": "485b62796a12b86fc681863e07e70f32216477cc9166c46d241738e7ee73c1d9",
+      "original_sha256": "01ba652594d664548808dbbc048fea225d2fc7ed0100da0f6661e16efa1c74cc"
+    },
+    {
       "path": "cubecl-runtime/src/server/base.rs",
       "sha256": "d250b0700e18c109da7f5909fd062ce0bd0aab91bf6249c3a2ab191463690cee",
       "original_sha256": "c6292c16d5a73d7a1570776ffd25ec10afc339b942dbc5a693d8c791feb8ef5b"
@@ -172,7 +177,7 @@
       "original_sha256": null
     }
   ],
-  "patch_sha256": "68134f72f193d2d125fa171bce9dd84d504756d82225ae2628982b92bdfd172d",
+  "patch_sha256": "d6b84b161a098edeb1d2c7da411d1992171b229d1e5e9d44a17591856915943c",
   "lock_sha256": "83550fa6c6d790fdfb62df390fd96b7c9d75b367c1ee6712b980ab2ff67c7288",
   "host_lock_sha256": "b968a383901ba657bdc2b670a0c7d30fc8c6b8c7ae9335c7c231fb827f0b7acf"
 }

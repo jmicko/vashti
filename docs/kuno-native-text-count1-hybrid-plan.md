@@ -1040,3 +1040,15 @@ fixed numeric extent array where present, must fit the existing 4 KiB host-heade
 allowance; no budget is increased. Non-retained resource lookup keeps its original
 submission semantics. Original full-model and owning/lifecycle acceptance gates
 are required before accepting a speed result.
+
+### In-place exclusive allocator cleanup
+
+Exclusive pool cleanup may retain pages in place rather than drain and rebuild
+the complete page array at every submission. The same free-count increment,
+aging threshold, reuse decrement, explicit release and storage flush remain.
+Only retained pages moved by removal of preceding holes change descriptor page
+indices. Actual handles and bindings still resolve to their original storage.
+No cleanup cadence, admission, erasure, publication or cache budget changes.
+Host controls must cover retained identities across repeated sweeps, multiple
+holes, held bindings after original handle release, reuse aging and explicit
+release, followed by the original complete device fixture.

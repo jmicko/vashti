@@ -13,7 +13,7 @@ baselines are needed. Backend work belongs in the owner worktree
 
 ## Active overnight offload run, 2026-10-08
 
-The current accepted best is5.6034 tokens/s (144 slots, original full fixture);
+The current accepted best is5.7053 tokens/s (144 slots, original full fixture);
 10 tokens/s remains unmet. The preceding block established3.5006 tokens/s. Source
 `4cf40f3` adds specialized F16C original CPU packed loops with120 core tests,
 3 ignored and strict Clippy. Its normal frozen direct-device artifact
@@ -1510,3 +1510,27 @@ The next diagnostic replaces ambiguous custom `Kernel` profiler names with
 static public operator/packing families. No arithmetic, identity, owner or
 speed-selection change. First-following profiling remains excluded from speed
 selection.
+
+### Actual metadata batches and updated host profile
+
+Source a3248d6 / frozen artifact d461f52b passes the original128-ID full
+fixture, fresh continuation, poison and owning/lifecycle gates:22260ms decode
+(5.7053 tokens/s),19126ms prefill. Metadata boundary calls fall from635131
+to159643; original actual extents, aliases and shard/dtype checks remain.
+492 native tests and two offline shader suites,33 Python controls, strict
+all-target Clippy pass. Physical B70 memory returns50688000 bytes.
+
+Static family labels source599b523 / artifact2c4f5195 also pass the short
+fixture and original owning/lifecycle gates. First-following diagnostic4309
+kernels total59.76967ms; dense Q4K13.299167ms, clears6.44854ms, grouped
+RMS5.944636ms, GDN4.477242ms, dense Q6K3.967663ms. Profiling forces
+extra flushes and differs from the long fixture; it is excluded from speed
+selection and does not establish an unprofiled GPU execution floor.
+
+A separate twelve-second root CPU sample of the public v25b fixture keeps raw
+perf stacks in private tmpfs, removes them, and saves only static symbols/sample
+aggregates. It points to CPU packed expert math, allocator cleanup, and buffer
+initialization/inspection. Cycle shares are not elapsed-time shares; the entire
+profiled sample is excluded from speed selection even though its output matches.
+Next candidate compacts exclusive allocation pages in place, preserving the
+original free aging, release conditions and every retained descriptor identity.

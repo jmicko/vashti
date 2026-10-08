@@ -16,7 +16,6 @@ use super::{ManagedMemoryBinding, ManagedMemoryHandle, MemoryPool, Slice, calcul
 /// - The pool uses a ring buffer to efficiently manage and reuse pages.
 pub struct ExclusiveMemoryPool {
     pages: Vec<MemoryPage>,
-    pages_tmp: Vec<MemoryPage>,
     alignment: u64,
     dealloc_period: u64,
     last_dealloc_check: u64,
@@ -70,7 +69,6 @@ impl ExclusiveMemoryPool {
 
         Self {
             pages: Vec::new(),
-            pages_tmp: Vec::new(),
             alignment,
             dealloc_period,
             last_dealloc_check: 0,
@@ -202,27 +200,24 @@ impl MemoryPool for ExclusiveMemoryPool {
         if explicit || alloc_nr - self.last_dealloc_check >= check_period {
             self.last_dealloc_check = alloc_nr;
 
-            for mut page in self.pages.drain(..) {
+            // Keep retained pages in place. The former drain/rebuild copied
+            // every page and rewrote every descriptor even when none was free.
+            // Only holes left by the same deallocation policy need compaction.
+            let mut page_index = 0usize;
+            self.pages.retain_mut(|page| {
                 if page.slice.is_free() {
                     page.free_count += 1;
-
-                    // If free found is sufficiently high (ie. we've seen this alloc as free multiple times,
-                    // without it being used in the meantime), deallocate it.
                     if page.free_count >= ALLOC_AFTER_FREE || explicit {
                         storage.dealloc(page.slice.storage.id);
-                        continue;
+                        return false;
                     }
                 }
-
-                let page_index = self.pages_tmp.len();
-                page.slice
-                    .handle
-                    .descriptor()
-                    .update_page(page_index as u16);
-                self.pages_tmp.push(page);
-            }
-
-            core::mem::swap(&mut self.pages, &mut self.pages_tmp);
+                if page.slice.handle.descriptor().page() != page_index {
+                    page.slice.handle.descriptor().update_page(page_index as u16);
+                }
+                page_index += 1;
+                true
+            });
         }
     }
 
