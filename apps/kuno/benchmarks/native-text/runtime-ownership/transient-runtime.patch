@@ -4158,7 +4158,7 @@
 +    Ok(())
 +}
 +const INFO_KEY_BYTES: usize = 64 * 1024;
-+const INFO_CACHE_ENTRIES: usize = 1024;
++const INFO_CACHE_ENTRIES: usize = 512;
 +static INFO_CACHE_STATS: [AtomicU64; 3] = [const { AtomicU64::new(0) }; 3];
 +/// Cumulative exact INFO hits, misses (including uncached saturation), page pins.
 +/// Numeric only; never exposes hashes, keys, buffer IDs, or request identifiers.

@@ -1405,7 +1405,7 @@ reuse and COPY_DST pretransition until the full audit, even when only one region
 of a page is cached. Pending pages can append only before their first submission.
 Upload sources can recycle after the original completed consumer checkpoint.
 
-The cache is bounded to1024 entries and64KiB of guarded key allocations, within
+The selected cache is bounded to512 entries and64KiB of guarded key allocations, within
 the existing256KiB actual-capacity bookkeeping allowance. Saturation falls back
 to ordinary owned INFO before adding a key; no eviction or cross-request cache.
 Keys and capacity are wiped and cached resource references dropped before full

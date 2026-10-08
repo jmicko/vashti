@@ -380,6 +380,65 @@
       "warm_uploaded_bytes": 0,
       "warm_weight_read_ms": 0,
       "warm_weight_upload_ms": 0
+    },
+    {
+      "run": "cpu-144-one-recycle-long-v47",
+      "role": "rejected-one-recycle-1024",
+      "source_commit": "3e367ef6557fb3d5994b21245f98826c8a9cdb01",
+      "frozen_executable_sha256": "7ac5385c6a709e0e83f6b74dd9fef9ed854254ed64937c6111582cea2883a646",
+      "raw_receipt_sha256": "816b98582601ed103fec8a2c3c2517771eaf5227e27c7fdcbb5a66752d68b15a",
+      "run_record_sha256": "5f64091a1ef149d02433d945d3f25aac45cd2a0c0857c4bf9dc9a2daa2ee3dfb",
+      "original_generated_id_count": 128,
+      "decode_tokens_per_second": 7.4890906946573885,
+      "accepted_output_owning_and_lifecycle": true,
+      "generation_ms": 16958,
+      "prefill_ms": 15192,
+      "native_decode_steps": 127,
+      "seed": 424242,
+      "temperature": 0,
+      "request_io_reuse": true,
+      "request_io_close_ms": 15,
+      "request_io_closed_and_audited": true,
+      "observed_request_io_reuses": 39122,
+      "observed_request_io_checkpoints": 381,
+      "public_resident_warm_phase_ns": {
+        "native_all_family_commit": 144686204,
+        "native_all_family_preflight": 117615068,
+        "native_attention_and_gr_enqueue": 4730538548,
+        "native_completed_final_proofs": 1021278448,
+        "native_ffn_gr_and_router_enqueue": 183051468,
+        "native_final_head_enqueue": 9022351,
+        "native_route_and_expert_enqueue": 4437966540,
+        "native_router_fence": 6133465149,
+        "native_shared_and_ffn_combine_enqueue": 94363152
+      },
+      "warm_scoped_read_host_ns": [
+        13456044,
+        352945406,
+        5617040396
+      ],
+      "warm_info_cache_stats": [
+        302428,
+        12970,
+        126
+      ],
+      "warm_host_resource_delta": {
+        "major_faults": 3,
+        "minor_faults": 179047,
+        "read_bytes": 0,
+        "system_ticks": 611,
+        "user_ticks": 3676,
+        "write_bytes": 0
+      },
+      "warm_cpu_operator_host_phase_ns": [
+        327669272,
+        1213590365,
+        891812815,
+        2483032725
+      ],
+      "warm_uploaded_bytes": 0,
+      "warm_weight_read_ms": 0,
+      "warm_weight_upload_ms": 0
     }
   ]
 }

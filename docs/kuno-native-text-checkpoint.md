@@ -1853,9 +1853,9 @@ controls/two shader suites,74 runtime host/three allocator/two logger controls;
 runtime strict Clippy passes. Physical performance remains pending.
 
 
-The indexed transition candidate passes original128 IDs but takes22215ms.
-INFO interning plus Readback COPY_DST transitions takes21104ms; same-build
-reuse-OFF control remains16131ms. Actual full-span Readback clears at the
+The indexed transition candidate passes original128 IDs but takes22214ms.
+INFO interning plus Readback COPY_DST transitions takes21103ms; same-build
+reuse-OFF control remains16130ms. Actual full-span Readback clears at the
 completed recycle (e9d8032) remove the regression and establish9.3348034 tokens/s:
 127 steps13605ms including request-close audit; prefill15314ms. Original128 IDs,
 independent numeric/finite guards, fresh continuation, actual cancellation,
@@ -1871,3 +1871,10 @@ keys and256KiB combined metadata. New runtime API is internal to the isolated
 benchmark, not a gateway or frontend contract. Runtime82+3 allocator+2 logger
 controls pass with strict Clippy; integrated498 controls/two shader suites and
 41 Python controls pass. Physical speed acceptance is pending.
+
+
+The combined accept-only/INFO1024 candidate3e367ef passes all original device
+gates but regresses to16958ms (final receipt authoritative), with5.617s mapped
+read waits. It is not selected. Next isolate the same accept-only boundary with
+the previously accepted512-entry cache. No new controls or admission limits are
+changed. All-family publication and request-close audits remain mandatory.
