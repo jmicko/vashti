@@ -818,8 +818,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if cpu_mapped_prefetch && (!mapped_weights || !count1_pooled) {
         return Err("CPU source prefetch requires explicitly mapped pooled workers".into());
     }
+    let cpu_threads = match std::env::var("KUNO_LAB_CPU_THREADS").as_deref() {
+        Ok("4") if mode == "resident-count1-hybrid-chat" => 4,
+        Ok("8") if mode == "resident-count1-hybrid-chat" => 8,
+        Ok("16") | Err(_) => 16,
+        _ => return Err("CPU thread choice requires explicit protected 4,8,16 geometry".into()),
+    };
+    if cpu_threads != 16 && !count1_pooled {
+        return Err("CPU thread tuning requires pooled protected workers".into());
+    }
     let cpu_q8 = count1_environment_opt_in(&mode, "KUNO_LAB_CPU_Q8")?;
     let cpu_q8_residual = count1_environment_opt_in(&mode, "KUNO_LAB_CPU_Q8_RESIDUAL")?;
+    let cpu_q8_two_pass = count1_environment_opt_in(&mode, "KUNO_LAB_CPU_Q8_TWO_PASS")?;
+    if cpu_q8_two_pass != cfg!(feature = "cpu-q8-two-pass")
+        || (cpu_q8_two_pass && (!cpu_q8 || !cpu_q8_residual || !count1_pooled))
+    {
+        return Err("Compiled two-pass Q8 requires explicit pooled residual Q8 selection".into());
+    }
     if cpu_q8_residual && !cpu_q8 {
         return Err("Residual Q8 requires explicitly selected Q8 activations".into());
     }
@@ -1957,6 +1972,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             cpu_q8,
                             cpu_q8_residual,
                             cpu_mapped_prefetch,
+                            cpu_threads,
                         )?
                     } else {
                         config.reserve_count1_hybrid()?
@@ -2325,6 +2341,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 receipt["long_fixture"] = serde_json::json!(long_fixture);
                 receipt["cpu_q8_activations"] = serde_json::json!(cpu_q8);
                 receipt["cpu_q8_residual"] = serde_json::json!(cpu_q8_residual);
+                receipt["cpu_q8_two_pass"] = serde_json::json!(cpu_q8_two_pass);
+                receipt["cpu_threads"] = serde_json::json!(cpu_threads);
+                if count1_hybrid_cap.is_some() {
+                    let (threads, passes) = resident
+                        .as_ref()
+                        .ok_or("CPU arithmetic owner absent")?
+                        .native_cpu_arithmetic_geometry(&executor)?
+                        .ok_or("CPU arithmetic operator absent")?;
+                    receipt["observed_cpu_threads"] = serde_json::json!(threads);
+                    receipt["observed_cpu_q8_residual_passes"] = serde_json::json!(passes);
+                }
                 receipt["cpu_mapped_prefetch"] = serde_json::json!(cpu_mapped_prefetch);
                 receipt["observed_cpu_mapped_prefetch"] =
                     serde_json::json!(observed_cpu_prefetch.0);

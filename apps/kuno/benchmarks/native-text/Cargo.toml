@@ -31,6 +31,7 @@ cubecl-wgpu = { path = "vendor/cubecl-wgpu" }
 direct-device = ["cubecl-common/kuno-direct-device"]
 # Separate arithmetic candidate: original weights, explicit FMA/32-lane CPU.
 cpu-fma = []
+cpu-q8-two-pass = ["kuno-text/cpu-q8-two-pass"]
 
 [profile.release]
 debug = 0

@@ -844,3 +844,28 @@ Actual original host ledgers are charged within the existing640KiB component /
 1378 owners/818413568 bytes and complete private/source proof inventories remain.
 Full128 original IDs and every owning gate still precede timing acceptance.
 No installed inference or API change. Physical efficacy is pending.
+
+
+### Explicit worker calibration and compiled two-pass integer candidate
+
+Protected `--cpu-threads` selects4,8 or16 pinned physical workers;16 preserves
+prior behavior. Nondefault counts require pooled workers and the constructed
+operator count must match the numeric receipt. Original thread metadata maximum
+and CPU1MiB private envelope are unchanged; smaller pools grant no extra budget.
+The runner overwrites ambient values and rejects unsupported/boolean counts.
+
+Separate compiled `cpu-q8-two-pass` uses one residual Q8 activation refinement
+instead of two; it requires independently selected `--cpu-q8-two-pass --cpu-q8
+--cpu-q8-residual` with pooled workers and an artifact without `cpu-fma`. Original
+weights, all ten ranks, private full capacities and erasure remain unchanged,
+including clearing the unused refinement array. The actual operator reports2
+passes; standard residual reports3, disabled reports0. No automatic fallback.
+
+This is approximate. The independent original-weight/f64 row bound includes the
+mathematically derived group quantization term max|x| sum|w| /254^2 for two passes;
+three passes retain the previous bound. Reconstructed inputs also independently
+check that group error, including an8-epsilon floating round allowance. Complete
+original-float expert checks bound error by1e-3+1e-4 times infinity norm. These
+synthetic bounds are not model-quality claims. The original full128-token gate
+remains mandatory and unchanged before any physical speed acceptance. No
+installed/API/default change. Device efficacy pending.

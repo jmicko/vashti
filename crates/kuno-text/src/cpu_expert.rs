@@ -385,7 +385,7 @@ impl ExpertOperator {
         self.q8_activations = true;
         Ok(self)
     }
-    /// Explicit three-pass residual Q8 activations, still approximate and
+    /// Explicit residual Q8 activations (three passes, or compiled two-pass lab), still approximate and
     /// never an automatic fallback. Original packed model bytes are unchanged.
     pub fn with_q8_residual(self) -> Result<Self> {
         let mut this = self.with_q8_activations()?;
@@ -403,6 +403,13 @@ impl ExpertOperator {
     }
     pub fn prefetch_calls(&self) -> u64 {
         self.prefetch_calls.load(Ordering::Relaxed)
+    }
+    pub fn q8_residual_passes(&self) -> usize {
+        if self.q8_residual {
+            quantized::residual_passes()
+        } else {
+            0
+        }
     }
     pub fn q8_residual(&self) -> bool {
         self.q8_residual
@@ -3099,6 +3106,49 @@ mod tests {
         cancel.store(true, Ordering::Relaxed);
         assert!(candidate.execute(&weights, &[2, 0], &x, &cancel).is_err());
         assert_eq!(candidate.prefetch_calls(), 6);
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn residual_complete_experts_bound_original_float_error_and_report_actual_passes() {
+        if !avx2_available() {
+            return;
+        }
+        for down in [TensorType::Q5_0, TensorType::Q8_0] {
+            let f = fixture([TensorType::Q4K, TensorType::Q4K, down], 256, 256, 3);
+            // SAFETY: test exclusively owns immutable fixture inode.
+            unsafe {
+                f.model.enable_mapped_weights().unwrap();
+            }
+            let reader = f.model.positional_reader().unwrap();
+            let weights = set(&reader, &f);
+            let control =
+                ExpertOperator::new_pooled(WorkerPlan::portable(4).unwrap(), Backend::Portable)
+                    .unwrap();
+            let candidate =
+                ExpertOperator::new_pooled(WorkerPlan::portable(4).unwrap(), Backend::Avx2)
+                    .unwrap()
+                    .with_q8_residual()
+                    .unwrap();
+            assert_eq!(
+                candidate.q8_residual_passes(),
+                if cfg!(feature = "cpu-q8-two-pass") {
+                    2
+                } else {
+                    3
+                }
+            );
+            let x = input(256);
+            let cancel = AtomicBool::new(false);
+            let expected = control.execute(&weights, &[2, 0], &x, &cancel).unwrap();
+            let actual = candidate.execute(&weights, &[2, 0], &x, &cancel).unwrap();
+            let norm = expected.full().iter().map(|v| v.abs()).fold(0f32, f32::max);
+            for (&a, &b) in actual.full().iter().zip(expected.full()) {
+                assert!((a - b).abs() <= 1e-3 + 1e-4 * norm);
+            }
+            cancel.store(true, Ordering::Relaxed);
+            assert!(candidate.execute(&weights, &[2, 0], &x, &cancel).is_err());
+        }
     }
 
     #[test]

@@ -28,6 +28,14 @@ impl Zeroize for ResidualInput {
         self.sums.zeroize();
     }
 }
+pub(super) const fn residual_passes() -> usize {
+    if cfg!(feature = "cpu-q8-two-pass") {
+        2
+    } else {
+        3
+    }
+}
+
 pub(super) struct Input {
     quants: [i8; MAX_HIDDEN],
     scales: [f32; GROUPS],
@@ -82,7 +90,7 @@ impl Input {
             for (i, &v) in block.iter().enumerate() {
                 residual[i] = v - f32::from(self.quants[group * GROUP + i]) * self.scales[group];
             }
-            for refinement in &mut self.refinements {
+            for refinement in self.refinements.iter_mut().take(residual_passes() - 1) {
                 check_cancel(cancel)?;
                 let scale = residual.iter().map(|v| v.abs()).fold(0f32, f32::max) / 127.;
                 refinement.scales[group] = scale;
@@ -194,7 +202,7 @@ mod avx {
                     - bias * input.sums[index] as f32),
         );
         if input.refined {
-            for refinement in &input.refinements {
+            for refinement in input.refinements.iter().take(residual_passes() - 1) {
                 let signed = unsafe {
                     _mm256_loadu_si256(refinement.quants.as_ptr().add(index * GROUP).cast())
                 };
@@ -379,6 +387,21 @@ mod tests {
                     .collect();
                 let mut input = Input::empty();
                 input.fill_refined(&values, &cancel).unwrap();
+                assert_eq!(
+                    residual_passes(),
+                    if cfg!(feature = "cpu-q8-two-pass") {
+                        2
+                    } else {
+                        3
+                    }
+                );
+                for spare in &input.refinements[residual_passes() - 1..] {
+                    assert!(
+                        spare.quants.iter().all(|&v| v == 0)
+                            && spare.scales.iter().all(|&v| v.to_bits() == 0)
+                            && spare.sums.iter().all(|&v| v == 0)
+                    );
+                }
                 let mut weights = vec![0.; MAX_HIDDEN];
                 kind.decode(&packed, &mut weights).unwrap();
                 let reference: f64 = weights
@@ -392,7 +415,47 @@ mod tests {
                     .map(|(&w, &v)| (f64::from(w) * f64::from(v)).abs())
                     .sum();
                 let actual = dot(kind, &packed, &input, &cancel).unwrap();
-                assert!((f64::from(actual) - reference).abs() <= 1e-5 + 1e-5 * norm);
+                // Independently derived two-pass quantization error: primary
+                // group error <= max|x|/254; residual pass error <= max|x|/254^2.
+                // Three-pass keeps its previously accepted forward-error bound.
+                let quantization_bound = if residual_passes() == 2 {
+                    weights
+                        .chunks_exact(GROUP)
+                        .zip(values.chunks_exact(GROUP))
+                        .map(|(w, x)| {
+                            let maximum =
+                                x.iter().map(|&v| f64::from(v).abs()).fold(0f64, f64::max);
+                            maximum / (254f64 * 254f64)
+                                * w.iter().map(|&v| f64::from(v).abs()).sum::<f64>()
+                        })
+                        .sum::<f64>()
+                } else {
+                    0.
+                };
+                assert!(
+                    (f64::from(actual) - reference).abs()
+                        <= 1e-5 + 1e-5 * norm + quantization_bound
+                );
+                if residual_passes() == 2 {
+                    for (g, block) in values.chunks_exact(GROUP).enumerate() {
+                        let maximum = block
+                            .iter()
+                            .map(|&v| f64::from(v).abs())
+                            .fold(0f64, f64::max);
+                        for (i, &value) in block.iter().enumerate() {
+                            let reconstructed = f64::from(input.quants[g * GROUP + i])
+                                * f64::from(input.scales[g])
+                                + f64::from(input.refinements[0].quants[g * GROUP + i])
+                                    * f64::from(input.refinements[0].scales[g]);
+                            assert!(
+                                (reconstructed - f64::from(value)).abs()
+                                    <= maximum
+                                        * ((254f64 * 254f64).recip()
+                                            + 8. * f64::from(f32::EPSILON))
+                            );
+                        }
+                    }
+                }
                 input.zeroize();
                 assert!(!input.refined);
                 assert_eq!(input.columns, 0);

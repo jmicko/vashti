@@ -153,7 +153,7 @@ impl Config {
         pooled: bool,
         overlap: bool,
     ) -> Result<Self> {
-        self.reserve_count1_hybrid_arithmetic(pooled, overlap, false, false, false)
+        self.reserve_count1_hybrid_arithmetic(pooled, overlap, false, false, false, 16)
     }
     pub(crate) fn reserve_count1_hybrid_arithmetic(
         mut self,
@@ -162,6 +162,7 @@ impl Config {
         q8: bool,
         residual: bool,
         prefetch: bool,
+        threads: usize,
     ) -> Result<Self> {
         use kuno_text::cpu_expert::{Backend, ExpertOperator, WorkerPlan};
         if self.cpu_operator.is_some()
@@ -171,7 +172,7 @@ impl Config {
         {
             return Err(error());
         }
-        let plan = WorkerPlan::physical(16)?;
+        let plan = WorkerPlan::physical(threads)?;
         let backend = if cfg!(feature = "cpu-fma") {
             Backend::Avx2Fma
         } else {
@@ -685,6 +686,18 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             .cpu_workers_pooled())
     }
 
+    pub(crate) fn native_cpu_arithmetic_geometry(
+        &self,
+        executor: &GpuExecutor<'f>,
+    ) -> Result<Option<(usize, usize)>> {
+        self.completed_native_projection_boundary(executor)?;
+        Ok(self
+            .native_batch
+            .as_ref()
+            .ok_or(error())?
+            .moe
+            .cpu_arithmetic_geometry())
+    }
     pub(crate) fn native_cpu_mapped_prefetch(
         &self,
         executor: &GpuExecutor<'f>,

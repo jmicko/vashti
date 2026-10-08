@@ -34,8 +34,18 @@ def completion(cap, deferred=False):
     ) + ((f"public_count1_hybrid_mid_token_cancel cap={cap} layer=47 erased=true",) if deferred else ())
 
 
-def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False, metadata=False, banks="standard", shared=False, shared_gdn=False, info_batch_upload=False, dispatch="threaded", cpu_fma=False, reclaim_gpu_sources=False, native_scratch_clear=False, cpu_q8_residual=False, cpu_mapped_prefetch=False, pageout_gpu_sources=False):
+def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False, metadata=False, banks="standard", shared=False, shared_gdn=False, info_batch_upload=False, dispatch="threaded", cpu_fma=False, reclaim_gpu_sources=False, native_scratch_clear=False, cpu_q8_residual=False, cpu_mapped_prefetch=False, pageout_gpu_sources=False, cpu_threads=16, cpu_q8_two_pass=False):
     validate_cap(cap)
+    if type(cpu_threads) is not int or cpu_threads not in (4,8,16):
+        raise ValueError("Explicit public CPU threads must be4,8,16")
+    if cpu_threads!=16 or cpu_q8_two_pass or "cpu_threads" in receipt:
+        if type(receipt.get("cpu_threads")) is not int or type(receipt.get("observed_cpu_threads")) is not int or receipt.get("cpu_threads")!=cpu_threads or receipt.get("observed_cpu_threads")!=cpu_threads:
+            raise ValueError("Actual constructed CPU threads mismatch")
+        if receipt.get("cpu_q8_two_pass") is not cpu_q8_two_pass or (cpu_q8_two_pass and (not cpu_q8 or not cpu_q8_residual or workers!="pooled")):
+            raise ValueError("Compiled two-pass Q8 must match explicit residual choice")
+        passes=receipt.get("observed_cpu_q8_residual_passes")
+        if type(passes) is not int or passes!=(2 if cpu_q8_two_pass else 3 if cpu_q8_residual else 0):
+            raise ValueError("Completed residual activation pass count mismatch")
     if cpu_mapped_prefetch or "cpu_mapped_prefetch" in receipt:
         calls=receipt.get("warm_cpu_prefetch_calls");misses=receipt.get("completed_cpu_misses")
         if (cpu_mapped_prefetch and (not mapped or workers!="pooled")) or receipt.get("cpu_mapped_prefetch") is not cpu_mapped_prefetch or receipt.get("observed_cpu_mapped_prefetch") is not cpu_mapped_prefetch or type(calls) is not int or type(misses) is not int or calls != (3*misses if cpu_mapped_prefetch else 0):
@@ -181,7 +191,13 @@ def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False
         raise ValueError("Hybrid continuation and both cancellation proofs required")
 
 
-def worker_environment(model, receipt, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False, metadata=False, banks="standard", shared=False, shared_gdn=False, info_batch_upload=False, dispatch="threaded", reclaim_gpu_sources=False, native_scratch_clear=False, cpu_q8_residual=False, cpu_mapped_prefetch=False, pageout_gpu_sources=False):
+def worker_environment(model, receipt, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False, metadata=False, banks="standard", shared=False, shared_gdn=False, info_batch_upload=False, dispatch="threaded", reclaim_gpu_sources=False, native_scratch_clear=False, cpu_q8_residual=False, cpu_mapped_prefetch=False, pageout_gpu_sources=False, cpu_threads=16, cpu_q8_two_pass=False):
+    if type(cpu_threads) is not int or cpu_threads not in (4,8,16):
+        raise ValueError("Explicit public CPU threads must be4,8,16")
+    if cpu_threads!=16 and workers!="pooled":
+        raise ValueError("CPU thread tuning requires pooled workers")
+    if cpu_q8_two_pass and (not cpu_q8 or not cpu_q8_residual or workers!="pooled"):
+        raise ValueError("Two-pass Q8 requires pooled explicit residual activations")
     if pageout_gpu_sources and not reclaim_gpu_sources:
         raise ValueError("Mapped GPU source pageout requires explicit source reclaim")
     if cpu_mapped_prefetch and (not mapped or workers!="pooled"):
@@ -210,6 +226,8 @@ def worker_environment(model, receipt, workers="scoped", overlap=False, mapped=F
         raise ValueError("Unknown GPU device dispatch")
     env = BASE.worker_environment(model, receipt, 8, True, 1, "single-q4-all")
     env["KUNO_LAB_DEVICE_DISPATCH"] = dispatch
+    env["KUNO_LAB_CPU_THREADS"]=str(cpu_threads)
+    env["KUNO_LAB_CPU_Q8_TWO_PASS"]="1" if cpu_q8_two_pass else "0"
     env["KUNO_LAB_CPU_WORKERS"] = workers
     env["KUNO_LAB_CPU_GPU_OVERLAP"] = "1" if overlap else "0"
     env["KUNO_LAB_MAPPED_WEIGHTS"] = "1" if mapped else "0"
@@ -262,6 +280,8 @@ def main():
     parser.add_argument("--long-fixture", action="store_true")
     parser.add_argument("--cpu-q8", action="store_true")
     parser.add_argument("--cpu-fma", action="store_true")
+    parser.add_argument("--cpu-threads",type=int,choices=(4,8,16),default=16)
+    parser.add_argument("--cpu-q8-two-pass",action="store_true")
     parser.add_argument("--cpu-mapped-prefetch",action="store_true")
     parser.add_argument("--cpu-q8-residual",action="store_true",help="Three-pass residual Q8 activations; requires explicit --cpu-q8")
     parser.add_argument("--native-scratch-clear",action="store_true",help="Use ordered full-owner native clears at original scratch boundaries")
@@ -304,6 +324,8 @@ def main():
         parser.error("Mapped GPU source pageout requires --reclaim-gpu-sources")
     if args.cpu_mapped_prefetch and (not args.mapped_weights or args.cpu_workers!="pooled"):
         parser.error("CPU source prefetch requires mapped pooled workers")
+    if args.cpu_q8_two_pass and (not args.cpu_q8 or not args.cpu_q8_residual or args.cpu_workers!="pooled"):
+        parser.error("Two-pass Q8 requires pooled residual Q8")
     if args.cpu_q8_residual and not args.cpu_q8:
         parser.error("Residual Q8 requires --cpu-q8")
     if args.cpu_fma and (args.cpu_workers != "pooled" or args.cpu_q8):
@@ -317,6 +339,8 @@ def main():
     frozen, identity, artifacts_identity = BASE.cargo_binary(args.cargo_artifacts)
     artifacts = [json.loads(line) for line in args.cargo_artifacts.read_text().splitlines()]
     compiled = next(r for r in artifacts if r.get("reason")=="compiler-artifact" and r.get("target",{}).get("name")=="kuno-text-lab" and r.get("executable"))
+    if ("cpu-q8-two-pass" in compiled.get("features",[])) is not args.cpu_q8_two_pass:
+        parser.error("Two-pass Q8 must match independently selected compiled artifact")
     if ("cpu-fma" in compiled.get("features",[])) is not args.cpu_fma:
         parser.error("CPU FMA must match the independently selected compiled artifact")
     command = [
@@ -328,7 +352,7 @@ def main():
         ("KUNO_LAB_STATIC_CACHE_BYTES " if args.bank_profile not in ("intel96","intel128","intel144") else "") + "KUNO_LAB_EXPERT_BATCH_BYTES KUNO_LAB_EXPERT_SCATTER",
     ]
     command.extend("--setenv=" + key + "=" + value
-                   for key, value in worker_environment(args.model.resolve(), target, args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault,args.defer_router_io,args.gpu_router,args.retained_metadata,args.bank_profile,args.next_shared_kernels,args.next_shared_gdn,args.info_batch_upload,args.device_dispatch,args.reclaim_gpu_sources,args.native_scratch_clear,args.cpu_q8_residual,args.cpu_mapped_prefetch,args.pageout_gpu_sources).items())
+                   for key, value in worker_environment(args.model.resolve(), target, args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault,args.defer_router_io,args.gpu_router,args.retained_metadata,args.bank_profile,args.next_shared_kernels,args.next_shared_gdn,args.info_batch_upload,args.device_dispatch,args.reclaim_gpu_sources,args.native_scratch_clear,args.cpu_q8_residual,args.cpu_mapped_prefetch,args.pageout_gpu_sources,args.cpu_threads,args.cpu_q8_two_pass).items())
     command.extend([sys.executable, str(HERE / "protected-lab-exec.py"), str(frozen),
                     args.card, MODE, str(args.cpu_miss_cap)])
     print("verified_cargo_executable_sha256=" + identity, flush=True)
@@ -343,7 +367,7 @@ def main():
         raise SystemExit("Missing whole-model hybrid receipt")
     snapshot = target.read_bytes()
     receipt = json.loads(snapshot)
-    validate_receipt(receipt, args.card, args.cpu_miss_cap, "".join(lines), args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault,args.defer_router_io,args.gpu_router,args.retained_metadata,args.bank_profile,args.next_shared_kernels,args.next_shared_gdn,args.info_batch_upload,args.device_dispatch,args.cpu_fma,args.reclaim_gpu_sources,args.native_scratch_clear,args.cpu_q8_residual,args.cpu_mapped_prefetch,args.pageout_gpu_sources)
+    validate_receipt(receipt, args.card, args.cpu_miss_cap, "".join(lines), args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault,args.defer_router_io,args.gpu_router,args.retained_metadata,args.bank_profile,args.next_shared_kernels,args.next_shared_gdn,args.info_batch_upload,args.device_dispatch,args.cpu_fma,args.reclaim_gpu_sources,args.native_scratch_clear,args.cpu_q8_residual,args.cpu_mapped_prefetch,args.pageout_gpu_sources,args.cpu_threads,args.cpu_q8_two_pass)
     record = {
         "scope": "fixed-public-count1-hybrid-output-and-lifecycle-only",
         "requested_cpu_fma_arithmetic": args.cpu_fma,
@@ -352,6 +376,8 @@ def main():
         "requested_cpu_q8_residual":args.cpu_q8_residual,
         "requested_cpu_mapped_prefetch":args.cpu_mapped_prefetch,
         "requested_pageout_gpu_sources":args.pageout_gpu_sources,
+        "requested_cpu_threads":args.cpu_threads,
+        "requested_cpu_q8_two_pass":args.cpu_q8_two_pass,
         "cargo_artifacts_sha256": artifacts_identity, "frozen_executable_sha256": identity,
         "card": args.card, "fixture": MODE, "cpu_miss_cap": args.cpu_miss_cap,
         "receipt_sha256": BASE.digest(snapshot), "protected_lifecycle_completion_checked": True,

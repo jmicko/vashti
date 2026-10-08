@@ -108,7 +108,9 @@ with explicit three-pass residual Q8 CPU activations on original weights. This
 is approximate and separately pinned; the original128-ID gate is unchanged.
 Actual private metadata is charged inside the original1MiB CPU envelope.124
 core tests (3 ignored),486 native tests plus two shader suites,27 Python controls
-and strict all-target Clippy pass. Physical correctness/speed are pending.
+and strict all-target Clippy pass. Source662a4bf/artifactf48737d4 passes all128
+IDs and original owning/fresh/lifecycle gates:36182ms decode (3.5100 tokens/s),
+51308ms prefill. Warm reads11150274560 bytes and64084 major faults remain.
 
 Selected CPU source read-ahead (a045454, artifact68052dcf) passes the same
 full gates with34944ms decode (3.6344 tokens/s),57714 advice calls for19238
@@ -123,7 +125,20 @@ complete validated GPU source pages are addressed at the original completed
 cap10 boundary. Linux COLD/PAGEOUT preserve read-only file contents and borrowed
 slices; anonymous/private inference memory is never addressed. This remains
 best-effort advice, with no actual reclaimed-byte credit. Mandatory original
-owning/output gates remain. Physical efficacy pending.
+owning/output gates remain. Physical source09dcdd9/artifact7a139c08 passes all original gates with35169ms
+decode (3.6111 tokens/s),51648ms prefill; readbytes10623344640 remain. The same
+frozen binary under the protected root cgroup passes all gates with34984ms
+(3.6302 tokens/s),51385ms prefill,10556477440 readbytes. Original blob belongs
+to UID997; Linux can silently filter nonowner file PAGEOUT, but temporary root
+execution also produces no useful improvement. No permission/model/service
+change. Physical B70 recovers50688000 bytes.
+
+Source2bd4f70/artifactcf2a9eee expands to144 original experts in two72-slot
+shards within the same24GiB bank/5GiB cache/31GiB device ceiling. All128 IDs,
+full original owning and fresh/lifecycle gates pass with34343ms decode
+(3.6980 tokens/s),50668ms prefill,16411 CPU misses. Readbytes10352029696 and
+58553 major faults remain.487 native tests plus two shader suites,29 Python
+controls and strict all-target Clippy pass. This remains below10 tokens/s.
 
 The user granted exclusive GPUs. Installed Kuno had an idle managed worker
 holding15978409984 B70 bytes with no active request; a graceful Kuno restart

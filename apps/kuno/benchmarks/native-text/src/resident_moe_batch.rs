@@ -425,6 +425,11 @@ impl Workspace {
     pub(crate) fn cpu_workers_pooled(&self) -> Option<bool> {
         self.hybrid.as_ref().map(|h| h.operator.workers_pooled())
     }
+    pub(crate) fn cpu_arithmetic_geometry(&self) -> Option<(usize, usize)> {
+        self.hybrid
+            .as_ref()
+            .map(|h| (h.operator.worker_count(), h.operator.q8_residual_passes()))
+    }
     pub(crate) fn cpu_mapped_prefetch(&self) -> Option<(bool, u64)> {
         self.hybrid
             .as_ref()
