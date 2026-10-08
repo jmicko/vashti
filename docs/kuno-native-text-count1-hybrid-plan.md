@@ -1027,3 +1027,16 @@ names. These are public model/operator classes; labels contain no rows, source
 spans, routing, request values or timestamps. Shader source/arithmetic and
 compilation identity are unchanged. Profiled runs remain excluded from speed
 selection and subject to the original I/O/full-model/owning checks.
+
+### Batched actual-resource metadata checks
+
+The selected retained-metadata laboratory may query each original MoE or hybrid
+validation boundary as one ordered batch of full handles rather than one runtime
+call per handle. Every original stream, offset, logical/full extent, dtype, shard
+and physical alias check remains. No identity proof is cached across boundaries.
+Cardinality is public and bounded (ten hybrid owners; at most sixteen MoE/private
+and bank owners). Actual handle and returned metadata Vec capacities, plus the
+fixed numeric extent array where present, must fit the existing 4 KiB host-header
+allowance; no budget is increased. Non-retained resource lookup keeps its original
+submission semantics. Original full-model and owning/lifecycle acceptance gates
+are required before accepting a speed result.

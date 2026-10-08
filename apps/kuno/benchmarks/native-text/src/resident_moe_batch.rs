@@ -1338,10 +1338,18 @@ fn physical(
         .into_iter()
         .flat_map(|b| b.segments().iter())
         .collect();
-    let mut resources = Vec::new();
-    resources
-        .try_reserve_exact(8 + public.len())
+    let extent_count = all
+        .len()
+        .checked_add(public.len())
+        .ok_or(Error::ArithmeticOverflow)?;
+    if extent_count > 16 {
+        return Err(err("native routed metadata cardinality"));
+    }
+    let mut handles = Vec::new();
+    handles
+        .try_reserve_exact(extent_count)
         .map_err(|_| Error::LimitExceeded("native routed physical metadata"))?;
+    let mut extents = Zeroizing::new([(0u64, 0u64); 16]);
     for (i, &id) in all.iter().enumerate() {
         if all[..i].contains(&id) {
             return Err(err("native routed owning alias"));
@@ -1356,14 +1364,8 @@ fn physical(
         {
             return Err(err("native routed private full handle"));
         }
-        let mut metadata = u::resources(client, vec![h.clone()])?;
-        let r = metadata.pop().ok_or(Error::InvalidBufferLength)?;
-        let v = r.resource();
-        check_page(v.offset, v.size, v.buffer.size(), n, n)?;
-        if resources.iter().any(|b| b == &v.buffer) {
-            return Err(err("native routed physical alias"));
-        }
-        resources.push(v.buffer.clone());
+        extents[handles.len()] = (n, n);
+        handles.push(h.clone());
     }
     for segment in &public {
         let h = segment.handle();
@@ -1376,15 +1378,41 @@ fn physical(
         {
             return Err(err("native routed public full handle"));
         }
-        let mut metadata = u::resources(client, vec![h.clone()])?;
-        let r = metadata.pop().ok_or(Error::InvalidBufferLength)?;
-        let v = r.resource();
         let bound = main_admission::page_bytes(n).map_err(admission_error)?;
+        extents[handles.len()] = (n, bound);
+        handles.push(h.clone());
+    }
+    // Inspect the same actual full resources once as an ordered retained batch.
+    // No resource identity is cached across this original proof boundary.
+    let handle_bytes = handles
+        .capacity()
+        .checked_mul(std::mem::size_of::<Handle>())
+        .ok_or(Error::ArithmeticOverflow)?;
+    if handle_bytes > 4096 {
+        return Err(Error::LimitExceeded("native physical handle metadata"));
+    }
+    let metadata = u::resources(client, handles)?;
+    if metadata.len() != extent_count {
+        return Err(Error::InvalidBufferLength);
+    }
+    let metadata_bytes = metadata
+        .capacity()
+        .checked_mul(std::mem::size_of_val(&metadata[0]))
+        .and_then(|n| n.checked_add(handle_bytes + std::mem::size_of_val(&*extents)))
+        .ok_or(Error::ArithmeticOverflow)?;
+    if metadata_bytes > 4096 {
+        return Err(Error::LimitExceeded("native routed physical metadata"));
+    }
+    for (i, r) in metadata.iter().enumerate() {
+        let v = r.resource();
+        let (n, bound) = extents[i];
         check_page(v.offset, v.size, v.buffer.size(), n, bound)?;
-        if resources.iter().any(|b| b == &v.buffer) {
-            return Err(err("native routed public physical alias"));
+        if metadata[..i]
+            .iter()
+            .any(|p| p.resource().buffer == v.buffer)
+        {
+            return Err(err("native routed physical alias"));
         }
-        resources.push(v.buffer.clone());
     }
     // Use actual layer dtypes, not the first layer, at every launch proof.
     for (b, p) in banks.into_iter().zip(g.projections()) {

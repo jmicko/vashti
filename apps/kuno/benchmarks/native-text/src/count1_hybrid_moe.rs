@@ -8,6 +8,7 @@ use crate::{
     resident_util as u,
 };
 use cubecl::{prelude::*, wgpu::WgpuRuntime};
+use cubecl_runtime::server::Handle;
 use kuno_text::cpu_expert::Partials;
 use zeroize::Zeroizing;
 
@@ -656,7 +657,8 @@ fn owning_views(
     let stream = arena.handle(fault).map_err(u::fault)?.stream;
     // Fixed public cardinality, not a private-sized Vec. Clones remain scoped
     // to this validation; the arena owns every buffer throughout both launches.
-    let mut resources: [Option<wgpu::Buffer>; 10] = std::array::from_fn(|_| None);
+    let mut handles = Vec::new();
+    handles.try_reserve_exact(10).map_err(|_| launch_error())?;
     for (i, &id) in all.iter().enumerate() {
         let handle = arena.handle(id).map_err(u::fault)?;
         let bytes = layouts[i].owned_bytes as u64;
@@ -668,23 +670,41 @@ fn owning_views(
         {
             return Err(launch_error());
         }
-        let mut metadata = u::resources(client, vec![handle.clone()])?;
-        let resource = metadata
-            .pop()
-            .ok_or(kuno_text::Error::InvalidBufferLength)?;
+        handles.push(handle.clone());
+    }
+    let handle_bytes = handles
+        .capacity()
+        .checked_mul(std::mem::size_of::<Handle>())
+        .ok_or_else(launch_error)?;
+    if handle_bytes > 4096 {
+        return Err(launch_error());
+    }
+    let metadata = u::resources(client, handles)?;
+    if metadata.len() != 10 {
+        return Err(launch_error());
+    }
+    let metadata_bytes = metadata
+        .capacity()
+        .checked_mul(std::mem::size_of_val(&metadata[0]))
+        .and_then(|n| n.checked_add(handle_bytes))
+        .ok_or_else(launch_error)?;
+    if metadata_bytes > 4096 {
+        return Err(launch_error());
+    }
+    for (i, resource) in metadata.iter().enumerate() {
+        let bytes = layouts[i].owned_bytes as u64;
         let view = resource.resource();
         if view.offset != 0
             || view.size != bytes
             || view.buffer.size() != bytes
-            || resources[..i]
+            || metadata[..i]
                 .iter()
-                .flatten()
-                .any(|buffer| buffer == &view.buffer)
+                .any(|p| p.resource().buffer == view.buffer)
         {
             return Err(launch_error());
         }
-        resources[i] = Some(view.buffer.clone());
     }
+
     Ok(words)
 }
 
