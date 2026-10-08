@@ -51,6 +51,7 @@ pub struct Gpu {
     pub readback: wgpu::Buffer,
     pub dummy: wgpu::Buffer,
     pub states: Vec<wgpu::Buffer>,
+    pub trusted_bounds: bool,
     layout: wgpu::BindGroupLayout,
     pipeline_layout: wgpu::PipelineLayout,
     pipelines: BTreeMap<String, wgpu::ComputePipeline>,
@@ -58,6 +59,11 @@ pub struct Gpu {
 
 impl Gpu {
     pub fn new() -> Result<Self> {
+        let trusted_bounds = match std::env::var("KUNO_LAB_ORNITH_TRUSTED_BOUNDS") {
+            Err(std::env::VarError::NotPresent) => false,
+            Ok(value) if value == "1" => true,
+            _ => return Err("Explicit fixed-geometry bounds selection rejected".into()),
+        };
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::VULKAN,
             ..wgpu::InstanceDescriptor::new_without_display_handle()
@@ -154,6 +160,7 @@ impl Gpu {
             readback,
             dummy,
             states: Vec::new(),
+            trusted_bounds,
             layout,
             pipeline_layout,
             pipelines: BTreeMap::new(),
@@ -177,12 +184,27 @@ impl Gpu {
         if let Some(pipeline) = self.pipelines.get(name) {
             return pipeline.clone();
         }
-        let module = self
-            .device
-            .create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some(name),
-                source: wgpu::ShaderSource::Wgsl(code.into()),
-            });
+        let descriptor = wgpu::ShaderModuleDescriptor {
+            label: Some(name),
+            source: wgpu::ShaderSource::Wgsl(code.into()),
+        };
+        let module = if self.trusted_bounds {
+            // SAFETY: this is only the fixed-public laboratory. Graph::validate
+            // checks every original tensor shape/type; token and context bounds
+            // are checked before dispatch. Each subgroup row is guarded, routed
+            // ranks select IDs0..255, and all fixed arena ranges fit524288f32.
+            // GDN uses24576+32*128*128f32; full KV uses2*4096*512f32.
+            // Public probes admit32 rows, columns2048, and original exact row
+            // extents. No external geometry or production request reaches here.
+            unsafe {
+                self.device.create_shader_module_trusted(
+                    descriptor,
+                    wgpu::ShaderRuntimeChecks::unchecked(),
+                )
+            }
+        } else {
+            self.device.create_shader_module(descriptor)
+        };
         let pipeline = self
             .device
             .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
@@ -259,7 +281,11 @@ impl Gpu {
         offset: u64,
         bytes: u64,
     ) -> Result<zeroize::Zeroizing<Vec<u8>>> {
-        if bytes == 0 || bytes > 1024 * 1024 || !bytes.is_multiple_of(4) || offset + bytes > source.size() {
+        if bytes == 0
+            || bytes > 1024 * 1024
+            || !bytes.is_multiple_of(4)
+            || offset + bytes > source.size()
+        {
             return Err("Public probe readback bound exceeded".into());
         }
         let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
