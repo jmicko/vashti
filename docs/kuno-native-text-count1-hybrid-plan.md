@@ -808,3 +808,21 @@ runner flags; ambient flags are overwritten. Numeric-only warm advice counts
 must equal three times completed CPU misses (zero when disabled). Counter reads
 occur outside the measured process resource window. Mandatory original128 IDs,
 fresh/poison and full-owning audits remain. Device efficacy is pending.
+
+
+### Read-only mapped GPU source reclamation, 2026-10-08
+
+Explicit protected `--pageout-gpu-sources` requires source reclamation and its
+existing mapped static cap10 completed-boundary contract. For the same complete
+original source pages retained on GPU, it applies Linux MADV_COLD then
+MADV_PAGEOUT to the original read-only regular-file mapping before file advice.
+These operations preserve file bytes and mapping semantics; private anonymous
+inference state is never passed to them. Inode lifetime, unchanged-stat checks,
+foreign tensor/extent bounds and full-page interior restrictions remain. Unlike
+MADV_DONTNEED/FREE/REMOVE, this path neither replaces nor changes mapped contents.
+See the [Linux API semantics](https://man7.org/linux/man-pages/man2/madvise.2.html).
+Reclamation is best effort; advised coverage is not actual freed-byte credit.
+
+Ambient selection is overwritten. Receipts must match independently selected
+pageout and source-reclaim flags. All original128 IDs, completed producer/consumer
+fences and full owning audits remain required. No installed/API/default change.

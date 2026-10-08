@@ -823,6 +823,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let large_weight_cache = count1_environment_opt_in(&mode, "KUNO_LAB_LARGE_WEIGHT_CACHE")?;
     let reclaim_gpu_sources = count1_environment_opt_in(&mode, "KUNO_LAB_RECLAIM_GPU_SOURCES")?;
+    let pageout_gpu_sources = count1_environment_opt_in(&mode, "KUNO_LAB_PAGEOUT_GPU_SOURCES")?;
+    if pageout_gpu_sources && !reclaim_gpu_sources {
+        return Err("Mapped GPU source pageout requires explicit source reclaim".into());
+    }
     if reclaim_gpu_sources && (!mapped_weights || count1_hybrid_cap != Some(10)) {
         return Err(
             "GPU source cache hint requires mapped static cap10 protected count1 mode".into(),
@@ -2138,7 +2142,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 resident
                     .as_ref()
                     .ok_or("GPU source cache hint requires complete resident model")?
-                    .advise_gpu_sources_not_needed(&executor)?
+                    .advise_gpu_sources_not_needed(&executor, pageout_gpu_sources)?
             } else {
                 0
             };
@@ -2317,6 +2321,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 receipt["cpu_fma_arithmetic"] = serde_json::json!(cfg!(feature = "cpu-fma"));
                 receipt["warm_host_resource_delta"] = serde_json::json!(warm_resources);
                 receipt["reclaim_gpu_sources"] = serde_json::json!(reclaim_gpu_sources);
+                receipt["pageout_gpu_sources"] = serde_json::json!(pageout_gpu_sources);
                 receipt["gpu_source_advised_bytes"] = serde_json::json!(gpu_source_advised_bytes);
                 receipt["gpu_source_advice_ms"] = serde_json::json!(gpu_source_advice_ms);
                 receipt["large_weight_cache"] = serde_json::json!(large_weight_cache);

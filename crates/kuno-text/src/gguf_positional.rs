@@ -57,6 +57,35 @@ impl GgufFile {
         offset: u64,
         length: u64,
     ) -> Result<u64> {
+        self.advise_gpu_source(tensor, offset, length, false)
+    }
+
+    /// Reclaim only checked immutable original file pages already copied to GPU.
+    /// Linux COLD/PAGEOUT advice preserves mapping contents and borrowed slices.
+    /// It never addresses anonymous/private inference memory or grants freed-byte credit.
+    #[allow(unsafe_code)]
+    pub fn advise_gpu_source_pageout(
+        &self,
+        tensor: TensorView<'_>,
+        offset: u64,
+        length: u64,
+    ) -> Result<u64> {
+        if !self.weights_mapped() {
+            return Err(Error::InvalidFormat(
+                "GPU source pageout requires original map",
+            ));
+        }
+        self.advise_gpu_source(tensor, offset, length, true)
+    }
+
+    #[allow(unsafe_code)]
+    fn advise_gpu_source(
+        &self,
+        tensor: TensorView<'_>,
+        offset: u64,
+        length: u64,
+        pageout: bool,
+    ) -> Result<u64> {
         if !tensor.belongs_to(self)
             || length == 0
             || offset
@@ -80,6 +109,11 @@ impl GgufFile {
                     advice: std::ffi::c_int,
                 ) -> std::ffi::c_int;
                 fn getpagesize() -> std::ffi::c_int;
+                fn madvise(
+                    address: *mut std::ffi::c_void,
+                    length: usize,
+                    advice: std::ffi::c_int,
+                ) -> std::ffi::c_int;
             }
             let absolute = self
                 .data_offset
@@ -112,6 +146,34 @@ impl GgufFile {
                 .lock()
                 .map_err(|_| Error::InvalidFormat("model reader lock poisoned"))?;
             self.check_stat(&file)?;
+            if pageout {
+                let map = self
+                    .mapping
+                    .get()
+                    .ok_or(Error::InvalidFormat("GPU source pageout map absent"))?;
+                let first = usize::try_from(first).map_err(|_| Error::ArithmeticOverflow)?;
+                let last = usize::try_from(last).map_err(|_| Error::ArithmeticOverflow)?;
+                if last > map.len() {
+                    return Err(Error::OutOfBounds);
+                }
+                // SAFETY: complete page-aligned checked span inside the immutable
+                // original read-only regular-file map. COLD and PAGEOUT change
+                // residency only; unlike DONTNEED/FREE/REMOVE they do not change
+                // byte semantics. No anonymous/dirty/private memory is addressed,
+                // no map is replaced, and all existing borrows stay valid.
+                for advice in [20, 21] {
+                    let status = unsafe {
+                        madvise(
+                            map.as_ptr().add(first).cast_mut().cast(),
+                            last - first,
+                            advice,
+                        )
+                    };
+                    if status != 0 {
+                        return Err(std::io::Error::last_os_error().into());
+                    }
+                }
+            }
             // SAFETY: original read-only pinned fd, Linux64 off_t ABI, bounded
             // full pages inside original inspected file. DONTNEED is a cache
             // hint, not a write/unmap; all existing borrowed slices stay valid.
@@ -527,6 +589,25 @@ mod tests {
         assert!(advised > 0 && advised <= tensor.info().byte_len());
         assert_eq!(original, expected);
         assert_eq!(original.as_ptr(), address);
+        assert_eq!(
+            f.model
+                .advise_gpu_source_pageout(tensor, 0, tensor.info().byte_len())
+                .unwrap(),
+            advised
+        );
+        assert_eq!(original, expected);
+        assert_eq!(original.as_ptr(), address);
+        assert!(
+            f.model
+                .advise_gpu_source_pageout(other.model.tensor("w").unwrap(), 0, 16)
+                .is_err()
+        );
+        assert!(
+            other
+                .model
+                .advise_gpu_source_pageout(other.model.tensor("w").unwrap(), 0, 16)
+                .is_err()
+        );
         let mut read = vec![0; expected.len()];
         reader.read_range(tensor, 16, &mut read).unwrap();
         assert_eq!(read, expected);

@@ -905,6 +905,7 @@ impl<'a> GpuExecutor<'a> {
     pub(crate) fn advise_resident_gpu_sources_not_needed(
         &self,
         _boundary: &crate::resident_model::batch::CompletedNativeProjectionBoundary,
+        pageout: bool,
     ) -> Result<u64> {
         if !self.model.weights_mapped() || self.resident_admission.is_none() {
             return Err(Error::InvalidFormat(
@@ -938,10 +939,13 @@ impl<'a> GpuExecutor<'a> {
             }
             let length = (cached.words as u64 * 4) / row_bytes * row_bytes;
             bytes = bytes
-                .checked_add(
+                .checked_add(if pageout {
                     self.model
-                        .advise_gpu_source_not_needed(tensor, *offset, length)?,
-                )
+                        .advise_gpu_source_pageout(tensor, *offset, length)?
+                } else {
+                    self.model
+                        .advise_gpu_source_not_needed(tensor, *offset, length)?
+                })
                 .ok_or(Error::ArithmeticOverflow)?;
         }
         for bank in self.banks.values() {
@@ -968,10 +972,13 @@ impl<'a> GpuExecutor<'a> {
                                 .ok_or(Error::ArithmeticOverflow)?,
                         );
                         bytes = bytes
-                            .checked_add(
+                            .checked_add(if pageout {
                                 self.model
-                                    .advise_gpu_source_not_needed(tensor, *offset, length)?,
-                            )
+                                    .advise_gpu_source_pageout(tensor, *offset, length)?
+                            } else {
+                                self.model
+                                    .advise_gpu_source_not_needed(tensor, *offset, length)?
+                            })
                             .ok_or(Error::ArithmeticOverflow)?;
                     }
                 }

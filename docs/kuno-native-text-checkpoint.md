@@ -110,6 +110,21 @@ Actual private metadata is charged inside the original1MiB CPU envelope.124
 core tests (3 ignored),486 native tests plus two shader suites,27 Python controls
 and strict all-target Clippy pass. Physical correctness/speed are pending.
 
+Selected CPU source read-ahead (a045454, artifact68052dcf) passes the same
+full gates with34944ms decode (3.6344 tokens/s),57714 advice calls for19238
+CPU misses. Warm reads10837012480 bytes and58098 major faults remain. This
+single sample is only a small change, far below10 tokens/s.126 core tests
+(3 ignored),486 native tests plus two shader suites,28 Python controls and
+strict all-target Clippy pass. Physical memory returns50688000 bytes.
+
+The next explicit `--pageout-gpu-sources` candidate also asks Linux to reclaim
+mapped immutable original model pages after their GPU copies are ready. Only
+complete validated GPU source pages are addressed at the original completed
+cap10 boundary. Linux COLD/PAGEOUT preserve read-only file contents and borrowed
+slices; anonymous/private inference memory is never addressed. This remains
+best-effort advice, with no actual reclaimed-byte credit. Mandatory original
+owning/output gates remain. Physical efficacy pending.
+
 The user granted exclusive GPUs. Installed Kuno had an idle managed worker
 holding15978409984 B70 bytes with no active request; a graceful Kuno restart
 released it and physical VRAM returned50688000. There was no GPU reset/unbind
