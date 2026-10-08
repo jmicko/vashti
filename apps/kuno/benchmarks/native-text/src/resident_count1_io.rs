@@ -300,6 +300,7 @@ pub(crate) fn read_count1_router_input(
     layer: usize,
     start: u64,
     gpu_router: bool,
+    shared_router: bool,
 ) -> Result<Count1RouterInput> {
     guarded(admission, || {
         active(arena, admission, cancel)?;
@@ -344,14 +345,23 @@ pub(crate) fn read_count1_router_input(
             rv.first,
         );
         if gpu_router {
-            crate::router_gpu::top10::launch::<WgpuRuntime>(
-                client,
-                CubeCount::Static(1, 1, 1),
-                CubeDim::new_1d(64),
-                u::raw_arg(full_private(arena, router, rv.words)?, ROUTER_BYTES / 4)?,
-                u::raw_arg(packet_handle.clone(), ROUTER_BYTES / 4)?,
-                rv.first,
-            );
+            if shared_router {
+                crate::next_shared::router(
+                    client,
+                    full_private(arena, router, rv.words)?,
+                    packet_handle.clone(),
+                    rv.first,
+                )?;
+            } else {
+                crate::router_gpu::top10::launch::<WgpuRuntime>(
+                    client,
+                    CubeCount::Static(1, 1, 1),
+                    CubeDim::new_1d(64),
+                    u::raw_arg(full_private(arena, router, rv.words)?, ROUTER_BYTES / 4)?,
+                    u::raw_arg(packet_handle.clone(), ROUTER_BYTES / 4)?,
+                    rv.first,
+                );
+            }
         }
         let retired = admission.retired_context();
         admission.readback_count1_bridge(cancel, || {

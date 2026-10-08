@@ -44,6 +44,32 @@ def completion(cap):
 
 
 class HybridLabTests(unittest.TestCase):
+    def test_shared_kernels_require_original_numeric_probes_and_all_dense_calls(self):
+        value = receipt("intel", 10)
+        value.update(fast_gpu=True, observed_fast_dense_calls=5264,
+                     gpu_router=True, observed_gpu_router_calls=336,
+                     next_shared_kernels=True, observed_shared_dense_calls=5264)
+        markers = ("rust_gpu_router cases=6 ranks=10 numeric_and_owning_checks=true",
+                   "next_shared_original_rows cases=6 numeric_and_owning_checks=true",
+                   "next_shared_gpu_router cases=8 numeric_and_owning_checks=true")
+        output = completion(10) + "\n" + "\n".join(markers)
+        LAB.validate_receipt(value, "intel", 10, output, fast=True, gpu_router=True, shared=True)
+        for bad in (None, True, 0, 5263, 5265, -1):
+            wrong = copy.deepcopy(value)
+            wrong["observed_shared_dense_calls"] = bad
+            with self.assertRaises(ValueError):
+                LAB.validate_receipt(wrong, "intel", 10, output, fast=True, gpu_router=True, shared=True)
+        for marker in markers:
+            with self.assertRaises(ValueError):
+                LAB.validate_receipt(value, "intel", 10, output.replace(marker, ""), fast=True, gpu_router=True, shared=True)
+        for kwargs in ({"shared": True}, {"shared": True, "fast": True},
+                       {"shared": True, "fast": True, "gpu_router": True, "fast_fault": True},
+                       {"shared": 1, "fast": True, "gpu_router": True}):
+            with self.assertRaises(ValueError):
+                LAB.worker_environment("/original/model", "/public/receipt", **kwargs)
+        env = LAB.worker_environment("/original/model", "/public/receipt", fast=True, gpu_router=True, shared=True)
+        self.assertEqual(env["KUNO_LAB_NEXT_SHARED"], "1")
+
     def test_deferred_epochs_require_actual_bridges_late_cancel_and_five_owning_audits(self):
         value=receipt("intel",10)
         value.update(compact_info=True,info_slab_bytes=4096,defer_router_io=True,observed_defer_router_io=True,observed_deferred_router_reads=336,io_token_checkpoint=True)

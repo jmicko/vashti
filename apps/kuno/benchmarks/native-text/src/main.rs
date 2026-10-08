@@ -20,6 +20,7 @@ mod grouped_moe_chunk_probe;
 mod info_slab_probe;
 mod main_admission;
 mod matmul_probe;
+mod next_shared;
 mod ordered_public;
 mod ple_batch_gpu;
 mod ple_chunk;
@@ -739,6 +740,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let kernel_profile = count1_environment_opt_in(&mode, "KUNO_LAB_KERNEL_PROFILE")?;
     let fast_gpu = count1_environment_opt_in(&mode, "KUNO_LAB_FAST_GPU")?;
     let fast_gpu_fault = count1_environment_opt_in(&mode, "KUNO_LAB_FAST_GPU_FAULT")?;
+    let next_shared = count1_environment_opt_in(&mode, "KUNO_LAB_NEXT_SHARED")?;
+    if next_shared && (!fast_gpu || fast_gpu_fault || count1_hybrid_cap != Some(10)) {
+        return Err(
+            "Shared Next kernels require protected cap10 fast GPU mode without fused faults".into(),
+        );
+    }
     if fast_gpu_fault && !fast_gpu {
         return Err("Fused subgroup finite checks require the explicit fast GPU path".into());
     }
@@ -748,6 +755,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let compact_info = count1_environment_opt_in(&mode, "KUNO_LAB_COMPACT_INFO")?;
     let batch_tasks = count1_environment_opt_in(&mode, "KUNO_LAB_BATCH_TASKS")?;
     let gpu_router = count1_environment_opt_in(&mode, "KUNO_LAB_GPU_ROUTER")?;
+    if next_shared && !gpu_router {
+        return Err("Shared Next kernels require GPU routing".into());
+    }
     let retained_metadata = count1_environment_opt_in(&mode, "KUNO_LAB_RETAINED_METADATA")?;
     if retained_metadata && count1_hybrid_cap != Some(10) {
         return Err("Retained metadata requires protected cap10 hybrid mode".into());
@@ -900,6 +910,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         let adapter = candidates.remove(0);
         let info = adapter.get_info();
+        if next_shared
+            && (adapter.limits().max_compute_invocations_per_workgroup < 256
+                || adapter.limits().max_compute_workgroup_size_x < 256)
+        {
+            return Err("shared Next router requires256 workgroup lanes".into());
+        }
         if fast_gpu
             && (!adapter.features().contains(wgpu::Features::SUBGROUP)
                 || info.subgroup_min_size < 16
@@ -1887,6 +1903,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let ids = tokenizer.encode(prompt, true)?;
             let mut sequence = model.sequence(ids.len() + limit)?;
             let device_budget = if vendor == 0x8086 { 26 } else { 10 } * 1024 * 1024 * 1024;
+            if next_shared {
+                next_shared::probe(&client, &file)?;
+            }
             let bank_charge = expert_banks::preflight_residency(
                 model.bound_graph(),
                 expert_slots,
@@ -1906,6 +1925,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             executor.gpu_router = gpu_router;
             executor.fast_dense = fast_gpu;
             executor.fast_dense_fault = fast_gpu_fault;
+            executor.shared_kernels = next_shared;
             executor.token_io_checkpoint = token_checkpoint || defer_router_io;
             let cancel = AtomicBool::new(false);
             let mut resident = if resident_enabled {
@@ -2134,6 +2154,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 );
                 receipt["observed_gpu_router_calls"] = serde_json::json!(executor.gpu_router_calls);
                 receipt["fast_gpu"] = serde_json::json!(fast_gpu);
+                receipt["next_shared_kernels"] = serde_json::json!(next_shared);
+                receipt["observed_shared_dense_calls"] =
+                    serde_json::json!(executor.shared_dense_calls);
                 receipt["observed_fast_dense_calls"] = serde_json::json!(executor.fast_dense_calls);
                 receipt["fast_gpu_fault"] = serde_json::json!(fast_gpu_fault);
                 receipt["observed_fast_dense_fault_calls"] =
@@ -2300,6 +2323,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 executor.gpu_router = gpu_router;
                 executor.fast_dense = fast_gpu;
                 executor.fast_dense_fault = fast_gpu_fault;
+                executor.shared_kernels = next_shared;
                 executor.token_io_checkpoint = token_checkpoint || defer_router_io;
                 let mut fresh = resident_model::ResidentModel::new_for_lab_fixture(
                     model.bound_graph(),
@@ -2406,6 +2430,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     executor.gpu_router = gpu_router;
                     executor.fast_dense = fast_gpu;
                     executor.fast_dense_fault = fast_gpu_fault;
+                    executor.shared_kernels = next_shared;
                     executor.token_io_checkpoint = token_checkpoint || defer_router_io;
                     let mut partial = resident_model::ResidentModel::new_for_lab_fixture(
                         model.bound_graph(),

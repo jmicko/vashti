@@ -74,8 +74,20 @@ pub fn top10(router: &Array<u32>, packet: &mut Array<u32>, router_first: usize) 
 pub fn probe(
     client: &cubecl::prelude::ComputeClient<cubecl::wgpu::WgpuRuntime>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    probe_inner(client, false)
+}
+pub fn probe_shared(
+    client: &cubecl::prelude::ComputeClient<cubecl::wgpu::WgpuRuntime>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    probe_inner(client, true)
+}
+fn probe_inner(
+    client: &cubecl::prelude::ComputeClient<cubecl::wgpu::WgpuRuntime>,
+    shared: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     use cubecl::wgpu::WgpuRuntime;
-    for case in 0..6_usize {
+    let cases = if shared { 8 } else { 6 };
+    for case in 0..cases {
         let mut logits = [0.0_f32; EXPERTS];
         for (id, value) in logits.iter_mut().enumerate() {
             *value = match case {
@@ -90,11 +102,19 @@ pub fn probe(
                 }
                 3 => ((id % 17) as f32 - 8.) * 10000.,
                 4 => -(id as f32) / 37.,
-                _ => {
+                5 => {
                     if id == 17 {
                         1e20
                     } else {
                         -1e20
+                    }
+                }
+                6 => f32::MIN,
+                _ => {
+                    if id == 64 || id == 511 {
+                        f32::MAX
+                    } else {
+                        f32::MIN
                     }
                 }
             };
@@ -112,15 +132,19 @@ pub fn probe(
         let packet = client.create_from_slice(u32::as_bytes(&initial));
         // SAFETY: both direct buffers above contain8192 u32 words; one64-lane
         // cube, checked first+512 and [FIRST,END) are inside these full owners.
-        unsafe {
-            top10::launch::<WgpuRuntime>(
-                client,
-                CubeCount::Static(1, 1, 1),
-                CubeDim::new_1d(64),
-                ArrayArg::from_raw_parts(router, 8192),
-                ArrayArg::from_raw_parts(packet.clone(), 8192),
-                first,
-            );
+        if shared {
+            crate::next_shared::router(client, router, packet.clone(), first)?;
+        } else {
+            unsafe {
+                top10::launch::<WgpuRuntime>(
+                    client,
+                    CubeCount::Static(1, 1, 1),
+                    CubeDim::new_1d(64),
+                    ArrayArg::from_raw_parts(router, 8192),
+                    ArrayArg::from_raw_parts(packet.clone(), 8192),
+                    first,
+                );
+            }
         }
         let bytes = client.read_one(packet)?;
         let actual = u32::from_bytes(&bytes);
@@ -147,6 +171,9 @@ pub fn probe(
         }
     }
     println!("rust_gpu_router cases=6 ranks=10 numeric_and_owning_checks=true");
+    if shared {
+        println!("next_shared_gpu_router cases=8 numeric_and_owning_checks=true");
+    }
     Ok(())
 }
 

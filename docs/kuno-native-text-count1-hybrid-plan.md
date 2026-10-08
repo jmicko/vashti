@@ -489,3 +489,31 @@ reliable overlap speed selection, long/production or full-logit claim. See the
 [latest checkpoint](kuno-native-text-checkpoint.md#joined-overlap-short-abba-checkpoint-2026-10-07)
 and exact rust-native-count1-overlap-20261007.json receipt. Admission is restored
 and physical Intel memory recovers without classified Xe faults.
+
+## Shared resident arithmetic in complete count1 Next, 2026-10-08
+
+The explicit laboratory selection `KUNO_LAB_NEXT_SHARED=1` connects the accepted
+Ornith vector packed arithmetic and cached parallel512/top10 router to the
+complete original Next graph. It requires protected cap10, fast GPU projections
+and GPU routing; fused finite checks are excluded. Defaults remain off. All
+operations use the existing CubeCL stream, original model files, public weight
+tiles and complete private input/output owners. Public dimensions/dtype alone
+identify pipelines; offsets travel in the transient16-byte INFO ledger with
+the original full-capacity erasure. No second backend/device or API is added.
+
+Only count1 dense projections and routing change. Original grouped GPU experts,
+CPU misses, rank merge, all-family acceptance, finite/fault checks, normal
+cleanup and swap0/core0 limits remain. The shared parallel router accepts the
+complete finite f32 range, uses negative infinity for eliminated candidates and
+preserves deterministic lower-ID ties. GPU startup checks compare six original
+tensor slabs to independently decoded Rust rows at absolute5e-4 plus relative
+5e-5 tolerance and check eight router patterns including finite extrema and
+complete owning intervals. Changed reduction order is not assumed to imply
+whole-model output parity or a performance win.
+
+The normal runner requires actual shared dense calls covering every fast dense
+dispatch plus the original-row/router probe markers. Source tests:478 native
+tests, both separate offline shader suites,20 hybrid Python controls and strict
+release all-bin Clippy pass. Complete-model device acceptance and timing are
+pending at this source checkpoint. No installed service, consumer or release
+change; required Vashti changes: none.

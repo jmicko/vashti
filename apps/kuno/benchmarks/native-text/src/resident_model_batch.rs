@@ -1181,6 +1181,7 @@ impl Workspace {
                     layer,
                     *start as u64,
                     e.gpu_router,
+                    e.shared_kernels,
                 )?)
             } else {
                 None

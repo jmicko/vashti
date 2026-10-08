@@ -34,8 +34,18 @@ def completion(cap, deferred=False):
     ) + ((f"public_count1_hybrid_mid_token_cancel cap={cap} layer=47 erased=true",) if deferred else ())
 
 
-def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False, metadata=False, banks="standard"):
+def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False, metadata=False, banks="standard", shared=False):
     validate_cap(cap)
+    if shared and (not fast or not gpu_router or fast_fault or cap!=10):
+        raise ValueError("Shared kernels require protected cap10 GPU/router mode")
+    if shared or "next_shared_kernels" in receipt:
+        if receipt.get("next_shared_kernels") is not shared:
+            raise ValueError("Shared-kernel selection mismatch")
+        calls=receipt.get("observed_shared_dense_calls")
+        if type(calls) is not int or not 0 <= calls <= 100000 or (calls>0) is not shared or calls!=receipt.get("observed_fast_dense_calls") and shared:
+            raise ValueError("Complete shared dense dispatch evidence missing")
+    if shared and any(marker not in output.splitlines() for marker in ("next_shared_original_rows cases=6 numeric_and_owning_checks=true", "next_shared_gpu_router cases=8 numeric_and_owning_checks=true")):
+        raise ValueError("Shared original row/router probes missing")
     if banks not in ("standard","intel72","intel96") or banks!="standard" and (card!="intel" or cap!=10):
         raise ValueError("Expanded banks require an explicit protected Intel cap10 profile")
     if (banks!="standard" or "count1_bank_profile" in receipt) and receipt.get("count1_bank_profile")!=banks:
@@ -127,12 +137,12 @@ def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False
         raise ValueError("Hybrid continuation and both cancellation proofs required")
 
 
-def worker_environment(model, receipt, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False, metadata=False, banks="standard"):
+def worker_environment(model, receipt, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False, metadata=False, banks="standard", shared=False):
     if workers not in ("scoped", "pooled"):
         raise ValueError("Unknown CPU worker mode")
     if type(overlap) is not bool or (overlap and workers != "pooled"):
         raise ValueError("Overlap requires explicit pooled workers")
-    if any(type(value) is not bool for value in (mapped,profile,fast,long,cpu_q8,large_cache,compact_info,batch_tasks,fast_fault,deferred,gpu_router,metadata)):
+    if any(type(value) is not bool for value in (mapped,profile,fast,long,cpu_q8,large_cache,compact_info,batch_tasks,fast_fault,deferred,gpu_router,metadata,shared)):
         raise ValueError("Explicit boolean optimization selections required")
     if cpu_q8 and workers != "pooled":
         raise ValueError("Q8 CPU activation arithmetic requires pooled workers")
@@ -150,6 +160,9 @@ def worker_environment(model, receipt, workers="scoped", overlap=False, mapped=F
     env["KUNO_LAB_MAPPED_WEIGHTS"] = "1" if mapped else "0"
     env["KUNO_LAB_KERNEL_PROFILE"] = "1" if profile else "0"
     env["KUNO_LAB_FAST_GPU"] = "1" if fast else "0"
+    if shared and (not fast or not gpu_router or fast_fault):
+        raise ValueError("Shared kernels require fast GPU/router mode")
+    env["KUNO_LAB_NEXT_SHARED"] = "1" if shared else "0"
     env["KUNO_LAB_LONG_FIXTURE"] = "1" if long else "0"
     env["KUNO_LAB_CPU_Q8"] = "1" if cpu_q8 else "0"
     env["KUNO_LAB_LARGE_WEIGHT_CACHE"] = "1" if large_cache else "0"
@@ -178,6 +191,7 @@ def main():
     parser.add_argument("--mapped-weights", action="store_true")
     parser.add_argument("--kernel-profile", action="store_true")
     parser.add_argument("--fast-gpu", action="store_true")
+    parser.add_argument("--next-shared-kernels", action="store_true")
     parser.add_argument("--long-fixture", action="store_true")
     parser.add_argument("--cpu-q8", action="store_true")
     parser.add_argument("--large-weight-cache", action="store_true")
@@ -199,6 +213,8 @@ def main():
         parser.error("Q8 CPU activation arithmetic requires --cpu-workers pooled")
     if args.large_weight_cache and not args.mapped_weights:
         parser.error("Larger public cache requires --mapped-weights")
+    if args.next_shared_kernels and (not args.fast_gpu or not args.gpu_router or args.fast_gpu_fault or args.cpu_miss_cap!=10):
+        parser.error("Shared kernels require --cpu-miss-cap10 --fast-gpu --gpu-router without fused faults")
     if args.fast_gpu_fault and not args.fast_gpu:
         parser.error("Fused finite checks require --fast-gpu")
     if args.retained_metadata and args.cpu_miss_cap!=10:
@@ -223,7 +239,7 @@ def main():
         ("KUNO_LAB_STATIC_CACHE_BYTES " if args.bank_profile!="intel96" else "") + "KUNO_LAB_EXPERT_BATCH_BYTES KUNO_LAB_EXPERT_SCATTER",
     ]
     command.extend("--setenv=" + key + "=" + value
-                   for key, value in worker_environment(args.model.resolve(), target, args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault,args.defer_router_io,args.gpu_router,args.retained_metadata,args.bank_profile).items())
+                   for key, value in worker_environment(args.model.resolve(), target, args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault,args.defer_router_io,args.gpu_router,args.retained_metadata,args.bank_profile,args.next_shared_kernels).items())
     command.extend([sys.executable, str(HERE / "protected-lab-exec.py"), str(frozen),
                     args.card, MODE, str(args.cpu_miss_cap)])
     print("verified_cargo_executable_sha256=" + identity, flush=True)
@@ -238,7 +254,7 @@ def main():
         raise SystemExit("Missing whole-model hybrid receipt")
     snapshot = target.read_bytes()
     receipt = json.loads(snapshot)
-    validate_receipt(receipt, args.card, args.cpu_miss_cap, "".join(lines), args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault,args.defer_router_io,args.gpu_router,args.retained_metadata,args.bank_profile)
+    validate_receipt(receipt, args.card, args.cpu_miss_cap, "".join(lines), args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault,args.defer_router_io,args.gpu_router,args.retained_metadata,args.bank_profile,args.next_shared_kernels)
     record = {
         "scope": "fixed-public-count1-hybrid-output-and-lifecycle-only",
         "cargo_artifacts_sha256": artifacts_identity, "frozen_executable_sha256": identity,
@@ -246,7 +262,7 @@ def main():
         "receipt_sha256": BASE.digest(snapshot), "protected_lifecycle_completion_checked": True,
         "matched_performance_measurement": False, "cpu_gpu_overlap": args.cpu_gpu_overlap, "cpu_workers": args.cpu_workers,
         "mapped_weights": args.mapped_weights, "kernel_profile": args.kernel_profile,
-        "fast_gpu": args.fast_gpu,
+        "fast_gpu": args.fast_gpu, "next_shared_kernels": args.next_shared_kernels,
         "long_fixture": args.long_fixture,
         "cpu_q8_activations": args.cpu_q8,
         "large_weight_cache": args.large_weight_cache,

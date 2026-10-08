@@ -656,6 +656,8 @@ pub struct GpuExecutor<'a> {
     pub fast_dense_calls: u64,
     pub fast_dense_fault: bool,
     pub fast_dense_fault_calls: u64,
+    pub shared_kernels: bool,
+    pub shared_dense_calls: u64,
     model: &'a GgufFile,
     pub block_kernel: bool,
     pub block_large_only: bool,
@@ -793,6 +795,8 @@ impl<'a> GpuExecutor<'a> {
             fast_dense_calls: 0,
             fast_dense_fault: false,
             fast_dense_fault_calls: 0,
+            shared_kernels: false,
+            shared_dense_calls: 0,
             native_projection_tile: NativeProjectionTile::default(),
             native_projection_members: quant_matvec::matmul::MAX_BATCH,
             bank_reserved: 0,
@@ -1651,7 +1655,23 @@ impl<'a> GpuExecutor<'a> {
                     if !packet.packed_first().is_multiple_of(4) {
                         return Err(Error::InvalidBufferLength);
                     }
-                    if fused {
+                    if self.shared_kernels {
+                        if fused || packet.packed_first() != 0 {
+                            return Err(Error::InvalidFormat("shared count1 projection contract"));
+                        }
+                        crate::next_shared::matrix(
+                            &self.client,
+                            crate::next_shared::MatrixSpec::new(g.rows(), g.columns(), g.dtype())?,
+                            weights,
+                            x.clone(),
+                            y.clone(),
+                            input_words,
+                            output_words,
+                            packet.input_first(),
+                            packet.output_first(),
+                        )?;
+                        self.shared_dense_calls += 1;
+                    } else if fused {
                         let tail = first + rows == m.outputs();
                         quant_matvec::fast::packed_single_fault::launch_unchecked::<WgpuRuntime>(
                             &self.client,
