@@ -406,6 +406,25 @@ fn fixed_calibration_configs() -> [Config; FIXED_CALIBRATION_POINTS] {
         mode: Mode::Concurrent,
     })
 }
+/// Same fixed original IDs/vector on resident GPU, uploaded GPU and selected CPU.
+/// No arbitrary miss/scheduling policy enters this separate laboratory choice.
+fn resident_calibration_configs() -> [Config; FIXED_CALIBRATION_POINTS] {
+    std::array::from_fn(|i| Config {
+        down: if i < 3 {
+            TensorType::Q5_0
+        } else {
+            TensorType::Q8_0
+        },
+        workers: 16,
+        backend: Backend::Avx2Fma,
+        misses: if i % 3 == 0 { 0 } else { 10 },
+        cpu_misses: if i % 3 == 2 { 10 } else { 0 },
+        group: 0,
+        vector: 0,
+        mode: Mode::Concurrent,
+    })
+}
+
 /// Used by the actual helper and injected host tests. Each exact configuration
 /// has one original numeric permit. A calibration result's replacement permit
 /// is dropped, so it cannot restart or substitute the original ticket counter.
@@ -499,11 +518,56 @@ pub fn run_fixed_calibration<'graph, 'm>(
     retired: Arc<AtomicBool>,
     cancel: &AtomicBool,
 ) -> Result<FixedCalibrationReport> {
+    run_calibration_configs(
+        client,
+        file,
+        graph,
+        device_limits,
+        retired,
+        cancel,
+        fixed_calibration_configs(),
+    )
+}
+
+/// Separate fixed-public operator test; not a dual-device inference connection.
+#[allow(clippy::too_many_arguments)]
+pub fn run_resident_calibration<'graph, 'm>(
+    client: &ComputeClient<WgpuRuntime>,
+    file: &'m GgufFile,
+    graph: BoundGraph<'graph, 'm>,
+    device_limits: &wgpu::Limits,
+    retired: Arc<AtomicBool>,
+    cancel: &AtomicBool,
+) -> Result<FixedCalibrationReport> {
+    if !cfg!(feature = "cpu-fma") {
+        return Err(fault());
+    }
+    run_calibration_configs(
+        client,
+        file,
+        graph,
+        device_limits,
+        retired,
+        cancel,
+        resident_calibration_configs(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_calibration_configs<'graph, 'm>(
+    client: &ComputeClient<WgpuRuntime>,
+    file: &'m GgufFile,
+    graph: BoundGraph<'graph, 'm>,
+    device_limits: &wgpu::Limits,
+    retired: Arc<AtomicBool>,
+    cancel: &AtomicBool,
+    configs: [Config; FIXED_CALIBRATION_POINTS],
+) -> Result<FixedCalibrationReport> {
     check(cancel)?;
     graph.verify_unchanged()?;
     file.verify_file_unchanged()?;
     let mut points = Vec::with_capacity(FIXED_CALIBRATION_POINTS);
-    for base in fixed_calibration_configs() {
+    for base in configs {
         let (numeric, samples) =
             fixed_calibration_point(base, |config, permit: Option<&NumericPermit<'m>>| {
                 let timed = permit.is_some();
@@ -1675,7 +1739,12 @@ fn run_inner<'graph, 'm>(
     };
     // Hardware setup and CPU affinity proof are deliberately before allocations.
     *stage = NumericStage::Workers;
-    let op = ExpertOperator::new(WorkerPlan::physical(config.workers)?, config.backend)?;
+    let worker_plan = WorkerPlan::physical(config.workers)?;
+    let op = if config.backend == Backend::Avx2Fma {
+        ExpertOperator::new_pooled(worker_plan, config.backend)?
+    } else {
+        ExpertOperator::new(worker_plan, config.backend)?
+    };
     let portable = ExpertOperator::new(WorkerPlan::portable(1)?, Backend::Portable)?;
     *stage = NumericStage::Geometry;
     let reader = file.positional_reader()?;
@@ -2216,6 +2285,28 @@ mod tests {
                 .is_empty()
         );
     }
+    #[test]
+    fn secondary_resident_calibration_pins_same_ids_and_selected_cpu() {
+        let configs = resident_calibration_configs();
+        for (i, c) in configs.iter().enumerate() {
+            c.validate().unwrap();
+            assert_eq!(c.workers, 16);
+            assert!(c.backend == Backend::Avx2Fma);
+            assert_eq!((c.group, c.vector), (0, 0));
+            assert_eq!(c.mode, Mode::Concurrent);
+            assert_eq!((c.misses, c.cpu_misses), [(0, 0), (10, 0), (10, 10)][i % 3]);
+            assert_eq!(
+                c.down,
+                if i < 3 {
+                    TensorType::Q5_0
+                } else {
+                    TensorType::Q8_0
+                }
+            );
+            assert!(!same_config(*c, fixed_calibration_configs()[i]));
+        }
+    }
+
     #[test]
     fn actual_fixed_calibration_driver_keeps_exact_original_permits_and_abba_caps() {
         let configs = fixed_calibration_configs();

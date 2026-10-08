@@ -101,6 +101,24 @@ fn transient_resident_mode(mode: &str, raw: Option<&str>) -> Result<bool, &'stat
     }
 }
 
+fn resident_expert_calibration_mode(
+    mode: &str,
+    raw: Option<&str>,
+    protected: bool,
+) -> Result<bool, &'static str> {
+    match raw {
+        None | Some("0") => Ok(false),
+        Some("1")
+            if mode == "resident-cpu-gpu-expert-calibration"
+                && protected
+                && cfg!(feature = "cpu-fma") =>
+        {
+            Ok(true)
+        }
+        _ => Err("Resident expert calibration requires protected compiled CPU FMA entry"),
+    }
+}
+
 fn token_io_cadence(raw: Option<&str>, owned_resident: bool) -> Result<bool, &'static str> {
     match raw {
         None | Some("0") => Ok(false),
@@ -804,6 +822,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if count1_banks != Count1Banks::Standard && count1_hybrid_cap.is_none_or(|cap| cap > 10) {
         return Err("Expanded count1 banks require protected count1 mode".into());
     }
+    let resident_calibration_raw = std::env::var("KUNO_LAB_RESIDENT_EXPERT_CALIBRATION").ok();
+    if std::env::var_os("KUNO_LAB_RESIDENT_EXPERT_CALIBRATION").is_some()
+        && resident_calibration_raw.is_none()
+    {
+        return Err("Resident expert calibration setting encoding rejected".into());
+    }
+    let resident_expert_calibration = resident_expert_calibration_mode(
+        &mode,
+        resident_calibration_raw.as_deref(),
+        transient_resident && public_owned_zero_audit,
+    )?;
     let mapped_weights = count1_environment_opt_in(&mode, "KUNO_LAB_MAPPED_WEIGHTS")?;
     let raw_dispatch = std::env::var_os("KUNO_LAB_DEVICE_DISPATCH");
     let inline_dispatch = cubecl_common::device_handle::DeviceHandle::<
@@ -812,15 +841,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if inline_dispatch != cfg!(feature = "direct-device") {
         return Err("Compiled GPU dispatch does not match the original runtime type".into());
     }
-    let device_dispatch = count1_dispatch(
-        &mode,
-        count1_hybrid_cap,
-        raw_dispatch
-            .as_ref()
-            .map(|v| v.to_str().ok_or("GPU dispatch setting encoding rejected"))
-            .transpose()?,
-        inline_dispatch,
-    )?;
+    let device_dispatch = if resident_expert_calibration && inline_dispatch {
+        if raw_dispatch.as_deref() != Some(std::ffi::OsStr::new("inline"))
+            || count1_hybrid_cap.is_some()
+        {
+            return Err(
+                "Resident calibration requires explicit matching inline device dispatch".into(),
+            );
+        }
+        "inline"
+    } else {
+        count1_dispatch(
+            &mode,
+            count1_hybrid_cap,
+            raw_dispatch
+                .as_ref()
+                .map(|v| v.to_str().ok_or("GPU dispatch setting encoding rejected"))
+                .transpose()?,
+            inline_dispatch,
+        )?
+    };
     println!("gpu_device_dispatch mode={device_dispatch} blocking={inline_dispatch}");
     let kernel_profile = count1_environment_opt_in(&mode, "KUNO_LAB_KERNEL_PROFILE")?;
     let fast_gpu = count1_environment_opt_in(&mode, "KUNO_LAB_FAST_GPU")?;
@@ -867,10 +907,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("Residual Q8 requires explicitly selected Q8 activations".into());
     }
     if cfg!(feature = "cpu-fma")
-        && (mode != "resident-count1-hybrid-chat"
-            || !count1_pooled
-            || cpu_q8
-            || !kuno_text::cpu_expert::fma_available())
+        && (!kuno_text::cpu_expert::fma_available()
+            || !resident_expert_calibration
+                && (mode != "resident-count1-hybrid-chat" || !count1_pooled || cpu_q8))
     {
         return Err("Compiled CPU FMA requires explicit pooled protected count1 float mode and AVX2/F16C/FMA".into());
     }
@@ -1315,7 +1354,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .clone()
                 .ok_or("CPU/GPU calibration requires configured transient stream")?;
             let cancel = AtomicBool::new(false);
-            let reports = cpu_gpu_expert_probe::run_fixed_calibration(
+            let calibrate = if resident_expert_calibration {
+                cpu_gpu_expert_probe::run_resident_calibration
+            } else {
+                cpu_gpu_expert_probe::run_fixed_calibration
+            };
+            let reports = calibrate(
                 &client,
                 &file,
                 model.bound_graph(),
@@ -1331,10 +1375,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 return Err("CPU/GPU calibration did not accept complete cleanup".into());
             }
             let receipt = serde_json::json!({
-                "scope":"fixed-public-original-cpu-gpu-expert-calibration",
+                "scope":if resident_expert_calibration {"fixed-public-original-resident-expert-calibration"} else {"fixed-public-original-cpu-gpu-expert-calibration"},
+                "resident_expert_calibration":resident_expert_calibration,
+                "device_dispatch":device_dispatch,
                 "vendor":vendor,"weights":"borrowed-unmodified-ollama-blob",
                 "fixed_public_points":6,"numeric_gates":12,"timing_samples":24,
-                "ranks_per_case":10,"group":0,"vector":0,"backend":"avx2","workers":16,
+                "ranks_per_case":10,"group":0,"vector":0,"backend":if resident_expert_calibration {"pooled-avx2-fma"} else {"avx2"},"workers":16,
                 "cache_scope":"warmed-original-read-operator-only",
                 "source_kind":"original-packed-gguf","points":points,
                 "owned_cleanup_accepted":true,"context_retired":false,
@@ -1349,6 +1395,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!(
                 "public_cpu_gpu_expert_calibration_complete points=6 numeric_gates=12 samples=24 owned_cleanup=true context_retired=false full_model_accepted=false"
             );
+            if resident_expert_calibration {
+                println!(
+                    "public_resident_expert_calibration modes=resident,upload,cpu workers=16 backend=pooled-avx2-fma owned_cleanup=true dual_device_accepted=false"
+                );
+            }
             return Ok(());
         }
         if mode == "resident-staged-hybrid-expert" {
@@ -3288,6 +3339,41 @@ mod transient_mode_tests {
     }
 
     #[cfg(feature = "direct-device")]
+    #[test]
+    fn resident_expert_calibration_rejects_unprotected_or_unrelated_entries() {
+        for raw in [None, Some("0")] {
+            assert!(!super::resident_expert_calibration_mode("resident-chat", raw, false).unwrap());
+        }
+        for raw in [Some(""), Some("true"), Some("2")] {
+            assert!(
+                super::resident_expert_calibration_mode(
+                    "resident-cpu-gpu-expert-calibration",
+                    raw,
+                    true
+                )
+                .is_err()
+            );
+        }
+        assert!(super::resident_expert_calibration_mode("resident-chat", Some("1"), true).is_err());
+        assert!(
+            super::resident_expert_calibration_mode(
+                "resident-cpu-gpu-expert-calibration",
+                Some("1"),
+                false
+            )
+            .is_err()
+        );
+        assert_eq!(
+            super::resident_expert_calibration_mode(
+                "resident-cpu-gpu-expert-calibration",
+                Some("1"),
+                true
+            )
+            .is_ok(),
+            cfg!(feature = "cpu-fma")
+        );
+    }
+
     #[test]
     fn direct_handle_serializes_concurrent_callers_without_gpu_work() {
         use cubecl_common::{device::DeviceId, device_handle::DeviceHandle};

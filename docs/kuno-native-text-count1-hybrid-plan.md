@@ -1813,3 +1813,29 @@ capacity. Initial admission conservatively reserves the512-entry header bound;
 subsequent charges use actual capacities. The native runtime emits the selected
 capacity/unchanged262144-byte metadata limit; the runner checks that marker and
 receipt against its independent selection. Capacity512 requires binding reuse.
+
+### Secondary resident expert bank: first calibration (2026-10-08)
+
+The user prioritizes an additional stationary NVIDIA expert bank ahead of
+adaptive upload-on-miss. The intended placement is disjoint resident experts on
+B70 and RTX3060, with CPU work only for experts absent from both. Input/result
+bridges and both devices must join before the original ten-rank merge. This
+whole-model connection is not implemented or accepted yet.
+
+First add an explicitly protected operator calibration, without allocating a
+second model or changing the model execution path. On each card compare the same
+original ten expert IDs/input/probabilities for each original Q5/Q8 down family:
+already-resident GPU (M0/K0), GPU upload (M10/K0), and warmed original-weight CPU
+(M10/K10). CPU uses the selected pooled AVX2/FMA operator with16 proven physical
+workers. Keep the original independent oracles, numerical tolerances, sealed
+numeric permits, four ABBA samples per point, full owning fences/cleanup and
+swap0/core0 limits. No private routes or vectors may escape the lab. Timings
+must distinguish completed operator work from result bridge/merge and cleanup.
+
+`KUNO_LAB_RESIDENT_EXPERT_CALIBRATION=1` is accepted only in the protected
+`resident-cpu-gpu-expert-calibration` entry with compiled cpu-fma. Defaults and
+the old calibration remain unchanged. Record exact selected CPU/backend and
+observed original hit/miss/source counts. This local operator test excludes
+the B70-to-NVIDIA bridge and full-model dual-device scheduling, and uses the
+existing isolated expert shader rather than the optimized count1 shared shader.
+It cannot establish a dual-GPU throughput gain. No API or Vashti change.
