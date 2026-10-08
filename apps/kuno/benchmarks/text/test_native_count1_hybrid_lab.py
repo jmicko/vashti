@@ -44,6 +44,18 @@ def completion(cap):
 
 
 class HybridLabTests(unittest.TestCase):
+    def test_residual_q8_requires_explicit_selected_and_observed_arithmetic(self):
+        value=receipt("intel",10);value.update(cpu_q8_activations=True,observed_cpu_q8_activations=True,cpu_q8_residual=True,observed_cpu_q8_residual=True,count1_hybrid_cpu_workers="pooled",observed_count1_hybrid_cpu_workers="pooled")
+        LAB.validate_receipt(value,"intel",10,completion(10),workers="pooled",cpu_q8=True,cpu_q8_residual=True)
+        for field in ("cpu_q8_residual","observed_cpu_q8_residual"):
+            for bad in (False,1,None):
+                wrong=copy.deepcopy(value);wrong[field]=bad
+                with self.assertRaises(ValueError):LAB.validate_receipt(wrong,"intel",10,completion(10),workers="pooled",cpu_q8=True,cpu_q8_residual=True)
+        with self.assertRaises(ValueError):LAB.worker_environment("/original","/receipt",workers="pooled",cpu_q8_residual=True)
+        with mock.patch.dict(os.environ,{"KUNO_LAB_CPU_Q8_RESIDUAL":"1"}):
+            self.assertEqual(LAB.worker_environment("/original","/receipt")["KUNO_LAB_CPU_Q8_RESIDUAL"],"0")
+        self.assertEqual(LAB.worker_environment("/original","/receipt",workers="pooled",cpu_q8=True,cpu_q8_residual=True)["KUNO_LAB_CPU_Q8_RESIDUAL"],"1")
+
     def test_native_scratch_clear_requires_completed_typed_evidence_and_explicit_environment(self):
         value=receipt("intel",10);value.update(native_scratch_clear=True,observed_native_scratch_clear_calls=18000)
         LAB.validate_receipt(value,"intel",10,completion(10),native_scratch_clear=True)

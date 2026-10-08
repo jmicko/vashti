@@ -425,6 +425,9 @@ impl Workspace {
     pub(crate) fn cpu_workers_pooled(&self) -> Option<bool> {
         self.hybrid.as_ref().map(|h| h.operator.workers_pooled())
     }
+    pub(crate) fn cpu_q8_residual(&self) -> Option<bool> {
+        self.hybrid.as_ref().map(|h| h.operator.q8_residual())
+    }
     pub(crate) fn cpu_q8_activations(&self) -> Option<bool> {
         self.hybrid.as_ref().map(|h| h.operator.q8_activations())
     }

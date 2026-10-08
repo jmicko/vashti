@@ -295,6 +295,7 @@ pub struct ExpertOperator {
     backend: Backend,
     pool: Option<rayon::ThreadPool>,
     q8_activations: bool,
+    q8_residual: bool,
 }
 
 // The full-capacity retained job owner erases these request-derived headers on
@@ -325,6 +326,7 @@ impl ExpertOperator {
             backend,
             pool: None,
             q8_activations: false,
+            q8_residual: false,
         })
     }
 
@@ -378,6 +380,16 @@ impl ExpertOperator {
         }
         self.q8_activations = true;
         Ok(self)
+    }
+    /// Explicit three-pass residual Q8 activations, still approximate and
+    /// never an automatic fallback. Original packed model bytes are unchanged.
+    pub fn with_q8_residual(self) -> Result<Self> {
+        let mut this = self.with_q8_activations()?;
+        this.q8_residual = true;
+        Ok(this)
+    }
+    pub fn q8_residual(&self) -> bool {
+        self.q8_residual
     }
     pub fn q8_activations(&self) -> bool {
         self.q8_activations
@@ -665,7 +677,13 @@ impl ExpertOperator {
         private_input[..g.hidden].copy_from_slice(input);
         if let Some(owner) = &mut quantized_inputs {
             owner.push(quantized::Input::empty())?;
-            owner.get_mut(0)?.fill(&private_input[..g.hidden], cancel)?;
+            if self.q8_residual {
+                owner
+                    .get_mut(0)?
+                    .fill_refined(&private_input[..g.hidden], cancel)?;
+            } else {
+                owner.get_mut(0)?.fill(&private_input[..g.hidden], cancel)?;
+            }
         }
         let mut public_owned = Zeroizing::new(0usize);
         for rank in 0..selected.len() {
@@ -757,10 +775,12 @@ impl ExpertOperator {
         if let Some(owner) = &mut quantized_inputs {
             for rank in 0..selected.len() {
                 owner.push(quantized::Input::empty())?;
-                owner.get_mut(rank + 1)?.fill(
-                    &activations[rank * g.feed_forward..(rank + 1) * g.feed_forward],
-                    cancel,
-                )?;
+                let values = &activations[rank * g.feed_forward..(rank + 1) * g.feed_forward];
+                if self.q8_residual {
+                    owner.get_mut(rank + 1)?.fill_refined(values, cancel)?;
+                } else {
+                    owner.get_mut(rank + 1)?.fill(values, cancel)?;
+                }
             }
         }
         self.rows(

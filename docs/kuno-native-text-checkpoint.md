@@ -98,7 +98,17 @@ GDN/QSA/GR and coordinator scratch, batching adjacent clears within16 owners/
 64MiB. Larger public spans keep the original shader path. Final arena erasure,
 parent fences and every original full-owning audit remain unchanged. Host gates
 pass486 native tests plus two shader suites,26 Python controls and strictClippy;
-physical efficacy is pending.
+Physical source d8c1993/artifact74a696a7… passes all original output and
+owning/lifecycle gates,35849ms decode (3.5427 tokens/s),50405ms prefill.40767
+actual native clear calls are reported. Nested host timings shift among enqueue
+and wait phases but total time does not improve. No selected speed win.
+
+The next candidate combines register integer reductions and vector Q5 unpacking
+with explicit three-pass residual Q8 CPU activations on original weights. This
+is approximate and separately pinned; the original128-ID gate is unchanged.
+Actual private metadata is charged inside the original1MiB CPU envelope.124
+core tests (3 ignored),486 native tests plus two shader suites,27 Python controls
+and strict all-target Clippy pass. Physical correctness/speed are pending.
 
 The user granted exclusive GPUs. Installed Kuno had an idle managed worker
 holding15978409984 B70 bytes with no active request; a graceful Kuno restart

@@ -805,6 +805,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let long_fixture = count1_environment_opt_in(&mode, "KUNO_LAB_LONG_FIXTURE")?;
     let cpu_q8 = count1_environment_opt_in(&mode, "KUNO_LAB_CPU_Q8")?;
+    let cpu_q8_residual = count1_environment_opt_in(&mode, "KUNO_LAB_CPU_Q8_RESIDUAL")?;
+    if cpu_q8_residual && !cpu_q8 {
+        return Err("Residual Q8 requires explicitly selected Q8 activations".into());
+    }
     if cfg!(feature = "cpu-fma")
         && (mode != "resident-count1-hybrid-chat"
             || !count1_pooled
@@ -1929,7 +1933,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let config = resident_model::batch::Config::new(&client, &grouped_limits, 8)?;
                 Some(if count1_hybrid_cap.is_some() {
                     if count1_pooled {
-                        config.reserve_count1_hybrid_arithmetic(true, count1_overlap, cpu_q8)?
+                        config.reserve_count1_hybrid_arithmetic(
+                            true,
+                            count1_overlap,
+                            cpu_q8,
+                            cpu_q8_residual,
+                        )?
                     } else {
                         config.reserve_count1_hybrid()?
                     }
@@ -2270,6 +2279,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     serde_json::json!(executor.fast_dense_fault_calls);
                 receipt["long_fixture"] = serde_json::json!(long_fixture);
                 receipt["cpu_q8_activations"] = serde_json::json!(cpu_q8);
+                receipt["cpu_q8_residual"] = serde_json::json!(cpu_q8_residual);
                 receipt["cpu_fma_arithmetic"] = serde_json::json!(cfg!(feature = "cpu-fma"));
                 receipt["warm_host_resource_delta"] = serde_json::json!(warm_resources);
                 receipt["reclaim_gpu_sources"] = serde_json::json!(reclaim_gpu_sources);
@@ -2305,6 +2315,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .native_deferred_router_reads(&executor)?;
                     receipt["observed_defer_router_io"] = serde_json::json!(observed);
                     receipt["observed_deferred_router_reads"] = serde_json::json!(reads);
+                    receipt["observed_cpu_q8_residual"] = serde_json::json!(
+                        resident
+                            .as_ref()
+                            .ok_or("count1 hybrid owner absent")?
+                            .native_cpu_q8_residual(&executor)?
+                            .ok_or("count1 hybrid arithmetic absent")?
+                    );
                     receipt["observed_cpu_q8_activations"] = serde_json::json!(
                         resident
                             .as_ref()

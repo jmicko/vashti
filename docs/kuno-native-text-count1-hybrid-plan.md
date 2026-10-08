@@ -761,3 +761,32 @@ these counters or cache keys. Full128 output IDs, fresh/poison checks and origin
 owning audits plus physical recovery remain mandatory. No installed or API/
 consumer change. Host gates pass486 native tests plus two offline shader suites,
 26 Python controls and strict all-target Clippy before physical efficacy testing.
+
+
+### Explicit residual CPU integer arithmetic, 2026-10-08
+
+`--cpu-q8-residual` requires independent `--cpu-q8`, pooled AVX2 workers and
+an artifact without `cpu-fma`. The original-float and ordinary single-pass Q8
+choices remain selectable; there is no automatic failure fallback. It reuses
+original Q4_K/Q5_0/Q8_0 weight codes across three Q8 activation passes: quantize
+the original input per32 elements, then quantize each of two successive residuals.
+All scales/quants/sums are call-local private owners, admitted by their actual
+full metadata capacities before copying input and wiped by the existing joined
+owning protocol. The original1MiB CPU envelope remains; no model requantization,
+new persistent cache, copied GGUF or skipped expert/rank is introduced.
+
+Integer horizontal sums stay in SIMD registers and Q5 original bit decoding is
+vectorized, with the saturation proof still covering signed weight-128 and
+activation clipping to[-127,127]. Float accumulation/reduction differs, so this
+is explicitly approximate. Independent dequantized-weight/f64 original-input
+row checks bound error by1e-5+1e-5 times the L1 product norm; complete expert
+checks bound against the original portable result by5e-4+1e-5 times its infinity
+norm. Existing single-pass integer tests include saturation edges. These tests
+are not model-quality evidence. Full128 original token IDs, all complete-model
+fences/owning audits and physical recovery still precede speed acceptance.
+
+`cpu_q8_residual` and `observed_cpu_q8_residual` must both match actual opt-in
+and the constructed operator. Q8 disabled/mismatched/ambient flags reject before
+inference. No installed/default/consumer changes. Host gates pass124 core tests
+(3 ignored),486 native tests plus two shader suites,27 Python controls and strict
+all-target Clippy. Complete physical correctness and speed remain pending.

@@ -7,11 +7,34 @@ use super::*;
 const GROUP: usize = 32;
 const GROUPS: usize = MAX_HIDDEN / GROUP;
 
+struct ResidualInput {
+    quants: [i8; MAX_HIDDEN],
+    scales: [f32; GROUPS],
+    sums: [i32; GROUPS],
+}
+impl ResidualInput {
+    fn empty() -> Self {
+        Self {
+            quants: [0; MAX_HIDDEN],
+            scales: [0.; GROUPS],
+            sums: [0; GROUPS],
+        }
+    }
+}
+impl Zeroize for ResidualInput {
+    fn zeroize(&mut self) {
+        self.quants.zeroize();
+        self.scales.zeroize();
+        self.sums.zeroize();
+    }
+}
 pub(super) struct Input {
     quants: [i8; MAX_HIDDEN],
     scales: [f32; GROUPS],
     sums: [i32; GROUPS],
     columns: usize,
+    refinements: [ResidualInput; 2],
+    refined: bool,
 }
 impl Input {
     pub(super) fn empty() -> Self {
@@ -20,6 +43,8 @@ impl Input {
             scales: [0.; GROUPS],
             sums: [0; GROUPS],
             columns: 0,
+            refinements: std::array::from_fn(|_| ResidualInput::empty()),
+            refined: false,
         }
     }
     pub(super) fn fill(&mut self, values: &[f32], cancel: &AtomicBool) -> Result<()> {
@@ -49,6 +74,31 @@ impl Input {
         self.columns = values.len();
         Ok(())
     }
+    pub(super) fn fill_refined(&mut self, values: &[f32], cancel: &AtomicBool) -> Result<()> {
+        self.fill(values, cancel)?;
+        for (group, block) in values.chunks_exact(GROUP).enumerate() {
+            check_cancel(cancel)?;
+            let mut residual = Zeroizing::new([0f32; GROUP]);
+            for (i, &v) in block.iter().enumerate() {
+                residual[i] = v - f32::from(self.quants[group * GROUP + i]) * self.scales[group];
+            }
+            for refinement in &mut self.refinements {
+                check_cancel(cancel)?;
+                let scale = residual.iter().map(|v| v.abs()).fold(0f32, f32::max) / 127.;
+                refinement.scales[group] = scale;
+                if scale > 0. {
+                    for (i, value) in residual.iter_mut().enumerate() {
+                        let q = (*value / scale).round_ties_even().clamp(-127., 127.) as i8;
+                        refinement.quants[group * GROUP + i] = q;
+                        refinement.sums[group] += i32::from(q);
+                        *value -= f32::from(q) * scale;
+                    }
+                }
+            }
+        }
+        self.refined = true;
+        Ok(())
+    }
 }
 impl Zeroize for Input {
     fn zeroize(&mut self) {
@@ -56,6 +106,8 @@ impl Zeroize for Input {
         self.scales.zeroize();
         self.sums.zeroize();
         self.columns.zeroize();
+        self.refinements.zeroize();
+        self.refined.zeroize();
     }
 }
 impl Drop for Input {
@@ -109,10 +161,54 @@ mod avx {
         // Q4/Q5 unsigned magnitudes are smaller; Q8 uses abs(weight)<=128.
         let pairs = _mm256_maddubs_epi16(unsigned, signed);
         let groups = _mm256_madd_epi16(pairs, _mm256_set1_epi16(1));
-        let mut lanes = Zeroizing::new([0i32; 8]);
-        // SAFETY: eight initialized i32 lanes, exactly one vector store.
-        unsafe { _mm256_storeu_si256(lanes.as_mut_ptr().cast(), groups) };
-        lanes.iter().sum()
+        // Exact i32 sum stays in registers. All32 products fit within520192;
+        // no application stack array or changed rounding is introduced.
+        let halves = _mm_add_epi32(
+            _mm256_castsi256_si128(groups),
+            _mm256_extracti128_si256::<1>(groups),
+        );
+        let pairs = _mm_hadd_epi32(halves, halves);
+        _mm_cvtsi128_si32(_mm_hadd_epi32(pairs, pairs))
+    }
+    #[target_feature(enable = "avx2")]
+    unsafe fn projection(
+        codes: __m256i,
+        signs: Option<__m256i>,
+        input: &Input,
+        index: usize,
+        factor: f32,
+        bias: f32,
+    ) -> f32 {
+        // Original packed weight codes reused across three activation passes;
+        // no weight requantization or private row dequantization is introduced.
+        let unsigned = codes;
+        let signed = unsafe { _mm256_loadu_si256(input.quants.as_ptr().add(index * GROUP).cast()) };
+        let signed = if let Some(signs) = signs {
+            _mm256_sign_epi8(signed, signs)
+        } else {
+            signed
+        };
+        let mut result = Zeroizing::new(
+            input.scales[index]
+                * (factor * unsafe { integer_dot(unsigned, signed) } as f32
+                    - bias * input.sums[index] as f32),
+        );
+        if input.refined {
+            for refinement in &input.refinements {
+                let signed = unsafe {
+                    _mm256_loadu_si256(refinement.quants.as_ptr().add(index * GROUP).cast())
+                };
+                let signed = if let Some(signs) = signs {
+                    _mm256_sign_epi8(signed, signs)
+                } else {
+                    signed
+                };
+                *result += refinement.scales[index]
+                    * (factor * unsafe { integer_dot(unsigned, signed) } as f32
+                        - bias * refinement.sums[index] as f32);
+            }
+        }
+        *result
     }
     fn half(bytes: &[u8]) -> Result<f32> {
         finite(
@@ -153,7 +249,7 @@ mod avx {
                         let index = block * 8 + group;
                         // SAFETY: 32-byte nibble block at16+(group/2)*32
                         // inside144 bytes; input has exactly8 groups/block.
-                        let (codes, x) = unsafe {
+                        let codes = unsafe {
                             let raw = _mm256_loadu_si256(
                                 bytes.as_ptr().add(16 + (group / 2) * 32).cast(),
                             );
@@ -162,17 +258,11 @@ mod avx {
                             } else {
                                 _mm256_srli_epi16::<4>(raw)
                             };
-                            (
-                                _mm256_and_si256(nibble, _mm256_set1_epi8(15)),
-                                _mm256_loadu_si256(input.quants.as_ptr().add(index * GROUP).cast()),
-                            )
+                            _mm256_and_si256(nibble, _mm256_set1_epi8(15))
                         };
-                        // SAFETY: enclosing function guarantees AVX2.
-                        let product = unsafe { integer_dot(codes, x) };
                         let factor = d * f32::from(scale(&bytes[4..16], group));
                         let bias = dmin * f32::from(minimum(&bytes[4..16], group));
-                        *result += input.scales[index]
-                            * (factor * product as f32 - bias * input.sums[index] as f32);
+                        *result += unsafe { projection(codes, None, input, index, factor, bias) };
                     }
                 }
             }
@@ -185,20 +275,30 @@ mod avx {
                             .try_into()
                             .map_err(|_| Error::InvalidBufferLength)?,
                     );
-                    let mut codes = Zeroizing::new([0u8; GROUP]);
-                    for index in 0..16 {
-                        codes[index] = (bytes[6 + index] & 15) | (((high >> index) as u8 & 1) << 4);
-                        codes[index + 16] =
-                            (bytes[6 + index] >> 4) | (((high >> (index + 16)) as u8 & 1) << 4);
-                    }
-                    // SAFETY: exact32-byte guarded code and input blocks.
-                    let product = unsafe {
-                        integer_dot(
-                            _mm256_loadu_si256(codes.as_ptr().cast()),
-                            _mm256_loadu_si256(input.quants.as_ptr().add(block * GROUP).cast()),
-                        )
+                    // Original16 nibble bytes become32 public unsigned
+                    // codes in registers. Each four-bit mask is spread to the
+                    // high bit of four bytes without changing original order.
+                    let codes = unsafe {
+                        let low = _mm_loadu_si128(bytes.as_ptr().add(6).cast());
+                        let joined = _mm256_inserti128_si256::<1>(
+                            _mm256_castsi128_si256(low),
+                            _mm_srli_epi16::<4>(low),
+                        );
+                        let nibbles = _mm256_and_si256(joined, _mm256_set1_epi8(15));
+                        let bits = _mm256_srlv_epi32(
+                            _mm256_set1_epi32(high as i32),
+                            _mm256_setr_epi32(0, 4, 8, 12, 16, 20, 24, 28),
+                        );
+                        let flags = _mm256_and_si256(
+                            _mm256_mullo_epi32(
+                                _mm256_and_si256(bits, _mm256_set1_epi32(15)),
+                                _mm256_set1_epi32(0x02040810),
+                            ),
+                            _mm256_set1_epi32(0x10101010),
+                        );
+                        _mm256_or_si256(nibbles, flags)
                     };
-                    *result += d * input.scales[block] * (product - 16 * input.sums[block]) as f32;
+                    *result += unsafe { projection(codes, None, input, block, d, 16. * d) };
                 }
             }
             TensorType::Q8_0 => {
@@ -210,12 +310,10 @@ mod avx {
                     // this approach includes weight=-128 without saturation.
                     // SAFETY:34-byte original block contains32 signed weights;
                     // quantizer clips input to[-127,127], so sign cannot wrap.
-                    let product = unsafe {
+                    *result += unsafe {
                         let weights = _mm256_loadu_si256(bytes.as_ptr().add(2).cast());
-                        let x = _mm256_loadu_si256(input.quants.as_ptr().add(block * GROUP).cast());
-                        integer_dot(_mm256_abs_epi8(weights), _mm256_sign_epi8(x, weights))
+                        projection(_mm256_abs_epi8(weights), Some(weights), input, block, d, 0.)
                     };
-                    *result += d * input.scales[block] * product as f32;
                 }
             }
             _ => return Err(Error::InvalidFormat("CPU quantized format unsupported")),
@@ -257,6 +355,57 @@ mod tests {
         }
         cancel.store(true, Ordering::Release);
         assert!(input.fill(&[1.; GROUP], &cancel).is_err());
+    }
+    #[test]
+    fn residual_original_rows_match_independent_f64_and_erase_every_pass() {
+        if !avx2_available() {
+            return;
+        }
+        let cancel = AtomicBool::new(false);
+        for kind in [TensorType::Q4K, TensorType::Q5_0, TensorType::Q8_0] {
+            for case in 0..13 {
+                let mut packed = vec![0u8; kind.row_bytes(MAX_HIDDEN as u64).unwrap() as usize];
+                for (i, b) in packed.iter_mut().enumerate() {
+                    *b = ((i * 37 + case * 29) % 256) as u8;
+                }
+                for block in packed.chunks_mut(kind.block_bytes() as usize) {
+                    block[..2].copy_from_slice(&0x3800u16.to_le_bytes());
+                    if kind == TensorType::Q4K {
+                        block[2..4].copy_from_slice(&0x2400u16.to_le_bytes());
+                    }
+                }
+                let values: Vec<_> = (0..MAX_HIDDEN)
+                    .map(|i| ((i * 41 + case * 19) % 287) as f32 / 37. - 3.)
+                    .collect();
+                let mut input = Input::empty();
+                input.fill_refined(&values, &cancel).unwrap();
+                let mut weights = vec![0.; MAX_HIDDEN];
+                kind.decode(&packed, &mut weights).unwrap();
+                let reference: f64 = weights
+                    .iter()
+                    .zip(&values)
+                    .map(|(&w, &v)| f64::from(w) * f64::from(v))
+                    .sum();
+                let norm: f64 = weights
+                    .iter()
+                    .zip(&values)
+                    .map(|(&w, &v)| (f64::from(w) * f64::from(v)).abs())
+                    .sum();
+                let actual = dot(kind, &packed, &input, &cancel).unwrap();
+                assert!((f64::from(actual) - reference).abs() <= 1e-5 + 1e-5 * norm);
+                input.zeroize();
+                assert!(!input.refined);
+                assert_eq!(input.columns, 0);
+                assert!(
+                    input
+                        .refinements
+                        .iter()
+                        .all(|r| r.quants.iter().all(|&v| v == 0)
+                            && r.scales.iter().all(|&v| v.to_bits() == 0)
+                            && r.sums.iter().all(|&v| v == 0))
+                );
+            }
+        }
     }
     #[test]
     fn integer_dots_match_independent_dequantized_oracle_including_saturation_edges() {
