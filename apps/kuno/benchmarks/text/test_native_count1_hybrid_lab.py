@@ -59,6 +59,19 @@ class HybridLabTests(unittest.TestCase):
         with mock.patch.dict(os.environ,{"KUNO_LAB_GROUPED_STATUS":"1"}):
             self.assertEqual(LAB.worker_environment("/original","/receipt")["KUNO_LAB_GROUPED_STATUS"],"0")
 
+    def test_inline_readback_requires_bounded_evidence_and_actual_policy(self):
+        value=receipt("intel",10);value.update(inline_readback=True,observed_inline_readback_batches=12000)
+        output=completion(10)+"\nprivate_inline_readback enabled=true checked_callbacks=true held_leases=true"
+        LAB.validate_receipt(value,"intel",10,output,inline_readback=True)
+        for field,bads in [("inline_readback",[False,1,None]),("observed_inline_readback_batches",[0,True,None,-1,1000001])]:
+            for bad in bads:
+                wrong=dict(value);wrong[field]=bad
+                with self.assertRaises(ValueError):LAB.validate_receipt(wrong,"intel",10,output,inline_readback=True)
+        with self.assertRaises(ValueError):LAB.validate_receipt(value,"intel",10,completion(10),inline_readback=True)
+        for dispatch in ["threaded","inline"]:
+            with self.assertRaises(ValueError):LAB.worker_environment("/original","/receipt",dispatch=dispatch,inline_readback=True)
+        self.assertEqual(LAB.worker_environment("/original","/receipt",compact_info=True,info_batch_upload=True,dispatch="inline",inline_readback=True)["KUNO_LAB_INLINE_READBACK"],"1")
+
     def test_gpu_upload_clear_requires_bounded_evidence_and_actual_policy(self):
         value=receipt("intel",10);value.update(gpu_upload_clear=True,observed_gpu_upload_clears=12000)
         output=completion(10)+"\nprivate_primary_upload_clear enabled=true two_gpu_passes=true direct_full_cpu_inspection=true"

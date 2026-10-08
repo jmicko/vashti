@@ -1266,3 +1266,26 @@ The original64MiB cap and conservative Upload/Uniform duplicate preflight remain
 no owner is credited early or transferred to a pool. Exact policy/capability and
 bounded positive warm clear evidence must accompany unchanged128 original IDs
 and full fresh/poison/owning/lifecycle acceptance. No service/API/frontend change.
+
+The all-size primary Upload clearing candidate is withdrawn from speed
+selection after a deliberately stopped slow fixed-public run. No original
+full-ID/lifecycle acceptance is claimed for that run; normal volatile Upload
+erasure remains selected. The experimental option is disabled by default.
+
+### Inline private Readback completion laboratory
+
+`--inline-readback` / `KUNO_LAB_INLINE_READBACK=1` requires protected batched
+INFO and the compiled inline device dispatcher. After original full readback
+setup/submission, the calling thread performs the native device map wait instead
+of waking a polling thread and parking on its callbacks. One bounded native
+30-second map window starts before requests; all callbacks must be delivered
+and accepted when Wait returns. Absent/rejected callback or timeout rejects and
+retires through the same guarded leases/mutation scope. No second deadline is
+started. The original async conversion future still owns every pending map and
+returned wiping controller/lease; all original drop/unmap/conversion failure
+handling, source/full-copy spans and sanitization remain. Nothing is published
+early. Default async behavior and production inference deadlines are unchanged.
+
+Exact policy and bounded successful warm inline-map batch evidence must accompany
+all original128-ID/fresh/poison/full-owning/lifecycle gates before speed selection.
+This changes internal scheduling only; no public API or Vashti change.

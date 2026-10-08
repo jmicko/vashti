@@ -887,6 +887,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if gpu_upload_clear && !info_batch_upload {
         return Err("GPU upload clear requires protected batched INFO".into());
     }
+    let inline_readback = count1_environment_opt_in(&mode, "KUNO_LAB_INLINE_READBACK")?;
+    if inline_readback && (!info_batch_upload || !inline_dispatch) {
+        return Err("inline readback requires protected batched INFO and inline dispatch".into());
+    }
     let batch_tasks = count1_environment_opt_in(&mode, "KUNO_LAB_BATCH_TASKS")?;
     let gpu_router = count1_environment_opt_in(&mode, "KUNO_LAB_GPU_ROUTER")?;
     if next_shared && !gpu_router {
@@ -2300,6 +2304,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let pre_grouped_status_calls = status_fold_batch::calls();
             let pre_readback_reuses = cubecl::wgpu::transient_readback_reuses();
             let pre_gpu_upload_clears = cubecl::wgpu::transient_gpu_upload_clears();
+            let pre_inline_read_batches = cubecl::wgpu::transient_inline_readback_batches();
             let reclaim_start = Instant::now();
             let gpu_source_advised_bytes = if reclaim_gpu_sources {
                 resident
@@ -2590,6 +2595,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 receipt["info_batch_upload"] = serde_json::json!(info_batch_upload);
                 receipt["device_dispatch"] = serde_json::json!(device_dispatch);
                 receipt["observed_inline_device_dispatch"] = serde_json::json!(inline_dispatch);
+                receipt["inline_readback"] = serde_json::json!(inline_readback);
+                receipt["observed_inline_readback_batches"] = serde_json::json!(
+                    cubecl::wgpu::transient_inline_readback_batches()
+                        .checked_sub(pre_inline_read_batches)
+                        .ok_or("inline read counter regression")?
+                );
                 receipt["gpu_upload_clear"] = serde_json::json!(gpu_upload_clear);
                 receipt["observed_gpu_upload_clears"] = serde_json::json!(
                     cubecl::wgpu::transient_gpu_upload_clears()

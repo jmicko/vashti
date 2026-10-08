@@ -1674,3 +1674,21 @@ actual allocator/two logger controls,37 Python controls and strict all-target
 Clippy. Regenerated23-file provenance patch
 f46b89e75ba029cd435f3b0cd0a71715300c306fb4377b69dfa003414d8efd6a
 retains original upstream archives/licenses and both locks. Device pending.
+
+Primary Upload source5b4eceb/artifact83e4292a2994430bfe312f1f3c349a9a89fa2e08426672e18d72beca6acdf9cd
+starts the correct capability/probes but its all-size clearing run is materially
+slower and is deliberately stopped before full output/owning/lifecycle acceptance.
+No receipt or speed selection exists. It is a fixed-public fixture; no private
+user content was involved. Ordinary process stop returns B70 to50688000B without
+GPU reset. Do not enable that candidate by default or represent it as accepted.
+
+The next candidate uses original volatile Upload erasure and inline Readback
+map completion on the compiled inline calling thread, preserving original
+guarded leases, callbacks, failure retirement and all owning/copy/clear bounds.
+Source and complete device acceptance are pending. Original async worker/API
+behavior, installed inference and the10-token/s target are unchanged.
+
+Inline Readback source gates pass496 native/two shaders,66 runtime/three actual
+allocator/two logger controls,38 Python controls and strict all-target Clippy.
+Regenerated23-file provenance a93143eaaa8f6f88155ad8323145214f26a7e51b3107e060ef2f8135a40978e9
+retains original upstream pins/licenses and both locks. Device pending.

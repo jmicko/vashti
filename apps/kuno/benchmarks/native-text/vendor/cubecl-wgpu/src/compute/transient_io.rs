@@ -93,6 +93,24 @@ fn allocation_usage(kind: Kind, gpu_upload_clear: bool) -> wgpu::BufferUsages {
         Kind::Readback => wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
     }
 }
+static INLINE_READ_BATCHES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// Content-free fixed-public laboratory counter.
+pub fn transient_inline_readback_batches() -> u64 {
+    INLINE_READ_BATCHES.load(Ordering::Relaxed)
+}
+fn configured_inline_readback(
+    raw: Option<&str>,
+    batch: bool,
+    inline: bool,
+) -> Result<bool, ServerError> {
+    match raw {
+        None | Some("0") => Ok(false),
+        Some("1") if batch && inline => Ok(true),
+        _ => Err(fault(
+            "inline readback requires batched INFO and inline dispatch",
+        )),
+    }
+}
 const POLL_TIMEOUT: Duration = Duration::from_secs(30);
 pub(crate) type ErrorFuture = Pin<Box<dyn Future<Output = Option<wgpu::Error>> + Send>>;
 
@@ -805,6 +823,7 @@ pub(crate) struct TransientIo {
     info_slab: Option<InfoSlab>,
     info_batch: bool,
     gpu_upload_clear: bool,
+    inline_readback: bool,
     pending_info: Vec<(wgpu::Buffer, wgpu::Buffer)>,
 }
 impl std::fmt::Debug for TransientIo {
@@ -1608,6 +1627,24 @@ impl TransientIo {
                     "private_primary_upload_clear enabled=true two_gpu_passes=true direct_full_cpu_inspection=true"
                 );
             }
+            let raw_inline = std::env::var_os("KUNO_LAB_INLINE_READBACK");
+            let inline_readback = configured_inline_readback(
+                raw_inline
+                    .as_ref()
+                    .map(|v| {
+                        v.to_str()
+                            .ok_or_else(|| fault("inline readback setting encoding"))
+                    })
+                    .transpose()?,
+                info_batch,
+                std::env::var_os("KUNO_LAB_DEVICE_DISPATCH").as_deref()
+                    == Some(std::ffi::OsStr::new("inline")),
+            )?;
+            if inline_readback {
+                println!(
+                    "private_inline_readback enabled=true checked_callbacks=true held_leases=true"
+                );
+            }
             let clean_readbacks = CleanReadbacks::new(reuse)?;
             if reuse {
                 println!(
@@ -1638,12 +1675,26 @@ impl TransientIo {
                 info_slab: None,
                 info_batch,
                 gpu_upload_clear,
+                inline_readback,
                 pending_info: Vec::new(),
             })
         }
     }
     pub fn retired(&self) -> bool {
         self.leases.retired.load(Ordering::Acquire)
+    }
+    pub(crate) fn reads_inline(&self) -> bool {
+        self.inline_readback
+    }
+    pub(crate) fn await_inline_read_maps(&self, deadline: Instant) -> Result<(), ServerError> {
+        if self.poll_map_until(deadline) {
+            Ok(())
+        } else {
+            Err(fault(self.leases.reason(Failure::ReadbackMap)))
+        }
+    }
+    pub(crate) fn record_inline_read_batch(&self) {
+        INLINE_READ_BATCHES.fetch_add(1, Ordering::Relaxed);
     }
     pub(crate) fn batches_info(&self) -> bool {
         self.info_batch
@@ -3955,6 +4006,24 @@ mod gpu_upload_clear_policy_tests {
                     needs_audit_stage(kind, true)
                 );
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod inline_readback_policy_tests {
+    use super::*;
+    #[test]
+    fn inline_wait_requires_strict_explicit_batched_and_inline_dispatch() {
+        for raw in [None, Some("0")] {
+            assert!(!configured_inline_readback(raw, false, false).unwrap());
+        }
+        assert!(configured_inline_readback(Some("1"), true, true).unwrap());
+        for (batch, inline) in [(false, false), (true, false), (false, true)] {
+            assert!(configured_inline_readback(Some("1"), batch, inline).is_err());
+        }
+        for raw in [Some("2"), Some(""), Some("true")] {
+            assert!(configured_inline_readback(raw, true, true).is_err());
         }
     }
 }

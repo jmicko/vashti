@@ -701,6 +701,9 @@ impl WgpuStream {
             });
         }
         let scopes = super::transient_io::IoScopes::new(&self.device);
+        let inline_readback = self.transient_io.as_ref().unwrap().reads_inline();
+        // One original bounded native map window starts before any request.
+        let map_deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
         let mut callbacks = Vec::with_capacity(pending.len());
         for entry in &pending {
             if let Some(entry) = entry {
@@ -717,16 +720,51 @@ impl WgpuStream {
             }
         }
         scopes.finish(self.transient_io.as_mut().unwrap());
-        let poll = self.poll.start_polling();
+        let poll = if inline_readback {
+            if let Err(error) = self
+                .transient_io
+                .as_ref()
+                .unwrap()
+                .await_inline_read_maps(map_deadline)
+            {
+                for entry in pending.iter().flatten() {
+                    entry.fail();
+                }
+                return Box::pin(async move { Err(error) });
+            }
+            // Device Wait processes native map callbacks synchronously. Refuse
+            // absent/rejected delivery instead of starting another wait window.
+            for (entry, callback) in pending.iter().zip(&callbacks) {
+                if let (Some(entry), Some(callback)) = (entry, callback)
+                    && !matches!(callback.try_recv(), Ok(Ok(())))
+                {
+                    entry.fail();
+                    return Box::pin(async {
+                        Err(super::transient_io::fault(
+                            "inline private readback callback failed",
+                        ))
+                    });
+                }
+            }
+            self.transient_io
+                .as_ref()
+                .unwrap()
+                .record_inline_read_batch();
+            None
+        } else {
+            Some(self.poll.start_polling())
+        };
         mutation.accept();
         Box::pin(async move {
-            for (entry, callback) in pending.iter().zip(&callbacks) {
-                if let (Some(entry), Some(callback)) = (entry, callback) {
-                    if !matches!(callback.recv().await, Ok(Ok(()))) {
-                        entry.fail();
-                        return Err(super::transient_io::fault(
-                            "private readback mapping failed",
-                        ));
+            if !inline_readback {
+                for (entry, callback) in pending.iter().zip(&callbacks) {
+                    if let (Some(entry), Some(callback)) = (entry, callback) {
+                        if !matches!(callback.recv().await, Ok(Ok(()))) {
+                            entry.fail();
+                            return Err(super::transient_io::fault(
+                                "private readback mapping failed",
+                            ));
+                        }
                     }
                 }
             }

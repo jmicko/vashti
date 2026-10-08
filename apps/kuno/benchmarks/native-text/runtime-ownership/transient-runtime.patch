@@ -1980,7 +1980,7 @@
 +}
 --- a/cubecl-wgpu/src/compute/mod.rs
 +++ b/cubecl-wgpu/src/compute/mod.rs
-@@ -1,13 +1,19 @@
+@@ -1,13 +1,20 @@
 +// Modified for Kuno's laboratory transient-I/O ownership/erasure patch (2026-10-05).
  pub(crate) mod controller;
  
@@ -1999,6 +1999,7 @@
  pub use storage::*;
 +
 +pub use transient_io::transient_gpu_upload_clears;
++pub use transient_io::transient_inline_readback_batches;
 +pub use transient_io::transient_readback_reuses;
 --- a/cubecl-wgpu/src/compute/schedule.rs
 +++ b/cubecl-wgpu/src/compute/schedule.rs
@@ -2555,7 +2556,7 @@
          self.compute_pass = None;
          let mut staging_info = Vec::with_capacity(descriptors.len());
          let mut callbacks = Vec::with_capacity(descriptors.len());
-@@ -363,6 +460,296 @@
+@@ -363,6 +460,334 @@
          })
      }
  
@@ -2800,6 +2801,9 @@
 +            });
 +        }
 +        let scopes = super::transient_io::IoScopes::new(&self.device);
++        let inline_readback = self.transient_io.as_ref().unwrap().reads_inline();
++        // One original bounded native map window starts before any request.
++        let map_deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
 +        let mut callbacks = Vec::with_capacity(pending.len());
 +        for entry in &pending {
 +            if let Some(entry) = entry {
@@ -2816,16 +2820,51 @@
 +            }
 +        }
 +        scopes.finish(self.transient_io.as_mut().unwrap());
-+        let poll = self.poll.start_polling();
++        let poll = if inline_readback {
++            if let Err(error) = self
++                .transient_io
++                .as_ref()
++                .unwrap()
++                .await_inline_read_maps(map_deadline)
++            {
++                for entry in pending.iter().flatten() {
++                    entry.fail();
++                }
++                return Box::pin(async move { Err(error) });
++            }
++            // Device Wait processes native map callbacks synchronously. Refuse
++            // absent/rejected delivery instead of starting another wait window.
++            for (entry, callback) in pending.iter().zip(&callbacks) {
++                if let (Some(entry), Some(callback)) = (entry, callback)
++                    && !matches!(callback.try_recv(), Ok(Ok(())))
++                {
++                    entry.fail();
++                    return Box::pin(async {
++                        Err(super::transient_io::fault(
++                            "inline private readback callback failed",
++                        ))
++                    });
++                }
++            }
++            self.transient_io
++                .as_ref()
++                .unwrap()
++                .record_inline_read_batch();
++            None
++        } else {
++            Some(self.poll.start_polling())
++        };
 +        mutation.accept();
 +        Box::pin(async move {
-+            for (entry, callback) in pending.iter().zip(&callbacks) {
-+                if let (Some(entry), Some(callback)) = (entry, callback) {
-+                    if !matches!(callback.recv().await, Ok(Ok(()))) {
-+                        entry.fail();
-+                        return Err(super::transient_io::fault(
-+                            "private readback mapping failed",
-+                        ));
++            if !inline_readback {
++                for (entry, callback) in pending.iter().zip(&callbacks) {
++                    if let (Some(entry), Some(callback)) = (entry, callback) {
++                        if !matches!(callback.recv().await, Ok(Ok(()))) {
++                            entry.fail();
++                            return Err(super::transient_io::fault(
++                                "private readback mapping failed",
++                            ));
++                        }
 +                    }
 +                }
 +            }
@@ -2852,7 +2891,7 @@
      /// Allocates a new empty buffer using the main memory pool.
      pub fn empty(&mut self, size: u64) -> Result<ManagedMemoryHandle, IoError> {
          self.mem_manage.reserve(size)
-@@ -373,10 +760,24 @@
+@@ -373,10 +798,24 @@
          self.errors.push(error);
      }
  
@@ -2881,7 +2920,7 @@
      }
  
      // Nb: this function submits a command to the _queue_ not to the encoder,
-@@ -441,9 +842,16 @@
+@@ -441,9 +880,16 @@
              #[cfg(not(target_family = "wasm"))]
              if let Err(e) = self.device.poll(wgpu::PollType::Wait {
                  submission_index: Some(index),
@@ -2900,7 +2939,7 @@
              }
  
              self.pending_write_count = 0;
-@@ -465,7 +873,29 @@
+@@ -465,7 +911,29 @@
      }
  
      pub fn flush(&mut self, mode: StreamErrorMode) -> Result<(), ServerError> {
@@ -2931,7 +2970,7 @@
              return self.flush_errors(mode);
          }
  
-@@ -484,10 +914,22 @@
+@@ -484,10 +952,22 @@
          };
  
          // This will _first_ fire off all pending write_buffer work.
@@ -2960,7 +2999,7 @@
          self.mem_manage.memory_cleanup(false);
 --- /dev/null
 +++ b/cubecl-wgpu/src/compute/transient_io.rs
-@@ -0,0 +1,3960 @@
+@@ -0,0 +1,4029 @@
 +// Modified for Kuno's laboratory transient-I/O ownership/erasure patch (2026-10-05).
 +//! Opt-in bounded, explicitly owned transient I/O. No device creation in tests.
 +//!
@@ -3054,6 +3093,24 @@
 +                | wgpu::BufferUsages::COPY_SRC
 +        }
 +        Kind::Readback => wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
++    }
++}
++static INLINE_READ_BATCHES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
++/// Content-free fixed-public laboratory counter.
++pub fn transient_inline_readback_batches() -> u64 {
++    INLINE_READ_BATCHES.load(Ordering::Relaxed)
++}
++fn configured_inline_readback(
++    raw: Option<&str>,
++    batch: bool,
++    inline: bool,
++) -> Result<bool, ServerError> {
++    match raw {
++        None | Some("0") => Ok(false),
++        Some("1") if batch && inline => Ok(true),
++        _ => Err(fault(
++            "inline readback requires batched INFO and inline dispatch",
++        )),
 +    }
 +}
 +const POLL_TIMEOUT: Duration = Duration::from_secs(30);
@@ -3768,6 +3825,7 @@
 +    info_slab: Option<InfoSlab>,
 +    info_batch: bool,
 +    gpu_upload_clear: bool,
++    inline_readback: bool,
 +    pending_info: Vec<(wgpu::Buffer, wgpu::Buffer)>,
 +}
 +impl std::fmt::Debug for TransientIo {
@@ -4571,6 +4629,24 @@
 +                    "private_primary_upload_clear enabled=true two_gpu_passes=true direct_full_cpu_inspection=true"
 +                );
 +            }
++            let raw_inline = std::env::var_os("KUNO_LAB_INLINE_READBACK");
++            let inline_readback = configured_inline_readback(
++                raw_inline
++                    .as_ref()
++                    .map(|v| {
++                        v.to_str()
++                            .ok_or_else(|| fault("inline readback setting encoding"))
++                    })
++                    .transpose()?,
++                info_batch,
++                std::env::var_os("KUNO_LAB_DEVICE_DISPATCH").as_deref()
++                    == Some(std::ffi::OsStr::new("inline")),
++            )?;
++            if inline_readback {
++                println!(
++                    "private_inline_readback enabled=true checked_callbacks=true held_leases=true"
++                );
++            }
 +            let clean_readbacks = CleanReadbacks::new(reuse)?;
 +            if reuse {
 +                println!(
@@ -4601,12 +4677,26 @@
 +                info_slab: None,
 +                info_batch,
 +                gpu_upload_clear,
++                inline_readback,
 +                pending_info: Vec::new(),
 +            })
 +        }
 +    }
 +    pub fn retired(&self) -> bool {
 +        self.leases.retired.load(Ordering::Acquire)
++    }
++    pub(crate) fn reads_inline(&self) -> bool {
++        self.inline_readback
++    }
++    pub(crate) fn await_inline_read_maps(&self, deadline: Instant) -> Result<(), ServerError> {
++        if self.poll_map_until(deadline) {
++            Ok(())
++        } else {
++            Err(fault(self.leases.reason(Failure::ReadbackMap)))
++        }
++    }
++    pub(crate) fn record_inline_read_batch(&self) {
++        INLINE_READ_BATCHES.fetch_add(1, Ordering::Relaxed);
 +    }
 +    pub(crate) fn batches_info(&self) -> bool {
 +        self.info_batch
@@ -6918,6 +7008,24 @@
 +                    needs_audit_stage(kind, true)
 +                );
 +            }
++        }
++    }
++}
++
++#[cfg(test)]
++mod inline_readback_policy_tests {
++    use super::*;
++    #[test]
++    fn inline_wait_requires_strict_explicit_batched_and_inline_dispatch() {
++        for raw in [None, Some("0")] {
++            assert!(!configured_inline_readback(raw, false, false).unwrap());
++        }
++        assert!(configured_inline_readback(Some("1"), true, true).unwrap());
++        for (batch, inline) in [(false, false), (true, false), (false, true)] {
++            assert!(configured_inline_readback(Some("1"), batch, inline).is_err());
++        }
++        for raw in [Some("2"), Some(""), Some("true")] {
++            assert!(configured_inline_readback(raw, true, true).is_err());
 +        }
 +    }
 +}

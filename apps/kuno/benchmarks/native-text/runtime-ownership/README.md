@@ -554,3 +554,13 @@ copy stage. Uniform/Readback inspection and all guarded callbacks/unmaps/error
 retirement remain. Nonselected volatile CPU Upload erasure remains unchanged.
 The original64MiB cap and conservative duplicate headroom are preserved. See the
 count1 contract for pinned actual-map/source evidence and pending acceptance.
+
+### Inline private Readback completion candidate
+
+Explicit protected inline dispatch may complete map Wait on the calling thread,
+avoiding the polling-thread wake/park handoff. One original native map window
+starts before requests; ready successful callbacks are mandatory before returning
+the original owning conversion future. Pending/returned leases, full copy spans,
+error retirement and final sanitization remain. Default async behavior stays.
+All-size primary GPU Upload erasure is withdrawn after a slow unaccepted public
+trial; ordinary volatile erasure is selected for this candidate.
