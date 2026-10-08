@@ -1317,3 +1317,18 @@ shader; request-derived routes remain runtime-only. Other shard counts retain
 the original implementation. No bank copy/requantization, extra private owner,
 cleanup omission or budget increase. Original128 IDs, owning/fresh/poison and
 lifecycle checks remain mandatory. No API/frontend/installed behavior change.
+
+### Explicit work-stealing CPU row dispatch laboratory
+
+The separately compiled `cpu-work-stealing` laboratory feature requires
+independent runner `--cpu-work-stealing`, protected count1 and pooled workers.
+It replaces synchronous per-worker broadcast with joined scoped tasks over the
+same bounded disjoint row chunks and full-capacity wiping header owner. Exact
+original packed math, cancellation/error clearing and joined completion gates
+remain. Physical worker pinning still occurs once during pool construction;
+parent affinity is unchanged. All tasks finish before header inspection/drop,
+including parent/worker panic and error. Opaque Rayon jobs/stacks retain the
+same explicit runtime exclusion as the original broadcast. No persistent
+request jobs, changed host budget, API or installed/default execution. Original
+core all-format bit, failure/join/header/thread tests and whole-model128-ID/full
+owning/lifecycle acceptance are required before speed selection.

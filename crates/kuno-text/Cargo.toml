@@ -18,3 +18,5 @@ serde_json = "1"
 [features]
 # Explicit laboratory arithmetic choice, never automatically selected.
 cpu-q8-two-pass = []
+# Explicit row scheduling experiment; ordinary pooled workers keep broadcast.
+cpu-work-stealing-lab = []

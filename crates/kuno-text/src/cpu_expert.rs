@@ -1271,14 +1271,10 @@ fn pooled_rows(
             }))?;
             live += 1;
         }
-        // Each broadcast index owns exactly one disjoint chunk. It is never
-        // stolen, and returning unit keeps runtime result storage content-free.
-        // catch_unwind is INSIDE the lock: a user hook panic cannot poison it.
-        pool.broadcast(|context| {
-            if context.index() >= live {
-                return;
-            }
-            let Ok(slot) = jobs.get(context.index()) else {
+        // Jobs own disjoint output chunks in the full-capacity header owner.
+        // Both scheduling choices join all callbacks before those headers drop.
+        let run_job = |index: usize| {
+            let Ok(slot) = jobs.get(index) else {
                 failed.store(true, Ordering::Relaxed);
                 return;
             };
@@ -1304,8 +1300,21 @@ fn pooled_rows(
                 failed.store(true, Ordering::Relaxed);
             }
             job.result = Some(result);
+        };
+        #[cfg(feature = "cpu-work-stealing-lab")]
+        pool.in_place_scope(|scope| {
+            for index in 0..live {
+                let run_job = &run_job;
+                scope.spawn(move |_| run_job(index));
+            }
         });
-        // Broadcast has completed every callback before inspection/header drop.
+        #[cfg(not(feature = "cpu-work-stealing-lab"))]
+        pool.broadcast(|context| {
+            if context.index() < live {
+                run_job(context.index());
+            }
+        });
+        // All consumers completed before inspection/header drop.
         let mut first_error = None;
         for index in 0..live {
             let result = jobs
@@ -3789,7 +3798,14 @@ mod tests {
         };
         let before = affinity::test_allowed().unwrap();
         let op = ExpertOperator::new_pooled(plan, Backend::Portable).unwrap();
+        #[cfg(not(feature = "cpu-work-stealing-lab"))]
         let mut original = None;
+        #[cfg(feature = "cpu-work-stealing-lab")]
+        let pool_ids = op
+            .pool
+            .as_ref()
+            .unwrap()
+            .broadcast(|_| std::thread::current().id());
         for _ in 0..8 {
             let ids = std::sync::Mutex::new(std::collections::HashSet::new());
             op.rows(
@@ -3803,11 +3819,19 @@ mod tests {
             )
             .unwrap();
             let ids = ids.into_inner().unwrap();
-            assert_eq!(ids.len(), 2);
-            if let Some(expected) = &original {
-                assert_eq!(&ids, expected);
-            } else {
-                original = Some(ids);
+            #[cfg(not(feature = "cpu-work-stealing-lab"))]
+            {
+                assert_eq!(ids.len(), 2);
+                if let Some(expected) = &original {
+                    assert_eq!(&ids, expected);
+                } else {
+                    original = Some(ids);
+                }
+            }
+            #[cfg(feature = "cpu-work-stealing-lab")]
+            {
+                assert!(!ids.is_empty());
+                assert!(ids.iter().all(|id| pool_ids.contains(id)));
             }
             assert_eq!(affinity::test_allowed().unwrap(), before);
         }

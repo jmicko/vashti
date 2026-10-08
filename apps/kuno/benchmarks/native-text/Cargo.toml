@@ -32,6 +32,7 @@ direct-device = ["cubecl-common/kuno-direct-device"]
 # Separate arithmetic candidate: original weights, explicit FMA/32-lane CPU.
 cpu-fma = []
 cpu-buffered-weights = []
+cpu-work-stealing = ["kuno-text/cpu-work-stealing-lab"]
 cpu-q8-two-pass = ["kuno-text/cpu-q8-two-pass"]
 
 [profile.release]

@@ -752,6 +752,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .map(|v| v.to_str().ok_or("CPU worker setting encoding rejected"))
             .transpose()?,
     )?;
+    let cpu_work_stealing = count1_environment_opt_in(&mode, "KUNO_LAB_CPU_WORK_STEALING")?;
+    if cpu_work_stealing != cfg!(feature = "cpu-work-stealing")
+        || cpu_work_stealing && !count1_pooled
+    {
+        return Err("Compiled CPU row scheduling requires explicit pooled count1 selection".into());
+    }
+    if cpu_work_stealing {
+        println!("cpu_row_dispatch mode=work-stealing joined=true original_arithmetic=true");
+    }
     let overlap_raw = std::env::var_os("KUNO_LAB_CPU_GPU_OVERLAP");
     let count1_overlap = count1_overlap(
         &mode,
@@ -2527,6 +2536,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 receipt["cpu_q8_activations"] = serde_json::json!(cpu_q8);
                 receipt["cpu_q8_residual"] = serde_json::json!(cpu_q8_residual);
                 receipt["cpu_q8_two_pass"] = serde_json::json!(cpu_q8_two_pass);
+                receipt["cpu_work_stealing"] = serde_json::json!(cpu_work_stealing);
                 receipt["cpu_threads"] = serde_json::json!(cpu_threads);
                 if count1_hybrid_cap.is_some() {
                     let (threads, passes) = resident

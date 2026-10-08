@@ -44,6 +44,21 @@ def completion(cap):
 
 
 class HybridLabTests(unittest.TestCase):
+    def test_cpu_work_stealing_requires_pooled_policy_and_compiled_marker(self):
+        value=receipt("intel",10)
+        value.update(cpu_work_stealing=True,count1_hybrid_cpu_workers="pooled",observed_count1_hybrid_cpu_workers="pooled")
+        output=completion(10)+"\ncpu_row_dispatch mode=work-stealing joined=true original_arithmetic=true"
+        LAB.validate_receipt(value,"intel",10,output,workers="pooled",cpu_work_stealing=True)
+        for bad in [False,1,None,"true"]:
+            wrong=copy.deepcopy(value);wrong["cpu_work_stealing"]=bad
+            with self.assertRaises(ValueError):LAB.validate_receipt(wrong,"intel",10,output,workers="pooled",cpu_work_stealing=True)
+        with self.assertRaises(ValueError):LAB.validate_receipt(value,"intel",10,completion(10),workers="pooled",cpu_work_stealing=True)
+        with self.assertRaises(ValueError):LAB.validate_receipt(value,"intel",10,output,cpu_work_stealing=True)
+        with self.assertRaises(ValueError):LAB.worker_environment("/original","/receipt",cpu_work_stealing=True)
+        self.assertEqual(LAB.worker_environment("/original","/receipt",workers="pooled",cpu_work_stealing=True)["KUNO_LAB_CPU_WORK_STEALING"],"1")
+        with mock.patch.dict(os.environ,{"KUNO_LAB_CPU_WORK_STEALING":"1"}):
+            self.assertEqual(LAB.worker_environment("/original","/receipt")["KUNO_LAB_CPU_WORK_STEALING"],"0")
+
     def test_grouped_status_requires_bounded_calls_active_sticky_probe_and_explicit_environment(self):
         value=receipt("intel",10);value.update(grouped_status=True,observed_grouped_status_calls=12000)
         output=completion(10)+"\npublic_grouped_status_fold groups=3,5,8 counts=1,3,8 active_and_sticky=true inactive_ignored=true"

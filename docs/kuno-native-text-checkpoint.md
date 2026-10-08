@@ -1713,3 +1713,19 @@ v40 at7.4499912.497 native tests/two shaders and strict Clippy pass.
 The next candidate combines two original expert-bank shards into two total
 projection dispatches rather than four, retaining original packed arithmetic,
 full physical proofs and all cleanup gates. Source/device acceptance pending.
+
+Paired original banks source07308b8/artifact6351c8bdf632c9db5ee3b536995ecee41b0312fffe5ad9ddabc8a9550062c401
+passes unchanged original128 IDs and all owning/fresh/poison/lifecycle gates.
+Following127 steps16933ms (7.5007 tokens/s), prefill15222ms. B70 returns50688000B.
+Single small improvement;10 tokens/s remains unmet. Expanded offline paired
+shaders,497 native tests/two other shaders and strict Clippy pass.
+
+Next candidate is separately compiled joined work-stealing CPU row scheduling.
+Original arithmetic and all failure/cleanup gates remain; source/device pending.
+
+Work-stealing source gates pass497 native tests/two shaders,128 core controls
+(three ignored) with both default broadcast and the separate work-stealing
+feature,39 Python runner rejection controls and strict all-target Clippy.
+Default and selected core behavior preserve exact original-format bits, bounded
+private capacities, joined panic/error/cancel cleanup, erased row headers,
+fixed physical worker topology and parent affinity. Complete device pending.
