@@ -11,10 +11,18 @@ use zeroize::{Zeroize, Zeroizing};
 
 // 72 original packed Qwen experts fit the same pooled pages as 64.
 // The resident-only 96 experiment uses public 64 + 32 pages;128 uses64 +64.
-pub const MAX_CAPACITY: usize = 128;
+pub const MAX_CAPACITY: usize = 144;
 pub const MAX_FLAT_CAPACITY: usize = 72;
+pub fn segmented_capacities(capacity: usize) -> Option<[usize; 2]> {
+    match capacity {
+        96 => Some([64, 32]),
+        128 => Some([64, 64]),
+        144 => Some([72, 72]),
+        _ => None,
+    }
+}
 pub fn segmented_capacity(capacity: usize) -> bool {
-    matches!(capacity, 96 | 128)
+    matches!(capacity, 96 | 128 | 144)
 }
 pub fn routed_capacity(capacity: usize) -> bool {
     (MIN_ROUTED_CAPACITY..=MAX_FLAT_CAPACITY).contains(&capacity) || segmented_capacity(capacity)
@@ -40,7 +48,7 @@ pub enum BankError {
 impl std::fmt::Display for BankError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
-            Self::Capacity => "expert bank capacity must be between one and 128",
+            Self::Capacity => "expert bank capacity must be between one and 144",
             Self::ExpertCount => "expert bank count must be between capacity and 512",
             Self::SelectionTooLarge => "expert selection exceeds bank capacity",
             Self::ExpertOutOfRange => "expert selection is out of range",
@@ -749,6 +757,7 @@ mod tests {
         assert_eq!(configured_capacity(Some("72"), 64).unwrap(), 72);
         assert_eq!(configured_capacity(Some("96"), 64).unwrap(), 96);
         assert_eq!(configured_capacity(Some("128"), 64).unwrap(), 128);
+        assert_eq!(configured_capacity(Some("144"), 64).unwrap(), 144);
         assert_eq!(configured_capacity(Some("10"), 16).unwrap(), 10);
         for invalid in [
             "",
@@ -776,7 +785,7 @@ mod tests {
 
     #[test]
     fn extended_slots_are_used_and_requested_hits_remain_protected() {
-        for capacity in [96, 128] {
+        for capacity in [96, 128, 144] {
             let mut bank = BankSlots::new(capacity, 512).unwrap();
             let initial: Vec<_> = (0..capacity).collect();
             let p = bank.plan(&initial).unwrap();

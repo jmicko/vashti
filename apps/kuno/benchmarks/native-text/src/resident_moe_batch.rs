@@ -1968,7 +1968,7 @@ mod tests {
     }
     #[test]
     fn q4_replacements_validate_every_layer_before_any_installation() {
-        for capacity in [16, 64, 96, 128] {
+        for capacity in [16, 64, 96, 128, 144] {
             let mut layers = [geometry(capacity); 48];
             let original = layers;
             install_q4_geometries(&mut layers).unwrap();
@@ -2018,7 +2018,7 @@ mod tests {
         assert!(2 * (direct + 2 * 8192) <= IO_INCREMENT);
         assert_eq!(48 * 32768 + 512 * 1024, HOST_PRIVATE);
         assert_eq!(Workspace::runtime_io_increment(), 512 * 1024);
-        for capacity in [10, 16, 64, 72, 96, 128] {
+        for capacity in [10, 16, 64, 72, 96, 128, 144] {
             assert_eq!(geometry(capacity).status_words(), 4800);
             let bound = StagedSlots::bounded_native_metadata_bytes(capacity).unwrap();
             assert!(
@@ -2078,7 +2078,7 @@ mod tests {
     }
     #[test]
     fn actual_last_pending_plan_retains_original_ledger_until_whole_model_swap() {
-        for cap in [16, 64, 72, 96, 128] {
+        for cap in [16, 64, 72, 96, 128, 144] {
             let mut bank = BankSlots::new(cap, 512).unwrap();
             let mut staged = StagedSlots::begin(&bank).unwrap();
             let first = (0..10).collect::<Vec<_>>();

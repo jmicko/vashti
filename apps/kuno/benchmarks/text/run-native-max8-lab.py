@@ -161,12 +161,12 @@ def _validate_model_receipt(receipt, card, fixture, count, output, *, owner_inve
         "intel": (64, 8 * 1024**3, 26 * 1024**3),
         "nvidia": (16, 6 * 1024**3, 10 * 1024**3),
     }[card]
-    if bank_profile not in ("standard","intel72","intel96","intel128") or bank_profile!="standard" and (card!="intel" or not native_decode or native_decode_tile!=1 or native_decode_kernels!="single-q4-all" or not reported_fixture.startswith("resident-count1-hybrid")):
+    if bank_profile not in ("standard","intel72","intel96","intel128","intel144") or bank_profile!="standard" and (card!="intel" or not native_decode or native_decode_tile!=1 or native_decode_kernels!="single-q4-all" or not reported_fixture.startswith("resident-count1-hybrid")):
         raise ValueError("Expanded bank profile requires the fixed protected native hybrid fixture")
     if bank_profile=="intel72":slots=72
     if bank_profile=="intel96":slots,cache=96,6*1024**3
-    if bank_profile=="intel128":slots,cache,reserved=128,5*1024**3,31*1024**3
-    bank_charge = 24*1024**3 if bank_profile=="intel128" else 18*1024**3 if bank_profile=="intel96" else 12*1024**3 if card=="intel" else 3*1024**3
+    if bank_profile in ("intel128","intel144"):slots,cache,reserved=(144 if bank_profile=="intel144" else 128),5*1024**3,31*1024**3
+    bank_charge = 24*1024**3 if bank_profile in ("intel128","intel144") else 18*1024**3 if bank_profile=="intel96" else 12*1024**3 if card=="intel" else 3*1024**3
     expected_settings = {
         "vendor": 0x8086 if card == "intel" else 0x10DE,
         "scope": "fixed-public-synthetic-operator-test-only",
@@ -180,11 +180,11 @@ def _validate_model_receipt(receipt, card, fixture, count, output, *, owner_inve
         "block_kernel": True,
         "block_large_only": True,
         "expert_bank_slots": slots,
-        "expert_bank_segments": [64,slots-64] if bank_profile in ("intel96","intel128") else [slots],
+        "expert_bank_segments": [72,72] if bank_profile=="intel144" else [64,slots-64] if bank_profile in ("intel96","intel128","intel144") else [slots],
         "expert_bank_accounted_limit_bytes": bank_charge,
         "static_cache_budget_bytes": cache,
         "device_reserved_limit_bytes": reserved,
-        "explicit_static_cache": bank_profile in ("intel96","intel128"),
+        "explicit_static_cache": bank_profile in ("intel96","intel128","intel144"),
         "expert_batch_window_bytes": 8388608,
         "expert_scatter_mode": "dynamic-1d",
         "small_cpu_cache_bytes": 0,
@@ -198,7 +198,7 @@ def _validate_model_receipt(receipt, card, fixture, count, output, *, owner_inve
                     "prefill_last_head", "io_token_checkpoint"):
         expected_settings[setting] = False
     expected_settings["io_token_checkpoint"]=deferred_io
-    expected_settings["block_moe"]=bank_profile in ("intel96","intel128")
+    expected_settings["block_moe"]=bank_profile in ("intel96","intel128","intel144")
     if any(key not in receipt or type(receipt[key]) is not type(value)
            or receipt[key] != value for key, value in expected_settings.items()):
         raise ValueError("Effective native/device/default configuration did not match")

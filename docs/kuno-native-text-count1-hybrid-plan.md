@@ -826,3 +826,21 @@ Reclamation is best effort; advised coverage is not actual freed-byte credit.
 Ambient selection is overwritten. Receipts must match independently selected
 pageout and source-reclaim flags. All original128 IDs, completed producer/consumer
 fences and full owning audits remain required. No installed/API/default change.
+
+
+### Original 144-slot profile in unchanged GPU page envelope, 2026-10-08
+
+Explicit Intel-only protected `intel144` uses two72-slot shards per original
+projection. For validated original Q4_K gate/up and Q5_0/Q8_0 down shapes, each
+72-slot allocation still fits the same64/128MiB exclusive bins as64 slots.
+Across48 original layers the conservative bank charge remains24GiB; the static
+cache remains5GiB and device ceiling31GiB. No new allocator configuration, reduced
+private budget, logical output or rank omission is introduced. Original shard
+boundaries are now driven by one checked public capacity table;144 requires72+72,
+128 retains64+64 and96 retains64+32. Foreign geometry rejects before allocation.
+
+Actual original host ledgers are charged within the existing640KiB component /
+12MiB parent envelope; errors retain original rejection and erasure. The original
+1378 owners/818413568 bytes and complete private/source proof inventories remain.
+Full128 original IDs and every owning gate still precede timing acceptance.
+No installed inference or API change. Physical efficacy is pending.

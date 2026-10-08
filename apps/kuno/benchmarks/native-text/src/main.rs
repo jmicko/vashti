@@ -258,6 +258,7 @@ enum Count1Banks {
     Intel72,
     Intel96,
     Intel128,
+    Intel144,
 }
 impl Count1Banks {
     fn parse(mode: &str, vendor: u32, raw: Option<&str>) -> Result<Self, &'static str> {
@@ -272,6 +273,9 @@ impl Count1Banks {
             Some("intel128") if mode == "resident-count1-hybrid-chat" && vendor == 0x8086 => {
                 Ok(Self::Intel128)
             }
+            Some("intel144") if mode == "resident-count1-hybrid-chat" && vendor == 0x8086 => {
+                Ok(Self::Intel144)
+            }
             _ => Err("fixed count1 bank profile rejected"),
         }
     }
@@ -281,19 +285,24 @@ impl Count1Banks {
             Self::Intel72 => "intel72",
             Self::Intel96 => "intel96",
             Self::Intel128 => "intel128",
+            Self::Intel144 => "intel144",
         }
     }
     fn setting(self, name: &str, raw: Option<&str>) -> Result<(), &'static str> {
-        if matches!(self, Self::Intel96 | Self::Intel128) && name == "KUNO_LAB_BLOCK_MOE" {
+        if matches!(self, Self::Intel96 | Self::Intel128 | Self::Intel144)
+            && name == "KUNO_LAB_BLOCK_MOE"
+        {
             return if raw == Some("1") {
                 Ok(())
             } else {
                 Err("segmented count1 bank block setting rejected")
             };
         }
-        if matches!(self, Self::Intel96 | Self::Intel128) && name == "KUNO_LAB_STATIC_CACHE_BYTES" {
+        if matches!(self, Self::Intel96 | Self::Intel128 | Self::Intel144)
+            && name == "KUNO_LAB_STATIC_CACHE_BYTES"
+        {
             return if raw
-                == Some(if self == Self::Intel128 {
+                == Some(if matches!(self, Self::Intel128 | Self::Intel144) {
                     "5368709120"
                 } else {
                     "6442450944"
@@ -310,6 +319,7 @@ impl Count1Banks {
             Self::Intel72 => 72,
             Self::Intel96 => 96,
             Self::Intel128 => 128,
+            Self::Intel144 => 144,
             Self::Standard => {
                 if vendor == 0x8086 {
                     64
@@ -1994,15 +2004,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let model = Qwen4Exp::bind(&file)?;
             let ids = tokenizer.encode(prompt, true)?;
             let mut sequence = model.sequence(ids.len() + limit)?;
-            let device_budget = if count1_banks == Count1Banks::Intel128 {
-                31
-            } else if vendor == 0x8086 {
-                26
-            } else {
-                10
-            } * 1024
-                * 1024
-                * 1024;
+            let device_budget =
+                if matches!(count1_banks, Count1Banks::Intel128 | Count1Banks::Intel144) {
+                    31
+                } else if vendor == 0x8086 {
+                    26
+                } else {
+                    10
+                } * 1024
+                    * 1024
+                    * 1024;
             if next_shared {
                 next_shared::probe(&client, &file)?;
                 if shared_gdn {
@@ -2448,7 +2459,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     serde_json::json!(static_cache_setting.is_some());
                 receipt["expert_bank_segments"] =
                     serde_json::json!(if crate::bank_slots::segmented_capacity(expert_slots) {
-                        vec![64, expert_slots - 64]
+                        bank_slots::segmented_capacities(expert_slots)
+                            .ok_or("original segment capacities")?
+                            .to_vec()
                     } else {
                         vec![expert_slots]
                     });
@@ -2847,7 +2860,12 @@ mod transient_mode_tests {
     #[test]
     fn expanded_banks_require_an_exact_intel_hybrid_profile_and_preserve_other_guards() {
         use super::Count1Banks as B;
-        for (raw, slots) in [("intel72", 72), ("intel96", 96), ("intel128", 128)] {
+        for (raw, slots) in [
+            ("intel72", 72),
+            ("intel96", 96),
+            ("intel128", 128),
+            ("intel144", 144),
+        ] {
             let p = B::parse("resident-count1-hybrid-chat", 0x8086, Some(raw)).unwrap();
             assert_eq!(p.slots(0x8086), slots);
             assert!(B::parse("resident-chat", 0x8086, Some(raw)).is_err());

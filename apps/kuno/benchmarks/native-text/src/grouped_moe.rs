@@ -171,11 +171,8 @@ impl Geometry {
             return Err("grouped segmented original metadata");
         }
         for projection in projections {
-            for count in if crate::bank_slots::segmented_capacity(capacity) {
-                [64, capacity - 64]
-            } else {
-                [capacity, 0]
-            } {
+            for count in crate::bank_slots::segmented_capacities(capacity).unwrap_or([capacity, 0])
+            {
                 if count != 0 {
                     projection.segment_words(count)?;
                 }
@@ -235,12 +232,13 @@ impl Geometry {
         slot_count: usize,
         binding_words: [usize; 3],
     ) -> Result<(), &'static str> {
-        let valid = if crate::bank_slots::segmented_capacity(self.capacity) {
-            (first_slot == 0 && slot_count == 64)
-                || (first_slot == 64 && slot_count == self.capacity - 64)
-        } else {
-            first_slot == 0 && slot_count == self.capacity
-        };
+        let valid =
+            if let Some([first, second]) = crate::bank_slots::segmented_capacities(self.capacity) {
+                (first_slot == 0 && slot_count == first)
+                    || (first_slot == first && slot_count == second)
+            } else {
+                first_slot == 0 && slot_count == self.capacity
+            };
         if !valid {
             return Err("grouped original shard geometry");
         }

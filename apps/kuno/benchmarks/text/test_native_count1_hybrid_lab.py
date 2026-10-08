@@ -326,14 +326,14 @@ class HybridLabTests(unittest.TestCase):
                 self.assertEqual(LAB.worker_environment("/original/model","/public/receipt",metadata=selected)["KUNO_LAB_RETAINED_METADATA"],"1" if selected else "0")
 
     def test_expanded_banks_pin_the_entire_device_budget_without_changing_other_settings(self):
-        for banks in ("intel72","intel96","intel128"):
+        for banks in ("intel72","intel96","intel128","intel144"):
             value=receipt("intel",10)
-            value.update(count1_bank_profile=banks, expert_bank_slots={"intel72":72,"intel96":96,"intel128":128}[banks],
-                         expert_bank_segments=[72] if banks=="intel72" else [64,64] if banks=="intel128" else [64,32])
+            value.update(count1_bank_profile=banks, expert_bank_slots={"intel72":72,"intel96":96,"intel128":128,"intel144":144}[banks],
+                         expert_bank_segments=[72,72] if banks=="intel144" else [72] if banks=="intel72" else [64,64] if banks in ("intel128","intel144") else [64,32])
             if banks=="intel96":
                 value.update(block_moe=True,explicit_static_cache=True,
                              expert_bank_accounted_limit_bytes=18*1024**3,static_cache_budget_bytes=6*1024**3)
-            if banks=="intel128":
+            if banks in ("intel128","intel144"):
                 value.update(block_moe=True,explicit_static_cache=True,expert_bank_accounted_limit_bytes=24*1024**3,static_cache_budget_bytes=5*1024**3,device_reserved_limit_bytes=31*1024**3)
             LAB.validate_receipt(value,"intel",10,completion(10),banks=banks)
             for field in ("expert_bank_slots","expert_bank_segments","expert_bank_accounted_limit_bytes","static_cache_budget_bytes","device_reserved_limit_bytes","explicit_static_cache","count1_bank_profile"):
@@ -343,8 +343,8 @@ class HybridLabTests(unittest.TestCase):
                 with self.assertRaises(ValueError):LAB.validate_receipt(value,card,cap,completion(cap),banks=banks)
             env=LAB.worker_environment("/original/model","/public/receipt",banks=banks)
             self.assertEqual(env["KUNO_LAB_COUNT1_BANKS"],banks)
-            self.assertEqual(env["KUNO_LAB_BLOCK_MOE"],"1" if banks in ("intel96","intel128") else "0")
-            self.assertEqual(env.get("KUNO_LAB_STATIC_CACHE_BYTES"),"5368709120" if banks=="intel128" else "6442450944" if banks=="intel96" else None)
+            self.assertEqual(env["KUNO_LAB_BLOCK_MOE"],"1" if banks in ("intel96","intel128","intel144") else "0")
+            self.assertEqual(env.get("KUNO_LAB_STATIC_CACHE_BYTES"),"5368709120" if banks in ("intel128","intel144") else "6442450944" if banks=="intel96" else None)
 
     def test_both_caps_and_cards_require_fixed_inventory_and_actual_cpu_work(self):
         for card in ("intel", "nvidia"):
