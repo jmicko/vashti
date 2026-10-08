@@ -1,4 +1,5 @@
 //! Public synthetic Rust-authored kernel probe, not a model engine wrapper.
+mod adaptive_experts;
 mod bank96_probe;
 mod bank_slots;
 pub mod cpu_gpu_expert_probe;
@@ -677,6 +678,7 @@ fn apply_count1_hybrid_cap<'f>(
         resident.begin_lab_request_io_reuse(executor)?;
     }
     executor.enable_secondary_after_prefill()?;
+    executor.enable_adaptive_after_prefill()?;
     Ok(())
 }
 
@@ -974,6 +976,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .into(),
         );
     }
+    let adaptive_experts = count1_environment_opt_in(&mode, "KUNO_LAB_ADAPTIVE_EXPERTS")?;
+    if adaptive_experts
+        && (secondary_experts
+            || vendor != 0x8086
+            || count1_banks != Count1Banks::Intel144
+            || count1_hybrid_cap != Some(10)
+            || !mapped_weights
+            || !count1_pooled
+            || !count1_overlap
+            || !next_shared
+            || !inline_dispatch
+            || std::env::var("KUNO_LAB_DEFER_ROUTER_IO").as_deref() != Ok("1")
+            || std::env::var("KUNO_LAB_REQUEST_IO_REUSE").as_deref() != Ok("1"))
+    {
+        return Err(
+            "adaptive experts require exclusive protected intel144 mapped cap10 mode".into(),
+        );
+    }
     let gpu_expert_limit = match std::env::var("KUNO_LAB_GPU_EXPERT_LIMIT") {
         Err(std::env::VarError::NotPresent) => 10,
         Ok(value) if mode == "resident-count1-hybrid-chat" => value
@@ -983,6 +1003,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .ok_or("GPU expert limit must be 0 through 10")?,
         _ => return Err("GPU expert limit requires protected count1 mode".into()),
     };
+    if adaptive_experts && gpu_expert_limit != 10 {
+        return Err("adaptive requires GPU limit10".into());
+    }
     if gpu_expert_limit < 10
         && (count1_hybrid_cap != Some(10) || !mapped_weights || !count1_pooled || !count1_overlap)
     {
@@ -2702,6 +2725,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 receipt["request_io_reuse"] = serde_json::json!(request_io_reuse);
                 receipt["bind_group_reuse"] = serde_json::json!(bind_group_reuse);
                 receipt["binding_cache_capacity"] = serde_json::json!(binding_cache_capacity);
+                receipt["adaptive_experts"] = serde_json::json!(adaptive_experts);
+                if let Some(cache) = &executor.adaptive {
+                    receipt["adaptive_rotating_slots"] =
+                        serde_json::json!(crate::adaptive_experts::ROTATING);
+                    receipt["adaptive_budget"] = serde_json::json!(crate::adaptive_experts::BUDGET);
+                    receipt["adaptive_promotions"] = serde_json::json!(cache.stats.promotions);
+                    receipt["adaptive_upload_bytes"] = serde_json::json!(cache.stats.bytes);
+                    receipt["adaptive_read_ns"] = serde_json::json!(cache.stats.read_ns);
+                    receipt["adaptive_upload_ns"] = serde_json::json!(cache.stats.upload_ns);
+                    receipt["adaptive_fence_ns"] = serde_json::json!(cache.stats.fence_ns);
+                    receipt["adaptive_boundaries"] = serde_json::json!(cache.stats.boundaries);
+                    receipt["adaptive_host_bytes"] = serde_json::json!(cache.owned_bytes());
+                }
                 receipt["secondary_experts"] = serde_json::json!(secondary_experts);
                 if let Some(second) = &executor.secondary {
                     receipt["secondary_expert_calls"] = serde_json::json!(second.expert_calls);

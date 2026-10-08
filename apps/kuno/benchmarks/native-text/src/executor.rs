@@ -745,6 +745,7 @@ struct Cached {
 /// The lifetime of this executor is one fixed synthetic experiment. Its cache
 /// keys/ranks must never be persisted or reused as private request history.
 pub struct GpuExecutor<'a> {
+    pub(crate) adaptive: Option<crate::adaptive_experts::Cache>,
     pub(crate) secondary: Option<crate::secondary_experts::Secondary>,
     pub(crate) secondary_frequency: Option<crate::secondary_experts::Frequency>,
     pub shared_overlap_calls: u64,
@@ -865,6 +866,7 @@ impl<'a> GpuExecutor<'a> {
             std::env::var("KUNO_LAB_BATCH_EXPERTS").as_deref() == Ok("1"),
         )?;
         Ok(Self {
+            adaptive: None,
             secondary: None,
             secondary_frequency: if std::env::var("KUNO_LAB_SECONDARY_EXPERTS").as_deref()
                 == Ok("1")
@@ -973,6 +975,10 @@ impl<'a> GpuExecutor<'a> {
         if let Some(secondary) = &mut self.secondary {
             secondary.close()?;
         }
+        if let Some(mut cache) = self.adaptive.take() {
+            cache.erase();
+            println!("public_adaptive_closed=true host_reservation=131072");
+        }
         self.secondary = None;
         self.secondary_frequency = None;
         let retired = self
@@ -1017,6 +1023,128 @@ impl<'a> GpuExecutor<'a> {
     }
     pub fn cache_bytes(&self) -> usize {
         self.cache_bytes + self.bank_reserved
+    }
+    pub(crate) fn enable_adaptive_after_prefill(&mut self) -> Result<()> {
+        if std::env::var("KUNO_LAB_ADAPTIVE_EXPERTS").as_deref() != Ok("1") {
+            return Ok(());
+        }
+        if self.adaptive.is_some()
+            || self.secondary.is_some()
+            || self.bank_slots != 144
+            || self.banks.len() != 48
+            || self.gpu_expert_limit != 10
+            || self.batch_moe.is_some()
+        {
+            return Err(Error::InvalidFormat("adaptive completed prefill policy"));
+        }
+        self.adaptive = Some(crate::adaptive_experts::Cache::new(|layer| {
+            self.banks
+                .get(&format!("blk.{layer}.ffn_gate_exps.weight"))
+                .ok_or(Error::InvalidFormat("adaptive original bank"))?
+                .slots
+                .cold_slots(crate::adaptive_experts::ROTATING)
+                .map_err(|_| Error::InvalidFormat("adaptive full original bank"))
+        })?);
+        Ok(())
+    }
+    pub(crate) fn promote_adaptive(
+        &mut self,
+        _boundary: &crate::resident_model::batch::CompletedAdaptiveBoundary,
+        arena: &crate::private_arena::PrivateArena,
+        fault: crate::private_arena::BufferId,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        let Some(cache) = &mut self.adaptive else {
+            return Ok(());
+        };
+        let admission = self
+            .resident_admission
+            .as_ref()
+            .ok_or(Error::InvalidFormat("adaptive resident admission"))?;
+        let mut promoted = 0;
+        let start = cache.first_layer();
+        let mut next = (start + 1) % 48;
+        for offset in 0..48 {
+            let layer = (start + offset) % 48;
+            let key = format!("blk.{layer}.ffn_gate_exps.weight");
+            let bank = self
+                .banks
+                .get_mut(&key)
+                .ok_or(Error::InvalidFormat("adaptive original bank"))?;
+            let Some(expert) = cache.candidate(layer, &bank.slots)? else {
+                continue;
+            };
+            let selected = zeroize::Zeroizing::new([expert]);
+            let plan = bank
+                .slots
+                .plan_in_slots(&*selected, cache.slots(layer)?)
+                .map_err(|_| Error::InvalidFormat("adaptive pinned plan"))?;
+            bank.slots
+                .validate_pending(&plan, &*selected)
+                .map_err(|_| Error::InvalidFormat("adaptive original plan proof"))?;
+            if cache
+                .owned_bytes()
+                .checked_add(
+                    plan.owned_metadata_bytes()
+                        .map_err(|_| Error::ArithmeticOverflow)?,
+                )
+                .and_then(|n| n.checked_add(4096))
+                .is_none_or(|n| n > crate::adaptive_experts::HOST)
+            {
+                return Err(Error::LimitExceeded("adaptive live private host"));
+            }
+            let [(_, slot)] = plan.uploads.as_slice() else {
+                return Err(Error::InvalidFormat("adaptive single original upload"));
+            };
+            let names = bank.source_names();
+            let tensors = names.map(|name| {
+                self.model
+                    .tensor(name)
+                    .ok_or(Error::InvalidFormat("adaptive original tensor"))
+            });
+            let [gate, up, down] = tensors;
+            let tensors = [gate?, up?, down?];
+            let requests = [bank.gate(), bank.up(), bank.down()].map(|b| b.expert_bytes() as u64);
+            // Each accepted single promotion stays under the original 40 MiB
+            // source envelope; one completion releases it before the next fill.
+            let charged = requests.iter().try_fold(0u64, |n, &b| {
+                n.checked_add(main_admission::page_bytes(b).map_err(admission_error)?)
+                    .ok_or(Error::ArithmeticOverflow)
+            })?;
+            if charged > 40 * 1024 * 1024 {
+                return Err(Error::LimitExceeded("adaptive original source"));
+            }
+            let add = admission.allocate(&requests, || {
+                let mut add = expert_banks::FillStats::default();
+                for (packed, tensor) in [bank.gate(), bank.up(), bank.down()]
+                    .into_iter()
+                    .zip(tensors)
+                {
+                    let (bytes, read, upload) =
+                        expert_banks::fill(&self.client, packed, tensor, expert, *slot, cancel)?;
+                    add.bytes += bytes;
+                    add.read_ns += read;
+                    add.upload_ns += upload;
+                }
+                Ok(add)
+            })?;
+            let fence = Instant::now();
+            crate::resident_model::batch_io::read_fault(arena, admission, fault, cancel)?;
+            cache.stats.fence_ns += fence.elapsed().as_nanos();
+            cache.stats.bytes += add.bytes;
+            cache.stats.read_ns += add.read_ns;
+            cache.stats.upload_ns += add.upload_ns;
+            bank.slots
+                .commit(plan)
+                .map_err(|_| Error::InvalidFormat("adaptive completed publication"))?;
+            cache.stats.promotions += 1;
+            promoted += 1;
+            next = (layer + 1) % 48;
+            if promoted == crate::adaptive_experts::BUDGET {
+                break;
+            }
+        }
+        cache.advance(next)
     }
     pub(crate) fn enable_secondary_after_prefill(&mut self) -> Result<()> {
         let Some(frequency) = self.secondary_frequency.as_ref() else {

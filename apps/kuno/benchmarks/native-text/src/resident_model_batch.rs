@@ -2,6 +2,7 @@
 //! committed state/cache/banks and publishes only after whole-model acceptance.
 //! Source-only until parent completes physical whole-model validation. No
 //! default/API/catalog change, replay, fallback or private checkpoint export.
+pub(crate) struct CompletedAdaptiveBoundary(());
 use super::*;
 use crate::{
     executor::{GpuExecutor, NativeProjectionTile, batch_moe},
@@ -1647,6 +1648,9 @@ impl Workspace {
         qa.finish(&m.arena, cancel)?;
         ma.finish(&m.arena, cancel)?;
         ple.commit(cancel)?;
+        if *count == 1 {
+            e.promote_adaptive(&CompletedAdaptiveBoundary(()), &m.arena, m.b.fault, cancel)?;
+        }
         *m.phase_ns.entry("native_all_family_commit").or_default() +=
             commit_start.elapsed().as_nanos();
         e.check_original_bank_metadata(LAYERS, ORIGINAL_BANK_HOST)?;

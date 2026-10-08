@@ -126,6 +126,34 @@ pub struct Plan {
 }
 
 impl Plan {
+    pub(crate) fn owned_metadata_bytes(&self) -> Result<usize> {
+        self.next
+            .slots
+            .capacity()
+            .checked_mul(std::mem::size_of::<Option<Resident>>())
+            .and_then(|n| {
+                n.checked_add(
+                    self.next
+                        .by_expert
+                        .capacity()
+                        .checked_mul(std::mem::size_of::<Option<usize>>())?,
+                )
+            })
+            .and_then(|n| {
+                n.checked_add(
+                    (self.slots.capacity() + self.canonical_slots.capacity())
+                        .checked_mul(std::mem::size_of::<usize>())?,
+                )
+            })
+            .and_then(|n| {
+                n.checked_add(
+                    (self.uploads.capacity() + self.canonical_uploads.capacity())
+                        .checked_mul(std::mem::size_of::<(usize, usize)>())?,
+                )
+            })
+            .and_then(|n| n.checked_add(std::mem::size_of::<Self>()))
+            .ok_or(BankError::CounterOverflow)
+    }
     fn wipe_routes(&mut self) {
         self.slots.zeroize();
         self.uploads.zeroize();
@@ -231,7 +259,37 @@ impl BankSlots {
     }
 
     /// Construct a plan without mutating committed residency or recency.
+    pub(crate) fn resident_slot(&self, expert: usize) -> Result<Option<usize>> {
+        self.state
+            .by_expert
+            .get(expert)
+            .copied()
+            .ok_or(BankError::ExpertOutOfRange)
+    }
+    pub(crate) fn cold_slots(&self, count: usize) -> Result<Zeroizing<Vec<usize>>> {
+        if count > self.capacity() || self.state.slots.iter().any(Option::is_none) {
+            return Err(BankError::Capacity);
+        }
+        let mut slots = Zeroizing::new((0..self.capacity()).collect::<Vec<_>>());
+        slots.sort_by_key(|&i| (self.state.slots[i].map(|r| r.last_used), i));
+        slots.truncate(count);
+        Ok(slots)
+    }
+    pub(crate) fn plan_in_slots(&mut self, selected: &[usize], allowed: &[usize]) -> Result<Plan> {
+        let mut mask = Zeroizing::new(vec![false; self.capacity()]);
+        for &slot in allowed {
+            let seen = mask.get_mut(slot).ok_or(BankError::Capacity)?;
+            if *seen {
+                return Err(BankError::Capacity);
+            }
+            *seen = true;
+        }
+        self.plan_allowed(selected, Some(&mask))
+    }
     pub fn plan(&mut self, selected: &[usize]) -> Result<Plan> {
+        self.plan_allowed(selected, None)
+    }
+    fn plan_allowed(&mut self, selected: &[usize], allowed: Option<&[bool]>) -> Result<Plan> {
         if selected.len() > self.capacity() {
             return Err(BankError::SelectionTooLarge);
         }
@@ -269,7 +327,8 @@ impl BankSlots {
                 let slot = next
                     .slots
                     .iter()
-                    .position(Option::is_none)
+                    .enumerate()
+                    .position(|(i, r)| r.is_none() && allowed.is_none_or(|a| a[i]))
                     .or_else(|| {
                         next.slots
                             .iter()
@@ -277,7 +336,10 @@ impl BankSlots {
                             .filter_map(|(slot, resident)| {
                                 resident
                                     .as_ref()
-                                    .filter(|resident| !protected[resident.expert])
+                                    .filter(|resident| {
+                                        !protected[resident.expert]
+                                            && allowed.is_none_or(|a| a[slot])
+                                    })
                                     .map(|resident| (resident.last_used, slot))
                             })
                             .min()
@@ -976,5 +1038,55 @@ mod tests {
             Err(BankError::ModifiedPlan)
         );
         assert!(source.state == original);
+    }
+}
+
+#[cfg(test)]
+mod adaptive_tests {
+    use super::*;
+    #[test]
+    fn restricted_plan_preserves_pins_and_rolls_back_host_state() {
+        let mut b = BankSlots::new(4, 8).unwrap();
+        let p = b.plan(&[0, 1, 2, 3]).unwrap();
+        b.commit(p).unwrap();
+        assert_eq!(&*b.cold_slots(2).unwrap(), &[0, 1]);
+        let p = b.plan_in_slots(&[4], &[0, 1]).unwrap();
+        b.validate_pending(&p, &[4]).unwrap();
+        drop(p);
+        assert_eq!(b.resident_slot(0).unwrap(), Some(0));
+        let p = b.plan_in_slots(&[4], &[0, 1]).unwrap();
+        b.commit(p).unwrap();
+        assert_eq!(b.resident_slot(4).unwrap(), Some(0));
+        assert_eq!(b.resident_slot(2).unwrap(), Some(2));
+        assert_eq!(b.resident_slot(3).unwrap(), Some(3));
+        assert!(matches!(
+            b.plan_in_slots(&[5], &[]),
+            Err(BankError::NoVictim)
+        ));
+        assert!(matches!(
+            b.plan_in_slots(&[5], &[0, 0]),
+            Err(BankError::Capacity)
+        ));
+        assert!(matches!(
+            b.plan_in_slots(&[5], &[4]),
+            Err(BankError::Capacity)
+        ));
+        assert!(matches!(
+            b.plan_in_slots(&[4, 5], &[0]),
+            Err(BankError::NoVictim)
+        ));
+    }
+    #[test]
+    fn restricted_plan_cannot_publish_modified_or_stale_uploads() {
+        let mut b = BankSlots::new(2, 4).unwrap();
+        let p = b.plan(&[0, 1]).unwrap();
+        b.commit(p).unwrap();
+        let mut p = b.plan_in_slots(&[2], &[0]).unwrap();
+        p.uploads[0].1 = 1;
+        assert_eq!(b.commit(p), Err(BankError::ModifiedPlan));
+        let stale = b.plan_in_slots(&[2], &[0]).unwrap();
+        let p = b.plan(&[1]).unwrap();
+        b.commit(p).unwrap();
+        assert_eq!(b.commit(stale), Err(BankError::StalePlan));
     }
 }

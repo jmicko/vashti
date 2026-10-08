@@ -2018,3 +2018,25 @@ and Kuno/Ollama/Vashti answerHTTP200. This establishes laboratory acceptance,
 not broader quality/context/soak or production/native-API integration.
 No installed service/configuration, model-file, API/catalog, frontend, release
 or installation change; no GPU reset/reboot/clock/driver change.
+
+### Agreed next experiment: bounded primary adaptive cache (2026-10-08)
+
+The user approved a B70-only rotating cache comparison with the accepted fixed
+intel144 placement. Keep 128 slots per layer pinned; choose the 16 least recently
+used slots at the completed prefill boundary as the only eviction candidates.
+Observe only accepted count1 CPU misses. Promote at most four experts per token,
+at most one per layer, after every original family has completed and committed.
+Candidates must miss twice within 32 tokens and miss on the current token.
+Current misses still run on CPU; promotions serve future tokens. No secondary
+GPU, arithmetic change, API, installed configuration, or persistent routing
+profile is part of this experiment.
+
+Private recency/frequency and slot metadata stays model-local, bounded by a
+128 KiB reservation inside the existing 1 MiB hybrid host allowance, and erased
+on close. Original GPU banks and source limits remain unchanged. Public original
+weight fills require admission, completion/fault acceptance, then ledger commit;
+a failed partial fill terminally poisons the context. All original numerical,
+continuation, lifecycle and physical recovery gates remain required. Record
+promotion traffic and full decode wall time, rather than treating cache hits as
+proof of a speed gain. The first trial uses synchronous token-boundary fills;
+overlap/calibration is a later step if reuse benefits justify transfer costs.

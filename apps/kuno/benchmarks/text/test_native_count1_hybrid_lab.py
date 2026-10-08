@@ -37,6 +37,30 @@ class SecondaryControls(unittest.TestCase):
         with self.assertRaises(ValueError):LAB.validate_secondary(value,True,output.replace("families=2","families=1"),False)
 
 
+class AdaptiveControls(unittest.TestCase):
+    def test_exact_partition_bounded_promotion_and_all_owner_closes(self):
+        value={"adaptive_experts":True,"secondary_experts":False,"adaptive_rotating_slots":16,
+            "adaptive_budget":4,"adaptive_promotions":10,"adaptive_boundaries":7,
+            "adaptive_host_bytes":105000,"warm_expert_hits":2200,"completed_cpu_misses":1160,
+            "adaptive_upload_bytes":1000000,"adaptive_read_ns":10,"adaptive_upload_ns":20,"adaptive_fence_ns":30}
+        output="\n".join(["public_adaptive_closed=true host_reservation=131072"]*5)
+        LAB.validate_adaptive(value,True,output,False)
+        for field,bad in [("adaptive_rotating_slots",17),("adaptive_budget",5),
+            ("adaptive_promotions",29),("adaptive_promotions",0),("adaptive_host_bytes",131073),
+            ("warm_expert_hits",2201),("adaptive_boundaries",6),("adaptive_fence_ns",0),
+            ("secondary_experts",True)]:
+            changed=dict(value);changed[field]=bad
+            with self.assertRaises(ValueError): LAB.validate_adaptive(changed,True,output,False)
+        with self.assertRaises(ValueError): LAB.validate_adaptive(value,True,output.split("\n",1)[1],False)
+        with self.assertRaises(ValueError): LAB.validate_adaptive(value,False,output,False)
+    def test_environment_does_not_inherit_accidental_opt_in(self):
+        with mock.patch.dict(os.environ,{"KUNO_LAB_ADAPTIVE_EXPERTS":"1"}):
+            env=LAB.worker_environment(pathlib.Path("/original/model"),pathlib.Path("/receipt"))
+            self.assertEqual(env["KUNO_LAB_ADAPTIVE_EXPERTS"],"0")
+            env=LAB.worker_environment(pathlib.Path("/original/model"),pathlib.Path("/receipt"),adaptive_experts=True)
+            self.assertEqual(env["KUNO_LAB_ADAPTIVE_EXPERTS"],"1")
+
+
 def receipt(card, cap):
     # Historical real native inventory, altered solely for validator tests.
     # No test output is saved as a hybrid device acceptance receipt.

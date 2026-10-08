@@ -1963,6 +1963,12 @@ impl Acceptance<'_, '_> {
                 .publish_after_whole_model_acceptance(&mut bank.slots, *p.waves)
                 .map_err(|_| err("native routed original ledger publication"))?;
             self.workspace.policy.commit(*p.layer)?;
+            if let (Some(cache), Some(proof)) = (&mut self.executor.adaptive, &p.count1) {
+                if proof.cap() != 10 || proof.gpu_limit() != 10 {
+                    return Err(err("adaptive accepted miss policy"));
+                }
+                cache.observe(*p.layer, proof.actual_miss_ids())?;
+            }
             p.armed = false;
             u::cancel(cancel)
         });

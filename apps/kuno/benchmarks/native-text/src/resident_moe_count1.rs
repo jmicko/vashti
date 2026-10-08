@@ -213,6 +213,13 @@ impl GpuExecutor<'_> {
         let private_limit = HYBRID_HOST
             .checked_sub(live)
             .and_then(|n| n.checked_sub(secondary_enqueue))
+            .and_then(|n| {
+                n.checked_sub(if self.adaptive.is_some() {
+                    crate::adaptive_experts::HOST
+                } else {
+                    0
+                })
+            })
             .filter(|&n| n > 0)
             .ok_or(Error::LimitExceeded("native count1 shared CPU host"))?;
         w.policy.issue(layer)?;
