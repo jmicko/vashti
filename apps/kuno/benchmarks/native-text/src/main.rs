@@ -642,6 +642,7 @@ fn apply_count1_hybrid_cap<'f>(
     resident: &mut resident_model::ResidentModel<'_, 'f>,
     executor: &mut executor::GpuExecutor<'f>,
     selected: Option<usize>,
+    request_io_reuse: bool,
     cancel: &AtomicBool,
 ) -> kuno_text::Result<()> {
     if let Some(cap) = selected
@@ -652,6 +653,9 @@ fn apply_count1_hybrid_cap<'f>(
         return Err(kuno_text::Error::InvalidFormat(
             "count1 hybrid completed prefill policy rejected",
         ));
+    }
+    if request_io_reuse {
+        resident.begin_lab_request_io_reuse(executor)?;
     }
     Ok(())
 }
@@ -930,6 +934,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let defer_router_io = count1_environment_opt_in(&mode, "KUNO_LAB_DEFER_ROUTER_IO")?;
     if defer_router_io && (!compact_info || count1_hybrid_cap.is_none_or(|cap| cap > 10)) {
         return Err("Deferred router IO requires compact protected count1 hybrid mode".into());
+    }
+    let request_io_reuse = count1_environment_opt_in(&mode, "KUNO_LAB_REQUEST_IO_REUSE")?;
+    if request_io_reuse
+        && (count1_hybrid_cap != Some(10)
+            || !mapped_weights
+            || !defer_router_io
+            || !info_batch_upload
+            || !inline_readback
+            || gpu_upload_clear
+            || kernel_profile)
+    {
+        return Err("request I/O reuse requires mapped cap10, deferred batched inline I/O without GPU-clear or kernel profiling".into());
     }
     if mode == "resident-count1-hybrid-chat" {
         let raw = std::env::var_os("KUNO_LAB_INFO_SLAB_BYTES");
@@ -2274,7 +2290,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         &cancel,
                     )?;
                 }
-                apply_count1_hybrid_cap(r, &mut executor, count1_hybrid_cap, &cancel)?;
+                apply_count1_hybrid_cap(
+                    r,
+                    &mut executor,
+                    count1_hybrid_cap,
+                    request_io_reuse,
+                    &cancel,
+                )?;
                 r.phase_ns.clear();
             }
             let pre_cpu_phase_ns = if count1_hybrid_cap.is_some() {
@@ -2314,6 +2336,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let pre_readback_reuses = cubecl::wgpu::transient_readback_reuses();
             let pre_gpu_upload_clears = cubecl::wgpu::transient_gpu_upload_clears();
             let pre_inline_read_batches = cubecl::wgpu::transient_inline_readback_batches();
+            let pre_request_io_reuses = cubecl::wgpu::transient_request_io_reuses();
             let reclaim_start = Instant::now();
             let gpu_source_advised_bytes = if reclaim_gpu_sources {
                 resident
@@ -2430,6 +2453,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 None
             };
+            let request_io_checkpoints =
+                resident.as_ref().map_or(0, |r| r.request_io_checkpoints());
+            let request_io_close_start = Instant::now();
+            if request_io_reuse {
+                resident
+                    .as_ref()
+                    .ok_or("request I/O model absent")?
+                    .end_lab_request_io_reuse()?;
+                println!("public_request_io_reuse closed=true full_audit=true");
+            }
+            let request_io_close_ms = if request_io_reuse {
+                request_io_close_start.elapsed().as_millis() as u64
+            } else {
+                0
+            };
             let mut fresh_completed_cpu_misses = None;
             println!(
                 "gpu_prefill_ms={} gpu_generation_ms={} synthetic_gpu_tokens={generated:?} cache_bytes={} reserved_bytes={} weight_upload_bytes={} cache_hits={} gpu_matvec_calls={}",
@@ -2494,6 +2532,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 receipt["mapped_weights"] = serde_json::json!(mapped_weights);
                 receipt["count1_bank_profile"] = serde_json::json!(count1_banks.label());
                 receipt["observed_mapped_weights"] = serde_json::json!(file.weights_mapped());
+                receipt["request_io_reuse"] = serde_json::json!(request_io_reuse);
+                receipt["observed_request_io_checkpoints"] =
+                    serde_json::json!(request_io_checkpoints);
+                receipt["observed_request_io_reuses"] = serde_json::json!(
+                    cubecl::wgpu::transient_request_io_reuses()
+                        .checked_sub(pre_request_io_reuses)
+                        .ok_or("request I/O counter overflow")?
+                );
+                receipt["request_io_closed_and_audited"] = serde_json::json!(request_io_reuse);
+                receipt["request_io_close_ms"] = serde_json::json!(request_io_close_ms);
                 receipt["kernel_profile"] = serde_json::json!(kernel_profile);
                 receipt["kernel_profile_scope"] = serde_json::json!(if kernel_profile {
                     "first-following-decode"
@@ -2837,7 +2885,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         native_decode_kernels,
                         &cancel,
                     )?;
-                    apply_count1_hybrid_cap(&mut fresh, &mut executor, count1_hybrid_cap, &cancel)?;
+                    apply_count1_hybrid_cap(
+                        &mut fresh,
+                        &mut executor,
+                        count1_hybrid_cap,
+                        request_io_reuse,
+                        &cancel,
+                    )?;
                     fresh_logits = resident_decode_step(
                         &mut fresh,
                         &mut executor,
@@ -2933,6 +2987,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         &mut partial,
                         &mut executor,
                         count1_hybrid_cap,
+                        request_io_reuse,
                         &cancel,
                     )?;
                     partial.arm_public_mid_token_cancel(layer)?;

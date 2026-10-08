@@ -1809,3 +1809,26 @@ current dominant measured cost on this fixture. Host-phase timings include
 synchronization and overlap and must not be read as pure GPU compute times.
 Keep original privacy/correctness/lifecycle bounds; no API or frontend work is
 needed for this internal optimization checkpoint.
+
+
+### Astra request-buffer reuse candidate, 2026-10-08
+
+User authorized another concentrated implementation/benchmark pass toward10
+ tokens/s. Owner remains the isolated Kuno checkout. db9f13c adds exact-math
+inactive-workgroup Q4 activation-load skipping;324bc92 adds an explicit
+request-scoped runtime I/O pool. Original maps/fences/finite checks remain;
+private buffers stay owned/charged through the request and receive the original
+full two-pass CPU-inspected audit at request close/error. The count1 contract
+above is explicitly revised for this request lifetime. No API/frontend changes.
+
+The attempted v44 first-token GPU profile failed the existing private-I/O
+bounded runtime gate and is NOT an accepted speed sample. It left B7050688000B
+and same-boot Xe classifications zero at2026-10-08T16:02:16.609881+00:00.
+No cap was raised. Source work proceeded from accepted v44.
+
+Integrated source tests pass498 native controls/two shader suites,70 runtime
+host controls/three allocator/two logger controls and41 Python runner controls.
+Runtime strict all-target Clippy passes; integrated Clippy/device acceptance
+are pending. Benchmark generation duration will include the final request audit,
+with its separate duration and actual reuse counters. Public admission is
+paused only for this exclusive benchmark block; restore it at the stopping point.

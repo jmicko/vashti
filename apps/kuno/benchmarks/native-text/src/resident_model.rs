@@ -561,6 +561,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         // Explicit close only: no callback from Drop/constructor guards into
         // admission. Cancelled short QSA can leave up to40MiB of ordered source
         // staging live; checked drain/erase must precede full MAIN inspection.
+        let request_io = self.admission.end_request_io_reuse();
         let sources = self.admission.cleanup_abandoned_ordered_sources();
         let io = self.io.close();
         let all = self.arena.close();
@@ -574,7 +575,12 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         self.cancel_after_attention = None;
         self.ple_history.reset();
         self.ple_conv.reset();
-        if sources.is_err() || io.is_err() || all.is_err() || self.retired.load(Ordering::Acquire) {
+        if request_io.is_err()
+            || sources.is_err()
+            || io.is_err()
+            || all.is_err()
+            || self.retired.load(Ordering::Acquire)
+        {
             self.retired.store(true, Ordering::Release);
             return Err(Error::InvalidFormat("resident full-span cleanup failed"));
         }

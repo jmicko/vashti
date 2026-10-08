@@ -34,8 +34,28 @@ def completion(cap, deferred=False):
     ) + ((f"public_count1_hybrid_mid_token_cancel cap={cap} layer=47 erased=true",) if deferred else ())
 
 
-def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False, metadata=False, banks="standard", shared=False, shared_gdn=False, info_batch_upload=False, dispatch="threaded", cpu_fma=False, reclaim_gpu_sources=False, native_scratch_clear=False, cpu_q8_residual=False, cpu_mapped_prefetch=False, pageout_gpu_sources=False, cpu_threads=16, cpu_q8_two_pass=False, cpu_buffered_weights=False, compute_scratch_clear=False, grouped_status=False, readback_reuse=False, gpu_upload_clear=False, inline_readback=False, cpu_work_stealing=False):
+def validate_request_io_reuse(receipt, selected, output):
+    if not selected and "request_io_reuse" not in receipt:
+        return
+    calls = receipt.get("observed_request_io_checkpoints")
+    close_ms = receipt.get("request_io_close_ms")
+    reuses = receipt.get("observed_request_io_reuses")
+    if (type(selected) is not bool or receipt.get("request_io_reuse") is not selected
+        or receipt.get("request_io_closed_and_audited") is not selected
+        or type(calls) is not int or not 0 <= calls <= 1000000 or (calls > 0) is not selected
+        or type(reuses) is not int or not 0 <= reuses <= 10000000 or (reuses > 0) is not selected
+        or type(close_ms) is not int or not 0 <= close_ms <= 900000
+        or not selected and close_ms != 0):
+        raise ValueError("Request I/O reuse requires actual checkpoints and full closing audit")
+    if selected and "public_request_io_reuse closed=true full_audit=true" not in output.splitlines():
+        raise ValueError("Completed request I/O closing audit missing")
+
+
+def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False, metadata=False, banks="standard", shared=False, shared_gdn=False, info_batch_upload=False, dispatch="threaded", cpu_fma=False, reclaim_gpu_sources=False, native_scratch_clear=False, cpu_q8_residual=False, cpu_mapped_prefetch=False, pageout_gpu_sources=False, cpu_threads=16, cpu_q8_two_pass=False, cpu_buffered_weights=False, compute_scratch_clear=False, grouped_status=False, readback_reuse=False, gpu_upload_clear=False, inline_readback=False, cpu_work_stealing=False, request_io_reuse=False):
     validate_cap(cap)
+    validate_request_io_reuse(receipt, request_io_reuse, output)
+    if request_io_reuse and cap != 10:
+        raise ValueError("Request I/O reuse requires cap10")
     if cpu_work_stealing or "cpu_work_stealing" in receipt:
         if type(cpu_work_stealing) is not bool or receipt.get("cpu_work_stealing") is not cpu_work_stealing or cpu_work_stealing and workers != "pooled":
             raise ValueError("CPU row scheduling policy mismatch")
@@ -239,7 +259,7 @@ def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False
         raise ValueError("Hybrid continuation and both cancellation proofs required")
 
 
-def worker_environment(model, receipt, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False, metadata=False, banks="standard", shared=False, shared_gdn=False, info_batch_upload=False, dispatch="threaded", reclaim_gpu_sources=False, native_scratch_clear=False, cpu_q8_residual=False, cpu_mapped_prefetch=False, pageout_gpu_sources=False, cpu_threads=16, cpu_q8_two_pass=False, compute_scratch_clear=False, grouped_status=False, readback_reuse=False, gpu_upload_clear=False, inline_readback=False, cpu_work_stealing=False):
+def worker_environment(model, receipt, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False, metadata=False, banks="standard", shared=False, shared_gdn=False, info_batch_upload=False, dispatch="threaded", reclaim_gpu_sources=False, native_scratch_clear=False, cpu_q8_residual=False, cpu_mapped_prefetch=False, pageout_gpu_sources=False, cpu_threads=16, cpu_q8_two_pass=False, compute_scratch_clear=False, grouped_status=False, readback_reuse=False, gpu_upload_clear=False, inline_readback=False, cpu_work_stealing=False, request_io_reuse=False):
     if type(cpu_threads) is not int or cpu_threads not in (4,8,16):
         raise ValueError("Explicit public CPU threads must be4,8,16")
     if cpu_threads!=16 and workers!="pooled":
@@ -305,6 +325,9 @@ def worker_environment(model, receipt, workers="scoped", overlap=False, mapped=F
         raise ValueError("Inline readback requires explicit batched INFO and inline dispatch")
     if type(cpu_work_stealing) is not bool or cpu_work_stealing and workers != "pooled":
         raise ValueError("CPU work stealing requires pooled workers")
+    if type(request_io_reuse) is not bool or request_io_reuse and (not mapped or not deferred or not info_batch_upload or not inline_readback or gpu_upload_clear or profile):
+        raise ValueError("Request I/O reuse requires mapped deferred batched inline I/O without GPU clear or profiling")
+    env["KUNO_LAB_REQUEST_IO_REUSE"] = "1" if request_io_reuse else "0"
     env["KUNO_LAB_CPU_WORK_STEALING"] = "1" if cpu_work_stealing else "0"
     env["KUNO_LAB_INLINE_READBACK"] = "1" if inline_readback else "0"
     env["KUNO_LAB_READBACK_REUSE"] = "1" if readback_reuse else "0"
@@ -365,6 +388,7 @@ def main():
     parser.add_argument("--defer-router-io", action="store_true")
     parser.add_argument("--gpu-router", action="store_true")
     parser.add_argument("--retained-metadata", action="store_true")
+    parser.add_argument("--request-io-reuse", action="store_true")
     parser.add_argument("--cpu-work-stealing", action="store_true")
     parser.add_argument("--inline-readback", action="store_true")
     parser.add_argument("--gpu-upload-clear", action="store_true")
@@ -377,6 +401,8 @@ def main():
         parser.error("Expanded banks require --card intel and a bounded --cpu-miss-cap")
     if args.cpu_work_stealing and args.cpu_workers != "pooled":
         parser.error("CPU work stealing requires pooled workers")
+    if args.request_io_reuse and (args.cpu_miss_cap != 10 or not args.mapped_weights or not args.defer_router_io or not args.info_batch_upload or not args.inline_readback or args.gpu_upload_clear or args.kernel_profile):
+        parser.error("Request I/O reuse requires mapped cap10 with deferred batched inline I/O without GPU clear or profiling")
     if args.cpu_gpu_overlap and args.cpu_workers != "pooled":
         parser.error("CPU/GPU overlap requires --cpu-workers pooled")
     if args.cpu_q8 and args.cpu_workers != "pooled":
@@ -439,7 +465,7 @@ def main():
         ("KUNO_LAB_STATIC_CACHE_BYTES " if args.bank_profile not in ("intel96","intel128","intel144","intel160") else "") + "KUNO_LAB_EXPERT_BATCH_BYTES KUNO_LAB_EXPERT_SCATTER",
     ]
     command.extend("--setenv=" + key + "=" + value
-                   for key, value in worker_environment(args.model.resolve(), target, args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault,args.defer_router_io,args.gpu_router,args.retained_metadata,args.bank_profile,args.next_shared_kernels,args.next_shared_gdn,args.info_batch_upload,args.device_dispatch,args.reclaim_gpu_sources,args.native_scratch_clear,args.cpu_q8_residual,args.cpu_mapped_prefetch,args.pageout_gpu_sources,args.cpu_threads,args.cpu_q8_two_pass,compute_scratch_clear=args.compute_scratch_clear,grouped_status=args.grouped_status,readback_reuse=args.readback_reuse,gpu_upload_clear=args.gpu_upload_clear,inline_readback=args.inline_readback,cpu_work_stealing=args.cpu_work_stealing).items())
+                   for key, value in worker_environment(args.model.resolve(), target, args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault,args.defer_router_io,args.gpu_router,args.retained_metadata,args.bank_profile,args.next_shared_kernels,args.next_shared_gdn,args.info_batch_upload,args.device_dispatch,args.reclaim_gpu_sources,args.native_scratch_clear,args.cpu_q8_residual,args.cpu_mapped_prefetch,args.pageout_gpu_sources,args.cpu_threads,args.cpu_q8_two_pass,compute_scratch_clear=args.compute_scratch_clear,grouped_status=args.grouped_status,readback_reuse=args.readback_reuse,gpu_upload_clear=args.gpu_upload_clear,inline_readback=args.inline_readback,cpu_work_stealing=args.cpu_work_stealing,request_io_reuse=args.request_io_reuse).items())
     command.extend([sys.executable, str(HERE / "protected-lab-exec.py"), str(frozen),
                     args.card, MODE, str(args.cpu_miss_cap)])
     print("verified_cargo_executable_sha256=" + identity, flush=True)
@@ -454,7 +480,7 @@ def main():
         raise SystemExit("Missing whole-model hybrid receipt")
     snapshot = target.read_bytes()
     receipt = json.loads(snapshot)
-    validate_receipt(receipt, args.card, args.cpu_miss_cap, "".join(lines), args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault,args.defer_router_io,args.gpu_router,args.retained_metadata,args.bank_profile,args.next_shared_kernels,args.next_shared_gdn,args.info_batch_upload,args.device_dispatch,args.cpu_fma,args.reclaim_gpu_sources,args.native_scratch_clear,args.cpu_q8_residual,args.cpu_mapped_prefetch,args.pageout_gpu_sources,args.cpu_threads,args.cpu_q8_two_pass,args.cpu_buffered_weights,compute_scratch_clear=args.compute_scratch_clear,grouped_status=args.grouped_status,readback_reuse=args.readback_reuse,gpu_upload_clear=args.gpu_upload_clear,inline_readback=args.inline_readback,cpu_work_stealing=args.cpu_work_stealing)
+    validate_receipt(receipt, args.card, args.cpu_miss_cap, "".join(lines), args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault,args.defer_router_io,args.gpu_router,args.retained_metadata,args.bank_profile,args.next_shared_kernels,args.next_shared_gdn,args.info_batch_upload,args.device_dispatch,args.cpu_fma,args.reclaim_gpu_sources,args.native_scratch_clear,args.cpu_q8_residual,args.cpu_mapped_prefetch,args.pageout_gpu_sources,args.cpu_threads,args.cpu_q8_two_pass,args.cpu_buffered_weights,compute_scratch_clear=args.compute_scratch_clear,grouped_status=args.grouped_status,readback_reuse=args.readback_reuse,gpu_upload_clear=args.gpu_upload_clear,inline_readback=args.inline_readback,cpu_work_stealing=args.cpu_work_stealing,request_io_reuse=args.request_io_reuse)
     record = {
         "scope": "fixed-public-count1-hybrid-output-and-lifecycle-only",
         "requested_cpu_fma_arithmetic": args.cpu_fma,
@@ -471,6 +497,7 @@ def main():
         "receipt_sha256": BASE.digest(snapshot), "protected_lifecycle_completion_checked": True,
         "matched_performance_measurement": False, "cpu_gpu_overlap": args.cpu_gpu_overlap, "cpu_workers": args.cpu_workers,
         "mapped_weights": args.mapped_weights, "kernel_profile": args.kernel_profile,
+        "request_io_reuse": args.request_io_reuse,
         "fast_gpu": args.fast_gpu, "next_shared_kernels": args.next_shared_kernels, "next_shared_gdn": args.next_shared_gdn,
         "long_fixture": args.long_fixture,
         "cpu_q8_activations": args.cpu_q8,

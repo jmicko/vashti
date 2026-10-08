@@ -73,7 +73,7 @@
     },
     {
       "path": "cubecl-runtime/src/client.rs",
-      "sha256": "7dbb22d4ea267158f44fe756d3af5cb524b6efae3e94eeaff8ccc0f528169ecc",
+      "sha256": "341c64cfaceefe65b15b011fc1b055282c0488b22266d0e8bffc20f3686f33ab",
       "original_sha256": "dd25c67906e3db68d05d916d45234e4bdf20cd5b65ac1ad2b00a2ddcb520e85a"
     },
     {
@@ -93,7 +93,7 @@
     },
     {
       "path": "cubecl-runtime/src/server/base.rs",
-      "sha256": "d250b0700e18c109da7f5909fd062ce0bd0aab91bf6249c3a2ab191463690cee",
+      "sha256": "b72f29fa7fca9203901ee71a7a50bdc93f3243c2e989a97e27972724f8ada62b",
       "original_sha256": "c6292c16d5a73d7a1570776ffd25ec10afc339b942dbc5a693d8c791feb8ef5b"
     },
     {
@@ -153,7 +153,7 @@
     },
     {
       "path": "cubecl-wgpu/src/compute/mod.rs",
-      "sha256": "d0f377cb7766f7c3a75d580706026f14dca097d5dd6398648fefb93a5ae36a3b",
+      "sha256": "4177d0188ee4f58e352b5b5b9270a208d3a626efda6eb0a06730898ca36b218c",
       "original_sha256": "add8acb1b1f8e92c330be1e66f182317c328f3778821b28db425d176f10cfe6f"
     },
     {
@@ -163,21 +163,21 @@
     },
     {
       "path": "cubecl-wgpu/src/compute/server.rs",
-      "sha256": "72a7ff0a8cc5b94047ba0aadb31b49b377d753474a437652a1f16d1ae0d82bad",
+      "sha256": "158b17cb9d80927e4ee5bba1def5c6e0b2c1e5bd8ca440832e84cf9c5aeb984c",
       "original_sha256": "a4840cd40e4541b27d93f0f08a211af96a0b50e272903fe97b74eec7a29a5903"
     },
     {
       "path": "cubecl-wgpu/src/compute/stream.rs",
-      "sha256": "15af06329c6d140fcf02f1817e089a93f36a2ff62b036c50e6adda1f69c03bf1",
+      "sha256": "03cccb80488fdfb93a132ad34e4067756b23d08278fb555f17cfdfe335cc19e8",
       "original_sha256": "97501594e0424c70cd65cbebfedf3b1f1578ecccb4b7ef1e3a873e85141cc35e"
     },
     {
       "path": "cubecl-wgpu/src/compute/transient_io.rs",
-      "sha256": "c8e85b8dc83e0b5583b937450e634604f0ee6f175b3dda15c965191355d7f45f",
+      "sha256": "be16e88c5f3c0616312a783bb8af923f728b25bd8ea2863ad96cf7b2c7270a67",
       "original_sha256": null
     }
   ],
-  "patch_sha256": "a93143eaaa8f6f88155ad8323145214f26a7e51b3107e060ef2f8135a40978e9",
+  "patch_sha256": "0a3a680067217031c1ae12ec3bdbd0c2487864f779a28dbf8d8939b2b4381af8",
   "lock_sha256": "83550fa6c6d790fdfb62df390fd96b7c9d75b367c1ee6712b980ab2ff67c7288",
   "host_lock_sha256": "b968a383901ba657bdc2b670a0c7d30fc8c6b8c7ae9335c7c231fb827f0b7acf"
 }

@@ -808,6 +808,22 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             .shared_vector_calls)
     }
 
+    pub(crate) fn begin_lab_request_io_reuse(&self, executor: &GpuExecutor<'f>) -> Result<()> {
+        self.completed_native_projection_boundary(executor)?;
+        if self.native_cpu_miss_cap()? != Some(10) {
+            return Err(error());
+        }
+        self.admission.begin_request_io_reuse()
+    }
+
+    pub(crate) fn request_io_checkpoints(&self) -> u64 {
+        self.admission.request_io_checkpoints()
+    }
+
+    pub(crate) fn end_lab_request_io_reuse(&self) -> Result<()> {
+        self.admission.end_request_io_reuse()
+    }
+
     /// Explicit reserved count1 lab only. The original completed all-family
     /// boundary remains the sole authority; this performs no inference/commit.
     pub(crate) fn set_lab_count1_cpu_misses(

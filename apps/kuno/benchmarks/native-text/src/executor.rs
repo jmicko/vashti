@@ -337,6 +337,8 @@ pub(crate) struct ResidentAdmission {
     retired: Arc<AtomicBool>,
     sequence_poison: Arc<AtomicBool>,
     deferred_router_reads: Arc<AtomicU64>,
+    request_io_nonce: Arc<AtomicU64>,
+    request_io_checkpoints: Arc<AtomicU64>,
 }
 /// Borrowed only inside the existing guarded model allocation callback. This
 /// proves that its MAIN lock is already held; constructor checks must not
@@ -378,6 +380,63 @@ fn checked_construction_origin<T>(
 }
 
 impl ResidentAdmission {
+    /// The model obtains this capability only at a completed public laboratory
+    /// boundary. Clones share the nonce; a different model cannot recycle it.
+    pub(crate) fn begin_request_io_reuse(&self) -> Result<()> {
+        self.active()?;
+        if !self.transient_io || !self.token_io_checkpoint {
+            return Err(Error::InvalidFormat(
+                "request I/O requires owned token checkpoints",
+            ));
+        }
+        self.with_ledger(|ledger| {
+            checked_sequence_guard(ledger, &self.sequence_poison, |_| {
+                if self.request_io_nonce.load(Ordering::Acquire) != 0 {
+                    return Err(Error::InvalidFormat("request I/O scope already active"));
+                }
+                let nonce = self
+                    .client
+                    .begin_transient_io_reuse()
+                    .map_err(|_| Error::InvalidFormat("request I/O scope rejected"))?;
+                if nonce == 0 {
+                    self.retired.store(true, Ordering::Release);
+                    return Err(Error::InvalidFormat("request I/O scope missing"));
+                }
+                self.request_io_nonce.store(nonce, Ordering::Release);
+                Ok(())
+            })
+        })
+    }
+    pub(crate) fn request_io_checkpoints(&self) -> u64 {
+        self.request_io_checkpoints.load(Ordering::Relaxed)
+    }
+    /// Explicit close remains legal after logical cancellation/poison. Do not
+    /// clear the capability unless the original full audit actually succeeded.
+    pub(crate) fn end_request_io_reuse(&self) -> Result<()> {
+        self.with_ledger(|_| {
+            let nonce = self.request_io_nonce.load(Ordering::Acquire);
+            if nonce == 0 {
+                return Ok(());
+            }
+            checked_transient_cleanup(&self.retired, || {
+                let receipt = self
+                    .client
+                    .end_transient_io_reuse(nonce)
+                    .map_err(|_| Error::InvalidFormat("request I/O closing audit failed"))?;
+                let bytes = receipt
+                    .upload_bytes
+                    .checked_add(receipt.uniform_bytes)
+                    .and_then(|n| n.checked_add(receipt.readback_bytes));
+                if bytes != Some(receipt.inspected_bytes)
+                    || (receipt.inspected_bytes == 0) != (receipt.inspected_buffers == 0)
+                {
+                    return Err(Error::InvalidFormat("request I/O closing audit incomplete"));
+                }
+                self.request_io_nonce.store(0, Ordering::Release);
+                Ok(())
+            })
+        })
+    }
     fn with_ledger<T>(&self, f: impl FnOnce(&mut MainAdmission) -> Result<T>) -> Result<T> {
         let mut ledger = self
             .ledger
@@ -429,10 +488,11 @@ impl ResidentAdmission {
     pub(crate) fn readback<T>(&self, f: impl FnOnce() -> Result<T>) -> Result<T> {
         self.readback_with_cadence(false, false, f)
     }
-    /// Mandatory full audited cleanup is the ONE admission cleanup callback.
-    /// No caller receipt/hook or token cadence can bypass that audit. Ordered
-    /// sources release only after the same completed map, audit and health
-    /// checks; telemetry/MAIN fence credit remains last and unchanged.
+    /// Completed map/error acceptance is the ONE admission cleanup callback.
+    /// An explicit request capability may retain dirty runtime owners until its
+    /// full closing audit. Ordinary callers and ordered MAIN source release
+    /// retain the original immediate full audit. No dirty runtime credit is
+    /// granted by reuse; telemetry/MAIN fence credit remains last.
     pub(crate) fn readback_audited<T>(
         &self,
         cancel: &AtomicBool,
@@ -452,6 +512,32 @@ impl ResidentAdmission {
                     f,
                     || {
                         checked_audited_boundary(&self.retired, || {
+                            let nonce = self.request_io_nonce.load(Ordering::Acquire);
+                            // No MAIN source is credited by a dirty checkpoint.
+                            // Rare public uploads keep their original full audit.
+                            let sources_empty = self
+                                .ordered_sources
+                                .as_ref()
+                                .is_none_or(|s| s.borrow().bytes() == 0);
+                            if nonce != 0 && sources_empty {
+                                self.client.recycle_transient_io(nonce).map_err(|_| {
+                                    Error::InvalidFormat("request I/O checkpoint rejected")
+                                })?;
+                                if cancel.load(Ordering::Acquire)
+                                    || self.retired.load(Ordering::Acquire)
+                                    || self.sequence_poison.load(Ordering::Acquire)
+                                {
+                                    return Err(Error::InvalidFormat(
+                                        "request I/O checkpoint invalidated",
+                                    ));
+                                }
+                                self.request_io_checkpoints
+                                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+                                        n.checked_add(1)
+                                    })
+                                    .map_err(|_| Error::ArithmeticOverflow)?;
+                                return Ok(());
+                            }
                             let audit = || {
                                 cubecl::future::block_on(
                                     self.client.sanitize_transient_io_audited(),
@@ -1100,6 +1186,8 @@ impl<'a> GpuExecutor<'a> {
         .map_err(admission_error)?;
         let admission = ResidentAdmission {
             deferred_router_reads: Arc::new(AtomicU64::new(0)),
+            request_io_nonce: Arc::new(AtomicU64::new(0)),
+            request_io_checkpoints: Arc::new(AtomicU64::new(0)),
             sequence_poison: Arc::new(AtomicBool::new(false)),
             client: self.client.clone(),
             transient_io: self.transient_resident.is_some(),

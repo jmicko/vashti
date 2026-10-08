@@ -44,6 +44,34 @@ def completion(cap):
 
 
 class HybridLabTests(unittest.TestCase):
+    def test_request_io_reuse_requires_actual_close_and_bounded_checkpoints(self):
+        marker="public_request_io_reuse closed=true full_audit=true"
+        value=dict(request_io_reuse=True, request_io_closed_and_audited=True,
+                   observed_request_io_checkpoints=381, observed_request_io_reuses=1234, request_io_close_ms=42)
+        LAB.validate_request_io_reuse(value, True, marker)
+        for field, bads in [("request_io_reuse",[False,1,None]),
+                            ("request_io_closed_and_audited",[False,1,None]),
+                            ("observed_request_io_checkpoints",[0,True,None,-1,1000001]),
+                            ("request_io_close_ms",[-1,True,None,900001]),
+                            ("observed_request_io_reuses",[0,True,None,-1,10000001])]:
+            for bad in bads:
+                wrong=dict(value);wrong[field]=bad
+                with self.assertRaises(ValueError): LAB.validate_request_io_reuse(wrong,True,marker)
+        with self.assertRaises(ValueError): LAB.validate_request_io_reuse(value,True,"")
+        with self.assertRaises(ValueError): LAB.validate_request_io_reuse(value,False,marker)
+        LAB.validate_request_io_reuse(dict(request_io_reuse=False,request_io_closed_and_audited=False,observed_request_io_checkpoints=0,observed_request_io_reuses=0,request_io_close_ms=0),False,"")
+
+    def test_request_io_reuse_is_explicit_and_has_no_unsafe_mode(self):
+        selection=dict(mapped=True,deferred=True,compact_info=True,info_batch_upload=True,
+                       inline_readback=True,dispatch="inline",request_io_reuse=True)
+        self.assertEqual(LAB.worker_environment("/original","/receipt",**selection)["KUNO_LAB_REQUEST_IO_REUSE"],"1")
+        for field,value in [("mapped",False),("deferred",False),("info_batch_upload",False),
+                            ("inline_readback",False),("gpu_upload_clear",True),("profile",True)]:
+            invalid=dict(selection);invalid[field]=value
+            with self.assertRaises(ValueError): LAB.worker_environment("/original","/receipt",**invalid)
+        with mock.patch.dict(os.environ,{"KUNO_LAB_REQUEST_IO_REUSE":"1"}):
+            self.assertEqual(LAB.worker_environment("/original","/receipt")["KUNO_LAB_REQUEST_IO_REUSE"],"0")
+
     def test_cpu_work_stealing_requires_pooled_policy_and_compiled_marker(self):
         value=receipt("intel",10)
         value.update(cpu_work_stealing=True,count1_hybrid_cpu_workers="pooled",observed_count1_hybrid_cpu_workers="pooled")

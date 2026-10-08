@@ -1385,3 +1385,35 @@ selection. Native engine and core source are restored exactly to accepted
 7c40189. The transient dispatch-count design is documented above for future
 consideration, but is not selected code. Goal is paused, target remains unmet;
 see the checkpoint and51-fixture numeric aggregate for final restoration proof.
+
+
+### Request-owned transient I/O reuse experiment (2026-10-08)
+
+The new explicit `--request-io-reuse` laboratory mode targets allocation and
+cleanup overhead, preserving original packed arithmetic and model outputs.
+It requires mapped cap10 count1, deferred router I/O, batched INFO and inline
+readback; incompatible GPU-upload-clear/kernel profiling modes reject. Default
+and installed execution remain unchanged.
+
+This mode deliberately supersedes the historical requirement to erase/audit
+runtime I/O after every token. The privacy boundary is the same exclusive model
+request: begin only after completed prefill, with one nonzero opaque stream-bound
+nonce; reject overlapping owners and stale capabilities. A healthy completed
+checkpoint must accept stream and private GPU errors, all callbacks and zero
+outstanding map leases before exact-kind/full-span buffers can be reused. All
+unique dirty owners stay retained and charged under the original64MiB cap,
+including full final audit headroom and bounded pool bookkeeping. No clean
+receipt or dirty memory credit is issued. Uploads receive checked batched WRITE
+maps; every producer fully overwrites the original span/padding before reuse.
+No request data enters compiler keys, diagnostics, disk caches or new storage.
+
+The original numeric checks, both final fault fences, PLE transition, all-family
+commit and original128 output IDs remain. Real ordered MAIN upload sources keep
+immediate full audit/release; only source-empty checkpoints reuse dirty storage.
+Normal request completion and cancellation/abandonment explicitly end the nonce
+before model-arena teardown, performing the original two erase passes and full
+CPU inspection across used AND idle retained buffers. Failed completion retains
+or quarantines ownership and retires the context; a new model cannot inherit it.
+Generation timings include the final request audit; report its separate numeric
+duration, actual reuse/checkpoint counters and successful full-close evidence.
+Complete source/device/physical-recovery validation is pending.
