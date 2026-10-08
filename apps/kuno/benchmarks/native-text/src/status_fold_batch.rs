@@ -172,9 +172,7 @@ pub(crate) fn launch(arena: &PrivateArena, views: &[View], fault: BufferId) -> R
         .and_then(|n| {
             n.checked_add(args.buffers.capacity() * std::mem::size_of_val(&args.buffers[0]))
         })
-        .and_then(|n| {
-            n.checked_add(info.data.capacity() * 8 + views.len() * std::mem::size_of::<View>())
-        })
+        .and_then(|n| n.checked_add(info.data.capacity() * 8 + std::mem::size_of_val(views)))
         .ok_or(Error::ArithmeticOverflow)?;
     if bytes > 4096 {
         return Err(Error::LimitExceeded("grouped status metadata"));
