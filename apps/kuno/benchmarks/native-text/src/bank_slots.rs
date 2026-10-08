@@ -267,7 +267,7 @@ impl BankSlots {
             .ok_or(BankError::ExpertOutOfRange)
     }
     pub(crate) fn cold_slots(&self, count: usize) -> Result<Zeroizing<Vec<usize>>> {
-        if count > self.capacity() || self.state.slots.iter().any(Option::is_none) {
+        if count > self.capacity() {
             return Err(BankError::Capacity);
         }
         let mut slots = Zeroizing::new((0..self.capacity()).collect::<Vec<_>>());
@@ -1075,6 +1075,18 @@ mod adaptive_tests {
             b.plan_in_slots(&[4, 5], &[0]),
             Err(BankError::NoVictim)
         ));
+    }
+    #[test]
+    fn cold_rotation_uses_empty_slots_before_evicting_prefill_weights() {
+        let mut b = BankSlots::new(4, 8).unwrap();
+        let p = b.plan(&[0, 1]).unwrap();
+        b.commit(p).unwrap();
+        assert_eq!(&*b.cold_slots(2).unwrap(), &[2, 3]);
+        let p = b.plan_in_slots(&[4], &b.cold_slots(2).unwrap()).unwrap();
+        b.commit(p).unwrap();
+        assert_eq!(b.resident_slot(0).unwrap(), Some(0));
+        assert_eq!(b.resident_slot(1).unwrap(), Some(1));
+        assert_eq!(b.resident_slot(4).unwrap(), Some(2));
     }
     #[test]
     fn restricted_plan_cannot_publish_modified_or_stale_uploads() {

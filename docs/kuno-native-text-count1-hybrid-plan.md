@@ -2040,3 +2040,9 @@ continuation, lifecycle and physical recovery gates remain required. Record
 promotion traffic and full decode wall time, rather than treating cache hits as
 proof of a speed gain. The first trial uses synchronous token-boundary fills;
 overlap/calibration is a later step if reuse benefits justify transfer costs.
+
+Initial v70 device trial correctly rejected setup before generation: some
+original prefill banks contain fewer than 144 populated experts. The rotating
+slot selection therefore uses empty slots first, then cold populated slots,
+while pinning the other 128 slots as before. Empty pinned slots stay pinned;
+this experiment does not claim a fully populated 144-expert stationary bank.
