@@ -44,6 +44,22 @@ def completion(cap):
 
 
 class HybridLabTests(unittest.TestCase):
+    def test_prefetch_counts_include_resident_cpu_work_without_changing_misses(self):
+        value = receipt("intel",10)
+        value.update(cpu_mapped_prefetch=True, observed_cpu_mapped_prefetch=True,
+            warm_cpu_prefetch_calls=60, mapped_weights=True, observed_mapped_weights=True,
+            count1_hybrid_cpu_workers="pooled", observed_count1_hybrid_cpu_workers="pooled",
+            count1_hybrid_cpu_gpu_overlap=True, observed_count1_hybrid_cpu_gpu_overlap=True,
+            gpu_expert_limit=6, observed_cpu_resident_expert_calls=3, observed_shared_overlap_calls=336)
+        LAB.validate_receipt(value, "intel", 10, completion(10), workers="pooled", overlap=True,
+            mapped=True, cpu_mapped_prefetch=True, gpu_expert_limit=6)
+        for field, bad in (("warm_cpu_prefetch_calls", 51), ("observed_cpu_resident_expert_calls", 0),
+            ("observed_cpu_resident_expert_calls", True), ("gpu_expert_limit", 10)):
+            corrupted = copy.deepcopy(value); corrupted[field] = bad
+            with self.assertRaises(ValueError):
+                LAB.validate_receipt(corrupted, "intel", 10, completion(10), workers="pooled", overlap=True,
+                    mapped=True, cpu_mapped_prefetch=True, gpu_expert_limit=6)
+
     def test_resident_balancing_requires_mapped_pooled_overlap(self):
         for limit in (-1, 11, True):
             with self.assertRaises(ValueError):

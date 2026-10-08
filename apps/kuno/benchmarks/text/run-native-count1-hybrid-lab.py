@@ -88,7 +88,7 @@ def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False
             or type(calls) is not int or not 0 <= calls <= 1000000
             or (calls > 0) is not fused_experts or fused_experts and not shared):
             raise ValueError("Fused expert selection requires observed shared GPU dispatch")
-    if gpu_expert_limit != 10 or "gpu_expert_limit" in receipt:
+    if gpu_expert_limit != 10 or "gpu_expert_limit" in receipt or "observed_cpu_resident_expert_calls" in receipt:
         calls = receipt.get("observed_cpu_resident_expert_calls")
         if (type(gpu_expert_limit) is not int or not 0 <= gpu_expert_limit <= 10
             or receipt.get("gpu_expert_limit") != gpu_expert_limit
@@ -144,11 +144,11 @@ def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False
             raise ValueError("GPU timing must cover only one independently selected native decode step")
     if cpu_buffered_weights or "cpu_buffered_weights" in receipt:
         calls=receipt.get("warm_cpu_buffered_reads");misses=receipt.get("completed_cpu_misses")
-        if type(cpu_buffered_weights) is not bool or (cpu_buffered_weights and (not mapped or workers!="pooled" or cpu_mapped_prefetch)) or receipt.get("cpu_buffered_weights") is not cpu_buffered_weights or receipt.get("observed_cpu_buffered_weights") is not cpu_buffered_weights or type(calls) is not int or type(misses) is not int or calls != (3*misses if cpu_buffered_weights else 0):
+        if type(cpu_buffered_weights) is not bool or (cpu_buffered_weights and (not mapped or workers!="pooled" or cpu_mapped_prefetch)) or receipt.get("cpu_buffered_weights") is not cpu_buffered_weights or receipt.get("observed_cpu_buffered_weights") is not cpu_buffered_weights or type(calls) is not int or type(misses) is not int or calls != (3*(misses + receipt.get("observed_cpu_resident_expert_calls", 0)) if cpu_buffered_weights else 0):
             raise ValueError("CPU buffered source requires actual original selected-span reads")
     if cpu_mapped_prefetch or "cpu_mapped_prefetch" in receipt:
         calls=receipt.get("warm_cpu_prefetch_calls");misses=receipt.get("completed_cpu_misses")
-        if (cpu_mapped_prefetch and (not mapped or workers!="pooled")) or receipt.get("cpu_mapped_prefetch") is not cpu_mapped_prefetch or receipt.get("observed_cpu_mapped_prefetch") is not cpu_mapped_prefetch or type(calls) is not int or type(misses) is not int or calls != (3*misses if cpu_mapped_prefetch else 0):
+        if (cpu_mapped_prefetch and (not mapped or workers!="pooled")) or receipt.get("cpu_mapped_prefetch") is not cpu_mapped_prefetch or receipt.get("observed_cpu_mapped_prefetch") is not cpu_mapped_prefetch or type(calls) is not int or type(misses) is not int or calls != (3*(misses + receipt.get("observed_cpu_resident_expert_calls", 0)) if cpu_mapped_prefetch else 0):
             raise ValueError("CPU source prefetch requires actual mapped pooled selected-source counts")
     if cpu_q8_residual or "cpu_q8_residual" in receipt:
         if (cpu_q8_residual and not cpu_q8) or receipt.get("cpu_q8_residual") is not cpu_q8_residual or receipt.get("observed_cpu_q8_residual") is not cpu_q8_residual:
