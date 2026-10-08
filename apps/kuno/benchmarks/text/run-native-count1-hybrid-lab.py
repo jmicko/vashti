@@ -102,8 +102,9 @@ def validate_adaptive(receipt, selected, output, long):
     primary = receipt.get("warm_expert_hits"); cpu = receipt.get("completed_cpu_misses")
     promotions = receipt.get("adaptive_promotions")
     batches = receipt.get("adaptive_completed_batches")
-    if (receipt.get("secondary_experts") is not False
-        or receipt.get("adaptive_rotating_slots") != 16 or receipt.get("adaptive_budget") != 4
+    if (receipt.get("adaptive_policy") != "decaying-frequency-recency"
+        or receipt.get("secondary_experts") is not False
+        or receipt.get("adaptive_capacity") != 144 or receipt.get("adaptive_budget") != 4
         or type(promotions) is not int or not 0 < promotions <= steps*4
         or type(batches) is not int or not 0 < batches <= steps
         or not batches <= promotions <= batches*4

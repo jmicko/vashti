@@ -266,6 +266,7 @@ impl BankSlots {
             .copied()
             .ok_or(BankError::ExpertOutOfRange)
     }
+    #[cfg(test)]
     pub(crate) fn cold_slots(&self, count: usize) -> Result<Zeroizing<Vec<usize>>> {
         if count > self.capacity() {
             return Err(BankError::Capacity);
@@ -284,12 +285,24 @@ impl BankSlots {
             }
             *seen = true;
         }
-        self.plan_allowed(selected, Some(&mask))
+        self.plan_allowed(selected, Some(&mask), None)
     }
     pub fn plan(&mut self, selected: &[usize]) -> Result<Plan> {
-        self.plan_allowed(selected, None)
+        self.plan_allowed(selected, None, None)
     }
-    fn plan_allowed(&mut self, selected: &[usize], allowed: Option<&[bool]>) -> Result<Plan> {
+    pub(crate) fn plan_scored(
+        &mut self,
+        selected: &[usize],
+        score: &dyn Fn(usize) -> (u16, u16),
+    ) -> Result<Plan> {
+        self.plan_allowed(selected, None, Some(score))
+    }
+    fn plan_allowed(
+        &mut self,
+        selected: &[usize],
+        allowed: Option<&[bool]>,
+        score: Option<&dyn Fn(usize) -> (u16, u16)>,
+    ) -> Result<Plan> {
         if selected.len() > self.capacity() {
             return Err(BankError::SelectionTooLarge);
         }
@@ -340,10 +353,14 @@ impl BankSlots {
                                         !protected[resident.expert]
                                             && allowed.is_none_or(|a| a[slot])
                                     })
-                                    .map(|resident| (resident.last_used, slot))
+                                    .map(|resident| {
+                                        let (frequency, recency) =
+                                            score.map_or((0, 0), |f| f(resident.expert));
+                                        (frequency, recency, resident.last_used, slot)
+                                    })
                             })
                             .min()
-                            .map(|(_, slot)| slot)
+                            .map(|(_, _, _, slot)| slot)
                     })
                     .ok_or(BankError::NoVictim)?;
                 if let Some(victim) = next.slots[slot] {
@@ -536,6 +553,18 @@ impl StagedSlots {
             return Err(BankError::SelectionTooLarge);
         }
         self.candidate.plan(selected)
+    }
+    pub(crate) fn plan_scored(
+        &mut self,
+        source: &BankSlots,
+        selected: &[usize],
+        score: &dyn Fn(usize) -> (u16, u16),
+    ) -> Result<Plan> {
+        self.validate_origin(source)?;
+        if self.accepted_waves >= 8 {
+            return Err(BankError::SelectionTooLarge);
+        }
+        self.candidate.plan_scored(selected, score)
     }
     pub fn validate_pending(
         &self,
@@ -1075,6 +1104,20 @@ mod adaptive_tests {
             b.plan_in_slots(&[4, 5], &[0]),
             Err(BankError::NoVictim)
         ));
+    }
+    #[test]
+    fn scored_prefill_protects_selected_and_keeps_frequent_old_experts() {
+        let mut bank = BankSlots::new(3, 8).unwrap();
+        let p = bank.plan(&[0, 1, 2]).unwrap();
+        bank.commit(p).unwrap();
+        let mut staged = StagedSlots::begin(&bank).unwrap();
+        let plan = staged
+            .plan_scored(&bank, &[1, 3], &|id| if id == 0 { (20, 1) } else { (1, 1) })
+            .unwrap();
+        staged.validate_pending(&bank, &plan, &[1, 3]).unwrap();
+        assert_eq!(plan.uploads, [(3, 2)]);
+        assert_eq!(bank.resident_slot(0).unwrap(), Some(0));
+        assert_eq!(bank.resident_slot(2).unwrap(), Some(2));
     }
     #[test]
     fn cold_rotation_uses_empty_slots_before_evicting_prefill_weights() {

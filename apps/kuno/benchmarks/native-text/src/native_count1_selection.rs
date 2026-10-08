@@ -93,12 +93,6 @@ impl Proof {
     pub(super) fn probabilities(&self) -> Zeroizing<[f32; 10]> {
         Zeroizing::new((*self.probabilities).map(f32::from_bits))
     }
-    pub(super) fn actual_miss_ids(&self) -> impl Iterator<Item = usize> + '_ {
-        self.ids
-            .iter()
-            .enumerate()
-            .filter_map(|(rank, &id)| ((*self.misses & (1 << rank)) != 0).then_some(id))
-    }
     pub(super) fn misses(&self) -> usize {
         self.misses.count_ones() as usize
     }

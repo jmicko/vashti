@@ -2059,3 +2059,25 @@ host allowance to retain four exact pending original plans; enforce actual live
 capacities. Both source hints exclude rotating slots because those experts can
 return to CPU. Pinned original spans retain the old hints. No generic OS cache
 or other process memory is reclaimed.
+
+### User correction: all slots adapt to frequency and recency (2026-10-08)
+
+The user identified a permanent-pin failure case: a new 50-expert working set
+could churn through 16 slots while unused pinned experts occupy the card.
+Replace that policy; all 144 slots per layer are eligible. Retain bounded
+four-expert grouped transfers, original completion/commit gates and the
+192 KiB/1 MiB host reservations. Count actual prefill routes in transient state
+and use decaying frequency plus recency for prefill eviction, protecting the
+complete selected wave. During decode observe all ten accepted experts, including
+GPU hits; never evict one selected on the current token. Empty slots come first.
+A repeated current miss may replace the least useful resident only when its
+frequency/recency score wins. Frequency decays with a 16-token half-life so old
+popularity cannot pin an expert indefinitely. Cold one-offs remain CPU work.
+
+These histories are model-local and erased on failure/close, not saved to
+profiles. Dynamic banks have no permanently GPU-only original expert sources,
+so they must be excluded from the static-bank COLD/PAGEOUT advice. Dense GPU
+sources retain existing advice. Initial weights are loaded for real prefill
+work, with usage-aware victims; decode then adapts that starting placement.
+Existing fixed and 16-slot receipts remain historical comparisons, not proof
+that this new policy is accepted or faster.

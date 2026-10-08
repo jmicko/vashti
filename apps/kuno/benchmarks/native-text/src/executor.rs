@@ -866,7 +866,11 @@ impl<'a> GpuExecutor<'a> {
             std::env::var("KUNO_LAB_BATCH_EXPERTS").as_deref() == Ok("1"),
         )?;
         Ok(Self {
-            adaptive: None,
+            adaptive: if std::env::var("KUNO_LAB_ADAPTIVE_EXPERTS").as_deref() == Ok("1") {
+                Some(crate::adaptive_experts::Cache::new()?)
+            } else {
+                None
+            },
             secondary: None,
             secondary_frequency: if std::env::var("KUNO_LAB_SECONDARY_EXPERTS").as_deref()
                 == Ok("1")
@@ -1028,7 +1032,7 @@ impl<'a> GpuExecutor<'a> {
         if std::env::var("KUNO_LAB_ADAPTIVE_EXPERTS").as_deref() != Ok("1") {
             return Ok(());
         }
-        if self.adaptive.is_some()
+        if self.adaptive.as_ref().is_none_or(|c| c.ready)
             || self.secondary.is_some()
             || self.bank_slots != 144
             || self.banks.len() != 48
@@ -1037,14 +1041,10 @@ impl<'a> GpuExecutor<'a> {
         {
             return Err(Error::InvalidFormat("adaptive completed prefill policy"));
         }
-        self.adaptive = Some(crate::adaptive_experts::Cache::new(|layer| {
-            self.banks
-                .get(&format!("blk.{layer}.ffn_gate_exps.weight"))
-                .ok_or(Error::InvalidFormat("adaptive original bank"))?
-                .slots
-                .cold_slots(crate::adaptive_experts::ROTATING)
-                .map_err(|_| Error::InvalidFormat("adaptive full original bank"))
-        })?);
+        self.adaptive
+            .as_mut()
+            .ok_or(Error::InvalidFormat("adaptive prefill owner"))?
+            .ready = true;
         Ok(())
     }
     pub(crate) fn promote_adaptive(
@@ -1057,6 +1057,9 @@ impl<'a> GpuExecutor<'a> {
         let Some(cache) = &mut self.adaptive else {
             return Ok(());
         };
+        if !cache.ready {
+            return Ok(());
+        }
         let admission = self
             .resident_admission
             .as_ref()
@@ -1073,14 +1076,14 @@ impl<'a> GpuExecutor<'a> {
                 .banks
                 .get_mut(&key)
                 .ok_or(Error::InvalidFormat("adaptive original bank"))?;
-            let Some(expert) = cache.candidate(layer, &bank.slots)? else {
+            let Some((expert, victim)) = cache.candidate(layer, &bank.slots)? else {
                 continue;
             };
             let selected = zeroize::Zeroizing::new([expert]);
             let plan = bank
                 .slots
-                .plan_in_slots(&*selected, cache.slots(layer)?)
-                .map_err(|_| Error::InvalidFormat("adaptive pinned plan"))?;
+                .plan_in_slots(&*selected, &[victim])
+                .map_err(|_| Error::InvalidFormat("adaptive scored victim plan"))?;
             bank.slots
                 .validate_pending(&plan, &*selected)
                 .map_err(|_| Error::InvalidFormat("adaptive original plan proof"))?;
@@ -1201,8 +1204,8 @@ impl<'a> GpuExecutor<'a> {
         Ok(())
     }
     /// Completed fixed-public cap10 boundary only: CPU misses never consume
-    /// pinned GPU-resident spans. Rotating slots may return to CPU and must
-    /// retain their original file-cache pages while adaptive caching is active. This
+    /// static GPU-resident spans. Fully adaptive banks can return to CPU and
+    /// are excluded; only immutable dense sources retain advice in that mode. This
     /// hints the OS to reclaim duplicate original file-cache pages, never GPU
     /// owners, tensors, private state or arbitrary host caches. No freed-byte
     /// claim: the returned total counts successfully advised source bytes.
@@ -1252,24 +1255,12 @@ impl<'a> GpuExecutor<'a> {
                 })
                 .ok_or(Error::ArithmeticOverflow)?;
         }
-        for (key, bank) in self.banks.iter().filter(|_| self.gpu_expert_limit == 10) {
-            let adaptive_layer = if self.adaptive.is_some() {
-                Some(
-                    key.strip_prefix("blk.")
-                        .and_then(|k| k.strip_suffix(".ffn_gate_exps.weight"))
-                        .and_then(|k| k.parse::<usize>().ok())
-                        .filter(|&l| l < 48)
-                        .ok_or(Error::InvalidFormat("adaptive source hint layer"))?,
-                )
-            } else {
-                None
-            };
+        for bank in self.banks.values().filter(|_| self.gpu_expert_limit == 10) {
+            // Every expert bank slot can return to CPU in adaptive mode.
+            if self.adaptive.is_some() {
+                continue;
+            }
             for slot in 0..bank.slots.capacity() {
-                if let (Some(cache), Some(layer)) = (&self.adaptive, adaptive_layer)
-                    && cache.is_rotating(layer, slot)?
-                {
-                    continue;
-                }
                 let expert = zeroize::Zeroizing::new(
                     bank.slots
                         .resident_expert(slot)

@@ -2727,8 +2727,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 receipt["binding_cache_capacity"] = serde_json::json!(binding_cache_capacity);
                 receipt["adaptive_experts"] = serde_json::json!(adaptive_experts);
                 if let Some(cache) = &executor.adaptive {
-                    receipt["adaptive_rotating_slots"] =
-                        serde_json::json!(crate::adaptive_experts::ROTATING);
+                    receipt["adaptive_capacity"] =
+                        serde_json::json!(crate::adaptive_experts::CAPACITY);
+                    receipt["adaptive_policy"] = serde_json::json!("decaying-frequency-recency");
                     receipt["adaptive_budget"] = serde_json::json!(crate::adaptive_experts::BUDGET);
                     receipt["adaptive_promotions"] = serde_json::json!(cache.stats.promotions);
                     receipt["adaptive_upload_bytes"] = serde_json::json!(cache.stats.bytes);

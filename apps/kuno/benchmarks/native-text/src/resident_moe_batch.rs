@@ -1024,6 +1024,24 @@ impl GpuExecutor<'_> {
                 experts[..routes.count() * 10].iter().map(|&id| id as usize),
             )?;
         }
+        if let Some(cache) = &mut self.adaptive {
+            if cache.ready {
+                return Err(err("adaptive prefill after activation"));
+            }
+            for token in 0..routes.count() {
+                cache.record(
+                    layer,
+                    s.stamp
+                        .start
+                        .checked_add(token as u64)
+                        .and_then(|n| n.checked_add(1))
+                        .ok_or(Error::ArithmeticOverflow)?,
+                    experts[token * 10..(token + 1) * 10]
+                        .iter()
+                        .map(|&id| id as usize),
+                )?;
+            }
+        }
         let mut final_last = None;
         let mut stats = expert_banks::FillStats::default();
         for index in 0..routes.wave_count() {
@@ -1040,9 +1058,14 @@ impl GpuExecutor<'_> {
             for (i, &e) in union.iter().enumerate() {
                 selected[i] = e as usize;
             }
-            let pending = staged
-                .plan(&bank.slots, &selected[..union.len()])
-                .map_err(|_| err("native routed real pending plan"))?;
+            let pending = if let Some(cache) = &self.adaptive {
+                staged.plan_scored(&bank.slots, &selected[..union.len()], &|id| {
+                    cache.score(layer, id)
+                })
+            } else {
+                staged.plan(&bank.slots, &selected[..union.len()])
+            }
+            .map_err(|_| err("native routed real pending plan"))?;
             let pin = Pin::new(wave, &pending, &staged, bank)?;
             for (wi, window) in pending.uploads.chunks(10).enumerate() {
                 pin.validate()?;
@@ -1967,7 +1990,14 @@ impl Acceptance<'_, '_> {
                 if proof.cap() != 10 || proof.gpu_limit() != 10 {
                     return Err(err("adaptive accepted miss policy"));
                 }
-                cache.observe(*p.layer, proof.actual_miss_ids())?;
+                cache.record(
+                    *p.layer,
+                    p.stamp
+                        .start
+                        .checked_add(1)
+                        .ok_or(Error::ArithmeticOverflow)?,
+                    proof.ids().iter().copied(),
+                )?;
             }
             p.armed = false;
             u::cancel(cancel)
