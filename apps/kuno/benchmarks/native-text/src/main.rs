@@ -2337,6 +2337,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let pre_gpu_upload_clears = cubecl::wgpu::transient_gpu_upload_clears();
             let pre_inline_read_batches = cubecl::wgpu::transient_inline_readback_batches();
             let pre_request_io_reuses = cubecl::wgpu::transient_request_io_reuses();
+            let pre_scoped_read_ns = cubecl::wgpu::transient_scoped_read_ns();
             let reclaim_start = Instant::now();
             let gpu_source_advised_bytes = if reclaim_gpu_sources {
                 resident
@@ -2542,6 +2543,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 );
                 receipt["request_io_closed_and_audited"] = serde_json::json!(request_io_reuse);
                 receipt["request_io_close_ms"] = serde_json::json!(request_io_close_ms);
+                let scoped_read_ns = cubecl::wgpu::transient_scoped_read_ns();
+                receipt["warm_scoped_read_host_ns"] = serde_json::json!([
+                    scoped_read_ns.0.checked_sub(pre_scoped_read_ns.0)
+                        .ok_or("scoped read setup counter overflow")?,
+                    scoped_read_ns.1.checked_sub(pre_scoped_read_ns.1)
+                        .ok_or("scoped read flush counter overflow")?,
+                    scoped_read_ns.2.checked_sub(pre_scoped_read_ns.2)
+                        .ok_or("scoped read map counter overflow")?,
+                ]);
+                println!("public_warm_scoped_read_host_ns={}", receipt["warm_scoped_read_host_ns"]);
                 receipt["kernel_profile"] = serde_json::json!(kernel_profile);
                 receipt["kernel_profile_scope"] = serde_json::json!(if kernel_profile {
                     "first-following-decode"

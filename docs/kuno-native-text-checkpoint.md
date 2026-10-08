@@ -1832,3 +1832,20 @@ Runtime strict all-target Clippy passes; integrated Clippy/device acceptance
 are pending. Benchmark generation duration will include the final request audit,
 with its separate duration and actual reuse counters. Public admission is
 paused only for this exclusive benchmark block; restore it at the stopping point.
+
+The first physical same-build control/reuse runs from63a68bb both pass original
+128 IDs and full owning/lifecycle acceptance:16108/16357ms respectively. PLE's
+independent sanitizer erased the pool each token;126 reuses were insufficient
+to exercise the intended optimization. bb678d9 joins that completed boundary
+to the request owner. Its corrected run passes every gate but regresses to
+23143ms with84673 reuses,381 checkpoints and28ms closing audit. Final proofs
+fall2.816→1.179s but routing fences rise3.854→10.396s; this is not selected.
+All completed runs leave B7050688000B. Numeric source/artifact/phase receipts
+are in`next-request-io-reuse-20261008.json`.
+
+The next candidate a2f1562 batches reused Uniform shader-read→COPY_DST
+transitions at a completed checkpoint, removes repeated linear owner searches,
+and records scoped readback setup/flush/map-wait aggregates. Original ownership,
+full audit and numeric acceptance stay mandatory. Source gates pass498 native
+controls/two shader suites,74 runtime host/three allocator/two logger controls;
+runtime strict Clippy passes. Physical performance remains pending.
