@@ -1485,3 +1485,23 @@ first. The original full-copy source bounds and initialized-source tracking,
 completed maps and callback/error checks remain. Completed request-recycle
 Readback clears and final two-pass CPU-inspected audits remain unchanged.
 No dirty capacity or erasure credit is granted by this initialization shortcut.
+
+
+### Request-scoped zero-tail upload (2026-10-08 candidate)
+
+The original private-write API still requires a full same-stream owned handle
+and full guarded host bytes. Inside the request reuse scope only, the runtime
+may replace a byte-exact zero suffix with an ordered GPU tail clear and upload
+just the aligned nonzero prefix. Reverse64-byte comparisons preserve every
+nonzero bit pattern, including negative zero and NaN payloads. Original source/
+destination bounds and maximum original span are checked before trimming; a
+large all-zero write cannot evade them. Partial source padding is still zero.
+
+Each actually allocated stage remains fully initialized, charged, retained and
+audited. An all-zero write needs no stage but still initializes the entire
+original destination. Copies and tail clears use the same ordered encoder;
+subsequent consumers, error scopes and final full destination audits remain.
+No smaller destination contract, dirty credit, compiler key or persistent
+content is introduced. Ordinary unscoped writes retain their original path.
+Numeric warm original/copied/cleared-byte totals must conserve the original
+extent and establish actual transfer savings separately from speed acceptance.

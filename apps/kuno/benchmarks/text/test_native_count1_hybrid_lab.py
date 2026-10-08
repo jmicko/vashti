@@ -63,6 +63,18 @@ class HybridLabTests(unittest.TestCase):
         with self.assertRaises(ValueError): LAB.validate_request_io_reuse(value,False,marker)
         LAB.validate_request_io_reuse(dict(request_io_reuse=False,request_io_closed_and_audited=False,observed_request_io_checkpoints=0,observed_request_io_reuses=0,request_io_close_ms=0),False,"")
 
+    def test_upload_transfer_receipts_conserve_original_bytes(self):
+        marker = "public_request_io_reuse closed=true full_audit=true"
+        value = dict(request_io_reuse=True, request_io_closed_and_audited=True,
+                     observed_request_io_checkpoints=381, observed_request_io_reuses=1234,
+                     request_io_close_ms=42, warm_info_cache_stats=[1000, 100, 20])
+        for stats in ([32768, 0, 32768], [32768, 32768, 0], [32768, 10240, 22528]):
+            LAB.validate_request_io_reuse(dict(value, warm_upload_transfer_bytes=stats), True, marker)
+        for stats in (None, [], [1, 1], [1, 1, 1], [0, 0, 0], [32768, True, 32767],
+                      [32768, -1, 32769], [2**64, 0, 2**64]):
+            with self.assertRaises(ValueError):
+                LAB.validate_request_io_reuse(dict(value, warm_upload_transfer_bytes=stats), True, marker)
+
     def test_request_io_reuse_is_explicit_and_has_no_unsafe_mode(self):
         selection=dict(mapped=True,deferred=True,compact_info=True,info_batch_upload=True,
                        inline_readback=True,dispatch="inline",request_io_reuse=True)

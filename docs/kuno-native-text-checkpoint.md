@@ -1911,3 +1911,12 @@ and strictClippy pass. Core131 controls (three intentional ignored) pass in
 both default and cpu-work-stealing-lab modes, with strict all-targetClippy in
 both. The original conservative private budget remains. Integrated498/native
 shader validation, frozen normal build and protected physical run are next.
+
+
+The copy/lazy candidate91cd57e passes all original device gates at13280ms,
+with no measurable additional gain over the repeated poll/index build. Its
+changes remain byte/arithmetic-equivalent; do not claim a throughput win for
+them. The next candidate reduces actual request-scoped zero-tail uploads while
+preserving full input/destination ownership and all audits. Warm command-byte
+counters are added to distinguish genuine transfer savings from timing noise.
+No public inference API or frontend work is involved.

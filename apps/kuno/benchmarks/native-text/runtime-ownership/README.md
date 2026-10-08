@@ -567,3 +567,14 @@ the original owning conversion future. Pending/returned leases, full copy spans,
 error retirement and final sanitization remain. Default async behavior stays.
 All-size primary GPU Upload erasure is withdrawn after a slow unaccepted public
 trial; ordinary volatile erasure is selected for this candidate.
+
+
+### Request-scoped zero-tail transfers
+
+The experimental request-reuse path can omit a byte-exact zero suffix from an
+upload and clear that suffix on the GPU in the same command order. The private
+API and guarded host controller still own the full original input; original
+bounds and maximum span remain mandatory. Full stage initialization/charging
+and final destination audits remain. Negative zero and all nonzero bit patterns
+are preserved. Unscoped uploads are unchanged. See the count1 plan and checkpoint
+for numerical tests, measured bytes, and separate device/speed acceptance.

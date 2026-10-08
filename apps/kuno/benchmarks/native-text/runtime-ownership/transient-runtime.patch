@@ -2086,7 +2086,7 @@
 +}
 --- a/cubecl-wgpu/src/compute/mod.rs
 +++ b/cubecl-wgpu/src/compute/mod.rs
-@@ -1,13 +1,25 @@
+@@ -1,13 +1,26 @@
 +// Modified for Kuno's laboratory transient-I/O ownership/erasure patch (2026-10-05).
  pub(crate) mod controller;
  
@@ -2112,6 +2112,7 @@
 +pub use transient_io::transient_scoped_read_ns;
 +
 +pub use transient_io::transient_info_cache_stats;
++pub use transient_io::transient_upload_transfer_stats;
 --- a/cubecl-wgpu/src/compute/schedule.rs
 +++ b/cubecl-wgpu/src/compute/schedule.rs
 @@ -1,3 +1,4 @@
@@ -3209,7 +3210,7 @@
          self.mem_manage.memory_cleanup(false);
 --- /dev/null
 +++ b/cubecl-wgpu/src/compute/transient_io.rs
-@@ -0,0 +1,5684 @@
+@@ -0,0 +1,5847 @@
 +// Modified for Kuno's laboratory transient-I/O ownership/erasure patch (2026-10-05).
 +//! Opt-in bounded, explicitly owned transient I/O. No device creation in tests.
 +//!
@@ -3524,6 +3525,58 @@
 +        return Err(fault("private I/O copy bounds/alignment"));
 +    }
 +    Ok(copy_len)
++}
++
++/// Request-local upload work reduction, never a smaller destination contract.
++/// Validate the ORIGINAL allocation extent even if all input bytes are zero.
++/// Inspect exact bytes in fixed chunks: floating-point signed zero and other
++/// nonzero bit patterns must not be normalized or silently discarded.
++fn zero_tail_copy_len(data: &[u8], copy_len: u64) -> Result<u64, ServerError> {
++    span(copy_len)?;
++    if !copy_len.is_multiple_of(4) || data.len() as u64 > copy_len {
++        return Err(fault("private upload original copy bounds"));
++    }
++    const ZERO_CHUNK: [u8; 64] = [0; 64];
++    let mut prefix = data.len();
++    for chunk in data.rchunks(ZERO_CHUNK.len()) {
++        if chunk != &ZERO_CHUNK[..chunk.len()] {
++            break;
++        }
++        prefix -= chunk.len();
++    }
++    let prefix = (prefix as u64)
++        .checked_add(3)
++        .map(|n| n / 4 * 4)
++        .ok_or_else(|| fault("private upload prefix overflow"))?;
++    // Avoid adding a second GPU command for a negligible nonempty tail.
++    Ok(
++        if prefix != 0 && copy_len - prefix < ZERO_CHUNK.len() as u64 {
++            copy_len
++        } else {
++            prefix
++        },
++    )
++}
++
++static UPLOAD_TRANSFER_BYTES: [AtomicU64; 3] = [const { AtomicU64::new(0) }; 3];
++/// Aggregate scoped upload command bytes: original, copied, cleared tail.
++/// No offsets/content are retained; counters grant no ownership/erasure credit.
++pub fn transient_upload_transfer_stats() -> (u64, u64, u64) {
++    (
++        UPLOAD_TRANSFER_BYTES[0].load(Ordering::Relaxed),
++        UPLOAD_TRANSFER_BYTES[1].load(Ordering::Relaxed),
++        UPLOAD_TRANSFER_BYTES[2].load(Ordering::Relaxed),
++    )
++}
++fn record_upload_transfer(copy_len: u64, prefix: u64) {
++    for (counter, amount) in UPLOAD_TRANSFER_BYTES
++        .iter()
++        .zip([copy_len, prefix, copy_len - prefix])
++    {
++        let _ = counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
++            Some(n.saturating_add(amount))
++        });
++    }
 +}
 +
 +/// Cleanup-only read must cover exactly the full underlying API-visible
@@ -5996,15 +6049,38 @@
 +            resource.buffer.size(),
 +            data.len(),
 +        )?;
-+        let (stage, stage_index) = self.allocate_indexed(Kind::Upload, copy_len)?;
-+        {
-+            let mut view = stage.get_mapped_range_mut(..);
-+            // Initialize the FULL mapped API-visible span, including padding.
-+            view.slice(..).fill(0);
-+            view.slice(..data.len()).copy_from_slice(data);
++        let scoped = self.reuse_active();
++        let prefix = if scoped {
++            zero_tail_copy_len(data, copy_len)?
++        } else {
++            copy_len
++        };
++        let tail_offset = resource
++            .offset
++            .checked_add(prefix)
++            .ok_or_else(|| fault("private upload tail offset overflow"))?;
++        if prefix != 0 {
++            let (stage, stage_index) = self.allocate_indexed(Kind::Upload, prefix)?;
++            {
++                let mut view = stage.get_mapped_range_mut(..);
++                // Initialize the FULL tracked mapped span, not just the prefix.
++                // Keep the original guarded host input; no shortened host copy.
++                view.slice(..).fill(0);
++                let source_len = data.len().min(prefix as usize);
++                view.slice(..source_len)
++                    .copy_from_slice(&data[..source_len]);
++            }
++            self.unmap_upload(stage_index, &stage)?;
++            encoder.copy_buffer_to_buffer(&stage, 0, &resource.buffer, resource.offset, prefix);
 +        }
-+        self.unmap_upload(stage_index, &stage)?;
-+        encoder.copy_buffer_to_buffer(&stage, 0, &resource.buffer, resource.offset, copy_len);
++        if prefix < copy_len {
++            // Same encoder/order as the original full copy. Every original
++            // destination byte is written before any subsequent consumer.
++            encoder.clear_buffer(&resource.buffer, tail_offset, Some(copy_len - prefix));
++        }
++        if scoped {
++            record_upload_transfer(copy_len, prefix);
++        }
 +        Ok(())
 +    }
 +    pub fn uniform(
@@ -8744,6 +8820,94 @@
 +        assert!(copy_bounds(4, u64::MAX - 3, u64::MAX, 4).is_err());
 +        assert!(copy_bounds(u64::MAX, 0, u64::MAX, 1).is_err());
 +        assert!(copy_bounds(0, 0, 0, 0).is_err());
++    }
++
++    #[test]
++    fn shortened_upload_commands_match_full_copy_for_offsets_padding_and_bit_patterns() {
++        fn equivalent(data: &[u8], size: u64, offset: u64, backing: u64) -> u64 {
++            let original = copy_bounds(size, offset, backing, data.len()).unwrap();
++            let prefix = zero_tail_copy_len(data, original).unwrap();
++            assert!(prefix <= original && prefix.is_multiple_of(4));
++            let at = offset as usize;
++            let end = (offset + original) as usize;
++            let mut old = vec![0xa5; backing as usize];
++            old[at..end].fill(0);
++            old[at..at + data.len()].copy_from_slice(data);
++            let mut new = vec![0xa5; backing as usize];
++            if prefix != 0 {
++                // Model the complete mapped owned span, including stale bytes
++                // left by another upload in the same request's retained pool.
++                let mut stage = vec![0xcc; span(prefix).unwrap() as usize];
++                stage.fill(0);
++                let source_len = data.len().min(prefix as usize);
++                stage[..source_len].copy_from_slice(&data[..source_len]);
++                assert!(stage[source_len..].iter().all(|byte| *byte == 0));
++                new[at..at + prefix as usize].copy_from_slice(&stage[..prefix as usize]);
++            }
++            new[at + prefix as usize..end].fill(0);
++            // Includes the sentinel regions before/after the original subspan.
++            assert_eq!(new, old);
++            prefix
++        }
++
++        assert_eq!(equivalent(&[0; 257], 257, 12, 288), 0);
++        assert_eq!(equivalent(&[], 129, 4, 140), 0);
++        for len in 1..=257 {
++            let mut data = vec![0; len];
++            data[len - 1] = 1;
++            let original = len.next_multiple_of(4) as u64;
++            assert_eq!(equivalent(&data, len as u64, 8, original + 16), original);
++        }
++        let mut signed_zero = vec![0; 128];
++        signed_zero[124..].copy_from_slice(&(-0.0f32).to_bits().to_le_bytes());
++        assert_eq!(equivalent(&signed_zero, 128, 16, 160), 128);
++        signed_zero[124..].copy_from_slice(&0x7fc0_1234u32.to_le_bytes());
++        assert_eq!(equivalent(&signed_zero, 128, 16, 160), 128);
++        let mut short_tail = vec![0; 129];
++        short_tail[0] = 0xff;
++        assert_eq!(equivalent(&short_tail, 129, 4, 140), 4);
++
++        // Deterministic synthetic cases exercise unaligned input sizes,
++        // implicit input padding, and zero tails ending inside a 64-byte chunk.
++        let mut random = 0x92e1_d934_5017_ba03u64;
++        let mut next = || {
++            random = random.wrapping_mul(6364136223846793005).wrapping_add(1);
++            random >> 32
++        };
++        for _ in 0..2048 {
++            let len = next() as usize % 1025;
++            let size = (len as u64 + next() % 257).max(1);
++            let offset = next() % 9 * 4;
++            let backing = offset + size.next_multiple_of(4) + next() % 33;
++            let mut data: Vec<u8> = (0..len).map(|_| next() as u8).collect();
++            let zeros = next() as usize % (len + 1);
++            data[len - zeros..].fill(0);
++            equivalent(&data, size, offset, backing);
++        }
++    }
++
++    #[test]
++    fn zero_tail_elision_preserves_original_bounds_and_maximum_span_rejections() {
++        for (size, offset, backing, logical) in [
++            (13, 8, 23, 13),
++            (13, 9, 25, 13),
++            (13, 8, 24, 17),
++            (4, u64::MAX - 3, u64::MAX, 4),
++            (u64::MAX, 0, u64::MAX, 0),
++            (0, 0, 0, 0),
++        ] {
++            // The upload calls this authoritative original bound check before
++            // inspecting any input bytes or scheduling either GPU operation.
++            assert!(copy_bounds(size, offset, backing, logical).is_err());
++        }
++        assert!(zero_tail_copy_len(&[], 0).is_err());
++        assert!(zero_tail_copy_len(&[], 3).is_err());
++        assert!(zero_tail_copy_len(&[0; 5], 4).is_err());
++        assert!(zero_tail_copy_len(&[], MAX_BYTES + 4).is_err());
++        assert!(zero_tail_copy_len(&[], u64::MAX - 3).is_err());
++        // A valid original maximum can skip allocation, but cannot erase a
++        // larger destination or relax the original admitted maximum span.
++        assert_eq!(zero_tail_copy_len(&[], MAX_BYTES).unwrap(), 0);
 +    }
 +    #[test]
 +    fn counter_epoch_exhaustion_never_releases_or_resets_a_dirty_ledger() {

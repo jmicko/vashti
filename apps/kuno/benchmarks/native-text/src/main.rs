@@ -2339,6 +2339,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let pre_request_io_reuses = cubecl::wgpu::transient_request_io_reuses();
             let pre_scoped_read_ns = cubecl::wgpu::transient_scoped_read_ns();
             let pre_info_cache_stats = cubecl::wgpu::transient_info_cache_stats();
+            let pre_upload_transfer = cubecl::wgpu::transient_upload_transfer_stats();
             let reclaim_start = Instant::now();
             let gpu_source_advised_bytes = if reclaim_gpu_sources {
                 resident
@@ -2554,6 +2555,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .ok_or("INFO cache page counter overflow")?,
                 ]);
                 println!("public_warm_info_cache_stats={}", receipt["warm_info_cache_stats"]);
+                let upload_transfer = cubecl::wgpu::transient_upload_transfer_stats();
+                receipt["warm_upload_transfer_bytes"] = serde_json::json!([
+                    upload_transfer.0.checked_sub(pre_upload_transfer.0)
+                        .ok_or("upload original byte counter overflow")?,
+                    upload_transfer.1.checked_sub(pre_upload_transfer.1)
+                        .ok_or("upload copied byte counter overflow")?,
+                    upload_transfer.2.checked_sub(pre_upload_transfer.2)
+                        .ok_or("upload cleared byte counter overflow")?,
+                ]);
+                println!("public_warm_upload_transfer_bytes={}", receipt["warm_upload_transfer_bytes"]);
                 let scoped_read_ns = cubecl::wgpu::transient_scoped_read_ns();
                 receipt["warm_scoped_read_host_ns"] = serde_json::json!([
                     scoped_read_ns.0.checked_sub(pre_scoped_read_ns.0)

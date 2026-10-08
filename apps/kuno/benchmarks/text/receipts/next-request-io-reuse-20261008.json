@@ -616,6 +616,65 @@
       "warm_uploaded_bytes": 0,
       "warm_weight_read_ms": 0,
       "warm_weight_upload_ms": 0
+    },
+    {
+      "run": "cpu-144-copy-lazy-long-v47",
+      "role": "accepted-no-measurable-additional-gain",
+      "source_commit": "91cd57ea0cf9a505b2aab6050aab7b6f52fc2294",
+      "frozen_executable_sha256": "c189cb7fddc891ce7e3d90ebb5c9566b5648d2849e4fe7a0885c5764282c2c53",
+      "raw_receipt_sha256": "357868ec849d1bc0175c0fa2babee2c4ab929703778b5ee9677209c74229db7a",
+      "run_record_sha256": "b0db6295a8fd257765f5fe21602d019616e4477f88a15e77af47c33547733a13",
+      "original_generated_id_count": 128,
+      "decode_tokens_per_second": 9.563253012048193,
+      "accepted_output_owning_and_lifecycle": true,
+      "generation_ms": 13280,
+      "prefill_ms": 15411,
+      "native_decode_steps": 127,
+      "seed": 424242,
+      "temperature": 0,
+      "request_io_reuse": true,
+      "request_io_close_ms": 15,
+      "request_io_closed_and_audited": true,
+      "observed_request_io_reuses": 40182,
+      "observed_request_io_checkpoints": 381,
+      "public_resident_warm_phase_ns": {
+        "native_all_family_commit": 146920610,
+        "native_all_family_preflight": 112643091,
+        "native_attention_and_gr_enqueue": 3840208169,
+        "native_completed_final_proofs": 968561627,
+        "native_ffn_gr_and_router_enqueue": 170653383,
+        "native_final_head_enqueue": 8466634,
+        "native_route_and_expert_enqueue": 4371954536,
+        "native_router_fence": 3488851519,
+        "native_shared_and_ffn_combine_enqueue": 87938085
+      },
+      "warm_scoped_read_host_ns": [
+        14400738,
+        344784374,
+        2190300897
+      ],
+      "warm_info_cache_stats": [
+        298578,
+        16820,
+        79
+      ],
+      "warm_host_resource_delta": {
+        "major_faults": 7,
+        "minor_faults": 179755,
+        "read_bytes": 12288,
+        "system_ticks": 704,
+        "user_ticks": 3645,
+        "write_bytes": 0
+      },
+      "warm_cpu_operator_host_phase_ns": [
+        317510354,
+        1180814829,
+        866208318,
+        2434578251
+      ],
+      "warm_uploaded_bytes": 0,
+      "warm_weight_read_ms": 0,
+      "warm_weight_upload_ms": 0
     }
   ]
 }

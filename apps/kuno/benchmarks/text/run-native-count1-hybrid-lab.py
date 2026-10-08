@@ -56,6 +56,15 @@ def validate_request_io_reuse(receipt, selected, output):
             or selected and not all(n > 0 for n in stats)
             or not selected and any(stats)):
             raise ValueError("Immutable INFO reuse requires actual bounded hits, misses and page pins")
+    # Older frozen control artifacts predate this optional measurement.
+    if "warm_upload_transfer_bytes" in receipt:
+        stats = receipt["warm_upload_transfer_bytes"]
+        if (type(stats) is not list or len(stats) != 3
+            or any(type(n) is not int or not 0 <= n < 2**64 for n in stats)
+            or stats[0] != stats[1] + stats[2]
+            or selected and stats[0] == 0
+            or not selected and any(stats)):
+            raise ValueError("Scoped upload bytes must conserve copied and GPU-cleared spans")
 
 
 def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False, metadata=False, banks="standard", shared=False, shared_gdn=False, info_batch_upload=False, dispatch="threaded", cpu_fma=False, reclaim_gpu_sources=False, native_scratch_clear=False, cpu_q8_residual=False, cpu_mapped_prefetch=False, pageout_gpu_sources=False, cpu_threads=16, cpu_q8_two_pass=False, cpu_buffered_weights=False, compute_scratch_clear=False, grouped_status=False, readback_reuse=False, gpu_upload_clear=False, inline_readback=False, cpu_work_stealing=False, request_io_reuse=False):
