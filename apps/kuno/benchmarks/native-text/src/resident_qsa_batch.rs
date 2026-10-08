@@ -1460,26 +1460,41 @@ impl ResidentQsa<'_> {
                     l.widths[APPEND],
                 ),
                 Operation::Fold(i, t) => {
-                    let (width, first, n) = if t == MAX_BATCH {
-                        (l.widths[FLAGS + i], 0, count)
+                    if t == MAX_BATCH && crate::status_fold_batch::selected() {
+                        if i == 0 {
+                            let views = [0, 1, 2, 3, 4, 9, 10, 11].map(|j| {
+                                crate::status_fold_batch::View::new(
+                                    ids[FLAGS + j],
+                                    count,
+                                    0,
+                                    l.widths[FLAGS + j],
+                                    l.widths[FLAGS + j],
+                                )
+                            });
+                            crate::status_fold_batch::launch(arena, &views, fault_id)?;
+                        }
                     } else {
-                        let token = l.token(t, start as usize)?;
-                        let width = if i == 8 {
-                            token.logits_elements
+                        let (width, first, n) = if t == MAX_BATCH {
+                            (l.widths[FLAGS + i], 0, count)
                         } else {
-                            token.complete
+                            let token = l.token(t, start as usize)?;
+                            let width = if i == 8 {
+                                token.logits_elements
+                            } else {
+                                token.complete
+                            };
+                            (width, t * l.widths[FLAGS + i], 1)
                         };
-                        (width, t * l.widths[FLAGS + i], 1)
-                    };
-                    u::status_batch(
-                        arena,
-                        ids[FLAGS + i],
-                        fault_id,
-                        n,
-                        first,
-                        l.widths[FLAGS + i],
-                        width,
-                    )?;
+                        u::status_batch(
+                            arena,
+                            ids[FLAGS + i],
+                            fault_id,
+                            n,
+                            first,
+                            l.widths[FLAGS + i],
+                            width,
+                        )?;
+                    }
                 }
             }
             Ok(())

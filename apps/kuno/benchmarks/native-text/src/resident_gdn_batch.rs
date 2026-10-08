@@ -1051,15 +1051,33 @@ impl ResidentGdn<'_> {
                     ),
                     cancel,
                 )?,
-                Operation::Status(i) => u::status_batch(
-                    arena,
-                    ids[STATUS + i],
-                    fault_id,
-                    count,
-                    0,
-                    layout.widths[STATUS + i],
-                    layout.widths[STATUS + i],
-                )?,
+                Operation::Status(i) => {
+                    if crate::status_fold_batch::selected() {
+                        if i == 0 {
+                            let views: [crate::status_fold_batch::View; 5] =
+                                std::array::from_fn(|j| {
+                                    crate::status_fold_batch::View::new(
+                                        ids[STATUS + j],
+                                        count,
+                                        0,
+                                        layout.widths[STATUS + j],
+                                        layout.widths[STATUS + j],
+                                    )
+                                });
+                            crate::status_fold_batch::launch(arena, &views, fault_id)?;
+                        }
+                    } else {
+                        u::status_batch(
+                            arena,
+                            ids[STATUS + i],
+                            fault_id,
+                            count,
+                            0,
+                            layout.widths[STATUS + i],
+                            layout.widths[STATUS + i],
+                        )?;
+                    }
+                }
             }
             Ok(())
         })?;

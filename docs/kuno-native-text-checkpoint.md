@@ -13,7 +13,7 @@ baselines are needed. Backend work belongs in the owner worktree
 
 ## Active overnight offload run, 2026-10-08
 
-The current accepted best is6.8082 tokens/s (144 slots, original full fixture);
+The current accepted best is7.0760 tokens/s (144 slots, original full fixture);
 10 tokens/s remains unmet. The preceding block established3.5006 tokens/s. Source
 `4cf40f3` adds specialized F16C original CPU packed loops with120 core tests,
 3 ignored and strict Clippy. Its normal frozen direct-device artifact
@@ -1561,3 +1561,12 @@ prefill. Independent groups2/3/4 full-owner/padding/unselected controls pass.
 494 native tests/two original shader suites,34 Python controls and strict
 Clippy pass. Next candidate narrows only active-row dispatch grids; all shader
 math and full MAX8 owning allocations remain.10 tokens/s is still unmet.
+
+Source b6049a3/artifactbb1c45f637c2d64926267bd943a5e96a31234b8890d7a96b5fd8b17c99fe27b1
+limits GR/GDN/QSA and status grids to their validated active rows. The full
+original75/128 fixture and fresh/poison/full-owning/lifecycle gates pass with
+17948ms decode (7.0760 tokens/s),17044ms prefill. Physical B70 returns50688000B.
+494 native tests, both original offline shader suites and strict Clippy pass.
+The next candidate groups statuses at their existing ready-before-reuse
+boundaries, preserving active words, sticky faults and complete original gates;
+physical acceptance is pending. No installed service/API/frontend changes.

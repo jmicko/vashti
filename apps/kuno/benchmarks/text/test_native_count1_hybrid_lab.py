@@ -44,6 +44,21 @@ def completion(cap):
 
 
 class HybridLabTests(unittest.TestCase):
+    def test_grouped_status_requires_bounded_calls_active_sticky_probe_and_explicit_environment(self):
+        value=receipt("intel",10);value.update(grouped_status=True,observed_grouped_status_calls=12000)
+        output=completion(10)+"\npublic_grouped_status_fold groups=3,5,8 counts=1,3,8 active_and_sticky=true inactive_ignored=true"
+        LAB.validate_receipt(value,"intel",10,output,grouped_status=True)
+        for field,bads in [("grouped_status",[False,1,None]),("observed_grouped_status_calls",[0,True,None,-1,1000001])]:
+            for bad in bads:
+                wrong=copy.deepcopy(value);wrong[field]=bad
+                with self.assertRaises(ValueError):LAB.validate_receipt(wrong,"intel",10,output,grouped_status=True)
+        with self.assertRaises(ValueError):LAB.validate_receipt(value,"intel",10,completion(10),grouped_status=True)
+        with self.assertRaises(ValueError):LAB.worker_environment("/original","/receipt",grouped_status=True)
+        selection=dict(metadata=True,shared=True,fast=True,gpu_router=True,compact_info=True,batch_tasks=True)
+        self.assertEqual(LAB.worker_environment("/original","/receipt",**selection,grouped_status=True)["KUNO_LAB_GROUPED_STATUS"],"1")
+        with mock.patch.dict(os.environ,{"KUNO_LAB_GROUPED_STATUS":"1"}):
+            self.assertEqual(LAB.worker_environment("/original","/receipt")["KUNO_LAB_GROUPED_STATUS"],"0")
+
     def test_compute_scratch_clear_requires_bounded_calls_full_probe_and_explicit_environment(self):
         value=receipt("intel",10);value.update(compute_scratch_clear=True,observed_compute_scratch_clear_calls=12000)
         output=completion(10)+"\npublic_compute_scratch_clear_full_owners=2,3,4 unselected_preserved=true padding=true"

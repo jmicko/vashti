@@ -1101,3 +1101,30 @@ spans, cache append order and fixed per-token selectors remain. This is dispatch
 geometry only; no request value enters a compilation key or persistent trace.
 The fixed-public full fixture, fresh continuation and original owning/lifecycle
 gates are required before accepting speed.
+
+### Ready-before-reuse grouped status folds
+
+The explicit protected `--grouped-status` experiment requires retained metadata,
+shared kernels, compact INFO and task batches. Three GR read statuses may be
+folded together after mix and before its consumer; five GDN statuses at the
+original tail fold boundary; eight QSA rectangular statuses after append.
+Original QSA per-token causal folds remain individual. No status is reset or
+reused, no fault is observed or published, and no consumer completes between
+its former fold and the grouped boundary. The original event/cancellation plans
+and completed fault/erasure/owning gates remain.
+
+One fixed-public3/5/8-member shader evaluates every original active status word
+and atomically ORs the same bit2 into the original sticky fault owner. It ignores
+inactive rows exactly as before. Actual arena epochs, full owners, logical view
+bounds, streams, offsets, physical extents and aliases must be checked before
+launch. Actual handle/resource/binding/INFO capacities and scoped View metadata
+fit the original4KiB host header; no private allocation or budget increase.
+Private view coordinates use the original full-capacity wiping INFO ledger;
+only public member cardinality identifies compiled kernels.
+
+Independent device probes cover groups3/5/8, active counts1/3/8, unequal widths,
+first/last active poison, deliberately poisoned inactive/padding words, sticky
+fault preservation and duplicate-owner rejection. Exact typed selection and
+observed-call counters, probe markers, all128 original model IDs, fresh
+continuation and whole-owning/lifecycle acceptance are required before timing
+selection. Default and installed inference remain unchanged.

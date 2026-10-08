@@ -47,6 +47,7 @@ mod residual_gpu;
 mod router_gpu;
 mod scratch_clear_batch;
 mod small_cpu;
+mod status_fold_batch;
 mod token_waves;
 mod transient_probe;
 use cubecl::prelude::*;
@@ -883,6 +884,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("Shared Next kernels require GPU routing".into());
     }
     let retained_metadata = count1_environment_opt_in(&mode, "KUNO_LAB_RETAINED_METADATA")?;
+    let grouped_status = count1_environment_opt_in(&mode, "KUNO_LAB_GROUPED_STATUS")?;
+    if grouped_status && (!retained_metadata || !next_shared || !compact_info || !batch_tasks) {
+        return Err("grouped status requires retained shared compact task batches".into());
+    }
+
     if compute_scratch_clear
         && (native_scratch_clear
             || !retained_metadata
@@ -2000,6 +2006,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             resident_util::select_retained_metadata(retained_metadata);
             resident_util::select_native_scratch_clear(native_scratch_clear);
             resident_util::select_compute_scratch_clear(compute_scratch_clear);
+            status_fold_batch::select(grouped_status);
+            if grouped_status {
+                status_fold_batch::probe(
+                    &client,
+                    transient_context
+                        .as_ref()
+                        .ok_or("owned runtime required")?
+                        .clone(),
+                )?;
+            }
             if compute_scratch_clear {
                 scratch_clear_batch::probe(
                     &client,
@@ -2252,6 +2268,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let pre_metadata_calls = resident_util::metadata_calls();
             let pre_scratch_clear_calls = resident_util::native_scratch_clear_calls();
             let pre_compute_scratch_clear_calls = resident_util::compute_scratch_clear_calls();
+            let pre_grouped_status_calls = status_fold_batch::calls();
             let reclaim_start = Instant::now();
             let gpu_source_advised_bytes = if reclaim_gpu_sources {
                 resident
@@ -2515,6 +2532,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 receipt["gpu_source_advised_bytes"] = serde_json::json!(gpu_source_advised_bytes);
                 receipt["gpu_source_advice_ms"] = serde_json::json!(gpu_source_advice_ms);
                 receipt["large_weight_cache"] = serde_json::json!(large_weight_cache);
+                receipt["grouped_status"] = serde_json::json!(grouped_status);
+                receipt["observed_grouped_status_calls"] = serde_json::json!(
+                    status_fold_batch::calls()
+                        .checked_sub(pre_grouped_status_calls)
+                        .ok_or("grouped status counter regression")?
+                );
                 receipt["compute_scratch_clear"] = serde_json::json!(compute_scratch_clear);
                 receipt["observed_compute_scratch_clear_calls"] = serde_json::json!(
                     resident_util::compute_scratch_clear_calls()

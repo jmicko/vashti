@@ -350,7 +350,9 @@ impl Workspace {
             l.streams,
             l.width,
         );
-        self.fold(arena, SN, count, fault)?;
+        if !crate::status_fold_batch::selected() {
+            self.fold(arena, SN, count, fault)?;
+        }
         self.project(
             graph,
             arena,
@@ -378,7 +380,9 @@ impl Workspace {
             l.streams,
             l.low,
         );
-        self.fold(arena, SL, count, fault)?;
+        if !crate::status_fold_batch::selected() {
+            self.fold(arena, SL, count, fault)?;
+        }
         self.project(
             graph,
             arena,
@@ -409,7 +413,14 @@ impl Workspace {
             l.streams,
             l.width,
         );
-        self.fold(arena, SM, count, fault)?;
+        if crate::status_fold_batch::selected() {
+            let views = [SN, SL, SM].map(|i| {
+                crate::status_fold_batch::View::new(self.ids[i], count, 0, l.widths[i], l.widths[i])
+            });
+            crate::status_fold_batch::launch(arena, &views, fault)?;
+        } else {
+            self.fold(arena, SM, count, fault)?;
+        }
         if kind.inject() {
             self.project(
                 graph,
