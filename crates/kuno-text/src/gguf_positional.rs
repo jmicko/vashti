@@ -60,9 +60,10 @@ impl GgufFile {
         self.advise_gpu_source(tensor, offset, length, false)
     }
 
-    /// Reclaim only checked immutable original file pages already copied to GPU.
-    /// Linux COLD/PAGEOUT advice preserves mapping contents and borrowed slices.
-    /// It never addresses anonymous/private inference memory or grants freed-byte credit.
+    /// Release PTEs for checked immutable original file pages already copied to GPU,
+    /// then advise the original descriptor cache. This read-only regular-file map
+    /// refaults identical original bytes; anonymous/private inference allocations
+    /// are never addressed. Successfully advised bytes are not freed-byte credit.
     #[allow(unsafe_code)]
     pub fn advise_gpu_source_pageout(
         &self,
@@ -156,22 +157,17 @@ impl GgufFile {
                 if last > map.len() {
                     return Err(Error::OutOfBounds);
                 }
-                // SAFETY: complete page-aligned checked span inside the immutable
-                // original read-only regular-file map. COLD and PAGEOUT change
-                // residency only; unlike DONTNEED/FREE/REMOVE they do not change
-                // byte semantics. No anonymous/dirty/private memory is addressed,
-                // no map is replaced, and all existing borrows stay valid.
-                for advice in [20, 21] {
-                    let status = unsafe {
-                        madvise(
-                            map.as_ptr().add(first).cast_mut().cast(),
-                            last - first,
-                            advice,
-                        )
-                    };
-                    if status != 0 {
-                        return Err(std::io::Error::last_os_error().into());
-                    }
+                // SAFETY: this is exclusively the original immutable, read-only
+                // regular-file mapping, not anonymous/COW/private inference state.
+                // DONTNEED releases its PTEs without unmapping or modifying the
+                // file. Any outstanding borrowed slice refaults the same original
+                // bytes under enable_mapped_weights' inode-immutability contract.
+                // It lets the following fd advice reclaim clean duplicate pages;
+                // COLD/PAGEOUT can leave these PTEs pinning cache unnecessarily.
+                let status =
+                    unsafe { madvise(map.as_ptr().add(first).cast_mut().cast(), last - first, 4) };
+                if status != 0 {
+                    return Err(std::io::Error::last_os_error().into());
                 }
             }
             // SAFETY: original read-only pinned fd, Linux64 off_t ABI, bounded
@@ -578,7 +574,7 @@ mod tests {
         }
         let reader = f.model.positional_reader().unwrap();
         let tensor = f.model.tensor("w").unwrap();
-        let original = reader.mapped_range(tensor, 16, 16).unwrap().unwrap();
+        let original = reader.mapped_range(tensor, 8192, 16384).unwrap().unwrap();
         let address = original.as_ptr();
         let expected = original.to_vec();
         let before = std::fs::metadata(&f.path).unwrap();
@@ -609,7 +605,7 @@ mod tests {
                 .is_err()
         );
         let mut read = vec![0; expected.len()];
-        reader.read_range(tensor, 16, &mut read).unwrap();
+        reader.read_range(tensor, 8192, &mut read).unwrap();
         assert_eq!(read, expected);
         let after = std::fs::metadata(&f.path).unwrap();
         assert_eq!(before.len(), after.len());

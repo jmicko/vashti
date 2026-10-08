@@ -65,7 +65,7 @@ def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False
         if receipt.get("native_scratch_clear") is not native_scratch_clear or type(calls) is not int or not 0<=calls<=1000000 or (calls>0) is not native_scratch_clear:
             raise ValueError("Native full scratch clear must match completed bounded evidence")
     if pageout_gpu_sources or "pageout_gpu_sources" in receipt:
-        if receipt.get("pageout_gpu_sources") is not pageout_gpu_sources or (pageout_gpu_sources and not reclaim_gpu_sources):
+        if receipt.get("pageout_gpu_sources") is not pageout_gpu_sources or (pageout_gpu_sources and (not reclaim_gpu_sources or receipt.get("gpu_source_mapping_advice") != "discard-clean-file-ptes")):
             raise ValueError("Mapped GPU source pageout requires explicit actual source reclaim")
     if reclaim_gpu_sources or "reclaim_gpu_sources" in receipt:
         if receipt.get("reclaim_gpu_sources") is not reclaim_gpu_sources or (reclaim_gpu_sources and (cap!=10 or not mapped)):

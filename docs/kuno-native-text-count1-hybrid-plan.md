@@ -814,14 +814,18 @@ fresh/poison and full-owning audits remain. Device efficacy is pending.
 
 Explicit protected `--pageout-gpu-sources` requires source reclamation and its
 existing mapped static cap10 completed-boundary contract. For the same complete
-original source pages retained on GPU, it applies Linux MADV_COLD then
-MADV_PAGEOUT to the original read-only regular-file mapping before file advice.
-These operations preserve file bytes and mapping semantics; private anonymous
-inference state is never passed to them. Inode lifetime, unchanged-stat checks,
-foreign tensor/extent bounds and full-page interior restrictions remain. Unlike
-MADV_DONTNEED/FREE/REMOVE, this path neither replaces nor changes mapped contents.
-See the [Linux API semantics](https://man7.org/linux/man-pages/man2/madvise.2.html).
-Reclamation is best effort; advised coverage is not actual freed-byte credit.
+original source pages retained on GPU, the current experiment releases the
+original mapping's clean file PTEs with Linux MADV_DONTNEED, then applies fd
+DONTNEED advice. This supersedes the ineffective COLD/PAGEOUT experiment. Only
+the original immutable read-only regular-file map is addressed: future accesses
+refault identical pinned inode bytes, including existing borrowed slices. It
+never addresses anonymous/COW inference allocations, changes file contents,
+unmaps/replaces the original map, or reopens its path. Original stat/inode,
+foreign tensor/extent bounds and full-page interior restrictions remain. See
+[Linux API semantics](https://man7.org/linux/man-pages/man2/madvise.2.html).
+Receipt `gpu_source_mapping_advice` must independently match
+`discard-clean-file-ptes` when enabled (`descriptor-only` for fd-only reclaim,
+`disabled` otherwise). Advised bytes do not establish actual reclamation.
 
 Ambient selection is overwritten. Receipts must match independently selected
 pageout and source-reclaim flags. All original128 IDs, completed producer/consumer

@@ -2434,6 +2434,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 receipt["warm_host_resource_delta"] = serde_json::json!(warm_resources);
                 receipt["reclaim_gpu_sources"] = serde_json::json!(reclaim_gpu_sources);
                 receipt["pageout_gpu_sources"] = serde_json::json!(pageout_gpu_sources);
+                receipt["gpu_source_mapping_advice"] = serde_json::json!(if pageout_gpu_sources {
+                    "discard-clean-file-ptes"
+                } else if reclaim_gpu_sources {
+                    "descriptor-only"
+                } else {
+                    "disabled"
+                });
                 receipt["gpu_source_advised_bytes"] = serde_json::json!(gpu_source_advised_bytes);
                 receipt["gpu_source_advice_ms"] = serde_json::json!(gpu_source_advice_ms);
                 receipt["large_weight_cache"] = serde_json::json!(large_weight_cache);

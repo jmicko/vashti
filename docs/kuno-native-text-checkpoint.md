@@ -13,7 +13,8 @@ baselines are needed. Backend work belongs in the owner worktree
 
 ## Active overnight offload run, 2026-10-08
 
-The last accepted best remains3.5006 tokens/s from the preceding block. Source
+The current accepted best is3.6980 tokens/s (144 slots, original full fixture);
+10 tokens/s remains unmet. The preceding block established3.5006 tokens/s. Source
 `4cf40f3` adds specialized F16C original CPU packed loops with120 core tests,
 3 ignored and strict Clippy. Its normal frozen direct-device artifact
 `e12a2b2788eabcb2f5d4c6b0588ba7cb18bd531bba4ae8c61ca676fb650a0179`
@@ -196,8 +197,23 @@ reads remain selected. B70 returns50688000B.
 The next diagnostic pauses profiling through initialization/prefill, and arms
 only the first following native decode with a drop guard. No I/O/admission cap
 or original owner proof is changed. Original full-lifetime profiling is rejected
-and excluded from timing selection. Host/source controls and physical acceptance
-of the bounded diagnostic are pending.
+and excluded from timing selection. Sourcee8270af passes491 native tests, both shader suites,32 Python controls,
+50 runtime host tests plus two isolated logger configurations and strict Clippy.
+The first-following-step diagnostic still rejects with deferred router I/O
+under the unchanged cap; same frozen49d016ca artifact with original per-router
+cleanup passes all short fixture/owning/fresh/cancel gates. It reports one
+profiled step, 64.183445ms total completed GPU kernels (generic custom kernels
+33.254779ms, clears6.821887ms), not a clean speed result. Profiling changes
+scheduling and is excluded from speed selection. GPU recovers50688000B.
+
+The next explicit source-pageout experiment replaces ineffective COLD/PAGEOUT
+with clean original file PTE release before descriptor cache advice. No private
+anonymous allocation, source/file contents, inode permission or original proof
+budget is changed. A live borrowed slice across full interior pages must refault
+identical bytes at the same address; the receipt distinguishes this method from
+historical pageout.127 core tests (3 ignored),491 native tests plus both shader
+suites,32 Python controls and strict all-target Clippy pass. Physical
+speed/reclamation remain pending.
 
 The user granted exclusive GPUs. Installed Kuno had an idle managed worker
 holding15978409984 B70 bytes with no active request; a graceful Kuno restart

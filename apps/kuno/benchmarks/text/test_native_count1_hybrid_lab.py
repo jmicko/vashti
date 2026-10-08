@@ -59,10 +59,13 @@ class HybridLabTests(unittest.TestCase):
             env=LAB.worker_environment("/original","/receipt");self.assertEqual(env["KUNO_LAB_CPU_THREADS"],"16");self.assertEqual(env["KUNO_LAB_CPU_Q8_TWO_PASS"],"0")
 
     def test_gpu_source_pageout_requires_explicit_reclaim_and_typed_selection(self):
-        value=receipt("intel",10);value.update(pageout_gpu_sources=True,reclaim_gpu_sources=True,gpu_source_advised_bytes=19*1024**3,gpu_source_advice_ms=200,mapped_weights=True,observed_mapped_weights=True)
+        value=receipt("intel",10);value.update(pageout_gpu_sources=True,reclaim_gpu_sources=True,gpu_source_mapping_advice="discard-clean-file-ptes",gpu_source_advised_bytes=19*1024**3,gpu_source_advice_ms=200,mapped_weights=True,observed_mapped_weights=True)
         LAB.validate_receipt(value,"intel",10,completion(10),mapped=True,reclaim_gpu_sources=True,pageout_gpu_sources=True)
         for bad in (False,1,None):
             wrong=copy.deepcopy(value);wrong["pageout_gpu_sources"]=bad
+            with self.assertRaises(ValueError):LAB.validate_receipt(wrong,"intel",10,completion(10),mapped=True,reclaim_gpu_sources=True,pageout_gpu_sources=True)
+        for mode in (None, "cold-pageout", "descriptor-only", True):
+            wrong=copy.deepcopy(value);wrong["gpu_source_mapping_advice"]=mode
             with self.assertRaises(ValueError):LAB.validate_receipt(wrong,"intel",10,completion(10),mapped=True,reclaim_gpu_sources=True,pageout_gpu_sources=True)
         with self.assertRaises(ValueError):LAB.worker_environment("/original","/receipt",pageout_gpu_sources=True)
         with mock.patch.dict(os.environ,{"KUNO_LAB_PAGEOUT_GPU_SOURCES":"1"}):
