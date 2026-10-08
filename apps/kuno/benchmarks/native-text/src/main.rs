@@ -2707,6 +2707,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     receipt["secondary_expert_calls"] = serde_json::json!(second.expert_calls);
                     receipt["secondary_gpu_calls"] = serde_json::json!(second.calls);
                     receipt["secondary_bank_setup_ms"] = serde_json::json!(second.bank_setup_ms);
+                    receipt["secondary_host_phase_ns"] = serde_json::json!(second.phase_ns);
                     receipt["secondary_weight_upload_bytes"] =
                         serde_json::json!(second.uploaded_bytes);
                     receipt["secondary_bank_allocation_bytes"] =

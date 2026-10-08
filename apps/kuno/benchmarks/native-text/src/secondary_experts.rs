@@ -241,6 +241,7 @@ pub(crate) struct Secondary {
     pub(crate) cpu_calls: u64,
     pub(crate) uploaded_bytes: u64,
     pub(crate) bank_setup_ms: u64,
+    pub(crate) phase_ns: [u64; 4],
 }
 impl Secondary {
     pub(crate) fn build<'p>(
@@ -312,6 +313,7 @@ impl Secondary {
             cpu_calls: 0,
             uploaded_bytes: 0,
             bank_setup_ms: 0,
+            phase_ns: [0; 4],
         };
         for layer in 0..LAYERS {
             u::cancel(cancel)?;
@@ -370,6 +372,7 @@ impl Secondary {
         out.calls = 0;
         out.expert_calls = 0;
         out.cpu_calls = 0;
+        out.phase_ns = [0; 4];
         out.bank_setup_ms = start.elapsed().as_millis() as u64;
         Ok(out)
     }
@@ -521,6 +524,7 @@ impl Secondary {
         mixed: &[f32],
         cancel: &AtomicBool,
     ) -> Result<()> {
+        let start = std::time::Instant::now();
         if self.queued
             || self.closed
             || s.gpu.is_empty()
@@ -640,6 +644,7 @@ impl Secondary {
         }
         self.client.flush().map_err(u::fault)?;
         self.queued = true;
+        self.phase_ns[0] += start.elapsed().as_nanos() as u64;
         Ok(())
     }
     fn write(&self, i: usize, words: &[u32]) -> Result<()> {
@@ -691,6 +696,7 @@ impl Secondary {
         {
             return Err(Error::LimitExceeded("secondary joining private host"));
         }
+        let read_start = std::time::Instant::now();
         // The packet combines the original-rank partial prefix and sticky fault.
         unsafe {
             packet::launch_unchecked::<WgpuRuntime>(
@@ -707,6 +713,8 @@ impl Secondary {
             .read_one(self.arena.handle(self.ids[8]).map_err(u::fault)?.clone())
             .map_err(u::fault)?;
         let bytes = Readback(bytes);
+        self.phase_ns[1] += read_start.elapsed().as_nanos() as u64;
+        let join_start = std::time::Instant::now();
         let values = u32::from_bytes(&bytes.0);
         if values.len()
             != self
@@ -765,11 +773,14 @@ impl Secondary {
         drop(bytes);
         drop(cpu);
         u::cancel(cancel)?;
+        self.phase_ns[2] += join_start.elapsed().as_nanos() as u64;
+        let recycle_start = std::time::Instant::now();
         self.client
             .recycle_transient_io(self.nonce)
             .map_err(u::fault)?;
         self.ledger.completed_fence(self.usage()?).map_err(adm)?;
         self.queued = false;
+        self.phase_ns[3] += recycle_start.elapsed().as_nanos() as u64;
         self.calls += 1;
         self.expert_calls += s.gpu.len() as u64;
         self.cpu_calls += s.cpu.len() as u64;
