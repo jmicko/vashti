@@ -1,7 +1,7 @@
 # Kuno transient-I/O runtime patch (laboratory only)
 
 This is an isolated, unpublished Rust experiment for Kuno's resident native
-text graph. It patches exactly three CubeCL 0.10.0 crates. It does not change the
+text graph. It patches four pinned CubeCL 0.10.0 crates. It does not change the
 production Kuno/Vashti dependencies, public inference API, system services,
 installed model files, the global Cargo registry, or any inference deadline.
 Initial patch authoring was source-only. Protected device acceptance performed
@@ -22,7 +22,7 @@ per-record path is unchanged. Device acceptance is pending for this new mode.
 
 ## Pin and licenses
 
-`cubecl-runtime`, `cubecl-core`, and `cubecl-wgpu` are copies of the published
+`cubecl-common`, `cubecl-runtime`, `cubecl-core`, and `cubecl-wgpu` are copies of the published
 0.10.0 crates. Their `.cargo_vcs_info.json` pins CubeCL commit
 `7cf203735e095e640a2c03b2400d0faa03196bb4`, with each original `path_in_vcs`.
 Original MIT/Apache-2.0 licenses and crate manifests are preserved. Wgpu 29.0.4
@@ -32,10 +32,21 @@ hashes. The patch is generated against those original archives, not mutable
 registry source files. A cached archive's hash is a provenance pin, not a fresh
 network authenticity check.
 
-Use only these three `[patch.crates-io]` path overrides in the standalone lab.
+Use only these four `[patch.crates-io]` path overrides in the standalone lab.
 Do not override production workspace dependencies or edit global registry files.
-`transient-runtime.patch` applies to directories named `cubecl-runtime`,
+`transient-runtime.patch` applies to directories named `cubecl-common`, `cubecl-runtime`,
 `cubecl-core`, and `cubecl-wgpu` containing the original pinned packages.
+
+The optional lab Cargo feature `direct-device` enables the pinned common crate's
+existing reentrant mutex device handle on native Linux. It executes server
+enqueues on the caller instead of the dedicated channel thread; the original
+server, stream, WGPU queue, resource leases and all erasure/error checks remain.
+GPU command completion is still asynchronous until the existing fences; a
+direct enqueue is not completion or acceptance. The feature is off by default,
+requires explicit protected cap10 `--device-dispatch inline`, and is checked
+against the actual runtime handle's blocking property. The ordinary threaded
+artifact and runner choice remain available. Collective/distributed device
+operations are unsupported by this experiment. Physical acceptance is pending.
 
 ## Small public ownership API
 

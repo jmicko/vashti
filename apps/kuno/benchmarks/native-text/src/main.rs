@@ -209,6 +209,21 @@ fn count1_environment_opt_in(mode: &str, name: &str) -> Result<bool, &'static st
             .transpose()?,
     )
 }
+fn count1_dispatch(
+    mode: &str,
+    cap: Option<usize>,
+    raw: Option<&str>,
+    compiled_inline: bool,
+) -> Result<&'static str, &'static str> {
+    match (raw, compiled_inline) {
+        (None | Some("threaded"), false) => Ok("threaded"),
+        (Some("inline"), true) if mode == "resident-count1-hybrid-chat" && cap == Some(10) => {
+            Ok("inline")
+        }
+        _ => Err("GPU dispatch must match the compiled protected cap10 artifact"),
+    }
+}
+
 fn count1_hybrid_setting(name: &str, raw: Option<&str>) -> Result<(), &'static str> {
     let accepted = match name {
         "KUNO_LAB_NATIVE_MAX8" | "KUNO_LAB_NATIVE_DECODE" | "KUNO_LAB_CANCEL_CHECK" => {
@@ -737,6 +752,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("Expanded count1 banks require protected cap10 mode".into());
     }
     let mapped_weights = count1_environment_opt_in(&mode, "KUNO_LAB_MAPPED_WEIGHTS")?;
+    let raw_dispatch = std::env::var_os("KUNO_LAB_DEVICE_DISPATCH");
+    let inline_dispatch = cubecl_common::device_handle::DeviceHandle::<
+        <WgpuRuntime as cubecl::prelude::Runtime>::Server,
+    >::is_blocking();
+    if inline_dispatch != cfg!(feature = "direct-device") {
+        return Err("Compiled GPU dispatch does not match the original runtime type".into());
+    }
+    let device_dispatch = count1_dispatch(
+        &mode,
+        count1_hybrid_cap,
+        raw_dispatch
+            .as_ref()
+            .map(|v| v.to_str().ok_or("GPU dispatch setting encoding rejected"))
+            .transpose()?,
+        inline_dispatch,
+    )?;
+    println!("gpu_device_dispatch mode={device_dispatch} blocking={inline_dispatch}");
     let kernel_profile = count1_environment_opt_in(&mode, "KUNO_LAB_KERNEL_PROFILE")?;
     let fast_gpu = count1_environment_opt_in(&mode, "KUNO_LAB_FAST_GPU")?;
     let fast_gpu_fault = count1_environment_opt_in(&mode, "KUNO_LAB_FAST_GPU_FAULT")?;
@@ -2185,6 +2217,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 receipt["large_weight_cache"] = serde_json::json!(large_weight_cache);
                 receipt["compact_info"] = serde_json::json!(compact_info);
                 receipt["info_batch_upload"] = serde_json::json!(info_batch_upload);
+                receipt["device_dispatch"] = serde_json::json!(device_dispatch);
+                receipt["observed_inline_device_dispatch"] = serde_json::json!(inline_dispatch);
                 receipt["info_slab_bytes"] = serde_json::json!(if compact_info { 4096 } else { 0 });
                 receipt["batch_tasks"] = serde_json::json!(batch_tasks);
                 receipt["defer_router_io"] = serde_json::json!(defer_router_io);
@@ -2600,6 +2634,89 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod transient_mode_tests {
+    #[cfg(feature = "direct-device")]
+    struct DirectTestService<const KIND: usize>(usize);
+    #[cfg(feature = "direct-device")]
+    impl<const KIND: usize> cubecl_common::device::DeviceService for DirectTestService<KIND> {
+        fn init(_: cubecl_common::device::DeviceId) -> Self {
+            Self(0)
+        }
+        fn utilities(&self) -> cubecl_common::device::ServerUtilitiesHandle {
+            std::sync::Arc::new(())
+        }
+    }
+
+    #[cfg(feature = "direct-device")]
+    #[test]
+    fn direct_handle_serializes_concurrent_callers_without_gpu_work() {
+        use cubecl_common::{device::DeviceId, device_handle::DeviceHandle};
+        let handle = DeviceHandle::<DirectTestService<1>>::new(DeviceId::new(65000, 1));
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                let handle = handle.clone();
+                scope.spawn(move || {
+                    for _ in 0..256 {
+                        handle.submit(|service| service.0 += 1);
+                    }
+                });
+            }
+        });
+        assert_eq!(handle.submit_blocking(|service| service.0).unwrap(), 2048);
+    }
+
+    #[cfg(feature = "direct-device")]
+    #[test]
+    fn direct_handle_retains_recursive_service_and_unwind_lock_semantics() {
+        use cubecl_common::{device::DeviceId, device_handle::DeviceHandle};
+        let device = DeviceId::new(65000, 2);
+        let first = DeviceHandle::<DirectTestService<2>>::new(device);
+        let second = DeviceHandle::<DirectTestService<3>>::new(device);
+        first
+            .submit_blocking(|service| {
+                service.0 += 1;
+                second.submit(|other| other.0 += 2);
+            })
+            .unwrap();
+        assert_eq!(first.submit_blocking(|service| service.0).unwrap(), 1);
+        assert_eq!(second.submit_blocking(|service| service.0).unwrap(), 2);
+        let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            first.exclusive::<(), _>(|| panic!("public direct dispatch lock test"))
+        }));
+        assert!(rejected.is_err());
+        first
+            .exclusive(|| first.submit(|service| service.0 += 3))
+            .unwrap();
+        assert_eq!(first.submit_blocking(|service| service.0).unwrap(), 4);
+    }
+
+    #[test]
+    fn direct_dispatch_requires_explicit_matching_protected_artifact() {
+        let mode = "resident-count1-hybrid-chat";
+        assert_eq!(
+            super::count1_dispatch(mode, Some(10), None, false),
+            Ok("threaded")
+        );
+        assert_eq!(
+            super::count1_dispatch(mode, Some(10), Some("inline"), true),
+            Ok("inline")
+        );
+        for (mode, cap, raw, compiled) in [
+            (mode, Some(10), None, true),
+            (mode, Some(10), Some("threaded"), true),
+            (mode, Some(10), Some("inline"), false),
+            (mode, Some(0), Some("inline"), true),
+            ("resident-chat", Some(10), Some("inline"), true),
+            (mode, Some(10), Some("unknown"), false),
+        ] {
+            assert!(super::count1_dispatch(mode, cap, raw, compiled).is_err());
+        }
+        assert_eq!(
+            cubecl_common::device_handle::DeviceHandle::<
+                <cubecl::wgpu::WgpuRuntime as cubecl::prelude::Runtime>::Server,
+            >::is_blocking(),
+            cfg!(feature = "direct-device")
+        );
+    }
     #[test]
     fn expanded_banks_require_an_exact_intel_hybrid_profile_and_preserve_other_guards() {
         use super::Count1Banks as B;

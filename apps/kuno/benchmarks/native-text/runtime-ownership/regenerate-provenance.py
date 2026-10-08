@@ -17,7 +17,7 @@ manifest = {
     'changed_files': [],
 }
 patch = []
-for crate in ('cubecl-runtime', 'cubecl-core', 'cubecl-wgpu'):
+for crate in ('cubecl-common', 'cubecl-runtime', 'cubecl-core', 'cubecl-wgpu'):
     name = crate + '-0.10.0'
     archive = cache / (name + '.crate')
     with tarfile.open(archive) as tar:

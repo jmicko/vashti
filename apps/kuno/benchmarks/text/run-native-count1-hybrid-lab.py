@@ -34,8 +34,16 @@ def completion(cap, deferred=False):
     ) + ((f"public_count1_hybrid_mid_token_cancel cap={cap} layer=47 erased=true",) if deferred else ())
 
 
-def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False, metadata=False, banks="standard", shared=False, shared_gdn=False, info_batch_upload=False):
+def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False, metadata=False, banks="standard", shared=False, shared_gdn=False, info_batch_upload=False, dispatch="threaded"):
     validate_cap(cap)
+    if dispatch not in ("threaded","inline") or dispatch=="inline" and cap!=10:
+        raise ValueError("Inline dispatch requires compiled protected cap10 mode")
+    if dispatch=="inline" or "device_dispatch" in receipt:
+        if receipt.get("device_dispatch")!=dispatch or receipt.get("observed_inline_device_dispatch") is not (dispatch=="inline"):
+            raise ValueError("Compiled device dispatch does not match selection")
+        marker=f"gpu_device_dispatch mode={dispatch} blocking={str(dispatch=='inline').lower()}"
+        if marker not in output.splitlines():
+            raise ValueError("Actual runtime device dispatch marker missing")
     if info_batch_upload and (not compact_info or cap!=10):
         raise ValueError("Batched INFO requires compact cap10 mode")
     if info_batch_upload or "info_batch_upload" in receipt:
@@ -151,7 +159,7 @@ def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False
         raise ValueError("Hybrid continuation and both cancellation proofs required")
 
 
-def worker_environment(model, receipt, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False, metadata=False, banks="standard", shared=False, shared_gdn=False, info_batch_upload=False):
+def worker_environment(model, receipt, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False, metadata=False, banks="standard", shared=False, shared_gdn=False, info_batch_upload=False, dispatch="threaded"):
     if workers not in ("scoped", "pooled"):
         raise ValueError("Unknown CPU worker mode")
     if type(overlap) is not bool or (overlap and workers != "pooled"):
@@ -168,7 +176,10 @@ def worker_environment(model, receipt, workers="scoped", overlap=False, mapped=F
         raise ValueError("Deferred router IO requires compact INFO")
     if banks not in ("standard","intel72","intel96"):
         raise ValueError("Unknown fixed bank profile")
+    if dispatch not in ("threaded","inline"):
+        raise ValueError("Unknown GPU device dispatch")
     env = BASE.worker_environment(model, receipt, 8, True, 1, "single-q4-all")
+    env["KUNO_LAB_DEVICE_DISPATCH"] = dispatch
     env["KUNO_LAB_CPU_WORKERS"] = workers
     env["KUNO_LAB_CPU_GPU_OVERLAP"] = "1" if overlap else "0"
     env["KUNO_LAB_MAPPED_WEIGHTS"] = "1" if mapped else "0"
@@ -218,6 +229,7 @@ def main():
     parser.add_argument("--large-weight-cache", action="store_true")
     parser.add_argument("--compact-info", action="store_true")
     parser.add_argument("--info-batch-upload", action="store_true")
+    parser.add_argument("--device-dispatch", choices=("threaded","inline"), default="threaded")
     parser.add_argument("--batch-tasks", action="store_true")
     parser.add_argument("--fast-gpu-fault", action="store_true")
     parser.add_argument("--defer-router-io", action="store_true")
@@ -235,6 +247,8 @@ def main():
         parser.error("Q8 CPU activation arithmetic requires --cpu-workers pooled")
     if args.large_weight_cache and not args.mapped_weights:
         parser.error("Larger public cache requires --mapped-weights")
+    if args.device_dispatch=="inline" and args.cpu_miss_cap!=10:
+        parser.error("Inline GPU dispatch requires --cpu-miss-cap10 and a compiled direct-device artifact")
     if args.info_batch_upload and (not args.compact_info or args.cpu_miss_cap!=10):
         parser.error("Batched INFO requires --compact-info --cpu-miss-cap10")
     if args.next_shared_gdn and not args.next_shared_kernels:
@@ -265,7 +279,7 @@ def main():
         ("KUNO_LAB_STATIC_CACHE_BYTES " if args.bank_profile!="intel96" else "") + "KUNO_LAB_EXPERT_BATCH_BYTES KUNO_LAB_EXPERT_SCATTER",
     ]
     command.extend("--setenv=" + key + "=" + value
-                   for key, value in worker_environment(args.model.resolve(), target, args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault,args.defer_router_io,args.gpu_router,args.retained_metadata,args.bank_profile,args.next_shared_kernels,args.next_shared_gdn,args.info_batch_upload).items())
+                   for key, value in worker_environment(args.model.resolve(), target, args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault,args.defer_router_io,args.gpu_router,args.retained_metadata,args.bank_profile,args.next_shared_kernels,args.next_shared_gdn,args.info_batch_upload,args.device_dispatch).items())
     command.extend([sys.executable, str(HERE / "protected-lab-exec.py"), str(frozen),
                     args.card, MODE, str(args.cpu_miss_cap)])
     print("verified_cargo_executable_sha256=" + identity, flush=True)
@@ -280,7 +294,7 @@ def main():
         raise SystemExit("Missing whole-model hybrid receipt")
     snapshot = target.read_bytes()
     receipt = json.loads(snapshot)
-    validate_receipt(receipt, args.card, args.cpu_miss_cap, "".join(lines), args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault,args.defer_router_io,args.gpu_router,args.retained_metadata,args.bank_profile,args.next_shared_kernels,args.next_shared_gdn,args.info_batch_upload)
+    validate_receipt(receipt, args.card, args.cpu_miss_cap, "".join(lines), args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault,args.defer_router_io,args.gpu_router,args.retained_metadata,args.bank_profile,args.next_shared_kernels,args.next_shared_gdn,args.info_batch_upload,args.device_dispatch)
     record = {
         "scope": "fixed-public-count1-hybrid-output-and-lifecycle-only",
         "cargo_artifacts_sha256": artifacts_identity, "frozen_executable_sha256": identity,
@@ -292,7 +306,7 @@ def main():
         "long_fixture": args.long_fixture,
         "cpu_q8_activations": args.cpu_q8,
         "large_weight_cache": args.large_weight_cache,
-        "compact_info": args.compact_info, "info_batch_upload": args.info_batch_upload,
+        "compact_info": args.compact_info, "info_batch_upload": args.info_batch_upload, "device_dispatch":args.device_dispatch,
         "batch_tasks": args.batch_tasks,
         "fast_gpu_fault": args.fast_gpu_fault,
         "gpu_router":args.gpu_router,"defer_router_io":args.defer_router_io,"retained_metadata":args.retained_metadata,"bank_profile":args.bank_profile,

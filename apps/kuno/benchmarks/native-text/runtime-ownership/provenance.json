@@ -2,6 +2,20 @@
   "scope": "standalone native-text laboratory ownership sources; acceptance is recorded separately",
   "upstream_git_commit": "7cf203735e095e640a2c03b2400d0faa03196bb4",
   "crates": {
+    "cubecl-common": {
+      "version": "0.10.0",
+      "published_archive_sha256": "cc956c2dcc993f16f748d03bfdbd900f75cab4d469f4e5d8924f8ee128e861ad",
+      "git": {
+        "git": {
+          "sha1": "7cf203735e095e640a2c03b2400d0faa03196bb4"
+        },
+        "path_in_vcs": "crates/cubecl-common"
+      },
+      "licenses": [
+        "MIT",
+        "Apache-2.0"
+      ]
+    },
     "cubecl-runtime": {
       "version": "0.10.0",
       "published_archive_sha256": "b68491bf5b3e997ae36bdc4e63b4ccd6d2f0e86b3b596a5d7a48d2b9e92622a0",
@@ -47,6 +61,16 @@
   },
   "unchanged_wgpu_version": "29.0.4",
   "changed_files": [
+    {
+      "path": "cubecl-common/Cargo.toml",
+      "sha256": "edb528a1ddc6964848d8aaba5b11ba70a03b5773f6b674fee857d8f2b89cf6dc",
+      "original_sha256": "68c03a500f4eafe809cf3b1beb5a6d348d510bb082bc8ab1c7c6fc316b688150"
+    },
+    {
+      "path": "cubecl-common/src/device/handle/mod.rs",
+      "sha256": "c54d4ca4566ea6deded711e4a15e2b704ff97b570d078f79d2d388bc3dfd1ce3",
+      "original_sha256": "0280488f432a35f158a605f8a997a6ba09352772b8ca6b6172127df80ed33d17"
+    },
     {
       "path": "cubecl-runtime/src/client.rs",
       "sha256": "49056dc3696baf4ca2c89bd9e6f98bf978dfdacdb709d7ac1a6e580c4f57d146",
@@ -138,7 +162,7 @@
       "original_sha256": null
     }
   ],
-  "patch_sha256": "249ef8794a304fb996d6d2f91369b4be63904e33b947498dde824f63e98de4a9",
-  "lock_sha256": "013a26bd77c9f8146e9ffb05a18d8128f308890425d6d38b17e7d2502875a70c",
+  "patch_sha256": "1cb2b787a578d46e2edff5bee97222ca9efc8bbf1aa75bd8a26b7d7704bd9415",
+  "lock_sha256": "83550fa6c6d790fdfb62df390fd96b7c9d75b367c1ee6712b980ab2ff67c7288",
   "host_lock_sha256": "b968a383901ba657bdc2b670a0c7d30fc8c6b8c7ae9335c7c231fb827f0b7acf"
 }

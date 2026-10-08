@@ -1,3 +1,32 @@
+--- a/cubecl-common/Cargo.toml
++++ b/cubecl-common/Cargo.toml
+@@ -40,6 +40,8 @@
+ resolver = "2"
+ 
+ [features]
++# Standalone Kuno laboratory only; default threaded dispatch is unchanged.
++kuno-direct-device = ["std"]
+ cache = [
+     "std",
+     "serde_json",
+--- a/cubecl-common/src/device/handle/mod.rs
++++ b/cubecl-common/src/device/handle/mod.rs
+@@ -15,10 +15,13 @@
+ #[allow(dead_code)]
+ mod reentrant;
+ 
+-#[cfg(all(feature = "std", multi_threading))]
++#[cfg(all(feature = "std", multi_threading, not(feature = "kuno-direct-device")))]
+ type Inner<S> = channel::ChannelDeviceHandle<S>;
+ // type Inner<S> = mutex::MutexDeviceHandle<S>;
+-#[cfg(all(feature = "std", not(multi_threading)))]
++#[cfg(all(
++    feature = "std",
++    any(not(multi_threading), feature = "kuno-direct-device")
++))]
+ type Inner<S> = reentrant::ReentrantMutexDeviceHandle<S>;
+ #[cfg(all(not(feature = "std"), not(multi_threading)))]
+ type Inner<S> = mutex::MutexDeviceHandle<S>;
 --- a/cubecl-runtime/src/client.rs
 +++ b/cubecl-runtime/src/client.rs
 @@ -1,3 +1,4 @@

@@ -44,6 +44,24 @@ def completion(cap):
 
 
 class HybridLabTests(unittest.TestCase):
+    def test_inline_dispatch_requires_compiled_runtime_evidence(self):
+        value=receipt("intel",10)
+        value.update(device_dispatch="inline",observed_inline_device_dispatch=True)
+        output=completion(10)+"\ngpu_device_dispatch mode=inline blocking=true"
+        LAB.validate_receipt(value,"intel",10,output,dispatch="inline")
+        for change in ({"device_dispatch":"threaded"},{"observed_inline_device_dispatch":False}):
+            bad=dict(value,**change)
+            with self.assertRaises(ValueError):
+                LAB.validate_receipt(bad,"intel",10,output,dispatch="inline")
+        with self.assertRaises(ValueError):
+            LAB.validate_receipt(value,"intel",10,completion(10),dispatch="inline")
+        with self.assertRaises(ValueError):
+            LAB.validate_receipt(value,"intel",0,output,dispatch="inline")
+        with self.assertRaises(ValueError):
+            LAB.worker_environment("/original/model","/public/receipt",dispatch="unknown")
+        env=LAB.worker_environment("/original/model","/public/receipt",dispatch="inline")
+        self.assertEqual(env["KUNO_LAB_DEVICE_DISPATCH"],"inline")
+
     def test_batched_info_requires_compact_slabs_and_independent_runtime_marker(self):
         value=receipt("intel",10)
         value.update(compact_info=True,info_slab_bytes=4096,info_batch_upload=True)

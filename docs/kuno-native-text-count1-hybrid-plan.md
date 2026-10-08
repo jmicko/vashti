@@ -553,3 +553,23 @@ selection. Source gates pass:478 native tests, both offline shader suites,
 native and imported runtime code. Physical complete-model acceptance and
 performance remain pending for this mode. No API, installed service or Vashti
 consumer changes are included.
+
+## Direct device enqueue experiment, 2026-10-08
+
+The standalone Cargo feature `direct-device` selects the pinned common
+runtime's existing reentrant mutex service handle instead of its threaded
+channel. It is disabled in normal builds. A compiled candidate requires
+`--device-dispatch inline`/`KUNO_LAB_DEVICE_DISPATCH=inline` in protected cap10
+mode, checked before device access against the actual runtime handle property.
+Normal builds accept the default `threaded` choice; mismatched artifacts, other
+encodings, cap0 and other entry points reject the inline choice. The runner
+checks both the actual marker and final selection/property receipt.
+
+The original WGPU server and queue still execute all graph work. Caller-side
+server enqueues remain serialized by the runtime's existing reentrant device
+lock; GPU commands remain asynchronous until their original fences. No math,
+logical/physical ownership, full-budget, finite/publication or normal erasure
+gate is removed. The only additional vendored dependency is the same pinned
+CubeCL0.10 common archive, with original licenses/provenance. It is excluded
+from deployed Kuno dependencies. Distributed collectives and arbitrary private
+requests are outside this experiment. Device acceptance/performance are pending.

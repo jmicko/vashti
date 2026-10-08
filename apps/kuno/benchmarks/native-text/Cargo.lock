@@ -317,8 +317,6 @@ dependencies = [
 [[package]]
 name = "cubecl-common"
 version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cc956c2dcc993f16f748d03bfdbd900f75cab4d469f4e5d8924f8ee128e861ad"
 dependencies = [
  "backtrace",
  "bytemuck",
@@ -1159,6 +1157,7 @@ name = "kuno-text-lab"
 version = "0.1.0"
 dependencies = [
  "cubecl",
+ "cubecl-common",
  "cubecl-runtime",
  "kuno-text",
  "serde_json",

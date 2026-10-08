@@ -12,6 +12,7 @@ name = "flash-kernel-lab"
 path = "src/flash_fast_main.rs"
 
 [dependencies]
+cubecl-common = "=0.10.0"
 cubecl-runtime = "=0.10.0"
 serde_json = "1"
 zeroize = "1.9"
@@ -20,9 +21,14 @@ cubecl = { version = "=0.10.0", default-features = false, features = ["std", "wg
 wgpu = { version = "29", default-features = false, features = ["std", "vulkan", "wgsl"] }
 
 [patch.crates-io]
+cubecl-common = { path = "vendor/cubecl-common" }
 cubecl-runtime = { path = "vendor/cubecl-runtime" }
 cubecl-core = { path = "vendor/cubecl-core" }
 cubecl-wgpu = { path = "vendor/cubecl-wgpu" }
+
+[features]
+# Compiled experiment; every invocation must explicitly select it in the runner.
+direct-device = ["cubecl-common/kuno-direct-device"]
 
 [profile.release]
 debug = 0
