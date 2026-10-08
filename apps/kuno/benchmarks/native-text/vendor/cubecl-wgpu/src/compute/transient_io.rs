@@ -314,7 +314,7 @@ fn copy_bounds(size: u64, offset: u64, backing: u64, logical: usize) -> Result<u
     Ok(copy_len)
 }
 
-/// Request-local upload work reduction, never a smaller destination contract.
+/// Private upload work reduction, never a smaller destination contract.
 /// Validate the ORIGINAL allocation extent even if all input bytes are zero.
 /// Inspect exact bytes in fixed chunks: floating-point signed zero and other
 /// nonzero bit patterns must not be normalized or silently discarded.
@@ -345,21 +345,66 @@ fn zero_tail_copy_len(data: &[u8], copy_len: u64) -> Result<u64, ServerError> {
     )
 }
 
+struct UploadTransfer {
+    original: u64,
+    prefix: u64,
+    tail_offset: u64,
+}
+
+impl UploadTransfer {
+    /// Plan before allocating or encoding, including outside request reuse.
+    /// The original extent is checked before inspecting the source, and its
+    /// full destination remains owned and initialized. This grants no reuse
+    /// capability and changes neither completion nor cleanup checkpoints.
+    fn plan(data: &[u8], size: u64, offset: u64, backing: u64) -> Result<Self, ServerError> {
+        let original = copy_bounds(size, offset, backing, data.len())?;
+        let prefix = zero_tail_copy_len(data, original)?;
+        let tail_offset = offset
+            .checked_add(prefix)
+            .ok_or_else(|| fault("private upload tail offset overflow"))?;
+        Ok(Self {
+            original,
+            prefix,
+            tail_offset,
+        })
+    }
+}
+
 static UPLOAD_TRANSFER_BYTES: [AtomicU64; 3] = [const { AtomicU64::new(0) }; 3];
+static UNSCOPED_UPLOAD_TRANSFER_BYTES: [AtomicU64; 3] = [const { AtomicU64::new(0) }; 3];
+
 /// Aggregate scoped upload command bytes: original, copied, cleared tail.
 /// No offsets/content are retained; counters grant no ownership/erasure credit.
 pub fn transient_upload_transfer_stats() -> (u64, u64, u64) {
+    upload_transfer_stats(&UPLOAD_TRANSFER_BYTES)
+}
+
+/// Aggregate private upload command bytes outside request reuse: original,
+/// copied, cleared tail. Includes constructor/prefill private initialization;
+/// ordinary public model-weight writes use a separate path and are excluded.
+/// Phase snapshots are the caller's responsibility. No content is retained.
+pub fn transient_unscoped_upload_transfer_stats() -> (u64, u64, u64) {
+    upload_transfer_stats(&UNSCOPED_UPLOAD_TRANSFER_BYTES)
+}
+
+fn upload_transfer_stats(counters: &[AtomicU64; 3]) -> (u64, u64, u64) {
     (
-        UPLOAD_TRANSFER_BYTES[0].load(Ordering::Relaxed),
-        UPLOAD_TRANSFER_BYTES[1].load(Ordering::Relaxed),
-        UPLOAD_TRANSFER_BYTES[2].load(Ordering::Relaxed),
+        counters[0].load(Ordering::Relaxed),
+        counters[1].load(Ordering::Relaxed),
+        counters[2].load(Ordering::Relaxed),
     )
 }
-fn record_upload_transfer(copy_len: u64, prefix: u64) {
-    for (counter, amount) in UPLOAD_TRANSFER_BYTES
-        .iter()
-        .zip([copy_len, prefix, copy_len - prefix])
-    {
+
+fn upload_transfer_counters(scoped: bool) -> &'static [AtomicU64; 3] {
+    if scoped {
+        &UPLOAD_TRANSFER_BYTES
+    } else {
+        &UNSCOPED_UPLOAD_TRANSFER_BYTES
+    }
+}
+
+fn record_upload_transfer(counters: &[AtomicU64; 3], copy_len: u64, prefix: u64) {
+    for (counter, amount) in counters.iter().zip([copy_len, prefix, copy_len - prefix]) {
         let _ = counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
             Some(n.saturating_add(amount))
         });
@@ -2830,22 +2875,9 @@ impl TransientIo {
         data: &[u8],
     ) -> Result<(), ServerError> {
         self.active()?;
-        let copy_len = copy_bounds(
-            resource.size,
-            resource.offset,
-            resource.buffer.size(),
-            data.len(),
-        )?;
-        let scoped = self.reuse_active();
-        let prefix = if scoped {
-            zero_tail_copy_len(data, copy_len)?
-        } else {
-            copy_len
-        };
-        let tail_offset = resource
-            .offset
-            .checked_add(prefix)
-            .ok_or_else(|| fault("private upload tail offset overflow"))?;
+        let transfer =
+            UploadTransfer::plan(data, resource.size, resource.offset, resource.buffer.size())?;
+        let prefix = transfer.prefix;
         if prefix != 0 {
             let (stage, stage_index) = self.allocate_indexed(Kind::Upload, prefix)?;
             {
@@ -2860,14 +2892,20 @@ impl TransientIo {
             self.unmap_upload(stage_index, &stage)?;
             encoder.copy_buffer_to_buffer(&stage, 0, &resource.buffer, resource.offset, prefix);
         }
-        if prefix < copy_len {
+        if prefix < transfer.original {
             // Same encoder/order as the original full copy. Every original
             // destination byte is written before any subsequent consumer.
-            encoder.clear_buffer(&resource.buffer, tail_offset, Some(copy_len - prefix));
+            encoder.clear_buffer(
+                &resource.buffer,
+                transfer.tail_offset,
+                Some(transfer.original - prefix),
+            );
         }
-        if scoped {
-            record_upload_transfer(copy_len, prefix);
-        }
+        record_upload_transfer(
+            upload_transfer_counters(self.reuse_active()),
+            transfer.original,
+            prefix,
+        );
         Ok(())
     }
     pub fn uniform(
@@ -5612,9 +5650,13 @@ mod tests {
     #[test]
     fn shortened_upload_commands_match_full_copy_for_offsets_padding_and_bit_patterns() {
         fn equivalent(data: &[u8], size: u64, offset: u64, backing: u64) -> u64 {
-            let original = copy_bounds(size, offset, backing, data.len()).unwrap();
-            let prefix = zero_tail_copy_len(data, original).unwrap();
+            // The same plan runs in constructor/prefill initialization and
+            // request reuse; no reuse capability is needed for transfer work.
+            let transfer = UploadTransfer::plan(data, size, offset, backing).unwrap();
+            let original = transfer.original;
+            let prefix = transfer.prefix;
             assert!(prefix <= original && prefix.is_multiple_of(4));
+            assert_eq!(transfer.tail_offset, offset + prefix);
             let at = offset as usize;
             let end = (offset + original) as usize;
             let mut old = vec![0xa5; backing as usize];
@@ -5671,6 +5713,48 @@ mod tests {
             data[len - zeros..].fill(0);
             equivalent(&data, size, offset, backing);
         }
+    }
+
+    #[test]
+    fn loading_upload_plan_preserves_dense_weights_and_omits_zero_initialization_stage() {
+        let dense = vec![0xa7; 1 << 20];
+        let plan = UploadTransfer::plan(&dense, dense.len() as u64, 0, dense.len() as u64).unwrap();
+        assert_eq!(plan.original, dense.len() as u64);
+        assert_eq!(plan.prefix, plan.original);
+        assert_eq!(plan.tail_offset, plan.original);
+
+        let plan = UploadTransfer::plan(&[], MAX_BYTES, 4, MAX_BYTES + 8).unwrap();
+        assert_eq!(plan.original, MAX_BYTES);
+        assert_eq!(plan.prefix, 0);
+        assert_eq!(plan.tail_offset, 4);
+        // Eliding a stage must never accept a larger original allocation.
+        assert!(UploadTransfer::plan(&[], MAX_BYTES + 4, 0, MAX_BYTES + 4).is_err());
+        assert!(UploadTransfer::plan(&[], 16, u64::MAX - 3, u64::MAX).is_err());
+    }
+
+    #[test]
+    fn scoped_and_loading_transfer_counters_remain_separate_and_conserve_extents() {
+        assert!(core::ptr::eq(
+            upload_transfer_counters(true),
+            &UPLOAD_TRANSFER_BYTES
+        ));
+        assert!(core::ptr::eq(
+            upload_transfer_counters(false),
+            &UNSCOPED_UPLOAD_TRANSFER_BYTES
+        ));
+        assert!(!core::ptr::eq(
+            upload_transfer_counters(false),
+            upload_transfer_counters(true)
+        ));
+        // Local atomic sets avoid coupling parallel host fixtures to global
+        // measurements. Dense/prefix/all-zero operations all conserve bytes.
+        let counters: [AtomicU64; 3] = [const { AtomicU64::new(0) }; 3];
+        record_upload_transfer(&counters, 1024, 1024);
+        record_upload_transfer(&counters, 4096, 512);
+        record_upload_transfer(&counters, 32768, 0);
+        let (original, copied, cleared) = upload_transfer_stats(&counters);
+        assert_eq!((original, copied, cleared), (37888, 1536, 36352));
+        assert_eq!(original, copied + cleared);
     }
 
     #[test]
