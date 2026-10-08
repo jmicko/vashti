@@ -40,6 +40,8 @@ UI or change its user-data storage.
 - [Native text checkpoint](kuno-native-text-checkpoint.md): current
   integrated source, isolated diagnostic candidate, completed checks and the
   next physical acceptance gates. Resume from this checkpoint first.
+- [Fully resident Ornith speed lab](kuno-native-ornith.md): user-selected
+  Qwen3.5 MoE diagnostic before further Flash-Next offload work; no API change.
 - [Image engine contract](kuno-images.md): supported execution and image API.
 - [Vashti Images specification](vashti-images-spec.md): product behavior and UX.
 
@@ -2141,3 +2143,28 @@ postflight are in the [checkpoint](kuno-native-text-checkpoint.md#joined-overlap
 Admission resumed, both inference listeners respond and Intel physical memory
 recovers without classified faults. No installed service/configuration, public
 API/catalog, application or release change. Required Vashti changes:none.
+
+
+### Paused fully resident Ornith speed checkpoint (2026-10-07)
+
+The user requested core execution speed work, then selected the already
+installed `ornith:35b` to isolate it from Flash-Next offloading. On
+`codex/kuno-native-text`, `3047d24` adds the Rust/WGPU resident Qwen3.5 MoE
+lab; `c174aa9` completes its optional BPE flag/numeric reference handling.
+The exact `6917d349…` frozen release artifact completes two75/128 public
+sequences at13.9408/13.9184 decode tokens/s, versus Ollama83.3857 warm.
+Only the first14 output IDs agree, so full-model numerical parity and Ollama
+parity are not accepted. `c071019` prepares an explicit packed-block Q4/Q6
+candidate, disabled by default and physically untested. Core118/native477,
+the new offline shader inventory, Python118 and strict Clippy pass.
+
+See [the current checkpoint](kuno-native-text-checkpoint.md#fully-resident-ornith-checkpoint-2026-10-07),
+[Ornith contract](kuno-native-ornith.md) and their exact numeric receipts,
+source/artifact identities and limitations. Earlier integrated Flash-Next
+remains1.691tokens/s; neither target completion nor installed native routing
+is claimed. The user requested a pause to use the GPUs and Vashti: all lab
+jobs ended, GPU memory recovered, admission resumed and both inference
+listeners plus Vashti respond. Goal remains paused. No installed binary,
+API/catalog/configuration, application or release change occurred.
+Required Vashti changes: none. Resume core arithmetic/performance work before
+extended lifecycle/API/application work; do not repeat Flash-Next baselines.

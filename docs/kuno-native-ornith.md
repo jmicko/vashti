@@ -47,3 +47,19 @@ extended cancellation/API integration work is deferred at the user's request.
 Source tests, actual numerical/model acceptance and performance comparisons
 remain distinct. This document is an implementation direction, not a completed
 device or throughput receipt. Required Vashti changes: none.
+
+## First device outcome and pause
+
+`c174aa9`'s frozen `6917d349…` normal release binary completes the40-layer
+fully resident B70 graph. The long fixed public fixture observes13.9408/13.9184
+decode tokens/s versus Ollama's83.3857 warm report. Only the first14 of128
+generated IDs agree; numerical parity remains unaccepted. Native fresh
+sequences are internally deterministic. See the
+[current checkpoint](kuno-native-text-checkpoint.md#fully-resident-ornith-checkpoint-2026-10-07)
+and its numeric aggregate for exact counters, artifact identities and limits.
+
+The subsequent `KUNO_LAB_ORNITH_BLOCK_DOT=1` Q4/Q6 grouped packed-dot candidate
+is source-tested and disabled by default. It has no device/performance receipt.
+The user requested a pause; no additional GPU tests may run until resumed.
+GPU memory and ordinary inference admission are restored; Vashti remains
+available. No installed engine, routing or API behavior changed.

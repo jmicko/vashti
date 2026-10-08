@@ -1,0 +1,120 @@
+{
+  "scope": "fixed_public_fully_resident_speed_lab",
+  "native_source_commit": "c174aa990fdfe619b88d5ac6665f328ca4a00103",
+  "native_executable_sha256": "6917d349c17bbac3eba4e97cfb67a031e96e2c10396a9f473d166f49caa55093",
+  "fixture": "ornith35-baseline.json",
+  "seed": 424242,
+  "model_blob": "6540411d9e4ca638983e905959188e1be74db7ff62151c69d71a6f2748584f68",
+  "gpu": "Intel Arc Pro B70",
+  "public_weight_bytes": 21155768832,
+  "private_gpu_bytes": 235737136,
+  "dispatches_per_full_token": 915,
+  "native_load_millis": 3954,
+  "short": [
+    {
+      "decode_nanoseconds": 501632241,
+      "decode_steps": 7,
+      "decode_tokens_per_second": 13.954445962335981,
+      "phase": "first_sequence",
+      "prefill_millis": 4988,
+      "prompt_tokens": 75,
+      "output_count": 8,
+      "matching_ollama_prefix": 8,
+      "all_outputs_match_ollama": true
+    },
+    {
+      "decode_nanoseconds": 501443611,
+      "decode_steps": 7,
+      "decode_tokens_per_second": 13.959695260729925,
+      "phase": "warm_weights_fresh_sequence",
+      "prefill_millis": 4965,
+      "prompt_tokens": 75,
+      "output_count": 8,
+      "matching_ollama_prefix": 8,
+      "all_outputs_match_ollama": true
+    }
+  ],
+  "long": [
+    {
+      "decode_nanoseconds": 9109957117,
+      "decode_steps": 127,
+      "decode_tokens_per_second": 13.940790101306467,
+      "phase": "first_sequence",
+      "prefill_millis": 4987,
+      "prompt_tokens": 75,
+      "output_count": 128,
+      "matching_ollama_prefix": 14,
+      "all_outputs_match_ollama": false
+    },
+    {
+      "decode_nanoseconds": 9124602024,
+      "decode_steps": 127,
+      "decode_tokens_per_second": 13.918415254271697,
+      "phase": "warm_weights_fresh_sequence",
+      "prefill_millis": 4968,
+      "prompt_tokens": 75,
+      "output_count": 128,
+      "matching_ollama_prefix": 14,
+      "all_outputs_match_ollama": false
+    }
+  ],
+  "native_fresh_sequence_outputs_deterministic": true,
+  "ollama": [
+    {
+      "phase": "cold_worker",
+      "wall_seconds": 27.412232968985336,
+      "total_duration": 27409732942,
+      "load_duration": 24803964137,
+      "prompt_eval_count": 75,
+      "prompt_eval_duration": 898656000,
+      "eval_count": 128,
+      "eval_duration": 1699366000,
+      "resident": [
+        {
+          "name": "ornith:35b",
+          "size": 21039635496,
+          "size_vram": 21039635496,
+          "context_length": 4096
+        }
+      ],
+      "decode_tokens_per_second": 75.32220840007392
+    },
+    {
+      "phase": "warm_weights_fresh_sequence",
+      "wall_seconds": 1.7598387480247766,
+      "total_duration": 1759040162,
+      "load_duration": 42279315,
+      "prompt_eval_count": 75,
+      "prompt_eval_duration": 91975000,
+      "eval_count": 128,
+      "eval_duration": 1535035000,
+      "resident": [
+        {
+          "name": "ornith:35b",
+          "size": 21039635496,
+          "size_vram": 21039635496,
+          "context_length": 4096
+        }
+      ],
+      "decode_tokens_per_second": 83.38572084675594
+    }
+  ],
+  "ollama_numeric_reference_decode_tokens_per_second": 83.5502048611859,
+  "limitations": [
+    "Only the first14 long-output IDs match Ollama; full-model numerical parity is not accepted.",
+    "Different quantized activation/reduction arithmetic may explain divergence, but this is not proven.",
+    "Repeated Ollama prompt may reuse its internal prefix; native resets sequence state.",
+    "Model load timing does not isolate file-cache warmth.",
+    "Single fixed public fixture, not a statistical throughput or quality acceptance.",
+    "No private-worker/API/default routing/installation change.",
+    "The Flash-Next10-token/s goal remains unmet."
+  ],
+  "postflight": {
+    "intel_vram_used_bytes": 50688000,
+    "nvidia_vram_mib": 398,
+    "xe_classified_faults": 0,
+    "kuno_admission_paused": false,
+    "inference_listeners_http": 200,
+    "vashti_home_http": 200
+  }
+}

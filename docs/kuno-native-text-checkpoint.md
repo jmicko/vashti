@@ -1,11 +1,84 @@
 # Native text checkpoint, 2026-10-07
 
-The user intentionally paused the goal again on2026-10-07 to conserve weekly
-usage. The additional user-authorized optimization/benchmark block is finished; no GPU
-job or compiler is left running and installed inference admission is resumed.
-The objective remains incomplete. Use **10 decode tokens/s** as the agreed
-working target when resumed and do not repeat Ollama baseline tests. Root owns
-GPU/service operations; source-only agents use isolated worktrees.
+The user requested a clean pause to use the GPUs and Vashti. The additional
+optimization block is finished, normal inference admission is resumed, and the
+goal remains paused and incomplete. Resume from **Fully resident Ornith
+checkpoint** below. The current priority is core execution speed; defer API,
+extended cancellation and application work. No further Flash-Next Ollama
+baselines are needed. Backend work belongs in the owner worktree
+`/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
+`codex/kuno-native-text`; preserve the canonical Vashti checkout and its work.
+
+## Fully resident Ornith checkpoint, 2026-10-07
+
+The user changed the immediate diagnostic model to the already downloaded
+`ornith:35b`, to isolate core performance without offloading. Its Qwen3.5 MoE
+adapter is implemented in Rust/WGPU Vulkan, using original packed GGUF weights
+and the existing Rust tokenizer. There are no intermediate CPU routing reads:
+all40 layers, all256 experts per layer, GDN/full attention and the final head
+are GPU resident. This is a separate fixed-public laboratory, not a deployed
+engine registration. See [the architecture/measurement contract](kuno-native-ornith.md).
+
+**Source and exact artifact:** `3047d24` introduces the graph; `c174aa9`
+handles omitted optional BPE boundary flags and numeric public reference
+capture. The accepted execution artifact is
+`6917d349c17bbac3eba4e97cfb67a031e96e2c10396a9f473d166f49caa55093`,
+frozen in `/media/jmicko/faststore/kuno-development/ornith-resident-build-20261007-v2`.
+It retains21,155,768,832 packed weight bytes and235,737,136 private GPU bytes;
+915 dispatches execute a complete token. The normal48-GiB cgroup has swap0
+and core0. No weight copy, driver change, reset, reboot or install occurred.
+
+**Measured outcome:** two75-prompt/128-output fresh native sequences reach
+13.9408 and13.9184 decode tokens/s (127 following steps), with4.987/4.968-second
+serial prefill. Native first eight outputs match Ollama; long outputs match the
+first14 IDs, then diverge. Both native fresh sequences reproduce identical128
+IDs. Thus functioning inference is observed but full-model numerical parity is
+**not accepted**. Different activation/reduction arithmetic is a possible
+explanation, not an established diagnosis.
+
+Ollama's same public raw prompt/seed424242 runs fully on GPU at75.3222 cold and
+83.3857 warm reported decode tokens/s. One numeric-reference run measures
+83.5502 and reproduces128 BPE IDs from its in-memory public response. The
+identical warm request may reuse Ollama's internal prefix; native resets all
+sequence state. Native load3.954seconds follows file warming and is not a
+matched cold-load win. All receipts are fixed-public numeric data; no real
+prompt, output, image or routing trace enters persistence. See
+[the aggregate receipt](../apps/kuno/benchmarks/text/receipts/ornith-resident-foundations-20261007.json).
+
+**Next candidate:** the subsequent explicit `KUNO_LAB_ORNITH_BLOCK_DOT=1`
+reuses Q4/Q6 headers and packed byte pairs during subgroup dots. It is off by
+default and source-tested only. Do not claim a performance or device-parity
+win for it or silently select it. On resume, first compare its individual
+packed projections numerically, then teacher-force identical public tokens to
+locate long-run divergence and use GPU timestamps to identify the remaining
+core bottleneck. Keep the work on speed and arithmetic, not API/lifecycle
+expansion. Ornith's14-token/s result does not satisfy Flash-Next's10-token/s
+goal or establish Ollama parity.
+
+**Tests:** 118 core tests,477 existing native tests, the new offline shader
+inventory,118 Python control tests and strict release Clippy pass. The first
+Ornith trial rejected missing optional BOS metadata before GPU creation;
+the corrected artifact completes both short and long sequences. No extended
+cancellation, multimodal, arbitrary-request, MTP, quality/soak or production
+acceptance follows from these tests.
+
+**Earlier heavy-pass outcome:** `9d625d7`'s integrated Flash-Next cap10 path,
+with mapped weights, exact AVX2 CPU experts, pooled workers, compact dispatch
+metadata, token-level IO, GPU routing and shared-expert overlap, completes the
+original75/128 fixture at1.691tokens/s. It remains far below10. Its larger-bank
+profiles and aligned upload erasure are source-tested through `9718587`;
+expanded-bank device timing is outstanding. The approximate Q8 CPU-activation
+long trial diverged and is not selected. Do not combine individual operator
+improvements into an unmeasured whole-model gain.
+
+**Restored system:** all benchmark units exited; B70 physical usage recovered
+to50,688,000 bytes, NVIDIA398MiB includes the desktop, and no classified Xe
+wedged/timeout/reset/memory fault appeared. Kuno admission is unpaused with no
+active/waiting request or recovery latch. Kuno11434 and direct Ollama11435
+answerHTTP200 with no loaded model; Vashti's existing process on7771 serves
+HTTP200. The failed metadata-only test unit was cleared. Installed binaries,
+configuration, API/catalog/routing, Vashti and release artifacts are unchanged.
+Required Vashti changes: none.
 
 ## Joined overlap short ABBA checkpoint, 2026-10-07
 
