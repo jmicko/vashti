@@ -2312,3 +2312,25 @@ accepted fixtures, including excluded profiles. B70 returns50688000B; same-boot
 Xe classifications remain zero through2026-10-08T15:25:46.933226+00:00.
 No installed services/configuration, original model blob, public API/catalog,
 Vashti application or release changes. Required Vashti changes: none.
+
+
+### Active handoff: overnight native text run paused (2026-10-08)
+
+This checkpoint supersedes pending-candidate/active-goal statements above.
+Owner remains `codex/kuno-native-text` in the Kuno worktree. User paused for a
+debrief; no further benchmark work is scheduled. Best accepted v44 source
+7c40189/frozen9e41bc5ed1f870d4649db476a9e4ee5b03323213ed1d076518ea4cb7c44a75f2
+measures7.8168277 tokens/s (127 steps16247ms), prefill15464ms. Target10 remains
+unmet. Fixed16 Q4 and the final active-GPU-group candidate pass original device
+acceptance but are slower; both are withdrawn and native/core source is restored
+exactly to v44. Aggregate `next-offload-overnight-20261008.json` records51
+accepted public fixtures, including excluded profiles. Source tests, exact
+commits, artifacts, acceptance limitations and restoration are in the owner
+checkpoint. Single samples do not establish general speed or soak acceptance.
+
+All benchmark jobs exited. B70 physical memory returned50688000B; same-boot
+root Xe fault classification is zero through2026-10-08T15:45:04.155894+00:00.
+Public Kuno admission is resumed, with no active/waiting request or recovery
+latch. Kuno11434, direct Ollama11435 and Vashti7771 return HTTP200. Installed
+binaries/settings, model blob, API/catalog/default routing and Vashti application
+are unchanged. No release/install performed. **Required Vashti changes: none.**

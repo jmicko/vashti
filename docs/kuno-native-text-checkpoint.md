@@ -1763,3 +1763,49 @@ Do not assume native subgroup choice or attribute a measured bottleneck from
 subgroup bounds alone. Next candidate dispatches only original GPU subset ranks
 in shared MoE, retaining private transient counts and all original bounds.
 Source/device acceptance pending. Best remains v44 at7.8168277 tokens/s.
+
+
+### Overnight run paused: 2026-10-08 final checkpoint
+
+User explicitly paused the goal for a debrief. No further optimization runs are
+scheduled. The last candidate, active GPU-only MoE dispatch source1a0179b /
+frozen02da13e947e1003d365532715a21b71fbcf4a732676b0358b0bc0e006e15ec6b,
+passes original128 generated IDs, independent guards, fresh continuation,
+poison recovery, full owning erasure and protected lifecycle completion.
+127 following steps16616ms (7.6432354 tokens/s), prefill15772ms. It does not
+improve the best sample; withdraw it alongside fixed16 Q4. Selected engine source
+is restored exactly to7c40189 across native-text and core text code.
+
+Best remains v44:127 following steps16247ms (7.8168277 tokens/s), prefill15464ms,
+source7c401893b481d006067d502cc19274b40bc7536f, frozen artifact
+9e41bc5ed1f870d4649db476a9e4ee5b03323213ed1d076518ea4cb7c44a75f2.
+The first accepted overnight long sample was3.3781088 tokens/s. These are single
+fixed-public samples with different selected placement/runtime options, not a
+statistical comparison or arbitrary-prompt/long-context/soak acceptance. Target
+10 remains unmet. The aggregate now records51 accepted fixtures, including
+explicitly excluded diagnostic profiles; stopped/rejected experiments remain
+excluded from speed selection.
+
+Selected source gates:497 native controls/two shader suites;128 core controls
+(three ignored) in default and separately compiled work-stealing modes;66
+runtime host controls, three allocator controls and two logger controls;
+39 Python runner controls and strict Clippy. Last candidate also passes complete
+protected device acceptance. Restored source matches the already accepted v44
+engine exactly; no extra physical run is needed to test identical source.
+
+After all benchmark processes exited, physical B70 usage returned50688000B.
+Root Xe classification at2026-10-08T15:45:04.155894+00:00 on boot
+665344a9-0e39-4e45-90de-465fa11df0ca / kernel7.0.0-38-generic reports zero
+wedged, timeout, GT-reset and memory-fault messages. Public admission resumed:
+active=false, waiting=0, paused=false, recovery_required=false. Kuno11434,
+direct Ollama11435 and Vashti7771 return HTTP200. No GPU reset or reboot used.
+Installed binaries/configuration/model blob/API/catalog/default routing and
+Vashti application remain unchanged. No release performed.
+
+Remaining work after a future explicit resume: reduce measured routing fences,
+GPU execution/dispatch costs and CPU expert row overhead. The accepted warm
+v44 run has zero expert weight uploads/reads, so expert transfer is not the
+current dominant measured cost on this fixture. Host-phase timings include
+synchronization and overlap and must not be read as pure GPU compute times.
+Keep original privacy/correctness/lifecycle bounds; no API or frontend work is
+needed for this internal optimization checkpoint.

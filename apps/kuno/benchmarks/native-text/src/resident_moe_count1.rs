@@ -322,7 +322,6 @@ impl GpuExecutor<'_> {
                             banks,
                             owners()?,
                             capacities,
-                            split.gpu().len(),
                         )?;
                     } else {
                         for shard in 0..bank.gate().segments().len() {
@@ -349,7 +348,6 @@ impl GpuExecutor<'_> {
                                 ],
                                 ga.first_slot(),
                                 ga.capacity(),
-                                split.gpu().len(),
                             )?;
                         }
                     }

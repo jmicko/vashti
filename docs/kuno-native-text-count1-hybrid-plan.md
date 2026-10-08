@@ -1375,3 +1375,13 @@ CPU/GPU original-rank merge, full status/owner inspection and all staged source
 proofs remain. Empty GPU subsets keep the original no-launch path. All original
 128-ID/fresh/poison/full-owning/lifecycle gates stay mandatory. No allocation,
 budget, arithmetic, API or installed/default execution change.
+
+
+### Selection at user pause, 2026-10-08
+
+Active GPU group dispatch1a0179b passes the full original device contract but
+measures7.6432354 tokens/s, below v44's7.8168277. Withdraw it and fixed16 Q4 from
+selection. Native engine and core source are restored exactly to accepted
+7c40189. The transient dispatch-count design is documented above for future
+consideration, but is not selected code. Goal is paused, target remains unmet;
+see the checkpoint and51-fixture numeric aggregate for final restoration proof.

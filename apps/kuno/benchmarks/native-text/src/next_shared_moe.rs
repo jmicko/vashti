@@ -194,7 +194,6 @@ impl CubeTask<AutoCompiler> for Kernel {
 }
 // Parent validates full original allocation identity, extent, aliasing, bank
 // origin and transaction before this narrowed count1 vector seam.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn launch(
     client: &ComputeClient<WgpuRuntime>,
     g: Geometry,
@@ -203,11 +202,8 @@ pub(crate) fn launch(
     owners: [Handle; 7],
     first_slot: usize,
     slots: usize,
-    groups: usize,
 ) -> Result<()> {
-    launch_banks(
-        client, g, s, banks, None, owners, first_slot, slots, 0, groups,
-    )
+    launch_banks(client, g, s, banks, None, owners, first_slot, slots, 0)
 }
 
 pub(crate) fn launch_pair(
@@ -217,7 +213,6 @@ pub(crate) fn launch_pair(
     banks: [[Handle; 3]; 2],
     owners: [Handle; 7],
     capacities: [usize; 2],
-    groups: usize,
 ) -> Result<()> {
     let [first, second] = banks;
     let total = capacities[0]
@@ -236,7 +231,6 @@ pub(crate) fn launch_pair(
         0,
         total,
         capacities[0],
-        groups,
     )
 }
 
@@ -251,11 +245,9 @@ fn launch_banks(
     first_slot: usize,
     slots: usize,
     split_slots: usize,
-    groups: usize,
 ) -> Result<()> {
     let [gate, up, down] = g.projections();
-    if !(1..=10).contains(&groups)
-        || g.hidden() != 2560
+    if g.hidden() != 2560
         || g.ff() != 640
         || g.tile() != 1
         || gate.dtype() != 12
@@ -376,7 +368,7 @@ fn launch_banks(
                     slots,
                     split_slots,
                 }),
-                CubeCount::Static(if is_down == 0 { 160 } else { 640 }, groups as u32, 1),
+                CubeCount::Static(if is_down == 0 { 160 } else { 640 }, 10, 1),
                 args,
             );
         }
