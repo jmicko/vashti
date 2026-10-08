@@ -21,9 +21,28 @@ impl GpuExecutor<'_> {
         cancel: &AtomicBool,
     ) -> Result<Pending> {
         let result = guarded(&w.poison.clone(), || {
-            self.count1_checked(
+            let result = self.count1_checked(
                 graph, arena, w, s, layer, input, output, views, routes, packet, cancel,
-            )
+            );
+            if self.secondary.is_some()
+                && let Err(error) = &result
+            {
+                let (kind, reason) = match error {
+                    Error::InvalidFormat(reason) => (1u32, *reason),
+                    Error::LimitExceeded(reason) => (2, *reason),
+                    Error::InvalidBufferLength => (3, ""),
+                    Error::ArithmeticOverflow => (4, ""),
+                    Error::OutOfBounds => (5, ""),
+                    _ => (6, ""),
+                };
+                // Only a source-controlled static reason identifier; never raw
+                // backend errors, routing IDs, prompts or model output.
+                let id = reason.as_bytes().iter().fold(2_166_136_261u32, |h, b| {
+                    (h ^ u32::from(*b)).wrapping_mul(16_777_619)
+                });
+                eprintln!("public_secondary_count1_failure kind={kind} reason_id={id}");
+            }
+            result
         });
         if result.is_err() {
             self.poison_resident();
