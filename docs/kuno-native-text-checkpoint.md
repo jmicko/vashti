@@ -177,10 +177,17 @@ Original32KiB orchestration /1MiB CPU reservations and full-capacity wiping
 metadata/Partials ownership remain. The existing genuine overlap test proves
 parent-thread identity and joined completion through all original failures.
 127 core tests (3 ignored),491 native tests plus both shader suites and strict
-all-target Clippy pass with compiled two-pass arithmetic. Physical acceptance
-of pool reuse and two-pass arithmetic remains pending. Original144-slot GPU
-kernel profiling is now running from frozen c3ff595/FMA artifact; profiling
-is diagnostic and cannot be selected as a clean performance sample.
+all-target Clippy pass with compiled two-pass arithmetic. Source17101d1/artifact0c908311 passes the full original75/128 model and owning/
+fresh/lifecycle gates with two actual residual passes and16 workers:34888ms
+decode (3.6402 tokens/s),59177ms prefill. Readbytes10927468544 and62447 major
+faults remain; no useful speed win. B70 returns50688000B.
+Original144-slot GPU profiling from frozen c3ff595/FMA artifact rejects during
+prefill because profiling exhausts the original private-I/O budget; no timing
+or acceptance claim, and no budget bypass. Physical memory returns50688000B.
+A further buffered original CPU job candidate keeps mapped GPU sources, but
+uses bounded call-local original packed vectors for actual CPU positional reads.
+127 core tests (3 ignored),491 native tests plus both shader suites,31 Python
+controls and strict all-target Clippy pass; physical acceptance remains pending.
 
 The user granted exclusive GPUs. Installed Kuno had an idle managed worker
 holding15978409984 B70 bytes with no active request; a graceful Kuno restart

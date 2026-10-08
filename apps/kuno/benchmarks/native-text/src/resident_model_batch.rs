@@ -183,6 +183,11 @@ impl Config {
         } else {
             ExpertOperator::new(plan, backend)?
         };
+        let operator = if cfg!(feature = "cpu-buffered-weights") {
+            operator.with_buffered_weights()?
+        } else {
+            operator
+        };
         let operator = if prefetch {
             operator.with_mapped_prefetch()
         } else {
@@ -698,6 +703,19 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
             .moe
             .cpu_arithmetic_geometry())
     }
+    pub(crate) fn native_cpu_buffered_weights(
+        &self,
+        executor: &GpuExecutor<'f>,
+    ) -> Result<Option<(bool, u64)>> {
+        self.completed_native_projection_boundary(executor)?;
+        Ok(self
+            .native_batch
+            .as_ref()
+            .ok_or(error())?
+            .moe
+            .cpu_buffered_weights())
+    }
+
     pub(crate) fn native_cpu_mapped_prefetch(
         &self,
         executor: &GpuExecutor<'f>,

@@ -34,7 +34,7 @@ def completion(cap, deferred=False):
     ) + ((f"public_count1_hybrid_mid_token_cancel cap={cap} layer=47 erased=true",) if deferred else ())
 
 
-def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False, metadata=False, banks="standard", shared=False, shared_gdn=False, info_batch_upload=False, dispatch="threaded", cpu_fma=False, reclaim_gpu_sources=False, native_scratch_clear=False, cpu_q8_residual=False, cpu_mapped_prefetch=False, pageout_gpu_sources=False, cpu_threads=16, cpu_q8_two_pass=False):
+def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False, metadata=False, banks="standard", shared=False, shared_gdn=False, info_batch_upload=False, dispatch="threaded", cpu_fma=False, reclaim_gpu_sources=False, native_scratch_clear=False, cpu_q8_residual=False, cpu_mapped_prefetch=False, pageout_gpu_sources=False, cpu_threads=16, cpu_q8_two_pass=False, cpu_buffered_weights=False):
     validate_cap(cap)
     if type(cpu_threads) is not int or cpu_threads not in (4,8,16):
         raise ValueError("Explicit public CPU threads must be4,8,16")
@@ -46,6 +46,10 @@ def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False
         passes=receipt.get("observed_cpu_q8_residual_passes")
         if type(passes) is not int or passes!=(2 if cpu_q8_two_pass else 3 if cpu_q8_residual else 0):
             raise ValueError("Completed residual activation pass count mismatch")
+    if cpu_buffered_weights or "cpu_buffered_weights" in receipt:
+        calls=receipt.get("warm_cpu_buffered_reads");misses=receipt.get("completed_cpu_misses")
+        if type(cpu_buffered_weights) is not bool or (cpu_buffered_weights and (not mapped or workers!="pooled" or cpu_mapped_prefetch)) or receipt.get("cpu_buffered_weights") is not cpu_buffered_weights or receipt.get("observed_cpu_buffered_weights") is not cpu_buffered_weights or type(calls) is not int or type(misses) is not int or calls != (3*misses if cpu_buffered_weights else 0):
+            raise ValueError("CPU buffered source requires actual original selected-span reads")
     if cpu_mapped_prefetch or "cpu_mapped_prefetch" in receipt:
         calls=receipt.get("warm_cpu_prefetch_calls");misses=receipt.get("completed_cpu_misses")
         if (cpu_mapped_prefetch and (not mapped or workers!="pooled")) or receipt.get("cpu_mapped_prefetch") is not cpu_mapped_prefetch or receipt.get("observed_cpu_mapped_prefetch") is not cpu_mapped_prefetch or type(calls) is not int or type(misses) is not int or calls != (3*misses if cpu_mapped_prefetch else 0):
@@ -280,6 +284,7 @@ def main():
     parser.add_argument("--long-fixture", action="store_true")
     parser.add_argument("--cpu-q8", action="store_true")
     parser.add_argument("--cpu-fma", action="store_true")
+    parser.add_argument("--cpu-buffered-weights", action="store_true")
     parser.add_argument("--cpu-threads",type=int,choices=(4,8,16),default=16)
     parser.add_argument("--cpu-q8-two-pass",action="store_true")
     parser.add_argument("--cpu-mapped-prefetch",action="store_true")
@@ -322,6 +327,8 @@ def main():
         parser.error("run-id must be 1..48 lowercase letters, digits or hyphens")
     if args.pageout_gpu_sources and not args.reclaim_gpu_sources:
         parser.error("Mapped GPU source pageout requires --reclaim-gpu-sources")
+    if args.cpu_buffered_weights and (not args.mapped_weights or args.cpu_workers!="pooled" or args.cpu_mapped_prefetch):
+        parser.error("Buffered CPU weights require mapped pooled workers without mapped read-ahead")
     if args.cpu_mapped_prefetch and (not args.mapped_weights or args.cpu_workers!="pooled"):
         parser.error("CPU source prefetch requires mapped pooled workers")
     if args.cpu_q8_two_pass and (not args.cpu_q8 or not args.cpu_q8_residual or args.cpu_workers!="pooled"):
@@ -341,6 +348,8 @@ def main():
     compiled = next(r for r in artifacts if r.get("reason")=="compiler-artifact" and r.get("target",{}).get("name")=="kuno-text-lab" and r.get("executable"))
     if ("cpu-q8-two-pass" in compiled.get("features",[])) is not args.cpu_q8_two_pass:
         parser.error("Two-pass Q8 must match independently selected compiled artifact")
+    if ("cpu-buffered-weights" in compiled.get("features",[])) is not args.cpu_buffered_weights:
+        parser.error("Buffered CPU weights must match independently selected compiled artifact")
     if ("cpu-fma" in compiled.get("features",[])) is not args.cpu_fma:
         parser.error("CPU FMA must match the independently selected compiled artifact")
     command = [
@@ -367,10 +376,11 @@ def main():
         raise SystemExit("Missing whole-model hybrid receipt")
     snapshot = target.read_bytes()
     receipt = json.loads(snapshot)
-    validate_receipt(receipt, args.card, args.cpu_miss_cap, "".join(lines), args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault,args.defer_router_io,args.gpu_router,args.retained_metadata,args.bank_profile,args.next_shared_kernels,args.next_shared_gdn,args.info_batch_upload,args.device_dispatch,args.cpu_fma,args.reclaim_gpu_sources,args.native_scratch_clear,args.cpu_q8_residual,args.cpu_mapped_prefetch,args.pageout_gpu_sources,args.cpu_threads,args.cpu_q8_two_pass)
+    validate_receipt(receipt, args.card, args.cpu_miss_cap, "".join(lines), args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault,args.defer_router_io,args.gpu_router,args.retained_metadata,args.bank_profile,args.next_shared_kernels,args.next_shared_gdn,args.info_batch_upload,args.device_dispatch,args.cpu_fma,args.reclaim_gpu_sources,args.native_scratch_clear,args.cpu_q8_residual,args.cpu_mapped_prefetch,args.pageout_gpu_sources,args.cpu_threads,args.cpu_q8_two_pass,args.cpu_buffered_weights)
     record = {
         "scope": "fixed-public-count1-hybrid-output-and-lifecycle-only",
         "requested_cpu_fma_arithmetic": args.cpu_fma,
+        "requested_cpu_buffered_weights":args.cpu_buffered_weights,
         "requested_gpu_source_cache_advice": args.reclaim_gpu_sources,
         "requested_native_scratch_clear":args.native_scratch_clear,
         "requested_cpu_q8_residual":args.cpu_q8_residual,

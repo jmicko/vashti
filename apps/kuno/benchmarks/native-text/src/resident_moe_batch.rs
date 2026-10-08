@@ -433,6 +433,14 @@ impl Workspace {
             .as_ref()
             .map(|h| (h.operator.worker_count(), h.operator.q8_residual_passes()))
     }
+    pub(crate) fn cpu_buffered_weights(&self) -> Option<(bool, u64)> {
+        self.hybrid.as_ref().map(|h| {
+            (
+                h.operator.buffered_weights(),
+                h.operator.buffered_weight_reads(),
+            )
+        })
+    }
     pub(crate) fn cpu_mapped_prefetch(&self) -> Option<(bool, u64)> {
         self.hybrid
             .as_ref()

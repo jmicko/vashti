@@ -905,3 +905,24 @@ original wiping ownership. There is no scheduling, arithmetic, model or API
 change. Existing overlapping success/failure tests, public numerical probes,
 full128 original IDs and complete original owning/erasure gates precede device
 acceptance and speed claims. Physical efficacy is pending.
+
+### Buffered original CPU jobs, mapped GPU source retained
+
+The independently compiled `cpu-buffered-weights` candidate requires matching
+`--cpu-buffered-weights` selection, pooled workers and the original mapped
+model, without CPU mapped read-ahead. GPU source borrowing stays unchanged.
+Only actual selected CPU gate/up/down spans use the existing checked positional
+read into call-local original public packed vectors. There is no alternate
+file, complete-model copy, format change or persistent expert cache. Original
+40MiB public capacity and1MiB private/header/worker bounds still precede fill;
+actual capacities remain checked and all consumers join before the original
+full-capacity wiping header owner drops. Each successful original span read
+increments a RAM-only atomic counter; the numeric fixed-public warm receipt
+must observe exactly three reads per completed CPU miss and zero when disabled.
+No request-based identifier or diagnostic enters production persistence.
+
+The hypothesis is that one sequential original-span read avoids parallel
+per-row mmap fault stalls; its allocation/copy cost can instead worsen speed.
+Original numerical results must be identical to the same arithmetic mode,
+including all128 reference IDs, unchanged full owning/erasure/fresh gates and
+physical recovery. This is an unaccepted laboratory hypothesis until measured.

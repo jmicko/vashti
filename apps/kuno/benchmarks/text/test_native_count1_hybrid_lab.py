@@ -69,6 +69,16 @@ class HybridLabTests(unittest.TestCase):
             self.assertEqual(LAB.worker_environment("/original","/receipt")["KUNO_LAB_PAGEOUT_GPU_SOURCES"],"0")
         self.assertEqual(LAB.worker_environment("/original","/receipt",mapped=True,reclaim_gpu_sources=True,pageout_gpu_sources=True)["KUNO_LAB_PAGEOUT_GPU_SOURCES"],"1")
 
+    def test_buffered_cpu_requires_actual_typed_original_reads_without_prefetch(self):
+        value=receipt("intel",10);value.update(cpu_buffered_weights=True,observed_cpu_buffered_weights=True,warm_cpu_buffered_reads=51,mapped_weights=True,observed_mapped_weights=True,count1_hybrid_cpu_workers="pooled",observed_count1_hybrid_cpu_workers="pooled")
+        LAB.validate_receipt(value,"intel",10,completion(10),workers="pooled",mapped=True,cpu_buffered_weights=True)
+        for field,bads in [("cpu_buffered_weights",[False,1,None]),("observed_cpu_buffered_weights",[False,1,None]),("warm_cpu_buffered_reads",[50,True,None,-1])]:
+            for bad in bads:
+                wrong=copy.deepcopy(value);wrong[field]=bad
+                with self.assertRaises(ValueError):LAB.validate_receipt(wrong,"intel",10,completion(10),workers="pooled",mapped=True,cpu_buffered_weights=True)
+        for kwargs in ({"workers":"scoped","mapped":True},{"workers":"pooled","mapped":False},{"workers":"pooled","mapped":True,"cpu_mapped_prefetch":True}):
+            with self.assertRaises(ValueError):LAB.validate_receipt(value,"intel",10,completion(10),cpu_buffered_weights=True,**kwargs)
+
     def test_cpu_prefetch_requires_mapped_actual_typed_selected_source_counts(self):
         value=receipt("intel",10);value.update(cpu_mapped_prefetch=True,observed_cpu_mapped_prefetch=True,warm_cpu_prefetch_calls=51,mapped_weights=True,observed_mapped_weights=True,count1_hybrid_cpu_workers="pooled",observed_count1_hybrid_cpu_workers="pooled")
         LAB.validate_receipt(value,"intel",10,completion(10),workers="pooled",mapped=True,cpu_mapped_prefetch=True)

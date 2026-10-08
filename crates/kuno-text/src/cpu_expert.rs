@@ -298,6 +298,8 @@ pub struct ExpertOperator {
     q8_residual: bool,
     mapped_prefetch: bool,
     prefetch_calls: std::sync::atomic::AtomicU64,
+    buffered_weights: bool,
+    buffered_reads: std::sync::atomic::AtomicU64,
 }
 
 // The full-capacity retained job owner erases these request-derived headers on
@@ -331,6 +333,8 @@ impl ExpertOperator {
             q8_residual: false,
             mapped_prefetch: false,
             prefetch_calls: std::sync::atomic::AtomicU64::new(0),
+            buffered_weights: false,
+            buffered_reads: std::sync::atomic::AtomicU64::new(0),
         })
     }
 
@@ -403,6 +407,21 @@ impl ExpertOperator {
     }
     pub fn prefetch_calls(&self) -> u64 {
         self.prefetch_calls.load(Ordering::Relaxed)
+    }
+    /// Original call-local public packed jobs, using checked positional reads.
+    /// No complete-model copy, persistent cache or alternative artifact.
+    pub fn with_buffered_weights(mut self) -> Result<Self> {
+        if self.pool.is_none() || self.mapped_prefetch {
+            return Err(Error::InvalidFormat("CPU buffered source policy"));
+        }
+        self.buffered_weights = true;
+        Ok(self)
+    }
+    pub fn buffered_weights(&self) -> bool {
+        self.buffered_weights
+    }
+    pub fn buffered_weight_reads(&self) -> u64 {
+        self.buffered_reads.load(Ordering::Relaxed)
     }
     pub fn q8_residual_passes(&self) -> usize {
         if self.q8_residual {
@@ -650,6 +669,9 @@ impl ExpertOperator {
         hook: impl Fn(usize) + Sync,
     ) -> Result<Partials> {
         let g = &weights.geometry;
+        if self.buffered_weights && self.mapped_prefetch {
+            return Err(Error::InvalidFormat("CPU conflicting source policies"));
+        }
         if self.q8_activations && g.kinds.iter().any(|&kind| !quantized::supported(kind)) {
             return Err(Error::InvalidFormat("CPU quantized format unsupported"));
         }
@@ -728,11 +750,13 @@ impl ExpertOperator {
                         .checked_mul(g.packed_bytes[part])
                         .ok_or(Error::ArithmeticOverflow)?,
                 );
-                if let Some(mapped) = weights.reader.mapped_range(
-                    weights.tensors[part],
-                    *offset as u64,
-                    g.packed_bytes[part],
-                )? {
+                if !self.buffered_weights
+                    && let Some(mapped) = weights.reader.mapped_range(
+                        weights.tensors[part],
+                        *offset as u64,
+                        g.packed_bytes[part],
+                    )?
+                {
                     if self.mapped_prefetch {
                         weights.reader.prefetch_range(
                             weights.tensors[part],
@@ -769,6 +793,11 @@ impl ExpertOperator {
                 weights
                     .reader
                     .read_range(weights.tensors[part], *offset as u64, packed)?;
+                if self.buffered_weights {
+                    self.buffered_reads
+                        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+                        .map_err(|_| Error::ArithmeticOverflow)?;
+                }
             }
         }
         weights.reader.verify_file_unchanged()?;
@@ -3177,6 +3206,43 @@ mod tests {
             }
             let actual = op.execute(&weights, &[2, 0], &x, &cancel).unwrap();
             same_bits(actual.full(), expected.full());
+            let buffered =
+                ExpertOperator::new_pooled(WorkerPlan::portable(4).unwrap(), Backend::Avx2)
+                    .unwrap()
+                    .with_buffered_weights()
+                    .unwrap();
+            assert!(buffered.buffered_weights());
+            assert!(!op.buffered_weights());
+            assert_eq!(op.buffered_weight_reads(), 0);
+            same_bits(
+                buffered
+                    .execute(&weights, &[2, 0], &x, &cancel)
+                    .unwrap()
+                    .full(),
+                expected.full(),
+            );
+            assert_eq!(buffered.buffered_weight_reads(), 6);
+            assert!(
+                ExpertOperator::new(WorkerPlan::portable(2).unwrap(), Backend::Avx2)
+                    .unwrap()
+                    .with_buffered_weights()
+                    .is_err()
+            );
+            assert!(
+                ExpertOperator::new_pooled(WorkerPlan::portable(4).unwrap(), Backend::Avx2)
+                    .unwrap()
+                    .with_mapped_prefetch()
+                    .with_buffered_weights()
+                    .is_err()
+            );
+            let conflict =
+                ExpertOperator::new_pooled(WorkerPlan::portable(4).unwrap(), Backend::Avx2)
+                    .unwrap()
+                    .with_buffered_weights()
+                    .unwrap()
+                    .with_mapped_prefetch();
+            assert!(conflict.execute(&weights, &[2, 0], &x, &cancel).is_err());
+            assert_eq!(conflict.buffered_weight_reads(), 0);
             let witness = std::sync::Arc::new(retained_metadata::Witness::default());
             {
                 let mut jobs = retained_metadata::Owner::<[PackedJob<'_>; 3]>::new(MAX_SELECTED)
@@ -3199,6 +3265,8 @@ mod tests {
             assert_metadata_wiped(&witness, MAX_SELECTED * size_of::<[PackedJob<'_>; 3]>());
             cancel.store(true, Ordering::Relaxed);
             assert!(op.execute(&weights, &[2, 0], &x, &cancel).is_err());
+            assert!(buffered.execute(&weights, &[2, 0], &x, &cancel).is_err());
+            assert_eq!(buffered.buffered_weight_reads(), 6);
             cancel.store(false, Ordering::Relaxed);
             same_bits(
                 op.execute(&weights, &[2, 0], &x, &cancel).unwrap().full(),

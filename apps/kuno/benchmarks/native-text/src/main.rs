@@ -826,8 +826,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("Fused subgroup finite checks require the explicit fast GPU path".into());
     }
     let long_fixture = count1_environment_opt_in(&mode, "KUNO_LAB_LONG_FIXTURE")?;
+    let cpu_buffered_weights = cfg!(feature = "cpu-buffered-weights");
+    if cpu_buffered_weights && (!mapped_weights || !count1_pooled) {
+        return Err("CPU buffered weights require mapped pooled hybrid mode".into());
+    }
     let cpu_mapped_prefetch = count1_environment_opt_in(&mode, "KUNO_LAB_CPU_MAPPED_PREFETCH")?;
-    if cpu_mapped_prefetch && (!mapped_weights || !count1_pooled) {
+    if cpu_mapped_prefetch && (!mapped_weights || !count1_pooled || cpu_buffered_weights) {
         return Err("CPU source prefetch requires explicitly mapped pooled workers".into());
     }
     let cpu_threads = match std::env::var("KUNO_LAB_CPU_THREADS").as_deref() {
@@ -2166,6 +2170,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 apply_count1_hybrid_cap(r, &mut executor, count1_hybrid_cap, &cancel)?;
                 r.phase_ns.clear();
             }
+            let pre_cpu_buffered_reads = if count1_hybrid_cap.is_some() {
+                resident
+                    .as_ref()
+                    .ok_or("CPU buffered owner absent")?
+                    .native_cpu_buffered_weights(&executor)?
+                    .ok_or("CPU buffered operator absent")?
+                    .1
+            } else {
+                0
+            };
             let pre_cpu_prefetch_calls = if count1_hybrid_cap.is_some() {
                 resident
                     .as_ref()
@@ -2225,6 +2239,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             let warm_resources =
                 public_resources::delta(resources_before, public_resources::snapshot());
+            let observed_cpu_buffered = if count1_hybrid_cap.is_some() {
+                let (enabled, calls) = resident
+                    .as_ref()
+                    .ok_or("CPU buffered owner absent")?
+                    .native_cpu_buffered_weights(&executor)?
+                    .ok_or("CPU buffered operator absent")?;
+                (
+                    enabled,
+                    calls
+                        .checked_sub(pre_cpu_buffered_reads)
+                        .ok_or("CPU buffered counter overflow")?,
+                )
+            } else {
+                (false, 0)
+            };
             let observed_cpu_prefetch = if count1_hybrid_cap.is_some() {
                 let (enabled, calls) = resident
                     .as_ref()
@@ -2366,6 +2395,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     receipt["observed_cpu_threads"] = serde_json::json!(threads);
                     receipt["observed_cpu_q8_residual_passes"] = serde_json::json!(passes);
                 }
+                receipt["cpu_buffered_weights"] = serde_json::json!(cpu_buffered_weights);
+                receipt["observed_cpu_buffered_weights"] =
+                    serde_json::json!(observed_cpu_buffered.0);
+                receipt["warm_cpu_buffered_reads"] = serde_json::json!(observed_cpu_buffered.1);
                 receipt["cpu_mapped_prefetch"] = serde_json::json!(cpu_mapped_prefetch);
                 receipt["observed_cpu_mapped_prefetch"] =
                     serde_json::json!(observed_cpu_prefetch.0);
