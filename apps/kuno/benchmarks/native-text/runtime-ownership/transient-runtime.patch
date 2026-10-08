@@ -712,7 +712,7 @@
 +}
 --- /dev/null
 +++ b/cubecl-runtime/src/transient.rs
-@@ -0,0 +1,373 @@
+@@ -0,0 +1,418 @@
 +// Modified for Kuno's laboratory transient-I/O ownership/erasure patch (2026-10-05).
 +//! Laboratory-only private upload ownership and transient-I/O receipt.
 +//!
@@ -737,6 +737,14 @@
 +/// mapped allocation span, including padding. Its map must remain active, and
 +/// no other CPU/GPU accessor may use it until the caller unmaps/flushed it.
 +pub unsafe fn wipe_mapped_full_span(pointer: *mut u8, length: usize) {
++    // SAFETY: mapped API contract implies the exclusive writable span below.
++    unsafe { wipe_writable_full_span(pointer, length) };
++}
++/// Internal full-capacity eraser; writes every byte and never reads the owner.
++/// Safety: the complete span must remain exclusively owned, allocated and
++/// writable. Uninitialized Vec spare capacity is permitted because only zero
++/// writes occur, including exact byte boundaries and aligned u64 words.
++unsafe fn wipe_writable_full_span(pointer: *mut u8, length: usize) {
 +    let prefix = pointer
 +        .align_offset(core::mem::align_of::<u64>())
 +        .min(length);
@@ -848,6 +856,17 @@
 +        data.resize(len, 0);
 +        Ok(Self { data })
 +    }
++    /// Copy directly into an already guarded, preallocated owner. No temporary
++    /// Vec, initialized zero pass or growth with private content is required.
++    pub fn copied(source: &[u8]) -> Result<Self, ()> {
++        let mut result = Self { data: Vec::new() };
++        result
++            .data
++            .try_reserve_exact(source.len())
++            .map_err(|_| ())?;
++        result.data.extend_from_slice(source);
++        Ok(result)
++    }
 +    /// Logical initialized bytes, used only while filling a private readback.
 +    pub fn as_mut_slice(&mut self) -> &mut [u8] {
 +        &mut self.data
@@ -861,13 +880,9 @@
 +        self.data.is_empty()
 +    }
 +    fn wipe(&mut self) {
-+        let pointer = self.data.as_mut_ptr();
-+        for i in 0..self.data.capacity() {
-+            // SAFETY: all bytes of this exclusively owned allocation are
-+            // writable, including uninitialized spare capacity. Zero is valid.
-+            unsafe { pointer.add(i).write_volatile(0) };
-+        }
-+        compiler_fence(Ordering::SeqCst);
++        // SAFETY: mutable ownership covers this Vec's complete allocation,
++        // including uninitialized spare capacity; no byte is read.
++        unsafe { wipe_writable_full_span(self.data.as_mut_ptr(), self.data.capacity()) };
 +    }
 +}
 +impl Drop for PrivateHostAllocation {
@@ -1053,6 +1068,36 @@
 +            subspan.offset_end = Some(end);
 +            assert!(private_write_descriptor(subspan, stream, 32768).is_err());
 +            assert!(!memory.is_free());
++        }
++    }
++    #[test]
++    fn writable_word_eraser_covers_unaligned_owners_and_every_tail() {
++        for offset in 0..8 {
++            for length in 0..257 {
++                let mut data = vec![0x95u8; offset + length + 11];
++                // SAFETY: exact writable owned subspan, with outside guard bytes.
++                unsafe { wipe_writable_full_span(data.as_mut_ptr().add(offset), length) };
++                assert!(data[..offset].iter().all(|&x| x == 0x95));
++                assert!(data[offset..offset + length].iter().all(|&x| x == 0));
++                assert!(data[offset + length..].iter().all(|&x| x == 0x95));
++            }
++        }
++    }
++    #[test]
++    fn direct_guarded_copy_preserves_contents_and_full_capacity_erasure() {
++        for length in [0, 1, 7, 8, 9, 127, 129, 32768] {
++            let source = vec![0x67u8; length];
++            let mut owner = PrivateHostAllocation::copied(&source).unwrap();
++            assert_eq!(owner.as_mut_slice(), source.as_slice());
++            let cap = owner.data.capacity();
++            owner.wipe();
++            // SAFETY: every capacity byte was initialized by full erasure.
++            assert!(
++                unsafe { core::slice::from_raw_parts(owner.data.as_ptr(), cap) }
++                    .iter()
++                    .all(|&v| v == 0)
++            );
++            assert!(source.iter().all(|&v| v == 0x67));
 +        }
 +    }
 +    #[test]
@@ -2912,7 +2957,7 @@
          self.mem_manage.memory_cleanup(false);
 --- /dev/null
 +++ b/cubecl-wgpu/src/compute/transient_io.rs
-@@ -0,0 +1,3577 @@
+@@ -0,0 +1,3578 @@
 +// Modified for Kuno's laboratory transient-I/O ownership/erasure patch (2026-10-05).
 +//! Opt-in bounded, explicitly owned transient I/O. No device creation in tests.
 +//!
@@ -3538,9 +3583,8 @@
 +            if self.logical > view.len() {
 +                return Err(fault("private readback logical bounds"));
 +            }
-+            let mut data = PrivateHostAllocation::zeroed(self.logical)
++            let data = PrivateHostAllocation::copied(&view[..self.logical])
 +                .map_err(|_| fault("private readback host allocation failed"))?;
-+            data.as_mut_slice().copy_from_slice(&view[..self.logical]);
 +            drop(view);
 +            self.lease.unmap();
 +            Ok(data)
@@ -4162,7 +4206,9 @@
 +    }
 +    fn inspect(&mut self, mapping: &AuditMapGuard) -> Result<(), ServerError> {
 +        let view = mapping.buffer.get_mapped_range(..);
-+        if view.len() as u64 != mapping.buffer.size() || !cubecl_runtime::transient::full_span_is_zero(&view) {
++        if view.len() as u64 != mapping.buffer.size()
++            || !cubecl_runtime::transient::full_span_is_zero(&view)
++        {
 +            self.0.leases.record(Failure::AuditNonzero);
 +            return Err(fault(self.0.leases.reason(Failure::AuditNonzero)));
 +        }

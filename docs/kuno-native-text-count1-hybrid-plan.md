@@ -1190,3 +1190,20 @@ the invocation or becomes a shader/cache key. Independent malformed/full-tail
 controls and original full128-ID/fresh/owning/lifecycle gates remain mandatory.
 The factored Q4_K arithmetic is withdrawn after an accepted but slower trial;
 shared Next kernels again use the original accepted vector dequantization.
+
+### Full-capacity host erasure and direct guarded readback copies
+
+The protected native laboratory may erase exclusively owned heap capacity using
+aligned volatile u64 stores plus exact byte prefix/tail writes and the original
+compiler fence. All capacity bytes remain covered, including uninitialized Vec
+spare capacity, without reading them. Mapped erasure retains its existing API
+and complete-span contract. Guarded readback copies reserve the complete logical
+size before private content arrives, then copy directly into that owner without
+a redundant zero initialization pass. No private-content growth, temporary Vec,
+pooling, wipe omission or increased budget is permitted. Original conversion
+error/unwind ownership, mapped leases, audits and final full zero proofs remain.
+
+Host controls exercise all offsets0..7, lengths0..256, outside guard bytes,
+empty/odd/aligned/32768-byte copies, source preservation and complete capacity
+erasure. All original full-model IDs and owning/fresh/lifecycle gates remain
+mandatory before selecting a timing. Installed execution remains unchanged.

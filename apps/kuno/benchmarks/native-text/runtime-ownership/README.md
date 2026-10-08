@@ -522,3 +522,14 @@ completion or publication. Any enclosed GPU error rejects; per-dispatch
 same-class attribution is not preserved. No guard is stored in a Send server,
 and no new deferred task owner is added. Original non-batched behavior and
 multi-stream interleaving remain. Source/physical acceptance is pending.
+
+### Heap owner erasure and guarded copy laboratory
+
+Heap owners now use aligned volatile word stores over their full capacity, with
+byte prefix/tail writes and the original fence. The mapped API is unchanged.
+Readback copies reserve before content and copy into a guarded allocation,
+avoiding a redundant initialized-zero pass. No owner is pooled or credited
+early; every original lease/fence/audit and both applicable wipe owners remain.
+57 imported runtime controls, three actual allocator controls, two logger
+controls and strict all-target Clippy pass. Physical v36 acceptance is pending;
+this is an isolated native laboratory and does not alter installed Kuno.

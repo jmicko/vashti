@@ -2252,3 +2252,25 @@ recovery latch. Kuno11434/direct Ollama11435 and Vashti7771 answer HTTP200,
 both inference listeners have no resident model, and B70 physical memory
 returns50688000 bytes. Same-boot Xe fault classifications remain zero. Goal
 controller remains paused and incomplete; this directly requested trial is done.
+
+### Active overnight Next offload optimization checkpoint (2026-10-08)
+
+The user authorizes the isolated backend speed run to reach at least10 decode
+tokens/s, or stop safely if sudo expires and effective GPU work is blocked.
+Owner remains `codex/kuno-native-text` in the Kuno worktree. Through5ee51a5,
+39 accepted public fixtures include diagnostic samples; current best v30 source
+9fbda89 / frozen normal artifact3c7346fb119a96ccd631e2a96eec2c4a199d9fc5f46ffd6250311471ba310044
+measures17724ms/127 following steps (7.1654 tokens/s). Target is unmet.
+Original128 IDs, fresh continuation, poison recovery and complete owning/lifecycle
+gates pass. B70 returns50688000B between runs; current classified Xe faults are
+zero on the same kernel38 boot. Single samples are not statistical acceptance.
+
+Current candidate changes only full-capacity heap erasure and guarded readback
+copying, with496 native tests/two shaders,57 runtime controls/three allocator
+controls/two logger controls and strict Clippy passing. Device acceptance is
+pending. See the owner checkpoint and count1 contract for exact constraints.
+The numeric aggregate `next-offload-overnight-20261008.json` is pending commit
+until the run checkpoint is finalized. Admission is paused only during this
+exclusive lab block; restore it and verify memory/listeners at an actual stop.
+No installed binary/configuration, model blob, API/catalog/default routing,
+Vashti application or release changes. **Required Vashti changes: none.**

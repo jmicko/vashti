@@ -1614,3 +1614,13 @@ arithmetic and removes count1 hybrid inactive merge workgroups/repeated
 immutable owner-header reads. Source gates pass496 native tests, both shader
 suites and strict Clippy; complete device acceptance and a new bounded CPU
 profile are pending.10 tokens/s remains unmet; no installation/API/UI changes.
+
+Hybrid fold source5ee51a5/artifact21dba701f30a3a90731f8862b141a6db580dc754bfe507505458c0490939ed14
+passes all original75/128 IDs and owning/fresh/lifecycle gates:18126ms decode
+(7.0065 tokens/s). No gain; B70 returns50688000B. Best remains v30 at7.1654.
+The next candidate replaces byte-at-a-time heap erasure with full-capacity
+volatile word stores and directly copies into preallocated guarded owners.
+496 native tests/two shaders,57 runtime controls/three actual allocator controls/
+two logger controls and strict all-target Clippy pass. Exact unchanged pins and
+regenerated23-file provenance patch3f6c6be96aa16958293769027304cf27d4453c6ac3a77edd4415793b1257ad93.
+Complete physical acceptance and a refreshed bounded host profile are pending.
