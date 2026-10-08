@@ -886,7 +886,7 @@ mod tests {
 
     #[test]
     fn map_covers_all_original_ranks_and_keeps_full_inactive_envelopes_zero() {
-        for capacity in [16, 64, 72, 96] {
+        for capacity in [16, 64, 72, 96, 128] {
             for mask in [0, 0b0101010101, 0b1000000001, 0x3ff] {
                 let pairs = pairs(mask);
                 let map =
@@ -1066,7 +1066,7 @@ mod tests {
         let original = layouts();
         for down in [crate::quant_matvec::Q5_0, crate::quant_matvec::Q8_0] {
             for tile in [1, 8] {
-                for capacity in [16, 64, 72, 96] {
+                for capacity in [16, 64, 72, 96, 128] {
                     let g = geometry(tile, capacity, down);
                     assert!(validate_layouts(g, &spans(), 1, 0, 2560, 0, &original).is_ok());
                     for count in [0, 2, 8, usize::MAX] {

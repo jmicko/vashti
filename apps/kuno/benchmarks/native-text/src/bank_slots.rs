@@ -10,12 +10,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use zeroize::{Zeroize, Zeroizing};
 
 // 72 original packed Qwen experts fit the same pooled pages as 64.
-// The resident-only 96 experiment splits public banks into 64 + 32 pages.
-pub const MAX_CAPACITY: usize = 96;
+// The resident-only 96 experiment uses public 64 + 32 pages;128 uses64 +64.
+pub const MAX_CAPACITY: usize = 128;
 pub const MAX_FLAT_CAPACITY: usize = 72;
-pub const SEGMENTED_CAPACITY: usize = 96;
+pub fn segmented_capacity(capacity: usize) -> bool {
+    matches!(capacity, 96 | 128)
+}
 pub fn routed_capacity(capacity: usize) -> bool {
-    (MIN_ROUTED_CAPACITY..=MAX_FLAT_CAPACITY).contains(&capacity) || capacity == SEGMENTED_CAPACITY
+    (MIN_ROUTED_CAPACITY..=MAX_FLAT_CAPACITY).contains(&capacity) || segmented_capacity(capacity)
 }
 pub const MIN_ROUTED_CAPACITY: usize = 10;
 
@@ -38,7 +40,7 @@ pub enum BankError {
 impl std::fmt::Display for BankError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
-            Self::Capacity => "expert bank capacity must be between one and 96",
+            Self::Capacity => "expert bank capacity must be between one and 128",
             Self::ExpertCount => "expert bank count must be between capacity and 512",
             Self::SelectionTooLarge => "expert selection exceeds bank capacity",
             Self::ExpertOutOfRange => "expert selection is out of range",
@@ -608,7 +610,7 @@ mod tests {
         );
         bank.state.slots.reserve(96);
         assert!(bank.original_metadata_bytes().unwrap() > bound);
-        assert!(BankSlots::bounded_original_metadata_bytes(97, 512).is_err());
+        assert!(BankSlots::bounded_original_metadata_bytes(MAX_CAPACITY + 1, 512).is_err());
     }
 
     fn commit(bank: &mut BankSlots, experts: &[usize]) -> (Vec<usize>, Vec<(usize, usize)>) {
@@ -746,6 +748,7 @@ mod tests {
         assert_eq!(configured_capacity(None, 16).unwrap(), 16);
         assert_eq!(configured_capacity(Some("72"), 64).unwrap(), 72);
         assert_eq!(configured_capacity(Some("96"), 64).unwrap(), 96);
+        assert_eq!(configured_capacity(Some("128"), 64).unwrap(), 128);
         assert_eq!(configured_capacity(Some("10"), 16).unwrap(), 10);
         for invalid in [
             "",
@@ -773,20 +776,24 @@ mod tests {
 
     #[test]
     fn extended_slots_are_used_and_requested_hits_remain_protected() {
-        let mut bank = BankSlots::new(MAX_CAPACITY, 512).unwrap();
-        let initial: Vec<_> = (0..MAX_CAPACITY).collect();
-        let p = bank.plan(&initial).unwrap();
-        assert_eq!(p.slots, initial);
-        bank.commit(p).unwrap();
-        let p = bank
-            .plan(&[100, 71, 70, 69, 68, 67, 66, 65, 64, 63])
-            .unwrap();
-        assert_eq!(p.uploads, [(100, 0)]);
-        assert_eq!(&p.slots[1..], &[71, 70, 69, 68, 67, 66, 65, 64, 63]);
-        bank.commit(p).unwrap();
-        assert_eq!(bank.state.by_expert[100], Some(0));
-        assert_eq!(bank.state.by_expert[71], Some(71));
-        assert_eq!(bank.state.by_expert[0], None);
+        for capacity in [96, 128] {
+            let mut bank = BankSlots::new(capacity, 512).unwrap();
+            let initial: Vec<_> = (0..capacity).collect();
+            let p = bank.plan(&initial).unwrap();
+            assert_eq!(p.slots, initial);
+            bank.commit(p).unwrap();
+            let new = capacity + 4;
+            let hit = capacity - 1;
+            let p = bank
+                .plan(&[new, hit, 70, 69, 68, 67, 66, 65, 64, 63])
+                .unwrap();
+            assert_eq!(p.uploads, [(new, 0)]);
+            assert_eq!(&p.slots[1..], &[hit, 70, 69, 68, 67, 66, 65, 64, 63]);
+            bank.commit(p).unwrap();
+            assert_eq!(bank.state.by_expert[new], Some(0));
+            assert_eq!(bank.state.by_expert[hit], Some(hit));
+            assert_eq!(bank.state.by_expert[0], None);
+        }
     }
 
     #[test]

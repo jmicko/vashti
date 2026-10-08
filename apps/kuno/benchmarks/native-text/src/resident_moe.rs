@@ -475,7 +475,7 @@ impl ResidentMoe {
             quant_matvec::moe_word_down::validate(weights.down.info().dtype().gguf_id(), banks.ff)
                 .map_err(|_| Error::InvalidFormat("word down packed layout"))?;
         }
-        let segmented = banks.slots.capacity() == crate::bank_slots::SEGMENTED_CAPACITY;
+        let segmented = crate::bank_slots::segmented_capacity(banks.slots.capacity());
         if segmented && (!block_moe || word_down) {
             return Err(fault(
                 "segmented resident MoE requires block gate/up and generic down",

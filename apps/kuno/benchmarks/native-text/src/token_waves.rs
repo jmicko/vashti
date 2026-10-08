@@ -90,7 +90,7 @@ impl Input {
         // Check original expert bounds and all public geometry before any private
         // owner is formed. 73..95 are not admitted routed-bank capacities.
         if !(1..=MAX_BATCH).contains(&count)
-            || !((TOP..=72).contains(&capacity) || capacity == 96)
+            || !crate::bank_slots::routed_capacity(capacity)
             || !(capacity..=MAX_EXPERTS).contains(&expert_count)
         {
             return Err(Error::Configuration);

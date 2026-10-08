@@ -78,7 +78,7 @@ def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False
             raise ValueError("Complete shared dense dispatch evidence missing")
     if shared and any(marker not in output.splitlines() for marker in ("next_shared_original_rows cases=6 numeric_and_owning_checks=true", "next_shared_gpu_router cases=8 numeric_and_owning_checks=true")):
         raise ValueError("Shared original row/router probes missing")
-    if banks not in ("standard","intel72","intel96") or banks!="standard" and (card!="intel"):
+    if banks not in ("standard","intel72","intel96","intel128") or banks!="standard" and (card!="intel"):
         raise ValueError("Expanded banks require an explicit protected Intel count1 profile")
     if (banks!="standard" or "count1_bank_profile" in receipt) and receipt.get("count1_bank_profile")!=banks:
         raise ValueError("Completed bank profile must match independent selection")
@@ -184,7 +184,7 @@ def worker_environment(model, receipt, workers="scoped", overlap=False, mapped=F
         raise ValueError("Fused finite checks require fast GPU projections")
     if deferred and not compact_info:
         raise ValueError("Deferred router IO requires compact INFO")
-    if banks not in ("standard","intel72","intel96"):
+    if banks not in ("standard","intel72","intel96","intel128"):
         raise ValueError("Unknown fixed bank profile")
     if dispatch not in ("threaded","inline"):
         raise ValueError("Unknown GPU device dispatch")
@@ -216,8 +216,8 @@ def worker_environment(model, receipt, workers="scoped", overlap=False, mapped=F
     env["KUNO_LAB_GPU_ROUTER"] = "1" if gpu_router else "0"
     env["KUNO_LAB_RETAINED_METADATA"] = "1" if metadata else "0"
     env["KUNO_LAB_COUNT1_BANKS"] = banks
-    if banks=="intel96":
-        env["KUNO_LAB_STATIC_CACHE_BYTES"] = "6442450944"
+    if banks in ("intel96","intel128"):
+        env["KUNO_LAB_STATIC_CACHE_BYTES"] = "5368709120" if banks=="intel128" else "6442450944"
         env["KUNO_LAB_BLOCK_MOE"] = "1"
     return env
 
@@ -248,7 +248,7 @@ def main():
     parser.add_argument("--defer-router-io", action="store_true")
     parser.add_argument("--gpu-router", action="store_true")
     parser.add_argument("--retained-metadata", action="store_true")
-    parser.add_argument("--bank-profile", choices=("standard","intel72","intel96"), default="standard")
+    parser.add_argument("--bank-profile", choices=("standard","intel72","intel96","intel128"), default="standard")
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--receipt", type=pathlib.Path, required=True)
     args = parser.parse_args()
@@ -291,7 +291,7 @@ def main():
         "--property=LimitCORE=0", "--property=MemoryMax=" + ("48G" if args.large_weight_cache else "8G"),
         "--property=RuntimeMaxSec=900",
         "--property=UnsetEnvironment=KUNO_LAB_BLOCK_KERNEL KUNO_LAB_EXPERT_SLOTS " +
-        ("KUNO_LAB_STATIC_CACHE_BYTES " if args.bank_profile!="intel96" else "") + "KUNO_LAB_EXPERT_BATCH_BYTES KUNO_LAB_EXPERT_SCATTER",
+        ("KUNO_LAB_STATIC_CACHE_BYTES " if args.bank_profile not in ("intel96","intel128") else "") + "KUNO_LAB_EXPERT_BATCH_BYTES KUNO_LAB_EXPERT_SCATTER",
     ]
     command.extend("--setenv=" + key + "=" + value
                    for key, value in worker_environment(args.model.resolve(), target, args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault,args.defer_router_io,args.gpu_router,args.retained_metadata,args.bank_profile,args.next_shared_kernels,args.next_shared_gdn,args.info_batch_upload,args.device_dispatch,args.reclaim_gpu_sources).items())

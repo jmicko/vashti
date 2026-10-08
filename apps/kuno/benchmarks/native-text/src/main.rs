@@ -257,6 +257,7 @@ enum Count1Banks {
     Standard,
     Intel72,
     Intel96,
+    Intel128,
 }
 impl Count1Banks {
     fn parse(mode: &str, vendor: u32, raw: Option<&str>) -> Result<Self, &'static str> {
@@ -268,6 +269,9 @@ impl Count1Banks {
             Some("intel96") if mode == "resident-count1-hybrid-chat" && vendor == 0x8086 => {
                 Ok(Self::Intel96)
             }
+            Some("intel128") if mode == "resident-count1-hybrid-chat" && vendor == 0x8086 => {
+                Ok(Self::Intel128)
+            }
             _ => Err("fixed count1 bank profile rejected"),
         }
     }
@@ -276,18 +280,24 @@ impl Count1Banks {
             Self::Standard => "standard",
             Self::Intel72 => "intel72",
             Self::Intel96 => "intel96",
+            Self::Intel128 => "intel128",
         }
     }
     fn setting(self, name: &str, raw: Option<&str>) -> Result<(), &'static str> {
-        if self == Self::Intel96 && name == "KUNO_LAB_BLOCK_MOE" {
+        if matches!(self, Self::Intel96 | Self::Intel128) && name == "KUNO_LAB_BLOCK_MOE" {
             return if raw == Some("1") {
                 Ok(())
             } else {
                 Err("segmented count1 bank block setting rejected")
             };
         }
-        if self == Self::Intel96 && name == "KUNO_LAB_STATIC_CACHE_BYTES" {
-            return if raw == Some("6442450944") {
+        if matches!(self, Self::Intel96 | Self::Intel128) && name == "KUNO_LAB_STATIC_CACHE_BYTES" {
+            return if raw
+                == Some(if self == Self::Intel128 {
+                    "5368709120"
+                } else {
+                    "6442450944"
+                }) {
                 Ok(())
             } else {
                 Err("segmented count1 bank static cache setting rejected")
@@ -299,6 +309,7 @@ impl Count1Banks {
         match self {
             Self::Intel72 => 72,
             Self::Intel96 => 96,
+            Self::Intel128 => 128,
             Self::Standard => {
                 if vendor == 0x8086 {
                     64
@@ -1963,7 +1974,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let model = Qwen4Exp::bind(&file)?;
             let ids = tokenizer.encode(prompt, true)?;
             let mut sequence = model.sequence(ids.len() + limit)?;
-            let device_budget = if vendor == 0x8086 { 26 } else { 10 } * 1024 * 1024 * 1024;
+            let device_budget = if count1_banks == Count1Banks::Intel128 {
+                31
+            } else if vendor == 0x8086 {
+                26
+            } else {
+                10
+            } * 1024
+                * 1024
+                * 1024;
             if next_shared {
                 next_shared::probe(&client, &file)?;
                 if shared_gdn {
@@ -2362,11 +2381,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 receipt["static_cache_budget_bytes"] = serde_json::json!(cache_budget);
                 receipt["explicit_static_cache"] =
                     serde_json::json!(static_cache_setting.is_some());
-                receipt["expert_bank_segments"] = serde_json::json!(if expert_slots == 96 {
-                    vec![64, 32]
-                } else {
-                    vec![expert_slots]
-                });
+                receipt["expert_bank_segments"] =
+                    serde_json::json!(if crate::bank_slots::segmented_capacity(expert_slots) {
+                        vec![64, expert_slots - 64]
+                    } else {
+                        vec![expert_slots]
+                    });
                 receipt["device_reserved_limit_bytes"] = serde_json::json!(device_budget);
                 // Timings/public IDs remain in RAM until explicit owned cleanup
                 // and optional cancellation/audit acceptance complete.
@@ -2762,7 +2782,7 @@ mod transient_mode_tests {
     #[test]
     fn expanded_banks_require_an_exact_intel_hybrid_profile_and_preserve_other_guards() {
         use super::Count1Banks as B;
-        for (raw, slots) in [("intel72", 72), ("intel96", 96)] {
+        for (raw, slots) in [("intel72", 72), ("intel96", 96), ("intel128", 128)] {
             let p = B::parse("resident-count1-hybrid-chat", 0x8086, Some(raw)).unwrap();
             assert_eq!(p.slots(0x8086), slots);
             assert!(B::parse("resident-chat", 0x8086, Some(raw)).is_err());

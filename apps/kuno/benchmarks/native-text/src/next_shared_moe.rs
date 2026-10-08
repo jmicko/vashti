@@ -177,7 +177,9 @@ pub(crate) fn launch(
         || gate.dtype() != 12
         || up.dtype() != 12
         || !matches!(down.dtype(), 6 | 8)
-        || first_slot.checked_add(slots).is_none_or(|n| n > 96)
+        || first_slot
+            .checked_add(slots)
+            .is_none_or(|n| n > g.capacity())
         || slots == 0
     {
         return Err(Error::InvalidFormat("shared count1 expert geometry"));

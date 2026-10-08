@@ -1,6 +1,6 @@
 //! Transient packed expert banks for a fixed public laboratory experiment.
 //! Stores original weights only; never persists expert access/rank history.
-use crate::bank_slots::{BankSlots, SEGMENTED_CAPACITY, routed_capacity};
+use crate::bank_slots::{BankSlots, routed_capacity, segmented_capacity};
 use crate::quant_matvec;
 use cubecl::prelude::*;
 use cubecl::server::Handle;
@@ -111,8 +111,8 @@ pub(crate) fn fixture_bank_instance() -> BankInstance {
 
 fn segment_capacities(capacity: usize) -> Result<Vec<usize>> {
     validate_capacity(capacity)?;
-    Ok(if capacity == SEGMENTED_CAPACITY {
-        vec![64, 32]
+    Ok(if segmented_capacity(capacity) {
+        vec![64, capacity - 64]
     } else {
         vec![capacity]
     })
@@ -148,7 +148,7 @@ fn validate_segmented_metadata(parts: [(TensorType, &[u64]); 3]) -> Result<()> {
         || ud != gd
         || dd != [640, 2560, 512]
     {
-        return Err(Error::InvalidFormat("96-slot original expert metadata"));
+        return Err(Error::InvalidFormat("segmented original expert metadata"));
     }
     Ok(())
 }
@@ -198,9 +198,9 @@ pub fn configured_static_cache(raw: Option<&str>, default: usize) -> Result<usiz
     Ok(bytes)
 }
 pub(crate) fn check_ordered_segmented(capacity: usize, ordered: bool) -> Result<()> {
-    if capacity == SEGMENTED_CAPACITY && ordered {
+    if segmented_capacity(capacity) && ordered {
         return Err(Error::InvalidFormat(
-            "96 slots do not yet support ordered public upload",
+            "segmented slots do not yet support ordered public upload",
         ));
     }
     Ok(())
@@ -221,11 +221,11 @@ pub fn validate_segmented_configuration(
     resident: bool,
 ) -> Result<()> {
     validate_capacity(capacity)?;
-    if capacity == SEGMENTED_CAPACITY
+    if segmented_capacity(capacity)
         && (explicit_cache != Some(budget) || !block || batch || word_down || !resident)
     {
         return Err(Error::InvalidFormat(
-            "96 slots require explicit static cache, resident block MoE, legacy fill and generic down",
+            "segmented slots require explicit static cache, resident block MoE, legacy fill and generic down",
         ));
     }
     Ok(())
@@ -255,7 +255,15 @@ fn validate_residency_budget(
     cache_bytes: usize,
     device_bytes: usize,
 ) -> Result<()> {
-    if device_bytes > MAX_DEVICE_BYTES
+    validate_residency_budget_with_limit(bank_bytes, cache_bytes, device_bytes, MAX_DEVICE_BYTES)
+}
+fn validate_residency_budget_with_limit(
+    bank_bytes: usize,
+    cache_bytes: usize,
+    device_bytes: usize,
+    limit: usize,
+) -> Result<()> {
+    if device_bytes > limit
         || bank_bytes
             .checked_add(cache_bytes)
             .and_then(|n| n.checked_add(RESIDENCY_MARGIN))
@@ -277,8 +285,8 @@ pub fn preflight_residency(
     device_bytes: usize,
 ) -> Result<usize> {
     validate_capacity(capacity)?;
-    if capacity == SEGMENTED_CAPACITY && graph.geometry().layers != 48 {
-        return Err(Error::InvalidFormat("96-slot graph requires 48 layers"));
+    if segmented_capacity(capacity) && graph.geometry().layers != 48 {
+        return Err(Error::InvalidFormat("segmented graph requires 48 layers"));
     }
     let mut total = 0usize;
     for layer in 0..graph.geometry().layers {
@@ -292,16 +300,28 @@ pub fn preflight_residency(
             .checked_add(ExpertBanks::allocation(weights, capacity)?)
             .ok_or(Error::ArithmeticOverflow)?;
     }
-    if capacity == SEGMENTED_CAPACITY && total != 18 * 1024 * 1024 * 1024 {
-        return Err(Error::InvalidFormat("96-slot full graph page charge"));
+    if segmented_capacity(capacity) && total != capacity / 32 * 6 * 1024 * 1024 * 1024 {
+        return Err(Error::InvalidFormat("segmented full graph page charge"));
     }
-    validate_residency_budget(total, cache_bytes, device_bytes)?;
+    if capacity == 128 {
+        if cache_bytes != 5 * 1024 * 1024 * 1024 || device_bytes != 31 * 1024 * 1024 * 1024 {
+            return Err(Error::InvalidFormat("128-slot fixed residency envelope"));
+        }
+        validate_residency_budget_with_limit(
+            total,
+            cache_bytes,
+            device_bytes,
+            31 * 1024 * 1024 * 1024,
+        )?;
+    } else {
+        validate_residency_budget(total, cache_bytes, device_bytes)?;
+    }
     Ok(total)
 }
 impl ExpertBanks {
     pub fn allocation_requests(weights: RoutedWeights<'_>, capacity: usize) -> Result<Vec<u64>> {
         validate_capacity(capacity)?;
-        if capacity == SEGMENTED_CAPACITY {
+        if segmented_capacity(capacity) {
             validate_segmented_metadata(
                 [weights.gate, weights.up, weights.down]
                     .map(|t| (t.info().dtype(), t.info().dimensions())),
@@ -1935,6 +1955,49 @@ mod segmented_tests {
     const MIB: usize = 1024 * 1024;
     const GIB: usize = 1024 * MIB;
     #[test]
+    fn expanded128_proves_two_original_shards_and_separate_complete_envelope() {
+        assert_eq!(segment_capacities(128).unwrap(), [64, 64]);
+        for down in [440, 680] {
+            let mut total = 0;
+            for (row, rows) in [(1440, 640), (1440, 640), (down, 2560)] {
+                let (_, parts) = packed_segments(row, rows, 128).unwrap();
+                assert_eq!(parts, [row * rows * 64; 2]);
+                total += parts
+                    .into_iter()
+                    .map(usize::next_power_of_two)
+                    .sum::<usize>();
+            }
+            assert_eq!(48 * total, 24 * GIB);
+            validate_residency_budget_with_limit(48 * total, 5 * GIB, 31 * GIB, 31 * GIB).unwrap();
+            assert!(validate_residency_budget(48 * total, 5 * GIB, 31 * GIB).is_err());
+            assert!(
+                validate_residency_budget_with_limit(48 * total, 7 * GIB, 31 * GIB, 31 * GIB)
+                    .is_err()
+            );
+        }
+        assert!(check_ordered_segmented(128, true).is_err());
+        for (explicit, block, batch, word, resident) in [
+            (None, true, false, false, true),
+            (Some(5 * GIB), false, false, false, true),
+            (Some(5 * GIB), true, true, false, true),
+            (Some(5 * GIB), true, false, true, true),
+            (Some(5 * GIB), true, false, false, false),
+        ] {
+            assert!(
+                validate_segmented_configuration(
+                    128,
+                    explicit,
+                    5 * GIB,
+                    block,
+                    batch,
+                    word,
+                    resident
+                )
+                .is_err()
+            );
+        }
+    }
+    #[test]
     fn exact_original_segment_charge_and_full_envelope() {
         let mut layer = 0;
         for (row, rows, expert, expected) in [
@@ -1967,7 +2030,7 @@ mod segmented_tests {
         assert_eq!(26 * GIB - base, 1186136064);
         assert_eq!(26 * GIB - base, 1131 * MIB + 196608);
         assert!(packed_segments(usize::MAX, 2, 96).is_err());
-        for cap in [9, 73, 95, 97, 128, usize::MAX] {
+        for cap in [9, 73, 95, 97, 127, 129, usize::MAX] {
             assert!(segment_capacities(cap).is_err());
         }
         assert_eq!(segment_capacities(72).unwrap(), [72]);

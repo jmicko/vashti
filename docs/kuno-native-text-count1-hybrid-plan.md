@@ -707,3 +707,25 @@ disk-read bytes and61267 major page faults over127 following steps, with no
 warm GPU weight uploads. This suggests competition between original GPU-source
 file pages and CPU experts, but neither the hint nor the hypothesis is selected
 as an improvement without complete physical acceptance and counter comparison.
+
+
+### Explicit B70 128-slot profile, 2026-10-08
+
+`intel128` is a separate fixed protected count1 profile, only admitted for Intel
+hardware with the original48-layer2560/640/512 Q4_K gate/up and Q5_0/Q8_0 down
+triples. All banks use two original packed64-slot shards. Original group/rank
+maps and maximum80 private group/status owners remain unchanged; greater slot
+indices are runtime data within the same bounded transient metadata. There is
+no new expert quantization, tensor copy on disk, skipped rank or altered merge.
+Normal profiles retain their original device ceilings and defaults.
+
+Before allocation, verify every original triple and the exact24GiB bank page
+charge. This profile requires an explicit5GiB static cache and31GiB reserved
+limit (including the existing parent admission of private owners, public vectors,
+source window and observed baseline). Keep the original512MiB residency margin;
+actual allocator enforcement remains mandatory. Each segment remains at most
+128MiB. Ordered uploads, batched legacy expert path and word-down remain excluded.
+Both prefill and decode use these original banks; CPU cap10 remains static after
+prefill. Full128 output IDs and all original owning/lifecycle gates still precede
+acceptance. This does not assert that the total model fits in RAM or that the
+expanded bank will improve performance. No API/Vashti/installed changes.

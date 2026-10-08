@@ -76,7 +76,16 @@ host caches. Successfully advised bytes are not a claim of actual reclamation.
 Advice cost is separately reported outside decode time. All128 original IDs,
 full private budgets, fences, erasure and physical recovery remain required.
 123 core tests (3 ignored),485 native tests plus two shader suites,25 Python
-controls and strict all-target Clippy pass. Physical efficacy is pending.
+controls and strict all-target Clippy pass. Source6e74f91 artifact861c20cc… passes the full75/128 fixture with37142ms
+decode (3.4193 tokens/s),50760ms prefill. Advice covers18080460800 source bytes
+in549ms, but warm decode still reads11718238208 bytes and incurs60783 major
+faults: no effective reduction or speed win. Recovery returns50688000B.
+
+The next candidate is explicit `intel128`: two original64-slot shards, exact
+24GiB bank charge,5GiB static cache and31GiB reserved ceiling. Existing profiles
+retain their26/10GiB ceiling. The original source metadata, all-ten-rank merge,
+private inventories and owning proof gates remain. Host and physical acceptance
+are pending; this may improve GPU hit fraction but is not a measured win yet.
 
 The user granted exclusive GPUs. Installed Kuno had an idle managed worker
 holding15978409984 B70 bytes with no active request; a graceful Kuno restart

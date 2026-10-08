@@ -601,7 +601,7 @@ impl Owner {
             .flat_map(|b| b.segments())
             .collect();
         if public.len()
-            != if self.layout.geometry.capacity() == 96 {
+            != if crate::bank_slots::segmented_capacity(self.layout.geometry.capacity()) {
                 6
             } else {
                 3

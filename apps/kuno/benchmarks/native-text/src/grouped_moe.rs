@@ -160,8 +160,8 @@ impl Geometry {
         {
             return Err("grouped MoE public geometry");
         }
-        // Existing96 contract restricts original format/shape. Do not expand it.
-        if capacity == 96
+        // Both explicit two-shard profiles retain the original format/shape.
+        if crate::bank_slots::segmented_capacity(capacity)
             && (gate.dtype != super::Q4_K
                 || up.dtype != super::Q4_K
                 || !matches!(down.dtype, super::Q5_0 | super::Q8_0)
@@ -171,8 +171,8 @@ impl Geometry {
             return Err("grouped segmented original metadata");
         }
         for projection in projections {
-            for count in if capacity == 96 {
-                [64, 32]
+            for count in if crate::bank_slots::segmented_capacity(capacity) {
+                [64, capacity - 64]
             } else {
                 [capacity, 0]
             } {
@@ -235,8 +235,9 @@ impl Geometry {
         slot_count: usize,
         binding_words: [usize; 3],
     ) -> Result<(), &'static str> {
-        let valid = if self.capacity == 96 {
-            (first_slot == 0 && slot_count == 64) || (first_slot == 64 && slot_count == 32)
+        let valid = if crate::bank_slots::segmented_capacity(self.capacity) {
+            (first_slot == 0 && slot_count == 64)
+                || (first_slot == 64 && slot_count == self.capacity - 64)
         } else {
             first_slot == 0 && slot_count == self.capacity
         };
@@ -1516,7 +1517,7 @@ mod tests {
                 Projection::new(Q4_K, 2560, 640, 512).unwrap(),
                 Projection::new(down, 640, 2560, 512).unwrap(),
             ];
-            for capacity in [16, 64, 96] {
+            for capacity in [16, 64, 96, 128] {
                 let default = Geometry::new(projections, 8, capacity).unwrap();
                 let single = Geometry::new(projections, 1, capacity).unwrap();
                 let blocked = single.with_q4_block().unwrap();
@@ -1980,10 +1981,10 @@ mod tests {
                 Projection::new(Q4_K, 2560, 640, 512).unwrap(),
                 Projection::new(down, 640, 2560, 512).unwrap(),
             ];
-            for cap in [16, 64, 72, 96] {
+            for cap in [16, 64, 72, 96, 128] {
                 let g = Geometry::new(p, 8, cap).unwrap();
-                let shards = if cap == 96 {
-                    vec![(0, 64), (64, 32)]
+                let shards = if crate::bank_slots::segmented_capacity(cap) {
+                    vec![(0, 64), (64, cap - 64)]
                 } else {
                     vec![(0, cap)]
                 };
