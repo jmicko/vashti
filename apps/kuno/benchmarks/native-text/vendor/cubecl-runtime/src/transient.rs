@@ -22,7 +22,9 @@ use cubecl_common::bytes::{AllocationController, AllocationProperty, Bytes};
 /// mapped allocation span, including padding. Its map must remain active, and
 /// no other CPU/GPU accessor may use it until the caller unmaps/flushed it.
 pub unsafe fn wipe_mapped_full_span(pointer: *mut u8, length: usize) {
-    let prefix = pointer.align_offset(core::mem::align_of::<u64>()).min(length);
+    let prefix = pointer
+        .align_offset(core::mem::align_of::<u64>())
+        .min(length);
     for i in 0..prefix {
         // SAFETY: inside the caller's full initialized writable span.
         unsafe { pointer.add(i).write_volatile(0) };
@@ -42,10 +44,18 @@ pub unsafe fn wipe_mapped_full_span(pointer: *mut u8, length: usize) {
 
 /// Validate metadata requests, never contents or completion. The backend must
 /// also reject an inactive private-I/O stream. All bindings remain retained.
-pub fn retained_metadata_bindings(bindings: &[crate::server::Binding], stream: cubecl_common::stream_id::StreamId) -> Result<(), crate::server::ServerError> {
-    if !(1..=128).contains(&bindings.len()) || bindings.iter().any(|b|
-        b.stream != stream || b.offset_start.unwrap_or(0) != 0
-        || b.offset_end.unwrap_or(0) != 0 || b.size == 0) {
+pub fn retained_metadata_bindings(
+    bindings: &[crate::server::Binding],
+    stream: cubecl_common::stream_id::StreamId,
+) -> Result<(), crate::server::ServerError> {
+    if !(1..=128).contains(&bindings.len())
+        || bindings.iter().any(|b| {
+            b.stream != stream
+                || b.offset_start.unwrap_or(0) != 0
+                || b.offset_end.unwrap_or(0) != 0
+                || b.size == 0
+        })
+    {
         return Err(crate::server::ServerError::Generic {
             reason: "retained metadata full same-stream binding".into(),
             backtrace: cubecl_common::backtrace::BackTrace::capture(),

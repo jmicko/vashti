@@ -514,8 +514,8 @@ whole-model output parity or a performance win.
 The normal runner requires actual shared dense calls covering every fast dense
 dispatch plus the original-row/router probe markers. Source tests:478 native
 tests, both separate offline shader suites,20 hybrid Python controls and strict
-release all-bin Clippy pass. Complete-model device acceptance and timing are
-pending at this source checkpoint. No installed service, consumer or release
+release all-bin Clippy pass. Complete-model device acceptance and timing were
+pending at this source checkpoint and are now recorded below. No installed service, consumer or release
 change; required Vashti changes: none.
 
 The further explicit `KUNO_LAB_NEXT_SHARED_GDN=1` requires shared Next kernels
@@ -530,8 +530,8 @@ state/publication or cleanup authority is granted to this arithmetic function.
 The counter must cover all36 recurrent stages in each completed decode step.
 Startup compares full candidate/output/status owners and unchanged old state
 against the original checked scalar shader for normal, zero-beta and nonfinite
-columns, including nonzero surrounding intervals. Source gates pass; device
-acceptance and whole-model performance remain pending for this additional mode.
+columns, including nonzero surrounding intervals. Source gates pass; subsequent
+complete B70 acceptance covers all4572 recurrent calls in127 steps, as below.
 
 ## Batched private parameter uploads, 2026-10-08
 
@@ -551,7 +551,7 @@ The runner pins the flag and checks both the actual runtime marker and receipt
 selection. Source gates pass:478 native tests, both offline shader suites,
 50 imported runtime tests,21 hybrid runner controls and strict Clippy for both
 native and imported runtime code. Physical complete-model acceptance and
-performance remain pending for this mode. No API, installed service or Vashti
+performance now pass for the fixed-public B70 cases below. No API, installed service or Vashti
 consumer changes are included.
 
 ## Direct device enqueue experiment, 2026-10-08
@@ -572,4 +572,58 @@ logical/physical ownership, full-budget, finite/publication or normal erasure
 gate is removed. The only additional vendored dependency is the same pinned
 CubeCL0.10 common archive, with original licenses/provenance. It is excluded
 from deployed Kuno dependencies. Distributed collectives and arbitrary private
-requests are outside this experiment. Device acceptance/performance are pending.
+requests are outside this experiment. Fixed-public B70 device acceptance and
+timing now pass, as below; production acceptance remains separate.
+
+## Complete-model shared execution acceptance, 2026-10-08
+
+Source `775d985`, `fc1e89e`, `d351bd6`, `62a52ba` and `1a80d5b` completes the
+operator-to-model transfer on the original mapped Ollama Flash-Next blob.
+The selected v5 inline/intel96 artifact completes the75-prompt/128-output
+fixture with all128 original native IDs,127 following steps in36280ms
+(3.5006 tokens/s),65978ms prefill and3272ms bind. Seed424242/temperature0.
+Its actual29205 CPU misses/31755 GPU hits compare with36916/24044 using
+standard banks; the same inline artifact's standard sample reaches3.3473
+tokens/s with48254ms prefill. These are single ordered samples, not statistical
+or matched Ollama measurements. Prefill and host page behavior prevent treating
+the larger bank as a universal speed improvement. The10-token/s target is unmet.
+
+The exact artifact/source, all13 samples, outer validators and limits are in
+[the aggregate receipt](../apps/kuno/benchmarks/text/receipts/next-shared-speed-20261008.json).
+Normal builds through the batched-parameter step measure1.5190→1.5630→2.8263
+tokens/s. A CPU-profiled sample is excluded from clean timing selection. The
+explicit CPU-Q8 trial fails original128-ID validation and is not selected.
+All accepted full samples pass the original normal/fresh/cancellation/poison
+checks and full1378-owner/818413568-byte MAIN zero audits, source0 and no
+context retirement. Existing runtime/private caps and actual swap0/core0 apply.
+
+The final normal Cargo release build uses `--features direct-device`; no SDK,
+driver or production dependency override. From the frozen v5 artifact metadata,
+the protected runner invocation is:
+
+```sh
+python3 apps/kuno/benchmarks/text/run-native-count1-hybrid-lab.py \
+  --cargo-artifacts /media/jmicko/faststore/kuno-development/next-shared-build-20261008-v5-inline/cargo-artifacts.jsonl \
+  --model /media/jmicko/faststore/ollama/blobs/sha256-89059c880c2f000b24520919d4ba2edd2a8101327c7f8ab33b2280e01addda75 \
+  --card intel --cpu-miss-cap 10 --cpu-workers pooled --cpu-gpu-overlap \
+  --mapped-weights --large-weight-cache --compact-info --batch-tasks \
+  --gpu-router --defer-router-io --retained-metadata --fast-gpu \
+  --next-shared-kernels --next-shared-gdn --info-batch-upload \
+  --device-dispatch inline --bank-profile intel96 --long-fixture \
+  --run-id NEW_PUBLIC_RUN_ID --receipt /tmp/NEW_PUBLIC_RECEIPT.json
+```
+
+Replace both placeholders with fresh public-fixture destinations. Pin the
+normal binary from source `1a80d5b`/SHA256`fe490699…` before running; Cargo's
+mutable target must still match that metadata. Pause installed admission and
+verify exclusive free-GPU access first; the runner does not isolate services
+on its own. Its48-GiB user cgroup independently checks swap0/core0. Resume
+admission and verify actual physical memory after completion.
+
+Current source gates:119 core tests,3 ignored;479 normal/481 direct native
+tests plus two additional offline shader suites each;50 imported runtime tests;
+22 hybrid Python controls; strict all-target Clippy, formatting and provenance.
+No arbitrary-request, quality/full-logit, long-context/soak, mixed-GPU or
+production/native-default acceptance follows. No API or consumer changes;
+required Vashti changes: none. The next speed bottlenecks are CPU expert work
+and fine-grained GPU handoffs, before speculative expert placement/prefetch/MTP.

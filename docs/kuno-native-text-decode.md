@@ -7,6 +7,10 @@ weight access and execution overhead, using10 decode tokens/s as the working
 target without repeating Ollama baselines. The implementation below remains
 laboratory-only until actual connected output, lifecycle and timing acceptance.
 The original ordinary engine settings and installed gateway stay unchanged.
+The later complete fixed-public B70 acceptance is recorded in
+[the current checkpoint](kuno-native-text-checkpoint.md#complete-next-shared-execution-acceptance-2026-10-08).
+It reaches3.5006 tokens/s with explicit shared/dispatch/bank modes;10 remains
+unmet and arbitrary private/native-default inference is not accepted.
 
 The AVX2 CPU expert operator now directly decodes original Q4_K, Q5_0 and Q8_0
 weights into vector registers. It retains F32 activations, separate multiply/add,
@@ -246,8 +250,12 @@ unquantized partial tails retain their existing guarded scratch path.
 An adversarial host gate compares signed zero, subnormals, overflowing finite
 inputs, all nonfinite lane positions and2048 fixed finite bit patterns against
 the original tree, requiring exact final bits or rejection. Existing seven
-format and repeated pooled whole-expert host gates also pass. Complete-model
-device acceptance and throughput remain pending at this source checkpoint.
+format and repeated pooled whole-expert host gates also pass. Subsequent B70
+complete75/128 runs at source `62a52ba` and `1a80d5b` retain all original native
+IDs and full owning erasure. The combined inline/intel96 candidate reaches
+3.5006 tokens/s. No isolated or paired throughput gain is attributed to this
+CPU finish change. See
+[the aggregate receipt](../apps/kuno/benchmarks/text/receipts/next-shared-speed-20261008.json).
 This is an internal Rust arithmetic change; no public API or service is changed.
 
 Use fixed-public data only, numerical acceptance first. Warm the compilation paths, pools, public fixture pages and clocks outside timed samples. Use payload working sets larger than the CPU last-level cache, rotating public experts without saving real request routing. Record device/driver/artifact/binary/CPU worker count, actual page charges, every sample and numeric checks. No heavy concurrent compilation.

@@ -2188,7 +2188,7 @@ the fixed-public laboratory. Source shader suites and strict all-bin Clippy pass
 
 The original Flash-Next Q4 gate/up, Q8/Q5 down, F32 router and Q6 head slabs plus
 512/top10 routing pass shared-kernel operator checks. These operators are not
-connected to complete Next inference: its last whole-model measured path remains
+connected to complete Next inference at that checkpoint: its last whole-model measured path remains
 1.691 tokens/s. The user's next milestone is approximately10 whole-model Next
 tokens/s before speculative FreeToken/Strata work. Avoid repeated Ollama
 baselines or API/lifecycle/frontend work in this speed phase.
@@ -2205,3 +2205,50 @@ At postflight all lab jobs exited, GPU memory recovered and Kuno admission was
 resumed without an active request, queue or recovery latch. Both inference
 listeners and Vashti respond. The broad goal controller remains paused and
 incomplete; this receipt completes the directly authorized resident speed block.
+
+### Complete Next shared execution receipt (2026-10-08)
+
+The user authorized complete Flash-Next transfer after the resident Ornith
+speed result. Kuno owner source `775d985`, `fc1e89e`, `d351bd6`, `62a52ba` and
+`1a80d5b` connects shared packed dense/router and vector recurrent arithmetic,
+batching of distinct privately owned GPU parameter records, exact CPU reduction
+in SIMD registers, and optional direct caller device dispatch. All work stays
+in the isolated native laboratory on `codex/kuno-native-text`. The current
+[owner checkpoint](kuno-native-text-checkpoint.md#complete-next-shared-execution-acceptance-2026-10-08)
+and [count1 contract](kuno-native-text-count1-hybrid-plan.md#complete-model-shared-execution-acceptance-2026-10-08)
+supersede the preceding operator-not-connected and1.691-current statements.
+
+Complete B70 inference now measures3.3473 tokens/s with standard banks and
+3.5006 with96 slots, using original Ollama weights, seed424242/temperature0
+and unchanged128 native output IDs. The selected frozen normal Cargo release
+artifact has explicit `direct-device` feature, source `1a80d5b`, SHA256
+`fe49069954829b2f8514b889b66967564937a67fdaabffe60a58418d437b8ec2`.
+Its127 following steps take36280ms; prefill65978ms is slower than the standard
+sample's48254ms. The10-token/s target remains unmet. Single ordered samples
+do not establish statistical or matched Ollama speed; none was repeated.
+The CPU-Q8 trial fails original-ID validation and is excluded from selection.
+
+119 core tests (3 ignored),479 normal/481 direct native tests, two additional
+offline shader suites each,50 imported runtime tests,22 hybrid Python controls,
+strict all-target Clippy, formatting and provenance pass. Accepted physical
+fixtures pass startup arithmetic probes, fresh continuation, existing
+cancellation/poison recovery and complete1378-owner/818413568-byte normal MAIN
+zero audits/source0, without context retirement. All runs enforce swap0/core0.
+No real prompts, outputs or route traces enter persistence. Exact changed
+commits, artifacts, all13 samples, tests, rejected/profiling limits and postflight
+are in
+[the numeric aggregate](../apps/kuno/benchmarks/text/receipts/next-shared-speed-20261008.json).
+
+No installed binary/configuration, API/catalog/default routing, application
+or release change occurred. **Required Vashti changes: none.** Production
+private workers, arbitrary quality/full-logit/long-context/soak acceptance,
+mixed-card execution and the10-token/s milestone remain outstanding. Next
+work should focus on CPU expert execution and remaining GPU dispatch/readback
+handoffs. Cycle profiling and page-cache counters identify candidates, not
+proven wall-time causes; the full notes retain those distinctions.
+
+All lab jobs exited; admission is resumed with no active/queued request or
+recovery latch. Kuno11434/direct Ollama11435 and Vashti7771 answer HTTP200,
+both inference listeners have no resident model, and B70 physical memory
+returns50688000 bytes. Same-boot Xe fault classifications remain zero. Goal
+controller remains paused and incomplete; this directly requested trial is done.

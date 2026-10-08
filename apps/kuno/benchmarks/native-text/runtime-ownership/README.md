@@ -18,7 +18,11 @@ tracked through normal erasure/inspection. Failed preparation keeps sources
 tracked and unmaps them before the original eraser; it cannot publish a token
 or a clean epoch. No implicit queue staging, pooling, public/private fallback,
 extra main allocation or reduction in owning checks is introduced. The default
-per-record path is unchanged. Device acceptance is pending for this new mode.
+per-record path is unchanged. Complete fixed-public B70 acceptance now passes
+for this mode, including all128 original native IDs and full normal owning
+erasure. The shared/GDN threaded sample measures2.8263 decode tokens/s.
+See [the complete-model receipt](../../text/receipts/next-shared-speed-20261008.json);
+these timings do not establish production/private worker acceptance.
 
 ## Pin and licenses
 
@@ -46,7 +50,12 @@ direct enqueue is not completion or acceptance. The feature is off by default,
 requires explicit protected cap10 `--device-dispatch inline`, and is checked
 against the actual runtime handle's blocking property. The ordinary threaded
 artifact and runner choice remain available. Collective/distributed device
-operations are unsupported by this experiment. Physical acceptance is pending.
+operations are unsupported by this experiment. Protected B70 short and75/128
+complete-model acceptance now passes with the actual blocking-handle marker,
+original output IDs, fresh/cancel/recovery checks and full owning erasure.
+Inline dispatch measures3.3473 tokens/s with standard banks and3.5006 with
+intel96 in single ordered samples; source `1a80d5b`, normal frozen artifact
+`fe490699…`. Production dependencies and default runtime dispatch are unchanged.
 
 ## Small public ownership API
 

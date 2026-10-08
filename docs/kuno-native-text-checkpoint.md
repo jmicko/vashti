@@ -1,12 +1,99 @@
 # Native text checkpoint, 2026-10-08
 
 The user returned the GPUs and authorized resident speed work. The goal
-controller remains paused and incomplete. Resume from **Resident speed
-acceptance** below. The current priority is core execution speed; defer API,
+controller remains paused and incomplete. Resume from **Complete Next shared
+execution acceptance** below. The current priority is core execution speed; defer API,
 extended cancellation and application work. No further Flash-Next Ollama
 baselines are needed. Backend work belongs in the owner worktree
 `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
 `codex/kuno-native-text`; preserve the canonical Vashti checkout and its work.
+
+## Complete Next shared execution acceptance, 2026-10-08
+
+The user authorized transferring the resident Ornith improvements into complete
+Flash-Next inference. This block reaches **3.5006 decode tokens/s** on the B70,
+versus the earlier1.691 artifact. The approximately10-token/s target remains
+unmet. This is an observed laboratory improvement, not a matched Ollama or
+paired historical-artifact comparison. No Ollama baseline was repeated.
+
+Source commits `775d985`, `fc1e89e`, `d351bd6`, `62a52ba` and `1a80d5b` connect
+shared packed dense/router kernels, vector recurrent attention, batched private
+parameter uploads, the exact original CPU reduction in SIMD registers, and
+explicit direct caller device dispatch. Original mapped Ollama weights, routed
+GPU/CPU experts, rank merge, full private budgets and owning erasure remain.
+The uploaded INFO records have distinct slots and ordered copy/task submission;
+the direct device handle retains the original serialized WGPU server and fences.
+These remain opt-in fixed-public lab modes, outside installed dependencies.
+
+| Complete75/128 fixture | Prefill ms | Following127 decode ms | Decode tokens/s |
+| --- | ---: | ---: | ---: |
+| Shared dense/router | 60243 | 83606 | 1.5190 |
+| Plus vector GDN | 53080 | 81255 | 1.5630 |
+| Plus batched private parameters | 49319 | 44935 | 2.8263 |
+| Exact CPU finish,96-slot banks | 54263 | 41974 | 3.0257 |
+| Direct device dispatch, standard banks | 48254 | 37941 | 3.3473 |
+| Direct device dispatch,96-slot banks | 65978 | 36280 | 3.5006 |
+
+Each row is one ordered compiler-idle sample with its actual source/artifact;
+do not infer statistical significance or independent component percentages.
+The final96-slot choice completes29205 CPU misses and31755 GPU hits, versus
+36916/24044 with standard banks. It improves decode modestly but worsens
+prefill. Model bind3272ms follows file warming, not a matched cold-load test.
+Seed424242, temperature0 and all128 original native output IDs are unchanged
+for every accepted long run. The separate CPU-Q8 trial fails the original-ID
+gate and is excluded; its full receipt and failed acceptance are retained.
+
+Selected fixed-public artifact: source
+`1a80d5bfc4b01e5984c10daf5c7002869aa26895`, Cargo feature `direct-device`, SHA256
+`fe49069954829b2f8514b889b66967564937a67fdaabffe60a58418d437b8ec2`, frozen in
+`/media/jmicko/faststore/kuno-development/next-shared-build-20261008-v5-inline`.
+Use explicit inline dispatch/intel96, cap10, pooled CPU workers, overlap,
+mapped weights, large weight cache, compact INFO, task batching, GPU router,
+deferred router IO, retained metadata, fast GPU, shared kernels/GDN and batched
+parameter upload. Exact requested/observed fields, hashes, source identities,
+all13 samples, tests and postflight are in the
+[numeric aggregate](../apps/kuno/benchmarks/text/receipts/next-shared-speed-20261008.json).
+The [count1 contract](kuno-native-text-count1-hybrid-plan.md#complete-model-shared-execution-acceptance-2026-10-08)
+records reproduction and remaining gates.
+
+119 core tests pass with3 ignored; normal/direct native suites pass479/481
+tests plus two separate offline shader suites each.50 imported runtime tests,
+22 hybrid Python controls, strict all-target Clippy, formatting and provenance
+checks pass. All accepted physical samples pass original row/router/GDN probes,
+fresh continuation, the existing cancellation/poison recovery checks and full
+1378-owner/818413568-byte MAIN zero audits, source0, without context retirement.
+Actual48-GiB cgroups enforce swap0/core0. No real prompt, output or route trace
+is stored. These tests do not establish arbitrary-request quality, full-logit
+equivalence, long-context/soak or production worker acceptance.
+
+The next speed work should address CPU expert execution and remaining
+fine-grained GPU handoffs. A12-second public CPU profile samples52.30% of cycles
+in CPU AVX experts and13.30% in the old threaded device server. These are CPU
+cycle shares, not wall-time shares; its profiled model run is excluded from
+clean speed selection. Final cgroup snapshots show major faults/page-cache
+refaults during decode with no swap or OOM, but IO counters are unavailable and
+I/O causality is unproven. GPU phase counters are nested host intervals, not
+isolated kernel timestamps. Mixed-card text execution and speculative expert
+prefetch/MTP remain future experiments.
+
+At postflight all lab jobs exited and Kuno admission is resumed: active=false,
+waiting0, paused=false, recovery_required=false. Kuno11434/direct Ollama11435
+return HTTP200 with no resident model; Vashti7771 returns HTTP200. Intel
+physical VRAM recovers to50688000 bytes; NVIDIA541MiB includes the desktop.
+The same boot has zero classified Xe wedge/timeout/GT-reset/memory-fault
+messages. No installed binary/configuration, API/catalog/default inference,
+Vashti or release change occurred. Required Vashti changes: none. The broader
+goal remains paused and incomplete; this directly authorized trial is finished.
+
+The final checkpoint also formats two earlier imported runtime functions and
+regenerates provenance; those whitespace changes do not alter the benchmarked
+artifact or behavior. The receipt distinguishes its original runtime patch
+hash from the checkpoint patch hash. Imported runtime tests/Clippy are rerun
+after formatting.
+
+The resident/operator checkpoint below is historical. Its statements that
+shared Next arithmetic is not connected and whole-model speed remains1.691
+are superseded by this acceptance.
 
 ## Resident speed acceptance, 2026-10-08
 
@@ -25,7 +112,7 @@ bounds-checked vector/router still measures77.5–78.2. Defaults are unchanged.
 Teacher-forced128-token comparison to Ollama gives121 top1 and7 rank2 matches,
 with identical scalar/fast choices. Free-running Ollama parity is not claimed.
 
-Latest backend source through `ffe1cf0` shares these arithmetic kernels and
+At that earlier checkpoint, backend source through `ffe1cf0` shares these arithmetic kernels and
 validates original Flash-Next Q4/Q5/Q8/F32/Q6 slabs plus512/top10 routing. This
 is an operator port, not yet complete-model integration. Earlier complete Next
 speed remains1.691 tokens/s. The next milestone is approximately10 whole-model

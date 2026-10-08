@@ -88,7 +88,7 @@
     },
     {
       "path": "cubecl-runtime/src/transient.rs",
-      "sha256": "2b23749a4d211a8ffcf9a1f760712741744a5b905eb351c53d1ddff9fa7630d6",
+      "sha256": "83e5df994d95fc8dc4d216964979757f68f37af472c6903bb6da7e4573c3a74e",
       "original_sha256": null
     },
     {
@@ -162,7 +162,7 @@
       "original_sha256": null
     }
   ],
-  "patch_sha256": "1cb2b787a578d46e2edff5bee97222ca9efc8bbf1aa75bd8a26b7d7704bd9415",
+  "patch_sha256": "1beb915493b35a0eaace620548f4252f8cf4c962c6ae5f04c82d317344b38363",
   "lock_sha256": "83550fa6c6d790fdfb62df390fd96b7c9d75b367c1ee6712b980ab2ff67c7288",
   "host_lock_sha256": "b968a383901ba657bdc2b670a0c7d30fc8c6b8c7ae9335c7c231fb827f0b7acf"
 }
