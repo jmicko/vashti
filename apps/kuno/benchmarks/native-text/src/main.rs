@@ -815,12 +815,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if shared_gdn && !next_shared {
         return Err("Shared GDN requires protected shared Next kernels".into());
     }
-    if next_shared && (!fast_gpu || fast_gpu_fault || count1_hybrid_cap.is_none_or(|cap| cap > 10))
-    {
-        return Err(
-            "Shared Next kernels require protected count1 fast GPU mode without fused faults"
-                .into(),
-        );
+    if next_shared && (!fast_gpu || count1_hybrid_cap.is_none_or(|cap| cap > 10)) {
+        return Err("Shared Next kernels require protected count1 fast GPU mode".into());
     }
     if fast_gpu_fault && !fast_gpu {
         return Err("Fused subgroup finite checks require the explicit fast GPU path".into());
@@ -1582,11 +1578,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         "rust_fast_packed_matvec dtype={dtype} rows={rows} cols={cols} max_abs_error={fast_error}"
                     );
                     if fast_gpu_fault {
-                        for case in 0..4 {
+                        for case in 0..if next_shared { 5 } else { 4 } {
                             let mut initial = vec![0f32; 16];
                             initial[2..2 + rows].fill(f32::NAN);
                             if case == 1 {
                                 initial[15] = f32::NAN;
+                            }
+                            if case == 4 {
+                                initial[0] = f32::INFINITY;
                             }
                             let mut fixture_input = input.clone();
                             if case == 2 {
@@ -1596,26 +1595,44 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             let out = client.create_from_slice(f32::as_bytes(&initial));
                             let fixture_x = client.create_from_slice(f32::as_bytes(&fixture_input));
                             let fault = client.create_from_slice(&initial_fault.to_le_bytes());
-                            quant_matvec::fast::packed_single_fault::launch::<WgpuRuntime>(
-                                &client,
-                                quant_matvec::fast::fault_grid(rows, 16, true),
-                                quant_matvec::fast::cube(),
-                                unsafe { ArrayArg::from_raw_parts(w.clone(), words.len()) },
-                                unsafe { ArrayArg::from_raw_parts(fixture_x, input.len()) },
-                                unsafe { ArrayArg::from_raw_parts(out.clone(), 16) },
-                                unsafe { ArrayArg::from_raw_parts(fault.clone(), 1) },
-                                1,
-                                0,
-                                0,
-                                2,
-                                2,
-                                rows,
-                                cols,
-                                dtype,
-                                tensor.info().row_bytes() as usize,
-                                rows,
-                                true,
-                            );
+                            if next_shared {
+                                next_shared::matrix_fault(
+                                    &client,
+                                    next_shared::MatrixSpec::new(rows, cols, dtype)?,
+                                    w.clone(),
+                                    fixture_x,
+                                    out.clone(),
+                                    input.len(),
+                                    16,
+                                    0,
+                                    2,
+                                    fault.clone(),
+                                    rows,
+                                    2,
+                                    true,
+                                )?;
+                            } else {
+                                quant_matvec::fast::packed_single_fault::launch::<WgpuRuntime>(
+                                    &client,
+                                    quant_matvec::fast::fault_grid(rows, 16, true),
+                                    quant_matvec::fast::cube(),
+                                    unsafe { ArrayArg::from_raw_parts(w.clone(), words.len()) },
+                                    unsafe { ArrayArg::from_raw_parts(fixture_x, input.len()) },
+                                    unsafe { ArrayArg::from_raw_parts(out.clone(), 16) },
+                                    unsafe { ArrayArg::from_raw_parts(fault.clone(), 1) },
+                                    1,
+                                    0,
+                                    0,
+                                    2,
+                                    2,
+                                    rows,
+                                    cols,
+                                    dtype,
+                                    tensor.info().row_bytes() as usize,
+                                    rows,
+                                    true,
+                                );
+                            }
                             let out_bytes = ScrubPublicRead(client.read_one(out)?);
                             let values = f32::from_bytes(&out_bytes.0);
                             let fault_bytes = ScrubPublicRead(client.read_one(fault)?);
@@ -1645,7 +1662,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 );
                             }
                         }
-                        println!("rust_fast_packed_fused_fault dtype={dtype} cases=4 passed=true");
+                        println!(
+                            "{}_packed_fused_fault dtype={dtype} cases={} passed=true",
+                            if next_shared {
+                                "next_shared"
+                            } else {
+                                "rust_fast"
+                            },
+                            if next_shared { 5 } else { 4 }
+                        );
                     }
                 }
                 drop(actual_bytes);

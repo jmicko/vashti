@@ -103,7 +103,7 @@ def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False
             raise ValueError("Actual shared GDN calls must cover every completed recurrent layer")
     if shared_gdn and "next_shared_gdn cases=3 numeric_and_owning_checks=true" not in output.splitlines():
         raise ValueError("Independent original GDN numeric/owning probe missing")
-    if shared and (not fast or not gpu_router or fast_fault):
+    if shared and (not fast or not gpu_router):
         raise ValueError("Shared kernels require protected count1 GPU/router mode")
     if shared or "next_shared_kernels" in receipt:
         if receipt.get("next_shared_kernels") is not shared:
@@ -147,7 +147,7 @@ def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False
     fused_calls=receipt.get("observed_fast_dense_fault_calls",0)
     if type(fused_calls) is not int or fused_calls != (calls if fast_fault else 0) or fast_fault and not fast:
         raise ValueError("Actual fused dispatches must cover the requested fast dense path")
-    if fast_fault and any(f"rust_fast_packed_fused_fault dtype={dtype} cases=4 passed=true" not in output.splitlines() for dtype in (0,1,30,12,6,14,8)):
+    if fast_fault and any(f"{'next_shared' if shared else 'rust_fast'}_packed_fused_fault dtype={dtype} cases={5 if shared else 4} passed=true" not in output.splitlines() for dtype in (0,1,30,12,6,14,8)):
         raise ValueError("All seven original formats require fixed fused numeric/tail/poison checks")
     if workers not in ("scoped", "pooled"):
         raise ValueError("Unknown CPU worker mode")
@@ -244,7 +244,7 @@ def worker_environment(model, receipt, workers="scoped", overlap=False, mapped=F
     env["KUNO_LAB_MAPPED_WEIGHTS"] = "1" if mapped else "0"
     env["KUNO_LAB_KERNEL_PROFILE"] = "1" if profile else "0"
     env["KUNO_LAB_FAST_GPU"] = "1" if fast else "0"
-    if shared and (not fast or not gpu_router or fast_fault):
+    if shared and (not fast or not gpu_router):
         raise ValueError("Shared kernels require fast GPU/router mode")
     env["KUNO_LAB_NEXT_SHARED"] = "1" if shared else "0"
     if shared_gdn and not shared:
@@ -324,8 +324,8 @@ def main():
         parser.error("Batched INFO requires --compact-info in protected count1 mode")
     if args.next_shared_gdn and not args.next_shared_kernels:
         parser.error("Shared GDN requires --next-shared-kernels")
-    if args.next_shared_kernels and (not args.fast_gpu or not args.gpu_router or args.fast_gpu_fault):
-        parser.error("Shared kernels require --fast-gpu --gpu-router without fused faults")
+    if args.next_shared_kernels and (not args.fast_gpu or not args.gpu_router):
+        parser.error("Shared kernels require --fast-gpu --gpu-router")
     if args.fast_gpu_fault and not args.fast_gpu:
         parser.error("Fused finite checks require --fast-gpu")
     if args.defer_router_io and (not args.compact_info):

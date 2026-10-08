@@ -957,3 +957,24 @@ and final guards account for the difference from the summed component times.
 No ranks, pointers, weight spans, prompt/output values or request history are
 retained; original private envelopes and all publication/cleanup gates remain.
 Receipts subtract before/after counters at completed model boundaries.
+
+
+### Shared vector projection with original finite fault fusion
+
+Explicit shared kernels may now combine with `--fast-gpu-fault`. The same
+original vector/subgroup arithmetic writes each projected row and ORs its
+nonfinite fault in that writer. The last public row tile independently scans
+every logical output-owner index outside the complete matrix span, preserving
+the removed separate finite kernel's coverage without racing active writes.
+All tiled active rows are covered by their respective writers. Logical owner
+prefixes, strides, foreign stream/fault extents and complete matrix/tile bounds
+reject before launch. Offsets/whole matrix span stay in existing privately
+owned INFO, never pipeline keys. Only public geometry and last-tile selection
+identify the opt-in kernel. No extra MAIN/source allowance or reduced physical
+owner/erasure proof, automatic selection, installed/API/default change.
+All seven original formats require numeric, inactive-suffix-NaN, active-NaN,
+sticky fault and inactive-prefix-infinity startup controls; shared five-case
+controls have independently checked markers. Host checks require the exact
+logical output binding, and the shader uses actual dispatched group counts
+for complete tail coverage on both16/32-lane subgroup sizes.
+Unchanged128 IDs and original complete owning/lifecycle checks precede timing.

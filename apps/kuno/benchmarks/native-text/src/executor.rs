@@ -1748,20 +1748,47 @@ impl<'a> GpuExecutor<'a> {
                         return Err(Error::InvalidBufferLength);
                     }
                     if self.shared_kernels {
-                        if fused || packet.packed_first() != 0 {
+                        if packet.packed_first() != 0 {
                             return Err(Error::InvalidFormat("shared count1 projection contract"));
                         }
-                        crate::next_shared::matrix(
-                            &self.client,
-                            crate::next_shared::MatrixSpec::new(g.rows(), g.columns(), g.dtype())?,
-                            weights,
-                            x.clone(),
-                            y.clone(),
-                            input_words,
-                            output_words,
-                            packet.input_first(),
-                            packet.output_first(),
-                        )?;
+                        if fused {
+                            crate::next_shared::matrix_fault(
+                                &self.client,
+                                crate::next_shared::MatrixSpec::new(
+                                    g.rows(),
+                                    g.columns(),
+                                    g.dtype(),
+                                )?,
+                                weights,
+                                x.clone(),
+                                y.clone(),
+                                input_words,
+                                output_words,
+                                packet.input_first(),
+                                packet.output_first(),
+                                fault.clone(),
+                                m.outputs(),
+                                spans.output_first(),
+                                first + rows == m.outputs(),
+                            )?;
+                            self.fast_dense_fault_calls += 1;
+                        } else {
+                            crate::next_shared::matrix(
+                                &self.client,
+                                crate::next_shared::MatrixSpec::new(
+                                    g.rows(),
+                                    g.columns(),
+                                    g.dtype(),
+                                )?,
+                                weights,
+                                x.clone(),
+                                y.clone(),
+                                input_words,
+                                output_words,
+                                packet.input_first(),
+                                packet.output_first(),
+                            )?;
+                        }
                         self.shared_dense_calls += 1;
                     } else if fused {
                         let tail = first + rows == m.outputs();

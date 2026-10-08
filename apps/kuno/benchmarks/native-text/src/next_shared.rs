@@ -65,11 +65,26 @@ impl MatrixSpec {
             self.dtype, self.rows, self.columns, self.row_bytes
         )
     }
+    fn source_fault(self, tail: bool) -> String {
+        let mut source = self.source()
+            .replace("@group(0) @binding(3) var<uniform> p:Params;",
+                "@group(0) @binding(4) var<uniform> p:Params;\n@group(0) @binding(3) var<storage,read_write> fault:array<atomic<u32>>;")
+            .replace("@builtin(subgroup_size) width:u32)", "@builtin(subgroup_size) width:u32,@builtin(num_workgroups) dispatched:vec3<u32>)")
+            .replace("output[out]=total;", "output[out]=total; if !(abs(total)<=3.4028234663852886e38) {atomicOr(&fault[0],1u);}");
+        if tail {
+            let end = source.rfind('}').expect("shared matrix entrypoint end");
+            // Independent of subgroup width: every lane covers a distinct
+            // owner index. Never read any active row written by another group.
+            source.insert_str(end, "\nlet index=group.x*128u+sg*width+lane;\nlet end=p.d+p.c;\nfor(var i=index;i<arrayLength(&output);i+=128u*dispatched.x) {\nif i<p.d || i>=end {if !(abs(output[i])<=3.4028234663852886e38) {atomicOr(&fault[0],1u);}}\n}\n");
+        }
+        source
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Kernel {
     Matrix(MatrixSpec),
+    MatrixFault(MatrixSpec, bool),
     Router,
     Gdn([usize; 3]),
 }
@@ -78,12 +93,13 @@ impl Kernel {
         CubeDim::new_1d(match self {
             Self::Router => 256,
             Self::Gdn(_) => 32,
-            Self::Matrix(_) => 128,
+            Self::Matrix(_) | Self::MatrixFault(_, _) => 128,
         })
     }
     fn source(self) -> String {
         match self {
             Self::Matrix(spec) => spec.source(),
+            Self::MatrixFault(spec, tail) => spec.source_fault(tail),
             Self::Gdn([head, key, value]) => format!(
                 "const HEAD_DIM:u32={head}u; const KEY_HEADS:u32={key}u; const VALUE_HEADS:u32={value}u;\n{}",
                 include_str!("next_gdn.wgsl")
@@ -147,6 +163,63 @@ pub(crate) fn matrix(
     input_first: usize,
     output_first: usize,
 ) -> Result<()> {
+    matrix_inner(
+        client,
+        spec,
+        weights,
+        input,
+        output,
+        input_words,
+        output_words,
+        input_first,
+        output_first,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn matrix_fault(
+    client: &ComputeClient<WgpuRuntime>,
+    spec: MatrixSpec,
+    weights: Handle,
+    input: Handle,
+    output: Handle,
+    input_words: usize,
+    output_words: usize,
+    input_first: usize,
+    output_first: usize,
+    fault: Handle,
+    matrix_rows: usize,
+    matrix_first: usize,
+    tail: bool,
+) -> Result<()> {
+    matrix_inner(
+        client,
+        spec,
+        weights,
+        input,
+        output,
+        input_words,
+        output_words,
+        input_first,
+        output_first,
+        Some((fault, matrix_rows, matrix_first, tail)),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn matrix_inner(
+    client: &ComputeClient<WgpuRuntime>,
+    spec: MatrixSpec,
+    weights: Handle,
+    input: Handle,
+    output: Handle,
+    input_words: usize,
+    output_words: usize,
+    input_first: usize,
+    output_first: usize,
+    fault: Option<(Handle, usize, usize, bool)>,
+) -> Result<()> {
     if !input_words.is_multiple_of(4)
         || !input_first.is_multiple_of(4)
         || input_first
@@ -165,24 +238,56 @@ pub(crate) fn matrix(
     {
         return Err(Error::InvalidBufferLength);
     }
-    let info =
-        MetadataBindingInfo::custom(vec![input_first as u64 | ((output_first as u64) << 32), 0]);
-    let args = KernelArguments::new()
+    let mut grid = spec.rows.div_ceil(4);
+    let (kernel, second) = if let Some((handle, matrix_rows, matrix_first, tail)) = &fault {
+        if handle.stream != input.stream
+            || output.size_in_used() != output_words as u64 * 4
+            || handle.size_in_used() != 4
+            || *matrix_rows == 0
+            || *matrix_first > output_first
+            || matrix_first
+                .checked_add(*matrix_rows)
+                .is_none_or(|n| n > output_words)
+            || output_first
+                .checked_add(spec.rows)
+                .is_none_or(|n| n > *matrix_first + *matrix_rows)
+            || *matrix_rows > u32::MAX as usize
+            || *matrix_first > u32::MAX as usize
+        {
+            return Err(Error::InvalidBufferLength);
+        }
+        if *tail {
+            grid = grid.max(output_words.div_ceil(128));
+        }
+        (
+            Kernel::MatrixFault(spec, *tail),
+            *matrix_rows as u64 | ((*matrix_first as u64) << 32),
+        )
+    } else {
+        (Kernel::Matrix(spec), 0)
+    };
+    if grid > 65535 {
+        return Err(Error::LimitExceeded("shared matrix fault grid"));
+    }
+    let info = MetadataBindingInfo::custom(vec![
+        input_first as u64 | ((output_first as u64) << 32),
+        second,
+    ]);
+    let mut args = KernelArguments::new()
         .with_buffer(weights.binding())
         .with_buffer(input.binding())
         .with_buffer(output.binding())
         .with_info(info);
-    // SAFETY: exact supported packing, aligned complete vector reads and all
-    // writes proved above; parent owns disjoint buffers and original live lease.
-    // Public grid covers every row even on16-lane subgroups; row guard rejects
-    // extra cubes. INFO's existing Drop and stream audit erase offsets.
-    unsafe {
-        client.launch_unchecked(
-            Box::new(Kernel::Matrix(spec)),
-            CubeCount::Static(spec.rows.div_ceil(4) as u32, 1, 1),
-            args,
-        );
+    if let Some((handle, _, _, _)) = fault {
+        args = args.with_buffer(handle.binding());
     }
+    // SAFETY: original supported packed geometry/alignment, disjoint arena
+    // owners and all runtime spans proved above. Tail work reads only outside
+    // the complete matrix span; every writer validates its own finite result.
+    unsafe {
+        client.launch_unchecked(Box::new(kernel), CubeCount::Static(grid as u32, 1, 1), args);
+    }
+
     Ok(())
 }
 
@@ -538,17 +643,59 @@ pub(crate) fn probe_gdn(
 mod tests {
     use super::*;
     #[test]
+    fn fused_tail_grid_reads_every_inactive_owner_index_and_no_active_writer() {
+        for width in [16usize, 32] {
+            for (rows, first, total, words) in [
+                (7usize, 3usize, 7usize, 26usize),
+                (11, 7, 75, 512),
+                (1, 0, 1, 8192),
+            ] {
+                let grid = rows.div_ceil(4).max(words.div_ceil(128));
+                let mut seen = vec![0usize; words];
+                for group in 0..grid {
+                    for sg in 0..128 / width {
+                        for lane in 0..width {
+                            for i in (group * 128 + sg * width + lane..words).step_by(grid * 128) {
+                                if i < first || i >= first + total {
+                                    seen[i] += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+                for (i, n) in seen.into_iter().enumerate() {
+                    assert_eq!(n, usize::from(i < first || i >= first + total));
+                }
+            }
+        }
+        let spec = MatrixSpec::new(7, 256, 12).unwrap();
+        let source = spec.source_fault(true);
+        assert!(source.contains("@binding(3) var<storage,read_write> fault"));
+        assert!(source.contains("@binding(4) var<uniform> p"));
+        assert!(
+            source.contains("num_workgroups")
+                && !spec.source_fault(false).contains("let index=group.x")
+        );
+    }
+
+    #[test]
     fn all_original_formats_and_router_validate_without_private_pipeline_keys() {
         for dtype in [0, 1, 30, 6, 8, 12, 14] {
-            let k = Kernel::Matrix(MatrixSpec::new(7, 256, dtype).unwrap());
-            let module = wgpu::naga::front::wgsl::parse_str(&k.source()).unwrap();
-            wgpu::naga::valid::Validator::new(
-                wgpu::naga::valid::ValidationFlags::all(),
-                wgpu::naga::valid::Capabilities::SUBGROUP
-                    | wgpu::naga::valid::Capabilities::SHADER_FLOAT16_IN_FLOAT32,
-            )
-            .validate(&module)
-            .unwrap();
+            let spec = MatrixSpec::new(7, 256, dtype).unwrap();
+            for k in [
+                Kernel::Matrix(spec),
+                Kernel::MatrixFault(spec, false),
+                Kernel::MatrixFault(spec, true),
+            ] {
+                let module = wgpu::naga::front::wgsl::parse_str(&k.source()).unwrap();
+                wgpu::naga::valid::Validator::new(
+                    wgpu::naga::valid::ValidationFlags::all(),
+                    wgpu::naga::valid::Capabilities::SUBGROUP
+                        | wgpu::naga::valid::Capabilities::SHADER_FLOAT16_IN_FLOAT32,
+                )
+                .validate(&module)
+                .unwrap();
+            }
         }
         let module = wgpu::naga::front::wgsl::parse_str(&Kernel::Router.source()).unwrap();
         wgpu::naga::valid::Validator::new(

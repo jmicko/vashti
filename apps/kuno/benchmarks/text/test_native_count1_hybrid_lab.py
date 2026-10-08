@@ -206,10 +206,14 @@ class HybridLabTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 LAB.validate_receipt(value, "intel", 10, output.replace(marker, ""), fast=True, gpu_router=True, shared=True)
         for kwargs in ({"shared": True}, {"shared": True, "fast": True},
-                       {"shared": True, "fast": True, "gpu_router": True, "fast_fault": True},
                        {"shared": 1, "fast": True, "gpu_router": True}):
             with self.assertRaises(ValueError):
                 LAB.worker_environment("/original/model", "/public/receipt", **kwargs)
+        combined=copy.deepcopy(value);combined.update(fast_gpu_fault=True,observed_fast_dense_fault_calls=5264)
+        fused_output=output+"\n"+"\n".join(f"next_shared_packed_fused_fault dtype={d} cases=5 passed=true" for d in (0,1,30,12,6,14,8))
+        LAB.validate_receipt(combined,"intel",10,fused_output,fast=True,gpu_router=True,shared=True,fast_fault=True)
+        with self.assertRaises(ValueError):LAB.validate_receipt(combined,"intel",10,fused_output.replace("next_shared_packed_fused_fault dtype=14 cases=5 passed=true",""),fast=True,gpu_router=True,shared=True,fast_fault=True)
+        LAB.worker_environment("/original/model", "/public/receipt", fast=True, gpu_router=True, shared=True,fast_fault=True)
         env = LAB.worker_environment("/original/model", "/public/receipt", fast=True, gpu_router=True, shared=True)
         self.assertEqual(env["KUNO_LAB_NEXT_SHARED"], "1")
         value.update(next_shared_gdn=True, observed_shared_gdn_calls=252)

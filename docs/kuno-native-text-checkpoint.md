@@ -13,7 +13,7 @@ baselines are needed. Backend work belongs in the owner worktree
 
 ## Active overnight offload run, 2026-10-08
 
-The current accepted best is4.2342 tokens/s (144 slots, original full fixture);
+The current accepted best is5.1502 tokens/s (144 slots, original full fixture);
 10 tokens/s remains unmet. The preceding block established3.5006 tokens/s. Source
 `4cf40f3` adds specialized F16C original CPU packed loops with120 core tests,
 3 ignored and strict Clippy. Its normal frozen direct-device artifact
@@ -225,7 +225,23 @@ are explicitly enabled only in the fixed-public native lab. This isolates
 CPU math/read wait from the broader host enqueue interval; no private trace
 or installed/API change.128 core tests (3 ignored),491 native tests and both
 shader suites,33 Python controls and strict all-target Clippy pass. Physical
-diagnostic remains pending.
+source9c4ddef/artifact412f3940 passes all original full-model/owning/lifecycle
+gates,24659ms decode (5.1502 tokens/s). CPU prepare347049742ns, gate/up
+1988165674ns, down1076907721ns, total3484611488ns over127 steps. Warm
+readbytes17580032, majorfaults572; the CPU set is now largely warm. Native
+CPU experts consume27.44ms/token and host total194.17ms/token, so remaining
+work focuses on execution/fences rather than more CPU math tuning.
+The existing fixed-public scheduling diagnostic measures128 broadcasts in
+1654/1813us versus scoped60173/57425us; this is not model speed.
+
+The next explicit shared vector projection fuses the original finite fault
+coverage into unchanged arithmetic and last-tile owner reads, reducing one
+separate kernel per projection. Source checks pass492 native tests, both offline
+shader suites,33 Python controls and strict all-target Clippy; physical
+acceptance is pending. The warm original native-clear control on the exactv20
+artifact passes all128 IDs and owning/lifecycle gates, but4.9075 tokens/s
+with16384 warm read bytes does not improve the5.1502 sample. Native clears
+remain unselected.
 
 The user granted exclusive GPUs. Installed Kuno had an idle managed worker
 holding15978409984 B70 bytes with no active request; a graceful Kuno restart
