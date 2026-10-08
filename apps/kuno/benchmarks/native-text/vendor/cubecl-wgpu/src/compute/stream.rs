@@ -688,6 +688,8 @@ impl WgpuStream {
         &mut self,
         descriptors: Vec<(WgpuResource, Shape, usize)>,
     ) -> DynFut<Result<Vec<Bytes>, ServerError>> {
+        let scoped = self.transient_io.as_ref().unwrap().reuse_active();
+        let mut setup_timer = super::transient_io::ScopedReadTimer::new(scoped, 0);
         let mutation = self.transient_io.as_ref().unwrap().mutation_guard();
         self.compute_pass = None;
         let scopes = super::transient_io::IoScopes::new(&self.device);
@@ -719,6 +721,8 @@ impl WgpuStream {
                 self.tasks_count += 2;
                 pending.push(Some(entry));
             }
+            setup_timer.finish();
+            let _flush_timer = super::transient_io::ScopedReadTimer::new(scoped, 1);
             self.flush(StreamErrorMode {
                 ignore: false,
                 flush: true,
@@ -732,6 +736,7 @@ impl WgpuStream {
                 Err(super::transient_io::fault("private readback setup failed"))
             });
         }
+        let mut map_timer = super::transient_io::ScopedReadTimer::new(scoped, 2);
         let scopes = super::transient_io::IoScopes::new(&self.device);
         let inline_readback = self.transient_io.as_ref().unwrap().reads_inline();
         // One original bounded native map window starts before any request.
@@ -786,6 +791,7 @@ impl WgpuStream {
         } else {
             Some(self.poll.start_polling())
         };
+        map_timer.finish();
         mutation.accept();
         Box::pin(async move {
             if !inline_readback {
