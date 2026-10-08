@@ -29,7 +29,35 @@ geometry, rank arithmetic, private/source budget or publication/erasure gate
 changes. See the
 [cache-admission contract](kuno-native-text-count1-hybrid-plan.md#bounded-dynamic-cache-admission-experiment-2026-10-08).
 482 direct native tests plus two offline shader suites and23 Python controls
-pass. Mixed-cap physical correctness and timing are pending.
+pass. Mixed-cap physical correctness and timing now pass (source5ed5c8c,
+protected-launch correction3f72acb, artifact8733aaec…): cap5/intel96 completes
+all128 IDs with37595ms decode (3.3781 tokens/s),50682ms prefill,38728 warm
+GPU hits and1703 warm GPU expert uploads (5632921600 bytes), and20529 CPU
+misses. Warm weight reads add3923ms. It is not a speed win over cap10.
+
+Source d9d5193 ports the GPU count1 expert projections to packed-vector/
+subgroup math on original banks and owning spans. Source6253828 batches the
+seven original MoE scratch clears via ordered native buffer clears; the same
+completed fences, transient-I/O errors, and whole-owning zero audits remain.
+Both full75/128 B70/intel96 runs pass all128 IDs plus fresh/poison/cancellation/
+full-owning gates. Vector-only decode36821ms (3.4491 tokens/s), prefill48214ms;
+plus clears decode37318ms (3.4032 tokens/s), prefill52038ms. These single ordered
+samples establish correctness, not a speed improvement. Frozen artifacts are
+d99bcffb… and4ffe5a7b… under next-offload-build-20261008-v3/v4; receipts live in
+the same next-offload-device directory.484 native tests plus two shader suites
+and strict Clippy pass. The updated runtime patch SHA is
+0f4137174f5de0e53caf1e30fc517c6e9822ca1861ca628080a78045e707b0d9.
+Physical Intel memory returns50688000 bytes after each completed fixture.
+
+The next CPU candidate is a separate compiled `cpu-fma` feature, explicitly
+selected in the protected runner. It keeps original Q4_K/Q5_0/Q8_0 weights,
+finite/cancel/ownership guards, and call-local wiping scratch, while using
+FMA and32 accumulated lanes. Its reduction round points differ; ordinary
+Avx2/Portable and installed inference remain unchanged. Independent f64 row
+checks use an L1 forward-error bound; complete synthetic expert checks use an
+infinity-norm error bound because cancelled elements can approach zero.
+The original128 model IDs remain a mandatory, unchanged acceptance gate.
+122 core tests pass with3 ignored; compiled/native device acceptance is pending.
 
 The user granted exclusive GPUs. Installed Kuno had an idle managed worker
 holding15978409984 B70 bytes with no active request; a graceful Kuno restart

@@ -793,6 +793,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let long_fixture = count1_environment_opt_in(&mode, "KUNO_LAB_LONG_FIXTURE")?;
     let cpu_q8 = count1_environment_opt_in(&mode, "KUNO_LAB_CPU_Q8")?;
+    if cfg!(feature = "cpu-fma")
+        && (mode != "resident-count1-hybrid-chat"
+            || !count1_pooled
+            || cpu_q8
+            || !kuno_text::cpu_expert::fma_available())
+    {
+        return Err("Compiled CPU FMA requires explicit pooled protected count1 float mode and AVX2/F16C/FMA".into());
+    }
     let large_weight_cache = count1_environment_opt_in(&mode, "KUNO_LAB_LARGE_WEIGHT_CACHE")?;
     let compact_info = count1_environment_opt_in(&mode, "KUNO_LAB_COMPACT_INFO")?;
     let info_batch_upload = count1_environment_opt_in(&mode, "KUNO_LAB_INFO_BATCH_UPLOAD")?;
@@ -2220,6 +2228,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     serde_json::json!(executor.fast_dense_fault_calls);
                 receipt["long_fixture"] = serde_json::json!(long_fixture);
                 receipt["cpu_q8_activations"] = serde_json::json!(cpu_q8);
+                receipt["cpu_fma_arithmetic"] = serde_json::json!(cfg!(feature = "cpu-fma"));
                 receipt["large_weight_cache"] = serde_json::json!(large_weight_cache);
                 receipt["compact_info"] = serde_json::json!(compact_info);
                 receipt["info_batch_upload"] = serde_json::json!(info_batch_upload);

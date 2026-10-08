@@ -166,10 +166,15 @@ impl Config {
             return Err(error());
         }
         let plan = WorkerPlan::physical(16)?;
-        let operator = if pooled {
-            ExpertOperator::new_pooled(plan, Backend::Avx2)?
+        let backend = if cfg!(feature = "cpu-fma") {
+            Backend::Avx2Fma
         } else {
-            ExpertOperator::new(plan, Backend::Avx2)?
+            Backend::Avx2
+        };
+        let operator = if pooled {
+            ExpertOperator::new_pooled(plan, backend)?
+        } else {
+            ExpertOperator::new(plan, backend)?
         };
         self.cpu_operator = Some(Arc::new(if q8 {
             operator.with_q8_activations()?

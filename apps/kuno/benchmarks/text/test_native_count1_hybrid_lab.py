@@ -44,6 +44,16 @@ def completion(cap):
 
 
 class HybridLabTests(unittest.TestCase):
+    def test_cpu_fma_arithmetic_is_explicit_typed_and_separate_from_q8(self):
+        value=receipt("intel",10)
+        value.update(cpu_fma_arithmetic=True,count1_hybrid_cpu_workers="pooled",observed_count1_hybrid_cpu_workers="pooled")
+        LAB.validate_receipt(value,"intel",10,completion(10),workers="pooled",cpu_fma=True)
+        for bad in (None,False,1,"true"):
+            wrong=copy.deepcopy(value);wrong["cpu_fma_arithmetic"]=bad
+            with self.assertRaises(ValueError):LAB.validate_receipt(wrong,"intel",10,completion(10),workers="pooled",cpu_fma=True)
+        with self.assertRaises(ValueError):LAB.validate_receipt(value,"intel",10,completion(10),workers="pooled")
+        with self.assertRaises(ValueError):LAB.validate_receipt(value,"intel",10,completion(10),workers="pooled",cpu_fma=True,cpu_q8=True)
+        with self.assertRaises(ValueError):LAB.validate_receipt(value,"intel",10,completion(10),cpu_fma=True)
     def test_inline_dispatch_requires_compiled_runtime_evidence(self):
         value=receipt("intel",10)
         value.update(device_dispatch="inline",observed_inline_device_dispatch=True)
@@ -402,6 +412,8 @@ class HybridLabTests(unittest.TestCase):
         for valid in (False, True):
             with tempfile.TemporaryDirectory() as directory:
                 target = pathlib.Path(directory) / "receipt.json"
+                build = pathlib.Path(directory) / "build.jsonl"
+                build.write_text(json.dumps({"reason":"compiler-artifact","target":{"name":"kuno-text-lab"},"executable":"/frozen","features":[]})+"\n")
                 command_seen = []
                 def launch(command, **options):
                     command_seen.extend(command)
@@ -410,7 +422,7 @@ class HybridLabTests(unittest.TestCase):
                         value["completed_cpu_misses"] = 0
                     target.write_text(json.dumps(value))
                     return SimpleNamespace(stdout=io.StringIO(completion(10)), wait=lambda: 0)
-                args = ["lab", "--cargo-artifacts", "/build.jsonl", "--model", "/original/model",
+                args = ["lab", "--cargo-artifacts", str(build), "--model", "/original/model",
                         "--card", "intel", "--cpu-miss-cap", "10", "--run-id", "test",
                         "--receipt", str(target)]
                 with mock.patch.object(LAB.BASE, "cargo_binary", return_value=(pathlib.Path("/frozen"), "binary", "build")), \

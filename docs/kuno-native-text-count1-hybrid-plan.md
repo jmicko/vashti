@@ -658,3 +658,25 @@ stationary residency from actual cache adaptation. All original128 native IDs,
 fresh/cancel/poison and full owning audits precede performance acceptance. A
 smaller CPU fraction may lose to PCIe transfer; it is not selected by assumption.
 This backend-only laboratory change requires no Vashti or API work.
+
+
+### Separate CPU FMA candidate, 2026-10-08
+
+`cpu-fma` is an off-by-default native-lab Cargo feature. The protected count1
+runner must independently select `--cpu-fma`, pooled workers and original-float
+activations. Actual Cargo features and the typed `cpu_fma_arithmetic` receipt
+must agree; missing/mismatched flags or Q8 activation arithmetic reject before
+inference. The feature's native entry point rejects other modes or a CPU
+without AVX2/F16C/FMA. It selects `Backend::Avx2Fma` explicitly; normal CPU
+backends, deployment builds and API choices are unchanged.
+
+This candidate reconstructs original packed weights and uses fused products
+plus32 accumulated lanes instead of the exact64-lane round-point policy. It
+retains the same source/private limits, input/activation/partial owners,
+physical16-worker plan, finite checks, cancellation, joined consumers and
+wiping scratch. No private cache or new staging is introduced. Other supported
+formats retain the existing original CPU decoder. Independent f64 row tests
+bound forward error relative to the L1 product norm; synthetic whole-expert
+error is bounded by the reference output infinity norm. Neither proves model
+quality. The existing complete128 original output-ID comparison, full fences,
+owning erasure and physical recovery remain mandatory before speed acceptance.

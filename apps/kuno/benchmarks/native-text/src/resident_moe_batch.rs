@@ -400,7 +400,12 @@ impl Workspace {
             || *self.policy.chunk != 0
             || (overlap && !operator.workers_pooled())
             || operator.worker_count() != 16
-            || operator.backend() != kuno_text::cpu_expert::Backend::Avx2
+            || operator.backend()
+                != if cfg!(feature = "cpu-fma") {
+                    kuno_text::cpu_expert::Backend::Avx2Fma
+                } else {
+                    kuno_text::cpu_expert::Backend::Avx2
+                }
         {
             return Err(err("native count1 explicit constructor reservation"));
         }

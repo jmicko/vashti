@@ -34,8 +34,11 @@ def completion(cap, deferred=False):
     ) + ((f"public_count1_hybrid_mid_token_cancel cap={cap} layer=47 erased=true",) if deferred else ())
 
 
-def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False, metadata=False, banks="standard", shared=False, shared_gdn=False, info_batch_upload=False, dispatch="threaded"):
+def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False, metadata=False, banks="standard", shared=False, shared_gdn=False, info_batch_upload=False, dispatch="threaded", cpu_fma=False):
     validate_cap(cap)
+    if cpu_fma or "cpu_fma_arithmetic" in receipt:
+        if receipt.get("cpu_fma_arithmetic") is not cpu_fma or (cpu_fma and (workers != "pooled" or cpu_q8)):
+            raise ValueError("Explicit CPU FMA arithmetic does not match selection")
     if dispatch not in ("threaded","inline"):
         raise ValueError("Inline dispatch requires compiled protected count1 mode")
     if dispatch=="inline" or "device_dispatch" in receipt:
@@ -222,6 +225,7 @@ def main():
     parser.add_argument("--next-shared-gdn", action="store_true")
     parser.add_argument("--long-fixture", action="store_true")
     parser.add_argument("--cpu-q8", action="store_true")
+    parser.add_argument("--cpu-fma", action="store_true")
     parser.add_argument("--large-weight-cache", action="store_true")
     parser.add_argument("--compact-info", action="store_true")
     parser.add_argument("--info-batch-upload", action="store_true")
@@ -255,11 +259,17 @@ def main():
         parser.error("Deferred router IO requires --compact-info and a bounded --cpu-miss-cap")
     if not re.fullmatch(r"[a-z0-9-]{1,48}", args.run_id):
         parser.error("run-id must be 1..48 lowercase letters, digits or hyphens")
+    if args.cpu_fma and (args.cpu_workers != "pooled" or args.cpu_q8):
+        parser.error("CPU FMA requires pooled original-float arithmetic")
     target = args.receipt.resolve()
     metadata = target.with_suffix(target.suffix + ".run.json")
     if target.exists() or metadata.exists():
         parser.error("Refusing to replace an existing receipt or run record")
     frozen, identity, artifacts_identity = BASE.cargo_binary(args.cargo_artifacts)
+    artifacts = [json.loads(line) for line in args.cargo_artifacts.read_text().splitlines()]
+    compiled = next(r for r in artifacts if r.get("reason")=="compiler-artifact" and r.get("target",{}).get("name")=="kuno-text-lab" and r.get("executable"))
+    if ("cpu-fma" in compiled.get("features",[])) is not args.cpu_fma:
+        parser.error("CPU FMA must match the independently selected compiled artifact")
     command = [
         "systemd-run", "--user", "--unit=kuno-user-" + args.run_id,
         "--collect", "--wait", "--pipe", "--property=MemorySwapMax=0",
@@ -284,9 +294,10 @@ def main():
         raise SystemExit("Missing whole-model hybrid receipt")
     snapshot = target.read_bytes()
     receipt = json.loads(snapshot)
-    validate_receipt(receipt, args.card, args.cpu_miss_cap, "".join(lines), args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault,args.defer_router_io,args.gpu_router,args.retained_metadata,args.bank_profile,args.next_shared_kernels,args.next_shared_gdn,args.info_batch_upload,args.device_dispatch)
+    validate_receipt(receipt, args.card, args.cpu_miss_cap, "".join(lines), args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault,args.defer_router_io,args.gpu_router,args.retained_metadata,args.bank_profile,args.next_shared_kernels,args.next_shared_gdn,args.info_batch_upload,args.device_dispatch,args.cpu_fma)
     record = {
         "scope": "fixed-public-count1-hybrid-output-and-lifecycle-only",
+        "requested_cpu_fma_arithmetic": args.cpu_fma,
         "cargo_artifacts_sha256": artifacts_identity, "frozen_executable_sha256": identity,
         "card": args.card, "fixture": MODE, "cpu_miss_cap": args.cpu_miss_cap,
         "receipt_sha256": BASE.digest(snapshot), "protected_lifecycle_completion_checked": True,

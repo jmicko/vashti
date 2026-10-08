@@ -31,6 +31,9 @@ mod quantized;
 pub enum Backend {
     Portable,
     Avx2,
+    /// Explicit original-weight FMA/32-lane candidate. Floating reduction
+    /// order differs; never selected automatically or used as a fallback.
+    Avx2Fma,
 }
 
 /// Public hardware-only worker configuration; never holds request data.
@@ -313,6 +316,9 @@ impl ExpertOperator {
     pub fn new(workers: WorkerPlan, backend: Backend) -> Result<Self> {
         if backend == Backend::Avx2 && !avx2_available() {
             return Err(Error::InvalidFormat("CPU expert AVX2 unavailable"));
+        }
+        if backend == Backend::Avx2Fma && !fma_available() {
+            return Err(Error::InvalidFormat("CPU expert AVX2/F16C/FMA unavailable"));
         }
         Ok(Self {
             workers,
@@ -1285,6 +1291,7 @@ fn dot_row(
             finite(result, "CPU expert non-finite projection")
         }
         Backend::Avx2 => avx::dot(dtype, packed, input, scratch, cancel),
+        Backend::Avx2Fma => avx::dot_fma(dtype, packed, input, scratch, cancel),
     }
 }
 
@@ -1303,6 +1310,18 @@ pub fn avx2_available() -> bool {
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     {
         std::is_x86_feature_detected!("avx2")
+    }
+    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+    {
+        false
+    }
+}
+pub fn fma_available() -> bool {
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    {
+        avx2_available()
+            && std::is_x86_feature_detected!("f16c")
+            && std::is_x86_feature_detected!("fma")
     }
     #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
     {
@@ -1782,6 +1801,169 @@ mod avx {
         unsafe { finish(&sums) }
     }
 
+    pub(super) fn dot_fma(
+        dtype: TensorType,
+        packed: &[u8],
+        input: &[f32],
+        scratch: &mut Scratch,
+        cancel: &AtomicBool,
+    ) -> Result<f32> {
+        if !fma_available() {
+            return Err(Error::InvalidFormat("CPU expert AVX2/F16C/FMA unavailable"));
+        }
+        // SAFETY: all three features checked; dot_row proved original packing.
+        unsafe {
+            match dtype {
+                TensorType::Q4K => packed_q4_fma(packed, input, cancel),
+                TensorType::Q5_0 => packed_32_fma::<true>(packed, input, cancel),
+                TensorType::Q8_0 => packed_32_fma::<false>(packed, input, cancel),
+                _ => run(dtype, packed, input, scratch, cancel),
+            }
+        }
+    }
+
+    #[target_feature(enable = "avx2,f16c,fma")]
+    unsafe fn packed_q4_fma(packed: &[u8], input: &[f32], cancel: &AtomicBool) -> Result<f32> {
+        let mut sums = Zeroizing::new(Sums([_mm256_setzero_ps(); 8]));
+        let mask = _mm256_set1_epi32(15);
+        for (index, block) in packed.chunks_exact(144).enumerate() {
+            check_cancel(cancel)?;
+            // SAFETY: this target has F16C; each full block has its four-byte
+            // half pair. Finite binary16 scales have exact binary32 encodings.
+            let (scale, minimum) =
+                unsafe { half_pair(u32::from_le_bytes(block[..4].try_into().unwrap()))? };
+            let first = index * 256;
+            macro_rules! group {
+                ($g:literal) => {{
+                    let (s0, m0) = q4_factors(&block[4..16], $g * 2, scale, minimum);
+                    let (s1, m1) = q4_factors(&block[4..16], $g * 2 + 1, scale, minimum);
+                    let s0 = _mm256_set1_ps(s0);
+                    let m0 = _mm256_set1_ps(m0);
+                    let s1 = _mm256_set1_ps(s1);
+                    let m1 = _mm256_set1_ps(m1);
+                    macro_rules! vector {
+                        ($v:literal) => {{
+                            // SAFETY: full144-byte Q4 block, full256-value
+                            // input block. Literal g<4/v<4 bounds every load;
+                            // original row geometry was checked by dot_row.
+                            unsafe {
+                                let bytes = _mm_loadl_epi64(
+                                    block.as_ptr().add(16 + $g * 32 + $v * 8).cast(),
+                                );
+                                let quants = _mm256_cvtepu8_epi32(bytes);
+                                let low = _mm256_cvtepi32_ps(_mm256_and_si256(quants, mask));
+                                let high = _mm256_cvtepi32_ps(_mm256_srli_epi32::<4>(quants));
+                                let w0 = _mm256_sub_ps(_mm256_mul_ps(s0, low), m0);
+                                let w1 = _mm256_sub_ps(_mm256_mul_ps(s1, high), m1);
+                                let x0 =
+                                    _mm256_loadu_ps(input.as_ptr().add(first + $g * 64 + $v * 8));
+                                let x1 = _mm256_loadu_ps(
+                                    input.as_ptr().add(first + $g * 64 + 32 + $v * 8),
+                                );
+                                sums.0[$v] = _mm256_fmadd_ps(w0, x0, sums.0[$v]);
+                                sums.0[$v] = _mm256_fmadd_ps(w1, x1, sums.0[$v]);
+                            }
+                        }};
+                    }
+                    vector!(0);
+                    vector!(1);
+                    vector!(2);
+                    vector!(3);
+                }};
+            }
+            group!(0);
+            group!(1);
+            group!(2);
+            group!(3);
+        }
+        // SAFETY: this target has AVX2 and the bounded32 accumulated lanes.
+        unsafe { finish(&sums) }
+    }
+
+    #[target_feature(enable = "avx2,f16c,fma")]
+    unsafe fn packed_32_fma<const Q5: bool>(
+        packed: &[u8],
+        input: &[f32],
+        cancel: &AtomicBool,
+    ) -> Result<f32> {
+        let mut sums = Zeroizing::new(Sums([_mm256_setzero_ps(); 8]));
+        let bytes_per_block = if Q5 { 22 } else { 34 };
+        macro_rules! block32 {
+            ($block:expr, $first:expr, $bank:literal) => {{
+                check_cancel(cancel)?;
+                let block = $block;
+                let first = $first;
+                // SAFETY: full original32-value block and detected F16C.
+                let (scale, _) =
+                    unsafe { half_pair(u32::from(u16::from_le_bytes([block[0], block[1]])))? };
+                let scale = _mm256_set1_ps(scale);
+                let high = if Q5 {
+                    u32::from_le_bytes(block[2..6].try_into().unwrap())
+                } else {
+                    0
+                };
+                macro_rules! vector {
+                    ($v:literal) => {{
+                        // SAFETY: literal v<4 bounds the eight-byte packed load
+                        // and eight-value activation load in the original full
+                        // block. Q5/8 dtype geometry was checked by dot_row.
+                        unsafe {
+                            let quants = if Q5 {
+                                let bytes =
+                                    _mm_loadl_epi64(block.as_ptr().add(6 + ($v * 8) % 16).cast());
+                                let bytes = _mm256_cvtepu8_epi32(bytes);
+                                let low = if $v < 2 {
+                                    _mm256_and_si256(bytes, _mm256_set1_epi32(15))
+                                } else {
+                                    _mm256_srli_epi32::<4>(bytes)
+                                };
+                                let shifts = _mm256_setr_epi32(
+                                    $v * 8,
+                                    $v * 8 + 1,
+                                    $v * 8 + 2,
+                                    $v * 8 + 3,
+                                    $v * 8 + 4,
+                                    $v * 8 + 5,
+                                    $v * 8 + 6,
+                                    $v * 8 + 7,
+                                );
+                                let bit = _mm256_and_si256(
+                                    _mm256_srlv_epi32(_mm256_set1_epi32(high as i32), shifts),
+                                    _mm256_set1_epi32(1),
+                                );
+                                _mm256_sub_epi32(
+                                    _mm256_or_si256(low, _mm256_slli_epi32::<4>(bit)),
+                                    _mm256_set1_epi32(16),
+                                )
+                            } else {
+                                let bytes = _mm_loadl_epi64(block.as_ptr().add(2 + $v * 8).cast());
+                                _mm256_cvtepi8_epi32(bytes)
+                            };
+                            let weight = _mm256_mul_ps(scale, _mm256_cvtepi32_ps(quants));
+                            let activation = _mm256_loadu_ps(input.as_ptr().add(first + $v * 8));
+                            sums.0[$v] = _mm256_fmadd_ps(weight, activation, sums.0[$v]);
+                        }
+                    }};
+                }
+                vector!(0);
+                vector!(1);
+                vector!(2);
+                vector!(3);
+            }};
+        }
+        let mut pairs = packed.chunks_exact(bytes_per_block * 2);
+        for (index, pair) in pairs.by_ref().enumerate() {
+            block32!(&pair[..bytes_per_block], index * 64, 0);
+            block32!(&pair[bytes_per_block..], index * 64 + 32, 4);
+        }
+        if !pairs.remainder().is_empty() {
+            // Quantized rows can end with one full32-value block.
+            block32!(pairs.remainder(), input.len() - 32, 0);
+        }
+        // SAFETY: this target has AVX2 and the bounded32 accumulated lanes.
+        unsafe { finish(&sums) }
+    }
+
     #[cfg(test)]
     pub(super) fn test_half_pair(bits: u32) -> Result<(f32, f32)> {
         if !avx2_available() || !std::is_x86_feature_detected!("f16c") {
@@ -1794,6 +1976,15 @@ mod avx {
 
 #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
 mod avx {
+    pub(super) fn dot_fma(
+        _: TensorType,
+        _: &[u8],
+        _: &[f32],
+        _: &mut Scratch,
+        _: &AtomicBool,
+    ) -> Result<f32> {
+        Err(Error::InvalidFormat("CPU expert AVX2/F16C/FMA unavailable"))
+    }
     use super::*;
     pub(super) fn dot(
         _: TensorType,
@@ -2732,6 +2923,84 @@ mod tests {
                 assert_eq!(second.to_bits(), b.to_bits());
             } else {
                 assert!(actual.is_err());
+            }
+        }
+    }
+    #[test]
+    fn explicit_fma_original_experts_have_bounded_error_and_preserve_inactive_capacity() {
+        if !fma_available() {
+            return;
+        }
+        for down in [TensorType::Q5_0, TensorType::Q8_0] {
+            let f = fixture([TensorType::Q4K, TensorType::Q4K, down], 256, 256, 3);
+            let reader = f.model.positional_reader().unwrap();
+            let weights = set(&reader, &f);
+            let exact = ExpertOperator::new_pooled(WorkerPlan::portable(4).unwrap(), Backend::Avx2)
+                .unwrap();
+            let fast =
+                ExpertOperator::new_pooled(WorkerPlan::portable(4).unwrap(), Backend::Avx2Fma)
+                    .unwrap();
+            let cancel = AtomicBool::new(false);
+            for pattern in 0..4 {
+                let mut x = input(256);
+                for (i, v) in x.iter_mut().enumerate() {
+                    *v *= ((i + pattern * 17) % 23) as f32 / 11. - 1.;
+                }
+                let expected = exact.execute(&weights, &[2, 0], &x, &cancel).unwrap();
+                let actual = fast.execute(&weights, &[2, 0], &x, &cancel).unwrap();
+                // Synthetic complete projections include cancellation near
+                // zero. Bound absolute error by the whole output's infinity
+                // norm, rather than dividing by each cancelled element.
+                let norm = expected.full().iter().map(|v| v.abs()).fold(0f32, f32::max);
+                for (&a, &e) in actual.full().iter().zip(expected.full()) {
+                    assert!(
+                        a.is_finite() && (a - e).abs() <= 5e-4 + 1e-5 * norm,
+                        "public FMA error a={a} e={e} norm={norm}"
+                    );
+                }
+                assert!(actual.full()[512..].iter().all(|v| v.to_bits() == 0));
+            }
+            cancel.store(true, Ordering::Release);
+            assert!(
+                fast.execute(&weights, &[2, 0], &input(256), &cancel)
+                    .is_err()
+            );
+        }
+    }
+    #[test]
+    fn explicit_fma_rows_match_independent_f64_dot_and_reject_bad_scales() {
+        if !fma_available() {
+            return;
+        }
+        for kind in [TensorType::Q4K, TensorType::Q5_0, TensorType::Q8_0] {
+            for columns in [256usize, 640, 2560] {
+                if !columns.is_multiple_of(kind.block_elements() as usize) {
+                    continue;
+                }
+                for seed in 0..16 {
+                    let (mut packed, decoded) = encoded_row(kind, columns, seed);
+                    let x: Vec<_> = (0..columns)
+                        .map(|i| ((i * 17 + seed * 31) % 257) as f32 / 129. - 1.)
+                        .collect();
+                    let pairs = decoded
+                        .iter()
+                        .zip(&x)
+                        .map(|(&w, &v)| f64::from(w) * f64::from(v));
+                    let reference = pairs.clone().sum::<f64>();
+                    let l1 = pairs.map(f64::abs).sum::<f64>();
+                    let cancel = AtomicBool::new(false);
+                    let mut scratch = Scratch::new(columns).unwrap();
+                    let a = dot_row(Backend::Avx2Fma, kind, &packed, &x, &mut scratch, &cancel)
+                        .unwrap();
+                    assert!((f64::from(a) - reference).abs() <= 1e-5 + 1e-5 * l1);
+                    for bits in [0x7c00u16, 0xfc00, 0x7e01] {
+                        packed[..2].copy_from_slice(&bits.to_le_bytes());
+                        assert!(
+                            dot_row(Backend::Avx2Fma, kind, &packed, &x, &mut scratch, &cancel)
+                                .is_err()
+                        );
+                    }
+                }
             }
         }
     }
