@@ -50,11 +50,25 @@ impl MatrixSpec {
             .split_once("fn sigmoid")
             .expect("shared packed helper boundary")
             .1;
-        let body = include_str!("ornith/matrix_vector.wgsl")
+        let mut body = include_str!("ornith/matrix_vector.wgsl")
             .replace("if ROUTED {base+=(route[rank]*ROWS)*ROW_BYTES;}", "")
             .replace("if RANKED_INPUT {input+=rank*COLUMNS;}", "")
             .replace("arena4[", "input4[")
             .replace("input4[out/4u][out%4u]=total;", "output[out]=total;");
+        if self.dtype == 12 && self.columns <= 4096 {
+            // Same exact dequant/dot/reduction schedule, sharing only unchanged
+            // F32 input values among rows. The public 16KiB bound fits the
+            // baseline native device limit. Every lane reaches the barrier.
+            body = body
+                .replace("input4[", "cached_input[")
+                .replace("(input+", "(")
+                .replace("@builtin(workgroup_id) group:vec3<u32>,", "@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) local:u32,")
+                .replace("    let row=", "    for(var i=local;i<COLUMNS/4u;i+=128u) {cached_input[i]=input4[p.a/4u+i];}\n    workgroupBarrier();\n    let row=");
+            body = format!(
+                "var<workgroup> cached_input:array<vec4<f32>,{}>;\n{body}",
+                self.columns / 4
+            );
+        }
         format!(
             "const DTYPE:u32={}u; const ROWS:u32={}u; const COLUMNS:u32={}u; const ROW_BYTES:u32={}u;\n\
              struct Params {{ a:u32, b:u32, c:u32, d:u32 }}\n\

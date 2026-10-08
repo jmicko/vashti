@@ -1716,7 +1716,7 @@ full physical proofs and all cleanup gates. Source/device acceptance pending.
 
 Paired original banks source07308b8/artifact6351c8bdf632c9db5ee3b536995ecee41b0312fffe5ad9ddabc8a9550062c401
 passes unchanged original128 IDs and all owning/fresh/poison/lifecycle gates.
-Following127 steps16933ms (7.5007 tokens/s), prefill15222ms. B70 returns50688000B.
+Following127 steps16933ms (7.5001476 tokens/s), prefill15222ms. B70 returns50688000B.
 Single small improvement;10 tokens/s remains unmet. Expanded offline paired
 shaders,497 native tests/two other shaders and strict Clippy pass.
 
@@ -1729,3 +1729,15 @@ feature,39 Python runner rejection controls and strict all-target Clippy.
 Default and selected core behavior preserve exact original-format bits, bounded
 private capacities, joined panic/error/cancel cleanup, erased row headers,
 fixed physical worker topology and parent affinity. Complete device pending.
+
+Work-stealing sourceceb88d9/artifactfd3d36bcc38f7cf978a74666e2e132751cf9a7698685f754065b4759b1e2148a
+passes all original128 IDs and owning/fresh/poison/lifecycle gates:16410ms decode
+(7.7391834 tokens/s),15111ms prefill. CPU phase total2614583418ns, down895490110ns,
+gate/up1342271873ns. B70 returns50688000B. Single improved sample;10 remains
+unmet. Next candidate shares original Q4 activations in bounded workgroup
+memory, retaining exact arithmetic. Complete source/device acceptance pending.
+
+Q4 activation-sharing source gates pass497 native tests/two shaders and strict
+all-target Clippy on the separately selected work-stealing build. Shared-input
+load spans are runtime-checked and unchanged original row/guard probes remain
+required on device. Whole-model device acceptance is pending.

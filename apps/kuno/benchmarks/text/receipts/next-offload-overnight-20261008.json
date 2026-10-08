@@ -4113,10 +4113,104 @@
       "seed": 424242,
       "source_commit": "07308b8f5cedf9282f6ba94eed0417911c17af39",
       "temperature": 0
+    },
+    {
+      "artifact_directory": "next-offload-build-20261008-v43-work-stealing",
+      "bank_profile": "intel144",
+      "eligible_for_warm_speed_selection": true,
+      "features": [
+        "cpu-fma",
+        "cpu-work-stealing",
+        "direct-device"
+      ],
+      "following_decode_steps": 127,
+      "frozen_executable_sha256": "fd3d36bcc38f7cf978a74666e2e132751cf9a7698685f754065b4759b1e2148a",
+      "measurements": {
+        "completed_cpu_misses": 16411,
+        "device_reserved_limit_bytes": 33285996544,
+        "expert_bank_accounted_limit_bytes": 25769803776,
+        "generation_ms": 16410,
+        "observed_retained_metadata_calls": 225683,
+        "owned_zero_audits": [
+          {
+            "main_buffers": 1378,
+            "main_bytes": 818413568,
+            "source_buffers": 0,
+            "source_bytes": 0
+          },
+          {
+            "main_buffers": 1378,
+            "main_bytes": 818413568,
+            "source_buffers": 0,
+            "source_bytes": 0
+          },
+          {
+            "main_buffers": 1378,
+            "main_bytes": 818413568,
+            "source_buffers": 0,
+            "source_bytes": 0
+          },
+          {
+            "main_buffers": 1378,
+            "main_bytes": 818413568,
+            "source_buffers": 0,
+            "source_bytes": 0
+          },
+          {
+            "main_buffers": 1378,
+            "main_bytes": 818413568,
+            "source_buffers": 0,
+            "source_bytes": 0
+          }
+        ],
+        "prefill_ms": 15111,
+        "public_resident_warm_phase_ns": {
+          "native_all_family_commit": 142307028,
+          "native_all_family_preflight": 116183479,
+          "native_attention_and_gr_enqueue": 4283307113,
+          "native_completed_final_proofs": 2844015265,
+          "native_ffn_gr_and_router_enqueue": 171507100,
+          "native_final_head_enqueue": 8620875,
+          "native_route_and_expert_enqueue": 4783431268,
+          "native_router_fence": 3888104493,
+          "native_shared_and_ffn_combine_enqueue": 87008671
+        },
+        "resident_private_owned_bytes": 818413568,
+        "resident_runtime_io_limit_bytes": 67108864,
+        "warm_cpu_operator_host_phase_ns": [
+          321178947,
+          1342271873,
+          895490110,
+          2614583418
+        ],
+        "warm_expert_hits": 44549,
+        "warm_expert_uploads": 0,
+        "warm_host_resource_delta": {
+          "major_faults": 88,
+          "minor_faults": 215797,
+          "read_bytes": 5042176,
+          "system_ticks": 670,
+          "user_ticks": 3808,
+          "write_bytes": 0
+        },
+        "warm_uploaded_bytes": 0,
+        "warm_weight_read_ms": 0,
+        "warm_weight_upload_ms": 0
+      },
+      "observed_decode_tokens_per_second": 7.739183424741012,
+      "original_ids_checked": 128,
+      "profiled": false,
+      "protected_lifecycle_completion_checked": true,
+      "receipt_sha256": "f106b1637964c9933574a91901957e1ac8a01ebde7ced03a8b04bb6b7a70de83",
+      "run": "cpu-144-work-stealing-long-v43",
+      "run_record_sha256": "b8c02956da2871d26dd7165a10f96bf70e4ea3e1626aceaf5659b04a651702eb",
+      "seed": 424242,
+      "source_commit": "ceb88d94251a3494ffd5106c5c0b2c1eb59a4697",
+      "temperature": 0
     }
   ],
-  "best_observed_decode_tokens_per_second": 7.500147640701589,
-  "best_observed_run": "cpu-144-paired-banks-long-v42",
+  "best_observed_decode_tokens_per_second": 7.739183424741012,
+  "best_observed_run": "cpu-144-work-stealing-long-v43",
   "date": "2026-10-08",
   "known_rejections_excluded_from_acceptance": [
     "intel128 initial640KiB metadata precharge missing, corrected in subsequent source",

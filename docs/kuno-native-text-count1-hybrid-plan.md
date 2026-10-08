@@ -1332,3 +1332,16 @@ same explicit runtime exclusion as the original broadcast. No persistent
 request jobs, changed host budget, API or installed/default execution. Original
 core all-format bit, failure/join/header/thread tests and whole-model128-ID/full
 owning/lifecycle acceptance are required before speed selection.
+
+### Bounded Q4 workgroup activation sharing laboratory
+
+Opt-in shared dense Q4_K projections with at most4096 columns may preload the
+original F32 activation interval into at most16KiB of workgroup memory. All128
+lanes reach the preload barrier, including inactive rows in finite-tail grids.
+Original public/runtime span checks bound every preload; no projection may
+select beyond that interval. The complete packed dequantization, f32 dot, lane
+accumulation and subgroup reduction order stay unchanged. Other dtypes/wider
+matrices retain direct loads. No persistent activation cache, extra host/private
+owner, weight copy or budget increase. Independent original row/guard probes
+and unchanged128-ID/full owning/lifecycle acceptance remain mandatory. No
+installed/default execution or API/frontend change.
