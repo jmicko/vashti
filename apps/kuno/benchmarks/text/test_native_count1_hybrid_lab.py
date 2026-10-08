@@ -75,6 +75,13 @@ class HybridLabTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 LAB.validate_request_io_reuse(dict(value, warm_upload_transfer_bytes=stats), True, marker)
 
+    def test_binding_cache_selection_requires_request_and_rejects_inherited_enable(self):
+        with mock.patch.dict(os.environ,{"KUNO_LAB_BIND_GROUP_REUSE":"1"}):
+            self.assertEqual(LAB.worker_environment("/original","/receipt")["KUNO_LAB_BIND_GROUP_REUSE"],"0")
+        with self.assertRaises(ValueError): LAB.worker_environment("/original","/receipt",bind_group_reuse=True)
+        selection=dict(mapped=True,deferred=True,compact_info=True,info_batch_upload=True,inline_readback=True,dispatch="inline",request_io_reuse=True,bind_group_reuse=True)
+        self.assertEqual(LAB.worker_environment("/original","/receipt",**selection)["KUNO_LAB_BIND_GROUP_REUSE"],"1")
+
     def test_private_upload_phases_are_paired_and_conserve_bytes(self):
         LAB.validate_private_upload_phases({})  # Historical frozen artifacts.
         fields = ("model_bind_private_upload_bytes", "prefill_private_upload_bytes")

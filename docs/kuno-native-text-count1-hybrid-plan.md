@@ -1619,3 +1619,29 @@ groups. Bound actual metadata within the existing reservation and fall back to
 uncached creation at capacity; do not retain extra private owners beyond their
 proved lifetime. Wipe private key metadata and retain every original scheduling,
 fence, dirty-owner and full audit obligation. Measure before promoting.
+
+
+### Binding-object reuse trial (2026-10-08, device acceptance pending)
+
+User authorizes trying the three ranked optimizations. Explicit protected-lab
+`--bind-group-reuse` requires existing request I/O reuse; inherited environment
+cannot enable it. Cache lifetime is exactly the original exclusive request.
+Keys use actual wgpu pipeline and buffer identities, ordered offsets and padded
+binding sizes. Pipeline identity also fixes its implicit layout. Buffer handles
+are retained, preventing identity recycling under live keys; contents are not
+keys. Hashes only choose buckets, with full exact comparisons before a hit.
+There are at most256 entries,32 bindings per entry and512 fixed buckets. Actual
+entry/binding capacities share the original256KiB I/O metadata allowance with
+INFO/owner bookkeeping. INFO's future capacity is reserved before optional
+binding keys. Saturation or allocation failure falls back to normal creation;
+if required owner/audit metadata grows, the optional cache is dropped first.
+No original model/private budget is raised.
+
+Every dispatch still uses the same compute pass, pipeline, group, resource
+tracking, completion/error scopes and owning audits. Cache references and full
+key capacities are dropped/wiped before final original erasure. Request exit,
+error/poison cleanup and independent non-reuse epochs cannot inherit entries.
+Numeric warm counters report hits, misses, inserts, creation nanoseconds and
+lookup nanoseconds only. They do not contain handles, hashes, offsets or input.
+These host timings are not GPU execution time. Device speed/correctness gates
+remain unchanged, including all original128 output IDs and complete lifecycle.

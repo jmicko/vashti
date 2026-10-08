@@ -1052,21 +1052,47 @@ impl WgpuStream {
     fn register_pipeline<'a>(
         &mut self,
         pipeline: Arc<ComputePipeline>,
-        resources: impl Iterator<Item = &'a WgpuResource>,
+        resources: impl Iterator<Item = &'a WgpuResource> + Clone,
         dispatch: &CubeCount,
     ) {
         if dispatch.is_empty() {
             return;
         }
 
-        let entries = resources
-            .enumerate()
-            .map(|(i, r)| wgpu::BindGroupEntry {
-                binding: i as u32,
-                resource: r.as_wgpu_bind_resource(),
-            })
-            .collect::<Vec<_>>();
+        let cached = self
+            .transient_io
+            .as_ref()
+            .and_then(|io| io.cached_binding_group(&pipeline, resources.clone()));
+        let bind_group = if let Some(group) = cached {
+            group
+        } else {
+            let creation_start = std::time::Instant::now();
+            let entries = resources
+                .clone()
+                .enumerate()
+                .map(|(i, r)| wgpu::BindGroupEntry {
+                    binding: i as u32,
+                    resource: r.as_wgpu_bind_resource(),
+                })
+                .collect::<Vec<_>>();
 
+            let group_layout = pipeline.get_bind_group_layout(0);
+            let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: None,
+                layout: &group_layout,
+                entries: &entries,
+            });
+
+            if let Some(io) = &mut self.transient_io {
+                io.retain_binding_group(
+                    &pipeline,
+                    resources.clone(),
+                    &bind_group,
+                    creation_start.elapsed().as_nanos().min(u64::MAX as u128) as u64,
+                );
+            }
+            bind_group
+        };
         // Start a new compute pass if needed. The forget_lifetime allows
         // to store this with a 'static lifetime, but the compute pass must
         // be dropped before the encoder. This isn't unsafe - it's still checked at runtime.
@@ -1091,13 +1117,6 @@ impl WgpuStream {
         });
 
         self.tasks_count += 1;
-
-        let group_layout = pipeline.get_bind_group_layout(0);
-        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout: &group_layout,
-            entries: &entries,
-        });
 
         pass.set_pipeline(&pipeline);
         pass.set_bind_group(0, &bind_group, &[]);

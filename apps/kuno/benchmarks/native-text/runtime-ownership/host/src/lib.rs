@@ -52,3 +52,8 @@ pub use cubecl_runtime::{config, logging, stream};
 #[allow(dead_code)]
 #[path = "../../../vendor/cubecl-runtime/src/stream/scheduler.rs"]
 mod scheduler_host;
+
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../../../vendor/cubecl-wgpu/src/compute/binding_cache.rs"]
+mod binding_cache;

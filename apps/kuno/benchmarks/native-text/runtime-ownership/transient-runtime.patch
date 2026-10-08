@@ -1927,6 +1927,308 @@
 +    }
 +}
 --- /dev/null
++++ b/cubecl-wgpu/src/compute/binding_cache.rs
+@@ -0,0 +1,299 @@
++// Bounded exact binding-object reuse for one exclusive private request.
++use std::hash::{Hash, Hasher};
++
++const ENTRIES: usize = 256;
++const BUCKETS: usize = 512;
++const MAX_BINDINGS: usize = 32;
++
++#[derive(Debug)]
++struct Binding<B> {
++    buffer: B,
++    offset: u64,
++    size: u64,
++}
++#[derive(Debug)]
++struct Entry<P, B, G> {
++    pipeline: P,
++    bindings: Vec<Binding<B>>,
++    group: G,
++    hash: u64,
++    next: u32,
++}
++
++// Drop every live Rust value before overwriting its now-uninitialized capacity.
++fn wipe_empty_capacity<T>(values: &mut Vec<T>) {
++    values.clear();
++    let pointer = values.as_mut_ptr().cast::<u8>();
++    let bytes = values.capacity() * std::mem::size_of::<T>();
++    for n in 0..bytes {
++        // SAFETY: length is zero; only exclusively owned allocation bytes are
++        // written, including spare capacity. No invalid T is read or dropped.
++        unsafe {
++            pointer.add(n).write_volatile(0);
++        }
++    }
++    std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
++}
++impl<P, B, G> Drop for Entry<P, B, G> {
++    fn drop(&mut self) {
++        wipe_empty_capacity(&mut self.bindings);
++    }
++}
++
++#[derive(Debug)]
++pub(super) struct BindingCache<P, B, G> {
++    entries: Vec<Entry<P, B, G>>,
++    buckets: [u32; BUCKETS],
++    binding_bytes: usize,
++}
++impl<P, B, G> BindingCache<P, B, G> {
++    pub fn reserved_bytes() -> usize {
++        std::mem::size_of::<Self>() + ENTRIES * std::mem::size_of::<Entry<P, B, G>>()
++    }
++    pub fn new() -> Option<Self> {
++        let mut entries = Vec::new();
++        entries.try_reserve_exact(ENTRIES).ok()?;
++        if entries.capacity() != ENTRIES {
++            return None;
++        }
++        Some(Self {
++            entries,
++            buckets: [0; BUCKETS],
++            binding_bytes: 0,
++        })
++    }
++    pub fn host_bytes(&self) -> usize {
++        std::mem::size_of::<Self>()
++            + self.entries.capacity() * std::mem::size_of::<Entry<P, B, G>>()
++            + self.binding_bytes
++    }
++}
++impl<P: Clone + Eq + Hash, B: Clone + Eq + Hash, G: Clone> BindingCache<P, B, G> {
++    fn hash<'a>(pipeline: &P, bindings: impl Iterator<Item = (&'a B, u64, u64)> + Clone) -> u64
++    where
++        B: 'a,
++    {
++        let mut hash = std::collections::hash_map::DefaultHasher::new();
++        pipeline.hash(&mut hash);
++        bindings.clone().count().hash(&mut hash);
++        for (buffer, offset, size) in bindings {
++            buffer.hash(&mut hash);
++            offset.hash(&mut hash);
++            size.hash(&mut hash);
++        }
++        hash.finish()
++    }
++    pub fn find<'a>(
++        &self,
++        pipeline: &P,
++        bindings: impl Iterator<Item = (&'a B, u64, u64)> + Clone,
++    ) -> Option<G>
++    where
++        B: 'a,
++    {
++        let hash = Self::hash(pipeline, bindings.clone());
++        let count = bindings.clone().count();
++        let mut link = self.buckets[hash as usize & (BUCKETS - 1)];
++        for _ in 0..self.entries.len() {
++            let entry = self.entries.get(link.checked_sub(1)? as usize)?;
++            if entry.hash == hash
++                && entry.pipeline == *pipeline
++                && entry.bindings.len() == count
++                && entry
++                    .bindings
++                    .iter()
++                    .zip(bindings.clone())
++                    .all(|(a, (b, o, s))| a.buffer == *b && a.offset == o && a.size == s)
++            {
++                return Some(entry.group.clone());
++            }
++            link = entry.next;
++        }
++        None
++    }
++    pub fn insert<'a>(
++        &mut self,
++        pipeline: &P,
++        bindings: impl Iterator<Item = (&'a B, u64, u64)> + Clone,
++        group: G,
++        max_bytes: usize,
++    ) -> bool
++    where
++        B: 'a,
++    {
++        let count = bindings.clone().count();
++        if self.entries.len() == ENTRIES || count == 0 || count > MAX_BINDINGS {
++            return false;
++        }
++        let Some(bytes) = count.checked_mul(std::mem::size_of::<Binding<B>>()) else {
++            return false;
++        };
++        if self
++            .host_bytes()
++            .checked_add(bytes)
++            .is_none_or(|n| n > max_bytes)
++        {
++            return false;
++        }
++        let mut owned = Vec::new();
++        if owned.try_reserve_exact(count).is_err() {
++            return false;
++        }
++        // Charge actual capacity before cloning any request-derived owners.
++        let Some(actual) = owned
++            .capacity()
++            .checked_mul(std::mem::size_of::<Binding<B>>())
++        else {
++            return false;
++        };
++        if self
++            .host_bytes()
++            .checked_add(actual)
++            .is_none_or(|n| n > max_bytes)
++        {
++            return false;
++        }
++        let hash = Self::hash(pipeline, bindings.clone());
++        for (buffer, offset, size) in bindings {
++            owned.push(Binding {
++                buffer: buffer.clone(),
++                offset,
++                size,
++            });
++        }
++        let bucket = hash as usize & (BUCKETS - 1);
++        self.entries.push(Entry {
++            pipeline: pipeline.clone(),
++            bindings: owned,
++            group,
++            hash,
++            next: self.buckets[bucket],
++        });
++        self.binding_bytes += actual;
++        self.buckets[bucket] = self.entries.len() as u32;
++        true
++    }
++}
++impl<P, B, G> Drop for BindingCache<P, B, G> {
++    fn drop(&mut self) {
++        wipe_empty_capacity(&mut self.entries);
++        for value in &mut self.buckets {
++            // SAFETY: initialized scalar exclusively owned during Drop.
++            unsafe {
++                std::ptr::write_volatile(value, 0);
++            }
++        }
++        // SAFETY: initialized scalar exclusively owned during Drop.
++        unsafe {
++            std::ptr::write_volatile(&mut self.binding_bytes, 0);
++        }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::sync::{
++        Arc,
++        atomic::{AtomicUsize, Ordering},
++    };
++    #[test]
++    fn exact_owner_pipeline_offset_size_and_order_are_required() {
++        let mut cache = BindingCache::<u64, u64, u64>::new().unwrap();
++        let bindings = [(11, 4, 64), (12, 8, 128)];
++        let iter = || bindings.iter().map(|(b, o, s)| (b, *o, *s));
++        assert!(cache.insert(&9, iter(), 100, usize::MAX));
++        assert_eq!(cache.find(&9, iter()), Some(100));
++        assert_eq!(cache.find(&10, iter()), None);
++        for wrong in [
++            [(13, 4, 64), (12, 8, 128)],
++            [(11, 8, 64), (12, 8, 128)],
++            [(11, 4, 68), (12, 8, 128)],
++            [(12, 8, 128), (11, 4, 64)],
++        ] {
++            assert_eq!(
++                cache.find(&9, wrong.iter().map(|(b, o, s)| (b, *o, *s))),
++                None
++            );
++        }
++        assert_eq!(
++            cache.find(&9, bindings[..1].iter().map(|(b, o, s)| (b, *o, *s))),
++            None
++        );
++        assert_eq!(
++            cache.find(
++                &9,
++                [(11, 4, 0), (12, 8, 128)]
++                    .iter()
++                    .map(|(b, o, s)| (b, *o, *s))
++            ),
++            None
++        );
++    }
++    #[test]
++    fn capacity_falls_back_without_growth_or_eviction() {
++        let mut cache = BindingCache::<u64, u64, u64>::new().unwrap();
++        let size = cache.host_bytes();
++        let b = 7;
++        assert!(!cache.insert(&0, std::iter::once((&b, 0, 64)), 1, size));
++        assert_eq!(cache.host_bytes(), size);
++        for n in 0..ENTRIES as u64 {
++            assert!(cache.insert(&n, std::iter::once((&b, 0, 64)), n, usize::MAX));
++        }
++        let size = cache.host_bytes();
++        assert!(!cache.insert(&999, std::iter::once((&b, 0, 64)), 1, usize::MAX));
++        assert_eq!(cache.host_bytes(), size);
++        assert_eq!(cache.find(&0, std::iter::once((&b, 0, 64))), Some(0));
++        assert!(cache.host_bytes() >= BindingCache::<u64, u64, u64>::reserved_bytes());
++    }
++    #[test]
++    fn malformed_collisions_cannot_substitute_or_loop() {
++        let mut cache = BindingCache::<u64, u64, u64>::new().unwrap();
++        let b = 7;
++        assert!(cache.insert(&1, std::iter::once((&b, 0, 64)), 11, usize::MAX));
++        let hash = BindingCache::<u64, u64, u64>::hash(&2, std::iter::once((&b, 0, 64)));
++        cache.entries[0].hash = hash;
++        cache.entries[0].next = 1;
++        cache.buckets[hash as usize & (BUCKETS - 1)] = 1;
++        assert_eq!(cache.find(&2, std::iter::once((&b, 0, 64))), None);
++        cache.buckets[hash as usize & (BUCKETS - 1)] = u32::MAX;
++        assert_eq!(cache.find(&2, std::iter::once((&b, 0, 64))), None);
++    }
++    #[test]
++    fn dropping_scope_releases_all_cached_references() {
++        #[derive(Clone)]
++        struct Tracked(Arc<AtomicUsize>);
++        impl Drop for Tracked {
++            fn drop(&mut self) {
++                self.0.fetch_add(1, Ordering::Relaxed);
++            }
++        }
++        let dropped = Arc::new(AtomicUsize::new(0));
++        let mut cache = BindingCache::<u64, u64, Tracked>::new().unwrap();
++        let b = 1;
++        assert!(cache.insert(
++            &1,
++            std::iter::once((&b, 0, 64)),
++            Tracked(dropped.clone()),
++            usize::MAX
++        ));
++        let hit = cache.find(&1, std::iter::once((&b, 0, 64))).unwrap();
++        drop(hit);
++        drop(cache);
++        assert_eq!(dropped.load(Ordering::Relaxed), 2);
++    }
++    #[test]
++    fn oversized_and_empty_binding_lists_do_not_allocate_cache_keys() {
++        let mut cache = BindingCache::<u64, u64, u64>::new().unwrap();
++        let b = 1;
++        let size = cache.host_bytes();
++        assert!(!cache.insert(&1, std::iter::empty(), 1, usize::MAX));
++        assert!(!cache.insert(
++            &1,
++            std::iter::repeat_n((&b, 0, 4), MAX_BINDINGS + 1),
++            1,
++            usize::MAX
++        ));
++        assert_eq!(cache.host_bytes(), size);
++    }
++}
+--- /dev/null
 +++ b/cubecl-wgpu/src/compute/cleanup_boundary.rs
 @@ -0,0 +1,155 @@
 +// Modified for Kuno's laboratory transient-I/O ownership/erasure patch (2026-10-05).
@@ -2086,12 +2388,13 @@
 +}
 --- a/cubecl-wgpu/src/compute/mod.rs
 +++ b/cubecl-wgpu/src/compute/mod.rs
-@@ -1,13 +1,27 @@
+@@ -1,13 +1,30 @@
 +// Modified for Kuno's laboratory transient-I/O ownership/erasure patch (2026-10-05).
  pub(crate) mod controller;
  
  mod storage;
  
++mod binding_cache;
 +mod cleanup_boundary;
  pub(super) mod mem_manager;
  pub(super) mod poll;
@@ -2114,6 +2417,8 @@
 +pub use transient_io::transient_info_cache_stats;
 +pub use transient_io::transient_unscoped_upload_transfer_stats;
 +pub use transient_io::transient_upload_transfer_stats;
++
++pub use transient_io::transient_binding_cache_stats;
 --- a/cubecl-wgpu/src/compute/schedule.rs
 +++ b/cubecl-wgpu/src/compute/schedule.rs
 @@ -1,3 +1,4 @@
@@ -3209,9 +3514,80 @@
  
          // Cleanup allocations and deallocations.
          self.mem_manage.memory_cleanup(false);
+@@ -524,21 +1052,47 @@
+     fn register_pipeline<'a>(
+         &mut self,
+         pipeline: Arc<ComputePipeline>,
+-        resources: impl Iterator<Item = &'a WgpuResource>,
++        resources: impl Iterator<Item = &'a WgpuResource> + Clone,
+         dispatch: &CubeCount,
+     ) {
+         if dispatch.is_empty() {
+             return;
+         }
+ 
+-        let entries = resources
+-            .enumerate()
+-            .map(|(i, r)| wgpu::BindGroupEntry {
+-                binding: i as u32,
+-                resource: r.as_wgpu_bind_resource(),
+-            })
+-            .collect::<Vec<_>>();
+-
++        let cached = self
++            .transient_io
++            .as_ref()
++            .and_then(|io| io.cached_binding_group(&pipeline, resources.clone()));
++        let bind_group = if let Some(group) = cached {
++            group
++        } else {
++            let creation_start = std::time::Instant::now();
++            let entries = resources
++                .clone()
++                .enumerate()
++                .map(|(i, r)| wgpu::BindGroupEntry {
++                    binding: i as u32,
++                    resource: r.as_wgpu_bind_resource(),
++                })
++                .collect::<Vec<_>>();
++
++            let group_layout = pipeline.get_bind_group_layout(0);
++            let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
++                label: None,
++                layout: &group_layout,
++                entries: &entries,
++            });
++
++            if let Some(io) = &mut self.transient_io {
++                io.retain_binding_group(
++                    &pipeline,
++                    resources.clone(),
++                    &bind_group,
++                    creation_start.elapsed().as_nanos().min(u64::MAX as u128) as u64,
++                );
++            }
++            bind_group
++        };
+         // Start a new compute pass if needed. The forget_lifetime allows
+         // to store this with a 'static lifetime, but the compute pass must
+         // be dropped before the encoder. This isn't unsafe - it's still checked at runtime.
+@@ -564,13 +1118,6 @@
+ 
+         self.tasks_count += 1;
+ 
+-        let group_layout = pipeline.get_bind_group_layout(0);
+-        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+-            label: None,
+-            layout: &group_layout,
+-            entries: &entries,
+-        });
+-
+         pass.set_pipeline(&pipeline);
+         pass.set_bind_group(0, &bind_group, &[]);
+ 
 --- /dev/null
 +++ b/cubecl-wgpu/src/compute/transient_io.rs
-@@ -0,0 +1,5931 @@
+@@ -0,0 +1,6049 @@
 +// Modified for Kuno's laboratory transient-I/O ownership/erasure patch (2026-10-05).
 +//! Opt-in bounded, explicitly owned transient I/O. No device creation in tests.
 +//!
@@ -4281,23 +4657,42 @@
 +    target: B,
 +    source_index: usize,
 +}
-+fn reuse_metadata_capacity<T>(
++fn reuse_metadata_bytes<T>(
 +    capacity: usize,
 +    pending_capacity: usize,
 +    cache_bytes: usize,
-+) -> Result<(), ServerError> {
-+    if capacity
++) -> Option<usize> {
++    capacity
 +        .checked_mul(std::mem::size_of::<Tracked<T>>())
 +        .and_then(|n| {
 +            n.checked_add(pending_capacity.checked_mul(std::mem::size_of::<PendingInfo<T>>())?)
 +        })
 +        .and_then(|n| n.checked_add(std::mem::size_of::<ReuseScope>()))
 +        .and_then(|n| n.checked_add(cache_bytes))
++}
++fn reuse_metadata_capacity<T>(
++    capacity: usize,
++    pending_capacity: usize,
++    cache_bytes: usize,
++) -> Result<(), ServerError> {
++    if reuse_metadata_bytes::<T>(capacity, pending_capacity, cache_bytes)
 +        .is_none_or(|n| n > REUSE_METADATA_MAX)
 +    {
 +        return Err(fault("private reuse metadata limit"));
 +    }
 +    Ok(())
++}
++type NativeBindingCache =
++    super::binding_cache::BindingCache<wgpu::ComputePipeline, wgpu::Buffer, wgpu::BindGroup>;
++static BINDING_CACHE_STATS: [AtomicU64; 5] = [const { AtomicU64::new(0) }; 5];
++/// Request-scoped hits, misses, inserts, creation ns and lookup ns only.
++pub fn transient_binding_cache_stats() -> [u64; 5] {
++    std::array::from_fn(|n| BINDING_CACHE_STATS[n].load(Ordering::Relaxed))
++}
++fn binding_stat(index: usize, value: u64) {
++    let _ = BINDING_CACHE_STATS[index].fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
++        Some(n.saturating_add(value))
++    });
 +}
 +const INFO_KEY_BYTES: usize = 64 * 1024;
 +const INFO_CACHE_ENTRIES: usize = 512;
@@ -4574,6 +4969,7 @@
 +    reuse_scope: ReuseScope,
 +    audit_retained_capacity: usize,
 +    info_cache: Option<InfoCache>,
++    binding_cache: Option<NativeBindingCache>,
 +    leases: Arc<LeaseTracker>,
 +    errors: Vec<ErrorFuture>,
 +    info_policy: Option<InfoPolicy>,
@@ -5473,6 +5869,7 @@
 +                reuse_scope: ReuseScope::default(),
 +                audit_retained_capacity: 0,
 +                info_cache: None,
++                binding_cache: None,
 +                leases: Arc::default(),
 +                errors: Vec::new(),
 +                info_policy,
@@ -5540,16 +5937,31 @@
 +            && self.ledger.charged == 0
 +            && self.pending_info.is_empty()
 +            && self.info_slab.is_none()
-+            && self.info_cache.is_none();
++            && self.info_cache.is_none()
++            && self.binding_cache.is_none();
 +        if !empty || self.leases() != 0 || self.reuse_scope.nonce.is_some() {
 +            return Err(fault("private reuse begin requires empty exclusive owner"));
 +        }
 +        reuse_metadata_capacity::<wgpu::Buffer>(
 +            self.buffers.capacity(),
 +            self.pending_info.capacity(),
-+            self.info_cache.as_ref().map_or(0, InfoCache::host_bytes),
++            self.info_cache_bytes(),
 +        )?;
 +        self.drain_accept_errors()?;
++        let enabled = match std::env::var("KUNO_LAB_BIND_GROUP_REUSE").as_deref() {
++            Ok("1") => true,
++            Ok("0") | Err(std::env::VarError::NotPresent) => false,
++            _ => return Err(fault("binding reuse selection encoding")),
++        };
++        if enabled {
++            reuse_metadata_capacity::<wgpu::Buffer>(
++                self.buffers.capacity(),
++                self.pending_info.capacity(),
++                InfoCache::<WgpuResource>::reserved_bytes() + NativeBindingCache::reserved_bytes(),
++            )?;
++            self.binding_cache =
++                Some(NativeBindingCache::new().ok_or_else(|| fault("binding cache allocation"))?);
++        }
 +        self.reuse_scope.free.reset();
 +        self.reuse_scope.begin(empty, self.leases())
 +    }
@@ -5678,10 +6090,91 @@
 +            && self.pending_info.is_empty()
 +            && self.info_slab.is_none()
 +            && self.errors.is_empty()
-+            && self.info_cache.is_none();
++            && self.info_cache.is_none()
++            && self.binding_cache.is_none();
 +        self.reuse_scope.finish(nonce, empty, self.leases())?;
 +        self.reuse_scope.free.reset();
 +        Ok(())
++    }
++    fn info_cache_bytes(&self) -> usize {
++        self.info_cache.as_ref().map_or(0, InfoCache::host_bytes)
++    }
++    fn check_reuse_metadata(
++        &mut self,
++        capacity: usize,
++        pending: usize,
++        info_bytes: usize,
++    ) -> Result<(), ServerError> {
++        let binding = self
++            .binding_cache
++            .as_ref()
++            .map_or(0, NativeBindingCache::host_bytes);
++        if reuse_metadata_capacity::<wgpu::Buffer>(capacity, pending, info_bytes + binding).is_err()
++            && binding != 0
++        {
++            // Optional memoization must not crowd out required owners/audits.
++            // Drop/wipe cache keys; original buffers remain charged and live.
++            self.binding_cache = None;
++        }
++        reuse_metadata_capacity::<wgpu::Buffer>(
++            capacity,
++            pending,
++            info_bytes
++                + self
++                    .binding_cache
++                    .as_ref()
++                    .map_or(0, NativeBindingCache::host_bytes),
++        )
++    }
++    pub(crate) fn cached_binding_group<'a>(
++        &self,
++        pipeline: &wgpu::ComputePipeline,
++        resources: impl Iterator<Item = &'a WgpuResource> + Clone,
++    ) -> Option<wgpu::BindGroup> {
++        if !self.reuse_active() {
++            return None;
++        }
++        let cache = self.binding_cache.as_ref()?;
++        let start = Instant::now();
++        let group = cache.find(
++            pipeline,
++            resources.map(|r| (&r.buffer, r.offset, r.size.next_multiple_of(4))),
++        );
++        binding_stat(4, start.elapsed().as_nanos().min(u64::MAX as u128) as u64);
++        binding_stat(if group.is_some() { 0 } else { 1 }, 1);
++        group
++    }
++    pub(crate) fn retain_binding_group<'a>(
++        &mut self,
++        pipeline: &wgpu::ComputePipeline,
++        resources: impl Iterator<Item = &'a WgpuResource> + Clone,
++        group: &wgpu::BindGroup,
++        create_ns: u64,
++    ) {
++        if !self.reuse_active() || self.binding_cache.is_none() {
++            return;
++        }
++        binding_stat(3, create_ns);
++        // Reserve the INFO cache's full future capacity before optional keys.
++        let other = reuse_metadata_bytes::<wgpu::Buffer>(
++            self.buffers.capacity(),
++            self.pending_info.capacity(),
++            self.info_cache.as_ref().map_or(
++                InfoCache::<WgpuResource>::reserved_bytes(),
++                InfoCache::host_bytes,
++            ),
++        );
++        let limit = other
++            .and_then(|n| REUSE_METADATA_MAX.checked_sub(n))
++            .unwrap_or(0);
++        if self.binding_cache.as_mut().unwrap().insert(
++            pipeline,
++            resources.map(|r| (&r.buffer, r.offset, r.size.next_multiple_of(4))),
++            group.clone(),
++            limit,
++        ) {
++            binding_stat(2, 1);
++        }
 +    }
 +    pub(crate) fn reads_inline(&self) -> bool {
 +        self.inline_readback
@@ -5774,13 +6267,13 @@
 +        let cache_hash = if self.reuse_active() {
 +            if self.info_cache.is_none() {
 +                // Admit both fixed allocations before creating the optional cache.
-+                reuse_metadata_capacity::<wgpu::Buffer>(
++                self.check_reuse_metadata(
 +                    self.buffers.capacity(),
 +                    self.pending_info.capacity(),
 +                    InfoCache::<WgpuResource>::reserved_bytes(),
 +                )?;
 +                let cache = InfoCache::new()?;
-+                reuse_metadata_capacity::<wgpu::Buffer>(
++                self.check_reuse_metadata(
 +                    self.buffers.capacity(),
 +                    self.pending_info.capacity(),
 +                    cache.host_bytes(),
@@ -5833,18 +6326,18 @@
 +            .inspect_err(|_| self.leases.record(Failure::AuditBudget))?;
 +        if !plan.existing {
 +            if self.reuse_active() {
-+                reuse_metadata_capacity::<wgpu::Buffer>(
++                self.check_reuse_metadata(
 +                    self.buffers.capacity(),
 +                    self.pending_info.len() + 1,
-+                    self.info_cache.as_ref().map_or(0, InfoCache::host_bytes),
++                    self.info_cache_bytes(),
 +                )?;
 +                self.pending_info
 +                    .try_reserve_exact(1)
 +                    .map_err(|_| fault("batched INFO pointer allocation"))?;
-+                reuse_metadata_capacity::<wgpu::Buffer>(
++                self.check_reuse_metadata(
 +                    self.buffers.capacity(),
 +                    self.pending_info.capacity(),
-+                    self.info_cache.as_ref().map_or(0, InfoCache::host_bytes),
++                    self.info_cache_bytes(),
 +                )?;
 +            } else {
 +                self.pending_info
@@ -6012,25 +6505,25 @@
 +    fn allocate_audit(&mut self, kind: Kind, logical: u64) -> Result<wgpu::Buffer, ServerError> {
 +        self.active()?;
 +        if self.reuse_scope.nonce.is_some() {
-+            reuse_metadata_capacity::<wgpu::Buffer>(
++            self.check_reuse_metadata(
 +                self.buffers
 +                    .len()
 +                    .checked_add(1)
 +                    .and_then(|n| n.checked_add(self.audit_retained_capacity))
 +                    .ok_or_else(|| fault("private reuse metadata overflow"))?,
 +                self.pending_info.capacity(),
-+                self.info_cache.as_ref().map_or(0, InfoCache::host_bytes),
++                self.info_cache_bytes(),
 +            )?;
 +            self.buffers
 +                .try_reserve_exact(1)
 +                .map_err(|_| fault("private reuse metadata allocation"))?;
-+            reuse_metadata_capacity::<wgpu::Buffer>(
++            self.check_reuse_metadata(
 +                self.buffers
 +                    .capacity()
 +                    .checked_add(self.audit_retained_capacity)
 +                    .ok_or_else(|| fault("private reuse metadata overflow"))?,
 +                self.pending_info.capacity(),
-+                self.info_cache.as_ref().map_or(0, InfoCache::host_bytes),
++                self.info_cache_bytes(),
 +            )?;
 +        } else {
 +            self.buffers.try_reserve(1).map_err(|_| {
@@ -6358,6 +6851,7 @@
 +    ) -> Result<TransientIoReceipt, ServerError> {
 +        // Drop cached references and wipe all key/header capacities before any
 +        // full sanitizer touches original GPU owners. Those remain charged here.
++        self.binding_cache = None;
 +        self.info_cache = None;
 +        // Audit invalidates every intrusive index before moving or releasing owners.
 +        self.reuse_scope.free.reset();
@@ -6417,10 +6911,10 @@
 +                        )
 +                        .checked_add(stages)
 +                        .ok_or_else(|| fault("private audit metadata overflow"))?;
-+                    reuse_metadata_capacity::<wgpu::Buffer>(
++                    self.check_reuse_metadata(
 +                        total,
 +                        self.pending_info.capacity(),
-+                        self.info_cache.as_ref().map_or(0, InfoCache::host_bytes),
++                        self.info_cache_bytes(),
 +                    )?;
 +                }
 +                buffers
@@ -6431,10 +6925,10 @@
 +                        .capacity()
 +                        .checked_add(stages)
 +                        .ok_or_else(|| fault("private audit metadata overflow"))?;
-+                    reuse_metadata_capacity::<wgpu::Buffer>(
++                    self.check_reuse_metadata(
 +                        total,
 +                        self.pending_info.capacity(),
-+                        self.info_cache.as_ref().map_or(0, InfoCache::host_bytes),
++                        self.info_cache_bytes(),
 +                    )?;
 +                }
 +                Ok::<(), ServerError>(())

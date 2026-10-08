@@ -3,6 +3,7 @@ pub(crate) mod controller;
 
 mod storage;
 
+mod binding_cache;
 mod cleanup_boundary;
 pub(super) mod mem_manager;
 pub(super) mod poll;
@@ -25,3 +26,5 @@ pub use transient_io::transient_scoped_read_ns;
 pub use transient_io::transient_info_cache_stats;
 pub use transient_io::transient_unscoped_upload_transfer_stats;
 pub use transient_io::transient_upload_transfer_stats;
+
+pub use transient_io::transient_binding_cache_stats;

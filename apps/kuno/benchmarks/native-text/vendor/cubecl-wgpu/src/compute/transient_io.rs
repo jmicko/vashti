@@ -1067,23 +1067,42 @@ struct PendingInfo<B = wgpu::Buffer> {
     target: B,
     source_index: usize,
 }
-fn reuse_metadata_capacity<T>(
+fn reuse_metadata_bytes<T>(
     capacity: usize,
     pending_capacity: usize,
     cache_bytes: usize,
-) -> Result<(), ServerError> {
-    if capacity
+) -> Option<usize> {
+    capacity
         .checked_mul(std::mem::size_of::<Tracked<T>>())
         .and_then(|n| {
             n.checked_add(pending_capacity.checked_mul(std::mem::size_of::<PendingInfo<T>>())?)
         })
         .and_then(|n| n.checked_add(std::mem::size_of::<ReuseScope>()))
         .and_then(|n| n.checked_add(cache_bytes))
+}
+fn reuse_metadata_capacity<T>(
+    capacity: usize,
+    pending_capacity: usize,
+    cache_bytes: usize,
+) -> Result<(), ServerError> {
+    if reuse_metadata_bytes::<T>(capacity, pending_capacity, cache_bytes)
         .is_none_or(|n| n > REUSE_METADATA_MAX)
     {
         return Err(fault("private reuse metadata limit"));
     }
     Ok(())
+}
+type NativeBindingCache =
+    super::binding_cache::BindingCache<wgpu::ComputePipeline, wgpu::Buffer, wgpu::BindGroup>;
+static BINDING_CACHE_STATS: [AtomicU64; 5] = [const { AtomicU64::new(0) }; 5];
+/// Request-scoped hits, misses, inserts, creation ns and lookup ns only.
+pub fn transient_binding_cache_stats() -> [u64; 5] {
+    std::array::from_fn(|n| BINDING_CACHE_STATS[n].load(Ordering::Relaxed))
+}
+fn binding_stat(index: usize, value: u64) {
+    let _ = BINDING_CACHE_STATS[index].fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+        Some(n.saturating_add(value))
+    });
 }
 const INFO_KEY_BYTES: usize = 64 * 1024;
 const INFO_CACHE_ENTRIES: usize = 512;
@@ -1360,6 +1379,7 @@ pub(crate) struct TransientIo {
     reuse_scope: ReuseScope,
     audit_retained_capacity: usize,
     info_cache: Option<InfoCache>,
+    binding_cache: Option<NativeBindingCache>,
     leases: Arc<LeaseTracker>,
     errors: Vec<ErrorFuture>,
     info_policy: Option<InfoPolicy>,
@@ -2259,6 +2279,7 @@ impl TransientIo {
                 reuse_scope: ReuseScope::default(),
                 audit_retained_capacity: 0,
                 info_cache: None,
+                binding_cache: None,
                 leases: Arc::default(),
                 errors: Vec::new(),
                 info_policy,
@@ -2326,16 +2347,31 @@ impl TransientIo {
             && self.ledger.charged == 0
             && self.pending_info.is_empty()
             && self.info_slab.is_none()
-            && self.info_cache.is_none();
+            && self.info_cache.is_none()
+            && self.binding_cache.is_none();
         if !empty || self.leases() != 0 || self.reuse_scope.nonce.is_some() {
             return Err(fault("private reuse begin requires empty exclusive owner"));
         }
         reuse_metadata_capacity::<wgpu::Buffer>(
             self.buffers.capacity(),
             self.pending_info.capacity(),
-            self.info_cache.as_ref().map_or(0, InfoCache::host_bytes),
+            self.info_cache_bytes(),
         )?;
         self.drain_accept_errors()?;
+        let enabled = match std::env::var("KUNO_LAB_BIND_GROUP_REUSE").as_deref() {
+            Ok("1") => true,
+            Ok("0") | Err(std::env::VarError::NotPresent) => false,
+            _ => return Err(fault("binding reuse selection encoding")),
+        };
+        if enabled {
+            reuse_metadata_capacity::<wgpu::Buffer>(
+                self.buffers.capacity(),
+                self.pending_info.capacity(),
+                InfoCache::<WgpuResource>::reserved_bytes() + NativeBindingCache::reserved_bytes(),
+            )?;
+            self.binding_cache =
+                Some(NativeBindingCache::new().ok_or_else(|| fault("binding cache allocation"))?);
+        }
         self.reuse_scope.free.reset();
         self.reuse_scope.begin(empty, self.leases())
     }
@@ -2464,10 +2500,91 @@ impl TransientIo {
             && self.pending_info.is_empty()
             && self.info_slab.is_none()
             && self.errors.is_empty()
-            && self.info_cache.is_none();
+            && self.info_cache.is_none()
+            && self.binding_cache.is_none();
         self.reuse_scope.finish(nonce, empty, self.leases())?;
         self.reuse_scope.free.reset();
         Ok(())
+    }
+    fn info_cache_bytes(&self) -> usize {
+        self.info_cache.as_ref().map_or(0, InfoCache::host_bytes)
+    }
+    fn check_reuse_metadata(
+        &mut self,
+        capacity: usize,
+        pending: usize,
+        info_bytes: usize,
+    ) -> Result<(), ServerError> {
+        let binding = self
+            .binding_cache
+            .as_ref()
+            .map_or(0, NativeBindingCache::host_bytes);
+        if reuse_metadata_capacity::<wgpu::Buffer>(capacity, pending, info_bytes + binding).is_err()
+            && binding != 0
+        {
+            // Optional memoization must not crowd out required owners/audits.
+            // Drop/wipe cache keys; original buffers remain charged and live.
+            self.binding_cache = None;
+        }
+        reuse_metadata_capacity::<wgpu::Buffer>(
+            capacity,
+            pending,
+            info_bytes
+                + self
+                    .binding_cache
+                    .as_ref()
+                    .map_or(0, NativeBindingCache::host_bytes),
+        )
+    }
+    pub(crate) fn cached_binding_group<'a>(
+        &self,
+        pipeline: &wgpu::ComputePipeline,
+        resources: impl Iterator<Item = &'a WgpuResource> + Clone,
+    ) -> Option<wgpu::BindGroup> {
+        if !self.reuse_active() {
+            return None;
+        }
+        let cache = self.binding_cache.as_ref()?;
+        let start = Instant::now();
+        let group = cache.find(
+            pipeline,
+            resources.map(|r| (&r.buffer, r.offset, r.size.next_multiple_of(4))),
+        );
+        binding_stat(4, start.elapsed().as_nanos().min(u64::MAX as u128) as u64);
+        binding_stat(if group.is_some() { 0 } else { 1 }, 1);
+        group
+    }
+    pub(crate) fn retain_binding_group<'a>(
+        &mut self,
+        pipeline: &wgpu::ComputePipeline,
+        resources: impl Iterator<Item = &'a WgpuResource> + Clone,
+        group: &wgpu::BindGroup,
+        create_ns: u64,
+    ) {
+        if !self.reuse_active() || self.binding_cache.is_none() {
+            return;
+        }
+        binding_stat(3, create_ns);
+        // Reserve the INFO cache's full future capacity before optional keys.
+        let other = reuse_metadata_bytes::<wgpu::Buffer>(
+            self.buffers.capacity(),
+            self.pending_info.capacity(),
+            self.info_cache.as_ref().map_or(
+                InfoCache::<WgpuResource>::reserved_bytes(),
+                InfoCache::host_bytes,
+            ),
+        );
+        let limit = other
+            .and_then(|n| REUSE_METADATA_MAX.checked_sub(n))
+            .unwrap_or(0);
+        if self.binding_cache.as_mut().unwrap().insert(
+            pipeline,
+            resources.map(|r| (&r.buffer, r.offset, r.size.next_multiple_of(4))),
+            group.clone(),
+            limit,
+        ) {
+            binding_stat(2, 1);
+        }
     }
     pub(crate) fn reads_inline(&self) -> bool {
         self.inline_readback
@@ -2560,13 +2677,13 @@ impl TransientIo {
         let cache_hash = if self.reuse_active() {
             if self.info_cache.is_none() {
                 // Admit both fixed allocations before creating the optional cache.
-                reuse_metadata_capacity::<wgpu::Buffer>(
+                self.check_reuse_metadata(
                     self.buffers.capacity(),
                     self.pending_info.capacity(),
                     InfoCache::<WgpuResource>::reserved_bytes(),
                 )?;
                 let cache = InfoCache::new()?;
-                reuse_metadata_capacity::<wgpu::Buffer>(
+                self.check_reuse_metadata(
                     self.buffers.capacity(),
                     self.pending_info.capacity(),
                     cache.host_bytes(),
@@ -2619,18 +2736,18 @@ impl TransientIo {
             .inspect_err(|_| self.leases.record(Failure::AuditBudget))?;
         if !plan.existing {
             if self.reuse_active() {
-                reuse_metadata_capacity::<wgpu::Buffer>(
+                self.check_reuse_metadata(
                     self.buffers.capacity(),
                     self.pending_info.len() + 1,
-                    self.info_cache.as_ref().map_or(0, InfoCache::host_bytes),
+                    self.info_cache_bytes(),
                 )?;
                 self.pending_info
                     .try_reserve_exact(1)
                     .map_err(|_| fault("batched INFO pointer allocation"))?;
-                reuse_metadata_capacity::<wgpu::Buffer>(
+                self.check_reuse_metadata(
                     self.buffers.capacity(),
                     self.pending_info.capacity(),
-                    self.info_cache.as_ref().map_or(0, InfoCache::host_bytes),
+                    self.info_cache_bytes(),
                 )?;
             } else {
                 self.pending_info
@@ -2798,25 +2915,25 @@ impl TransientIo {
     fn allocate_audit(&mut self, kind: Kind, logical: u64) -> Result<wgpu::Buffer, ServerError> {
         self.active()?;
         if self.reuse_scope.nonce.is_some() {
-            reuse_metadata_capacity::<wgpu::Buffer>(
+            self.check_reuse_metadata(
                 self.buffers
                     .len()
                     .checked_add(1)
                     .and_then(|n| n.checked_add(self.audit_retained_capacity))
                     .ok_or_else(|| fault("private reuse metadata overflow"))?,
                 self.pending_info.capacity(),
-                self.info_cache.as_ref().map_or(0, InfoCache::host_bytes),
+                self.info_cache_bytes(),
             )?;
             self.buffers
                 .try_reserve_exact(1)
                 .map_err(|_| fault("private reuse metadata allocation"))?;
-            reuse_metadata_capacity::<wgpu::Buffer>(
+            self.check_reuse_metadata(
                 self.buffers
                     .capacity()
                     .checked_add(self.audit_retained_capacity)
                     .ok_or_else(|| fault("private reuse metadata overflow"))?,
                 self.pending_info.capacity(),
-                self.info_cache.as_ref().map_or(0, InfoCache::host_bytes),
+                self.info_cache_bytes(),
             )?;
         } else {
             self.buffers.try_reserve(1).map_err(|_| {
@@ -3144,6 +3261,7 @@ impl TransientIo {
     ) -> Result<TransientIoReceipt, ServerError> {
         // Drop cached references and wipe all key/header capacities before any
         // full sanitizer touches original GPU owners. Those remain charged here.
+        self.binding_cache = None;
         self.info_cache = None;
         // Audit invalidates every intrusive index before moving or releasing owners.
         self.reuse_scope.free.reset();
@@ -3203,10 +3321,10 @@ impl TransientIo {
                         )
                         .checked_add(stages)
                         .ok_or_else(|| fault("private audit metadata overflow"))?;
-                    reuse_metadata_capacity::<wgpu::Buffer>(
+                    self.check_reuse_metadata(
                         total,
                         self.pending_info.capacity(),
-                        self.info_cache.as_ref().map_or(0, InfoCache::host_bytes),
+                        self.info_cache_bytes(),
                     )?;
                 }
                 buffers
@@ -3217,10 +3335,10 @@ impl TransientIo {
                         .capacity()
                         .checked_add(stages)
                         .ok_or_else(|| fault("private audit metadata overflow"))?;
-                    reuse_metadata_capacity::<wgpu::Buffer>(
+                    self.check_reuse_metadata(
                         total,
                         self.pending_info.capacity(),
-                        self.info_cache.as_ref().map_or(0, InfoCache::host_bytes),
+                        self.info_cache_bytes(),
                     )?;
                 }
                 Ok::<(), ServerError>(())

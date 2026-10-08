@@ -936,6 +936,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("Deferred router IO requires compact protected count1 hybrid mode".into());
     }
     let request_io_reuse = count1_environment_opt_in(&mode, "KUNO_LAB_REQUEST_IO_REUSE")?;
+    let bind_group_reuse = count1_environment_opt_in(&mode, "KUNO_LAB_BIND_GROUP_REUSE")?;
+    if bind_group_reuse && !request_io_reuse {
+        return Err("binding reuse requires request I/O reuse".into());
+    }
     if request_io_reuse
         && (count1_hybrid_cap != Some(10)
             || !mapped_weights
@@ -2342,6 +2346,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let pre_request_io_reuses = cubecl::wgpu::transient_request_io_reuses();
             let pre_scoped_read_ns = cubecl::wgpu::transient_scoped_read_ns();
             let pre_info_cache_stats = cubecl::wgpu::transient_info_cache_stats();
+            let pre_binding_cache_stats = cubecl::wgpu::transient_binding_cache_stats();
             let pre_upload_transfer = cubecl::wgpu::transient_upload_transfer_stats();
             let reclaim_start = Instant::now();
             let gpu_source_advised_bytes = if reclaim_gpu_sources {
@@ -2569,6 +2574,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("public_{name}={}", receipt[name]);
                 }
                 receipt["request_io_reuse"] = serde_json::json!(request_io_reuse);
+                receipt["bind_group_reuse"] = serde_json::json!(bind_group_reuse);
+                let binding_stats = cubecl::wgpu::transient_binding_cache_stats();
+                let binding_delta = binding_stats
+                    .into_iter()
+                    .zip(pre_binding_cache_stats)
+                    .map(|(after, before)| {
+                        after.checked_sub(before).ok_or("binding counter overflow")
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                receipt["warm_binding_cache_stats"] = serde_json::json!(binding_delta);
+                println!(
+                    "public_warm_binding_cache_stats={}",
+                    receipt["warm_binding_cache_stats"]
+                );
                 receipt["observed_request_io_checkpoints"] =
                     serde_json::json!(request_io_checkpoints);
                 receipt["observed_request_io_reuses"] = serde_json::json!(
