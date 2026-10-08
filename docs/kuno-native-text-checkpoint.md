@@ -13,7 +13,7 @@ baselines are needed. Backend work belongs in the owner worktree
 
 ## Active overnight offload run, 2026-10-08
 
-The current accepted best is5.4142 tokens/s (144 slots, original full fixture);
+The current accepted best is5.5955 tokens/s (144 slots, original full fixture);
 10 tokens/s remains unmet. The preceding block established3.5006 tokens/s. Source
 `4cf40f3` adds specialized F16C original CPU packed loops with120 core tests,
 3 ignored and strict Clippy. Its normal frozen direct-device artifact
@@ -1488,4 +1488,15 @@ The batched-INFO laboratory will pack full post-erasure source copies into
 fewer bounded staging owners. Every original full source byte, new full stage
 and padding remains charged, mapped/inspected and finally erased under the
 original caps. No inference math, original MAIN proof or installed path changes.
-Physical acceptance pending.
+Sourceb5fafef/artifact2d8f4a9c passes all128 IDs and original owning/fresh/
+lifecycle gates:22697ms decode (5.5955 tokens/s),16885ms prefill. Warm
+readbytes10211328, uploaded bytes0; CPU total3528544550ns. Final proof
+interval falls from4172079892ns to3845052045ns in these single samples.
+Physical B70 returns50688000B.51 runtime host tests plus two isolated logger
+controls,492 native tests/both shaders,33 Python controls and strict Clippy
+pass. This does not meet10 tokens/s or establish a paired speed comparison.
+
+The next candidate shares the same three typed GPU error scopes across each
+already-owned single-stream scheduler batch. It adds no deferred task queue or
+private owner and preserves all before-acceptance errors/fences. Source/physical
+acceptance pending.

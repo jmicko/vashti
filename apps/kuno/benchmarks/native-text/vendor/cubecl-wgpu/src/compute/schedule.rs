@@ -158,6 +158,10 @@ impl SchedulerStreamBackend for ScheduledWgpuBackend {
         stream.enqueue_task(task);
     }
 
+    fn enqueue_many(tasks: impl Iterator<Item = Self::Task>, stream: &mut Self::Stream) {
+        stream.enqueue_tasks(tasks);
+    }
+
     fn flush(stream: &mut Self::Stream) {
         let _ = stream
             .flush(StreamErrorMode {

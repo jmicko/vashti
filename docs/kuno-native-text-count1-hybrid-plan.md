@@ -999,3 +999,22 @@ stage per source; no clean pool or cross-epoch reuse. This changes staging
 allocation/map overhead; it removes no original source coverage or checks.
 Source tests and the unchanged complete128-ID/owning/lifecycle device gates
 are mandatory before timing acceptance.
+
+### Synchronous GPU error scopes across existing scheduler batches
+
+The explicitly batched-INFO WGPU laboratory may share OOM/Internal/Validation
+scopes across one already-owned serialized task batch. Guards remain local to
+the same synchronous thread/stack; none is stored in a Send server or survives
+the batch call. Original task/resource/INFO ownership, order, compiler checks,
+flush limits, nested scopes and both admission/error fences remain. Popped
+futures enter the original checked error ledger before scheduler flush/readback
+or publication. A failure of any enclosed call still rejects; same-class
+per-dispatch attribution is not retained by a shared WGPU scope. A retired
+stream stops the remaining batch, dropping its original wiping metadata.
+Single-stream Interleave and Sequential schedules use an enqueue-many seam;
+multi-stream interleaving keeps its original individual order and flushes.
+The default backend method preserves individual enqueue; WGPU's non-batched
+path also keeps original per-call guards. No new queue, host/private allowance,
+API/default, unbounded wait, or early acceptance is introduced. Host scheduler
+order checks, original LIFO/error tests and the complete128-ID/owning/lifecycle
+fixture are required before accepting timing.

@@ -45,3 +45,10 @@ pub use core_scalars::ScalarBuilder;
 #[allow(dead_code)]
 #[path = "../../../vendor/cubecl-core/src/compute/private_info.rs"]
 mod core_private_info;
+
+#[cfg(test)]
+pub use cubecl_runtime::{config, logging, stream};
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../../../vendor/cubecl-runtime/src/stream/scheduler.rs"]
+mod scheduler_host;

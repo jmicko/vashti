@@ -17,6 +17,13 @@ pub trait SchedulerStreamBackend {
 
     /// Enqueues a task onto a given stream for execution.
     fn enqueue(task: Self::Task, stream: &mut Self::Stream);
+    /// Preserve a complete already-owned single-stream task order. Backends may
+    /// amortize synchronous bookkeeping; the default keeps individual enqueue.
+    fn enqueue_many(tasks: impl Iterator<Item = Self::Task>, stream: &mut Self::Stream) {
+        for task in tasks {
+            Self::enqueue(task, stream);
+        }
+    }
     /// Flush the inner stream queue to ensure ordering between different streams.
     fn flush(stream: &mut Self::Stream);
     /// Returns a mutable reference to the stream factory.
@@ -207,10 +214,7 @@ impl<B: SchedulerStreamBackend> SchedulerMultiStream<B> {
     fn execute_schedules_sequence(&mut self, schedules: Vec<Schedule<B>>) {
         for schedule in schedules {
             let stream = unsafe { self.pool.get_mut_index(schedule.stream_index) }; // Note: `unsafe` usage assumes valid index.
-            for task in schedule.tasks {
-                // Enqueue each task on the stream.
-                B::enqueue(task, &mut stream.stream);
-            }
+            B::enqueue_many(schedule.tasks, &mut stream.stream);
 
             // Makes sure the tasks are ordered on the compute queue.
             B::flush(&mut stream.stream);
@@ -224,6 +228,13 @@ impl<B: SchedulerStreamBackend> SchedulerMultiStream<B> {
     /// This way, we ensure that most tasks are actually interleaved on the real compute queue
     /// shared across all streams.
     fn execute_schedules_interleave(&mut self, mut schedules: Vec<Schedule<B>>) {
+        if schedules.len() == 1 {
+            let schedule = schedules.pop().unwrap();
+            let stream = unsafe { self.pool.get_mut_index(schedule.stream_index) };
+            B::enqueue_many(schedule.tasks, &mut stream.stream);
+            B::flush(&mut stream.stream);
+            return;
+        }
         // Makes sure the tasks are ordered on the compute queue.
         for schedule in schedules.iter_mut().skip(1) {
             let stream = unsafe { self.pool.get_mut_index(schedule.stream_index) };
@@ -263,4 +274,119 @@ struct Schedule<B: SchedulerStreamBackend> {
     num_tasks: usize,
     // Index of the stream in the pool.
     stream_index: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+    type Events = Arc<Mutex<Vec<(usize, usize, usize)>>>;
+    #[derive(Debug)]
+    struct BackendStream {
+        id: usize,
+        events: Events,
+    }
+    #[derive(Debug)]
+    struct Factory {
+        next: usize,
+        events: Events,
+    }
+    impl StreamFactory for Factory {
+        type Stream = BackendStream;
+        fn create(&mut self) -> BackendStream {
+            let id = self.next;
+            self.next += 1;
+            BackendStream {
+                id,
+                events: self.events.clone(),
+            }
+        }
+    }
+    struct Backend(Factory);
+    impl SchedulerStreamBackend for Backend {
+        type Task = usize;
+        type Stream = BackendStream;
+        type Factory = Factory;
+        fn enqueue(task: usize, stream: &mut BackendStream) {
+            stream.events.lock().unwrap().push((stream.id, 0, task));
+        }
+        fn enqueue_many(tasks: impl Iterator<Item = usize>, stream: &mut BackendStream) {
+            stream.events.lock().unwrap().push((stream.id, 1, 0));
+            for task in tasks {
+                Self::enqueue(task, stream);
+            }
+        }
+        fn flush(stream: &mut BackendStream) {
+            stream.events.lock().unwrap().push((stream.id, 2, 0));
+        }
+        fn factory(&mut self) -> &mut Factory {
+            &mut self.0
+        }
+    }
+    fn scheduler(strategy: SchedulerStrategy) -> (SchedulerMultiStream<Backend>, Events) {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let backend = Backend(Factory {
+            next: 0,
+            events: events.clone(),
+        });
+        (
+            SchedulerMultiStream::new(
+                Arc::new(ServerLogger::default()),
+                backend,
+                SchedulerMultiStreamOptions {
+                    max_streams: 4,
+                    max_tasks: 256,
+                    strategy,
+                },
+            ),
+            events,
+        )
+    }
+    #[test]
+    fn single_stream_batches_preserve_original_order_and_flush_after_enqueue() {
+        for strategy in [SchedulerStrategy::Interleave, SchedulerStrategy::Sequential] {
+            let (mut scheduler, events) = scheduler(strategy);
+            let id = StreamId { value: 0 };
+            for task in 10..15 {
+                scheduler.register(id, task, &[id]);
+            }
+            scheduler.execute_streams(vec![id, id]);
+            assert_eq!(
+                *events.lock().unwrap(),
+                vec![
+                    (0, 1, 0),
+                    (0, 0, 10),
+                    (0, 0, 11),
+                    (0, 0, 12),
+                    (0, 0, 13),
+                    (0, 0, 14),
+                    (0, 2, 0)
+                ]
+            );
+        }
+    }
+    #[test]
+    fn multiple_interleaved_streams_keep_original_single_task_ordering() {
+        let (mut scheduler, events) = scheduler(SchedulerStrategy::Interleave);
+        let a = StreamId { value: 0 };
+        let b = StreamId { value: 1 };
+        for task in 10..12 {
+            scheduler.register(a, task, &[a]);
+        }
+        for task in 20..22 {
+            scheduler.register(b, task, &[b]);
+        }
+        scheduler.execute_streams(vec![a, b]);
+        assert_eq!(
+            *events.lock().unwrap(),
+            vec![
+                (1, 2, 0),
+                (0, 0, 10),
+                (0, 0, 20),
+                (0, 0, 11),
+                (0, 0, 21),
+                (0, 2, 0)
+            ]
+        );
+    }
 }

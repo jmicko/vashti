@@ -124,6 +124,43 @@ impl WgpuStream {
             mutation.accept();
         }
     }
+    /// One already-owned serialized scheduler batch; guards remain synchronous
+    /// and thread-local. No ErrorScopeGuard is stored in a Send ComputeServer.
+    pub fn enqueue_tasks(&mut self, tasks: impl Iterator<Item = ScheduleTask>) {
+        if !self
+            .transient_io
+            .as_ref()
+            .is_some_and(|io| io.batches_info())
+        {
+            for task in tasks {
+                self.enqueue_task(task);
+            }
+            return;
+        }
+        if self.cleanup_boundary.retired()
+            || self.transient_io.as_ref().is_some_and(|io| io.retired())
+        {
+            self.error(super::transient_io::fault("private I/O stream retired"));
+            return;
+        }
+        let mut tasks = tasks.peekable();
+        if tasks.peek().is_none() {
+            return;
+        }
+        let mutation = self.transient_io.as_ref().unwrap().mutation_guard();
+        let scopes = super::transient_io::IoScopes::new(&self.device);
+        for task in tasks {
+            if self.cleanup_boundary.retired() || self.transient_io.as_ref().unwrap().retired() {
+                break;
+            }
+            self.enqueue_task_inner(task);
+        }
+        // Every typed error future exists BEFORE scheduler flush/readback or
+        // token acceptance. Errors from all enclosed calls share these scopes.
+        scopes.finish(self.transient_io.as_mut().unwrap());
+        mutation.accept();
+    }
+
     fn enqueue_task_inner(&mut self, task: ScheduleTask) {
         match task {
             ScheduleTask::Write {

@@ -512,3 +512,13 @@ Readback owners, both erase passes, typed scopes, callback/fence acceptance and
 failed-owner retention remain. No stage is pooled or reused across epochs.
 The ordinary non-batched path remains separate stages. Physical acceptance
 is pending; see the count1 plan and current checkpoint.
+
+### Error scopes over the original scheduler batch
+
+The batched-INFO laboratory shares synchronous typed error scopes for an
+already-owned single-stream task batch. The guards stay on the calling stack,
+then every popped scope future enters the existing error ledger before any
+completion or publication. Any enclosed GPU error rejects; per-dispatch
+same-class attribution is not preserved. No guard is stored in a Send server,
+and no new deferred task owner is added. Original non-batched behavior and
+multi-stream interleaving remain. Source/physical acceptance is pending.

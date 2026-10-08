@@ -491,6 +491,167 @@
  }
  
  impl MetadataBindingInfo {
+--- a/cubecl-runtime/src/stream/scheduler.rs
++++ b/cubecl-runtime/src/stream/scheduler.rs
+@@ -17,6 +17,13 @@
+ 
+     /// Enqueues a task onto a given stream for execution.
+     fn enqueue(task: Self::Task, stream: &mut Self::Stream);
++    /// Preserve a complete already-owned single-stream task order. Backends may
++    /// amortize synchronous bookkeeping; the default keeps individual enqueue.
++    fn enqueue_many(tasks: impl Iterator<Item = Self::Task>, stream: &mut Self::Stream) {
++        for task in tasks {
++            Self::enqueue(task, stream);
++        }
++    }
+     /// Flush the inner stream queue to ensure ordering between different streams.
+     fn flush(stream: &mut Self::Stream);
+     /// Returns a mutable reference to the stream factory.
+@@ -207,10 +214,7 @@
+     fn execute_schedules_sequence(&mut self, schedules: Vec<Schedule<B>>) {
+         for schedule in schedules {
+             let stream = unsafe { self.pool.get_mut_index(schedule.stream_index) }; // Note: `unsafe` usage assumes valid index.
+-            for task in schedule.tasks {
+-                // Enqueue each task on the stream.
+-                B::enqueue(task, &mut stream.stream);
+-            }
++            B::enqueue_many(schedule.tasks, &mut stream.stream);
+ 
+             // Makes sure the tasks are ordered on the compute queue.
+             B::flush(&mut stream.stream);
+@@ -224,6 +228,13 @@
+     /// This way, we ensure that most tasks are actually interleaved on the real compute queue
+     /// shared across all streams.
+     fn execute_schedules_interleave(&mut self, mut schedules: Vec<Schedule<B>>) {
++        if schedules.len() == 1 {
++            let schedule = schedules.pop().unwrap();
++            let stream = unsafe { self.pool.get_mut_index(schedule.stream_index) };
++            B::enqueue_many(schedule.tasks, &mut stream.stream);
++            B::flush(&mut stream.stream);
++            return;
++        }
+         // Makes sure the tasks are ordered on the compute queue.
+         for schedule in schedules.iter_mut().skip(1) {
+             let stream = unsafe { self.pool.get_mut_index(schedule.stream_index) };
+@@ -264,3 +275,118 @@
+     // Index of the stream in the pool.
+     stream_index: usize,
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::sync::Mutex;
++    type Events = Arc<Mutex<Vec<(usize, usize, usize)>>>;
++    #[derive(Debug)]
++    struct BackendStream {
++        id: usize,
++        events: Events,
++    }
++    #[derive(Debug)]
++    struct Factory {
++        next: usize,
++        events: Events,
++    }
++    impl StreamFactory for Factory {
++        type Stream = BackendStream;
++        fn create(&mut self) -> BackendStream {
++            let id = self.next;
++            self.next += 1;
++            BackendStream {
++                id,
++                events: self.events.clone(),
++            }
++        }
++    }
++    struct Backend(Factory);
++    impl SchedulerStreamBackend for Backend {
++        type Task = usize;
++        type Stream = BackendStream;
++        type Factory = Factory;
++        fn enqueue(task: usize, stream: &mut BackendStream) {
++            stream.events.lock().unwrap().push((stream.id, 0, task));
++        }
++        fn enqueue_many(tasks: impl Iterator<Item = usize>, stream: &mut BackendStream) {
++            stream.events.lock().unwrap().push((stream.id, 1, 0));
++            for task in tasks {
++                Self::enqueue(task, stream);
++            }
++        }
++        fn flush(stream: &mut BackendStream) {
++            stream.events.lock().unwrap().push((stream.id, 2, 0));
++        }
++        fn factory(&mut self) -> &mut Factory {
++            &mut self.0
++        }
++    }
++    fn scheduler(strategy: SchedulerStrategy) -> (SchedulerMultiStream<Backend>, Events) {
++        let events = Arc::new(Mutex::new(Vec::new()));
++        let backend = Backend(Factory {
++            next: 0,
++            events: events.clone(),
++        });
++        (
++            SchedulerMultiStream::new(
++                Arc::new(ServerLogger::default()),
++                backend,
++                SchedulerMultiStreamOptions {
++                    max_streams: 4,
++                    max_tasks: 256,
++                    strategy,
++                },
++            ),
++            events,
++        )
++    }
++    #[test]
++    fn single_stream_batches_preserve_original_order_and_flush_after_enqueue() {
++        for strategy in [SchedulerStrategy::Interleave, SchedulerStrategy::Sequential] {
++            let (mut scheduler, events) = scheduler(strategy);
++            let id = StreamId { value: 0 };
++            for task in 10..15 {
++                scheduler.register(id, task, &[id]);
++            }
++            scheduler.execute_streams(vec![id, id]);
++            assert_eq!(
++                *events.lock().unwrap(),
++                vec![
++                    (0, 1, 0),
++                    (0, 0, 10),
++                    (0, 0, 11),
++                    (0, 0, 12),
++                    (0, 0, 13),
++                    (0, 0, 14),
++                    (0, 2, 0)
++                ]
++            );
++        }
++    }
++    #[test]
++    fn multiple_interleaved_streams_keep_original_single_task_ordering() {
++        let (mut scheduler, events) = scheduler(SchedulerStrategy::Interleave);
++        let a = StreamId { value: 0 };
++        let b = StreamId { value: 1 };
++        for task in 10..12 {
++            scheduler.register(a, task, &[a]);
++        }
++        for task in 20..22 {
++            scheduler.register(b, task, &[b]);
++        }
++        scheduler.execute_streams(vec![a, b]);
++        assert_eq!(
++            *events.lock().unwrap(),
++            vec![
++                (1, 2, 0),
++                (0, 0, 10),
++                (0, 0, 20),
++                (0, 0, 11),
++                (0, 0, 21),
++                (0, 2, 0)
++            ]
++        );
++    }
++}
 --- /dev/null
 +++ b/cubecl-runtime/src/transient.rs
 @@ -0,0 +1,337 @@
@@ -1750,6 +1911,17 @@
      }
  }
  
+@@ -139,6 +156,10 @@
+ 
+     fn enqueue(task: Self::Task, stream: &mut Self::Stream) {
+         stream.enqueue_task(task);
++    }
++
++    fn enqueue_many(tasks: impl Iterator<Item = Self::Task>, stream: &mut Self::Stream) {
++        stream.enqueue_tasks(tasks);
+     }
+ 
+     fn flush(stream: &mut Self::Stream) {
 --- a/cubecl-wgpu/src/compute/server.rs
 +++ b/cubecl-wgpu/src/compute/server.rs
 @@ -1,3 +1,4 @@
@@ -2117,7 +2289,7 @@
          }
      }
  
-@@ -100,8 +105,55 @@
+@@ -100,8 +105,92 @@
      ///
      /// * `task` - The task to execute.
      pub fn enqueue_task(&mut self, task: ScheduleTask) {
@@ -2140,6 +2312,43 @@
 +            mutation.accept();
 +        }
 +    }
++    /// One already-owned serialized scheduler batch; guards remain synchronous
++    /// and thread-local. No ErrorScopeGuard is stored in a Send ComputeServer.
++    pub fn enqueue_tasks(&mut self, tasks: impl Iterator<Item = ScheduleTask>) {
++        if !self
++            .transient_io
++            .as_ref()
++            .is_some_and(|io| io.batches_info())
++        {
++            for task in tasks {
++                self.enqueue_task(task);
++            }
++            return;
++        }
++        if self.cleanup_boundary.retired()
++            || self.transient_io.as_ref().is_some_and(|io| io.retired())
++        {
++            self.error(super::transient_io::fault("private I/O stream retired"));
++            return;
++        }
++        let mut tasks = tasks.peekable();
++        if tasks.peek().is_none() {
++            return;
++        }
++        let mutation = self.transient_io.as_ref().unwrap().mutation_guard();
++        let scopes = super::transient_io::IoScopes::new(&self.device);
++        for task in tasks {
++            if self.cleanup_boundary.retired() || self.transient_io.as_ref().unwrap().retired() {
++                break;
++            }
++            self.enqueue_task_inner(task);
++        }
++        // Every typed error future exists BEFORE scheduler flush/readback or
++        // token acceptance. Errors from all enclosed calls share these scopes.
++        scopes.finish(self.transient_io.as_mut().unwrap());
++        mutation.accept();
++    }
++
 +    fn enqueue_task_inner(&mut self, task: ScheduleTask) {
          match task {
 -            ScheduleTask::Write { data, buffer } => {
@@ -2174,7 +2383,7 @@
                  // It is important to flush before writing, as the write operation is inserted
                  // into the QUEUE not the encoder. We want to make sure all outstanding work
                  // happens _before_ the write operation.
-@@ -117,10 +169,15 @@
+@@ -117,10 +206,15 @@
                  pipeline,
                  count,
                  resources,
@@ -2194,7 +2403,7 @@
          }
      }
  
-@@ -138,6 +195,9 @@
+@@ -138,6 +232,9 @@
          &mut self,
          descriptors: Vec<(WgpuResource, Shape, usize)>,
      ) -> DynFut<Result<Vec<Bytes>, ServerError>> {
@@ -2204,7 +2413,7 @@
          self.compute_pass = None;
          let mut staging_info = Vec::with_capacity(descriptors.len());
          let mut callbacks = Vec::with_capacity(descriptors.len());
-@@ -363,6 +423,296 @@
+@@ -363,6 +460,296 @@
          })
      }
  
@@ -2501,7 +2710,7 @@
      /// Allocates a new empty buffer using the main memory pool.
      pub fn empty(&mut self, size: u64) -> Result<ManagedMemoryHandle, IoError> {
          self.mem_manage.reserve(size)
-@@ -373,10 +723,24 @@
+@@ -373,10 +760,24 @@
          self.errors.push(error);
      }
  
@@ -2530,7 +2739,7 @@
      }
  
      // Nb: this function submits a command to the _queue_ not to the encoder,
-@@ -441,9 +805,16 @@
+@@ -441,9 +842,16 @@
              #[cfg(not(target_family = "wasm"))]
              if let Err(e) = self.device.poll(wgpu::PollType::Wait {
                  submission_index: Some(index),
@@ -2549,7 +2758,7 @@
              }
  
              self.pending_write_count = 0;
-@@ -465,7 +836,29 @@
+@@ -465,7 +873,29 @@
      }
  
      pub fn flush(&mut self, mode: StreamErrorMode) -> Result<(), ServerError> {
@@ -2580,7 +2789,7 @@
              return self.flush_errors(mode);
          }
  
-@@ -484,10 +877,22 @@
+@@ -484,10 +914,22 @@
          };
  
          // This will _first_ fire off all pending write_buffer work.
