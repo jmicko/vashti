@@ -291,32 +291,65 @@ impl GpuExecutor<'_> {
             physical(arena, bank, g, &ids, s.stamp.fault, w)?;
             if !split.gpu().is_empty() {
                 if self.shared_kernels {
-                    for shard in 0..bank.gate().segments().len() {
-                        let ga = &bank.gate().segments()[shard];
-                        let up = &bank.up().segments()[shard];
-                        let down = &bank.down().segments()[shard];
-                        let owner = |i| arena.handle(ids[i]).cloned().map_err(u::fault);
-                        crate::next_shared_moe::launch(
+                    let owner = |i| arena.handle(ids[i]).cloned().map_err(u::fault);
+                    let owners = || -> Result<[Handle; 7]> {
+                        Ok([
+                            owner(0)?,
+                            owner(1)?,
+                            owner(2)?,
+                            owner(3)?,
+                            owner(4)?,
+                            owner(5)?,
+                            owner(6)?,
+                        ])
+                    };
+                    if bank.gate().segments().len() == 2 {
+                        // physical() already proved all original contiguous segments,
+                        // exact extents/origin/aliases, including both paired banks.
+                        let banks = std::array::from_fn(|shard| {
+                            [
+                                bank.gate().segments()[shard].handle().clone(),
+                                bank.up().segments()[shard].handle().clone(),
+                                bank.down().segments()[shard].handle().clone(),
+                            ]
+                        });
+                        let capacities =
+                            std::array::from_fn(|shard| bank.gate().segments()[shard].capacity());
+                        crate::next_shared_moe::launch_pair(
                             &self.client,
                             g,
                             &spans,
-                            [
-                                ga.handle().clone(),
-                                up.handle().clone(),
-                                down.handle().clone(),
-                            ],
-                            [
-                                owner(0)?,
-                                owner(1)?,
-                                owner(2)?,
-                                owner(3)?,
-                                owner(4)?,
-                                owner(5)?,
-                                owner(6)?,
-                            ],
-                            ga.first_slot(),
-                            ga.capacity(),
+                            banks,
+                            owners()?,
+                            capacities,
                         )?;
+                    } else {
+                        for shard in 0..bank.gate().segments().len() {
+                            let ga = &bank.gate().segments()[shard];
+                            let up = &bank.up().segments()[shard];
+                            let down = &bank.down().segments()[shard];
+                            crate::next_shared_moe::launch(
+                                &self.client,
+                                g,
+                                &spans,
+                                [
+                                    ga.handle().clone(),
+                                    up.handle().clone(),
+                                    down.handle().clone(),
+                                ],
+                                [
+                                    owner(0)?,
+                                    owner(1)?,
+                                    owner(2)?,
+                                    owner(3)?,
+                                    owner(4)?,
+                                    owner(5)?,
+                                    owner(6)?,
+                                ],
+                                ga.first_slot(),
+                                ga.capacity(),
+                            )?;
+                        }
                     }
                 } else {
                     launch_wave(arena, bank, g, &spans, &ids, 10)?;

@@ -1703,3 +1703,13 @@ This is the best single sample so far;10 tokens/s remains unmet.
 The next candidate partitions GDN key reductions across four lanes. Arithmetic
 summation order changes and complete original acceptance is pending. Installed
 execution and all full-owner/cleanup gates remain unchanged.
+
+Partitioned GDN sourceaa3681c/artifactb2efc9e3be1d353687059dbe1a77fb19eb9ff231f8e212063929a2f7791f5f26
+passes original128 IDs, independent scalar numeric/invalid-column probes and
+all owning/fresh/poison/lifecycle gates:17079ms decode (7.4360 tokens/s),15463ms
+prefill. B70 returns50688000B. No measured overall gain; current best remains
+v40 at7.4499912.497 native tests/two shaders and strict Clippy pass.
+
+The next candidate combines two original expert-bank shards into two total
+projection dispatches rather than four, retaining original packed arithmetic,
+full physical proofs and all cleanup gates. Source/device acceptance pending.

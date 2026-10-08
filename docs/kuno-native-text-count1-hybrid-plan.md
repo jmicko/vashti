@@ -1303,3 +1303,17 @@ all four disjoint state intervals. Every lane follows identical barriers; no
 workgroup scratch is reused before all preceding readers complete. Original
 complete owners, status, full-span cleanup and lifecycle gates remain unchanged.
 No allocation budget, production behavior, model blob, API or frontend change.
+
+### Paired original expert-bank dispatch laboratory
+
+The existing opt-in shared count1 MoE seam may bind exactly two original
+contiguous shards in one gate/up dispatch and one down dispatch. The existing
+parent physical proof still checks every original projection/shard identity,
+origin, extent and alias. The narrowed seam additionally validates each segment
+geometry/size/stream and their exact total capacity. Original runtime map and
+rank slots choose the immutable weight binding, retaining all accepted packed
+row arithmetic and rank-order merge. Public shard capacities specialize the
+shader; request-derived routes remain runtime-only. Other shard counts retain
+the original implementation. No bank copy/requantization, extra private owner,
+cleanup omission or budget increase. Original128 IDs, owning/fresh/poison and
+lifecycle checks remain mandatory. No API/frontend/installed behavior change.

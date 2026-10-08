@@ -18,53 +18,55 @@ struct Kernel {
     row_bytes: usize,
     first_slot: usize,
     slots: usize,
+    split_slots: usize,
 }
+fn projection(name: &str, rows: usize, columns: usize, dtype: u32, row_bytes: usize) -> String {
+    let common = include_str!("ornith/common.wgsl")
+        .split_once("fn sigmoid")
+        .unwrap()
+        .1;
+    let vector = include_str!("ornith/matrix_vector.wgsl");
+    let helpers = vector.split_once("@compute").unwrap().0;
+    let arithmetic = vector
+        .split_once("    var sum=0.0;")
+        .unwrap()
+        .1
+        .split_once("    let total=subgroupAdd(sum);")
+        .unwrap()
+        .0;
+    let mut source = format!(
+        "fn sigmoid{common}\n{helpers}\nfn project_{name}(row:u32,base:u32,input:u32,lane:u32,width:u32)->f32 {{\nvar sum=0.0;{arithmetic}\nreturn subgroupAdd(sum);\n}}\n"
+    );
+    source = source
+        .replace("weight[", &format!("{name}["))
+        .replace("arena4[", "input4[")
+        .replace("DTYPE", &format!("{dtype}u"))
+        .replace("ROWS", &format!("{rows}u"))
+        .replace("COLUMNS", &format!("{columns}u"))
+        .replace("ROW_BYTES", &format!("{row_bytes}u"));
+    for helper in [
+        "sigmoid",
+        "silu",
+        "wb",
+        "wh",
+        "signed",
+        "word_byte",
+        "q4_scale",
+        "q4_minimum",
+        "packed",
+        "bytes4",
+        "word_at",
+    ] {
+        source = source.replace(&format!("{helper}("), &format!("{name}_{helper}("));
+    }
+    source
+}
+
 impl Kernel {
     fn source(self) -> String {
         // Exactly the original packed-vector row implementation already
         // independently checked against original GGUF rows. Each projection
         // gets its own immutable weight binding and helper namespace.
-        let common = include_str!("ornith/common.wgsl")
-            .split_once("fn sigmoid")
-            .unwrap()
-            .1;
-        let vector = include_str!("ornith/matrix_vector.wgsl");
-        let helpers = vector.split_once("@compute").unwrap().0;
-        let arithmetic = vector
-            .split_once("    var sum=0.0;")
-            .unwrap()
-            .1
-            .split_once("    let total=subgroupAdd(sum);")
-            .unwrap()
-            .0;
-        let project = |name: &str, rows: usize, columns: usize, dtype: u32, row_bytes: usize| {
-            let mut source = format!(
-                "fn sigmoid{common}\n{helpers}\nfn project_{name}(row:u32,base:u32,input:u32,lane:u32,width:u32)->f32 {{\nvar sum=0.0;{arithmetic}\nreturn subgroupAdd(sum);\n}}\n"
-            );
-            source = source
-                .replace("weight[", &format!("{name}["))
-                .replace("arena4[", "input4[")
-                .replace("DTYPE", &format!("{dtype}u"))
-                .replace("ROWS", &format!("{rows}u"))
-                .replace("COLUMNS", &format!("{columns}u"))
-                .replace("ROW_BYTES", &format!("{row_bytes}u"));
-            for helper in [
-                "sigmoid",
-                "silu",
-                "wb",
-                "wh",
-                "signed",
-                "word_byte",
-                "q4_scale",
-                "q4_minimum",
-                "packed",
-                "bytes4",
-                "word_at",
-            ] {
-                source = source.replace(&format!("{helper}("), &format!("{name}_{helper}("));
-            }
-            source
-        };
         let header = format!(
             "const FIRST_SLOT:u32={}u;const SLOTS:u32={}u;\n\
             struct Params {{a:u32,b:u32,c:u32,d:u32,e:u32,f:u32,g:u32,h:u32}}\n\
@@ -79,7 +81,7 @@ impl Kernel {
             }}\n",
             self.first_slot, self.slots
         );
-        if self.down {
+        let source = if self.down {
             let header = header
                 .replace(
                     "@binding(3) var<storage,read> map",
@@ -103,7 +105,7 @@ impl Kernel {
                     var sum=0.0;if valid {{sum=project_down(row,(slot*2560u+row)*{}u,p.b+route*p.c,lane,width);}}\n\
                     if valid && row<2560u && lane==0u {{output[p.d+route*p.e+row]=sum;if row==0u {{status[p.f+80u+route]=1u;}}}}\n\
                 }}",
-                project("down", 2560, 640, self.dtype, self.row_bytes),
+                projection("down", 2560, 640, self.dtype, self.row_bytes),
                 self.row_bytes
             )
         } else {
@@ -125,9 +127,31 @@ impl Kernel {
                         output[p.c+route*p.d+row]=a*sig*b;if row==0u {{status[p.e+route]=1u;}}\n\
                     }}\n\
                 }}",
-                project("gate", 640, 2560, 12, 1440),
-                project("up", 640, 2560, 12, 1440)
+                projection("gate", 640, 2560, 12, 1440),
+                projection("up", 640, 2560, 12, 1440)
             )
+        };
+        if self.split_slots == 0 {
+            return source;
+        }
+        let split = self.split_slots;
+        let source = format!("const SPLIT_SLOTS:u32={split}u;\n{source}");
+        if self.down {
+            source.replace("@binding(5) var<uniform>", "@binding(6) var<uniform>")
+                .replace("@compute @workgroup_size(128)", &format!(
+                    "@group(0) @binding(5) var<storage,read> down_second:array<u32>;\n{}\n@compute @workgroup_size(128)",
+                    projection("down_second", 2560, 640, self.dtype, self.row_bytes)))
+                .replace("sum=project_down(row,(slot*2560u+row)*", "if slot>=SPLIT_SLOTS {sum=project_down_second(row,((slot-SPLIT_SLOTS)*2560u+row)*")
+                .replace("u,p.b+route*p.c,lane,width);}", &format!(
+                    "u,p.b+route*p.c,lane,width);}}else{{sum=project_down(row,(slot*2560u+row)*{}u,p.b+route*p.c,lane,width);}}}}", self.row_bytes))
+        } else {
+            source.replace("@binding(6) var<uniform>", "@binding(8) var<uniform>")
+                .replace("@compute @workgroup_size(128)", &format!(
+                    "@group(0) @binding(6) var<storage,read> gate_second:array<u32>;\n@group(0) @binding(7) var<storage,read> up_second:array<u32>;\n{}\n{}\n@compute @workgroup_size(128)",
+                    projection("gate_second", 640, 2560, 12, 1440),
+                    projection("up_second", 640, 2560, 12, 1440)))
+                .replace("let base=(slot*640u+row)*1440u;", "if slot>=SPLIT_SLOTS {let base=((slot-SPLIT_SLOTS)*640u+row)*1440u;a=project_gate_second(row,base,p.b,lane,width);b=project_up_second(row,base,p.b,lane,width);}else{let base=(slot*640u+row)*1440u;")
+                .replace("b=project_up(row,base,p.b,lane,width);}", "b=project_up(row,base,p.b,lane,width);}}")
         }
     }
 }
@@ -179,6 +203,49 @@ pub(crate) fn launch(
     first_slot: usize,
     slots: usize,
 ) -> Result<()> {
+    launch_banks(client, g, s, banks, None, owners, first_slot, slots, 0)
+}
+
+pub(crate) fn launch_pair(
+    client: &ComputeClient<WgpuRuntime>,
+    g: Geometry,
+    s: &Spans,
+    banks: [[Handle; 3]; 2],
+    owners: [Handle; 7],
+    capacities: [usize; 2],
+) -> Result<()> {
+    let [first, second] = banks;
+    let total = capacities[0]
+        .checked_add(capacities[1])
+        .ok_or(Error::ArithmeticOverflow)?;
+    if capacities.contains(&0) || total != g.capacity() {
+        return Err(Error::InvalidFormat("shared paired original bank capacity"));
+    }
+    launch_banks(
+        client,
+        g,
+        s,
+        first,
+        Some(second),
+        owners,
+        0,
+        total,
+        capacities[0],
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn launch_banks(
+    client: &ComputeClient<WgpuRuntime>,
+    g: Geometry,
+    s: &Spans,
+    banks: [Handle; 3],
+    second: Option<[Handle; 3]>,
+    owners: [Handle; 7],
+    first_slot: usize,
+    slots: usize,
+    split_slots: usize,
+) -> Result<()> {
     let [gate, up, down] = g.projections();
     if g.hidden() != 2560
         || g.ff() != 640
@@ -193,22 +260,29 @@ pub(crate) fn launch(
     {
         return Err(Error::InvalidFormat("shared count1 expert geometry"));
     }
-    let packed_words = [
-        gate.segment_words(slots),
-        up.segment_words(slots),
-        down.segment_words(slots),
-    ];
-    let [a, b, c] = packed_words;
-    g.validate_shard(
-        first_slot,
-        slots,
-        [
-            a.map_err(Error::InvalidFormat)?,
-            b.map_err(Error::InvalidFormat)?,
-            c.map_err(Error::InvalidFormat)?,
-        ],
-    )
-    .map_err(Error::InvalidFormat)?;
+    if (split_slots == 0) != second.is_none() || split_slots >= slots && split_slots != 0 {
+        return Err(Error::InvalidFormat("shared original bank partition"));
+    }
+    let first_capacity = if split_slots == 0 { slots } else { split_slots };
+    for (offset, capacity, buffers) in std::iter::once((first_slot, first_capacity, &banks)).chain(
+        second
+            .as_ref()
+            .map(|b| (first_slot + split_slots, slots - split_slots, b)),
+    ) {
+        let mut packed_words = [0usize; 3];
+        for (i, (projection, buffer)) in [gate, up, down].iter().zip(buffers).enumerate() {
+            packed_words[i] = projection
+                .segment_words(capacity)
+                .map_err(Error::InvalidFormat)?;
+            if buffer.size_in_used() != packed_words[i] as u64 * 4
+                || buffer.stream != owners[0].stream
+            {
+                return Err(Error::InvalidBufferLength);
+            }
+        }
+        g.validate_shard(offset, capacity, packed_words)
+            .map_err(Error::InvalidFormat)?;
+    }
     let words = owners.each_ref().map(|h| h.size_in_used() as usize / 4);
     s.validate(g, words).map_err(Error::InvalidFormat)?;
     if owners
@@ -221,16 +295,6 @@ pub(crate) fn launch(
         || owners.iter().any(|h| !h.size_in_used().is_multiple_of(16))
     {
         return Err(Error::InvalidBufferLength);
-    }
-    for (projection, bank) in [gate, up, down].iter().zip(&banks) {
-        if bank.size_in_used()
-            != projection
-                .segment_words(slots)
-                .map_err(Error::InvalidFormat)? as u64
-                * 4
-        {
-            return Err(Error::InvalidBufferLength);
-        }
     }
     let infos = [
         [
@@ -259,7 +323,7 @@ pub(crate) fn launch(
             return Err(Error::InvalidBufferLength);
         }
         let mut args = KernelArguments::new();
-        let indices = if is_down == 0 {
+        let mut indices = if is_down == 0 {
             vec![
                 banks[0].clone(),
                 banks[1].clone(),
@@ -277,6 +341,13 @@ pub(crate) fn launch(
                 owners[6].clone(),
             ]
         };
+        if let Some(second) = &second {
+            if is_down == 0 {
+                indices.extend([second[0].clone(), second[1].clone()]);
+            } else {
+                indices.push(second[2].clone());
+            }
+        }
         for h in indices {
             args = args.with_buffer(h.binding());
         }
@@ -295,6 +366,7 @@ pub(crate) fn launch(
                     row_bytes: down.row_bytes(),
                     first_slot,
                     slots,
+                    split_slots,
                 }),
                 CubeCount::Static(if is_down == 0 { 160 } else { 640 }, 10, 1),
                 args,
@@ -310,13 +382,20 @@ mod tests {
     #[test]
     fn public_vector_experts_validate() {
         for (down, dtype, row_bytes) in [(false, 6, 440), (true, 6, 440), (true, 8, 680)] {
-            for (first_slot, slots) in [(0, 64), (64, 32)] {
+            for (first_slot, slots, split_slots) in [
+                (0, 64, 0),
+                (64, 32, 0),
+                (0, 96, 64),
+                (0, 128, 64),
+                (0, 144, 72),
+            ] {
                 let source = Kernel {
                     down,
                     dtype,
                     row_bytes,
                     first_slot,
                     slots,
+                    split_slots,
                 }
                 .source();
                 let module = wgpu::naga::front::wgsl::parse_str(&source).unwrap();
