@@ -686,10 +686,15 @@ impl Secondary {
                 .layout(self.ids[8])
                 .map_err(u::fault)?
                 .owned_words
-            || values[10 * H] != 0
-            || values[10 * H + 1..].iter().any(|&v| v != 0)
         {
-            return Err(err());
+            return Err(Error::InvalidFormat("secondary return packet extent"));
+        }
+        if values[10 * H] != 0 {
+            println!("public_secondary_fault flags={}", values[10 * H]);
+            return Err(Error::InvalidFormat("secondary full-owner device fold"));
+        }
+        if values[10 * H + 1..].iter().any(|&v| v != 0) {
+            return Err(Error::InvalidFormat("secondary return packet padding"));
         }
         let mut out = Completed {
             values: Zeroizing::new(vec![0f32; 10 * H]),
@@ -821,43 +826,43 @@ fn fold(
     count: usize,
 ) {
     let i = ABSOLUTE_POS;
-    let mut bad = false;
+    let mut bad = 0u32;
     if count == 0 || count > 10 {
-        bad = true;
+        bad |= 256;
     }
     if i == 0 {
         if map[0] != 1 || map[1] != 0 || map[2] != 1 || map[3] != count as u32 {
-            bad = true;
+            bad |= 256;
         }
     }
     if i < input.len() {
         if i < 2560 {
             let v = f32::reinterpret(input[i]);
             if v != v || f32::abs(v) > f32::new(f32::MAX) {
-                bad = true;
+                bad |= 1;
             }
         } else if input[i] != 0 {
-            bad = true;
+            bad |= 1;
         }
     }
     if i < act.len() {
         if i < count * 640 {
             let v = f32::reinterpret(act[i]);
             if v != v || f32::abs(v) > f32::new(f32::MAX) {
-                bad = true;
+                bad |= 2;
             }
         } else if act[i] != 0 {
-            bad = true;
+            bad |= 2;
         }
     }
     if i < part.len() {
         if i < count * 2560 {
             let v = f32::reinterpret(part[i]);
             if v != v || f32::abs(v) > f32::new(f32::MAX) {
-                bad = true;
+                bad |= 4;
             }
         } else if part[i] != 0 {
-            bad = true;
+            bad |= 4;
         }
     }
     if i < status.len() {
@@ -867,31 +872,31 @@ fn fold(
             0u32
         };
         if status[i] != expected {
-            bad = true;
+            bad |= 8;
         }
     }
     if i < prob.len() {
         if prob[i] != 0 {
-            bad = true;
+            bad |= 16;
         }
     }
     if i < output.len() {
         if output[i] != 0 {
-            bad = true;
+            bad |= 32;
         }
     }
     if i < map.len() && i >= 804 {
         if map[i] != 0 {
-            bad = true;
+            bad |= 64;
         }
     }
     if i < fault.len() && i > 0 {
         if fault[i].load() != 0 {
-            bad = true;
+            bad |= 128;
         }
     }
-    if bad {
-        fault[0].fetch_or(1);
+    if bad != 0 {
+        fault[0].fetch_or(bad);
     }
 }
 #[cube(launch, launch_unchecked)]

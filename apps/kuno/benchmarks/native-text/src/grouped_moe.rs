@@ -1519,6 +1519,7 @@ mod tests {
             tile: 8,
             capacity: 16,
             gate_policy: GatePolicy::Generic,
+            secondary_partition: false,
         };
         assert_eq!(g.scratch_bytes(true).unwrap(), 4480 * 1024);
     }
