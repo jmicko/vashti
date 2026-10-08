@@ -1,5 +1,32 @@
 # Native text checkpoint, 2026-10-08
 
+**Latest pause for reasoning-mode switch:** full-cache source is
+`3d67dbdd3c331b779779406a0fd177d3f459a4cd` (not device accepted yet).
+The user rejected permanent 128-slot pins; all 144 slots now use prefill and
+accepted decode frequency/recency, with 16-token frequency decay, current-token
+protection, grouped four-expert fills and unchanged original acceptance gates.
+Tests pass 513 native, two one-test shader suites, 52 Python controls and strict
+release all-target Clippy. Frozen v73 artifact is
+`20697ff60e7068dbd32f8c1bf1bf1c35c34c7c769847c27cc075e61e5aecd727`,
+build `next-offload-build-20261008-v73-adaptive-full`. GPU runs are pending.
+
+Earlier 16-slot v71 passes all original gates but is slower: 12825 ms/127 steps
+versus matched fixed-cache 11392 ms (9.9025 versus11.1482 tokens/s), 504 promotions,
+14100 CPU misses versus16411. Grouped v72 reduces that to12085 ms (10.509 tokens/s)
+and eliminates warm disk reads; it still does not beat the fixed cache.
+Raw accepted run names are `cpu-144-adaptive-long-v71`,
+`cpu-144-adaptive-off-long-v71`, `cpu-144-adaptive-long-v72-grouped`, under
+`/media/jmicko/faststore/kuno-development/next-offload-device-20261008`.
+Rejected v70 failed setup because partially populated banks were incorrectly
+assumed full; no acceptance record exists. Exact policy history is in the
+hybrid plan. Earlier selected-source statements below are historical.
+
+No benchmark remains running. Normal admission is resumed (HTTP200,
+paused=false, recovery_required=false). Installed inference binaries/settings,
+public API and Vashti remain unchanged. Resume with protected matched v73
+adaptive/fixed complete original fixtures; do not call full-cache speed proven.
+
+
 Latest engine source is **3e9f0e4891c75a09ff40eddd47f167e7ae47bef9**.
 The complementary stationary NVIDIA expert bank is implemented and passes the
 complete original model checks. It is **excluded from the selected path**:

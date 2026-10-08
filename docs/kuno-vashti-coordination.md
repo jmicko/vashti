@@ -2512,3 +2512,25 @@ Xe/NVIDIA faults, andHTTP200 from Kuno11434/Ollama11435/Vashti7771. No GPU
 reset/unbind/reboot/clock/driver or installed-service/configuration change.
 **Required Vashti changes: none.** No shared contract or frontend handoff is
 needed for this internal opt-in benchmark path.
+
+
+### Active handoff: full adaptive cache awaits device benchmark (2026-10-08)
+
+User corrected the 16-slot experiment: unused pinned experts must not prevent a
+new working set from settling into GPU memory. Latest Kuno lab source
+`3d67dbdd3c331b779779406a0fd177d3f459a4cd` makes all144 slots eligible, learns
+prefill and accepted decode use, decays frequency with16-token half-life,
+protects current selections and retains bounded grouped future-use transfers.
+Earlier source commits: `b0c7652` bounded cache, `6a30bc7` empty slots,
+`990a1a7` grouped fills/source hints. Read the exact internal contract in
+[kuno-native-text-count1-hybrid-plan.md](kuno-native-text-count1-hybrid-plan.md#user-correction-all-slots-adapt-to-frequency-and-recency-2026-10-08)
+and the latest top-of-file [checkpoint](kuno-native-text-checkpoint.md).
+
+Full-cache host checks pass513 native, two one-test shader suites,52 Python
+controls, strict release all-target Clippy and formatting. Device performance
+and complete model/lifecycle acceptance are **pending**. Earlier16-slot paths
+passed original gates but were slower than the matched fixed cache; they remain
+historical comparisons, not a selected optimization. Native lab only; no
+installation, release or public API/config/catalog changes. Required Vashti
+changes: none. Normal admission is resumed; no GPU benchmark remains running.
+The user requested a reasoning-mode switch before further GPU trials.
