@@ -779,8 +779,8 @@ impl WgpuStream {
                 }
                 return Box::pin(async move { Err(error) });
             }
-            // Device Wait processes native map callbacks synchronously. Refuse
-            // absent/rejected delivery instead of starting another wait window.
+            // Completed native polls process map callbacks synchronously.
+            // Refuse absent/rejected delivery rather than starting a new window.
             for (entry, callback) in pending.iter().zip(&callbacks) {
                 if let (Some(entry), Some(callback)) = (entry, callback)
                     && !matches!(callback.try_recv(), Ok(Ok(())))

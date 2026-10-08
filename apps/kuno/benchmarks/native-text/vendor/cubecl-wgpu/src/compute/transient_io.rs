@@ -112,6 +112,8 @@ fn configured_inline_readback(
     }
 }
 const POLL_TIMEOUT: Duration = Duration::from_secs(30);
+#[cfg(not(target_family = "wasm"))]
+const INLINE_MAP_SPIN_BUDGET: Duration = Duration::from_millis(1);
 pub(crate) type ErrorFuture = Pin<Box<dyn Future<Output = Option<wgpu::Error>> + Send>>;
 
 pub(crate) fn fault(reason: &'static str) -> ServerError {
@@ -565,6 +567,47 @@ fn remaining_map_time_at(deadline: Instant, now: Instant) -> Option<Duration> {
     deadline
         .checked_duration_since(now)
         .filter(|remaining| !remaining.is_zero())
+}
+
+/// Short routing submissions can finish before a native blocking wait wakes
+/// its caller. Poll briefly without sleeping, then wait only the remainder of
+/// the ORIGINAL map deadline. Poll itself is not completion: only QueueEmpty
+/// proves completion on the nonblocking path. Callers still accept every map
+/// callback and the existing GPU error scopes before using any readback.
+#[cfg(not(target_family = "wasm"))]
+fn poll_inline_maps_bounded(
+    deadline: Instant,
+    mut now: impl FnMut() -> Instant,
+    mut poll: impl FnMut(wgpu::PollType) -> Result<wgpu::PollStatus, wgpu::PollError>,
+) -> Result<(), wgpu::PollError> {
+    let mut current = now();
+    let spin_deadline = current
+        .checked_add(INLINE_MAP_SPIN_BUDGET)
+        .unwrap_or(deadline)
+        .min(deadline);
+    loop {
+        let remaining = remaining_map_time_at(deadline, current).ok_or(wgpu::PollError::Timeout)?;
+        let waiting = current >= spin_deadline;
+        let status = poll(if waiting {
+            wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: Some(remaining),
+            }
+        } else {
+            wgpu::PollType::Poll
+        })?;
+        current = now();
+        // A scheduling pause or slow poll cannot turn a late completion into
+        // acceptance. No fallback creates another thirty-second window.
+        remaining_map_time_at(deadline, current).ok_or(wgpu::PollError::Timeout)?;
+        if status.is_queue_empty() || (waiting && status.wait_finished()) {
+            return Ok(());
+        }
+        if waiting {
+            return Err(wgpu::PollError::Timeout);
+        }
+        std::hint::spin_loop();
+    }
 }
 
 /// A successful poll is not a delivered mapping callback: another native poll
@@ -2333,7 +2376,7 @@ impl TransientIo {
         self.inline_readback
     }
     pub(crate) fn await_inline_read_maps(&self, deadline: Instant) -> Result<(), ServerError> {
-        if self.poll_map_until(deadline) {
+        if self.poll_inline_map_until(deadline) {
             Ok(())
         } else {
             Err(fault(self.leases.reason(Failure::ReadbackMap)))
@@ -2910,6 +2953,23 @@ impl TransientIo {
         }
     }
     #[cfg(not(target_family = "wasm"))]
+    fn poll_inline_map_until(&self, deadline: Instant) -> bool {
+        if !self.reuse_active() {
+            return self.poll_map_until(deadline);
+        }
+        match poll_inline_maps_bounded(deadline, Instant::now, |mode| self.device.poll(mode)) {
+            Ok(()) => true,
+            Err(wgpu::PollError::Timeout) => {
+                self.leases.record(Failure::DrainTimeout);
+                false
+            }
+            Err(wgpu::PollError::WrongSubmissionIndex(_, _)) => {
+                self.leases.record(Failure::PollIndex);
+                false
+            }
+        }
+    }
+    #[cfg(not(target_family = "wasm"))]
     fn poll_with_timeout(&self, index: Option<wgpu::SubmissionIndex>, timeout: Duration) -> bool {
         match self.device.poll(wgpu::PollType::Wait {
             submission_index: index,
@@ -2933,6 +2993,10 @@ impl TransientIo {
     #[cfg(target_family = "wasm")]
     fn poll_map_until(&self, _deadline: Instant) -> bool {
         false
+    }
+    #[cfg(target_family = "wasm")]
+    fn poll_inline_map_until(&self, deadline: Instant) -> bool {
+        self.poll_map_until(deadline)
     }
     fn erase_set(&mut self, buffers: &[Tracked], previous_error: bool) -> bool {
         let scopes = IoScopes::new(&self.device);
@@ -3470,6 +3534,167 @@ mod tests {
             await_map_callback(&receiver, Instant::now() + Duration::from_millis(2)),
             Err(MapCallbackFailure::Timeout)
         );
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    mod inline_poll_tests {
+        use super::*;
+        use std::cell::Cell;
+        use std::collections::VecDeque;
+
+        type Step = (Duration, Result<wgpu::PollStatus, wgpu::PollError>);
+        struct FakePoll {
+            clock: Cell<Instant>,
+            steps: RefCell<VecDeque<Step>>,
+            calls: RefCell<Vec<wgpu::PollType>>,
+        }
+        impl FakePoll {
+            fn new(now: Instant, steps: Vec<Step>) -> Self {
+                Self {
+                    clock: Cell::new(now),
+                    steps: RefCell::new(steps.into()),
+                    calls: RefCell::new(Vec::new()),
+                }
+            }
+            fn run(&self, deadline: Instant) -> Result<(), wgpu::PollError> {
+                poll_inline_maps_bounded(
+                    deadline,
+                    || self.clock.get(),
+                    |mode| {
+                        self.calls.borrow_mut().push(mode);
+                        let (elapsed, result) = self.steps.borrow_mut().pop_front().unwrap();
+                        self.clock.set(self.clock.get() + elapsed);
+                        result
+                    },
+                )
+            }
+        }
+
+        #[test]
+        fn nonblocking_poll_requires_queue_completion() {
+            let now = Instant::now();
+            let fake = FakePoll::new(
+                now,
+                vec![
+                    // This status is not produced by native Poll, but must not
+                    // be mistaken for an identified submission's completion.
+                    (
+                        Duration::from_micros(100),
+                        Ok(wgpu::PollStatus::WaitSucceeded),
+                    ),
+                    (Duration::from_micros(100), Ok(wgpu::PollStatus::Poll)),
+                    (Duration::from_micros(100), Ok(wgpu::PollStatus::QueueEmpty)),
+                ],
+            );
+            assert!(fake.run(now + POLL_TIMEOUT).is_ok());
+            assert_eq!(fake.calls.borrow().len(), 3);
+            assert!(
+                fake.calls
+                    .borrow()
+                    .iter()
+                    .all(|mode| matches!(mode, wgpu::PollType::Poll))
+            );
+        }
+
+        #[test]
+        fn spin_budget_falls_through_to_only_original_remaining_wait() {
+            let now = Instant::now();
+            let fake = FakePoll::new(
+                now,
+                vec![
+                    (INLINE_MAP_SPIN_BUDGET, Ok(wgpu::PollStatus::Poll)),
+                    (
+                        Duration::from_micros(100),
+                        Ok(wgpu::PollStatus::WaitSucceeded),
+                    ),
+                ],
+            );
+            assert!(fake.run(now + POLL_TIMEOUT).is_ok());
+            let calls = fake.calls.borrow();
+            assert_eq!(calls.len(), 2);
+            assert!(matches!(calls[0], wgpu::PollType::Poll));
+            assert!(matches!(calls[1], wgpu::PollType::Wait {
+                submission_index: None, timeout: Some(timeout)
+            } if timeout == POLL_TIMEOUT - INLINE_MAP_SPIN_BUDGET));
+        }
+
+        #[test]
+        fn poll_and_fallback_errors_are_never_retried_or_accepted() {
+            for waiting in [false, true] {
+                for wrong_index in [false, true] {
+                    let now = Instant::now();
+                    let mut steps = Vec::new();
+                    if waiting {
+                        steps.push((INLINE_MAP_SPIN_BUDGET, Ok(wgpu::PollStatus::Poll)));
+                    }
+                    steps.push((
+                        Duration::ZERO,
+                        Err(if wrong_index {
+                            wgpu::PollError::WrongSubmissionIndex(2, 1)
+                        } else {
+                            wgpu::PollError::Timeout
+                        }),
+                    ));
+                    let fake = FakePoll::new(now, steps);
+                    let result = fake.run(now + POLL_TIMEOUT);
+                    assert!(if wrong_index {
+                        matches!(result, Err(wgpu::PollError::WrongSubmissionIndex(2, 1)))
+                    } else {
+                        matches!(result, Err(wgpu::PollError::Timeout))
+                    });
+                    assert_eq!(fake.calls.borrow().len(), 1 + usize::from(waiting));
+                }
+            }
+            let now = Instant::now();
+            let fake = FakePoll::new(
+                now,
+                vec![
+                    (INLINE_MAP_SPIN_BUDGET, Ok(wgpu::PollStatus::Poll)),
+                    (Duration::ZERO, Ok(wgpu::PollStatus::Poll)),
+                ],
+            );
+            assert!(matches!(
+                fake.run(now + POLL_TIMEOUT),
+                Err(wgpu::PollError::Timeout)
+            ));
+            assert_eq!(fake.calls.borrow().len(), 2);
+        }
+
+        #[test]
+        fn original_deadline_rejects_expired_or_late_poll_and_wait_completion() {
+            let now = Instant::now();
+            let expired = FakePoll::new(now, vec![]);
+            assert!(matches!(expired.run(now), Err(wgpu::PollError::Timeout)));
+            assert!(expired.calls.borrow().is_empty());
+
+            let short = Duration::from_micros(500);
+            let late_poll = FakePoll::new(now, vec![(short, Ok(wgpu::PollStatus::QueueEmpty))]);
+            assert!(matches!(
+                late_poll.run(now + short),
+                Err(wgpu::PollError::Timeout)
+            ));
+            assert_eq!(late_poll.calls.borrow().len(), 1);
+            assert!(matches!(late_poll.calls.borrow()[0], wgpu::PollType::Poll));
+
+            let late_wait = FakePoll::new(
+                now,
+                vec![
+                    (INLINE_MAP_SPIN_BUDGET, Ok(wgpu::PollStatus::Poll)),
+                    (
+                        Duration::from_millis(2),
+                        Ok(wgpu::PollStatus::WaitSucceeded),
+                    ),
+                ],
+            );
+            assert!(matches!(
+                late_wait.run(now + Duration::from_millis(3)),
+                Err(wgpu::PollError::Timeout)
+            ));
+            assert_eq!(late_wait.calls.borrow().len(), 2);
+            assert!(matches!(late_wait.calls.borrow()[1], wgpu::PollType::Wait {
+                submission_index: None, timeout: Some(timeout)
+            } if timeout == Duration::from_millis(2)));
+        }
     }
 
     #[test]
