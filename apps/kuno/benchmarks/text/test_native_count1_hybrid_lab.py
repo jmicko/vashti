@@ -37,14 +37,35 @@ class SecondaryControls(unittest.TestCase):
         with self.assertRaises(ValueError):LAB.validate_secondary(value,True,output.replace("families=2","families=1"),False)
 
 
+def adaptive_receipt(direct=False, long=False):
+    steps = 127 if long else 7
+    return {
+        "adaptive_experts": True, "secondary_experts": False,
+        "adaptive_policy": "decaying-frequency-recency", "adaptive_capacity": 144,
+        "adaptive_frequency_half_life_tokens": 16, "adaptive_score_scale": 256,
+        "adaptive_admit_score": 384, "adaptive_budget": 4,
+        "adaptive_promotions": 10, "adaptive_boundaries": steps,
+        "adaptive_completed_batches": 3, "adaptive_private_peak": 150000,
+        "adaptive_source_peak": 16777216, "adaptive_host_bytes": 105000,
+        "warm_expert_hits": 2200, "completed_cpu_misses": steps*48*10 - 2200,
+        "adaptive_upload_bytes": 1000000, "adaptive_read_ns": 10,
+        "adaptive_upload_ns": 20, "adaptive_fence_ns": 30,
+        "adaptive_wall_ns": 100, "adaptive_policy_ns": 10,
+        "adaptive_fill_ns": 40, "adaptive_publication_ns": 20,
+        "adaptive_direct_upload": direct,
+        "adaptive_direct_batches": 3 if direct else 0,
+        "adaptive_direct_components": 30 if direct else 0,
+        "adaptive_direct_bytes": 1000000 if direct else 0,
+    }
+
+
+ADAPTIVE_COMPLETION = "\n".join(["public_adaptive_closed=true host_reservation=196608"]*5)
+
+
 class AdaptiveControls(unittest.TestCase):
     def test_exact_partition_bounded_promotion_and_all_owner_closes(self):
-        value={"adaptive_experts":True,"secondary_experts":False,"adaptive_policy":"decaying-frequency-recency","adaptive_capacity":144,
-            "adaptive_budget":4,"adaptive_promotions":10,"adaptive_boundaries":7,
-            "adaptive_completed_batches":3,"adaptive_private_peak":150000,"adaptive_source_peak":16777216,
-            "adaptive_host_bytes":105000,"warm_expert_hits":2200,"completed_cpu_misses":1160,
-            "adaptive_upload_bytes":1000000,"adaptive_read_ns":10,"adaptive_upload_ns":20,"adaptive_fence_ns":30}
-        output="\n".join(["public_adaptive_closed=true host_reservation=196608"]*5)
+        value = adaptive_receipt()
+        output = ADAPTIVE_COMPLETION
         LAB.validate_adaptive(value,True,output,False)
         for field,bad in [("adaptive_capacity",145),("adaptive_budget",5),
             ("adaptive_promotions",29),("adaptive_completed_batches",2),
@@ -55,12 +76,172 @@ class AdaptiveControls(unittest.TestCase):
             with self.assertRaises(ValueError): LAB.validate_adaptive(changed,True,output,False)
         with self.assertRaises(ValueError): LAB.validate_adaptive(value,True,output.split("\n",1)[1],False)
         with self.assertRaises(ValueError): LAB.validate_adaptive(value,False,output,False)
+
+    def test_decay_metadata_is_required_and_exact_for_all_active_receipts(self):
+        for direct in (False, True):
+            for long in (False, True):
+                value = adaptive_receipt(direct, long)
+                LAB.validate_adaptive(value, True, ADAPTIVE_COMPLETION, long,
+                                      adaptive_direct_upload=direct)
+                for field in ("adaptive_frequency_half_life_tokens", "adaptive_score_scale", "adaptive_admit_score"):
+                    for bad in (None, True, str(value[field]), float(value[field]), value[field] + 1):
+                        with self.subTest(direct=direct, long=long, field=field, bad=bad):
+                            wrong = dict(value, **{field: bad})
+                            with self.assertRaises(ValueError):
+                                LAB.validate_adaptive(wrong, True, ADAPTIVE_COMPLETION, long,
+                                                      adaptive_direct_upload=direct)
+                    missing = dict(value)
+                    del missing[field]
+                    with self.assertRaises(ValueError):
+                        LAB.validate_adaptive(missing, True, ADAPTIVE_COMPLETION, long,
+                                              adaptive_direct_upload=direct)
+
+    def test_disjoint_phases_are_numeric_and_fully_enclosed_without_tolerance(self):
+        value = adaptive_receipt()
+        LAB.validate_adaptive(value, True, ADAPTIVE_COMPLETION, False)
+        # Equality is accepted; losing even one nanosecond of enclosing time is not.
+        with self.assertRaises(ValueError):
+            LAB.validate_adaptive(dict(value, adaptive_wall_ns=99), True, ADAPTIVE_COMPLETION, False)
+        LAB.validate_adaptive(dict(value, adaptive_wall_ns=101), True, ADAPTIVE_COMPLETION, False)
+        for field in ("adaptive_wall_ns", "adaptive_policy_ns", "adaptive_fill_ns", "adaptive_publication_ns"):
+            for bad in (None, True, -1, "10", 10.0):
+                with self.subTest(field=field, bad=bad):
+                    with self.assertRaises(ValueError):
+                        LAB.validate_adaptive(dict(value, **{field: bad}), True, ADAPTIVE_COMPLETION, False)
+            missing = dict(value)
+            del missing[field]
+            with self.assertRaises(ValueError):
+                LAB.validate_adaptive(missing, True, ADAPTIVE_COMPLETION, False)
+        LAB.validate_adaptive(dict(value, adaptive_wall_ns=30, adaptive_policy_ns=0,
+                                   adaptive_fill_ns=0, adaptive_publication_ns=0),
+                              True, ADAPTIVE_COMPLETION, False)
+
+    def test_direct_proof_conserves_completed_batches_components_and_original_bytes(self):
+        fields = ("adaptive_direct_batches", "adaptive_direct_components", "adaptive_direct_bytes")
+        for direct in (False, True):
+            value = adaptive_receipt(direct)
+            LAB.validate_adaptive(value, True, ADAPTIVE_COMPLETION, False,
+                                  adaptive_direct_upload=direct)
+            for field in fields:
+                for bad in (None, True, -1, str(value[field]), float(value[field]), value[field] + 1):
+                    with self.subTest(direct=direct, field=field, bad=bad):
+                        with self.assertRaises(ValueError):
+                            LAB.validate_adaptive(dict(value, **{field: bad}), True, ADAPTIVE_COMPLETION, False,
+                                                  adaptive_direct_upload=direct)
+                missing = dict(value)
+                del missing[field]
+                with self.assertRaises(ValueError):
+                    LAB.validate_adaptive(missing, True, ADAPTIVE_COMPLETION, False,
+                                          adaptive_direct_upload=direct)
+            for bad in (None, 1, "true", not direct):
+                with self.assertRaises(ValueError):
+                    LAB.validate_adaptive(dict(value, adaptive_direct_upload=bad), True,
+                                          ADAPTIVE_COMPLETION, False, adaptive_direct_upload=direct)
+            missing = dict(value)
+            del missing["adaptive_direct_upload"]
+            with self.assertRaises(ValueError):
+                LAB.validate_adaptive(missing, True, ADAPTIVE_COMPLETION, False,
+                                      adaptive_direct_upload=direct)
+
+    def test_inactive_receipts_cannot_report_any_adaptive_proof(self):
+        LAB.validate_adaptive({"adaptive_experts": False}, False, "", False)
+        LAB.validate_adaptive({}, False, "", False)  # Historical inactive artifact.
+        for field, value in adaptive_receipt().items():
+            if field.startswith("adaptive_") and field != "adaptive_experts":
+                for receipt_value in ({"adaptive_experts": False, field: value}, {field: value}):
+                    with self.subTest(field=field, receipt=receipt_value):
+                        with self.assertRaises(ValueError):
+                            LAB.validate_adaptive(receipt_value, False, "", False)
+        with self.assertRaises(ValueError):
+            LAB.validate_adaptive({"adaptive_experts": False}, False, "", False,
+                                  adaptive_direct_upload=True)
+        for bad in (None, 1, "true"):
+            with self.assertRaises(ValueError):
+                LAB.validate_adaptive(adaptive_receipt(), True, ADAPTIVE_COMPLETION, False,
+                                      adaptive_direct_upload=bad)
+
     def test_environment_does_not_inherit_accidental_opt_in(self):
-        with mock.patch.dict(os.environ,{"KUNO_LAB_ADAPTIVE_EXPERTS":"1"}):
+        with mock.patch.dict(os.environ,{"KUNO_LAB_ADAPTIVE_EXPERTS":"1", "KUNO_LAB_ADAPTIVE_DIRECT_UPLOAD":"1"}):
             env=LAB.worker_environment(pathlib.Path("/original/model"),pathlib.Path("/receipt"))
             self.assertEqual(env["KUNO_LAB_ADAPTIVE_EXPERTS"],"0")
+            self.assertEqual(env["KUNO_LAB_ADAPTIVE_DIRECT_UPLOAD"],"0")
             env=LAB.worker_environment(pathlib.Path("/original/model"),pathlib.Path("/receipt"),adaptive_experts=True)
             self.assertEqual(env["KUNO_LAB_ADAPTIVE_EXPERTS"],"1")
+            self.assertEqual(env["KUNO_LAB_ADAPTIVE_DIRECT_UPLOAD"],"0")
+            env=LAB.worker_environment("/original/model", "/receipt", adaptive_experts=True,
+                                       adaptive_direct_upload=True)
+            self.assertEqual(env["KUNO_LAB_ADAPTIVE_DIRECT_UPLOAD"],"1")
+        with self.assertRaises(ValueError):
+            LAB.worker_environment("/original/model", "/receipt", adaptive_direct_upload=True)
+        for field in ("adaptive_experts", "adaptive_direct_upload"):
+            for bad in (None, 1, "true"):
+                with self.assertRaises(ValueError):
+                    LAB.worker_environment("/original/model", "/receipt", **{field: bad})
+
+    def test_cli_direct_flag_requires_adaptive_before_loading_artifacts_or_launching(self):
+        args = ["lab", "--cargo-artifacts", "/absent/build", "--model", "/original/model",
+                "--card", "intel", "--cpu-miss-cap", "10", "--run-id", "test",
+                "--receipt", "/absent/receipt", "--adaptive-direct-upload"]
+        with mock.patch.object(LAB.sys, "argv", args), \
+             mock.patch.object(LAB.BASE, "cargo_binary") as load, \
+             mock.patch.object(LAB.subprocess, "Popen") as launch, \
+             mock.patch("sys.stderr", new_callable=io.StringIO) as errors:
+            with self.assertRaises(SystemExit) as error:
+                LAB.main()
+        self.assertEqual(error.exception.code, 2)
+        self.assertIn("requires --adaptive-experts", errors.getvalue())
+        load.assert_not_called()
+        launch.assert_not_called()
+
+    def test_validator_forwards_explicit_direct_selection_to_adaptive_gate(self):
+        # The existing full-model controls cover the downstream geometry and
+        # lifecycle gates; this control isolates selection forwarding to the new gate.
+        with mock.patch.object(LAB, "validate_adaptive") as gate:
+            LAB.validate_receipt(receipt("intel", 10), "intel", 10, completion(10),
+                                 adaptive_experts=True, adaptive_direct_upload=True)
+        self.assertTrue(gate.call_args.args[1])
+        self.assertTrue(gate.call_args.kwargs["adaptive_direct_upload"])
+
+    def test_runner_forwards_direct_selection_to_environment_validator_and_run_record(self):
+        for direct in (False, True):
+            with self.subTest(direct=direct), tempfile.TemporaryDirectory() as directory:
+                target = pathlib.Path(directory) / "receipt.json"
+                build = pathlib.Path(directory) / "build.jsonl"
+                build.write_text(json.dumps({"reason": "compiler-artifact",
+                    "target": {"name": "kuno-text-lab"}, "executable": "/frozen", "features": []}) + "\n")
+                command_seen = []
+
+                def launch(command, **options):
+                    command_seen.extend(command)
+                    target.write_text(json.dumps(adaptive_receipt(direct)))
+                    return SimpleNamespace(stdout=io.StringIO(ADAPTIVE_COMPLETION), wait=lambda: 0)
+
+                def validate(*args, **selection):
+                    # Only the adaptive gate is exercised here; independent
+                    # full-model/fidelity/lifecycle controls remain below.
+                    LAB.validate_adaptive(args[0], selection["adaptive_experts"], args[3], False,
+                                          adaptive_direct_upload=selection["adaptive_direct_upload"])
+
+                args = ["lab", "--cargo-artifacts", str(build), "--model", "/original/model",
+                        "--card", "intel", "--cpu-miss-cap", "10", "--run-id", "test",
+                        "--receipt", str(target), "--adaptive-experts", "--bank-profile", "intel144",
+                        "--cpu-workers", "pooled", "--cpu-gpu-overlap", "--mapped-weights",
+                        "--next-shared-kernels", "--fast-gpu", "--gpu-router", "--device-dispatch", "inline",
+                        "--request-io-reuse", "--defer-router-io", "--compact-info",
+                        "--info-batch-upload", "--inline-readback"]
+                if direct:
+                    args.append("--adaptive-direct-upload")
+                with mock.patch.object(LAB.BASE, "cargo_binary", return_value=(pathlib.Path("/frozen"), "binary", "build")), \
+                     mock.patch.object(LAB.subprocess, "Popen", side_effect=launch), \
+                     mock.patch.object(LAB, "validate_receipt", side_effect=validate) as gate, \
+                     mock.patch.object(LAB.sys, "argv", args), mock.patch("sys.stdout", new_callable=io.StringIO):
+                    LAB.main()
+                self.assertIs(gate.call_args.kwargs["adaptive_direct_upload"], direct)
+                self.assertIn("--setenv=KUNO_LAB_ADAPTIVE_DIRECT_UPLOAD=" + ("1" if direct else "0"), command_seen)
+                self.assertIn("--setenv=KUNO_LAB_ADAPTIVE_EXPERTS=1", command_seen)
+                record = json.loads(target.with_suffix(".json.run.json").read_text())
+                self.assertTrue(record["adaptive_experts"])
+                self.assertIs(record["adaptive_direct_upload"], direct)
 
 
 def receipt(card, cap):
@@ -796,6 +977,7 @@ class HybridLabTests(unittest.TestCase):
                 self.assertEqual(command_seen[-3:], ["intel", LAB.MODE, "10"])
                 self.assertIn("--property=MemorySwapMax=0", command_seen)
                 self.assertIn("--property=LimitCORE=0", command_seen)
+                self.assertIn("--setenv=KUNO_LAB_ADAPTIVE_DIRECT_UPLOAD=0", command_seen)
                 record = target.with_suffix(".json.run.json")
                 self.assertEqual(record.exists(), valid)
                 if valid:
@@ -803,6 +985,7 @@ class HybridLabTests(unittest.TestCase):
                     self.assertFalse(data["matched_performance_measurement"])
                     self.assertFalse(data["cpu_gpu_overlap"])
                     self.assertEqual(data["cpu_miss_cap"], 10)
+                    self.assertFalse(data["adaptive_direct_upload"])
 
 
 if __name__ == "__main__":
