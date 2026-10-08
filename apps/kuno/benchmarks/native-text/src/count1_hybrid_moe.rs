@@ -323,7 +323,8 @@ pub(super) fn hybrid_fold(
     #[comptime] capacity: usize,
 ) {
     let i = ABSOLUTE_POS;
-    let mut valid = owner_header(owners, owner_first, count);
+    let header = owner_header(owners, owner_first, count);
+    let mut valid = header;
     let mut cpu_count = 0usize;
     let mut gpu_count = 0usize;
     if valid {
@@ -375,9 +376,7 @@ pub(super) fn hybrid_fold(
     }
     if i < act.len() {
         let mut active = false;
-        if active_coordinate(i, act_first, act_stride, RANKS, ff)
-            && owner_header(owners, owner_first, count)
-        {
+        if active_coordinate(i, act_first, act_stride, RANKS, ff) && header {
             let rank = (i - act_first) / act_stride;
             active = owners[owner_first + 4 + rank * 3] == 0;
         }
@@ -391,9 +390,7 @@ pub(super) fn hybrid_fold(
     }
     if i < gpu.len() {
         let mut active = false;
-        if active_coordinate(i, partial_first, partial_stride, RANKS, hidden)
-            && owner_header(owners, owner_first, count)
-        {
+        if active_coordinate(i, partial_first, partial_stride, RANKS, hidden) && header {
             let rank = (i - partial_first) / partial_stride;
             active = owners[owner_first + 4 + rank * 3] == 0;
         }
@@ -473,7 +470,7 @@ pub(super) fn hybrid_fold(
                         let rank = map[i] as usize;
                         if rank >= RANKS {
                             valid = false;
-                        } else if owner_header(owners, owner_first, count) {
+                        } else if header {
                             if owners[owner_first + 4 + rank * 3] != 0 {
                                 valid = false;
                             }
@@ -530,7 +527,7 @@ pub(super) fn hybrid_fold(
             );
             if at < MAX_ROUTES * 2 {
                 let rank = at % MAX_ROUTES;
-                if rank < RANKS && owner_header(owners, owner_first, count) {
+                if rank < RANKS && header {
                     if owners[owner_first + 4 + rank * 3] == 0 {
                         expect_one = true;
                     }
@@ -743,11 +740,7 @@ pub(super) fn merge(
     unsafe {
         hybrid_merge::launch_unchecked::<WgpuRuntime>(
             client,
-            CubeCount::Static(
-                geometry.hidden().div_ceil(k::LANES) as u32,
-                MAX_BATCH as u32,
-                1,
-            ),
+            CubeCount::Static(geometry.hidden().div_ceil(k::LANES) as u32, 1, 1),
             CubeDim::new_1d(k::LANES as u32),
             super::arg(arena, ids[3])?,
             super::arg(arena, cpu)?,

@@ -50,7 +50,7 @@ impl MatrixSpec {
             .split_once("fn sigmoid")
             .expect("shared packed helper boundary")
             .1;
-        let body = packed_vector_source()
+        let body = include_str!("ornith/matrix_vector.wgsl")
             .replace("if ROUTED {base+=(route[rank]*ROWS)*ROW_BYTES;}", "")
             .replace("if RANKED_INPUT {input+=rank*COLUMNS;}", "")
             .replace("arena4[", "input4[")
@@ -79,26 +79,6 @@ impl MatrixSpec {
         }
         source
     }
-}
-
-/// Same original Q4_K words/scales/minima; distribute the vector dot over its
-/// block scale and minimum to avoid dequantizing eight float lanes per word.
-/// Changed round points stay subject to original independent rows/full128 IDs.
-pub(crate) fn packed_vector_source() -> String {
-    include_str!("ornith/matrix_vector.wgsl").replace(
-        r#"                    let low=vec4<f32>(q&vec4<u32>(15u))*factors.x*q4_scale(a,scales,pair*2u)
-                        -vec4<f32>(factors.y*q4_minimum(z,scales,pair*2u));
-                    let high=vec4<f32>(q>>vec4<u32>(4u))*factors.x*q4_scale(a,scales,pair*2u+1u)
-                        -vec4<f32>(factors.y*q4_minimum(z,scales,pair*2u+1u));
-                    let col=(input+block*256u+pair*64u+i)/4u;
-                    sum+=dot(low,arena4[col])+dot(high,arena4[col+8u]);"#,
-        r#"                    let col=(input+block*256u+pair*64u+i)/4u;
-                    let x=arena4[col];let y=arena4[col+8u];
-                    let low=(factors.x*q4_scale(a,scales,pair*2u))*dot(vec4<f32>(q&vec4<u32>(15u)),x)
-                        -(factors.y*q4_minimum(z,scales,pair*2u))*dot(vec4<f32>(1.0),x);
-                    let high=(factors.x*q4_scale(a,scales,pair*2u+1u))*dot(vec4<f32>(q>>vec4<u32>(4u)),y)
-                        -(factors.y*q4_minimum(z,scales,pair*2u+1u))*dot(vec4<f32>(1.0),y);
-                    sum+=low+high;"#)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

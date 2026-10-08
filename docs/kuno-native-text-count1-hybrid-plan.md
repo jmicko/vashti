@@ -1176,3 +1176,17 @@ spans remain. This changes floating round points without requantizing weights.
 Original independent f64 row controls and complete128-ID/fresh/poison/owning/
 lifecycle gates remain mandatory; no tolerance or output gate is relaxed.
 The separate fully resident Ornith path keeps its current arithmetic.
+
+### Count1 hybrid inactive-grid and immutable header reuse
+
+The count1 hybrid merge dispatches its sole active row instead of eight rows;
+the original kernel stores only when token==0, and the narrowed owning proof
+already rejects every count other than1 before encoding. Full MAX8/MAX80 owners
+and the following full-span finite/inactive/owner/map/status inspection remain.
+Within each full inspection invocation the immutable checked owner header may
+be evaluated once and reused, independently of subsequent local fault results.
+Every header/bijection/word/status predicate is unchanged; no result survives
+the invocation or becomes a shader/cache key. Independent malformed/full-tail
+controls and original full128-ID/fresh/owning/lifecycle gates remain mandatory.
+The factored Q4_K arithmetic is withdrawn after an accepted but slower trial;
+shared Next kernels again use the original accepted vector dequantization.

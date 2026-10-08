@@ -1602,3 +1602,15 @@ disk reads remain zero; retain original float FMA as the control. Both feature
 sets pass496 native tests, both shader suites and strict Clippy. The next
 candidate factors original Q4_K vector dots for dense/expert kernels; independent
 rows and full original device acceptance are pending. No API/installed changes.
+
+Factored Q4_K source1f0e078/artifacte71731c34dffd23e94001a21f820f00e7bd5bc9bfbea6b3cfe5f8ba706269a39
+passes all original75/128 output, independent rows and owning/fresh/lifecycle
+gates, but18110ms decode (7.0127 tokens/s) does not improve v30. Eight workers
+on the same frozen artifact also pass all original gates with17943ms decode
+(7.0780 tokens/s). CPU user/system ticks fall4026/612→2726/417 against v30,
+but CPU operator wall total rises3006→3256ms; retain sixteen workers. Both
+physical postflights return50688000B. The next source restores original Q4_K
+arithmetic and removes count1 hybrid inactive merge workgroups/repeated
+immutable owner-header reads. Source gates pass496 native tests, both shader
+suites and strict Clippy; complete device acceptance and a new bounded CPU
+profile are pending.10 tokens/s remains unmet; no installation/API/UI changes.
