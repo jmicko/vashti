@@ -1389,6 +1389,13 @@ see the checkpoint and51-fixture numeric aggregate for final restoration proof.
 
 ### Request-owned transient I/O reuse experiment (2026-10-08)
 
+PLE's independent completed-map checkpoint joins the same explicit admission
+scope as logits and final fault. Its original full three-buffer numeric
+inspection, host transition preparation, second fault proof and all-family
+publication order remain unchanged. Without a request capability, PLE retains
+its original independent full audit. Calling that full sanitizer inside the
+selected scope would prematurely erase the entire token pool and defeat reuse.
+
 The new explicit `--request-io-reuse` laboratory mode targets allocation and
 cleanup overhead, preserving original packed arithmetic and model outputs.
 It requires mapped cap10 count1, deferred router I/O, batched INFO and inline

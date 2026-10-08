@@ -552,7 +552,8 @@ impl PleBatchWorkspace {
     /// EXTERNAL OWNER PRECONDITION: exact WHOLE-model output/global-fault fence
     /// already completed, health/cancellation accepted, all earlier leases
     /// dropped. This performs additional full diagnostics and ACTUAL independent
-    /// audited I/O cleanup; caller must preflight every OTHER family before ANY
+    /// audited I/O cleanup (or an explicit request-owned checkpoint); caller
+    /// must preflight every OTHER family before ANY
     /// state swap. No enqueue receipt or MAIN credit substitutes for this proof.
     pub(crate) fn prepare_after_whole_model_fence<'a>(
         &'a mut self,
@@ -564,6 +565,7 @@ impl PleBatchWorkspace {
             Preparation {
                 graph: model.graph,
                 arena: &model.arena,
+                admission: &model.admission,
                 retired: &model.retired,
                 context: model.context,
                 position: model.position,
@@ -651,7 +653,13 @@ impl PleBatchWorkspace {
                 (old, normalized, next)
             };
             // All raw Bytes leases are gone; inference was already completed.
-            audit(c.arena, c.retired)?;
+            // Keep this independent PLE boundary in the SAME request scope as
+            // logits/fault. A direct sanitizer here would erase that pool on
+            // every token. Reuse retains every dirty owner/charge, accepts GPU
+            // errors and maps now, and performs the full audit at request end.
+            if !c.admission.checkpoint_request_io_reuse(cancel)? {
+                audit(c.arena, c.retired)?;
+            }
             self.receipt_parts(&c, &receipt, cancel)?;
             let existing = core::owner_capacity_bytes(c.conv, c.history).map_err(u::fault)?;
             let maps = old
@@ -716,6 +724,7 @@ impl PleBatchWorkspace {
 pub(crate) struct Preparation<'a, 'm, 'f> {
     pub(super) graph: BoundGraph<'m, 'f>,
     pub(super) arena: &'a PrivateArena,
+    pub(super) admission: &'a crate::executor::ResidentAdmission,
     pub(super) retired: &'a AtomicBool,
     pub(super) context: usize,
     pub(super) position: usize,

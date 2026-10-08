@@ -1519,6 +1519,7 @@ impl Workspace {
                     ple_batch::Preparation {
                         graph: m.graph,
                         arena: &m.arena,
+                        admission: &m.admission,
                         retired: &m.retired,
                         context: m.context,
                         position: *start,

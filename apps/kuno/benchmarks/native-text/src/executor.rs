@@ -410,6 +410,16 @@ impl ResidentAdmission {
     pub(crate) fn request_io_checkpoints(&self) -> u64 {
         self.request_io_checkpoints.load(Ordering::Relaxed)
     }
+    /// A family may have completed its own guarded maps outside the admission
+    /// callback. Join the same owning checkpoint only when its explicit request
+    /// capability exists; ordinary family audits remain unchanged.
+    pub(crate) fn checkpoint_request_io_reuse(&self, cancel: &AtomicBool) -> Result<bool> {
+        if self.request_io_nonce.load(Ordering::Acquire) == 0 {
+            return Ok(false);
+        }
+        self.readback_audited(cancel, || Ok(()))?;
+        Ok(true)
+    }
     /// Explicit close remains legal after logical cancellation/poison. Do not
     /// clear the capability unless the original full audit actually succeeded.
     pub(crate) fn end_request_io_reuse(&self) -> Result<()> {
