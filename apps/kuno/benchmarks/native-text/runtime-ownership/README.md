@@ -500,3 +500,15 @@ audits apply to every profiling flush; exhaustion still rejects the fixture.
 Profiling remains diagnostic and cannot establish unprofiled speed. Two
 process-isolated logger tests exercise enabled and disabled configurations
 without adapters, files or private content. Physical efficacy is pending.
+
+### Packed audit copies in the batched-INFO experiment
+
+Batched-INFO streams pack full Upload/Uniform verification copies into fewer
+owned stages, retaining the original source order and full-byte coverage.
+Logical groups are at most1 MiB; larger original sources stay alone. Full
+power-of-two staging padding is precharged under the unchanged runtime cap,
+cleared, mapped and inspected. Numeric planning is bounded to4 KiB. Original
+Readback owners, both erase passes, typed scopes, callback/fence acceptance and
+failed-owner retention remain. No stage is pooled or reused across epochs.
+The ordinary non-batched path remains separate stages. Physical acceptance
+is pending; see the count1 plan and current checkpoint.

@@ -1097,24 +1097,91 @@ impl EraseBackend for NativeEraser<'_> {
 
 /// All verification copies share one submission. Extra stages remain charged
 /// and retained in the SAME ledger, including partial setup/error/unwind.
+// Only the explicitly selected batched-INFO laboratory packs audit copies.
+// Full original sources and full staging padding remain independently owned.
+const PACKED_AUDIT_BYTES: u64 = 1024 * 1024;
+fn audit_stage_plan(sizes: impl Iterator<Item = u64>) -> Result<Vec<(u64, u64)>, ServerError> {
+    let mut plan = Vec::new();
+    let mut pending = 0u64;
+    for bytes in sizes {
+        if bytes < MIN_BYTES || !bytes.is_power_of_two() || bytes > MAX_BYTES {
+            return Err(fault("private packed audit source span"));
+        }
+        if pending != 0
+            && pending
+                .checked_add(bytes)
+                .is_none_or(|n| n > PACKED_AUDIT_BYTES)
+        {
+            if plan.len() >= 256 {
+                return Err(fault("private packed audit metadata limit"));
+            }
+            plan.try_reserve_exact(1)
+                .map_err(|_| fault("private packed audit plan allocation"))?;
+            plan.push((pending, span(pending)?));
+            pending = 0;
+        }
+        if bytes >= PACKED_AUDIT_BYTES {
+            if plan.len() >= 256 {
+                return Err(fault("private packed audit metadata limit"));
+            }
+            plan.try_reserve_exact(1)
+                .map_err(|_| fault("private packed audit plan allocation"))?;
+            plan.push((bytes, bytes));
+        } else {
+            pending = pending
+                .checked_add(bytes)
+                .ok_or_else(|| fault("private packed audit span overflow"))?;
+        }
+    }
+    if pending != 0 {
+        if plan.len() >= 256 {
+            return Err(fault("private packed audit metadata limit"));
+        }
+        plan.try_reserve_exact(1)
+            .map_err(|_| fault("private packed audit plan allocation"))?;
+        plan.push((pending, span(pending)?));
+    }
+    // Consumers pop in original source order; no private source trace is kept.
+    plan.reverse();
+    Ok(plan)
+}
+struct PackedAuditStage {
+    buffer: wgpu::Buffer,
+    cursor: u64,
+    logical: u64,
+}
 struct NativeAudit<'a> {
     io: &'a mut TransientIo,
     encoder: Option<wgpu::CommandEncoder>,
     scopes: Option<IoScopes>,
+    stage_plan: Option<Vec<(u64, u64)>>,
+    current_stage: Option<PackedAuditStage>,
 }
 impl<'a> NativeAudit<'a> {
-    fn new(io: &'a mut TransientIo) -> Self {
+    fn new(io: &'a mut TransientIo, originals: &[Tracked]) -> Result<Self, ServerError> {
+        let stage_plan = if io.info_batch {
+            Some(audit_stage_plan(
+                originals
+                    .iter()
+                    .filter(|b| b.kind != Kind::Readback)
+                    .map(|b| b.buffer.size()),
+            )?)
+        } else {
+            None
+        };
         let scopes = IoScopes::new(&io.device);
         let encoder = io
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("CubeCL private zero audit"),
             });
-        Self {
+        Ok(Self {
             io,
             encoder: Some(encoder),
             scopes: Some(scopes),
-        }
+            stage_plan,
+            current_stage: None,
+        })
     }
 }
 /// Own the unmap obligation BEFORE map_async. Pending, rejected and completed
@@ -1206,28 +1273,80 @@ impl AuditBackend for NativeAudit<'_> {
                 self.io.leases.record(Failure::AuditBudget);
                 fault(self.io.leases.reason(Failure::AuditBudget))
             })?;
-            let stage = self
-                .io
-                .allocate_audit(Kind::Readback, source.size())
-                .inspect_err(|_| {
-                    self.io.leases.record(Failure::AuditAllocation);
+            let packed = self.stage_plan.is_some();
+            if self.current_stage.as_ref().is_some_and(|stage| {
+                stage
+                    .cursor
+                    .checked_add(source.size())
+                    .is_none_or(|n| n > stage.logical)
+            }) {
+                if self.current_stage.as_ref().unwrap().cursor
+                    != self.current_stage.as_ref().unwrap().logical
+                {
+                    return Err(fault("private packed audit incomplete group"));
+                }
+                self.current_stage = None;
+            }
+            if self.current_stage.is_none() {
+                let (logical, bytes) = if let Some(plan) = &mut self.stage_plan {
+                    plan.pop()
+                        .ok_or_else(|| fault("private packed audit plan exhausted"))?
+                } else {
+                    (source.size(), source.size())
+                };
+                if bytes < source.size() {
+                    return Err(fault("private packed audit source exceeds stage"));
+                }
+                let stage = self
+                    .io
+                    .allocate_audit(Kind::Readback, bytes)
+                    .inspect_err(|_| {
+                        self.io.leases.record(Failure::AuditAllocation);
+                    })?;
+                let encoder = self
+                    .encoder
+                    .as_mut()
+                    .ok_or_else(|| fault("private audit encoder missing"))?;
+                encoder.clear_buffer(&stage, 0, None);
+                counts.add(AuditCounts {
+                    bytes: stage.size(),
+                    buffers: 1,
                 })?;
-            let encoder = self
-                .encoder
+                self.current_stage = Some(PackedAuditStage {
+                    buffer: stage,
+                    cursor: 0,
+                    logical,
+                });
+            }
+            let stage = self.current_stage.as_mut().unwrap();
+            let next = stage
+                .cursor
+                .checked_add(source.size())
+                .filter(|n| *n <= stage.logical)
+                .ok_or_else(|| fault("private packed audit copy extent"))?;
+            self.encoder
                 .as_mut()
-                .ok_or_else(|| fault("private audit encoder missing"))?;
-            encoder.clear_buffer(&stage, 0, None);
-            encoder.copy_buffer_to_buffer(source, 0, &stage, 0, source.size());
-            // These are exactly the old source+stage inspection counts. Both
-            // remain owned through full inspection and final checked erasure.
-            counts.add(AuditCounts {
-                bytes: stage.size(),
-                buffers: 1,
-            })?;
+                .ok_or_else(|| fault("private audit encoder missing"))?
+                .copy_buffer_to_buffer(source, 0, &stage.buffer, stage.cursor, source.size());
+            stage.cursor = next;
+            if !packed {
+                self.current_stage = None;
+            }
         }
         Ok(counts)
     }
     fn inspect_prepared(&mut self, originals: &[Tracked<wgpu::Buffer>]) -> Result<(), ServerError> {
+        if self.stage_plan.as_ref().is_some_and(|p| !p.is_empty()) {
+            return Err(fault("private packed audit unused plan"));
+        }
+        if self
+            .current_stage
+            .as_ref()
+            .is_some_and(|s| s.cursor != s.logical)
+        {
+            return Err(fault("private packed audit incomplete final group"));
+        }
+        self.current_stage = None;
         let submitted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             self.io
                 .queue
@@ -1758,6 +1877,23 @@ impl TransientIo {
                 .check_info_audit_group(0, 0, 0)
                 .inspect_err(|_| self.leases.record(Failure::AuditBudget))?;
         }
+        if self.info_batch && inspect {
+            // Charge packed stage padding before the FIRST erase or audit copy.
+            // No original runtime cap or full-span owner is credited early.
+            let plan = audit_stage_plan(
+                self.buffers
+                    .iter()
+                    .filter(|b| b.kind != Kind::Readback)
+                    .map(|b| b.buffer.size()),
+            )?;
+            let bytes = plan
+                .iter()
+                .try_fold(0u64, |sum, (_, owned)| sum.checked_add(*owned))
+                .ok_or_else(|| fault("private packed audit charge overflow"))?;
+            self.ledger
+                .check(bytes)
+                .inspect_err(|_| self.leases.record(Failure::AuditBudget))?;
+        }
         // Move bookkeeping, never GPU bytes. Restore ALL original and audit
         // stages before handling any panic/error. Failed audit never releases.
         let mut buffers = std::mem::take(&mut self.buffers);
@@ -1784,7 +1920,8 @@ impl TransientIo {
         let initial_ok = matches!(initial, Ok(true));
         let inspected = if inspect && initial_ok {
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                inspect_all(&mut NativeAudit::new(self), &buffers)
+                let mut audit = NativeAudit::new(self, &buffers)?;
+                inspect_all(&mut audit, &buffers)
             }))
             .map_err(|_| {
                 self.leases.record(Failure::Panic);
@@ -1856,6 +1993,47 @@ mod cleanup_read_tests {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn packed_audit_plan_preserves_complete_sources_padding_and_original_order() {
+        for sizes in [
+            vec![],
+            vec![256],
+            vec![256, 512, 256],
+            vec![4096; 511],
+            vec![512, 1048576, 256, 256],
+            vec![524288, 262144, 524288, 2097152, 256],
+        ] {
+            let mut plan = audit_stage_plan(sizes.iter().copied()).unwrap();
+            let input_bytes: u64 = sizes.iter().sum();
+            assert_eq!(plan.iter().map(|s| s.0).sum::<u64>(), input_bytes);
+            assert!(
+                plan.iter()
+                    .all(|(logical, owned)| *owned == span(*logical).unwrap())
+            );
+            let mut current = None;
+            for bytes in sizes {
+                if current.is_none_or(|(cursor, limit)| cursor + bytes > limit) {
+                    if let Some((cursor, limit)) = current {
+                        assert_eq!(cursor, limit);
+                    }
+                    let (limit, _) = plan.pop().unwrap();
+                    current = Some((0, limit));
+                }
+                let (cursor, limit) = current.as_mut().unwrap();
+                assert_eq!(*cursor % wgpu::COPY_BUFFER_ALIGNMENT, 0);
+                *cursor += bytes;
+                assert!(*cursor <= *limit);
+            }
+            assert!(plan.is_empty());
+            if let Some((cursor, limit)) = current {
+                assert_eq!(cursor, limit);
+            }
+        }
+        for n in [0, 1, 257, MAX_BYTES + 1, u64::MAX] {
+            assert!(audit_stage_plan([n].into_iter()).is_err());
+        }
+        assert!(audit_stage_plan(std::iter::repeat_n(PACKED_AUDIT_BYTES, 257)).is_err());
+    }
     use super::*;
     use std::cell::RefCell;
 

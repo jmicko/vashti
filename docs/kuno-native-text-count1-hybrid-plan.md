@@ -978,3 +978,24 @@ controls have independently checked markers. Host checks require the exact
 logical output binding, and the shader uses actual dispatched group counts
 for complete tail coverage on both16/32-lane subgroup sizes.
 Unchanged128 IDs and original complete owning/lifecycle checks precede timing.
+
+### Packed full-span runtime audit copies
+
+Only explicitly selected batched-INFO laboratory streams pack the original
+post-erasure Upload/Uniform copies into staging owners with at most1 MiB of
+logical source coverage. A larger original owner stays alone. Original source
+order and each complete API span are preserved at disjoint aligned offsets;
+the last stage's power-of-two padding is cleared and fully inspected too.
+The plan retains only at most256 pairs of numeric byte lengths (4 KiB), no
+source offsets or contents. Original readable owners remain individually
+inspected. Stage planning and full padding charge reject before first erasure
+or verification copy if the unchanged hard budget cannot cover them. Each
+actual allocated stage remains in the original ledger on partial setup, copy,
+map, scope, nonzero/error/unwind, or final-erasure failure. All original sources
+remain retained until both original erase passes, complete full-span inspection
+and original scope/fence/publication checks succeed. The receipt counts actual
+full original and packed staging bytes/buffers. Non-batched paths retain one
+stage per source; no clean pool or cross-epoch reuse. This changes staging
+allocation/map overhead; it removes no original source coverage or checks.
+Source tests and the unchanged complete128-ID/owning/lifecycle device gates
+are mandatory before timing acceptance.
