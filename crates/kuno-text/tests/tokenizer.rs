@@ -57,6 +57,39 @@ fn exact_ids_match_independent_pinned_python_reference_fixtures() {
 }
 
 #[test]
+fn omitted_optional_bpe_boundary_flags_preserve_exact_raw_encoding() {
+    let mut metadata = metadata();
+    metadata.remove("tokenizer.ggml.add_bos_token");
+    metadata.remove("tokenizer.ggml.add_eos_token");
+    let tokenizer = Qwen35Tokenizer::from_metadata(&metadata, TokenizerLimits::default()).unwrap();
+    for case in fixture()["cases"].as_array().unwrap() {
+        let expected = case["expected"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|id| id.as_u64().unwrap() as u32)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            tokenizer
+                .encode(
+                    case["input"].as_str().unwrap(),
+                    case["parse_special"].as_bool().unwrap()
+                )
+                .unwrap(),
+            expected
+        );
+    }
+    for key in [
+        "tokenizer.ggml.add_bos_token",
+        "tokenizer.ggml.add_eos_token",
+    ] {
+        metadata.insert(key.into(), MetadataValue::Bool(true));
+        assert!(Qwen35Tokenizer::from_metadata(&metadata, TokenizerLimits::default()).is_err());
+        metadata.remove(key);
+    }
+}
+
+#[test]
 fn control_is_opt_in_user_defined_is_always_matched_and_longest_wins() {
     let tokenizer = tokenizer(TokenizerLimits::default());
     assert!(tokenizer.encode("", true).unwrap().is_empty());

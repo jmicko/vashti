@@ -22,6 +22,7 @@ fn main() -> Result<()> {
     let count = match args[3].as_str() {
         "8" => 8,
         "128" => 128,
+        "tokenize-public-response" => 0,
         _ => return Err("Public output limit must be8 or128".into()),
     };
     if std::env::var("KUNO_LAB_ORNITH_PUBLIC").as_deref() != Ok("1") {
@@ -62,6 +63,18 @@ fn main() -> Result<()> {
         file.enable_mapped_weights()?;
     }
     let tokenizer = Qwen35Tokenizer::from_gguf(&file, TokenizerLimits::default())?;
+    if count == 0 {
+        use std::io::Read;
+        let mut bytes = Zeroizing::new(Vec::new());
+        std::io::stdin().take(65537).read_to_end(&mut bytes)?;
+        if bytes.len() > 65536 {
+            return Err("Fixed public response exceeds lab tokenization bound".into());
+        }
+        let text = std::str::from_utf8(&bytes)?;
+        let ids = Zeroizing::new(tokenizer.encode(text, false)?);
+        serde_json::to_writer(std::io::stdout().lock(), &*ids)?;
+        return Ok(());
+    }
     let fixture: serde_json::Value =
         serde_json::from_str(include_str!("../../text/ornith35-baseline.json"))?;
     let prompt = fixture["prompt"].as_str().ok_or("Public fixture missing")?;

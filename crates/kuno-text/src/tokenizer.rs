@@ -93,12 +93,15 @@ impl Qwen35Tokenizer {
                 "unsupported tokenizer model or pretokenizer",
             ));
         }
-        if metadata.get("tokenizer.ggml.add_bos_token") != Some(&MetadataValue::Bool(false))
-            || !matches!(
-                metadata.get("tokenizer.ggml.add_eos_token"),
-                None | Some(MetadataValue::Bool(false))
-            )
-        {
+        // Qwen35 GPT2/BPE defaults to no automatic BOS/EOS when these optional
+        // GGUF flags are absent. Explicit true still requires another policy.
+        if !matches!(
+            metadata.get("tokenizer.ggml.add_bos_token"),
+            None | Some(MetadataValue::Bool(false))
+        ) || !matches!(
+            metadata.get("tokenizer.ggml.add_eos_token"),
+            None | Some(MetadataValue::Bool(false))
+        ) {
             return Err(Error::InvalidFormat("implicit BOS/EOS is unsupported"));
         }
         let vocabulary = array(metadata, "tokenizer.ggml.tokens")?;
