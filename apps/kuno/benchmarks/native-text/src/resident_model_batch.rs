@@ -952,14 +952,21 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 self.native_batch = Some(native);
                 Ok(logits)
             }
-            _ => {
+            failure => {
                 flight.poison.store(true, Ordering::Release);
                 self.poisoned = true;
                 executor.poison_resident();
                 self.native_batch = Some(native);
                 let _ = self.close(); // Explicit close outside admission-held guards.
                 let _ = executor.close_transient_resident(); // Abort/drain the actual staged bank registry.
-                Err(error())
+                // Keep the original typed failure after the same terminal
+                // cleanup. The fixed-public lab must be able to distinguish
+                // a rejected capacity from an execution fault; panic payloads
+                // remain suppressed and no request values are added.
+                Err(match failure {
+                    Ok(Err(cause)) => cause,
+                    _ => error(),
+                })
             }
         }
     }

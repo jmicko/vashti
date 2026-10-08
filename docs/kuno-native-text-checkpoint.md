@@ -152,6 +152,20 @@ owning/fresh/lifecycle gates with8 actual workers:35199ms decode
 but readbytes10334400512 remain and wall speed does not improve. Sixteen workers
 remain the control. Two-pass physical acceptance is pending.
 
+Source ff8d92b adds the original160-slot/72+72+16 profile within27GiB bank,
+3GiB static cache and the unchanged31GiB ceiling.490 native tests and both
+shader suites,30 Python controls and strict Clippy pass. Frozen artifact
+006771c6… rejects its first prefill at a physical owning check before any
+accepted timing; no receipt or speed claim. GPU memory recovers50688000B.
+Inspection found the actual resident MoE launch proof still assumed two shards.
+The correction derives and independently validates all three actual projection
+inventories from the checked public table, without weakening full-page/alias/
+geometry checks. A host regression rejects missing/extra shards in each
+projection.491 native tests plus both shader suites pass. The fixed-public
+terminal cleanup now preserves the original content-free typed error instead
+of replacing every failure with an opaque chunk rejection; panic payloads
+remain suppressed. Physical acceptance of the corrected profile is pending.
+
 The user granted exclusive GPUs. Installed Kuno had an idle managed worker
 holding15978409984 B70 bytes with no active request; a graceful Kuno restart
 released it and physical VRAM returned50688000. There was no GPU reset/unbind

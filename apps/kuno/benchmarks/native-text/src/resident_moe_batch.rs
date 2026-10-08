@@ -1314,13 +1314,8 @@ fn physical(
         all.extend_from_slice(&*h.ids);
     }
     let banks = [bank.gate(), bank.up(), bank.down()];
-    let count = if crate::bank_slots::segmented_capacity(w.layout.capacity) {
-        2
-    } else {
-        1
-    };
-    if banks.iter().any(|b| b.segments().len() != count)
-        || bank.slots.capacity() != w.layout.capacity
+    let count = original_shard_count(w.layout.capacity, banks.map(|b| b.segments().len()))?;
+    if bank.slots.capacity() != w.layout.capacity
         || bank.hidden != 2560
         || bank.ff != 640
         || bank.experts != 512
@@ -1397,6 +1392,16 @@ fn physical(
             .map_err(err)?;
     }
     Ok(())
+}
+fn original_shard_count(capacity: usize, actual: [usize; 3]) -> Result<usize> {
+    if !crate::bank_slots::routed_capacity(capacity) {
+        return Err(err("native routed bank capacity"));
+    }
+    let count = crate::bank_slots::segmented_capacities(capacity).map_or(1, |parts| parts.len());
+    if actual != [count; 3] {
+        return Err(err("native routed bank shard inventory"));
+    }
+    Ok(count)
 }
 fn check_page(offset: u64, size: u64, physical: u64, logical: u64, bound: u64) -> Result<()> {
     if logical == 0 || offset != 0 || size != logical || physical < logical || physical > bound {
@@ -1975,6 +1980,23 @@ mod tests {
             capacity,
         )
         .unwrap()
+    }
+    #[test]
+    fn actual_original_shard_inventory_matches_each_admitted_profile() {
+        for (capacity, count) in [(16, 1), (72, 1), (96, 2), (128, 2), (144, 2), (160, 3)] {
+            assert_eq!(original_shard_count(capacity, [count; 3]).unwrap(), count);
+            for projection in 0..3 {
+                let mut short = [count; 3];
+                short[projection] -= 1;
+                assert!(original_shard_count(capacity, short).is_err());
+                let mut extra = [count; 3];
+                extra[projection] += 1;
+                assert!(original_shard_count(capacity, extra).is_err());
+            }
+        }
+        for capacity in [0, 9, 73, 145, 159, 161, usize::MAX] {
+            assert!(original_shard_count(capacity, [3; 3]).is_err());
+        }
     }
     fn stamp() -> Stamp {
         Stamp {

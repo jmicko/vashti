@@ -883,7 +883,9 @@ extra private budget and changes no rank/selection/output or installed policy.
 
 One checked public shard table governs logical source extents, GPU bindings,
 slot bounds and receipt inventory. Original inactive/whole-owner audits remain;
-all three last-slot boundaries are tested independently. Original host ledger
+all three last-slot boundaries are tested independently. The resident launch
+proof validates actual gate/up/down shard inventories against that same table;
+missing or extra shards reject before dispatch. Original host ledger
 capacity remains separately checked within640KiB / original12MiB parent.
 Full128 original IDs, mandatory numerical probes and full private/source owning
 proofs plus physical recovery still precede acceptance. Device efficacy pending.
