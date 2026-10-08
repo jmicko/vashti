@@ -141,6 +141,7 @@ pub struct Geometry {
     tile: usize,
     capacity: usize,
     gate_policy: GatePolicy,
+    secondary_partition: bool,
 }
 impl Geometry {
     pub fn new(
@@ -184,7 +185,24 @@ impl Geometry {
             tile,
             capacity,
             gate_policy: GatePolicy::Generic,
+            secondary_partition: false,
         })
+    }
+    /// Narrow immutable32+16 partition; ordinary flat48 remains unchanged.
+    pub(crate) fn stationary_secondary(projections: [Projection; 3]) -> Result<Self, &'static str> {
+        let [gate, up, down] = projections;
+        if gate.dtype != Q4_K
+            || up != gate
+            || gate.columns != 2560
+            || gate.rows != 640
+            || gate.experts != 512
+            || !matches!(down.dtype, super::Q5_0 | super::Q8_0)
+        {
+            return Err("secondary original geometry");
+        }
+        let mut g = Self::new(projections, 1, 48)?;
+        g.secondary_partition = true;
+        Ok(g)
     }
     pub fn projections(self) -> [Projection; 3] {
         self.projections
@@ -232,7 +250,11 @@ impl Geometry {
         binding_words: [usize; 3],
     ) -> Result<(), &'static str> {
         let flat = [self.capacity];
-        let parts = crate::bank_slots::segmented_capacities(self.capacity).unwrap_or(&flat);
+        let parts = if self.secondary_partition {
+            &[32, 16][..]
+        } else {
+            crate::bank_slots::segmented_capacities(self.capacity).unwrap_or(&flat)
+        };
         let mut start = 0;
         let valid = parts.iter().any(|&count| {
             let matches = first_slot == start && slot_count == count;

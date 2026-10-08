@@ -569,15 +569,11 @@ impl Secondary {
         } else {
             6
         };
-        let g = k::Geometry::new(
-            [
-                k::Projection::new(12, H, F, 512).map_err(Error::InvalidFormat)?,
-                k::Projection::new(12, H, F, 512).map_err(Error::InvalidFormat)?,
-                k::Projection::new(down, F, H, 512).map_err(Error::InvalidFormat)?,
-            ],
-            1,
-            48,
-        )
+        let g = k::Geometry::stationary_secondary([
+            k::Projection::new(12, H, F, 512).map_err(Error::InvalidFormat)?,
+            k::Projection::new(12, H, F, 512).map_err(Error::InvalidFormat)?,
+            k::Projection::new(down, F, H, 512).map_err(Error::InvalidFormat)?,
+        ])
         .map_err(Error::InvalidFormat)?;
         let spans = k::Spans::new([0, 0, H, 0, F, 0, H, 0, 0, H, 0]);
         let owner = |i: usize| self.arena.handle(self.ids[i]).cloned().map_err(u::fault);
@@ -912,6 +908,33 @@ fn packet(part: &Array<u32>, fault: &Array<u32>, out: &mut Array<u32>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn secondary_partition_rejects_foreign_boundaries_and_preserves_flat48() {
+        for down in [6, 8] {
+            let p = [
+                k::Projection::new(12, H, F, 512).unwrap(),
+                k::Projection::new(12, H, F, 512).unwrap(),
+                k::Projection::new(down, F, H, 512).unwrap(),
+            ];
+            let flat = k::Geometry::new(p, 1, 48).unwrap();
+            let secondary = k::Geometry::stationary_secondary(p).unwrap();
+            for (first, count) in [(0, 32), (32, 16)] {
+                let words = p.map(|v| v.segment_words(count).unwrap());
+                secondary.validate_shard(first, count, words).unwrap();
+                assert!(flat.validate_shard(first, count, words).is_err());
+            }
+            assert!(
+                secondary
+                    .validate_shard(0, 48, p.map(|v| v.segment_words(48).unwrap()))
+                    .is_err()
+            );
+            assert!(
+                secondary
+                    .validate_shard(31, 16, p.map(|v| v.segment_words(16).unwrap()))
+                    .is_err()
+            );
+        }
+    }
     #[test]
     fn complementary_selection_preserves_primary_and_prefill_frequency() {
         let mut f = Frequency::new().unwrap();
