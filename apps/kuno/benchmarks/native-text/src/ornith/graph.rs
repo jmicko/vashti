@@ -168,12 +168,18 @@ pub struct Graph {
     _weights: BTreeMap<String, Weight>,
     pub weight_bytes: u64,
     pub load_millis: u128,
+    pub block_dot: bool,
     subgroup_max: u32,
 }
 
 impl Graph {
     pub fn new(file: &GgufFile) -> Result<Self> {
         validate(file)?;
+        let block_dot = match std::env::var("KUNO_LAB_ORNITH_BLOCK_DOT") {
+            Err(std::env::VarError::NotPresent) => false,
+            Ok(value) if value == "1" => true,
+            _ => return Err("Explicit resident packed-block selection rejected".into()),
+        };
         let start = Instant::now();
         let mut gpu = Gpu::new()?;
         if gpu.info.subgroup_min_size < 16 || gpu.info.subgroup_max_size > 32 {
@@ -224,6 +230,7 @@ impl Graph {
             _weights: weights,
             weight_bytes,
             load_millis: 0,
+            block_dot,
             subgroup_max,
         };
         graph.construct()?;
@@ -295,8 +302,12 @@ impl Graph {
         let constants = format!(
             "const ROWS:u32={rows}u;const COLUMNS:u32={cols}u;const ROW_BYTES:u32={row_bytes}u;const ROUTED:bool={routed};const RANKED_INPUT:bool={ranked};"
         );
+        let constants = format!("{constants}const BLOCK_DOT:bool={};", self.block_dot);
         self.op(
-            &format!("matrix-{dtype}-{rows}-{cols}-{routed}-{ranked}"),
+            &format!(
+                "matrix-{dtype}-{rows}-{cols}-{routed}-{ranked}-{}",
+                self.block_dot
+            ),
             include_str!("matrix.wgsl"),
             dtype,
             &constants,
@@ -760,7 +771,7 @@ mod tests {
             for body in bodies {
                 let code = shader(
                     dtype,
-                    "const ROWS:u32=2048u;const COLUMNS:u32=2048u;const ROW_BYTES:u32=1152u;const ROUTED:bool=true;const RANKED_INPUT:bool=false;const OP:u32=0u;",
+                    "const ROWS:u32=2048u;const COLUMNS:u32=2048u;const ROW_BYTES:u32=1152u;const ROUTED:bool=true;const RANKED_INPUT:bool=false;const BLOCK_DOT:bool=true;const OP:u32=0u;",
                     body,
                 );
                 let module = wgpu::naga::front::wgsl::parse_str(&code)

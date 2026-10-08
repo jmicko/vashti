@@ -122,7 +122,7 @@ fn main() -> Result<()> {
     let receipt = serde_json::json!({"fixture":"ornith35-baseline.json","model_blob":fixture["expected_model_blob"],
         "seed":424242,"temperature":0,"backend":"native-rust-wgpu-vulkan","gpu_vendor":model.gpu.info.vendor,
         "gpu_device":model.gpu.info.device,"subgroup_min":model.gpu.info.subgroup_min_size,"subgroup_max":model.gpu.info.subgroup_max_size,
-        "public_weight_bytes":model.weight_bytes,"private_gpu_bytes":model.gpu.private_bytes(),"load_millis":total_load,
+        "public_weight_bytes":model.weight_bytes,"private_gpu_bytes":model.gpu.private_bytes(),"load_millis":total_load,"packed_block_dot":model.block_dot,
         "gpu_construction_millis":model.load_millis,"dispatches_per_full_token":model.steps(),
         "normal_private_clear_completed":true,"swap_disabled":true,"core_dumps_disabled":true,"samples":samples});
     let output = std::fs::OpenOptions::new()

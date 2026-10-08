@@ -14,6 +14,15 @@ fn wh(offset:u32)->f32 {
     return unpack2x16float(wb(offset)|(wb(offset+1u)<<8u)).x;
 }
 fn signed(x:u32)->f32 { return f32(i32(x)-select(0,256,x>=128u)); }
+fn word_byte(x:u32,index:u32)->u32 {return (x>>(index*8u))&255u;}
+fn q4_scale(a:u32,c:u32,g:u32)->f32 {
+    let i=g%4u;
+    return f32(select((word_byte(c,i)&15u)|((word_byte(a,i)>>6u)<<4u),word_byte(a,i)&63u,g<4u));
+}
+fn q4_minimum(b:u32,c:u32,g:u32)->f32 {
+    let i=g%4u;
+    return f32(select((word_byte(c,i)>>4u)|((word_byte(b,i)>>6u)<<4u),word_byte(b,i)&63u,g<4u));
+}
 fn packed(base:u32, col:u32)->f32 {
     if DTYPE==0u { return bitcast<f32>(weight[base/4u+col]); }
     if DTYPE==12u {
