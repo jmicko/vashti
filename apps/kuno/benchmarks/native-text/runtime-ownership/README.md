@@ -578,3 +578,9 @@ bounds and maximum span remain mandatory. Full stage initialization/charging
 and final destination audits remain. Negative zero and all nonzero bit patterns
 are preserved. Unscoped uploads are unchanged. See the count1 plan and checkpoint
 for numerical tests, measured bytes, and separate device/speed acceptance.
+
+The user selected this byte-equivalent reduction after full device correctness
+passed. A speed improvement is not established. It starts only after completed
+prefill, so no startup/model-loading benefit is claimed. Encoded command bytes
+are not a PCIe hardware traffic counter; numeric evidence remains in the
+count1 request-reuse aggregate.

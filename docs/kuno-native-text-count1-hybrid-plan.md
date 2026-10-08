@@ -1448,10 +1448,11 @@ CPU inspection across used AND idle retained buffers. Failed completion retains
 or quarantines ownership and retires the context; a new model cannot inherit it.
 Generation timings include the final request audit; report its separate numeric
 duration, actual reuse/checkpoint counters and successful full-close evidence.
-Complete source/device/physical-recovery validation is pending.
+Complete source/device/physical-recovery validation passes on selected source
+79739d1; see the final Astra checkpoint and 14-fixture numeric aggregate.
 
 
-### Indexed INFO and bounded active map waits (2026-10-08 candidate)
+### Indexed INFO and bounded active map waits (2026-10-08, accepted)
 
 Exact INFO lookup uses512 fixed bucket heads (2048 guarded bytes) and one-based
 bounded entry links, replacing a linear scan. The same512 entry/64KiB key limits
@@ -1470,7 +1471,7 @@ acceptance remain unchanged. This trades a bounded amount of active CPU time
 for potentially lower handoff latency. Physical speed acceptance is separate.
 
 
-### Remove unused CPU scratch and overwritten clears (2026-10-08 candidate)
+### Remove unused CPU scratch and overwritten clears (2026-10-08, accepted)
 
 CPU SIMD rows do not use the full-row decoded vector. Its allocation becomes
 lazy for the Portable path, while a checked logical width retains the original
@@ -1487,7 +1488,7 @@ Readback clears and final two-pass CPU-inspected audits remain unchanged.
 No dirty capacity or erasure credit is granted by this initialization shortcut.
 
 
-### Request-scoped zero-tail upload (2026-10-08 candidate)
+### Request-scoped zero-tail upload (2026-10-08, retained)
 
 The original private-write API still requires a full same-stream owned handle
 and full guarded host bytes. Inside the request reuse scope only, the runtime
@@ -1505,3 +1506,18 @@ No smaller destination contract, dirty credit, compiler key or persistent
 content is introduced. Ordinary unscoped writes retain their original path.
 Numeric warm original/copied/cleared-byte totals must conserve the original
 extent and establish actual transfer savings separately from speed acceptance.
+
+
+Device validation passes all original output/owning/lifecycle gates, but the
+zero-tail experiment takes13391ms versus13280ms for its immediate parent.
+Encoded upload-copy bytes fall1747845120→229218304, with1518626816 GPU-cleared
+bytes. These are encoded copy extents, not a PCIe hardware traffic counter;
+map-store traffic and overlap are not separated. No measured throughput gain is established. The user explicitly prefers to
+retain the byte-equivalent transfer reduction; selected source is79739d1. It
+activates only after completed prefill, so no model-loading/startup benefit is
+claimed. Unscoped/loading transfers still use the original path. The same
+frozen artifact repeats all acceptance gates in13298ms (9.5503083 tokens/s),
+with identical byte totals. The first run measures9.4839818 tokens/s; neither
+establishes a zero-tail speed benefit. See the final Astra checkpoint for exact
+artifact, tests, exclusions and completed host restoration. The10-token/s target
+remains unmet; goal stays paused.

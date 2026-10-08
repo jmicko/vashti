@@ -1,14 +1,20 @@
 # Native text checkpoint, 2026-10-08
 
-The user authorized a concentrated Astra optimization pass after the overnight
-goal was paused. The goal controller remains paused; this turn is explicitly
-authorized. Target: the approved10-token/s Ollama reference for Flash-Next.
-Resume from **Astra request-buffer reuse candidate** at the end of this file;
-older measurements below are historical. Current best accepted final receipt:
-127 steps13605ms,9.3348034 tokens/s, sourcee9d8032; short active polling and indexed INFO lookup are the next candidates; the
-accept-only recycle experiment was rejected for speed. Refresh sudo during active physical work and restore
-public admission at the stopping point. Core speed is the priority; no new
-Ollama baselines, API, frontend, release or installation work is needed.
+The concentrated Astra optimization pass is complete. Selected engine source
+**79739d174af41990258a9571c1a8e720d77edc8a** measures **9.484–9.550 decode tokens/s**
+on two complete fixed-public Flash-Next fixtures, versus the preceding best
+7.817 tokens/s. The approved 10-token/s Ollama reference remains unmet; no new
+Ollama baseline was run. See **Astra pass complete** at the end of this file for
+selected code, artifact, tests and restoration. Earlier candidates and pending
+statements below are historical and superseded by that acceptance.
+
+The user explicitly selected the zero-tail upload reduction despite no measured
+extra throughput gain: encoded upload-copy bytes fall about 87%, but this path
+starts after prefill and has no established startup benefit. All lab jobs have
+exited and normal inference admission is restored. The goal controller remains
+paused, and no additional benchmark is scheduled. No installed service, API,
+frontend or release changes were made.
+
 Backend owner:
 `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
 `codex/kuno-native-text`; preserve the canonical Vashti checkout and its work.
@@ -1920,3 +1926,81 @@ them. The next candidate reduces actual request-scoped zero-tail uploads while
 preserving full input/destination ownership and all audits. Warm command-byte
 counters are added to distinguish genuine transfer savings from timing noise.
 No public inference API or frontend work is involved.
+
+
+### Astra pass complete: selected source and restored host, 2026-10-08
+
+This final checkpoint supersedes the candidate/pending statements above.
+Selected source is `79739d174af41990258a9571c1a8e720d77edc8a`, frozen normal
+locked Cargo release artifact
+`0df72bd223c7afda807f9fed0793572153bbe40db8ac3fd77ab621f01590d9e6`, with
+`direct-device,cpu-fma,cpu-work-stealing`. Its build directory is
+`/media/jmicko/faststore/kuno-development/next-offload-build-20261008-v47-zero-tail`.
+Original Ollama weights remain read-only and unchanged.
+
+| Selected fixed-public run | Following steps | Decode including closing audit | Decode tokens/s | Prefill |
+| --- | ---: | ---: | ---: | ---: |
+| `cpu-144-zero-tail-long-v47` | 127 | 13391 ms | 9.4839818 | 15550 ms |
+| `cpu-144-zero-tail-repeat-long-v47` | 127 | 13298 ms | 9.5503083 | 15305 ms |
+
+This is about 21–22% faster than the preceding accepted 7.8168277-token/s
+sample, but still below the user-approved 10-token/s reference. These two short
+fixed-public samples do not establish arbitrary prompt, long-context, quality,
+soak or matched-Ollama performance. All original 128 generated IDs, independent
+arithmetic/finiteness/guard checks, fresh continuation, actual mid-token
+cancellation, poison recovery, full owned-memory erasure and protected lifecycle
+checks pass. Timings include the terminal request audit. Both runs enforce
+swap zero and core dumps disabled, without persisting real user content.
+
+The main improvement is request-owned I/O reuse with actual completed Readback
+clears (`e9d8032`), followed by bounded INFO buckets (`406cf80`) and short bounded
+active polling (`a5a0d34`). Selected execution retains all three completed
+recycle checkpoints and the 512-entry INFO limit; the correct but slower
+one-recycle experiments are excluded. `708f5fe` removes only fully overwritten
+constructor clears; `9b51ace` avoids unused SIMD decoded-row scratch. Neither
+of the last two has a separately established throughput gain.
+
+`fbae6f7` plus measurement/validation `79739d1` retains request-scoped zero-tail
+uploads at the user's explicit preference. Both selected runs encode original
+1747845120 bytes as 229218304 copied bytes plus 1518626816 GPU-cleared bytes:
+86.8857% fewer upload-copy bytes. The same artifact repeated full correctness.
+There is no established additional throughput gain over the immediately prior
+13280-ms result. Counters measure encoded command extents, not hardware PCIe
+traffic, mapped-store traffic or transfer/compute overlap. This optimization
+starts after completed prefill; model loading and unscoped uploads still use
+the original path. No startup improvement is claimed.
+
+Final source gates: 498 native controls plus two one-test shader suites;
+131 core controls with three intentionally ignored, in both default and
+`cpu-work-stealing-lab` builds; 90 runtime host controls, three allocator and
+two logger fixtures; 42 Python benchmark/receipt controls. Strict release
+all-target Clippy passes for the native lab, runtime and both core feature
+modes. Zero-tail host checks include 2048 byte-model cases, original spans,
+offsets/padding, signed zero, NaN payloads, alignment and overflow rejection.
+Independent source reviews found no blocker. Runtime provenance accounts for
+23 modified vendor files and four unchanged published dependency pins/licenses;
+composed patch SHA256 is
+`e3bb92933bdd4d4cd62e027d0a9a954a3cc3a6f0bc717507158de9788afad386`.
+
+The [numeric aggregate](../apps/kuno/benchmarks/text/receipts/next-request-io-reuse-20261008.json)
+records all 14 accepted physical fixtures, including candidates excluded from
+speed selection, with exact source/artifact/raw-receipt/run-proof hashes and
+numeric phases. Raw public receipts and lifecycle proofs are under
+`/media/jmicko/faststore/kuno-development/next-offload-device-20261008`.
+
+All benchmark jobs exited and physical B70 memory returned 50688000 bytes.
+Root Xe classification at `2026-10-08T18:16:29.880861+00:00` on boot
+`665344a9-0e39-4e45-90de-465fa11df0ca`, kernel `7.0.0-38-generic`, reports
+zero wedged, timeout, GT-reset and memory-fault messages. Public admission is
+restored: active=false, waiting=0, paused=false, recovery_required=false.
+Kuno 11434, direct Ollama 11435 and Vashti 7771 return HTTP 200. No GPU reset,
+unbind, reboot, driver or clock change was used. Installed binaries/settings,
+model blob, public API/catalog/default routing and Vashti remain unchanged.
+The goal stays paused; this explicitly requested pass is complete, with the
+speed target still unmet. Required Vashti changes: none.
+
+Next work should start from this selected engine and remaining measured routing/
+readback and CPU expert costs, preserving complete output/privacy acceptance.
+Warm expert-weight upload/read counters are zero for this fixture; this does
+not establish that all transfer costs are irrelevant. Extending zero-tail
+handling to loading would require separate correctness and startup measurements.

@@ -2334,3 +2334,39 @@ Public Kuno admission is resumed, with no active/waiting request or recovery
 latch. Kuno11434, direct Ollama11435 and Vashti7771 return HTTP200. Installed
 binaries/settings, model blob, API/catalog/default routing and Vashti application
 are unchanged. No release/install performed. **Required Vashti changes: none.**
+
+
+### Active handoff: Astra native-text pass complete (2026-10-08)
+
+This supersedes the preceding paused overnight checkpoint and pending native
+candidates. Owner remains `codex/kuno-native-text` in the Kuno worktree.
+Selected engine `79739d174af41990258a9571c1a8e720d77edc8a` measures
+9.484–9.550 decode tokens/s across two full fixed-public fixtures, up from
+7.817. The approved 10-token/s reference is still unmet; no new Ollama baseline
+was run. Request-owned I/O reuse with completed Readback clears (`e9d8032`),
+bounded INFO buckets (`406cf80`) and map polling (`a5a0d34`) supply the main gain.
+Three completed recycle checkpoints and the original 512-entry INFO limit stay
+selected. Scratch/full-copy cleanup (`9b51ace`, `708f5fe`) and byte-equivalent
+zero-tail uploads (`fbae6f7`, `79739d1`) are retained; separate throughput gains
+from those cleanups are not established. The user specifically selected the
+zero-tail change: about 87% fewer encoded upload-copy bytes, after prefill only,
+with no startup or measured hardware PCIe-traffic claim.
+
+See [the final checkpoint](kuno-native-text-checkpoint.md#astra-pass-complete-selected-source-and-restored-host-2026-10-08),
+[count1 contract](kuno-native-text-count1-hybrid-plan.md#request-scoped-zero-tail-upload-2026-10-08-retained)
+and [14-fixture numeric aggregate](../apps/kuno/benchmarks/text/receipts/next-request-io-reuse-20261008.json)
+for exact source/artifact hashes, tests, acceptance and exclusions. Original
+128 IDs, numerical/guard checks, fresh continuation, mid-token cancellation,
+poison recovery, full owned-memory erasure and protected lifecycle checks pass.
+Source gates: 498 native plus two shader suites; 131 core (three ignored) in
+both feature modes; 90 runtime plus three allocator/two logger fixtures;
+42 Python controls and strict Clippy. Broader quality, long-context, soak,
+mixed-card execution and production-worker integration remain outstanding.
+
+All lab jobs exited; B70 returned 50688000 bytes. Same-boot root Xe classifications
+remain zero through `2026-10-08T18:16:29.880861+00:00`. Public admission is resumed
+without active/queued work or a recovery latch. Kuno 11434, direct Ollama 11435
+and Vashti 7771 return HTTP 200. Installed binaries/configuration, original
+model blob, API/catalog/default routing and Vashti remain unchanged. No release
+or installation performed. **Required Vashti changes: none.** Goal remains
+paused; no further physical work is scheduled.
