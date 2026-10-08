@@ -9,7 +9,7 @@ import sys
 
 base = pathlib.Path("/media/jmicko/faststore/kuno-development")
 if len(sys.argv) != 5:
-    raise SystemExit("usage: run-ornith-resident.py FROZEN_BUILD TAG scalar|block|vector[+trusted][+profile] probe|8|128|profile")
+    raise SystemExit("usage: run-ornith-resident.py FROZEN_BUILD TAG scalar|block|vector[+trusted][+router][+alternate][+profile] probe|8|128|512|profile|teacher")
 build = pathlib.Path(sys.argv[1]).resolve()
 tag, selection, mode = sys.argv[2:]
 if build.parent != base or not re.fullmatch(r"[a-z0-9-]{1,60}", tag):

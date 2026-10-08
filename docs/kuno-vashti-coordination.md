@@ -2168,3 +2168,40 @@ listeners plus Vashti respond. Goal remains paused. No installed binary,
 API/catalog/configuration, application or release change occurred.
 Required Vashti changes: none. Resume core arithmetic/performance work before
 extended lifecycle/API/application work; do not repeat Flash-Next baselines.
+
+### Resident text speed acceptance and Next transfer (2026-10-08)
+
+The user returned the GPUs and authorized the approximately80-token/s resident
+Ornith target. Backend source `000bdbe`, `fbddf49`, `3d8973e`, `5a93d1b`,
+`26829f6`, `4a06b83` and `ffe1cf0` adds original-row probes, timestamp profiles,
+explicit validated-geometry bounds selection, vector packed arithmetic, cached
+parallel expert selection, EOS/teacher diagnostics and a shared Next operator
+port. No public API, model registration, installed binary or configuration changed.
+
+Complete B70 Ornith runs reach85.35/85.38 tokens/s on two fresh75/128 sequences,
+82.6–83.0 on longer EOS-finished public prompts, and86.00/85.27 after the shared
+kernel refactor. Every128-token native continuation matches the original scalar
+path. Independent original-row and router checks pass. Teacher forcing128 public
+Ollama tokens gives121 top1 and7 rank2 matches; free-running Ollama parity and
+quality/indefinite stability are not claimed. The fast modes remain opt-in in
+the fixed-public laboratory. Source shader suites and strict all-bin Clippy pass.
+
+The original Flash-Next Q4 gate/up, Q8/Q5 down, F32 router and Q6 head slabs plus
+512/top10 routing pass shared-kernel operator checks. These operators are not
+connected to complete Next inference: its last whole-model measured path remains
+1.691 tokens/s. The user's next milestone is approximately10 whole-model Next
+tokens/s before speculative FreeToken/Strata work. Avoid repeated Ollama
+baselines or API/lifecycle/frontend work in this speed phase.
+
+See [the current checkpoint](kuno-native-text-checkpoint.md#resident-speed-acceptance-2026-10-08),
+[Ornith acceptance](kuno-native-ornith.md#resident-speed-acceptance-2026-10-08)
+and [numeric aggregate](../apps/kuno/benchmarks/text/receipts/ornith-resident-speed-20261008.json)
+for exact source/artifacts, timings, numeric tolerances and limitations. All
+accepted GPU runs enforce swap0/core0 and explicit normal private-buffer clearing.
+These are public fixtures; no real prompts, output text or routing trace was
+persisted. Required Vashti changes: none.
+
+At postflight all lab jobs exited, GPU memory recovered and Kuno admission was
+resumed without an active request, queue or recovery latch. Both inference
+listeners and Vashti respond. The broad goal controller remains paused and
+incomplete; this receipt completes the directly authorized resident speed block.

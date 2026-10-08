@@ -1,0 +1,665 @@
+{
+  "scope": "fixed-public-synthetic-speed-and-numeric-laboratory-only",
+  "date_utc": "2026-10-08",
+  "model": "ornith:35b",
+  "backend": "Rust/WGPU Vulkan",
+  "device": "Intel Arc Pro B70 8086:e223",
+  "source_flags": [
+    "KUNO_LAB_ORNITH_VECTOR_DOT=1",
+    "KUNO_LAB_ORNITH_PARALLEL_ROUTER=1",
+    "KUNO_LAB_ORNITH_TRUSTED_BOUNDS=1"
+  ],
+  "resident_weight_bytes": 21155768832,
+  "private_gpu_bytes": 235737136,
+  "dispatches_per_full_token": 915,
+  "original_scalar": {
+    "load_millis": 3954,
+    "samples": [
+      {
+        "decode_nanoseconds": 9109957117,
+        "decode_steps": 127,
+        "decode_tokens_per_second": 13.940790101306467,
+        "phase": "first_sequence",
+        "prefill_millis": 4987,
+        "prompt_tokens": 75
+      },
+      {
+        "decode_nanoseconds": 9124602024,
+        "decode_steps": 127,
+        "decode_tokens_per_second": 13.918415254271697,
+        "phase": "warm_weights_fresh_sequence",
+        "prefill_millis": 4968,
+        "prompt_tokens": 75
+      }
+    ]
+  },
+  "block_candidate": {
+    "load_millis": 5273,
+    "samples": [
+      {
+        "decode_nanoseconds": 8227146882,
+        "decode_steps": 127,
+        "decode_tokens_per_second": 15.436700209869914,
+        "phase": "first_sequence",
+        "prefill_millis": 4599,
+        "prompt_tokens": 75
+      },
+      {
+        "decode_nanoseconds": 8224382498,
+        "decode_steps": 127,
+        "decode_tokens_per_second": 15.441888802093503,
+        "phase": "warm_weights_fresh_sequence",
+        "prefill_millis": 4583,
+        "prompt_tokens": 75
+      }
+    ]
+  },
+  "vector_router_bounds_checked": {
+    "load_millis": 4168,
+    "samples": [
+      {
+        "decode_nanoseconds": 1623983806,
+        "decode_steps": 127,
+        "decode_tokens_per_second": 78.20275025574978,
+        "phase": "first_sequence",
+        "prefill_millis": 787,
+        "prompt_tokens": 75
+      },
+      {
+        "decode_nanoseconds": 1639071288,
+        "decode_steps": 127,
+        "decode_tokens_per_second": 77.48290201274028,
+        "phase": "warm_weights_fresh_sequence",
+        "prefill_millis": 779,
+        "prompt_tokens": 75
+      }
+    ]
+  },
+  "vector_router_trusted": {
+    "load_millis": 4004,
+    "samples": [
+      {
+        "decode_nanoseconds": 1488048801,
+        "decode_steps": 127,
+        "decode_tokens_per_second": 85.3466633047608,
+        "output_cap": 128,
+        "phase": "first_sequence",
+        "prefill_millis": 711,
+        "prompt_tokens": 75,
+        "stopped_on_eos": false
+      },
+      {
+        "decode_nanoseconds": 1487415583,
+        "decode_steps": 127,
+        "decode_tokens_per_second": 85.38299682449946,
+        "output_cap": 128,
+        "phase": "warm_weights_fresh_sequence",
+        "prefill_millis": 694,
+        "prompt_tokens": 75,
+        "stopped_on_eos": false
+      }
+    ]
+  },
+  "eos_finished": {
+    "load_millis": 4098,
+    "samples": [
+      {
+        "decode_nanoseconds": 3545416285,
+        "decode_steps": 294,
+        "decode_tokens_per_second": 82.9239717896766,
+        "output_cap": 512,
+        "phase": "first_sequence",
+        "prefill_millis": 719,
+        "prompt_tokens": 75,
+        "stopped_on_eos": true
+      },
+      {
+        "decode_nanoseconds": 3540630068,
+        "decode_steps": 294,
+        "decode_tokens_per_second": 83.03606825721619,
+        "output_cap": 512,
+        "phase": "warm_weights_fresh_sequence",
+        "prefill_millis": 692,
+        "prompt_tokens": 75,
+        "stopped_on_eos": true
+      }
+    ]
+  },
+  "alternate_eos_finished": {
+    "load_millis": 4125,
+    "samples": [
+      {
+        "decode_nanoseconds": 4054391302,
+        "decode_steps": 335,
+        "decode_tokens_per_second": 82.62645981771594,
+        "output_cap": 512,
+        "phase": "first_sequence",
+        "prefill_millis": 761,
+        "prompt_tokens": 80,
+        "stopped_on_eos": true
+      },
+      {
+        "decode_nanoseconds": 4052702828,
+        "decode_steps": 335,
+        "decode_tokens_per_second": 82.6608844066965,
+        "output_cap": 512,
+        "phase": "warm_weights_fresh_sequence",
+        "prefill_millis": 741,
+        "prompt_tokens": 80,
+        "stopped_on_eos": true
+      }
+    ]
+  },
+  "shared_kernel_recheck": {
+    "load_millis": 4280,
+    "samples": [
+      {
+        "decode_nanoseconds": 1476695933,
+        "decode_steps": 127,
+        "decode_tokens_per_second": 86.00281016687813,
+        "output_cap": 128,
+        "phase": "first_sequence",
+        "prefill_millis": 703,
+        "prompt_tokens": 75,
+        "stopped_on_eos": false
+      },
+      {
+        "decode_nanoseconds": 1489354810,
+        "decode_steps": 127,
+        "decode_tokens_per_second": 85.27182317288114,
+        "output_cap": 128,
+        "phase": "warm_weights_fresh_sequence",
+        "prefill_millis": 695,
+        "prompt_tokens": 75,
+        "stopped_on_eos": false
+      }
+    ]
+  },
+  "all_native_128_ids_match_original": true,
+  "projection_cases": 54,
+  "routing_cases": 6,
+  "projection_absolute_tolerance": 0.0005,
+  "projection_relative_tolerance": 5e-05,
+  "teacher_forced_ollama": {
+    "top1_matches": 121,
+    "positions": 128,
+    "other_expected_ids_all_rank2": true,
+    "scalar_fast_choices_and_ranks_all_match": true,
+    "maximum_expected_gap_difference": 9.5367431640625e-06
+  },
+  "instrumented_profiles": {
+    "original": {
+      "gpu_span_nanoseconds": 82069008.41302872,
+      "instrumented": true,
+      "operators": [
+        {
+          "dispatches": 40,
+          "gpu_nanoseconds": 42063853.1397171,
+          "operator": "router"
+        },
+        {
+          "dispatches": 80,
+          "gpu_nanoseconds": 5647031.112133026,
+          "operator": "matrix-12-512-2048-true-false-false-false"
+        },
+        {
+          "dispatches": 1,
+          "gpu_nanoseconds": 3557031.1631584167,
+          "operator": "matrix-14-248320-2048-false-false-false-false"
+        },
+        {
+          "dispatches": 26,
+          "gpu_nanoseconds": 3169895.7559432983,
+          "operator": "matrix-12-8192-2048-false-false-false-false"
+        },
+        {
+          "dispatches": 40,
+          "gpu_nanoseconds": 2886562.4295272827,
+          "operator": "matrix-12-2048-4096-false-false-false-false"
+        },
+        {
+          "dispatches": 94,
+          "gpu_nanoseconds": 2153541.614089966,
+          "operator": "matrix-12-512-2048-false-false-false-false"
+        },
+        {
+          "dispatches": 30,
+          "gpu_nanoseconds": 2076562.4493026733,
+          "operator": "matrix-12-4096-2048-false-false-false-false"
+        },
+        {
+          "dispatches": 30,
+          "gpu_nanoseconds": 1971354.1185379028,
+          "operator": "gdn"
+        },
+        {
+          "dispatches": 14,
+          "gpu_nanoseconds": 1891406.2038230896,
+          "operator": "matrix-14-8192-2048-false-false-false-false"
+        },
+        {
+          "dispatches": 20,
+          "gpu_nanoseconds": 1444166.6314086914,
+          "operator": "matrix-14-2048-512-true-true-false-false"
+        },
+        {
+          "dispatches": 20,
+          "gpu_nanoseconds": 1322031.2177238464,
+          "operator": "matrix-12-2048-512-true-true-false-false"
+        },
+        {
+          "dispatches": 60,
+          "gpu_nanoseconds": 1296927.0516700745,
+          "operator": "matrix-12-32-2048-false-false-false-false"
+        },
+        {
+          "dispatches": 81,
+          "gpu_nanoseconds": 1057656.2241783142,
+          "operator": "point-1-0-8192"
+        },
+        {
+          "dispatches": 40,
+          "gpu_nanoseconds": 921354.1441726685,
+          "operator": "matrix-0-256-2048-false-false-false-false"
+        },
+        {
+          "dispatches": 40,
+          "gpu_nanoseconds": 881406.2284812927,
+          "operator": "matrix-0-1-2048-false-false-false-false"
+        },
+        {
+          "dispatches": 80,
+          "gpu_nanoseconds": 626197.9013786316,
+          "operator": "point-4-0-0"
+        },
+        {
+          "dispatches": 10,
+          "gpu_nanoseconds": 387968.7405281067,
+          "operator": "qsa-softmax-value"
+        },
+        {
+          "dispatches": 20,
+          "gpu_nanoseconds": 383854.15729522705,
+          "operator": "matrix-14-2048-512-false-false-false-false"
+        },
+        {
+          "dispatches": 20,
+          "gpu_nanoseconds": 370208.32429504395,
+          "operator": "matrix-12-2048-512-false-false-false-false"
+        },
+        {
+          "dispatches": 10,
+          "gpu_nanoseconds": 339218.74171829224,
+          "operator": "qsa-scores"
+        },
+        {
+          "dispatches": 40,
+          "gpu_nanoseconds": 318541.6588897705,
+          "operator": "point-5-0-0"
+        },
+        {
+          "dispatches": 30,
+          "gpu_nanoseconds": 281354.15979766846,
+          "operator": "point-1-0-512"
+        },
+        {
+          "dispatches": 30,
+          "gpu_nanoseconds": 273072.9099998474,
+          "operator": "point-2-0-16"
+        },
+        {
+          "dispatches": 30,
+          "gpu_nanoseconds": 258281.24369430542,
+          "operator": "point-3-0-0"
+        },
+        {
+          "dispatches": 20,
+          "gpu_nanoseconds": 187187.49542999268,
+          "operator": "qsa-norm-rope"
+        },
+        {
+          "dispatches": 6,
+          "gpu_nanoseconds": 122916.66366577148,
+          "operator": "matrix-14-512-2048-false-false-false-false"
+        },
+        {
+          "dispatches": 1,
+          "gpu_nanoseconds": 16145.83293914795,
+          "operator": "argmax-groups"
+        },
+        {
+          "dispatches": 1,
+          "gpu_nanoseconds": 9010.416446685791,
+          "operator": "argmax-final"
+        },
+        {
+          "dispatches": 1,
+          "gpu_nanoseconds": 6249.999847412109,
+          "operator": "point-0-12-1152"
+        }
+      ],
+      "wall_nanoseconds": 100232619
+    },
+    "fast": {
+      "gpu_span_nanoseconds": 22644166.113830566,
+      "instrumented": true,
+      "operators": [
+        {
+          "dispatches": 80,
+          "gpu_nanoseconds": 2000260.3678321838,
+          "operator": "matrix-12-512-2048-true-false-false-true"
+        },
+        {
+          "dispatches": 30,
+          "gpu_nanoseconds": 1960624.9521331787,
+          "operator": "gdn"
+        },
+        {
+          "dispatches": 94,
+          "gpu_nanoseconds": 1188437.4709854126,
+          "operator": "matrix-12-512-2048-false-false-false-true"
+        },
+        {
+          "dispatches": 81,
+          "gpu_nanoseconds": 1047604.1410903931,
+          "operator": "point-1-0-8192"
+        },
+        {
+          "dispatches": 40,
+          "gpu_nanoseconds": 989427.0591773987,
+          "operator": "matrix-12-2048-4096-false-false-false-true"
+        },
+        {
+          "dispatches": 26,
+          "gpu_nanoseconds": 916874.9776153564,
+          "operator": "matrix-12-8192-2048-false-false-false-true"
+        },
+        {
+          "dispatches": 1,
+          "gpu_nanoseconds": 714947.8992118835,
+          "operator": "matrix-14-248320-2048-false-false-false-true"
+        },
+        {
+          "dispatches": 60,
+          "gpu_nanoseconds": 707968.7327156067,
+          "operator": "matrix-12-32-2048-false-false-false-true"
+        },
+        {
+          "dispatches": 30,
+          "gpu_nanoseconds": 705208.316116333,
+          "operator": "matrix-12-4096-2048-false-false-false-true"
+        },
+        {
+          "dispatches": 80,
+          "gpu_nanoseconds": 643697.9009513855,
+          "operator": "point-4-0-0"
+        },
+        {
+          "dispatches": 20,
+          "gpu_nanoseconds": 564947.9028739929,
+          "operator": "matrix-14-2048-512-true-true-false-true"
+        },
+        {
+          "dispatches": 14,
+          "gpu_nanoseconds": 562916.652923584,
+          "operator": "matrix-14-8192-2048-false-false-false-true"
+        },
+        {
+          "dispatches": 40,
+          "gpu_nanoseconds": 532187.4870071411,
+          "operator": "matrix-0-256-2048-false-false-false-true"
+        },
+        {
+          "dispatches": 20,
+          "gpu_nanoseconds": 476562.48836517334,
+          "operator": "matrix-12-2048-512-true-true-false-true"
+        },
+        {
+          "dispatches": 40,
+          "gpu_nanoseconds": 418802.0731086731,
+          "operator": "router-parallel"
+        },
+        {
+          "dispatches": 40,
+          "gpu_nanoseconds": 414947.9065361023,
+          "operator": "matrix-0-1-2048-false-false-false-true"
+        },
+        {
+          "dispatches": 10,
+          "gpu_nanoseconds": 374583.3241882324,
+          "operator": "qsa-softmax-value"
+        },
+        {
+          "dispatches": 40,
+          "gpu_nanoseconds": 318385.4088935852,
+          "operator": "point-5-0-0"
+        },
+        {
+          "dispatches": 10,
+          "gpu_nanoseconds": 294635.4094734192,
+          "operator": "qsa-scores"
+        },
+        {
+          "dispatches": 30,
+          "gpu_nanoseconds": 278385.4098701477,
+          "operator": "point-1-0-512"
+        },
+        {
+          "dispatches": 30,
+          "gpu_nanoseconds": 272499.99334716797,
+          "operator": "point-2-0-16"
+        },
+        {
+          "dispatches": 30,
+          "gpu_nanoseconds": 256458.32707214355,
+          "operator": "point-3-0-0"
+        },
+        {
+          "dispatches": 20,
+          "gpu_nanoseconds": 255989.57708358765,
+          "operator": "matrix-14-2048-512-false-false-false-true"
+        },
+        {
+          "dispatches": 20,
+          "gpu_nanoseconds": 232968.74431228638,
+          "operator": "matrix-12-2048-512-false-false-false-true"
+        },
+        {
+          "dispatches": 20,
+          "gpu_nanoseconds": 186145.82878875732,
+          "operator": "qsa-norm-rope"
+        },
+        {
+          "dispatches": 6,
+          "gpu_nanoseconds": 77864.58143234253,
+          "operator": "matrix-14-512-2048-false-false-false-true"
+        },
+        {
+          "dispatches": 1,
+          "gpu_nanoseconds": 15937.499610900879,
+          "operator": "argmax-groups"
+        },
+        {
+          "dispatches": 1,
+          "gpu_nanoseconds": 9010.416446685791,
+          "operator": "argmax-final"
+        },
+        {
+          "dispatches": 1,
+          "gpu_nanoseconds": 6302.083179473877,
+          "operator": "point-0-12-1152"
+        }
+      ],
+      "wall_nanoseconds": 25050676
+    },
+    "not_clean_throughput": true
+  },
+  "next_original_weight_operator_port": {
+    "whole_model_connected": false,
+    "routing_cases": 6,
+    "matrices": [
+      {
+        "tensor": "blk.0.ffn_gate_exps.weight",
+        "dtype": 12,
+        "reference_rows": 32,
+        "median_scalar_ns_per_dispatch": 104495.95,
+        "median_vector_ns_per_dispatch": 35145.8,
+        "median_speed_ratio": 2.9732130154954506,
+        "maximum_absolute_errors": [
+          2.384185791015625e-07,
+          2.384185791015625e-07
+        ]
+      },
+      {
+        "tensor": "blk.0.ffn_up_exps.weight",
+        "dtype": 12,
+        "reference_rows": 32,
+        "median_scalar_ns_per_dispatch": 104401.45,
+        "median_vector_ns_per_dispatch": 34983.85,
+        "median_speed_ratio": 2.9842756014561003,
+        "maximum_absolute_errors": [
+          2.384185791015625e-07,
+          1.9371509552001953e-07
+        ]
+      },
+      {
+        "tensor": "blk.0.ffn_down_exps.weight",
+        "dtype": 8,
+        "reference_rows": 32,
+        "median_scalar_ns_per_dispatch": 41580.85,
+        "median_vector_ns_per_dispatch": 26123.25,
+        "median_speed_ratio": 1.59171810551903,
+        "maximum_absolute_errors": [
+          1.1920928955078125e-07,
+          5.960464477539063e-08
+        ]
+      },
+      {
+        "tensor": "blk.6.ffn_down_exps.weight",
+        "dtype": 6,
+        "reference_rows": 32,
+        "median_scalar_ns_per_dispatch": 62685.55,
+        "median_vector_ns_per_dispatch": 27957.25,
+        "median_speed_ratio": 2.2421929910846026,
+        "maximum_absolute_errors": [
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "tensor": "blk.0.ffn_gate_inp.weight",
+        "dtype": 0,
+        "reference_rows": 32,
+        "median_scalar_ns_per_dispatch": 55258.55,
+        "median_vector_ns_per_dispatch": 32346.3,
+        "median_speed_ratio": 1.7083422215214723,
+        "maximum_absolute_errors": [
+          2.384185791015625e-07,
+          2.384185791015625e-07
+        ]
+      },
+      {
+        "tensor": "output.weight",
+        "dtype": 14,
+        "reference_rows": 32,
+        "median_scalar_ns_per_dispatch": 4238151.9,
+        "median_vector_ns_per_dispatch": 922695.2,
+        "median_speed_ratio": 4.593230678993453,
+        "maximum_absolute_errors": [
+          2.384185791015625e-07,
+          1.1920928955078125e-07
+        ]
+      }
+    ],
+    "last_complete_next_tokens_per_second": 1.691,
+    "next_target_tokens_per_second": 10
+  },
+  "privacy": {
+    "fixed_public_inputs_only": true,
+    "persisted_actual_request_content": false,
+    "swap_max_bytes": 0,
+    "core_dumps_bytes": 0,
+    "normal_private_clear_completed": true
+  },
+  "limits": [
+    "Not an installed engine or API capability",
+    "No arbitrary request, multimodal, cancellation, quality or indefinite soak acceptance",
+    "Ollama and native free continuations diverge after14 IDs",
+    "Native warmed file load is not a matched cold-load comparison",
+    "Operator ratios do not establish whole-model Next throughput"
+  ],
+  "artifacts_and_numeric_receipts": {
+    "/media/jmicko/faststore/kuno-development/ornith-resident-device-20261007/long-v2.json": {
+      "sha256": "e144394d23bd7588d76de1900ea0fe0c5d73c08ae0908cb27061f8a40b14f465"
+    },
+    "/media/jmicko/faststore/kuno-development/ornith-speed-20261008/block-long-v5.json": {
+      "sha256": "58830de45439cd7f889fc9824739089e37a8a784b4edb767bbf9e7ba9cf84b15"
+    },
+    "/media/jmicko/faststore/kuno-development/ornith-speed-20261008/vector-router-checked-long-v6.json": {
+      "sha256": "d4a57d2a9ec95848504e2cf32f4b6f148d076809c1a1647be5e51daac4745f7a"
+    },
+    "/media/jmicko/faststore/kuno-development/ornith-speed-20261008/fast-repeat128-v7.json": {
+      "sha256": "7117ca6ce2db995447c517954c7ad1a092b5b7d6eb66410967a2e914820ffabb"
+    },
+    "/media/jmicko/faststore/kuno-development/ornith-speed-20261008/fast-eos512-v7.json": {
+      "sha256": "50ca1021a80664dc4faceb5d946d9427d55c0fd2dbb6eca55c0a860881625163"
+    },
+    "/media/jmicko/faststore/kuno-development/ornith-speed-20261008/alternate-eos512-v7.json": {
+      "sha256": "0f4c0356d72c08b43efdba957ec0060fbd70511a37f5d33206400c782c4eecc5"
+    },
+    "/media/jmicko/faststore/kuno-development/ornith-speed-20261008/shared-long-v8.json": {
+      "sha256": "cb7df5e8d35084b8f856715e7951ca0cfcf04b8b83f515b363f8524695924182"
+    },
+    "/media/jmicko/faststore/kuno-development/ornith-speed-20261008/shared-probe-v8.json": {
+      "sha256": "b9c940a0dffa78d7276245ef5bf5713ac318ee82f72d038b0d6e3336f4c2e2a8"
+    },
+    "/media/jmicko/faststore/kuno-development/ornith-speed-20261008/fast-teacher-v7.json": {
+      "sha256": "c802add8897f69431ba592e1ef5cbdc2c22ad88eb17ea71473345ed5d5e90e45"
+    },
+    "/media/jmicko/faststore/kuno-development/ornith-speed-20261008/scalar-teacher-v7.json": {
+      "sha256": "4a24327322568f08c2570c747df136c8e732312285033e25ad21cc12965c8370"
+    },
+    "/media/jmicko/faststore/kuno-development/ornith-speed-20261008/next-fast-kernels-v1.json": {
+      "sha256": "daba08db2894b2af63dbf76ce54f9d36c2f1a726a2173daca1d0ee3552f65dd1"
+    },
+    "/media/jmicko/faststore/kuno-development/ornith-speed-20261008/profile-scalar-v5.json": {
+      "sha256": "1cd6b7af66c231e6e95fb07fa60f685e1d4692f193ff9c1e379c5546e8c11b69"
+    },
+    "/media/jmicko/faststore/kuno-development/ornith-speed-20261008/profile-vector-router-trusted-v6.json": {
+      "sha256": "675115c5f03cff04183706ab372c2484d6dfb76aa911b5beb8c23fe0a35bfa6b"
+    },
+    "/media/jmicko/faststore/kuno-development/ornith-resident-build-20261008-v7": {
+      "source_commit": "26829f601b3aebd28a3f3d49d678fd48192e79bb",
+      "executable_sha256": "55cdb1fa1afa9e64882a6eae4d28116d4784c72f2e962b7a0b89d34fbe1b04e3",
+      "executable": "/media/jmicko/faststore/kuno-development/ornith-resident-build-20261008-v7/ornith-resident-lab-55cdb1fa1afa9e64882a6eae4d28116d4784c72f2e962b7a0b89d34fbe1b04e3"
+    },
+    "/media/jmicko/faststore/kuno-development/ornith-resident-build-20261008-v8": {
+      "source_commit": "4a06b83e8388a05ccb5653a2cb552f9572255415",
+      "executable_sha256": "b6b81d72437a59ac29a94a40819f4f92a64e0337f2012380fcb4cf0e66e9c3e4",
+      "executable": "/media/jmicko/faststore/kuno-development/ornith-resident-build-20261008-v8/ornith-resident-lab-b6b81d72437a59ac29a94a40819f4f92a64e0337f2012380fcb4cf0e66e9c3e4"
+    },
+    "/media/jmicko/faststore/kuno-development/next-fast-kernels-build-20261008-v1": {
+      "source_commit": "ffe1cf06a08359921cddbb942144a7ee74ef43f0",
+      "executable_sha256": "e9a3c833b1990481c8914b82c17b04ab5d45e9c2757850171ab2b63416412572",
+      "executable": "/media/jmicko/faststore/kuno-development/next-fast-kernels-build-20261008-v1/flash-kernel-lab-e9a3c833b1990481c8914b82c17b04ab5d45e9c2757850171ab2b63416412572"
+    }
+  },
+  "postflight": {
+    "utc": "2026-10-08T03:25:51.501825+00:00",
+    "inference_admission": {
+      "active": false,
+      "waiting": 0,
+      "paused": false,
+      "recovery_required": false
+    },
+    "intel_physical_vram_bytes": 50688000,
+    "nvidia_physical_vram_mib_including_desktop": 596,
+    "kuno_http_port": 11434,
+    "direct_ollama_http_port": 11435,
+    "vashti_http_port": 7771,
+    "all_three_http_200": true,
+    "inference_loaded_models": 0,
+    "no_benchmark_process_left_running": true,
+    "goal_controller": "paused_incomplete"
+  }
+}

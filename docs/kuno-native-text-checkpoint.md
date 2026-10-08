@@ -1,13 +1,64 @@
-# Native text checkpoint, 2026-10-07
+# Native text checkpoint, 2026-10-08
 
-The user requested a clean pause to use the GPUs and Vashti. The additional
-optimization block is finished, normal inference admission is resumed, and the
-goal remains paused and incomplete. Resume from **Fully resident Ornith
-checkpoint** below. The current priority is core execution speed; defer API,
+The user returned the GPUs and authorized resident speed work. The goal
+controller remains paused and incomplete. Resume from **Resident speed
+acceptance** below. The current priority is core execution speed; defer API,
 extended cancellation and application work. No further Flash-Next Ollama
 baselines are needed. Backend work belongs in the owner worktree
 `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
 `codex/kuno-native-text`; preserve the canonical Vashti checkout and its work.
+
+## Resident speed acceptance, 2026-10-08
+
+Ornith now meets the approximately80-token/s resident target:85.35/85.38 for
+two fresh75/128 sequences and82.6–83.0 on two EOS-finished public prompts.
+All128 IDs match the native scalar reference. The shared-kernel refactor
+recheck measures86.00/85.27 with the same IDs. See
+[the acceptance contract](kuno-native-ornith.md#resident-speed-acceptance-2026-10-08)
+and [aggregate receipt](../apps/kuno/benchmarks/text/receipts/ornith-resident-speed-20261008.json)
+for exact source, artifacts, modes, counters and numerical limits.
+
+The main measured fix is cached parallel expert selection (instrumented router
+42.064→0.419ms across40 layers), combined with vector packed Q4/Q6 calculations.
+Explicit unchecked runtime bounds add roughly9% to the fixed-geometry lab;
+bounds-checked vector/router still measures77.5–78.2. Defaults are unchanged.
+Teacher-forced128-token comparison to Ollama gives121 top1 and7 rank2 matches,
+with identical scalar/fast choices. Free-running Ollama parity is not claimed.
+
+Latest backend source through `ffe1cf0` shares these arithmetic kernels and
+validates original Flash-Next Q4/Q5/Q8/F32/Q6 slabs plus512/top10 routing. This
+is an operator port, not yet complete-model integration. Earlier complete Next
+speed remains1.691 tokens/s. The next milestone is approximately10 whole-model
+Next tokens/s before speculative FreeToken/Strata work. Ordinary dispatch,
+buffer reuse, arithmetic and CPU/GPU offload remain in scope; avoid repeating
+Ollama baselines or expanding API/lifecycle work.
+
+Accepted normal artifacts: Ornithv7`55cdb1fa…` at`26829f6`; shared Ornithv8
+`b6b81d72…` at`4a06b83`; Next operatorv1`e9a3c833…` at`ffe1cf0`. Two binary
+offline shader suites and strict all-bin Clippy pass. All GPU jobs use48-GiB
+user cgroups with swap0/core0 and normal explicit private-buffer clearing.
+B70 physical memory recovers to50,688,000 bytes with no classified Xe fault.
+No installed binary/configuration, gateway/API/catalog, frontend or release
+change. Required Vashti changes: none.
+
+At this completed block's postflight all benchmark units exited and inference
+admission was resumed: active=false, waiting=0, paused=false and
+recovery_required=false. Kuno11434/direct Ollama11435 return HTTP200 with no
+resident model; Vashti7771 returns HTTP200. Intel physical VRAM is50,688,000
+bytes; NVIDIA596MiB includes the desktop. Kernel classification reports zero
+wedged, timeout, GT reset or memory-fault messages on the current boot.
+
+For the next whole-model port, retain the previously measured complete Next
+phase boundaries: the old long run spends about186ms/token in attention/GR
+enqueue,172ms in router fences,108ms in final proofs and111ms in routed-expert
+enqueue. These are host intervals including dependent queued work, not isolated
+kernel durations. Port the accepted packed arithmetic and cached512/top10
+selection into the original whole-model owners and reduce repeated dispatch/
+metadata work. A new operator test alone does not retire this whole-model gate.
+
+The historical checkpoint below describes the original13.9-token/s artifact,
+not the currently accepted fast laboratory. Its first result and source-only
+block candidate statements are superseded by this section.
 
 ## Fully resident Ornith checkpoint, 2026-10-07
 
