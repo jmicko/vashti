@@ -804,6 +804,40 @@ impl ReuseScope {
         Ok(())
     }
 }
+/// Accept-only checkpoints cannot publish readiness: they have no mutable
+/// buffer/index/ledger access. Only the caller's completed-error drain runs.
+fn accept_only_checkpoint(
+    tracker: &LeaseTracker,
+    owner_nonce: Option<u64>,
+    nonce: u64,
+    live_leases: usize,
+    pending_info: bool,
+    completed: impl FnOnce() -> Result<(), ServerError>,
+) -> Result<(), ServerError> {
+    let attempted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if tracker.retired.load(Ordering::Acquire) {
+            return Err(fault(tracker.reason(Failure::ContextRetired)));
+        }
+        if nonce == 0 || owner_nonce != Some(nonce) {
+            return Err(fault("private reuse owner mismatch"));
+        }
+        if live_leases != 0 || pending_info {
+            return Err(fault("private reuse fence has outstanding owner"));
+        }
+        completed()?;
+        if tracker.retired.load(Ordering::Acquire) {
+            return Err(fault(tracker.reason(Failure::ContextRetired)));
+        }
+        Ok(())
+    }));
+    match attempted {
+        Ok(Ok(())) => Ok(()),
+        _ => {
+            tracker.retire_with(Failure::CleanupRejected);
+            Err(fault(tracker.reason(Failure::CleanupRejected)))
+        }
+    }
+}
 const NO_REUSE_INDEX: usize = usize::MAX;
 const REUSE_SIZE_BUCKETS: usize = (MAX_BYTES.ilog2() - MIN_BYTES.ilog2() + 1) as usize;
 struct ReuseIndex {
@@ -912,7 +946,7 @@ fn reuse_metadata_capacity<T>(
     Ok(())
 }
 const INFO_KEY_BYTES: usize = 64 * 1024;
-const INFO_CACHE_ENTRIES: usize = 512;
+const INFO_CACHE_ENTRIES: usize = 1024;
 static INFO_CACHE_STATS: [AtomicU64; 3] = [const { AtomicU64::new(0) }; 3];
 /// Cumulative exact INFO hits, misses (including uncached saturation), page pins.
 /// Numeric only; never exposes hashes, keys, buffer IDs, or request identifiers.
@@ -2125,6 +2159,19 @@ impl TransientIo {
     }
     pub(crate) fn check_reuse(&self, nonce: u64) -> Result<(), ServerError> {
         self.reuse_scope.check(nonce)
+    }
+    pub(crate) fn accept_reuse(&mut self, nonce: u64) -> Result<(), ServerError> {
+        let tracker = self.leases.clone();
+        accept_only_checkpoint(
+            &tracker,
+            self.reuse_scope.nonce,
+            nonce,
+            self.leases(),
+            !self.pending_info.is_empty() || self.info_slab.is_some(),
+            || self.drain_accept_errors(),
+        )
+        // No remapping, readiness/index mutation, destination clear or ledger
+        // credit. Already-ready unused owners retain their prior permission.
     }
     pub(crate) fn recycle_reuse(&mut self, nonce: u64) -> Result<(), ServerError> {
         let attempted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -4284,6 +4331,101 @@ mod tests {
         let mut other = ReuseScope::default();
         let foreign = other.begin(true, 0).unwrap();
         assert!(scope.check(foreign).is_err());
+    }
+    #[test]
+    fn accept_only_keeps_dirty_charges_and_does_not_publish_reuse() {
+        let mut scope = ReuseScope::default();
+        let nonce = scope.begin(true, 0).unwrap();
+        let mut buffers = fake_buffers();
+        buffers[0].upload_mapped = true;
+        let size = |b: &FakeBuffer| b.words.borrow().len() as u64;
+        scope.free.rebuild(&mut buffers, size).unwrap();
+        scope
+            .free
+            .take(&mut buffers, Kind::Readback, MIN_BYTES, size)
+            .unwrap();
+        let mut ledger = Ledger::new(5 * MIN_BYTES).unwrap();
+        for owner in &buffers {
+            ledger.reserve(owner.kind, 19).unwrap();
+        }
+        let original = (ledger.charged, ledger.totals, ledger.epoch);
+        let tracker = LeaseTracker::default();
+        let drains = std::cell::Cell::new(0);
+        for _ in 0..3 {
+            accept_only_checkpoint(&tracker, scope.nonce, nonce, 0, false, || {
+                drains.set(drains.get() + 1);
+                Ok(())
+            })
+            .unwrap();
+            assert!(scope.free.available(Kind::Upload, MIN_BYTES).unwrap());
+            assert!(!scope.free.available(Kind::Readback, MIN_BYTES).unwrap());
+            assert_eq!((ledger.charged, ledger.totals, ledger.epoch), original);
+            assert!(
+                buffers
+                    .iter()
+                    .all(|b| b.buffer.words.borrow().iter().all(|byte| *byte == 0xa7))
+            );
+            assert!(buffers[0].upload_mapped);
+            assert!(!buffers[2].reuse_ready);
+        }
+        assert_eq!(drains.get(), 3);
+        assert!(!tracker.retired.load(Ordering::Acquire));
+        scope.check(nonce).unwrap();
+    }
+    #[test]
+    fn accept_only_rejects_stale_held_pending_and_retired_before_completion() {
+        for fault_kind in 0..5 {
+            let tracker = LeaseTracker::default();
+            if fault_kind == 4 {
+                tracker.retire_with(Failure::ContextRetired);
+            }
+            let completed = std::cell::Cell::new(false);
+            let result = accept_only_checkpoint(
+                &tracker,
+                Some(17),
+                if fault_kind == 0 {
+                    0
+                } else if fault_kind == 1 {
+                    18
+                } else {
+                    17
+                },
+                usize::from(fault_kind == 2),
+                fault_kind == 3,
+                || {
+                    completed.set(true);
+                    Ok(())
+                },
+            );
+            assert!(result.is_err());
+            assert!(!completed.get());
+            assert!(tracker.retired.load(Ordering::Acquire));
+        }
+        let tracker = LeaseTracker::default();
+        assert!(accept_only_checkpoint(&tracker, None, 17, 0, false, || Ok(())).is_err());
+    }
+    #[test]
+    fn accept_only_completion_error_panic_and_late_retirement_never_accept() {
+        for fault_kind in 0..3 {
+            let tracker = LeaseTracker::default();
+            let result = accept_only_checkpoint(&tracker, Some(17), 17, 0, false, || {
+                tracker.record(Failure::GpuValidation);
+                match fault_kind {
+                    0 => Err(fault("synthetic GPU validation failure")),
+                    1 => panic!("synthetic completion panic"),
+                    _ => {
+                        tracker.retire_with(Failure::ContextRetired);
+                        Ok(())
+                    }
+                }
+            });
+            assert!(result.is_err());
+            assert!(tracker.retired.load(Ordering::Acquire));
+            assert_eq!(
+                tracker.reason(Failure::CleanupRejected),
+                Failure::GpuValidation.code()
+            );
+        }
     }
     #[test]
     fn request_reuse_keeps_original_dirty_spans_charged_until_full_terminal_audit() {

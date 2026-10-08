@@ -501,6 +501,23 @@ impl ComputeServer for WgpuServer {
         })
     }
 
+    fn accept_transient_io_reuse(
+        &mut self,
+        nonce: u64,
+        stream_id: StreamId,
+    ) -> Result<(), ServerError> {
+        let guard = self
+            .scheduler
+            .stream(&stream_id)
+            .begin_transient_cleanup()?;
+        guard.run(|| {
+            self.scheduler.execute_streams(vec![stream_id]);
+            self.scheduler
+                .stream(&stream_id)
+                .accept_transient_io_reuse(nonce)
+        })
+    }
+
     fn end_transient_io_reuse(
         &mut self,
         nonce: u64,

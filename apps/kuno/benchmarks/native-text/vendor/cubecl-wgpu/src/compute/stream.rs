@@ -587,6 +587,16 @@ impl WgpuStream {
         self.transient_io.as_mut().unwrap().recycle_reuse(nonce)
     }
 
+    pub(crate) fn accept_transient_io_reuse(&mut self, nonce: u64) -> Result<(), ServerError> {
+        self.private_io_active()?;
+        self.transient_io.as_ref().unwrap().check_reuse(nonce)?;
+        self.flush(StreamErrorMode {
+            ignore: false,
+            flush: true,
+        })?;
+        self.transient_io.as_mut().unwrap().accept_reuse(nonce)
+    }
+
     pub(crate) fn end_transient_io_reuse(
         &mut self,
         nonce: u64,

@@ -449,6 +449,19 @@ where
         .into())
     }
 
+    /// Accept completion and scoped GPU errors without preparing or publishing
+    /// any additional reusable owner. All dirty spans remain fully charged.
+    fn accept_transient_io_reuse(
+        &mut self,
+        _nonce: u64,
+        _stream_id: StreamId,
+    ) -> Result<(), ServerError> {
+        Err(IoError::UnsupportedIoOperation {
+            backtrace: BackTrace::capture(),
+        }
+        .into())
+    }
+
     /// End only after full two-pass erasure and CPU inspection of all retained
     /// owners. Failed cleanup retains the scope and retires the stream.
     fn end_transient_io_reuse(

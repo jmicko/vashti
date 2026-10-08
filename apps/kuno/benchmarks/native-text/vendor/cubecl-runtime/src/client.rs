@@ -524,6 +524,18 @@ impl<R: Runtime> ComputeClient<R> {
             })?
     }
 
+    /// Accept this request checkpoint without remapping, clearing or publishing
+    /// buffers for reuse. The eventual recycle and full closing audit remain due.
+    pub fn accept_transient_io_reuse(&self, nonce: u64) -> Result<(), ServerError> {
+        let stream_id = self.stream_id();
+        self.device
+            .submit_blocking(move |server| server.accept_transient_io_reuse(nonce, stream_id))
+            .map_err(|_| ServerError::Generic {
+                reason: "private I/O reuse channel unavailable".into(),
+                backtrace: BackTrace::capture(),
+            })?
+    }
+
     /// Synchronous full inspected erasure of every retained scope owner.
     pub fn end_transient_io_reuse(
         &self,
