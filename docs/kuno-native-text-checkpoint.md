@@ -1624,3 +1624,25 @@ volatile word stores and directly copies into preallocated guarded owners.
 two logger controls and strict all-target Clippy pass. Exact unchanged pins and
 regenerated23-file provenance patch3f6c6be96aa16958293769027304cf27d4453c6ac3a77edd4415793b1257ad93.
 Complete physical acceptance and a refreshed bounded host profile are pending.
+
+Heap erasure source13f591c/artifact54526913e4c600e32a828530de408fe6c99a1e466e5bc80e7a3f4b26c3ecfe76
+passes all original gates with17730ms decode (7.1630 tokens/s),15579ms prefill.
+B70 returns50688000B. Two bounded host profiles, v36b(all threads) and v36c(main
+thread), pass original complete model/lifecycle acceptance and are excluded from
+speed selection. Raw stacks are root-owned tmpfs and removed; only static
+symbol/sample aggregates remain. Main-thread clearing/copying/allocation remains
+visible; cycle shares do not establish elapsed-time attribution.
+
+First-following GPU profile v36d rejects with retired private I/O during its
+profiling path; no acceptance or timing selected. Physical B70 returns50688000B
+and same-boot classified Xe faults remain zero at2026-10-08T14:00:58.573310+00:00.
+Do not bypass its original cap or relax ownership gates to obtain a profile.
+The next candidate explicitly reuses only exact-size inspected-zero Readback
+owners inside the original I/O cap. Source and complete device acceptance pending.
+
+Readback reuse candidate source gates pass496 native tests/two original shaders,
+61 runtime host controls/three actual allocator controls/two logger controls,
+36 Python count1 controls and strict all-target Clippy. Provenance23-file patch
+fe6c6cfa60fa34f2b784dfb0292a15103f4cb61c608949201e022fec639eccc0;
+original four upstream pins/licenses and both locks remain unchanged. Device
+acceptance is pending. No source edits or compiler overlap during timings.

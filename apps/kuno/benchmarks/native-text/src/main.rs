@@ -879,6 +879,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if info_batch_upload && (!compact_info || count1_hybrid_cap.is_none_or(|cap| cap > 10)) {
         return Err("Batched INFO requires protected compact count1 mode".into());
     }
+    let readback_reuse = count1_environment_opt_in(&mode, "KUNO_LAB_READBACK_REUSE")?;
+    if readback_reuse && !info_batch_upload {
+        return Err("readback reuse requires protected batched INFO".into());
+    }
     let batch_tasks = count1_environment_opt_in(&mode, "KUNO_LAB_BATCH_TASKS")?;
     let gpu_router = count1_environment_opt_in(&mode, "KUNO_LAB_GPU_ROUTER")?;
     if next_shared && !gpu_router {
@@ -2278,6 +2282,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let pre_scratch_clear_calls = resident_util::native_scratch_clear_calls();
             let pre_compute_scratch_clear_calls = resident_util::compute_scratch_clear_calls();
             let pre_grouped_status_calls = status_fold_batch::calls();
+            let pre_readback_reuses = cubecl::wgpu::transient_readback_reuses();
             let reclaim_start = Instant::now();
             let gpu_source_advised_bytes = if reclaim_gpu_sources {
                 resident
@@ -2568,6 +2573,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 receipt["info_batch_upload"] = serde_json::json!(info_batch_upload);
                 receipt["device_dispatch"] = serde_json::json!(device_dispatch);
                 receipt["observed_inline_device_dispatch"] = serde_json::json!(inline_dispatch);
+                receipt["readback_reuse"] = serde_json::json!(readback_reuse);
+                receipt["observed_clean_readback_reuses"] = serde_json::json!(
+                    cubecl::wgpu::transient_readback_reuses()
+                        .checked_sub(pre_readback_reuses)
+                        .ok_or("readback reuse counter regression")?
+                );
                 receipt["info_slab_bytes"] = serde_json::json!(if compact_info { 4096 } else { 0 });
                 receipt["batch_tasks"] = serde_json::json!(batch_tasks);
                 receipt["defer_router_io"] = serde_json::json!(defer_router_io);

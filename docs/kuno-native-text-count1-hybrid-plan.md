@@ -1207,3 +1207,30 @@ Host controls exercise all offsets0..7, lengths0..256, outside guard bytes,
 empty/odd/aligned/32768-byte copies, source preservation and complete capacity
 erasure. All original full-model IDs and owning/fresh/lifecycle gates remain
 mandatory before selecting a timing. Installed execution remains unchanged.
+
+### Explicit zero-only readback reuse laboratory
+
+`--readback-reuse` requires protected batched INFO and selects native
+`KUNO_LAB_READBACK_REUSE=1`; all other modes remain unchanged. This supersedes
+earlier no-pool wording only for these Readback owners. At most16 exact-size
+Readback owners, totaling8MiB, may remain after complete accepted inspected
+two-pass erasure. Scheduling has drained, every returned/map lease is gone,
+every audit map is dropped and the final clear/fence/error proof has completed
+before transfer. Uniform resources and mapped Upload owners are never pooled.
+Failures, non-inspected cleanup and live leases cannot introduce reusable owners;
+retirement forbids future allocation. Every newly dirty reused owner again enters
+the original full-owner ledger, two passes, full inspection and completion gates.
+
+Retained zero-only bytes remain charged against the original64MiB runtime I/O
+cap; activation transfers exact existing charge to the current Readback total.
+All source/audit headroom checks include retained charge; there is no allowance
+increase or early dirty-owner credit. Pointer storage is reserved before content
+and bounded to16 entries within the original metadata envelope. Exact-size reuse
+is internal to one stream/context; no external buffer accessor survives the
+returned lease proof. All retained owners disappear on context destruction.
+
+Four host controls cover strict selection, exact conserved charges, count/byte
+limits, unselected behavior and failure atomicity. The runner requires exact
+policy and bounded positive warm reuse evidence. Every original128-ID, fresh,
+poison/cancellation and complete owning/lifecycle check remains mandatory.
+No production/private worker or installed service change is implied.

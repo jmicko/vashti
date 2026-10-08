@@ -1980,7 +1980,7 @@
 +}
 --- a/cubecl-wgpu/src/compute/mod.rs
 +++ b/cubecl-wgpu/src/compute/mod.rs
-@@ -1,13 +1,16 @@
+@@ -1,13 +1,18 @@
 +// Modified for Kuno's laboratory transient-I/O ownership/erasure patch (2026-10-05).
  pub(crate) mod controller;
  
@@ -1997,6 +1997,8 @@
  
  pub use server::*;
  pub use storage::*;
++
++pub use transient_io::transient_readback_reuses;
 --- a/cubecl-wgpu/src/compute/schedule.rs
 +++ b/cubecl-wgpu/src/compute/schedule.rs
 @@ -1,3 +1,4 @@
@@ -2957,7 +2959,7 @@
          self.mem_manage.memory_cleanup(false);
 --- /dev/null
 +++ b/cubecl-wgpu/src/compute/transient_io.rs
-@@ -0,0 +1,3578 @@
+@@ -0,0 +1,3770 @@
 +// Modified for Kuno's laboratory transient-I/O ownership/erasure patch (2026-10-05).
 +//! Opt-in bounded, explicitly owned transient I/O. No device creation in tests.
 +//!
@@ -2998,6 +3000,20 @@
 +// erasure covers the FULL API span, never opaque driver-allocation padding.
 +const MIN_BYTES: u64 = 256;
 +const MAX_BYTES: u64 = 128 * 1024 * 1024;
++const CLEAN_READBACK_BYTES: u64 = 8 * 1024 * 1024;
++const CLEAN_READBACK_COUNT: usize = 16;
++static READBACK_REUSES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
++/// Numeric fixed-public laboratory evidence; never exposes buffer or content data.
++pub fn transient_readback_reuses() -> u64 {
++    READBACK_REUSES.load(Ordering::Relaxed)
++}
++fn configured_readback_reuse(raw: Option<&str>, batch: bool) -> Result<bool, ServerError> {
++    match raw {
++        None | Some("0") => Ok(false),
++        Some("1") if batch => Ok(true),
++        _ => Err(fault("readback reuse requires explicit batched INFO")),
++    }
++}
 +const POLL_TIMEOUT: Duration = Duration::from_secs(30);
 +pub(crate) type ErrorFuture = Pin<Box<dyn Future<Output = Option<wgpu::Error>> + Send>>;
 +
@@ -3209,6 +3225,7 @@
 +struct Ledger {
 +    budget: u64,
 +    charged: u64,
++    clean_bytes: u64,
 +    totals: [u64; 3],
 +    epoch: u64,
 +}
@@ -3220,6 +3237,7 @@
 +        Ok(Self {
 +            budget,
 +            charged: 0,
++            clean_bytes: 0,
 +            totals: [0; 3],
 +            epoch: 1,
 +        })
@@ -3227,7 +3245,8 @@
 +    fn check(&self, bytes: u64) -> Result<(), ServerError> {
 +        if self
 +            .charged
-+            .checked_add(bytes)
++            .checked_add(self.clean_bytes)
++            .and_then(|n| n.checked_add(bytes))
 +            .is_none_or(|n| n > self.budget)
 +        {
 +            return Err(fault("private I/O budget exhausted; owner must checkpoint"));
@@ -3243,6 +3262,32 @@
 +        self.charged += bytes;
 +        self.totals[kind.slot()] = total;
 +        Ok(bytes)
++    }
++    fn retain_clean(&mut self, bytes: u64) -> Result<(), ServerError> {
++        self.check(bytes)?;
++        self.clean_bytes = self
++            .clean_bytes
++            .checked_add(bytes)
++            .ok_or_else(|| fault("clean readback charge overflow"))?;
++        Ok(())
++    }
++    fn activate_clean_readback(&mut self, bytes: u64) -> Result<(), ServerError> {
++        if span(bytes)? != bytes || self.clean_bytes < bytes {
++            return Err(fault("clean readback charge mismatch"));
++        }
++        self.check(0)?;
++        let charged = self
++            .charged
++            .checked_add(bytes)
++            .ok_or_else(|| fault("clean readback active charge overflow"))?;
++        let total = self.totals[Kind::Readback.slot()]
++            .checked_add(bytes)
++            .ok_or_else(|| fault("clean readback counter overflow"))?;
++        // Move exact already-charged ownership; never credit or double-charge it.
++        self.clean_bytes -= bytes;
++        self.charged = charged;
++        self.totals[Kind::Readback.slot()] = total;
++        Ok(())
 +    }
 +    /// Opt-in slabs reserve all full Upload/Uniform audit duplicates before
 +    /// normal mutation. Readback creation must preserve that same headroom.
@@ -3613,11 +3658,54 @@
 +    buffer: B,
 +    kind: Kind,
 +}
++/// Zero-only owners admitted after complete inspected two-pass sanitization.
++/// Only Readback buffers enter: returned read leases prove no external accessor
++/// survives the drain. Uniform resources and mapped Uploads are never recycled.
++struct CleanReadbacks<B> {
++    buffers: Vec<(B, u64)>,
++    enabled: bool,
++}
++impl<B> CleanReadbacks<B> {
++    fn new(enabled: bool) -> Result<Self, ServerError> {
++        let mut buffers = Vec::new();
++        if enabled {
++            buffers
++                .try_reserve_exact(CLEAN_READBACK_COUNT)
++                .map_err(|_| fault("clean readback metadata allocation"))?;
++        }
++        Ok(Self { buffers, enabled })
++    }
++    fn take(&mut self, bytes: u64, ledger: &mut Ledger) -> Result<Option<B>, ServerError> {
++        let Some(index) = self.buffers.iter().position(|(_, size)| *size == bytes) else {
++            return Ok(None);
++        };
++        ledger.activate_clean_readback(bytes)?;
++        Ok(Some(self.buffers.swap_remove(index).0))
++    }
++    /// Caller must prove complete accepted inspected erasure, drained scheduling
++    /// and zero live mapping/returned-read leases BEFORE transferring an owner.
++    fn offer(&mut self, buffer: B, bytes: u64, ledger: &mut Ledger) -> Result<bool, ServerError> {
++        if !self.enabled
++            || self.buffers.len() >= CLEAN_READBACK_COUNT
++            || span(bytes)? != bytes
++            || ledger
++                .clean_bytes
++                .checked_add(bytes)
++                .is_none_or(|n| n > CLEAN_READBACK_BYTES)
++        {
++            return Ok(false); // Fully clean excess owner is dropped, never reallocated.
++        }
++        ledger.retain_clean(bytes)?;
++        self.buffers.push((buffer, bytes)); // Preallocated public pointer envelope.
++        Ok(true)
++    }
++}
 +pub(crate) struct TransientIo {
 +    device: wgpu::Device,
 +    queue: wgpu::Queue,
 +    ledger: Ledger,
 +    buffers: Vec<Tracked>,
++    clean_readbacks: CleanReadbacks<wgpu::Buffer>,
 +    leases: Arc<LeaseTracker>,
 +    errors: Vec<ErrorFuture>,
 +    info_policy: Option<InfoPolicy>,
@@ -4359,6 +4447,23 @@
 +            if info_batch {
 +                println!("private_info_batch_upload enabled=true");
 +            }
++            let raw_reuse = std::env::var_os("KUNO_LAB_READBACK_REUSE");
++            let reuse = configured_readback_reuse(
++                raw_reuse
++                    .as_ref()
++                    .map(|v| {
++                        v.to_str()
++                            .ok_or_else(|| fault("readback reuse setting encoding"))
++                    })
++                    .transpose()?,
++                info_batch,
++            )?;
++            let clean_readbacks = CleanReadbacks::new(reuse)?;
++            if reuse {
++                println!(
++                    "private_clean_readback_reuse enabled=true max_buffers=16 max_bytes=8388608"
++                );
++            }
 +            let info_policy = slab_bytes
 +                .map(|bytes| {
 +                    let limits = device.limits();
@@ -4376,6 +4481,7 @@
 +                queue,
 +                ledger: Ledger::new(budget)?,
 +                buffers: Vec::new(),
++                clean_readbacks,
 +                leases: Arc::default(),
 +                errors: Vec::new(),
 +                info_policy,
@@ -4562,6 +4668,21 @@
 +            self.leases.record(Failure::AllocationMetadata);
 +            fault(self.leases.reason(Failure::AllocationMetadata))
 +        })?;
++        let full = span(logical)?;
++        if kind == Kind::Readback
++            && let Some(buffer) = self.clean_readbacks.take(full, &mut self.ledger)?
++        {
++            if buffer.size() != full {
++                self.leases.retire_with(Failure::AllocationSpan);
++                return Err(fault(self.leases.reason(Failure::AllocationSpan)));
++            }
++            self.buffers.push(Tracked {
++                buffer: buffer.clone(),
++                kind,
++            });
++            READBACK_REUSES.fetch_add(1, Ordering::Relaxed);
++            return Ok(buffer);
++        }
 +        let owned = self.ledger.reserve(kind, logical).inspect_err(|_| {
 +            self.leases.record(Failure::AllocationBudget);
 +        })?;
@@ -4921,8 +5042,21 @@
 +        let counts = inspected?;
 +        receipt.inspected_bytes = counts.bytes;
 +        receipt.inspected_buffers = counts.buffers;
-+        self.info_slab = None; // No clean pool or cross-epoch owner reuse.
-+        self.buffers.clear(); // ONLY after full erase + optional audit acceptance
++        self.info_slab = None;
++        // Only inspected complete erasure can authorize reuse. Every newly dirty
++        // cohort still undergoes the same original two passes and full inspection.
++        // Zero leases were checked before drain; audit maps are dropped before here.
++        if inspect && !previous_error && self.clean_readbacks.enabled {
++            for tracked in self.buffers.drain(..) {
++                if tracked.kind == Kind::Readback {
++                    let bytes = tracked.buffer.size();
++                    self.clean_readbacks
++                        .offer(tracked.buffer, bytes, &mut self.ledger)?;
++                }
++            }
++        } else {
++            self.buffers.clear();
++        }
 +        Ok(receipt)
 +    }
 +}
@@ -6534,5 +6668,65 @@
 +        assert!(l.after_erasure().is_err());
 +        assert_eq!(l.charged, MIN_BYTES);
 +        assert_eq!(l.totals, [MIN_BYTES, 0, 0]);
++    }
++}
++
++#[cfg(test)]
++mod clean_readback_tests {
++    use super::*;
++    #[test]
++    fn reuse_requires_explicit_batched_info_and_strict_encoding() {
++        for raw in [None, Some("0")] {
++            assert!(!configured_readback_reuse(raw, false).unwrap());
++        }
++        assert!(configured_readback_reuse(Some("1"), true).unwrap());
++        for raw in [Some("1"), Some("2"), Some(""), Some("true")] {
++            assert!(configured_readback_reuse(raw, false).is_err());
++        }
++    }
++    #[test]
++    fn clean_owner_charge_moves_exactly_and_remains_inside_original_budget() {
++        let mut ledger = Ledger::new(1024).unwrap();
++        ledger.reserve(Kind::Readback, 512).unwrap();
++        assert_eq!(ledger.after_erasure().unwrap().readback_bytes, 512);
++        let mut pool = CleanReadbacks::new(true).unwrap();
++        assert!(pool.offer(7u32, 512, &mut ledger).unwrap());
++        assert_eq!(ledger.clean_bytes, 512);
++        assert_eq!(ledger.charged, 0);
++        assert!(ledger.check(513).is_err());
++        assert_eq!(pool.take(256, &mut ledger).unwrap(), None);
++        assert_eq!(pool.take(512, &mut ledger).unwrap(), Some(7));
++        assert_eq!(ledger.clean_bytes, 0);
++        assert_eq!(ledger.charged, 512);
++        assert_eq!(ledger.totals, [0, 0, 512]);
++        ledger.reserve(Kind::Uniform, 512).unwrap();
++        assert!(ledger.reserve(Kind::Readback, 256).is_err());
++    }
++    #[test]
++    fn clean_pool_is_bounded_and_unselected_drops_owners() {
++        let mut ledger = Ledger::new(32 * 1024 * 1024).unwrap();
++        let mut disabled = CleanReadbacks::new(false).unwrap();
++        assert!(!disabled.offer(0u32, 256, &mut ledger).unwrap());
++        assert_eq!(ledger.clean_bytes, 0);
++        let mut pool = CleanReadbacks::new(true).unwrap();
++        for i in 0..CLEAN_READBACK_COUNT {
++            assert!(pool.offer(i, 512 * 1024, &mut ledger).unwrap());
++        }
++        assert_eq!(ledger.clean_bytes, CLEAN_READBACK_BYTES);
++        assert!(!pool.offer(99, 256, &mut ledger).unwrap());
++        assert_eq!(pool.buffers.len(), CLEAN_READBACK_COUNT);
++        assert!(ledger.activate_clean_readback(129).is_err());
++        assert_eq!(ledger.clean_bytes, CLEAN_READBACK_BYTES);
++    }
++    #[test]
++    fn rejected_transfer_does_not_mutate_clean_owner_or_ledger() {
++        let mut ledger = Ledger::new(512).unwrap();
++        let mut pool = CleanReadbacks::new(true).unwrap();
++        assert!(pool.offer(7u32, 512, &mut ledger).unwrap());
++        ledger.charged = 256; // Deliberately corrupt outside the admitted envelope.
++        assert!(pool.take(512, &mut ledger).is_err());
++        assert_eq!(pool.buffers, [(7, 512)]);
++        assert_eq!(ledger.clean_bytes, 512);
++        assert_eq!(ledger.charged, 256);
 +    }
 +}

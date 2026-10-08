@@ -533,3 +533,13 @@ early; every original lease/fence/audit and both applicable wipe owners remain.
 57 imported runtime controls, three actual allocator controls, two logger
 controls and strict all-target Clippy pass. Physical v36 acceptance is pending;
 this is an isolated native laboratory and does not alter installed Kuno.
+
+### Explicit clean Readback reuse candidate
+
+Only the selected protected batched-INFO lab may retain up to16 inspected-zero
+Readback owners totaling8MiB. This supersedes no-pool wording only for Readback;
+Upload and Uniform behavior remains. Full two-pass accepted inspection, final
+fence/error completion and zero returned/map leases precede retention. All
+retained bytes remain inside the unchanged64MiB I/O ledger ceiling. Exact-size
+activation moves existing charge; every newly dirty cohort repeats all original
+wipes/audits. Source/device acceptance is recorded in the owner checkpoint.

@@ -59,6 +59,18 @@ class HybridLabTests(unittest.TestCase):
         with mock.patch.dict(os.environ,{"KUNO_LAB_GROUPED_STATUS":"1"}):
             self.assertEqual(LAB.worker_environment("/original","/receipt")["KUNO_LAB_GROUPED_STATUS"],"0")
 
+    def test_readback_reuse_requires_bounded_evidence_and_actual_policy(self):
+        value=receipt("intel",10);value.update(readback_reuse=True,observed_clean_readback_reuses=12000)
+        output=completion(10)+"\nprivate_clean_readback_reuse enabled=true max_buffers=16 max_bytes=8388608"
+        LAB.validate_receipt(value,"intel",10,output,readback_reuse=True)
+        for field,bads in [("readback_reuse",[False,1,None]),("observed_clean_readback_reuses",[0,True,None,-1,1000001])]:
+            for bad in bads:
+                wrong=dict(value);wrong[field]=bad
+                with self.assertRaises(ValueError):LAB.validate_receipt(wrong,"intel",10,output,readback_reuse=True)
+        with self.assertRaises(ValueError):LAB.validate_receipt(value,"intel",10,completion(10),readback_reuse=True)
+        with self.assertRaises(ValueError):LAB.worker_environment("/original","/receipt",readback_reuse=True)
+        self.assertEqual(LAB.worker_environment("/original","/receipt",compact_info=True,info_batch_upload=True,readback_reuse=True)["KUNO_LAB_READBACK_REUSE"],"1")
+
     def test_compute_scratch_clear_requires_bounded_calls_full_probe_and_explicit_environment(self):
         value=receipt("intel",10);value.update(compute_scratch_clear=True,observed_compute_scratch_clear_calls=12000)
         output=completion(10)+"\npublic_compute_scratch_clear_full_owners=2,3,4 unselected_preserved=true padding=true"
