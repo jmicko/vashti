@@ -1013,11 +1013,9 @@ impl UploadMapping for NativeUploadMapping<'_> {
             return Err(fault("private upload wipe extent"));
         }
         let pointer = view.slice(..).as_raw_element_ptr().as_ptr();
-        for i in 0..view.len() {
-            // SAFETY: exclusive full WRITE view, exact owned API-visible span.
-            unsafe { pointer.add(i).write_volatile(0) };
-        }
-        std::sync::atomic::compiler_fence(Ordering::SeqCst);
+        // SAFETY: exclusive full WRITE view, exact owned API-visible span;
+        // the map guard remains active until checked explicit unmap below.
+        unsafe { cubecl_runtime::transient::wipe_mapped_full_span(pointer, view.len()) };
         // The full view drops before checked explicit unmap/guard fallback.
         Ok(())
     }

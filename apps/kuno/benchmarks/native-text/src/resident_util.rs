@@ -451,6 +451,25 @@ impl crate::resident_qsa::ResidentQsaSelector for TransientSelector<'_> {
 mod tests {
     use super::*;
     #[test]
+    fn mapped_word_erasure_covers_every_odd_unaligned_span_and_preserves_boundaries() {
+        for offset in 0..16 {
+            for length in 0..=240 {
+                let mut data = [0xa5_u8; 257];
+                // SAFETY: this initialized exclusive synthetic span stays live
+                // for the whole call; all 16 alignments and byte tails are tested.
+                unsafe {
+                    cubecl_runtime::transient::wipe_mapped_full_span(
+                        data.as_mut_ptr().add(offset),
+                        length,
+                    )
+                };
+                assert!(data[..offset].iter().all(|&x| x == 0xa5));
+                assert!(data[offset..offset + length].iter().all(|&x| x == 0));
+                assert!(data[offset + length..].iter().all(|&x| x == 0xa5));
+            }
+        }
+    }
+    #[test]
     fn retained_metadata_rejects_foreign_streams_offset_views_empty_and_growth() {
         use cubecl::stream_id::StreamId;
         use cubecl_runtime::transient::retained_metadata_bindings as validate;

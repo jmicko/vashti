@@ -14,6 +14,32 @@ use core::mem::MaybeUninit;
 use core::sync::atomic::{Ordering, compiler_fence};
 use cubecl_common::bytes::{AllocationController, AllocationProperty, Bytes};
 
+/// Erase every mapped byte using aligned volatile words plus byte boundaries.
+/// No allocation, logical-span narrowing, nonvolatile memset, or early exit.
+///
+/// # Safety
+/// `pointer..pointer+length` must be the exclusive, writable, initialized FULL
+/// mapped allocation span, including padding. Its map must remain active, and
+/// no other CPU/GPU accessor may use it until the caller unmaps/flushed it.
+pub unsafe fn wipe_mapped_full_span(pointer: *mut u8, length: usize) {
+    let prefix = pointer.align_offset(core::mem::align_of::<u64>()).min(length);
+    for i in 0..prefix {
+        // SAFETY: inside the caller's full initialized writable span.
+        unsafe { pointer.add(i).write_volatile(0) };
+    }
+    let words = (length - prefix) / 8;
+    for i in 0..words {
+        // SAFETY: prefix establishes u64 alignment; each complete word lies
+        // entirely inside the same full span and contains only initialized bytes.
+        unsafe { pointer.add(prefix).cast::<u64>().add(i).write_volatile(0) };
+    }
+    for i in prefix + words * 8..length {
+        // SAFETY: exact remaining tail, never the first byte beyond the owner.
+        unsafe { pointer.add(i).write_volatile(0) };
+    }
+    compiler_fence(Ordering::SeqCst);
+}
+
 /// Validate metadata requests, never contents or completion. The backend must
 /// also reject an inactive private-I/O stream. All bindings remain retained.
 pub fn retained_metadata_bindings(bindings: &[crate::server::Binding], stream: cubecl_common::stream_id::StreamId) -> Result<(), crate::server::ServerError> {

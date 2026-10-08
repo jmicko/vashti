@@ -313,3 +313,36 @@ consumers continue using ordinary resource lookup. Requested policy and actual
 completed warm metadata call counts are recorded only for the fixed public
 fixture. Source compilation and host/device/timing acceptance are separate
 gates; no speed claim follows from this option existing.
+
+### Bounded count1 Intel bank placement profiles (2026-10-07)
+
+The protected cap10 lab supports explicit `--bank-profile standard|intel72|intel96`,
+pinned by `KUNO_LAB_COUNT1_BANKS`; expanded profiles reject other cards/modes/caps
+before device/model access. Arbitrary expert/cache overrides remain rejected.
+`standard` keeps existing B70 64/NVIDIA16 slots and their8/6GiB static caches.
+`intel72` uses72 original expert slots per layer within the SAME12GiB pooled bank
+pages,8GiB static cache and26GiB MAIN ceiling. `intel96` uses the existing64+32
+segmented original banks:18GiB full bank pages, explicit6GiB static cache, block
+MoE/legacy fill/generic down, and the SAME26GiB MAIN ceiling. It never raises GPU
+limits, skips original live memory/admission checks, or silently shrinks another
+profile's cache. Native scratch/CPU/I/O/host budgets remain unchanged and are
+checked against actual capacities. Whole-model acceptance is required; operator
+geometry passing alone is insufficient.
+
+The Python receipt validator independently selects the profile and validates
+actual slots, segments, declared full bank charge, static cache/explicitness,
+block mode and unchanged device/private budgets. This reuses a bounded cache
+on one GPU; it is not whole-layer CPU/GPU or mixed-card execution. Changing
+prefill residency may change which decode experts are CPU misses. Profile and
+actual completed CPU-miss counts must accompany any timing comparison.
+
+### Full mapped upload erasure with aligned volatile words (2026-10-07)
+
+Laboratory transient upload stages now erase aligned eight-byte words with
+volatile stores, using volatile bytes for every unaligned prefix/final tail.
+The caller proves the same exact full mapped API-visible span before the call.
+There is no logical-span narrowing, nonvolatile memset or early successful
+exit. The same map guards, compiler fence, checked unmap/flush, original full
+zero inspection and final erasure remain mandatory. Synthetic tests cover every
+byte alignment, empty/odd sizes and both surrounding sentinels. Both-card actual
+owning audits and performance acceptance are separate gates.

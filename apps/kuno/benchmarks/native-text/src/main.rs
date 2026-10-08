@@ -231,6 +231,64 @@ fn count1_hybrid_setting(name: &str, raw: Option<&str>) -> Result<(), &'static s
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Count1Banks {
+    Standard,
+    Intel72,
+    Intel96,
+}
+impl Count1Banks {
+    fn parse(mode: &str, vendor: u32, raw: Option<&str>) -> Result<Self, &'static str> {
+        match raw {
+            None | Some("standard") => Ok(Self::Standard),
+            Some("intel72") if mode == "resident-count1-hybrid-chat" && vendor == 0x8086 => {
+                Ok(Self::Intel72)
+            }
+            Some("intel96") if mode == "resident-count1-hybrid-chat" && vendor == 0x8086 => {
+                Ok(Self::Intel96)
+            }
+            _ => Err("fixed count1 bank profile rejected"),
+        }
+    }
+    fn label(self) -> &'static str {
+        match self {
+            Self::Standard => "standard",
+            Self::Intel72 => "intel72",
+            Self::Intel96 => "intel96",
+        }
+    }
+    fn setting(self, name: &str, raw: Option<&str>) -> Result<(), &'static str> {
+        if self == Self::Intel96 && name == "KUNO_LAB_BLOCK_MOE" {
+            return if raw == Some("1") {
+                Ok(())
+            } else {
+                Err("segmented count1 bank block setting rejected")
+            };
+        }
+        if self == Self::Intel96 && name == "KUNO_LAB_STATIC_CACHE_BYTES" {
+            return if raw == Some("6442450944") {
+                Ok(())
+            } else {
+                Err("segmented count1 bank static cache setting rejected")
+            };
+        }
+        count1_hybrid_setting(name, raw)
+    }
+    fn slots(self, vendor: u32) -> usize {
+        match self {
+            Self::Intel72 => 72,
+            Self::Intel96 => 96,
+            Self::Standard => {
+                if vendor == 0x8086 {
+                    64
+                } else {
+                    16
+                }
+            }
+        }
+    }
+}
+
 fn staged_hybrid_registration(argc: usize, receipt: bool) -> Result<(), &'static str> {
     if argc != 3 || !receipt {
         return Err("staged hybrid numeric probe requires only card, mode and receipt destination");
@@ -647,6 +705,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .map(|v| v.to_str().ok_or("CPU/GPU overlap encoding rejected"))
             .transpose()?,
     )?;
+    let banks_raw = std::env::var_os("KUNO_LAB_COUNT1_BANKS");
+    let count1_banks = Count1Banks::parse(
+        &mode,
+        vendor,
+        banks_raw
+            .as_ref()
+            .map(|v| v.to_str().ok_or("bank profile encoding rejected"))
+            .transpose()?,
+    )?;
     let count1_hybrid_cap = if mode == "resident-count1-hybrid-chat" {
         let cap = count1_hybrid_registration(
             std::env::args().count(),
@@ -659,12 +726,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .as_ref()
                 .map(|v| v.to_str().ok_or("count1 hybrid setting encoding rejected"))
                 .transpose()?;
-            count1_hybrid_setting(name, value)?;
+            count1_banks.setting(name, value)?;
         }
         Some(cap)
     } else {
         None
     };
+    if count1_banks != Count1Banks::Standard && count1_hybrid_cap != Some(10) {
+        return Err("Expanded count1 banks require protected cap10 mode".into());
+    }
     let mapped_weights = count1_environment_opt_in(&mode, "KUNO_LAB_MAPPED_WEIGHTS")?;
     let kernel_profile = count1_environment_opt_in(&mode, "KUNO_LAB_KERNEL_PROFILE")?;
     let fast_gpu = count1_environment_opt_in(&mode, "KUNO_LAB_FAST_GPU")?;
@@ -783,11 +853,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(_) => return Err("KUNO_LAB_EXPERT_SLOTS must be an integer 10..72 or 96".into()),
     };
     // Reject malformed/out-of-range overrides before creating a GPU device.
-    let expert_slots = bank_slots::configured_capacity(
-        requested_slots.as_deref(),
-        if vendor == 0x8086 { 64 } else { 16 },
-    )
-    .map_err(|_| "KUNO_LAB_EXPERT_SLOTS must be an integer 10..72 or 96")?;
+    let expert_slots =
+        bank_slots::configured_capacity(requested_slots.as_deref(), count1_banks.slots(vendor))
+            .map_err(|_| "KUNO_LAB_EXPERT_SLOTS must be an integer 10..72 or 96")?;
     let static_cache_setting = match std::env::var("KUNO_LAB_STATIC_CACHE_BYTES") {
         Ok(raw) => Some(raw),
         Err(std::env::VarError::NotPresent) => None,
@@ -806,7 +874,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::env::var("KUNO_LAB_WORD_DOWN").as_deref() == Ok("1"),
         matches!(
             mode.as_str(),
-            "resident-bang" | "resident-chat" | "resident-rainwater"
+            "resident-bang"
+                | "resident-chat"
+                | "resident-rainwater"
+                | "resident-count1-hybrid-chat"
         ),
     )?;
     expert_banks::validate_ordered_segmented(expert_slots)?;
@@ -2049,6 +2120,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 });
                 receipt["fused_matrix_fault"] = serde_json::json!(executor.fused_matrix_fault);
                 receipt["mapped_weights"] = serde_json::json!(mapped_weights);
+                receipt["count1_bank_profile"] = serde_json::json!(count1_banks.label());
                 receipt["observed_mapped_weights"] = serde_json::json!(file.weights_mapped());
                 receipt["kernel_profile"] = serde_json::json!(kernel_profile);
                 receipt["observed_shared_overlap_calls"] =
@@ -2481,6 +2553,40 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod transient_mode_tests {
+    #[test]
+    fn expanded_banks_require_an_exact_intel_hybrid_profile_and_preserve_other_guards() {
+        use super::Count1Banks as B;
+        for (raw, slots) in [("intel72", 72), ("intel96", 96)] {
+            let p = B::parse("resident-count1-hybrid-chat", 0x8086, Some(raw)).unwrap();
+            assert_eq!(p.slots(0x8086), slots);
+            assert!(B::parse("resident-chat", 0x8086, Some(raw)).is_err());
+            assert!(B::parse("resident-count1-hybrid-chat", 0x10de, Some(raw)).is_err());
+            assert!(p.setting("KUNO_LAB_EXPERT_SLOTS", Some("96")).is_err());
+            assert!(p.setting("KUNO_LAB_BATCH_EXPERTS", Some("1")).is_err());
+        }
+        assert!(B::parse("probe", 0x8086, Some("standard")).is_ok());
+        for raw in ["", "96", "auto", "true", "Intel96"] {
+            assert!(B::parse("resident-count1-hybrid-chat", 0x8086, Some(raw)).is_err());
+        }
+        assert!(B::Intel96.setting("KUNO_LAB_BLOCK_MOE", Some("1")).is_ok());
+        assert!(
+            B::Intel96
+                .setting("KUNO_LAB_STATIC_CACHE_BYTES", Some("6442450944"))
+                .is_ok()
+        );
+        for raw in [None, Some("0"), Some("8589934592")] {
+            assert!(
+                B::Intel96
+                    .setting("KUNO_LAB_STATIC_CACHE_BYTES", raw)
+                    .is_err()
+            );
+        }
+        assert!(
+            B::Intel72
+                .setting("KUNO_LAB_STATIC_CACHE_BYTES", Some("6442450944"))
+                .is_err()
+        );
+    }
     #[test]
     fn overlap_requires_explicit_pooled_hybrid_selection_before_device_access() {
         for mode in ["resident-count1-hybrid-chat", "resident-chat"] {
