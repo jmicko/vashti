@@ -1,24 +1,22 @@
 # Native text checkpoint, 2026-10-08
 
-All three user-approved ranked optimizations have been tried. Selected engine
-source is **89ea1bc03ab22c1e834363d46c2736627d03b8da**, with bounded request-owned
-GPU binding reuse, the original GDN shader and float/FMA CPU arithmetic.
-Two complete fixed-public fixtures measure **10.6428 and 10.7300 decode
-tokens/s**, versus **9.5317** with binding reuse disabled in the same binary.
-The approved **10-token/s reference is met on this fixture**. No new Ollama
-baseline was run, and these results do not establish general prompt performance.
+Latest engine source is **3e9f0e4891c75a09ff40eddd47f167e7ae47bef9**.
+The complementary stationary NVIDIA expert bank is implemented and passes the
+complete original model checks. It is **excluded from the selected path**:
+matched same-binary decode is **11.0406 tokens/s** with original B70/CPU placement
+and **8.2586** with NVIDIA experts. More residency saves CPU work but additional
+completion/readback and buffer reuse overhead outweigh that saving here.
 
-Retained GDN state and three-/two-pass residual Q8 CPU arithmetic pass the
-unchanged acceptance gates but do not improve the selected timing. They are
-excluded; no arithmetic tolerance or privacy gate was relaxed. The retained
-startup zero-tail change remains. See **Ranked optimization pass complete** at
-the end for exact source/artifacts, six numeric receipts and limitations.
-Earlier pending statements and selected versions are historical.
+Keep original intel144/cap10, GPU limit10, float/CPU FMA and binding256, with
+secondary experts off. The approved10-token/s reference is met on this fixed
+public fixture. No new Ollama baseline was run; these results do not establish
+general prompt performance. See **Stationary secondary model acceptance** below
+for source, artifacts, matched timings and limitations. Earlier pending and
+selected-source statements are historical.
 
-Normal inference is restored and all lab jobs exited. The goal remains paused;
-no more physical work is scheduled. This remains a standalone native laboratory.
-Installed binaries/settings, public API, Vashti and release artifacts are
-unchanged. Required Vashti changes: none.
+Normal inference is restored and all lab jobs exited. This remains a standalone
+native laboratory. Installed binaries/settings, public API, Vashti and release
+artifacts are unchanged. Required Vashti changes: none.
 
 Backend owner:
 `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
@@ -2243,3 +2241,61 @@ or queued work/recovery latch. Kuno11434, direct Ollama11435 and Vashti7771
 return HTTP200; public residency and running lab units are empty. No GPU reset,
 driver/clock/reboot, model-file, installed-service/configuration, API/catalog,
 Vashti, release or installation change. **Required Vashti changes: none.**
+
+### Stationary secondary model acceptance (2026-10-08)
+
+This supersedes the preceding pending two-device checkpoint. The implemented
+stationary NVIDIA bank passes complete original model acceptance but is slower,
+so keep it off. Engine source is `3e9f0e4891c75a09ff40eddd47f167e7ae47bef9`;
+post-run receipt partition/provenance validation is `bfdd986`. Integrate the
+complete backend range after `1e16862`, not just the timing counter commit.
+No production native-text/API deployment is part of this checkpoint.
+
+| Complete original75/128 fixture | Decode ms /127 | Tokens/s | Prefill ms |
+| --- | ---: | ---: | ---: |
+| Secondary accepted first v67 | 15779 | 8.0487 | 48658 |
+| Ordinary control v68 | 11587 | 10.9606 | 14616 |
+| Secondary profiled v69 | 15378 | 8.2586 | 14433 |
+| Same-artifact ordinary v69 | 11503 | 11.0406 | 14626 |
+
+The matched v69 pair uses normal frozen artifact
+`0267ae0af32888a0c0d4c86847a016180ffbb81496c2a62a85ef6113c98784e8`, features
+`direct-device,cpu-fma,cpu-work-stealing`. Keep intel144/cap10, GPU limit10,
+original float/FMA and binding256. Every run passes all original128 IDs,
+numerical, whole-owning, fresh, cancel and poisoned-retry gates. Both secondary
+runs additionally pass five complete nine-owner closes and five independent
+Q5/Q8 probes across slots0/31/32/47. Warm disk reads/writes are zero throughout.
+The first secondary prefill is disk-cold; do not treat48658ms as a warm baseline.
+Current64GB RAM is sufficient for these measured warm decodes.
+
+The9-GiB32+16 bank holds48 complementary experts per layer. Transient prefill
+frequency chooses them; no private history is saved. NVIDIA serves3900 additional
+expert calls, reducing CPU calls16411 to12511 and raising combined GPU coverage
+73.0791% to79.4767%. Secondary construction takes6036ms in profiled v69, outside
+decode. Across2196 dispatches, secondary enqueue/readback/join/reuse cost
+0.434/2.442/0.144/1.040 seconds in host wall time. Readback includes GPU waiting;
+these are not isolated kernel/PCIe timings. The extra synchronization outweighs
+the CPU saving, despite no warm expert weight upload. Reduce these bridges
+before selecting a secondary cache from hit rate alone.
+
+Explicit secondary geometry and status branches fix early device rejections;
+160-KiB enqueue and separately checked384-KiB post-worker join reservations fix
+an overly conservative precharge inside the unchanged1-MiB CPU host cap.
+No tolerance, owner/fault or publication check was weakened. Full source,
+limits, failures and matched-pair evidence are in the
+[internal contract](kuno-native-text-count1-hybrid-plan.md#stationary-secondary-model-acceptance-2026-10-08)
+and [numeric aggregate](../apps/kuno/benchmarks/text/receipts/next-secondary-stationary-model-20261008.json).
+Checks pass505 native plus two one-test shader suites,50 Python controls,
+strict release all-target Clippy and formatting/whitespace checks. Runtime
+source/patch is unchanged. Broader quality/context/soak and production
+integration remain unverified; no new Ollama tests were run.
+
+All jobs exited; public admission is restored with active=false, waiting=0,
+paused=false, recovery_required=false. Final same-boot snapshot at
+2026-10-08T22:42:05.444314+00:00 shows B70 at50688000/34242297856B,
+NVIDIA373MiB desktop allocations and no compute process. No running lab unit
+or public Kuno/Ollama model remains; Kuno11434/Ollama11435/Vashti7771 return
+HTTP200. Xe wedged/timeout/reset-failure/memory-fault and NVIDIA Xid counts
+remain zero. No installed binary/configuration, model-file, public API/catalog,
+Vashti, release or installation change. No reset/unbind/reboot/driver/clock
+change. **Required Vashti changes: none.**

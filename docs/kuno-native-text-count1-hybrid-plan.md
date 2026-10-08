@@ -1902,17 +1902,18 @@ placement from this isolated shader calibration. Source fill windows remain
 bounded to at most8 experts with full page charges inside the existing40MiB
 limit. Histories remain transient and are erased on exit/error.
 
-This bank and full two-device execution are **not implemented**. Acceptance
-requires exact membership/source proofs, both-device owners/fault checks and
-complete erasure, original128 IDs and independent numerical/fresh/cancel/poison
-checks, matched full-model timing, and physical memory recovery on both cards.
+This was a proposal at this checkpoint; it is superseded by **Stationary
+secondary model acceptance** below. That receipt covers exact membership/source
+proofs, both-device owners/fault checks and complete erasure, original128 IDs
+and independent numerical/fresh/cancel/poison checks, matched full-model timing,
+and physical memory recovery on both cards.
 Latest ordinary selected-path control using the same frozen v60 artifact passes
 all original complete-model gates at11577ms/127 steps (10.9700 tokens/s),
 prefill14534ms, with zero decode disk reads/writes and zero expert uploads.
 It retains44549/60960 expert calls (73.08%) on B70; additional NVIDIA coverage
 and whole-model speedup remain unmeasured. No API or consumer change.
 
-### Complementary stationary NVIDIA bank implementation (2026-10-08, pending device acceptance)
+### Complementary stationary NVIDIA bank implementation (2026-10-08)
 
 User approved implementation of the secondary bank. Explicit
 `KUNO_LAB_SECONDARY_EXPERTS=1` requires protected intel144 mapped cap10, pooled
@@ -1941,8 +1942,13 @@ The second context uses the original optimized float shared expert kernels with
 suffix/padding, original count/header and exact completion statuses before the
 joined partial/fault packet is mapped. Only completed finite data may enter the
 original host bridge; original probability/rank merge, primary fault fold and
-whole-model publication remain. Existing1-MiB hybrid host limit additionally
-reserves384KiB for the secondary bridge; no primary privacy budget is increased.
+whole-model publication remain. Inside the existing1-MiB hybrid host limit,
+enqueue reserves160KiB while CPU workers are live. After those workers join and
+their scratch is destroyed, a separately checked384-KiB budget covers the CPU
+partial owner, full return packet and joined owner. These phases never coexist;
+an earlier combined384-KiB precharge correctly hit the original CPU cap and was
+replaced by actual phase accounting. Exact upload/return capacities are checked.
+No primary privacy budget is increased.
 
 Secondary construction independently checks original decoded F64 rows for both
 Q5/Q8 down families and slots0/31/32/47 using a fixed public input, unchanged
@@ -1953,3 +1959,62 @@ All five complete-model/fresh/cancel owner instances require checked closes;
 the runner records secondary dispatch counts, setup time, public upload bytes
 and allocation geometry independently of decode timing. No API/Vashti change,
 production installation or throughput acceptance follows from source tests.
+
+### Stationary secondary model acceptance (2026-10-08)
+
+Implemented engine source `3e9f0e4891c75a09ff40eddd47f167e7ae47bef9`
+passes complete original128-ID, independent original-row, whole-owning,
+fresh-continuation, cancellation and poisoned-retry gates with both devices.
+The bank remains **opt-in and excluded from the selected performance path**.
+Matched same-artifact runs give11503ms/127 decode steps without secondary
+experts (11.0406 tokens/s) and15378ms with them (8.2586). Prefill is14626/14433ms
+respectively; secondary construction adds6036ms outside decode. An earlier
+accepted secondary run takes15779ms, and an ordinary control takes11587ms.
+All four warm decodes read/write zero disk bytes. No new Ollama baseline.
+
+B70 still serves44549/60960 expert calls. NVIDIA serves3900 additional calls
+across2196 layer transactions, leaving12511 CPU calls instead of16411:
+combined GPU coverage79.4767%, up from73.0791%, and23.7645% fewer CPU calls.
+Original plus secondary plus CPU counts must equal all48x10 ranks for every
+decode step. The stricter runner `bfdd986` independently revalidates all four
+completed samples, all five exact secondary close byte counts, and all five
+both-format/boundary-slot row probes. Individual historical run records retain
+their original contents; the observed secondary selector is in their raw model
+receipts. Future run records also include the requested selector explicitly.
+
+Content-free host phase counters distinguish secondary enqueue434063us,
+packet/completion readback2441913us, checked join143501us and runtime
+reuse/MAIN fence1039978us over the full decode. These are host wall intervals,
+including waits; they do not isolate GPU arithmetic, PCIe transfer or driver
+cost. The extra completion/reuse work outweighs the CPU saving. Do not select
+this bank from residency percentage or the earlier isolated shader calibration.
+The next secondary performance work must reduce these bridges/checkpoints
+before assuming that another cache or more NVIDIA residency improves decode.
+
+Original partition rejection was corrected by explicit secondary32+16 geometry
+(`92b00bf`); ordinary flat48 remains unchanged. Explicit imperative status
+expectations (`4943a23`) stop falsely rejecting the independently completed
+status buffer. Numeric static failure categories diagnose the unchanged CPU
+host cap (`182b52a`); phase-specific admission (`5b6c320`/`a00cc20`) fixes the
+overconservative precharge without increasing it. Full runtime closing audit
+byte identities are checked as well as all nine MAIN owners. Timing counters
+are `3e9f0e4`; the initial connected implementation is `d02415f`. No source,
+geometry, numerical tolerance, rank order or erasure gate was bypassed.
+
+Normal frozen release SHA256:
+`0267ae0af32888a0c0d4c86847a016180ffbb81496c2a62a85ef6113c98784e8`, features
+`direct-device,cpu-fma,cpu-work-stealing`. Source checks pass505 native tests,
+two one-test offline shader suites,50 Python controls, strict release all-target
+Clippy and formatting/whitespace checks. The runtime patch is unchanged.
+Exact four accepted and six rejected device attempts, source/artifact/raw/run/
+log hashes, limits, selected flags and host restoration are in the
+[numeric aggregate](../apps/kuno/benchmarks/text/receipts/next-secondary-stationary-model-20261008.json).
+
+At2026-10-08T22:42:05.444314+00:00 both devices are physically recovered:
+B70 reports50688000/34242297856B, NVIDIA373MiB desktop allocations with no
+compute processes. All five Xe/NVIDIA fault categories are zero on the same
+boot. Public admission is resumed, no lab units or inference models remain,
+and Kuno/Ollama/Vashti answerHTTP200. This establishes laboratory acceptance,
+not broader quality/context/soak or production/native-API integration.
+No installed service/configuration, model-file, API/catalog, frontend, release
+or installation change; no GPU reset/reboot/clock/driver change.

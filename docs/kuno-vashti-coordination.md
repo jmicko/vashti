@@ -2471,3 +2471,44 @@ work or recovery latch. Kuno11434/Ollama11435/Vashti7771 answer HTTP200. No GPU
 reset/reboot or installed-service/configuration, public API/catalog, frontend,
 release or installation change. **Required Vashti changes: none.** This remains
 an internal standalone laboratory checkpoint, not a production handoff.
+
+### Active handoff: stationary secondary model accepted, performance excluded (2026-10-08)
+
+This supersedes the preceding pending two-device handoff. Kuno owner remains
+`codex/kuno-native-text` in the dedicated worktree. Connected engine source is
+`3e9f0e4891c75a09ff40eddd47f167e7ae47bef9`; stricter runner partition/provenance
+validation is `bfdd986`. The complete range after `1e16862` implements the
+secondary bank,32+16 geometry, status/phase admission corrections and counters.
+Public API/configuration/catalog and Vashti consumers are unchanged.
+
+The stationary48-expert/layer NVIDIA bank passes the complete original128-ID,
+independent Q5/Q8 boundary-row, owning, fresh, cancel and poisoned-retry checks.
+Both accepted secondary fixtures require five exact1835008B/nine-owner closes
+and five independent row probes. Primary private budgets are unchanged; enqueue
+and post-CPU-worker join are separately bounded phases. Frequency, selections
+and partials are transient and erased; no private routing history is persisted.
+
+**Keep secondary off.** Same-artifact v69 decode is11.0406 tokens/s for original
+intel144/cap10 float/CPU FMA binding256, versus8.2586 with NVIDIA. Coverage rises
+73.0791% to79.4767%, saving3900 CPU expert calls, but completion/readback and
+runtime reuse add more cost than that saving. No warm disk reads/writes or
+expert weight uploads. Extra RAM is not justified by these warm results.
+Next secondary performance work needs cheaper bridges/checkpoints; more
+residency alone is not evidence of faster inference. No new Ollama baseline.
+
+See [latest checkpoint](kuno-native-text-checkpoint.md#stationary-secondary-model-acceptance-2026-10-08),
+[exact internal contract](kuno-native-text-count1-hybrid-plan.md#stationary-secondary-model-acceptance-2026-10-08)
+and [four accepted/six rejected numeric receipts](../apps/kuno/benchmarks/text/receipts/next-secondary-stationary-model-20261008.json)
+for commits/artifacts, timings, failures and limitations. Checks pass505 native,
+two one-test shader suites,50 Python controls, strict release all-target Clippy,
+formatting and whitespace checks; runtime source is unchanged. This is a
+standalone laboratory, with broader quality/context/soak and native-text
+production integration still outstanding. No installation/release claim.
+
+Normal admission is resumed; lab jobs/models are gone. Final same-boot snapshot
+at2026-10-08T22:42:05.444314+00:00 reports B70 physical50688000/34242297856B,
+NVIDIA373MiB desktop allocations without compute processes, zero classified
+Xe/NVIDIA faults, andHTTP200 from Kuno11434/Ollama11435/Vashti7771. No GPU
+reset/unbind/reboot/clock/driver or installed-service/configuration change.
+**Required Vashti changes: none.** No shared contract or frontend handoff is
+needed for this internal opt-in benchmark path.

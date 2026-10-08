@@ -1,0 +1,436 @@
+{
+  "scope": "fixed-public complete original model secondary stationary expert laboratory only",
+  "model": "borrowed original Qwen3.8 Flash Next Q4_K_M Ollama artifact",
+  "model_file_modified": false,
+  "new_ollama_baseline": false,
+  "seed": 424242,
+  "temperature": 0,
+  "prompt_token_count": 75,
+  "output_id_count": 128,
+  "decode_steps": 127,
+  "secondary_default_enabled": false,
+  "selected_path": "original intel144 cap10 GPUlimit10 original float/CPU FMA binding256 without secondary experts",
+  "source_base_commit": "1e16862a60ad95e380c4f5aea5e8915a868b5a28",
+  "engine_source_commit": "3e9f0e4891c75a09ff40eddd47f167e7ae47bef9",
+  "samples": [
+    {
+      "run": "cpu-144-secondary-long-v67",
+      "source_commit": "5b6c320a882ef26bd1f646229c2dd69a79c02e67",
+      "build_directory": "next-offload-build-20261008-v67-secondary-host-phases",
+      "build_features": [
+        "direct-device",
+        "cpu-fma",
+        "cpu-work-stealing"
+      ],
+      "cargo_artifacts_sha256": "588432327ff4a3d5607474f0b5e92dfba48e3837dae0d5a46ae2dc460ce6fc7c",
+      "frozen_executable_sha256": "0accd8186abca308bd158948a8aaf23992881418698ba37af594f369848a1029",
+      "raw_receipt_path": "/media/jmicko/faststore/kuno-development/next-offload-device-20261008/cpu-144-secondary-long-v67.json",
+      "raw_receipt_sha256": "1be0b95323651c18b99132bb7de037be50a7237b98130364c35bb33d47c88fba",
+      "run_record_path": "/media/jmicko/faststore/kuno-development/next-offload-device-20261008/cpu-144-secondary-long-v67.json.run.json",
+      "run_record_sha256": "3f7d772ea101c38867b725104aa1b68a0528fadda412e6d869301b3c2aff5d23",
+      "protected_log_sha256": "236674a9e3044e4f6c6a3ea149dd5828a53adb3510c0c6201d5dafd5d28e0077",
+      "wrapper_acceptance_record_exists": true,
+      "all_original_output_owning_and_lifecycle_gates_pass": true,
+      "secondary_close_count": 5,
+      "secondary_independent_original_rows_probe_count": 5,
+      "decode_tokens_per_second": 8.04867228594968,
+      "secondary_experts": true,
+      "generation_ms": 15779,
+      "prefill_ms": 48658,
+      "native_decode_steps": 127,
+      "warm_expert_hits": 44549,
+      "warm_expert_uploads": 0,
+      "completed_cpu_misses": 12511,
+      "warm_host_resource_delta": {
+        "major_faults": 254,
+        "minor_faults": 154851,
+        "read_bytes": 0,
+        "system_ticks": 709,
+        "user_ticks": 3158,
+        "write_bytes": 0
+      },
+      "warm_cpu_operator_host_phase_ns": [
+        252391868,
+        1004633651,
+        717854458,
+        2034422228
+      ],
+      "request_io_closed_and_audited": true,
+      "secondary_expert_calls": 3900,
+      "secondary_gpu_calls": 2196,
+      "secondary_bank_setup_ms": 6417,
+      "secondary_weight_upload_bytes": 7549747200,
+      "secondary_bank_allocation_bytes": 9663676416,
+      "secondary_bank_shards": [
+        32,
+        16
+      ],
+      "warm_expert_total": 60960,
+      "b70_expert_fraction": 0.7307906824146981,
+      "combined_gpu_expert_fraction": 0.794767060367454
+    },
+    {
+      "run": "cpu-144-secondary-off-long-v68",
+      "source_commit": "a00cc2098ab7402fe80f7f5cb7d46e4815aabc6b",
+      "build_directory": "next-offload-build-20261008-v68-secondary-phases-final",
+      "build_features": [
+        "direct-device",
+        "cpu-fma",
+        "cpu-work-stealing"
+      ],
+      "cargo_artifacts_sha256": "c02f3500304fd826222fd372dc8105ad2af06306398ac8b74e28a3dff6073a25",
+      "frozen_executable_sha256": "2722de547ef00e70947bef653aa0d89f5c6c1d51cc502de39f2fdfe8fe555e6f",
+      "raw_receipt_path": "/media/jmicko/faststore/kuno-development/next-offload-device-20261008/cpu-144-secondary-off-long-v68.json",
+      "raw_receipt_sha256": "fdae598e094c091e98ca0cd4da1f728177350ac8da152505735152bb64773bb7",
+      "run_record_path": "/media/jmicko/faststore/kuno-development/next-offload-device-20261008/cpu-144-secondary-off-long-v68.json.run.json",
+      "run_record_sha256": "bbce11b299477b4a2a146fa320fa61caad05e16c29e334ce2f9eb05799244453",
+      "protected_log_sha256": "a5c0af1cd2c4969ca01f1defa96e3ed5aba25a6927edba06f5870e9d2aa2737f",
+      "wrapper_acceptance_record_exists": true,
+      "all_original_output_owning_and_lifecycle_gates_pass": true,
+      "secondary_close_count": 0,
+      "secondary_independent_original_rows_probe_count": 0,
+      "decode_tokens_per_second": 10.960559247432467,
+      "secondary_experts": false,
+      "generation_ms": 11587,
+      "prefill_ms": 14616,
+      "native_decode_steps": 127,
+      "warm_expert_hits": 44549,
+      "warm_expert_uploads": 0,
+      "completed_cpu_misses": 16411,
+      "warm_host_resource_delta": {
+        "major_faults": 84,
+        "minor_faults": 182476,
+        "read_bytes": 0,
+        "system_ticks": 678,
+        "user_ticks": 3456,
+        "write_bytes": 0
+      },
+      "warm_cpu_operator_host_phase_ns": [
+        304690480,
+        1131453128,
+        813580168,
+        2304639187
+      ],
+      "request_io_closed_and_audited": true,
+      "warm_expert_total": 60960,
+      "b70_expert_fraction": 0.7307906824146981,
+      "combined_gpu_expert_fraction": 0.7307906824146981
+    },
+    {
+      "run": "cpu-144-secondary-long-v69-profile",
+      "source_commit": "3e9f0e4891c75a09ff40eddd47f167e7ae47bef9",
+      "build_directory": "next-offload-build-20261008-v69-secondary-profile",
+      "build_features": [
+        "direct-device",
+        "cpu-fma",
+        "cpu-work-stealing"
+      ],
+      "cargo_artifacts_sha256": "f40d6c5f4bb9298d96ac5d7ac95b3c071fc75d652763a5e33652fe721f6dfe55",
+      "frozen_executable_sha256": "0267ae0af32888a0c0d4c86847a016180ffbb81496c2a62a85ef6113c98784e8",
+      "raw_receipt_path": "/media/jmicko/faststore/kuno-development/next-offload-device-20261008/cpu-144-secondary-long-v69-profile.json",
+      "raw_receipt_sha256": "08367c4e95129ec35cfb94001c57a5255c00f4e9bff3a8f9386988e8ce968fde",
+      "run_record_path": "/media/jmicko/faststore/kuno-development/next-offload-device-20261008/cpu-144-secondary-long-v69-profile.json.run.json",
+      "run_record_sha256": "e29a157ae01a6dcf8e4cabcabda04f215bdb8bb736bc59850ac0fa8e964c5061",
+      "protected_log_sha256": "9f461bf621c53f3a6cfe99aa42b25dde981bf532247b1b97713a55270826b7cf",
+      "wrapper_acceptance_record_exists": true,
+      "all_original_output_owning_and_lifecycle_gates_pass": true,
+      "secondary_close_count": 5,
+      "secondary_independent_original_rows_probe_count": 5,
+      "decode_tokens_per_second": 8.258551177006112,
+      "secondary_experts": true,
+      "generation_ms": 15378,
+      "prefill_ms": 14433,
+      "native_decode_steps": 127,
+      "warm_expert_hits": 44549,
+      "warm_expert_uploads": 0,
+      "completed_cpu_misses": 12511,
+      "warm_host_resource_delta": {
+        "major_faults": 84,
+        "minor_faults": 154861,
+        "read_bytes": 0,
+        "system_ticks": 679,
+        "user_ticks": 3133,
+        "write_bytes": 0
+      },
+      "warm_cpu_operator_host_phase_ns": [
+        249262787,
+        914687234,
+        646416823,
+        1861904648
+      ],
+      "request_io_closed_and_audited": true,
+      "secondary_expert_calls": 3900,
+      "secondary_gpu_calls": 2196,
+      "secondary_bank_setup_ms": 6036,
+      "secondary_weight_upload_bytes": 7549747200,
+      "secondary_bank_allocation_bytes": 9663676416,
+      "secondary_bank_shards": [
+        32,
+        16
+      ],
+      "secondary_host_phase_ns": [
+        434062719,
+        2441912997,
+        143500658,
+        1039978377
+      ],
+      "warm_expert_total": 60960,
+      "b70_expert_fraction": 0.7307906824146981,
+      "combined_gpu_expert_fraction": 0.794767060367454
+    },
+    {
+      "run": "cpu-144-secondary-off-long-v69-control",
+      "source_commit": "3e9f0e4891c75a09ff40eddd47f167e7ae47bef9",
+      "build_directory": "next-offload-build-20261008-v69-secondary-profile",
+      "build_features": [
+        "direct-device",
+        "cpu-fma",
+        "cpu-work-stealing"
+      ],
+      "cargo_artifacts_sha256": "f40d6c5f4bb9298d96ac5d7ac95b3c071fc75d652763a5e33652fe721f6dfe55",
+      "frozen_executable_sha256": "0267ae0af32888a0c0d4c86847a016180ffbb81496c2a62a85ef6113c98784e8",
+      "raw_receipt_path": "/media/jmicko/faststore/kuno-development/next-offload-device-20261008/cpu-144-secondary-off-long-v69-control.json",
+      "raw_receipt_sha256": "0454b5bee95a11e15cdf2a2eee6eb397717f22a104f5e537735746b05461d263",
+      "run_record_path": "/media/jmicko/faststore/kuno-development/next-offload-device-20261008/cpu-144-secondary-off-long-v69-control.json.run.json",
+      "run_record_sha256": "7b56bbf141b0282e528722a7142b9438218c5b8d1d108dd3b88f8ae17b8eabf2",
+      "protected_log_sha256": "34be34be7762252c17abd1325d16933012cede744e43a3d2e62a098cbd22902e",
+      "wrapper_acceptance_record_exists": true,
+      "all_original_output_owning_and_lifecycle_gates_pass": true,
+      "secondary_close_count": 0,
+      "secondary_independent_original_rows_probe_count": 0,
+      "decode_tokens_per_second": 11.040598104842216,
+      "secondary_experts": false,
+      "generation_ms": 11503,
+      "prefill_ms": 14626,
+      "native_decode_steps": 127,
+      "warm_expert_hits": 44549,
+      "warm_expert_uploads": 0,
+      "completed_cpu_misses": 16411,
+      "warm_host_resource_delta": {
+        "major_faults": 84,
+        "minor_faults": 182289,
+        "read_bytes": 0,
+        "system_ticks": 670,
+        "user_ticks": 3441,
+        "write_bytes": 0
+      },
+      "warm_cpu_operator_host_phase_ns": [
+        300734369,
+        1102527727,
+        798802319,
+        2252184738
+      ],
+      "request_io_closed_and_audited": true,
+      "warm_expert_total": 60960,
+      "b70_expert_fraction": 0.7307906824146981,
+      "combined_gpu_expert_fraction": 0.7307906824146981
+    }
+  ],
+  "failed_device_attempts": [
+    {
+      "run": "cpu-144-secondary-long-v61-user2",
+      "source_commit": "d02415ff03d7c4a3e718e9b4a213bc8cbcb61900",
+      "build_directory": "next-offload-build-20261008-v61-secondary-model",
+      "build_features": [
+        "direct-device",
+        "cpu-fma",
+        "cpu-work-stealing"
+      ],
+      "cargo_artifacts_sha256": "0f11bfc7fdd35c077900e9098f2abfbe5359cd320a90051855c46c0558cda0c0",
+      "frozen_executable_sha256": "5d7d06c04af323ba09fb854e880894bf8c83fbb7cf399e3bbeff95af26546cdf",
+      "reason": "original shard partition mismatch",
+      "protected_log_sha256": "3ba19287e524f77ea34ce1c31844842bdc48c5b746573a4db23c37ae8403dadf",
+      "accepted": false,
+      "all_nine_secondary_owner_close_marker_observed": true
+    },
+    {
+      "run": "cpu-144-secondary-long-v62",
+      "source_commit": "92b00bfb7dc69ecbf41821e64d4fa8034c3374df",
+      "build_directory": "next-offload-build-20261008-v62-secondary-partition",
+      "build_features": [
+        "direct-device",
+        "cpu-fma",
+        "cpu-work-stealing"
+      ],
+      "cargo_artifacts_sha256": "26f75ca7354b1ee7d00cc24665f69820f05dc725bc5f66881ae2b1a796c4ea6c",
+      "frozen_executable_sha256": "b26b9d34cca818571720aa5dd0449958fa7f19a466312ae5944eb12269146120",
+      "reason": "secondary completion guard rejected",
+      "protected_log_sha256": "b7ebac379ad0f8e1c0574d48fdb25a72c0ffb07f833c68c829f86cbbeb5d873e",
+      "accepted": false,
+      "all_nine_secondary_owner_close_marker_observed": true
+    },
+    {
+      "run": "cpu-144-secondary-long-v63",
+      "source_commit": "bfd550bfbbb9ab6d707d135a6bcebca5e7dd4c6b",
+      "build_directory": "next-offload-build-20261008-v63-secondary-faults",
+      "build_features": [
+        "direct-device",
+        "cpu-fma",
+        "cpu-work-stealing"
+      ],
+      "cargo_artifacts_sha256": "9bda228717a4344ee9e6e795ed9d99ee5c6b40b7ebfc7d59563dfa5b2955e6a9",
+      "frozen_executable_sha256": "675319df74a3854b9cf3ff30ba3fb7d02a015f2cce788330684aa7d8ad6eacd1",
+      "reason": "status guard bit 8",
+      "protected_log_sha256": "12e96daffa089626fd93041e841e7f9b6f80bce57e2f38e94cf44e500dbcd67f",
+      "accepted": false,
+      "all_nine_secondary_owner_close_marker_observed": true
+    },
+    {
+      "run": "cpu-144-secondary-long-v64",
+      "source_commit": "a6f017946e5b424c131d64815d6422008ee237c3",
+      "build_directory": "next-offload-build-20261008-v64-secondary-status",
+      "build_features": [
+        "direct-device",
+        "cpu-fma",
+        "cpu-work-stealing"
+      ],
+      "cargo_artifacts_sha256": "44d5088526926d04d9ca94a830e2735d4ff2a84740dda6ed01908d1980511ffc",
+      "frozen_executable_sha256": "c7d6b333ec60af868787257709a0ba070f84577f86bbb629cb69dca617163264",
+      "reason": "status guard bit 8 despite complete host counts",
+      "protected_log_sha256": "e4480169ae89c86b2c9703918bbcf22610823f3c2f62333a26369819aa19d4c0",
+      "accepted": false,
+      "all_nine_secondary_owner_close_marker_observed": true
+    },
+    {
+      "run": "cpu-144-secondary-long-v65",
+      "source_commit": "4943a23ddb539d3cbc1a64dbfa3a35b80791bef2",
+      "build_directory": "next-offload-build-20261008-v65-secondary-guard",
+      "build_features": [
+        "direct-device",
+        "cpu-fma",
+        "cpu-work-stealing"
+      ],
+      "cargo_artifacts_sha256": "145b6360dbd124f34c4578ebee217dafaeacfd50e297ea5a7643a26854b65a91",
+      "frozen_executable_sha256": "aebf8a0539f348c8d61e707e649e917d5d18849a137452ef0acf604db1ebb662",
+      "reason": "original CPU private host cap rejected conservative concurrent precharge",
+      "protected_log_sha256": "74f9d819344de6219f4346e26c3b68110f4d424005dfade4891c78e07f84ef2c",
+      "accepted": false,
+      "all_nine_secondary_owner_close_marker_observed": true
+    },
+    {
+      "run": "cpu-144-secondary-long-v66",
+      "source_commit": "182b52a126bdc2f57abb515ecad80b6b1f0075e8",
+      "build_directory": "next-offload-build-20261008-v66-secondary-count1",
+      "build_features": [
+        "direct-device",
+        "cpu-fma",
+        "cpu-work-stealing"
+      ],
+      "cargo_artifacts_sha256": "5bc6c21474ecd24f202607ad81784d6c30714177994b3f91786c22422f595c77",
+      "frozen_executable_sha256": "e47e4c2d8ed48c48a17e4e5c4bc1e677e377287508a0f8355a81c327b1f8b056",
+      "reason": "CPU expert private host capacity reason id 1324233082",
+      "protected_log_sha256": "4de951517d4701c8287675563388c6d1b93c98d32aef13ccb09851e3b9180e84",
+      "accepted": false,
+      "all_nine_secondary_owner_close_marker_observed": true
+    }
+  ],
+  "early_launch_failures": [
+    "root session has no user service manager",
+    "root-owned prior frozen executable permission rejected before device work"
+  ],
+  "matched_pair": {
+    "on_run": "cpu-144-secondary-long-v69-profile",
+    "off_run": "cpu-144-secondary-off-long-v69-control",
+    "same_source_and_artifact": true,
+    "secondary_added_expert_calls": 3900,
+    "cpu_expert_call_reduction_fraction": 0.23764548168911095,
+    "secondary_duration_increase_fraction": 0.33686864296270547,
+    "secondary_host_phase_order": [
+      "enqueue",
+      "packet_and_completion_readback",
+      "checked_join",
+      "transient_IO_recycle_and_MAIN_fence"
+    ],
+    "secondary_host_phase_ns": [
+      434062719,
+      2441912997,
+      143500658,
+      1039978377
+    ],
+    "phase_times_are_host_wall_times_not_isolated_GPU_or_PCIe_times": true
+  },
+  "privacy_limits": {
+    "primary_hybrid_host_bytes": 1048576,
+    "secondary_enqueue_host_reserve_bytes": 163840,
+    "secondary_join_host_reserve_bytes": 393216,
+    "secondary_GPU_MAIN_cap_bytes": 10737418240,
+    "secondary_runtime_IO_cap_bytes": 16777216,
+    "secondary_private_arena_cap_bytes": 2097152,
+    "secondary_owning_buffer_count": 9,
+    "secondary_owned_bytes": 1835008,
+    "secondary_bank_charge_bytes": 9663676416,
+    "source_window_cap_bytes": 41943040,
+    "routing_history_persisted": false,
+    "frequency_table_bytes": 98304
+  },
+  "checks": {
+    "native_tests": 505,
+    "offline_shader_suites": 2,
+    "offline_shader_tests_per_suite": 1,
+    "python_hybrid_controls": 50,
+    "strict_release_all_target_clippy": true,
+    "runtime_source_changed": false,
+    "native_tests_log_sha256": "903cf6078b5971535a6b163f3d439b2a3e1039a9384b74b0358355359c19ee15",
+    "python_tests_log_sha256": "b8ba60e8d56ad7d3694048d84691dd8e5413a23e0ccde5d73b31ca0867993bee",
+    "clippy_log_sha256": "0f516b8fc4c6d706d433c49ffcbacc913ffa45b05e80b8af4cb17ffad7dc5f0b",
+    "four_completed_samples_revalidated_after_partition_control": true
+  },
+  "host_after_restore": {
+    "admission": {
+      "action": "status",
+      "state": {
+        "admission": {
+          "active": false,
+          "completed": 0,
+          "paused": false,
+          "recovery_required": false,
+          "rejected": 0,
+          "waiting": 0
+        }
+      },
+      "status": 200
+    },
+    "boot": "b32654b7-a49b-493d-8305-46da15b6eac6",
+    "http_statuses": {
+      "kuno": 200,
+      "ollama": 200,
+      "vashti": 200
+    },
+    "intel": {
+      "xe_memory": [
+        {
+          "total_bytes": 34242297856,
+          "used_bytes": 50688000
+        }
+      ]
+    },
+    "kernel": "7.0.0-38-generic",
+    "kernel_fault_counts": {
+      "nvidia_xid": 0,
+      "xe_memory_faults": 0,
+      "xe_reset_failures": 0,
+      "xe_timeouts": 0,
+      "xe_wedged": 0
+    },
+    "nvidia_compute_process_count": 0,
+    "nvidia_memory_mib": 373,
+    "time": "2026-10-08T22:42:05.444314+00:00",
+    "running_lab_unit_count": 0,
+    "public_residency_model_counts": {
+      "kuno": 0,
+      "ollama": 0
+    }
+  },
+  "installed_service_or_config_changed": false,
+  "public_API_changed": false,
+  "required_Vashti_changes": [],
+  "limitations": [
+    "stationary secondary correct but slower on this fixed fixture; kept opt-in",
+    "completion readback includes GPU execution wait; no isolated GPU timing",
+    "startup includes secondary bank fill and independent numeric probes",
+    "fixed public prompt cannot establish broad quality context or soak behavior",
+    "standalone lab only; no native text API installation release or UI integration",
+    "individual run records classify output/lifecycle only; aggregate establishes this specific matched pair"
+  ],
+  "runner_partition_validation_commit": "bfdd98672d30f42874a67b88f39e78daba0e037c"
+}
