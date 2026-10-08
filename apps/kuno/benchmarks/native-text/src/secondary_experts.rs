@@ -25,7 +25,10 @@ const LAYERS: usize = 48;
 const IO: u64 = 16 * 1024 * 1024;
 const PRIVATE: usize = 2 * 1024 * 1024;
 const DEVICE: u64 = 10 * 1024 * 1024 * 1024;
-pub(crate) const LIVE_HOST: usize = 384 * 1024;
+// Enqueue and join are separate phases. CPU worker scratch has been destroyed
+// before the return packet and joined owner are allocated.
+pub(crate) const ENQUEUE_HOST: usize = 160 * 1024;
+pub(crate) const JOIN_HOST: usize = 384 * 1024;
 struct Readback(cubecl::bytes::Bytes);
 impl Drop for Readback {
     fn drop(&mut self) {
@@ -403,7 +406,7 @@ impl Secondary {
             }
             let selection = self.select(layer, &*ids, primary(layer)?)?;
             self.enqueue(layer, &selection, &x, cancel)?;
-            let actual = self.finish(&selection, &*ids, None, cancel)?;
+            let actual = self.finish(&selection, &*ids, None, JOIN_HOST, cancel)?;
             for (rank, &expert) in ids.iter().enumerate() {
                 for r in 0..F {
                     w.gate.decode_row((expert * F + r) as u64, &mut decoded)?;
@@ -551,6 +554,9 @@ impl Secondary {
         }
         u::zero_batch(&self.arena, &self.ids[..])?;
         let mut map = Zeroizing::new(vec![0u32; wwords[0]]);
+        if map.capacity() * 4 + H * 4 + 131072 + 4096 > ENQUEUE_HOST {
+            return Err(Error::LimitExceeded("secondary enqueue private host"));
+        }
         map[..4].copy_from_slice(&[1, 0, 1, s.gpu.len() as u32]);
         for r in 0..s.gpu.len() {
             if resident_slot(&bank.slots, s.gpu[r])? != Some(s.slots[r]) {
@@ -562,6 +568,9 @@ impl Secondary {
         }
         self.write(0, &map)?;
         let input = Zeroizing::new(mixed.iter().map(|v| v.to_bits()).collect::<Vec<_>>());
+        if map.capacity() * 4 + input.capacity() * 4 + 131072 + 4096 > ENQUEUE_HOST {
+            return Err(Error::LimitExceeded("secondary input private host"));
+        }
         self.write(1, &input)?;
 
         let down = if bank.down().expert_bytes() == 640 * 2560 * 34 / 32 {
@@ -640,6 +649,9 @@ impl Secondary {
             return Err(err());
         }
         let mut bytes = Zeroizing::new(vec![0u8; l.owned_bytes]);
+        if bytes.capacity() != l.owned_bytes {
+            return Err(Error::LimitExceeded("secondary full upload capacity"));
+        }
         for (i, &v) in words.iter().enumerate() {
             bytes[i * 4..i * 4 + 4].copy_from_slice(&v.to_le_bytes());
         }
@@ -655,6 +667,7 @@ impl Secondary {
         s: &Selection,
         original: &[usize],
         cpu: Option<Partials>,
+        host_limit: usize,
         cancel: &AtomicBool,
     ) -> Result<HostPartials> {
         if s.gpu.is_empty() {
@@ -662,6 +675,21 @@ impl Secondary {
         }
         if !self.queued {
             return Err(err());
+        }
+        let cpu_bytes = cpu.as_ref().map_or(0, Partials::owned_bytes);
+        let packet_bytes = self
+            .arena
+            .layout(self.ids[8])
+            .map_err(u::fault)?
+            .owned_bytes;
+        let joined_bytes = 10 * H * 4;
+        if host_limit < JOIN_HOST
+            || cpu_bytes
+                .checked_add(packet_bytes)
+                .and_then(|n| n.checked_add(joined_bytes + 4096))
+                .is_none_or(|n| n > host_limit)
+        {
+            return Err(Error::LimitExceeded("secondary joining private host"));
         }
         // The packet combines the original-rank partial prefix and sticky fault.
         unsafe {
@@ -723,6 +751,9 @@ impl Secondary {
             values: Zeroizing::new(vec![0f32; 10 * H]),
             count: Zeroizing::new(original.len()),
         };
+        if out.values.capacity() != 10 * H {
+            return Err(Error::LimitExceeded("secondary joined allocation"));
+        }
         join_rows(
             original,
             &s.cpu,
@@ -749,9 +780,21 @@ impl Secondary {
             return Ok(());
         }
         if self.nonce != 0 {
-            self.client
+            let receipt = self
+                .client
                 .end_transient_io_reuse(self.nonce)
                 .map_err(u::fault)?;
+            let bytes = receipt
+                .upload_bytes
+                .checked_add(receipt.uniform_bytes)
+                .and_then(|n| n.checked_add(receipt.readback_bytes));
+            if bytes != Some(receipt.inspected_bytes)
+                || (receipt.inspected_bytes == 0) != (receipt.inspected_buffers == 0)
+            {
+                return Err(Error::InvalidFormat(
+                    "secondary runtime closing audit incomplete",
+                ));
+            }
             self.nonce = 0;
         }
         let expected = self.ids.iter().try_fold(0u64, |n, &id| {

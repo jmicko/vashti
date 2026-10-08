@@ -81,7 +81,8 @@ def validate_secondary(receipt, selected, output, long):
         or type(receipt.get("secondary_bank_setup_ms")) is not int
         or type(receipt.get("secondary_weight_upload_bytes")) is not int
         or receipt["secondary_weight_upload_bytes"] <= 0
-        or len([line for line in output.splitlines() if line.startswith("public_secondary_closed=true owned_buffers=9 ")]) != 5):
+        or output.splitlines().count("public_secondary_closed=true owned_buffers=9 owned_bytes=1835008") != 5
+        or output.splitlines().count("public_secondary_original_rows families=2 boundary_slots=4 numerical_and_full_owners=true") != 5):
         raise ValueError("Secondary experts require completed work and all five full owning closing audits")
 
 

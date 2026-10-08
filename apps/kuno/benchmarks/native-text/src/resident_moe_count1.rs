@@ -202,15 +202,14 @@ impl GpuExecutor<'_> {
                 )
             })
             .ok_or(Error::ArithmeticOverflow)?;
-        let live = live
-            .checked_add(if secondary_selection.is_some() {
-                crate::secondary_experts::LIVE_HOST
-            } else {
-                0
-            })
-            .ok_or(Error::ArithmeticOverflow)?;
+        let secondary_enqueue = secondary_selection
+            .as_ref()
+            .is_some_and(|s| s.gpu_count() > 0)
+            .then_some(crate::secondary_experts::ENQUEUE_HOST)
+            .unwrap_or(0);
         let private_limit = HYBRID_HOST
             .checked_sub(live)
+            .and_then(|n| n.checked_sub(secondary_enqueue))
             .filter(|&n| n > 0)
             .ok_or(Error::LimitExceeded("native count1 shared CPU host"))?;
         w.policy.issue(layer)?;
@@ -456,7 +455,15 @@ impl GpuExecutor<'_> {
                     self.secondary
                         .as_mut()
                         .ok_or(err("secondary joined owner absent"))?
-                        .finish(selection, split.cpu(), partials, cancel)?,
+                        .finish(
+                            selection,
+                            split.cpu(),
+                            partials,
+                            HYBRID_HOST
+                                .checked_sub(live)
+                                .ok_or(Error::ArithmeticOverflow)?,
+                            cancel,
+                        )?,
                 )
             }
         } else {

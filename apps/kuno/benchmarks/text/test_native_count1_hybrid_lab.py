@@ -21,7 +21,8 @@ class SecondaryControls(unittest.TestCase):
         value={"secondary_experts":True,"secondary_expert_calls":35,"secondary_gpu_calls":20,
             "secondary_bank_shards":[32,16],"secondary_bank_allocation_bytes":9*1024**3,
             "secondary_bank_setup_ms":2000,"secondary_weight_upload_bytes":1000000}
-        output="\n".join(["public_secondary_closed=true owned_buffers=9 owned_bytes=1835008"]*5)
+        output="\n".join(["public_secondary_closed=true owned_buffers=9 owned_bytes=1835008",
+            "public_secondary_original_rows families=2 boundary_slots=4 numerical_and_full_owners=true"]*5)
         LAB.validate_secondary(value,True,output,False)
         for field,bad in [("secondary_expert_calls",0),("secondary_gpu_calls",36),
                          ("secondary_bank_shards",[48]),("secondary_bank_allocation_bytes",1),
@@ -30,6 +31,8 @@ class SecondaryControls(unittest.TestCase):
             with self.assertRaises(ValueError):LAB.validate_secondary(changed,True,output,False)
         with self.assertRaises(ValueError):LAB.validate_secondary(value,True,output.split("\n",1)[1],False)
         with self.assertRaises(ValueError):LAB.validate_secondary(value,False,output,False)
+        with self.assertRaises(ValueError):LAB.validate_secondary(value,True,output.replace("owned_bytes=1835008","owned_bytes=1"),False)
+        with self.assertRaises(ValueError):LAB.validate_secondary(value,True,output.replace("families=2","families=1"),False)
 
 
 def receipt(card, cap):
