@@ -44,6 +44,20 @@ def completion(cap):
 
 
 class HybridLabTests(unittest.TestCase):
+    def test_source_advice_requires_actual_bounded_evidence_and_static_bank_mapping(self):
+        value=receipt("intel",10)
+        value.update(reclaim_gpu_sources=True,gpu_source_advised_bytes=19*1024**3,gpu_source_advice_ms=150,mapped_weights=True,observed_mapped_weights=True)
+        LAB.validate_receipt(value,"intel",10,completion(10),mapped=True,reclaim_gpu_sources=True)
+        for field,bads in [("reclaim_gpu_sources",[False,1,"true",None]),("gpu_source_advised_bytes",[0,True,33*1024**3,None]),("gpu_source_advice_ms",[-1,True,None])]:
+            for bad in bads:
+                wrong=copy.deepcopy(value);wrong[field]=bad
+                with self.assertRaises(ValueError):LAB.validate_receipt(wrong,"intel",10,completion(10),mapped=True,reclaim_gpu_sources=True)
+        with self.assertRaises(ValueError):LAB.validate_receipt(value,"intel",5,completion(5),mapped=True,reclaim_gpu_sources=True)
+        with self.assertRaises(ValueError):LAB.worker_environment("/original","/receipt",reclaim_gpu_sources=True)
+        env=LAB.worker_environment("/original","/receipt",mapped=True,reclaim_gpu_sources=True)
+        self.assertEqual(env["KUNO_LAB_RECLAIM_GPU_SOURCES"],"1")
+        with mock.patch.dict(os.environ,{"KUNO_LAB_RECLAIM_GPU_SOURCES":"1"}):
+            self.assertEqual(LAB.worker_environment("/original","/receipt")["KUNO_LAB_RECLAIM_GPU_SOURCES"],"0")
     def test_cpu_fma_arithmetic_is_explicit_typed_and_separate_from_q8(self):
         value=receipt("intel",10)
         value.update(cpu_fma_arithmetic=True,count1_hybrid_cpu_workers="pooled",observed_count1_hybrid_cpu_workers="pooled")

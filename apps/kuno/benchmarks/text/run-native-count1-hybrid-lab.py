@@ -34,8 +34,15 @@ def completion(cap, deferred=False):
     ) + ((f"public_count1_hybrid_mid_token_cancel cap={cap} layer=47 erased=true",) if deferred else ())
 
 
-def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False, metadata=False, banks="standard", shared=False, shared_gdn=False, info_batch_upload=False, dispatch="threaded", cpu_fma=False):
+def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False, metadata=False, banks="standard", shared=False, shared_gdn=False, info_batch_upload=False, dispatch="threaded", cpu_fma=False, reclaim_gpu_sources=False):
     validate_cap(cap)
+    if reclaim_gpu_sources or "reclaim_gpu_sources" in receipt:
+        if receipt.get("reclaim_gpu_sources") is not reclaim_gpu_sources or (reclaim_gpu_sources and (cap!=10 or not mapped)):
+            raise ValueError("GPU source cache advice must match mapped static cap10 selection")
+        advised=receipt.get("gpu_source_advised_bytes")
+        elapsed=receipt.get("gpu_source_advice_ms")
+        if type(advised) is not int or not 0 <= advised <= 32*1024**3 or (reclaim_gpu_sources and advised==0) or (not reclaim_gpu_sources and advised!=0) or type(elapsed) is not int or elapsed<0:
+            raise ValueError("Missing bounded actual GPU source advice evidence")
     if cpu_fma or "cpu_fma_arithmetic" in receipt:
         if receipt.get("cpu_fma_arithmetic") is not cpu_fma or (cpu_fma and (workers != "pooled" or cpu_q8)):
             raise ValueError("Explicit CPU FMA arithmetic does not match selection")
@@ -114,6 +121,8 @@ def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False
     for field in ("count1_hybrid_cpu_workers", "observed_count1_hybrid_cpu_workers"):
         if receipt.get(field) != workers:
             raise ValueError("Requested and completed CPU workers must match explicit selection")
+    if reclaim_gpu_sources and not mapped:
+        raise ValueError("GPU source cache advice requires mapped original weights")
     if large_cache and not mapped:
         raise ValueError("Larger public cache requires mapped weights")
     guard = GUARD.replace("8589934592", "51539607552") if large_cache else GUARD
@@ -158,12 +167,14 @@ def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False
         raise ValueError("Hybrid continuation and both cancellation proofs required")
 
 
-def worker_environment(model, receipt, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False, metadata=False, banks="standard", shared=False, shared_gdn=False, info_batch_upload=False, dispatch="threaded"):
+def worker_environment(model, receipt, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False, metadata=False, banks="standard", shared=False, shared_gdn=False, info_batch_upload=False, dispatch="threaded", reclaim_gpu_sources=False):
+    if reclaim_gpu_sources and not mapped:
+        raise ValueError("GPU source cache advice requires mapped original weights")
     if workers not in ("scoped", "pooled"):
         raise ValueError("Unknown CPU worker mode")
     if type(overlap) is not bool or (overlap and workers != "pooled"):
         raise ValueError("Overlap requires explicit pooled workers")
-    if any(type(value) is not bool for value in (mapped,profile,fast,long,cpu_q8,large_cache,compact_info,batch_tasks,fast_fault,deferred,gpu_router,metadata,shared,shared_gdn,info_batch_upload)):
+    if any(type(value) is not bool for value in (mapped,profile,fast,long,cpu_q8,large_cache,compact_info,batch_tasks,fast_fault,deferred,gpu_router,metadata,shared,shared_gdn,info_batch_upload,reclaim_gpu_sources)):
         raise ValueError("Explicit boolean optimization selections required")
     if cpu_q8 and workers != "pooled":
         raise ValueError("Q8 CPU activation arithmetic requires pooled workers")
@@ -200,6 +211,7 @@ def worker_environment(model, receipt, workers="scoped", overlap=False, mapped=F
     env["KUNO_LAB_INFO_SLAB_BYTES"] = "4096" if compact_info else "0"
     env["KUNO_LAB_BATCH_TASKS"] = "1" if batch_tasks else "0"
     env["KUNO_LAB_FAST_GPU_FAULT"] = "1" if fast_fault else "0"
+    env["KUNO_LAB_RECLAIM_GPU_SOURCES"] = "1" if reclaim_gpu_sources else "0"
     env["KUNO_LAB_DEFER_ROUTER_IO"] = "1" if deferred else "0"
     env["KUNO_LAB_GPU_ROUTER"] = "1" if gpu_router else "0"
     env["KUNO_LAB_RETAINED_METADATA"] = "1" if metadata else "0"
@@ -226,6 +238,7 @@ def main():
     parser.add_argument("--long-fixture", action="store_true")
     parser.add_argument("--cpu-q8", action="store_true")
     parser.add_argument("--cpu-fma", action="store_true")
+    parser.add_argument("--reclaim-gpu-sources", action="store_true")
     parser.add_argument("--large-weight-cache", action="store_true")
     parser.add_argument("--compact-info", action="store_true")
     parser.add_argument("--info-batch-upload", action="store_true")
@@ -261,6 +274,8 @@ def main():
         parser.error("run-id must be 1..48 lowercase letters, digits or hyphens")
     if args.cpu_fma and (args.cpu_workers != "pooled" or args.cpu_q8):
         parser.error("CPU FMA requires pooled original-float arithmetic")
+    if args.reclaim_gpu_sources and (args.cpu_miss_cap!=10 or not args.mapped_weights):
+        parser.error("GPU source cache advice requires mapped static cap10")
     target = args.receipt.resolve()
     metadata = target.with_suffix(target.suffix + ".run.json")
     if target.exists() or metadata.exists():
@@ -279,7 +294,7 @@ def main():
         ("KUNO_LAB_STATIC_CACHE_BYTES " if args.bank_profile!="intel96" else "") + "KUNO_LAB_EXPERT_BATCH_BYTES KUNO_LAB_EXPERT_SCATTER",
     ]
     command.extend("--setenv=" + key + "=" + value
-                   for key, value in worker_environment(args.model.resolve(), target, args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault,args.defer_router_io,args.gpu_router,args.retained_metadata,args.bank_profile,args.next_shared_kernels,args.next_shared_gdn,args.info_batch_upload,args.device_dispatch).items())
+                   for key, value in worker_environment(args.model.resolve(), target, args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault,args.defer_router_io,args.gpu_router,args.retained_metadata,args.bank_profile,args.next_shared_kernels,args.next_shared_gdn,args.info_batch_upload,args.device_dispatch,args.reclaim_gpu_sources).items())
     command.extend([sys.executable, str(HERE / "protected-lab-exec.py"), str(frozen),
                     args.card, MODE, str(args.cpu_miss_cap)])
     print("verified_cargo_executable_sha256=" + identity, flush=True)
@@ -294,10 +309,11 @@ def main():
         raise SystemExit("Missing whole-model hybrid receipt")
     snapshot = target.read_bytes()
     receipt = json.loads(snapshot)
-    validate_receipt(receipt, args.card, args.cpu_miss_cap, "".join(lines), args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault,args.defer_router_io,args.gpu_router,args.retained_metadata,args.bank_profile,args.next_shared_kernels,args.next_shared_gdn,args.info_batch_upload,args.device_dispatch,args.cpu_fma)
+    validate_receipt(receipt, args.card, args.cpu_miss_cap, "".join(lines), args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault,args.defer_router_io,args.gpu_router,args.retained_metadata,args.bank_profile,args.next_shared_kernels,args.next_shared_gdn,args.info_batch_upload,args.device_dispatch,args.cpu_fma,args.reclaim_gpu_sources)
     record = {
         "scope": "fixed-public-count1-hybrid-output-and-lifecycle-only",
         "requested_cpu_fma_arithmetic": args.cpu_fma,
+        "requested_gpu_source_cache_advice": args.reclaim_gpu_sources,
         "cargo_artifacts_sha256": artifacts_identity, "frozen_executable_sha256": identity,
         "card": args.card, "fixture": MODE, "cpu_miss_cap": args.cpu_miss_cap,
         "receipt_sha256": BASE.digest(snapshot), "protected_lifecycle_completion_checked": True,

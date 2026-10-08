@@ -45,6 +45,93 @@ impl GgufFile {
     pub fn weights_mapped(&self) -> bool {
         self.mapping.get().is_some()
     }
+    /// Linux64 laboratory cache hint for already retained original GPU weights.
+    /// No tensor or mapped bytes change, no mapping is invalidated, and no
+    /// actual freed-memory credit is granted. Only complete native pages wholly
+    /// inside this validated tensor interval are advised. Existing CPU mappings
+    /// can keep pages resident; OS cache reclamation remains best effort.
+    #[allow(unsafe_code)]
+    pub fn advise_gpu_source_not_needed(
+        &self,
+        tensor: TensorView<'_>,
+        offset: u64,
+        length: u64,
+    ) -> Result<u64> {
+        if !tensor.belongs_to(self)
+            || length == 0
+            || offset
+                .checked_add(length)
+                .is_none_or(|n| n > tensor.info().byte_len())
+        {
+            return Err(Error::InvalidBufferLength);
+        }
+        #[cfg(all(
+            target_os = "linux",
+            target_pointer_width = "64",
+            not(target_arch = "s390x")
+        ))]
+        {
+            use std::os::fd::AsRawFd;
+            unsafe extern "C" {
+                fn posix_fadvise(
+                    fd: std::ffi::c_int,
+                    offset: i64,
+                    length: i64,
+                    advice: std::ffi::c_int,
+                ) -> std::ffi::c_int;
+                fn getpagesize() -> std::ffi::c_int;
+            }
+            let absolute = self
+                .data_offset
+                .checked_add(tensor.info.offset)
+                .and_then(|n| n.checked_add(offset))
+                .ok_or(Error::ArithmeticOverflow)?;
+            let end = absolute
+                .checked_add(length)
+                .ok_or(Error::ArithmeticOverflow)?;
+            // SAFETY: argument-free libc query; size is public machine geometry.
+            let page = unsafe { getpagesize() };
+            if page <= 0 || !(page as u64).is_power_of_two() {
+                return Err(Error::InvalidFormat("native file-cache page size"));
+            }
+            let page = page as u64;
+            let first = absolute
+                .checked_add(page - 1)
+                .ok_or(Error::ArithmeticOverflow)?
+                / page
+                * page;
+            let last = end / page * page;
+            if first >= last {
+                return Ok(0);
+            }
+            if last > self.file_len || last > i64::MAX as u64 {
+                return Err(Error::OutOfBounds);
+            }
+            let file = self
+                .file
+                .lock()
+                .map_err(|_| Error::InvalidFormat("model reader lock poisoned"))?;
+            self.check_stat(&file)?;
+            // SAFETY: original read-only pinned fd, Linux64 off_t ABI, bounded
+            // full pages inside original inspected file. DONTNEED is a cache
+            // hint, not a write/unmap; all existing borrowed slices stay valid.
+            let result =
+                unsafe { posix_fadvise(file.as_raw_fd(), first as i64, (last - first) as i64, 4) };
+            if result != 0 {
+                return Err(std::io::Error::from_raw_os_error(result).into());
+            }
+            self.check_stat(&file)?;
+            Ok(last - first)
+        }
+        #[cfg(not(all(
+            target_os = "linux",
+            target_pointer_width = "64",
+            not(target_arch = "s390x")
+        )))]
+        Err(Error::InvalidFormat(
+            "GPU source cache hint requires Linux64",
+        ))
+    }
 
     pub fn positional_reader(&self) -> Result<PositionalReader<'_>> {
         #[cfg(not(unix))]
@@ -236,6 +323,9 @@ mod tests {
         }
     }
     fn fixture(limit: u64) -> Fixture {
+        fixture_experts(limit, 3)
+    }
+    fn fixture_experts(limit: u64, experts: u64) -> Fixture {
         let path = std::env::temp_dir().join(format!(
             "kuno-positional-{}-{}.gguf",
             std::process::id(),
@@ -249,14 +339,14 @@ mod tests {
         bytes.extend(1u64.to_le_bytes());
         bytes.extend(b"w");
         bytes.extend(3u32.to_le_bytes());
-        for dimension in [4u64, 2, 3] {
+        for dimension in [4u64, 2, experts] {
             bytes.extend(dimension.to_le_bytes());
         }
         bytes.extend(0u32.to_le_bytes());
         bytes.extend(0u64.to_le_bytes());
         bytes.resize(bytes.len().next_multiple_of(32), 0);
         let data_offset = bytes.len() as u64;
-        for value in 0..24u32 {
+        for value in 0..8 * experts {
             bytes.extend((value as f32).to_le_bytes());
         }
         std::fs::write(&path, bytes).unwrap();
@@ -354,6 +444,58 @@ mod tests {
                 });
             }
         });
+    }
+    #[cfg(all(
+        target_os = "linux",
+        target_pointer_width = "64",
+        not(target_arch = "s390x")
+    ))]
+    #[test]
+    #[allow(unsafe_code)]
+    fn public_gpu_source_cache_hint_preserves_inode_mapping_and_original_bytes() {
+        let f = fixture_experts(512 * 1024, 16384);
+        let other = fixture(96);
+        // SAFETY: no fixture writer/truncation until mapped consumers drop.
+        unsafe {
+            f.model.enable_mapped_weights().unwrap();
+        }
+        let reader = f.model.positional_reader().unwrap();
+        let tensor = f.model.tensor("w").unwrap();
+        let original = reader.mapped_range(tensor, 16, 16).unwrap().unwrap();
+        let address = original.as_ptr();
+        let expected = original.to_vec();
+        let before = std::fs::metadata(&f.path).unwrap();
+        let advised = f
+            .model
+            .advise_gpu_source_not_needed(tensor, 0, tensor.info().byte_len())
+            .unwrap();
+        assert!(advised > 0 && advised <= tensor.info().byte_len());
+        assert_eq!(original, expected);
+        assert_eq!(original.as_ptr(), address);
+        let mut read = vec![0; expected.len()];
+        reader.read_range(tensor, 16, &mut read).unwrap();
+        assert_eq!(read, expected);
+        let after = std::fs::metadata(&f.path).unwrap();
+        assert_eq!(before.len(), after.len());
+        assert_eq!(before.modified().unwrap(), after.modified().unwrap());
+        for (offset, length) in [(0, 0), (u64::MAX, 4), (tensor.info().byte_len(), 4)] {
+            assert!(
+                f.model
+                    .advise_gpu_source_not_needed(tensor, offset, length)
+                    .is_err()
+            );
+        }
+        assert!(
+            f.model
+                .advise_gpu_source_not_needed(other.model.tensor("w").unwrap(), 0, 16)
+                .is_err()
+        );
+        assert_eq!(
+            f.model
+                .advise_gpu_source_not_needed(tensor, 16, 16)
+                .unwrap(),
+            0
+        );
     }
 
     #[test]

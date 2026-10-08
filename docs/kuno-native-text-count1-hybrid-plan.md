@@ -680,3 +680,30 @@ bound forward error relative to the L1 product norm; synthetic whole-expert
 error is bounded by the reference output infinity norm. Neither proves model
 quality. The existing complete128 original output-ID comparison, full fences,
 owning erasure and physical recovery remain mandatory before speed acceptance.
+
+
+### GPU source page-cache advice experiment, 2026-10-08
+
+The protected runner must explicitly select `--reclaim-gpu-sources`, mapped
+weights and CPU cap10. At the model's existing opaque completed projection
+boundary, inspect only committed GPU tensor tiles and expert bank slots.
+Checked original tensor-relative extents are rounded inward to complete native
+pages; the pinned read-only file descriptor receives POSIX_FADV_DONTNEED.
+Linux64 except s390x is the implemented ABI. There is no global cache drop,
+file write, mapping invalidation, new private staging or GPU mutation. Existing
+mapped slices retain their immutable lifetime contract. The kernel may ignore
+advice or retain pages used by mappings; no memory budget credit is granted.
+
+`reclaim_gpu_sources` must match actual opt-in; `gpu_source_advised_bytes` is
+bounded0..32GiB and positive only when enabled, and `gpu_source_advice_ms`
+records pre-decode elapsed cost separately. These are numeric aggregate counters;
+selected expert IDs/ranges are not persisted. Existing source identity, full128
+output IDs, fences, owning zero audits and physical recovery still precede speed
+acceptance. Other caps/unmapped input reject before device access. Installed
+inference and the shared API are unchanged; no Vashti changes are required.
+
+The motivation is a measured warm decode stall in source98df150:11601731584
+disk-read bytes and61267 major page faults over127 following steps, with no
+warm GPU weight uploads. This suggests competition between original GPU-source
+file pages and CPU experts, but neither the hint nor the hypothesis is selected
+as an improvement without complete physical acceptance and counter comparison.

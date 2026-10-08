@@ -897,6 +897,89 @@ impl<'a> GpuExecutor<'a> {
     pub fn cache_bytes(&self) -> usize {
         self.cache_bytes + self.bank_reserved
     }
+    /// Completed fixed-public cap10 boundary only: CPU misses never consume
+    /// these GPU-resident spans during the following static-bank decode. This
+    /// hints the OS to reclaim duplicate original file-cache pages, never GPU
+    /// owners, tensors, private state or arbitrary host caches. No freed-byte
+    /// claim: the returned total counts successfully advised source bytes.
+    pub(crate) fn advise_resident_gpu_sources_not_needed(
+        &self,
+        _boundary: &crate::resident_model::batch::CompletedNativeProjectionBoundary,
+    ) -> Result<u64> {
+        if !self.model.weights_mapped() || self.resident_admission.is_none() {
+            return Err(Error::InvalidFormat(
+                "GPU source cache hint requires resident mapped owner",
+            ));
+        }
+        self.model.verify_file_unchanged()?;
+        let mut bytes = 0u64;
+        for (key, cached) in &self.cache {
+            let tensor = self
+                .model
+                .tensor(&key.tensor)
+                .ok_or(Error::InvalidFormat("GPU cached source tensor absent"))?;
+            let rows = *tensor
+                .info()
+                .dimensions()
+                .get(1)
+                .ok_or(Error::InvalidBufferLength)?;
+            let offset = zeroize::Zeroizing::new(
+                (key.expert as u64)
+                    .checked_mul(rows)
+                    .and_then(|n| n.checked_add(key.first as u64))
+                    .and_then(|n| n.checked_mul(tensor.info().row_bytes()))
+                    .ok_or(Error::ArithmeticOverflow)?,
+            );
+            // Cached words include at most3 bytes of binding alignment, never
+            // another tensor/expert. Advise only original complete rows.
+            let row_bytes = tensor.info().row_bytes();
+            if row_bytes < 4 {
+                return Err(Error::InvalidBufferLength);
+            }
+            let length = (cached.words as u64 * 4) / row_bytes * row_bytes;
+            bytes = bytes
+                .checked_add(
+                    self.model
+                        .advise_gpu_source_not_needed(tensor, *offset, length)?,
+                )
+                .ok_or(Error::ArithmeticOverflow)?;
+        }
+        for bank in self.banks.values() {
+            for slot in 0..bank.slots.capacity() {
+                let expert = zeroize::Zeroizing::new(
+                    bank.slots
+                        .resident_expert(slot)
+                        .map_err(|_| Error::InvalidFormat("GPU source committed residency"))?,
+                );
+                if let Some(expert) = *expert {
+                    for (name, packed) in
+                        bank.source_names()
+                            .into_iter()
+                            .zip([bank.gate(), bank.up(), bank.down()])
+                    {
+                        let tensor = self
+                            .model
+                            .tensor(name)
+                            .ok_or(Error::InvalidFormat("GPU bank source tensor absent"))?;
+                        let length = packed.expert_bytes() as u64;
+                        let offset = zeroize::Zeroizing::new(
+                            (expert as u64)
+                                .checked_mul(length)
+                                .ok_or(Error::ArithmeticOverflow)?,
+                        );
+                        bytes = bytes
+                            .checked_add(
+                                self.model
+                                    .advise_gpu_source_not_needed(tensor, *offset, length)?,
+                            )
+                            .ok_or(Error::ArithmeticOverflow)?;
+                    }
+                }
+            }
+        }
+        self.model.verify_file_unchanged()?;
+        Ok(bytes)
+    }
     pub fn reserved_bytes(&self) -> Result<u64> {
         self.client
             .memory_usage()

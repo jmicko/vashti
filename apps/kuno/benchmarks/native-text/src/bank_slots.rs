@@ -176,6 +176,15 @@ impl BankSlots {
     pub fn experts(&self) -> usize {
         self.state.by_expert.len()
     }
+    /// Read committed residency only at the parent's completed boundary.
+    /// Caller must not serialize or retain this request-derived selection.
+    pub(crate) fn resident_expert(&self, slot: usize) -> Result<Option<usize>> {
+        self.state
+            .slots
+            .get(slot)
+            .map(|r| r.map(|r| r.expert))
+            .ok_or(BankError::Capacity)
+    }
 
     /// Actual committed state storage, including both Vec capacities and the
     /// inline owner/state/counters. Public capacity only; no route data escapes.

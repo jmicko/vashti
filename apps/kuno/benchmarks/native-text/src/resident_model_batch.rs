@@ -631,6 +631,13 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         let native = self.native_batch.as_ref().ok_or(error())?;
         native.decode_kernels()
     }
+    pub(crate) fn advise_gpu_sources_not_needed(&self, executor: &GpuExecutor<'f>) -> Result<u64> {
+        let proof = self.completed_native_projection_boundary(executor)?;
+        if self.native_cpu_miss_cap()? != Some(10) {
+            return Err(error());
+        }
+        executor.advise_resident_gpu_sources_not_needed(&proof)
+    }
 
     #[allow(dead_code)] // Protected receipt exposure is owned separately.
     pub(crate) fn native_dense_member_capacity(&self) -> Result<usize> {

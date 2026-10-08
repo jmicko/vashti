@@ -57,7 +57,26 @@ Avx2/Portable and installed inference remain unchanged. Independent f64 row
 checks use an L1 forward-error bound; complete synthetic expert checks use an
 infinity-norm error bound because cancelled elements can approach zero.
 The original128 model IDs remain a mandatory, unchanged acceptance gate.
-122 core tests pass with3 ignored; compiled/native device acceptance is pending.
+122 core tests pass with3 ignored. Source56340c2, frozen artifact4fa9fbfd…
+passes all128 IDs and original owning/lifecycle gates, but decode37323ms
+(3.4027 tokens/s), prefill54966ms does not improve the selected control.
+
+Source98df150 adds numeric-only warm decode process counters. Artifact
+a2724725… passes the same complete fixture with36790ms decode (3.4520 tokens/s)
+and53251ms prefill. During warm decode it incurs61267 major faults and reads
+11601731584 bytes from disk, despite zero warm GPU expert uploads. CPU cycle
+profiles alone did not expose this stall. Counters report process CPU ticks,
+not inferred GPU times; their scope starts after prefill and before decode.
+
+The next explicitly pinned cap10/mapped experiment advises complete original
+file pages for weights already retained on GPU at a proved completed boundary.
+It uses Linux64 POSIX_FADV_DONTNEED on the original read-only descriptor,
+leaves all mappings and borrowed tensor bytes valid, and never drops arbitrary
+host caches. Successfully advised bytes are not a claim of actual reclamation.
+Advice cost is separately reported outside decode time. All128 original IDs,
+full private budgets, fences, erasure and physical recovery remain required.
+123 core tests (3 ignored),485 native tests plus two shader suites,25 Python
+controls and strict all-target Clippy pass. Physical efficacy is pending.
 
 The user granted exclusive GPUs. Installed Kuno had an idle managed worker
 holding15978409984 B70 bytes with no active request; a graceful Kuno restart

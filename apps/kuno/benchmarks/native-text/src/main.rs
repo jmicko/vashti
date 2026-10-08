@@ -803,6 +803,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("Compiled CPU FMA requires explicit pooled protected count1 float mode and AVX2/F16C/FMA".into());
     }
     let large_weight_cache = count1_environment_opt_in(&mode, "KUNO_LAB_LARGE_WEIGHT_CACHE")?;
+    let reclaim_gpu_sources = count1_environment_opt_in(&mode, "KUNO_LAB_RECLAIM_GPU_SOURCES")?;
+    if reclaim_gpu_sources && (!mapped_weights || count1_hybrid_cap != Some(10)) {
+        return Err(
+            "GPU source cache hint requires mapped static cap10 protected count1 mode".into(),
+        );
+    }
     let compact_info = count1_environment_opt_in(&mode, "KUNO_LAB_COMPACT_INFO")?;
     let info_batch_upload = count1_environment_opt_in(&mode, "KUNO_LAB_INFO_BATCH_UPLOAD")?;
     if info_batch_upload && (!compact_info || count1_hybrid_cap.is_none_or(|cap| cap > 10)) {
@@ -2081,6 +2087,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 r.phase_ns.clear();
             }
             let pre_metadata_calls = resident_util::metadata_calls();
+            let reclaim_start = Instant::now();
+            let gpu_source_advised_bytes = if reclaim_gpu_sources {
+                resident
+                    .as_ref()
+                    .ok_or("GPU source cache hint requires complete resident model")?
+                    .advise_gpu_sources_not_needed(&executor)?
+            } else {
+                0
+            };
+            let gpu_source_advice_ms = reclaim_start.elapsed().as_millis();
             let start = Instant::now();
             let mut generated = Vec::new();
             // Count actual successful generation continuations only. Prompt
@@ -2234,6 +2250,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 receipt["cpu_q8_activations"] = serde_json::json!(cpu_q8);
                 receipt["cpu_fma_arithmetic"] = serde_json::json!(cfg!(feature = "cpu-fma"));
                 receipt["warm_host_resource_delta"] = serde_json::json!(warm_resources);
+                receipt["reclaim_gpu_sources"] = serde_json::json!(reclaim_gpu_sources);
+                receipt["gpu_source_advised_bytes"] = serde_json::json!(gpu_source_advised_bytes);
+                receipt["gpu_source_advice_ms"] = serde_json::json!(gpu_source_advice_ms);
                 receipt["large_weight_cache"] = serde_json::json!(large_weight_cache);
                 receipt["compact_info"] = serde_json::json!(compact_info);
                 receipt["info_batch_upload"] = serde_json::json!(info_batch_upload);

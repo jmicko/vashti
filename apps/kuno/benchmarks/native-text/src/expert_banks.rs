@@ -445,6 +445,9 @@ impl ExpertBanks {
         }
         Ok(())
     }
+    pub(crate) fn source_names(&self) -> [&str; 3] {
+        self.names.each_ref().map(String::as_str)
+    }
     pub fn check(
         &self,
         weights: RoutedWeights<'_>,
