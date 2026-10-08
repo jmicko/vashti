@@ -501,6 +501,9 @@ impl GpuExecutor<'_> {
         proof.validate_source(&bank.slots, &staged, &last, true)?;
         map.complete_cpu(partials.as_ref(), g.hidden())
             .map_err(err)?;
+        let live = live
+            .checked_add(self.adaptive.as_ref().map_or(0, |c| c.owned_bytes()))
+            .ok_or(Error::ArithmeticOverflow)?;
         let partial_bytes = partials.as_ref().map_or(0, |p| p.owned_bytes());
         let encoding = arena.layout(owner_ids[0]).map_err(u::fault)?.owned_bytes
             + arena.layout(owner_ids[1]).map_err(u::fault)?.owned_bytes;

@@ -2081,3 +2081,34 @@ sources retain existing advice. Initial weights are loaded for real prefill
 work, with usage-aware victims; decode then adapts that starting placement.
 Existing fixed and 16-slot receipts remain historical comparisons, not proof
 that this new policy is accepted or faster.
+
+### Ultra review corrections and transfer comparison (2026-10-08)
+
+Source review identified that whole-gap right shifts reset on every touch and
+therefore do not implement the promised token-time half-life. Replace them with
+Q8 frequency and fractional Q16 decay for every elapsed token, with exact halves
+per16-token interval. Increment256 per distinct selected expert/token; a384
+admission score rejects one-offs and permits recent repeats. Compare with a
+continuous reference within bounded quantization error. This remains a recent
+reuse signal, not proof that transfers amortize. Retain original128-ID device
+acceptance and measured full promotion wall time.
+
+Existing transactional LRU, bounded miss fills, selected CPU WILLNEED and mapped
+source paging are reused, not reimplemented. Add an opt-in ordinary PUBLIC write
+into an existing checked segmented expert-bank subview. It uses the same moved
+original weight bytes/server write policy as create_public_owned, but avoids
+temporary MAIN source allocations and copy_words shaders. Root views, byte
+bounds,4-byte alignment, exact payload length and stream identity must be
+checked; preserve conservative full source precharge, all-family boundary,
+original owning read_fault completion, poisoning and commit-after-completion.
+The ordinary copy path remains the matched control. No private input/output is
+passed to that public upload API; no API or deployed runtime default changes.
+
+Measure complete policy/admission/publication wall intervals because old
+read/upload/fence counters omit source allocation and planning. Include actual
+persistent adaptive history in the post-CPU-join/upload host checks within the
+unchanged1 MiB allowance. The50-expert unit example only proves eligible
+capacity; add actual ten-route/four-global/one-per-layer bounded convergence
+coverage. A simultaneous50-expert shift in all48 layers has a600-token lower
+bound under the current transfer budget; the127-step timing fixture cannot
+establish fully warmed long-run throughput for that case.

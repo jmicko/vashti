@@ -977,6 +977,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
     let adaptive_experts = count1_environment_opt_in(&mode, "KUNO_LAB_ADAPTIVE_EXPERTS")?;
+    let adaptive_direct_upload =
+        count1_environment_opt_in(&mode, "KUNO_LAB_ADAPTIVE_DIRECT_UPLOAD")?;
+    if adaptive_direct_upload && !adaptive_experts {
+        return Err("direct expert upload requires protected adaptive cache".into());
+    }
     if adaptive_experts
         && (secondary_experts
             || vendor != 0x8086
@@ -2727,9 +2732,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 receipt["binding_cache_capacity"] = serde_json::json!(binding_cache_capacity);
                 receipt["adaptive_experts"] = serde_json::json!(adaptive_experts);
                 if let Some(cache) = &executor.adaptive {
+                    receipt["adaptive_direct_upload"] = serde_json::json!(adaptive_direct_upload);
+                    receipt["adaptive_direct_batches"] =
+                        serde_json::json!(cache.stats.direct_batches);
+                    receipt["adaptive_direct_components"] =
+                        serde_json::json!(cache.stats.direct_components);
+                    receipt["adaptive_direct_bytes"] = serde_json::json!(cache.stats.direct_bytes);
                     receipt["adaptive_capacity"] =
                         serde_json::json!(crate::adaptive_experts::CAPACITY);
                     receipt["adaptive_policy"] = serde_json::json!("decaying-frequency-recency");
+                    receipt["adaptive_frequency_half_life_tokens"] =
+                        serde_json::json!(crate::adaptive_experts::HALF_LIFE);
+                    receipt["adaptive_score_scale"] =
+                        serde_json::json!(crate::adaptive_experts::SCALE);
+                    receipt["adaptive_admit_score"] =
+                        serde_json::json!(crate::adaptive_experts::ADMIT_SCORE);
+                    receipt["adaptive_wall_ns"] = serde_json::json!(cache.stats.wall_ns);
+                    receipt["adaptive_policy_ns"] = serde_json::json!(cache.stats.policy_ns);
+                    receipt["adaptive_fill_ns"] = serde_json::json!(cache.stats.fill_ns);
+                    receipt["adaptive_publication_ns"] =
+                        serde_json::json!(cache.stats.publication_ns);
                     receipt["adaptive_budget"] = serde_json::json!(crate::adaptive_experts::BUDGET);
                     receipt["adaptive_promotions"] = serde_json::json!(cache.stats.promotions);
                     receipt["adaptive_upload_bytes"] = serde_json::json!(cache.stats.bytes);

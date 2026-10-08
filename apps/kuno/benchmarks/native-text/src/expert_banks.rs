@@ -667,6 +667,101 @@ fn fill_source(
     Ok((bank.expert_bytes as u64, read_ns, upload_ns))
 }
 
+/// A byte-exact span inside an untrimmed bank allocation. Allocation padding
+/// is retained outside the view; it must never become part of an expert upload.
+fn public_slot_span(
+    expert_bytes: usize,
+    local_slot: usize,
+    capacity: usize,
+    words: usize,
+    handle_bytes: u64,
+) -> Result<(u64, u64)> {
+    let logical = words.checked_mul(4).ok_or(Error::ArithmeticOverflow)?;
+    if expert_bytes == 0
+        || !expert_bytes.is_multiple_of(4)
+        || local_slot >= capacity
+        || expert_bytes.checked_mul(capacity) != Some(logical)
+        || handle_bytes < u64::try_from(logical).map_err(|_| Error::ArithmeticOverflow)?
+    {
+        return Err(Error::InvalidBufferLength);
+    }
+    let start = local_slot
+        .checked_mul(expert_bytes)
+        .ok_or(Error::ArithmeticOverflow)?;
+    let end = start
+        .checked_add(expert_bytes)
+        .ok_or(Error::ArithmeticOverflow)?;
+    if end > logical {
+        return Err(Error::InvalidBufferLength);
+    }
+    Ok((
+        u64::try_from(start).map_err(|_| Error::ArithmeticOverflow)?,
+        handle_bytes
+            .checked_sub(u64::try_from(end).map_err(|_| Error::ArithmeticOverflow)?)
+            .ok_or(Error::ArithmeticOverflow)?,
+    ))
+}
+
+/// Prepare only original PUBLIC weight bytes for a checked existing slot.
+/// Caller binds the source names/device and exact pending plan, retains full
+/// bank owners and commits only after the original audited owning completion.
+pub(crate) fn prepare_public_existing(
+    bank: &Bank,
+    tensor: TensorView<'_>,
+    expert: usize,
+    slot: usize,
+    cancel: &AtomicBool,
+) -> Result<(Handle, Vec<u8>, u128)> {
+    if cancel.load(Ordering::Relaxed) {
+        return Err(Error::InvalidFormat("GPU execution cancelled"));
+    }
+    let dimensions = tensor.info().dimensions();
+    if dimensions.len() != 3
+        || tensor.info().row_bytes().checked_mul(dimensions[1]) != Some(bank.expert_bytes as u64)
+        || expert as u64 >= dimensions[2]
+    {
+        return Err(Error::InvalidFormat("direct original expert geometry"));
+    }
+    let offset = (expert as u64)
+        .checked_mul(bank.expert_bytes as u64)
+        .ok_or(Error::ArithmeticOverflow)?;
+    if offset
+        .checked_add(bank.expert_bytes as u64)
+        .is_none_or(|end| end > tensor.info().byte_len())
+    {
+        return Err(Error::InvalidBufferLength);
+    }
+    let (segment, local_slot) = bank.resolve(slot)?;
+    if segment.handle.offset_start.unwrap_or(0) != 0 || segment.handle.offset_end.unwrap_or(0) != 0
+    {
+        return Err(Error::InvalidFormat("direct original bank root view"));
+    }
+    let (start, trim_end) = public_slot_span(
+        bank.expert_bytes,
+        local_slot,
+        segment.capacity,
+        segment.words,
+        segment.handle.size(),
+    )?;
+    let view = segment
+        .handle
+        .clone()
+        .offset_start(start)
+        .offset_end(trim_end);
+    let mut packed = Vec::new();
+    packed
+        .try_reserve_exact(bank.expert_bytes)
+        .map_err(|_| Error::LimitExceeded("public direct expert upload scratch"))?;
+    packed.resize(bank.expert_bytes, 0u8);
+    let read = Instant::now();
+    tensor.read_range(offset, &mut packed)?;
+    let read_ns = read.elapsed().as_nanos();
+    if cancel.load(Ordering::Relaxed) {
+        return Err(Error::InvalidFormat("GPU execution cancelled"));
+    }
+    Ok((view, packed, read_ns))
+}
+
 // One-dimensional portable grid; stay one 256-lane workgroup below 64 MiB.
 const MAX_BATCH_BYTES: usize = 65_535 * 256 * 4;
 const MIN_CONFIG_BATCH_BYTES: usize = 4 * 1024 * 1024;
@@ -2234,6 +2329,28 @@ mod segmented_tests {
         ] {
             assert!(configured_static_cache(Some(invalid), 8 * GIB).is_err());
         }
+    }
+    #[test]
+    fn public_existing_spans_cover_only_original_slots_and_preserve_padding() {
+        let bytes = 1024;
+        for capacity in [16usize, 32, 64] {
+            let logical = bytes * capacity;
+            let allocated = logical as u64 + 4096;
+            for local in 0..capacity {
+                let (start, end_trim) =
+                    public_slot_span(bytes, local, capacity, logical / 4, allocated).unwrap();
+                assert_eq!(start, (local * bytes) as u64);
+                assert_eq!(allocated - start - end_trim, bytes as u64);
+                assert!(end_trim >= 4096);
+            }
+            assert!(public_slot_span(bytes, capacity, capacity, logical / 4, allocated).is_err());
+            assert!(public_slot_span(bytes, 0, capacity, logical / 4, logical as u64 - 1).is_err());
+            assert!(public_slot_span(bytes, 0, capacity, logical / 4 + 1, allocated).is_err());
+        }
+        for bytes in [0usize, 3, usize::MAX] {
+            assert!(public_slot_span(bytes, 0, 1, 1, 4).is_err());
+        }
+        assert!(public_slot_span(4, 0, usize::MAX, usize::MAX, u64::MAX).is_err());
     }
     #[test]
     fn global_slots_resolve_once_across_boundary_and_failure_is_transactional() {

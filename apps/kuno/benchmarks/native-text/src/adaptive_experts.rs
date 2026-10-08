@@ -9,7 +9,24 @@ pub(crate) const CAPACITY: usize = 144;
 pub(crate) const BUDGET: usize = 4;
 const LAYERS: usize = 48;
 const EXPERTS: usize = 512;
-const HALF_LIFE: u16 = 16;
+pub(crate) const HALF_LIFE: u16 = 16;
+pub(crate) const SCALE: u16 = 256;
+pub(crate) const ADMIT_SCORE: u16 = 384;
+// Rounded Q16 factors for2^(-remainder/16), including exact unity.
+const FRACTIONAL_DECAY: [u32; 16] = [
+    65536, 62757, 60097, 57549, 55109, 52773, 50535, 48393, 46341, 44376, 42495, 40693, 38968,
+    37316, 35734, 34219,
+];
+fn decay(count: u16, elapsed: u16) -> u16 {
+    let periods = elapsed / HALF_LIFE;
+    if periods >= 16 {
+        return 0;
+    }
+    // Multiply before shifting; dropping fractional age on every touch would
+    // recreate lifetime LFU for experts called at intervals below16 tokens.
+    (((u32::from(count) * FRACTIONAL_DECAY[usize::from(elapsed % HALF_LIFE)]) >> 16) >> periods)
+        as u16
+}
 #[derive(Default)]
 pub(crate) struct Stats {
     pub promotions: u64,
@@ -21,6 +38,13 @@ pub(crate) struct Stats {
     pub completed_batches: u64,
     pub private_peak: usize,
     pub source_peak: u64,
+    pub wall_ns: u128,
+    pub policy_ns: u128,
+    pub fill_ns: u128,
+    pub publication_ns: u128,
+    pub direct_batches: u64,
+    pub direct_components: u64,
+    pub direct_bytes: u64,
 }
 pub(crate) struct Cache {
     seen: Zeroizing<Vec<u16>>,
@@ -49,7 +73,10 @@ impl Cache {
         (self.seen.capacity() + self.frequency.capacity()) * 2 + std::mem::size_of::<Self>()
     }
     fn decayed(&self, index: usize, epoch: u16) -> u16 {
-        self.frequency[index] >> ((epoch.saturating_sub(self.seen[index]) / HALF_LIFE).min(15))
+        decay(
+            self.frequency[index],
+            epoch.saturating_sub(self.seen[index]),
+        )
     }
     pub(crate) fn record(
         &mut self,
@@ -75,7 +102,7 @@ impl Cache {
             if self.seen[index] == epoch {
                 continue;
             }
-            self.frequency[index] = self.decayed(index, epoch).saturating_add(1);
+            self.frequency[index] = self.decayed(index, epoch).saturating_add(SCALE);
             self.seen[index] = epoch;
         }
         *self.tick = (*self.tick).max(epoch);
@@ -126,7 +153,7 @@ impl Cache {
         for expert in 0..EXPERTS {
             let current = self.score(layer, expert);
             if current.1 == *self.tick
-                && current.0 >= 2
+                && current.0 >= ADMIT_SCORE
                 && current > *score
                 && bank
                     .resident_slot(expert)
@@ -189,13 +216,14 @@ mod tests {
         for position in 1..=20 {
             c.record(0, position, [0].into_iter()).unwrap();
         }
-        assert_eq!(c.score(0, 0), (20, 20));
+        assert!((12 * SCALE..15 * SCALE).contains(&c.score(0, 0).0));
+        assert_eq!(c.score(0, 0).1, 20);
         c.record(0, 21, [200].into_iter()).unwrap();
         c.record(0, 22, [0, 200].into_iter()).unwrap();
         let (_, slot) = c.candidate(0, &b).unwrap().unwrap();
         assert_ne!(slot, 0);
         c.record(0, 148, [201].into_iter()).unwrap();
-        assert_eq!(c.score(0, 0).0, 0);
+        assert!(c.score(0, 0).0 < SCALE / 8);
         assert!(c.candidate(0, &b).unwrap().is_none());
     }
     #[test]
@@ -203,7 +231,7 @@ mod tests {
         let (mut c, b) = setup();
         assert!(c.owned_bytes() <= HOST);
         c.record(0, 1, [200, 200].into_iter()).unwrap();
-        assert_eq!(c.score(0, 200), (1, 1));
+        assert_eq!(c.score(0, 200), (SCALE, 1));
         assert!(c.candidate(0, &b).unwrap().is_none());
         assert!(c.record(48, 2, [200].into_iter()).is_err());
         assert!(c.record(0, 2, [512].into_iter()).is_err());
@@ -213,6 +241,40 @@ mod tests {
         c.erase();
         assert!(c.seen.is_empty() && c.frequency.is_empty());
         assert_eq!((*c.tick, *c.cursor, c.ready), (0, 0, false));
+    }
+    #[test]
+    fn fractional_decay_has_exact_halves_and_bounded_reference_error() {
+        assert_eq!(decay(1024, 16), 512);
+        assert_eq!(decay(1024, 32), 256);
+        assert_eq!(decay(u16::MAX, 256), 0);
+        for interval in [1u64, 8, 15] {
+            let (mut c, _) = setup();
+            let mut expected = 0.0f64;
+            let factor = 2f64.powf(-(interval as f64) / f64::from(HALF_LIFE));
+            for n in 1..=100 {
+                c.record(0, n * interval, [200].into_iter()).unwrap();
+                expected = expected * factor + f64::from(SCALE);
+                let actual = f64::from(c.score(0, 200).0);
+                assert!((actual - expected).abs() < 26.0);
+            }
+            assert!(c.score(0, 200).0 < 24 * SCALE);
+        }
+    }
+    #[test]
+    fn new_working_set_overtakes_old_popularity_without_lifetime_pin() {
+        let (mut c, _) = setup();
+        for pos in 1..=100 {
+            c.record(0, pos, [0].into_iter()).unwrap();
+        }
+        for pos in 101..=120 {
+            c.record(0, pos, [200].into_iter()).unwrap();
+        }
+        assert!(c.score(0, 200) > c.score(0, 0));
+        let (mut c, b) = setup();
+        c.record(0, 1, [200].into_iter()).unwrap();
+        c.record(0, 17, [200].into_iter()).unwrap();
+        assert_eq!(c.score(0, 200).0, ADMIT_SCORE);
+        assert!(c.candidate(0, &b).unwrap().is_some());
     }
     #[test]
     fn grouped_plans_and_history_fit_existing_reservation() {
@@ -228,3 +290,7 @@ mod tests {
         assert_eq!(plans.len(), BUDGET);
     }
 }
+
+#[cfg(test)]
+#[path = "adaptive_convergence_tests.rs"]
+mod convergence_tests;

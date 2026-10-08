@@ -1060,6 +1060,9 @@ impl<'a> GpuExecutor<'a> {
         if !cache.ready {
             return Ok(());
         }
+        let direct_upload = std::env::var("KUNO_LAB_ADAPTIVE_DIRECT_UPLOAD").as_deref() == Ok("1");
+        let wall_start = Instant::now();
+        let policy_start = Instant::now();
         let admission = self
             .resident_admission
             .as_ref()
@@ -1106,6 +1109,7 @@ impl<'a> GpuExecutor<'a> {
                 break;
             }
         }
+        cache.stats.policy_ns += policy_start.elapsed().as_nanos();
         if !pending.is_empty() {
             let charged = requests.iter().try_fold(0u64, |n, &b| {
                 n.checked_add(main_admission::page_bytes(b).map_err(admission_error)?)
@@ -1116,13 +1120,17 @@ impl<'a> GpuExecutor<'a> {
             }
             cache.stats.private_peak = cache.stats.private_peak.max(private_bytes);
             cache.stats.source_peak = cache.stats.source_peak.max(charged);
+            let fill_start = Instant::now();
             let add = admission.allocate(&requests, || {
                 let mut add = expert_banks::FillStats::default();
+                let mut writes =
+                    Vec::with_capacity(if direct_upload { pending.len() * 3 } else { 0 });
                 for (layer, plan) in &pending {
                     let bank = self
                         .banks
                         .get(&format!("blk.{layer}.ffn_gate_exps.weight"))
                         .ok_or(Error::InvalidFormat("adaptive original fill bank"))?;
+                    bank.check_client(&self.client)?;
                     let [(expert, slot)] = plan.uploads.as_slice() else {
                         return Err(Error::InvalidFormat("adaptive original fill proof"));
                     };
@@ -1137,30 +1145,56 @@ impl<'a> GpuExecutor<'a> {
                             .model
                             .tensor(name)
                             .ok_or(Error::InvalidFormat("adaptive original tensor"))?;
-                        let (bytes, read, upload) = expert_banks::fill(
-                            &self.client,
-                            packed,
-                            tensor,
-                            *expert,
-                            *slot,
-                            cancel,
-                        )?;
-                        add.bytes += bytes;
-                        add.read_ns += read;
-                        add.upload_ns += upload;
+                        if direct_upload {
+                            let (view, data, read) = expert_banks::prepare_public_existing(
+                                packed, tensor, *expert, *slot, cancel,
+                            )?;
+                            add.bytes += data.len() as u64;
+                            add.read_ns += read;
+                            writes.push((view, data));
+                        } else {
+                            let (bytes, read, upload) = expert_banks::fill(
+                                &self.client,
+                                packed,
+                                tensor,
+                                *expert,
+                                *slot,
+                                cancel,
+                            )?;
+                            add.bytes += bytes;
+                            add.read_ns += read;
+                            add.upload_ns += upload;
+                        }
                     }
+                }
+                if direct_upload {
+                    if cancel.load(Ordering::Relaxed) {
+                        return Err(Error::InvalidFormat("GPU execution cancelled"));
+                    }
+                    let upload = Instant::now();
+                    self.client
+                        .write_public_owned_batch(writes)
+                        .map_err(|_| Error::InvalidFormat("direct original expert upload"))?;
+                    add.upload_ns += upload.elapsed().as_nanos();
                 }
                 Ok(add)
             })?;
+            cache.stats.fill_ns += fill_start.elapsed().as_nanos();
             // ONE owning completion follows all admitted fills. No ledger is
             // committed while any original bank copy can still be in flight.
             let fence = Instant::now();
             crate::resident_model::batch_io::read_fault(arena, admission, fault, cancel)?;
             cache.stats.fence_ns += fence.elapsed().as_nanos();
             cache.stats.completed_batches += 1;
+            if direct_upload {
+                cache.stats.direct_batches += 1;
+                cache.stats.direct_components += (pending.len() * 3) as u64;
+                cache.stats.direct_bytes += add.bytes;
+            }
             cache.stats.bytes += add.bytes;
             cache.stats.read_ns += add.read_ns;
             cache.stats.upload_ns += add.upload_ns;
+            let publication_start = Instant::now();
             for (layer, plan) in pending {
                 self.banks
                     .get_mut(&format!("blk.{layer}.ffn_gate_exps.weight"))
@@ -1170,7 +1204,9 @@ impl<'a> GpuExecutor<'a> {
                     .map_err(|_| Error::InvalidFormat("adaptive completed publication"))?;
                 cache.stats.promotions += 1;
             }
+            cache.stats.publication_ns += publication_start.elapsed().as_nanos();
         }
+        cache.stats.wall_ns += wall_start.elapsed().as_nanos();
         cache.advance(next)
     }
     pub(crate) fn enable_secondary_after_prefill(&mut self) -> Result<()> {
