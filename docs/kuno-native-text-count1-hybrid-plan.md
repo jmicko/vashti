@@ -1857,7 +1857,7 @@ float and CPU FMA arithmetic, and binding256. New opt-ins remain laboratory
 experiments. Source048426b adds fused projections,12d1f85 adds resident CPU
 balancing,ff45fe5 corrects exact prefetch accounting,c0d3420 adds packed integer
 GPU projections,eec1797 adds explicit binding capacities. No new trial shows a
-matched warm throughput gain. Nine complete-model receipts, including one
+matched warm throughput gain. Ten complete-model receipts, including one
 explicit wrapper rejection and its accepted repeat, are in
 [the numeric aggregate](../apps/kuno/benchmarks/text/receipts/next-placement-kernel-trials-20261008.json).
 
@@ -1876,3 +1876,38 @@ has no demonstrated steady-decode RAM shortage. More RAM is not selected as a
 remedy for a cold page cache. User now prioritizes a disjoint resident NVIDIA
 bank before adaptive upload-on-miss. The secondary calibration above and its
 separate acceptance do not yet implement the whole-model dual-device bridge.
+
+### Secondary resident calibration results and next placement (2026-10-08)
+
+Mapped/prefetched CPU comparison `34cdeaf71d8b29ffe186439a35e77b19be1150af`
+passes all six original operator points on RTX3060. Four ABBA samples per point
+give completed resident/upload/CPU medians respectively4.264/43.606/4.939ms for
+Q5 down and7.300/52.622/5.026ms for Q8 down. The CPU arithmetic portion alone
+is1.214/1.665ms; completed costs also include bridges, owning fences and the
+CPU-case empty GPU checks. Do not compare CPU arithmetic alone to completed
+GPU cost. The earlier buffered CPU calibration is accepted numerically but
+excluded as a current CPU performance baseline. Neither run uses the optimized
+native shared GPU kernels, request reuse or a B70-to-NVIDIA bridge. See the
+[separate numeric calibration](../apps/kuno/benchmarks/text/receipts/next-resident-expert-calibration-20261008.json).
+
+Next candidate: select48 experts per layer from transient prefill frequency,
+excluding the stationary B70 banks. Use32+16-slot shards: their original full
+allocation bins total192MiB per layer for either down family, or9GiB across48
+layers. Keep dense/attention/GDN work on B70; upload secondary weights during
+bank construction only. Submit both GPU expert subsets while CPU handles ranks
+absent from both banks. Transfer the existing mixed input and original-rank
+partials, and join all workers before the unchanged rank merge/publication.
+Use the optimized native shared kernels and retained request I/O; do not select
+placement from this isolated shader calibration. Source fill windows remain
+bounded to at most8 experts with full page charges inside the existing40MiB
+limit. Histories remain transient and are erased on exit/error.
+
+This bank and full two-device execution are **not implemented**. Acceptance
+requires exact membership/source proofs, both-device owners/fault checks and
+complete erasure, original128 IDs and independent numerical/fresh/cancel/poison
+checks, matched full-model timing, and physical memory recovery on both cards.
+Latest ordinary selected-path control using the same frozen v60 artifact passes
+all original complete-model gates at11577ms/127 steps (10.9700 tokens/s),
+prefill14534ms, with zero decode disk reads/writes and zero expert uploads.
+It retains44549/60960 expert calls (73.08%) on B70; additional NVIDIA coverage
+and whole-model speedup remain unmeasured. No API or consumer change.

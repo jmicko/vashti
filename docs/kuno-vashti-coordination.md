@@ -2435,3 +2435,39 @@ active/queued work or recovery latch; Kuno11434/Ollama11435/Vashti7771 answer
 HTTP200. No GPU reset, reboot, installed service/configuration change or release
 performed. Goal remains paused. **Required Vashti changes: none.** This is an
 internal standalone laboratory selection, not a production inference handoff.
+
+### Active handoff: placement trials and secondary bank calibration complete (2026-10-08)
+
+This supersedes the ranked-optimization handoff. Kuno owner remains
+`codex/kuno-native-text` in the dedicated worktree; current engine source is
+`34cdeaf71d8b29ffe186439a35e77b19be1150af`. Original intel144/cap10, float/FMA
+and binding256 remain selected. Fused GPU projections, extra resident CPU work,
+packed integer projections and binding512 provide no matched warm gain and
+remain excluded lab opt-ins. Latest complete original128-output fixture passes
+all numerical/owning/fresh/cancel/poison gates at10.9700 decode tokens/s, with
+zero warm disk reads/writes and73.08% of expert calls served by B70 residency.
+
+The user's next priority is complementary stationary experts on RTX3060 before
+adaptive swapping. A protected original-expert calibration passes on that card;
+residency avoids most upload cost but does not always beat the optimized CPU
+path. **Full two-device execution is not implemented.** Proposed48 experts per
+layer (disjoint from B70),32+16 shards/9GiB total, will need optimized native
+kernels, concurrent scheduling, exact rank/source proofs, both-device lifecycle
+and numerical acceptance, full-model timing and physical recovery. No private
+expert histories/routes are persisted. Current warm results do not justify
+adding16GB RAM. Broader quality/context/soak and production integration remain.
+
+See [current checkpoint](kuno-native-text-checkpoint.md#placement-trials-and-secondary-resident-calibration-complete-2026-10-08),
+[internal contract/results](kuno-native-text-count1-hybrid-plan.md#secondary-resident-calibration-results-and-next-placement-2026-10-08),
+[ten-model-sample receipt](../apps/kuno/benchmarks/text/receipts/next-placement-kernel-trials-20261008.json)
+and [operator receipt](../apps/kuno/benchmarks/text/receipts/next-resident-expert-calibration-20261008.json)
+for exact commits/artifacts, failures, timings, tests and limitations. Source
+checks pass502 native plus two shader suites,49+3 Python controls,98 unchanged
+runtime-host controls, strict release Clippy and formatting/whitespace checks.
+
+All lab jobs exited and physical memory recovered on both cards; no classified
+Xe/NVIDIA faults this boot. Public admission is resumed without active/queued
+work or recovery latch. Kuno11434/Ollama11435/Vashti7771 answer HTTP200. No GPU
+reset/reboot or installed-service/configuration, public API/catalog, frontend,
+release or installation change. **Required Vashti changes: none.** This remains
+an internal standalone laboratory checkpoint, not a production handoff.

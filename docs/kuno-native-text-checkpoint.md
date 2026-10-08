@@ -2168,3 +2168,78 @@ active=false, waiting=0, paused=false, recovery_required=false. Kuno 11434,
 direct Ollama 11435 and Vashti 7771 return HTTP 200. No reset/unbind/reboot,
 clock/driver or installed-service/configuration change. The goal remains paused;
 this user-authorized pass is complete. Required Vashti changes: none.
+
+### Placement trials and secondary resident calibration complete (2026-10-08)
+
+This supersedes the preceding selected-source checkpoint. Owner source is
+`34cdeaf71d8b29ffe186439a35e77b19be1150af` in `codex/kuno-native-text`.
+Keep stationary B70 intel144, cap10/GPU limit10, original GPU float/CPU FMA
+arithmetic and binding256. New fused projections `048426b`, CPU-resident
+balancing `12d1f85`/prefetch-accounting correction `ff45fe5`, packed integer
+GPU projections `c0d3420`, and binding512 `eec1797` pass their applicable original
+checks but establish no matched warm throughput gain. All remain opt-in labs.
+
+| Complete-model run | Decode ms /127 steps | Tokens/s | Outcome |
+| --- | ---: | ---: | --- |
+| Warm ordinary v53 | 11548 | 10.9976 | Original path |
+| Fused projections v53 | 11677 | 10.8761 | Excluded |
+| Ordinary limit10 v54 | 11397 | 11.1433 | Original placement |
+| Limit6 accepted repeat | 12712 | 9.9906 | Excluded |
+| Packed integer v55 | 11654 | 10.8975 | Excluded |
+| Binding256 v56 | 11596 | 10.9521 | Original capacity |
+| Binding512 v56 | 12946 | 9.8100 | Excluded |
+| Latest ordinary v60 | 11577 | 10.9700 | Selected control |
+
+Binding512 inserts419 then withdraws its optional cache for required metadata
+growth inside the unchanged256-KiB cap. The first limit6 wrapper rejected an
+incorrect prefetch identity; correcting the count to include CPU-resident ranks
+does not relax original output/ownership acceptance. Its repeat passes. First
+post-reboot ordinary decode takes20018ms and reads9867210752B, so it is excluded
+from matched warm comparisons. Latest warm control reads/writes zero, prefill
+14534ms, with44549/60960 resident expert calls (73.08%) and zero expert uploads.
+No demonstrated steady-decode RAM shortage justifies adding16GB to current64GB.
+
+Protected secondary operator calibration is added by `da72160`, with compiled
+scheduler selection `c1f8f72`, independent exact FMA32 reference `d8245e4` and
+mapped/prefetched original CPU sources `34cdeaf`. The original64-lane reference,
+numerical tolerances, full ownership/erasure gates and memory budgets remain.
+RTX3060 mapped trial completed resident/upload/CPU medians are4.264/43.606/4.939ms
+for Q5 and7.300/52.622/5.026ms for Q8. Earlier buffered CPU results are excluded
+as a current CPU baseline. Stationary banks avoid upload cost; the isolated
+shader does not prove that GPU execution always beats the selected CPU path.
+
+Next priority is a disjoint48-expert/layer NVIDIA bank,32+16 shards totaling9GiB
+across48 layers, using optimized native shared kernels and concurrent B70/GPU/CPU
+work. **The full two-device engine is not implemented or accepted.** It needs
+original-rank membership/source proofs, both-device lifecycle/fault/erasure,
+full original-token/numerical/fresh/cancel/poison acceptance, matched total
+timings and physical recovery. No private routes/history will be persisted.
+
+Normal locked v60 release artifact is
+`21ed239b5c71551ae36e55ea39781b19f8abbe64f0bcfa3ab42ae8367b7e0881`, features
+`direct-device,cpu-fma,cpu-work-stealing`. Latest complete-model control passes
+all original128 IDs and owning/lifecycle checks. Local calibration passes six
+points with two numerical gates and four ABBA samples per point. Source checks
+pass502 native tests plus two one-test shader suites,49 Python hybrid controls
+and3 resident-calibration rejection controls, strict release all-target native
+Clippy, formatting and whitespace checks. Unchanged runtime host passes98 tests
+and strict Clippy. Runtime composed patch SHA256 is
+`6a122c160a1c58bc0f67a89b98dc5ef89e7df6ea448c27d0b7841eddb723d2d4`.
+No broader quality/context/soak, new Ollama baseline or production integration
+is established. The approved10-token/s reference is met on this fixed fixture.
+
+Exact source/artifact/raw/run/log hashes are in the
+[ten-model-sample aggregate](../apps/kuno/benchmarks/text/receipts/next-placement-kernel-trials-20261008.json)
+and [separate operator calibration](../apps/kuno/benchmarks/text/receipts/next-resident-expert-calibration-20261008.json).
+Raw public-fixture records remain under
+`/media/jmicko/faststore/kuno-development/next-offload-device-20261008`.
+
+All lab jobs exited. At2026-10-08T21:54:25.400396+00:00, boot
+`b32654b7-a49b-493d-8305-46da15b6eac6`, kernel`7.0.0-38-generic`, B70 physical
+memory is50688000/34242297856B; NVIDIA is372MiB of desktop allocations with no
+compute processes. Root same-boot Xe wedged/timeout/reset-failure/memory-fault
+and NVIDIA Xid classifications are zero. Admission is resumed with no active
+or queued work/recovery latch. Kuno11434, direct Ollama11435 and Vashti7771
+return HTTP200; public residency and running lab units are empty. No GPU reset,
+driver/clock/reboot, model-file, installed-service/configuration, API/catalog,
+Vashti, release or installation change. **Required Vashti changes: none.**
