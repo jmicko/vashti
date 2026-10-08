@@ -21,6 +21,7 @@ mod info_slab_probe;
 mod main_admission;
 mod matmul_probe;
 mod next_shared;
+mod next_shared_moe;
 mod ordered_public;
 mod ple_batch_gpu;
 mod ple_chunk;

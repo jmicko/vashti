@@ -277,7 +277,37 @@ impl GpuExecutor<'_> {
             write_gpu_header(arena, ids[PROB], &*probs, &w.poison)?;
             physical(arena, bank, g, &ids, s.stamp.fault, w)?;
             if !split.gpu().is_empty() {
-                launch_wave(arena, bank, g, &spans, &ids, 10)?;
+                if self.shared_kernels {
+                    for shard in 0..bank.gate().segments().len() {
+                        let ga = &bank.gate().segments()[shard];
+                        let up = &bank.up().segments()[shard];
+                        let down = &bank.down().segments()[shard];
+                        let owner = |i| arena.handle(ids[i]).cloned().map_err(u::fault);
+                        crate::next_shared_moe::launch(
+                            &self.client,
+                            g,
+                            &spans,
+                            [
+                                ga.handle().clone(),
+                                up.handle().clone(),
+                                down.handle().clone(),
+                            ],
+                            [
+                                owner(0)?,
+                                owner(1)?,
+                                owner(2)?,
+                                owner(3)?,
+                                owner(4)?,
+                                owner(5)?,
+                                owner(6)?,
+                            ],
+                            ga.first_slot(),
+                            ga.capacity(),
+                        )?;
+                    }
+                } else {
+                    launch_wave(arena, bank, g, &spans, &ids, 10)?;
+                }
             }
             launch_finite(arena, g, &spans, &ids)?;
             if overlap {
