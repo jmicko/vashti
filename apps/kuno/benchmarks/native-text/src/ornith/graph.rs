@@ -785,6 +785,42 @@ impl Graph {
         Ok(result[0])
     }
 
+    /// Numerical diagnosis on the compiled-in public reference sequence only.
+    /// Never read logits from a real inference request through this lab path.
+    pub fn public_expected_rank(&self, expected: u32) -> Result<serde_json::Value> {
+        if expected >= 248320 {
+            return Err("Public reference ID out of range".into());
+        }
+        let bytes = self
+            .gpu
+            .public_read(&self.gpu.arena, LOGITS as u64 * 4, 248320 * 4)?;
+        let at = |id: usize| f32::from_le_bytes(bytes[id * 4..id * 4 + 4].try_into().unwrap());
+        let expected_value = at(expected as usize);
+        let mut rank = 1u32;
+        let mut maximum = f32::NEG_INFINITY;
+        let mut second = f32::NEG_INFINITY;
+        let mut id = 0u32;
+        for (i, chunk) in bytes.chunks_exact(4).enumerate() {
+            let value = f32::from_le_bytes(chunk.try_into().unwrap());
+            if !value.is_finite() {
+                return Err("Public logits contain non-finite values".into());
+            }
+            if value > expected_value || (value == expected_value && i < expected as usize) {
+                rank += 1;
+            }
+            if value > maximum {
+                second = maximum;
+                maximum = value;
+                id = i as u32;
+            } else if value > second {
+                second = value;
+            }
+        }
+        Ok(
+            serde_json::json!({"expected_id":expected,"native_id":id,"expected_rank":rank,"expected_gap_from_maximum":maximum-expected_value,"native_first_second_margin":maximum-second}),
+        )
+    }
+
     pub fn steps(&self) -> usize {
         self.body.len() + self.head.len()
     }

@@ -15,7 +15,7 @@ tag, selection, mode = sys.argv[2:]
 if build.parent != base or not re.fullmatch(r"[a-z0-9-]{1,60}", tag):
     raise SystemExit("invalid public build/tag")
 parts = selection.split("+")
-if parts[0] not in ("scalar", "block", "vector") or any(x not in ("trusted", "profile", "router") for x in parts[1:]) or mode not in ("probe", "8", "128", "profile"):
+if parts[0] not in ("scalar", "block", "vector") or any(x not in ("trusted", "profile", "router", "alternate") for x in parts[1:]) or mode not in ("probe", "8", "128", "512", "profile", "teacher"):
     raise SystemExit("invalid public selection")
 if ("profile" in parts) != (mode == "profile"):
     raise SystemExit("instrumented profiles must be explicit")
@@ -43,6 +43,8 @@ if "router" in parts:
     command += ["--setenv=KUNO_LAB_ORNITH_PARALLEL_ROUTER=1"]
 if "profile" in parts:
     command += ["--setenv=KUNO_LAB_ORNITH_PROFILE=1"]
+if "alternate" in parts:
+    command += ["--setenv=KUNO_LAB_ORNITH_ALTERNATE_PUBLIC=1"]
 blob = pathlib.Path("/media/jmicko/faststore/ollama/blobs/sha256-6540411d9e4ca638983e905959188e1be74db7ff62151c69d71a6f2748584f68")
 command += [str(executable), str(blob), str(receipt), mode]
 with (output / (tag + ".launch.json")).open("x") as f:

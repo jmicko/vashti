@@ -13,7 +13,7 @@ use zeroize::Zeroizing;
 fn main() -> Result<()> {
     let args = std::env::args().collect::<Vec<_>>();
     if args.len() != 4 {
-        return Err("Usage: ornith-resident-lab ORIGINAL_BLOB PUBLIC_RECEIPT 8|128".into());
+        return Err("Usage: ornith-resident-lab ORIGINAL_BLOB PUBLIC_RECEIPT 8|128|512|probe|profile|teacher".into());
     }
     if !args[1].ends_with("sha256-6540411d9e4ca638983e905959188e1be74db7ff62151c69d71a6f2748584f68")
     {
@@ -24,10 +24,12 @@ fn main() -> Result<()> {
     let count = match args[3].as_str() {
         "8" => 8,
         "128" => 128,
+        "512" => 512,
         "tokenize-public-response" => 0,
         "probe" => 1,
         "profile" => 2,
-        _ => return Err("Public output limit must be8 or128".into()),
+        "teacher" => 3,
+        _ => return Err("Unknown fixed public mode".into()),
     };
     if std::env::var("KUNO_LAB_ORNITH_PUBLIC").as_deref() != Ok("1") {
         return Err("Fixed-public lab opt-in missing".into());
@@ -92,7 +94,21 @@ fn main() -> Result<()> {
     }
     let fixture: serde_json::Value =
         serde_json::from_str(include_str!("../../text/ornith35-baseline.json"))?;
-    let prompt = fixture["prompt"].as_str().ok_or("Public fixture missing")?;
+    let alternate = match std::env::var("KUNO_LAB_ORNITH_ALTERNATE_PUBLIC") {
+        Err(std::env::VarError::NotPresent) => false,
+        Ok(value) if value == "1" => true,
+        _ => return Err("Fixed public alternate selection rejected".into()),
+    };
+    if count == 3 && alternate {
+        return Err("Teacher sequence requires original public prefix".into());
+    }
+    let prompt = fixture[if alternate {
+        "alternate_prompt"
+    } else {
+        "prompt"
+    }]
+    .as_str()
+    .ok_or("Public fixture missing")?;
     let tokens = Zeroizing::new(tokenizer.encode(prompt, true)?);
     let model = graph::Graph::new(&file)?;
     let total_load = start.elapsed().as_millis();
@@ -104,6 +120,46 @@ fn main() -> Result<()> {
         total_load
     );
     let mut samples = Vec::new();
+    if count == 3 {
+        let reference: Vec<u32> =
+            serde_json::from_str(include_str!("../../text/ornith35-public-ids.json"))?;
+        if reference.len() != 128 || reference.iter().any(|&id| id >= 248320) {
+            return Err("Fixed public teacher sequence rejected".into());
+        }
+        model.gpu.clear()?;
+        for (pos, &token) in tokens.iter().enumerate() {
+            model.token(token, pos as u32, pos + 1 == tokens.len())?;
+        }
+        let mut observations = Vec::new();
+        for (i, &expected) in reference.iter().enumerate() {
+            let native = model.next()?;
+            let mut metrics = model.public_expected_rank(expected)?;
+            if metrics["native_id"].as_u64() != Some(native as u64) {
+                return Err("Public CPU/GPU final selection mismatch".into());
+            }
+            metrics["output_position"] = i.into();
+            observations.push(metrics);
+            if i + 1 < reference.len() {
+                model.token(expected, (tokens.len() + i) as u32, true)?;
+            }
+        }
+        model.gpu.clear()?;
+        file.verify_file_unchanged()?;
+        let matches = observations
+            .iter()
+            .filter(|m| m["expected_rank"] == 1)
+            .count();
+        let output = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&args[2])?;
+        serde_json::to_writer_pretty(
+            output,
+            &serde_json::json!({"fixed_public_teacher_forcing":true,"fixture":"ornith35-baseline.json","reference_ids":"ornith35-public-ids.json","top1_matches":matches,"positions":observations,"normal_private_clear_completed":true}),
+        )?;
+        println!("public_teacher_forcing_completed top1_matches={matches}/128");
+        return Ok(());
+    }
     if count == 2 {
         model.gpu.clear()?;
         for (pos, &token) in tokens.iter().enumerate() {
@@ -132,27 +188,31 @@ fn main() -> Result<()> {
         let prefill_ms = prefill.elapsed().as_millis();
         let generation = Instant::now();
         for step in 1..count {
+            if count == 512 && generated.last() == Some(&tokenizer.eos_token_id()) {
+                break;
+            }
             model.token(generated[step - 1], (tokens.len() + step - 1) as u32, true)?;
             generated.push(model.next()?);
         }
         let decode_ns = generation.elapsed().as_nanos();
-        let rate = (count - 1) as f64 / (decode_ns as f64 / 1e9);
+        let decode_steps = generated.len() - 1;
+        let rate = decode_steps as f64 / (decode_ns as f64 / 1e9);
         println!(
             "public_ornith_sample phase={phase} prompt_tokens={} decode_steps={} prefill_ms={} decode_ns={} tokens_per_second={:.4}",
             tokens.len(),
-            count - 1,
+            decode_steps,
             prefill_ms,
             decode_ns,
             rate
         );
         samples.push(serde_json::json!({"phase":phase,"prompt_tokens":tokens.len(),"prefill_millis":prefill_ms,
-            "decode_steps":count-1,"decode_nanoseconds":decode_ns,"decode_tokens_per_second":rate,
+            "decode_steps":decode_steps,"output_cap":count,"stopped_on_eos":generated.last()==Some(&tokenizer.eos_token_id()),"decode_nanoseconds":decode_ns,"decode_tokens_per_second":rate,
             "public_generated_ids":&*generated}));
     }
     model.gpu.clear()?;
     file.verify_file_unchanged()?;
     let receipt = serde_json::json!({"fixture":"ornith35-baseline.json","model_blob":fixture["expected_model_blob"],
-        "seed":424242,"temperature":0,"backend":"native-rust-wgpu-vulkan","gpu_vendor":model.gpu.info.vendor,
+        "seed":424242,"temperature":0,"alternate_public_prefix":alternate,"backend":"native-rust-wgpu-vulkan","gpu_vendor":model.gpu.info.vendor,
         "gpu_device":model.gpu.info.device,"subgroup_min":model.gpu.info.subgroup_min_size,"subgroup_max":model.gpu.info.subgroup_max_size,
         "public_weight_bytes":model.weight_bytes,"private_gpu_bytes":model.gpu.private_bytes(),"load_millis":total_load,"packed_block_dot":model.block_dot,
         "gpu_construction_millis":model.load_millis,"dispatches_per_full_token":model.steps(),"trusted_shader_bounds":model.gpu.trusted_bounds,"vector_packed_dot":model.vector_dot,"parallel_gpu_router":model.parallel_router,
