@@ -500,6 +500,44 @@ impl<R: Runtime> ComputeClient<R> {
         }
     }
 
+    /// Begin an exclusive request-scoped pool on this exact client stream.
+    /// No environment variable alone permits dirty reuse or cross-owner access.
+    pub fn begin_transient_io_reuse(&self) -> Result<u64, ServerError> {
+        let stream_id = self.stream_id();
+        self.device
+            .submit_blocking(move |server| server.begin_transient_io_reuse(stream_id))
+            .map_err(|_| ServerError::Generic {
+                reason: "private I/O reuse channel unavailable".into(),
+                backtrace: BackTrace::capture(),
+            })?
+    }
+
+    /// Checked completed fence. Buffers remain dirty, owned and fully charged;
+    /// caller must still end the scope before handing the stream to another request.
+    pub fn recycle_transient_io(&self, nonce: u64) -> Result<(), ServerError> {
+        let stream_id = self.stream_id();
+        self.device
+            .submit_blocking(move |server| server.recycle_transient_io(nonce, stream_id))
+            .map_err(|_| ServerError::Generic {
+                reason: "private I/O reuse channel unavailable".into(),
+                backtrace: BackTrace::capture(),
+            })?
+    }
+
+    /// Synchronous full inspected erasure of every retained scope owner.
+    pub fn end_transient_io_reuse(
+        &self,
+        nonce: u64,
+    ) -> Result<crate::transient::TransientIoReceipt, ServerError> {
+        let stream_id = self.stream_id();
+        self.device
+            .submit_blocking(move |server| server.end_transient_io_reuse(nonce, stream_id))
+            .map_err(|_| ServerError::Generic {
+                reason: "private I/O reuse channel unavailable".into(),
+                backtrace: BackTrace::capture(),
+            })?
+    }
+
     /// todo: docs
     pub fn exclusive<'a, Re: Send + 'static, F: FnOnce() -> Re + Send + 'a>(
         &'a self,

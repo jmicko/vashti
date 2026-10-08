@@ -568,6 +568,38 @@ impl WgpuStream {
         Ok(())
     }
 
+    pub(crate) fn begin_transient_io_reuse(&mut self) -> Result<u64, ServerError> {
+        self.private_io_active()?;
+        self.flush(StreamErrorMode {
+            ignore: false,
+            flush: true,
+        })?;
+        self.transient_io.as_mut().unwrap().begin_reuse()
+    }
+
+    pub(crate) fn recycle_transient_io(&mut self, nonce: u64) -> Result<(), ServerError> {
+        self.private_io_active()?;
+        self.transient_io.as_ref().unwrap().check_reuse(nonce)?;
+        self.flush(StreamErrorMode {
+            ignore: false,
+            flush: true,
+        })?;
+        self.transient_io.as_mut().unwrap().recycle_reuse(nonce)
+    }
+
+    pub(crate) fn end_transient_io_reuse(
+        &mut self,
+        nonce: u64,
+    ) -> Result<cubecl_runtime::transient::TransientIoReceipt, ServerError> {
+        self.transient_io
+            .as_ref()
+            .ok_or_else(|| super::transient_io::fault("private I/O not configured"))?
+            .check_reuse(nonce)?;
+        let receipt = self.sanitize_transient_io(true)?;
+        self.transient_io.as_mut().unwrap().finish_reuse(nonce)?;
+        Ok(receipt)
+    }
+
     pub(crate) fn sanitize_transient_io(
         &mut self,
         inspect: bool,

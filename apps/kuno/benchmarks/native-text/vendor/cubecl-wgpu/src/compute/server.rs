@@ -477,6 +477,47 @@ impl ComputeServer for WgpuServer {
         Box::pin(async move { result })
     }
 
+    fn begin_transient_io_reuse(&mut self, stream_id: StreamId) -> Result<u64, ServerError> {
+        let guard = self
+            .scheduler
+            .stream(&stream_id)
+            .begin_transient_cleanup()?;
+        guard.run(|| {
+            self.scheduler.execute_streams(vec![stream_id]);
+            self.scheduler.stream(&stream_id).begin_transient_io_reuse()
+        })
+    }
+
+    fn recycle_transient_io(&mut self, nonce: u64, stream_id: StreamId) -> Result<(), ServerError> {
+        let guard = self
+            .scheduler
+            .stream(&stream_id)
+            .begin_transient_cleanup()?;
+        guard.run(|| {
+            self.scheduler.execute_streams(vec![stream_id]);
+            self.scheduler
+                .stream(&stream_id)
+                .recycle_transient_io(nonce)
+        })
+    }
+
+    fn end_transient_io_reuse(
+        &mut self,
+        nonce: u64,
+        stream_id: StreamId,
+    ) -> Result<cubecl_runtime::transient::TransientIoReceipt, ServerError> {
+        let guard = self
+            .scheduler
+            .stream(&stream_id)
+            .begin_transient_cleanup()?;
+        guard.run(|| {
+            self.scheduler.execute_streams(vec![stream_id]);
+            self.scheduler
+                .stream(&stream_id)
+                .end_transient_io_reuse(nonce)
+        })
+    }
+
     fn get_resource(
         &mut self,
         binding: Binding,

@@ -18,3 +18,4 @@ pub use storage::*;
 pub use transient_io::transient_gpu_upload_clears;
 pub use transient_io::transient_inline_readback_batches;
 pub use transient_io::transient_readback_reuses;
+pub use transient_io::transient_request_io_reuses;

@@ -427,6 +427,41 @@ where
         })
     }
 
+    /// Begin one exclusive request-owned transient I/O reuse scope. The
+    /// returned nonzero nonce belongs only to this stream until checked end.
+    fn begin_transient_io_reuse(&mut self, _stream_id: StreamId) -> Result<u64, ServerError> {
+        Err(IoError::UnsupportedIoOperation {
+            backtrace: BackTrace::capture(),
+        }
+        .into())
+    }
+
+    /// Complete outstanding work and retain all dirty I/O owners for reuse by
+    /// the SAME request. This grants no erasure receipt or ownership credit.
+    fn recycle_transient_io(
+        &mut self,
+        _nonce: u64,
+        _stream_id: StreamId,
+    ) -> Result<(), ServerError> {
+        Err(IoError::UnsupportedIoOperation {
+            backtrace: BackTrace::capture(),
+        }
+        .into())
+    }
+
+    /// End only after full two-pass erasure and CPU inspection of all retained
+    /// owners. Failed cleanup retains the scope and retires the stream.
+    fn end_transient_io_reuse(
+        &mut self,
+        _nonce: u64,
+        _stream_id: StreamId,
+    ) -> Result<crate::transient::TransientIoReceipt, ServerError> {
+        Err(IoError::UnsupportedIoOperation {
+            backtrace: BackTrace::capture(),
+        }
+        .into())
+    }
+
     /// Given a resource handle, returns the storage resource.
     fn get_resource(
         &mut self,

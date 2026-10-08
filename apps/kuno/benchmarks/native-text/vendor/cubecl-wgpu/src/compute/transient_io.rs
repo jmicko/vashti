@@ -24,7 +24,7 @@
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::WgpuResource;
@@ -754,6 +754,81 @@ impl PendingReadback {
 struct Tracked<B = wgpu::Buffer> {
     buffer: B,
     kind: Kind,
+    // A completed scope fence may authorize reuse, never ownership release.
+    reuse_ready: bool,
+    // Includes unused remaps retained across checkpoints. This obligation
+    // survives selection and partial producers until the actual unmap succeeds.
+    upload_mapped: bool,
+}
+const REUSE_METADATA_MAX: usize = 256 * 1024;
+static NEXT_REUSE_NONCE: AtomicU64 = AtomicU64::new(1);
+static REQUEST_IO_REUSES: AtomicU64 = AtomicU64::new(0);
+/// Bounded numeric laboratory diagnostic; no per-request trace or content.
+pub fn transient_request_io_reuses() -> u64 {
+    REQUEST_IO_REUSES.load(Ordering::Relaxed)
+}
+#[derive(Default)]
+struct ReuseScope {
+    nonce: Option<u64>,
+}
+impl ReuseScope {
+    fn begin(&mut self, empty: bool, live_leases: usize) -> Result<u64, ServerError> {
+        if self.nonce.is_some() || !empty || live_leases != 0 {
+            return Err(fault("private reuse begin requires empty exclusive owner"));
+        }
+        let nonce = NEXT_REUSE_NONCE
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+            .map_err(|_| fault("private reuse nonce exhausted"))?;
+        self.nonce = Some(nonce);
+        Ok(nonce)
+    }
+    fn check(&self, nonce: u64) -> Result<(), ServerError> {
+        if nonce == 0 || self.nonce != Some(nonce) {
+            Err(fault("private reuse owner mismatch"))
+        } else {
+            Ok(())
+        }
+    }
+    fn finish(&mut self, nonce: u64, empty: bool, live_leases: usize) -> Result<(), ServerError> {
+        self.check(nonce)?;
+        if !empty || live_leases != 0 {
+            return Err(fault("private reuse end still owns dirty buffers"));
+        }
+        self.nonce = None;
+        Ok(())
+    }
+}
+fn reusable_index<B>(
+    buffers: &[Tracked<B>],
+    kind: Kind,
+    bytes: u64,
+    size: impl Fn(&B) -> u64,
+) -> Option<usize> {
+    buffers
+        .iter()
+        .position(|b| b.reuse_ready && b.kind == kind && size(&b.buffer) == bytes)
+}
+fn mark_reusable<B>(buffers: &mut [Tracked<B>]) -> Result<(), ServerError> {
+    if buffers
+        .iter()
+        .any(|b| b.kind == Kind::Upload && !b.upload_mapped)
+    {
+        return Err(fault("private reuse upload remap incomplete"));
+    }
+    for buffer in buffers {
+        buffer.reuse_ready = true;
+    }
+    Ok(())
+}
+fn reuse_metadata_capacity<T>(capacity: usize) -> Result<(), ServerError> {
+    if capacity
+        .checked_mul(std::mem::size_of::<Tracked<T>>())
+        .and_then(|n| n.checked_add(std::mem::size_of::<ReuseScope>()))
+        .is_none_or(|n| n > REUSE_METADATA_MAX)
+    {
+        return Err(fault("private reuse metadata limit"));
+    }
+    Ok(())
 }
 /// Zero-only owners admitted after complete inspected two-pass sanitization.
 /// Only Readback buffers enter: returned read leases prove no external accessor
@@ -817,6 +892,7 @@ pub(crate) struct TransientIo {
     ledger: Ledger,
     buffers: Vec<Tracked>,
     clean_readbacks: CleanReadbacks<wgpu::Buffer>,
+    reuse_scope: ReuseScope,
     leases: Arc<LeaseTracker>,
     errors: Vec<ErrorFuture>,
     info_policy: Option<InfoPolicy>,
@@ -1124,6 +1200,50 @@ fn erase_upload_map_group<M: UploadMapping>(
         failed |= attempt_upload(mapper, Failure::Unmap, |mapper| mapper.unmap(mapping)).is_none();
     }
     !failed
+}
+/// Prepare a bounded remap cohort without erasing or releasing any owner.
+/// On every partial failure the retained Mapping guards cancel/unmap all
+/// attempted maps. Successful callers must transfer each guard's obligation
+/// into its original Tracked owner before disarming that guard.
+fn map_upload_reuse_group<M: UploadMapping>(
+    mapper: &mut M,
+    buffers: &[Option<&M::Buffer>; UPLOAD_MAP_GROUP],
+    count: usize,
+) -> Result<[Option<M::Mapping>; UPLOAD_MAP_GROUP], ServerError> {
+    if count == 0 || count > UPLOAD_MAP_GROUP {
+        return Err(fault("private reuse map group size"));
+    }
+    let deadline = Instant::now() + POLL_TIMEOUT;
+    let mut mappings = std::array::from_fn(|_| None);
+    let mut requested = [false; UPLOAD_MAP_GROUP];
+    let mut failed = false;
+    for i in 0..count {
+        mappings[i] = attempt_upload(mapper, Failure::UploadMap, |m| {
+            m.prepare(buffers[i].ok_or_else(|| fault("private reuse map owner missing"))?)
+        });
+        failed |= mappings[i].is_none();
+    }
+    for i in 0..count {
+        if let Some(mapping) = &mut mappings[i] {
+            requested[i] =
+                attempt_upload(mapper, Failure::UploadMap, |m| m.request(mapping)).is_some();
+            failed |= !requested[i];
+        }
+    }
+    failed |= attempt_upload(mapper, Failure::UploadMap, |m| m.poll_group(deadline)).is_none();
+    for i in 0..count {
+        if requested[i] {
+            failed |= attempt_upload(mapper, Failure::UploadMap, |m| {
+                m.callback(mappings[i].as_ref().unwrap(), deadline)
+            })
+            .is_none();
+        }
+    }
+    if failed {
+        Err(fault("private reuse remap rejected"))
+    } else {
+        Ok(mappings)
+    }
 }
 fn erase_upload_groups<M: UploadMapping>(mapper: &mut M, buffers: &[Tracked<M::Buffer>]) -> bool {
     let mut group = [None; UPLOAD_MAP_GROUP];
@@ -1669,6 +1789,7 @@ impl TransientIo {
                 ledger: Ledger::new(budget)?,
                 buffers: Vec::new(),
                 clean_readbacks,
+                reuse_scope: ReuseScope::default(),
                 leases: Arc::default(),
                 errors: Vec::new(),
                 info_policy,
@@ -1682,6 +1803,137 @@ impl TransientIo {
     }
     pub fn retired(&self) -> bool {
         self.leases.retired.load(Ordering::Acquire)
+    }
+    fn unmap_upload(&mut self, buffer: &wgpu::Buffer) -> Result<(), ServerError> {
+        let owner = self
+            .buffers
+            .iter_mut()
+            .find(|b| b.buffer == *buffer)
+            .ok_or_else(|| fault("private upload owner missing"))?;
+        if owner.kind != Kind::Upload || !owner.upload_mapped {
+            return Err(fault("private upload mapping obligation missing"));
+        }
+        buffer.unmap();
+        owner.upload_mapped = false;
+        Ok(())
+    }
+    fn additional_charge(&self, kind: Kind, bytes: u64) -> u64 {
+        if bytes == 0
+            || (self.reuse_scope.nonce.is_some()
+                && reusable_index(&self.buffers, kind, bytes, wgpu::Buffer::size).is_some())
+        {
+            0
+        } else {
+            bytes
+        }
+    }
+    /// Completion and all GPU validation/OOM/internal scope results are
+    /// mandatory even when the private bytes stay dirty inside their owner.
+    fn drain_accept_errors(&mut self) -> Result<(), ServerError> {
+        let mut failed = !self.poll(None);
+        for future in self.errors.drain(..) {
+            if let Some(error) = cubecl_common::future::block_on(future) {
+                self.leases.record(gpu_failure(&error));
+                failed = true;
+            }
+        }
+        if failed || self.retired() {
+            self.leases.retire_with(Failure::PriorStreamError);
+            return Err(fault(self.leases.reason(Failure::PriorStreamError)));
+        }
+        Ok(())
+    }
+    pub(crate) fn begin_reuse(&mut self) -> Result<u64, ServerError> {
+        self.active()?;
+        if !self.info_batch || !self.inline_readback || self.gpu_upload_clear {
+            return Err(fault(
+                "private reuse requires batched inline standard-upload runtime",
+            ));
+        }
+        // A previously audited zero-only Readback pool may exist. All dirty
+        // allocations, pending consumers, maps and old scopes must be absent.
+        let empty = self.buffers.is_empty()
+            && self.ledger.charged == 0
+            && self.pending_info.is_empty()
+            && self.info_slab.is_none();
+        if !empty || self.leases() != 0 || self.reuse_scope.nonce.is_some() {
+            return Err(fault("private reuse begin requires empty exclusive owner"));
+        }
+        self.drain_accept_errors()?;
+        self.reuse_scope.begin(empty, self.leases())
+    }
+    pub(crate) fn check_reuse(&self, nonce: u64) -> Result<(), ServerError> {
+        self.reuse_scope.check(nonce)
+    }
+    pub(crate) fn recycle_reuse(&mut self, nonce: u64) -> Result<(), ServerError> {
+        let attempted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.active()?;
+            self.check_reuse(nonce)?;
+            if self.leases() != 0 || !self.pending_info.is_empty() || self.info_slab.is_some() {
+                return Err(fault("private reuse fence has outstanding owner"));
+            }
+            self.drain_accept_errors()?;
+            // Stop old availability until every map and error check succeeds.
+            for owner in &mut self.buffers {
+                owner.reuse_ready = false;
+            }
+            let scopes = IoScopes::new(&self.device);
+            let remapped: Result<(), ServerError> = (|| {
+                let mut begin = 0;
+                while begin < self.buffers.len() {
+                    let mut ids = [0usize; UPLOAD_MAP_GROUP];
+                    let mut group = [None; UPLOAD_MAP_GROUP];
+                    let mut count = 0;
+                    while begin < self.buffers.len() && count < UPLOAD_MAP_GROUP {
+                        let owner = &self.buffers[begin];
+                        if owner.kind == Kind::Upload && !owner.upload_mapped {
+                            ids[count] = begin;
+                            group[count] = Some(&owner.buffer);
+                            count += 1;
+                        }
+                        begin += 1;
+                    }
+                    if count == 0 {
+                        continue;
+                    }
+                    let mut maps =
+                        map_upload_reuse_group(&mut NativeUploadMapping(self), &group, count)?;
+                    for i in 0..count {
+                        let map = maps[i]
+                            .as_mut()
+                            .ok_or_else(|| fault("private reuse map missing"))?;
+                        // Install the enduring unmap duty BEFORE disarming the
+                        // local guard. The owner remains fully charged/tracked.
+                        self.buffers[ids[i]].upload_mapped = true;
+                        map.requested = false;
+                    }
+                }
+                Ok(())
+            })();
+            scopes.finish(self);
+            remapped?;
+            self.drain_accept_errors()?;
+            mark_reusable(&mut self.buffers)?;
+            // Deliberately no ledger.after_erasure, zero receipt, clean pool
+            // handoff, allocation release or source-content inspection claim.
+            Ok(())
+        }));
+        match attempted {
+            Ok(Ok(())) => Ok(()),
+            _ => {
+                self.leases.retire_with(Failure::CleanupRejected);
+                Err(fault(self.leases.reason(Failure::CleanupRejected)))
+            }
+        }
+    }
+    pub(crate) fn finish_reuse(&mut self, nonce: u64) -> Result<(), ServerError> {
+        self.active()?;
+        let empty = self.buffers.is_empty()
+            && self.ledger.charged == 0
+            && self.pending_info.is_empty()
+            && self.info_slab.is_none()
+            && self.errors.is_empty();
+        self.reuse_scope.finish(nonce, empty, self.leases())
     }
     pub(crate) fn reads_inline(&self) -> bool {
         self.inline_readback
@@ -1730,6 +1982,11 @@ impl TransientIo {
         }
         for (source, target) in &self.pending_info {
             source.unmap();
+            self.buffers
+                .iter_mut()
+                .find(|b| b.buffer == *source)
+                .ok_or_else(|| fault("private INFO source owner missing"))?
+                .upload_mapped = false;
             encoder.copy_buffer_to_buffer(source, 0, target, 0, source.size());
         }
         self.pending_info.clear();
@@ -1765,7 +2022,14 @@ impl TransientIo {
         }
         let source_charge = if plan.existing { 0 } else { plan.target_bytes };
         self.ledger
-            .check_info_audit_group(source_charge, plan.target_bytes, 0)
+            .check_info_audit_group(
+                self.additional_charge(Kind::Upload, source_charge),
+                self.additional_charge(
+                    Kind::Uniform,
+                    if plan.existing { 0 } else { plan.target_bytes },
+                ),
+                0,
+            )
             .inspect_err(|_| self.leases.record(Failure::AuditBudget))?;
         if !plan.existing {
             self.pending_info
@@ -1854,6 +2118,21 @@ impl TransientIo {
         self.leases.count.load(Ordering::Acquire)
     }
     fn allocate(&mut self, kind: Kind, logical: u64) -> Result<wgpu::Buffer, ServerError> {
+        self.active()?;
+        if self.reuse_scope.nonce.is_some() {
+            let full = span(logical)?;
+            if let Some(index) = reusable_index(&self.buffers, kind, full, wgpu::Buffer::size) {
+                let tracked = &mut self.buffers[index];
+                if kind == Kind::Upload && !tracked.upload_mapped {
+                    return Err(fault("private reusable upload not mapped"));
+                }
+                tracked.reuse_ready = false;
+                REQUEST_IO_REUSES
+                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+                    .map_err(|_| fault("private reuse count exhausted"))?;
+                return Ok(tracked.buffer.clone());
+            }
+        }
         if self.info_policy.is_some() {
             let full = span(logical)?;
             let mut group = [0; 3];
@@ -1866,10 +2145,18 @@ impl TransientIo {
     }
     fn allocate_audit(&mut self, kind: Kind, logical: u64) -> Result<wgpu::Buffer, ServerError> {
         self.active()?;
-        self.buffers.try_reserve(1).map_err(|_| {
-            self.leases.record(Failure::AllocationMetadata);
-            fault(self.leases.reason(Failure::AllocationMetadata))
-        })?;
+        if self.reuse_scope.nonce.is_some() {
+            reuse_metadata_capacity::<wgpu::Buffer>(self.buffers.len() + 1)?;
+            self.buffers
+                .try_reserve_exact(1)
+                .map_err(|_| fault("private reuse metadata allocation"))?;
+            reuse_metadata_capacity::<wgpu::Buffer>(self.buffers.capacity())?;
+        } else {
+            self.buffers.try_reserve(1).map_err(|_| {
+                self.leases.record(Failure::AllocationMetadata);
+                fault(self.leases.reason(Failure::AllocationMetadata))
+            })?;
+        }
         let full = span(logical)?;
         if kind == Kind::Readback
             && let Some(buffer) = self.clean_readbacks.take(full, &mut self.ledger)?
@@ -1879,6 +2166,8 @@ impl TransientIo {
                 return Err(fault(self.leases.reason(Failure::AllocationSpan)));
             }
             self.buffers.push(Tracked {
+                reuse_ready: false,
+                upload_mapped: false,
                 buffer: buffer.clone(),
                 kind,
             });
@@ -1897,6 +2186,8 @@ impl TransientIo {
         });
         // Retain full ownership before any initialization/mapping/copy can fail.
         self.buffers.push(Tracked {
+            reuse_ready: false,
+            upload_mapped: kind == Kind::Upload,
             buffer: buffer.clone(),
             kind,
         });
@@ -1926,7 +2217,7 @@ impl TransientIo {
             view.slice(..).fill(0);
             view.slice(..data.len()).copy_from_slice(data);
         }
-        stage.unmap();
+        self.unmap_upload(&stage)?;
         encoder.copy_buffer_to_buffer(&stage, 0, &resource.buffer, resource.offset, copy_len);
         Ok(())
     }
@@ -2056,7 +2347,7 @@ impl TransientIo {
             return Err(fault(Failure::HeldLease.code()));
         }
         let attempted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            self.erase_checked(previous_error, inspect)
+            self.erase_checked(previous_error, inspect || self.reuse_scope.nonce.is_some())
         }));
         match attempted {
             Ok(Ok(receipt)) => Ok(receipt),
@@ -2140,8 +2431,12 @@ impl TransientIo {
         // Failed submission/preparation can leave append sources mapped. Their
         // complete tracked buffers still belong to the ledger and must become
         // available to the existing remap/wipe eraser on every failure path.
-        for (source, _) in &self.pending_info {
-            source.unmap();
+        for tracked in &mut self.buffers {
+            tracked.reuse_ready = false;
+            if tracked.kind == Kind::Upload && tracked.upload_mapped {
+                tracked.buffer.unmap();
+                tracked.upload_mapped = false;
+            }
         }
         self.info_slab = None;
         self.pending_info.clear();
@@ -2824,6 +3119,8 @@ mod tests {
         [Kind::Upload, Kind::Uniform, Kind::Readback]
             .into_iter()
             .map(|kind| Tracked {
+                reuse_ready: false,
+                upload_mapped: false,
                 // Include sentinel-filled tails beyond19 logical bytes. The shared
                 // full-span erasure policy must clear those tails before release.
                 kind,
@@ -2967,6 +3264,8 @@ mod tests {
                     .borrow_mut()
                     .copy_from_slice(&source.words.borrow());
                 self.stages.push(Tracked {
+                    reuse_ready: false,
+                    upload_mapped: false,
                     buffer: stage,
                     kind: Kind::Readback,
                 });
@@ -3465,6 +3764,8 @@ mod tests {
     fn fake_uploads(count: usize) -> Vec<Tracked<FakeBuffer>> {
         (0..count)
             .map(|_| Tracked {
+                reuse_ready: false,
+                upload_mapped: false,
                 kind: Kind::Upload,
                 buffer: FakeBuffer {
                     kind: Kind::Upload,
@@ -3472,6 +3773,164 @@ mod tests {
                 },
             })
             .collect()
+    }
+    #[test]
+    fn request_reuse_nonce_rejects_held_dirty_concurrent_foreign_and_stale_owners() {
+        let mut scope = ReuseScope::default();
+        assert!(scope.begin(false, 0).is_err());
+        assert!(scope.begin(true, 1).is_err());
+        let nonce = scope.begin(true, 0).unwrap();
+        assert_ne!(nonce, 0);
+        assert!(scope.begin(true, 0).is_err());
+        assert!(scope.check(0).is_err());
+        assert!(scope.check(nonce + 1).is_err());
+        assert!(scope.finish(nonce, false, 0).is_err());
+        assert!(scope.finish(nonce, true, 1).is_err());
+        scope.check(nonce).unwrap();
+        scope.finish(nonce, true, 0).unwrap();
+        assert!(scope.check(nonce).is_err());
+        let next = scope.begin(true, 0).unwrap();
+        assert_ne!(nonce, next);
+        let mut other = ReuseScope::default();
+        let foreign = other.begin(true, 0).unwrap();
+        assert!(scope.check(foreign).is_err());
+    }
+    #[test]
+    fn request_reuse_keeps_original_dirty_spans_charged_until_full_terminal_audit() {
+        let mut buffers = fake_buffers();
+        let mut ledger = Ledger::new(5 * MIN_BYTES).unwrap();
+        for buffer in &buffers {
+            ledger.reserve(buffer.kind, 19).unwrap();
+        }
+        let original = (ledger.charged, ledger.totals, ledger.epoch);
+        // No partial readiness is published until every Upload remap succeeds.
+        assert!(mark_reusable(&mut buffers).is_err());
+        assert!(buffers.iter().all(|b| !b.reuse_ready));
+        buffers[0].upload_mapped = true;
+        for _ in 0..16 {
+            mark_reusable(&mut buffers).unwrap();
+            for kind in [Kind::Upload, Kind::Uniform, Kind::Readback] {
+                assert!(
+                    reusable_index(&buffers, kind, MIN_BYTES * 2, |b| b.words.borrow().len()
+                        as u64)
+                    .is_none()
+                );
+                let index =
+                    reusable_index(&buffers, kind, MIN_BYTES, |b| b.words.borrow().len() as u64)
+                        .unwrap();
+                buffers[index].reuse_ready = false;
+                assert!(
+                    reusable_index(&buffers, kind, MIN_BYTES, |b| b.words.borrow().len() as u64)
+                        .is_none()
+                );
+                // Production constructors fully overwrite ALL padding before use.
+                buffers[index].buffer.words.borrow_mut().fill(0);
+                buffers[index].buffer.words.borrow_mut()[0] = 0xb3;
+            }
+            assert_eq!((ledger.charged, ledger.totals, ledger.epoch), original);
+            assert!(ledger.reserve(Kind::Upload, 3 * MIN_BYTES).is_err());
+        }
+        let mut eraser = FakeEraser {
+            events: Vec::new(),
+            fail: None,
+        };
+        assert!(erase_all(&mut eraser, &buffers, false));
+        let mut audit = FakeAudit {
+            ledger: &mut ledger,
+            stages: Vec::new(),
+            fail: None,
+            submissions: 0,
+        };
+        let counts = inspect_all(&mut audit, &buffers).unwrap();
+        buffers.append(&mut audit.stages);
+        drop(audit);
+        assert!(erase_all(&mut eraser, &buffers, false));
+        assert!(
+            buffers
+                .iter()
+                .all(|b| b.buffer.words.borrow().iter().all(|v| *v == 0))
+        );
+        assert_eq!(counts.bytes, 5 * MIN_BYTES);
+        assert_eq!(counts.buffers, 5);
+        let receipt = ledger.after_erasure().unwrap();
+        assert_eq!(
+            receipt.upload_bytes + receipt.uniform_bytes + receipt.readback_bytes,
+            5 * MIN_BYTES
+        );
+        assert_eq!(ledger.charged, 0);
+        assert_eq!(ledger.epoch, original.2 + 1);
+        assert!(reuse_metadata_capacity::<wgpu::Buffer>(4096).is_ok());
+        assert!(reuse_metadata_capacity::<wgpu::Buffer>(usize::MAX).is_err());
+    }
+    #[test]
+    fn reuse_upload_maps_transfer_only_after_all_callbacks_without_wipe_or_unmap() {
+        for count in [1, 63, 64] {
+            let buffers = fake_uploads(count);
+            let group = std::array::from_fn(|i| buffers.get(i).map(|b| &b.buffer));
+            let mut mapper = FakeUploadMapper::new(None);
+            let mut maps = map_upload_reuse_group(&mut mapper, &group, count).unwrap();
+            let state = mapper.0.state.borrow();
+            assert_eq!(state.polls, 1);
+            assert_eq!(
+                state.events.iter().filter(|v| v.0 == "callback").count(),
+                count
+            );
+            assert!(!state.events.iter().any(|v| v.0 == "wipe" || v.0 == "unmap"));
+            drop(state);
+            assert!(
+                buffers
+                    .iter()
+                    .all(|b| b.buffer.words.borrow().iter().all(|v| *v == 0xa7))
+            );
+            // Stand in for transferring each full unmap obligation to Tracked.
+            for map in maps.iter_mut().take(count).flatten() {
+                map.requested = false;
+            }
+            drop(maps);
+            assert!(
+                !mapper
+                    .0
+                    .state
+                    .borrow()
+                    .events
+                    .iter()
+                    .any(|v| v.0 == "unmap")
+            );
+        }
+        let mut mapper = FakeUploadMapper::new(None);
+        assert!(map_upload_reuse_group(&mut mapper, &[None; UPLOAD_MAP_GROUP], 0).is_err());
+        assert!(map_upload_reuse_group(&mut mapper, &[None; UPLOAD_MAP_GROUP], 65).is_err());
+    }
+    #[test]
+    fn reuse_partial_maps_keep_dirty_owners_and_unmap_every_attempt_before_failure() {
+        for failure in [
+            BatchFailure::Prepare(1),
+            BatchFailure::PreparePanic(1),
+            BatchFailure::Request(1),
+            BatchFailure::Panic(1),
+            BatchFailure::Poll(0),
+            BatchFailure::PollPanic(0),
+            BatchFailure::Callback(1),
+            BatchFailure::CallbackPanic(1),
+            BatchFailure::Disconnect(1),
+            BatchFailure::Pending(1),
+            BatchFailure::Late(1),
+        ] {
+            let buffers = fake_uploads(3);
+            let group = std::array::from_fn(|i| buffers.get(i).map(|b| &b.buffer));
+            let mut mapper = FakeUploadMapper::new(Some(failure));
+            assert!(map_upload_reuse_group(&mut mapper, &group, 3).is_err());
+            assert!(
+                buffers
+                    .iter()
+                    .all(|b| b.buffer.words.borrow().iter().all(|v| *v == 0xa7))
+            );
+            let state = mapper.0.state.borrow();
+            let requests = state.events.iter().filter(|v| v.0 == "request").count();
+            let unmapped = state.events.iter().filter(|v| v.0 == "unmap").count();
+            assert_eq!(requests, unmapped, "{failure:?}");
+            assert!(!state.events.iter().any(|v| v.0 == "wipe"));
+        }
     }
     #[test]
     fn upload_groups_bound_polls_prepare_all_maps_and_unmap_before_later_groups_or_clears() {
@@ -3691,6 +4150,8 @@ mod tests {
     fn fake_readable(count: usize) -> Vec<Tracked<FakeBuffer>> {
         (0..count)
             .map(|_| Tracked {
+                reuse_ready: false,
+                upload_mapped: false,
                 kind: Kind::Readback,
                 buffer: FakeBuffer {
                     kind: Kind::Readback,
