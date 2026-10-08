@@ -1645,3 +1645,16 @@ Numeric warm counters report hits, misses, inserts, creation nanoseconds and
 lookup nanoseconds only. They do not contain handles, hashes, offsets or input.
 These host timings are not GPU execution time. Device speed/correctness gates
 remain unchanged, including all original128 output IDs and complete lifecycle.
+
+
+### Retained recurrent-state shard trial (2026-10-08, device acceptance pending)
+
+The existing shared count1 GDN shader retains each invocation's32 original
+vec4 decayed state products from prediction through update, removing a second
+read of the old state and repeated multiply. Public geometry, partitioning,
+reduction order, status masks, invalid-input handling and all original owner/
+publication checks remain. The shard is fixed private invocation storage with
+no new storage-buffer owner or allocation. Local array lowering may increase
+register pressure or spill; source validation is not proof of register residency
+or a performance benefit. All128 generated IDs and independent arithmetic guards
+remain mandatory. Compare full protected timing with binding reuse selected.
