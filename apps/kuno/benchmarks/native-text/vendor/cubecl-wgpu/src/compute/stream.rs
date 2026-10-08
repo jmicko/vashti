@@ -676,6 +676,9 @@ impl WgpuStream {
 
     pub(crate) fn create_uniform(&mut self, data: &[u8]) -> Result<WgpuResource, ServerError> {
         if self.transient_io.is_some() {
+            if self.transient_io.as_ref().unwrap().batches_info() {
+                return self.transient_io.as_mut().unwrap().batched_uniform(data);
+            }
             self.compute_pass = None;
             let resource = self
                 .transient_io
@@ -801,7 +804,12 @@ impl WgpuStream {
         result
     }
     fn flush_inner(&mut self, mode: StreamErrorMode) -> Result<(), ServerError> {
-        if self.tasks_count == 0 {
+        if self.tasks_count == 0
+            && !self
+                .transient_io
+                .as_ref()
+                .is_some_and(|io| io.has_pending_info())
+        {
             return self.flush_errors(mode);
         }
 
@@ -820,7 +828,17 @@ impl WgpuStream {
         };
 
         // This will _first_ fire off all pending write_buffer work.
-        let index = self.queue.submit([tasks_encoder.finish()]);
+        let parameters = self
+            .transient_io
+            .as_mut()
+            .map(|io| io.prepare_batched_info())
+            .transpose()?
+            .flatten();
+        let index = self.queue.submit(
+            parameters
+                .into_iter()
+                .chain(std::iter::once(tasks_encoder.finish())),
+        );
 
         self.cleanup_boundary.ordinary_regulation(|| {
             self.submission_load

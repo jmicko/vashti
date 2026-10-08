@@ -34,8 +34,15 @@ def completion(cap, deferred=False):
     ) + ((f"public_count1_hybrid_mid_token_cancel cap={cap} layer=47 erased=true",) if deferred else ())
 
 
-def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False, metadata=False, banks="standard", shared=False, shared_gdn=False):
+def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False, metadata=False, banks="standard", shared=False, shared_gdn=False, info_batch_upload=False):
     validate_cap(cap)
+    if info_batch_upload and (not compact_info or cap!=10):
+        raise ValueError("Batched INFO requires compact cap10 mode")
+    if info_batch_upload or "info_batch_upload" in receipt:
+        if receipt.get("info_batch_upload") is not info_batch_upload:
+            raise ValueError("Batched INFO selection mismatch")
+    if info_batch_upload and "private_info_batch_upload enabled=true" not in output.splitlines():
+        raise ValueError("Batched INFO runtime initialization missing")
     if shared_gdn and not shared:
         raise ValueError("Shared GDN requires shared Next kernels")
     if shared_gdn or "next_shared_gdn" in receipt:
@@ -144,12 +151,12 @@ def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False
         raise ValueError("Hybrid continuation and both cancellation proofs required")
 
 
-def worker_environment(model, receipt, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False, metadata=False, banks="standard", shared=False, shared_gdn=False):
+def worker_environment(model, receipt, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False, metadata=False, banks="standard", shared=False, shared_gdn=False, info_batch_upload=False):
     if workers not in ("scoped", "pooled"):
         raise ValueError("Unknown CPU worker mode")
     if type(overlap) is not bool or (overlap and workers != "pooled"):
         raise ValueError("Overlap requires explicit pooled workers")
-    if any(type(value) is not bool for value in (mapped,profile,fast,long,cpu_q8,large_cache,compact_info,batch_tasks,fast_fault,deferred,gpu_router,metadata,shared,shared_gdn)):
+    if any(type(value) is not bool for value in (mapped,profile,fast,long,cpu_q8,large_cache,compact_info,batch_tasks,fast_fault,deferred,gpu_router,metadata,shared,shared_gdn,info_batch_upload)):
         raise ValueError("Explicit boolean optimization selections required")
     if cpu_q8 and workers != "pooled":
         raise ValueError("Q8 CPU activation arithmetic requires pooled workers")
@@ -177,6 +184,9 @@ def worker_environment(model, receipt, workers="scoped", overlap=False, mapped=F
     env["KUNO_LAB_CPU_Q8"] = "1" if cpu_q8 else "0"
     env["KUNO_LAB_LARGE_WEIGHT_CACHE"] = "1" if large_cache else "0"
     env["KUNO_LAB_COMPACT_INFO"] = "1" if compact_info else "0"
+    if info_batch_upload and not compact_info:
+        raise ValueError("Batched INFO requires compact slabs")
+    env["KUNO_LAB_INFO_BATCH_UPLOAD"] = "1" if info_batch_upload else "0"
     env["KUNO_LAB_INFO_SLAB_BYTES"] = "4096" if compact_info else "0"
     env["KUNO_LAB_BATCH_TASKS"] = "1" if batch_tasks else "0"
     env["KUNO_LAB_FAST_GPU_FAULT"] = "1" if fast_fault else "0"
@@ -207,6 +217,7 @@ def main():
     parser.add_argument("--cpu-q8", action="store_true")
     parser.add_argument("--large-weight-cache", action="store_true")
     parser.add_argument("--compact-info", action="store_true")
+    parser.add_argument("--info-batch-upload", action="store_true")
     parser.add_argument("--batch-tasks", action="store_true")
     parser.add_argument("--fast-gpu-fault", action="store_true")
     parser.add_argument("--defer-router-io", action="store_true")
@@ -224,6 +235,8 @@ def main():
         parser.error("Q8 CPU activation arithmetic requires --cpu-workers pooled")
     if args.large_weight_cache and not args.mapped_weights:
         parser.error("Larger public cache requires --mapped-weights")
+    if args.info_batch_upload and (not args.compact_info or args.cpu_miss_cap!=10):
+        parser.error("Batched INFO requires --compact-info --cpu-miss-cap10")
     if args.next_shared_gdn and not args.next_shared_kernels:
         parser.error("Shared GDN requires --next-shared-kernels")
     if args.next_shared_kernels and (not args.fast_gpu or not args.gpu_router or args.fast_gpu_fault or args.cpu_miss_cap!=10):
@@ -252,7 +265,7 @@ def main():
         ("KUNO_LAB_STATIC_CACHE_BYTES " if args.bank_profile!="intel96" else "") + "KUNO_LAB_EXPERT_BATCH_BYTES KUNO_LAB_EXPERT_SCATTER",
     ]
     command.extend("--setenv=" + key + "=" + value
-                   for key, value in worker_environment(args.model.resolve(), target, args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault,args.defer_router_io,args.gpu_router,args.retained_metadata,args.bank_profile,args.next_shared_kernels,args.next_shared_gdn).items())
+                   for key, value in worker_environment(args.model.resolve(), target, args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault,args.defer_router_io,args.gpu_router,args.retained_metadata,args.bank_profile,args.next_shared_kernels,args.next_shared_gdn,args.info_batch_upload).items())
     command.extend([sys.executable, str(HERE / "protected-lab-exec.py"), str(frozen),
                     args.card, MODE, str(args.cpu_miss_cap)])
     print("verified_cargo_executable_sha256=" + identity, flush=True)
@@ -267,7 +280,7 @@ def main():
         raise SystemExit("Missing whole-model hybrid receipt")
     snapshot = target.read_bytes()
     receipt = json.loads(snapshot)
-    validate_receipt(receipt, args.card, args.cpu_miss_cap, "".join(lines), args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault,args.defer_router_io,args.gpu_router,args.retained_metadata,args.bank_profile,args.next_shared_kernels,args.next_shared_gdn)
+    validate_receipt(receipt, args.card, args.cpu_miss_cap, "".join(lines), args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault,args.defer_router_io,args.gpu_router,args.retained_metadata,args.bank_profile,args.next_shared_kernels,args.next_shared_gdn,args.info_batch_upload)
     record = {
         "scope": "fixed-public-count1-hybrid-output-and-lifecycle-only",
         "cargo_artifacts_sha256": artifacts_identity, "frozen_executable_sha256": identity,
@@ -279,7 +292,7 @@ def main():
         "long_fixture": args.long_fixture,
         "cpu_q8_activations": args.cpu_q8,
         "large_weight_cache": args.large_weight_cache,
-        "compact_info": args.compact_info,
+        "compact_info": args.compact_info, "info_batch_upload": args.info_batch_upload,
         "batch_tasks": args.batch_tasks,
         "fast_gpu_fault": args.fast_gpu_fault,
         "gpu_router":args.gpu_router,"defer_router_io":args.defer_router_io,"retained_metadata":args.retained_metadata,"bank_profile":args.bank_profile,

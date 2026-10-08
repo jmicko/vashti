@@ -532,3 +532,24 @@ Startup compares full candidate/output/status owners and unchanged old state
 against the original checked scalar shader for normal, zero-beta and nonfinite
 columns, including nonzero surrounding intervals. Source gates pass; device
 acceptance and whole-model performance remain pending for this additional mode.
+
+## Batched private parameter uploads, 2026-10-08
+
+`KUNO_LAB_INFO_BATCH_UPLOAD=1` is an explicit protected compact-cap10 experiment,
+off by default. It appends each kernel's parameters into distinct aligned
+regions of an initialized mapped source page and its original uniform target.
+At submission, a separate copy command buffer precedes the graph command
+buffer. Submission closes every append page; no in-flight uniform is changed.
+This removes per-kernel source allocations and compute-pass interruptions,
+without changing arithmetic or graph acceptance. Full source and target pages,
+including audit duplicates, stay charged to the existing runtime-I/O cap and
+tracked through normal erasure and inspection. Failed preparation keeps the
+original owners and unmaps sources before cleanup. See the
+[runtime ownership details](../apps/kuno/benchmarks/native-text/runtime-ownership/README.md).
+
+The runner pins the flag and checks both the actual runtime marker and receipt
+selection. Source gates pass:478 native tests, both offline shader suites,
+50 imported runtime tests,21 hybrid runner controls and strict Clippy for both
+native and imported runtime code. Physical complete-model acceptance and
+performance remain pending for this mode. No API, installed service or Vashti
+consumer changes are included.

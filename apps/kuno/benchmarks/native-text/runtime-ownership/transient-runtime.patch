@@ -14,7 +14,32 @@
  use cubecl_common::{
      backtrace::BackTrace,
      bytes::{AllocationProperty, Bytes},
-@@ -298,6 +299,168 @@
+@@ -207,6 +208,24 @@
+         self.device
+             .submit_blocking(move |state| state.get_resource(binding, stream_id))
+             .unwrap()
++    }
++
++    /// Inspect only already initialized, retained FULL same-stream allocations.
++    /// Channel ordering completes prior initialization calls; queued consumers
++    /// need not run for immutable allocation identity/extent to be inspected.
++    /// This is NOT a readback, submission, completion, or memory-credit fence.
++    pub fn retained_resource_metadata(
++        &self,
++        handles: Vec<Handle>,
++    ) -> Result<Vec<ManagedResource<<<R::Server as ComputeServer>::Storage as ComputeStorage>::Resource>>, ServerError> {
++        let stream_id = self.stream_id();
++        let bindings: Vec<_> = handles.into_iter().map(Handle::binding).collect();
++        crate::transient::retained_metadata_bindings(&bindings, stream_id)?;
++        self.device.submit_blocking(move |server| server.retained_resource_metadata(bindings, stream_id))
++            .map_err(|_| ServerError::Generic {
++                reason: "retained metadata channel unavailable".into(),
++                backtrace: BackTrace::capture(),
++            })?
+     }
+ 
+     fn do_create_from_slices(
+@@ -298,6 +317,168 @@
          .unwrap()
          .remove(0)
          .memory
@@ -206,7 +231,7 @@
  use super::Handle;
  use crate::{
      client::ComputeClient,
-@@ -360,6 +361,72 @@
+@@ -360,12 +361,93 @@
      /// Wait for the completion of every task in the server.
      fn sync(&mut self, stream_id: StreamId) -> DynFut<Result<(), ServerError>>;
  
@@ -279,7 +304,28 @@
      /// Given a resource handle, returns the storage resource.
      fn get_resource(
          &mut self,
-@@ -812,12 +879,38 @@
+         binding: Binding,
+         stream_id: StreamId,
+     ) -> Result<ManagedResource<<Self::Storage as ComputeStorage>::Resource>, ServerError>;
++
++    /// Bounded, same-stream FULL retained allocation metadata only. Does not
++    /// execute pending tasks, map bytes, synchronize, allocate GPU memory,
++    /// clean a pool, or grant completed-fence credit. Unsupported backends
++    /// reject this API; ordinary get_resource keeps its existing semantics.
++    fn retained_resource_metadata(
++        &mut self,
++        _bindings: Vec<Binding>,
++        _stream_id: StreamId,
++    ) -> Result<Vec<ManagedResource<<Self::Storage as ComputeStorage>::Resource>>, ServerError> {
++        Err(ServerError::Generic {
++            reason: "retained resource metadata unsupported".into(),
++            backtrace: BackTrace::capture(),
++        })
++    }
+ 
+     /// Executes the `kernel` over the given memory `handles`.
+     ///
+@@ -812,12 +894,38 @@
  ///
  /// The [`ComputeServer`] is responsible to convert those info into actual [`Binding`] when launching
  /// kernels.
@@ -321,7 +367,7 @@
  impl MetadataBindingInfo {
 --- /dev/null
 +++ b/cubecl-runtime/src/transient.rs
-@@ -0,0 +1,265 @@
+@@ -0,0 +1,305 @@
 +// Modified for Kuno's laboratory transient-I/O ownership/erasure patch (2026-10-05).
 +//! Laboratory-only private upload ownership and transient-I/O receipt.
 +//!
@@ -337,6 +383,46 @@
 +use core::mem::MaybeUninit;
 +use core::sync::atomic::{Ordering, compiler_fence};
 +use cubecl_common::bytes::{AllocationController, AllocationProperty, Bytes};
++
++/// Erase every mapped byte using aligned volatile words plus byte boundaries.
++/// No allocation, logical-span narrowing, nonvolatile memset, or early exit.
++///
++/// # Safety
++/// `pointer..pointer+length` must be the exclusive, writable, initialized FULL
++/// mapped allocation span, including padding. Its map must remain active, and
++/// no other CPU/GPU accessor may use it until the caller unmaps/flushed it.
++pub unsafe fn wipe_mapped_full_span(pointer: *mut u8, length: usize) {
++    let prefix = pointer.align_offset(core::mem::align_of::<u64>()).min(length);
++    for i in 0..prefix {
++        // SAFETY: inside the caller's full initialized writable span.
++        unsafe { pointer.add(i).write_volatile(0) };
++    }
++    let words = (length - prefix) / 8;
++    for i in 0..words {
++        // SAFETY: prefix establishes u64 alignment; each complete word lies
++        // entirely inside the same full span and contains only initialized bytes.
++        unsafe { pointer.add(prefix).cast::<u64>().add(i).write_volatile(0) };
++    }
++    for i in prefix + words * 8..length {
++        // SAFETY: exact remaining tail, never the first byte beyond the owner.
++        unsafe { pointer.add(i).write_volatile(0) };
++    }
++    compiler_fence(Ordering::SeqCst);
++}
++
++/// Validate metadata requests, never contents or completion. The backend must
++/// also reject an inactive private-I/O stream. All bindings remain retained.
++pub fn retained_metadata_bindings(bindings: &[crate::server::Binding], stream: cubecl_common::stream_id::StreamId) -> Result<(), crate::server::ServerError> {
++    if !(1..=128).contains(&bindings.len()) || bindings.iter().any(|b|
++        b.stream != stream || b.offset_start.unwrap_or(0) != 0
++        || b.offset_end.unwrap_or(0) != 0 || b.size == 0) {
++        return Err(crate::server::ServerError::Generic {
++            reason: "retained metadata full same-stream binding".into(),
++            backtrace: cubecl_common::backtrace::BackTrace::capture(),
++        });
++    }
++    Ok(())
++}
 +
 +/// Checked sanitizer completion for the explicitly owned transient I/O buffers.
 +/// This is not a production privacy certificate or device/driver memory proof.
@@ -1732,7 +1818,35 @@
      }
  
      fn get_resource(
-@@ -356,6 +502,7 @@
+@@ -348,6 +494,27 @@
+         Ok(ManagedResource::new(memory, resource))
+     }
+ 
++    fn retained_resource_metadata(
++        &mut self,
++        bindings: Vec<Binding>,
++        stream_id: StreamId,
++    ) -> Result<Vec<ManagedResource<WgpuResource>>, ServerError> {
++        cubecl_runtime::transient::retained_metadata_bindings(&bindings, stream_id)?;
++        let stream = self.scheduler.stream(&stream_id);
++        stream.private_io_active()?;
++        let mut resources = Vec::new();
++        resources.try_reserve_exact(bindings.len()).map_err(|_|
++            super::transient_io::fault("retained metadata bounded host allocation"))?;
++        for binding in bindings {
++            let memory = binding.memory.clone();
++            let resource = stream.mem_manage.get_resource(binding)?;
++            resources.push(ManagedResource::new(memory, resource));
++        }
++        // No execute_streams/flush/sync/cleanup/queue operation. The retained
++        // bindings prevent relocation/reuse of these already initialized spans.
++        Ok(resources)
++    }
++
+     unsafe fn launch(
+         &mut self,
+         kernel: Self::Kernel,
+@@ -356,6 +523,7 @@
          mode: ExecutionMode,
          stream_id: StreamId,
      ) {
@@ -1740,7 +1854,7 @@
          let pipeline = match self.pipeline(kernel, &args, mode) {
              Ok(val) => val,
              Err(err) => {
-@@ -387,25 +534,40 @@
+@@ -387,25 +555,40 @@
          };
  
          self.scheduler.register(stream_id, task, &self.streams_pool);
@@ -2144,7 +2258,7 @@
      /// Allocates a new empty buffer using the main memory pool.
      pub fn empty(&mut self, size: u64) -> Result<ManagedMemoryHandle, IoError> {
          self.mem_manage.reserve(size)
-@@ -373,10 +674,21 @@
+@@ -373,10 +674,24 @@
          self.errors.push(error);
      }
  
@@ -2154,6 +2268,9 @@
 -        resource
 +    pub(crate) fn create_uniform(&mut self, data: &[u8]) -> Result<WgpuResource, ServerError> {
 +        if self.transient_io.is_some() {
++            if self.transient_io.as_ref().unwrap().batches_info() {
++                return self.transient_io.as_mut().unwrap().batched_uniform(data);
++            }
 +            self.compute_pass = None;
 +            let resource = self
 +                .transient_io
@@ -2170,7 +2287,7 @@
      }
  
      // Nb: this function submits a command to the _queue_ not to the encoder,
-@@ -441,9 +753,16 @@
+@@ -441,9 +756,16 @@
              #[cfg(not(target_family = "wasm"))]
              if let Err(e) = self.device.poll(wgpu::PollType::Wait {
                  submission_index: Some(index),
@@ -2189,10 +2306,11 @@
              }
  
              self.pending_write_count = 0;
-@@ -465,6 +784,23 @@
+@@ -465,7 +787,29 @@
      }
  
      pub fn flush(&mut self, mode: StreamErrorMode) -> Result<(), ServerError> {
+-        if self.tasks_count == 0 {
 +        let mutation = self.transient_io.as_ref().map(|io| io.mutation_guard());
 +        let scopes = self
 +            .transient_io
@@ -2210,15 +2328,35 @@
 +        result
 +    }
 +    fn flush_inner(&mut self, mode: StreamErrorMode) -> Result<(), ServerError> {
-         if self.tasks_count == 0 {
++        if self.tasks_count == 0
++            && !self
++                .transient_io
++                .as_ref()
++                .is_some_and(|io| io.has_pending_info())
++        {
              return self.flush_errors(mode);
          }
-@@ -486,8 +822,10 @@
-         // This will _first_ fire off all pending write_buffer work.
-         let index = self.queue.submit([tasks_encoder.finish()]);
  
+@@ -484,10 +828,22 @@
+         };
+ 
+         // This will _first_ fire off all pending write_buffer work.
+-        let index = self.queue.submit([tasks_encoder.finish()]);
+-
 -        self.submission_load
 -            .regulate(&self.device, self.tasks_count, index);
++        let parameters = self
++            .transient_io
++            .as_mut()
++            .map(|io| io.prepare_batched_info())
++            .transpose()?
++            .flatten();
++        let index = self.queue.submit(
++            parameters
++                .into_iter()
++                .chain(std::iter::once(tasks_encoder.finish())),
++        );
++
 +        self.cleanup_boundary.ordinary_regulation(|| {
 +            self.submission_load
 +                .regulate(&self.device, self.tasks_count, index);
@@ -2228,7 +2366,7 @@
          self.mem_manage.memory_cleanup(false);
 --- /dev/null
 +++ b/cubecl-wgpu/src/compute/transient_io.rs
-@@ -0,0 +1,3219 @@
+@@ -0,0 +1,3399 @@
 +// Modified for Kuno's laboratory transient-I/O ownership/erasure patch (2026-10-05).
 +//! Opt-in bounded, explicitly owned transient I/O. No device creation in tests.
 +//!
@@ -2318,6 +2456,15 @@
 +        Some("4096") => Ok(Some(4096)),
 +        Some("8192") => Ok(Some(8192)),
 +        _ => Err(fault("private INFO slab requires 0, 4096 or 8192")),
++    }
++}
++fn configured_info_batch(raw: Option<&str>, slab: Option<u64>) -> Result<bool, ServerError> {
++    match raw {
++        None | Some("0") => Ok(false),
++        Some("1") if slab.is_some() => Ok(true),
++        _ => Err(fault(
++            "batched private INFO requires explicit compact slabs",
++        )),
 +    }
 +}
 +#[derive(Clone, Copy)]
@@ -2420,6 +2567,7 @@
 +}
 +struct InfoSlab {
 +    buffer: wgpu::Buffer,
++    source: Option<wgpu::Buffer>,
 +    cursor: u64,
 +    epoch: u64,
 +}
@@ -2884,6 +3032,8 @@
 +    errors: Vec<ErrorFuture>,
 +    info_policy: Option<InfoPolicy>,
 +    info_slab: Option<InfoSlab>,
++    info_batch: bool,
++    pending_info: Vec<(wgpu::Buffer, wgpu::Buffer)>,
 +}
 +impl std::fmt::Debug for TransientIo {
 +    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -3244,11 +3394,9 @@
 +            return Err(fault("private upload wipe extent"));
 +        }
 +        let pointer = view.slice(..).as_raw_element_ptr().as_ptr();
-+        for i in 0..view.len() {
-+            // SAFETY: exclusive full WRITE view, exact owned API-visible span.
-+            unsafe { pointer.add(i).write_volatile(0) };
-+        }
-+        std::sync::atomic::compiler_fence(Ordering::SeqCst);
++        // SAFETY: exclusive full WRITE view, exact owned API-visible span;
++        // the map guard remains active until checked explicit unmap below.
++        unsafe { cubecl_runtime::transient::wipe_mapped_full_span(pointer, view.len()) };
 +        // The full view drops before checked explicit unmap/guard fallback.
 +        Ok(())
 +    }
@@ -3486,6 +3634,20 @@
 +                    })
 +                    .transpose()?,
 +            )?;
++            let raw_batch = std::env::var_os("KUNO_LAB_INFO_BATCH_UPLOAD");
++            let info_batch = configured_info_batch(
++                raw_batch
++                    .as_ref()
++                    .map(|v| {
++                        v.to_str()
++                            .ok_or_else(|| fault("batched private INFO setting encoding"))
++                    })
++                    .transpose()?,
++                slab_bytes,
++            )?;
++            if info_batch {
++                println!("private_info_batch_upload enabled=true");
++            }
 +            let info_policy = slab_bytes
 +                .map(|bytes| {
 +                    let limits = device.limits();
@@ -3507,11 +3669,125 @@
 +                errors: Vec::new(),
 +                info_policy,
 +                info_slab: None,
++                info_batch,
++                pending_info: Vec::new(),
 +            })
 +        }
 +    }
 +    pub fn retired(&self) -> bool {
 +        self.leases.retired.load(Ordering::Acquire)
++    }
++    pub(crate) fn batches_info(&self) -> bool {
++        self.info_batch
++    }
++    pub(crate) fn has_pending_info(&self) -> bool {
++        !self.pending_info.is_empty()
++    }
++
++    /// Each page is write-once and contains only this submission's INFO. Every
++    /// full source/target remains in the original ledger through erase/audit.
++    /// Returning this encoder before the task encoder proves copy-before-use;
++    /// no pending source is remapped or reused after this submission boundary.
++    pub(crate) fn prepare_batched_info(
++        &mut self,
++    ) -> Result<Option<wgpu::CommandBuffer>, ServerError> {
++        if self.pending_info.is_empty() {
++            return Ok(None);
++        }
++        self.active()?;
++        let mut encoder = self
++            .device
++            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
++                label: Some("CubeCL owned batched INFO copies"),
++            });
++        self.info_slab = None;
++        if self
++            .pending_info
++            .iter()
++            .any(|(source, target)| source.size() != target.size())
++        {
++            self.retire();
++            return Err(fault("batched INFO owner span mismatch"));
++        }
++        for (source, target) in &self.pending_info {
++            source.unmap();
++            encoder.copy_buffer_to_buffer(source, 0, target, 0, source.size());
++        }
++        self.pending_info.clear();
++        Ok(Some(encoder.finish()))
++    }
++
++    pub(crate) fn batched_uniform(&mut self, data: &[u8]) -> Result<WgpuResource, ServerError> {
++        self.active()?;
++        if !self.info_batch {
++            return Err(fault("batched INFO not selected"));
++        }
++        let policy = self
++            .info_policy
++            .ok_or_else(|| fault("batched INFO missing policy"))?;
++        let logical = (data.len() as u64)
++            .checked_add(3)
++            .map(|n| n / 4 * 4)
++            .ok_or_else(|| fault("batched INFO length overflow"))?;
++        let current = self
++            .info_slab
++            .as_ref()
++            .map(|s| {
++                info_epoch(s.epoch, self.ledger.epoch)?;
++                if s.source.is_none() {
++                    return Err(fault("batched INFO source missing"));
++                }
++                Ok((s.buffer.size(), s.cursor))
++            })
++            .transpose()?;
++        let plan = policy.plan(logical, current)?;
++        if !plan.slab {
++            return Err(fault("batched INFO record exceeds fixed page"));
++        }
++        let source_charge = if plan.existing { 0 } else { plan.target_bytes };
++        self.ledger
++            .check_info_audit_group(source_charge, plan.target_bytes, 0)
++            .inspect_err(|_| self.leases.record(Failure::AuditBudget))?;
++        if !plan.existing {
++            self.pending_info
++                .try_reserve(1)
++                .map_err(|_| fault("batched INFO pointer allocation"))?;
++            let target = self.allocate(Kind::Uniform, plan.target_bytes)?;
++            let source = self.allocate(Kind::Upload, source_charge)?;
++            {
++                let mut map = source.get_mapped_range_mut(..);
++                map.slice(..).fill(0);
++            }
++            self.pending_info.push((source.clone(), target.clone()));
++            self.info_slab = Some(InfoSlab {
++                buffer: target,
++                source: Some(source),
++                cursor: 0,
++                epoch: self.ledger.epoch,
++            });
++        }
++        let page = self
++            .info_slab
++            .as_mut()
++            .ok_or_else(|| fault("batched INFO current page missing"))?;
++        copy_bounds(plan.logical, plan.offset, page.buffer.size(), data.len())?;
++        // Reserve append interval before filling; failures cannot authorize a
++        // subsequent overwrite. Mapped views never outlive this synchronous call.
++        page.cursor = plan.next_cursor;
++        {
++            let source = page
++                .source
++                .as_ref()
++                .ok_or_else(|| fault("batched INFO current source missing"))?;
++            let mut map = source.get_mapped_range_mut(..);
++            map.slice(plan.offset as usize..plan.offset as usize + data.len())
++                .copy_from_slice(data);
++        }
++        Ok(WgpuResource {
++            buffer: page.buffer.clone(),
++            offset: plan.offset,
++            size: plan.logical,
++        })
 +    }
 +    pub fn retire(&self) {
 +        self.leases.retire_with(Failure::ContextRetired);
@@ -3691,6 +3967,7 @@
 +            if plan.slab {
 +                self.info_slab = Some(InfoSlab {
 +                    buffer: buffer.clone(),
++                    source: None,
 +                    cursor: 0,
 +                    epoch: self.ledger.epoch,
 +                });
@@ -3835,6 +4112,14 @@
 +        previous_error: bool,
 +        inspect: bool,
 +    ) -> Result<TransientIoReceipt, ServerError> {
++        // Failed submission/preparation can leave append sources mapped. Their
++        // complete tracked buffers still belong to the ledger and must become
++        // available to the existing remap/wipe eraser on every failure path.
++        for (source, _) in &self.pending_info {
++            source.unmap();
++        }
++        self.info_slab = None;
++        self.pending_info.clear();
 +        if self.info_policy.is_some() && inspect {
 +            // Check ALL duplicate full-span stages before any erase/audit
 +            // mutation. Never recurse into a checkpoint to obtain space.
@@ -3942,6 +4227,39 @@
 +mod tests {
 +    use super::*;
 +    use std::cell::RefCell;
++
++    #[test]
++    fn batched_info_requires_explicit_slabs_and_complete_source_audit_charge() {
++        assert!(!configured_info_batch(None, None).unwrap());
++        assert!(!configured_info_batch(Some("0"), Some(4096)).unwrap());
++        assert!(configured_info_batch(Some("1"), Some(4096)).unwrap());
++        assert!(configured_info_batch(Some("1"), None).is_err());
++        for bad in ["", "auto", "true", "01", "1 "] {
++            assert!(configured_info_batch(Some(bad), Some(4096)).is_err());
++        }
++        let policy = InfoPolicy::new(4096, 256, 256, MAX_BYTES, 65536).unwrap();
++        let first = policy.plan(16, None).unwrap();
++        let mut ledger = Ledger::new(16384).unwrap();
++        ledger
++            .check_info_audit_group(first.target_bytes, first.target_bytes, 0)
++            .unwrap();
++        assert!(
++            Ledger::new(16383)
++                .unwrap()
++                .check_info_audit_group(4096, 4096, 0)
++                .is_err()
++        );
++        ledger.reserve(Kind::Uniform, 4096).unwrap();
++        ledger.reserve(Kind::Upload, 4096).unwrap();
++        let append = policy.plan(64, Some((4096, first.next_cursor))).unwrap();
++        assert!(append.existing);
++        assert_eq!(append.target_bytes, 0);
++        assert!(append.offset >= first.logical);
++        ledger.check_info_audit_group(0, 0, 0).unwrap();
++        assert!(ledger.check_info_audit_group(4096, 4096, 0).is_err());
++        // A flush starts fresh owners, never writes an in-flight earlier page.
++        assert!(!policy.plan(16, None).unwrap().existing);
++    }
 +
 +    #[test]
 +    fn info_slab_opt_in_and_actual_storage_uniform_limits_are_strict() {

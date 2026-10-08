@@ -7,6 +7,19 @@ installed model files, the global Cargo registry, or any inference deadline.
 Initial patch authoring was source-only. Protected device acceptance performed
 later by the root task is recorded below; it remains a standalone laboratory.
 
+The explicit laboratory `KUNO_LAB_INFO_BATCH_UPLOAD=1` requires compact INFO
+slabs and uses one fully initialized mapped source page per uniform target page.
+Records append in nonoverlapping aligned regions. A separate copy encoder
+unmaps all pages and copies every full source before the task encoder is
+submitted. Each submission closes its append pages and creates fresh owners;
+in-flight parameters are never overwritten. The original hard runtime budget
+precharges full source/target pages and every audit duplicate. All pages remain
+tracked through normal erasure/inspection. Failed preparation keeps sources
+tracked and unmaps them before the original eraser; it cannot publish a token
+or a clean epoch. No implicit queue staging, pooling, public/private fallback,
+extra main allocation or reduction in owning checks is introduced. The default
+per-record path is unchanged. Device acceptance is pending for this new mode.
+
 ## Pin and licenses
 
 `cubecl-runtime`, `cubecl-core`, and `cubecl-wgpu` are copies of the published

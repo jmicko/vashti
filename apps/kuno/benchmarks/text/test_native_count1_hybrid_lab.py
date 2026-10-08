@@ -44,6 +44,18 @@ def completion(cap):
 
 
 class HybridLabTests(unittest.TestCase):
+    def test_batched_info_requires_compact_slabs_and_independent_runtime_marker(self):
+        value=receipt("intel",10)
+        value.update(compact_info=True,info_slab_bytes=4096,info_batch_upload=True)
+        output=completion(10)+"\nprivate_info_batch_upload enabled=true"
+        LAB.validate_receipt(value,"intel",10,output,compact_info=True,info_batch_upload=True)
+        with self.assertRaises(ValueError):
+            LAB.validate_receipt(value,"intel",10,completion(10),compact_info=True,info_batch_upload=True)
+        with self.assertRaises(ValueError):
+            LAB.worker_environment("/original/model","/public/receipt",info_batch_upload=True)
+        env=LAB.worker_environment("/original/model","/public/receipt",compact_info=True,info_batch_upload=True)
+        self.assertEqual(env["KUNO_LAB_INFO_BATCH_UPLOAD"],"1")
+
     def test_shared_kernels_require_original_numeric_probes_and_all_dense_calls(self):
         value = receipt("intel", 10)
         value.update(fast_gpu=True, observed_fast_dense_calls=5264,

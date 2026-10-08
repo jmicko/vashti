@@ -89,6 +89,15 @@ fn configured_info_slab(raw: Option<&str>) -> Result<Option<u64>, ServerError> {
         _ => Err(fault("private INFO slab requires 0, 4096 or 8192")),
     }
 }
+fn configured_info_batch(raw: Option<&str>, slab: Option<u64>) -> Result<bool, ServerError> {
+    match raw {
+        None | Some("0") => Ok(false),
+        Some("1") if slab.is_some() => Ok(true),
+        _ => Err(fault(
+            "batched private INFO requires explicit compact slabs",
+        )),
+    }
+}
 #[derive(Clone, Copy)]
 struct InfoPolicy {
     slab_bytes: u64,
@@ -189,6 +198,7 @@ struct InfoPlan {
 }
 struct InfoSlab {
     buffer: wgpu::Buffer,
+    source: Option<wgpu::Buffer>,
     cursor: u64,
     epoch: u64,
 }
@@ -653,6 +663,8 @@ pub(crate) struct TransientIo {
     errors: Vec<ErrorFuture>,
     info_policy: Option<InfoPolicy>,
     info_slab: Option<InfoSlab>,
+    info_batch: bool,
+    pending_info: Vec<(wgpu::Buffer, wgpu::Buffer)>,
 }
 impl std::fmt::Debug for TransientIo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -1253,6 +1265,20 @@ impl TransientIo {
                     })
                     .transpose()?,
             )?;
+            let raw_batch = std::env::var_os("KUNO_LAB_INFO_BATCH_UPLOAD");
+            let info_batch = configured_info_batch(
+                raw_batch
+                    .as_ref()
+                    .map(|v| {
+                        v.to_str()
+                            .ok_or_else(|| fault("batched private INFO setting encoding"))
+                    })
+                    .transpose()?,
+                slab_bytes,
+            )?;
+            if info_batch {
+                println!("private_info_batch_upload enabled=true");
+            }
             let info_policy = slab_bytes
                 .map(|bytes| {
                     let limits = device.limits();
@@ -1274,11 +1300,125 @@ impl TransientIo {
                 errors: Vec::new(),
                 info_policy,
                 info_slab: None,
+                info_batch,
+                pending_info: Vec::new(),
             })
         }
     }
     pub fn retired(&self) -> bool {
         self.leases.retired.load(Ordering::Acquire)
+    }
+    pub(crate) fn batches_info(&self) -> bool {
+        self.info_batch
+    }
+    pub(crate) fn has_pending_info(&self) -> bool {
+        !self.pending_info.is_empty()
+    }
+
+    /// Each page is write-once and contains only this submission's INFO. Every
+    /// full source/target remains in the original ledger through erase/audit.
+    /// Returning this encoder before the task encoder proves copy-before-use;
+    /// no pending source is remapped or reused after this submission boundary.
+    pub(crate) fn prepare_batched_info(
+        &mut self,
+    ) -> Result<Option<wgpu::CommandBuffer>, ServerError> {
+        if self.pending_info.is_empty() {
+            return Ok(None);
+        }
+        self.active()?;
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("CubeCL owned batched INFO copies"),
+            });
+        self.info_slab = None;
+        if self
+            .pending_info
+            .iter()
+            .any(|(source, target)| source.size() != target.size())
+        {
+            self.retire();
+            return Err(fault("batched INFO owner span mismatch"));
+        }
+        for (source, target) in &self.pending_info {
+            source.unmap();
+            encoder.copy_buffer_to_buffer(source, 0, target, 0, source.size());
+        }
+        self.pending_info.clear();
+        Ok(Some(encoder.finish()))
+    }
+
+    pub(crate) fn batched_uniform(&mut self, data: &[u8]) -> Result<WgpuResource, ServerError> {
+        self.active()?;
+        if !self.info_batch {
+            return Err(fault("batched INFO not selected"));
+        }
+        let policy = self
+            .info_policy
+            .ok_or_else(|| fault("batched INFO missing policy"))?;
+        let logical = (data.len() as u64)
+            .checked_add(3)
+            .map(|n| n / 4 * 4)
+            .ok_or_else(|| fault("batched INFO length overflow"))?;
+        let current = self
+            .info_slab
+            .as_ref()
+            .map(|s| {
+                info_epoch(s.epoch, self.ledger.epoch)?;
+                if s.source.is_none() {
+                    return Err(fault("batched INFO source missing"));
+                }
+                Ok((s.buffer.size(), s.cursor))
+            })
+            .transpose()?;
+        let plan = policy.plan(logical, current)?;
+        if !plan.slab {
+            return Err(fault("batched INFO record exceeds fixed page"));
+        }
+        let source_charge = if plan.existing { 0 } else { plan.target_bytes };
+        self.ledger
+            .check_info_audit_group(source_charge, plan.target_bytes, 0)
+            .inspect_err(|_| self.leases.record(Failure::AuditBudget))?;
+        if !plan.existing {
+            self.pending_info
+                .try_reserve(1)
+                .map_err(|_| fault("batched INFO pointer allocation"))?;
+            let target = self.allocate(Kind::Uniform, plan.target_bytes)?;
+            let source = self.allocate(Kind::Upload, source_charge)?;
+            {
+                let mut map = source.get_mapped_range_mut(..);
+                map.slice(..).fill(0);
+            }
+            self.pending_info.push((source.clone(), target.clone()));
+            self.info_slab = Some(InfoSlab {
+                buffer: target,
+                source: Some(source),
+                cursor: 0,
+                epoch: self.ledger.epoch,
+            });
+        }
+        let page = self
+            .info_slab
+            .as_mut()
+            .ok_or_else(|| fault("batched INFO current page missing"))?;
+        copy_bounds(plan.logical, plan.offset, page.buffer.size(), data.len())?;
+        // Reserve append interval before filling; failures cannot authorize a
+        // subsequent overwrite. Mapped views never outlive this synchronous call.
+        page.cursor = plan.next_cursor;
+        {
+            let source = page
+                .source
+                .as_ref()
+                .ok_or_else(|| fault("batched INFO current source missing"))?;
+            let mut map = source.get_mapped_range_mut(..);
+            map.slice(plan.offset as usize..plan.offset as usize + data.len())
+                .copy_from_slice(data);
+        }
+        Ok(WgpuResource {
+            buffer: page.buffer.clone(),
+            offset: plan.offset,
+            size: plan.logical,
+        })
     }
     pub fn retire(&self) {
         self.leases.retire_with(Failure::ContextRetired);
@@ -1458,6 +1598,7 @@ impl TransientIo {
             if plan.slab {
                 self.info_slab = Some(InfoSlab {
                     buffer: buffer.clone(),
+                    source: None,
                     cursor: 0,
                     epoch: self.ledger.epoch,
                 });
@@ -1602,6 +1743,14 @@ impl TransientIo {
         previous_error: bool,
         inspect: bool,
     ) -> Result<TransientIoReceipt, ServerError> {
+        // Failed submission/preparation can leave append sources mapped. Their
+        // complete tracked buffers still belong to the ledger and must become
+        // available to the existing remap/wipe eraser on every failure path.
+        for (source, _) in &self.pending_info {
+            source.unmap();
+        }
+        self.info_slab = None;
+        self.pending_info.clear();
         if self.info_policy.is_some() && inspect {
             // Check ALL duplicate full-span stages before any erase/audit
             // mutation. Never recurse into a checkpoint to obtain space.
@@ -1709,6 +1858,39 @@ mod cleanup_read_tests {
 mod tests {
     use super::*;
     use std::cell::RefCell;
+
+    #[test]
+    fn batched_info_requires_explicit_slabs_and_complete_source_audit_charge() {
+        assert!(!configured_info_batch(None, None).unwrap());
+        assert!(!configured_info_batch(Some("0"), Some(4096)).unwrap());
+        assert!(configured_info_batch(Some("1"), Some(4096)).unwrap());
+        assert!(configured_info_batch(Some("1"), None).is_err());
+        for bad in ["", "auto", "true", "01", "1 "] {
+            assert!(configured_info_batch(Some(bad), Some(4096)).is_err());
+        }
+        let policy = InfoPolicy::new(4096, 256, 256, MAX_BYTES, 65536).unwrap();
+        let first = policy.plan(16, None).unwrap();
+        let mut ledger = Ledger::new(16384).unwrap();
+        ledger
+            .check_info_audit_group(first.target_bytes, first.target_bytes, 0)
+            .unwrap();
+        assert!(
+            Ledger::new(16383)
+                .unwrap()
+                .check_info_audit_group(4096, 4096, 0)
+                .is_err()
+        );
+        ledger.reserve(Kind::Uniform, 4096).unwrap();
+        ledger.reserve(Kind::Upload, 4096).unwrap();
+        let append = policy.plan(64, Some((4096, first.next_cursor))).unwrap();
+        assert!(append.existing);
+        assert_eq!(append.target_bytes, 0);
+        assert!(append.offset >= first.logical);
+        ledger.check_info_audit_group(0, 0, 0).unwrap();
+        assert!(ledger.check_info_audit_group(4096, 4096, 0).is_err());
+        // A flush starts fresh owners, never writes an in-flight earlier page.
+        assert!(!policy.plan(16, None).unwrap().existing);
+    }
 
     #[test]
     fn info_slab_opt_in_and_actual_storage_uniform_limits_are_strict() {

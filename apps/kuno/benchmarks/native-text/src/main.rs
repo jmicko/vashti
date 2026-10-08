@@ -757,6 +757,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cpu_q8 = count1_environment_opt_in(&mode, "KUNO_LAB_CPU_Q8")?;
     let large_weight_cache = count1_environment_opt_in(&mode, "KUNO_LAB_LARGE_WEIGHT_CACHE")?;
     let compact_info = count1_environment_opt_in(&mode, "KUNO_LAB_COMPACT_INFO")?;
+    let info_batch_upload = count1_environment_opt_in(&mode, "KUNO_LAB_INFO_BATCH_UPLOAD")?;
+    if info_batch_upload && (!compact_info || count1_hybrid_cap != Some(10)) {
+        return Err("Batched INFO requires protected compact cap10 mode".into());
+    }
     let batch_tasks = count1_environment_opt_in(&mode, "KUNO_LAB_BATCH_TASKS")?;
     let gpu_router = count1_environment_opt_in(&mode, "KUNO_LAB_GPU_ROUTER")?;
     if next_shared && !gpu_router {
@@ -2180,6 +2184,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 receipt["cpu_q8_activations"] = serde_json::json!(cpu_q8);
                 receipt["large_weight_cache"] = serde_json::json!(large_weight_cache);
                 receipt["compact_info"] = serde_json::json!(compact_info);
+                receipt["info_batch_upload"] = serde_json::json!(info_batch_upload);
                 receipt["info_slab_bytes"] = serde_json::json!(if compact_info { 4096 } else { 0 });
                 receipt["batch_tasks"] = serde_json::json!(batch_tasks);
                 receipt["defer_router_io"] = serde_json::json!(defer_router_io);

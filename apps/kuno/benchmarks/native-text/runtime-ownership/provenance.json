@@ -49,7 +49,7 @@
   "changed_files": [
     {
       "path": "cubecl-runtime/src/client.rs",
-      "sha256": "a232ba9ffd504174cd72a6e5c6001289dc86726456a266336cb78b303651cda4",
+      "sha256": "49056dc3696baf4ca2c89bd9e6f98bf978dfdacdb709d7ac1a6e580c4f57d146",
       "original_sha256": "dd25c67906e3db68d05d916d45234e4bdf20cd5b65ac1ad2b00a2ddcb520e85a"
     },
     {
@@ -59,12 +59,12 @@
     },
     {
       "path": "cubecl-runtime/src/server/base.rs",
-      "sha256": "ab32e1d3be718c280216d03cfacbe9d8e7eb68522115249f1dd5000e3b2a1111",
+      "sha256": "d6475e2243490a5dff3ec3597ad23058677b8e15f74bf41f0312f2b5626d3ac2",
       "original_sha256": "c6292c16d5a73d7a1570776ffd25ec10afc339b942dbc5a693d8c791feb8ef5b"
     },
     {
       "path": "cubecl-runtime/src/transient.rs",
-      "sha256": "5b030003429bd16f9873addc0e3e7df942e5d7879d24322a81da493d78c07982",
+      "sha256": "2b23749a4d211a8ffcf9a1f760712741744a5b905eb351c53d1ddff9fa7630d6",
       "original_sha256": null
     },
     {
@@ -124,21 +124,21 @@
     },
     {
       "path": "cubecl-wgpu/src/compute/server.rs",
-      "sha256": "b9339d4767c9f6ab2cea7e39611b9dba847934803d5785566150f09830fcbc3d",
+      "sha256": "86d38cc24b42633a7bebd247b13bbf5e92b86af38ed1091106bc6c15a5b0db5e",
       "original_sha256": "a4840cd40e4541b27d93f0f08a211af96a0b50e272903fe97b74eec7a29a5903"
     },
     {
       "path": "cubecl-wgpu/src/compute/stream.rs",
-      "sha256": "af8662e362314677d5d3405322f430b974d2882ea34b69018f0407a05a592d66",
+      "sha256": "a9b261717c63ef3bc0061d12dca3a0917922e93e1122eb500c2c9d13f19d467c",
       "original_sha256": "97501594e0424c70cd65cbebfedf3b1f1578ecccb4b7ef1e3a873e85141cc35e"
     },
     {
       "path": "cubecl-wgpu/src/compute/transient_io.rs",
-      "sha256": "77008a45744ecaa3bea6f1a1a374e7e7716a51b7870186d2bd2e62f5767ecbf9",
+      "sha256": "aad272b06c7aacf4021beebc2627bbf1b6e62361d469b6b728afbea392a988f2",
       "original_sha256": null
     }
   ],
-  "patch_sha256": "64e243409cde4685bc0207876156b595e0081b8d830c1faf66117bb1deb8278f",
-  "lock_sha256": "b63c5bbf0b755839ed0a59bcf0c83c8ca87bb94ebd57933c7fccac21dcfaece5",
+  "patch_sha256": "249ef8794a304fb996d6d2f91369b4be63904e33b947498dde824f63e98de4a9",
+  "lock_sha256": "013a26bd77c9f8146e9ffb05a18d8128f308890425d6d38b17e7d2502875a70c",
   "host_lock_sha256": "b968a383901ba657bdc2b670a0c7d30fc8c6b8c7ae9335c7c231fb827f0b7acf"
 }
