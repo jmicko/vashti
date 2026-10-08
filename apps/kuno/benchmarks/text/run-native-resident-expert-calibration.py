@@ -98,6 +98,7 @@ def main():
         "KUNO_PUBLIC_RECEIPT": str(target), "KUNO_TEST_GGUF": str(args.model.resolve()),
         "KUNO_LAB_TRANSIENT_IO": "1", "KUNO_LAB_OWNED_ZERO_AUDIT": "1",
         "KUNO_LAB_RESIDENT_EXPERT_CALIBRATION": "1", "KUNO_LAB_DEVICE_DISPATCH": "inline",
+        "KUNO_LAB_CPU_WORK_STEALING": "1",
     }
     # This is not a count1 model run. Explicitly exclude inherited model policies.
     excluded = set(k for k in os.environ if k.startswith("KUNO_LAB_") and k not in env)

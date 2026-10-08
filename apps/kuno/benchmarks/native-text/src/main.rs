@@ -766,6 +766,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             staged_hybrid_setting(name, value)?;
         }
     }
+    let resident_calibration_raw = std::env::var("KUNO_LAB_RESIDENT_EXPERT_CALIBRATION").ok();
+    if std::env::var_os("KUNO_LAB_RESIDENT_EXPERT_CALIBRATION").is_some()
+        && resident_calibration_raw.is_none()
+    {
+        return Err("Resident expert calibration setting encoding rejected".into());
+    }
+    let resident_expert_calibration = resident_expert_calibration_mode(
+        &mode,
+        resident_calibration_raw.as_deref(),
+        transient_resident && public_owned_zero_audit,
+    )?;
     let cpu_workers_raw = std::env::var_os("KUNO_LAB_CPU_WORKERS");
     let count1_pooled = count1_worker_pool(
         &mode,
@@ -774,9 +785,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .map(|v| v.to_str().ok_or("CPU worker setting encoding rejected"))
             .transpose()?,
     )?;
-    let cpu_work_stealing = count1_environment_opt_in(&mode, "KUNO_LAB_CPU_WORK_STEALING")?;
+    let cpu_work_stealing = if resident_expert_calibration && cfg!(feature = "cpu-work-stealing") {
+        if std::env::var("KUNO_LAB_CPU_WORK_STEALING").as_deref() != Ok("1") {
+            return Err(
+                "Resident calibration requires explicit compiled work-stealing selection".into(),
+            );
+        }
+        true
+    } else {
+        count1_environment_opt_in(&mode, "KUNO_LAB_CPU_WORK_STEALING")?
+    };
     if cpu_work_stealing != cfg!(feature = "cpu-work-stealing")
-        || cpu_work_stealing && !count1_pooled
+        || cpu_work_stealing && !count1_pooled && !resident_expert_calibration
     {
         return Err("Compiled CPU row scheduling requires explicit pooled count1 selection".into());
     }
@@ -822,17 +842,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if count1_banks != Count1Banks::Standard && count1_hybrid_cap.is_none_or(|cap| cap > 10) {
         return Err("Expanded count1 banks require protected count1 mode".into());
     }
-    let resident_calibration_raw = std::env::var("KUNO_LAB_RESIDENT_EXPERT_CALIBRATION").ok();
-    if std::env::var_os("KUNO_LAB_RESIDENT_EXPERT_CALIBRATION").is_some()
-        && resident_calibration_raw.is_none()
-    {
-        return Err("Resident expert calibration setting encoding rejected".into());
-    }
-    let resident_expert_calibration = resident_expert_calibration_mode(
-        &mode,
-        resident_calibration_raw.as_deref(),
-        transient_resident && public_owned_zero_audit,
-    )?;
     let mapped_weights = count1_environment_opt_in(&mode, "KUNO_LAB_MAPPED_WEIGHTS")?;
     let raw_dispatch = std::env::var_os("KUNO_LAB_DEVICE_DISPATCH");
     let inline_dispatch = cubecl_common::device_handle::DeviceHandle::<
