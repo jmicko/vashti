@@ -2,6 +2,7 @@
 //! The coordinator proves actual misses/original bank pins, joins CPU workers,
 //! uploads CPU before owner readiness, and retains all-family cleanup authority.
 //! Original grouped gate/down kernels consume the subset map unchanged.
+use crate::secondary_experts::HostPartials as Partials;
 use crate::{
     private_arena::{BufferId, BufferLayout, PrivateArena},
     quant_matvec::grouped_moe::{self as k, MAX_BATCH, MAX_ROUTES, RANKS, Spans},
@@ -9,7 +10,6 @@ use crate::{
 };
 use cubecl::{prelude::*, wgpu::WgpuRuntime};
 use cubecl_runtime::server::Handle;
-use kuno_text::cpu_expert::Partials;
 use zeroize::Zeroizing;
 
 pub(super) const CPU_WORDS: usize = RANKS * 2560;

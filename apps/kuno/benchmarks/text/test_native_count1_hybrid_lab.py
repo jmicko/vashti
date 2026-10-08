@@ -16,6 +16,22 @@ LAB = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(LAB)
 
 
+class SecondaryControls(unittest.TestCase):
+    def test_actual_secondary_work_and_all_model_owner_closes_required(self):
+        value={"secondary_experts":True,"secondary_expert_calls":35,"secondary_gpu_calls":20,
+            "secondary_bank_shards":[32,16],"secondary_bank_allocation_bytes":9*1024**3,
+            "secondary_bank_setup_ms":2000,"secondary_weight_upload_bytes":1000000}
+        output="\n".join(["public_secondary_closed=true owned_buffers=9 owned_bytes=1835008"]*5)
+        LAB.validate_secondary(value,True,output,False)
+        for field,bad in [("secondary_expert_calls",0),("secondary_gpu_calls",36),
+                         ("secondary_bank_shards",[48]),("secondary_bank_allocation_bytes",1),
+                         ("secondary_weight_upload_bytes",0),("secondary_experts",False)]:
+            changed=dict(value);changed[field]=bad
+            with self.assertRaises(ValueError):LAB.validate_secondary(changed,True,output,False)
+        with self.assertRaises(ValueError):LAB.validate_secondary(value,True,output.split("\n",1)[1],False)
+        with self.assertRaises(ValueError):LAB.validate_secondary(value,False,output,False)
+
+
 def receipt(card, cap):
     # Historical real native inventory, altered solely for validator tests.
     # No test output is saved as a hybrid device acceptance receipt.

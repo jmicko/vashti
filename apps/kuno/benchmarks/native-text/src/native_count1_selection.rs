@@ -3,7 +3,7 @@
 //! original native Pending, whose bank identity and full handles pin the owner.
 use super::*;
 use crate::cpu_gpu_expert_schedule::Split;
-use kuno_text::cpu_expert::Partials;
+use crate::secondary_experts::HostPartials as Partials;
 
 pub(super) struct Proof {
     ids: Zeroizing<[usize; 10]>,
@@ -14,6 +14,8 @@ pub(super) struct Proof {
     hit_slots: Zeroizing<[usize; 10]>,
     cpu_count: Zeroizing<usize>,
     joined: Zeroizing<bool>,
+    secondary_mask: Zeroizing<u16>,
+    secondary_instance: Option<expert_banks::BankInstance>,
 }
 impl Proof {
     pub(super) fn prepare(
@@ -50,6 +52,8 @@ impl Proof {
             hit_slots: Zeroizing::new([0; 10]),
             cpu_count: Zeroizing::new(split.cpu().len()),
             joined: Zeroizing::new(false),
+            secondary_mask: Zeroizing::new(0),
+            secondary_instance: None,
         };
         for (rank, &id) in ids.iter().enumerate() {
             if misses[..all.uploads.len()].contains(&id) {
@@ -93,10 +97,54 @@ impl Proof {
         self.misses.count_ones() as usize
     }
     pub(super) fn cpu_miss_count(&self) -> usize {
-        self.misses().min(*self.cap)
+        self.misses().min(*self.cap) - self.secondary_mask.count_ones() as usize
     }
     pub(super) fn cpu_count(&self) -> usize {
-        *self.cpu_count
+        *self.cpu_count - self.secondary_mask.count_ones() as usize
+    }
+    pub(super) fn mark_secondary(
+        &mut self,
+        ids: &[usize],
+        instance: expert_banks::BankInstance,
+    ) -> Result<()> {
+        if !*self.joined || *self.cap != 10 || *self.gpu_limit != 10 || *self.secondary_mask != 0 {
+            return Err(err("native secondary completion policy"));
+        }
+        for (i, id) in ids.iter().enumerate() {
+            if ids[..i].contains(id) {
+                return Err(Error::InvalidBufferLength);
+            }
+            let rank = self
+                .ids
+                .iter()
+                .position(|v| v == id)
+                .ok_or(Error::InvalidBufferLength)?;
+            if *self.misses & (1 << rank) == 0 {
+                return Err(err("native secondary must be primary miss"));
+            }
+            *self.secondary_mask |= 1 << rank;
+        }
+        self.secondary_instance = Some(instance);
+        Ok(())
+    }
+    pub(super) fn validate_secondary(
+        &self,
+        secondary: Option<&crate::secondary_experts::Secondary>,
+        layer: usize,
+        primary: &expert_banks::ExpertBanks,
+    ) -> Result<()> {
+        if *self.secondary_mask == 0 {
+            return Ok(());
+        }
+        secondary
+            .ok_or(err("native secondary owner absent"))?
+            .check_membership(
+                layer,
+                primary,
+                &self.ids,
+                *self.secondary_mask,
+                self.secondary_instance,
+            )
     }
     pub(super) fn gpu_limit(&self) -> usize {
         *self.gpu_limit

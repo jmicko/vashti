@@ -46,6 +46,7 @@ mod residual_batch_gpu;
 mod residual_gpu;
 mod router_gpu;
 mod scratch_clear_batch;
+mod secondary_experts;
 mod small_cpu;
 mod status_fold_batch;
 mod token_waves;
@@ -675,6 +676,7 @@ fn apply_count1_hybrid_cap<'f>(
     if request_io_reuse {
         resident.begin_lab_request_io_reuse(executor)?;
     }
+    executor.enable_secondary_after_prefill()?;
     Ok(())
 }
 
@@ -955,6 +957,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let batch_tasks = count1_environment_opt_in(&mode, "KUNO_LAB_BATCH_TASKS")?;
     let gpu_router = count1_environment_opt_in(&mode, "KUNO_LAB_GPU_ROUTER")?;
     let fused_experts = count1_environment_opt_in(&mode, "KUNO_LAB_FUSED_EXPERTS")?;
+    let secondary_experts = count1_environment_opt_in(&mode, "KUNO_LAB_SECONDARY_EXPERTS")?;
+    if secondary_experts
+        && (vendor != 0x8086
+            || count1_banks != Count1Banks::Intel144
+            || count1_hybrid_cap != Some(10)
+            || !mapped_weights
+            || !count1_pooled
+            || !count1_overlap
+            || !next_shared
+            || !inline_dispatch
+            || std::env::var("KUNO_LAB_REQUEST_IO_REUSE").as_deref() != Ok("1"))
+    {
+        return Err(
+            "secondary experts require protected intel144 mapped cap10 pooled shared inline mode"
+                .into(),
+        );
+    }
     let gpu_expert_limit = match std::env::var("KUNO_LAB_GPU_EXPERT_LIMIT") {
         Err(std::env::VarError::NotPresent) => 10,
         Ok(value) if mode == "resident-count1-hybrid-chat" => value
@@ -2683,6 +2702,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 receipt["request_io_reuse"] = serde_json::json!(request_io_reuse);
                 receipt["bind_group_reuse"] = serde_json::json!(bind_group_reuse);
                 receipt["binding_cache_capacity"] = serde_json::json!(binding_cache_capacity);
+                receipt["secondary_experts"] = serde_json::json!(secondary_experts);
+                if let Some(second) = &executor.secondary {
+                    receipt["secondary_expert_calls"] = serde_json::json!(second.expert_calls);
+                    receipt["secondary_gpu_calls"] = serde_json::json!(second.calls);
+                    receipt["secondary_bank_setup_ms"] = serde_json::json!(second.bank_setup_ms);
+                    receipt["secondary_weight_upload_bytes"] =
+                        serde_json::json!(second.uploaded_bytes);
+                    receipt["secondary_bank_allocation_bytes"] =
+                        serde_json::json!(9u64 * 1024 * 1024 * 1024);
+                    receipt["secondary_bank_shards"] = serde_json::json!([32, 16]);
+                }
                 receipt["fused_experts"] = serde_json::json!(fused_experts);
                 receipt["integer_experts"] = serde_json::json!(integer_experts);
                 receipt["gpu_expert_limit"] = serde_json::json!(gpu_expert_limit);

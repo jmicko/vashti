@@ -745,6 +745,8 @@ struct Cached {
 /// The lifetime of this executor is one fixed synthetic experiment. Its cache
 /// keys/ranks must never be persisted or reused as private request history.
 pub struct GpuExecutor<'a> {
+    pub(crate) secondary: Option<crate::secondary_experts::Secondary>,
+    pub(crate) secondary_frequency: Option<crate::secondary_experts::Frequency>,
     pub shared_overlap_calls: u64,
     pub gpu_router: bool,
     pub fused_experts: bool,
@@ -863,6 +865,14 @@ impl<'a> GpuExecutor<'a> {
             std::env::var("KUNO_LAB_BATCH_EXPERTS").as_deref() == Ok("1"),
         )?;
         Ok(Self {
+            secondary: None,
+            secondary_frequency: if std::env::var("KUNO_LAB_SECONDARY_EXPERTS").as_deref()
+                == Ok("1")
+            {
+                Some(crate::secondary_experts::Frequency::new()?)
+            } else {
+                None
+            },
             ordered_public_upload,
             ordered_sources: ordered_public_upload
                 .then(|| Rc::new(RefCell::new(crate::ordered_public::PendingSources::new()))),
@@ -960,6 +970,11 @@ impl<'a> GpuExecutor<'a> {
     /// Checked fixed-fixture shutdown. No ordinary sync on owned-runtime I/O;
     /// failure keeps the context retired and the admission ledger poisoned.
     pub(crate) fn close_transient_resident(&mut self) -> Result<()> {
+        if let Some(secondary) = &mut self.secondary {
+            secondary.close()?;
+        }
+        self.secondary = None;
+        self.secondary_frequency = None;
         let retired = self
             .transient_resident
             .clone()
@@ -1002,6 +1017,36 @@ impl<'a> GpuExecutor<'a> {
     }
     pub fn cache_bytes(&self) -> usize {
         self.cache_bytes + self.bank_reserved
+    }
+    pub(crate) fn enable_secondary_after_prefill(&mut self) -> Result<()> {
+        let Some(frequency) = self.secondary_frequency.as_ref() else {
+            return Ok(());
+        };
+        if self.secondary.is_some()
+            || self.bank_slots != 144
+            || self.banks.len() != 48
+            || !self.shared_kernels
+            || self.gpu_expert_limit != 10
+            || self.batch_moe.is_some()
+        {
+            return Err(Error::InvalidFormat("secondary completed prefill policy"));
+        }
+        let model = kuno_text::model::Qwen4Exp::bind(self.model)?;
+        let client = cubecl::future::block_on(crate::secondary_experts::new_client())?;
+        self.secondary = Some(crate::secondary_experts::Secondary::build(
+            client,
+            self.model,
+            model.bound_graph(),
+            |layer| {
+                self.banks
+                    .get(&format!("blk.{layer}.ffn_gate_exps.weight"))
+                    .ok_or(Error::InvalidFormat("secondary original primary bank"))
+            },
+            frequency,
+            &AtomicBool::new(false),
+        )?);
+        self.secondary_frequency = None;
+        Ok(())
     }
     /// Completed fixed-public cap10 boundary only: CPU misses never consume
     /// these GPU-resident spans during the following static-bank decode. This

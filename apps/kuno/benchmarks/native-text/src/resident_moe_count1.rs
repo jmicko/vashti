@@ -152,6 +152,11 @@ impl GpuExecutor<'_> {
         }
         let rank_map = count1::Proof::native_map(&split);
         let original_probabilities = proof.probabilities();
+        let secondary_selection = self
+            .secondary
+            .as_ref()
+            .map(|s| s.select(layer, split.cpu(), bank))
+            .transpose()?;
         let mut map = hybrid_k::Map::new(
             proof.ids(),
             &original_probabilities,
@@ -176,6 +181,13 @@ impl GpuExecutor<'_> {
                         + std::mem::size_of::<Pending>()
                         + 4096,
                 )
+            })
+            .ok_or(Error::ArithmeticOverflow)?;
+        let live = live
+            .checked_add(if secondary_selection.is_some() {
+                crate::secondary_experts::LIVE_HOST
+            } else {
+                0
             })
             .ok_or(Error::ArithmeticOverflow)?;
         let private_limit = HYBRID_HOST
@@ -217,7 +229,7 @@ impl GpuExecutor<'_> {
         } else {
             private_limit
         };
-        let parent = || -> Result<expert_banks::FillStats> {
+        let mut parent = || -> Result<expert_banks::FillStats> {
             let mut stats = expert_banks::FillStats::default();
             for window in last.pending.uploads.chunks(10) {
                 proof.validate_source(&bank.slots, &staged, &last, false)?;
@@ -375,12 +387,21 @@ impl GpuExecutor<'_> {
                 // and audit every consumer before publication or scratch reuse.
                 self.client.flush().map_err(u::fault)?;
             }
+            if let Some(selection) = &secondary_selection
+                && selection.gpu_count() > 0
+            {
+                self.secondary
+                    .as_mut()
+                    .ok_or(err("secondary owner absent"))?
+                    .enqueue(layer, selection, packet.mixed(), cancel)?;
+            }
             Ok(stats)
         };
         // Parent work never joins a CPU consumer inside its admission allocation
         // closure. CPU/parent error or panic finishes all borrowed CPU jobs before
         // the enclosing sticky poison/drain/erase path can dispose model owners.
-        let (partials, stats) = if split.cpu().is_empty() {
+        let cpu_ids = secondary_selection.as_ref().map_or(split.cpu(), |s| &s.cpu);
+        let (partials, stats) = if cpu_ids.is_empty() {
             (None, parent()?)
         } else {
             let reader = self.model.positional_reader()?;
@@ -389,7 +410,7 @@ impl GpuExecutor<'_> {
             let (result, stats) = if overlap {
                 operator.execute_with_private_limit_alongside(
                     &cpu_weights,
-                    split.cpu(),
+                    cpu_ids,
                     packet.mixed(),
                     cancel,
                     cpu_limit,
@@ -398,7 +419,7 @@ impl GpuExecutor<'_> {
             } else {
                 let result = operator.execute_with_private_limit(
                     &cpu_weights,
-                    split.cpu(),
+                    cpu_ids,
                     packet.mixed(),
                     cancel,
                     cpu_limit,
@@ -408,7 +429,39 @@ impl GpuExecutor<'_> {
             reader.verify_file_unchanged()?;
             (Some(result), stats)
         };
+        let partials = if let Some(selection) = &secondary_selection {
+            if split.cpu().is_empty() {
+                None
+            } else {
+                Some(
+                    self.secondary
+                        .as_mut()
+                        .ok_or(err("secondary joined owner absent"))?
+                        .finish(selection, split.cpu(), partials, cancel)?,
+                )
+            }
+        } else {
+            partials.map(crate::secondary_experts::HostPartials::Cpu)
+        };
         proof.complete(partials.as_ref())?;
+        if let Some(selection) = &secondary_selection
+            && selection.gpu_count() > 0
+        {
+            let secondary = self
+                .secondary
+                .as_ref()
+                .ok_or(err("secondary completion owner absent"))?;
+            let ids = zeroize::Zeroizing::new(
+                split
+                    .cpu()
+                    .iter()
+                    .copied()
+                    .filter(|id| !selection.cpu.contains(id))
+                    .collect::<Vec<_>>(),
+            );
+            proof.mark_secondary(&ids, selection.instance)?;
+            proof.validate_secondary(Some(secondary), layer, bank)?;
+        }
         proof.validate_source(&bank.slots, &staged, &last, true)?;
         map.complete_cpu(partials.as_ref(), g.hidden())
             .map_err(err)?;
@@ -577,7 +630,7 @@ fn write_gpu_header(
 fn write_cpu(
     arena: &PrivateArena,
     id: BufferId,
-    partials: Option<&kuno_text::cpu_expert::Partials>,
+    partials: Option<&crate::secondary_experts::HostPartials>,
     live: usize,
     poison: &AtomicBool,
 ) -> Result<()> {

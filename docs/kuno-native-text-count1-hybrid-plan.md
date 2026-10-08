@@ -1911,3 +1911,45 @@ all original complete-model gates at11577ms/127 steps (10.9700 tokens/s),
 prefill14534ms, with zero decode disk reads/writes and zero expert uploads.
 It retains44549/60960 expert calls (73.08%) on B70; additional NVIDIA coverage
 and whole-model speedup remain unmeasured. No API or consumer change.
+
+### Complementary stationary NVIDIA bank implementation (2026-10-08, pending device acceptance)
+
+User approved implementation of the secondary bank. Explicit
+`KUNO_LAB_SECONDARY_EXPERTS=1` requires protected intel144 mapped cap10, pooled
+CPU overlap, shared kernels, inline dispatch and request I/O reuse. Default is
+off. The primary engine and its budgets remain unchanged. A separate NVIDIA
+context has a10-GiB MAIN cap,16-MiB runtime I/O cap and2-MiB private arena.
+Its nine original MAX8-shaped owning pages total1835008B, including a distinct
+fault and return packet. Preflight includes9-GiB public banks, source40-MiB and
+512-MiB device margin. Each original32+16 bank has independent same-device
+handles; ordinary flat48 construction is unchanged. Full source pages are
+precharged before bounded8-expert construction windows and credited only after
+completed cleanup/telemetry. No weights upload during decode.
+
+Prefill frequency occupies a fixed erased48x512 u32 table. Choose48 experts
+per layer by descending frequency, expert ID for ties, excluding every B70
+resident; erase frequency after constructing the stationary secondary bank.
+Selection and original-rank maps remain transient. The original count1 proof
+classifies B70 misses unchanged; a sealed joined host owner supplies NVIDIA and
+CPU partials in their original non-B70 order. Actual CPU miss accounting excludes
+secondary ranks only after checked secondary completion. All-family preflight
+revalidates secondary bank identity, membership and absence from primary.
+
+CPU jobs run alongside the parent callback, which submits B70 and NVIDIA work.
+The second context uses the original optimized float shared expert kernels with
+32+16 paired shards. A full-owner fold checks active finite values, every inactive
+suffix/padding, original count/header and exact completion statuses before the
+joined partial/fault packet is mapped. Only completed finite data may enter the
+original host bridge; original probability/rank merge, primary fault fold and
+whole-model publication remain. Existing1-MiB hybrid host limit additionally
+reserves384KiB for the secondary bridge; no primary privacy budget is increased.
+
+Secondary construction independently checks original decoded F64 rows for both
+Q5/Q8 down families and slots0/31/32/47 using a fixed public input, unchanged
+5e-4+5e-5 relative tolerance and full owning checks. Request reuse closes with
+full runtime audit; the nine MAIN owners close with full zero inspection before
+public banks release. Error/cancel cleanup retires the second context on failure.
+All five complete-model/fresh/cancel owner instances require checked closes;
+the runner records secondary dispatch counts, setup time, public upload bytes
+and allocation geometry independently of decode timing. No API/Vashti change,
+production installation or throughput acceptance follows from source tests.

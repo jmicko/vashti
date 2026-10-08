@@ -368,7 +368,7 @@ impl ExpertBanks {
         weights: RoutedWeights<'_>,
         capacity: usize,
     ) -> Result<Self> {
-        Self::new_inner(client, weights, capacity, false)
+        Self::new_inner(client, weights, capacity, false, false)
     }
     /// Narrow operator-lab seam: original Q4 gate/up and Q5/Q8 down, exactly
     /// sixteen slots. The original constructor/model allocation is unchanged.
@@ -381,13 +381,44 @@ impl ExpertBanks {
                 .map(|tensor| (tensor.info().dtype(), tensor.info().dimensions())),
         )
         .map_err(|_| Error::InvalidFormat("fixed-public original expert bank metadata"))?;
-        Self::new_inner(client, weights, 16, true)
+        Self::new_inner(client, weights, 16, true, false)
+    }
+    /// A separate stationary secondary bank. Preserve ordinary flat48 geometry.
+    pub(crate) fn new_secondary(
+        client: &ComputeClient<WgpuRuntime>,
+        weights: RoutedWeights<'_>,
+    ) -> Result<Self> {
+        validate_segmented_metadata(
+            [weights.gate, weights.up, weights.down]
+                .map(|t| (t.info().dtype(), t.info().dimensions())),
+        )?;
+        Self::new_inner(client, weights, 48, false, true)
+    }
+    pub(crate) fn secondary_requests(weights: RoutedWeights<'_>) -> Result<Vec<u64>> {
+        validate_segmented_metadata(
+            [weights.gate, weights.up, weights.down]
+                .map(|t| (t.info().dtype(), t.info().dimensions())),
+        )?;
+        [weights.gate, weights.up, weights.down]
+            .into_iter()
+            .flat_map(|t| {
+                [32, 16].map(move |n| {
+                    packed_bank_bytes(
+                        t.info().row_bytes() as usize,
+                        t.info().dimensions()[1] as usize,
+                        n,
+                    )
+                    .map(|(_, b)| b as u64)
+                })
+            })
+            .collect()
     }
     fn new_inner(
         client: &ComputeClient<WgpuRuntime>,
         weights: RoutedWeights<'_>,
         capacity: usize,
         full_lab_pages: bool,
+        secondary: bool,
     ) -> Result<Self> {
         let gate = Matrix::new(weights.gate)?;
         let up = Matrix::new(weights.up)?;
@@ -405,8 +436,22 @@ impl ExpertBanks {
             return Err(Error::InvalidFormat("expert bank geometry"));
         }
         Self::allocation(weights, capacity)?;
-        let create = |t| -> Result<Bank> {
-            let (expert_bytes, sizes) = bank_segments(t, capacity)?;
+        let create = |t: TensorView<'_>| -> Result<Bank> {
+            let (expert_bytes, sizes) = if secondary {
+                let (expert, first) = packed_bank_bytes(
+                    t.info().row_bytes() as usize,
+                    t.info().dimensions()[1] as usize,
+                    32,
+                )?;
+                let (_, second) = packed_bank_bytes(
+                    t.info().row_bytes() as usize,
+                    t.info().dimensions()[1] as usize,
+                    16,
+                )?;
+                (expert, vec![first, second])
+            } else {
+                bank_segments(t, capacity)?
+            };
             let mut first_slot = 0;
             let mut words = 0;
             let mut reserved = 0;

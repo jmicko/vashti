@@ -1018,6 +1018,12 @@ impl GpuExecutor<'_> {
             }
         }
         let mut done = 0;
+        if let Some(frequency) = &mut self.secondary_frequency {
+            frequency.record(
+                layer,
+                experts[..routes.count() * 10].iter().map(|&id| id as usize),
+            )?;
+        }
         let mut final_last = None;
         let mut stats = expert_banks::FillStats::default();
         for index in 0..routes.wave_count() {
@@ -1839,6 +1845,7 @@ impl Workspace {
                 return Err(err("native count1 foreign pending policy"));
             }
             proof.validate_source(&bank.slots, staged, last, true)?;
+            proof.validate_secondary(e.secondary.as_ref(), *p.layer, bank)?;
         } else if self.cpu_miss_cap().is_some() {
             return Err(err("native count1 missing compact proof"));
         }
