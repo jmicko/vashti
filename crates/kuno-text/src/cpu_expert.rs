@@ -1217,24 +1217,44 @@ fn finite(value: f32, category: &'static str) -> Result<f32> {
 }
 
 struct Scratch {
+    logical_width: usize,
     decoded: Zeroizing<Vec<f32>>,
     block: Zeroizing<[f32; 256]>,
     sums: Zeroizing<[f32; LANES]>,
 }
 impl Scratch {
     fn new(width: usize) -> Result<Self> {
-        let decoded = zeroed(width)?;
-        let total = bytes(&decoded)?
+        Self::check_capacity(width)?;
+        Ok(Self {
+            logical_width: width,
+            // SIMD paths decode into registers or the fixed block below. Do
+            // not allocate/initialize/wipe an unused full row for each worker.
+            decoded: Zeroizing::new(Vec::new()),
+            block: Zeroizing::new([0.; 256]),
+            sums: Zeroizing::new([0.; LANES]),
+        })
+    }
+    fn check_capacity(words: usize) -> Result<()> {
+        let total = words
+            .checked_mul(size_of::<f32>())
+            .ok_or(Error::ArithmeticOverflow)?
             .checked_add(WORKER_FIXED_PRIVATE_BYTES)
             .ok_or(Error::ArithmeticOverflow)?;
         if total > MAX_WORKER_PRIVATE_BYTES {
             return Err(Error::LimitExceeded("CPU expert worker scratch"));
         }
-        Ok(Self {
-            decoded,
-            block: Zeroizing::new([0.; 256]),
-            sums: Zeroizing::new([0.; LANES]),
-        })
+        Ok(())
+    }
+    fn prepare_decoded(&mut self) -> Result<()> {
+        if self.decoded.len() < self.logical_width {
+            let decoded = zeroed(self.logical_width)?;
+            // Keep the original actual-allocation bound, even if the allocator
+            // reserves more than the requested logical row. The guarded local
+            // wipes on rejection before it becomes reusable worker scratch.
+            Self::check_capacity(decoded.capacity())?;
+            self.decoded = decoded;
+        }
+        Ok(())
     }
 }
 
@@ -1432,12 +1452,13 @@ fn dot_row(
     cancel: &AtomicBool,
 ) -> Result<f32> {
     if dtype.row_bytes(input.len() as u64)? != packed.len() as u64
-        || input.len() > scratch.decoded.len()
+        || input.len() > scratch.logical_width
     {
         return Err(Error::InvalidBufferLength);
     }
     match backend {
         Backend::Portable => {
+            scratch.prepare_decoded()?;
             let decoded = &mut scratch.decoded[..input.len()];
             dtype.decode(packed, decoded)?;
             scratch.sums.fill(0.);
@@ -2789,6 +2810,107 @@ mod tests {
                             .all(|value| value.to_bits() == 0)
                     );
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn lazy_worker_scratch_preserves_logical_and_actual_capacity_bounds() {
+        let max_words = (MAX_WORKER_PRIVATE_BYTES - WORKER_FIXED_PRIVATE_BYTES) / size_of::<f32>();
+        let mut scratch = Scratch::new(max_words).unwrap();
+        assert_eq!(scratch.logical_width, max_words);
+        assert_eq!(scratch.decoded.capacity(), 0);
+        scratch.prepare_decoded().unwrap();
+        assert!(
+            bytes(&scratch.decoded).unwrap() + WORKER_FIXED_PRIVATE_BYTES
+                <= MAX_WORKER_PRIVATE_BYTES
+        );
+        assert!(Scratch::new(max_words + 1).is_err());
+        assert!(Scratch::check_capacity(max_words + 1).is_err());
+        assert!(matches!(
+            Scratch::new(usize::MAX),
+            Err(Error::ArithmeticOverflow)
+        ));
+
+        let (packed, _) = encoded_row(TensorType::F32, 65, 3);
+        for backend in [Backend::Portable, Backend::Avx2, Backend::Avx2Fma] {
+            let mut narrow = Scratch::new(64).unwrap();
+            assert!(matches!(
+                dot_row(
+                    backend,
+                    TensorType::F32,
+                    &packed,
+                    &input(65),
+                    &mut narrow,
+                    &AtomicBool::new(false)
+                ),
+                Err(Error::InvalidBufferLength)
+            ));
+            // Rejected geometry cannot trigger the portable allocation either.
+            assert_eq!(narrow.decoded.capacity(), 0);
+        }
+    }
+
+    #[test]
+    fn portable_worker_allocates_one_guarded_full_row_and_reuses_it() {
+        let mut scratch = Scratch::new(512).unwrap();
+        assert_eq!(scratch.decoded.capacity(), 0);
+        let mut allocation = None;
+        for kind in KINDS {
+            for width in [256, 512, 256] {
+                let (packed, decoded) = encoded_row(kind, width, 7);
+                let x = input(width);
+                let actual = dot_row(
+                    Backend::Portable,
+                    kind,
+                    &packed,
+                    &x,
+                    &mut scratch,
+                    &AtomicBool::new(false),
+                )
+                .unwrap();
+                assert_eq!(actual.to_bits(), reference_dot(&decoded, &x).to_bits());
+                assert!(scratch.decoded.len() >= 512);
+                assert_eq!(scratch.decoded.len(), scratch.decoded.capacity());
+                let current = (scratch.decoded.as_ptr(), scratch.decoded.capacity());
+                if let Some(original) = allocation {
+                    assert_eq!(current, original);
+                } else {
+                    allocation = Some(current);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn all_simd_formats_preserve_results_without_full_row_allocation() {
+        let cancel = AtomicBool::new(false);
+        for backend in [Backend::Avx2, Backend::Avx2Fma] {
+            if (backend == Backend::Avx2 && !avx2_available())
+                || (backend == Backend::Avx2Fma && !fma_available())
+            {
+                continue;
+            }
+            let mut scratch = Scratch::new(MAX_HIDDEN).unwrap();
+            for kind in KINDS {
+                let (packed, decoded) = encoded_row(kind, MAX_HIDDEN, 7);
+                let x = input(MAX_HIDDEN);
+                let actual = dot_row(backend, kind, &packed, &x, &mut scratch, &cancel).unwrap();
+                if backend == Backend::Avx2Fma
+                    && matches!(kind, TensorType::Q4K | TensorType::Q5_0 | TensorType::Q8_0)
+                {
+                    let products = decoded
+                        .iter()
+                        .zip(&x)
+                        .map(|(&w, &v)| f64::from(w) * f64::from(v));
+                    let reference = products.clone().sum::<f64>();
+                    let l1 = products.map(f64::abs).sum::<f64>();
+                    assert!((f64::from(actual) - reference).abs() <= 1e-5 + 1e-5 * l1);
+                } else {
+                    assert_eq!(actual.to_bits(), reference_dot(&decoded, &x).to_bits());
+                }
+                assert_eq!(scratch.decoded.len(), 0);
+                assert_eq!(scratch.decoded.capacity(), 0);
             }
         }
     }
