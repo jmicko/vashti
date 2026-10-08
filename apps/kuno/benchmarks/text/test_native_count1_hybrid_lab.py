@@ -222,10 +222,11 @@ class HybridLabTests(unittest.TestCase):
         value = receipt("intel", 10)
         value.update(fast_gpu=True, observed_fast_dense_calls=5264,
                      gpu_router=True, observed_gpu_router_calls=336,
-                     next_shared_kernels=True, observed_shared_dense_calls=5264)
+                     next_shared_kernels=True, observed_shared_dense_calls=5264, observed_shared_gr_calls=679)
         markers = ("rust_gpu_router cases=6 ranks=10 numeric_and_owning_checks=true",
                    "next_shared_original_rows cases=6 numeric_and_owning_checks=true",
-                   "next_shared_gpu_router cases=8 numeric_and_owning_checks=true")
+                   "next_shared_gpu_router cases=8 numeric_and_owning_checks=true",
+                   "next_shared_gr_rms counts=1,3,8 cases=6 numeric_finite_status_and_owning_checks=true")
         output = completion(10) + "\n" + "\n".join(markers)
         LAB.validate_receipt(value, "intel", 10, output, fast=True, gpu_router=True, shared=True)
         for bad in (None, True, 0, 5263, 5265, -1):
@@ -233,6 +234,10 @@ class HybridLabTests(unittest.TestCase):
             wrong["observed_shared_dense_calls"] = bad
             with self.assertRaises(ValueError):
                 LAB.validate_receipt(wrong, "intel", 10, output, fast=True, gpu_router=True, shared=True)
+        for bad in (None, True, 0, -1, 1_000_001):
+            wrong=copy.deepcopy(value);wrong["observed_shared_gr_calls"]=bad
+            with self.assertRaises(ValueError):
+                LAB.validate_receipt(wrong,"intel",10,output,fast=True,gpu_router=True,shared=True)
         for marker in markers:
             with self.assertRaises(ValueError):
                 LAB.validate_receipt(value, "intel", 10, output.replace(marker, ""), fast=True, gpu_router=True, shared=True)

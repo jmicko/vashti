@@ -331,25 +331,42 @@ impl Workspace {
         // layer. Floating scratch is fully overwritten for every active row.
         let clear_ids = Zeroizing::new([self.ids[SN], self.ids[SL], self.ids[SM]]);
         u::zero_many(arena, &*clear_ids)?;
-        r::grouped_rms_norm::launch::<WgpuRuntime>(
-            client,
-            CubeCount::Static(l.streams as u32, count as u32, 1),
-            CubeDim::new_1d(64),
-            u::arg(arena, residual)?,
-            u::raw_arg(gamma, l.streams * l.width)?,
-            u::arg(arena, self.ids[NORM])?,
-            u::arg(arena, self.ids[SN])?,
-            graph.geometry().epsilon,
-            count,
-            input_first,
-            l.streams * l.width,
-            0,
-            l.streams * l.width,
-            0,
-            l.streams,
-            l.streams,
-            l.width,
-        );
+        if crate::next_shared::gr_selected() {
+            crate::next_shared::gr_norm(
+                client,
+                [
+                    u::handle(arena, residual)?,
+                    gamma,
+                    u::handle(arena, self.ids[NORM])?,
+                    u::handle(arena, self.ids[SN])?,
+                ],
+                count,
+                l.streams,
+                l.width,
+                input_first,
+                graph.geometry().epsilon,
+            )?;
+        } else {
+            r::grouped_rms_norm::launch::<WgpuRuntime>(
+                client,
+                CubeCount::Static(l.streams as u32, count as u32, 1),
+                CubeDim::new_1d(64),
+                u::arg(arena, residual)?,
+                u::raw_arg(gamma, l.streams * l.width)?,
+                u::arg(arena, self.ids[NORM])?,
+                u::arg(arena, self.ids[SN])?,
+                graph.geometry().epsilon,
+                count,
+                input_first,
+                l.streams * l.width,
+                0,
+                l.streams * l.width,
+                0,
+                l.streams,
+                l.streams,
+                l.width,
+            );
+        }
         if !crate::status_fold_batch::selected() {
             self.fold(arena, SN, count, fault)?;
         }

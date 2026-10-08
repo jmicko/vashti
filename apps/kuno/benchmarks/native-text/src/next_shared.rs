@@ -87,17 +87,23 @@ enum Kernel {
     MatrixFault(MatrixSpec, bool),
     Router,
     Gdn([usize; 3]),
+    GrNorm(usize),
 }
 impl Kernel {
     fn dimension(self) -> CubeDim {
         CubeDim::new_1d(match self {
             Self::Router => 256,
             Self::Gdn(_) => 32,
+            Self::GrNorm(_) => 64,
             Self::Matrix(_) | Self::MatrixFault(_, _) => 128,
         })
     }
     fn source(self) -> String {
         match self {
+            Self::GrNorm(width) => format!(
+                "const WIDTH:u32={width}u;\n{}",
+                include_str!("next_gr_norm.wgsl")
+            ),
             Self::Matrix(spec) => spec.source(),
             Self::MatrixFault(spec, tail) => spec.source_fault(tail),
             Self::Gdn([head, key, value]) => format!(
@@ -131,6 +137,7 @@ impl KernelMetadata for Kernel {
             },
             Self::Router => "NextRouter",
             Self::Gdn(_) => "NextGdn",
+            Self::GrNorm(_) => "NextGrRms",
         }
     }
     fn id(&self) -> KernelId {
@@ -728,5 +735,252 @@ mod tests {
         assert!(MatrixSpec::new(7, 257, 12).is_err());
         assert!(MatrixSpec::new(7, 256, 999).is_err());
         assert!(MatrixSpec::new(16385, 256, 12).is_err());
+    }
+}
+
+static GR_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub(crate) fn gr_calls() -> u64 {
+    GR_CALLS.load(std::sync::atomic::Ordering::Relaxed)
+}
+static GR_SELECTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub(crate) fn select_gr(selected: bool) {
+    GR_SELECTED.store(selected, std::sync::atomic::Ordering::Release);
+}
+pub(crate) fn gr_selected() -> bool {
+    GR_SELECTED.load(std::sync::atomic::Ordering::Acquire)
+}
+/// Parent proves actual full owners, physical aliases and model origin. This
+/// seam independently narrows the runtime logical views without new owners.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn gr_norm(
+    client: &ComputeClient<WgpuRuntime>,
+    handles: [Handle; 4],
+    count: usize,
+    streams: usize,
+    width: usize,
+    input_first: usize,
+    epsilon: f32,
+) -> Result<()> {
+    if !(1..=8).contains(&count)
+        || streams == 0
+        || streams > 32
+        || width == 0
+        || width > 16384
+        || !width.is_multiple_of(4)
+        || !input_first.is_multiple_of(4)
+        || input_first > u32::MAX as usize
+    {
+        return Err(Error::InvalidBufferLength);
+    }
+    let row = streams
+        .checked_mul(width)
+        .ok_or(Error::ArithmeticOverflow)?;
+    let input_end = count
+        .checked_mul(row)
+        .and_then(|n| n.checked_add(input_first))
+        .ok_or(Error::ArithmeticOverflow)?;
+    let lengths = [input_end, row, count * row, count * streams];
+    for (h, n) in handles.iter().zip(lengths) {
+        if h.stream != handles[0].stream || h.size_in_used() < n as u64 * 4 {
+            return Err(Error::InvalidBufferLength);
+        }
+    }
+    let info = MetadataBindingInfo::custom(vec![
+        count as u64 | ((input_first as u64) << 32),
+        row as u64,
+        row as u64,
+        streams as u64 | ((epsilon.to_bits() as u64) << 32),
+    ]);
+    let [input, gamma, output, status] = handles;
+    let args = KernelArguments::new()
+        .with_buffer(input.binding())
+        .with_buffer(gamma.binding())
+        .with_buffer(output.binding())
+        .with_buffer(status.binding())
+        .with_info(info);
+    // SAFETY: parent actual full-owner proof and checked aligned logical spans;
+    // disjoint workgroups write one original active stream and status each.
+    unsafe {
+        client.launch_unchecked(
+            Box::new(Kernel::GrNorm(width)),
+            CubeCount::Static(streams as u32, count as u32, 1),
+            args,
+        );
+    }
+    GR_CALLS
+        .fetch_update(
+            std::sync::atomic::Ordering::Relaxed,
+            std::sync::atomic::Ordering::Relaxed,
+            |n| n.checked_add(1),
+        )
+        .map_err(|_| Error::ArithmeticOverflow)?;
+    Ok(())
+}
+
+struct GrScrub(cubecl::bytes::Bytes);
+impl Drop for GrScrub {
+    fn drop(&mut self) {
+        self.0.zeroize();
+    }
+}
+pub(crate) fn probe_gr(
+    client: &ComputeClient<WgpuRuntime>,
+    retired: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> Result<()> {
+    use crate::{private_arena::PrivateArena, resident_util as u};
+    let mut a = PrivateArena::new_transient_on_configured(client.clone(), 2 * 1024 * 1024, retired)
+        .map_err(u::fault)?;
+    const WIDTH: usize = 2560;
+    const STREAMS: usize = 4;
+    const ROW: usize = WIDTH * STREAMS;
+    let input = a.allocate_zeroed(8 * ROW + 8).map_err(u::fault)?;
+    let gamma = a.allocate_zeroed(ROW).map_err(u::fault)?;
+    let output = a.allocate_zeroed(8 * ROW + 8).map_err(u::fault)?;
+    let status = a.allocate_zeroed(8 * STREAMS + 8).map_err(u::fault)?;
+    for count in [1, 3, 8] {
+        for case in 0..6 {
+            let mut x =
+                Zeroizing::new(vec![-19f32; a.layout(input).map_err(u::fault)?.owned_words]);
+            let mut g = Zeroizing::new(vec![1f32; a.layout(gamma).map_err(u::fault)?.owned_words]);
+            for i in 0..count * ROW {
+                x[4 + i] = (((i * 37 % 97) as f32) - 48.) / 97.;
+                if case == 5 {
+                    x[4 + i] *= 1e30;
+                }
+            }
+            for i in 0..ROW {
+                g[i] = 0.5 + (i % 13) as f32 / 13.;
+            }
+            if case == 1 {
+                x[4] = f32::NAN;
+            }
+            if case == 2 {
+                g[WIDTH + WIDTH - 1] = f32::INFINITY;
+            }
+            let epsilon = match case {
+                3 => 0.,
+                4 => f32::NAN,
+                _ => 1e-6,
+            };
+            let mut initial = Zeroizing::new(vec![
+                3.5f32;
+                a.layout(output).map_err(u::fault)?.owned_words
+            ]);
+            let flags = Zeroizing::new(vec![9u32; a.layout(status).map_err(u::fault)?.owned_words]);
+            for (id, bytes) in [
+                (input, f32::as_bytes(&x)),
+                (gamma, f32::as_bytes(&g)),
+                (output, f32::as_bytes(&initial)),
+                (status, u32::as_bytes(&flags)),
+            ] {
+                client
+                    .write_private(a.handle(id).map_err(u::fault)?.clone(), bytes.to_vec())
+                    .map_err(u::fault)?;
+            }
+            let owners = [input, gamma, output, status]
+                .map(|id| a.handle(id).map_err(u::fault).cloned())
+                .into_iter()
+                .collect::<Result<Vec<_>>>()?;
+            crate::resident_gr::batch::physical(&a, &owners)?;
+            gr_norm(
+                client,
+                [
+                    u::handle(&a, input)?,
+                    u::handle(&a, gamma)?,
+                    u::handle(&a, output)?,
+                    u::handle(&a, status)?,
+                ],
+                count,
+                STREAMS,
+                WIDTH,
+                4,
+                epsilon,
+            )?;
+            let got = GrScrub(
+                client
+                    .read_one(a.handle(output).map_err(u::fault)?.clone())
+                    .map_err(u::fault)?,
+            );
+            let flags_got = GrScrub(
+                client
+                    .read_one(a.handle(status).map_err(u::fault)?.clone())
+                    .map_err(u::fault)?,
+            );
+            let check = (|| -> Result<()> {
+                let values = f32::from_bytes(&got.0);
+                let flags = u32::from_bytes(&flags_got.0);
+                if values.len() != initial.len()
+                    || flags.len() != a.layout(status).map_err(u::fault)?.owned_words
+                {
+                    return Err(Error::InvalidBufferLength);
+                }
+                for token in 0..count {
+                    for stream in 0..STREAMS {
+                        let base = token * ROW + stream * WIDTH;
+                        let valid = epsilon.is_finite()
+                            && epsilon > 0.
+                            && x[4 + base..4 + base + WIDTH].iter().all(|v| v.is_finite())
+                            && g[stream * WIDTH..(stream + 1) * WIDTH]
+                                .iter()
+                                .all(|v| v.is_finite());
+                        if flags[token * STREAMS + stream] != u32::from(valid) {
+                            return Err(Error::InvalidFormat("shared GR status probe"));
+                        }
+                        let sum = x[4 + base..4 + base + WIDTH]
+                            .iter()
+                            .map(|&v| (v as f64) * (v as f64))
+                            .sum::<f64>();
+                        let divisor = (sum / WIDTH as f64 + epsilon as f64).sqrt();
+                        for j in 0..WIDTH {
+                            let expected = if valid {
+                                (x[4 + base + j] as f64 / divisor * g[stream * WIDTH + j] as f64)
+                                    as f32
+                            } else {
+                                0.
+                            };
+                            let v = values[base + j];
+                            if !v.is_finite() || (v - expected).abs() > 2e-5 + 2e-5 * expected.abs()
+                            {
+                                return Err(Error::InvalidFormat("shared GR numeric probe"));
+                            }
+                        }
+                    }
+                }
+                if values[count * ROW..].iter().any(|&v| v != 3.5)
+                    || flags[count * STREAMS..].iter().any(|&v| v != 9)
+                {
+                    return Err(Error::InvalidFormat("shared GR inactive probe"));
+                }
+                Ok(())
+            })();
+            drop(got);
+            drop(flags_got);
+            initial.zeroize();
+            check?;
+            cubecl::future::block_on(client.sanitize_transient_io_audited()).map_err(u::fault)?;
+        }
+    }
+    a.close().map_err(u::fault)?;
+    println!(
+        "next_shared_gr_rms counts=1,3,8 cases=6 numeric_finite_status_and_owning_checks=true"
+    );
+    Ok(())
+}
+#[cfg(test)]
+mod gr_tests {
+    use super::*;
+    #[test]
+    fn subgroup_gr_shader_and_runtime_uniform_validate_offline() {
+        let source = Kernel::GrNorm(2560).source();
+        let module = wgpu::naga::front::wgsl::parse_str(&source).unwrap();
+        wgpu::naga::valid::Validator::new(
+            wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .unwrap();
+        assert!(source.contains("workgroupBarrier()"));
+        assert!(source.contains("output_goods"));
+        assert!(!source.contains("arrayLength"));
     }
 }

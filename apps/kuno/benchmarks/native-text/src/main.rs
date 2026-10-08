@@ -813,6 +813,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let fast_gpu = count1_environment_opt_in(&mode, "KUNO_LAB_FAST_GPU")?;
     let fast_gpu_fault = count1_environment_opt_in(&mode, "KUNO_LAB_FAST_GPU_FAULT")?;
     let next_shared = count1_environment_opt_in(&mode, "KUNO_LAB_NEXT_SHARED")?;
+    next_shared::select_gr(next_shared);
     let shared_gdn = count1_environment_opt_in(&mode, "KUNO_LAB_NEXT_SHARED_GDN")?;
     if shared_gdn && !next_shared {
         return Err("Shared GDN requires protected shared Next kernels".into());
@@ -2116,6 +2117,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 * 1024;
             if next_shared {
                 next_shared::probe(&client, &file)?;
+                next_shared::probe_gr(
+                    &client,
+                    transient_context
+                        .as_ref()
+                        .ok_or("shared GR requires transient stream")?
+                        .clone(),
+                )?;
                 if shared_gdn {
                     next_shared::probe_gdn(&client, model.bound_graph().geometry().gdn)?;
                 }
@@ -2266,6 +2274,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 0
             };
             let pre_metadata_calls = resident_util::metadata_calls();
+            let pre_shared_gr_calls = next_shared::gr_calls();
             let pre_scratch_clear_calls = resident_util::native_scratch_clear_calls();
             let pre_compute_scratch_clear_calls = resident_util::compute_scratch_clear_calls();
             let pre_grouped_status_calls = status_fold_batch::calls();
@@ -2469,6 +2478,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 receipt["observed_gpu_router_calls"] = serde_json::json!(executor.gpu_router_calls);
                 receipt["fast_gpu"] = serde_json::json!(fast_gpu);
                 receipt["next_shared_kernels"] = serde_json::json!(next_shared);
+                receipt["observed_shared_gr_calls"] = serde_json::json!(
+                    next_shared::gr_calls()
+                        .checked_sub(pre_shared_gr_calls)
+                        .ok_or("shared GR counter regressed")?
+                );
                 receipt["next_shared_gdn"] = serde_json::json!(shared_gdn);
                 receipt["observed_shared_gdn_calls"] = serde_json::json!(
                     resident

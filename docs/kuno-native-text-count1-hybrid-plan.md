@@ -1128,3 +1128,24 @@ fault preservation and duplicate-owner rejection. Exact typed selection and
 observed-call counters, probe markers, all128 original model IDs, fresh
 continuation and whole-owning/lifecycle acceptance are required before timing
 selection. Default and installed inference remain unchanged.
+
+### Shared GR RMS subgroup reduction
+
+The explicit protected shared-kernel laboratory may use vectorized aligned
+GR RMS loads and subgroup reductions for MAX8 active rows. Original max scaling,
+epsilon placement, gamma multiplication, per-element finite output clearing,
+whole-stream input validity and status values remain. Sum reduction round points
+change; the original all128-ID gate is unchanged. Only public width specializes
+the shader; counts, offsets, strides and epsilon remain in the original wiping
+INFO ledger. No new global scratch allocation, retained private buffer or
+increased host/device allowance is introduced. Parent full model-owner/physical
+alias proof is unchanged; the narrowed seam validates all aligned logical spans
+and streams before dispatch. Default/installed reference execution is unchanged.
+
+Independent protected device probes cover the actual2560-wide/four-stream
+shape, active counts1/3/8, finite input/gamma, NaN/infinity, invalid epsilon,
+overflow-safe large finite inputs and untouched full inactive/padding spans.
+Readback guards wipe on success/error. Original model output, fresh continuation,
+poison rejection and owning/lifecycle gates remain mandatory. Exact bounded
+warm shared-GR call evidence and the numeric/finite/status/owning probe marker
+are required before accepting a timing receipt.

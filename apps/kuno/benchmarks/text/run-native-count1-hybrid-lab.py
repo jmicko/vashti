@@ -123,8 +123,10 @@ def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False
         calls=receipt.get("observed_shared_dense_calls")
         if type(calls) is not int or not 0 <= calls <= 100000 or (calls>0) is not shared or calls!=receipt.get("observed_fast_dense_calls") and shared:
             raise ValueError("Complete shared dense dispatch evidence missing")
-    if shared and any(marker not in output.splitlines() for marker in ("next_shared_original_rows cases=6 numeric_and_owning_checks=true", "next_shared_gpu_router cases=8 numeric_and_owning_checks=true")):
+    if shared and any(marker not in output.splitlines() for marker in ("next_shared_original_rows cases=6 numeric_and_owning_checks=true", "next_shared_gpu_router cases=8 numeric_and_owning_checks=true", "next_shared_gr_rms counts=1,3,8 cases=6 numeric_finite_status_and_owning_checks=true")):
         raise ValueError("Shared original row/router probes missing")
+    if shared and (type(receipt.get("observed_shared_gr_calls")) is not int or not 1 <= receipt["observed_shared_gr_calls"] <= 1_000_000):
+        raise ValueError("Actual shared GR dispatch evidence missing")
     if banks not in ("standard","intel72","intel96","intel128","intel144","intel160") or banks!="standard" and (card!="intel"):
         raise ValueError("Expanded banks require an explicit protected Intel count1 profile")
     if (banks!="standard" or "count1_bank_profile" in receipt) and receipt.get("count1_bank_profile")!=banks:
