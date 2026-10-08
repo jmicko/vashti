@@ -1,12 +1,43 @@
 # Native text checkpoint, 2026-10-08
 
-The user returned the GPUs and authorized resident speed work. The goal
-controller remains paused and incomplete. Resume from **Complete Next shared
-execution acceptance** below. The current priority is core execution speed; defer API,
+The user authorized an overnight offload optimization run. The new goal is
+active: match or exceed the approved10-token/s Ollama target for Flash-Next.
+The user also permits completion at a documented safe checkpoint if sudo is
+no longer cached and effective GPU work cannot continue. Refresh sudo during
+active work; do not spend usage on sudo workarounds. Resume from **Active
+overnight offload run** below. The current priority is core execution speed; defer API,
 extended cancellation and application work. No further Flash-Next Ollama
 baselines are needed. Backend work belongs in the owner worktree
 `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
 `codex/kuno-native-text`; preserve the canonical Vashti checkout and its work.
+
+## Active overnight offload run, 2026-10-08
+
+The last accepted best remains3.5006 tokens/s from the preceding block. Source
+`4cf40f3` adds specialized F16C original CPU packed loops with120 core tests,
+3 ignored and strict Clippy. Its normal frozen direct-device artifact
+`e12a2b2788eabcb2f5d4c6b0588ba7cb18bd531bba4ae8c61ca676fb650a0179`
+passes the complete B70/intel96 fixed75/128 model and all original lifecycle/
+owning gates: all128 IDs,127 steps in37118ms (3.4215 tokens/s),61491ms prefill.
+It establishes correctness but no whole-model speed improvement. Results are
+under `kuno-development/next-offload-device-20261008/f16c96-long-v1.*`.
+
+The next candidate expands explicit protected CPU caps to canonical0..10 so
+misses beyond the cap can enter the GPU cache during decode. Cap10, which sends
+all misses to CPU, leaves its prefilling bank stationary. No default, model
+geometry, rank arithmetic, private/source budget or publication/erasure gate
+changes. See the
+[cache-admission contract](kuno-native-text-count1-hybrid-plan.md#bounded-dynamic-cache-admission-experiment-2026-10-08).
+482 direct native tests plus two offline shader suites and23 Python controls
+pass. Mixed-cap physical correctness and timing are pending.
+
+The user granted exclusive GPUs. Installed Kuno had an idle managed worker
+holding15978409984 B70 bytes with no active request; a graceful Kuno restart
+released it and physical VRAM returned50688000. There was no GPU reset/unbind
+or reboot. Kuno admission is currently paused for this run, active=false,
+waiting0, recovery_required=false. Normal admission must be restored at the
+next checkpoint. Source isolation is the same owning worktree; do not touch
+the canonical Vashti task. No installed binary/configuration/API change.
 
 ## Complete Next shared execution acceptance, 2026-10-08
 

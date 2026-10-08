@@ -47,7 +47,7 @@ enqueues on the caller instead of the dedicated channel thread; the original
 server, stream, WGPU queue, resource leases and all erasure/error checks remain.
 GPU command completion is still asynchronous until the existing fences; a
 direct enqueue is not completion or acceptance. The feature is off by default,
-requires explicit protected cap10 `--device-dispatch inline`, and is checked
+requires explicit protected count1 `--device-dispatch inline`, and is checked
 against the actual runtime handle's blocking property. The ordinary threaded
 artifact and runner choice remain available. Collective/distributed device
 operations are unsupported by this experiment. Protected B70 short and75/128
@@ -56,6 +56,12 @@ original output IDs, fresh/cancel/recovery checks and full owning erasure.
 Inline dispatch measures3.3473 tokens/s with standard banks and3.5006 with
 intel96 in single ordered samples; source `1a80d5b`, normal frozen artifact
 `fe490699…`. Production dependencies and default runtime dispatch are unchanged.
+
+The later explicit cache-admission experiment permits independently pinned
+canonical CPU caps0..10 in this same fixed-public count1 entry point. It does
+not relax actual compiled-handle checks, private budgets, leases or erasure.
+Intermediate-cap device acceptance is recorded separately in the owner
+checkpoint; the original cap10 receipts remain valid historical measurements.
 
 ## Small public ownership API
 

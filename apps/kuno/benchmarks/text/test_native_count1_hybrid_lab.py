@@ -273,8 +273,23 @@ class HybridLabTests(unittest.TestCase):
 
     def test_both_caps_and_cards_require_fixed_inventory_and_actual_cpu_work(self):
         for card in ("intel", "nvidia"):
-            for cap in (0, 10):
+            for cap in range(11):
                 LAB.validate_receipt(receipt(card, cap), card, cap, completion(cap))
+
+    def test_intermediate_caps_require_matching_actual_completed_work_within_their_own_bound(self):
+        for cap in range(1, 10):
+            value = receipt("intel", cap)
+            value.update(device_dispatch="inline", observed_inline_device_dispatch=True)
+            output = completion(cap) + "\ngpu_device_dispatch mode=inline blocking=true"
+            LAB.validate_receipt(value, "intel", cap, output, dispatch="inline")
+            for field, limit in (("completed_cpu_misses", 7 * 48 * cap),
+                                 ("fresh_completed_cpu_misses", 48 * cap)):
+                for bad in (0, limit + 1, True, None):
+                    wrong = copy.deepcopy(value); wrong[field] = bad
+                    with self.assertRaises(ValueError):
+                        LAB.validate_receipt(wrong, "intel", cap, output, dispatch="inline")
+            with self.assertRaises(ValueError):
+                LAB.validate_receipt(value, "intel", (cap % 10) + 1, output, dispatch="inline")
 
     def test_overlap_policy_pins_both_observations_and_cannot_enable_scoped_workers(self):
         for overlap in (False, True):
@@ -330,7 +345,7 @@ class HybridLabTests(unittest.TestCase):
                 value["count1_hybrid_cpu_gpu_overlap"] = bad
                 with self.assertRaises(ValueError):
                     LAB.validate_receipt(value, "intel", cap, completion(cap))
-        for cap in (False, "0", 0.0, 1, -1, 11):
+        for cap in (False, "0", 0.0, None, -1, 11):
             with self.assertRaises(ValueError):
                 LAB.validate_receipt(receipt("intel", 0), "intel", cap, completion(0))
 

@@ -58,7 +58,7 @@ impl GpuExecutor<'_> {
             .ok_or(err("native count1 reservation absent"))?;
         let cap = h.cap.ok_or(err("native count1 policy absent"))?;
         let overlap = h.overlap;
-        if ![0, 10].contains(&cap)
+        if cap > 10
             || routes.count() != 1
             || s.stamp.count != 1
             || views.count() != 1

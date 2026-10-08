@@ -21,7 +21,7 @@ impl Proof {
         probabilities: &[f32; 10],
         cap: usize,
     ) -> Result<(Self, StagedSlots, Last, Split)> {
-        if ![0, 10].contains(&cap) || probabilities.iter().any(|p| !p.is_finite() || *p < 0.) {
+        if cap > 10 || probabilities.iter().any(|p| !p.is_finite() || *p < 0.) {
             return Err(err("native count1 fixed miss policy"));
         }
         let mut staged = StagedSlots::begin(source).map_err(|_| err("native count1 origin"))?;
@@ -122,7 +122,7 @@ impl Proof {
         last: &Last,
         require_join: bool,
     ) -> Result<()> {
-        if ![0, 10].contains(&*self.cap)
+        if *self.cap > 10
             || require_join && !*self.joined
             || staged.accepted_waves() != 0
             || *last.len > 10
@@ -189,7 +189,7 @@ mod tests {
     use crate::bank_slots::BankSlots;
     #[test]
     fn compact_noncontiguous_misses_keep_original_gpu_ranks_and_hit_slots() {
-        for cap in [0, 10] {
+        for cap in 0..=10 {
             let mut source = BankSlots::new(16, 512).unwrap();
             let prime = source
                 .plan(&[0, 481, 2, 483, 4, 485, 6, 487, 8, 489])
@@ -200,10 +200,8 @@ mod tests {
             let (mut p, staged, last, split) =
                 Proof::prepare(&source, &ids, &probabilities, cap).unwrap();
             assert_eq!(p.misses(), 5);
-            assert_eq!(
-                split.cpu(),
-                if cap == 10 { &[1, 3, 5, 7, 9][..] } else { &[] }
-            );
+            assert_eq!(split.cpu(), &[1, 3, 5, 7, 9][..cap.min(5)]);
+            assert_eq!(last.pending.uploads.len(), 5 - cap.min(5));
             let map = Proof::native_map(&split);
             for rank in 0..10 {
                 if map[rank * 2] == 0 {
@@ -233,6 +231,34 @@ mod tests {
         let update = source.plan(&[481]).unwrap();
         source.commit(update).unwrap();
         assert!(p.validate_source(&source, &staged, &last, false).is_err());
-        assert!(Proof::prepare(&source, &ids, &[0.1; 10], 1).is_err());
+        assert!(Proof::prepare(&source, &ids, &[0.1; 10], 11).is_err());
+    }
+
+    #[test]
+    fn bounded_caps_admit_only_canonical_gpu_misses_and_cannot_change_after_classification() {
+        let source = BankSlots::new(16, 512).unwrap();
+        let ids = std::array::from_fn(|rank| rank);
+        for cap in 0..=10 {
+            let (mut proof, staged, last, split) =
+                Proof::prepare(&source, &ids, &[0.1; 10], cap).unwrap();
+            assert_eq!(split.cpu(), &ids[..cap]);
+            assert_eq!(split.gpu(), &ids[cap..]);
+            assert_eq!(last.pending.uploads.len(), 10 - cap);
+            assert!(
+                last.pending
+                    .uploads
+                    .iter()
+                    .all(|(id, _)| split.gpu().contains(id))
+            );
+            proof
+                .validate_source(&source, &staged, &last, false)
+                .unwrap();
+            *proof.cap = (cap + 1) % 11;
+            assert!(
+                proof
+                    .validate_source(&source, &staged, &last, false)
+                    .is_err()
+            );
+        }
     }
 }

@@ -442,7 +442,7 @@ impl Workspace {
         executor.check_resident_admission(&self.admission)?;
         executor.check_client(arena.client().map_err(u::fault)?)?;
         graph.verify_unchanged()?;
-        if ![0, 10].contains(&cap)
+        if cap > 10
             || ![1, 8].contains(&self.layout.tile)
             || !arena.public_owned_zero_audit_enabled()
             || executor.batch_moe.is_some()

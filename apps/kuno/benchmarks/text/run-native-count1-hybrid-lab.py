@@ -21,8 +21,8 @@ GUARD = "verified_lab_limits swap_max=0 core_soft=0 core_hard=0 memory_max=85899
 
 
 def validate_cap(cap):
-    if type(cap) is not int or cap not in (0, 10):
-        raise ValueError("CPU miss cap must be independently selected as integer 0 or 10")
+    if type(cap) is not int or not 0 <= cap <= 10:
+        raise ValueError("CPU miss cap must be independently selected as integer 0 through 10")
 
 
 def completion(cap, deferred=False):
@@ -36,16 +36,16 @@ def completion(cap, deferred=False):
 
 def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False, metadata=False, banks="standard", shared=False, shared_gdn=False, info_batch_upload=False, dispatch="threaded"):
     validate_cap(cap)
-    if dispatch not in ("threaded","inline") or dispatch=="inline" and cap!=10:
-        raise ValueError("Inline dispatch requires compiled protected cap10 mode")
+    if dispatch not in ("threaded","inline"):
+        raise ValueError("Inline dispatch requires compiled protected count1 mode")
     if dispatch=="inline" or "device_dispatch" in receipt:
         if receipt.get("device_dispatch")!=dispatch or receipt.get("observed_inline_device_dispatch") is not (dispatch=="inline"):
             raise ValueError("Compiled device dispatch does not match selection")
         marker=f"gpu_device_dispatch mode={dispatch} blocking={str(dispatch=='inline').lower()}"
         if marker not in output.splitlines():
             raise ValueError("Actual runtime device dispatch marker missing")
-    if info_batch_upload and (not compact_info or cap!=10):
-        raise ValueError("Batched INFO requires compact cap10 mode")
+    if info_batch_upload and (not compact_info):
+        raise ValueError("Batched INFO requires compact count1 mode")
     if info_batch_upload or "info_batch_upload" in receipt:
         if receipt.get("info_batch_upload") is not info_batch_upload:
             raise ValueError("Batched INFO selection mismatch")
@@ -58,8 +58,8 @@ def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False
             raise ValueError("Actual shared GDN calls must cover every completed recurrent layer")
     if shared_gdn and "next_shared_gdn cases=3 numeric_and_owning_checks=true" not in output.splitlines():
         raise ValueError("Independent original GDN numeric/owning probe missing")
-    if shared and (not fast or not gpu_router or fast_fault or cap!=10):
-        raise ValueError("Shared kernels require protected cap10 GPU/router mode")
+    if shared and (not fast or not gpu_router or fast_fault):
+        raise ValueError("Shared kernels require protected count1 GPU/router mode")
     if shared or "next_shared_kernels" in receipt:
         if receipt.get("next_shared_kernels") is not shared:
             raise ValueError("Shared-kernel selection mismatch")
@@ -68,8 +68,8 @@ def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False
             raise ValueError("Complete shared dense dispatch evidence missing")
     if shared and any(marker not in output.splitlines() for marker in ("next_shared_original_rows cases=6 numeric_and_owning_checks=true", "next_shared_gpu_router cases=8 numeric_and_owning_checks=true")):
         raise ValueError("Shared original row/router probes missing")
-    if banks not in ("standard","intel72","intel96") or banks!="standard" and (card!="intel" or cap!=10):
-        raise ValueError("Expanded banks require an explicit protected Intel cap10 profile")
+    if banks not in ("standard","intel72","intel96") or banks!="standard" and (card!="intel"):
+        raise ValueError("Expanded banks require an explicit protected Intel count1 profile")
     if (banks!="standard" or "count1_bank_profile" in receipt) and receipt.get("count1_bank_profile")!=banks:
         raise ValueError("Completed bank profile must match independent selection")
     for field, selected in (("mapped_weights", mapped), ("observed_mapped_weights", mapped), ("kernel_profile", profile), ("fast_gpu", fast), ("long_fixture", long), ("cpu_q8_activations", cpu_q8), ("observed_cpu_q8_activations", cpu_q8), ("large_weight_cache", large_cache), ("compact_info", compact_info), ("batch_tasks", batch_tasks), ("fast_gpu_fault", fast_fault), ("defer_router_io",deferred), ("observed_defer_router_io",deferred), ("gpu_router",gpu_router),("retained_metadata",metadata)):
@@ -78,20 +78,16 @@ def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False
     metadata_calls=receipt.get("observed_retained_metadata_calls",0)
     if type(metadata_calls) is not int or not (0<=metadata_calls<=1000000) or (metadata_calls>0) is not metadata:
         raise ValueError("Completed metadata-only calls must match explicit selection")
-    if metadata and cap!=10:
-        raise ValueError("Retained metadata requires protected cap10 hybrid mode")
     shared_calls=receipt.get("observed_shared_overlap_calls",0)
     if type(shared_calls) is not int or shared_calls!=((127 if long else 7)*48 if overlap else 0):
         raise ValueError("Actual prepared shared branches must match explicit overlap selection")
-    if gpu_router and cap!=10:
-        raise ValueError("GPU router requires protected cap10 hybrid mode")
     router_calls=receipt.get("observed_gpu_router_calls",0)
     if type(router_calls) is not int or router_calls!=((127 if long else 7)*48 if gpu_router else 0):
         raise ValueError("Actual GPU routing must cover every completed native layer")
     if gpu_router and "rust_gpu_router cases=6 ranks=10 numeric_and_owning_checks=true" not in output.splitlines():
         raise ValueError("Independent fixed GPU routing checks missing")
-    if deferred and (not compact_info or cap!=10):
-        raise ValueError("Deferred router IO requires compact protected cap10 hybrid mode")
+    if deferred and (not compact_info):
+        raise ValueError("Deferred router IO requires compact protected count1 hybrid mode")
     reads=receipt.get("observed_deferred_router_reads",0)
     if type(reads) is not int or reads!=((127 if long else 7)*48 if deferred else 0):
         raise ValueError("Actual deferred router bridges must cover every completed native layer")
@@ -128,12 +124,12 @@ def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False
     for field in ("count1_hybrid_cpu_gpu_overlap", "observed_count1_hybrid_cpu_gpu_overlap"):
         if receipt.get(field) is not overlap:
             raise ValueError("Requested and completed overlap policy mismatch")
-    for field, limit in (("completed_cpu_misses", (127 if long else 7) * 48 * 10),
-                         ("fresh_completed_cpu_misses", 48 * 10)):
+    for field, limit in (("completed_cpu_misses", (127 if long else 7) * 48 * cap),
+                         ("fresh_completed_cpu_misses", 48 * cap)):
         value = receipt.get(field)
         if type(value) is not int or not 0 <= value <= limit:
             raise ValueError("Completed CPU work outside accepted fixture bounds")
-        if cap == 0 and value != 0 or cap == 10 and value == 0:
+        if cap == 0 and value != 0 or cap > 0 and value == 0:
             raise ValueError("Actual completed CPU-miss evidence missing or incompatible")
     if any(type(receipt.get(field)) is not int for field in (
         "resident_private_owned_bytes", "prompt_tokens", "seed", "temperature", "native_public_chunk_count"
@@ -216,7 +212,7 @@ def main():
     parser.add_argument("--cargo-artifacts", type=pathlib.Path, required=True)
     parser.add_argument("--model", type=pathlib.Path, required=True)
     parser.add_argument("--card", choices=("intel", "nvidia"), required=True)
-    parser.add_argument("--cpu-miss-cap", type=int, choices=(0, 10), required=True)
+    parser.add_argument("--cpu-miss-cap", type=int, choices=range(11), required=True)
     parser.add_argument("--cpu-workers", choices=("scoped", "pooled"), default="scoped")
     parser.add_argument("--cpu-gpu-overlap", action="store_true")
     parser.add_argument("--mapped-weights", action="store_true")
@@ -239,30 +235,24 @@ def main():
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--receipt", type=pathlib.Path, required=True)
     args = parser.parse_args()
-    if args.bank_profile!="standard" and (args.card!="intel" or args.cpu_miss_cap!=10):
-        parser.error("Expanded banks require --card intel --cpu-miss-cap 10")
+    if args.bank_profile!="standard" and (args.card!="intel"):
+        parser.error("Expanded banks require --card intel and a bounded --cpu-miss-cap")
     if args.cpu_gpu_overlap and args.cpu_workers != "pooled":
         parser.error("CPU/GPU overlap requires --cpu-workers pooled")
     if args.cpu_q8 and args.cpu_workers != "pooled":
         parser.error("Q8 CPU activation arithmetic requires --cpu-workers pooled")
     if args.large_weight_cache and not args.mapped_weights:
         parser.error("Larger public cache requires --mapped-weights")
-    if args.device_dispatch=="inline" and args.cpu_miss_cap!=10:
-        parser.error("Inline GPU dispatch requires --cpu-miss-cap10 and a compiled direct-device artifact")
-    if args.info_batch_upload and (not args.compact_info or args.cpu_miss_cap!=10):
-        parser.error("Batched INFO requires --compact-info --cpu-miss-cap10")
+    if args.info_batch_upload and (not args.compact_info):
+        parser.error("Batched INFO requires --compact-info in protected count1 mode")
     if args.next_shared_gdn and not args.next_shared_kernels:
         parser.error("Shared GDN requires --next-shared-kernels")
-    if args.next_shared_kernels and (not args.fast_gpu or not args.gpu_router or args.fast_gpu_fault or args.cpu_miss_cap!=10):
-        parser.error("Shared kernels require --cpu-miss-cap10 --fast-gpu --gpu-router without fused faults")
+    if args.next_shared_kernels and (not args.fast_gpu or not args.gpu_router or args.fast_gpu_fault):
+        parser.error("Shared kernels require --fast-gpu --gpu-router without fused faults")
     if args.fast_gpu_fault and not args.fast_gpu:
         parser.error("Fused finite checks require --fast-gpu")
-    if args.retained_metadata and args.cpu_miss_cap!=10:
-        parser.error("Retained metadata requires --cpu-miss-cap 10")
-    if args.gpu_router and args.cpu_miss_cap!=10:
-        parser.error("GPU router requires --cpu-miss-cap 10")
-    if args.defer_router_io and (not args.compact_info or args.cpu_miss_cap!=10):
-        parser.error("Deferred router IO requires --compact-info and --cpu-miss-cap 10")
+    if args.defer_router_io and (not args.compact_info):
+        parser.error("Deferred router IO requires --compact-info and a bounded --cpu-miss-cap")
     if not re.fullmatch(r"[a-z0-9-]{1,48}", args.run_id):
         parser.error("run-id must be 1..48 lowercase letters, digits or hyphens")
     target = args.receipt.resolve()

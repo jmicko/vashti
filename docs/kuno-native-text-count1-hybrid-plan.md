@@ -627,3 +627,34 @@ No arbitrary-request, quality/full-logit, long-context/soak, mixed-GPU or
 production/native-default acceptance follows. No API or consumer changes;
 required Vashti changes: none. The next speed bottlenecks are CPU expert work
 and fine-grained GPU handoffs, before speculative expert placement/prefetch/MTP.
+
+## Bounded dynamic cache-admission experiment, 2026-10-08
+
+The user authorized continued speed work toward10 Next tokens/s. The earlier
+cap10 path assigns every actual cache miss to CPU, so its GPU banks do not
+admit new decode experts after prefill. This is intentional in that calibration
+policy, not an adaptive expert cache. The next explicit fixed-public experiment
+admits canonical integer CPU caps0 through10 instead of only0/10; defaults,
+ordinary modes and installed routing do not change. Source10 remains the
+stationary-bank control. Smaller caps send the first capped actual misses to
+CPU and fill remaining misses into the original GPU bank with its existing
+canonical victim protection and all-family publication. No CPU hit is moved
+off GPU, no probability/rank is skipped, and no prediction or private history
+is persisted. The policy remains fixed for a complete sequence.
+
+Original ten-rank geometry, maximum40-MiB public source jobs,1-MiB CPU/private
+host envelope, full original MAIN/IO budgets and private owning erasure remain.
+The opaque proof binds the exact cap, actual miss set and unaltered source;
+changing cap after classification rejects. GPU uploads remain on the original
+parent stream and require the same source accounting, joined CPU consumers,
+whole-model fault/finality and completed publication checks. The existing
+explicit fast/metadata/shared/inline selections now accept any independently
+pinned cap within this protected count1 mode. Other entry points, noncanonical
+strings, booleans, negative or greater-than10 caps still reject before access.
+
+Receipts pin requested/observed caps and actual CPU work, with a cap-specific
+maximum of48*cap per step. Existing GPU hit/upload/read counters distinguish
+stationary residency from actual cache adaptation. All original128 native IDs,
+fresh/cancel/poison and full owning audits precede performance acceptance. A
+smaller CPU fraction may lose to PCIe transfer; it is not selected by assumption.
+This backend-only laboratory change requires no Vashti or API work.

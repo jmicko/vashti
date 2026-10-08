@@ -168,9 +168,10 @@ fn count1_hybrid_registration(
         return Err("count1 hybrid requires card, fixed mode, cap and receipt destination");
     }
     match cap {
-        Some("0") => Ok(0),
-        Some("10") => Ok(10),
-        _ => Err("count1 hybrid cap must be exactly 0 or 10"),
+        Some(raw @ ("0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "10")) => {
+            raw.parse().map_err(|_| "count1 hybrid bounded cap")
+        }
+        _ => Err("count1 hybrid cap must be a canonical integer 0 through 10"),
     }
 }
 fn count1_worker_pool(mode: &str, raw: Option<&str>) -> Result<bool, &'static str> {
@@ -217,10 +218,12 @@ fn count1_dispatch(
 ) -> Result<&'static str, &'static str> {
     match (raw, compiled_inline) {
         (None | Some("threaded"), false) => Ok("threaded"),
-        (Some("inline"), true) if mode == "resident-count1-hybrid-chat" && cap == Some(10) => {
+        (Some("inline"), true)
+            if mode == "resident-count1-hybrid-chat" && cap.is_some_and(|value| value <= 10) =>
+        {
             Ok("inline")
         }
-        _ => Err("GPU dispatch must match the compiled protected cap10 artifact"),
+        _ => Err("GPU dispatch must match the compiled protected count1 artifact"),
     }
 }
 
@@ -748,8 +751,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         None
     };
-    if count1_banks != Count1Banks::Standard && count1_hybrid_cap != Some(10) {
-        return Err("Expanded count1 banks require protected cap10 mode".into());
+    if count1_banks != Count1Banks::Standard && count1_hybrid_cap.is_none_or(|cap| cap > 10) {
+        return Err("Expanded count1 banks require protected count1 mode".into());
     }
     let mapped_weights = count1_environment_opt_in(&mode, "KUNO_LAB_MAPPED_WEIGHTS")?;
     let raw_dispatch = std::env::var_os("KUNO_LAB_DEVICE_DISPATCH");
@@ -777,9 +780,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if shared_gdn && !next_shared {
         return Err("Shared GDN requires protected shared Next kernels".into());
     }
-    if next_shared && (!fast_gpu || fast_gpu_fault || count1_hybrid_cap != Some(10)) {
+    if next_shared && (!fast_gpu || fast_gpu_fault || count1_hybrid_cap.is_none_or(|cap| cap > 10))
+    {
         return Err(
-            "Shared Next kernels require protected cap10 fast GPU mode without fused faults".into(),
+            "Shared Next kernels require protected count1 fast GPU mode without fused faults"
+                .into(),
         );
     }
     if fast_gpu_fault && !fast_gpu {
@@ -790,8 +795,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let large_weight_cache = count1_environment_opt_in(&mode, "KUNO_LAB_LARGE_WEIGHT_CACHE")?;
     let compact_info = count1_environment_opt_in(&mode, "KUNO_LAB_COMPACT_INFO")?;
     let info_batch_upload = count1_environment_opt_in(&mode, "KUNO_LAB_INFO_BATCH_UPLOAD")?;
-    if info_batch_upload && (!compact_info || count1_hybrid_cap != Some(10)) {
-        return Err("Batched INFO requires protected compact cap10 mode".into());
+    if info_batch_upload && (!compact_info || count1_hybrid_cap.is_none_or(|cap| cap > 10)) {
+        return Err("Batched INFO requires protected compact count1 mode".into());
     }
     let batch_tasks = count1_environment_opt_in(&mode, "KUNO_LAB_BATCH_TASKS")?;
     let gpu_router = count1_environment_opt_in(&mode, "KUNO_LAB_GPU_ROUTER")?;
@@ -799,15 +804,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("Shared Next kernels require GPU routing".into());
     }
     let retained_metadata = count1_environment_opt_in(&mode, "KUNO_LAB_RETAINED_METADATA")?;
-    if retained_metadata && count1_hybrid_cap != Some(10) {
-        return Err("Retained metadata requires protected cap10 hybrid mode".into());
+    if retained_metadata && count1_hybrid_cap.is_none_or(|cap| cap > 10) {
+        return Err("Retained metadata requires protected count1 hybrid mode".into());
     }
-    if gpu_router && count1_hybrid_cap != Some(10) {
-        return Err("GPU routing requires protected cap10 hybrid mode".into());
+    if gpu_router && count1_hybrid_cap.is_none_or(|cap| cap > 10) {
+        return Err("GPU routing requires protected count1 hybrid mode".into());
     }
     let defer_router_io = count1_environment_opt_in(&mode, "KUNO_LAB_DEFER_ROUTER_IO")?;
-    if defer_router_io && (!compact_info || count1_hybrid_cap != Some(10)) {
-        return Err("Deferred router IO requires compact protected cap10 hybrid mode".into());
+    if defer_router_io && (!compact_info || count1_hybrid_cap.is_none_or(|cap| cap > 10)) {
+        return Err("Deferred router IO requires compact protected count1 hybrid mode".into());
     }
     if mode == "resident-count1-hybrid-chat" {
         let raw = std::env::var_os("KUNO_LAB_INFO_SLAB_BYTES");
@@ -2114,7 +2119,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if r.native_cpu_miss_cap()? != Some(cap)
                     || completed > native_decode_steps * 480
                     || (cap == 0 && completed != 0)
-                    || (cap == 10 && completed == 0)
+                    || (cap > 0 && completed == 0)
                 {
                     return Err("count1 hybrid did not complete actual CPU miss work".into());
                 }
@@ -2447,7 +2452,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if fresh.native_cpu_miss_cap()? != Some(cap)
                         || completed > 480
                         || (cap == 0 && completed != 0)
-                        || (cap == 10 && completed == 0)
+                        || (cap > 0 && completed == 0)
                     {
                         return Err("fresh count1 hybrid actual completion missing".into());
                     }
@@ -2696,15 +2701,18 @@ mod transient_mode_tests {
             super::count1_dispatch(mode, Some(10), None, false),
             Ok("threaded")
         );
-        assert_eq!(
-            super::count1_dispatch(mode, Some(10), Some("inline"), true),
-            Ok("inline")
-        );
+        for cap in 0..=10 {
+            assert_eq!(
+                super::count1_dispatch(mode, Some(cap), Some("inline"), true),
+                Ok("inline")
+            );
+        }
         for (mode, cap, raw, compiled) in [
             (mode, Some(10), None, true),
             (mode, Some(10), Some("threaded"), true),
             (mode, Some(10), Some("inline"), false),
-            (mode, Some(0), Some("inline"), true),
+            (mode, Some(11), Some("inline"), true),
+            (mode, None, Some("inline"), true),
             ("resident-chat", Some(10), Some("inline"), true),
             (mode, Some(10), Some("unknown"), false),
         ] {
@@ -2798,13 +2806,33 @@ mod transient_mode_tests {
                     Some("0"),
                     Some("10"),
                     Some("1"),
+                    Some("2"),
+                    Some("5"),
+                    Some("9"),
+                    Some("11"),
                     Some("01"),
                     Some(" 10"),
                     Some("10 "),
                 ] {
                     assert_eq!(
                         super::count1_hybrid_registration(argc, receipt, cap).is_ok(),
-                        argc == 4 && receipt && matches!(cap, Some("0" | "10"))
+                        argc == 4
+                            && receipt
+                            && matches!(
+                                cap,
+                                Some(
+                                    "0" | "1"
+                                        | "2"
+                                        | "3"
+                                        | "4"
+                                        | "5"
+                                        | "6"
+                                        | "7"
+                                        | "8"
+                                        | "9"
+                                        | "10"
+                                )
+                            )
                     );
                 }
             }

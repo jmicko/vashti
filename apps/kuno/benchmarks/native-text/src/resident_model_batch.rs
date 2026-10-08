@@ -720,7 +720,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         cancel: &AtomicBool,
     ) -> Result<usize> {
         u::cancel(cancel)?;
-        if ![0, 10].contains(&cap) {
+        if cap > 10 {
             return Err(error());
         }
         let boundary = self.completed_native_projection_boundary(executor)?;
