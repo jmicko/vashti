@@ -1432,13 +1432,10 @@ checkpoint must accept stream and private GPU errors, all callbacks and zero
 outstanding map leases before exact-kind/full-span buffers can be reused. All
 unique dirty owners stay retained and charged under the original64MiB cap,
 including full final audit headroom and bounded pool bookkeeping. No clean
-receipt or dirty memory credit is issued. Within a token, logits and PLE use an
-accept-only boundary: original stream flush, nonce/zero-lease/empty-pending-INFO
-checks and native completed GPU error acceptance remain, but it cannot remap,
-clear, rebuild indexes or grant readiness/ledger credit. The final fault boundary
-alone performs the complete recycle before all-family commit. Already-ready
-unused owners retain their permission; owners used during the token remain
-unavailable until that completed recycle. Uploads receive checked batched WRITE
+receipt or dirty memory credit is issued. The selected LastLogits path recycles
+at all three original completed logits/PLE/final-fault checkpoints: experiments
+with accept-only for the first two preserved correctness but regressed device
+latency. The internal accept-only API remains available but is not selected. Uploads receive checked batched WRITE
 maps; every producer fully overwrites the original span/padding before reuse.
 No request data enters compiler keys, diagnostics, disk caches or new storage.
 

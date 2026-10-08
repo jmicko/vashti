@@ -439,6 +439,65 @@
       "warm_uploaded_bytes": 0,
       "warm_weight_read_ms": 0,
       "warm_weight_upload_ms": 0
+    },
+    {
+      "run": "cpu-144-one-recycle-512-long-v47",
+      "role": "rejected-one-recycle-512",
+      "source_commit": "8151cf6696396f34fba6509e0a3374468af30b4b",
+      "frozen_executable_sha256": "4c4cecc65a16eb7c544daf30473a0a9a680ac929f38457e230ed0f36c3942f46",
+      "raw_receipt_sha256": "bcbb3196c78ed850f4e7b003f912be1abd486eec4bebc3201f12e004cd143b53",
+      "run_record_sha256": "5ad25d51d7f3b0184a704176a562de466ce324315e38a732275245445adfddea",
+      "original_generated_id_count": 128,
+      "decode_tokens_per_second": 7.59842048582027,
+      "accepted_output_owning_and_lifecycle": true,
+      "generation_ms": 16714,
+      "prefill_ms": 15303,
+      "native_decode_steps": 127,
+      "seed": 424242,
+      "temperature": 0,
+      "request_io_reuse": true,
+      "request_io_close_ms": 15,
+      "request_io_closed_and_audited": true,
+      "observed_request_io_reuses": 40181,
+      "observed_request_io_checkpoints": 381,
+      "public_resident_warm_phase_ns": {
+        "native_all_family_commit": 142735292,
+        "native_all_family_preflight": 114972053,
+        "native_attention_and_gr_enqueue": 4679975848,
+        "native_completed_final_proofs": 993580657,
+        "native_ffn_gr_and_router_enqueue": 179854899,
+        "native_final_head_enqueue": 8856641,
+        "native_route_and_expert_enqueue": 4427687042,
+        "native_router_fence": 5986179015,
+        "native_shared_and_ffn_combine_enqueue": 94444329
+      },
+      "warm_scoped_read_host_ns": [
+        13876280,
+        356680911,
+        5431512608
+      ],
+      "warm_info_cache_stats": [
+        298578,
+        16820,
+        79
+      ],
+      "warm_host_resource_delta": {
+        "major_faults": 3,
+        "minor_faults": 178957,
+        "read_bytes": 0,
+        "system_ticks": 612,
+        "user_ticks": 3667,
+        "write_bytes": 0
+      },
+      "warm_cpu_operator_host_phase_ns": [
+        329302663,
+        1223076557,
+        889590051,
+        2493032058
+      ],
+      "warm_uploaded_bytes": 0,
+      "warm_weight_read_ms": 0,
+      "warm_weight_upload_ms": 0
     }
   ]
 }

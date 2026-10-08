@@ -1878,3 +1878,11 @@ gates but regresses to16958ms (final receipt authoritative), with5.617s mapped
 read waits. It is not selected. Next isolate the same accept-only boundary with
 the previously accepted512-entry cache. No new controls or admission limits are
 changed. All-family publication and request-close audits remain mandatory.
+
+
+The512-entry isolated one-recycle candidate8151cf6 also passes every original
+gate but regresses (see numeric aggregate). Restore the previously accepted
+three completed recycles and512-entry INFO cache. The unused internal
+accept-only API does not alter selected execution. Next investigate bounded
+nonblocking polling before the original inline map wait, retaining the same
+30-second deadline, callbacks and all error acceptance.
