@@ -164,7 +164,23 @@ geometry checks. A host regression rejects missing/extra shards in each
 projection.491 native tests plus both shader suites pass. The fixed-public
 terminal cleanup now preserves the original content-free typed error instead
 of replacing every failure with an opaque chunk rejection; panic payloads
-remain suppressed. Physical acceptance of the corrected profile is pending.
+remain suppressed. Corrected sourcec3ff595/artifact8dfbc305 passes all128 IDs and original fresh,
+full-owning and cancellation gates, but decode234567ms (0.5414 tokens/s),
+prefill61257ms. Three-GiB dense cache thrashes: warm weight reuploads386165831680B,
+read59030ms/upload95104ms. It is excluded from speed selection; the accepted
+144-slot/5GiB control remains selected. Physical B70 returns50688000B.
+
+A further internal CPU overlap candidate schedules its coordination task in
+Rayon's existing pinned pool with `in_place_scope`, retaining the GPU parent
+on its original caller thread instead of creating an OS thread every layer.
+Original32KiB orchestration /1MiB CPU reservations and full-capacity wiping
+metadata/Partials ownership remain. The existing genuine overlap test proves
+parent-thread identity and joined completion through all original failures.
+127 core tests (3 ignored),491 native tests plus both shader suites and strict
+all-target Clippy pass with compiled two-pass arithmetic. Physical acceptance
+of pool reuse and two-pass arithmetic remains pending. Original144-slot GPU
+kernel profiling is now running from frozen c3ff595/FMA artifact; profiling
+is diagnostic and cannot be selected as a clean performance sample.
 
 The user granted exclusive GPUs. Installed Kuno had an idle managed worker
 holding15978409984 B70 bytes with no active request; a graceful Kuno restart

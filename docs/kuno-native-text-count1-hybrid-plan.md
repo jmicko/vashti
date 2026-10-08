@@ -889,3 +889,19 @@ missing or extra shards reject before dispatch. Original host ledger
 capacity remains separately checked within640KiB / original12MiB parent.
 Full128 original IDs, mandatory numerical probes and full private/source owning
 proofs plus physical recovery still precede acceptance. Device efficacy pending.
+
+### Reuse the existing CPU pool for overlapping orchestration
+
+The pooled overlap operator currently creates a scoped OS thread at each
+layer, even though arithmetic already runs in a persistent pinned Rayon pool.
+The internal candidate uses that same pool's `in_place_scope`: the GPU parent
+closure stays on the original caller thread, while one joined pool task
+coordinates the original broadcast arithmetic. No cross-layer/request job
+survives the scope. The original32KiB orchestration reservation remains
+subtract-only within the original1MiB CPU envelope. The result/metadata stays
+in the existing full-capacity wiping owner; errors, panic and cancellation
+still join all CPU work before returning, and private Partials keep their
+original wiping ownership. There is no scheduling, arithmetic, model or API
+change. Existing overlapping success/failure tests, public numerical probes,
+full128 original IDs and complete original owning/erasure gates precede device
+acceptance and speed claims. Physical efficacy is pending.

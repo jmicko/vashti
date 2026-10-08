@@ -580,38 +580,46 @@ impl ExpertOperator {
             .ok_or(Error::LimitExceeded("CPU expert concurrent host remainder"))?;
         check_cancel(cancel)?;
         let hook = &hook;
-        std::thread::scope(|scope| {
-            let mut handles = retained_metadata::Owner::new(1)?;
-            if handles.metadata_bytes()? > ORCHESTRATOR_PRIVATE {
-                return Err(Error::LimitExceeded(
-                    "CPU expert concurrent header capacity",
-                ));
-            }
-            let task = std::thread::Builder::new()
-                .spawn_scoped(scope, || {
-                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        self.execute_with_limit(weights, selected, input, cancel, remainder, hook)
-                    }))
-                    .unwrap_or(Err(Error::InvalidFormat("CPU expert orchestrator panic")))
-                })
-                .map_err(|_| Error::LimitExceeded("CPU expert orchestrator spawn"))?;
-            handles.push(task)?;
-            // Parent remains on the original GPU/stream thread. Its returned
-            // static error and CPU completion are both checked only after join.
-            let parent_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(parent))
-                .unwrap_or(Err(Error::InvalidFormat("CPU expert parent work panic")));
-            let handle = handles
-                .take_first()
-                .ok_or(Error::InvalidFormat("CPU expert missing orchestrator"))?;
-            let cpu_result = handle
-                .join()
+        let pool = self
+            .pool
+            .as_ref()
+            .ok_or(Error::InvalidFormat("CPU expert missing pool"))?;
+        // The original owning metadata container drops Partials before wiping
+        // its complete capacity. Only this call's scoped task borrows it.
+        let mut completion = retained_metadata::Owner::new(1)?;
+        completion.push(std::sync::Mutex::new(None))?;
+        if completion.metadata_bytes()? > ORCHESTRATOR_PRIVATE {
+            return Err(Error::LimitExceeded(
+                "CPU expert concurrent header capacity",
+            ));
+        }
+        let slot = completion.get(0)?;
+        let parent_result = pool.in_place_scope(|scope| {
+            scope.spawn(|_| {
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    self.execute_with_limit(weights, selected, input, cancel, remainder, hook)
+                }))
                 .unwrap_or(Err(Error::InvalidFormat("CPU expert orchestrator panic")));
-            drop(handles);
-            let partials = cpu_result?;
-            let parent_output = parent_result?;
-            check_cancel(cancel)?;
-            Ok((partials, parent_output))
-        })
+                if let Ok(mut destination) = slot.lock() {
+                    *destination = Some(result);
+                }
+            });
+            // in_place_scope runs this closure on the current GPU caller, and
+            // joins the CPU task before returning, including all parent errors.
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(parent))
+                .unwrap_or(Err(Error::InvalidFormat("CPU expert parent work panic")))
+        });
+        let cpu_result = completion
+            .get_mut(0)?
+            .get_mut()
+            .map_err(|_| Error::InvalidFormat("CPU expert completion poisoned"))?
+            .take()
+            .ok_or(Error::InvalidFormat("CPU expert missing orchestrator"))?;
+        drop(completion);
+        let partials = cpu_result?;
+        let parent_output = parent_result?;
+        check_cancel(cancel)?;
+        Ok((partials, parent_output))
     }
 
     fn execute_with(
@@ -3536,6 +3544,7 @@ mod tests {
         let weights = set(&reader, &f);
         let op = ExpertOperator::new_pooled(WorkerPlan::portable(2).unwrap(), Backend::Portable)
             .unwrap();
+        let parent_thread = std::thread::current().id();
         for failure in 0..5 {
             let cancel = AtomicBool::new(false);
             let started = AtomicBool::new(false);
@@ -3548,6 +3557,7 @@ mod tests {
                 &cancel,
                 MAX_PRIVATE_HOST_BYTES,
                 || {
+                    assert_eq!(std::thread::current().id(), parent_thread);
                     // A bounded public host-test synchronization only. No engine
                     // timeout or private request instrumentation is introduced.
                     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
