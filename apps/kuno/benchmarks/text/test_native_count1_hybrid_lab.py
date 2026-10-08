@@ -175,10 +175,12 @@ class HybridLabTests(unittest.TestCase):
         env={"KUNO_LAB_LARGE_WEIGHT_CACHE":"1","KUNO_LAB_MAPPED_WEIGHTS":"1"}
         args=["/frozen/binary","intel",LAB.MODE,"10"]
         self.assertEqual(guard.memory_limit(env,args),48*1024**3)
+        for cap in range(11):
+            self.assertEqual(guard.memory_limit(env,[*args[:3],str(cap)]),48*1024**3)
         self.assertEqual(guard.memory_limit({},args),8*1024**3)
         for bad in ("auto","48","",True):
             with self.assertRaises(ValueError):guard.memory_limit(dict(env,KUNO_LAB_LARGE_WEIGHT_CACHE=bad),args)
-        for badargs in (args[:-1],[*args,"arbitrary"],[args[0],"cpu",LAB.MODE,"10"],[args[0],"intel","arbitrary","10"],[args[0],"intel",LAB.MODE,"1"]):
+        for badargs in (args[:-1],[*args,"arbitrary"],[args[0],"cpu",LAB.MODE,"10"],[args[0],"intel","arbitrary","10"],*([*args[:3],cap] for cap in ("11","-1","01"," 1",True))):
             with self.assertRaises(ValueError):guard.memory_limit(env,badargs)
         with self.assertRaises(ValueError):guard.memory_limit(dict(env,KUNO_LAB_MAPPED_WEIGHTS="0"),args)
         value=receipt("intel",10);value.update(mapped_weights=True,observed_mapped_weights=True,large_weight_cache=True)

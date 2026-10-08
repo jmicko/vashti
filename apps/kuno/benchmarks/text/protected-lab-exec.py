@@ -8,7 +8,7 @@ def memory_limit(environment, arguments):
     value = environment.get("KUNO_LAB_LARGE_WEIGHT_CACHE", "0")
     if value == "0":
         return 8 * 1024**3
-    if value != "1" or environment.get("KUNO_LAB_MAPPED_WEIGHTS") != "1" or len(arguments) != 4 or arguments[1] not in ("intel", "nvidia") or arguments[2] != "resident-count1-hybrid-chat" or arguments[3] not in ("0", "10"):
+    if value != "1" or environment.get("KUNO_LAB_MAPPED_WEIGHTS") != "1" or len(arguments) != 4 or arguments[1] not in ("intel", "nvidia") or arguments[2] != "resident-count1-hybrid-chat" or arguments[3] not in tuple(str(cap) for cap in range(11)):
         raise ValueError("Larger public cache requires the fixed mapped hybrid fixture")
     # Public model page cache, not a private-buffer allowance. The native MAIN
     # and CPU owning ledgers are unchanged. Bound the whole process to48GiB.
