@@ -704,6 +704,14 @@ impl Secondary {
                     v[80..160].iter().filter(|&&n| n == 1).count(),
                     v[160..].iter().filter(|&&n| n != 0).count()
                 );
+                println!(
+                    "public_secondary_status_mismatch_count={}",
+                    v.iter()
+                        .enumerate()
+                        .filter(|&(i, &n)| n
+                            != u32::from(i < s.gpu.len() || (i >= 80 && i < 80 + s.gpu.len())))
+                        .count()
+                );
             }
 
             return Err(Error::InvalidFormat("secondary full-owner device fold"));
@@ -881,11 +889,15 @@ fn fold(
         }
     }
     if i < status.len() {
-        let expected = if i < count || (i >= 80 && i < 80 + count) {
-            1u32
-        } else {
-            0u32
-        };
+        let mut expected = 0u32;
+        if i < count {
+            expected = 1;
+        }
+        if i >= 80 {
+            if i < 80 + count {
+                expected = 1;
+            }
+        }
         if status[i] != expected {
             bad |= 8;
         }
