@@ -148,7 +148,7 @@ pub fn validate(file: &GgufFile) -> Result<()> {
     Ok(())
 }
 
-fn shader(dtype: u32, constants: &str, body: &str) -> String {
+pub(super) fn shader(dtype: u32, constants: &str, body: &str) -> String {
     format!(
         "const DTYPE:u32={dtype}u;\n{constants}\n{}\n{body}",
         include_str!("common.wgsl")
@@ -268,7 +268,7 @@ impl Graph {
                     .ok_or("Missing second resident weight")
             })
             .transpose()?;
-        let step = self.gpu.step(
+        let mut step = self.gpu.step(
             pipeline,
             first.map(|w| &w.buffer),
             second.map(|w| &w.buffer),
@@ -276,6 +276,7 @@ impl Graph {
             p,
             grid,
         );
+        step.name = name.to_owned();
         if head {
             self.head.push(step);
         } else {
@@ -750,6 +751,87 @@ impl Graph {
 
     pub fn steps(&self) -> usize {
         self.body.len() + self.head.len()
+    }
+
+    /// One fixed-public following token with per-dispatch GPU counters. These
+    /// instrumented timings are diagnostics, never counter-free throughput.
+    pub fn profile_token(&self, token: u32, pos: u32) -> Result<serde_json::Value> {
+        if token >= 248320
+            || pos >= CONTEXT
+            || !self
+                .gpu
+                .device
+                .features()
+                .contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES)
+        {
+            return Err("Public timestamp profile not admitted".into());
+        }
+        let count = (self.steps() * 2) as u32;
+        let queries = self.gpu.device.create_query_set(&wgpu::QuerySetDescriptor {
+            label: Some("public-ornith-operator-profile"),
+            ty: wgpu::QueryType::Timestamp,
+            count,
+        });
+        let resolved = self.gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("public-timestamp-resolution"),
+            size: count as u64 * 8,
+            usage: wgpu::BufferUsages::QUERY_RESOLVE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        self.gpu
+            .queue
+            .write_buffer(&self.gpu.control, 0, &words(&[token, pos, 0, 0]));
+        let start = Instant::now();
+        let mut encoder = self.gpu.device.create_command_encoder(&Default::default());
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: None,
+                timestamp_writes: None,
+            });
+            for (i, step) in self.body.iter().chain(self.head.iter()).enumerate() {
+                pass.set_pipeline(&step.pipeline);
+                pass.set_bind_group(0, &step.bindings, &[]);
+                pass.write_timestamp(&queries, i as u32 * 2);
+                pass.dispatch_workgroups(
+                    step.grid[0],
+                    if step.grid[1] == 0 {
+                        (pos + 1).div_ceil(64)
+                    } else {
+                        step.grid[1]
+                    },
+                    step.grid[2],
+                );
+                pass.write_timestamp(&queries, i as u32 * 2 + 1);
+            }
+        }
+        encoder.resolve_query_set(&queries, 0..count, &resolved, 0);
+        self.gpu.queue.submit([encoder.finish()]);
+        self.gpu.wait()?;
+        let wall_ns = start.elapsed().as_nanos();
+        let counters = self.gpu.public_read(&resolved, 0, count as u64 * 8)?;
+        let ticks = counters
+            .chunks_exact(8)
+            .map(|b| u64::from_le_bytes(b.try_into().unwrap()))
+            .collect::<Vec<_>>();
+        let period = self.gpu.queue.get_timestamp_period() as f64;
+        let mut groups: BTreeMap<String, (u32, f64)> = BTreeMap::new();
+        for (i, step) in self.body.iter().chain(self.head.iter()).enumerate() {
+            let entry = groups.entry(step.name.clone()).or_default();
+            entry.0 += 1;
+            entry.1 += ticks[i * 2 + 1].saturating_sub(ticks[i * 2]) as f64 * period;
+        }
+        let mut groups = groups.into_iter().map(|(name,(count,ns))| serde_json::json!({"operator":name,"dispatches":count,"gpu_nanoseconds":ns})).collect::<Vec<_>>();
+        groups.sort_by(|a, b| {
+            b["gpu_nanoseconds"]
+                .as_f64()
+                .unwrap()
+                .total_cmp(&a["gpu_nanoseconds"].as_f64().unwrap())
+        });
+        Ok(
+            serde_json::json!({"instrumented":true,"wall_nanoseconds":wall_ns,"gpu_span_nanoseconds":(ticks[ticks.len()-1]-ticks[0]) as f64*period,"operators":groups}),
+        )
     }
 }
 

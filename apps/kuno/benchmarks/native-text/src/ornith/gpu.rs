@@ -35,6 +35,7 @@ pub fn words(values: &[u32]) -> Vec<u8> {
 }
 
 pub struct Step {
+    pub name: String,
     pub pipeline: wgpu::ComputePipeline,
     pub bindings: wgpu::BindGroup,
     pub grid: [u32; 3],
@@ -70,7 +71,11 @@ impl Gpu {
             })
             .ok_or("The fully resident lab requires the inspected B70")?;
         let info = adapter.get_info();
-        let features = wgpu::Features::SUBGROUP;
+        let mut features = wgpu::Features::SUBGROUP;
+        if std::env::var("KUNO_LAB_ORNITH_PROFILE").as_deref() == Ok("1") {
+            features |=
+                wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES;
+        }
         if !adapter.features().contains(features) {
             return Err("Subgroup arithmetic unavailable".into());
         }
@@ -231,6 +236,7 @@ impl Gpu {
             entries: &entries,
         });
         Step {
+            name: String::new(),
             pipeline,
             bindings,
             grid,
@@ -243,6 +249,43 @@ impl Gpu {
             timeout: Some(Duration::from_secs(60)),
         })?;
         Ok(())
+    }
+
+    /// Bounded laboratory readback. Callers admit only fixed public probes or
+    /// public-fixture timestamp counters; real requests never use this path.
+    pub fn public_read(
+        &self,
+        source: &wgpu::Buffer,
+        offset: u64,
+        bytes: u64,
+    ) -> Result<zeroize::Zeroizing<Vec<u8>>> {
+        if bytes == 0 || bytes > 1024 * 1024 || !bytes.is_multiple_of(4) || offset + bytes > source.size() {
+            return Err("Public probe readback bound exceeded".into());
+        }
+        let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("fixed-public-probe-readback"),
+            size: bytes,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let mut encoder = self.device.create_command_encoder(&Default::default());
+        encoder.copy_buffer_to_buffer(source, offset, &staging, 0, bytes);
+        self.queue.submit([encoder.finish()]);
+        let (tx, rx) = std::sync::mpsc::channel();
+        staging.slice(..).map_async(wgpu::MapMode::Read, move |r| {
+            let _ = tx.send(r);
+        });
+        self.wait()?;
+        rx.recv()??;
+        let view = staging.slice(..).get_mapped_range();
+        let result = zeroize::Zeroizing::new(view.to_vec());
+        drop(view);
+        staging.unmap();
+        let mut encoder = self.device.create_command_encoder(&Default::default());
+        encoder.clear_buffer(&staging, 0, None);
+        self.queue.submit([encoder.finish()]);
+        self.wait()?;
+        Ok(result)
     }
 
     pub fn result(&self) -> Result<[u32; 4]> {

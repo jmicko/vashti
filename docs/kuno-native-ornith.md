@@ -2,8 +2,8 @@
 
 User-authorized direction, 2026-10-07: isolate native execution speed with the
 already downloaded `ornith:35b` before returning to Flash-Next offloading. The
-working 10 decode tokens/s target remains; neither it nor Ollama parity is
-established by an operator microbenchmark.
+immediate target is now approximately80 decode tokens/s, matching the observed
+fully resident Ollama result. Operator microbenchmarks do not establish this.
 
 ## Scope
 
@@ -60,6 +60,6 @@ and its numeric aggregate for exact counters, artifact identities and limits.
 
 The subsequent `KUNO_LAB_ORNITH_BLOCK_DOT=1` Q4/Q6 grouped packed-dot candidate
 is source-tested and disabled by default. It has no device/performance receipt.
-The user requested a pause; no additional GPU tests may run until resumed.
+The previous pause ended when the user returned both GPUs for speed work.
 GPU memory and ordinary inference admission are restored; Vashti remains
 available. No installed engine, routing or API behavior changed.

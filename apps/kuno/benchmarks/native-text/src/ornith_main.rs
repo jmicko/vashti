@@ -3,6 +3,8 @@
 mod gpu;
 #[path = "ornith/graph.rs"]
 mod graph;
+#[path = "ornith/probe.rs"]
+mod probe;
 use gpu::Result;
 use kuno_text::{GgufFile, GgufLimits, Qwen35Tokenizer, TokenizerLimits};
 use std::time::Instant;
@@ -23,6 +25,8 @@ fn main() -> Result<()> {
         "8" => 8,
         "128" => 128,
         "tokenize-public-response" => 0,
+        "probe" => 1,
+        "profile" => 2,
         _ => return Err("Public output limit must be8 or128".into()),
     };
     if std::env::var("KUNO_LAB_ORNITH_PUBLIC").as_deref() != Ok("1") {
@@ -62,6 +66,17 @@ fn main() -> Result<()> {
     unsafe {
         file.enable_mapped_weights()?;
     }
+    if count == 1 {
+        let receipt = probe::run(&file)?;
+        file.verify_file_unchanged()?;
+        let output = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&args[2])?;
+        serde_json::to_writer_pretty(output, &receipt)?;
+        println!("public_original_projection_probes_passed");
+        return Ok(());
+    }
     let tokenizer = Qwen35Tokenizer::from_gguf(&file, TokenizerLimits::default())?;
     if count == 0 {
         use std::io::Read;
@@ -89,6 +104,23 @@ fn main() -> Result<()> {
         total_load
     );
     let mut samples = Vec::new();
+    if count == 2 {
+        model.gpu.clear()?;
+        for (pos, &token) in tokens.iter().enumerate() {
+            model.token(token, pos as u32, pos + 1 == tokens.len())?;
+        }
+        let first = model.next()?;
+        let receipt = model.profile_token(first, tokens.len() as u32)?;
+        model.gpu.clear()?;
+        file.verify_file_unchanged()?;
+        let output = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&args[2])?;
+        serde_json::to_writer_pretty(output, &receipt)?;
+        println!("public_ornith_operator_profile_completed");
+        return Ok(());
+    }
     for phase in ["first_sequence", "warm_weights_fresh_sequence"] {
         model.gpu.clear()?;
         let prefill = Instant::now();
