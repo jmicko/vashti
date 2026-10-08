@@ -1580,3 +1580,13 @@ The next candidate ports GR RMS to max-scaled vector/subgroup reductions;
 source gates pass496 native tests plus both shaders,35 Python controls and
 strict Clippy; complete physical acceptance is pending. API/installed inference
 remain unchanged. The10-token/s target remains unmet.
+
+Shared GR source901f35b/artifact809aace6a5f6d86a5d6d2effa118c685f46d1f9a074f610ae8309fbe6f31739e
+passes independent actual-shape/count/invalid/overflow/padding probes and all
+original75/128 output, fresh, full-owning and lifecycle gates. Decode17805ms
+(7.1328 tokens/s), prefill15240ms,12319 warm shared-GR calls; no speed gain over
+v30 in this single sample. B70 returns50688000B. The next candidate batches
+three completed PLE diagnostic readbacks, retaining every original validation
+and enforcing the simultaneous peak against the unchanged4MiB host cap.
+496 native tests, both shaders and strict Clippy pass; physical acceptance
+pending. Installed inference and public contracts remain unchanged.

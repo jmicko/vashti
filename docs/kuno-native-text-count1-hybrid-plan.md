@@ -1149,3 +1149,19 @@ Readback guards wipe on success/error. Original model output, fresh continuation
 poison rejection and owning/lifecycle gates remain mandatory. Exact bounded
 warm shared-GR call evidence and the numeric/finite/status/owning probe marker
 are required before accepting a timing receipt.
+
+### Completed PLE full readbacks as one ordered group
+
+The selected shared-kernel laboratory may submit the original OLD, NORMALIZED
+and NEXT PLE full-owner reads as one three-member readback after the unchanged
+whole-model fence. Full owner/epoch/physical proofs and every original finite,
+inactive, padding and length validation remain; no write intervenes between
+these immutable completed diagnostic sources. Raw controller ownership wipes
+on every success/error path, and all raw leases drop before the same independent
+PLE audited cleanup, second whole-model fault proof and all-family preflight.
+No state commit or owner credit advances early. The original4MiB host component
+cap must cover the simultaneously retained raw maps plus all converted float
+vectors and existing history, with the original64KiB metadata reserve. Runtime
+readback/full-audit reservations and original owning inventories are unchanged.
+The unselected path retains separate reads. Original full-model128 IDs and
+fresh/poison/full-owning/lifecycle gates are mandatory before timing acceptance.

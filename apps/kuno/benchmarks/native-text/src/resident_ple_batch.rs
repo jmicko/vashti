@@ -629,15 +629,27 @@ impl PleBatchWorkspace {
         let diagnostics = guarded(&poison, || {
             self.receipt_parts(&c, &receipt, cancel)?;
             let m = &*receipt.metadata;
-            let old = read_full(c.arena, self.ids[OLD], words(OLD), m.count, false)?;
-            let normalized = read_full(
-                c.arena,
-                self.ids[NORMALIZED],
-                words(NORMALIZED),
-                m.count,
-                true,
-            )?;
-            let next = read_full(c.arena, self.ids[NEXT], words(NEXT), m.count, false)?;
+            let (old, normalized, next) = if crate::next_shared::gr_selected() {
+                let existing = core::owner_capacity_bytes(c.conv, c.history).map_err(u::fault)?;
+                let [old, normalized, next] = read_full_three(
+                    c.arena,
+                    [self.ids[OLD], self.ids[NORMALIZED], self.ids[NEXT]],
+                    m.count,
+                    existing,
+                )?;
+                (old, normalized, next)
+            } else {
+                let old = read_full(c.arena, self.ids[OLD], words(OLD), m.count, false)?;
+                let normalized = read_full(
+                    c.arena,
+                    self.ids[NORMALIZED],
+                    words(NORMALIZED),
+                    m.count,
+                    true,
+                )?;
+                let next = read_full(c.arena, self.ids[NEXT], words(NEXT), m.count, false)?;
+                (old, normalized, next)
+            };
             // All raw Bytes leases are gone; inference was already completed.
             audit(c.arena, c.retired)?;
             self.receipt_parts(&c, &receipt, cancel)?;
@@ -1142,19 +1154,74 @@ fn read_full(
             .read_one(h)
             .map_err(u::fault)?,
     );
-    validate_download(&bytes.0, logical, count, token_major)?;
-    let n = bytes.0.len() / 4;
+    decode_download(&bytes.0, logical, count, token_major)
+}
+fn decode_download(
+    bytes: &[u8],
+    logical: usize,
+    count: usize,
+    token_major: bool,
+) -> Result<Zeroizing<Vec<f32>>> {
+    validate_download(bytes, logical, count, token_major)?;
+    let n = bytes.len() / 4;
     let mut values = Zeroizing::new(Vec::new());
     values.try_reserve_exact(n).map_err(|_| error())?;
     if values.capacity() != n {
         return Err(error());
     }
-    for b in bytes.0.chunks_exact(4) {
+    for b in bytes.chunks_exact(4) {
         values.push(f32::from_bits(u32::from_le_bytes(
             b.try_into().map_err(|_| error())?,
         )));
     }
     Ok(values) // raw guarded lease drops BEFORE audit/transition factory.
+}
+struct ReadBatch(Vec<cubecl::bytes::Bytes>);
+impl Drop for ReadBatch {
+    fn drop(&mut self) {
+        for b in &mut self.0 {
+            b.zeroize();
+        }
+    }
+}
+fn read_full_three(
+    arena: &PrivateArena,
+    ids: [BufferId; 3],
+    count: usize,
+    existing: usize,
+) -> Result<[Zeroizing<Vec<f32>>; 3]> {
+    let logical = [words(OLD), words(NORMALIZED), words(NEXT)];
+    let mut raw_bytes = 0usize;
+    let mut handles = Vec::new();
+    handles.try_reserve_exact(3).map_err(|_| error())?;
+    for (id, n) in ids.into_iter().zip(logical) {
+        let h = full_private(arena, id, n)?;
+        raw_bytes = raw_bytes
+            .checked_add(h.size() as usize)
+            .ok_or(Error::ArithmeticOverflow)?;
+        handles.push(h);
+    }
+    // All three existing full maps and their converted Vecs can coexist during
+    // conversion. Same4MiB cap, including64KiB original scoped metadata reserve.
+    if existing
+        .checked_add(raw_bytes.checked_mul(2).ok_or(Error::ArithmeticOverflow)?)
+        .and_then(|n| n.checked_add(65536))
+        .is_none_or(|n| n > HOST_CAP)
+    {
+        return Err(error());
+    }
+    let raw = ReadBatch(
+        cubecl::future::block_on(arena.client().map_err(u::fault)?.read_async(handles))
+            .map_err(u::fault)?,
+    );
+    if raw.0.len() != 3 {
+        return Err(error());
+    }
+    let old = decode_download(&raw.0[0], logical[0], count, false)?;
+    let normalized = decode_download(&raw.0[1], logical[1], count, true)?;
+    let next = decode_download(&raw.0[2], logical[2], count, false)?;
+    // Guard wipes every raw map before the caller's original audited cleanup.
+    Ok([old, normalized, next])
 }
 fn audit(arena: &PrivateArena, retired: &AtomicBool) -> Result<()> {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
