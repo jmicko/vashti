@@ -1834,7 +1834,10 @@ fn run_inner<'graph, 'm>(
     *stage = NumericStage::Workers;
     let worker_plan = WorkerPlan::physical(config.workers)?;
     let op = if config.backend == Backend::Avx2Fma {
-        ExpertOperator::new_pooled(worker_plan, config.backend)?
+        if !file.weights_mapped() {
+            return Err(fault());
+        }
+        ExpertOperator::new_pooled(worker_plan, config.backend)?.with_mapped_prefetch()
     } else {
         ExpertOperator::new(worker_plan, config.backend)?
     };

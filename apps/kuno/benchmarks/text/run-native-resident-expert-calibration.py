@@ -21,6 +21,7 @@ def validate_receipt(receipt, card, output):
     expected = {
         "scope": "fixed-public-original-resident-expert-calibration",
         "resident_expert_calibration": True, "device_dispatch": "inline",
+        "weights_mapped": True, "cpu_mapped_prefetch": True,
         "vendor": 0x8086 if card == "intel" else 0x10DE,
         "weights": "borrowed-unmodified-ollama-blob", "fixed_public_points": 6,
         "numeric_gates": 12, "timing_samples": 24, "ranks_per_case": 10,

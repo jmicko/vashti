@@ -1358,6 +1358,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .ok_or("fixed-public CPU/GPU calibration receipt path required")?;
             let path = std::env::var_os("KUNO_TEST_GGUF").ok_or("existing GGUF required")?;
             let file = GgufFile::open(path, GgufLimits::default())?;
+            if resident_expert_calibration {
+                // SAFETY: this exclusive protected lab borrows the unchanged
+                // content-addressed public model. No installer/writer may run.
+                unsafe {
+                    file.enable_mapped_weights()?;
+                }
+            }
             let model = Qwen4Exp::bind(&file)?;
             let retired = transient_context
                 .clone()
@@ -1386,6 +1393,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let receipt = serde_json::json!({
                 "scope":if resident_expert_calibration {"fixed-public-original-resident-expert-calibration"} else {"fixed-public-original-cpu-gpu-expert-calibration"},
                 "resident_expert_calibration":resident_expert_calibration,
+                "weights_mapped":file.weights_mapped(),
+                "cpu_mapped_prefetch":resident_expert_calibration,
                 "device_dispatch":device_dispatch,
                 "vendor":vendor,"weights":"borrowed-unmodified-ollama-blob",
                 "fixed_public_points":6,"numeric_gates":12,"timing_samples":24,

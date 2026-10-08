@@ -1827,8 +1827,10 @@ second model or changing the model execution path. On each card compare the same
 original ten expert IDs/input/probabilities for each original Q5/Q8 down family:
 already-resident GPU (M0/K0), GPU upload (M10/K0), and warmed original-weight CPU
 (M10/K10). CPU uses the selected pooled AVX2/FMA operator with16 proven physical
-workers. Keep the original independent oracles, numerical tolerances, sealed
-numeric permits, four ABBA samples per point, full owning fences/cleanup and
+workers. CPU jobs borrow the unchanged mapped weight file with selected-source prefetch;
+do not compare the earlier buffered source path against resident GPU as though
+it were the current native CPU baseline. The calibration reports actual mapping.
+Keep original independent oracles/numerical tolerances, sealed numeric permits, four ABBA samples per point, full owning fences/cleanup and
 swap0/core0 limits. No private routes or vectors may escape the lab. Timings
 must distinguish completed operator work from result bridge/merge and cleanup.
 

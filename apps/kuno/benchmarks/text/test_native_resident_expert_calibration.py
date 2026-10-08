@@ -12,6 +12,7 @@ SPEC.loader.exec_module(LAB)
 def fixture():
     receipt = dict(scope="fixed-public-original-resident-expert-calibration",
         resident_expert_calibration=True, device_dispatch="inline", vendor=0x10DE,
+        weights_mapped=True, cpu_mapped_prefetch=True,
         weights="borrowed-unmodified-ollama-blob", fixed_public_points=6,
         numeric_gates=12, timing_samples=24, ranks_per_case=10, group=0, vector=0,
         backend="pooled-avx2-fma", workers=16, owned_cleanup_accepted=True,
