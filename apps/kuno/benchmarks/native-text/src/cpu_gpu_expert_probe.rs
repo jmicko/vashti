@@ -814,6 +814,81 @@ fn dot64(w: &[f32], x: &[f32]) -> Result<f32> {
     }
     Ok(sums[0])
 }
+/// Independently decoded weights; scalar fused operations and32 lanes,
+/// with the same final64-slot tree (the upper32 remain zero). No packed SIMD.
+fn dot32_fma(w: &[f32], x: &[f32]) -> Result<f32> {
+    if w.len() != x.len() {
+        return Err(fault());
+    }
+    let mut sums = Zeroizing::new([0.0f32; 64]);
+    for lane in 0..32 {
+        for col in (lane..x.len()).step_by(32) {
+            sums[lane] = w[col].mul_add(x[col], sums[lane]);
+        }
+    }
+    for width in [32, 16, 8, 4, 2, 1] {
+        for lane in 0..width {
+            sums[lane] += sums[lane + width];
+        }
+    }
+    if !sums[0].is_finite() {
+        return Err(fault());
+    }
+    Ok(sums[0])
+}
+
+fn project_fma(
+    t: TensorView<'_>,
+    expert: usize,
+    x: &[f32],
+    cancel: &AtomicBool,
+) -> Result<Zeroizing<Vec<f32>>> {
+    let matrix = Matrix::new(t)?;
+    if matrix.inputs() != x.len() || matrix.outputs() > D || expert >= 512 {
+        return Err(fault());
+    }
+    let row_bytes = t.info().row_bytes() as usize;
+    let mut packed = vec![0; row_bytes];
+    if packed.capacity() > 8 * 1024 * 1024 {
+        return Err(fault());
+    }
+    let mut decoded = guarded(x.len(), HOST_ORACLE_LIMIT)?;
+    let mut output = guarded(matrix.outputs(), HOST_ORACLE_LIMIT)?;
+    for (row, value) in output.iter_mut().enumerate() {
+        check(cancel)?;
+        t.read_range(
+            ((expert * matrix.outputs() + row) * row_bytes) as u64,
+            &mut packed,
+        )?;
+        t.info().dtype().decode(&packed, &mut decoded)?;
+        if decoded.iter().any(|v| !v.is_finite()) {
+            return Err(fault());
+        }
+        *value = dot32_fma(&decoded, x)?;
+    }
+    Ok(output)
+}
+
+fn fma_reference_parts(
+    w: RoutedWeights<'_>,
+    ids: &[usize; N],
+    x: &[f32],
+    cancel: &AtomicBool,
+) -> Result<Zeroizing<Vec<f32>>> {
+    let mut output = guarded(N * D, HOST_ORACLE_LIMIT)?;
+    for (rank, &expert) in ids.iter().enumerate() {
+        let gate = project_fma(w.gate, expert, x, cancel)?;
+        let up = project_fma(w.up, expert, x, cancel)?;
+        let mut active = guarded(FF, HOST_ORACLE_LIMIT)?;
+        for col in 0..FF {
+            active[col] = kuno_text::ops::silu(gate[col]) * up[col];
+        }
+        let down = project_fma(w.down, expert, &active, cancel)?;
+        output[rank * D..][..D].copy_from_slice(&down);
+    }
+    Ok(output)
+}
+
 fn project(
     t: TensorView<'_>,
     e: usize,
@@ -852,6 +927,7 @@ struct Oracle {
     part: Zeroizing<Vec<f32>>,
     out: Zeroizing<Vec<f32>>,
     core: Zeroizing<Vec<f32>>,
+    fma_part: Option<Zeroizing<Vec<f32>>>,
 }
 fn oracle(
     w: RoutedWeights<'_>,
@@ -865,6 +941,7 @@ fn oracle(
         part: guarded(N * D, HOST_ORACLE_LIMIT)?,
         out: guarded(D, HOST_ORACLE_LIMIT)?,
         core: guarded(D, HOST_ORACLE_LIMIT)?,
+        fma_part: None,
     };
     for (rank, &e) in ids.iter().enumerate() {
         for tree in [true, false] {
@@ -1506,6 +1583,7 @@ fn verified_references(
     experts: &PackedExperts<'_, '_>,
     reader: &kuno_text::gguf::PositionalReader<'_>,
     cancel: &AtomicBool,
+    cpu_fma: bool,
 ) -> Result<(Values, Oracle, usize)> {
     let (full, metadata) = reference(
         graph,
@@ -1519,13 +1597,27 @@ fn verified_references(
         prob,
         cancel,
     )?;
-    let expected = oracle(weights, ids, x, prob, cancel)?;
+    let mut expected = oracle(weights, ids, x, prob, cancel)?;
     let all_cpu = portable.execute(experts, ids, x, cancel)?;
     bits(all_cpu.active(), &expected.part)?;
     drop(all_cpu);
     raw_projections(
-        arena, buffers, flat, weights, ids, x, op, reader, &expected, ledger, retired, cancel,
+        arena,
+        buffers,
+        flat,
+        weights,
+        ids,
+        x,
+        if cpu_fma { portable } else { op },
+        reader,
+        &expected,
+        ledger,
+        retired,
+        cancel,
     )?;
+    if cpu_fma {
+        expected.fma_part = Some(fma_reference_parts(weights, ids, x, cancel)?);
+    }
     Ok((full, expected, metadata))
 }
 fn snapshot_bytes(v: &[&Vec<f32>]) -> Result<usize> {
@@ -1581,7 +1673,8 @@ fn host_preflight() -> Result<()> {
     let oracle = (2 * (N * FF + N * D + D) + N * FF + N * D + 3 * D) * 4
         + 2 * N * D * 4
         + 2 * FF * 4
-        + D * 4;
+        + D * 4
+        + N * D * 4; // Additional selected-FMA oracle; original2-MiB cap unchanged.
     // Two simultaneous measured StagedSlots/Plan inventories are each capped
     // at256KiB; both committed states, full moved bridge+word encoding, input,
     // handle/resource headers and one scoped orchestrator fit the spare1MiB.
@@ -1896,6 +1989,7 @@ fn run_inner<'graph, 'm>(
                 &experts,
                 &reader,
                 cancel,
+                config.backend == Backend::Avx2Fma,
             )
         })?;
         let mut metadata = prime_meta;
@@ -2056,6 +2150,7 @@ fn run_inner<'graph, 'm>(
                 &experts,
                 &reader,
                 cancel,
+                config.backend == Backend::Avx2Fma,
             )
         })?;
         metadata = metadata.max(reference_meta);
@@ -2067,7 +2162,12 @@ fn run_inner<'graph, 'm>(
         if let Some(cpu) = &cpu {
             for (r, &id) in split.cpu().iter().enumerate() {
                 let rank = ids.iter().position(|&e| e == id).ok_or_else(fault)?;
-                bits(&cpu.active()[r * D..][..D], &expected.part[rank * D..][..D])?;
+                let reference = if config.backend == Backend::Avx2Fma {
+                    expected.fma_part.as_ref().ok_or_else(fault)?
+                } else {
+                    &expected.part
+                };
+                bits(&cpu.active()[r * D..][..D], &reference[rank * D..][..D])?;
             }
         }
         let mut legacy_error = compare(&y, &expected_full.out, 1e-4, 3e-4)?;
@@ -2111,7 +2211,7 @@ fn run_inner<'graph, 'm>(
         // Publication is LOCAL fixture metadata only, after ALL arithmetic/maps and
         // actual cleanup. No model token/cursor or whole-family right is invoked.
         *stage = NumericStage::Metadata;
-        let snapshots = snapshot_bytes(&[
+        let mut snapshots = snapshot_bytes(&[
             &expected.act,
             &expected.part,
             &expected.out,
@@ -2124,6 +2224,14 @@ fn run_inner<'graph, 'm>(
             &gpu.out,
             &y,
         ])?;
+        if let Some(part) = &expected.fma_part {
+            snapshots = snapshots
+                .checked_add(part.capacity() * 4)
+                .ok_or_else(fault)?;
+            if snapshots > HOST_ORACLE_LIMIT {
+                return Err(fault());
+            }
+        }
         *stage = NumericStage::SlotCommit;
         // This distinct fixture deliberately publishes neither staged nor
         // original metadata. Its local bank is disposed after full owning
@@ -2764,6 +2872,28 @@ mod tests {
             assert_eq!(dot64(&decoded, &x).unwrap().to_bits(), expected.to_bits());
         }
     }
+    #[test]
+    fn independently_decoded_fma_oracle_is_finite_and_uses32_lanes() {
+        for columns in [640, 2560] {
+            let w: Vec<f32> = (0..columns)
+                .map(|i| ((i * 17) % 31) as f32 / 31.0 - 0.5)
+                .collect();
+            let x: Vec<f32> = (0..columns)
+                .map(|i| ((i * 19) % 23) as f32 / 23.0 - 0.5)
+                .collect();
+            let oracle: f64 = w
+                .iter()
+                .zip(&x)
+                .map(|(&a, &b)| f64::from(a) * f64::from(b))
+                .sum();
+            let got = dot32_fma(&w, &x).unwrap();
+            assert!((f64::from(got) - oracle).abs() < 1e-5);
+            assert_ne!(got.to_bits(), dot64(&w, &x).unwrap().to_bits());
+        }
+        assert!(dot32_fma(&[1.], &[]).is_err());
+        assert!(dot32_fma(&[f32::NAN], &[1.]).is_err());
+    }
+
     #[test]
     fn actual_extent_host_envelope_and_bounded_sample_ticket() {
         host_preflight().unwrap();

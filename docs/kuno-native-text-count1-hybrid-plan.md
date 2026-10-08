@@ -1718,7 +1718,7 @@ host state. Required production worker, API/catalog and Vashti changes: none
 for this laboratory selection. Production integration, broad quality, context,
 sampling and soak acceptance remain outstanding; installed Kuno is unchanged.
 
-### Fused resident expert trial (2026-10-08, pending laboratory acceptance)
+### Fused resident expert trial (2026-10-08, complete, excluded)
 
 The next opt-in trial, `KUNO_LAB_FUSED_EXPERTS=1` / `--fused-experts`, targets
 resident GPU experts without changing cache placement. Interleave the existing
@@ -1738,7 +1738,7 @@ full original 75/128 fixture and original expected IDs/lifecycle checks before
 selection. This is a kernel trial, not completed FreeToken cache scheduling or
 Strata speculation. Public APIs, workers, model file and Vashti stay unchanged.
 
-### Resident expert CPU balancing trial (2026-10-08, pending)
+### Resident expert CPU balancing trial (2026-10-08, complete, excluded)
 
 `--gpu-expert-limit N` / `KUNO_LAB_GPU_EXPERT_LIMIT=N` (default 10) is an
 explicit count1 cap10/mapped/pooled/overlap laboratory policy. Keep the first N
@@ -1769,7 +1769,7 @@ counters are not evidence of private content storage. Subsequent off reads and
 writes zero. Preserve the opt-in for later instruction/register investigation;
 keep the accepted original shader selected. No speed gain established.
 
-### Packed integer GPU expert trial (2026-10-08, pending)
+### Packed integer GPU expert trial (2026-10-08, complete, excluded)
 
 `--integer-experts` / `KUNO_LAB_INTEGER_EXPERTS=1` requires explicitly fused
 count1 cap10 kernels and original GPU limit10. Gate/up use two residual Q8
@@ -1792,7 +1792,7 @@ actual integer dispatch evidence. Record exact selection/counters/artifact.
 Broad quality and precision acceptance remain separate; ordinary F32 selection
 and production workers/APIs remain unchanged.
 
-### Binding capacity trial (2026-10-08, pending)
+### Binding capacity trial (2026-10-08, complete, excluded)
 
 The existing request-owned exact binding cache provisionally reserves512 entries
 and1024 buckets, replacing256/512; maximum32 ordered bindings per key is unchanged.
@@ -1839,3 +1839,38 @@ observed original hit/miss/source counts. This local operator test excludes
 the B70-to-NVIDIA bridge and full-model dual-device scheduling, and uses the
 existing isolated expert shader rather than the optimized count1 shared shader.
 It cannot establish a dual-GPU throughput gain. No API or Vashti change.
+
+The selected FMA operator has a separate independently decoded scalar32-lane
+fused reference. Actual CPU partials must match that reference bit for bit;
+original64-lane portable/raw checks and all original GPU/output tolerances stay
+intact. Its additional100-KiB oracle is charged inside the existing2-MiB host
+oracle limit, including actual retained capacity. This does not substitute a
+looser tolerance for the original arithmetic or relax whole-model acceptance.
+
+
+### Placement/kernel/cache trials completed (2026-10-08)
+
+Select the original stationary intel144 bank, cap10/GPU limit10, original GPU
+float and CPU FMA arithmetic, and binding256. New opt-ins remain laboratory
+experiments. Source048426b adds fused projections,12d1f85 adds resident CPU
+balancing,ff45fe5 corrects exact prefetch accounting,c0d3420 adds packed integer
+GPU projections,eec1797 adds explicit binding capacities. No new trial shows a
+matched warm throughput gain. Nine complete-model receipts, including one
+explicit wrapper rejection and its accepted repeat, are in
+[the numeric aggregate](../apps/kuno/benchmarks/text/receipts/next-placement-kernel-trials-20261008.json).
+
+Ordinary same-binary warm controls measure11548/11397/11596ms for127 steps
+(10.998/11.143/10.952 tokens/s). Fused takes11677ms; integer11654ms.
+GPU limit6 repeat12712ms (9.991) loses to limit10 at11397ms (11.143).
+Binding51212946ms (9.810) loses to same-binary25611596ms (10.952): it inserts419
+entries then loses its optional cache when required metadata grows. Keep the
+same256-KiB runtime metadata allowance; do not increase a privacy budget to make
+the larger cache fit. These are individual fixed-public measurements, not a new
+Ollama comparison or general performance claim.
+
+First post-reboot ordinary control reads9867210752 bytes during decode and takes
+20018ms. Warm ordinary/balanced controls read zero or a few KiB; the current64GB
+has no demonstrated steady-decode RAM shortage. More RAM is not selected as a
+remedy for a cold page cache. User now prioritizes a disjoint resident NVIDIA
+bank before adaptive upload-on-miss. The secondary calibration above and its
+separate acceptance do not yet implement the whole-model dual-device bridge.

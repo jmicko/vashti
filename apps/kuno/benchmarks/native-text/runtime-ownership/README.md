@@ -601,8 +601,9 @@ requires the original exclusive request-I/O reuse transaction. It memoizes
 binding objects by actual pipeline/buffer identity and ordered offset/size;
 hashes only select buckets and every hit requires exact equality. Retained
 handles prevent identity recycling. Contents are never cache keys or logged.
-The fixed cache permits at most 256 entries, 32 bindings per entry and 512
-buckets. Actual key/entry capacities share the original 256 KiB metadata cap
+The protected cache selects256 or512 entries (default256),32 bindings per entry
+and1024 buckets. A controlled512-entry trial under the unchanged metadata limit
+withdraws its optional cache at419 entries and is slower; keep256 selected. Actual key/entry capacities share the original 256 KiB metadata cap
 with owner/INFO bookkeeping, including INFO's next capacity. Required ownership
 growth drops the optional cache first; saturation/allocation failure uses normal
 binding creation without raising any budget.
