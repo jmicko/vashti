@@ -1692,3 +1692,14 @@ Inline Readback source gates pass496 native/two shaders,66 runtime/three actual
 allocator/two logger controls,38 Python controls and strict all-target Clippy.
 Regenerated23-file provenance a93143eaaa8f6f88155ad8323145214f26a7e51b3107e060ef2f8135a40978e9
 retains original upstream pins/licenses and both locks. Device pending.
+
+Inline Readback sourceb345f9c/artifact3e707443f0452d00f9b4bc24608efbad406a2fde1f24bc58acc0eb6d658ef709
+passes unchanged original128 IDs, independent arithmetic/fresh/poison and full
+1378-owner/818413568-byte normal cleanup/lifecycle gates. Following127 steps
+take17047ms (7.4499912 tokens/s), prefill48856ms,9525 warm inline map batches.
+Physical B70 returns50688000B and same-boot Xe classifications remain zero.
+This is the best single sample so far;10 tokens/s remains unmet.
+
+The next candidate partitions GDN key reductions across four lanes. Arithmetic
+summation order changes and complete original acceptance is pending. Installed
+execution and all full-owner/cleanup gates remain unchanged.

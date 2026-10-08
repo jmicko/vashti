@@ -93,7 +93,7 @@ impl Kernel {
     fn dimension(self) -> CubeDim {
         CubeDim::new_1d(match self {
             Self::Router => 256,
-            Self::Gdn(_) => 32,
+            Self::Gdn(_) => 128,
             Self::GrNorm(_) => 64,
             Self::Matrix(_) | Self::MatrixFault(_, _) => 128,
         })
@@ -661,6 +661,23 @@ pub(crate) fn probe_gdn(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn partitioned_gdn_writes_every_state_column_once() {
+        let mut seen = vec![0u32; 128 * 128];
+        for lane in 0..128 {
+            let column = (lane % 32) * 4;
+            let start = (lane / 32) * 32;
+            for row in start..start + 32 {
+                for c in column..column + 4 {
+                    seen[row * 128 + c] += 1;
+                }
+            }
+        }
+        assert!(seen.into_iter().all(|n| n == 1));
+        assert_eq!(Kernel::Gdn([128, 16, 32]).dimension(), CubeDim::new_1d(128));
+        // Fixed shared arrays: q/k, partial vec4 sums/masks, final masks.
+        assert_eq!(2 * 128 * 4 + 2 * 128 * 16 + 32 * 16, 5632);
+    }
     #[test]
     fn fused_tail_grid_reads_every_inactive_owner_index_and_no_active_writer() {
         for width in [16usize, 32] {

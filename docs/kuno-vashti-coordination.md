@@ -2274,3 +2274,20 @@ until the run checkpoint is finalized. Admission is paused only during this
 exclusive lab block; restore it and verify memory/listeners at an actual stop.
 No installed binary/configuration, model blob, API/catalog/default routing,
 Vashti application or release changes. **Required Vashti changes: none.**
+
+### Overnight Next continuation: inline readback accepted
+
+Ownerb345f9c/frozen3e707443f0452d00f9b4bc24608efbad406a2fde1f24bc58acc0eb6d658ef709
+passes all original128 generated IDs, independent probes, fresh/poison/full
+1378-owner cleanup and protected lifecycle checks.127 following steps17047ms
+(7.4499912 tokens/s), prefill48856ms; single sample,10-token/s target still
+unmet. B70 returns50688000B; same-boot classified Xe faults zero through
+2026-10-08T14:50:40.509316+00:00.45 accepted fixtures (including excluded
+profiles) are recorded in the pending numeric aggregate. The all-size GPU
+Upload clear experiment is withdrawn after a deliberately stopped slow run;
+ordinary volatile Upload erasure stays selected.
+
+The next lab candidate partitions recurrent key reductions within a bounded
+workgroup. Independent numeric/invalid-column probes and original unchanged
+128 IDs remain required; device acceptance is pending. No installed services,
+API, routing, frontend or release changes. Required Vashti changes: none.

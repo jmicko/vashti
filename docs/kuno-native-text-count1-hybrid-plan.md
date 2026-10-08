@@ -1289,3 +1289,17 @@ early. Default async behavior and production inference deadlines are unchanged.
 Exact policy and bounded successful warm inline-map batch evidence must accompany
 all original128-ID/fresh/poison/full-owning/lifecycle gates before speed selection.
 This changes internal scheduling only; no public API or Vashti change.
+
+### Partitioned recurrent reduction laboratory
+
+The existing opt-in shared GDN laboratory may split each original128-key
+reduction into four fixed32-key partitions within one128-invocation workgroup.
+Partial sums and validity masks live only in bounded workgroup memory. Summation
+order changes; the independent original scalar numeric/invalid-column probes
+and unchanged original128 generated IDs remain mandatory. All four partitions
+combine old-state/prediction/delta validity before state updates, then combine
+updated-state/readout validity before publication. Every invalid column clears
+all four disjoint state intervals. Every lane follows identical barriers; no
+workgroup scratch is reused before all preceding readers complete. Original
+complete owners, status, full-span cleanup and lifecycle gates remain unchanged.
+No allocation budget, production behavior, model blob, API or frontend change.
