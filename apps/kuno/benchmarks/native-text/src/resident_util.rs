@@ -8,6 +8,10 @@ use kuno_text::{Error, Result};
 use std::sync::atomic::{AtomicBool, Ordering};
 use zeroize::{Zeroize, Zeroizing};
 static METADATA_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static RETAINED_METADATA: AtomicBool = AtomicBool::new(false);
+pub(crate) fn select_retained_metadata(selected: bool) {
+    RETAINED_METADATA.store(selected, Ordering::Release);
+}
 pub fn metadata_calls() -> u64 {
     METADATA_CALLS.load(Ordering::Relaxed)
 }
@@ -18,7 +22,7 @@ pub fn resources(
     client: &ComputeClient<WgpuRuntime>,
     handles: Vec<Handle>,
 ) -> Result<Vec<ManagedResource<cubecl::wgpu::WgpuResource>>> {
-    if std::env::var("KUNO_LAB_RETAINED_METADATA").as_deref() == Ok("1") {
+    if RETAINED_METADATA.load(Ordering::Acquire) {
         let result = client.retained_resource_metadata(handles).map_err(fault)?;
         METADATA_CALLS
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))

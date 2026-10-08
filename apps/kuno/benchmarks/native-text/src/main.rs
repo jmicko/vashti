@@ -1741,6 +1741,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Ok(());
         }
         if mode != "probe" {
+            // Startup operators intentionally use public fixture arenas and
+            // retain their original submission semantics. Only this guarded
+            // complete-model fixture selects active transient metadata lookup.
+            resident_util::select_retained_metadata(retained_metadata);
             let fixture: serde_json::Value =
                 serde_json::from_str(include_str!("../../text/qwen38-baseline.json"))?;
             let resident_enabled = mode.starts_with("resident-");

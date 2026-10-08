@@ -298,7 +298,11 @@ queued kernel can relocate a retained allocation. This path queries actual
 resource identity/extent without executing the scheduler, mapping contents,
 allocating GPU storage, pool cleanup, or completed-fence credit. Existing full
 size/backing and physical alias checks are repeated on the returned resources.
-Batching these readonly checks removes repeated host channel crossings.
+Batching these readonly checks removes repeated host channel crossings. The
+policy is selected once for the guarded complete-model fixture after public
+startup operator controls; those controls retain their original public arena
+and submission behavior. An inactive transient backend still rejects the new
+API rather than silently falling back to ordinary lookup.
 
 All allocations/telemetry retain their original admission checks. All writes,
 reads, data dependencies, full owning erasure, final fault/state validation,
