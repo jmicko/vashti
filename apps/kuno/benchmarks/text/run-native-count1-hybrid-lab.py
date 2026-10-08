@@ -40,7 +40,7 @@ def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False
         calls=receipt.get("observed_clean_readback_reuses")
         if type(readback_reuse) is not bool or receipt.get("readback_reuse") is not readback_reuse or type(calls) is not int or not 0<=calls<=1000000 or (calls>0) is not readback_reuse:
             raise ValueError("Clean readback reuse must match bounded completed evidence")
-        if readback_reuse and "private_clean_readback_reuse enabled=true max_buffers=16 max_bytes=8388608" not in output.splitlines():
+        if readback_reuse and "private_clean_readback_reuse enabled=true max_buffers=64 max_bytes=8388608" not in output.splitlines():
             raise ValueError("Actual bounded readback policy marker missing")
     if type(cpu_threads) is not int or cpu_threads not in (4,8,16):
         raise ValueError("Explicit public CPU threads must be4,8,16")

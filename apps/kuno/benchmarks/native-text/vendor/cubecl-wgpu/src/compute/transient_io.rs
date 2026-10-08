@@ -39,7 +39,7 @@ use cubecl_runtime::transient::{PrivateHostAllocation, TransientIoReceipt};
 const MIN_BYTES: u64 = 256;
 const MAX_BYTES: u64 = 128 * 1024 * 1024;
 const CLEAN_READBACK_BYTES: u64 = 8 * 1024 * 1024;
-const CLEAN_READBACK_COUNT: usize = 16;
+const CLEAN_READBACK_COUNT: usize = 64;
 static READBACK_REUSES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 /// Numeric fixed-public laboratory evidence; never exposes buffer or content data.
 pub fn transient_readback_reuses() -> u64 {
@@ -707,9 +707,23 @@ impl<B> CleanReadbacks<B> {
     fn new(enabled: bool) -> Result<Self, ServerError> {
         let mut buffers = Vec::new();
         if enabled {
+            let bytes = CLEAN_READBACK_COUNT
+                .checked_mul(std::mem::size_of::<(B, u64)>())
+                .and_then(|n| n.checked_add(std::mem::size_of::<Self>()))
+                .filter(|&n| n <= 4096)
+                .ok_or_else(|| fault("clean readback metadata bound"))?;
+            let _ = bytes;
             buffers
                 .try_reserve_exact(CLEAN_READBACK_COUNT)
                 .map_err(|_| fault("clean readback metadata allocation"))?;
+            if buffers
+                .capacity()
+                .checked_mul(std::mem::size_of::<(B, u64)>())
+                .and_then(|n| n.checked_add(std::mem::size_of::<Self>()))
+                .is_none_or(|n| n > 4096)
+            {
+                return Err(fault("clean readback actual metadata bound"));
+            }
         }
         Ok(Self { buffers, enabled })
     }
@@ -1499,7 +1513,7 @@ impl TransientIo {
             let clean_readbacks = CleanReadbacks::new(reuse)?;
             if reuse {
                 println!(
-                    "private_clean_readback_reuse enabled=true max_buffers=16 max_bytes=8388608"
+                    "private_clean_readback_reuse enabled=true max_buffers=64 max_bytes=8388608"
                 );
             }
             let info_policy = slab_bytes
@@ -3748,7 +3762,14 @@ mod clean_readback_tests {
         assert_eq!(ledger.clean_bytes, 0);
         let mut pool = CleanReadbacks::new(true).unwrap();
         for i in 0..CLEAN_READBACK_COUNT {
-            assert!(pool.offer(i, 512 * 1024, &mut ledger).unwrap());
+            assert!(
+                pool.offer(
+                    i,
+                    CLEAN_READBACK_BYTES / CLEAN_READBACK_COUNT as u64,
+                    &mut ledger
+                )
+                .unwrap()
+            );
         }
         assert_eq!(ledger.clean_bytes, CLEAN_READBACK_BYTES);
         assert!(!pool.offer(99, 256, &mut ledger).unwrap());
@@ -3766,5 +3787,20 @@ mod clean_readback_tests {
         assert_eq!(pool.buffers, [(7, 512)]);
         assert_eq!(ledger.clean_bytes, 512);
         assert_eq!(ledger.charged, 256);
+    }
+}
+
+#[cfg(test)]
+mod clean_readback_metadata_tests {
+    use super::*;
+    #[test]
+    fn actual_wgpu_pool_metadata_fits_original_four_kib_envelope() {
+        let pool = CleanReadbacks::<wgpu::Buffer>::new(true).unwrap();
+        assert!(
+            pool.buffers.capacity() * std::mem::size_of::<(wgpu::Buffer, u64)>()
+                + std::mem::size_of_val(&pool)
+                <= 4096
+        );
+        assert!(CleanReadbacks::<[u8; 4096]>::new(true).is_err());
     }
 }

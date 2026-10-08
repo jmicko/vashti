@@ -61,7 +61,7 @@ class HybridLabTests(unittest.TestCase):
 
     def test_readback_reuse_requires_bounded_evidence_and_actual_policy(self):
         value=receipt("intel",10);value.update(readback_reuse=True,observed_clean_readback_reuses=12000)
-        output=completion(10)+"\nprivate_clean_readback_reuse enabled=true max_buffers=16 max_bytes=8388608"
+        output=completion(10)+"\nprivate_clean_readback_reuse enabled=true max_buffers=64 max_bytes=8388608"
         LAB.validate_receipt(value,"intel",10,output,readback_reuse=True)
         for field,bads in [("readback_reuse",[False,1,None]),("observed_clean_readback_reuses",[0,True,None,-1,1000001])]:
             for bad in bads:

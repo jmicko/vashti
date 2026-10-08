@@ -1646,3 +1646,11 @@ Readback reuse candidate source gates pass496 native tests/two original shaders,
 fe6c6cfa60fa34f2b784dfb0292a15103f4cb61c608949201e022fec639eccc0;
 original four upstream pins/licenses and both locks remain unchanged. Device
 acceptance is pending. No source edits or compiler overlap during timings.
+
+Readback reuse source3f16450/artifact0162e03533dc58025dbf4ca146b9552a32590490bf3493473bda565705937155
+passes original128 IDs and all fresh/poison/full-owning/lifecycle gates with
+17491ms decode (7.2609 tokens/s),48883ms prefill and1900 warm actual reuses.
+B70 returns50688000B. The prefill regression is recorded, not attributed or
+hidden;10 tokens/s remains unmet. Next candidate retains up to64 small owners
+in the same8MiB cap, with explicit actual pointer storage plus owner header
+limited to the original4KiB envelope before content. Device acceptance pending.

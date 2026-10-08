@@ -1234,3 +1234,8 @@ limits, unselected behavior and failure atomicity. The runner requires exact
 policy and bounded positive warm reuse evidence. Every original128-ID, fresh,
 poison/cancellation and complete owning/lifecycle check remains mandatory.
 No production/private worker or installed service change is implied.
+
+The subsequent selected laboratory pool allows up to64 exact-size clean
+Readback owners within the same8MiB cap. Actual preallocated pointer capacity
+plus pool header must fit4KiB before any content. This supersedes the preceding
+16-entry candidate ceiling; all original cleanup/charge/lease gates remain.
