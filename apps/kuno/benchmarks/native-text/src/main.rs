@@ -962,6 +962,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let request_io_reuse = count1_environment_opt_in(&mode, "KUNO_LAB_REQUEST_IO_REUSE")?;
     let bind_group_reuse = count1_environment_opt_in(&mode, "KUNO_LAB_BIND_GROUP_REUSE")?;
+    let binding_cache_capacity = match std::env::var("KUNO_LAB_BIND_GROUP_CAPACITY").as_deref() {
+        Ok("256") | Err(std::env::VarError::NotPresent) => 256,
+        Ok("512") if bind_group_reuse => 512,
+        _ => return Err("binding cache capacity requires explicit 256/512 request reuse".into()),
+    };
     if bind_group_reuse && !request_io_reuse {
         return Err("binding reuse requires request I/O reuse".into());
     }
@@ -2608,6 +2613,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 receipt["request_io_reuse"] = serde_json::json!(request_io_reuse);
                 receipt["bind_group_reuse"] = serde_json::json!(bind_group_reuse);
+                receipt["binding_cache_capacity"] = serde_json::json!(binding_cache_capacity);
                 receipt["fused_experts"] = serde_json::json!(fused_experts);
                 receipt["integer_experts"] = serde_json::json!(integer_experts);
                 receipt["gpu_expert_limit"] = serde_json::json!(gpu_expert_limit);

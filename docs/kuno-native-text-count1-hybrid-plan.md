@@ -1791,3 +1791,25 @@ original128 fixture IDs and all numerical/owning/lifecycle proofs as well as
 actual integer dispatch evidence. Record exact selection/counters/artifact.
 Broad quality and precision acceptance remain separate; ordinary F32 selection
 and production workers/APIs remain unchanged.
+
+### Binding capacity trial (2026-10-08, pending)
+
+The existing request-owned exact binding cache provisionally reserves512 entries
+and1024 buckets, replacing256/512; maximum32 ordered bindings per key is unchanged.
+The shared256-KiB private runtime metadata cap, actual Vec capacity charges,
+allocation-before-clone checks and cache withdrawal for mandatory owner growth
+remain unchanged. Capacity does not grant extra allowance: insert can still
+refuse early. Keys/offsets and complete allocations are erased and all retained
+handles/groups released before the original full closing audit. No identity,
+alias/layout/padding/error acceptance is relaxed, and no private key persists
+between requests. Selection remains the explicit lab binding/request reuse
+policy; ordinary runtime paths have no cache. Compare against the normal frozen
+256-entry float control with full original output/lifecycle acceptance.
+
+For a controlled same-binary comparison, capacity is selected explicitly by
+`--binding-cache-capacity 256|512` / `KUNO_LAB_BIND_GROUP_CAPACITY`; default256.
+Both use1024 hash buckets, and each Vec reserves its selected exact entry
+capacity. Initial admission conservatively reserves the512-entry header bound;
+subsequent charges use actual capacities. The native runtime emits the selected
+capacity/unchanged262144-byte metadata limit; the runner checks that marker and
+receipt against its independent selection. Capacity512 requires binding reuse.

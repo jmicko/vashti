@@ -2369,8 +2369,16 @@ impl TransientIo {
                 self.pending_info.capacity(),
                 InfoCache::<WgpuResource>::reserved_bytes() + NativeBindingCache::reserved_bytes(),
             )?;
-            self.binding_cache =
-                Some(NativeBindingCache::new().ok_or_else(|| fault("binding cache allocation"))?);
+            let limit = match std::env::var("KUNO_LAB_BIND_GROUP_CAPACITY").as_deref() {
+                Ok("256") | Err(std::env::VarError::NotPresent) => 256,
+                Ok("512") => 512,
+                _ => return Err(fault("binding cache capacity selection")),
+            };
+            self.binding_cache = Some(
+                NativeBindingCache::with_limit(limit)
+                    .ok_or_else(|| fault("binding cache allocation"))?,
+            );
+            println!("private_binding_cache entries={limit} metadata_limit=262144");
         }
         self.reuse_scope.free.reset();
         self.reuse_scope.begin(empty, self.leases())

@@ -44,6 +44,15 @@ def completion(cap):
 
 
 class HybridLabTests(unittest.TestCase):
+    def test_binding_capacity_is_bounded_and_explicit(self):
+        for capacity in (0, True, 1024, 512):
+            with self.assertRaises(ValueError):
+                LAB.worker_environment("/original", "/receipt", binding_cache_capacity=capacity)
+        selection=dict(mapped=True,deferred=True,compact_info=True,info_batch_upload=True,inline_readback=True,dispatch="inline",request_io_reuse=True,bind_group_reuse=True)
+        env=LAB.worker_environment("/original", "/receipt", binding_cache_capacity=512, **selection)
+        self.assertEqual(env["KUNO_LAB_BIND_GROUP_CAPACITY"], "512")
+        self.assertEqual(LAB.worker_environment("/original", "/receipt")["KUNO_LAB_BIND_GROUP_CAPACITY"], "256")
+
     def test_integer_experts_require_explicit_fused_original_gpu_policy(self):
         for settings in ({}, {"fused_experts":True, "gpu_expert_limit":6, "mapped":True,"workers":"pooled","overlap":True}):
             with self.assertRaises(ValueError):
