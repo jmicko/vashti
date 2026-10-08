@@ -237,6 +237,24 @@ A narrow immutable positional reader is a prerequisite for real concurrent I/O. 
 
 ## Stage 2: measurement before split policy
 
+### Specialized original packed CPU loops, overnight experiment 2026-10-08
+
+The user authorized continuing toward10 Flash-Next tokens/s, with no further
+Ollama baseline work. The next internal CPU candidate specializes Q4_K/Q5_0/
+Q8_0 outside their hot block loops. On detected AVX2+F16C hosts it converts
+binary16 scales in hardware, unrolls fixed SIMD lane banks, and pairs original
+32-value Q5/Q8 blocks so their64 accumulators have constant indices. Odd final
+32-value blocks retain the original first32 lanes. Each original multiply/add
+round point,64-lane reduction, finite rejection, cancellation boundary and
+full guarded scratch/accumulator erasure remains. No FMA, activation
+requantization, changed rank merge, converted weight copy or private cache.
+AVX2 hosts without F16C retain the old software-conversion path.
+
+Exhaustive binary16 conversion, exact portable-versus-SIMD rows/experts and
+whole-model original128-ID acceptance precede timing selection. This candidate
+has no performance acceptance until measured in the connected fixed-public
+model. Normal installed Kuno, API, Vashti and release behavior are unchanged.
+
 ### Exact CPU reduction in registers, 2026-10-08
 
 The packed F32-activation AVX2 path now finishes its eight original vector

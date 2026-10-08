@@ -1336,6 +1336,7 @@ mod avx {
     /// The original64-lane tree, entirely in registers: strides32,16,8,4,2,1.
     /// Every add has the same two operands and f32 round point as reduce64.
     /// In particular, this is neither a horizontal sum nor reassociation/FMA.
+    #[inline]
     #[target_feature(enable = "avx2")]
     unsafe fn finish(sums: &Sums) -> Result<f32> {
         let a0 = _mm256_add_ps(sums.0[0], sums.0[4]);
@@ -1479,6 +1480,11 @@ mod avx {
         _scratch: &mut Scratch,
         cancel: &AtomicBool,
     ) -> Result<f32> {
+        if std::is_x86_feature_detected!("f16c") {
+            // SAFETY: run already requires AVX2; F16C is detected here. The
+            // original dot_row proved the complete packed row/input geometry.
+            return unsafe { packed_f16c_dot(dtype, packed, input, cancel) };
+        }
         let mut sums = Zeroizing::new(Sums([_mm256_setzero_ps(); 8]));
         let mask = _mm256_set1_epi32(15);
         let elements = dtype.block_elements() as usize;
@@ -1597,6 +1603,192 @@ mod avx {
             )
         };
         (scale * f32::from(s), minimum * f32::from(m))
+    }
+
+    // Keep dtype decisions outside the hot loop. Original64 lanes and every
+    // multiply/add round point remain; no activation quantization or FMA.
+    #[target_feature(enable = "avx2,f16c")]
+    unsafe fn packed_f16c_dot(
+        dtype: TensorType,
+        packed: &[u8],
+        input: &[f32],
+        cancel: &AtomicBool,
+    ) -> Result<f32> {
+        // SAFETY: caller detected both features and validated the full row.
+        unsafe {
+            match dtype {
+                TensorType::Q4K => packed_q4_f16c(packed, input, cancel),
+                TensorType::Q5_0 => packed_32_f16c::<true>(packed, input, cancel),
+                TensorType::Q8_0 => packed_32_f16c::<false>(packed, input, cancel),
+                _ => Err(Error::InvalidFormat("CPU packed SIMD layout")),
+            }
+        }
+    }
+
+    #[inline]
+    #[target_feature(enable = "avx2,f16c")]
+    unsafe fn half_pair(bits: u32) -> Result<(f32, f32)> {
+        let values = _mm_cvtph_ps(_mm_cvtsi32_si128(bits as i32));
+        let first = _mm_cvtss_f32(values);
+        let second = _mm_cvtss_f32(_mm_shuffle_ps::<0x55>(values, values));
+        finite(first, "CPU expert non-finite packed weight")?;
+        finite(second, "CPU expert non-finite packed weight")?;
+        Ok((first, second))
+    }
+
+    #[target_feature(enable = "avx2,f16c")]
+    unsafe fn packed_q4_f16c(packed: &[u8], input: &[f32], cancel: &AtomicBool) -> Result<f32> {
+        let mut sums = Zeroizing::new(Sums([_mm256_setzero_ps(); 8]));
+        let mask = _mm256_set1_epi32(15);
+        for (index, block) in packed.chunks_exact(144).enumerate() {
+            check_cancel(cancel)?;
+            // SAFETY: this target has F16C; each full block has its four-byte
+            // half pair. Finite binary16 scales have exact binary32 encodings.
+            let (scale, minimum) =
+                unsafe { half_pair(u32::from_le_bytes(block[..4].try_into().unwrap()))? };
+            let first = index * 256;
+            macro_rules! group {
+                ($g:literal) => {{
+                    let (s0, m0) = q4_factors(&block[4..16], $g * 2, scale, minimum);
+                    let (s1, m1) = q4_factors(&block[4..16], $g * 2 + 1, scale, minimum);
+                    let s0 = _mm256_set1_ps(s0);
+                    let m0 = _mm256_set1_ps(m0);
+                    let s1 = _mm256_set1_ps(s1);
+                    let m1 = _mm256_set1_ps(m1);
+                    macro_rules! vector {
+                        ($v:literal) => {{
+                            // SAFETY: full144-byte Q4 block, full256-value
+                            // input block. Literal g<4/v<4 bounds every load;
+                            // original row geometry was checked by dot_row.
+                            unsafe {
+                                let bytes = _mm_loadl_epi64(
+                                    block.as_ptr().add(16 + $g * 32 + $v * 8).cast(),
+                                );
+                                let quants = _mm256_cvtepu8_epi32(bytes);
+                                let low = _mm256_cvtepi32_ps(_mm256_and_si256(quants, mask));
+                                let high = _mm256_cvtepi32_ps(_mm256_srli_epi32::<4>(quants));
+                                let w0 = _mm256_sub_ps(_mm256_mul_ps(s0, low), m0);
+                                let w1 = _mm256_sub_ps(_mm256_mul_ps(s1, high), m1);
+                                let x0 =
+                                    _mm256_loadu_ps(input.as_ptr().add(first + $g * 64 + $v * 8));
+                                let x1 = _mm256_loadu_ps(
+                                    input.as_ptr().add(first + $g * 64 + 32 + $v * 8),
+                                );
+                                sums.0[$v] = _mm256_add_ps(sums.0[$v], _mm256_mul_ps(w0, x0));
+                                sums.0[$v + 4] =
+                                    _mm256_add_ps(sums.0[$v + 4], _mm256_mul_ps(w1, x1));
+                            }
+                        }};
+                    }
+                    vector!(0);
+                    vector!(1);
+                    vector!(2);
+                    vector!(3);
+                }};
+            }
+            group!(0);
+            group!(1);
+            group!(2);
+            group!(3);
+        }
+        // SAFETY: this target has AVX2 and the original complete64 sums.
+        unsafe { finish(&sums) }
+    }
+
+    #[target_feature(enable = "avx2,f16c")]
+    unsafe fn packed_32_f16c<const Q5: bool>(
+        packed: &[u8],
+        input: &[f32],
+        cancel: &AtomicBool,
+    ) -> Result<f32> {
+        let mut sums = Zeroizing::new(Sums([_mm256_setzero_ps(); 8]));
+        let bytes_per_block = if Q5 { 22 } else { 34 };
+        macro_rules! block32 {
+            ($block:expr, $first:expr, $bank:literal) => {{
+                check_cancel(cancel)?;
+                let block = $block;
+                let first = $first;
+                // SAFETY: full original32-value block and detected F16C.
+                let (scale, _) =
+                    unsafe { half_pair(u32::from(u16::from_le_bytes([block[0], block[1]])))? };
+                let scale = _mm256_set1_ps(scale);
+                let high = if Q5 {
+                    u32::from_le_bytes(block[2..6].try_into().unwrap())
+                } else {
+                    0
+                };
+                macro_rules! vector {
+                    ($v:literal) => {{
+                        // SAFETY: literal v<4 bounds the eight-byte packed load
+                        // and eight-value activation load in the original full
+                        // block. Q5/8 dtype geometry was checked by dot_row.
+                        unsafe {
+                            let quants = if Q5 {
+                                let bytes =
+                                    _mm_loadl_epi64(block.as_ptr().add(6 + ($v * 8) % 16).cast());
+                                let bytes = _mm256_cvtepu8_epi32(bytes);
+                                let low = if $v < 2 {
+                                    _mm256_and_si256(bytes, _mm256_set1_epi32(15))
+                                } else {
+                                    _mm256_srli_epi32::<4>(bytes)
+                                };
+                                let shifts = _mm256_setr_epi32(
+                                    $v * 8,
+                                    $v * 8 + 1,
+                                    $v * 8 + 2,
+                                    $v * 8 + 3,
+                                    $v * 8 + 4,
+                                    $v * 8 + 5,
+                                    $v * 8 + 6,
+                                    $v * 8 + 7,
+                                );
+                                let bit = _mm256_and_si256(
+                                    _mm256_srlv_epi32(_mm256_set1_epi32(high as i32), shifts),
+                                    _mm256_set1_epi32(1),
+                                );
+                                _mm256_sub_epi32(
+                                    _mm256_or_si256(low, _mm256_slli_epi32::<4>(bit)),
+                                    _mm256_set1_epi32(16),
+                                )
+                            } else {
+                                let bytes = _mm_loadl_epi64(block.as_ptr().add(2 + $v * 8).cast());
+                                _mm256_cvtepi8_epi32(bytes)
+                            };
+                            let weight = _mm256_mul_ps(scale, _mm256_cvtepi32_ps(quants));
+                            let activation = _mm256_loadu_ps(input.as_ptr().add(first + $v * 8));
+                            sums.0[$bank + $v] = _mm256_add_ps(
+                                sums.0[$bank + $v],
+                                _mm256_mul_ps(weight, activation),
+                            );
+                        }
+                    }};
+                }
+                vector!(0);
+                vector!(1);
+                vector!(2);
+                vector!(3);
+            }};
+        }
+        let mut pairs = packed.chunks_exact(bytes_per_block * 2);
+        for (index, pair) in pairs.by_ref().enumerate() {
+            block32!(&pair[..bytes_per_block], index * 64, 0);
+            block32!(&pair[bytes_per_block..], index * 64 + 32, 4);
+        }
+        if !pairs.remainder().is_empty() {
+            // Original quantized rows can end with one full32-value block.
+            block32!(pairs.remainder(), input.len() - 32, 0);
+        }
+        // SAFETY: this target has AVX2 and every original64 lane is retained.
+        unsafe { finish(&sums) }
+    }
+
+    #[cfg(test)]
+    pub(super) fn test_half_pair(bits: u32) -> Result<(f32, f32)> {
+        if !avx2_available() || !std::is_x86_feature_detected!("f16c") {
+            return Err(Error::InvalidFormat("CPU expert F16C unavailable"));
+        }
+        // SAFETY: both ISA features were detected above.
+        unsafe { half_pair(bits) }
     }
 }
 
@@ -2519,6 +2711,27 @@ mod tests {
                         dot_row(Backend::Avx2, kind, &packed, &x, &mut vector, &cancel).is_err()
                     );
                 }
+            }
+        }
+    }
+
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    #[test]
+    fn hardware_half_pairs_match_all_finite_software_encodings_and_reject_nonfinite() {
+        if !avx2_available() || !std::is_x86_feature_detected!("f16c") {
+            return;
+        }
+        for bits in 0..=u16::MAX {
+            let opposite = bits ^ 0x8000;
+            let a = crate::quant::f16_to_f32(bits);
+            let b = crate::quant::f16_to_f32(opposite);
+            let actual = avx::test_half_pair(u32::from(bits) | (u32::from(opposite) << 16));
+            if a.is_finite() && b.is_finite() {
+                let (first, second) = actual.unwrap();
+                assert_eq!(first.to_bits(), a.to_bits());
+                assert_eq!(second.to_bits(), b.to_bits());
+            } else {
+                assert!(actual.is_err());
             }
         }
     }
