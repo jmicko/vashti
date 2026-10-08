@@ -88,7 +88,8 @@ fn main() -> Result<()> {
     for (name, rows, cols, dtype) in [
         ("blk.0.ffn_gate_exps.weight", 640u32, 2560u32, 12u32),
         ("blk.0.ffn_up_exps.weight", 640, 2560, 12),
-        ("blk.0.ffn_down_exps.weight", 2560, 640, 6),
+        ("blk.0.ffn_down_exps.weight", 2560, 640, 8),
+        ("blk.6.ffn_down_exps.weight", 2560, 640, 6),
         ("blk.0.ffn_gate_inp.weight", 512, 2560, 0),
         ("output.weight", 248320, 2560, 14),
     ] {
@@ -260,7 +261,7 @@ fn main() -> Result<()> {
         .open(&args[2])?;
     serde_json::to_writer_pretty(output, &receipt)?;
     println!(
-        "public_next_kernel_port matrices=5 router_cases=6 numeric_checks_passed=true whole_model=false"
+        "public_next_kernel_port matrices=6 router_cases=6 numeric_checks_passed=true whole_model=false"
     );
     Ok(())
 }
