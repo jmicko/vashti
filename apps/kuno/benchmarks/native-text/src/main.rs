@@ -27,6 +27,7 @@ mod ple_batch_gpu;
 mod ple_chunk;
 mod ple_chunk_probe;
 mod private_arena;
+mod public_resources;
 mod qsa_chunk;
 mod qsa_chunk_probe;
 mod qsa_gpu;
@@ -2086,6 +2087,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // chunks, cancellation attempts and fresh replay are excluded.
             let mut native_decode_steps = 0u64;
             let mut scalar_decode_steps = 0u64;
+            let resources_before = public_resources::snapshot();
             let mut decoder = tokenizer.stream_decoder();
             for n in 0..limit {
                 let token = greedy(&logits)?;
@@ -2114,6 +2116,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     };
                 }
             }
+            let warm_resources =
+                public_resources::delta(resources_before, public_resources::snapshot());
             if let Some(r) = &resident
                 && native_max8
             {
@@ -2229,6 +2233,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 receipt["long_fixture"] = serde_json::json!(long_fixture);
                 receipt["cpu_q8_activations"] = serde_json::json!(cpu_q8);
                 receipt["cpu_fma_arithmetic"] = serde_json::json!(cfg!(feature = "cpu-fma"));
+                receipt["warm_host_resource_delta"] = serde_json::json!(warm_resources);
                 receipt["large_weight_cache"] = serde_json::json!(large_weight_cache);
                 receipt["compact_info"] = serde_json::json!(compact_info);
                 receipt["info_batch_upload"] = serde_json::json!(info_batch_upload);
