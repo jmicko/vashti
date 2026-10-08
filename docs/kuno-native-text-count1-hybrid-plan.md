@@ -1768,3 +1768,26 @@ Fused first use reads 5955584 bytes and writes 40960 bytes in aggregate; these
 counters are not evidence of private content storage. Subsequent off reads and
 writes zero. Preserve the opt-in for later instruction/register investigation;
 keep the accepted original shader selected. No speed gain established.
+
+### Packed integer GPU expert trial (2026-10-08, pending)
+
+`--integer-experts` / `KUNO_LAB_INTEGER_EXPERTS=1` requires explicitly fused
+count1 cap10 kernels and original GPU limit10. Gate/up use two residual Q8
+activation planes per32-value block, ties-to-even/clipped signed codes, with
+original Q4_K scales/minima and packed four-byte signed dot products. Original
+weights are unchanged. This changes activation precision and floating-point
+operation order; it is not exact F32 arithmetic. CPU float/FMA, GPU down and
+original probability/rank merge stay unchanged. Workgroup owners total16000
+bytes, below the original16-KiB limit; no new MAIN/runtime owners or private
+budgets. Native support can accelerate the builtin; no speed claim follows from
+support alone. Both installed adapters advertise accelerated signed packed
+4x8 dot products after reboot; the pinned Vulkan backend enables their capability.
+
+Before model execution, compare both original bank segments' actual gate/up
+outputs with independently decoded original rows and F64 dot/product references,
+using unchanged5e-4+5e-5 relative tolerance, nonzero input/output offsets, sparse
+original ranks, full inactive owning extents/status and finite checks. Require
+original128 fixture IDs and all numerical/owning/lifecycle proofs as well as
+actual integer dispatch evidence. Record exact selection/counters/artifact.
+Broad quality and precision acceptance remain separate; ordinary F32 selection
+and production workers/APIs remain unchanged.

@@ -80,8 +80,14 @@ def validate_private_upload_phases(receipt):
             raise ValueError("Private upload phases require original/copied/cleared byte conservation")
 
 
-def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False, metadata=False, banks="standard", shared=False, shared_gdn=False, info_batch_upload=False, dispatch="threaded", cpu_fma=False, reclaim_gpu_sources=False, native_scratch_clear=False, cpu_q8_residual=False, cpu_mapped_prefetch=False, pageout_gpu_sources=False, cpu_threads=16, cpu_q8_two_pass=False, cpu_buffered_weights=False, compute_scratch_clear=False, grouped_status=False, readback_reuse=False, gpu_upload_clear=False, inline_readback=False, cpu_work_stealing=False, request_io_reuse=False, bind_group_reuse=False, fused_experts=False, gpu_expert_limit=10):
+def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False, metadata=False, banks="standard", shared=False, shared_gdn=False, info_batch_upload=False, dispatch="threaded", cpu_fma=False, reclaim_gpu_sources=False, native_scratch_clear=False, cpu_q8_residual=False, cpu_mapped_prefetch=False, pageout_gpu_sources=False, cpu_threads=16, cpu_q8_two_pass=False, cpu_buffered_weights=False, compute_scratch_clear=False, grouped_status=False, readback_reuse=False, gpu_upload_clear=False, inline_readback=False, cpu_work_stealing=False, request_io_reuse=False, bind_group_reuse=False, fused_experts=False, gpu_expert_limit=10, integer_experts=False):
     validate_cap(cap)
+    if integer_experts or "integer_experts" in receipt:
+        if (type(integer_experts) is not bool or receipt.get("integer_experts") is not integer_experts
+            or integer_experts and (not fused_experts or cap != 10 or gpu_expert_limit != 10)):
+            raise ValueError("Integer experts require explicit fused cap10 GPU limit10")
+        if integer_experts and "next_shared_integer_experts cases=2 numeric_and_owning_checks=true" not in output.splitlines():
+            raise ValueError("Integer expert original-row oracle missing")
     if fused_experts or "fused_experts" in receipt:
         calls = receipt.get("observed_fused_expert_calls")
         if (type(fused_experts) is not bool or receipt.get("fused_experts") is not fused_experts
@@ -309,7 +315,7 @@ def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False
         raise ValueError("Hybrid continuation and both cancellation proofs required")
 
 
-def worker_environment(model, receipt, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False, metadata=False, banks="standard", shared=False, shared_gdn=False, info_batch_upload=False, dispatch="threaded", reclaim_gpu_sources=False, native_scratch_clear=False, cpu_q8_residual=False, cpu_mapped_prefetch=False, pageout_gpu_sources=False, cpu_threads=16, cpu_q8_two_pass=False, compute_scratch_clear=False, grouped_status=False, readback_reuse=False, gpu_upload_clear=False, inline_readback=False, cpu_work_stealing=False, request_io_reuse=False, bind_group_reuse=False, fused_experts=False, gpu_expert_limit=10):
+def worker_environment(model, receipt, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False, metadata=False, banks="standard", shared=False, shared_gdn=False, info_batch_upload=False, dispatch="threaded", reclaim_gpu_sources=False, native_scratch_clear=False, cpu_q8_residual=False, cpu_mapped_prefetch=False, pageout_gpu_sources=False, cpu_threads=16, cpu_q8_two_pass=False, compute_scratch_clear=False, grouped_status=False, readback_reuse=False, gpu_upload_clear=False, inline_readback=False, cpu_work_stealing=False, request_io_reuse=False, bind_group_reuse=False, fused_experts=False, gpu_expert_limit=10, integer_experts=False):
     if type(cpu_threads) is not int or cpu_threads not in (4,8,16):
         raise ValueError("Explicit public CPU threads must be4,8,16")
     if cpu_threads!=16 and workers!="pooled":
@@ -355,6 +361,9 @@ def worker_environment(model, receipt, workers="scoped", overlap=False, mapped=F
         raise ValueError("Shared kernels require fast GPU/router mode")
     if type(fused_experts) is not bool or fused_experts and not shared:
         raise ValueError("Fused experts require explicitly selected shared kernels")
+    if type(integer_experts) is not bool or integer_experts and (not fused_experts or gpu_expert_limit != 10):
+        raise ValueError("Integer experts require explicitly fused original GPU policy")
+    env["KUNO_LAB_INTEGER_EXPERTS"] = "1" if integer_experts else "0"
     env["KUNO_LAB_FUSED_EXPERTS"] = "1" if fused_experts else "0"
     env["KUNO_LAB_NEXT_SHARED"] = "1" if shared else "0"
     if shared_gdn and not shared:
@@ -426,6 +435,7 @@ def main():
     parser.add_argument("--fast-gpu", action="store_true")
     parser.add_argument("--next-shared-kernels", action="store_true")
     parser.add_argument("--fused-experts", action="store_true")
+    parser.add_argument("--integer-experts", action="store_true")
     parser.add_argument("--gpu-expert-limit", type=int, choices=range(11), default=10)
     parser.add_argument("--next-shared-gdn", action="store_true")
     parser.add_argument("--long-fixture", action="store_true")
@@ -532,7 +542,7 @@ def main():
         ("KUNO_LAB_STATIC_CACHE_BYTES " if args.bank_profile not in ("intel96","intel128","intel144","intel160") else "") + "KUNO_LAB_EXPERT_BATCH_BYTES KUNO_LAB_EXPERT_SCATTER",
     ]
     command.extend("--setenv=" + key + "=" + value
-                   for key, value in worker_environment(args.model.resolve(), target, args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault,args.defer_router_io,args.gpu_router,args.retained_metadata,args.bank_profile,args.next_shared_kernels,args.next_shared_gdn,args.info_batch_upload,args.device_dispatch,args.reclaim_gpu_sources,args.native_scratch_clear,args.cpu_q8_residual,args.cpu_mapped_prefetch,args.pageout_gpu_sources,args.cpu_threads,args.cpu_q8_two_pass,compute_scratch_clear=args.compute_scratch_clear,grouped_status=args.grouped_status,readback_reuse=args.readback_reuse,gpu_upload_clear=args.gpu_upload_clear,inline_readback=args.inline_readback,cpu_work_stealing=args.cpu_work_stealing,request_io_reuse=args.request_io_reuse,bind_group_reuse=args.bind_group_reuse,fused_experts=args.fused_experts,gpu_expert_limit=args.gpu_expert_limit).items())
+                   for key, value in worker_environment(args.model.resolve(), target, args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault,args.defer_router_io,args.gpu_router,args.retained_metadata,args.bank_profile,args.next_shared_kernels,args.next_shared_gdn,args.info_batch_upload,args.device_dispatch,args.reclaim_gpu_sources,args.native_scratch_clear,args.cpu_q8_residual,args.cpu_mapped_prefetch,args.pageout_gpu_sources,args.cpu_threads,args.cpu_q8_two_pass,compute_scratch_clear=args.compute_scratch_clear,grouped_status=args.grouped_status,readback_reuse=args.readback_reuse,gpu_upload_clear=args.gpu_upload_clear,inline_readback=args.inline_readback,cpu_work_stealing=args.cpu_work_stealing,request_io_reuse=args.request_io_reuse,bind_group_reuse=args.bind_group_reuse,fused_experts=args.fused_experts,gpu_expert_limit=args.gpu_expert_limit,integer_experts=args.integer_experts).items())
     command.extend([sys.executable, str(HERE / "protected-lab-exec.py"), str(frozen),
                     args.card, MODE, str(args.cpu_miss_cap)])
     print("verified_cargo_executable_sha256=" + identity, flush=True)
@@ -547,7 +557,7 @@ def main():
         raise SystemExit("Missing whole-model hybrid receipt")
     snapshot = target.read_bytes()
     receipt = json.loads(snapshot)
-    validate_receipt(receipt, args.card, args.cpu_miss_cap, "".join(lines), args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault,args.defer_router_io,args.gpu_router,args.retained_metadata,args.bank_profile,args.next_shared_kernels,args.next_shared_gdn,args.info_batch_upload,args.device_dispatch,args.cpu_fma,args.reclaim_gpu_sources,args.native_scratch_clear,args.cpu_q8_residual,args.cpu_mapped_prefetch,args.pageout_gpu_sources,args.cpu_threads,args.cpu_q8_two_pass,args.cpu_buffered_weights,compute_scratch_clear=args.compute_scratch_clear,grouped_status=args.grouped_status,readback_reuse=args.readback_reuse,gpu_upload_clear=args.gpu_upload_clear,inline_readback=args.inline_readback,cpu_work_stealing=args.cpu_work_stealing,request_io_reuse=args.request_io_reuse,bind_group_reuse=args.bind_group_reuse,fused_experts=args.fused_experts,gpu_expert_limit=args.gpu_expert_limit)
+    validate_receipt(receipt, args.card, args.cpu_miss_cap, "".join(lines), args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault,args.defer_router_io,args.gpu_router,args.retained_metadata,args.bank_profile,args.next_shared_kernels,args.next_shared_gdn,args.info_batch_upload,args.device_dispatch,args.cpu_fma,args.reclaim_gpu_sources,args.native_scratch_clear,args.cpu_q8_residual,args.cpu_mapped_prefetch,args.pageout_gpu_sources,args.cpu_threads,args.cpu_q8_two_pass,args.cpu_buffered_weights,compute_scratch_clear=args.compute_scratch_clear,grouped_status=args.grouped_status,readback_reuse=args.readback_reuse,gpu_upload_clear=args.gpu_upload_clear,inline_readback=args.inline_readback,cpu_work_stealing=args.cpu_work_stealing,request_io_reuse=args.request_io_reuse,bind_group_reuse=args.bind_group_reuse,fused_experts=args.fused_experts,gpu_expert_limit=args.gpu_expert_limit,integer_experts=args.integer_experts)
     record = {
         "scope": "fixed-public-count1-hybrid-output-and-lifecycle-only",
         "requested_cpu_fma_arithmetic": args.cpu_fma,
@@ -568,6 +578,7 @@ def main():
         "bind_group_reuse": args.bind_group_reuse,
         "fused_experts": args.fused_experts,
         "gpu_expert_limit": args.gpu_expert_limit,
+        "integer_experts": args.integer_experts,
         "fast_gpu": args.fast_gpu, "next_shared_kernels": args.next_shared_kernels, "next_shared_gdn": args.next_shared_gdn,
         "long_fixture": args.long_fixture,
         "cpu_q8_activations": args.cpu_q8,

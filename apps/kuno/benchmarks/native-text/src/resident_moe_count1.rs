@@ -61,6 +61,7 @@ impl GpuExecutor<'_> {
         if cap > 10
             || self.gpu_expert_limit > 10
             || self.gpu_expert_limit < 10 && (cap != 10 || !overlap || !self.model.weights_mapped())
+            || self.integer_experts && (!self.fused_experts || self.gpu_expert_limit != 10)
             || self.fused_experts && !self.shared_kernels
             || routes.count() != 1
             || s.stamp.count != 1
@@ -331,6 +332,7 @@ impl GpuExecutor<'_> {
                             owners()?,
                             capacities,
                             self.fused_experts,
+                            self.integer_experts,
                         )?;
                     } else {
                         for shard in 0..bank.gate().segments().len() {
@@ -358,6 +360,7 @@ impl GpuExecutor<'_> {
                                 ga.first_slot(),
                                 ga.capacity(),
                                 self.fused_experts,
+                                self.integer_experts,
                             )?;
                         }
                     }

@@ -922,6 +922,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("GPU expert balancing requires mapped cap10 pooled overlap".into());
     }
 
+    let integer_experts = count1_environment_opt_in(&mode, "KUNO_LAB_INTEGER_EXPERTS")?;
+    if integer_experts
+        && (!fused_experts || gpu_expert_limit != 10 || count1_hybrid_cap != Some(10))
+    {
+        return Err("integer experts require fused cap10 kernels with GPU limit10".into());
+    }
     if fused_experts && !next_shared {
         return Err("Fused experts require protected shared kernels".into());
     }
@@ -2190,6 +2196,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 * 1024;
             if next_shared {
                 next_shared::probe(&client, &file)?;
+                if integer_experts {
+                    next_shared_moe::probe_integer(&client, &file)?;
+                }
                 next_shared::probe_gr(
                     &client,
                     transient_context
@@ -2219,6 +2228,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             executor.gpu_router = gpu_router;
             executor.fused_experts = fused_experts;
+            executor.integer_experts = integer_experts;
             executor.gpu_expert_limit = gpu_expert_limit;
             executor.fast_dense = fast_gpu;
             executor.fast_dense_fault = fast_gpu_fault;
@@ -2599,6 +2609,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 receipt["request_io_reuse"] = serde_json::json!(request_io_reuse);
                 receipt["bind_group_reuse"] = serde_json::json!(bind_group_reuse);
                 receipt["fused_experts"] = serde_json::json!(fused_experts);
+                receipt["integer_experts"] = serde_json::json!(integer_experts);
                 receipt["gpu_expert_limit"] = serde_json::json!(gpu_expert_limit);
                 receipt["observed_cpu_resident_expert_calls"] = serde_json::json!(
                     executor
@@ -2987,6 +2998,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 executor.gpu_router = gpu_router;
                 executor.fused_experts = fused_experts;
+                executor.integer_experts = integer_experts;
                 executor.gpu_expert_limit = gpu_expert_limit;
                 executor.fast_dense = fast_gpu;
                 executor.fast_dense_fault = fast_gpu_fault;
@@ -3103,6 +3115,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     executor.gpu_router = gpu_router;
                     executor.fused_experts = fused_experts;
+                    executor.integer_experts = integer_experts;
                     executor.gpu_expert_limit = gpu_expert_limit;
                     executor.fast_dense = fast_gpu;
                     executor.fast_dense_fault = fast_gpu_fault;

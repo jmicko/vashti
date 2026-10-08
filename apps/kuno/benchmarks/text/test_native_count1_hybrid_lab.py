@@ -44,6 +44,14 @@ def completion(cap):
 
 
 class HybridLabTests(unittest.TestCase):
+    def test_integer_experts_require_explicit_fused_original_gpu_policy(self):
+        for settings in ({}, {"fused_experts":True, "gpu_expert_limit":6, "mapped":True,"workers":"pooled","overlap":True}):
+            with self.assertRaises(ValueError):
+                LAB.worker_environment("/original", "/receipt", integer_experts=True, shared=True, fast=True, gpu_router=True, **settings)
+        env=LAB.worker_environment("/original", "/receipt", integer_experts=True, fused_experts=True, shared=True, fast=True, gpu_router=True)
+        self.assertEqual(env["KUNO_LAB_INTEGER_EXPERTS"], "1")
+        self.assertEqual(LAB.worker_environment("/original", "/receipt")["KUNO_LAB_INTEGER_EXPERTS"], "0")
+
     def test_prefetch_counts_include_resident_cpu_work_without_changing_misses(self):
         value = receipt("intel",10)
         value.update(cpu_mapped_prefetch=True, observed_cpu_mapped_prefetch=True,

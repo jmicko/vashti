@@ -15,6 +15,7 @@ use kuno_text::{Error, Result};
 struct Kernel {
     down: bool,
     fused: bool,
+    integer: bool,
     dtype: u32,
     row_bytes: usize,
     first_slot: usize,
@@ -64,6 +65,27 @@ fn projection(name: &str, rows: usize, columns: usize, dtype: u32, row_bytes: us
 }
 
 impl Kernel {
+    fn optimized_source(self, source: String) -> String {
+        let source = fused_source(source, self.down);
+        if !self.integer || self.down {
+            return source;
+        }
+        let template = include_str!("next_moe_integer.wgsl");
+        let (shared, projection) = template.split_once("fn project_fusedSUFFIX").unwrap();
+        let projection = format!("fn project_fusedSUFFIX{projection}");
+        let mut source = source.replace(&fused_projection(""), &projection.replace("SUFFIX", ""));
+        if self.split_slots != 0 {
+            source = source.replace(
+                &fused_projection("_second"),
+                &projection.replace("SUFFIX", "_second"),
+            );
+        }
+        source = source.replace(
+            "workgroupBarrier();\nvar a=0.0;",
+            "workgroupBarrier();\nprepare_q8(local);\nworkgroupBarrier();\nvar a=0.0;",
+        );
+        format!("requires packed_4x8_integer_dot_product;\n{shared}\n{source}")
+    }
     fn source(self) -> String {
         // Exactly the original packed-vector row implementation already
         // independently checked against original GGUF rows. Each projection
@@ -134,7 +156,7 @@ impl Kernel {
         };
         if self.split_slots == 0 {
             return if self.fused {
-                fused_source(source, self.down)
+                self.optimized_source(source)
             } else {
                 source
             };
@@ -159,7 +181,7 @@ impl Kernel {
                 .replace("b=project_up(row,base,p.b,lane,width);}", "b=project_up(row,base,p.b,lane,width);}}")
         };
         if self.fused {
-            fused_source(source, self.down)
+            self.optimized_source(source)
         } else {
             source
         }
@@ -286,12 +308,14 @@ pub(crate) fn launch(
     first_slot: usize,
     slots: usize,
     fused: bool,
+    integer: bool,
 ) -> Result<()> {
     launch_banks(
-        client, g, s, banks, None, owners, first_slot, slots, 0, fused,
+        client, g, s, banks, None, owners, first_slot, slots, 0, fused, integer,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn launch_pair(
     client: &ComputeClient<WgpuRuntime>,
     g: Geometry,
@@ -300,6 +324,7 @@ pub(crate) fn launch_pair(
     owners: [Handle; 7],
     capacities: [usize; 2],
     fused: bool,
+    integer: bool,
 ) -> Result<()> {
     let [first, second] = banks;
     let total = capacities[0]
@@ -319,6 +344,7 @@ pub(crate) fn launch_pair(
         total,
         capacities[0],
         fused,
+        integer,
     )
 }
 
@@ -334,7 +360,13 @@ fn launch_banks(
     slots: usize,
     split_slots: usize,
     fused: bool,
+    integer: bool,
 ) -> Result<()> {
+    if integer && !fused {
+        return Err(Error::InvalidFormat(
+            "integer experts require fused kernels",
+        ));
+    }
     let [gate, up, down] = g.projections();
     if g.hidden() != 2560
         || g.ff() != 640
@@ -452,6 +484,7 @@ fn launch_banks(
                 Box::new(Kernel {
                     down: is_down != 0,
                     fused,
+                    integer,
                     dtype: down.dtype(),
                     row_bytes: down.row_bytes(),
                     first_slot,
@@ -463,6 +496,134 @@ fn launch_banks(
             );
         }
     }
+    Ok(())
+}
+
+/// Fixed-public original-row oracle, before any model/session/private prompt.
+/// Exercises the exact paired gate/up shader with offsets and sparse ranks.
+pub(crate) fn probe_integer(
+    client: &ComputeClient<WgpuRuntime>,
+    file: &kuno_text::GgufFile,
+) -> Result<()> {
+    use cubecl::prelude::CubeElement;
+    use zeroize::{Zeroize, Zeroizing};
+    let gate = file
+        .tensor("blk.0.ffn_gate_exps.weight")
+        .ok_or(Error::InvalidBufferLength)?;
+    let up = file
+        .tensor("blk.0.ffn_up_exps.weight")
+        .ok_or(Error::InvalidBufferLength)?;
+    let mut banks = Vec::new();
+    for expert in [7usize, 19] {
+        for tensor in [gate, up] {
+            let mut packed = vec![0u8; 640 * 1440];
+            tensor.read_range((expert * packed.len()) as u64, &mut packed)?;
+            banks.push(client.create_from_slice(&packed));
+        }
+    }
+    let mut input = Zeroizing::new(vec![0f32; 2560 + 8]);
+    for (i, x) in input[4..2564].iter_mut().enumerate() {
+        *x = ((i * 37 % 97) as f32 - 48.) / 97.;
+    }
+    let input_handle = client.create_from_slice(f32::as_bytes(&input));
+    let mut map = vec![0u32; 8192];
+    map[..4].copy_from_slice(&[1, 0, 1, 2]);
+    map[4] = 0;
+    map[5] = 1;
+    map[84] = 1;
+    map[85] = 1;
+    map[164] = 0;
+    map[172] = 9;
+    let map_handle = client.create_from_slice(u32::as_bytes(&map));
+    let output = client.create_from_slice(f32::as_bytes(&vec![1f32; 8192]));
+    let status = client.create_from_slice(u32::as_bytes(&vec![0u32; 8192]));
+    let mut args = KernelArguments::new();
+    for handle in [
+        banks[0].clone(),
+        banks[1].clone(),
+        input_handle,
+        map_handle,
+        output.clone(),
+        status.clone(),
+        banks[2].clone(),
+        banks[3].clone(),
+    ] {
+        args = args.with_buffer(handle.binding());
+    }
+    args = args.with_info(MetadataBindingInfo::custom(vec![
+        4u64 << 32,
+        640u64 << 32 | 16,
+        0,
+        0,
+    ]));
+    // SAFETY: fixed public complete Q4_K expert tiles, exact paired slot/rank
+    // bounds and original128-thread row grid, all full output/status extents.
+    unsafe {
+        client.launch_unchecked(
+            Box::new(Kernel {
+                down: false,
+                fused: true,
+                integer: true,
+                dtype: 6,
+                row_bytes: 440,
+                first_slot: 0,
+                slots: 2,
+                split_slots: 1,
+            }),
+            CubeCount::Static(160, 10, 1),
+            args,
+        );
+    }
+    let mut got = client
+        .read_one(output)
+        .map_err(|_| Error::InvalidFormat("integer expert public read"))?;
+    let mut flags = client
+        .read_one(status)
+        .map_err(|_| Error::InvalidFormat("integer expert public status"))?;
+    let actual = f32::from_bytes(&got);
+    let ready = u32::from_bytes(&flags);
+    let mut failed = actual.len() != 8192 || ready.len() != 8192;
+    let mut row = Zeroizing::new(vec![0f32; 2560]);
+    if !failed {
+        for i in 0..8192 {
+            let active = (16..656).contains(&i) || (5776..6416).contains(&i);
+            failed |= !actual[i].is_finite() || (!active && actual[i].to_bits() != 1f32.to_bits());
+            failed |= ready[i] != u32::from(i == 0 || i == 9);
+        }
+        for (expert, rank) in [(7usize, 0usize), (19, 9)] {
+            for r in 0..640 {
+                gate.decode_row((expert * 640 + r) as u64, &mut row)?;
+                let a = row
+                    .iter()
+                    .zip(&input[4..2564])
+                    .map(|(&w, &x)| w as f64 * x as f64)
+                    .sum::<f64>();
+                up.decode_row((expert * 640 + r) as u64, &mut row)?;
+                let b = row
+                    .iter()
+                    .zip(&input[4..2564])
+                    .map(|(&w, &x)| w as f64 * x as f64)
+                    .sum::<f64>();
+                let sigmoid = if a >= 0. {
+                    1. / (1. + (-a).exp())
+                } else {
+                    let e = a.exp();
+                    e / (1. + e)
+                };
+                let expected = (a * sigmoid * b) as f32;
+                failed |=
+                    (actual[16 + rank * 640 + r] - expected).abs() > 5e-4 + 5e-5 * expected.abs();
+            }
+        }
+    }
+    got.zeroize();
+    flags.zeroize();
+    if failed {
+        return Err(Error::InvalidFormat(
+            "integer expert original rows/owning numeric probe",
+        ));
+    }
+    println!("next_shared_integer_experts cases=2 numeric_and_owning_checks=true");
     Ok(())
 }
 
@@ -479,9 +640,10 @@ mod tests {
                 (0, 128, 64),
                 (0, 144, 72),
             ] {
-                for fused in [false, true] {
+                for (fused, integer) in [(false, false), (true, false), (true, true)] {
                     let source = Kernel {
                         fused,
+                        integer,
                         down,
                         dtype,
                         row_bytes,
@@ -490,6 +652,9 @@ mod tests {
                         split_slots,
                     }
                     .source();
+                    if integer && !down {
+                        assert!(source.contains("prepare_q8(local);"));
+                    }
                     let module = wgpu::naga::front::wgsl::parse_str(&source).unwrap();
                     wgpu::naga::valid::Validator::new(
                         wgpu::naga::valid::ValidationFlags::all(),
