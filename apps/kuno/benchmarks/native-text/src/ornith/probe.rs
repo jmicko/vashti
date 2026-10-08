@@ -69,17 +69,20 @@ pub fn run(file: &GgufFile) -> Result<serde_json::Value> {
                         .collect::<Vec<_>>(),
                 );
                 gpu.queue.write_buffer(&gpu.arena, 0, &bytes);
-                for block in [false, true] {
-                    let code = graph::shader(
+                for (block, vector_dot) in [(false, false), (true, false), (false, true)] {
+                    let code = graph::matrix_shader(
                         info.dtype().gguf_id(),
                         &format!(
                             "const ROWS:u32={rows}u;const COLUMNS:u32={cols}u;const ROW_BYTES:u32={}u;const ROUTED:bool=false;const RANKED_INPUT:bool=false;const BLOCK_DOT:bool={block};",
                             info.row_bytes()
                         ),
-                        include_str!("matrix.wgsl"),
+                        vector_dot,
                     );
                     let pipeline = gpu.pipeline(
-                        &format!("public-probe-{}-{block}", info.dtype().gguf_id()),
+                        &format!(
+                            "public-probe-{}-{block}-{vector_dot}",
+                            info.dtype().gguf_id()
+                        ),
                         code,
                     );
                     let step = gpu.step(
@@ -125,7 +128,7 @@ pub fn run(file: &GgufFile) -> Result<serde_json::Value> {
                         max_absolute = max_absolute.max(error);
                         max_tolerance_fraction = max_tolerance_fraction.max(error / tolerance);
                     }
-                    cases.push(serde_json::json!({"tensor":name,"first_row":first_row,"rows":rows,"public_vector":vector,"packed_block_dot":block,"maximum_absolute_error":max_absolute,"maximum_tolerance_fraction":max_tolerance_fraction}));
+                    cases.push(serde_json::json!({"tensor":name,"first_row":first_row,"rows":rows,"public_vector":vector,"packed_block_dot":block,"vector_packed_dot":vector_dot,"maximum_absolute_error":max_absolute,"maximum_tolerance_fraction":max_tolerance_fraction}));
                 }
             }
         }

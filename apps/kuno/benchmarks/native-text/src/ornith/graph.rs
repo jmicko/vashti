@@ -155,6 +155,15 @@ pub(super) fn shader(dtype: u32, constants: &str, body: &str) -> String {
     )
 }
 
+pub(super) fn matrix_shader(dtype: u32, constants: &str, vector: bool) -> String {
+    if vector {
+        shader(dtype, constants, include_str!("matrix_vector.wgsl"))
+            .replace("arena:array<f32>", "arena4:array<vec4<f32>>")
+    } else {
+        shader(dtype, constants, include_str!("matrix.wgsl"))
+    }
+}
+
 struct Weight {
     buffer: wgpu::Buffer,
     dtype: u32,
@@ -169,6 +178,7 @@ pub struct Graph {
     pub weight_bytes: u64,
     pub load_millis: u128,
     pub block_dot: bool,
+    pub vector_dot: bool,
     subgroup_max: u32,
 }
 
@@ -181,6 +191,11 @@ impl Graph {
             _ => return Err("Explicit resident packed-block selection rejected".into()),
         };
         let start = Instant::now();
+        let vector_dot = match std::env::var("KUNO_LAB_ORNITH_VECTOR_DOT") {
+            Err(std::env::VarError::NotPresent) => false,
+            Ok(value) if value == "1" => true,
+            _ => return Err("Explicit resident vector-dot selection rejected".into()),
+        };
         let mut gpu = Gpu::new()?;
         if gpu.info.subgroup_min_size < 16 || gpu.info.subgroup_max_size > 32 {
             return Err("Resident lab requires inspected16..32 subgroup bounds".into());
@@ -231,6 +246,7 @@ impl Graph {
             weight_bytes,
             load_millis: 0,
             block_dot,
+            vector_dot,
             subgroup_max,
         };
         graph.construct()?;
@@ -253,7 +269,12 @@ impl Graph {
         grid: [u32; 3],
         head: bool,
     ) -> Result<()> {
-        let pipeline = self.gpu.pipeline(name, shader(dtype, constants, source));
+        let code = if name.starts_with("matrix-") {
+            matrix_shader(dtype, constants, self.vector_dot)
+        } else {
+            shader(dtype, constants, source)
+        };
+        let pipeline = self.gpu.pipeline(name, code);
         let first = first
             .map(|name| {
                 self._weights
@@ -306,8 +327,8 @@ impl Graph {
         let constants = format!("{constants}const BLOCK_DOT:bool={};", self.block_dot);
         self.op(
             &format!(
-                "matrix-{dtype}-{rows}-{cols}-{routed}-{ranked}-{}",
-                self.block_dot
+                "matrix-{dtype}-{rows}-{cols}-{routed}-{ranked}-{}-{}",
+                self.block_dot, self.vector_dot
             ),
             include_str!("matrix.wgsl"),
             dtype,
@@ -850,6 +871,19 @@ mod tests {
             include_str!("argmax.wgsl"),
         ];
         for dtype in [0, 12, 14] {
+            let code = matrix_shader(
+                dtype,
+                "const ROWS:u32=2048u;const COLUMNS:u32=2048u;const ROW_BYTES:u32=1152u;const ROUTED:bool=true;const RANKED_INPUT:bool=false;",
+                true,
+            );
+            let module = wgpu::naga::front::wgsl::parse_str(&code)
+                .unwrap_or_else(|e| panic!("{}", e.emit_to_string(&code)));
+            wgpu::naga::valid::Validator::new(
+                wgpu::naga::valid::ValidationFlags::all(),
+                wgpu::naga::valid::Capabilities::all(),
+            )
+            .validate(&module)
+            .unwrap();
             for body in bodies {
                 let code = shader(
                     dtype,
