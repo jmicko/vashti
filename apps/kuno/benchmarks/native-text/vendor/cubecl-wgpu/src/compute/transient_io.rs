@@ -947,6 +947,8 @@ fn reuse_metadata_capacity<T>(
 }
 const INFO_KEY_BYTES: usize = 64 * 1024;
 const INFO_CACHE_ENTRIES: usize = 512;
+const INFO_CACHE_BUCKETS: usize = 512;
+const INFO_BUCKET_BYTES: usize = INFO_CACHE_BUCKETS * std::mem::size_of::<u32>();
 static INFO_CACHE_STATS: [AtomicU64; 3] = [const { AtomicU64::new(0) }; 3];
 /// Cumulative exact INFO hits, misses (including uncached saturation), page pins.
 /// Numeric only; never exposes hashes, keys, buffer IDs, or request identifiers.
@@ -972,16 +974,21 @@ struct InfoEntry<R> {
     key_start: usize,
     key_len: usize,
     owner_index: usize,
+    // One-based prior entry in this bucket; zero terminates the chain.
+    next: u32,
     resource: R,
 }
 struct InfoCache<R = WgpuResource> {
     keys: PrivateHostAllocation,
+    // Request-derived bucket links need the same guarded ownership as keys.
+    buckets: PrivateHostAllocation,
     used: usize,
     entries: Vec<InfoEntry<R>>,
 }
 impl<R> InfoCache<R> {
     fn reserved_bytes() -> usize {
         INFO_KEY_BYTES
+            + INFO_BUCKET_BYTES
             + INFO_CACHE_ENTRIES * std::mem::size_of::<InfoEntry<R>>()
             + std::mem::size_of::<Self>()
     }
@@ -989,6 +996,8 @@ impl<R> InfoCache<R> {
         let mut cache = Self {
             keys: PrivateHostAllocation::zeroed(INFO_KEY_BYTES)
                 .map_err(|_| fault("private INFO key allocation"))?,
+            buckets: PrivateHostAllocation::zeroed(INFO_BUCKET_BYTES)
+                .map_err(|_| fault("private INFO bucket allocation"))?,
             used: 0,
             entries: Vec::new(),
         };
@@ -996,25 +1005,46 @@ impl<R> InfoCache<R> {
             .entries
             .try_reserve_exact(INFO_CACHE_ENTRIES)
             .map_err(|_| fault("private INFO entry allocation"))?;
-        if cache.keys.capacity() > INFO_KEY_BYTES || cache.entries.capacity() > INFO_CACHE_ENTRIES {
+        if cache.keys.capacity() != INFO_KEY_BYTES
+            || cache.buckets.capacity() != INFO_BUCKET_BYTES
+            || cache.entries.capacity() > INFO_CACHE_ENTRIES
+        {
             return Err(fault("private INFO cache actual capacity"));
         }
-        // Every future private key/header stays inside these two fixed owners.
+        // Every future private key/header/link stays inside these fixed owners.
         reuse_metadata_capacity::<wgpu::Buffer>(0, 0, cache.host_bytes())?;
         Ok(cache)
     }
     fn host_bytes(&self) -> usize {
-        // Construction bounds both capacities; their sum cannot overflow.
+        // Construction bounds all capacities; their sum cannot overflow.
         self.keys.capacity()
+            + self.buckets.capacity()
             + self.entries.capacity() * std::mem::size_of::<InfoEntry<R>>()
             + std::mem::size_of::<Self>()
     }
     fn lookup(&self, data: &[u8], hash: u64) -> Option<&InfoEntry<R>> {
-        self.entries.iter().find(|entry| {
-            entry.hash == hash
+        let mut link = self.bucket_head(hash);
+        // Even a malformed link cannot escape the allocation or loop forever.
+        // Normal chains only visit records in one bucket, newest first.
+        for _ in 0..self.entries.len() {
+            let index = link.checked_sub(1)? as usize;
+            let entry = self.entries.get(index)?;
+            if entry.hash == hash
                 && entry.key_len == data.len()
                 && self.keys.as_slice()[entry.key_start..entry.key_start + entry.key_len] == *data
-        })
+            {
+                return Some(entry);
+            }
+            link = entry.next;
+        }
+        None
+    }
+    fn bucket_offset(hash: u64) -> usize {
+        ((hash ^ (hash >> 32)) as usize & (INFO_CACHE_BUCKETS - 1)) * std::mem::size_of::<u32>()
+    }
+    fn bucket_head(&self, hash: u64) -> u32 {
+        let at = Self::bucket_offset(hash);
+        u32::from_ne_bytes(self.buckets.as_slice()[at..at + 4].try_into().unwrap())
     }
     fn has_room(&self, data: &[u8]) -> bool {
         !data.is_empty()
@@ -1029,6 +1059,7 @@ impl<R> InfoCache<R> {
             return false;
         }
         let key_start = self.used;
+        let next = self.bucket_head(hash);
         self.keys.as_mut_slice()[key_start..key_start + data.len()].copy_from_slice(data);
         self.used += data.len();
         // Capacity was admitted before any private key existed; never reallocates.
@@ -1037,8 +1068,14 @@ impl<R> InfoCache<R> {
             key_start,
             key_len: data.len(),
             owner_index,
+            next,
             resource,
         });
+        // Publish only after the entry and key are initialized. Append-only
+        // indices stay valid until the entire cache is destroyed at full audit.
+        let at = Self::bucket_offset(hash);
+        self.buckets.as_mut_slice()[at..at + 4]
+            .copy_from_slice(&(self.entries.len() as u32).to_ne_bytes());
         true
     }
     fn clear_private(&mut self) {
@@ -1052,6 +1089,11 @@ impl<R> InfoCache<R> {
         // SAFETY: this initialized exclusive slice remains owned throughout wipe.
         unsafe {
             cubecl_runtime::transient::wipe_mapped_full_span(keys.as_mut_ptr(), keys.len());
+        }
+        let buckets = self.buckets.as_mut_slice();
+        // SAFETY: fixed, initialized, exclusively owned allocation remains live.
+        unsafe {
+            cubecl_runtime::transient::wipe_mapped_full_span(buckets.as_mut_ptr(), buckets.len());
         }
         let pointer = self.entries.as_mut_ptr().cast::<u8>();
         let bytes = self.entries.capacity() * std::mem::size_of::<InfoEntry<R>>();
@@ -4621,6 +4663,51 @@ mod tests {
         assert_eq!(cache.used, 3);
     }
     #[test]
+    fn info_bucket_collisions_retain_every_exact_key_and_reject_absent_keys() {
+        let mut cache = InfoCache::new().unwrap();
+        let original = cache.host_bytes();
+        // Full hash collisions exercise the longest permitted chain, including
+        // first/middle/last entries rather than only the newest bucket head.
+        for i in 0..INFO_CACHE_ENTRIES {
+            assert!(cache.insert(&(i as u32).to_le_bytes(), 7, i, i + 17));
+        }
+        for i in 0..INFO_CACHE_ENTRIES {
+            let hit = cache.lookup(&(i as u32).to_le_bytes(), 7).unwrap();
+            assert_eq!((hit.owner_index, hit.resource), (i, i + 17));
+        }
+        assert!(cache.lookup(&u32::MAX.to_le_bytes(), 7).is_none());
+        assert!(cache.lookup(&[0; 3], 7).is_none());
+        assert!(!cache.insert(&u32::MAX.to_le_bytes(), 7, 0, 0));
+        assert_eq!(cache.host_bytes(), original);
+
+        // Distinct hashes sharing a bucket must still check the entire hash.
+        let mut partial = InfoCache::new().unwrap();
+        let first = 7;
+        let second = first + INFO_CACHE_BUCKETS as u64;
+        assert_eq!(
+            InfoCache::<u32>::bucket_offset(first),
+            InfoCache::<u32>::bucket_offset(second)
+        );
+        assert!(partial.insert(&[1, 2, 3], first, 3, 41u32));
+        assert!(partial.insert(&[1, 2, 3], second, 8, 67u32));
+        assert_eq!(partial.lookup(&[1, 2, 3], first).unwrap().resource, 41);
+        assert_eq!(partial.lookup(&[1, 2, 3], second).unwrap().resource, 67);
+    }
+    #[test]
+    fn info_bucket_malformed_links_are_bounded_and_never_escape_owned_entries() {
+        let mut cache = InfoCache::new().unwrap();
+        assert!(cache.insert(&[1], 7, 0, ()));
+        assert!(cache.insert(&[2], 7, 1, ()));
+        // A synthetic self-cycle cannot turn a miss into an unbounded scan.
+        cache.entries[1].next = 2;
+        assert!(cache.lookup(&[3], 7).is_none());
+        cache.entries[1].next = u32::MAX;
+        assert!(cache.lookup(&[1], 7).is_none());
+        let at = InfoCache::<()>::bucket_offset(7);
+        cache.buckets.as_mut_slice()[at..at + 4].copy_from_slice(&u32::MAX.to_ne_bytes());
+        assert!(cache.lookup(&[2], 7).is_none());
+    }
+    #[test]
     fn info_cache_saturation_falls_back_without_eviction_mutation_or_growth() {
         let mut cache = InfoCache::new().unwrap();
         let original = cache.host_bytes();
@@ -4659,6 +4746,7 @@ mod tests {
         let mut cache = InfoCache::new().unwrap();
         assert!(cache.insert(&[0xa7; 19], 0xbeef, 37, DropCount(dropped.clone())));
         cache.keys.as_mut_slice()[19..].fill(0xbd);
+        cache.buckets.as_mut_slice().fill(0xe7);
         // Fill never-initialized spare headers so the test proves full capacity,
         // not only the logical entry range. No live object is overwritten.
         let initialized = cache.entries.len() * std::mem::size_of::<InfoEntry<DropCount>>();
@@ -4675,7 +4763,9 @@ mod tests {
         assert_eq!(cache.used, 0);
         assert!(cache.entries.is_empty());
         assert_eq!(cache.keys.capacity(), INFO_KEY_BYTES);
+        assert_eq!(cache.buckets.capacity(), INFO_BUCKET_BYTES);
         assert!(cache.keys.as_slice().iter().all(|byte| *byte == 0));
+        assert!(cache.buckets.as_slice().iter().all(|byte| *byte == 0));
         // SAFETY: clear_private initialized every capacity byte while retaining
         // the allocation; no Rust entry remains live and all bytes are readable.
         let headers = unsafe { std::slice::from_raw_parts(pointer, total) };
@@ -4687,15 +4777,21 @@ mod tests {
     fn info_cache_actual_capacities_share_original_metadata_allowance() {
         let cache = InfoCache::<WgpuResource>::new().unwrap();
         let actual = cache.keys.capacity()
+            + cache.buckets.capacity()
             + cache.entries.capacity() * std::mem::size_of::<InfoEntry<WgpuResource>>()
             + std::mem::size_of_val(&cache);
         assert_eq!(cache.host_bytes(), actual);
         assert_eq!(InfoCache::<WgpuResource>::reserved_bytes(), actual);
-        assert!(actual > INFO_KEY_BYTES);
+        assert_eq!(cache.buckets.capacity(), 512 * std::mem::size_of::<u32>());
+        assert!(actual > INFO_KEY_BYTES + INFO_BUCKET_BYTES);
         assert!(actual < REUSE_METADATA_MAX);
         assert!(reuse_metadata_capacity::<wgpu::Buffer>(0, 0, actual).is_ok());
         assert!(reuse_metadata_capacity::<wgpu::Buffer>(4096, 64, actual).is_err());
         assert!(reuse_metadata_capacity::<wgpu::Buffer>(0, 0, usize::MAX).is_err());
+        let remaining = REUSE_METADATA_MAX - std::mem::size_of::<ReuseScope>() - actual;
+        let max_owners = remaining / std::mem::size_of::<Tracked<wgpu::Buffer>>();
+        assert!(reuse_metadata_capacity::<wgpu::Buffer>(max_owners, 0, actual).is_ok());
+        assert!(reuse_metadata_capacity::<wgpu::Buffer>(max_owners + 1, 0, actual).is_err());
     }
     #[test]
     fn info_pins_exclude_full_uniform_owner_from_recycling_until_audit_reset() {
