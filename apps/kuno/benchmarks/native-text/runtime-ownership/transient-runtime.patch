@@ -3041,8 +3041,8 @@
 +                }
 +                return Box::pin(async move { Err(error) });
 +            }
-+            // Device Wait processes native map callbacks synchronously. Refuse
-+            // absent/rejected delivery instead of starting another wait window.
++            // Completed native polls process map callbacks synchronously.
++            // Refuse absent/rejected delivery rather than starting a new window.
 +            for (entry, callback) in pending.iter().zip(&callbacks) {
 +                if let (Some(entry), Some(callback)) = (entry, callback)
 +                    && !matches!(callback.try_recv(), Ok(Ok(())))
@@ -3209,7 +3209,7 @@
          self.mem_manage.memory_cleanup(false);
 --- /dev/null
 +++ b/cubecl-wgpu/src/compute/transient_io.rs
-@@ -0,0 +1,5358 @@
+@@ -0,0 +1,5679 @@
 +// Modified for Kuno's laboratory transient-I/O ownership/erasure patch (2026-10-05).
 +//! Opt-in bounded, explicitly owned transient I/O. No device creation in tests.
 +//!
@@ -3324,6 +3324,8 @@
 +    }
 +}
 +const POLL_TIMEOUT: Duration = Duration::from_secs(30);
++#[cfg(not(target_family = "wasm"))]
++const INLINE_MAP_SPIN_BUDGET: Duration = Duration::from_millis(1);
 +pub(crate) type ErrorFuture = Pin<Box<dyn Future<Output = Option<wgpu::Error>> + Send>>;
 +
 +pub(crate) fn fault(reason: &'static str) -> ServerError {
@@ -3779,6 +3781,47 @@
 +        .filter(|remaining| !remaining.is_zero())
 +}
 +
++/// Short routing submissions can finish before a native blocking wait wakes
++/// its caller. Poll briefly without sleeping, then wait only the remainder of
++/// the ORIGINAL map deadline. Poll itself is not completion: only QueueEmpty
++/// proves completion on the nonblocking path. Callers still accept every map
++/// callback and the existing GPU error scopes before using any readback.
++#[cfg(not(target_family = "wasm"))]
++fn poll_inline_maps_bounded(
++    deadline: Instant,
++    mut now: impl FnMut() -> Instant,
++    mut poll: impl FnMut(wgpu::PollType) -> Result<wgpu::PollStatus, wgpu::PollError>,
++) -> Result<(), wgpu::PollError> {
++    let mut current = now();
++    let spin_deadline = current
++        .checked_add(INLINE_MAP_SPIN_BUDGET)
++        .unwrap_or(deadline)
++        .min(deadline);
++    loop {
++        let remaining = remaining_map_time_at(deadline, current).ok_or(wgpu::PollError::Timeout)?;
++        let waiting = current >= spin_deadline;
++        let status = poll(if waiting {
++            wgpu::PollType::Wait {
++                submission_index: None,
++                timeout: Some(remaining),
++            }
++        } else {
++            wgpu::PollType::Poll
++        })?;
++        current = now();
++        // A scheduling pause or slow poll cannot turn a late completion into
++        // acceptance. No fallback creates another thirty-second window.
++        remaining_map_time_at(deadline, current).ok_or(wgpu::PollError::Timeout)?;
++        if status.is_queue_empty() || (waiting && status.wait_finished()) {
++            return Ok(());
++        }
++        if waiting {
++            return Err(wgpu::PollError::Timeout);
++        }
++        std::hint::spin_loop();
++    }
++}
++
 +/// A successful poll is not a delivered mapping callback: another native poll
 +/// can claim the callback under the queue lock and fire it after releasing that
 +/// lock. Wait for delivery within the SAME deadline used for the native poll.
@@ -4159,6 +4202,8 @@
 +}
 +const INFO_KEY_BYTES: usize = 64 * 1024;
 +const INFO_CACHE_ENTRIES: usize = 512;
++const INFO_CACHE_BUCKETS: usize = 512;
++const INFO_BUCKET_BYTES: usize = INFO_CACHE_BUCKETS * std::mem::size_of::<u32>();
 +static INFO_CACHE_STATS: [AtomicU64; 3] = [const { AtomicU64::new(0) }; 3];
 +/// Cumulative exact INFO hits, misses (including uncached saturation), page pins.
 +/// Numeric only; never exposes hashes, keys, buffer IDs, or request identifiers.
@@ -4184,16 +4229,21 @@
 +    key_start: usize,
 +    key_len: usize,
 +    owner_index: usize,
++    // One-based prior entry in this bucket; zero terminates the chain.
++    next: u32,
 +    resource: R,
 +}
 +struct InfoCache<R = WgpuResource> {
 +    keys: PrivateHostAllocation,
++    // Request-derived bucket links need the same guarded ownership as keys.
++    buckets: PrivateHostAllocation,
 +    used: usize,
 +    entries: Vec<InfoEntry<R>>,
 +}
 +impl<R> InfoCache<R> {
 +    fn reserved_bytes() -> usize {
 +        INFO_KEY_BYTES
++            + INFO_BUCKET_BYTES
 +            + INFO_CACHE_ENTRIES * std::mem::size_of::<InfoEntry<R>>()
 +            + std::mem::size_of::<Self>()
 +    }
@@ -4201,6 +4251,8 @@
 +        let mut cache = Self {
 +            keys: PrivateHostAllocation::zeroed(INFO_KEY_BYTES)
 +                .map_err(|_| fault("private INFO key allocation"))?,
++            buckets: PrivateHostAllocation::zeroed(INFO_BUCKET_BYTES)
++                .map_err(|_| fault("private INFO bucket allocation"))?,
 +            used: 0,
 +            entries: Vec::new(),
 +        };
@@ -4208,25 +4260,46 @@
 +            .entries
 +            .try_reserve_exact(INFO_CACHE_ENTRIES)
 +            .map_err(|_| fault("private INFO entry allocation"))?;
-+        if cache.keys.capacity() > INFO_KEY_BYTES || cache.entries.capacity() > INFO_CACHE_ENTRIES {
++        if cache.keys.capacity() != INFO_KEY_BYTES
++            || cache.buckets.capacity() != INFO_BUCKET_BYTES
++            || cache.entries.capacity() > INFO_CACHE_ENTRIES
++        {
 +            return Err(fault("private INFO cache actual capacity"));
 +        }
-+        // Every future private key/header stays inside these two fixed owners.
++        // Every future private key/header/link stays inside these fixed owners.
 +        reuse_metadata_capacity::<wgpu::Buffer>(0, 0, cache.host_bytes())?;
 +        Ok(cache)
 +    }
 +    fn host_bytes(&self) -> usize {
-+        // Construction bounds both capacities; their sum cannot overflow.
++        // Construction bounds all capacities; their sum cannot overflow.
 +        self.keys.capacity()
++            + self.buckets.capacity()
 +            + self.entries.capacity() * std::mem::size_of::<InfoEntry<R>>()
 +            + std::mem::size_of::<Self>()
 +    }
 +    fn lookup(&self, data: &[u8], hash: u64) -> Option<&InfoEntry<R>> {
-+        self.entries.iter().find(|entry| {
-+            entry.hash == hash
++        let mut link = self.bucket_head(hash);
++        // Even a malformed link cannot escape the allocation or loop forever.
++        // Normal chains only visit records in one bucket, newest first.
++        for _ in 0..self.entries.len() {
++            let index = link.checked_sub(1)? as usize;
++            let entry = self.entries.get(index)?;
++            if entry.hash == hash
 +                && entry.key_len == data.len()
 +                && self.keys.as_slice()[entry.key_start..entry.key_start + entry.key_len] == *data
-+        })
++            {
++                return Some(entry);
++            }
++            link = entry.next;
++        }
++        None
++    }
++    fn bucket_offset(hash: u64) -> usize {
++        ((hash ^ (hash >> 32)) as usize & (INFO_CACHE_BUCKETS - 1)) * std::mem::size_of::<u32>()
++    }
++    fn bucket_head(&self, hash: u64) -> u32 {
++        let at = Self::bucket_offset(hash);
++        u32::from_ne_bytes(self.buckets.as_slice()[at..at + 4].try_into().unwrap())
 +    }
 +    fn has_room(&self, data: &[u8]) -> bool {
 +        !data.is_empty()
@@ -4241,6 +4314,7 @@
 +            return false;
 +        }
 +        let key_start = self.used;
++        let next = self.bucket_head(hash);
 +        self.keys.as_mut_slice()[key_start..key_start + data.len()].copy_from_slice(data);
 +        self.used += data.len();
 +        // Capacity was admitted before any private key existed; never reallocates.
@@ -4249,8 +4323,14 @@
 +            key_start,
 +            key_len: data.len(),
 +            owner_index,
++            next,
 +            resource,
 +        });
++        // Publish only after the entry and key are initialized. Append-only
++        // indices stay valid until the entire cache is destroyed at full audit.
++        let at = Self::bucket_offset(hash);
++        self.buckets.as_mut_slice()[at..at + 4]
++            .copy_from_slice(&(self.entries.len() as u32).to_ne_bytes());
 +        true
 +    }
 +    fn clear_private(&mut self) {
@@ -4264,6 +4344,11 @@
 +        // SAFETY: this initialized exclusive slice remains owned throughout wipe.
 +        unsafe {
 +            cubecl_runtime::transient::wipe_mapped_full_span(keys.as_mut_ptr(), keys.len());
++        }
++        let buckets = self.buckets.as_mut_slice();
++        // SAFETY: fixed, initialized, exclusively owned allocation remains live.
++        unsafe {
++            cubecl_runtime::transient::wipe_mapped_full_span(buckets.as_mut_ptr(), buckets.len());
 +        }
 +        let pointer = self.entries.as_mut_ptr().cast::<u8>();
 +        let bytes = self.entries.capacity() * std::mem::size_of::<InfoEntry<R>>();
@@ -5503,7 +5588,7 @@
 +        self.inline_readback
 +    }
 +    pub(crate) fn await_inline_read_maps(&self, deadline: Instant) -> Result<(), ServerError> {
-+        if self.poll_map_until(deadline) {
++        if self.poll_inline_map_until(deadline) {
 +            Ok(())
 +        } else {
 +            Err(fault(self.leases.reason(Failure::ReadbackMap)))
@@ -6080,6 +6165,23 @@
 +        }
 +    }
 +    #[cfg(not(target_family = "wasm"))]
++    fn poll_inline_map_until(&self, deadline: Instant) -> bool {
++        if !self.reuse_active() {
++            return self.poll_map_until(deadline);
++        }
++        match poll_inline_maps_bounded(deadline, Instant::now, |mode| self.device.poll(mode)) {
++            Ok(()) => true,
++            Err(wgpu::PollError::Timeout) => {
++                self.leases.record(Failure::DrainTimeout);
++                false
++            }
++            Err(wgpu::PollError::WrongSubmissionIndex(_, _)) => {
++                self.leases.record(Failure::PollIndex);
++                false
++            }
++        }
++    }
++    #[cfg(not(target_family = "wasm"))]
 +    fn poll_with_timeout(&self, index: Option<wgpu::SubmissionIndex>, timeout: Duration) -> bool {
 +        match self.device.poll(wgpu::PollType::Wait {
 +            submission_index: index,
@@ -6103,6 +6205,10 @@
 +    #[cfg(target_family = "wasm")]
 +    fn poll_map_until(&self, _deadline: Instant) -> bool {
 +        false
++    }
++    #[cfg(target_family = "wasm")]
++    fn poll_inline_map_until(&self, deadline: Instant) -> bool {
++        self.poll_map_until(deadline)
 +    }
 +    fn erase_set(&mut self, buffers: &[Tracked], previous_error: bool) -> bool {
 +        let scopes = IoScopes::new(&self.device);
@@ -6640,6 +6746,167 @@
 +            await_map_callback(&receiver, Instant::now() + Duration::from_millis(2)),
 +            Err(MapCallbackFailure::Timeout)
 +        );
++    }
++
++    #[cfg(not(target_family = "wasm"))]
++    mod inline_poll_tests {
++        use super::*;
++        use std::cell::Cell;
++        use std::collections::VecDeque;
++
++        type Step = (Duration, Result<wgpu::PollStatus, wgpu::PollError>);
++        struct FakePoll {
++            clock: Cell<Instant>,
++            steps: RefCell<VecDeque<Step>>,
++            calls: RefCell<Vec<wgpu::PollType>>,
++        }
++        impl FakePoll {
++            fn new(now: Instant, steps: Vec<Step>) -> Self {
++                Self {
++                    clock: Cell::new(now),
++                    steps: RefCell::new(steps.into()),
++                    calls: RefCell::new(Vec::new()),
++                }
++            }
++            fn run(&self, deadline: Instant) -> Result<(), wgpu::PollError> {
++                poll_inline_maps_bounded(
++                    deadline,
++                    || self.clock.get(),
++                    |mode| {
++                        self.calls.borrow_mut().push(mode);
++                        let (elapsed, result) = self.steps.borrow_mut().pop_front().unwrap();
++                        self.clock.set(self.clock.get() + elapsed);
++                        result
++                    },
++                )
++            }
++        }
++
++        #[test]
++        fn nonblocking_poll_requires_queue_completion() {
++            let now = Instant::now();
++            let fake = FakePoll::new(
++                now,
++                vec![
++                    // This status is not produced by native Poll, but must not
++                    // be mistaken for an identified submission's completion.
++                    (
++                        Duration::from_micros(100),
++                        Ok(wgpu::PollStatus::WaitSucceeded),
++                    ),
++                    (Duration::from_micros(100), Ok(wgpu::PollStatus::Poll)),
++                    (Duration::from_micros(100), Ok(wgpu::PollStatus::QueueEmpty)),
++                ],
++            );
++            assert!(fake.run(now + POLL_TIMEOUT).is_ok());
++            assert_eq!(fake.calls.borrow().len(), 3);
++            assert!(
++                fake.calls
++                    .borrow()
++                    .iter()
++                    .all(|mode| matches!(mode, wgpu::PollType::Poll))
++            );
++        }
++
++        #[test]
++        fn spin_budget_falls_through_to_only_original_remaining_wait() {
++            let now = Instant::now();
++            let fake = FakePoll::new(
++                now,
++                vec![
++                    (INLINE_MAP_SPIN_BUDGET, Ok(wgpu::PollStatus::Poll)),
++                    (
++                        Duration::from_micros(100),
++                        Ok(wgpu::PollStatus::WaitSucceeded),
++                    ),
++                ],
++            );
++            assert!(fake.run(now + POLL_TIMEOUT).is_ok());
++            let calls = fake.calls.borrow();
++            assert_eq!(calls.len(), 2);
++            assert!(matches!(calls[0], wgpu::PollType::Poll));
++            assert!(matches!(calls[1], wgpu::PollType::Wait {
++                submission_index: None, timeout: Some(timeout)
++            } if timeout == POLL_TIMEOUT - INLINE_MAP_SPIN_BUDGET));
++        }
++
++        #[test]
++        fn poll_and_fallback_errors_are_never_retried_or_accepted() {
++            for waiting in [false, true] {
++                for wrong_index in [false, true] {
++                    let now = Instant::now();
++                    let mut steps = Vec::new();
++                    if waiting {
++                        steps.push((INLINE_MAP_SPIN_BUDGET, Ok(wgpu::PollStatus::Poll)));
++                    }
++                    steps.push((
++                        Duration::ZERO,
++                        Err(if wrong_index {
++                            wgpu::PollError::WrongSubmissionIndex(2, 1)
++                        } else {
++                            wgpu::PollError::Timeout
++                        }),
++                    ));
++                    let fake = FakePoll::new(now, steps);
++                    let result = fake.run(now + POLL_TIMEOUT);
++                    assert!(if wrong_index {
++                        matches!(result, Err(wgpu::PollError::WrongSubmissionIndex(2, 1)))
++                    } else {
++                        matches!(result, Err(wgpu::PollError::Timeout))
++                    });
++                    assert_eq!(fake.calls.borrow().len(), 1 + usize::from(waiting));
++                }
++            }
++            let now = Instant::now();
++            let fake = FakePoll::new(
++                now,
++                vec![
++                    (INLINE_MAP_SPIN_BUDGET, Ok(wgpu::PollStatus::Poll)),
++                    (Duration::ZERO, Ok(wgpu::PollStatus::Poll)),
++                ],
++            );
++            assert!(matches!(
++                fake.run(now + POLL_TIMEOUT),
++                Err(wgpu::PollError::Timeout)
++            ));
++            assert_eq!(fake.calls.borrow().len(), 2);
++        }
++
++        #[test]
++        fn original_deadline_rejects_expired_or_late_poll_and_wait_completion() {
++            let now = Instant::now();
++            let expired = FakePoll::new(now, vec![]);
++            assert!(matches!(expired.run(now), Err(wgpu::PollError::Timeout)));
++            assert!(expired.calls.borrow().is_empty());
++
++            let short = Duration::from_micros(500);
++            let late_poll = FakePoll::new(now, vec![(short, Ok(wgpu::PollStatus::QueueEmpty))]);
++            assert!(matches!(
++                late_poll.run(now + short),
++                Err(wgpu::PollError::Timeout)
++            ));
++            assert_eq!(late_poll.calls.borrow().len(), 1);
++            assert!(matches!(late_poll.calls.borrow()[0], wgpu::PollType::Poll));
++
++            let late_wait = FakePoll::new(
++                now,
++                vec![
++                    (INLINE_MAP_SPIN_BUDGET, Ok(wgpu::PollStatus::Poll)),
++                    (
++                        Duration::from_millis(2),
++                        Ok(wgpu::PollStatus::WaitSucceeded),
++                    ),
++                ],
++            );
++            assert!(matches!(
++                late_wait.run(now + Duration::from_millis(3)),
++                Err(wgpu::PollError::Timeout)
++            ));
++            assert_eq!(late_wait.calls.borrow().len(), 2);
++            assert!(matches!(late_wait.calls.borrow()[1], wgpu::PollType::Wait {
++                submission_index: None, timeout: Some(timeout)
++            } if timeout == Duration::from_millis(2)));
++        }
 +    }
 +
 +    #[test]
@@ -7833,6 +8100,51 @@
 +        assert_eq!(cache.used, 3);
 +    }
 +    #[test]
++    fn info_bucket_collisions_retain_every_exact_key_and_reject_absent_keys() {
++        let mut cache = InfoCache::new().unwrap();
++        let original = cache.host_bytes();
++        // Full hash collisions exercise the longest permitted chain, including
++        // first/middle/last entries rather than only the newest bucket head.
++        for i in 0..INFO_CACHE_ENTRIES {
++            assert!(cache.insert(&(i as u32).to_le_bytes(), 7, i, i + 17));
++        }
++        for i in 0..INFO_CACHE_ENTRIES {
++            let hit = cache.lookup(&(i as u32).to_le_bytes(), 7).unwrap();
++            assert_eq!((hit.owner_index, hit.resource), (i, i + 17));
++        }
++        assert!(cache.lookup(&u32::MAX.to_le_bytes(), 7).is_none());
++        assert!(cache.lookup(&[0; 3], 7).is_none());
++        assert!(!cache.insert(&u32::MAX.to_le_bytes(), 7, 0, 0));
++        assert_eq!(cache.host_bytes(), original);
++
++        // Distinct hashes sharing a bucket must still check the entire hash.
++        let mut partial = InfoCache::new().unwrap();
++        let first = 7;
++        let second = first + INFO_CACHE_BUCKETS as u64;
++        assert_eq!(
++            InfoCache::<u32>::bucket_offset(first),
++            InfoCache::<u32>::bucket_offset(second)
++        );
++        assert!(partial.insert(&[1, 2, 3], first, 3, 41u32));
++        assert!(partial.insert(&[1, 2, 3], second, 8, 67u32));
++        assert_eq!(partial.lookup(&[1, 2, 3], first).unwrap().resource, 41);
++        assert_eq!(partial.lookup(&[1, 2, 3], second).unwrap().resource, 67);
++    }
++    #[test]
++    fn info_bucket_malformed_links_are_bounded_and_never_escape_owned_entries() {
++        let mut cache = InfoCache::new().unwrap();
++        assert!(cache.insert(&[1], 7, 0, ()));
++        assert!(cache.insert(&[2], 7, 1, ()));
++        // A synthetic self-cycle cannot turn a miss into an unbounded scan.
++        cache.entries[1].next = 2;
++        assert!(cache.lookup(&[3], 7).is_none());
++        cache.entries[1].next = u32::MAX;
++        assert!(cache.lookup(&[1], 7).is_none());
++        let at = InfoCache::<()>::bucket_offset(7);
++        cache.buckets.as_mut_slice()[at..at + 4].copy_from_slice(&u32::MAX.to_ne_bytes());
++        assert!(cache.lookup(&[2], 7).is_none());
++    }
++    #[test]
 +    fn info_cache_saturation_falls_back_without_eviction_mutation_or_growth() {
 +        let mut cache = InfoCache::new().unwrap();
 +        let original = cache.host_bytes();
@@ -7871,6 +8183,7 @@
 +        let mut cache = InfoCache::new().unwrap();
 +        assert!(cache.insert(&[0xa7; 19], 0xbeef, 37, DropCount(dropped.clone())));
 +        cache.keys.as_mut_slice()[19..].fill(0xbd);
++        cache.buckets.as_mut_slice().fill(0xe7);
 +        // Fill never-initialized spare headers so the test proves full capacity,
 +        // not only the logical entry range. No live object is overwritten.
 +        let initialized = cache.entries.len() * std::mem::size_of::<InfoEntry<DropCount>>();
@@ -7887,7 +8200,9 @@
 +        assert_eq!(cache.used, 0);
 +        assert!(cache.entries.is_empty());
 +        assert_eq!(cache.keys.capacity(), INFO_KEY_BYTES);
++        assert_eq!(cache.buckets.capacity(), INFO_BUCKET_BYTES);
 +        assert!(cache.keys.as_slice().iter().all(|byte| *byte == 0));
++        assert!(cache.buckets.as_slice().iter().all(|byte| *byte == 0));
 +        // SAFETY: clear_private initialized every capacity byte while retaining
 +        // the allocation; no Rust entry remains live and all bytes are readable.
 +        let headers = unsafe { std::slice::from_raw_parts(pointer, total) };
@@ -7899,15 +8214,21 @@
 +    fn info_cache_actual_capacities_share_original_metadata_allowance() {
 +        let cache = InfoCache::<WgpuResource>::new().unwrap();
 +        let actual = cache.keys.capacity()
++            + cache.buckets.capacity()
 +            + cache.entries.capacity() * std::mem::size_of::<InfoEntry<WgpuResource>>()
 +            + std::mem::size_of_val(&cache);
 +        assert_eq!(cache.host_bytes(), actual);
 +        assert_eq!(InfoCache::<WgpuResource>::reserved_bytes(), actual);
-+        assert!(actual > INFO_KEY_BYTES);
++        assert_eq!(cache.buckets.capacity(), 512 * std::mem::size_of::<u32>());
++        assert!(actual > INFO_KEY_BYTES + INFO_BUCKET_BYTES);
 +        assert!(actual < REUSE_METADATA_MAX);
 +        assert!(reuse_metadata_capacity::<wgpu::Buffer>(0, 0, actual).is_ok());
 +        assert!(reuse_metadata_capacity::<wgpu::Buffer>(4096, 64, actual).is_err());
 +        assert!(reuse_metadata_capacity::<wgpu::Buffer>(0, 0, usize::MAX).is_err());
++        let remaining = REUSE_METADATA_MAX - std::mem::size_of::<ReuseScope>() - actual;
++        let max_owners = remaining / std::mem::size_of::<Tracked<wgpu::Buffer>>();
++        assert!(reuse_metadata_capacity::<wgpu::Buffer>(max_owners, 0, actual).is_ok());
++        assert!(reuse_metadata_capacity::<wgpu::Buffer>(max_owners + 1, 0, actual).is_err());
 +    }
 +    #[test]
 +    fn info_pins_exclude_full_uniform_owner_from_recycling_until_audit_reset() {

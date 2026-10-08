@@ -5,8 +5,8 @@ goal was paused. The goal controller remains paused; this turn is explicitly
 authorized. Target: the approved10-token/s Ollama reference for Flash-Next.
 Resume from **Astra request-buffer reuse candidate** at the end of this file;
 older measurements below are historical. Current best accepted final receipt:
-127 steps13605ms,9.3348034 tokens/s, sourcee9d8032; next accept-only boundary
-candidate is under test. Refresh sudo during active physical work and restore
+127 steps13605ms,9.3348034 tokens/s, sourcee9d8032; short active polling and indexed INFO lookup are the next candidates; the
+accept-only recycle experiment was rejected for speed. Refresh sudo during active physical work and restore
 public admission at the stopping point. Core speed is the priority; no new
 Ollama baselines, API, frontend, release or installation work is needed.
 Backend owner:
@@ -1886,3 +1886,11 @@ three completed recycles and512-entry INFO cache. The unused internal
 accept-only API does not alter selected execution. Next investigate bounded
 nonblocking polling before the original inline map wait, retaining the same
 30-second deadline, callbacks and all error acceptance.
+
+
+Candidate406cf80+a5a0d34 combines bounded bucket lookup with up-to1ms active
+native polling only in request-scoped inline readback. Host integration passes
+88 unit+3 allocator+2 logger controls. Core math, device placement, full owning
+bounds, original map callbacks, completed errors and terminal audits are
+unchanged. Normal/default paths retain blocking waits. Integrated native gates
+and the protected full device fixture are the remaining acceptance steps.

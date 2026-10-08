@@ -1449,3 +1449,22 @@ or quarantines ownership and retires the context; a new model cannot inherit it.
 Generation timings include the final request audit; report its separate numeric
 duration, actual reuse/checkpoint counters and successful full-close evidence.
 Complete source/device/physical-recovery validation is pending.
+
+
+### Indexed INFO and bounded active map waits (2026-10-08 candidate)
+
+Exact INFO lookup uses512 fixed bucket heads (2048 guarded bytes) and one-based
+bounded entry links, replacing a linear scan. The same512 entry/64KiB key limits
+apply; heads, entries and keys all count inside the unchanged256KiB actual
+metadata budget and receive full-capacity erasure. Full hash, length and bytes
+must still match; collisions never substitute a resource. Saturation falls back
+without eviction, growth, or changing the original page pinning rules.
+
+For inline mapping only inside a request reuse scope, nonblocking native polls
+may run for up to1ms before falling back to the original blocking wait. The
+nonblocking path needs QueueEmpty, then the original delivered map callbacks;
+a poll occurrence is not completion. The same30-second map deadline is checked
+before and after poll and its remainder bounds the fallback wait. Errors never
+retry. Default execution, full audit/remap drains, GPU error scopes and output
+acceptance remain unchanged. This trades a bounded amount of active CPU time
+for potentially lower handoff latency. Physical speed acceptance is separate.
