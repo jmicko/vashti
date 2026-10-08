@@ -432,7 +432,10 @@ trait OwnedZeroInspection {
 /// not credit an uninspected tail. No content is returned or formatted.
 fn inspect_zero_span(lease: impl AsRef<[u8]>, owned_bytes: usize) -> Result<()> {
     let bytes = lease.as_ref();
-    if owned_bytes == 0 || bytes.len() != owned_bytes || bytes.iter().any(|&b| b != 0) {
+    if owned_bytes == 0
+        || bytes.len() != owned_bytes
+        || !cubecl_runtime::transient::full_span_is_zero(bytes)
+    {
         return Err(ArenaError::Cleanup);
     }
     Ok(())

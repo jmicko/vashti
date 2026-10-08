@@ -42,6 +42,17 @@ pub unsafe fn wipe_mapped_full_span(pointer: *mut u8, length: usize) {
     compiler_fence(Ordering::SeqCst);
 }
 
+/// Check the complete supplied byte span without allocating or copying it.
+/// Full eight-byte words use safe unaligned byte-array loads; the exact tail
+/// remains byte-checked. A nonzero byte rejects just as the original byte scan.
+pub fn full_span_is_zero(bytes: &[u8]) -> bool {
+    let mut words = bytes.chunks_exact(8);
+    words
+        .by_ref()
+        .all(|word| u64::from_ne_bytes(word.try_into().unwrap()) == 0)
+        && words.remainder().iter().all(|byte| *byte == 0)
+}
+
 /// Validate metadata requests, never contents or completion. The backend must
 /// also reject an inactive private-I/O stream. All bindings remain retained.
 pub fn retained_metadata_bindings(
@@ -198,6 +209,31 @@ pub(crate) fn private_write_descriptor(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn numeric_full_zero_scan_covers_unaligned_exact_lengths_and_guards() {
+        for length in 0..=257 {
+            for first in 0..8 {
+                let mut owner = vec![0xa5u8; length + 16];
+                owner[first..first + length].fill(0);
+                assert!(super::full_span_is_zero(&owner[first..first + length]));
+                assert!(owner[..first].iter().all(|b| *b == 0xa5));
+                assert!(owner[first + length..].iter().all(|b| *b == 0xa5));
+            }
+        }
+    }
+    #[test]
+    fn numeric_full_zero_scan_rejects_every_nonzero_byte_including_word_tails() {
+        for length in 1..=257 {
+            for first in 0..8 {
+                let mut owner = vec![0u8; length + 16];
+                for bad in first..first + length {
+                    owner[bad] = 0x80;
+                    assert!(!super::full_span_is_zero(&owner[first..first + length]));
+                    owner[bad] = 0;
+                }
+            }
+        }
+    }
     use super::*;
     #[test]
     fn private_destination_validation_preserves_original_owner_on_failure() {

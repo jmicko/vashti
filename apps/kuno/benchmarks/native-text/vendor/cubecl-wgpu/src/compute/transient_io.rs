@@ -1247,7 +1247,7 @@ impl AuditMapping for NativeAuditMapping<'_> {
     }
     fn inspect(&mut self, mapping: &AuditMapGuard) -> Result<(), ServerError> {
         let view = mapping.buffer.get_mapped_range(..);
-        if view.len() as u64 != mapping.buffer.size() || view.iter().any(|byte| *byte != 0) {
+        if view.len() as u64 != mapping.buffer.size() || !cubecl_runtime::transient::full_span_is_zero(&view) {
             self.0.leases.record(Failure::AuditNonzero);
             return Err(fault(self.0.leases.reason(Failure::AuditNonzero)));
         }

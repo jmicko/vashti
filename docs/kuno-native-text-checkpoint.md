@@ -13,7 +13,7 @@ baselines are needed. Backend work belongs in the owner worktree
 
 ## Active overnight offload run, 2026-10-08
 
-The current accepted best is5.7053 tokens/s (144 slots, original full fixture);
+The current accepted best is5.8666 tokens/s (144 slots, original full fixture);
 10 tokens/s remains unmet. The preceding block established3.5006 tokens/s. Source
 `4cf40f3` adds specialized F16C original CPU packed loops with120 core tests,
 3 ignored and strict Clippy. Its normal frozen direct-device artifact
@@ -1534,3 +1534,14 @@ initialization/inspection. Cycle shares are not elapsed-time shares; the entire
 profiled sample is excluded from speed selection even though its output matches.
 Next candidate compacts exclusive allocation pages in place, preserving the
 original free aging, release conditions and every retained descriptor identity.
+
+Source fd1b864 / artifact22309cf4 accepts the unchanged full128-ID and
+owning/fresh/lifecycle fixture with21648ms decode (5.8666 tokens/s),15544ms
+prefill. Physical memory returns50688000 bytes; no new classified Xe faults
+as of2026-10-08T12:11:53.071467+00:00. Three actual imported allocator host
+controls,53 original runtime tests/two logger controls,492 native tests/two
+shader suites and strict Clippy pass. One sample;10 tokens/s remains unmet.
+The next candidate uses word-sized full-span zero inspection. A standalone
+public16-MiB zero-array scan,100 passes, measures754881065ns for byte checks
+and46726019ns for safe8-byte words; this is a CPU microbenchmark only, not
+whole-model speed acceptance. The original spans/tails/checks remain.

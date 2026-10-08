@@ -1052,3 +1052,14 @@ No cleanup cadence, admission, erasure, publication or cache budget changes.
 Host controls must cover retained identities across repeated sweeps, multiple
 holes, held bindings after original handle release, reuse aging and explicit
 release, followed by the original complete device fixture.
+
+### Word-sized full-span zero inspection
+
+CPU post-erasure inspection may compare complete eight-byte words using safe
+unaligned byte-array loads, then check every remaining tail byte. The supplied
+view is still the exact complete owning span, including padding; no copy, GPU
+read, narrowed prefix, early success or allocated scan buffer is introduced.
+Nonzero data still rejects. Original view-length checks and map lifetime/cleanup
+guards remain. Exhaustive host controls cover unaligned views, exact lengths,
+all poison positions through word tails and untouched outside guards, followed
+by original full device owning/lifecycle and output acceptance.
