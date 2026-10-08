@@ -1468,18 +1468,13 @@ mod avx {
                 finite(minimum, "CPU expert non-finite packed weight")?;
                 let scales = &block[4..16];
                 for group in 0..4 {
-                    let factors = std::array::from_fn::<_, 2, _>(|side| {
-                        let index = group * 2 + side;
-                        let (s, m) = if index < 4 {
-                            (scales[index] & 63, scales[index + 4] & 63)
-                        } else {
-                            (
-                                (scales[index + 4] & 15) | ((scales[index - 4] >> 6) << 4),
-                                (scales[index + 4] >> 4) | ((scales[index] >> 6) << 4),
-                            )
-                        };
-                        (scale * f32::from(s), minimum * f32::from(m))
-                    });
+                    // Two explicit inline calls avoid the out-of-line array
+                    // construction/closure observed in the fixed-public CPU
+                    // profile. Every original f32 multiply round point stays.
+                    let factors = [
+                        q4_factors(scales, group * 2, scale, minimum),
+                        q4_factors(scales, group * 2 + 1, scale, minimum),
+                    ];
                     for vector in 0..4 {
                         let local = vector * 8;
                         // SAFETY: 16+group*32+local+8 <= 144.
@@ -1572,6 +1567,19 @@ mod avx {
             reduce64(&mut scratch.sums),
             "CPU expert non-finite projection",
         )
+    }
+
+    #[inline(always)]
+    fn q4_factors(scales: &[u8], index: usize, scale: f32, minimum: f32) -> (f32, f32) {
+        let (s, m) = if index < 4 {
+            (scales[index] & 63, scales[index + 4] & 63)
+        } else {
+            (
+                (scales[index + 4] & 15) | ((scales[index - 4] >> 6) << 4),
+                (scales[index + 4] >> 4) | ((scales[index] >> 6) << 4),
+            )
+        };
+        (scale * f32::from(s), minimum * f32::from(m))
     }
 }
 

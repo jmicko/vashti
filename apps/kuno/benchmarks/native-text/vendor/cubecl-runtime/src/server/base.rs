@@ -434,6 +434,21 @@ where
         stream_id: StreamId,
     ) -> Result<ManagedResource<<Self::Storage as ComputeStorage>::Resource>, ServerError>;
 
+    /// Bounded, same-stream FULL retained allocation metadata only. Does not
+    /// execute pending tasks, map bytes, synchronize, allocate GPU memory,
+    /// clean a pool, or grant completed-fence credit. Unsupported backends
+    /// reject this API; ordinary get_resource keeps its existing semantics.
+    fn retained_resource_metadata(
+        &mut self,
+        _bindings: Vec<Binding>,
+        _stream_id: StreamId,
+    ) -> Result<Vec<ManagedResource<<Self::Storage as ComputeStorage>::Resource>>, ServerError> {
+        Err(ServerError::Generic {
+            reason: "retained resource metadata unsupported".into(),
+            backtrace: BackTrace::capture(),
+        })
+    }
+
     /// Executes the `kernel` over the given memory `handles`.
     ///
     /// Kernels have mutable access to every resource they are given

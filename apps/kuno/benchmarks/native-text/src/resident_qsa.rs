@@ -1068,17 +1068,10 @@ fn validate_regions(
     if handles.iter().any(|h| h.stream != stream) {
         return Err(fault("QSA cross-stream allocation"));
     }
-    let mut resources = Vec::new();
-    resources
-        .try_reserve_exact(handles.len())
-        .map_err(|_| Error::LimitExceeded("QSA region metadata"))?;
-    for h in handles {
-        resources.push(
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| client.get_resource(h)))
-                .map_err(|_| fault("QSA resource lookup failed"))?
-                .map_err(|_| fault("QSA resource lookup failed"))?,
-        );
-    }
+    let resources = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        crate::resident_util::resources(client, handles)
+    }))
+    .map_err(|_| fault("retained physical metadata channel"))??;
     for (i, left) in resources.iter().enumerate().take(N) {
         let a = left.resource();
         let end = a

@@ -3,9 +3,34 @@
 use cubecl::prelude::*;
 use cubecl::server::Handle;
 use cubecl::wgpu::WgpuRuntime;
+use cubecl_runtime::storage::ManagedResource;
 use kuno_text::{Error, Result};
 use std::sync::atomic::{AtomicBool, Ordering};
 use zeroize::{Zeroize, Zeroizing};
+static METADATA_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub fn metadata_calls() -> u64 {
+    METADATA_CALLS.load(Ordering::Relaxed)
+}
+/// Fixed-public experiment only. Ordinary callers preserve get_resource's
+/// submission semantics. The selected API inspects FULL retained owners only;
+/// subsequent extent/alias checks and every actual data fence stay unchanged.
+pub fn resources(
+    client: &ComputeClient<WgpuRuntime>,
+    handles: Vec<Handle>,
+) -> Result<Vec<ManagedResource<cubecl::wgpu::WgpuResource>>> {
+    if std::env::var("KUNO_LAB_RETAINED_METADATA").as_deref() == Ok("1") {
+        let result = client.retained_resource_metadata(handles).map_err(fault)?;
+        METADATA_CALLS
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+            .map_err(|_| Error::ArithmeticOverflow)?;
+        Ok(result)
+    } else {
+        handles
+            .into_iter()
+            .map(|h| client.get_resource(h).map_err(fault))
+            .collect()
+    }
+}
 struct ScrubBytes(cubecl::bytes::Bytes);
 impl Drop for ScrubBytes {
     fn drop(&mut self) {
@@ -419,6 +444,31 @@ impl crate::resident_qsa::ResidentQsaSelector for TransientSelector<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn retained_metadata_rejects_foreign_streams_offset_views_empty_and_growth() {
+        use cubecl::stream_id::StreamId;
+        use cubecl_runtime::transient::retained_metadata_bindings as validate;
+        let stream = StreamId { value: 73 };
+        let owner = || Handle::new(stream, 32768).binding();
+        assert!(validate(&[owner()], stream).is_ok());
+        assert!(validate(&(0..128).map(|_| owner()).collect::<Vec<_>>(), stream).is_ok());
+        assert!(validate(&[], stream).is_err());
+        assert!(validate(&(0..129).map(|_| owner()).collect::<Vec<_>>(), stream).is_err());
+        assert!(
+            validate(
+                &[Handle::new(StreamId { value: 74 }, 32768).binding()],
+                stream
+            )
+            .is_err()
+        );
+        assert!(validate(&[Handle::new(stream, 0).binding()], stream).is_err());
+        for (first, last) in [(1, 0), (0, 1), (32768, 0), (0, u64::MAX)] {
+            let h = Handle::new(stream, 32768)
+                .offset_start(first)
+                .offset_end(last);
+            assert!(validate(&[h.binding()], stream).is_err());
+        }
+    }
     #[test]
     fn fault_only_fence_accepts_exact_zero_and_rejects_all_failure_bits() {
         assert!(accept_fault_packet(&[0; 4]).is_ok());

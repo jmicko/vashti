@@ -494,6 +494,27 @@ impl ComputeServer for WgpuServer {
         Ok(ManagedResource::new(memory, resource))
     }
 
+    fn retained_resource_metadata(
+        &mut self,
+        bindings: Vec<Binding>,
+        stream_id: StreamId,
+    ) -> Result<Vec<ManagedResource<WgpuResource>>, ServerError> {
+        cubecl_runtime::transient::retained_metadata_bindings(&bindings, stream_id)?;
+        let stream = self.scheduler.stream(&stream_id);
+        stream.private_io_active()?;
+        let mut resources = Vec::new();
+        resources.try_reserve_exact(bindings.len()).map_err(|_|
+            super::transient_io::fault("retained metadata bounded host allocation"))?;
+        for binding in bindings {
+            let memory = binding.memory.clone();
+            let resource = stream.mem_manage.get_resource(binding)?;
+            resources.push(ManagedResource::new(memory, resource));
+        }
+        // No execute_streams/flush/sync/cleanup/queue operation. The retained
+        // bindings prevent relocation/reuse of these already initialized spans.
+        Ok(resources)
+    }
+
     unsafe fn launch(
         &mut self,
         kernel: Self::Kernel,

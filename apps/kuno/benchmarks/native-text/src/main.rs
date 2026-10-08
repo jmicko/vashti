@@ -678,6 +678,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let compact_info = count1_environment_opt_in(&mode, "KUNO_LAB_COMPACT_INFO")?;
     let batch_tasks = count1_environment_opt_in(&mode, "KUNO_LAB_BATCH_TASKS")?;
     let gpu_router = count1_environment_opt_in(&mode, "KUNO_LAB_GPU_ROUTER")?;
+    let retained_metadata = count1_environment_opt_in(&mode, "KUNO_LAB_RETAINED_METADATA")?;
+    if retained_metadata && count1_hybrid_cap != Some(10) {
+        return Err("Retained metadata requires protected cap10 hybrid mode".into());
+    }
     if gpu_router && count1_hybrid_cap != Some(10) {
         return Err("GPU routing requires protected cap10 hybrid mode".into());
     }
@@ -1922,6 +1926,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 apply_count1_hybrid_cap(r, &mut executor, count1_hybrid_cap, &cancel)?;
                 r.phase_ns.clear();
             }
+            let pre_metadata_calls = resident_util::metadata_calls();
             let start = Instant::now();
             let mut generated = Vec::new();
             // Count actual successful generation continuations only. Prompt
@@ -2042,7 +2047,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 receipt["mapped_weights"] = serde_json::json!(mapped_weights);
                 receipt["observed_mapped_weights"] = serde_json::json!(file.weights_mapped());
                 receipt["kernel_profile"] = serde_json::json!(kernel_profile);
+                receipt["observed_shared_overlap_calls"] =
+                    serde_json::json!(executor.shared_overlap_calls);
                 receipt["gpu_router"] = serde_json::json!(gpu_router);
+                receipt["retained_metadata"] = serde_json::json!(retained_metadata);
+                receipt["observed_retained_metadata_calls"] = serde_json::json!(
+                    resident_util::metadata_calls()
+                        .checked_sub(pre_metadata_calls)
+                        .ok_or("metadata counter regressed")?
+                );
                 receipt["observed_gpu_router_calls"] = serde_json::json!(executor.gpu_router_calls);
                 receipt["fast_gpu"] = serde_json::json!(fast_gpu);
                 receipt["observed_fast_dense_calls"] = serde_json::json!(executor.fast_dense_calls);

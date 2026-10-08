@@ -970,6 +970,7 @@ fn validate_full_regions(
     ids[S..S + super::N].copy_from_slice(&stage.ids);
     ids[S + super::N..].copy_from_slice(&[input, output, fault_id]);
     let mut resources: [Option<_>; TOTAL] = std::array::from_fn(|_| None);
+    let mut full_handles = Vec::with_capacity(TOTAL);
     let public_words = [
         qsa::HD,
         qsa::HD,
@@ -1013,11 +1014,14 @@ fn validate_full_regions(
             return Err(fault("native QSA foreign stream"));
         }
         bytes[i] = h.size();
-        resources[i] = Some(
-            client
-                .get_resource(h)
-                .map_err(|_| fault("native QSA physical lookup"))?,
-        );
+        full_handles.push(h);
+    }
+    let metadata = crate::resident_util::resources(client, full_handles)?;
+    if metadata.len() != resources.len() {
+        return Err(Error::InvalidBufferLength);
+    }
+    for (slot, value) in resources.iter_mut().zip(metadata) {
+        *slot = Some(value);
     }
     for i in 0..TOTAL {
         let page = resources[i]

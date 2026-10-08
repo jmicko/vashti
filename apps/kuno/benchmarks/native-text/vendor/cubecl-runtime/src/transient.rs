@@ -14,6 +14,20 @@ use core::mem::MaybeUninit;
 use core::sync::atomic::{Ordering, compiler_fence};
 use cubecl_common::bytes::{AllocationController, AllocationProperty, Bytes};
 
+/// Validate metadata requests, never contents or completion. The backend must
+/// also reject an inactive private-I/O stream. All bindings remain retained.
+pub fn retained_metadata_bindings(bindings: &[crate::server::Binding], stream: cubecl_common::stream_id::StreamId) -> Result<(), crate::server::ServerError> {
+    if !(1..=128).contains(&bindings.len()) || bindings.iter().any(|b|
+        b.stream != stream || b.offset_start.unwrap_or(0) != 0
+        || b.offset_end.unwrap_or(0) != 0 || b.size == 0) {
+        return Err(crate::server::ServerError::Generic {
+            reason: "retained metadata full same-stream binding".into(),
+            backtrace: cubecl_common::backtrace::BackTrace::capture(),
+        });
+    }
+    Ok(())
+}
+
 /// Checked sanitizer completion for the explicitly owned transient I/O buffers.
 /// This is not a production privacy certificate or device/driver memory proof.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

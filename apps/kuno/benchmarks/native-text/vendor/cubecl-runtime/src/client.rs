@@ -210,6 +210,24 @@ impl<R: Runtime> ComputeClient<R> {
             .unwrap()
     }
 
+    /// Inspect only already initialized, retained FULL same-stream allocations.
+    /// Channel ordering completes prior initialization calls; queued consumers
+    /// need not run for immutable allocation identity/extent to be inspected.
+    /// This is NOT a readback, submission, completion, or memory-credit fence.
+    pub fn retained_resource_metadata(
+        &self,
+        handles: Vec<Handle>,
+    ) -> Result<Vec<ManagedResource<<<R::Server as ComputeServer>::Storage as ComputeStorage>::Resource>>, ServerError> {
+        let stream_id = self.stream_id();
+        let bindings: Vec<_> = handles.into_iter().map(Handle::binding).collect();
+        crate::transient::retained_metadata_bindings(&bindings, stream_id)?;
+        self.device.submit_blocking(move |server| server.retained_resource_metadata(bindings, stream_id))
+            .map_err(|_| ServerError::Generic {
+                reason: "retained metadata channel unavailable".into(),
+                backtrace: BackTrace::capture(),
+            })?
+    }
+
     fn do_create_from_slices(
         &self,
         descriptors: Vec<MemoryLayoutDescriptor>,

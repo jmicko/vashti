@@ -150,15 +150,13 @@ pub(crate) fn physical(arena: &PrivateArena, owners: &[Handle]) -> Result<()> {
         return Err(Error::InvalidBufferLength);
     }
     let client = arena.client().map_err(u::fault)?;
-    let mut resources = Vec::new();
-    resources
-        .try_reserve_exact(owners.len())
-        .map_err(|_| Error::LimitExceeded("GR owner metadata"))?;
-    for h in owners {
-        let resource = client.get_resource(h.clone()).map_err(u::fault)?;
+    let resources = u::resources(client, owners.to_vec())?;
+    if resources.len() != owners.len() {
+        return Err(Error::InvalidBufferLength);
+    }
+    for (resource, h) in resources.iter().zip(owners) {
         let r = resource.resource();
         validate_full_extent(r.offset, r.size, r.buffer.size(), h.size())?;
-        resources.push(resource);
     }
     for (i, a) in resources.iter().enumerate() {
         let a = a.resource();

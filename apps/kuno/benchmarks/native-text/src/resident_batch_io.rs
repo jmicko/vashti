@@ -127,6 +127,7 @@ fn physical<const N: usize>(
     }
     let mut handles: [Option<Handle>; N] = std::array::from_fn(|_| None);
     let mut resources: [Option<_>; N] = std::array::from_fn(|_| None);
+    let mut full_handles = Vec::with_capacity(N);
     let client = arena.client().map_err(u::fault)?;
     for i in 0..N {
         let h = full_private(arena, ids[i], words[i])?;
@@ -138,8 +139,15 @@ fn physical<const N: usize>(
         {
             return Err(error());
         }
-        resources[i] = Some(client.get_resource(h.clone()).map_err(u::fault)?);
+        full_handles.push(h.clone());
         handles[i] = Some(h);
+    }
+    let metadata = crate::resident_util::resources(client, full_handles)?;
+    if metadata.len() != resources.len() {
+        return Err(Error::InvalidBufferLength);
+    }
+    for (slot, value) in resources.iter_mut().zip(metadata) {
+        *slot = Some(value);
     }
     for i in 0..N {
         let p = resources[i].as_ref().ok_or(error())?.resource();

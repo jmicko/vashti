@@ -34,11 +34,19 @@ def completion(cap, deferred=False):
     ) + ((f"public_count1_hybrid_mid_token_cancel cap={cap} layer=47 erased=true",) if deferred else ())
 
 
-def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False):
+def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False, metadata=False):
     validate_cap(cap)
-    for field, selected in (("mapped_weights", mapped), ("observed_mapped_weights", mapped), ("kernel_profile", profile), ("fast_gpu", fast), ("long_fixture", long), ("cpu_q8_activations", cpu_q8), ("observed_cpu_q8_activations", cpu_q8), ("large_weight_cache", large_cache), ("compact_info", compact_info), ("batch_tasks", batch_tasks), ("fast_gpu_fault", fast_fault), ("defer_router_io",deferred), ("observed_defer_router_io",deferred), ("gpu_router",gpu_router)):
+    for field, selected in (("mapped_weights", mapped), ("observed_mapped_weights", mapped), ("kernel_profile", profile), ("fast_gpu", fast), ("long_fixture", long), ("cpu_q8_activations", cpu_q8), ("observed_cpu_q8_activations", cpu_q8), ("large_weight_cache", large_cache), ("compact_info", compact_info), ("batch_tasks", batch_tasks), ("fast_gpu_fault", fast_fault), ("defer_router_io",deferred), ("observed_defer_router_io",deferred), ("gpu_router",gpu_router),("retained_metadata",metadata)):
         if type(selected) is not bool or (selected or field in receipt) and receipt.get(field) is not selected:
             raise ValueError("Explicit optimization selection and completed receipt must match")
+    metadata_calls=receipt.get("observed_retained_metadata_calls",0)
+    if type(metadata_calls) is not int or not (0<=metadata_calls<=1000000) or (metadata_calls>0) is not metadata:
+        raise ValueError("Completed metadata-only calls must match explicit selection")
+    if metadata and cap!=10:
+        raise ValueError("Retained metadata requires protected cap10 hybrid mode")
+    shared_calls=receipt.get("observed_shared_overlap_calls",0)
+    if type(shared_calls) is not int or shared_calls!=((127 if long else 7)*48 if overlap else 0):
+        raise ValueError("Actual prepared shared branches must match explicit overlap selection")
     if gpu_router and cap!=10:
         raise ValueError("GPU router requires protected cap10 hybrid mode")
     router_calls=receipt.get("observed_gpu_router_calls",0)
@@ -115,12 +123,12 @@ def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False
         raise ValueError("Hybrid continuation and both cancellation proofs required")
 
 
-def worker_environment(model, receipt, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False):
+def worker_environment(model, receipt, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False, metadata=False):
     if workers not in ("scoped", "pooled"):
         raise ValueError("Unknown CPU worker mode")
     if type(overlap) is not bool or (overlap and workers != "pooled"):
         raise ValueError("Overlap requires explicit pooled workers")
-    if any(type(value) is not bool for value in (mapped,profile,fast,long,cpu_q8,large_cache,compact_info,batch_tasks,fast_fault,deferred,gpu_router)):
+    if any(type(value) is not bool for value in (mapped,profile,fast,long,cpu_q8,large_cache,compact_info,batch_tasks,fast_fault,deferred,gpu_router,metadata)):
         raise ValueError("Explicit boolean optimization selections required")
     if cpu_q8 and workers != "pooled":
         raise ValueError("Q8 CPU activation arithmetic requires pooled workers")
@@ -145,6 +153,7 @@ def worker_environment(model, receipt, workers="scoped", overlap=False, mapped=F
     env["KUNO_LAB_FAST_GPU_FAULT"] = "1" if fast_fault else "0"
     env["KUNO_LAB_DEFER_ROUTER_IO"] = "1" if deferred else "0"
     env["KUNO_LAB_GPU_ROUTER"] = "1" if gpu_router else "0"
+    env["KUNO_LAB_RETAINED_METADATA"] = "1" if metadata else "0"
     return env
 
 
@@ -167,6 +176,7 @@ def main():
     parser.add_argument("--fast-gpu-fault", action="store_true")
     parser.add_argument("--defer-router-io", action="store_true")
     parser.add_argument("--gpu-router", action="store_true")
+    parser.add_argument("--retained-metadata", action="store_true")
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--receipt", type=pathlib.Path, required=True)
     args = parser.parse_args()
@@ -178,6 +188,8 @@ def main():
         parser.error("Larger public cache requires --mapped-weights")
     if args.fast_gpu_fault and not args.fast_gpu:
         parser.error("Fused finite checks require --fast-gpu")
+    if args.retained_metadata and args.cpu_miss_cap!=10:
+        parser.error("Retained metadata requires --cpu-miss-cap 10")
     if args.gpu_router and args.cpu_miss_cap!=10:
         parser.error("GPU router requires --cpu-miss-cap 10")
     if args.defer_router_io and (not args.compact_info or args.cpu_miss_cap!=10):
@@ -198,7 +210,7 @@ def main():
         "KUNO_LAB_STATIC_CACHE_BYTES KUNO_LAB_EXPERT_BATCH_BYTES KUNO_LAB_EXPERT_SCATTER",
     ]
     command.extend("--setenv=" + key + "=" + value
-                   for key, value in worker_environment(args.model.resolve(), target, args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault,args.defer_router_io,args.gpu_router).items())
+                   for key, value in worker_environment(args.model.resolve(), target, args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault,args.defer_router_io,args.gpu_router,args.retained_metadata).items())
     command.extend([sys.executable, str(HERE / "protected-lab-exec.py"), str(frozen),
                     args.card, MODE, str(args.cpu_miss_cap)])
     print("verified_cargo_executable_sha256=" + identity, flush=True)
@@ -213,7 +225,7 @@ def main():
         raise SystemExit("Missing whole-model hybrid receipt")
     snapshot = target.read_bytes()
     receipt = json.loads(snapshot)
-    validate_receipt(receipt, args.card, args.cpu_miss_cap, "".join(lines), args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault,args.defer_router_io,args.gpu_router)
+    validate_receipt(receipt, args.card, args.cpu_miss_cap, "".join(lines), args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault,args.defer_router_io,args.gpu_router,args.retained_metadata)
     record = {
         "scope": "fixed-public-count1-hybrid-output-and-lifecycle-only",
         "cargo_artifacts_sha256": artifacts_identity, "frozen_executable_sha256": identity,
@@ -228,7 +240,7 @@ def main():
         "compact_info": args.compact_info,
         "batch_tasks": args.batch_tasks,
         "fast_gpu_fault": args.fast_gpu_fault,
-        "gpu_router":args.gpu_router,"defer_router_io":args.defer_router_io,
+        "gpu_router":args.gpu_router,"defer_router_io":args.defer_router_io,"retained_metadata":args.retained_metadata,
     }
     with metadata.open("x") as output:
         json.dump(record, output, indent=2, sort_keys=True)

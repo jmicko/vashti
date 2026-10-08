@@ -1098,6 +1098,7 @@ fn validate_full_regions(
     let client = arena.client().map_err(arena_fault)?;
     let stream = arena.handle(ids[0]).map_err(arena_fault)?.stream;
     let mut resources: [Option<_>; TOTAL] = std::array::from_fn(|_| None);
+    let mut full_handles = Vec::with_capacity(TOTAL);
     let mut bytes = Zeroizing::new([0u64; TOTAL]);
     for i in 0..TOTAL {
         let full = if i < PRIVATE {
@@ -1126,11 +1127,14 @@ fn validate_full_regions(
             return Err(fault("native GDN batch cross-stream owner"));
         }
         bytes[i] = full.size();
-        resources[i] = Some(
-            client
-                .get_resource(full)
-                .map_err(|_| fault("native GDN batch physical lookup"))?,
-        );
+        full_handles.push(full);
+    }
+    let metadata = crate::resident_util::resources(client, full_handles)?;
+    if metadata.len() != resources.len() {
+        return Err(Error::InvalidBufferLength);
+    }
+    for (slot, value) in resources.iter_mut().zip(metadata) {
+        *slot = Some(value);
     }
     for i in 0..TOTAL {
         let page = resources[i]

@@ -1246,6 +1246,27 @@ impl Workspace {
                 }
             }
             let waves = token_waves::Plan::build(&routes, cancel).map_err(|_| error())?;
+            let overlap_shared =
+                hybrid_packet.is_some() && self.moe.cpu_gpu_overlap() == Some(true);
+            if overlap_shared {
+                let mut projector = ResidentBatchProjection {
+                    executor: e,
+                    fault: m.b.fault,
+                };
+                self.shared.prepare(
+                    m.graph,
+                    layer,
+                    &m.arena,
+                    &mut m.public,
+                    &mut projector,
+                    prepared.mixed(),
+                    self.outer.block[0],
+                    self.outer.block[1],
+                    m.b.fault,
+                    *count,
+                    cancel,
+                )?;
+            }
             pending.moe[layer] = Some(if let Some(packet) = &hybrid_packet {
                 e.enqueue_routed_moe_count1_hybrid(
                     m.graph,
@@ -1283,19 +1304,38 @@ impl Workspace {
                 executor: e,
                 fault: m.b.fault,
             };
-            self.shared.enqueue(
-                m.graph,
-                layer,
-                &m.arena,
-                &mut m.public,
-                &mut projector,
-                prepared.mixed(),
-                self.outer.block[0],
-                self.outer.block[1],
-                m.b.fault,
-                *count,
-                cancel,
-            )?;
+            if overlap_shared {
+                self.shared.finish_prepared(
+                    m.graph,
+                    layer,
+                    &m.arena,
+                    &mut m.public,
+                    prepared.mixed(),
+                    self.outer.block[0],
+                    self.outer.block[1],
+                    m.b.fault,
+                    *count,
+                    cancel,
+                )?;
+                e.shared_overlap_calls = e
+                    .shared_overlap_calls
+                    .checked_add(1)
+                    .ok_or(Error::ArithmeticOverflow)?;
+            } else {
+                self.shared.enqueue(
+                    m.graph,
+                    layer,
+                    &m.arena,
+                    &mut m.public,
+                    &mut projector,
+                    prepared.mixed(),
+                    self.outer.block[0],
+                    self.outer.block[1],
+                    m.b.fault,
+                    *count,
+                    cancel,
+                )?;
+            }
             prepared.combine(self.outer.block[1], self.outer.residual[1 - *current])?;
             *current = 1 - *current;
             *m.phase_ns

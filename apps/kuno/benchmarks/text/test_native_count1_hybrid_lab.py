@@ -172,6 +172,21 @@ class HybridLabTests(unittest.TestCase):
             self.assertEqual(LAB.worker_environment("/original/model","/public/receipt",gpu_router=False)["KUNO_LAB_GPU_ROUTER"],"0")
             self.assertEqual(LAB.worker_environment("/original/model","/public/receipt",gpu_router=True)["KUNO_LAB_GPU_ROUTER"],"1")
 
+    def test_metadata_requires_real_warm_lookups_protected_mode_and_explicit_policy(self):
+        value = receipt("intel", 10)
+        value.update(retained_metadata=True, observed_retained_metadata_calls=1200)
+        LAB.validate_receipt(value, "intel", 10, completion(10), metadata=True)
+        for field, bads in (("retained_metadata", (False, 1, "true")),
+                            ("observed_retained_metadata_calls", (None, True, "1200", 0, -1, 1000001))):
+            for bad in bads:
+                wrong=copy.deepcopy(value);wrong[field]=bad
+                with self.assertRaises(ValueError):
+                    LAB.validate_receipt(wrong,"intel",10,completion(10),metadata=True)
+        with self.assertRaises(ValueError):LAB.validate_receipt(value,"intel",0,completion(0),metadata=True)
+        with mock.patch.dict(os.environ, {"KUNO_LAB_RETAINED_METADATA":"auto"}):
+            for selected in (False,True):
+                self.assertEqual(LAB.worker_environment("/original/model","/public/receipt",metadata=selected)["KUNO_LAB_RETAINED_METADATA"],"1" if selected else "0")
+
     def test_both_caps_and_cards_require_fixed_inventory_and_actual_cpu_work(self):
         for card in ("intel", "nvidia"):
             for cap in (0, 10):
@@ -181,8 +196,13 @@ class HybridLabTests(unittest.TestCase):
         for overlap in (False, True):
             value = receipt("intel", 10)
             value.update(count1_hybrid_cpu_workers="pooled", observed_count1_hybrid_cpu_workers="pooled",
-                         count1_hybrid_cpu_gpu_overlap=overlap, observed_count1_hybrid_cpu_gpu_overlap=overlap)
+                         count1_hybrid_cpu_gpu_overlap=overlap, observed_count1_hybrid_cpu_gpu_overlap=overlap, observed_shared_overlap_calls=336 if overlap else 0)
             LAB.validate_receipt(value, "intel", 10, completion(10), "pooled", overlap)
+            for bad in (None, True, "336", 335, 337, 0 if overlap else 336):
+                wrong = copy.deepcopy(value)
+                wrong["observed_shared_overlap_calls"] = bad
+                with self.assertRaises(ValueError):
+                    LAB.validate_receipt(wrong, "intel", 10, completion(10), "pooled", overlap)
             for field in ("count1_hybrid_cpu_gpu_overlap", "observed_count1_hybrid_cpu_gpu_overlap"):
                 for bad in (None, 0, "false", not overlap):
                     wrong = copy.deepcopy(value)

@@ -21,6 +21,7 @@ use kuno_text::{
     model::{BoundGraph, GraphBindingId},
 };
 use std::sync::atomic::AtomicBool;
+use zeroize::Zeroizing;
 
 const N: usize = 5;
 const GATE: usize = 0;
@@ -173,13 +174,26 @@ impl Layout {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Phase {
     Available,
+    Prepared,
     Poisoned,
+}
+type PreparedStamp = (Zeroizing<[BufferId; 4]>, Zeroizing<[usize; 2]>);
+fn consume_prepared(
+    phase: &mut Phase,
+    prepared: &mut Option<PreparedStamp>,
+) -> Result<PreparedStamp> {
+    if *phase != Phase::Prepared {
+        return Err(Error::InvalidFormat("shared preparation missing"));
+    }
+    *phase = Phase::Poisoned;
+    prepared.take().ok_or(Error::InvalidBufferLength)
 }
 pub struct Workspace {
     binding: GraphBindingId,
     layout: Layout,
     ids: [BufferId; N],
     phase: Phase,
+    prepared: Option<PreparedStamp>,
 }
 impl Workspace {
     pub fn allocation_requests(graph: BoundGraph<'_, '_>) -> Result<[u64; N]> {
@@ -215,6 +229,7 @@ impl Workspace {
             layout,
             ids,
             phase: Phase::Available,
+            prepared: None,
         })
     }
     pub fn validate_all_consumers_queued(&self) -> Result<()> {
@@ -269,10 +284,33 @@ impl Workspace {
         handles.push(full);
         physical(arena, &handles)
     }
-    /// All enqueue/fold consumers use the same physical stream and persistent
-    /// fault. Success only releases same-stream scratch reuse, not acceptance.
+    /// Serial wrapper retains the original shared branch ordering. An explicit
+    /// hybrid scheduling experiment can prepare independent GPU work earlier,
+    /// then combine ONLY after the routed consumer/CPU upload is queued.
     #[allow(clippy::too_many_arguments)]
     pub fn enqueue(
+        &mut self,
+        graph: BoundGraph<'_, '_>,
+        layer: usize,
+        arena: &PrivateArena,
+        public: &mut PublicVectors,
+        projector: &mut impl BatchedResidentProjector,
+        input: BufferId,
+        routed: BufferId,
+        output: BufferId,
+        fault: BufferId,
+        count: usize,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        self.prepare(
+            graph, layer, arena, public, projector, input, routed, output, fault, count, cancel,
+        )?;
+        self.finish_prepared(
+            graph, layer, arena, public, input, routed, output, fault, count, cancel,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare(
         &mut self,
         graph: BoundGraph<'_, '_>,
         layer: usize,
@@ -372,6 +410,41 @@ impl Workspace {
             count,
             self.layout.width,
         );
+        u::cancel(cancel)?;
+        self.prepared = Some((
+            Zeroizing::new([input, routed, output, fault]),
+            Zeroizing::new([layer, count]),
+        ));
+        self.phase = Phase::Prepared;
+        Ok(())
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub fn finish_prepared(
+        &mut self,
+        graph: BoundGraph<'_, '_>,
+        layer: usize,
+        arena: &PrivateArena,
+        public: &mut PublicVectors,
+        input: BufferId,
+        routed: BufferId,
+        output: BufferId,
+        fault: BufferId,
+        count: usize,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        let (ids, coordinates) = consume_prepared(&mut self.phase, &mut self.prepared)?;
+        if *ids != [input, routed, output, fault]
+            || *coordinates != [layer, count]
+            || graph.binding_id() != self.binding
+        {
+            return Err(Error::InvalidBufferLength);
+        }
+        u::cancel(cancel)?;
+        graph.verify_unchanged()?;
+        public.validate_native_batch_owner(graph, arena)?;
+        let weight = public.vector(graph, &format!("blk.{layer}.ffn_gate_inp_shexp.weight"))?;
+        self.prove(arena, input, routed, output, fault, &weight)?;
+        let client = arena.client().map_err(u::fault)?;
         let CubeCount::Static(width_grid, _, _) = u::grid(self.layout.width)? else {
             return Err(Error::InvalidBufferLength);
         };
@@ -396,6 +469,29 @@ impl Workspace {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn shared_preparation_is_consumed_once_and_missing_stamp_poison_is_sticky() {
+        let stamp = || {
+            Some((
+                Zeroizing::new([BufferId::metadata_fixture(7, 11, 3); 4]),
+                Zeroizing::new([47, 1]),
+            ))
+        };
+        for mut phase in [Phase::Available, Phase::Poisoned] {
+            let mut prepared = stamp();
+            assert!(consume_prepared(&mut phase, &mut prepared).is_err());
+        }
+        let mut phase = Phase::Prepared;
+        let mut prepared = stamp();
+        let (ids, coordinates) = consume_prepared(&mut phase, &mut prepared).unwrap();
+        assert!(*ids == [BufferId::metadata_fixture(7, 11, 3); 4]);
+        assert_eq!(*coordinates, [47, 1]);
+        assert!(phase == Phase::Poisoned && prepared.is_none());
+        assert!(consume_prepared(&mut phase, &mut prepared).is_err());
+        let mut phase = Phase::Prepared;
+        assert!(consume_prepared(&mut phase, &mut None).is_err());
+        assert!(phase == Phase::Poisoned);
+    }
     #[test]
     fn full_pages_cover_all_active_columns_and_reject_growth_before_allocation() {
         let l = Layout::new(2560, 640).unwrap();

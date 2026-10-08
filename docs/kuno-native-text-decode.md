@@ -166,6 +166,24 @@ GPU router bridges, exactly48 per accepted decode step. CPU-assigned experts
 still require a completed bridge; this alone does not eliminate host dependency,
 establish whole-layer placement or certify production quality/throughput.
 
+### Independent shared-expert scheduling
+
+The explicit pooled CPU/GPU overlap experiment may prepare the shared expert's
+gate/up/activation/down/gate-dot before routed CPU expert execution, on the
+original GPU stream and private owners. The existing parent GPU flush submits
+this independent work while joined CPU consumers run. The routed+shared addition
+and residual combine stay AFTER successful CPU join/upload and routed enqueue.
+The shared workspace keeps a guarded exact input/routed/output/fault/layer/count
+stamp and remains unavailable until that final consumer is queued. Bad stamps,
+incomplete preparation, cancellation or errors must reject the entire model;
+there is no reuse, publication or scalar fallback. All existing final proofs,
+private budgets, fault folding and owning erasure remain mandatory.
+
+Ordinary serial execution uses the same split internally in its old order.
+Completed explicit overlap receipts additionally require48 finished prepared
+shared branches per accepted decode step. This proves scheduling and completed
+consumer inventory, not physical kernel/CPU simultaneity or a measured speed win.
+
 Source-only proposal, 2026-10-05. Prepared by the resident-MoE child after the native MAX8 adapter handoff. No code, GPU, service, model-payload read, benchmark or default change accompanies this proposal. Parent owns whole-model batching correctness, admission, device acceptance and integration. This is a later decode experiment; MAX8 prompt batching alone cannot establish faster hot decode.
 
 ## Evidence and first decision
@@ -264,3 +282,28 @@ Only later compare layer partitioning (whole layers on3060 with activation bridg
 An immediate all-GPU router replacement is not this first step. The original normalization uses f64 exp/sums with explicit f32 round points and total_cmp ties; a WGSL f32 softmax/top-k is not identical. GPU f64 capability/emulation and expert-cache bookkeeping need an independent exactness/limit design before dropping the 48 host decisions. Packet reduction can reduce traffic but cannot remove required slot decisions. Likewise speculative expert prefetch/MTP/activation quantization are separate opt-in contracts, not hidden speed fixes.
 
 Expected implementation order: packed CPU primitive + positional reader; joint public operator calibration; explicit CPU/B70 native rank seam; whole-model measured trial; secondary expert-only3060 trial. Parent batching/owner acceptance remains the current priority. No faster-than-Ollama, privacy-erasure, mixed-GPU or production/API claim follows from this plan.
+
+### Retained allocation metadata without GPU submission (2026-10-07)
+
+The fixed-public protected cap10 lab adds explicit `--retained-metadata`
+(`KUNO_LAB_RETAINED_METADATA=1`). Ordinary clients keep their existing resource
+lookup and submission behavior. The runner always pins the option, including
+zero when disabled. This is not a production API capability.
+
+A bounded metadata lookup accepts 1..128 retained full handles on the original
+serialized stream. Both client and backend reject empty, oversized, offset,
+zero-sized, or foreign-stream requests; the backend also requires active
+transient I/O. FIFO initialization has already allocated these spans. No
+queued kernel can relocate a retained allocation. This path queries actual
+resource identity/extent without executing the scheduler, mapping contents,
+allocating GPU storage, pool cleanup, or completed-fence credit. Existing full
+size/backing and physical alias checks are repeated on the returned resources.
+Batching these readonly checks removes repeated host channel crossings.
+
+All allocations/telemetry retain their original admission checks. All writes,
+reads, data dependencies, full owning erasure, final fault/state validation,
+cancellation, and completed fences remain unchanged. Direct queue/data-copy
+consumers continue using ordinary resource lookup. Requested policy and actual
+completed warm metadata call counts are recorded only for the fixed public
+fixture. Source compilation and host/device/timing acceptance are separate
+gates; no speed claim follows from this option existing.

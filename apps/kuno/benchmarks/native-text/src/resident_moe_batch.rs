@@ -1324,7 +1324,8 @@ fn physical(
         {
             return Err(err("native routed private full handle"));
         }
-        let r = client.get_resource(h.clone()).map_err(u::fault)?;
+        let mut metadata = u::resources(client, vec![h.clone()])?;
+        let r = metadata.pop().ok_or(Error::InvalidBufferLength)?;
         let v = r.resource();
         check_page(v.offset, v.size, v.buffer.size(), n, n)?;
         if resources.iter().any(|b| b == &v.buffer) {
@@ -1343,7 +1344,8 @@ fn physical(
         {
             return Err(err("native routed public full handle"));
         }
-        let r = client.get_resource(h.clone()).map_err(u::fault)?;
+        let mut metadata = u::resources(client, vec![h.clone()])?;
+        let r = metadata.pop().ok_or(Error::InvalidBufferLength)?;
         let v = r.resource();
         let bound = main_admission::page_bytes(n).map_err(admission_error)?;
         check_page(v.offset, v.size, v.buffer.size(), n, bound)?;
@@ -1726,16 +1728,14 @@ impl Workspace {
             return Err(err("native routed immutable bank pin changed"));
         }
         for (a, b) in handles.iter().zip(&p.pins) {
-            let left = arena
-                .client()
-                .map_err(u::fault)?
-                .get_resource((*a).clone())
-                .map_err(u::fault)?;
-            let right = arena
-                .client()
-                .map_err(u::fault)?
-                .get_resource(b.clone())
-                .map_err(u::fault)?;
+            let metadata = u::resources(
+                arena.client().map_err(u::fault)?,
+                vec![(*a).clone(), b.clone()],
+            )?;
+            if metadata.len() != 2 {
+                return Err(Error::InvalidBufferLength);
+            }
+            let (left, right) = (&metadata[0], &metadata[1]);
             if left.resource().buffer != right.resource().buffer
                 || left.resource().offset != right.resource().offset
                 || left.resource().size != right.resource().size

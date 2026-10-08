@@ -1068,6 +1068,7 @@ fn validate_full_parts(
     let client = arena.client().map_err(u::fault)?;
     let stream = arena.handle(input).map_err(u::fault)?.stream;
     let mut resources: [Option<_>; TOTAL] = std::array::from_fn(|_| None);
+    let mut full_handles = Vec::with_capacity(TOTAL);
     let mut sizes = Zeroizing::new([0u64; TOTAL]);
     for i in 0..TOTAL {
         let h = if i < PRIVATE {
@@ -1081,7 +1082,14 @@ fn validate_full_parts(
             return Err(error());
         }
         sizes[i] = h.size();
-        resources[i] = Some(client.get_resource(h).map_err(u::fault)?);
+        full_handles.push(h);
+    }
+    let metadata = crate::resident_util::resources(client, full_handles)?;
+    if metadata.len() != resources.len() {
+        return Err(Error::InvalidBufferLength);
+    }
+    for (slot, value) in resources.iter_mut().zip(metadata) {
+        *slot = Some(value);
     }
     for i in 0..TOTAL {
         let page = resources[i].as_ref().ok_or(error())?.resource();

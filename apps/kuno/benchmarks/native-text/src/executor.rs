@@ -649,6 +649,7 @@ struct Cached {
 /// The lifetime of this executor is one fixed synthetic experiment. Its cache
 /// keys/ranks must never be persisted or reused as private request history.
 pub struct GpuExecutor<'a> {
+    pub shared_overlap_calls: u64,
     pub gpu_router: bool,
     pub gpu_router_calls: u64,
     pub fast_dense: bool,
@@ -785,6 +786,7 @@ impl<'a> GpuExecutor<'a> {
             tick: 0,
             banks: BTreeMap::new(),
             batch_moe: None,
+            shared_overlap_calls: 0,
             gpu_router: false,
             gpu_router_calls: 0,
             fast_dense: false,
