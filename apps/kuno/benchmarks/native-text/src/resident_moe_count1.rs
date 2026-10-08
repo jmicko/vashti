@@ -202,11 +202,14 @@ impl GpuExecutor<'_> {
                 )
             })
             .ok_or(Error::ArithmeticOverflow)?;
-        let secondary_enqueue = secondary_selection
+        let secondary_enqueue = if secondary_selection
             .as_ref()
             .is_some_and(|s| s.gpu_count() > 0)
-            .then_some(crate::secondary_experts::ENQUEUE_HOST)
-            .unwrap_or(0);
+        {
+            crate::secondary_experts::ENQUEUE_HOST
+        } else {
+            0
+        };
         let private_limit = HYBRID_HOST
             .checked_sub(live)
             .and_then(|n| n.checked_sub(secondary_enqueue))
