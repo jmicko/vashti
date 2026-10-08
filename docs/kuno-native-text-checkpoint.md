@@ -13,7 +13,7 @@ baselines are needed. Backend work belongs in the owner worktree
 
 ## Active overnight offload run, 2026-10-08
 
-The current accepted best is5.8666 tokens/s (144 slots, original full fixture);
+The current accepted best is6.4216 tokens/s (144 slots, original full fixture);
 10 tokens/s remains unmet. The preceding block established3.5006 tokens/s. Source
 `4cf40f3` adds specialized F16C original CPU packed loops with120 core tests,
 3 ignored and strict Clippy. Its normal frozen direct-device artifact
@@ -1545,3 +1545,12 @@ The next candidate uses word-sized full-span zero inspection. A standalone
 public16-MiB zero-array scan,100 passes, measures754881065ns for byte checks
 and46726019ns for safe8-byte words; this is a CPU microbenchmark only, not
 whole-model speed acceptance. The original spans/tails/checks remain.
+
+Source998fdcd / frozen artifact8444d9db completes original128 IDs and all
+owning/fresh/lifecycle gates:19777ms decode (6.4216 tokens/s),15504ms prefill.
+The completed-final-proof interval is2756719001ns/127 steps. Physical B70
+returns50688000 bytes.55 original runtime/zero-scan tests,three actual allocator
+controls/two logger controls,492 native tests/two shaders and strict Clippy pass.
+Next candidate groups consecutive full scratch shader clears (explicit
+`--compute-scratch-clear`) without ending the existing compute pass. Final
+erasure, every full byte and all original completion/ownership checks remain.

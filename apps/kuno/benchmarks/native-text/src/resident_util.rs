@@ -8,6 +8,21 @@ use kuno_text::{Error, Result};
 use std::sync::atomic::{AtomicBool, Ordering};
 use zeroize::{Zeroize, Zeroizing};
 static METADATA_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static COMPUTE_SCRATCH_CLEAR: AtomicBool = AtomicBool::new(false);
+static COMPUTE_SCRATCH_CLEAR_CALLS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+pub(crate) fn select_compute_scratch_clear(selected: bool) {
+    COMPUTE_SCRATCH_CLEAR.store(selected, Ordering::Release);
+}
+pub(crate) fn compute_scratch_clear_enabled() -> bool {
+    COMPUTE_SCRATCH_CLEAR.load(Ordering::Acquire)
+}
+pub(crate) fn compute_scratch_clear_calls() -> u64 {
+    COMPUTE_SCRATCH_CLEAR_CALLS.load(Ordering::Relaxed)
+}
+pub(crate) fn grouped_scratch_clear_enabled() -> bool {
+    native_scratch_clear_enabled() || compute_scratch_clear_enabled()
+}
 static NATIVE_SCRATCH_CLEAR: AtomicBool = AtomicBool::new(false);
 static NATIVE_SCRATCH_CLEAR_CALLS: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
@@ -236,12 +251,21 @@ pub fn zero(arena: &PrivateArena, id: BufferId) -> Result<()> {
 /// boundary. Public16-owner/64MiB limits remain; larger public spans retain
 /// the original shader clear. Never changes final private arena erasure.
 pub fn zero_many(arena: &PrivateArena, ids: &[BufferId]) -> Result<()> {
-    for chunk in ids.chunks(16) {
+    for chunk in ids.chunks(if compute_scratch_clear_enabled() {
+        4
+    } else {
+        16
+    }) {
         let bytes = chunk.iter().try_fold(0usize, |n, &id| {
             n.checked_add(arena.layout(id).map_err(fault)?.owned_bytes)
                 .ok_or(Error::ArithmeticOverflow)
         })?;
-        if native_scratch_clear_enabled() && bytes <= 64 * 1024 * 1024 {
+        if compute_scratch_clear_enabled() && chunk.len() >= 2 && bytes <= 64 * 1024 * 1024 {
+            crate::scratch_clear_batch::launch(arena, chunk)?;
+            COMPUTE_SCRATCH_CLEAR_CALLS
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+                .map_err(|_| Error::ArithmeticOverflow)?;
+        } else if native_scratch_clear_enabled() && bytes <= 64 * 1024 * 1024 {
             zero_batch(arena, chunk)?;
             NATIVE_SCRATCH_CLEAR_CALLS
                 .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))

@@ -45,6 +45,7 @@ mod resident_util;
 mod residual_batch_gpu;
 mod residual_gpu;
 mod router_gpu;
+mod scratch_clear_batch;
 mod small_cpu;
 mod token_waves;
 mod transient_probe;
@@ -870,6 +871,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
     let native_scratch_clear = count1_environment_opt_in(&mode, "KUNO_LAB_NATIVE_SCRATCH_CLEAR")?;
+    let compute_scratch_clear = count1_environment_opt_in(&mode, "KUNO_LAB_COMPUTE_SCRATCH_CLEAR")?;
     let compact_info = count1_environment_opt_in(&mode, "KUNO_LAB_COMPACT_INFO")?;
     let info_batch_upload = count1_environment_opt_in(&mode, "KUNO_LAB_INFO_BATCH_UPLOAD")?;
     if info_batch_upload && (!compact_info || count1_hybrid_cap.is_none_or(|cap| cap > 10)) {
@@ -881,6 +883,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("Shared Next kernels require GPU routing".into());
     }
     let retained_metadata = count1_environment_opt_in(&mode, "KUNO_LAB_RETAINED_METADATA")?;
+    if compute_scratch_clear
+        && (native_scratch_clear
+            || !retained_metadata
+            || !next_shared
+            || !compact_info
+            || !batch_tasks)
+    {
+        return Err("compute scratch clear requires retained shared compact task batches without native clear".into());
+    }
+
     if retained_metadata && count1_hybrid_cap.is_none_or(|cap| cap > 10) {
         return Err("Retained metadata requires protected count1 hybrid mode".into());
     }
@@ -1987,6 +1999,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // complete-model fixture selects active transient metadata lookup.
             resident_util::select_retained_metadata(retained_metadata);
             resident_util::select_native_scratch_clear(native_scratch_clear);
+            resident_util::select_compute_scratch_clear(compute_scratch_clear);
+            if compute_scratch_clear {
+                scratch_clear_batch::probe(
+                    &client,
+                    transient_context
+                        .as_ref()
+                        .ok_or("owned runtime required")?
+                        .clone(),
+                )?;
+            }
             let fixture: serde_json::Value =
                 serde_json::from_str(include_str!("../../text/qwen38-baseline.json"))?;
             let resident_enabled = mode.starts_with("resident-");
@@ -2229,6 +2251,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
             let pre_metadata_calls = resident_util::metadata_calls();
             let pre_scratch_clear_calls = resident_util::native_scratch_clear_calls();
+            let pre_compute_scratch_clear_calls = resident_util::compute_scratch_clear_calls();
             let reclaim_start = Instant::now();
             let gpu_source_advised_bytes = if reclaim_gpu_sources {
                 resident
@@ -2492,6 +2515,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 receipt["gpu_source_advised_bytes"] = serde_json::json!(gpu_source_advised_bytes);
                 receipt["gpu_source_advice_ms"] = serde_json::json!(gpu_source_advice_ms);
                 receipt["large_weight_cache"] = serde_json::json!(large_weight_cache);
+                receipt["compute_scratch_clear"] = serde_json::json!(compute_scratch_clear);
+                receipt["observed_compute_scratch_clear_calls"] = serde_json::json!(
+                    resident_util::compute_scratch_clear_calls()
+                        .checked_sub(pre_compute_scratch_clear_calls)
+                        .ok_or("compute clear counter regression")?
+                );
                 receipt["native_scratch_clear"] = serde_json::json!(native_scratch_clear);
                 receipt["observed_native_scratch_clear_calls"] = serde_json::json!(
                     resident_util::native_scratch_clear_calls()

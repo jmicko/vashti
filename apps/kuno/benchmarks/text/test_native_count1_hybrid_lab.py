@@ -44,6 +44,22 @@ def completion(cap):
 
 
 class HybridLabTests(unittest.TestCase):
+    def test_compute_scratch_clear_requires_bounded_calls_full_probe_and_explicit_environment(self):
+        value=receipt("intel",10);value.update(compute_scratch_clear=True,observed_compute_scratch_clear_calls=12000)
+        output=completion(10)+"\npublic_compute_scratch_clear_full_owners=2,3,4 unselected_preserved=true padding=true"
+        LAB.validate_receipt(value,"intel",10,output,compute_scratch_clear=True)
+        for field,bads in [("compute_scratch_clear",[False,1,None]),("observed_compute_scratch_clear_calls",[0,True,None,-1,1000001])]:
+            for bad in bads:
+                wrong=copy.deepcopy(value);wrong[field]=bad
+                with self.assertRaises(ValueError):LAB.validate_receipt(wrong,"intel",10,output,compute_scratch_clear=True)
+        with self.assertRaises(ValueError):LAB.validate_receipt(value,"intel",10,completion(10),compute_scratch_clear=True)
+        with self.assertRaises(ValueError):LAB.worker_environment("/original","/receipt",compute_scratch_clear=True)
+        selection=dict(metadata=True,shared=True,fast=True,gpu_router=True,compact_info=True,batch_tasks=True)
+        self.assertEqual(LAB.worker_environment("/original","/receipt",**selection,compute_scratch_clear=True)["KUNO_LAB_COMPUTE_SCRATCH_CLEAR"],"1")
+        with self.assertRaises(ValueError):LAB.worker_environment("/original","/receipt",**selection,compute_scratch_clear=True,native_scratch_clear=True)
+        with mock.patch.dict(os.environ,{"KUNO_LAB_COMPUTE_SCRATCH_CLEAR":"1"}):
+            self.assertEqual(LAB.worker_environment("/original","/receipt")["KUNO_LAB_COMPUTE_SCRATCH_CLEAR"],"0")
+
     def test_cpu_threads_and_compiled_two_pass_require_actual_typed_operator_geometry(self):
         for threads in (4,8,16):
             value=receipt("intel",10);value.update(cpu_threads=threads,observed_cpu_threads=threads,cpu_q8_two_pass=True,observed_cpu_q8_residual_passes=2,cpu_q8_residual=True,observed_cpu_q8_residual=True,cpu_q8_activations=True,observed_cpu_q8_activations=True,count1_hybrid_cpu_workers="pooled",observed_count1_hybrid_cpu_workers="pooled")

@@ -1174,7 +1174,7 @@ impl ResidentQsa<'_> {
         queue_stage(count, start as usize, cancel, |op| {
             match op {
                 Operation::Clear(i) => {
-                    if u::native_scratch_clear_enabled() {
+                    if u::grouped_scratch_clear_enabled() {
                         if i == 0 {
                             u::zero_many(arena, &**ids)?;
                         }

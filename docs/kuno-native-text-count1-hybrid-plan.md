@@ -1063,3 +1063,28 @@ Nonzero data still rejects. Original view-length checks and map lifetime/cleanup
 guards remain. Exhaustive host controls cover unaligned views, exact lengths,
 all poison positions through word tails and untouched outside guards, followed
 by original full device owning/lifecycle and output acceptance.
+
+### Consecutive full scratch clears in one compute dispatch
+
+The explicit protected count1 `--compute-scratch-clear` experiment requires
+retained metadata, shared kernels, compact INFO and task batches, and excludes
+`--native-scratch-clear`. Consecutive scratch-only clear lists may group two to
+four distinct complete owning buffers in one compute shader without ending
+the existing compute pass. Each binding covers the actual full underlying
+buffer, including padding; every index is overwritten with zero. Actual arena
+epochs, same streams, full handles, actual resources and physical aliases are
+checked before launch. The existing 4 KiB scoped metadata allowance and16-owner/
+64 MiB clear limit are unchanged; each group is at most64 MiB. Single owners
+or groups beyond the byte bound keep original individual shader clears.
+
+The pipeline key contains only fixed public binding cardinality, not indices,
+routes or request data. No scalar INFO, private device allocation, persistent
+proof, early completion or clean pool is added. GDN/QSA operation plans retain
+all original clear events; the first event encodes the consecutive group before
+any following consumer. MoE/GR/model scratch lists preserve original ordering
+and all final erasure, scope, publication and whole-owning gates. Startup probes
+independently poison complete spans of unequal sizes, verify every selected
+byte and padding for groups2/3/4, verify unselected owners remain unchanged, and
+reject duplicate IDs before encoding. Exact typed selected/observed counters,
+probe markers, original output IDs and owning/lifecycle completion are mandatory
+for receipt acceptance. This remains an internal laboratory option.

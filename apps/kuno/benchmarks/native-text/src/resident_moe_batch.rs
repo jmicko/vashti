@@ -1002,9 +1002,7 @@ impl GpuExecutor<'_> {
         let words: [usize; 7] = words.try_into().map_err(|_| Error::InvalidBufferLength)?;
         spans.validate(g, words).map_err(err)?;
         physical(arena, bank, g, &ids, s.stamp.fault, w)?;
-        for &id in w.ids.iter() {
-            u::zero(arena, id)?;
-        }
+        u::zero_many(arena, &*w.ids)?;
         let mut staged =
             StagedSlots::begin(&bank.slots).map_err(|_| err("native routed staged origin"))?;
         let mut experts = Zeroizing::new([0u32; 80]);
