@@ -37,13 +37,10 @@ fn main(@builtin(workgroup_id) group:vec3<u32>, @builtin(local_invocation_index)
     var predicted=vec4<f32>(0.0);
     let old_base=p.old.x+h*p.old.y+j;
     let next_base=p.next.x+h*p.next.y+j;
-    // Fixed public 32-vector shard; retain the exact first-pass product.
-    var decayed_shard:array<vec4<f32>,32>;
     for(var i=start;i<start+32u;i++) {
         let old_value=previous[(old_base+i*p.old.z)/4u];
         valid=both(valid,finite4(old_value));
         let decayed=old_value*vec4<f32>(decay);
-        decayed_shard[i-start]=decayed;
         predicted+=decayed*vec4<f32>(k[i]);
     }
     sums[lane]=predicted;masks[lane]=select(vec4<u32>(0u),vec4<u32>(1u),valid);
@@ -58,7 +55,7 @@ fn main(@builtin(workgroup_id) group:vec3<u32>, @builtin(local_invocation_index)
     // All lanes follow the same barrier sequence, including invalid columns.
     var readout=vec4<f32>(0.0);
     for(var i=start;i<start+32u;i++) {
-        let decayed=decayed_shard[i-start];
+        let decayed=previous[(old_base+i*p.old.z)/4u]*vec4<f32>(decay);
         let updated=decayed+vec4<f32>(k[i])*delta;
         valid=both(valid,finite4(updated));
         candidate[(next_base+i*p.next.z)/4u]=select(vec4<f32>(0.0),updated,valid);

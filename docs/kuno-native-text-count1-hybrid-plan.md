@@ -1658,3 +1658,26 @@ no new storage-buffer owner or allocation. Local array lowering may increase
 register pressure or spill; source validation is not proof of register residency
 or a performance benefit. All128 generated IDs and independent arithmetic guards
 remain mandatory. Compare full protected timing with binding reuse selected.
+
+
+### Refined CPU integer-dot retest (2026-10-08)
+
+Test existing explicit residual Q8 activations again after the accepted
+page-cache/worker/binding changes, with original packed weights and16 joined
+work-stealing workers. This is approximate activation arithmetic, selected
+explicitly rather than as a failure fallback. Three-pass and separately compiled
+two-pass variants both retain original finite/cancel/scratch bounds and all128
+original output IDs. The existing laboratory two-pass feature forwards to the
+CPU crate, and receipts must observe actual two-pass execution. Tests do not
+weaken output or numerical tolerances. Baseline floating FMA mode remains
+available; omit its incompatible feature for Q8 trials. Compare whole-model
+timing, not summed CPU phases that overlap GPU execution. If accuracy or
+performance fails, retain the accepted float path.
+
+
+The retained-shard trial passes all original output and owning/lifecycle gates
+at12086ms/127 steps (10.5079 tokens/s), compared with11933ms for binding reuse
+alone. This single ordered sample provides no extra performance win. Withdraw
+its shader from selection and restore original double-read GDN; keep the exact
+trial commit/receipt for later register/spill investigation. Binding reuse stays
+selected while refined CPU variants are tested.
