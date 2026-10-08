@@ -2300,7 +2300,7 @@ measured overall gain);07308b8 pairs existing expert-bank shards;ceb88d9 adds
 a separately compiled, explicitly selected joined work-stealing CPU row mode;
 7c40189 shares bounded original Q4 activations. Best accepted artifact
 9e41bc5ed1f870d4649db476a9e4ee5b03323213ed1d076518ea4cb7c44a75f2
-completes127 steps in16247ms (7.8162 tokens/s), prefill15464ms. All unchanged
+completes127 steps in16247ms (7.8168277 tokens/s), prefill15464ms. All unchanged
 128 IDs, independent arithmetic/guard checks and owning/fresh/poison/lifecycle
 gates pass. Single samples only;10-token/s goal remains active and unmet.
 

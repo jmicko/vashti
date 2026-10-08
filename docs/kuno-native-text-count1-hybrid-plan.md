@@ -1359,3 +1359,19 @@ active writers. All lanes reach any activation preload barrier. Other dtypes
 retain128 invocations. Public fixed geometry alone affects pipeline keys;
 runtime input/rank bounds and all owning/cleanup/lifecycle gates stay unchanged.
 No extra private owner, budget change, API or installed/default execution.
+
+The fixed16 Q4 row candidate is withdrawn from speed selection after full
+original acceptance but a slower whole-model sample. The next source restores
+original128-lane Q4 scheduling/reduction with bounded activation sharing.
+
+### Active original GPU rank dispatch count
+
+The opt-in shared count1 MoE seam may dispatch the exact1..10 GPU ranks in the
+original guarded Split/Map, omitting workgroups for CPU ranks. This is the same
+transient group count already accepted by original grouped projection kernels.
+It does not enter KernelId, compiled source, persisted profiles or logs. Runtime
+map header/slot/rank validation remains before every weight access; original
+CPU/GPU original-rank merge, full status/owner inspection and all staged source
+proofs remain. Empty GPU subsets keep the original no-launch path. All original
+128-ID/fresh/poison/full-owning/lifecycle gates stay mandatory. No allocation,
+budget, arithmetic, API or installed/default execution change.

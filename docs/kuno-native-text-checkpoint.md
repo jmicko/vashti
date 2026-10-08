@@ -1754,3 +1754,12 @@ and strict all-target Clippy. Tail enumeration covers both64/128 threads and
 16/32 native subgroups; every inactive owner index is read exactly once and
 active writers are excluded. Fixed16 shuffle peers remain in their own logical
 row; shaders validate at256/4096/8192 columns. Device acceptance pending.
+
+Fixed16 Q4 source6a32c25/artifact9a035f53ccf3f35082a1dc6d9ae07f04895f730019c87ab16d57e4d7adb45b1a
+passes original128 IDs and owning/fresh/poison/lifecycle gates but is slower:
+16700ms decode,16952ms prefill. B70 returns50688000B. Withdraw that geometry
+from selection and restore accepted128-lane Q4 source with activation sharing.
+Do not assume native subgroup choice or attribute a measured bottleneck from
+subgroup bounds alone. Next candidate dispatches only original GPU subset ranks
+in shared MoE, retaining private transient counts and all original bounds.
+Source/device acceptance pending. Best remains v44 at7.8168277 tokens/s.
