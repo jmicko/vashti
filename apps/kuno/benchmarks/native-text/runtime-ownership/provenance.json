@@ -73,7 +73,7 @@
     },
     {
       "path": "cubecl-runtime/src/client.rs",
-      "sha256": "341c64cfaceefe65b15b011fc1b055282c0488b22266d0e8bffc20f3686f33ab",
+      "sha256": "0a7318b0cde3f2534ae82beff91131fd55ca30e899bd99bfc51cdbd5e275750f",
       "original_sha256": "dd25c67906e3db68d05d916d45234e4bdf20cd5b65ac1ad2b00a2ddcb520e85a"
     },
     {
@@ -93,7 +93,7 @@
     },
     {
       "path": "cubecl-runtime/src/server/base.rs",
-      "sha256": "b72f29fa7fca9203901ee71a7a50bdc93f3243c2e989a97e27972724f8ada62b",
+      "sha256": "d9323c2063f63b3d56df34251ef1d387714ca9408321295b750a0641b6be287f",
       "original_sha256": "c6292c16d5a73d7a1570776ffd25ec10afc339b942dbc5a693d8c791feb8ef5b"
     },
     {
@@ -163,21 +163,21 @@
     },
     {
       "path": "cubecl-wgpu/src/compute/server.rs",
-      "sha256": "158b17cb9d80927e4ee5bba1def5c6e0b2c1e5bd8ca440832e84cf9c5aeb984c",
+      "sha256": "0f344170e63663dd59a5b42b7c06a89d94e38d43d69956642e6ae1656f9f27fb",
       "original_sha256": "a4840cd40e4541b27d93f0f08a211af96a0b50e272903fe97b74eec7a29a5903"
     },
     {
       "path": "cubecl-wgpu/src/compute/stream.rs",
-      "sha256": "39e896b43d4edc3639e481a83d62e299ec75ebfd73ec45e11b25c3e39d0a2a58",
+      "sha256": "ff72c54603e783dca40e36622b73ad7ae580a8af5526405ed413c4e2acb9ddc1",
       "original_sha256": "97501594e0424c70cd65cbebfedf3b1f1578ecccb4b7ef1e3a873e85141cc35e"
     },
     {
       "path": "cubecl-wgpu/src/compute/transient_io.rs",
-      "sha256": "9c7f8a418d5b9871abdaa6f77224baa3cf53dddcddf7de8ff6911d0dacaaf76c",
+      "sha256": "e1accf85e01b2d41166e22fe51f514a3b5a0cbc0ca21d4d553c22b93ecc23fff",
       "original_sha256": null
     }
   ],
-  "patch_sha256": "edc905306e2c03c8268bf1d8d34cf2e830c5416b63572a14d1f29995fdb27857",
+  "patch_sha256": "5f0ab6aa9f88a3cfe149d37fead347bc4f741b833886eccd64e56f4df95c1cc3",
   "lock_sha256": "83550fa6c6d790fdfb62df390fd96b7c9d75b367c1ee6712b980ab2ff67c7288",
   "host_lock_sha256": "b968a383901ba657bdc2b670a0c7d30fc8c6b8c7ae9335c7c231fb827f0b7acf"
 }

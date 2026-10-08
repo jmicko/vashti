@@ -87,7 +87,7 @@
      }
  
      fn do_create_from_slices(
-@@ -298,6 +336,206 @@
+@@ -298,6 +336,218 @@
          .unwrap()
          .remove(0)
          .memory
@@ -279,6 +279,18 @@
 +            })?
 +    }
 +
++    /// Accept this request checkpoint without remapping, clearing or publishing
++    /// buffers for reuse. The eventual recycle and full closing audit remain due.
++    pub fn accept_transient_io_reuse(&self, nonce: u64) -> Result<(), ServerError> {
++        let stream_id = self.stream_id();
++        self.device
++            .submit_blocking(move |server| server.accept_transient_io_reuse(nonce, stream_id))
++            .map_err(|_| ServerError::Generic {
++                reason: "private I/O reuse channel unavailable".into(),
++                backtrace: BackTrace::capture(),
++            })?
++    }
++
 +    /// Synchronous full inspected erasure of every retained scope owner.
 +    pub fn end_transient_io_reuse(
 +        &self,
@@ -294,7 +306,7 @@
      }
  
      /// todo: docs
-@@ -792,6 +1030,12 @@
+@@ -792,6 +1042,12 @@
          }
      }
  
@@ -438,7 +450,7 @@
  use super::Handle;
  use crate::{
      client::ComputeClient,
-@@ -360,12 +361,143 @@
+@@ -360,12 +361,156 @@
      /// Wait for the completion of every task in the server.
      fn sync(&mut self, stream_id: StreamId) -> DynFut<Result<(), ServerError>>;
  
@@ -530,6 +542,19 @@
 +        .into())
 +    }
 +
++    /// Accept completion and scoped GPU errors without preparing or publishing
++    /// any additional reusable owner. All dirty spans remain fully charged.
++    fn accept_transient_io_reuse(
++        &mut self,
++        _nonce: u64,
++        _stream_id: StreamId,
++    ) -> Result<(), ServerError> {
++        Err(IoError::UnsupportedIoOperation {
++            backtrace: BackTrace::capture(),
++        }
++        .into())
++    }
++
 +    /// End only after full two-pass erasure and CPU inspection of all retained
 +    /// owners. Failed cleanup retains the scope and retires the stream.
 +    fn end_transient_io_reuse(
@@ -582,7 +607,7 @@
  
      /// Executes the `kernel` over the given memory `handles`.
      ///
-@@ -812,12 +944,38 @@
+@@ -812,12 +957,38 @@
  ///
  /// The [`ComputeServer`] is responsible to convert those info into actual [`Binding`] when launching
  /// kernels.
@@ -2217,7 +2242,7 @@
          let mut streams = vec![stream_id];
          let mut resources = Vec::with_capacity(descriptors.len());
          for desc in descriptors {
-@@ -301,34 +347,175 @@
+@@ -301,34 +347,192 @@
          self.scheduler.execute_streams(streams);
  
          let stream = self.scheduler.stream(&stream_id);
@@ -2400,6 +2425,23 @@
 +        })
 +    }
 +
++    fn accept_transient_io_reuse(
++        &mut self,
++        nonce: u64,
++        stream_id: StreamId,
++    ) -> Result<(), ServerError> {
++        let guard = self
++            .scheduler
++            .stream(&stream_id)
++            .begin_transient_cleanup()?;
++        guard.run(|| {
++            self.scheduler.execute_streams(vec![stream_id]);
++            self.scheduler
++                .stream(&stream_id)
++                .accept_transient_io_reuse(nonce)
++        })
++    }
++
 +    fn end_transient_io_reuse(
 +        &mut self,
 +        nonce: u64,
@@ -2418,7 +2460,7 @@
      }
  
      fn get_resource(
-@@ -348,6 +535,56 @@
+@@ -348,6 +552,56 @@
          Ok(ManagedResource::new(memory, resource))
      }
  
@@ -2475,7 +2517,7 @@
      unsafe fn launch(
          &mut self,
          kernel: Self::Kernel,
-@@ -356,6 +593,7 @@
+@@ -356,6 +610,7 @@
          mode: ExecutionMode,
          stream_id: StreamId,
      ) {
@@ -2483,7 +2525,7 @@
          let pipeline = match self.pipeline(kernel, &args, mode) {
              Ok(val) => val,
              Err(err) => {
-@@ -387,25 +625,40 @@
+@@ -387,25 +642,40 @@
          };
  
          self.scheduler.register(stream_id, task, &self.streams_pool);
@@ -2676,7 +2718,7 @@
          self.compute_pass = None;
          let mut staging_info = Vec::with_capacity(descriptors.len());
          let mut callbacks = Vec::with_capacity(descriptors.len());
-@@ -363,6 +460,372 @@
+@@ -363,6 +460,382 @@
          })
      }
  
@@ -2805,6 +2847,16 @@
 +            flush: true,
 +        })?;
 +        self.transient_io.as_mut().unwrap().recycle_reuse(nonce)
++    }
++
++    pub(crate) fn accept_transient_io_reuse(&mut self, nonce: u64) -> Result<(), ServerError> {
++        self.private_io_active()?;
++        self.transient_io.as_ref().unwrap().check_reuse(nonce)?;
++        self.flush(StreamErrorMode {
++            ignore: false,
++            flush: true,
++        })?;
++        self.transient_io.as_mut().unwrap().accept_reuse(nonce)
 +    }
 +
 +    pub(crate) fn end_transient_io_reuse(
@@ -3049,7 +3101,7 @@
      /// Allocates a new empty buffer using the main memory pool.
      pub fn empty(&mut self, size: u64) -> Result<ManagedMemoryHandle, IoError> {
          self.mem_manage.reserve(size)
-@@ -373,10 +836,24 @@
+@@ -373,10 +846,24 @@
          self.errors.push(error);
      }
  
@@ -3078,7 +3130,7 @@
      }
  
      // Nb: this function submits a command to the _queue_ not to the encoder,
-@@ -441,9 +918,16 @@
+@@ -441,9 +928,16 @@
              #[cfg(not(target_family = "wasm"))]
              if let Err(e) = self.device.poll(wgpu::PollType::Wait {
                  submission_index: Some(index),
@@ -3097,7 +3149,7 @@
              }
  
              self.pending_write_count = 0;
-@@ -465,7 +949,29 @@
+@@ -465,7 +959,29 @@
      }
  
      pub fn flush(&mut self, mode: StreamErrorMode) -> Result<(), ServerError> {
@@ -3128,7 +3180,7 @@
              return self.flush_errors(mode);
          }
  
-@@ -484,10 +990,22 @@
+@@ -484,10 +1000,22 @@
          };
  
          // This will _first_ fire off all pending write_buffer work.
@@ -3157,7 +3209,7 @@
          self.mem_manage.memory_cleanup(false);
 --- /dev/null
 +++ b/cubecl-wgpu/src/compute/transient_io.rs
-@@ -0,0 +1,5216 @@
+@@ -0,0 +1,5358 @@
 +// Modified for Kuno's laboratory transient-I/O ownership/erasure patch (2026-10-05).
 +//! Opt-in bounded, explicitly owned transient I/O. No device creation in tests.
 +//!
@@ -3964,6 +4016,40 @@
 +        Ok(())
 +    }
 +}
++/// Accept-only checkpoints cannot publish readiness: they have no mutable
++/// buffer/index/ledger access. Only the caller's completed-error drain runs.
++fn accept_only_checkpoint(
++    tracker: &LeaseTracker,
++    owner_nonce: Option<u64>,
++    nonce: u64,
++    live_leases: usize,
++    pending_info: bool,
++    completed: impl FnOnce() -> Result<(), ServerError>,
++) -> Result<(), ServerError> {
++    let attempted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
++        if tracker.retired.load(Ordering::Acquire) {
++            return Err(fault(tracker.reason(Failure::ContextRetired)));
++        }
++        if nonce == 0 || owner_nonce != Some(nonce) {
++            return Err(fault("private reuse owner mismatch"));
++        }
++        if live_leases != 0 || pending_info {
++            return Err(fault("private reuse fence has outstanding owner"));
++        }
++        completed()?;
++        if tracker.retired.load(Ordering::Acquire) {
++            return Err(fault(tracker.reason(Failure::ContextRetired)));
++        }
++        Ok(())
++    }));
++    match attempted {
++        Ok(Ok(())) => Ok(()),
++        _ => {
++            tracker.retire_with(Failure::CleanupRejected);
++            Err(fault(tracker.reason(Failure::CleanupRejected)))
++        }
++    }
++}
 +const NO_REUSE_INDEX: usize = usize::MAX;
 +const REUSE_SIZE_BUCKETS: usize = (MAX_BYTES.ilog2() - MIN_BYTES.ilog2() + 1) as usize;
 +struct ReuseIndex {
@@ -4072,7 +4158,7 @@
 +    Ok(())
 +}
 +const INFO_KEY_BYTES: usize = 64 * 1024;
-+const INFO_CACHE_ENTRIES: usize = 512;
++const INFO_CACHE_ENTRIES: usize = 1024;
 +static INFO_CACHE_STATS: [AtomicU64; 3] = [const { AtomicU64::new(0) }; 3];
 +/// Cumulative exact INFO hits, misses (including uncached saturation), page pins.
 +/// Numeric only; never exposes hashes, keys, buffer IDs, or request identifiers.
@@ -5285,6 +5371,19 @@
 +    }
 +    pub(crate) fn check_reuse(&self, nonce: u64) -> Result<(), ServerError> {
 +        self.reuse_scope.check(nonce)
++    }
++    pub(crate) fn accept_reuse(&mut self, nonce: u64) -> Result<(), ServerError> {
++        let tracker = self.leases.clone();
++        accept_only_checkpoint(
++            &tracker,
++            self.reuse_scope.nonce,
++            nonce,
++            self.leases(),
++            !self.pending_info.is_empty() || self.info_slab.is_some(),
++            || self.drain_accept_errors(),
++        )
++        // No remapping, readiness/index mutation, destination clear or ledger
++        // credit. Already-ready unused owners retain their prior permission.
 +    }
 +    pub(crate) fn recycle_reuse(&mut self, nonce: u64) -> Result<(), ServerError> {
 +        let attempted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -7444,6 +7543,101 @@
 +        let mut other = ReuseScope::default();
 +        let foreign = other.begin(true, 0).unwrap();
 +        assert!(scope.check(foreign).is_err());
++    }
++    #[test]
++    fn accept_only_keeps_dirty_charges_and_does_not_publish_reuse() {
++        let mut scope = ReuseScope::default();
++        let nonce = scope.begin(true, 0).unwrap();
++        let mut buffers = fake_buffers();
++        buffers[0].upload_mapped = true;
++        let size = |b: &FakeBuffer| b.words.borrow().len() as u64;
++        scope.free.rebuild(&mut buffers, size).unwrap();
++        scope
++            .free
++            .take(&mut buffers, Kind::Readback, MIN_BYTES, size)
++            .unwrap();
++        let mut ledger = Ledger::new(5 * MIN_BYTES).unwrap();
++        for owner in &buffers {
++            ledger.reserve(owner.kind, 19).unwrap();
++        }
++        let original = (ledger.charged, ledger.totals, ledger.epoch);
++        let tracker = LeaseTracker::default();
++        let drains = std::cell::Cell::new(0);
++        for _ in 0..3 {
++            accept_only_checkpoint(&tracker, scope.nonce, nonce, 0, false, || {
++                drains.set(drains.get() + 1);
++                Ok(())
++            })
++            .unwrap();
++            assert!(scope.free.available(Kind::Upload, MIN_BYTES).unwrap());
++            assert!(!scope.free.available(Kind::Readback, MIN_BYTES).unwrap());
++            assert_eq!((ledger.charged, ledger.totals, ledger.epoch), original);
++            assert!(
++                buffers
++                    .iter()
++                    .all(|b| b.buffer.words.borrow().iter().all(|byte| *byte == 0xa7))
++            );
++            assert!(buffers[0].upload_mapped);
++            assert!(!buffers[2].reuse_ready);
++        }
++        assert_eq!(drains.get(), 3);
++        assert!(!tracker.retired.load(Ordering::Acquire));
++        scope.check(nonce).unwrap();
++    }
++    #[test]
++    fn accept_only_rejects_stale_held_pending_and_retired_before_completion() {
++        for fault_kind in 0..5 {
++            let tracker = LeaseTracker::default();
++            if fault_kind == 4 {
++                tracker.retire_with(Failure::ContextRetired);
++            }
++            let completed = std::cell::Cell::new(false);
++            let result = accept_only_checkpoint(
++                &tracker,
++                Some(17),
++                if fault_kind == 0 {
++                    0
++                } else if fault_kind == 1 {
++                    18
++                } else {
++                    17
++                },
++                usize::from(fault_kind == 2),
++                fault_kind == 3,
++                || {
++                    completed.set(true);
++                    Ok(())
++                },
++            );
++            assert!(result.is_err());
++            assert!(!completed.get());
++            assert!(tracker.retired.load(Ordering::Acquire));
++        }
++        let tracker = LeaseTracker::default();
++        assert!(accept_only_checkpoint(&tracker, None, 17, 0, false, || Ok(())).is_err());
++    }
++    #[test]
++    fn accept_only_completion_error_panic_and_late_retirement_never_accept() {
++        for fault_kind in 0..3 {
++            let tracker = LeaseTracker::default();
++            let result = accept_only_checkpoint(&tracker, Some(17), 17, 0, false, || {
++                tracker.record(Failure::GpuValidation);
++                match fault_kind {
++                    0 => Err(fault("synthetic GPU validation failure")),
++                    1 => panic!("synthetic completion panic"),
++                    _ => {
++                        tracker.retire_with(Failure::ContextRetired);
++                        Ok(())
++                    }
++                }
++            });
++            assert!(result.is_err());
++            assert!(tracker.retired.load(Ordering::Acquire));
++            assert_eq!(
++                tracker.reason(Failure::CleanupRejected),
++                Failure::GpuValidation.code()
++            );
++        }
 +    }
 +    #[test]
 +    fn request_reuse_keeps_original_dirty_spans_charged_until_full_terminal_audit() {

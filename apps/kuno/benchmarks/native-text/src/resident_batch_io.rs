@@ -492,7 +492,7 @@ pub(crate) fn read_last_logits(
             VOCABULARY,
         );
         let retired = admission.retired_context();
-        admission.readback_audited(cancel, || {
+        admission.readback_before_request_recycle(cancel, || {
             completed_map(
                 || read(arena, packet_handle, &retired),
                 |bytes| accept_output(bytes, VOCABULARY),

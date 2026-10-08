@@ -1405,14 +1405,18 @@ reuse and COPY_DST pretransition until the full audit, even when only one region
 of a page is cached. Pending pages can append only before their first submission.
 Upload sources can recycle after the original completed consumer checkpoint.
 
-The cache is bounded to512 entries and64KiB of guarded key allocations, within
+The cache is bounded to1024 entries and64KiB of guarded key allocations, within
 the existing256KiB actual-capacity bookkeeping allowance. Saturation falls back
 to ordinary owned INFO before adding a key; no eviction or cross-request cache.
 Keys and capacity are wiped and cached resource references dropped before full
 GPU cleanup. Numeric hit/miss/new-page-pin aggregates establish actual use;
 they never contain keys, hashes, prompts or outputs. Readback owners may also
 join the completed COPY_DST transition batch after every raw lease has unmapped;
-mapped Upload owners remain excluded. Physical speed acceptance is separate.
+mapped Upload owners remain excluded. The completed recycle also submits real
+full-span clears for retained Readbacks, then accepts completion/errors before
+publishing readiness. Constructor overwrites and terminal audits remain; these
+batch clears do not grant early erasure credit. Physical speed acceptance is
+separate.
 
 The new explicit `--request-io-reuse` laboratory mode targets allocation and
 cleanup overhead, preserving original packed arithmetic and model outputs.
@@ -1428,7 +1432,13 @@ checkpoint must accept stream and private GPU errors, all callbacks and zero
 outstanding map leases before exact-kind/full-span buffers can be reused. All
 unique dirty owners stay retained and charged under the original64MiB cap,
 including full final audit headroom and bounded pool bookkeeping. No clean
-receipt or dirty memory credit is issued. Uploads receive checked batched WRITE
+receipt or dirty memory credit is issued. Within a token, logits and PLE use an
+accept-only boundary: original stream flush, nonce/zero-lease/empty-pending-INFO
+checks and native completed GPU error acceptance remain, but it cannot remap,
+clear, rebuild indexes or grant readiness/ledger credit. The final fault boundary
+alone performs the complete recycle before all-family commit. Already-ready
+unused owners retain their permission; owners used during the token remain
+unavailable until that completed recycle. Uploads receive checked batched WRITE
 maps; every producer fully overwrites the original span/padding before reuse.
 No request data enters compiler keys, diagnostics, disk caches or new storage.
 

@@ -417,7 +417,7 @@ impl ResidentAdmission {
         if self.request_io_nonce.load(Ordering::Acquire) == 0 {
             return Ok(false);
         }
-        self.readback_audited(cancel, || Ok(()))?;
+        self.readback_before_request_recycle(cancel, || Ok(()))?;
         Ok(true)
     }
     /// Explicit close remains legal after logical cancellation/poison. Do not
@@ -508,6 +508,24 @@ impl ResidentAdmission {
         cancel: &AtomicBool,
         f: impl FnOnce() -> Result<T>,
     ) -> Result<T> {
+        self.readback_request_boundary(cancel, true, f)
+    }
+    /// Logits and PLE retain their independent completed error/map proofs.
+    /// The final fault boundary alone remaps/recycles the request buffers,
+    /// avoiding three physical buffer-cohort transitions per decoded token.
+    pub(crate) fn readback_before_request_recycle<T>(
+        &self,
+        cancel: &AtomicBool,
+        f: impl FnOnce() -> Result<T>,
+    ) -> Result<T> {
+        self.readback_request_boundary(cancel, false, f)
+    }
+    fn readback_request_boundary<T>(
+        &self,
+        cancel: &AtomicBool,
+        recycle: bool,
+        f: impl FnOnce() -> Result<T>,
+    ) -> Result<T> {
         if !self.transient_io
             || self.retired.load(Ordering::Acquire)
             || cancel.load(Ordering::Acquire)
@@ -530,7 +548,12 @@ impl ResidentAdmission {
                                 .as_ref()
                                 .is_none_or(|s| s.borrow().bytes() == 0);
                             if nonce != 0 && sources_empty {
-                                self.client.recycle_transient_io(nonce).map_err(|_| {
+                                let completed = if recycle {
+                                    self.client.recycle_transient_io(nonce)
+                                } else {
+                                    self.client.accept_transient_io_reuse(nonce)
+                                };
+                                completed.map_err(|_| {
                                     Error::InvalidFormat("request I/O checkpoint rejected")
                                 })?;
                                 if cancel.load(Ordering::Acquire)

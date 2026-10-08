@@ -1,13 +1,15 @@
 # Native text checkpoint, 2026-10-08
 
-The user authorized an overnight offload optimization run. The new goal is
-active: match or exceed the approved10-token/s Ollama target for Flash-Next.
-The user also permits completion at a documented safe checkpoint if sudo is
-no longer cached and effective GPU work cannot continue. Refresh sudo during
-active work; do not spend usage on sudo workarounds. Resume from **Active
-overnight offload run** below. The current priority is core execution speed; defer API,
-extended cancellation and application work. No further Flash-Next Ollama
-baselines are needed. Backend work belongs in the owner worktree
+The user authorized a concentrated Astra optimization pass after the overnight
+goal was paused. The goal controller remains paused; this turn is explicitly
+authorized. Target: the approved10-token/s Ollama reference for Flash-Next.
+Resume from **Astra request-buffer reuse candidate** at the end of this file;
+older measurements below are historical. Current best accepted final receipt:
+127 steps13605ms,9.3348034 tokens/s, sourcee9d8032; next accept-only boundary
+candidate is under test. Refresh sudo during active physical work and restore
+public admission at the stopping point. Core speed is the priority; no new
+Ollama baselines, API, frontend, release or installation work is needed.
+Backend owner:
 `/home/jmicko/.codex/worktrees/kuno-image-speed/vashti`, branch
 `codex/kuno-native-text`; preserve the canonical Vashti checkout and its work.
 
@@ -1849,3 +1851,23 @@ and records scoped readback setup/flush/map-wait aggregates. Original ownership,
 full audit and numeric acceptance stay mandatory. Source gates pass498 native
 controls/two shader suites,74 runtime host/three allocator/two logger controls;
 runtime strict Clippy passes. Physical performance remains pending.
+
+
+The indexed transition candidate passes original128 IDs but takes22215ms.
+INFO interning plus Readback COPY_DST transitions takes21104ms; same-build
+reuse-OFF control remains16131ms. Actual full-span Readback clears at the
+completed recycle (e9d8032) remove the regression and establish9.3348034 tokens/s:
+127 steps13605ms including request-close audit; prefill15314ms. Original128 IDs,
+independent numeric/finite guards, fresh continuation, actual cancellation,
+poison recovery, owning erasure and protected lifecycle all pass. Map/callback
+wait falls9.331→2.454s; this is measured, while the proposed GPU memory-coherence
+explanation is an inference. Every completed candidate leaves B7050688000B.
+No GPU reset or driver/clock change is involved.
+
+The next candidate preserves original completed checks but uses accept-only
+logits/PLE boundaries and one full recycle after the final fault per token.
+It also increases exact immutable INFO entries512→1024 under unchanged64KiB
+keys and256KiB combined metadata. New runtime API is internal to the isolated
+benchmark, not a gateway or frontend contract. Runtime82+3 allocator+2 logger
+controls pass with strict Clippy; integrated498 controls/two shader suites and
+41 Python controls pass. Physical speed acceptance is pending.

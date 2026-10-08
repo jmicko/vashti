@@ -203,6 +203,183 @@
       "warm_uploaded_bytes": 0,
       "warm_weight_read_ms": 0,
       "warm_weight_upload_ms": 0
+    },
+    {
+      "run": "cpu-144-info-cache-long-v47",
+      "role": "slow-immutable-info-control",
+      "source_commit": "fa78d2af95333f20d15a3b8621060245ce87ebda",
+      "frozen_executable_sha256": "76b8789fe577ddafe7fc8fa6d84ebc5f0da9bc7687de8a28b42b923486d78309",
+      "raw_receipt_sha256": "6c4979c4ab4c82eb279f870d316889385513e3fb59a38689b68f0752d7d2617f",
+      "run_record_sha256": "5c40117a84d411950fa934c0198eef16c84be5ee9abf0b55ee7d41b0cd85668b",
+      "original_generated_id_count": 128,
+      "decode_tokens_per_second": 6.018101691702602,
+      "accepted_output_owning_and_lifecycle": true,
+      "generation_ms": 21103,
+      "prefill_ms": 15482,
+      "native_decode_steps": 127,
+      "seed": 424242,
+      "temperature": 0,
+      "request_io_reuse": true,
+      "request_io_close_ms": 21,
+      "request_io_closed_and_audited": true,
+      "observed_request_io_reuses": 40182,
+      "observed_request_io_checkpoints": 381,
+      "public_resident_warm_phase_ns": {
+        "native_all_family_commit": 140806897,
+        "native_all_family_preflight": 113030505,
+        "native_attention_and_gr_enqueue": 5602428751,
+        "native_completed_final_proofs": 1156400484,
+        "native_ffn_gr_and_router_enqueue": 173119362,
+        "native_final_head_enqueue": 8862974,
+        "native_route_and_expert_enqueue": 4584758165,
+        "native_router_fence": 9127603519,
+        "native_shared_and_ffn_combine_enqueue": 94583781
+      },
+      "warm_scoped_read_host_ns": [
+        13573551,
+        365103572,
+        9331102222
+      ],
+      "warm_info_cache_stats": [
+        298578,
+        16820,
+        79
+      ],
+      "warm_host_resource_delta": {
+        "major_faults": 1,
+        "minor_faults": 178289,
+        "read_bytes": 12288,
+        "system_ticks": 619,
+        "user_ticks": 3756,
+        "write_bytes": 0
+      },
+      "warm_cpu_operator_host_phase_ns": [
+        339851541,
+        1217387482,
+        889647840,
+        2496761414
+      ],
+      "warm_uploaded_bytes": 0,
+      "warm_weight_read_ms": 0,
+      "warm_weight_upload_ms": 0
+    },
+    {
+      "run": "cpu-144-info-cache-off-control-long-v47",
+      "role": "repeat-reuse-off-control",
+      "source_commit": "fa78d2af95333f20d15a3b8621060245ce87ebda",
+      "frozen_executable_sha256": "76b8789fe577ddafe7fc8fa6d84ebc5f0da9bc7687de8a28b42b923486d78309",
+      "raw_receipt_sha256": "13719ccef487fa3b5222d6905b483fbe43e26c47d2cf33fe359be8de02f183cc",
+      "run_record_sha256": "77e0d4ba369e8a8ebcf0b5a9b636447096027019e277daae7fea851e3fd4caa3",
+      "original_generated_id_count": 128,
+      "decode_tokens_per_second": 7.873527588344699,
+      "accepted_output_owning_and_lifecycle": true,
+      "generation_ms": 16130,
+      "prefill_ms": 15378,
+      "native_decode_steps": 127,
+      "seed": 424242,
+      "temperature": 0,
+      "request_io_reuse": false,
+      "request_io_close_ms": 0,
+      "request_io_closed_and_audited": false,
+      "observed_request_io_reuses": 0,
+      "observed_request_io_checkpoints": 0,
+      "public_resident_warm_phase_ns": {
+        "native_all_family_commit": 142652712,
+        "native_all_family_preflight": 116523201,
+        "native_attention_and_gr_enqueue": 4225333872,
+        "native_completed_final_proofs": 2854048080,
+        "native_ffn_gr_and_router_enqueue": 169769499,
+        "native_final_head_enqueue": 8783918,
+        "native_route_and_expert_enqueue": 4568785791,
+        "native_router_fence": 3876213092,
+        "native_shared_and_ffn_combine_enqueue": 87039872
+      },
+      "warm_scoped_read_host_ns": [
+        0,
+        0,
+        0
+      ],
+      "warm_info_cache_stats": [
+        0,
+        0,
+        0
+      ],
+      "warm_host_resource_delta": {
+        "major_faults": 81,
+        "minor_faults": 215945,
+        "read_bytes": 0,
+        "system_ticks": 664,
+        "user_ticks": 3809,
+        "write_bytes": 0
+      },
+      "warm_cpu_operator_host_phase_ns": [
+        318651113,
+        1216844028,
+        875661915,
+        2462625484
+      ],
+      "warm_uploaded_bytes": 0,
+      "warm_weight_read_ms": 0,
+      "warm_weight_upload_ms": 0
+    },
+    {
+      "run": "cpu-144-read-clear-long-v47",
+      "role": "accepted-read-clear",
+      "source_commit": "e9d80323dc5d239ff35915252e1281957dbca72f",
+      "frozen_executable_sha256": "c5a42eda1609059b693299fe7f0717d1d5519447b3468cb840c006c4778738f2",
+      "raw_receipt_sha256": "1fa2058fd6f1b24f8d266b38edc5e5e5ed2841e73a40e94292d4ebd062caa3cd",
+      "run_record_sha256": "98e40e8c08a1dc46af7969ae00140dd52d9929be021f7c666a445420de783ea4",
+      "original_generated_id_count": 128,
+      "decode_tokens_per_second": 9.334803381109886,
+      "accepted_output_owning_and_lifecycle": true,
+      "generation_ms": 13605,
+      "prefill_ms": 15314,
+      "native_decode_steps": 127,
+      "seed": 424242,
+      "temperature": 0,
+      "request_io_reuse": true,
+      "request_io_close_ms": 16,
+      "request_io_closed_and_audited": true,
+      "observed_request_io_reuses": 40182,
+      "observed_request_io_checkpoints": 381,
+      "public_resident_warm_phase_ns": {
+        "native_all_family_commit": 141962113,
+        "native_all_family_preflight": 111367982,
+        "native_attention_and_gr_enqueue": 3907387595,
+        "native_completed_final_proofs": 995922364,
+        "native_ffn_gr_and_router_enqueue": 167843677,
+        "native_final_head_enqueue": 8960568,
+        "native_route_and_expert_enqueue": 4413194888,
+        "native_router_fence": 3675174208,
+        "native_shared_and_ffn_combine_enqueue": 88193843
+      },
+      "warm_scoped_read_host_ns": [
+        16501365,
+        354935213,
+        2453813849
+      ],
+      "warm_info_cache_stats": [
+        298578,
+        16820,
+        79
+      ],
+      "warm_host_resource_delta": {
+        "major_faults": 7,
+        "minor_faults": 179868,
+        "read_bytes": 0,
+        "system_ticks": 584,
+        "user_ticks": 3629,
+        "write_bytes": 0
+      },
+      "warm_cpu_operator_host_phase_ns": [
+        315632652,
+        1208265093,
+        885577153,
+        2460219415
+      ],
+      "warm_uploaded_bytes": 0,
+      "warm_weight_read_ms": 0,
+      "warm_weight_upload_ms": 0
     }
   ]
 }
