@@ -101,16 +101,23 @@ def validate_adaptive(receipt, selected, output, long):
     steps = 127 if long else 7
     primary = receipt.get("warm_expert_hits"); cpu = receipt.get("completed_cpu_misses")
     promotions = receipt.get("adaptive_promotions")
+    batches = receipt.get("adaptive_completed_batches")
     if (receipt.get("secondary_experts") is not False
         or receipt.get("adaptive_rotating_slots") != 16 or receipt.get("adaptive_budget") != 4
         or type(promotions) is not int or not 0 < promotions <= steps*4
+        or type(batches) is not int or not 0 < batches <= steps
+        or not batches <= promotions <= batches*4
+        or type(receipt.get("adaptive_private_peak")) is not int
+        or not receipt.get("adaptive_host_bytes",0) < receipt["adaptive_private_peak"] <= 192*1024
+        or type(receipt.get("adaptive_source_peak")) is not int
+        or not 0 < receipt["adaptive_source_peak"] <= 40*1024*1024
         or receipt.get("adaptive_boundaries") != steps
-        or type(receipt.get("adaptive_host_bytes")) is not int or not 0 < receipt["adaptive_host_bytes"] <= 128*1024
+        or type(receipt.get("adaptive_host_bytes")) is not int or not 0 < receipt["adaptive_host_bytes"] <= 192*1024
         or type(primary) is not int or primary < 0 or type(cpu) is not int or cpu < 0
         or primary + cpu != steps*48*10
         or any(type(receipt.get(f)) is not int or receipt[f] <= 0 for f in
             ("adaptive_upload_bytes", "adaptive_read_ns", "adaptive_upload_ns", "adaptive_fence_ns"))
-        or output.splitlines().count("public_adaptive_closed=true host_reservation=131072") != 5):
+        or output.splitlines().count("public_adaptive_closed=true host_reservation=196608") != 5):
         raise ValueError("Adaptive cache requires bounded completed work, exact partition and full owner closes")
 
 

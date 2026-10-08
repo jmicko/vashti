@@ -41,12 +41,14 @@ class AdaptiveControls(unittest.TestCase):
     def test_exact_partition_bounded_promotion_and_all_owner_closes(self):
         value={"adaptive_experts":True,"secondary_experts":False,"adaptive_rotating_slots":16,
             "adaptive_budget":4,"adaptive_promotions":10,"adaptive_boundaries":7,
+            "adaptive_completed_batches":3,"adaptive_private_peak":150000,"adaptive_source_peak":16777216,
             "adaptive_host_bytes":105000,"warm_expert_hits":2200,"completed_cpu_misses":1160,
             "adaptive_upload_bytes":1000000,"adaptive_read_ns":10,"adaptive_upload_ns":20,"adaptive_fence_ns":30}
-        output="\n".join(["public_adaptive_closed=true host_reservation=131072"]*5)
+        output="\n".join(["public_adaptive_closed=true host_reservation=196608"]*5)
         LAB.validate_adaptive(value,True,output,False)
         for field,bad in [("adaptive_rotating_slots",17),("adaptive_budget",5),
-            ("adaptive_promotions",29),("adaptive_promotions",0),("adaptive_host_bytes",131073),
+            ("adaptive_promotions",29),("adaptive_completed_batches",2),
+            ("adaptive_private_peak",196609),("adaptive_source_peak",41943041),("adaptive_promotions",0),("adaptive_host_bytes",196609),
             ("warm_expert_hits",2201),("adaptive_boundaries",6),("adaptive_fence_ns",0),
             ("secondary_experts",True)]:
             changed=dict(value);changed[field]=bad

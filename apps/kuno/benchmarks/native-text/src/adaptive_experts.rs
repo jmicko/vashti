@@ -4,7 +4,7 @@
 use crate::bank_slots::BankSlots;
 use kuno_text::{Error, Result};
 use zeroize::{Zeroize, Zeroizing};
-pub(crate) const HOST: usize = 128 * 1024;
+pub(crate) const HOST: usize = 192 * 1024;
 pub(crate) const ROTATING: usize = 16;
 pub(crate) const BUDGET: usize = 4;
 const LAYERS: usize = 48;
@@ -18,6 +18,9 @@ pub(crate) struct Stats {
     pub upload_ns: u128,
     pub fence_ns: u128,
     pub boundaries: u64,
+    pub completed_batches: u64,
+    pub private_peak: usize,
+    pub source_peak: u64,
 }
 pub(crate) struct Cache {
     seen: Zeroizing<Vec<u16>>,
@@ -96,6 +99,9 @@ impl Cache {
             .map(|s| s.as_slice())
             .ok_or(Error::InvalidBufferLength)
     }
+    pub(crate) fn is_rotating(&self, layer: usize, slot: usize) -> Result<bool> {
+        Ok(self.slots(layer)?.contains(&slot))
+    }
     pub(crate) fn candidate(&self, layer: usize, bank: &BankSlots) -> Result<Option<usize>> {
         if layer >= LAYERS || bank.capacity() != 144 || bank.experts() != EXPERTS {
             return Err(Error::InvalidFormat("adaptive original bank geometry"));
@@ -173,6 +179,24 @@ mod tests {
         c.erase();
         assert!(c.seen.is_empty() && c.repeats.is_empty() && c.rotating.is_empty());
         assert_eq!((*c.tick, *c.cursor), (0, 0));
+    }
+    #[test]
+    fn grouped_original_plans_fit_reservation_and_only_rotating_sources_can_return_to_cpu() {
+        let (cache, mut bank) = setup();
+        let mut live = cache.owned_bytes() + 4096;
+        let mut plans = Vec::new();
+        for layer in 0..BUDGET {
+            assert!(cache.is_rotating(layer, 0).unwrap());
+            assert!(!cache.is_rotating(layer, 128).unwrap());
+            let p = bank
+                .plan_in_slots(&[200 + layer], cache.slots(layer).unwrap())
+                .unwrap();
+            live += p.owned_metadata_bytes().unwrap();
+            plans.push(p);
+        }
+        assert!(live <= HOST);
+        assert_eq!(plans.len(), BUDGET);
+        assert!(cache.is_rotating(48, 0).is_err());
     }
     #[test]
     fn candidate_requires_current_token_and_prefers_repeated_recent_misses() {

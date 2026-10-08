@@ -977,7 +977,7 @@ impl<'a> GpuExecutor<'a> {
         }
         if let Some(mut cache) = self.adaptive.take() {
             cache.erase();
-            println!("public_adaptive_closed=true host_reservation=131072");
+            println!("public_adaptive_closed=true host_reservation=196608");
         }
         self.secondary = None;
         self.secondary_frequency = None;
@@ -1061,9 +1061,11 @@ impl<'a> GpuExecutor<'a> {
             .resident_admission
             .as_ref()
             .ok_or(Error::InvalidFormat("adaptive resident admission"))?;
-        let mut promoted = 0;
+        let mut pending = Vec::with_capacity(crate::adaptive_experts::BUDGET);
+        let mut requests = Vec::with_capacity(crate::adaptive_experts::BUDGET * 3);
         let start = cache.first_layer();
         let mut next = (start + 1) % 48;
+        let mut private_bytes = cache.owned_bytes() + 4096;
         for offset in 0..48 {
             let layer = (start + offset) % 48;
             let key = format!("blk.{layer}.ffn_gate_exps.weight");
@@ -1082,31 +1084,26 @@ impl<'a> GpuExecutor<'a> {
             bank.slots
                 .validate_pending(&plan, &*selected)
                 .map_err(|_| Error::InvalidFormat("adaptive original plan proof"))?;
-            if cache
-                .owned_bytes()
+            if plan.uploads.len() != 1 {
+                return Err(Error::InvalidFormat("adaptive single original upload"));
+            }
+            private_bytes = private_bytes
                 .checked_add(
                     plan.owned_metadata_bytes()
                         .map_err(|_| Error::ArithmeticOverflow)?,
                 )
-                .and_then(|n| n.checked_add(4096))
-                .is_none_or(|n| n > crate::adaptive_experts::HOST)
-            {
+                .ok_or(Error::ArithmeticOverflow)?;
+            if private_bytes > crate::adaptive_experts::HOST {
                 return Err(Error::LimitExceeded("adaptive live private host"));
             }
-            let [(_, slot)] = plan.uploads.as_slice() else {
-                return Err(Error::InvalidFormat("adaptive single original upload"));
-            };
-            let names = bank.source_names();
-            let tensors = names.map(|name| {
-                self.model
-                    .tensor(name)
-                    .ok_or(Error::InvalidFormat("adaptive original tensor"))
-            });
-            let [gate, up, down] = tensors;
-            let tensors = [gate?, up?, down?];
-            let requests = [bank.gate(), bank.up(), bank.down()].map(|b| b.expert_bytes() as u64);
-            // Each accepted single promotion stays under the original 40 MiB
-            // source envelope; one completion releases it before the next fill.
+            requests.extend([bank.gate(), bank.up(), bank.down()].map(|b| b.expert_bytes() as u64));
+            pending.push((layer, plan));
+            next = (layer + 1) % 48;
+            if pending.len() == crate::adaptive_experts::BUDGET {
+                break;
+            }
+        }
+        if !pending.is_empty() {
             let charged = requests.iter().try_fold(0u64, |n, &b| {
                 n.checked_add(main_admission::page_bytes(b).map_err(admission_error)?)
                     .ok_or(Error::ArithmeticOverflow)
@@ -1114,34 +1111,61 @@ impl<'a> GpuExecutor<'a> {
             if charged > 40 * 1024 * 1024 {
                 return Err(Error::LimitExceeded("adaptive original source"));
             }
+            cache.stats.private_peak = cache.stats.private_peak.max(private_bytes);
+            cache.stats.source_peak = cache.stats.source_peak.max(charged);
             let add = admission.allocate(&requests, || {
                 let mut add = expert_banks::FillStats::default();
-                for (packed, tensor) in [bank.gate(), bank.up(), bank.down()]
-                    .into_iter()
-                    .zip(tensors)
-                {
-                    let (bytes, read, upload) =
-                        expert_banks::fill(&self.client, packed, tensor, expert, *slot, cancel)?;
-                    add.bytes += bytes;
-                    add.read_ns += read;
-                    add.upload_ns += upload;
+                for (layer, plan) in &pending {
+                    let bank = self
+                        .banks
+                        .get(&format!("blk.{layer}.ffn_gate_exps.weight"))
+                        .ok_or(Error::InvalidFormat("adaptive original fill bank"))?;
+                    let [(expert, slot)] = plan.uploads.as_slice() else {
+                        return Err(Error::InvalidFormat("adaptive original fill proof"));
+                    };
+                    bank.slots
+                        .validate_pending(plan, &[*expert])
+                        .map_err(|_| Error::InvalidFormat("adaptive fill ledger proof"))?;
+                    for (packed, name) in [bank.gate(), bank.up(), bank.down()]
+                        .into_iter()
+                        .zip(bank.source_names())
+                    {
+                        let tensor = self
+                            .model
+                            .tensor(name)
+                            .ok_or(Error::InvalidFormat("adaptive original tensor"))?;
+                        let (bytes, read, upload) = expert_banks::fill(
+                            &self.client,
+                            packed,
+                            tensor,
+                            *expert,
+                            *slot,
+                            cancel,
+                        )?;
+                        add.bytes += bytes;
+                        add.read_ns += read;
+                        add.upload_ns += upload;
+                    }
                 }
                 Ok(add)
             })?;
+            // ONE owning completion follows all admitted fills. No ledger is
+            // committed while any original bank copy can still be in flight.
             let fence = Instant::now();
             crate::resident_model::batch_io::read_fault(arena, admission, fault, cancel)?;
             cache.stats.fence_ns += fence.elapsed().as_nanos();
+            cache.stats.completed_batches += 1;
             cache.stats.bytes += add.bytes;
             cache.stats.read_ns += add.read_ns;
             cache.stats.upload_ns += add.upload_ns;
-            bank.slots
-                .commit(plan)
-                .map_err(|_| Error::InvalidFormat("adaptive completed publication"))?;
-            cache.stats.promotions += 1;
-            promoted += 1;
-            next = (layer + 1) % 48;
-            if promoted == crate::adaptive_experts::BUDGET {
-                break;
+            for (layer, plan) in pending {
+                self.banks
+                    .get_mut(&format!("blk.{layer}.ffn_gate_exps.weight"))
+                    .ok_or(Error::InvalidFormat("adaptive completed original bank"))?
+                    .slots
+                    .commit(plan)
+                    .map_err(|_| Error::InvalidFormat("adaptive completed publication"))?;
+                cache.stats.promotions += 1;
             }
         }
         cache.advance(next)
@@ -1177,7 +1201,8 @@ impl<'a> GpuExecutor<'a> {
         Ok(())
     }
     /// Completed fixed-public cap10 boundary only: CPU misses never consume
-    /// these GPU-resident spans during the following static-bank decode. This
+    /// pinned GPU-resident spans. Rotating slots may return to CPU and must
+    /// retain their original file-cache pages while adaptive caching is active. This
     /// hints the OS to reclaim duplicate original file-cache pages, never GPU
     /// owners, tensors, private state or arbitrary host caches. No freed-byte
     /// claim: the returned total counts successfully advised source bytes.
@@ -1227,8 +1252,24 @@ impl<'a> GpuExecutor<'a> {
                 })
                 .ok_or(Error::ArithmeticOverflow)?;
         }
-        for bank in self.banks.values().filter(|_| self.gpu_expert_limit == 10) {
+        for (key, bank) in self.banks.iter().filter(|_| self.gpu_expert_limit == 10) {
+            let adaptive_layer = if self.adaptive.is_some() {
+                Some(
+                    key.strip_prefix("blk.")
+                        .and_then(|k| k.strip_suffix(".ffn_gate_exps.weight"))
+                        .and_then(|k| k.parse::<usize>().ok())
+                        .filter(|&l| l < 48)
+                        .ok_or(Error::InvalidFormat("adaptive source hint layer"))?,
+                )
+            } else {
+                None
+            };
             for slot in 0..bank.slots.capacity() {
+                if let (Some(cache), Some(layer)) = (&self.adaptive, adaptive_layer)
+                    && cache.is_rotating(layer, slot)?
+                {
+                    continue;
+                }
                 let expert = zeroize::Zeroizing::new(
                     bank.slots
                         .resident_expert(slot)

@@ -2046,3 +2046,16 @@ original prefill banks contain fewer than 144 populated experts. The rotating
 slot selection therefore uses empty slots first, then cold populated slots,
 while pinning the other 128 slots as before. Empty pinned slots stay pinned;
 this experiment does not claim a fully populated 144-expert stationary bank.
+
+The accepted v71 run passes every original model/lifecycle gate but takes
+12825 ms for 127 steps (9.9025 tokens/s). It promotes 504 experts/1647820800
+original bytes, reduces CPU calls from the historical 16411 to 14100, and spends
+480103305 ns in 504 separate completed promotion fences. It also reads
+375513088 disk bytes: rotating prefill experts were still included in the old
+static-bank source reclamation hints. These measurements justify a grouped
+fill experiment: one admitted source batch/one original owning completion per
+token, then commit every candidate. Reserve 192 KiB within the unchanged 1 MiB
+host allowance to retain four exact pending original plans; enforce actual live
+capacities. Both source hints exclude rotating slots because those experts can
+return to CPU. Pinned original spans retain the old hints. No generic OS cache
+or other process memory is reclaimed.

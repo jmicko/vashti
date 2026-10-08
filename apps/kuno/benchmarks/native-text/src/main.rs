@@ -2736,6 +2736,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     receipt["adaptive_upload_ns"] = serde_json::json!(cache.stats.upload_ns);
                     receipt["adaptive_fence_ns"] = serde_json::json!(cache.stats.fence_ns);
                     receipt["adaptive_boundaries"] = serde_json::json!(cache.stats.boundaries);
+                    receipt["adaptive_completed_batches"] =
+                        serde_json::json!(cache.stats.completed_batches);
+                    receipt["adaptive_private_peak"] = serde_json::json!(cache.stats.private_peak);
+                    receipt["adaptive_source_peak"] = serde_json::json!(cache.stats.source_peak);
                     receipt["adaptive_host_bytes"] = serde_json::json!(cache.owned_bytes());
                 }
                 receipt["secondary_experts"] = serde_json::json!(secondary_experts);
