@@ -735,6 +735,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         _ => return Err("expected intel or nvidia".into()),
     };
     let mode = std::env::args().nth(2).unwrap_or("probe".into());
+    if mode == "iq-quant-probe" {
+        matmul_probe::iq::registration(
+            std::env::args().count(),
+            std::env::var_os("KUNO_PUBLIC_RECEIPT").is_some(),
+            std::env::var_os("KUNO_TEST_GGUF").is_some(),
+            std::env::var_os("KUNO_LAB_MATMUL_TIMING").is_some(),
+        )?;
+    }
     let transient_setting = match std::env::var("KUNO_LAB_TRANSIENT_IO") {
         Ok(raw) => Some(raw),
         Err(std::env::VarError::NotPresent) => None,
@@ -1270,7 +1278,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         {
             return Err("shared Next router requires256 workgroup lanes".into());
         }
-        if fast_gpu
+        if (fast_gpu || mode == "iq-quant-probe")
             && (!adapter.features().contains(wgpu::Features::SUBGROUP)
                 || info.subgroup_min_size < 16
                 || info.subgroup_max_size > 32
@@ -1369,6 +1377,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if mode == "info-slab-probe" {
             info_slab_probe::run(&client)?;
             return Ok(());
+        }
+        if mode == "iq-quant-probe" {
+            return matmul_probe::iq::run(&client);
         }
         if mode == "fused-matrix-fault-probe" {
             return matmul_probe::run_fused_fault(&client);
@@ -3644,6 +3655,7 @@ mod transient_mode_tests {
         );
     }
 
+    #[cfg(feature = "direct-device")]
     #[test]
     fn direct_handle_serializes_concurrent_callers_without_gpu_work() {
         use cubecl_common::{device::DeviceId, device_handle::DeviceHandle};

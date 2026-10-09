@@ -250,14 +250,16 @@ pub fn fault_grid(rows: usize, output_words: usize, check_tail: bool) -> CubeCou
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::quant_matvec::{BF16, F16, Q5_0, Q6_K, Q8_0};
+    use crate::quant_matvec::{BF16, F16, IQ3_XXS, IQ4_NL, IQ4_XS, Q5_0, Q6_K, Q8_0};
     #[test]
     fn all_original_formats_lower_to_valid_subgroup_wgsl_with_runtime_spans() {
         use cubecl::compute::KernelBuilder;
         use cubecl::ir::{ElemType, FloatKind, IntKind, StorageType, Type, UIntKind};
         use cubecl::wgpu::WgslCompiler;
         use cubecl::{Compiler, KernelSettings, WgpuCompilationOptions};
-        for dtype in [0, F16, BF16, Q4_K, Q5_0, Q8_0, Q6_K] {
+        for dtype in [
+            0, F16, BF16, Q4_K, Q5_0, Q8_0, Q6_K, IQ3_XXS, IQ4_NL, IQ4_XS,
+        ] {
             let uint = StorageType::Scalar(ElemType::UInt(UIntKind::U32));
             let float = StorageType::Scalar(ElemType::Float(FloatKind::F32));
             let mut b = KernelBuilder::default();

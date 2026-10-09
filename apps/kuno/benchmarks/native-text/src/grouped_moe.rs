@@ -161,11 +161,16 @@ impl Geometry {
         {
             return Err("grouped MoE public geometry");
         }
-        // Both explicit two-shard profiles retain the original format/shape.
+        // Explicit segmented profiles retain original packed model metadata.
+        // The accepted artifact families have equal gate/up dtypes; no Q4-only
+        // arithmetic policy is selected for the nonlinear IQ family.
         if crate::bank_slots::segmented_capacity(capacity)
-            && (gate.dtype != super::Q4_K
-                || up.dtype != super::Q4_K
-                || !matches!(down.dtype, super::Q5_0 | super::Q8_0)
+            && (!(gate.dtype == super::Q4_K
+                && up.dtype == super::Q4_K
+                && matches!(down.dtype, super::Q5_0 | super::Q8_0)
+                || matches!(gate.dtype, super::IQ3_XXS | super::IQ4_XS)
+                    && up.dtype == gate.dtype
+                    && matches!(down.dtype, super::IQ4_NL | super::Q8_0))
                 || gate.columns != 2560
                 || gate.rows != 640)
         {
@@ -1270,7 +1275,7 @@ mod tests {
         }
     }
 
-    use super::super::{BF16, F16, F32, Q4_K, Q5_0, Q6_K, Q8_0};
+    use super::super::{BF16, F16, F32, IQ3_XXS, IQ4_NL, IQ4_XS, Q4_K, Q5_0, Q6_K, Q8_0};
     use super::*;
 
     fn geometry(dtype: u32, hidden: usize, ff: usize, tile: usize, capacity: usize) -> Geometry {
@@ -1667,7 +1672,9 @@ mod tests {
     fn q4_block_is_explicit_public_tile1_policy_with_unchanged_owners() {
         assert_eq!(GatePolicy::default(), GatePolicy::Generic);
         for tile in [1, 4, 8] {
-            for dtype in [F32, F16, BF16, Q4_K, Q5_0, Q6_K, Q8_0] {
+            for dtype in [
+                F32, F16, BF16, Q4_K, Q5_0, Q6_K, Q8_0, IQ3_XXS, IQ4_NL, IQ4_XS,
+            ] {
                 let g = geometry(dtype, 256, 256, tile, 16);
                 assert_eq!(g.gate_policy(), GatePolicy::Generic);
                 let blocked = g.with_q4_block();
@@ -2046,6 +2053,83 @@ mod tests {
         }
     }
 
+    #[test]
+    fn unsloth_iq_shards_keep_exact_original_row_strides_and_generic_policy() {
+        for (gate, row_bytes, expert_bytes) in [(IQ3_XXS, 980, 627200), (IQ4_XS, 1360, 870400)] {
+            for down in [IQ4_NL, Q8_0] {
+                let p = [
+                    Projection::new(gate, 2560, 640, 512).unwrap(),
+                    Projection::new(gate, 2560, 640, 512).unwrap(),
+                    Projection::new(down, 640, 2560, 512).unwrap(),
+                ];
+                assert_eq!(p[0].row_bytes(), row_bytes);
+                assert_eq!(p[0].expert_bytes(), expert_bytes);
+                assert_eq!(p[1], p[0]);
+                assert_eq!(p[2].row_bytes(), if down == IQ4_NL { 360 } else { 680 });
+                for cap in [16, 64, 72, 96, 128, 144, 160] {
+                    for tile in [1, 4, 8] {
+                        let g = Geometry::new(p, tile, cap).unwrap();
+                        assert_eq!(g.gate_policy(), GatePolicy::Generic);
+                        assert!(g.with_q4_block().is_err());
+                        assert!(Geometry::stationary_secondary(p).is_err());
+                        let flat = [cap];
+                        let shards = crate::bank_slots::segmented_capacities(cap).unwrap_or(&flat);
+                        let mut first = 0;
+                        for &slots in shards {
+                            if slots == 0 {
+                                continue;
+                            }
+                            let words =
+                                p.map(|projection| projection.segment_words(slots).unwrap());
+                            g.validate_shard(first, slots, words).unwrap();
+                            for field in 0..3 {
+                                let mut short = words;
+                                short[field] -= 1;
+                                assert!(g.validate_shard(first, slots, short).is_err());
+                            }
+                            first += slots;
+                        }
+                        assert_eq!(first, cap);
+                    }
+                }
+                for cap in [96, 128, 144, 160] {
+                    let mut wrong = p;
+                    wrong[1] = Projection::new(
+                        if gate == IQ3_XXS { IQ4_XS } else { IQ3_XXS },
+                        2560,
+                        640,
+                        512,
+                    )
+                    .unwrap();
+                    assert!(Geometry::new(wrong, 1, cap).is_err());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn offline_iq_original_gate_up_and_down_validate_for_count1_and_max8() {
+        use cubecl::server::ExecutionMode;
+        for gate in [IQ3_XXS, IQ4_XS] {
+            for down in [IQ4_NL, Q8_0] {
+                let p = [
+                    Projection::new(gate, 2560, 640, 512).unwrap(),
+                    Projection::new(gate, 2560, 640, 512).unwrap(),
+                    Projection::new(down, 640, 2560, 512).unwrap(),
+                ];
+                for tile in [1, 4, 8] {
+                    let g = Geometry::new(p, tile, 160).unwrap();
+                    for mode in [ExecutionMode::Checked, ExecutionMode::Unchecked] {
+                        validate_shader(&shader(0, g, mode), 8, true);
+                        validate_shader(&shader(1, g, mode), 8, true);
+                        validate_shader(&shader(2, g, mode), 7, false);
+                        validate_shader(&shader(3, g, mode), 10, true);
+                    }
+                }
+            }
+        }
+    }
+
     fn shader(kind: usize, g: Geometry, mode: cubecl::server::ExecutionMode) -> String {
         use cubecl::compute::KernelBuilder;
         use cubecl::ir::{ElemType, FloatKind, IntKind, StorageType, Type, UIntKind};
@@ -2257,7 +2341,9 @@ mod tests {
     #[test]
     fn offline_shaders_all_original_decoders_reuse_weights_across_rhs() {
         use cubecl::server::ExecutionMode;
-        for dtype in [F32, F16, BF16, Q4_K, Q5_0, Q6_K, Q8_0] {
+        for dtype in [
+            F32, F16, BF16, Q4_K, Q5_0, Q6_K, Q8_0, IQ3_XXS, IQ4_NL, IQ4_XS,
+        ] {
             for mode in [ExecutionMode::Checked, ExecutionMode::Unchecked] {
                 let a = geometry(dtype, 256, 256, 4, 16);
                 let b = geometry(dtype, 256, 256, 8, 16);
@@ -2416,6 +2502,9 @@ mod tests {
     }
 
     fn packed_fixture(dtype: u32, rows: usize, columns: usize, phase: usize) -> Vec<u8> {
+        if matches!(dtype, IQ3_XXS | IQ4_NL | IQ4_XS) {
+            return super::super::iq_fixtures::packed(dtype, rows, columns, phase);
+        }
         let (elements, bytes) = super::super::block_layout(dtype).unwrap();
         let mut result = vec![0u8; rows * columns / elements * bytes];
         for (index, block) in result.chunks_exact_mut(bytes).enumerate() {
@@ -2742,10 +2831,12 @@ mod tests {
         }
     }
     #[test]
-    fn all_seven_original_projection_formats_reuse_decoded_values_with_independent_expectations() {
+    fn all_ten_original_projection_formats_reuse_decoded_values_with_independent_expectations() {
         use kuno_text::TensorType;
         let rows = 4;
-        for dtype in [F32, F16, BF16, Q4_K, Q5_0, Q6_K, Q8_0] {
+        for dtype in [
+            F32, F16, BF16, Q4_K, Q5_0, Q6_K, Q8_0, IQ3_XXS, IQ4_NL, IQ4_XS,
+        ] {
             let block = super::super::block_layout(dtype).unwrap().0;
             let columns = if block == 1 { 138 } else { block * 3 };
             let original = Projection::new(dtype, columns, rows, 512).unwrap();

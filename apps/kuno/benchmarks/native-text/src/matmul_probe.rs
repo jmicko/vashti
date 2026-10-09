@@ -18,6 +18,9 @@ use zeroize::{Zeroize, Zeroizing};
 #[path = "matmul_timing.rs"]
 mod timing;
 
+#[path = "iq_quant_probe.rs"]
+pub mod iq;
+
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 const MAX_ROWS: usize = 7;
 const MAX_COLUMNS: usize = 65536;
@@ -529,7 +532,7 @@ fn cases(
     retired: &AtomicBool,
 ) -> Result<Vec<serde_json::Value>> {
     let mut reports =
-        Vec::with_capacity(FORMATS.len() * (NUMERIC_COUNTS.len() * NUMERIC_TILES.len() + 1));
+        Vec::with_capacity(matrices.len() * (NUMERIC_COUNTS.len() * NUMERIC_TILES.len() + 1));
     for matrix in matrices {
         for count in NUMERIC_COUNTS {
             for (tile, single) in NUMERIC_TILES
@@ -684,12 +687,12 @@ fn cases(
             }
         }
     }
-    if reports.len() != FORMATS.len() * (NUMERIC_COUNTS.len() * NUMERIC_TILES.len() + 1)
+    if reports.len() != matrices.len() * (NUMERIC_COUNTS.len() * NUMERIC_TILES.len() + 1)
         || reports
             .iter()
             .filter(|case| case.get("member_capacity") == Some(&serde_json::json!(1)))
             .count()
-            != FORMATS.len()
+            != matrices.len()
     {
         return Err("public projection case inventory incomplete".into());
     }
@@ -844,6 +847,43 @@ pub fn run_fused_fault(client: &ComputeClient<WgpuRuntime>) -> Result<()> {
         .configure_transient_io(IO_BUDGET)
         .map_err(|_| "fused fixture owned IO setup")?;
     let public_bound = FORMATS.len() * (MAX_PACKED_BYTES + 4).next_power_of_two();
+    let report = fused_cases(
+        client,
+        &matrices,
+        public_bound,
+        FusedProjection::Cooperative,
+    )?;
+    file.verify_file_unchanged()
+        .map_err(|_| "fused original artifact changed")?;
+    if let Some(path) = std::env::var_os("KUNO_PUBLIC_RECEIPT") {
+        use std::io::Write;
+        let mut out = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)?;
+        out.write_all(serde_json::to_string_pretty(&report)?.as_bytes())?;
+    }
+    println!(
+        "public_fused_matrix_fault cases=28 full_main_zero_bytes={} context_retired=false",
+        report["main_erased_bytes"]
+    );
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+enum FusedProjection {
+    Cooperative,
+    SingleSubgroup,
+}
+
+/// Same bounded projection/fault owners for any already-prewarmed immutable
+/// public fixture inventory. Caller configures transient I/O exactly once.
+fn fused_cases(
+    client: &ComputeClient<WgpuRuntime>,
+    matrices: &[PublicMatrix],
+    public_bound: usize,
+    projection: FusedProjection,
+) -> Result<serde_json::Value> {
     let retired = Arc::new(AtomicBool::new(false));
     // Owned zero inspection requires the already configured transient policy.
     // A PUBLIC-fixture arena correctly rejects that audit before any kernel.
@@ -856,7 +896,7 @@ pub fn run_fused_fault(client: &ComputeClient<WgpuRuntime>) -> Result<()> {
     let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
         || -> Result<Vec<serde_json::Value>> {
             let mut cases = Vec::new();
-            for m in &matrices {
+            for m in matrices {
                 for bad in [
                     None,
                     Some(f32::NAN),
@@ -931,18 +971,43 @@ pub fn run_fused_fault(client: &ComputeClient<WgpuRuntime>) -> Result<()> {
                     };
                     let weight = || unsafe { ArrayArg::from_raw_parts(m.handle.clone(), m.words) };
                     diagnostic.0 = "projection_enqueue";
-                    crate::quant_matvec::cooperative::cooperative_matvec::launch::<WgpuRuntime>(
-                        client,
-                        CubeCount::Static(m.rows as u32, 1, 1),
-                        CubeDim::new_1d(64),
-                        weight(),
-                        arg(x, m.columns)?,
-                        arg(original, out_words)?,
-                        m.rows,
-                        m.columns,
-                        m.kind.gguf_id(),
-                        5,
-                    );
+                    match projection {
+                        FusedProjection::Cooperative => {
+                            crate::quant_matvec::cooperative::cooperative_matvec::launch::<
+                                WgpuRuntime,
+                            >(
+                                client,
+                                CubeCount::Static(m.rows as u32, 1, 1),
+                                CubeDim::new_1d(64),
+                                weight(),
+                                arg(x, m.columns)?,
+                                arg(original, out_words)?,
+                                m.rows,
+                                m.columns,
+                                m.kind.gguf_id(),
+                                5,
+                            );
+                        }
+                        FusedProjection::SingleSubgroup => {
+                            crate::quant_matvec::fast::packed_single::launch::<WgpuRuntime>(
+                                client,
+                                crate::quant_matvec::fast::grid(m.rows),
+                                crate::quant_matvec::fast::cube(),
+                                weight(),
+                                arg(x, m.columns)?,
+                                arg(original, out_words)?,
+                                1,
+                                0,
+                                0,
+                                5,
+                                m.rows,
+                                m.columns,
+                                m.kind.gguf_id(),
+                                MatrixGeometry::new(m.kind.gguf_id(), m.rows, m.columns, 1)?
+                                    .row_bytes(),
+                            );
+                        }
+                    }
                     crate::resident_util::verify_finite::launch::<WgpuRuntime>(
                         client,
                         CubeCount::Static(out_words.div_ceil(64) as u32, 1, 1),
@@ -950,21 +1015,48 @@ pub fn run_fused_fault(client: &ComputeClient<WgpuRuntime>) -> Result<()> {
                         arg(original, out_words)?,
                         arg(original_f, 1)?,
                     );
-                    crate::quant_matvec::cooperative::cooperative_matvec_with_fault::launch::<
-                        WgpuRuntime,
-                    >(
-                        client,
-                        CubeCount::Static(m.rows as u32, 1, 1),
-                        CubeDim::new_1d(64),
-                        weight(),
-                        arg(x, m.columns)?,
-                        arg(y, out_words)?,
-                        arg(f, 1)?,
-                        m.rows,
-                        m.columns,
-                        m.kind.gguf_id(),
-                        5,
-                    );
+                    match projection {
+                        FusedProjection::Cooperative => {
+                            crate::quant_matvec::cooperative::cooperative_matvec_with_fault::launch::<
+                                WgpuRuntime,
+                            >(
+                                client,
+                                CubeCount::Static(m.rows as u32, 1, 1),
+                                CubeDim::new_1d(64),
+                                weight(),
+                                arg(x, m.columns)?,
+                                arg(y, out_words)?,
+                                arg(f, 1)?,
+                                m.rows,
+                                m.columns,
+                                m.kind.gguf_id(),
+                                5,
+                            );
+                        }
+                        FusedProjection::SingleSubgroup => {
+                            crate::quant_matvec::fast::packed_single_fault::launch::<WgpuRuntime>(
+                                client,
+                                crate::quant_matvec::fast::fault_grid(m.rows, out_words, true),
+                                crate::quant_matvec::fast::cube(),
+                                weight(),
+                                arg(x, m.columns)?,
+                                arg(y, out_words)?,
+                                arg(f, 1)?,
+                                1,
+                                0,
+                                0,
+                                5,
+                                5,
+                                m.rows,
+                                m.columns,
+                                m.kind.gguf_id(),
+                                MatrixGeometry::new(m.kind.gguf_id(), m.rows, m.columns, 1)?
+                                    .row_bytes(),
+                                m.rows,
+                                true,
+                            );
+                        }
+                    }
                     let mut snapshots = Vec::new();
                     diagnostic.0 = "owning_readback";
                     for h in &handles {
@@ -1082,25 +1174,12 @@ pub fn run_fused_fault(client: &ComputeClient<WgpuRuntime>) -> Result<()> {
         (Ok(Ok(cases)), Ok(()), false) => cases,
         _ => return Err("fused fixture failed; no success receipt".into()),
     };
-    file.verify_file_unchanged()
-        .map_err(|_| "fused original artifact changed")?;
     let zero = arena
         .owned_zero_audit_receipt()
         .ok_or("fused zero audit absent")?;
-    let report = serde_json::json!({"scope":"fixed-public-original-packed-projection-only","fixture":"fused-matrix-fault-probe","cases":cases,"main_cap_bytes":MAIN_BUDGET,"public_full_page_upper_bytes":public_bound,"runtime_io_cap_bytes":IO_BUDGET,"main_erased_bytes":zero.bytes,"main_erased_buffers":zero.buffers,"owned_cleanup":true,"context_retired":false,"whole_graph_or_performance_accepted":false});
-    if let Some(path) = std::env::var_os("KUNO_PUBLIC_RECEIPT") {
-        use std::io::Write;
-        let mut out = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(path)?;
-        out.write_all(serde_json::to_string_pretty(&report)?.as_bytes())?;
-    }
-    println!(
-        "public_fused_matrix_fault cases=28 full_main_zero_bytes={} context_retired=false",
-        zero.bytes
-    );
-    Ok(())
+    Ok(
+        serde_json::json!({"scope":"fixed-public-original-packed-projection-only","fixture":match projection { FusedProjection::Cooperative=>"fused-matrix-fault-probe", FusedProjection::SingleSubgroup=>"single-subgroup-matrix-fault-probe" },"cases":cases,"main_cap_bytes":MAIN_BUDGET,"public_full_page_upper_bytes":public_bound,"runtime_io_cap_bytes":IO_BUDGET,"main_erased_bytes":zero.bytes,"main_erased_buffers":zero.buffers,"owned_cleanup":true,"context_retired":false,"whole_graph_or_performance_accepted":false}),
+    )
 }
 
 #[cfg(test)]

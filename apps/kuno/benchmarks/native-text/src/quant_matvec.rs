@@ -1,19 +1,23 @@
 //! Scalar packed-weight matvec written in Rust/CubeCL 0.10.0.
 //!
 //! Reference: `crates/kuno-text/src/quant.rs`, whose GGML packing provenance is
-//! ggml revision `4bf5f6000653b7881d00963cd6ddb665ccd62a8d` (MIT).
+//! ggml revision `4bf5f6000653b7881d00963cd6ddb665ccd62a8d` (MIT) for the
+//! initial formats and pinned llama.cpp b11232 for IQ3/IQ4 codebooks/geometry.
 //! This decodes weights to f32 and accumulates in column order. It does not
 //! implement GGML's additional quantization of the activation vector.
 //!
 //! Launch `packed_matvec::launch::<R>` with Array<u32> / Array<f32> /
 //! Array<f32>, then rows, columns, and the compile-time GGUF dtype ID.
 //! Validate the layout first. Rows are tightly byte-packed: do NOT pad each
-//! 22/34/210-byte block or each row. Pad only the entire upload to four bytes.
+//! 18/22/34/98/210-byte block or each row. Pad only the entire upload to four bytes.
 //! F16 conversion needs integer bit operations and f32 bitcast, not shader f16.
 //! No GPU has been run by this module's host tests. Device parity still needs
 //! independent `kuno-text` decoding, especially rounding/FMA and subnormals.
 
 use cubecl::prelude::*;
+
+#[path = "quant_iq_fixtures.rs"]
+pub(crate) mod iq_fixtures;
 
 pub const F32: u32 = 0;
 pub const F16: u32 = 1;
@@ -21,6 +25,9 @@ pub const Q5_0: u32 = 6;
 pub const Q8_0: u32 = 8;
 pub const Q4_K: u32 = 12;
 pub const Q6_K: u32 = 14;
+pub const IQ3_XXS: u32 = 18;
+pub const IQ4_NL: u32 = 20;
+pub const IQ4_XS: u32 = 23;
 pub const BF16: u32 = 30;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -38,8 +45,36 @@ pub const fn block_layout(dtype: u32) -> Option<(usize, usize)> {
         Q8_0 => Some((32, 34)),
         Q4_K => Some((256, 144)),
         Q6_K => Some((256, 210)),
+        IQ3_XXS => Some((256, 98)),
+        IQ4_NL => Some((32, 18)),
+        IQ4_XS => Some((256, 136)),
         _ => None,
     }
+}
+
+/// Original tightly packed shader row stride. The host's block_layout and
+/// validated columns must agree; no per-row padding or conversion is allowed.
+#[cube]
+pub(crate) fn packed_row_bytes(columns: usize, #[comptime] dtype: u32) -> usize {
+    let mut bytes = columns * 4;
+    if comptime!(dtype == F16 || dtype == BF16) {
+        bytes = columns * 2;
+    } else if comptime!(dtype == Q5_0) {
+        bytes = (columns / 32) * 22;
+    } else if comptime!(dtype == Q8_0) {
+        bytes = (columns / 32) * 34;
+    } else if comptime!(dtype == Q4_K) {
+        bytes = (columns / 256) * 144;
+    } else if comptime!(dtype == Q6_K) {
+        bytes = (columns / 256) * 210;
+    } else if comptime!(dtype == IQ3_XXS) {
+        bytes = (columns / 256) * 98;
+    } else if comptime!(dtype == IQ4_NL) {
+        bytes = (columns / 32) * 18;
+    } else if comptime!(dtype == IQ4_XS) {
+        bytes = (columns / 256) * 136;
+    }
+    bytes
 }
 
 /// Host validation, before any upload/launch. This prototype uses 32-bit shader
@@ -147,11 +182,31 @@ fn signed_byte(value: u32) -> i32 {
     result
 }
 
+/// Public codebooks are compiled as shader-global constant arrays. There is no
+/// new storage binding, per-request lookup upload or expanded weight payload.
+#[cube]
+fn iq3_grid_word(index: usize) -> u32 {
+    let grid = Array::<u32>::from_data(comptime!(kuno_text::quant::IQ3_XXS_GRID.to_vec()));
+    grid[index]
+}
+
+#[cube]
+fn iq4_value(index: usize) -> f32 {
+    let values = Array::<i32>::from_data(comptime!(
+        kuno_text::quant::IQ4_NL_VALUES
+            .iter()
+            .copied()
+            .map(i32::from)
+            .collect::<Vec<_>>()
+    ));
+    values[index] as f32
+}
+
 /// F32 callers must use a four-byte-aligned row_offset. Validated tightly
 /// packed F32 rows are columns*4 bytes; whole-row tile/expert views preserve
 /// alignment. Quantized rows keep their original byte addressing below.
 #[cube]
-fn packed_value(
+pub(crate) fn packed_value(
     words: &Array<u32>,
     row_offset: usize,
     column: usize,
@@ -218,6 +273,53 @@ fn packed_value(
             base + 192 + half * 8 + quarter * 2 + lane / 16,
         ));
         value = binary16(u16_at(words, base + 208)) * subscale as f32 * quant as f32;
+    } else if comptime!(dtype == IQ3_XXS) {
+        let base = row_offset + (column / 256) * 98;
+        let within = column % 256;
+        let group = within / 32;
+        let octet = (within % 32) / 8;
+        let lane = within % 8;
+        let word = u32_at(words, base + 66 + group * 4);
+        let scale = binary16(u16_at(words, base)) * (0.5_f32 + (word >> 28) as f32) * 0.5;
+        let sign_code = (word >> ((octet * 7) as u32)) & 127;
+        // Reconstruct the eighth sign from parity, matching GGML's complete
+        // 128-entry ksigns_iq2xs table without another shader constant array.
+        let mut parity = sign_code ^ (sign_code >> 4);
+        parity ^= parity >> 2;
+        parity ^= parity >> 1;
+        let signs = sign_code | ((parity & 1) << 7);
+        let grid_index = byte_at(words, base + 2 + group * 8 + octet * 2 + lane / 4);
+        let grid = iq3_grid_word(grid_index as usize);
+        let magnitude = (grid >> (((lane % 4) * 8) as u32)) & 255;
+        let mut sign = 1.0_f32;
+        if ((signs >> (lane as u32)) & 1) != 0 {
+            sign = -1.0;
+        }
+        value = scale * magnitude as f32 * sign;
+    } else if comptime!(dtype == IQ4_NL) {
+        let base = row_offset + (column / 32) * 18;
+        let lane = column % 32;
+        let codes = byte_at(words, base + 2 + lane % 16);
+        let mut code = codes & 15;
+        if lane >= 16 {
+            code = codes >> 4;
+        }
+        value = binary16(u16_at(words, base)) * iq4_value(code as usize);
+    } else if comptime!(dtype == IQ4_XS) {
+        let base = row_offset + (column / 256) * 136;
+        let within = column % 256;
+        let group = within / 32;
+        let lane = within % 32;
+        let low_scale = (byte_at(words, base + 4 + group / 2) >> ((group % 2 * 4) as u32)) & 15;
+        let high_scale = (u16_at(words, base + 2) >> ((group * 2) as u32)) & 3;
+        let subscale = (low_scale | (high_scale << 4)) as i32 - 32;
+        let scale = binary16(u16_at(words, base)) * subscale as f32;
+        let codes = byte_at(words, base + 8 + group * 16 + lane % 16);
+        let mut code = codes & 15;
+        if lane >= 16 {
+            code = codes >> 4;
+        }
+        value = scale * iq4_value(code as usize);
     }
     value
 }
@@ -236,18 +338,7 @@ pub fn packed_matvec(
 ) {
     let row = ABSOLUTE_POS;
     if row < rows {
-        let mut row_bytes = columns * 4;
-        if comptime!(dtype == F16 || dtype == BF16) {
-            row_bytes = columns * 2;
-        } else if comptime!(dtype == Q5_0) {
-            row_bytes = (columns / 32) * 22;
-        } else if comptime!(dtype == Q8_0) {
-            row_bytes = (columns / 32) * 34;
-        } else if comptime!(dtype == Q4_K) {
-            row_bytes = (columns / 256) * 144;
-        } else if comptime!(dtype == Q6_K) {
-            row_bytes = (columns / 256) * 210;
-        }
+        let row_bytes = packed_row_bytes(columns, dtype);
         let mut sum = 0.0_f32;
         for column in 0..columns {
             let weight = packed_value(packed, row * row_bytes, column, dtype);
@@ -271,6 +362,9 @@ mod tests {
             (Q8_0, 32, 34),
             (Q4_K, 256, 144),
             (Q6_K, 256, 210),
+            (IQ3_XXS, 256, 98),
+            (IQ4_NL, 32, 18),
+            (IQ4_XS, 256, 136),
         ] {
             let layout = validate_layout(dtype, 3, columns, expected_row * 3, columns, 3).unwrap();
             assert_eq!(layout.row_bytes, expected_row);
@@ -295,7 +389,7 @@ mod tests {
 
     #[test]
     fn rejects_partial_blocks_mismatch_and_overflow() {
-        for dtype in [Q5_0, Q8_0, Q4_K, Q6_K] {
+        for dtype in [Q5_0, Q8_0, Q4_K, Q6_K, IQ3_XXS, IQ4_NL, IQ4_XS] {
             let (n, b) = block_layout(dtype).unwrap();
             assert!(validate_layout(dtype, 1, n - 1, b, n, 1).is_err());
             assert!(validate_layout(dtype, 1, n, b - 1, n, 1).is_err());
@@ -311,7 +405,7 @@ mod tests {
     }
 
     #[test]
-    fn scalar_iq_support_does_not_grant_unimplemented_gpu_layouts() {
+    fn original_iq_packing_is_admitted_without_row_padding_or_weight_expansion() {
         for kind in [
             kuno_text::TensorType::Iq3Xxs,
             kuno_text::TensorType::Iq4Nl,
@@ -319,13 +413,41 @@ mod tests {
         ] {
             let columns = kind.block_elements() as usize;
             let bytes = kind.block_bytes() as usize;
-            assert_eq!(block_layout(kind.gguf_id()), None);
+            assert_eq!(block_layout(kind.gguf_id()), Some((columns, bytes)));
             assert_eq!(
                 validate_layout(kind.gguf_id(), 1, columns, bytes, columns, 1),
-                Err("unsupported GGUF dtype")
+                Ok(PackedLayout {
+                    row_bytes: bytes,
+                    total_bytes: bytes,
+                    padded_words: bytes.div_ceil(4),
+                })
             );
-            assert!(matmul::MatrixGeometry::new(kind.gguf_id(), 1, columns, 1).is_err());
+            for tile in [1, 4, 8] {
+                let geometry =
+                    matmul::MatrixGeometry::new(kind.gguf_id(), 3, columns, tile).unwrap();
+                assert_eq!(geometry.row_bytes(), bytes);
+                assert_eq!(geometry.total_bytes(), bytes * 3);
+            }
         }
+    }
+
+    #[test]
+    fn shader_row_strides_match_original_gguf_geometry_including_unaligned_rows() {
+        for dtype in [
+            F32, F16, BF16, Q4_K, Q5_0, Q6_K, Q8_0, IQ3_XXS, IQ4_NL, IQ4_XS,
+        ] {
+            let kind = kuno_text::TensorType::from_gguf_id(dtype).unwrap();
+            for blocks in [1, 2, 5, 10] {
+                let columns = kind.block_elements() as usize * blocks;
+                assert_eq!(
+                    packed_row_bytes(columns, dtype),
+                    kind.row_bytes(columns as u64).unwrap() as usize
+                );
+            }
+        }
+        assert_eq!(packed_row_bytes(160, IQ4_NL), 90);
+        assert_eq!(packed_row_bytes(2560, IQ3_XXS), 980);
+        assert_eq!(packed_row_bytes(2560, IQ4_XS), 1360);
     }
 
     #[test]

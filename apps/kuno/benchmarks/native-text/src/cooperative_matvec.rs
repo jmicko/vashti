@@ -12,7 +12,7 @@
 //! Respect the adapter's maximum workgroups per dimension. A larger matrix
 //! (e.g. the vocabulary head) needs validated row views, not an oversized grid.
 
-use super::{BF16, F16, Q4_K, Q5_0, Q6_K, Q8_0, packed_value};
+use super::{packed_row_bytes, packed_value};
 use cubecl::prelude::*;
 
 pub const LANES: usize = 64;
@@ -37,18 +37,7 @@ pub fn cooperative_matvec(
     let lane = UNIT_POS_X as usize;
     let mut partial = 0.0_f32;
     if row < rows {
-        let mut row_bytes = columns * 4;
-        if comptime!(dtype == F16 || dtype == BF16) {
-            row_bytes = columns * 2;
-        } else if comptime!(dtype == Q5_0) {
-            row_bytes = (columns / 32) * 22;
-        } else if comptime!(dtype == Q8_0) {
-            row_bytes = (columns / 32) * 34;
-        } else if comptime!(dtype == Q4_K) {
-            row_bytes = (columns / 256) * 144;
-        } else if comptime!(dtype == Q6_K) {
-            row_bytes = (columns / 256) * 210;
-        }
+        let row_bytes = packed_row_bytes(columns, dtype);
         let row_offset = row * row_bytes;
         let full_tiles = columns / LANES;
         for tile in 0..full_tiles {
@@ -95,18 +84,7 @@ pub fn cooperative_matvec_with_fault(
     let lane = UNIT_POS_X as usize;
     let mut partial = 0.0_f32;
     if row < rows {
-        let mut row_bytes = columns * 4;
-        if comptime!(dtype == F16 || dtype == BF16) {
-            row_bytes = columns * 2;
-        } else if comptime!(dtype == Q5_0) {
-            row_bytes = (columns / 32) * 22;
-        } else if comptime!(dtype == Q8_0) {
-            row_bytes = (columns / 32) * 34;
-        } else if comptime!(dtype == Q4_K) {
-            row_bytes = (columns / 256) * 144;
-        } else if comptime!(dtype == Q6_K) {
-            row_bytes = (columns / 256) * 210;
-        }
+        let row_bytes = packed_row_bytes(columns, dtype);
         let row_offset = row * row_bytes;
         let full_tiles = columns / LANES;
         for tile in 0..full_tiles {
@@ -163,6 +141,7 @@ pub fn reference_tree_dot(weights: &[f32], input: &[f32]) -> Result<f32, &'stati
 
 #[cfg(test)]
 mod tests {
+    use super::super::{BF16, F16, IQ3_XXS, IQ4_NL, IQ4_XS, Q4_K, Q5_0, Q6_K, Q8_0};
     use super::*;
 
     #[test]
@@ -175,7 +154,18 @@ mod tests {
         let uint = StorageType::Scalar(ElemType::UInt(UIntKind::U32));
         let float = StorageType::Scalar(ElemType::Float(FloatKind::F32));
         let atomic = StorageType::Atomic(ElemType::UInt(UIntKind::U32));
-        for dtype in [super::super::F32, F16, BF16, Q4_K, Q5_0, Q6_K, Q8_0] {
+        for dtype in [
+            super::super::F32,
+            F16,
+            BF16,
+            Q4_K,
+            Q5_0,
+            Q6_K,
+            Q8_0,
+            IQ3_XXS,
+            IQ4_NL,
+            IQ4_XS,
+        ] {
             for mode in [ExecutionMode::Checked, ExecutionMode::Unchecked] {
                 let mut b = KernelBuilder::default();
                 b.scope.register_type::<u32>(uint);

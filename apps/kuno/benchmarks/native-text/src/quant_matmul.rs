@@ -3,7 +3,7 @@
 //! This is a single multi-RHS operation: each lane decodes a weight ONCE per
 //! column, then uses it across one/four/eight independent token accumulators.
 //! Every token retains the existing 64-lane column order and reduction tree.
-//! Original seven-format decoding is inherited from the parent; no full-weight
+//! Original ten-format decoding is inherited from the parent; no full-weight
 //! conversion, activation quantization, foreign engine or extra dependency.
 //!
 //! Launch with scalar arrays, CubeDim=(64,1,1), and geometry.grid(). Validate
@@ -14,7 +14,7 @@
 //! activation/scalar/staging spans on all exits. This primitive is not an arena,
 //! transaction, privacy certificate or device-performance acceptance.
 
-use super::{BF16, F16, F32, Q4_K, Q5_0, Q6_K, Q8_0, packed_value};
+use super::{F32, packed_row_bytes, packed_value};
 use cubecl::prelude::*;
 use zeroize::Zeroize;
 
@@ -263,20 +263,7 @@ pub fn packed_matmul(
         partials[t] = 0.0_f32;
     }
     if row < rows && first_token < count {
-        let mut row_bytes = 0_usize;
-        if comptime!(dtype == F32) {
-            row_bytes = columns * 4;
-        } else if comptime!(dtype == F16 || dtype == BF16) {
-            row_bytes = columns * 2;
-        } else if comptime!(dtype == Q5_0) {
-            row_bytes = (columns / 32) * 22;
-        } else if comptime!(dtype == Q8_0) {
-            row_bytes = (columns / 32) * 34;
-        } else if comptime!(dtype == Q4_K) {
-            row_bytes = (columns / 256) * 144;
-        } else if comptime!(dtype == Q6_K) {
-            row_bytes = (columns / 256) * 210;
-        }
+        let row_bytes = packed_row_bytes(columns, dtype);
         let row_offset = packed_first + row * row_bytes;
         for tile in 0..columns / LANES {
             let column = tile * LANES + lane;
@@ -331,10 +318,14 @@ pub fn packed_matmul(
 
 #[cfg(test)]
 mod tests {
+    use super::super::{BF16, F16, F32, IQ3_XXS, IQ4_NL, IQ4_XS, Q4_K, Q5_0, Q6_K, Q8_0};
     use super::*;
     use kuno_text::TensorType;
 
     fn fixture(dtype: u32, rows: usize, columns: usize) -> Vec<u8> {
+        if matches!(dtype, IQ3_XXS | IQ4_NL | IQ4_XS) {
+            return super::super::iq_fixtures::packed(dtype, rows, columns, 0);
+        }
         let (elements, bytes) = super::super::block_layout(dtype).unwrap();
         let mut result = vec![0_u8; rows * columns / elements * bytes];
         for (index, block) in result.chunks_exact_mut(bytes).enumerate() {
@@ -432,7 +423,9 @@ mod tests {
 
     #[test]
     fn all_formats_batches_and_tiles_match_independent_numeric_expectations() {
-        for dtype in [F32, F16, BF16, Q5_0, Q8_0, Q4_K, Q6_K] {
+        for dtype in [
+            F32, F16, BF16, Q5_0, Q8_0, Q4_K, Q6_K, IQ3_XXS, IQ4_NL, IQ4_XS,
+        ] {
             let (block, _) = super::super::block_layout(dtype).unwrap();
             let columns = if block == 1 { 137 } else { block * 3 };
             let rows = 3;
@@ -633,7 +626,9 @@ mod tests {
     #[test]
     fn offline_wgsl_all_formats_both_modes_reuse_weights_and_keep_private_scalars_runtime() {
         use cubecl::server::ExecutionMode;
-        for dtype in [F32, F16, BF16, Q5_0, Q8_0, Q4_K, Q6_K] {
+        for dtype in [
+            F32, F16, BF16, Q5_0, Q8_0, Q4_K, Q6_K, IQ3_XXS, IQ4_NL, IQ4_XS,
+        ] {
             for mode in [ExecutionMode::Checked, ExecutionMode::Unchecked] {
                 let one = shader(MatrixGeometry::new(dtype, 3, 256, 1).unwrap(), mode);
                 let a = shader(MatrixGeometry::new(dtype, 3, 256, 4).unwrap(), mode);
@@ -726,7 +721,9 @@ mod tests {
 
     #[test]
     fn explicit_single_member_policy_keeps_full_bindings_and_rejects_other_counts() {
-        for dtype in [F32, F16, BF16, Q5_0, Q8_0, Q4_K, Q6_K] {
+        for dtype in [
+            F32, F16, BF16, Q5_0, Q8_0, Q4_K, Q6_K, IQ3_XXS, IQ4_NL, IQ4_XS,
+        ] {
             let original = MatrixGeometry::new(dtype, 3, 256, 1).unwrap();
             let single = original.with_single_member().unwrap();
             assert_eq!(original.member_capacity(), MAX_BATCH);
@@ -756,7 +753,9 @@ mod tests {
 
     #[test]
     fn single_member_after_max8_prefill_preserves_every_inactive_word_and_original_math() {
-        for dtype in [F32, F16, BF16, Q5_0, Q8_0, Q4_K, Q6_K] {
+        for dtype in [
+            F32, F16, BF16, Q5_0, Q8_0, Q4_K, Q6_K, IQ3_XXS, IQ4_NL, IQ4_XS,
+        ] {
             let columns = 256;
             let rows = 3;
             let packed = fixture(dtype, rows, columns);

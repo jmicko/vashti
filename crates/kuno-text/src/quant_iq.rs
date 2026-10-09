@@ -6,7 +6,7 @@ use super::half_at;
 
 // Explicit little-endian expansion preserves the serialized GGML grid order
 // independently of the host's endianness. These are magnitudes, not linear codes.
-const IQ3_GRID: [u32; 256] = [
+pub const IQ3_XXS_GRID: [u32; 256] = [
     0x04040404, 0x04040414, 0x04040424, 0x04040c0c, 0x04040c1c, 0x04040c3e, 0x04041404, 0x04041414,
     0x04041c0c, 0x04042414, 0x04043e1c, 0x04043e2c, 0x040c040c, 0x040c041c, 0x040c0c04, 0x040c0c14,
     0x040c140c, 0x040c142c, 0x040c1c04, 0x040c1c14, 0x040c240c, 0x040c2c24, 0x040c3e04, 0x04140404,
@@ -41,7 +41,7 @@ const IQ3_GRID: [u32; 256] = [
     0x3e1c1c1c, 0x3e1c3404, 0x3e24140c, 0x3e24240c, 0x3e2c0404, 0x3e2c0414, 0x3e2c1424, 0x3e341c04,
 ];
 
-const IQ4_VALUES: [i8; 16] = [
+pub const IQ4_NL_VALUES: [i8; 16] = [
     -127, -104, -83, -65, -49, -35, -22, -10, 1, 13, 25, 38, 53, 69, 89, 113,
 ];
 
@@ -61,7 +61,7 @@ pub(super) fn decode_iq3_xxs(block: &[u8], out: &mut [f32]) {
             let signs = sign_code | ((sign_code.count_ones() & 1) << 7);
             for quartet in 0..2 {
                 let grid =
-                    IQ3_GRID[usize::from(grids[group * 8 + octet * 2 + quartet])].to_le_bytes();
+                    IQ3_XXS_GRID[usize::from(grids[group * 8 + octet * 2 + quartet])].to_le_bytes();
                 for (lane, value) in grid.into_iter().enumerate() {
                     let octet_lane = quartet * 4 + lane;
                     let sign = if signs & (1 << octet_lane) == 0 {
@@ -79,8 +79,8 @@ pub(super) fn decode_iq3_xxs(block: &[u8], out: &mut [f32]) {
 pub(super) fn decode_iq4_nl(block: &[u8], out: &mut [f32]) {
     let scale = half_at(block, 0);
     for (lane, &codes) in block[2..].iter().enumerate() {
-        out[lane] = scale * f32::from(IQ4_VALUES[usize::from(codes & 15)]);
-        out[lane + 16] = scale * f32::from(IQ4_VALUES[usize::from(codes >> 4)]);
+        out[lane] = scale * f32::from(IQ4_NL_VALUES[usize::from(codes & 15)]);
+        out[lane + 16] = scale * f32::from(IQ4_NL_VALUES[usize::from(codes >> 4)]);
     }
 }
 
@@ -94,8 +94,9 @@ pub(super) fn decode_iq4_xs(block: &[u8], out: &mut [f32]) {
         let factor = scale * f32::from(subscale);
         for lane in 0..16 {
             let codes = block[8 + group * 16 + lane];
-            out[group * 32 + lane] = factor * f32::from(IQ4_VALUES[usize::from(codes & 15)]);
-            out[group * 32 + lane + 16] = factor * f32::from(IQ4_VALUES[usize::from(codes >> 4)]);
+            out[group * 32 + lane] = factor * f32::from(IQ4_NL_VALUES[usize::from(codes & 15)]);
+            out[group * 32 + lane + 16] =
+                factor * f32::from(IQ4_NL_VALUES[usize::from(codes >> 4)]);
         }
     }
 }

@@ -11,6 +11,12 @@ use crate::{Error, Result};
 #[path = "quant_iq.rs"]
 mod iq;
 
+/// Immutable GGML IQ3_XXS magnitudes, packed as four little-endian bytes.
+/// Native device compilers may embed this public table as a shader constant.
+pub use iq::IQ3_XXS_GRID;
+/// Immutable signed nonlinear values shared by GGML IQ4_NL and IQ4_XS.
+pub use iq::IQ4_NL_VALUES;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TensorType {
     F32,
