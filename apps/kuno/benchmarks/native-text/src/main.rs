@@ -23,6 +23,8 @@ mod main_admission;
 mod matmul_probe;
 mod next_shared;
 mod next_shared_moe;
+mod oracle_public;
+mod oracle_trace;
 mod ordered_public;
 mod ple_batch_gpu;
 mod ple_chunk;
@@ -893,6 +895,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let long_fixture = count1_environment_opt_in(&mode, "KUNO_LAB_LONG_FIXTURE")?;
     let steady_public = count1_environment_opt_in(&mode, "KUNO_LAB_STEADY_PUBLIC")?;
+    let oracle_public = count1_environment_opt_in(&mode, "KUNO_LAB_ORACLE_PUBLIC")?;
     let cpu_buffered_weights = cfg!(feature = "cpu-buffered-weights");
     if cpu_buffered_weights && (!mapped_weights || !count1_pooled) {
         return Err("CPU buffered weights require mapped pooled hybrid mode".into());
@@ -1035,6 +1038,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             || std::env::var("KUNO_LAB_REQUEST_IO_REUSE").as_deref() != Ok("1"))
     {
         return Err("steady diagnostic requires protected fixed public intel144 cap10 mode".into());
+    }
+
+    if oracle_public
+        && (steady_public
+            || adaptive_experts
+            || adaptive_direct_upload
+            || secondary_experts
+            || !long_fixture
+            || vendor != 0x8086
+            || count1_banks != Count1Banks::Intel144
+            || count1_hybrid_cap != Some(10)
+            || gpu_expert_limit != 10
+            || !mapped_weights
+            || !count1_pooled
+            || !count1_overlap
+            || !next_shared
+            || !inline_dispatch
+            || std::env::var("KUNO_LAB_DEFER_ROUTER_IO").as_deref() != Ok("1")
+            || std::env::var("KUNO_LAB_REQUEST_IO_REUSE").as_deref() != Ok("1"))
+    {
+        return Err(
+            "oracle diagnostic requires exclusive protected fixed public intel144 cap10 mode"
+                .into(),
+        );
     }
 
     let integer_experts = count1_environment_opt_in(&mode, "KUNO_LAB_INTEGER_EXPERTS")?;
@@ -3495,6 +3522,62 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     receipt["steady_probe"] = steady_public::run(
                         &mut steady,
                         &mut executor,
+                        &ids,
+                        &public_prefix,
+                        &cancel,
+                    )?;
+                }
+                if oracle_public {
+                    // All original acceptance/close fields are frozen first.
+                    println!("public_oracle_probe_begin=true");
+                    resident.take();
+                    let public_prefix = zeroize::Zeroizing::new(
+                        receipt["public_generated_ids"]
+                            .as_array()
+                            .ok_or("oracle public prefix absent")?
+                            .iter()
+                            .take(oracle_trace::PREFIX)
+                            .map(|x| {
+                                x.as_u64()
+                                    .and_then(|n| u32::try_from(n).ok())
+                                    .ok_or("oracle public prefix invalid")
+                            })
+                            .collect::<Result<Vec<_>, _>>()?,
+                    );
+                    receipt["oracle_probe"] = oracle_public::run(
+                        |context| {
+                            let mut e = executor::GpuExecutor::new(
+                                &file,
+                                client.clone(),
+                                cache_budget,
+                                expert_slots,
+                                device_budget,
+                            )?;
+                            e.enable_transient_resident(
+                                transient_context
+                                    .as_ref()
+                                    .ok_or("oracle transient owner missing")?
+                                    .clone(),
+                            )?;
+                            e.gpu_router = gpu_router;
+                            e.fused_experts = fused_experts;
+                            e.integer_experts = integer_experts;
+                            e.gpu_expert_limit = gpu_expert_limit;
+                            e.fast_dense = fast_gpu;
+                            e.fast_dense_fault = fast_gpu_fault;
+                            e.shared_kernels = next_shared;
+                            e.shared_gdn = shared_gdn;
+                            e.token_io_checkpoint = token_checkpoint || defer_router_io;
+                            let r = resident_model::ResidentModel::new_for_lab_fixture(
+                                model.bound_graph(),
+                                client.clone(),
+                                context,
+                                &mut e,
+                                true,
+                                native_config.clone(),
+                            )?;
+                            Ok((r, e))
+                        },
                         &ids,
                         &public_prefix,
                         &cancel,

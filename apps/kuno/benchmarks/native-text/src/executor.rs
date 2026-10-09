@@ -1207,7 +1207,7 @@ impl<'a> GpuExecutor<'a> {
                     }
                     Ok(add)
                 })?;
-                crate::resident_model::batch_io::read_fault(arena, fault, &admission)?;
+                crate::resident_model::batch_io::read_fault(arena, &admission, fault, cancel)?;
                 if cancel.load(Ordering::Acquire) {
                     return Err(Error::InvalidFormat("GPU execution cancelled"));
                 }

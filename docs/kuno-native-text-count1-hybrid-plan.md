@@ -2166,3 +2166,30 @@ file pages before changing memory budgets or recommending more RAM. Read
 Host gates pass519 native tests plus two shader suites,69 targeted Python
 controls and strict release all-target Clippy. Laboratory only; installed
 services, public API, Vashti and private-content persistence remain unchanged.
+
+### Exact short resident replay diagnostic (2026-10-08)
+
+The user requested a correct short run with all future selected experts already
+resident. `--oracle-public` explicitly enables `KUNO_LAB_ORACLE_PUBLIC=1`; it
+requires the fixed intel144/cap10 path and excludes adaptive, direct-write,
+secondary and steady modes. Preserve the five complete original fixture
+acceptance/close gates before starting this separate diagnostic.
+
+Train seven ordinary decode steps on the compiled75-token prompt and verify
+the first eight original greedy IDs. Retain only a transient48-layer union of
+the accepted router selections. Close the training context and its trace/I/O
+owners. Prepare a fresh203-token context with the same prompt, preload each
+complete original expert union outside the timer, and replay seven correct
+decode steps. Never substitute experts or change routing. Require all3360
+expert calls on GPU, zero CPU calls, zero expert uploads/weight bytes, exact
+eight-ID agreement, complete trace coverage/membership and both extra full
+owning closes. Ordinary activation transfers remain in the timed path.
+
+The receipt is a nested, compiled-public-only diagnostic; production requests
+cannot enable it. Expert IDs/history are erased, not persisted. Preload source
+windows are bounded to ten experts and existing owner/budget/fence checks;
+whole-union protection prevents eviction during staging. Runner validation
+separates extra markers/audits from the unchanged original gates. This measures
+the current correct engine with ideal expert residency for seven steps. It
+excludes loading, prefill, training and preload and cannot establish a general
+or physical maximum throughput. Device acceptance is pending at this commit.
