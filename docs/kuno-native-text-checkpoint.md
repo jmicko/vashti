@@ -1,32 +1,58 @@
 # Native text checkpoint, 2026-10-08
 
-**Latest checkpoint: original-packed Unsloth Q3 foundation accepted; MTP remains
-laboratory-only.** Integrated source is `4b29087`. All three original main
-shards and Q8 sidecar pass complete publisher hashes; the main is registered in
-Ollama with same-filesystem hardlinks, without a merged or duplicated payload.
-Strict split loading, mixed IQ CPU/GPU operators, Q3 expert/PLE ownership and
-real CPU target carry are implemented in Rust.
+**Latest checkpoint: Q3 correct-expert replay accepted; work paused at the
+user's request.** Integrated engine source is `9218638`, on
+`codex/kuno-native-text`, in the dedicated Kuno worktree. Installed services,
+public API/catalog, Vashti and releases are unchanged. Preserve the canonical
+Vashti checkout and its independent coordination work.
 
-Both physical cards pass independent C IQ operator values, projection/fault
-checks and full owning audits. The fixed32-position B70 diagnostic passes all
-248320 logits and exact greedy IDs per position, original owning/fresh/recovery
-checks, and **31 decode steps in4250ms (7.294tokens/s)** with compilation idle.
-Ordinary uploads are zero. The frozen binary is
-`3cec59c0030ee30b11496b8a483474f458af7de5db4dfb483cb06983a3a832d5`.
-The cap0 GPU-miss comparison fails its full-logit gate at position23; it has no
-accepted throughput. Empty-slot filling is under development: one-token
-prefill currently leaves134/144 expert slots empty per layer.
+The actual MTP GPU projection probe now passes on both cards (`8cba745`);
+nonprojection graph operations remain CPU and private whole-stack owning
+acceptance/speculative speed remain pending. Independent full72+72 segmented
+mixed-IQ MoE operators also pass on both cards (`f116d09`/`3571bcb`). These
+operator results do not establish whole-model or MTP speed.
 
-CPU packed-IQ SIMD achieves6.82–12.15x arithmetic microbenchmark gains, not
-whole-model speedups. Actual target h0 conditions the Q8 CPU MTP graph at
-position1, with full target-logit/draft-hidden/draft-logit fresh replay checks.
-No independent MTP whole-head oracle or speculative speedup is established.
-MTP and the legacy nonresident projection probe remain fixed-public-only;
-complete private erasure is not accepted. See the
-[exact plan](kuno-native-text-mtp-plan.md) and
+Q3 empty-slot filling is implemented (`b739c32`), with opt-in skipping of wholly
+unused bank segments (`397999c`/`c6d2088`). Same-input expert and router diagnostics
+locate the preserved full32 failure: tiny arithmetic differences create a tied
+router score at position23/layer17, change one selected expert, then amplify.
+The CPU top-k run on GPU scores agrees with all GPU selected ranks at all48
+layers. No decoder/eviction defect was demonstrated; tolerance is unchanged.
+The explicit23-position prefix ends **before** that known discontinuity and
+verifies complete248320-wide original CPU logits and exact greedy IDs.
+
+Fresh training → full close → fresh exact original preload → replay (`9218638`)
+passes22 decode continuations with10,560 GPU expert calls, zero CPU calls,
+zero expert/weight uploads and zero observed physical read bytes. The3102-expert
+union fits38–135 of144 slots per layer. Same-artifact one-pair timings are
+2311859249ns (**9.516tokens/s**) without unused-segment skipping and2174240700ns
+(**10.118tokens/s**) with it. Preload uploads6459852800 original bytes outside
+the timer. This is a short conditional residency result, not normal demand-cache
+throughput or an absolute hardware limit. Prefix/full32 status and all timing
+exclusions are explicit in the receipt; full32 failure is retained. Initial
+fill runs are slower and their physical I/O differs, so their timing difference
+is not an isolated skip speedup. Keep both candidates opt-in.
+
+Host checks pass591 native tests (one ignored opt-in), two one-test shader
+suites, release all-target Clippy with default and all five features, formatting
+and whitespace checks. All four v90 physical prefix runs pass the unchanged
+five original818413568-byte/1378-buffer owning closes; the two ideal probes add
+independent training/replay closes, full-vector/membership/counter checks.
+
+Next candidate is a **leaf-only, uncompiled and untested** four-row subgroup
+MoE kernel in isolated commit `6d12ddd`, branch `codex/kuno-q3-subgroup-moe`,
+base `9218638`. It is not cherry-picked here. Next resume: connect its opt-in
+and device support, extend independent segmented-IQ probe/fault/owning checks,
+then run host checks and protected both-card operator/full-vector performance
+acceptance. Do not infer acceptance from source or formatting.
+
+At the pause, no lab jobs remain; public admission is resumed with no active
+or queued work/latch. Kuno11434/Ollama11435/Vashti7771 returnHTTP200. Same-boot
+B70 memory is50688000bytes, NVIDIA has no compute process, and classified Xe/
+NVIDIA faults remain zero. No GPU reset/unbind/reboot, driver/clock change or
+installation occurred. GPUs and normal application access are available.
+See the [exact plan](kuno-native-text-mtp-plan.md) and
 [source/artifact/numeric receipt](../apps/kuno/benchmarks/text/receipts/unsloth-q3-foundation-20261008.json).
-Production routing/API, installed services, Vashti and releases are unchanged.
-Normal admission and physical GPU recovery were verified after each trial.
 
 ### Previous ideal-residency replay checkpoint (historical)
 

@@ -117,6 +117,16 @@ numerical parity nor useful speculative performance.
   target logits and both draft hidden/logit vectors have zero fresh-replay bit
   mismatches. Target and MTP
   binding domains are checked separately.
+- Protected default-build `mtp-gpu-probe` at `8cba745` passes on both physical
+  cards. It consumes fixed token0/zero preceding hidden at position0 and the
+  real target-greedy token/target h0 at position1. Every248320-wide draft logit
+  vector and10240-wide hidden vector matches the CPU graph within the unchanged
+  explicit tolerance, with exact greedy IDs and zero fresh GPU replay bit
+  mismatches. Each two-position sequence executes132 original-packed GPU
+  projection kernels. Main allocator allocations/in-use/padding/reserved bytes
+  return to their zero baseline after checked synchronization and cleanup.
+  Other MTP graph operations execute on CPU. Separate staging/uniform owning
+  erasure, an independent head oracle and performance remain unaccepted.
 
 The compiler-idle32-position Q3 run at `4b29087` passes every full-logit and
 greedy check, all original owning closes and fresh/recovery checks. Its31 timed
@@ -124,7 +134,77 @@ decode continuations take4250ms: **7.294tokens/s**. Ordinary weight uploads are
 zero; observed physical reads are1,323,008bytes. GPU experts cover1940 of14880
 decode selections;12940 still execute on CPU. One-token prefill seeds only ten
 of144 slots per layer and the current static CPU-miss policy leaves the rest
-empty. Explicit empty-slot filling is the next candidate, not yet accepted.
+empty. Explicit empty-slot filling at `b739c32` is implemented but not accepted:
+its unchanged32-position test reproduces the same finite position23 mismatch
+as the GPU-miss control below, with exactly the same first failing value and
+1.176437 maximum logit error. The no-eviction proof excludes replacement as
+the cause. The candidate remains opt-in. The completed same-input expert/router diagnosis
+below distinguishes projection arithmetic from discrete routing amplification.
+
+### Routing diagnosis and bounded performance comparison
+
+The fixed public same-input shadow at `37f4edb` compares all48 layers at
+position23:1,228,800 expert output values, maximum absolute difference
+1.7881393e-7. The router comparison at `67bdcfa` locates the first selected-set
+change at layer17. CPU's tenth/eleventh score gap is1.001358e-5; the GPU's
+scores tie exactly, with maximum score difference2.384186e-5. Both use their
+original tie rule. Applying CPU top-k to the GPU's actual scores reproduces
+all ten selected experts and ranks at all48 layers. The next layer's score
+error grows to0.023154; the final strict logit gate still fails. This is a
+routing discontinuity following small arithmetic differences, not evidence of
+an expert decoder or cache eviction defect. No wrong-expert substitution,
+acceptance threshold change or full32 timing acceptance was introduced.
+
+For a bounded cache comparison, the explicit23-position mode checks the first
+23 complete logit vectors of the original32-position CPU file. The complete
+32-position file and unused suffix must still parse correctly; no shortened
+reference is generated. There are22 timed continuations, ending before the
+known position23 discontinuity. Both strict4/32 modes and the full32 failure
+are retained. Prefix receipts explicitly identify this cutoff and cannot claim
+full32 reference acceptance. Matched v88 static/empty-fill runs pass complete
+original owning/recovery checks:22 decode steps take2995ms/4188ms, respectively
+(7.346/5.253tokens/s). Demand-fill uploads2813 experts, filling480→3293 of6912
+slots; its CPU rank count falls tozero, but filling is slower on this sample.
+There is no demand-cache speedup claim.
+
+A fresh correct-expert ideal replay at `9218638` records the actual22×48×10
+selections into an erased transient public-only trace, closes the training owner,
+then preloads their union into a fresh original owner. The per-layer union must
+fit144 slots, and every actual replay selection must belong to it. This does
+not force expert choices or reset a poisoned ledger. The3102-expert union fits
+38–135/layer;6459852800 original preload bytes are excluded from timing.
+Both replay runs verify all23 complete original logit vectors and greedy IDs,
+10,560 GPU hits, zero CPU expert calls/weight uploads, and full owning closes.
+Same frozen v90 binary gives2311859249ns (9.516tokens/s) without the explicit
+unused-segment option and2174240700ns (10.118tokens/s) with it: one ordered pair,
+5.95% lower decode latency, not statistical proof. Both timed windows observe
+zero physical reads, but17/47 major faults; zero I/O does not mean zero faults.
+Timer includes full-vector/trace checks and audited request-I/O close; it
+excludes training/binding/prefill/preload and later full close/recovery.
+
+The skip candidate (`397999c`) derives a segment-activity mask only from the
+validated immutable pending GPU-slot plan. Original Q3 gate/up and down banks
+are paired72+72 segments. A wholly unused segment omits only its two projection
+launches; original selected rank order, partial spans, finite/status checks,
+physical/source/pin proofs and merge remain unchanged. Default dispatch remains
+unchanged. v90 initial fill without/with skip takes5401/4141ms, but physical
+reads differ605462528/49152bytes; this is not an isolated kernel speedup.
+Keep both empty-fill and skip opt-in until longer correctness/performance work.
+
+Root source `9218638` passes591 native plus two one-test shader suites, strict
+release all-target default/all-five-feature Clippy and formatting. Four physical
+v90 runs pass five original owning audits each; ideal training/replay adds two
+full independent closes. Host admission/services and physical memory recover,
+with no new classified Xe/NVIDIA fault. No production/installation/API change.
+
+The user paused this work to use the GPUs. Isolated leaf candidate `6d12ddd`
+(`codex/kuno-q3-subgroup-moe`, base `9218638`) uses original `fast::dot` and
+`reduce_original64`, four rows per128-thread group. Source/formatting only:
+no compilation, count1 caller, independent probe extension or GPU acceptance.
+Resume by connecting explicit protected opt-in/device subgroup support and
+extending the existing three mixed-IQ C-oracle profiles, fault/status/owning
+checks, then host/both-card/operator/full-vector performance tests. It is not
+integrated into this root checkpoint.
 
 The same frozen artifact's all-GPU-miss32-position control passes positions0–22
 but fails the full-logit check at position23, after greedy equality passes.
@@ -155,8 +235,8 @@ has been established.
    different quants cannot reuse Q4 token IDs as a quality oracle.
 2. Validate complete MTP head numerical output against an independent graph
    oracle. CPU fresh replay proves repeatability, not correct full-head math.
-   First check two-position GPU projections against the CPU graph using real
-   target carry; label any legacy nonresident probe public-only.
+   The two-position GPU projection check against the CPU graph and real target
+   carry now passes both cards; keep this legacy nonresident probe public-only.
 3. Extend the implemented CPU target carry to the GPU owner and return logits
    and wide hidden for every verification position. Existing MAX8 LastLogits
    only projects the last row.
@@ -184,3 +264,17 @@ See the [pinned speculative driver](https://github.com/danielhanchen/llama.cpp/b
 [publisher's MTP guide](https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/blob/766911a6b7369840a91dbcd95f9f997acaab6cd6/MTP/README.md).
 Published speedups are not local acceptance. No GPU reset, driver/clock change,
 installed binary/service change, release, API change, or Vashti work is included.
+
+### DASLab comparison candidate, 2026-10-08
+
+The user asked to revisit DASLab's quality after reviewing Strata. The current
+[publisher card](https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF)
+describes GSQ weight optimization plus RCO per-tensor precision allocation
+under a size budget. Its83.6GB IQ3_S results are close to the BF16 base on
+the listed reasoning/coding tasks; this is a publisher result, not a direct
+Unsloth comparison or a measurement on this host. The earlier pinned artifact
+assessment in the disk research remains historical. Three former missing
+formats and split/PLE ownership are now implemented here. IQ2_S, IQ3_S,
+Q2_0 and Q5_K still need actual inventory-driven support before that assessed
+IQ3_S artifact can run. No DASLab payload was downloaded in this block; the
+current Unsloth work and its original public references remain intact.

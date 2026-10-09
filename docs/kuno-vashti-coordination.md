@@ -2697,3 +2697,60 @@ Normal admission and all three services recover, both GPUs return to baseline,
 and classified fault counters remain unchanged after every accepted/rejected
 trial. **Required Vashti changes: none.** The future native catalog/routing
 contract still needs coordination before changing consumers.
+
+
+### Active handoff: Q3 routing diagnosis and correct-expert replay paused (2026-10-08)
+
+This supersedes the preceding Q3 foundation checkpoint for new backend work.
+The user requested a clean pause to use the GPUs. Root Kuno source is `9218638`
+on `codex/kuno-native-text`, in its existing isolated worktree. Preserve the
+canonical Vashti checkout/coordination work. Public API/config/catalog, installed
+services/runtime, Vashti and release selection are unchanged. **Required Vashti
+changes: none.** This is standalone fixed-public laboratory work.
+
+After `4b29087`, integrate the complete backend range through `9218638` when
+resuming sequential work: actual MTP projections (`8cba745`), empty-slot filling
+(`b739c32`), same-input expert/router diagnostics (`37f4edb`, `41db769`,
+`b285d68`, `67bdcfa`), independent segmented-IQ probe (`f116d09`/`3571bcb`),
+explicit original32-reference prefix23 (`4f41d6c`), skip-unused segment option
+(`397999c`/`c6d2088`), and fixture-scoped correct-expert replay (`9218638`). Read
+[the exact plan](kuno-native-text-mtp-plan.md), [latest checkpoint](kuno-native-text-checkpoint.md)
+and [numeric/provenance receipt](../apps/kuno/benchmarks/text/receipts/unsloth-q3-foundation-20261008.json).
+
+Both cards pass actual target-conditioned MTP GPU projections and independent
+original72+72 mixed-IQ MoE operator cases. MTP other graph math remains CPU;
+private full-head ownership, independent whole-head quality and speculative
+performance remain pending. The Q3 full32 all-GPU logit failure remains:
+position23/layer17 near-tie routing follows tiny arithmetic differences and
+changes one expert. Same-input expert outputs and CPU top-k on GPU scores agree.
+No tolerance relaxation, forced routing, full32 performance or decoder defect
+claim. Explicit prefix23 checks the complete original32 file and verifies only
+positions0..22 before the known discontinuity.
+
+One compiler-idle same-artifact prefix ideal pair gives9.516→10.118tokens/s
+without/with unused-segment skipping, respectively (22steps each).10,560 GPU
+expert calls, zero CPU calls, expert uploads and physical read bytes during
+replay. Full23 logit vectors/greedy IDs, exact trace membership and full owning
+closes pass. Correct original preloading/training are excluded from timing;
+this is conditional short residency, not demand-cache/production throughput.
+Demand-fill initial runs are slower and I/O-confounded. Keep new options off
+by default. No private prompts/routes/history were persisted; all fixtures are
+compiled public token0/seed424242.
+
+Root host checks:591 native tests (one ignored), two one-test shader suites,
+strict release all-target Clippy default/all-five features, formatting and
+whitespace pass. Four v90 runs have five exact818413568-byte/1378-buffer original
+owning closes each, plus two additional ideal training/replay closes where used.
+At2026-10-09T04:41:26Z all jobs exited, normal admission resumed with no active/
+queued/recovery latch, HTTP200 from Kuno/Ollama/Vashti, B70 memory50688000bytes,
+no NVIDIA compute process and zero classified Xe/NVIDIA faults. No reset/unbind/
+reboot, driver/clocks, installation or release change. GPUs are available.
+
+Next source candidate `6d12ddd` is isolated on `codex/kuno-q3-subgroup-moe`, base
+`9218638`, in the Unsloth quant-support managed worktree. **Not integrated,
+compiled, tested or GPU accepted.** It adds a leaf-only four-row original-order
+subgroup MoE kernel plus module/helper visibility. Resume with count1 opt-in/
+device-feature integration, independent three-profile probe/fault/owning checks,
+then host and protected both-card/full-vector performance acceptance. No GPU
+work should resume until the user gives them back. DASLab remains an assessed
+quality comparison candidate, without a new download or measured comparison.
