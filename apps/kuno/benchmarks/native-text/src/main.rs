@@ -27,6 +27,8 @@ mod info_slab_probe;
 mod main_admission;
 mod matmul_probe;
 mod mtp_gpu_probe;
+#[allow(dead_code)] // Shared numeric oracle writer also uses constructor/writer helpers.
+mod mtp_public_reference;
 mod mtp_resident_kernels;
 mod next_shared;
 mod next_shared_moe;
@@ -54,6 +56,8 @@ mod resident_gdn;
 mod resident_gr;
 mod resident_model;
 mod resident_moe;
+mod resident_mtp;
+mod resident_mtp_probe;
 mod resident_probe;
 mod resident_qsa;
 mod resident_router_gpu;
@@ -1046,6 +1050,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         _ => return Err("expected intel or nvidia".into()),
     };
     let mode = std::env::args().nth(2).unwrap_or("probe".into());
+    let resident_mtp_inputs = if mode == "resident-mtp-probe" {
+        Some(resident_mtp_probe::registration(
+            &std::env::args_os().collect::<Vec<_>>(),
+            std::env::vars_os(),
+            mtp_gpu_probe::default_build(),
+        )?)
+    } else {
+        if std::env::var_os("KUNO_LAB_RESIDENT_MTP_PUBLIC_ONLY").is_some() {
+            return Err("resident MTP public gate requires its dedicated probe".into());
+        }
+        None
+    };
     let target_rows_inputs = if mode == "daslab-target-rows-probe" {
         Some(daslab_target_rows_probe::registration(
             &std::env::args_os().collect::<Vec<_>>(),
@@ -1893,6 +1909,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if target_rows_inputs.is_some() {
             daslab_target_rows_probe::validate_limits(&adapter.limits())?;
         }
+        if resident_mtp_inputs.is_some() {
+            resident_mtp::validate_limits(&adapter.limits())?;
+        }
         if q6_integer_probe {
             q6_integer_probe::validate_limits(&adapter.limits())?;
         }
@@ -1917,6 +1936,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             || iq_integer_probe
             || shared_original_iq_probe
             || q6_integer_probe
+            || resident_mtp_inputs.is_some()
             || resident_router_probe)
             && (!adapter.features().contains(wgpu::Features::SUBGROUP)
                 || info.subgroup_min_size < 16
@@ -1984,7 +2004,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 backend: wgpu::Backend::Vulkan,
             },
             RuntimeOptions {
-                tasks_max: if batch_tasks || target_rows_inputs.is_some() {
+                tasks_max: if batch_tasks
+                    || target_rows_inputs.is_some()
+                    || resident_mtp_inputs.is_some()
+                {
                     256
                 } else {
                     32
@@ -1993,6 +2016,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
         );
         let client = WgpuRuntime::client(&selected);
+        if let Some(inputs) = resident_mtp_inputs {
+            return resident_mtp_probe::run(&client, &grouped_limits, vendor, inputs);
+        }
         if let Some(inputs) = target_rows_inputs {
             return daslab_target_rows_probe::run(&client, &grouped_limits, inputs);
         }
