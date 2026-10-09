@@ -1,59 +1,66 @@
 # Active DASLab/Strata pass — 2026-10-09
 
-The user returned both GPUs and approved the full DASLab IQ3_S model, source
-study of Strata and a30 accepted-token/s goal. Native root source is `85711cd`
-on `codex/kuno-native-text`, in the existing isolated Kuno worktree. Canonical
-Vashti work/uncommitted coordination documents are preserved. Installed Kuno,
-Ollama/Vashti, public API/catalog/config and release selection are unchanged.
-Required Vashti changes: none.
+Latest tested engine source is `774f2a9` on `codex/kuno-native-text`, in the
+existing isolated Kuno worktree. The user approved full DASLab IQ3_S, Strata
+source study and30 accepted-token/s work. Canonical Vashti source is preserved;
+installed services, public API/catalog/configuration and release selection are
+unchanged. Required Vashti changes: none.
 
-Read [DASLab source/acceptance notes](kuno-native-daslab.md) and the
-[numeric/provenance receipt](../apps/kuno/benchmarks/text/receipts/daslab-foundation-20261009.json).
-The complete two original shards total83,617,662,656 bytes and pass their full
-publisher hashes; no merged/duplicate payload. Scalar/SIMD/GPU support now
-covers the original mixed IQ2_S/IQ3_S/Q5_K/Q2_0 formats and all48 routed triples.
-Both cards pass independent original operators and all-nine-profile integer/
-shared-original probes. Full original32 CPU reference is preserved. GPU full32
-fails complete logits at position13 (greedy matches); cause remains unlocated,
-with no tolerance relaxation/forced experts. Only explicit prefix13 before
-that discontinuity is accepted for current conditional speed comparisons.
+Read [DASLab notes](kuno-native-daslab.md),
+[the numeric/provenance receipt](../apps/kuno/benchmarks/text/receipts/daslab-foundation-20261009.json)
+and [resident GPU routing design](kuno-native-resident-router.md).
+Both original shards pass full publisher hashes, total83,617,662,656bytes;
+there is no merged/duplicate payload. Scalar/SIMD/GPU support covers the
+original mixed formats and all48 routed triples. Both GPUs pass independent
+original operators and all-nine-profile integer/shared probes. Original full32
+GPU comparison still fails complete CPU logits at position13 despite matching
+greedy IDs; exact cause is unlocated. No relaxed tolerance or forced experts.
+Only explicit prefix13 before that discontinuity is accepted for current
+conditional comparisons.
 
-Best recorded prefix13 ideal replay is11.177tokens/s (v104 integer), versus
-same-artifact original10.817, shared-original10.931 and prepared Q6 head9.820.
-Every accepted replay checks all original full CPU vectors/greedy IDs, correct
-trace membership,5760 GPU ranks and zero CPU misses/weight uploads/physical
-reads. Preloading/training are outside timing. This is a short conditional
-compute diagnostic, not demand-cache, production/private, full32 or30tokens/s
-acceptance. The preserved first integer implementation was21.19times slower;
-direct lane codebook initialization repaired it, but gains over original are
-small and run variation is material.
+Selected public experiment: once-prepared integer MoE plus4096-entry FIFO/
+4MiB fully charged request metadata, original output head. Featured v109 SHA256
+`1d6b61068d9f491a93404ad941eb4649ac9e407f8f51437babe75f9d035d879f`.
+Same-artifact control/prepared ordered pair gives10.511→12.728 accepted
+continuations/s (12steps:1,141,680,997→942,769,705ns),17.4% lower latency.
+Complete original CPU vectors/greedy IDs, actual trace membership, owning closes
+and5760 GPU ranks with zero CPU calls/uploads/physical reads pass. Training,
+binding, prefill/preload and later full owning close/recovery are outside
+timing; vector/trace checks and request I/O close are inside. This is a short
+conditional residency diagnostic, not demand-cache/private/production/full32
+quality or30tokens/s acceptance. Arithmetic is explicitly two residual Q8
+activation planes, not original F32 bit equality.
 
-v105 profiling records34,254 binding misses/zero hits/zero inserts and272ms
-creation time in1.2208s; these counters require a present cache and do not prove
-withdrawal. v106 larger append-only4096-entry/4MiB cache also has zero hits and
-zero inserts (12steps/1.2838s). It does not establish a gain. Root source adds
-explicit protected-only scope and complete host charging; default256/512-entry
-and256KiB limits stay unchanged. Native family metadata remains independently
-capped; expanded runtime metadata is fully reserved, with64KiB host-plan margin.
+`b4c07ed` FIFO now gives31,750 cache hits/2,504 misses instead of zero hits.
+Creation+lookup fall to25.6ms in the v109 control (~2.2% of1.14s). Default
+256/512 caches and256KiB ceiling stay unchanged. Full Rust metadata capacities
+and old/new replacement peaks are charged; opaque driver/RSS is not that bound.
 
-Current pending isolated candidates: bounded replacement of setup-only binding
-keys in the larger cache, and once-prepared two-residual-Q8 activation planes
-for expert stages (reuse the existing full CPU owner, no new model owner).
-Aligned Q6 loads `bcb9bfc` are integrated/host-tested; new physical operator
-acceptance is still pending. MTP KV-only append `2dea140` passes focused host
-checks; target batch verification/controller/rollback remain pending and no
-speculative throughput is claimed. Read the exact MTP plan before extending it.
+`f5d5e97` prepares activation planes once per stage in the existing complete
+CPU bridge owner; all GPU consumers precede its original full overwrite.
+`95b31cc` repairs auto-reflected unused binding mismatch caught by first v107
+physical test. Both-card v108 nine-profile tests then match old integer ACT/
+PART/merge exactly, check full scratch/rank/fault guards and erase90 owners/
+15,925,248bytes each. `774f2a9` separately reserves196,608bytes extra prepare
+INFO, preserving32KiB runtime margin and ordinary64MiB hard cap. No new model
+owner. Aligned Q6 `bcb9bfc` passes both-card independent tests and13-position
+combined model gates, but12.686tokens/s gives no gain: keep original head.
 
-Merged657 native featured tests (one ignored) pass; vendor105 device-free
-runtime tests and strict native/runtime Clippy pass at reviewed source leaf.
-Final integrated strict checks and both-card physical candidate tests remain
-required. Frozen v106 featured SHA256 is
-`d0ebc35d6d070b61f816027b007d84de1165304989331b6ecfac084a54808fa9`.
-Normal admission/actual GPU memory and services recover after every trial,
-classified fault counters remain unchanged. No GPU reset/unbind/reboot,
-clock/driver changes, production installation or release. The active goal
-continues toward30; if sudo expires and effective protected work cannot
-continue, save a tested checkpoint and restore normal GPU/service access.
+Integrated default663 and all-feature666 native tests (one opt-in ignored),
+plus both auxiliary suites and strict default/all-feature all-target Clippy
+pass. Formatting and whitespace checks pass. All physical trials restore normal admission/services, actual
+memory and unchanged classified faults. No GPU reset/unbind/reboot, clocks/
+drivers, production installation or release.
+
+Next larger candidate is isolated immutable resident GPU routing: use actual
+original top10, freeze source/slot owners, enqueue continuous layers and resolve
+all48 route audits before original all-family acceptance. Source/device and
+speed acceptance remain pending. It must charge full table/audit owners and
+runtime/host mirrors; default paths must stay unchanged. MTP KV-only append
+`2dea140` has focused host acceptance, but target all-row verification, controller
+and accepted-prefix state repair remain pending. The active goal continues;
+if sudo expires and effective protected work cannot continue, save a tested
+checkpoint and restore normal GPU/service access.
 
 ---
 

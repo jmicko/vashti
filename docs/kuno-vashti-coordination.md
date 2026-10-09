@@ -2760,7 +2760,7 @@ quality comparison candidate, without a new download or measured comparison.
 
 Supersedes the paused `9218638` checkpoint for backend inference work. User has
 returned the GPUs and approved full DASLab IQ3_S plus Strata source study, with
-an active30 accepted-token/s target. Kuno source is `85711cd` in the same isolated
+an active30 accepted-token/s target. Latest tested Kuno source is `774f2a9` in the same isolated
 `codex/kuno-native-text` worktree. Installed services, public contracts/catalog/
 configuration, Vashti and release selection remain unchanged. Preserve the
 canonical checkout's uncommitted coordination/application work.
@@ -2780,15 +2780,20 @@ laboratory changes, not a new production native model route.
 
 Two original DAS shards are fully verified without merged/duplicate payload.
 Both GPUs pass independent mixed-quant operators. Fixed prefix13 full-vector/
-greedy/ownership tests pass. Best conditional ideal replay is11.177tokens/s;
+greedy/ownership tests pass. Best conditional ideal replay is12.728tokens/s;
 30tokens/s is not achieved. Original full32 fails at position13 with finite
 logit disagreement despite greedy equality; keep that failure and unchanged
 tolerance. v105 identifies binding/enqueue/fence overhead; simply growing the
-append-only cache in v106 does not improve hits or speed. Once-prepared expert
-inputs and bounded cache replacement are still pending physical acceptance.
+append-only cache in v106 does not improve hits or speed. FIFO cache replacement (`b4c07ed`) and once-prepared integer inputs
+(`f5d5e97`/`95b31cc`, full INFO plan `774f2a9`) now pass both-card operator and
+protected prefix13 model acceptance. Same-artifact ordered control/prepared
+comparison is10.511→12.728tokens/s,17.4% lower latency. Aligned Q6 passes
+operators/model gates but adds no speed. Keep the original head. Next larger
+[resident GPU routing candidate](kuno-native-resident-router.md) is isolated work
+in progress, with no device/throughput acceptance.
 No private content/history is persisted; only compiled public numeric fixtures
 and model provenance. Actual memory, admission/services and classified-fault
 recovery pass after every physical trial. No resets, reboots, driver/clocks,
-installation or release. Final integrated checks are pending further candidate
-source changes. **Required Vashti changes: none.** Future production native
+installation or release. Integrated663 default/666 all-feature native tests and auxiliary suites pass;
+strict default/all-feature all-target Clippy pass. **Required Vashti changes: none.** Future production native
 catalog/routing still needs a coordinated consumer contract.

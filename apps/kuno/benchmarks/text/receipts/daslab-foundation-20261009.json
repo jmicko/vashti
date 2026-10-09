@@ -530,10 +530,413 @@
         "native_shared_and_ffn_combine_enqueue": 9095121
       },
       "host_after_receipt_path": "/media/jmicko/faststore/kuno-development/daslab-main-gpu-20261009/daslab-bind4096-prefix13-v106-host-after.json"
+    },
+    {
+      "run": "daslab-bind4096-fifo-prefix13-v107",
+      "receipt_path": "/media/jmicko/faststore/kuno-development/daslab-main-gpu-20261009/daslab-bind4096-fifo-prefix13-v107.json",
+      "receipt_sha256": "06b71419c06e04ecf31571cbfdebe4ae1722d5164b3213b106a2822da6f55b54",
+      "source": {
+        "commit": "b4c07edcd1c4e60bd2a570a91beeaed0469dfa29",
+        "binary_sha256": "e73485b359d384c617b76f04b857959d5d4f2082c4ab6600e28e9cf84eb7f8de",
+        "reference_sha256": "635385075cd6a46241c4451726b5a3f95d40bb98e2f6e96e89e2bfbfd5db45d6",
+        "public_positions": 13,
+        "prefix_of_full32": true,
+        "ends_before_known_router_divergence": true,
+        "public_fixed_fixture": true,
+        "profile": "daslab-iq3",
+        "binding_capacity": 4096,
+        "request_reuse_metadata_ceiling_bytes": 4194304,
+        "cache_bytes": 8589934592,
+        "cpu_cap": 10,
+        "empty_slot_fill": true,
+        "same_input_expert_oracle": false,
+        "skip_empty_segments": true,
+        "ideal_correct_residency": true,
+        "cpu_threads": 16,
+        "helper_sha256": "b70bab854c9c4a36ae84cf24d3ebf3c816c8b5d6eb0698f373e7ef60786957e6"
+      },
+      "scope": "fixed-public-DASLab-prefix13-conditional-ideal-residency",
+      "elapsed_ns": 1110630256,
+      "accepted_decode_steps": 12,
+      "accepted_continuations_per_second": 10.804675935282642,
+      "expert_work": [
+        5760,
+        0,
+        0,
+        0
+      ],
+      "observed_resources": {
+        "major_faults": 12,
+        "minor_faults": 809,
+        "read_bytes": 0,
+        "system_ticks": 37,
+        "user_ticks": 65,
+        "write_bytes": 4096
+      },
+      "original_full_vectors_and_greedy": true,
+      "trace_membership": true,
+      "owner_audit": {
+        "main_buffers": 1378,
+        "main_bytes": 818413568,
+        "source_buffers": 0,
+        "source_bytes": 0
+      },
+      "binding_cache_stats": [
+        31750,
+        2504,
+        2504,
+        16416240,
+        7912943
+      ],
+      "host_wall_phase_ns": {
+        "native_all_family_commit": 10850031,
+        "native_all_family_preflight": 7483098,
+        "native_attention_and_gr_enqueue": 244035350,
+        "native_completed_final_proofs": 91454948,
+        "native_ffn_gr_and_router_enqueue": 15466360,
+        "native_final_head_enqueue": 516065,
+        "native_route_and_expert_enqueue": 158489849,
+        "native_router_fence": 550405930,
+        "native_shared_and_ffn_combine_enqueue": 8557631
+      },
+      "host_after_receipt_path": "/media/jmicko/faststore/kuno-development/daslab-main-gpu-20261009/daslab-bind4096-fifo-prefix13-v107-host-after.json"
+    },
+    {
+      "run": "daslab-bind4096-control-prefix13-v109",
+      "receipt_path": "/media/jmicko/faststore/kuno-development/daslab-main-gpu-20261009/daslab-bind4096-control-prefix13-v109.json",
+      "receipt_sha256": "845c75d220dee248fc97e975d52bbeb872a29b9f39d049d5f0548ff8a65b391f",
+      "source": {
+        "commit": "774f2a9020a03fa350a191fe1825f0ad508bbc13",
+        "binary_sha256": "1d6b61068d9f491a93404ad941eb4649ac9e407f8f51437babe75f9d035d879f",
+        "reference_sha256": "635385075cd6a46241c4451726b5a3f95d40bb98e2f6e96e89e2bfbfd5db45d6",
+        "public_positions": 13,
+        "prefix_of_full32": true,
+        "ends_before_known_router_divergence": true,
+        "public_fixed_fixture": true,
+        "profile": "daslab-iq3",
+        "binding_capacity": 4096,
+        "request_reuse_metadata_ceiling_bytes": 4194304,
+        "cache_bytes": 8589934592,
+        "cpu_cap": 10,
+        "empty_slot_fill": true,
+        "same_input_expert_oracle": false,
+        "skip_empty_segments": true,
+        "ideal_correct_residency": true,
+        "cpu_threads": 16,
+        "helper_sha256": "b70bab854c9c4a36ae84cf24d3ebf3c816c8b5d6eb0698f373e7ef60786957e6"
+      },
+      "scope": "fixed-public-DASLab-prefix13-conditional-ideal-residency",
+      "elapsed_ns": 1141680997,
+      "accepted_decode_steps": 12,
+      "accepted_continuations_per_second": 10.510816972107314,
+      "expert_work": [
+        5760,
+        0,
+        0,
+        0
+      ],
+      "observed_resources": {
+        "major_faults": 12,
+        "minor_faults": 807,
+        "read_bytes": 0,
+        "system_ticks": 39,
+        "user_ticks": 65,
+        "write_bytes": 4096
+      },
+      "original_full_vectors_and_greedy": true,
+      "trace_membership": true,
+      "owner_audit": {
+        "main_buffers": 1378,
+        "main_bytes": 818413568,
+        "source_buffers": 0,
+        "source_bytes": 0
+      },
+      "binding_cache_stats": [
+        31750,
+        2504,
+        2504,
+        16777605,
+        8842628
+      ],
+      "host_wall_phase_ns": {
+        "native_all_family_commit": 11619346,
+        "native_all_family_preflight": 8403581,
+        "native_attention_and_gr_enqueue": 250766635,
+        "native_completed_final_proofs": 94573612,
+        "native_ffn_gr_and_router_enqueue": 16012707,
+        "native_final_head_enqueue": 561404,
+        "native_route_and_expert_enqueue": 165858574,
+        "native_router_fence": 561563450,
+        "native_shared_and_ffn_combine_enqueue": 8681888
+      },
+      "host_after_receipt_path": "/media/jmicko/faststore/kuno-development/daslab-main-gpu-20261009/daslab-bind4096-control-prefix13-v109-host-after.json"
+    },
+    {
+      "run": "daslab-prepared-bind4096-prefix13-v109",
+      "receipt_path": "/media/jmicko/faststore/kuno-development/daslab-main-gpu-20261009/daslab-prepared-bind4096-prefix13-v109.json",
+      "receipt_sha256": "09dbbfc11ce008372b743ccd784bde59757e692c1d4b73e5cd8b2b31a7de5d03",
+      "source": {
+        "commit": "774f2a9020a03fa350a191fe1825f0ad508bbc13",
+        "binary_sha256": "1d6b61068d9f491a93404ad941eb4649ac9e407f8f51437babe75f9d035d879f",
+        "reference_sha256": "635385075cd6a46241c4451726b5a3f95d40bb98e2f6e96e89e2bfbfd5db45d6",
+        "public_positions": 13,
+        "prefix_of_full32": true,
+        "ends_before_known_router_divergence": true,
+        "public_fixed_fixture": true,
+        "profile": "daslab-iq3",
+        "q3_integer_moe": true,
+        "binding_capacity": 4096,
+        "request_reuse_metadata_ceiling_bytes": 4194304,
+        "cache_bytes": 8589934592,
+        "cpu_cap": 10,
+        "empty_slot_fill": true,
+        "same_input_expert_oracle": false,
+        "skip_empty_segments": true,
+        "ideal_correct_residency": true,
+        "cpu_threads": 16,
+        "helper_sha256": "123eb51dd256bd23da7b484f304b99c7d43f616e52c083feec5dcf4d242f2413"
+      },
+      "scope": "fixed-public-DASLab-prefix13-conditional-ideal-residency",
+      "elapsed_ns": 942769705,
+      "accepted_decode_steps": 12,
+      "accepted_continuations_per_second": 12.728453127373243,
+      "expert_work": [
+        5760,
+        0,
+        0,
+        0
+      ],
+      "observed_resources": {
+        "major_faults": 10,
+        "minor_faults": 819,
+        "read_bytes": 0,
+        "system_ticks": 30,
+        "user_ticks": 61,
+        "write_bytes": 4096
+      },
+      "original_full_vectors_and_greedy": true,
+      "trace_membership": true,
+      "owner_audit": {
+        "main_buffers": 1378,
+        "main_bytes": 818413568,
+        "source_buffers": 0,
+        "source_bytes": 0
+      },
+      "binding_cache_stats": [
+        32922,
+        2484,
+        2484,
+        16626236,
+        9923405
+      ],
+      "host_wall_phase_ns": {
+        "native_all_family_commit": 12301044,
+        "native_all_family_preflight": 8659463,
+        "native_attention_and_gr_enqueue": 222341564,
+        "native_completed_final_proofs": 92024155,
+        "native_ffn_gr_and_router_enqueue": 16250299,
+        "native_final_head_enqueue": 573643,
+        "native_route_and_expert_enqueue": 165440294,
+        "native_router_fence": 392137332,
+        "native_shared_and_ffn_combine_enqueue": 8918358
+      },
+      "host_after_receipt_path": "/media/jmicko/faststore/kuno-development/daslab-main-gpu-20261009/daslab-prepared-bind4096-prefix13-v109-host-after.json"
+    },
+    {
+      "run": "daslab-prepared-q6-bind4096-prefix13-v109",
+      "receipt_path": "/media/jmicko/faststore/kuno-development/daslab-main-gpu-20261009/daslab-prepared-q6-bind4096-prefix13-v109.json",
+      "receipt_sha256": "51be9290d18c0c08b1bd760035970d98233884b293da87131b99b2b806f68171",
+      "source": {
+        "commit": "774f2a9020a03fa350a191fe1825f0ad508bbc13",
+        "binary_sha256": "1d6b61068d9f491a93404ad941eb4649ac9e407f8f51437babe75f9d035d879f",
+        "reference_sha256": "635385075cd6a46241c4451726b5a3f95d40bb98e2f6e96e89e2bfbfd5db45d6",
+        "public_positions": 13,
+        "prefix_of_full32": true,
+        "ends_before_known_router_divergence": true,
+        "public_fixed_fixture": true,
+        "profile": "daslab-iq3",
+        "q6_integer_head": true,
+        "q3_integer_moe": true,
+        "binding_capacity": 4096,
+        "request_reuse_metadata_ceiling_bytes": 4194304,
+        "cache_bytes": 8589934592,
+        "cpu_cap": 10,
+        "empty_slot_fill": true,
+        "same_input_expert_oracle": false,
+        "skip_empty_segments": true,
+        "ideal_correct_residency": true,
+        "cpu_threads": 16,
+        "helper_sha256": "b039367317074e028cf047396a68d5a90f319c64073887c556527e627c10589e"
+      },
+      "scope": "fixed-public-DASLab-prefix13-conditional-ideal-residency",
+      "elapsed_ns": 945901792,
+      "accepted_decode_steps": 12,
+      "accepted_continuations_per_second": 12.686306444802677,
+      "expert_work": [
+        5760,
+        0,
+        0,
+        0
+      ],
+      "observed_resources": {
+        "major_faults": 12,
+        "minor_faults": 815,
+        "read_bytes": 0,
+        "system_ticks": 27,
+        "user_ticks": 63,
+        "write_bytes": 4096
+      },
+      "original_full_vectors_and_greedy": true,
+      "trace_membership": true,
+      "owner_audit": {
+        "main_buffers": 1378,
+        "main_bytes": 818413568,
+        "source_buffers": 0,
+        "source_bytes": 0
+      },
+      "binding_cache_stats": [
+        32933,
+        2497,
+        2497,
+        16613418,
+        9306582
+      ],
+      "host_wall_phase_ns": {
+        "native_all_family_commit": 11666459,
+        "native_all_family_preflight": 8430942,
+        "native_attention_and_gr_enqueue": 220244976,
+        "native_completed_final_proofs": 94259574,
+        "native_ffn_gr_and_router_enqueue": 16151502,
+        "native_final_head_enqueue": 574165,
+        "native_route_and_expert_enqueue": 163235329,
+        "native_router_fence": 398225892,
+        "native_shared_and_ffn_combine_enqueue": 8737730
+      },
+      "host_after_receipt_path": "/media/jmicko/faststore/kuno-development/daslab-main-gpu-20261009/daslab-prepared-q6-bind4096-prefix13-v109-host-after.json"
     }
   ],
   "ongoing_candidates": [
-    "once-prepared integer expert activation planes",
-    "extended-cache bounded replacement"
-  ]
+    "Immutable resident GPU routing and single token-wide audit: isolated work in progress; no device/performance acceptance",
+    "MTP all-row target verification, accepted-prefix publication and controller: pending"
+  ],
+  "physical_q6_aligned_operator_receipts": [
+    {
+      "card": "intel",
+      "receipt_path": "/media/jmicko/faststore/kuno-development/daslab-q6-aligned-v107-default-20261009/intel-q6.json",
+      "sha256": "c28406d29350239119dee5430b9c8b9c1ca4bbbc0ead732ac5bc4e1dc6d8d957",
+      "source_commit": "b4c07edcd1c4e60bd2a570a91beeaed0469dfa29",
+      "artifact_sha256": "492700735c31da9f2eb967427e288b67f96431e80b7a7f964e8d9b86ef8dd617",
+      "receipt": {
+        "activation_two_residual_q8_planes": true,
+        "allocator_cleanup_complete": true,
+        "c_reference_finite_values": 6400,
+        "fresh_owner_replay_bit_mismatches": 0,
+        "full_rows_verified": 38416,
+        "geometries": 4,
+        "gguf_id": 14,
+        "host_capacity_bound_bytes": 335544320,
+        "input_and_full_owner_guards_unchanged": true,
+        "invalid_activation_block_zeroed": true,
+        "io_cap_bytes": 134217728,
+        "main_cap_bytes": 268435456,
+        "malformed_original_half_rejected": true,
+        "max_abs_alternate_integer_error": 0.0001068115234375,
+        "nonfinite_and_max_input_rejected": true,
+        "original_f32_numerical_parity_accepted": false,
+        "original_public_bytes_and_padding_unchanged": true,
+        "original_weight_bytes": true,
+        "owned_zero_audit_buffers": 32,
+        "owned_zero_audit_bytes": 1245184,
+        "performance_accepted": false,
+        "prior_fault_preserved": true,
+        "private_cap_bytes": 1048576,
+        "private_request_accepted": false,
+        "q6_integer_fixed_public_probe": true,
+        "relative_tolerance": 0.0002,
+        "whole_model_accepted": false,
+        "whole_output_padding_finite_gate": true,
+        "whole_owning_erasure_accepted": false
+      }
+    },
+    {
+      "card": "nvidia",
+      "receipt_path": "/media/jmicko/faststore/kuno-development/daslab-q6-aligned-v107-default-20261009/nvidia-q6.json",
+      "sha256": "c28406d29350239119dee5430b9c8b9c1ca4bbbc0ead732ac5bc4e1dc6d8d957",
+      "source_commit": "b4c07edcd1c4e60bd2a570a91beeaed0469dfa29",
+      "artifact_sha256": "492700735c31da9f2eb967427e288b67f96431e80b7a7f964e8d9b86ef8dd617",
+      "receipt": {
+        "activation_two_residual_q8_planes": true,
+        "allocator_cleanup_complete": true,
+        "c_reference_finite_values": 6400,
+        "fresh_owner_replay_bit_mismatches": 0,
+        "full_rows_verified": 38416,
+        "geometries": 4,
+        "gguf_id": 14,
+        "host_capacity_bound_bytes": 335544320,
+        "input_and_full_owner_guards_unchanged": true,
+        "invalid_activation_block_zeroed": true,
+        "io_cap_bytes": 134217728,
+        "main_cap_bytes": 268435456,
+        "malformed_original_half_rejected": true,
+        "max_abs_alternate_integer_error": 0.0001068115234375,
+        "nonfinite_and_max_input_rejected": true,
+        "original_f32_numerical_parity_accepted": false,
+        "original_public_bytes_and_padding_unchanged": true,
+        "original_weight_bytes": true,
+        "owned_zero_audit_buffers": 32,
+        "owned_zero_audit_bytes": 1245184,
+        "performance_accepted": false,
+        "prior_fault_preserved": true,
+        "private_cap_bytes": 1048576,
+        "private_request_accepted": false,
+        "q6_integer_fixed_public_probe": true,
+        "relative_tolerance": 0.0002,
+        "whole_model_accepted": false,
+        "whole_output_padding_finite_gate": true,
+        "whole_owning_erasure_accepted": false
+      }
+    }
+  ],
+  "physical_prepared_operator_receipts": [
+    {
+      "card": "intel",
+      "receipt_path": "/media/jmicko/faststore/kuno-development/daslab-prepared-v108-default-20261009/intel-integer.json",
+      "sha256": "9f61210f36b7e09e4c65d56d4f1c21a402aea5fe065ee00e74fa1e5b142588bb",
+      "source_commit": "95b31ccc2b395d79bc5bb6c5dd0212a638ef6bd6",
+      "artifact_sha256": "385b9c5d43608b80b207a47b45a96ac8f3e9a0ffd5440e217d4de4ae719aaa4e",
+      "profiles": 9,
+      "prepared_compact_rank_planes_full_scratch_guards": true,
+      "prepared_fault_guards": true,
+      "max_prepared_vs_old_integer_difference": 0.0,
+      "erased_owner_count": 90,
+      "erased_owner_bytes": 15925248,
+      "performance_or_private_accepted": false,
+      "host_after_receipt": "/media/jmicko/faststore/kuno-development/daslab-prepared-v108-default-20261009/intel-integer-host-after.json"
+    },
+    {
+      "card": "nvidia",
+      "receipt_path": "/media/jmicko/faststore/kuno-development/daslab-prepared-v108-default-20261009/nvidia-integer.json",
+      "sha256": "f59458b99cfc2b6cb09b5d37c23e0447158905bebc52613184365f03983211e1",
+      "source_commit": "95b31ccc2b395d79bc5bb6c5dd0212a638ef6bd6",
+      "artifact_sha256": "385b9c5d43608b80b207a47b45a96ac8f3e9a0ffd5440e217d4de4ae719aaa4e",
+      "profiles": 9,
+      "prepared_compact_rank_planes_full_scratch_guards": true,
+      "prepared_fault_guards": true,
+      "max_prepared_vs_old_integer_difference": 0.0,
+      "erased_owner_count": 90,
+      "erased_owner_bytes": 15925248,
+      "performance_or_private_accepted": false,
+      "host_after_receipt": "/media/jmicko/faststore/kuno-development/daslab-prepared-v108-default-20261009/nvidia-integer-host-after.json"
+    }
+  ],
+  "selected_public_experiment": {
+    "code_commit": "774f2a9020a03fa350a191fe1825f0ad508bbc13",
+    "frozen_sha256": "1d6b61068d9f491a93404ad941eb4649ac9e407f8f51437babe75f9d035d879f",
+    "prepared_integer_moe": true,
+    "original_output_head": true,
+    "request_binding_fifo_entries": 4096,
+    "request_metadata_bytes": 4194304,
+    "accepted_continuations_per_second": 12.728453127373243,
+    "ordinary_demand_or_production_accepted": false
+  }
 }

@@ -176,7 +176,7 @@ fixtures/logs, restore normal admission after every attempt, and verify actual
 physical GPU recovery. Do not reset/unbind/reboot GPUs or change drivers/clocks
 to chase this result. Required Vashti changes: none.
 
-## Conditional DASLab timing through v105
+## Conditional DASLab timing through v109
 
 All runs below use the same public `!`/seed424242/temperature0 prefix13,12
 checked continuations,8GiB cache and exact correct-expert replay. Training and
@@ -197,6 +197,11 @@ long-run quality, private execution or30tokens/s.
 | v104 | Original shared-codebook MoE | 1097770028 | 10.9313 |
 | v104 | Original MoE plus prepared Q6 head | 1221968213 | 9.8202 |
 | v105 | Original F32, with host diagnostics | 1220809483 | 9.8295 |
+| v106 | Original, larger append-only cache | 1283836016 | 9.3470 |
+| v107 | Original, larger FIFO cache | 1110630256 | 10.8047 |
+| v109 | Original, larger FIFO control | 1141680997 | 10.5108 |
+| v109 | Once-prepared integer MoE, FIFO | 942769705 | 12.7284 |
+| v109 | Prepared MoE plus aligned Q6 head, FIFO | 945901792 | 12.6863 |
 
 The matching v103 control isolates the21.19-fold integer regression. Source
 `6189e69`/`5b976e2` replaces repeated256/512/2048-way codeword lookups with one
@@ -254,3 +259,53 @@ Clippy pass at the reviewed leaf; physical caching throughput is a separate gate
 Featured v106 artifact SHA256
 `d0ebc35d6d070b61f816027b007d84de1165304989331b6ecfac084a54808fa9`
 is built from `85711cd11e52939754b3a1a9deded75f313af8e2` for that gate.
+
+`b4c07ed` adds bounded FIFO replacement only to explicitly extended full entry
+tables. Full old/new key capacities and staging records are charged before
+replacement; retired keys are wiped. Default caches stay append-only. The v107
+original replay records31,750 hits/2,504 misses and inserts, reducing binding
+creation to16.4ms. Compiler-idle v109 independently repeats those counts, with
+16.8ms creation and8.8ms lookup. Further binding tuning cannot explain most of
+the remaining1.14s: these two costs now represent about2.2% of that replay.
+Byte-credit exhaustion before table fullness still safely falls back; the
+ceiling does not include opaque driver allocations or whole-process RSS.
+
+## Once-prepared activation planes and aligned loads
+
+`f5d5e97` prepares gate/up input once, then each compact down input once, reusing
+the existing complete131,072-byte CPU bridge owner in an ordered GPU-only phase.
+All consumers queue before its original same-stream full CPU overwrite. Scratch
+uses5,072 logical words/20,288bytes; no extra model owner or weight repacking.
+An initial standalone test failed because auto-reflection dropped obsolete
+unused bindings while the host still supplied them. Preserve that failed v107
+run. `95b31cc` specializes dense live binding layouts and adds a negative
+reflection regression. Both-card frozen v108 then passes all nine profiles,
+identical prepared-versus-old-integer ACT/PART/merge values, independent integer
+oracles, compact-rank planes, complete scratch gap/tail and finite/fault guards.
+Each card erases90 owners/15,925,248bytes; helper host checks separately verify
+physical memory/admission recovery and unchanged classified faults.
+
+`774f2a9` charges the two extra preparation INFO records per layer separately:
+96×2,048=196,608bytes. Hybrid runtime addition is1,245,184bytes, derived ownership
+1,212,416, preserving32,768bytes margin. Worst38-tile total65,335,296 remains
+under67,108,864. Host/MAIN/owner counts are unchanged.
+
+Featured v109 source is `774f2a9020a03fa350a191fe1825f0ad508bbc13`, SHA256
+`1d6b61068d9f491a93404ad941eb4649ac9e407f8f51437babe75f9d035d879f`.
+Same-artifact ordered original/prepared pair takes1,141,680,997→942,769,705ns
+for12 accepted continuations:17.4% lower latency. Full original CPU vectors,
+greedy IDs, actual trace membership, original owning closes and zero CPU calls/
+uploads/physical reads pass. Preparation changes arithmetic, as explicitly
+recorded; it is not F32 bit equivalence or long/private quality acceptance.
+
+Aligned Q6 loads `bcb9bfc` independently pass both-card v107 tests,38,416 rows,
+6,400 C values, fault/partial-view/owner checks. Combined with prepared MoE,
+v109 accepts all13 model vectors/greedy IDs but takes945,901,792ns, giving no
+gain over prepared-only. Keep the original head for the selected experiment.
+
+The next larger candidate is [immutable resident GPU routing](kuno-native-resident-router.md):
+continuous layer enqueue with actual original top10 and a single token-wide
+route audit. It is isolated work in progress, not a completed source/device or
+performance result. The observed router-fence wall time includes necessary
+upstream GPU computation; removing readback cannot save all of it.30tokens/s
+and full32 original-vector acceptance remain unachieved.
