@@ -24,6 +24,8 @@ pub(crate) use resident_router::{
     RESIDENT_ROUTER_HOST, RESIDENT_ROUTER_INTEGER_CLEAR_INFO, RESIDENT_ROUTER_MAIN,
     RESIDENT_ROUTER_PREFLIGHT_INFO, RESIDENT_ROUTER_RUNTIME_LIMIT, resident_router_runtime,
 };
+#[path = "resident_frozen_sources.rs"]
+pub(crate) mod frozen_sources;
 #[path = "count1_hybrid_moe.rs"]
 mod hybrid_k;
 #[path = "iq_moe_integer_verify3.rs"]
@@ -386,6 +388,8 @@ pub(crate) struct Workspace {
     // Constructor-frozen public experiment; never read from ambient settings.
     public_existing_fill: bool,
     public_fill_counters: PublicFillCounters,
+    frozen_sources: Option<Arc<frozen_sources::Sources>>,
+    frozen_source_counters: frozen_sources::Counters,
 }
 
 /// Aggregate successfully queued demand-fill diagnostics, not publication or
@@ -948,6 +952,8 @@ impl Workspace {
                 prepared_verify3: None,
                 public_existing_fill,
                 public_fill_counters: PublicFillCounters::default(),
+                frozen_sources: None,
+                frozen_source_counters: frozen_sources::Counters::default(),
             };
             out.validate_ids(arena)?;
             u::cancel(cancel)?;
@@ -1144,6 +1150,7 @@ pub(crate) struct Pending {
     last: Option<Last>,
     count1: Option<count1::Proof>,
     deferred_router: Option<Zeroizing<u64>>,
+    frozen_sources: Option<frozen_sources::Proof>,
     waves: Zeroizing<usize>,
     poison: Arc<AtomicBool>,
     armed: bool,
@@ -1284,6 +1291,18 @@ impl GpuExecutor<'_> {
             self.check_segmented_resident(true)?;
             w.begin_resident_router_token(self, graph, arena, start, count, cancel)?;
             w.begin_batch_router_chunk(arena, start, count)?;
+            if w.frozen_host_sources_enabled()
+                && (!(1..=3).contains(&count)
+                    || !self.resident_banks_frozen
+                    || self.target_frozen_host_source_identity
+                        != w.frozen_sources.as_ref().map(|s| s.plan_identity())
+                    || w.hybrid.is_some()
+                    || w.resident_router.is_some()
+                    || w.batch_router.is_some()
+                    || w.prepared_verify3.is_some())
+            {
+                return Err(err("frozen source chunk policy"));
+            }
             w.policy.begin(start, count)?;
             let stamp = Zeroizing::new(Stamp {
                 workspace: w.identity,
@@ -1350,8 +1369,10 @@ impl GpuExecutor<'_> {
     ) -> Result<Pending> {
         u::cancel(cancel)?;
         w.check(self, s, arena)?;
-        if w.resident_router_active() {
-            return Err(err("resident router cannot use demand path"));
+        if w.resident_router_active() || w.frozen_host_sources_enabled() {
+            return Err(err(
+                "resident router or frozen sources cannot use demand path",
+            ));
         }
         graph.verify_unchanged()?;
         self.model.verify_file_unchanged()?;
@@ -1816,6 +1837,7 @@ impl GpuExecutor<'_> {
             last: final_last,
             count1: None,
             deferred_router: None,
+            frozen_sources: None,
             waves: Zeroizing::new(routes.wave_count()),
             poison: w.poison.clone(),
             armed: true,
@@ -2435,6 +2457,38 @@ impl Workspace {
         {
             return Err(err("native routed bank instance changed"));
         }
+        if let Some(proof) = &p.frozen_sources {
+            let source = self
+                .frozen_sources
+                .as_ref()
+                .ok_or(err("frozen source workspace lost"))?;
+            if !Arc::ptr_eq(source, &proof.source)
+                || p.staged.is_some()
+                || p.last.is_some()
+                || p.count1.is_some()
+                || *p.waves != 1
+                || !(1..=3).contains(&s.stamp.count)
+                || proof.count() != s.stamp.count
+                || !e.resident_banks_frozen
+                || e.target_frozen_host_source_identity != Some(source.plan_identity())
+            {
+                return Err(err("frozen source pending policy"));
+            }
+            proof.validate(*p.layer, bank)?;
+            let g = source.geometry(*p.layer, bank)?;
+            let ids = self.ids(p.views.ids[0], p.views.ids[1]);
+            let v = &p.views.offsets;
+            let spans = k::Spans::new([0, v[0], v[1], 0, g.ff(), 0, g.hidden(), 0, v[2], v[3], 0]);
+            let mut words = Zeroizing::new([0usize; 7]);
+            for (i, &id) in ids.iter().enumerate() {
+                words[i] = u::words(arena, id)?;
+            }
+            spans.validate(g, *words).map_err(err)?;
+            return source.physical(arena, *p.layer, bank, &ids, s.stamp.fault, Some(&p.pins));
+        }
+        if self.frozen_sources.is_some() {
+            return Err(err("frozen source pending receipt required"));
+        }
         let handles: Vec<_> = [bank.gate(), bank.up(), bank.down()]
             .into_iter()
             .flat_map(|b| b.segments().iter().map(|p| p.handle()))
@@ -2587,6 +2641,14 @@ impl Acceptance<'_, '_> {
                 || *self.workspace.policy.committed & bit != 0
             {
                 return Err(err("native routed invalid publication"));
+            }
+            if let Some(proof) = &p.frozen_sources {
+                let counters = self.workspace.frozen_source_counters.add(proof)?;
+                u::cancel(cancel)?;
+                self.workspace.policy.commit(*p.layer)?;
+                self.workspace.frozen_source_counters = counters;
+                p.armed = false;
+                return Ok(());
             }
             let bank = self
                 .executor
@@ -3029,6 +3091,7 @@ mod tests {
             last: None,
             count1: None,
             deferred_router: None,
+            frozen_sources: None,
             waves: Zeroizing::new(0),
             poison: poison.clone(),
             armed: true,

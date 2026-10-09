@@ -154,6 +154,7 @@ pub struct Geometry {
     gate_policy: GatePolicy,
     reduction_policy: ReductionPolicy,
     secondary_partition: bool,
+    frozen_host_sources: bool,
 }
 impl Geometry {
     pub fn new(
@@ -207,7 +208,40 @@ impl Geometry {
             gate_policy: GatePolicy::Generic,
             reduction_policy: ReductionPolicy::AllMembers,
             secondary_partition: false,
+            frozen_host_sources: false,
         })
+    }
+    /// Explicit source-only public profile. These virtual slots are NOT
+    /// BankSlots capacity; the ordinary constructor continues to reject512.
+    pub(crate) fn with_frozen_host_sources(mut self) -> Result<Self, &'static str> {
+        let [gate, up, down] = self.projections;
+        if self.capacity != 144
+            || self.tile != 8
+            || self.secondary_partition
+            || self.frozen_host_sources
+            || self.gate_policy != GatePolicy::Generic
+            || gate.columns != 2560
+            || gate.rows != 640
+            || up != gate
+            || !matches!(
+                gate.dtype,
+                super::IQ3_XXS | super::IQ2_S | super::IQ3_S | super::IQ4_XS
+            )
+            || !matches!(down.dtype, super::IQ4_NL | super::Q2_0)
+        {
+            return Err("grouped frozen host source profile");
+        }
+        for projection in self.projections {
+            for slots in [72, 72, 144, 144, 80] {
+                projection.segment_words(slots)?;
+            }
+        }
+        self.capacity = 512;
+        self.frozen_host_sources = true;
+        Ok(self)
+    }
+    pub(crate) fn frozen_host_sources(self) -> bool {
+        self.frozen_host_sources
     }
     /// Narrow immutable32+16 partition; ordinary flat48 remains unchanged.
     pub(crate) fn stationary_secondary(projections: [Projection; 3]) -> Result<Self, &'static str> {
@@ -272,7 +306,7 @@ impl Geometry {
         if self.tile == 1 { 1 } else { MAX_BATCH }
     }
     pub fn validate_count(self, count: usize) -> Result<(), &'static str> {
-        if !(1..=self.member_capacity()).contains(&count) {
+        if !(1..=self.member_capacity()).contains(&count) || self.frozen_host_sources && count > 3 {
             return Err("grouped public member policy count");
         }
         Ok(())
@@ -289,7 +323,9 @@ impl Geometry {
         binding_words: [usize; 3],
     ) -> Result<(), &'static str> {
         let flat = [self.capacity];
-        let parts = if self.secondary_partition {
+        let parts = if self.frozen_host_sources {
+            &[72, 72, 144, 144, 80][..]
+        } else if self.secondary_partition {
             &[32, 16][..]
         } else {
             crate::bank_slots::segmented_capacities(self.capacity).unwrap_or(&flat)
@@ -412,6 +448,14 @@ pub struct GroupMap<'a> {
     words: Box<[u32; MAP_WORDS]>,
     probabilities: Box<[f32; MAX_ROUTES]>,
     protected: &'a [(u32, u32)],
+    frozen_host_sources: bool,
+}
+fn source_map_capacity(frozen: bool, capacity: usize, count: usize) -> bool {
+    if frozen {
+        capacity == 512 && (1..=3).contains(&count)
+    } else {
+        crate::bank_slots::routed_capacity(capacity)
+    }
 }
 impl<'a> GroupMap<'a> {
     #[allow(clippy::too_many_arguments)]
@@ -424,10 +468,57 @@ impl<'a> GroupMap<'a> {
         protected: &'a [(u32, u32)],
         capacity: usize,
     ) -> Result<Self, &'static str> {
+        Self::new_with_policy(
+            count,
+            wave_first,
+            wave_count,
+            experts,
+            probabilities,
+            protected,
+            capacity,
+            false,
+        )
+    }
+    /// Source-aware map only after the frozen original source proof has bound
+    /// each actual expert to its exact immutable virtual address.
+    pub(crate) fn new_frozen_sources(
+        count: usize,
+        experts: &[u32],
+        probabilities: &[f32],
+        protected: &'a [(u32, u32)],
+        geometry: Geometry,
+    ) -> Result<Self, &'static str> {
+        if !geometry.frozen_host_sources() {
+            return Err("grouped frozen source map policy");
+        }
+        geometry.validate_count(count)?;
+        Self::new_with_policy(
+            count,
+            0,
+            count,
+            experts,
+            probabilities,
+            protected,
+            512,
+            true,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn new_with_policy(
+        count: usize,
+        wave_first: usize,
+        wave_count: usize,
+        experts: &[u32],
+        probabilities: &[f32],
+        protected: &'a [(u32, u32)],
+        capacity: usize,
+        frozen_host_sources: bool,
+    ) -> Result<Self, &'static str> {
         let mut map = Self {
             words: Box::new([0; MAP_WORDS]),
             probabilities: Box::new([0.; MAX_ROUTES]),
             protected,
+            frozen_host_sources,
         };
         if !(1..=MAX_BATCH).contains(&count)
             || wave_count == 0
@@ -436,7 +527,7 @@ impl<'a> GroupMap<'a> {
                 .is_none_or(|end| end > count)
             || experts.len() != count * RANKS
             || probabilities.len() != count * RANKS
-            || !crate::bank_slots::routed_capacity(capacity)
+            || !source_map_capacity(frozen_host_sources, capacity, count)
             || protected.is_empty()
             || protected.len() > capacity.min(MAX_GROUPS)
         {
@@ -511,6 +602,9 @@ impl<'a> GroupMap<'a> {
     /// Canonical route/probability validation remains separately mandatory.
     pub fn validate_geometry(&self, geometry: Geometry) -> Result<(), &'static str> {
         geometry.validate_count(self.count())?;
+        if geometry.frozen_host_sources != self.frozen_host_sources {
+            return Err("grouped map source policy mismatch");
+        }
         if geometry.tile() == 1
             && (self.words[1] != 0
                 || self.words[2] != 1
@@ -536,7 +630,7 @@ impl<'a> GroupMap<'a> {
         if !(1..=MAX_BATCH).contains(&count)
             || wave == 0
             || first.checked_add(wave).is_none_or(|end| end > count)
-            || !crate::bank_slots::routed_capacity(capacity)
+            || !source_map_capacity(self.frozen_host_sources, capacity, count)
             || groups == 0
             || groups != self.protected.len()
             || groups > MAX_GROUPS.min(capacity)
@@ -1844,6 +1938,7 @@ mod tests {
             gate_policy: GatePolicy::Generic,
             reduction_policy: ReductionPolicy::AllMembers,
             secondary_partition: false,
+            frozen_host_sources: false,
         };
         assert_eq!(g.scratch_bytes(true).unwrap(), 4480 * 1024);
     }
@@ -3583,5 +3678,107 @@ mod tests {
         });
         assert!(failed.is_err());
         assert_eq!(SCRATCH_WIPES.with(|n| n.get()), before + 5);
+    }
+}
+#[cfg(test)]
+mod frozen_source_tests {
+    use super::*;
+    fn geometry(layer: usize) -> Geometry {
+        let [gate, up, down] = crate::daslab_profile::routed_types(layer).unwrap();
+        let p = [
+            Projection::new(gate, 2560, 640, 512).unwrap(),
+            Projection::new(up, 2560, 640, 512).unwrap(),
+            Projection::new(down, 640, 2560, 512).unwrap(),
+        ];
+        Geometry::new(p, 8, 144).unwrap()
+    }
+    #[test]
+    fn virtual_five_page_geometry_is_separate_from_ordinary_bank_capacity() {
+        for layer in 0..48 {
+            let ordinary = geometry(layer);
+            assert!(!ordinary.frozen_host_sources());
+            assert!(Geometry::new(ordinary.projections(), 8, 512).is_err());
+            let frozen = ordinary.with_frozen_host_sources().unwrap();
+            assert_eq!(frozen.capacity(), 512);
+            let mut start = 0;
+            for slots in [72, 72, 144, 144, 80] {
+                let words = frozen
+                    .projections()
+                    .map(|p| p.segment_words(slots).unwrap());
+                frozen.validate_shard(start, slots, words).unwrap();
+                assert!(frozen.validate_shard(start + 1, slots, words).is_err());
+                let mut bad = words;
+                bad[1] += 1;
+                assert!(frozen.validate_shard(start, slots, bad).is_err());
+                start += slots;
+            }
+            assert_eq!(start, 512);
+            for count in 1..=3 {
+                frozen.validate_count(count).unwrap();
+            }
+            assert!(frozen.validate_count(4).is_err());
+            assert!(frozen.with_frozen_host_sources().is_err());
+        }
+        let p = [
+            Projection::new(Q4_K, 2560, 640, 512).unwrap(),
+            Projection::new(Q4_K, 2560, 640, 512).unwrap(),
+            Projection::new(crate::quant_matvec::Q8_0, 640, 2560, 512).unwrap(),
+        ];
+        assert!(
+            Geometry::new(p, 8, 144)
+                .unwrap()
+                .with_frozen_host_sources()
+                .is_err()
+        );
+        assert!(
+            Geometry::new(geometry(0).projections(), 4, 144)
+                .unwrap()
+                .with_frozen_host_sources()
+                .is_err()
+        );
+    }
+    #[test]
+    fn virtual_source_map_preserves_actual_ranks_probability_bits_and_boundaries() {
+        let g = geometry(0).with_frozen_host_sources().unwrap();
+        let slots = [0u32, 71, 72, 143, 144, 287, 288, 431, 432, 511];
+        let pairs: Vec<_> = slots
+            .into_iter()
+            .enumerate()
+            .map(|(e, s)| (e as u32, s))
+            .collect();
+        for count in 1..=3 {
+            let experts: Vec<_> = (0..count)
+                .flat_map(|t| (0..10).map(move |r| ((r + t) % 10) as u32))
+                .collect();
+            let probabilities = vec![0.1f32; count * 10];
+            assert!(GroupMap::new(count, 0, count, &experts, &probabilities, &pairs, 512).is_err());
+            let map =
+                GroupMap::new_frozen_sources(count, &experts, &probabilities, &pairs, g).unwrap();
+            map.validate_geometry(g).unwrap();
+            map.validate(&experts, &probabilities, 512).unwrap();
+            assert!(map.validate_geometry(geometry(0)).is_err());
+            assert!(map.validate(&experts, &probabilities, 144).is_err());
+            for (group, &(_, slot)) in pairs.iter().enumerate() {
+                assert_eq!(map.words()[SLOTS + group], slot);
+                assert_eq!(map.words()[LENGTHS + group], count as u32);
+                for t in 0..count {
+                    let rank = (group + 10 - t) % 10;
+                    assert_eq!(map.words()[MEMBERS + group * 8 + t], (t * 10 + rank) as u32);
+                }
+            }
+            for (r, &p) in probabilities.iter().enumerate() {
+                assert_eq!(map.probabilities()[r].to_bits(), p.to_bits());
+            }
+        }
+        let experts: Vec<_> = (0..10).collect();
+        let p = vec![0.1; 10];
+        assert!(GroupMap::new_frozen_sources(1, &experts, &p, &pairs, geometry(0)).is_err());
+        let mut bad = pairs.clone();
+        bad[9].1 = 512;
+        assert!(GroupMap::new_frozen_sources(1, &experts, &p, &bad, g).is_err());
+        bad = pairs.clone();
+        bad[9].1 = bad[0].1;
+        assert!(GroupMap::new_frozen_sources(1, &experts, &p, &bad, g).is_err());
+        assert!(GroupMap::new_frozen_sources(1, &experts, &p, &pairs[..9], g).is_err());
     }
 }

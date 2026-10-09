@@ -367,6 +367,7 @@ impl GpuExecutor<'_> {
                 staged: None,
                 last: None,
                 count1: None,
+                frozen_sources: None,
                 deferred_router: Some(Zeroizing::new(w.identity)),
                 waves: Zeroizing::new(1),
                 poison: w.poison.clone(),
