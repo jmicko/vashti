@@ -1876,7 +1876,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if q6_integer_probe {
             q6_integer_probe::validate_limits(&adapter.limits())?;
         }
-        if resident_router_probe {
+        if resident_router_probe || resident_gpu_router {
             resident_router_gpu_probe::validate_limits(&adapter.limits())?;
         }
         if shared_original_iq_probe
