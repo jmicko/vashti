@@ -1852,7 +1852,11 @@ impl<'a> GpuExecutor<'a> {
         self.check_segmented_resident(true)?;
         self.check_target_rows_policy()?;
         if self.target_rows_reserved
-            && private_owned != crate::resident_model::batch::TARGET_ROWS_PRIVATE_MAIN
+            && ![
+                crate::resident_model::batch::TARGET_ROWS_PRIVATE_MAIN,
+                crate::resident_model::batch::TARGET_ROWS_PREPARED_VERIFY3_MAIN,
+            ]
+            .contains(&private_owned)
         {
             return Err(Error::InvalidFormat(
                 "native target rows explicit construction policy",

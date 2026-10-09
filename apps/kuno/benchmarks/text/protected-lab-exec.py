@@ -4,7 +4,7 @@ import pathlib
 import resource
 import sys
 
-def selected_target_policy(environment):
+def selected_target_policy(environment, mtp=False):
     selected = {key: value for key, value in environment.items() if key.startswith(("KUNO_LAB_", "KUNO_TEST_", "KUNO_PUBLIC_"))}
     if "KUNO_LAB_TARGET_DENSE" in selected:
         if selected.pop("KUNO_LAB_TARGET_DENSE") != "verify3":
@@ -12,6 +12,12 @@ def selected_target_policy(environment):
     if "KUNO_LAB_TARGET_IO" in selected:
         if selected.pop("KUNO_LAB_TARGET_IO") != "chunk":
             raise ValueError("Target I/O policy requires canonical chunk")
+    if "KUNO_LAB_TARGET_EXPERTS" in selected:
+        if selected.pop("KUNO_LAB_TARGET_EXPERTS") != "prepared-verify3":
+            raise ValueError("Target expert policy requires canonical prepared-verify3")
+    if mtp and "KUNO_LAB_MTP_SWEEPS" in selected:
+        if selected.pop("KUNO_LAB_MTP_SWEEPS") != "fused":
+            raise ValueError("MTP sweep policy requires canonical fused")
     return selected
 
 def memory_limit(environment, arguments):
@@ -25,13 +31,23 @@ def memory_limit(environment, arguments):
         return 8 * 1024**3
     if "KUNO_LAB_SPECULATIVE_PUBLIC_ONLY" in environment:
         permitted = {"KUNO_LAB_SPECULATIVE_PUBLIC_ONLY", "KUNO_LAB_STATIC_CACHE_BYTES", "KUNO_TEST_Q3_DIR", "KUNO_TEST_MTP", "KUNO_PUBLIC_TARGET_CARRY13_REFERENCE", "KUNO_PUBLIC_RECEIPT"}
-        selected = selected_target_policy(environment)
+        selected = selected_target_policy(environment, mtp=True)
         if (set(selected) != permitted or any(not value for value in selected.values())
                 or selected["KUNO_LAB_SPECULATIVE_PUBLIC_ONLY"] != "1"
                 or selected["KUNO_LAB_STATIC_CACHE_BYTES"] != "8589934592"
                 or len(arguments) != 3 or arguments[1:] != ["intel", "daslab-speculative-probe"]):
             raise ValueError("Speculative cache requires the fixed public dual-GPU fixture")
         return 48 * 1024**3
+    if "KUNO_LAB_RESIDENT_MTP_PUBLIC_ONLY" in environment or (len(arguments) > 2 and arguments[2] == "resident-mtp-probe"):
+        selected = {key: value for key, value in environment.items() if key.startswith(("KUNO_LAB_", "KUNO_TEST_", "KUNO_PUBLIC_"))}
+        if "KUNO_LAB_MTP_SWEEPS" in selected and selected.pop("KUNO_LAB_MTP_SWEEPS") != "fused":
+            raise ValueError("MTP sweep policy requires canonical fused")
+        permitted={"KUNO_LAB_RESIDENT_MTP_PUBLIC_ONLY", "KUNO_TEST_MTP", "KUNO_PUBLIC_DASLAB_CARRY", "KUNO_PUBLIC_MTP_REFERENCE", "KUNO_PUBLIC_RECEIPT"}
+        if (set(selected) != permitted or any(not value for value in selected.values())
+                or selected["KUNO_LAB_RESIDENT_MTP_PUBLIC_ONLY"] != "1"
+                or len(arguments) != 3 or arguments[1] not in ("intel", "nvidia") or arguments[2] != "resident-mtp-probe"):
+            raise ValueError("Resident MTP requires fixed public artifacts")
+        return 8 * 1024**3
     target_modes = {"KUNO_LAB_TARGET_ROWS_PUBLIC_ONLY": "daslab-target-rows-probe", "KUNO_LAB_TARGET_REPAIR_PUBLIC_ONLY": "daslab-target-repair-probe"}
     target_gate = next((key for key in target_modes if key in environment), None)
     if target_gate is not None:

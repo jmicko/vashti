@@ -24,6 +24,7 @@ use zeroize::Zeroizing;
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 pub(crate) struct Inputs {
     pub(crate) verify3_dense: bool,
+    pub(crate) prepared_experts: bool,
     chunk_io: bool,
     directory: PathBuf,
     reference: PathBuf,
@@ -55,6 +56,7 @@ pub(crate) fn registration(
                     | "KUNO_PUBLIC_RECEIPT"
                     | "KUNO_LAB_STATIC_CACHE_BYTES"
                     | "KUNO_LAB_TARGET_DENSE"
+                    | "KUNO_LAB_TARGET_EXPERTS"
                     | "KUNO_LAB_TARGET_IO"
             )
         ) || value.is_empty()
@@ -68,6 +70,11 @@ pub(crate) fn registration(
     {
         return Err("target repair fixed public/cache gates missing");
     }
+    let prepared_experts = match values.remove(OsStr::new("KUNO_LAB_TARGET_EXPERTS")) {
+        None => false,
+        Some(value) if value == "prepared-verify3" => true,
+        _ => return Err("target expert policy requires canonical prepared-verify3"),
+    };
     let chunk_io = match values.remove(OsStr::new("KUNO_LAB_TARGET_IO")) {
         None => false,
         Some(value) if value == "chunk" => true,
@@ -86,6 +93,7 @@ pub(crate) fn registration(
     };
     Ok(Inputs {
         verify3_dense,
+        prepared_experts,
         chunk_io,
         directory: path("KUNO_TEST_Q3_DIR")?,
         reference: path("KUNO_PUBLIC_TARGET_ROWS_REFERENCE")?,
@@ -146,9 +154,12 @@ pub(crate) fn run(
         executor.fast_dense_fault = true;
         executor.shared_kernels = true;
         executor.shared_gdn = true;
-        let config = Config::new(client, limits, 8)?
+        let mut config = Config::new(client, limits, 8)?
             .reserve_target_rows()?
             .reserve_latest_target_checkpoint()?;
+        if input.prepared_experts {
+            config = config.reserve_prepared_verify3_experts()?;
+        }
         let mut resident = ResidentModel::new_with_native_batch(
             graph.bound_graph(),
             client.clone(),
@@ -253,7 +264,7 @@ pub(crate) fn run(
         reports.push(report);
     }
     file.verify_file_unchanged()?;
-    let value = serde_json::json!({"scope":"fixed-public-DASLab-actual-target-prefix-repair-only","verify3_dense":input.verify3_dense,"chunk_io_checkpoint":input.chunk_io,"public_token0":0,"seed":424242,"temperature":0,"max_chunk":3,"runtime_io_limit_bytes":128*1024*1024,"complete_cpu_reference_rows":4,"cases":reports,"speculative_controller":false,"accepted_speculative_tokens_per_second":null,"private_or_production_accepted":false});
+    let value = serde_json::json!({"scope":"fixed-public-DASLab-actual-target-prefix-repair-only","verify3_dense":input.verify3_dense,"prepared_verify3_experts":input.prepared_experts,"chunk_io_checkpoint":input.chunk_io,"public_token0":0,"seed":424242,"temperature":0,"max_chunk":3,"runtime_io_limit_bytes":128*1024*1024,"complete_cpu_reference_rows":4,"cases":reports,"speculative_controller":false,"accepted_speculative_tokens_per_second":null,"private_or_production_accepted":false});
     let out = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -288,6 +299,18 @@ mod tests {
         let mut candidate = env();
         candidate.push(("KUNO_LAB_TARGET_DENSE".into(), "verify3".into()));
         assert!(registration(&args, candidate, true).unwrap().verify3_dense);
+        let mut candidate = env();
+        candidate.push(("KUNO_LAB_TARGET_EXPERTS".into(), "prepared-verify3".into()));
+        assert!(
+            registration(&args, candidate, true)
+                .unwrap()
+                .prepared_experts
+        );
+        for invalid in ["", "auto", "0", "1", "prepared-verify3 "] {
+            let mut candidate = env();
+            candidate.push(("KUNO_LAB_TARGET_EXPERTS".into(), invalid.into()));
+            assert!(registration(&args, candidate, true).is_err());
+        }
         let mut candidate = env();
         candidate.push(("KUNO_LAB_TARGET_IO".into(), "chunk".into()));
         assert!(registration(&args, candidate, true).unwrap().chunk_io);

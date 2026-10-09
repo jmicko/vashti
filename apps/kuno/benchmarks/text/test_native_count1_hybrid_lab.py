@@ -1306,11 +1306,36 @@ class HybridLabTests(unittest.TestCase):
             args=["/frozen/binary","intel",mode]
             self.assertEqual(guard.memory_limit(env,args),48*1024**3)
             self.assertEqual(guard.memory_limit(dict(env,KUNO_LAB_TARGET_IO="chunk"),args),48*1024**3)
+            self.assertEqual(guard.memory_limit(dict(env,KUNO_LAB_TARGET_EXPERTS="prepared-verify3"),args),48*1024**3)
+            for invalid in ("", "auto", "0", "1", "prepared-verify3 ", True):
+                with self.assertRaises(ValueError):guard.memory_limit(dict(env,KUNO_LAB_TARGET_EXPERTS=invalid),args)
+            if gate=="KUNO_LAB_SPECULATIVE_PUBLIC_ONLY":
+                self.assertEqual(guard.memory_limit(dict(env,KUNO_LAB_MTP_SWEEPS="fused"),args),48*1024**3)
+                for invalid in ("", "auto", "0", "1", "fused ", True):
+                    with self.assertRaises(ValueError):guard.memory_limit(dict(env,KUNO_LAB_MTP_SWEEPS=invalid),args)
+            else:
+                with self.assertRaises(ValueError):guard.memory_limit(dict(env,KUNO_LAB_MTP_SWEEPS="fused"),args)
             for invalid in ("", "auto", "0", "1", "chunk ", True):
                 with self.assertRaises(ValueError):guard.memory_limit(dict(env,KUNO_LAB_TARGET_IO=invalid),args)
             for invalid in ("", "auto", "0", "1", "verify3 ", True):
                 with self.assertRaises(ValueError):guard.memory_limit(dict(env,KUNO_LAB_TARGET_DENSE=invalid),args)
             with self.assertRaises(ValueError):guard.memory_limit(dict(env,KUNO_LAB_OTHER="1"),args)
+
+    def test_resident_mtp_fused_sweeps_keep_fixed_public_artifact_envelope(self):
+        spec=importlib.util.spec_from_file_location("protected_resident_mtp",HERE/"protected-lab-exec.py")
+        guard=importlib.util.module_from_spec(spec);spec.loader.exec_module(guard)
+        env={"KUNO_LAB_RESIDENT_MTP_PUBLIC_ONLY":"1", "KUNO_TEST_MTP":"/original/draft", "KUNO_PUBLIC_DASLAB_CARRY":"/public/carry", "KUNO_PUBLIC_MTP_REFERENCE":"/public/reference", "KUNO_PUBLIC_RECEIPT":"/public/receipt"}
+        for card in ("intel","nvidia"):
+            args=["/frozen/binary",card,"resident-mtp-probe"]
+            self.assertEqual(guard.memory_limit(env,args),8*1024**3)
+            self.assertEqual(guard.memory_limit(dict(env,KUNO_LAB_MTP_SWEEPS="fused"),args),8*1024**3)
+            for invalid in ("", "auto", "0", "1", "fused ", True):
+                with self.assertRaises(ValueError):guard.memory_limit(dict(env,KUNO_LAB_MTP_SWEEPS=invalid),args)
+            for key in env:
+                wrong=dict(env);wrong.pop(key)
+                with self.assertRaises(ValueError):guard.memory_limit(wrong,args)
+            with self.assertRaises(ValueError):guard.memory_limit(dict(env,KUNO_LAB_TARGET_EXPERTS="prepared-verify3"),args)
+            with self.assertRaises(ValueError):guard.memory_limit(env,[*args,"extra"])
 
     def test_fast_gpu_requires_actual_dispatches_and_separate_long_selection(self):
         value = receipt("intel",10)

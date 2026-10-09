@@ -32,7 +32,9 @@ use std::{
 use zeroize::Zeroizing;
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 pub(crate) struct Inputs {
+    pub(crate) fused_sweeps: bool,
     pub(crate) verify3_dense: bool,
+    pub(crate) prepared_experts: bool,
     chunk_io: bool,
     directory: PathBuf,
     mtp: PathBuf,
@@ -64,7 +66,9 @@ pub(crate) fn registration(
                     | "KUNO_PUBLIC_TARGET_CARRY13_REFERENCE"
                     | "KUNO_PUBLIC_RECEIPT"
                     | "KUNO_LAB_STATIC_CACHE_BYTES"
+                    | "KUNO_LAB_MTP_SWEEPS"
                     | "KUNO_LAB_TARGET_DENSE"
+                    | "KUNO_LAB_TARGET_EXPERTS"
                     | "KUNO_LAB_TARGET_IO"
             )
         ) || value.is_empty()
@@ -78,6 +82,11 @@ pub(crate) fn registration(
     {
         return Err("speculative fixed public/cache gates missing");
     }
+    let prepared_experts = match values.remove(OsStr::new("KUNO_LAB_TARGET_EXPERTS")) {
+        None => false,
+        Some(value) if value == "prepared-verify3" => true,
+        _ => return Err("target expert policy requires canonical prepared-verify3"),
+    };
     let chunk_io = match values.remove(OsStr::new("KUNO_LAB_TARGET_IO")) {
         None => false,
         Some(value) if value == "chunk" => true,
@@ -88,6 +97,11 @@ pub(crate) fn registration(
         Some(value) if value == "verify3" => true,
         _ => return Err("target dense policy requires canonical verify3"),
     };
+    let fused_sweeps = match values.remove(OsStr::new("KUNO_LAB_MTP_SWEEPS")) {
+        None => false,
+        Some(value) if value == "fused" => true,
+        _ => return Err("MTP sweep policy requires canonical fused"),
+    };
     let mut path = |name: &str| {
         values
             .remove(OsStr::new(name))
@@ -95,7 +109,9 @@ pub(crate) fn registration(
             .ok_or("speculative public path missing")
     };
     Ok(Inputs {
+        fused_sweeps,
         verify3_dense,
+        prepared_experts,
         chunk_io,
         directory: path("KUNO_TEST_Q3_DIR")?,
         mtp: path("KUNO_TEST_MTP")?,
@@ -121,7 +137,7 @@ fn accepted_prefix(inputs: &[u32], predicted: &[u32]) -> std::result::Result<usi
     Ok(inputs.len())
 }
 
-async fn draft_client() -> Result<(ComputeClient<WgpuRuntime>, wgpu::Limits)> {
+async fn draft_client(fused_sweeps: bool) -> Result<(ComputeClient<WgpuRuntime>, wgpu::Limits)> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::VULKAN,
         ..wgpu::InstanceDescriptor::new_without_display_handle()
@@ -142,6 +158,9 @@ async fn draft_client() -> Result<(ComputeClient<WgpuRuntime>, wgpu::Limits)> {
     let info = adapter.get_info();
     let limits = adapter.limits();
     resident_mtp::validate_limits(&limits)?;
+    if fused_sweeps {
+        resident_mtp::validate_fused_sweep_limits(&limits)?;
+    }
     if !adapter.features().contains(wgpu::Features::SUBGROUP)
         || info.subgroup_min_size < 16
         || info.subgroup_max_size > 32
@@ -173,6 +192,17 @@ async fn draft_client() -> Result<(ComputeClient<WgpuRuntime>, wgpu::Limits)> {
         },
     );
     Ok((WgpuRuntime::client(&selected), limits))
+}
+
+fn process_disk_read_bytes() -> Result<u64> {
+    let fields = std::fs::read_to_string("/proc/self/io")?;
+    fields
+        .lines()
+        .find_map(|line| line.strip_prefix("read_bytes: "))
+        .ok_or("public fixture process I/O counter missing")?
+        .trim()
+        .parse()
+        .map_err(Into::into)
 }
 
 pub(crate) fn run(
@@ -215,18 +245,28 @@ pub(crate) fn run(
     crate::resident_util::select_retained_metadata(true);
     crate::resident_util::select_compute_scratch_clear(true);
     client.configure_transient_io(128 * 1024 * 1024)?;
-    let (draft_client, draft_limits) = cubecl::future::block_on(draft_client())?;
+    let (draft_client, draft_limits) = cubecl::future::block_on(draft_client(input.fused_sweeps))?;
     draft_client.configure_transient_io(64 * 1024 * 1024)?;
     let target_retired = Arc::new(AtomicBool::new(false));
     let draft_retired = Arc::new(AtomicBool::new(false));
     let cancel = AtomicBool::new(false);
+    let load_disk_before = process_disk_read_bytes()?;
     let loading = Instant::now();
-    let mut draft = resident_mtp::ResidentMtp::new(
-        &draft_graph,
-        draft_client,
-        &draft_limits,
-        draft_retired.clone(),
-    )?;
+    let mut draft = if input.fused_sweeps {
+        resident_mtp::ResidentMtp::new_with_fused_sweeps(
+            &draft_graph,
+            draft_client,
+            &draft_limits,
+            draft_retired.clone(),
+        )?
+    } else {
+        resident_mtp::ResidentMtp::new(
+            &draft_graph,
+            draft_client,
+            &draft_limits,
+            draft_retired.clone(),
+        )?
+    };
     let mut executor = GpuExecutor::new_with_profile(
         &file,
         client.clone(),
@@ -248,9 +288,12 @@ pub(crate) fn run(
         // A target admission binds one owner and close permanently poisons it.
         // Never reset that ledger to manufacture a warm second sequence.
         for replay in 0..1 {
-            let config = Config::new(client, limits, 8)?
+            let mut config = Config::new(client, limits, 8)?
                 .reserve_target_rows()?
                 .reserve_latest_target_checkpoint()?;
+            if input.prepared_experts {
+                config = config.reserve_prepared_verify3_experts()?;
+            }
             let mut target = ResidentModel::new_with_native_batch(
                 graph.bound_graph(),
                 client.clone(),
@@ -278,6 +321,7 @@ pub(crate) fn run(
                 let before_hits = executor.expert_hits;
                 let before_bytes = executor.uploaded_bytes;
                 let before_dense = executor.target_verify3_dense_calls;
+                let load_disk_after = process_disk_read_bytes()?;
                 let before_weight_reads = executor.weight_read_ns;
                 let before_weight_uploads = executor.weight_upload_ns;
                 let before_phases = target.phase_ns.clone();
@@ -393,9 +437,12 @@ pub(crate) fn run(
                         (*name, value - before_phases.get(name).copied().unwrap_or(0))
                     })
                     .collect();
+                let timed_physical_read_bytes = process_disk_read_bytes()?
+                    .checked_sub(load_disk_after)
+                    .ok_or("public process read counter regressed")?;
                 let after = draft.traffic();
                 Ok(
-                    serde_json::json!({"replay":replay,"verify3_dense_calls":executor.target_verify3_dense_calls-before_dense,"target_host_phase_ns":host_phase_ns,"weight_read_ns":executor.weight_read_ns-before_weight_reads,"weight_upload_enqueue_ns":executor.weight_upload_ns-before_weight_uploads,"timing_scope":"original normal routing/demand uploads; public checks and actual repair included","load_and_initial_prefill_cumulative_ns":load_ns,"accepted_tokens":accepted_tokens,"elapsed_ns":elapsed_ns,"accepted_tokens_per_second":accepted_tokens as f64*1e9/elapsed_ns as f64,"proposed_drafts":proposed_tokens,"accepted_drafts":accepted_drafts,"rounds":rounds,"expert_uploads":executor.expert_uploads-before_uploads,"expert_hits":executor.expert_hits-before_hits,"uploaded_bytes":executor.uploaded_bytes-before_bytes,"draft_traffic":{"host_read_calls":after.host_read_calls-before_traffic.host_read_calls,"host_read_bytes":after.host_read_bytes-before_traffic.host_read_bytes,"private_upload_calls":after.private_upload_calls-before_traffic.private_upload_calls,"private_upload_bytes":after.private_upload_bytes-before_traffic.private_upload_bytes,"minimal_packet_reads":after.minimal_packet_reads-before_traffic.minimal_packet_reads,"followup_copy_calls":after.followup_copy_calls-before_traffic.followup_copy_calls}}),
+                    serde_json::json!({"replay":replay,"verify3_dense_calls":executor.target_verify3_dense_calls-before_dense,"target_host_phase_ns":host_phase_ns,"load_and_initial_prefill_physical_read_bytes":load_disk_after.checked_sub(load_disk_before).ok_or("public process read counter regressed")?,"timed_physical_read_bytes":timed_physical_read_bytes,"weight_read_ns":executor.weight_read_ns-before_weight_reads,"weight_upload_enqueue_ns":executor.weight_upload_ns-before_weight_uploads,"timing_scope":"original normal routing/demand uploads; public checks and actual repair included","load_and_initial_prefill_cumulative_ns":load_ns,"accepted_tokens":accepted_tokens,"elapsed_ns":elapsed_ns,"accepted_tokens_per_second":accepted_tokens as f64*1e9/elapsed_ns as f64,"proposed_drafts":proposed_tokens,"accepted_drafts":accepted_drafts,"rounds":rounds,"expert_uploads":executor.expert_uploads-before_uploads,"expert_hits":executor.expert_hits-before_hits,"uploaded_bytes":executor.uploaded_bytes-before_bytes,"draft_traffic":{"host_read_calls":after.host_read_calls-before_traffic.host_read_calls,"host_read_bytes":after.host_read_bytes-before_traffic.host_read_bytes,"explicit_dispatches":after.explicit_dispatches-before_traffic.explicit_dispatches,"private_upload_calls":after.private_upload_calls-before_traffic.private_upload_calls,"private_upload_bytes":after.private_upload_bytes-before_traffic.private_upload_bytes,"minimal_packet_reads":after.minimal_packet_reads-before_traffic.minimal_packet_reads,"followup_copy_calls":after.followup_copy_calls-before_traffic.followup_copy_calls}}),
                 )
             })();
             let close = target.close();
@@ -421,7 +468,7 @@ pub(crate) fn run(
     }
     file.verify_file_unchanged()?;
     sidecar.verify_file_unchanged()?;
-    let value = serde_json::json!({"scope":"fixed-public-DASLab13-real-dual-GPU-greedy-speculation","target_card":"B70","draft_card":"RTX3060","verify3_dense":input.verify3_dense,"chunk_io_checkpoint":input.chunk_io,"compiled_token0":0,"seed":424242,"temperature":0,"oracle_forcing":false,"expert_route_forcing":false,"passes":passes,"draft_close":{"private_buffers":draft_close.private.buffers,"private_bytes":draft_close.private.bytes,"public_bytes":draft_close.public_bytes,"main_reserved":draft_close.main_reserved},"private_or_production_accepted":false});
+    let value = serde_json::json!({"scope":"fixed-public-DASLab13-real-dual-GPU-greedy-speculation","target_card":"B70","draft_card":"RTX3060","verify3_dense":input.verify3_dense,"prepared_verify3_experts":input.prepared_experts,"chunk_io_checkpoint":input.chunk_io,"fused_mtp_sweeps":input.fused_sweeps,"compiled_token0":0,"seed":424242,"temperature":0,"oracle_forcing":false,"expert_route_forcing":false,"passes":passes,"draft_close":{"private_buffers":draft_close.private.buffers,"private_bytes":draft_close.private.bytes,"public_bytes":draft_close.public_bytes,"main_reserved":draft_close.main_reserved},"private_or_production_accepted":false});
     serde_json::to_writer_pretty(
         std::fs::OpenOptions::new()
             .write(true)
@@ -470,9 +517,29 @@ mod tests {
             .to_vec()
         };
         assert!(registration(&args, env(), true).is_ok());
+        let mut fused = env();
+        fused.push(("KUNO_LAB_MTP_SWEEPS".into(), "fused".into()));
+        assert!(registration(&args, fused, true).unwrap().fused_sweeps);
+        for invalid in ["", "auto", "0", "1", "fused "] {
+            let mut values = env();
+            values.push(("KUNO_LAB_MTP_SWEEPS".into(), invalid.into()));
+            assert!(registration(&args, values, true).is_err());
+        }
         let mut candidate = env();
         candidate.push(("KUNO_LAB_TARGET_DENSE".into(), "verify3".into()));
         assert!(registration(&args, candidate, true).unwrap().verify3_dense);
+        let mut candidate = env();
+        candidate.push(("KUNO_LAB_TARGET_EXPERTS".into(), "prepared-verify3".into()));
+        assert!(
+            registration(&args, candidate, true)
+                .unwrap()
+                .prepared_experts
+        );
+        for invalid in ["", "auto", "0", "1", "prepared-verify3 "] {
+            let mut candidate = env();
+            candidate.push(("KUNO_LAB_TARGET_EXPERTS".into(), invalid.into()));
+            assert!(registration(&args, candidate, true).is_err());
+        }
         let mut candidate = env();
         candidate.push(("KUNO_LAB_TARGET_IO".into(), "chunk".into()));
         assert!(registration(&args, candidate, true).unwrap().chunk_io);

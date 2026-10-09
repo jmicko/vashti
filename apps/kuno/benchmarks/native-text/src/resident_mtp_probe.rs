@@ -37,6 +37,7 @@ fn verify_minimal(
     Ok(error)
 }
 pub(crate) struct Inputs {
+    pub(crate) fused_sweeps: bool,
     mtp: PathBuf,
     carry: PathBuf,
     reference: PathBuf,
@@ -70,6 +71,7 @@ pub(crate) fn registration(
                     | "KUNO_PUBLIC_DASLAB_CARRY"
                     | "KUNO_PUBLIC_MTP_REFERENCE"
                     | "KUNO_PUBLIC_RECEIPT"
+                    | "KUNO_LAB_MTP_SWEEPS"
             )
         ) || value.is_empty()
             || selected.insert(key, value).is_some()
@@ -81,6 +83,11 @@ pub(crate) fn registration(
     {
         return Err("resident MTP requires its public-only gate");
     }
+    let fused_sweeps = match selected.remove(OsStr::new("KUNO_LAB_MTP_SWEEPS")) {
+        None => false,
+        Some(value) if value == "fused" => true,
+        _ => return Err("MTP sweep policy requires canonical fused"),
+    };
     let mut path = |name: &str| -> std::result::Result<PathBuf, &'static str> {
         selected
             .remove(OsStr::new(name))
@@ -88,6 +95,7 @@ pub(crate) fn registration(
             .ok_or("resident MTP fixed public path missing")
     };
     Ok(Inputs {
+        fused_sweeps,
         mtp: path("KUNO_TEST_MTP")?,
         carry: path("KUNO_PUBLIC_DASLAB_CARRY")?,
         reference: path("KUNO_PUBLIC_MTP_REFERENCE")?,
@@ -121,8 +129,16 @@ pub(crate) fn run(
     let retired = Arc::new(AtomicBool::new(false));
     let mut passes = Vec::with_capacity(2);
     for replay in 0..2 {
-        let mut workspace =
-            resident_mtp::ResidentMtp::new(&graph, client.clone(), limits, retired.clone())?;
+        let mut workspace = if input.fused_sweeps {
+            resident_mtp::ResidentMtp::new_with_fused_sweeps(
+                &graph,
+                client.clone(),
+                limits,
+                retired.clone(),
+            )?
+        } else {
+            resident_mtp::ResidentMtp::new(&graph, client.clone(), limits, retired.clone())?
+        };
         let attempt = (|| -> Result<serde_json::Value> {
             let binding = workspace.binding();
             let mut checks = Vec::with_capacity(9);
@@ -234,7 +250,7 @@ pub(crate) fn run(
             {
                 return Err("resident minimal MTP actual traffic rejected".into());
             }
-            checks.push(serde_json::json!({"minimal_teacher_rows":4,"complete_hidden_and_real_greedy":true,"host_reads":after.host_read_calls-before.host_read_calls,"host_read_bytes":after.host_read_bytes-before.host_read_bytes,"elapsed_ns_including_public_checks":minimal_ns}));
+            checks.push(serde_json::json!({"minimal_teacher_rows":4,"explicit_dispatches":after.explicit_dispatches-before.explicit_dispatches,"complete_hidden_and_real_greedy":true,"host_reads":after.host_read_calls-before.host_read_calls,"host_read_bytes":after.host_read_bytes-before.host_read_bytes,"elapsed_ns_including_public_checks":minimal_ns}));
             workspace.rewind(0)?;
             let expected = reference.provisional(0)?;
             let output = workspace.step_draft(expected.input_token(), carry.hidden(0)?, &cancel)?;
@@ -274,6 +290,7 @@ pub(crate) fn run(
     file.verify_file_unchanged()?;
     let value = serde_json::json!({
         "scope":"fixed-public-original-Q8-resident-MTP-only", "vendor":vendor,
+        "fused_mtp_sweeps":input.fused_sweeps,
         "seed":424242, "temperature":0, "public_token0":0,
         "passes":passes, "target_model_on_this_card":false,
         "speculative_controller":false, "accepted_speculative_tokens_per_second":null,
@@ -311,6 +328,14 @@ mod tests {
             .map(Into::into)
             .to_vec();
         assert!(registration(&args, env(), true).is_ok());
+        let mut fused = env();
+        fused.push(("KUNO_LAB_MTP_SWEEPS".into(), "fused".into()));
+        assert!(registration(&args, fused, true).unwrap().fused_sweeps);
+        for invalid in ["", "auto", "0", "1", "fused "] {
+            let mut values = env();
+            values.push(("KUNO_LAB_MTP_SWEEPS".into(), invalid.into()));
+            assert!(registration(&args, values, true).is_err());
+        }
         let mut nvidia = args.clone();
         nvidia[1] = "nvidia".into();
         assert!(registration(&nvidia, env(), true).is_ok());

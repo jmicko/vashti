@@ -1953,8 +1953,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         {
             daslab_target_rows_probe::validate_limits(&adapter.limits())?;
         }
-        if resident_mtp_inputs.is_some() {
+        if let Some(input) = &resident_mtp_inputs {
             resident_mtp::validate_limits(&adapter.limits())?;
+            if input.fused_sweeps {
+                resident_mtp::validate_fused_sweep_limits(&adapter.limits())?;
+            }
+        }
+        if target_rows_inputs
+            .as_ref()
+            .is_some_and(|i| i.prepared_experts)
+            || target_repair_inputs
+                .as_ref()
+                .is_some_and(|i| i.prepared_experts)
+            || speculative_inputs
+                .as_ref()
+                .is_some_and(|i| i.prepared_experts)
+        {
+            executor::batch_moe::prepared_verify3::validate_subgroups(
+                adapter.features().contains(wgpu::Features::SUBGROUP),
+                info.subgroup_min_size,
+                info.subgroup_max_size,
+            )?;
+            executor::batch_moe::prepared_verify3::validate_limits(&adapter.limits())?;
         }
         if verify3_dense_receipt.is_some()
             || target_rows_inputs.as_ref().is_some_and(|i| i.verify3_dense)
