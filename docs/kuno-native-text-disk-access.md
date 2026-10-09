@@ -100,8 +100,12 @@ Source and artifact hashes, all windows, original acceptance and cleanup are
 recorded in [the numeric receipt](../apps/kuno/benchmarks/text/receipts/next-adaptive-steady-20261008.json).
 The user also approved an exact short expert-trace/replay ceiling. Trace/preload
 and runner candidates `990c52d`/`0740b6b` are integrated as `d45dc4b`/`366d847`;
-orchestration is `aef04f2`. Device acceptance is pending. Do not substitute wrong
-experts or report that pending ceiling as measured.
+orchestration is `aef04f2`. The protected v76 replay is accepted: seven correct
+steps in596125512ns (11.74249tokens/s), all3360 expert calls on GPU, no expert
+uploads/CPU work or observed physical disk I/O. Original gates and both extra
+full closes pass. This is a short current-engine ideal-residency measurement,
+not a hardware maximum. See the
+[exact numeric receipt](../apps/kuno/benchmarks/text/receipts/next-public-oracle-20261008.json).
 
 ## Physical memory and GPU eviction follow-up
 
@@ -209,3 +213,30 @@ The four-bit disk-limited report is the closest memory-footprint comparison.
 Measure ideal correct GPU residency first. Then compare exposed CPU/I/O time,
 remaining GPU/dispatch time and multi-token execution; no cache-only speed
 promise follows from these reports.
+
+## Smaller-quant feasibility follow-up
+
+The user suggests a smaller quant. The full ISTA IQ3_S, retaining all512 experts,
+is a meaningful candidate: two published shards total83617662656bytes
+(77.875GiB), versus110.968GiB for our existing model. Shards are54817524224 and
+28800138432bytes at revision `ed59f92082b1e93c0e96d60a8b11aab089b52f09`.
+See the [pinned artifact](https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF/tree/ed59f92082b1e93c0e96d60a8b11aab089b52f09/IQ3_S).
+
+Its [published mixed-format allocation](https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF/blob/main/tensor-allocation/Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.rco-allocation.txt)
+lists seven currently unsupported types: IQ2_S, IQ3_S, IQ3_XXS, IQ4_NL, IQ4_XS,
+Q2_0 and Q5_K. This allocation document was fetched read-only on2026-10-08,
+SHA256 `df10add9e3389cf5930e1dd527df4c0b24b38597a7e4652aa3a1ab2d3e12fd9b`;
+validate actual pinned GGUF headers before implementation. No model payload
+was downloaded or inference performed with it.
+
+Current `kuno-text` supports seven other scalar formats, owns one GGUF file,
+and rejects unsupported tensor types while parsing. Native banks/optimized CPU
+experts restrict original Q4_K gate/up and Q5_0/Q8_0 down; native PLE restricts
+Q5_0 rows. IQ3_S therefore requires split-file ownership, the missing scalar
+and native GPU formats, IQ4_NL PLE, format-specific CPU fallback/optimization
+and a validated bank/admission profile. Preserve routing/cache/completion
+machinery and the original Q4 acceptance. Establish a separate quant-specific
+reference/output fixture rather than requiring Q4's output IDs or weakening
+numeric/owning gates. The smaller footprint may reduce capacity/traffic, but
+cannot by itself remove the current11.74token/s replay's GPU/synchronization
+cost. No smaller drop-in artifact has been verified.

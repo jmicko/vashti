@@ -2542,6 +2542,8 @@ The user requested a reasoning-mode switch before further GPU trials.
 
 ### Active handoff: adaptive settling and disk research (2026-10-08)
 
+Historical; superseded by the exact replay handoff below.
+
 Kuno laboratory integration is `8d25a9d` on `codex/kuno-native-text` in the
 dedicated Kuno worktree. Source `cbfa8d1` corrects fractional token-time decay,
 retains transient frequency/recency across all144 slots and adds optional
@@ -2572,3 +2574,35 @@ Normal admission is resumed; all lab jobs exited. B70 physical memory returned
 to50688000bytes, NVIDIA has no compute process, classified Xe/NVIDIA faults are
 zero and all three services returnHTTP200. No reset, unbind, reboot, install,
 release or API/configuration change. **Required Vashti changes: none.**
+
+### Active handoff: exact native-text residency replay and quant research (2026-10-08)
+
+Kuno lab source `aef04f2` integrates `d45dc4b` trace/preload and `366d847` protected
+runner; fast-report research is `a5d2827`. v76 frozen SHA:
+`7e18edff2d5413b48b834f391f6637497bf5d157acd3507542afa2602887c8a7`.
+`cpu-144-public-oracle-v76` passes every original output/lifecycle/owning gate
+and both extra full training/replay closes. The correct seven-step replay
+reaches11.74249tokens/s with3360 GPU calls and zero CPU work, expert uploads or
+observed physical disk I/O. All eight original prefix IDs match. This is a
+short conditional current-engine residency ceiling, not a hardware maximum;
+loading/prefill/preload are excluded. No router/expert substitution.
+
+Read the [latest checkpoint](kuno-native-text-checkpoint.md),
+[internal contract](kuno-native-text-count1-hybrid-plan.md#exact-short-resident-replay-diagnostic-2026-10-08),
+[primary-source speed/transfer research](kuno-native-text-disk-access.md#bidirectional-cache-transfer-and-published-fast-reports)
+and [verified numeric receipt](../apps/kuno/benchmarks/text/receipts/next-public-oracle-20261008.json).
+The user now suggests a smaller quant. Full83.6GB IQ3_S support is assessed in
+the disk research: split loading and seven additional mixed-format paths need
+implementation plus a separate reference fixture. No payload was downloaded;
+no smaller quant or speculative decoding has been benchmarked here. Published
+Strata/FreeToken-Kai results use materially different quantization, host
+residency and often MTP; they have not been reproduced on this system.
+
+Checks pass525 native tests, two one-test shader suites,181 Python controls,
+strict release all-target Clippy, formatting and whitespace. Normal admission
+is resumed, all lab jobs exited, B70 returned to50688000physical bytes, NVIDIA
+has no compute process, classified faults remain zero and all three services
+returnHTTP200. No installed binary/configuration, API/catalog, model-file,
+Vashti, release, reset/unbind/reboot or driver/clock changes. Expert histories
+remain transient. **Required Vashti changes: none.** Review worktrees are
+integrated, reviewed and submitted for archival. No shared API change is needed.

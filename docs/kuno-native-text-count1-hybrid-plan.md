@@ -2193,3 +2193,31 @@ separates extra markers/audits from the unchanged original gates. This measures
 the current correct engine with ideal expert residency for seven steps. It
 excludes loading, prefill, training and preload and cannot establish a general
 or physical maximum throughput. Device acceptance is pending at this commit.
+
+### Exact short replay acceptance (2026-10-08)
+
+Source `aef04f2` with trace/preload `d45dc4b` and runner `366d847` passes all
+unchanged original128-ID, fresh, cancel, poisoned-retry and five full owning
+gates in protected v76. Separate training/replay each closes1378 buffers /
+818413568bytes and all trace/source/I/O owners. Frozen executable SHA is
+`7e18edff2d5413b48b834f391f6637497bf5d157acd3507542afa2602887c8a7`.
+
+Replay takes596125512ns for seven normal correct steps,11.74249tokens/s.
+Every3360 expert call is GPU-resident; CPU calls, expert uploads, weight bytes
+and physical reads/writes are zero. All eight greedy IDs agree with the
+original prefix. Transient unions span18–63 experts per layer,1826 total;
+1420390400 original weight bytes are preloaded outside timing. Three major
+faults remain despite no observed physical reads. Private activation traffic
+and ordinary router/owning/numeric checks are still timed. This single short
+sample is conditional on the current unfused GPU kernels and is neither a
+physical throughput maximum nor proof that all-GPU beats optimal mixed work.
+Original127-step decode takes12994ms and is not a matched seven-step control.
+
+Host gates pass525 native tests, two one-test shader suites,181 Python controls
+and strict release all-target Clippy. Exact options/hashes/audits/resource
+counters and restored host state are in the
+[numeric receipt](../apps/kuno/benchmarks/text/receipts/next-public-oracle-20261008.json).
+All lab work exited; normal admission, physical GPU memory and service health
+are restored without classified driver faults. Installed services/API remain
+unchanged. Follow up on kernel/synchronization/MTP and full smaller quant support;
+do not assume a two-way cache alone accounts for published30–50token/s results.

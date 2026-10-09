@@ -1,6 +1,50 @@
 # Native text checkpoint, 2026-10-08
 
-**Latest checkpoint: longer adaptive settling and disk research complete.**
+**Latest checkpoint: exact short ideal-residency replay accepted.**
+Source `aef04f24254b6019fa3a61e1275e2bf38eeee98c` integrates trace/preload
+`d45dc4b` and runner `366d847`. Frozen v76 SHA:
+`7e18edff2d5413b48b834f391f6637497bf5d157acd3507542afa2602887c8a7`.
+Protected run `cpu-144-public-oracle-v76` passes every unchanged original gate,
+five original owner closes and two additional full replay/training closes.
+
+Seven correct decode steps take596125512ns: **11.74249tokens/s** with3360 GPU
+expert calls, zero CPU calls, zero expert/weight uploads and zero observed
+physical disk reads/writes. All eight output IDs match the original prefix.
+The transient union contains1826 experts,18–63 per layer; preloading uploads
+1420390400 original bytes outside the timer. There are three major faults;
+zero physical I/O does not mean zero faults. No wrong-expert substitution.
+
+This is a single short sample of the current ordinary all-GPU expert path
+under ideal residency, **not an absolute hardware maximum**. Loading, prefill,
+training and preload are excluded; activation transfers, router fences,
+numerical/owning checks and unfused single-token kernels remain. Original
+127-step decode is12994ms, but differs in length/routes and is not a matched
+seven-step control. Perfect residency alone does not establish30–50tokens/s.
+Compare remaining GPU execution/synchronization and multi-token work before
+treating the cache as the only bottleneck.
+
+Checks pass525 native tests, two one-test shader suites,181 Python controls,
+strict release all-target Clippy, formatting and whitespace checks. See the
+[exact numeric receipt](../apps/kuno/benchmarks/text/receipts/next-public-oracle-20261008.json),
+[internal replay contract](kuno-native-text-count1-hybrid-plan.md#exact-short-resident-replay-diagnostic-2026-10-08)
+and [original fast-report comparison](kuno-native-text-disk-access.md#bidirectional-cache-transfer-and-published-fast-reports).
+The user suggests trying a smaller quant; the full83.6GB IQ3_S artifact is
+assessed in the disk research. It needs split-file loading and seven missing
+mixed quantization formats across scalar/GPU/CPU/PLE paths plus a new reference
+fixture. No smaller quant was downloaded or run. Preserve native Rust execution
+and the original Q4 acceptance while adding support.
+Do not conflate pruned Coder models or MTP throughput with our original Q4 run.
+
+Normal admission is resumed; all lab jobs exited. Same-boot post-run state at
+2026-10-09T00:54:07.706692+00:00 has B70 physical50688000bytes, no NVIDIA compute
+process, zero classified Xe/NVIDIA faults andHTTP200 from all three services.
+Swap/core dumps were disabled during the benchmark. No reset/unbind/reboot,
+driver/clock, installed runtime, API, release or Vashti change. Required Vashti
+changes: none. Two integrated review worktrees were submitted for archival.
+
+### Previous adaptive settling checkpoint (historical)
+
+**Longer adaptive settling and disk research complete.**
 Integrated laboratory source is `8d25a9d`; corrected token-time decay and
 original existing-slot PUBLIC writes are `cbfa8d1`, long diagnostic source is
 `569c8e2`, and runner acceptance is `8d25a9d`. All144 slots remain eligible;
