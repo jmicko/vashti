@@ -4,7 +4,11 @@ mod bank96_probe;
 mod bank_slots;
 pub mod cpu_gpu_expert_probe;
 mod cpu_gpu_expert_schedule;
+// Shared with the standalone CPU writer; writer-only methods are inert here.
+#[allow(dead_code)]
+mod daslab_carry_reference;
 mod daslab_profile;
+mod daslab_target_rows_probe;
 mod executor;
 mod expert_banks;
 mod gdn_batch_pointwise;
@@ -23,6 +27,7 @@ mod info_slab_probe;
 mod main_admission;
 mod matmul_probe;
 mod mtp_gpu_probe;
+mod mtp_resident_kernels;
 mod next_shared;
 mod next_shared_moe;
 mod oracle_public;
@@ -1041,6 +1046,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         _ => return Err("expected intel or nvidia".into()),
     };
     let mode = std::env::args().nth(2).unwrap_or("probe".into());
+    let target_rows_inputs = if mode == "daslab-target-rows-probe" {
+        Some(daslab_target_rows_probe::registration(
+            &std::env::args_os().collect::<Vec<_>>(),
+            std::env::vars_os(),
+            mtp_gpu_probe::default_build(),
+        )?)
+    } else {
+        if std::env::var_os("KUNO_LAB_TARGET_ROWS_PUBLIC_ONLY").is_some() {
+            return Err("target row public gate requires its dedicated probe".into());
+        }
+        None
+    };
     let resident_router_probe = resident_router_probe_registration(
         &mode,
         std::env::args_os().count(),
@@ -1873,6 +1890,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if mtp_gpu_inputs.is_some() {
             mtp_gpu_probe::validate_limits(&adapter.limits())?;
         }
+        if target_rows_inputs.is_some() {
+            daslab_target_rows_probe::validate_limits(&adapter.limits())?;
+        }
         if q6_integer_probe {
             q6_integer_probe::validate_limits(&adapter.limits())?;
         }
@@ -1964,11 +1984,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 backend: wgpu::Backend::Vulkan,
             },
             RuntimeOptions {
-                tasks_max: if batch_tasks { 256 } else { 32 },
+                tasks_max: if batch_tasks || target_rows_inputs.is_some() {
+                    256
+                } else {
+                    32
+                },
                 memory_config: private_arena::required_memory_configuration(),
             },
         );
         let client = WgpuRuntime::client(&selected);
+        if let Some(inputs) = target_rows_inputs {
+            return daslab_target_rows_probe::run(&client, &grouped_limits, inputs);
+        }
         if let Some(inputs) = mtp_gpu_inputs {
             return mtp_gpu_probe::run(&client, vendor, inputs);
         }
