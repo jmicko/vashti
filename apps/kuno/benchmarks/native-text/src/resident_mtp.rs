@@ -18,6 +18,7 @@ use crate::{
 use cubecl::{prelude::*, server::Handle, wgpu::WgpuRuntime};
 use kuno_text::{Error, Result, TensorType, mtp::MtpGraph};
 use std::{
+    cell::Cell,
     collections::BTreeMap,
     sync::{
         Arc,
@@ -47,6 +48,27 @@ const INFO_BYTES: u64 = MAX_TOKEN_DISPATCHES as u64 * 2048;
 static NEXT_BINDING: AtomicU64 = AtomicU64::new(1);
 const MAX_LIVE_OUTPUTS: usize = 4;
 const OUTPUT_HOST_BYTES: usize = (k::VOCAB + k::WIDE) * 4;
+const DRAFT_TOKEN: usize = k::WIDE;
+const DRAFT_FAULT: usize = k::WIDE + 1;
+const DRAFT_WORDS: usize = k::WIDE + 2;
+
+/// Unforgeable workspace-private authorization for the last completed full
+/// forward. It never keys a shader/cache or crosses the public lab boundary.
+struct LastForward {
+    binding: u64,
+    start: usize,
+}
+impl LastForward {
+    fn valid(&self, binding: u64, position: usize) -> bool {
+        self.binding == binding && position.checked_sub(1) == Some(self.start)
+    }
+}
+impl Drop for LastForward {
+    fn drop(&mut self) {
+        self.binding.zeroize();
+        self.start.zeroize();
+    }
+}
 
 struct OutputLease {
     live: Arc<AtomicUsize>,
@@ -382,6 +404,48 @@ pub struct CloseReceipt {
     pub main_reserved: u64,
 }
 
+/// Content-free scheduling counters. Full-owner host read/upload bytes are
+/// counted after the backend operation succeeds, including a later rejected
+/// result. Construction is included; compare snapshots around each operation.
+/// These counters do not synchronize the device or include close's separately
+/// audited erasure readback. `explicit_dispatches` counts workspace dispatches,
+/// not any backend-internal copy/sanitizer work.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub struct Traffic {
+    pub host_read_calls: u64,
+    pub host_read_bytes: u64,
+    pub private_upload_calls: u64,
+    pub private_upload_bytes: u64,
+    pub minimal_packet_reads: u64,
+    pub followup_copy_calls: u64,
+    pub full_output_reads: u64,
+    pub explicit_dispatches: u64,
+}
+
+/// Provisional draft result without a full vocabulary host copy. The complete
+/// vocabulary is still computed/finite-checked and actual greedy chosen onGPU.
+pub struct DraftOutput {
+    hidden: Zeroizing<Vec<f32>>,
+    greedy: Zeroizing<u32>,
+    binding: u64,
+    start: Zeroizing<usize>,
+    _lease: OutputLease,
+}
+impl DraftOutput {
+    pub fn hidden(&self) -> &[f32] {
+        &self.hidden
+    }
+    pub fn greedy(&self) -> u32 {
+        *self.greedy
+    }
+    pub fn binding(&self) -> u64 {
+        self.binding
+    }
+    pub fn start(&self) -> usize {
+        *self.start
+    }
+}
+
 pub struct ResidentMtp<'g, 'f> {
     graph: &'g MtpGraph<'f>,
     arena: PrivateArena,
@@ -396,6 +460,8 @@ pub struct ResidentMtp<'g, 'f> {
     dispatches: usize,
     binding: u64,
     live_outputs: Arc<AtomicUsize>,
+    last_forward: Option<LastForward>,
+    traffic: Cell<Traffic>,
 }
 
 fn error(_: impl std::fmt::Display) -> Error {
@@ -492,6 +558,101 @@ fn public_guard(
                 }
             }
         }
+    }
+}
+
+/// Same-stream copy of the actual last committed GPU carry/token. Complete
+/// source tails/fault and finite/token decisions remain sticky. Destinations
+/// are complete prevalidated owners, and their full padding is overwritten0.
+/// Partial candidate stores on a fault are never a committed proposal.
+#[cube(launch)]
+#[allow(clippy::manual_range_contains, clippy::collapsible_if)]
+fn copy_committed(
+    hidden: &Array<u32>,
+    greedy: &Array<u32>,
+    carry: &mut Array<u32>,
+    token: &mut Array<u32>,
+    fault: &mut Array<Atomic<u32>>,
+) {
+    let i = ABSOLUTE_POS;
+    // Keep the actual bounds branch outside the atomic load in generated GPU
+    // code; a source Boolean combination need not lower with lazy evaluation.
+    if i < fault.len() {
+        if fault[i].load() != 0 {
+            fault[0].fetch_or(4);
+        }
+    }
+    if i < hidden.len() {
+        let bits = hidden[i];
+        if i < k::WIDE {
+            let value = f32::reinterpret(bits);
+            if value >= -3.4028235e38_f32 && value <= 3.4028235e38_f32 {
+                if fault[0].load() == 0 {
+                    carry[i] = bits;
+                }
+            } else {
+                fault[0].fetch_or(1);
+            }
+        } else if bits != 0 {
+            fault[0].fetch_or(4);
+        }
+    }
+    if i < carry.len() && i >= k::WIDE {
+        carry[i] = 0;
+    }
+    if i < greedy.len() {
+        let value = greedy[i];
+        if i == 0 {
+            if value < k::VOCAB as u32 {
+                if fault[0].load() == 0 {
+                    token[0] = value;
+                }
+            } else {
+                fault[0].fetch_or(1);
+            }
+        } else if value != 0 {
+            fault[0].fetch_or(4);
+        }
+    }
+    if i < token.len() && i > 0 {
+        token[i] = 0;
+    }
+}
+
+/// RawQuery has completed every consumer by this phase. Caller clears its
+/// COMPLETE64KiB owner, copies actual carry+greedy, then seals fault in a
+/// separate same-stream dispatch AFTER every producer/check has completed.
+#[cube(launch)]
+#[allow(clippy::manual_range_contains)]
+fn pack_draft(
+    hidden: &Array<u32>,
+    greedy: &Array<u32>,
+    packet: &mut Array<u32>,
+    fault: &mut Array<Atomic<u32>>,
+) {
+    let i = ABSOLUTE_POS;
+    if i < k::WIDE {
+        let bits = hidden[i];
+        let value = f32::reinterpret(bits);
+        if value >= -3.4028235e38_f32 && value <= 3.4028235e38_f32 {
+            packet[i] = bits;
+        } else {
+            fault[0].fetch_or(1);
+        }
+    }
+    if i == k::WIDE {
+        let token = greedy[0];
+        if token < k::VOCAB as u32 {
+            packet[DRAFT_TOKEN] = token;
+        } else {
+            fault[0].fetch_or(1);
+        }
+    }
+}
+#[cube(launch)]
+fn seal_draft(packet: &mut Array<u32>, fault: &Array<Atomic<u32>>) {
+    if UNIT_POS_X == 0 {
+        packet[DRAFT_FAULT] = fault[0].load();
     }
 }
 
@@ -641,6 +802,8 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
             dispatches: 0,
             binding,
             live_outputs: Arc::new(AtomicUsize::new(0)),
+            last_forward: None,
+            traffic: Cell::new(Traffic::default()),
         };
         let result = workspace.load_public();
         match result {
@@ -670,6 +833,13 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
     fn a(&self, b: B) -> Result<ArrayArg<WgpuRuntime>> {
         u::arg(&self.arena, self.id(b))
     }
+    fn full(&self, b: B) -> Result<ArrayArg<WgpuRuntime>> {
+        let layout = self.arena.layout(self.id(b)).map_err(error)?;
+        u::raw_arg(
+            self.arena.handle(self.id(b)).map_err(error)?.clone(),
+            layout.owned_words,
+        )
+    }
     fn prefix(&self, b: B, first: usize, words: usize) -> Result<ArrayArg<WgpuRuntime>> {
         if first.checked_add(words).ok_or(Error::ArithmeticOverflow)? > WORDS[b as usize] {
             return Err(Error::InvalidBufferLength);
@@ -691,6 +861,19 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
         if self.dispatches > MAX_TOKEN_DISPATCHES {
             return Err(Error::LimitExceeded("MTP token INFO records"));
         }
+        self.count_traffic(|traffic| {
+            traffic.explicit_dispatches = traffic
+                .explicit_dispatches
+                .checked_add(count as u64)
+                .ok_or(Error::ArithmeticOverflow)?;
+            Ok(())
+        })?;
+        Ok(())
+    }
+    fn count_traffic(&self, update: impl FnOnce(&mut Traffic) -> Result<()>) -> Result<()> {
+        let mut next = self.traffic.get();
+        update(&mut next)?;
+        self.traffic.set(next);
         Ok(())
     }
     fn verify_source(&self) -> Result<()> {
@@ -937,6 +1120,17 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
             .read_one(self.arena.handle(self.id(b)).map_err(error)?.clone())
             .map_err(error)?;
         let bytes = Bytes(result);
+        self.count_traffic(|traffic| {
+            traffic.host_read_calls = traffic
+                .host_read_calls
+                .checked_add(1)
+                .ok_or(Error::ArithmeticOverflow)?;
+            traffic.host_read_bytes = traffic
+                .host_read_bytes
+                .checked_add(layout.owned_bytes as u64)
+                .ok_or(Error::ArithmeticOverflow)?;
+            Ok(())
+        })?;
         if bytes.0.len() != layout.owned_bytes {
             return Err(Error::InvalidBufferLength);
         }
@@ -973,15 +1167,38 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
                 self.arena.handle(self.id(b)).map_err(error)?.clone(),
                 upload.take(),
             )
-            .map_err(error)
+            .map_err(error)?;
+        self.count_traffic(|traffic| {
+            traffic.private_upload_calls = traffic
+                .private_upload_calls
+                .checked_add(1)
+                .ok_or(Error::ArithmeticOverflow)?;
+            traffic.private_upload_bytes = traffic
+                .private_upload_bytes
+                .checked_add(layout.owned_bytes as u64)
+                .ok_or(Error::ArithmeticOverflow)?;
+            Ok(())
+        })
     }
     fn clear_scratch(&mut self) -> Result<()> {
+        self.clear_scratch_preserving_inputs(false)
+    }
+    fn clear_scratch_preserving_inputs(&mut self, preserve: bool) -> Result<()> {
+        let mut count = 0;
         for index in 0..N {
             if index != B::Keys as usize && index != B::Values as usize {
+                if preserve
+                    && [B::Carry, B::Token, B::Fault]
+                        .iter()
+                        .any(|b| *b as usize == index)
+                {
+                    continue;
+                }
                 u::zero(&self.arena, self.ids[index])?;
+                count += 1;
             }
         }
-        self.tick(N - 2)
+        self.tick(count)
     }
     fn start(&mut self, token: u32, carry: &[f32]) -> Result<()> {
         if self.closed || self.poisoned || self.retired.load(Ordering::Acquire) {
@@ -1022,6 +1239,7 @@ impl<'g, 'f> ResidentMtp<'g, 'f> {
     }
 
     fn fail(&mut self) {
+        self.last_forward.take();
         self.poisoned = true;
         self.position.zeroize();
         // Every private owner, including all candidate/committed KV, is erased
@@ -1047,6 +1265,9 @@ impl ResidentMtp<'_, '_> {
     }
     pub fn binding(&self) -> u64 {
         self.binding
+    }
+    pub fn traffic(&self) -> Traffic {
+        self.traffic.get()
     }
     fn public(&self) -> Result<&Public> {
         self.public
@@ -1503,7 +1724,7 @@ impl ResidentMtp<'_, '_> {
         self.tick(1)?;
         self.finite(B::Block)
     }
-    fn output(&mut self, lease: OutputLease) -> Result<Output> {
+    fn finish_gpu(&mut self) -> Result<()> {
         self.project("output.weight", B::Mixed, B::Logits)?;
         k::greedy_chunks::launch::<WgpuRuntime>(
             self.client()?,
@@ -1525,6 +1746,10 @@ impl ResidentMtp<'_, '_> {
         self.tick(1)?;
         self.physical()?;
         self.guard_private(self.position + 1)?;
+        Ok(())
+    }
+    fn output(&mut self, lease: OutputLease) -> Result<Output> {
+        self.finish_gpu()?;
         self.complete_fault()?;
         let logits = self.read_f32(B::Logits)?;
         let hidden = self.read_f32(B::Residual2)?;
@@ -1536,6 +1761,13 @@ impl ResidentMtp<'_, '_> {
         self.ledger
             .completed_fence(sample(self.client()?)?)
             .map_err(error)?;
+        self.count_traffic(|traffic| {
+            traffic.full_output_reads = traffic
+                .full_output_reads
+                .checked_add(1)
+                .ok_or(Error::ArithmeticOverflow)?;
+            Ok(())
+        })?;
         Ok(Output {
             logits,
             hidden,
@@ -1544,6 +1776,126 @@ impl ResidentMtp<'_, '_> {
             start: Zeroizing::new(self.position),
             _lease: lease,
         })
+    }
+    fn draft_output(&mut self, lease: OutputLease) -> Result<DraftOutput> {
+        self.finish_gpu()?;
+        let layout = self.arena.layout(self.id(B::RawQuery)).map_err(error)?;
+        if WORDS[B::RawQuery as usize] < DRAFT_WORDS || layout.owned_bytes != 65536 {
+            return Err(Error::InvalidBufferLength);
+        }
+        // Every RawQuery consumer ended at attention, before FFN/head/greedy.
+        // Its complete owner is now a single wiping/fenced readback packet.
+        u::zero(&self.arena, self.id(B::RawQuery))?;
+        self.tick(1)?;
+        pack_draft::launch::<WgpuRuntime>(
+            self.client()?,
+            u::grid(DRAFT_WORDS)?,
+            CubeDim::new_1d(64),
+            self.a(B::Residual2)?,
+            self.a(B::Greedy)?,
+            self.full(B::RawQuery)?,
+            self.a(B::Fault)?,
+        );
+        self.tick(1)?;
+        // Distinct dispatch is essential: no grid-wide barrier exists in the
+        // producer, so sampling the fault there could precede anotherWG error.
+        seal_draft::launch::<WgpuRuntime>(
+            self.client()?,
+            CubeCount::Static(1, 1, 1),
+            CubeDim::new_1d(64),
+            self.full(B::RawQuery)?,
+            self.a(B::Fault)?,
+        );
+        self.tick(1)?;
+        let packet = self.read_words(B::RawQuery)?;
+        self.count_traffic(|traffic| {
+            traffic.minimal_packet_reads = traffic
+                .minimal_packet_reads
+                .checked_add(1)
+                .ok_or(Error::ArithmeticOverflow)?;
+            Ok(())
+        })?;
+        let (hidden, greedy) = decode_draft(&packet)?;
+        self.verify_source()?;
+        self.ledger
+            .completed_fence(sample(self.client()?)?)
+            .map_err(error)?;
+        Ok(DraftOutput {
+            hidden,
+            greedy: Zeroizing::new(greedy),
+            binding: self.binding,
+            start: Zeroizing::new(self.position),
+            _lease: lease,
+        })
+    }
+    fn forward(&mut self) -> Result<()> {
+        self.condition()?;
+        self.hc(B::Residual0, 0, true)?;
+        self.attention()?;
+        self.combine(B::Residual0, B::Residual1)?;
+        self.hc(B::Residual1, 1, true)?;
+        self.moe()?;
+        self.combine(B::Residual1, B::Residual2)?;
+        self.hc(B::Residual2, 2, false)
+    }
+    fn commit_forward(&mut self) {
+        let start = self.position;
+        self.position += 1;
+        self.poisoned = false;
+        self.last_forward = Some(LastForward {
+            binding: self.binding,
+            start,
+        });
+    }
+    fn start_follow(&mut self, stamp: &LastForward) -> Result<()> {
+        if self.closed
+            || self.poisoned
+            || self.retired.load(Ordering::Acquire)
+            || !stamp.valid(self.binding, self.position)
+        {
+            return Err(Error::InvalidFormat("MTP committed followup source"));
+        }
+        k::validate_position(self.position)?;
+        self.verify_source()?;
+        self.physical()?;
+        self.ledger
+            .observe_before(sample(self.client()?)?)
+            .map_err(error)?;
+        self.poisoned = true;
+        self.dispatches = 0;
+        let source = self.arena.layout(self.id(B::Residual2)).map_err(error)?;
+        let carry = self.arena.layout(self.id(B::Carry)).map_err(error)?;
+        let greedy = self.arena.layout(self.id(B::Greedy)).map_err(error)?;
+        let token = self.arena.layout(self.id(B::Token)).map_err(error)?;
+        if source != carry
+            || greedy != token
+            || source.logical_words != k::WIDE
+            || greedy.logical_words != 1
+        {
+            return Err(Error::InvalidBufferLength);
+        }
+        copy_committed::launch::<WgpuRuntime>(
+            self.client()?,
+            grid(source.owned_words)?,
+            CubeDim::new_1d(64),
+            self.full(B::Residual2)?,
+            self.full(B::Greedy)?,
+            self.full(B::Carry)?,
+            self.full(B::Token)?,
+            self.full(B::Fault)?,
+        );
+        self.tick(1)?;
+        // Source copy precedes any old-scratch clear; preserve the actual new
+        // Carry/Token AND stickyfault so copy/preflight faults cannot disappear.
+        self.count_traffic(|traffic| {
+            traffic.followup_copy_calls = traffic
+                .followup_copy_calls
+                .checked_add(1)
+                .ok_or(Error::ArithmeticOverflow)?;
+            Ok(())
+        })?;
+        self.clear_scratch_preserving_inputs(true)?;
+        self.guard_private(self.position)
     }
     fn read_f32(&self, b: B) -> Result<Zeroizing<Vec<f32>>> {
         let bits = self.read_words(b)?;
@@ -1561,6 +1913,7 @@ impl ResidentMtp<'_, '_> {
         // use the preceding draft hidden only behind target verification.
         // Invalid preflight/cancellation must not destroy a previous valid KV
         // sequence. Once start() begins writes, any failure wipes and poisons.
+        self.last_forward.take();
         u::cancel(cancel)?;
         if self.poisoned || self.closed {
             return Err(Error::InvalidFormat("MTP resident poisoned"));
@@ -1570,14 +1923,7 @@ impl ResidentMtp<'_, '_> {
         let result =
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<Output> {
                 self.start(token, carry)?;
-                self.condition()?;
-                self.hc(B::Residual0, 0, true)?;
-                self.attention()?;
-                self.combine(B::Residual0, B::Residual1)?;
-                self.hc(B::Residual1, 1, true)?;
-                self.moe()?;
-                self.combine(B::Residual1, B::Residual2)?;
-                self.hc(B::Residual2, 2, false)?;
+                self.forward()?;
                 u::cancel(cancel)?;
                 self.output(lease)
             }));
@@ -1588,8 +1934,7 @@ impl ResidentMtp<'_, '_> {
                     self.fail();
                     return Err(e);
                 }
-                self.position += 1;
-                self.poisoned = false;
+                self.commit_forward();
                 Ok(output)
             }
             Ok(Err(e)) => {
@@ -1602,9 +1947,80 @@ impl ResidentMtp<'_, '_> {
             }
         }
     }
+    pub fn step_draft(
+        &mut self,
+        token: u32,
+        carry: &[f32],
+        cancel: &AtomicBool,
+    ) -> Result<DraftOutput> {
+        self.last_forward.take();
+        u::cancel(cancel)?;
+        if self.poisoned || self.closed {
+            return Err(Error::InvalidFormat("MTP resident poisoned"));
+        }
+        validate_input(token, carry, self.position)?;
+        let lease = OutputLease::acquire(&self.live_outputs)?;
+        let result =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<DraftOutput> {
+                self.start(token, carry)?;
+                self.forward()?;
+                u::cancel(cancel)?;
+                self.draft_output(lease)
+            }));
+        self.accept_draft(result, cancel)
+    }
+    /// Consume the last complete forward's actual GPU token/carry once. There
+    /// is no host token/carry argument and no substitution of draft experts.
+    /// Any append/rewind/explicit step/failure/close invalidates this authority.
+    pub fn follow_draft(&mut self, cancel: &AtomicBool) -> Result<DraftOutput> {
+        let stamp = self
+            .last_forward
+            .take()
+            .ok_or(Error::InvalidFormat("MTP no committed followup"))?;
+        u::cancel(cancel)?;
+        if self.poisoned || self.closed || !stamp.valid(self.binding, self.position) {
+            return Err(Error::InvalidFormat("MTP stale committed followup"));
+        }
+        k::validate_position(self.position)?;
+        let lease = OutputLease::acquire(&self.live_outputs)?;
+        let result =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<DraftOutput> {
+                self.start_follow(&stamp)?;
+                self.forward()?;
+                u::cancel(cancel)?;
+                self.draft_output(lease)
+            }));
+        self.accept_draft(result, cancel)
+    }
+    fn accept_draft(
+        &mut self,
+        result: std::thread::Result<Result<DraftOutput>>,
+        cancel: &AtomicBool,
+    ) -> Result<DraftOutput> {
+        match result {
+            Ok(Ok(output)) => {
+                if let Err(e) = u::cancel(cancel) {
+                    drop(output);
+                    self.fail();
+                    return Err(e);
+                }
+                self.commit_forward();
+                Ok(output)
+            }
+            Ok(Err(e)) => {
+                self.fail();
+                Err(e)
+            }
+            Err(_) => {
+                self.fail();
+                Err(Error::InvalidFormat("MTP resident draft failure"))
+            }
+        }
+    }
     /// Repair cache conditioning with the actual preceding target residual.
     /// No FFN, draft logits or controller acceptance occurs in this path.
     pub fn append_kv(&mut self, token: u32, carry: &[f32], cancel: &AtomicBool) -> Result<()> {
+        self.last_forward.take();
         u::cancel(cancel)?;
         if self.poisoned || self.closed {
             return Err(Error::InvalidFormat("MTP resident poisoned"));
@@ -1642,6 +2058,7 @@ impl ResidentMtp<'_, '_> {
         }
     }
     pub fn rewind(&mut self, new_position: usize) -> Result<()> {
+        self.last_forward.take();
         if self.closed || self.poisoned || self.retired.load(Ordering::Acquire) {
             return Err(Error::InvalidFormat("MTP resident poisoned"));
         }
@@ -1684,6 +2101,7 @@ impl ResidentMtp<'_, '_> {
         }
     }
     pub fn close(&mut self) -> Result<CloseReceipt> {
+        self.last_forward.take();
         if self.closed {
             return Err(Error::InvalidFormat("MTP resident already closed"));
         }
@@ -1758,6 +2176,28 @@ fn greedy_host(values: &[f32]) -> Result<u32> {
         }
     }
     Ok(best as u32)
+}
+
+fn decode_draft(packet: &[u32]) -> Result<(Zeroizing<Vec<f32>>, u32)> {
+    let owned = BufferLayout::new(WORDS[B::RawQuery as usize])
+        .map_err(error)?
+        .owned_words;
+    if packet.len() != owned
+        || packet[DRAFT_TOKEN] as usize >= k::VOCAB
+        || packet[DRAFT_FAULT] != 0
+        || packet[DRAFT_WORDS..].iter().any(|&x| x != 0)
+        || packet[..k::WIDE]
+            .iter()
+            .any(|&x| !f32::from_bits(x).is_finite())
+    {
+        return Err(Error::InvalidFormat("MTP draft full owning packet"));
+    }
+    let mut hidden = Zeroizing::new(Vec::with_capacity(k::WIDE));
+    hidden.extend(packet[..k::WIDE].iter().map(|&x| f32::from_bits(x)));
+    if hidden.capacity() != k::WIDE {
+        return Err(Error::LimitExceeded("MTP draft host capacity"));
+    }
+    Ok((hidden, packet[DRAFT_TOKEN]))
 }
 
 #[cfg(test)]

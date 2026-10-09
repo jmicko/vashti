@@ -256,6 +256,159 @@ fn greedy_proof_includes_final_row_and_lowest_id_ties() {
 }
 
 #[test]
+fn draft_packet_consumes_exact_gpu_fields_and_every_logical_gap_and_tail() {
+    let owned = BufferLayout::new(WORDS[B::RawQuery as usize])
+        .unwrap()
+        .owned_words;
+    let mut packet = vec![0_u32; owned];
+    for (i, word) in packet[..k::WIDE].iter_mut().enumerate() {
+        *word = ((i as f32 - 5000.0) / 8192.0).to_bits();
+    }
+    packet[0] = (-0.0_f32).to_bits();
+    packet[DRAFT_TOKEN] = (k::VOCAB - 1) as u32;
+    let (hidden, token) = decode_draft(&packet).unwrap();
+    assert_eq!(hidden.len(), 10240);
+    assert_eq!(hidden[0].to_bits(), (-0.0_f32).to_bits());
+    assert_eq!(hidden[k::WIDE - 1].to_bits(), packet[k::WIDE - 1]);
+    assert_eq!(token, 248319);
+    for length in [0, DRAFT_WORDS - 1, DRAFT_WORDS, owned - 1, owned + 1] {
+        let mut bad = packet.clone();
+        bad.resize(length, 0);
+        assert!(decode_draft(&bad).is_err());
+    }
+    for index in [DRAFT_FAULT, DRAFT_WORDS, 12287, 12288, owned - 1] {
+        let mut bad = packet.clone();
+        bad[index] = 1;
+        assert!(decode_draft(&bad).is_err());
+    }
+    for index in [0, k::WIDE - 1] {
+        let mut bad = packet.clone();
+        bad[index] = f32::NAN.to_bits();
+        assert!(decode_draft(&bad).is_err());
+    }
+    packet[DRAFT_TOKEN] = k::VOCAB as u32;
+    assert!(decode_draft(&packet).is_err());
+}
+
+#[test]
+fn committed_source_stamp_is_bound_to_exact_previous_position_and_consumed_once() {
+    let mut source = Some(LastForward {
+        binding: 19,
+        start: 3,
+    });
+    assert!(source.as_ref().unwrap().valid(19, 4));
+    assert!(!source.as_ref().unwrap().valid(18, 4));
+    for position in [0, 1, 3, 5, k::CONTEXT] {
+        assert!(!source.as_ref().unwrap().valid(19, position));
+    }
+    let lease = source.take().unwrap();
+    assert!(source.take().is_none());
+    assert!(lease.valid(19, 4));
+    drop(lease);
+}
+
+#[test]
+fn minimal_packet_and_followup_use_existing_complete_owners_without_new_main() {
+    const { assert!(DRAFT_WORDS < WORDS[B::RawQuery as usize]) };
+    assert_eq!(
+        BufferLayout::new(WORDS[B::RawQuery as usize])
+            .unwrap()
+            .owned_bytes,
+        65536
+    );
+    assert_eq!(
+        BufferLayout::new(WORDS[B::Residual2 as usize]).unwrap(),
+        BufferLayout::new(WORDS[B::Carry as usize]).unwrap()
+    );
+    assert_eq!(
+        BufferLayout::new(WORDS[B::Greedy as usize]).unwrap(),
+        BufferLayout::new(WORDS[B::Token as usize]).unwrap()
+    );
+    assert_eq!(private_plan().unwrap(), 11_698_176);
+    assert_eq!(public_plan().unwrap(), 5_011_668_992);
+    let full_read_bytes: usize = [B::Fault, B::Logits, B::Residual2, B::Greedy]
+        .into_iter()
+        .map(|b| BufferLayout::new(WORDS[b as usize]).unwrap().owned_bytes)
+        .sum();
+    assert_eq!(full_read_bytes, 1_179_648);
+    let input_upload_bytes: usize = [B::Token, B::Carry]
+        .into_iter()
+        .map(|b| BufferLayout::new(WORDS[b as usize]).unwrap().owned_bytes)
+        .sum();
+    assert_eq!(input_upload_bytes, 98_304);
+    assert_eq!(MAX_TOKEN_DISPATCHES, 512);
+    // Original265 explicit dispatches; packet clear/producer/seal add3.
+    // Followup source copy adds1 and preserves3 clear destinations:266.
+    assert!(
+        [268_usize, 266]
+            .into_iter()
+            .all(|n| n <= MAX_TOKEN_DISPATCHES)
+    );
+}
+
+#[test]
+fn draft_copy_producer_and_seal_lower_with_full_bindings_and_no_fma() {
+    use cubecl::{Compiler, WgpuCompilationOptions, server::ExecutionMode, wgpu::WgslCompiler};
+    for which in 0..3 {
+        for mode in [ExecutionMode::Checked, ExecutionMode::Unchecked] {
+            let mut builder = KernelBuilder::default();
+            builder.runtime_properties(WgpuRuntime::target_properties());
+            AddressType::U32.register(&mut builder.scope);
+            let u = u32::as_type(&builder.scope);
+            let a = Atomic::<u32>::as_type(&builder.scope);
+            match which {
+                0 => {
+                    let hidden = builder.input_array(u).into();
+                    let greedy = builder.input_array(u).into();
+                    let carry = builder.output_array(u).into();
+                    let token = builder.output_array(u).into();
+                    let fault = builder.output_array(a).into();
+                    copy_committed::expand(&mut builder.scope, hidden, greedy, carry, token, fault);
+                }
+                1 => {
+                    let hidden = builder.input_array(u).into();
+                    let greedy = builder.input_array(u).into();
+                    let packet = builder.output_array(u).into();
+                    let fault = builder.output_array(a).into();
+                    pack_draft::expand(&mut builder.scope, hidden, greedy, packet, fault);
+                }
+                _ => {
+                    let packet = builder.output_array(u).into();
+                    let fault = builder.input_array(a).into();
+                    seal_draft::expand(&mut builder.scope, packet, fault);
+                }
+            }
+            let source = WgslCompiler::default()
+                .compile(
+                    builder.build(
+                        KernelSettings::default()
+                            .cube_dim(CubeDim::new_1d(64))
+                            .kernel_name("fixed_mtp_draft_packet"),
+                    ),
+                    &WgpuCompilationOptions::default(),
+                    mode,
+                    AddressType::U32.unsigned_type(),
+                )
+                .unwrap()
+                .to_string();
+            let module = wgpu::naga::front::wgsl::parse_str(&source).unwrap();
+            wgpu::naga::valid::Validator::new(
+                wgpu::naga::valid::ValidationFlags::all(),
+                wgpu::naga::valid::Capabilities::SUBGROUP,
+            )
+            .validate(&module)
+            .unwrap();
+            assert!(!source.contains("fma(") && !source.contains("f64"));
+            if which < 2 {
+                assert!(source.contains("atomicOr"));
+            } else {
+                assert!(source.contains("atomicLoad"));
+            }
+        }
+    }
+}
+
+#[test]
 fn full_span_guards_lower_checked_and_unchecked_for_all_public_roles() {
     use cubecl::{Compiler, WgpuCompilationOptions, server::ExecutionMode, wgpu::WgslCompiler};
     for which in 0..4 {
