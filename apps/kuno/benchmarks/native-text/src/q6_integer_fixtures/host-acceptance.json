@@ -1,0 +1,28 @@
+{
+  "base_commit": "f2d7af660211253b42aa551dd856d04b95a94537",
+  "gpu_executed": false,
+  "host_harness": "q6-integer-host-harness-20261009",
+  "main_or_executor_changed": false,
+  "model_executed": false,
+  "new_source_sha256": {
+    "q6_integer_matvec.rs": "587881b0d80f63a30c3dd1e0fcac619e4a45cdac20901f60706e933ca2a0680b",
+    "q6_integer_matvec.wgsl": "8fb9bbc82d3efffc659ec7de679f17b2af70c1f68c749ebe7727b58946b6e21b",
+    "q6_integer_oracle.rs": "1f04719873b4133d9a31522a5fcaed6f18fd554e80807285ce64fb663ef6adfc",
+    "q6_integer_probe.rs": "1dd914034997a94740d926943a44795cffc7630e27f1d5bb96e47da3618fb049"
+  },
+  "parent_registration_and_protected_physical_acceptance_pending": true,
+  "performance_accepted": false,
+  "private_request_accepted": false,
+  "scope": "host-only-new-Q6-original-packed-two-Q8-operator-leaf",
+  "tests": {
+    "all_features_host": 30,
+    "default_host": 30,
+    "independent_finite_C_bits": 6400,
+    "rustfmt": true,
+    "strict_all_feature_all_target_clippy": true,
+    "strict_default_all_target_clippy": true,
+    "wgsl_Naga_validation": true
+  },
+  "utc_completed": "2026-10-09T07:44:59.286311+00:00",
+  "whole_owning_erasure_accepted": false
+}
