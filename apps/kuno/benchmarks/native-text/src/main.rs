@@ -47,6 +47,8 @@ mod ple_batch_gpu;
 mod ple_chunk;
 mod ple_chunk_probe;
 mod private_arena;
+#[allow(dead_code)]
+mod public_host_expert_mirror;
 #[allow(dead_code)] // Source-only mirror planner; physical consumer is pending.
 mod public_host_expert_plan;
 mod public_host_weight_pool;
