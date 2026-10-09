@@ -55,6 +55,10 @@ impl NativeProjectionTile {
     }
 }
 
+#[allow(dead_code)] // Shared public-only construction and numerical probe seam.
+#[path = "public_host_bank_completion.rs"]
+mod public_host_bank_completion;
+
 fn validate_target_frozen_host_policy(
     frozen: bool,
     authenticated_identity: bool,
@@ -62,13 +66,19 @@ fn validate_target_frozen_host_policy(
     profile: expert_banks::OriginalPackedProfile,
     capacity: usize,
     batch_router: bool,
+    frozen_router_reserved: bool,
 ) -> Result<()> {
-    if authenticated_identity
-        && (!frozen
-            || !rows
+    if frozen_router_reserved
+        && (!rows
             || profile != expert_banks::OriginalPackedProfile::DaslabIq3
             || capacity != 144
-            || batch_router)
+            || !batch_router)
+        || authenticated_identity
+            && (!frozen
+                || !rows
+                || profile != expert_banks::OriginalPackedProfile::DaslabIq3
+                || capacity != 144
+                || batch_router != frozen_router_reserved)
         || rows && frozen && !authenticated_identity
     {
         return Err(Error::InvalidFormat(
@@ -829,6 +839,7 @@ pub struct GpuExecutor<'a> {
     pub(crate) resident_router_reserved: bool,
     pub(crate) target_rows_reserved: bool,
     pub(crate) target_batch_router_reserved: bool,
+    pub(crate) target_frozen_host_router_reserved: bool,
     pub(crate) target_frozen_host_source_identity:
         Option<crate::public_host_expert_plan::PlanIdentity>,
     pub(crate) target_verify3_dense: bool,
@@ -964,6 +975,11 @@ fn oracle_fixture_profile_matches(
     )
 }
 impl<'a> GpuExecutor<'a> {
+    #[allow(dead_code)] // Original descriptor for the additive public mirror controller.
+    pub(crate) fn public_host_model(&self) -> &'a GgufFile {
+        self.model
+    }
+
     pub fn new(
         model: &'a GgufFile,
         client: ComputeClient<WgpuRuntime>,
@@ -1063,6 +1079,7 @@ impl<'a> GpuExecutor<'a> {
             resident_router_reserved: false,
             target_rows_reserved: false,
             target_batch_router_reserved: false,
+            target_frozen_host_router_reserved: false,
             target_frozen_host_source_identity: None,
             target_verify3_dense: false,
             target_verify3_dense_calls: 0,
@@ -1218,6 +1235,7 @@ impl<'a> GpuExecutor<'a> {
         self.banks.clear();
         self.resident_banks_frozen = false;
         self.target_frozen_host_source_identity = None;
+        self.target_frozen_host_router_reserved = false;
         self.batch_moe = None;
         self.bank_reserved = 0;
         // All previous commands completed before public cache handles release.
@@ -1868,6 +1886,7 @@ impl<'a> GpuExecutor<'a> {
             self.packed_profile,
             self.bank_slots,
             self.target_batch_router_reserved,
+            self.target_frozen_host_router_reserved,
         )?;
         validate_target_verify3_policy(
             self.target_verify3_dense,
@@ -3370,6 +3389,7 @@ impl Drop for GpuExecutor<'_> {
         self.banks.clear();
         self.resident_banks_frozen = false;
         self.target_frozen_host_source_identity = None;
+        self.target_frozen_host_router_reserved = false;
         self.bank_reserved = 0;
         self.client.memory_cleanup();
         let _ = cubecl::future::block_on(self.client.sync());
@@ -4494,18 +4514,26 @@ mod frozen_host_policy_tests {
     #[test]
     fn target_freeze_requires_matching_authenticated_source_domain() {
         let p = expert_banks::OriginalPackedProfile::DaslabIq3;
-        validate_target_frozen_host_policy(true, true, true, p, 144, false).unwrap();
-        validate_target_frozen_host_policy(false, false, true, p, 144, false).unwrap();
-        validate_target_frozen_host_policy(true, false, false, p, 144, false).unwrap();
+        validate_target_frozen_host_policy(true, true, true, p, 144, false, false).unwrap();
+        validate_target_frozen_host_policy(false, false, true, p, 144, false, false).unwrap();
+        validate_target_frozen_host_policy(true, false, false, p, 144, false, false).unwrap();
         for other in [
             expert_banks::OriginalPackedProfile::Q4,
             expert_banks::OriginalPackedProfile::UnslothQ3,
         ] {
             assert!(
-                validate_target_frozen_host_policy(true, true, true, other, 144, false).is_err()
+                validate_target_frozen_host_policy(true, true, true, other, 144, false, false)
+                    .is_err()
             );
         }
 
+        validate_target_frozen_host_policy(true, true, true, p, 144, true, true).unwrap();
+        validate_target_frozen_host_policy(false, false, true, p, 144, true, true).unwrap();
+        assert!(validate_target_frozen_host_policy(true, true, true, p, 144, false, true).is_err());
+        assert!(
+            validate_target_frozen_host_policy(false, false, false, p, 144, true, true).is_err()
+        );
+        assert!(validate_target_frozen_host_policy(false, false, true, p, 96, true, true).is_err());
         for (frozen, identity, rows, capacity, router) in [
             (true, false, true, 144, false),
             (false, true, true, 144, false),
@@ -4514,8 +4542,10 @@ mod frozen_host_policy_tests {
             (true, true, true, 144, true),
         ] {
             assert!(
-                validate_target_frozen_host_policy(frozen, identity, rows, p, capacity, router)
-                    .is_err()
+                validate_target_frozen_host_policy(
+                    frozen, identity, rows, p, capacity, router, false
+                )
+                .is_err()
             );
         }
     }
