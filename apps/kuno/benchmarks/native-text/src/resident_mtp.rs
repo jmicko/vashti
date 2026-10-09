@@ -1,0 +1,1774 @@
+//! Fixed-public, fully resident original-Q8 MTP laboratory workspace.
+//!
+//! No model alias, HTTP request, speculative acceptance controller or arbitrary
+//! configuration is exposed here. The caller supplies a fresh exclusive-bin
+//! client and the strict34-tensor `MtpGraph`. Every expert remains original and
+//! resident. A step is provisional until the target verifies it. Position is
+//! committed only after complete finite/fault/tail and guarded output proofs.
+//! A failed queued step destroys the entire cache and poisons this sequence.
+#![allow(dead_code)] // Parent fixed-public registration/physical gate is separate.
+
+use crate::{
+    main_admission::{self, MainAdmission},
+    mtp_resident_kernels as k,
+    private_arena::{BufferId, BufferLayout, OwnedZeroAudit, PrivateArena},
+    quant_matvec::{self, fast, matmul},
+    resident_util as u,
+};
+use cubecl::{prelude::*, server::Handle, wgpu::WgpuRuntime};
+use kuno_text::{Error, Result, TensorType, mtp::MtpGraph};
+use std::{
+    collections::BTreeMap,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+    },
+};
+use zeroize::{Zeroize, Zeroizing};
+
+pub const PUBLIC_BYTES: u64 = 5_011_668_992;
+pub const MAIN_BYTES: u64 = 6 * 1024 * 1024 * 1024;
+pub const PRIVATE_BYTES: usize = 16 * 1024 * 1024;
+pub const RUNTIME_BYTES: u64 = 64 * 1024 * 1024;
+pub const HOST_BYTES: usize = 16 * 1024 * 1024;
+pub const PUBLIC_SOURCE_BYTES: usize = 128 * 1024 * 1024;
+const READ_CHUNK: usize = 64 * 1024 * 1024;
+const TILE_ROWS: usize = 16384;
+const EPS: f32 = 1e-6;
+// Original MTP conditioning is one global10240 RMS row. Ordinary HC mixers
+// below remain four independent2560 RMS rows. vLLM0.30 nvidia/mtp.py211–216.
+const HIDDEN_NORM_GROUPS: usize = 1;
+const HIDDEN_NORM_WIDTH: usize = k::WIDE;
+// Conservatively includes all per-owner clears/checks, projection/finite
+// folds, sixteen embedding tiles and eight gate/up + eight down shards. The
+// source ledger never credits a dropped owner before a completed fence.
+const MAX_TOKEN_DISPATCHES: usize = 512;
+const INFO_BYTES: u64 = MAX_TOKEN_DISPATCHES as u64 * 2048;
+static NEXT_BINDING: AtomicU64 = AtomicU64::new(1);
+const MAX_LIVE_OUTPUTS: usize = 4;
+const OUTPUT_HOST_BYTES: usize = (k::VOCAB + k::WIDE) * 4;
+
+struct OutputLease {
+    live: Arc<AtomicUsize>,
+}
+impl OutputLease {
+    fn acquire(live: &Arc<AtomicUsize>) -> Result<Self> {
+        live.fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
+            (n < MAX_LIVE_OUTPUTS).then_some(n + 1)
+        })
+        .map_err(|_| Error::LimitExceeded("MTP live guarded outputs"))?;
+        Ok(Self { live: live.clone() })
+    }
+}
+impl Drop for OutputLease {
+    fn drop(&mut self) {
+        self.live.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(usize)]
+enum B {
+    Token,
+    Carry,
+    Embedding,
+    EmbeddingNorm,
+    HiddenNorm,
+    Condition,
+    Residual0,
+    Residual1,
+    Residual2,
+    Norm,
+    LowRaw,
+    Low,
+    Up,
+    Mixed,
+    Injection,
+    Status,
+    RawQuery,
+    SplitQuery,
+    Query,
+    Key,
+    Value,
+    KeyRotated,
+    Keys,
+    Values,
+    Attention,
+    Probability,
+    Attended,
+    Block,
+    Router,
+    Packet,
+    Activation,
+    Partials,
+    Readiness,
+    SharedGate,
+    SharedUp,
+    SharedAct,
+    SharedDown,
+    SharedScalar,
+    Logits,
+    Candidates,
+    Greedy,
+    Fault,
+}
+const N: usize = B::Fault as usize + 1;
+const WORDS: [usize; N] = [
+    1,
+    k::WIDE,
+    k::D,
+    k::D,
+    k::WIDE,
+    k::CONDITION_WORDS,
+    k::WIDE,
+    k::WIDE,
+    k::WIDE,
+    k::WIDE,
+    k::LOW_RANK,
+    k::LOW_RANK,
+    k::WIDE,
+    k::D,
+    k::HC,
+    k::QUERY * 2,
+    k::QUERY * 2,
+    k::QUERY * 2,
+    k::QUERY,
+    k::KV,
+    k::KV,
+    k::KV,
+    k::CACHE_WORDS,
+    k::CACHE_WORDS,
+    k::ATTENTION_WORDS,
+    k::ATTENTION_WORDS,
+    k::QUERY,
+    k::D,
+    k::EXPERTS,
+    8192,
+    k::ACTIVATION_WORDS,
+    k::PARTIAL_WORDS,
+    k::READINESS_WORDS,
+    k::FF,
+    k::FF,
+    k::FF,
+    k::D,
+    1,
+    k::VOCAB,
+    k::GREEDY_WORDS,
+    1,
+    1,
+];
+fn integer_buffer(index: usize) -> bool {
+    [
+        B::Token,
+        B::Status,
+        B::Packet,
+        B::Readiness,
+        B::Candidates,
+        B::Greedy,
+        B::Fault,
+    ]
+    .iter()
+    .any(|b| *b as usize == index)
+}
+
+#[derive(Clone, Copy)]
+struct Spec {
+    name: &'static str,
+    columns: usize,
+    rows: usize,
+    dtype: u32,
+}
+const MATRICES: [Spec; 17] = [
+    Spec {
+        name: "output.weight",
+        columns: k::D,
+        rows: k::VOCAB,
+        dtype: quant_matvec::Q8_0,
+    },
+    Spec {
+        name: "blk.48.attn_q.weight",
+        columns: k::D,
+        rows: k::QUERY * 2,
+        dtype: quant_matvec::Q8_0,
+    },
+    Spec {
+        name: "blk.48.attn_k.weight",
+        columns: k::D,
+        rows: k::KV,
+        dtype: quant_matvec::Q8_0,
+    },
+    Spec {
+        name: "blk.48.attn_v.weight",
+        columns: k::D,
+        rows: k::KV,
+        dtype: quant_matvec::Q8_0,
+    },
+    Spec {
+        name: "blk.48.attn_output.weight",
+        columns: k::QUERY,
+        rows: k::D,
+        dtype: quant_matvec::Q8_0,
+    },
+    Spec {
+        name: "blk.48.ffn_gate_shexp.weight",
+        columns: k::D,
+        rows: k::FF,
+        dtype: quant_matvec::Q8_0,
+    },
+    Spec {
+        name: "blk.48.ffn_up_shexp.weight",
+        columns: k::D,
+        rows: k::FF,
+        dtype: quant_matvec::Q8_0,
+    },
+    Spec {
+        name: "blk.48.ffn_down_shexp.weight",
+        columns: k::FF,
+        rows: k::D,
+        dtype: quant_matvec::Q8_0,
+    },
+    Spec {
+        name: "blk.48.ffn_gate_inp.weight",
+        columns: k::D,
+        rows: k::EXPERTS,
+        dtype: quant_matvec::F32,
+    },
+    Spec {
+        name: "blk.48.nextn.eh_proj.weight",
+        columns: k::D * 2,
+        rows: k::D,
+        dtype: quant_matvec::Q8_0,
+    },
+    Spec {
+        name: "blk.48.hc_attn_down.weight",
+        columns: k::WIDE,
+        rows: k::LOW_RANK,
+        dtype: quant_matvec::Q8_0,
+    },
+    Spec {
+        name: "blk.48.hc_attn_up.weight",
+        columns: k::LOW_RANK,
+        rows: k::WIDE,
+        dtype: quant_matvec::Q8_0,
+    },
+    Spec {
+        name: "blk.48.hc_attn_inject.weight",
+        columns: k::WIDE,
+        rows: k::HC,
+        dtype: quant_matvec::Q8_0,
+    },
+    Spec {
+        name: "blk.48.hc_ffn_down.weight",
+        columns: k::WIDE,
+        rows: k::LOW_RANK,
+        dtype: quant_matvec::Q8_0,
+    },
+    Spec {
+        name: "blk.48.hc_ffn_up.weight",
+        columns: k::LOW_RANK,
+        rows: k::WIDE,
+        dtype: quant_matvec::Q8_0,
+    },
+    Spec {
+        name: "blk.48.hc_ffn_inject.weight",
+        columns: k::WIDE,
+        rows: k::HC,
+        dtype: quant_matvec::Q8_0,
+    },
+    Spec {
+        name: "blk.48.nextn.hc_head_down.weight",
+        columns: k::WIDE,
+        rows: k::LOW_RANK,
+        dtype: quant_matvec::Q8_0,
+    },
+];
+// Kept separately so every role is a compile-time original public tensor name.
+const HEAD_UP: Spec = Spec {
+    name: "blk.48.nextn.hc_head_up.weight",
+    columns: k::LOW_RANK,
+    rows: k::WIDE,
+    dtype: quant_matvec::Q8_0,
+};
+const EMBEDDING: Spec = Spec {
+    name: "token_embd.weight",
+    columns: k::D,
+    rows: k::VOCAB,
+    dtype: quant_matvec::Q8_0,
+};
+const VECTORS: [(&str, usize); 8] = [
+    ("blk.48.attn_q_norm.weight", k::HD),
+    ("blk.48.attn_k_norm.weight", k::HD),
+    ("blk.48.ffn_gate_inp_shexp.weight", k::D),
+    ("blk.48.nextn.enorm.weight", k::D),
+    ("blk.48.nextn.hnorm.weight", k::WIDE),
+    ("blk.48.nextn.hc_head_norm.weight", k::WIDE),
+    ("blk.48.hc_attn_norm.weight", k::WIDE),
+    ("blk.48.hc_ffn_norm.weight", k::WIDE),
+];
+const EXPERT_NAMES: [&str; 3] = [
+    "blk.48.ffn_gate_exps.weight",
+    "blk.48.ffn_up_exps.weight",
+    "blk.48.ffn_down_exps.weight",
+];
+
+struct Page {
+    handle: Handle,
+    logical_bytes: usize,
+    owned_bytes: usize,
+    first: usize,
+    rows: usize,
+}
+struct Public {
+    pages: BTreeMap<&'static str, Vec<Page>>,
+    sin: Page,
+    cos: Page,
+    bytes: u64,
+}
+impl Public {
+    fn pages(&self, name: &'static str) -> Result<&[Page]> {
+        self.pages
+            .get(name)
+            .map(Vec::as_slice)
+            .ok_or(Error::InvalidFormat("MTP resident public role"))
+    }
+    fn one(&self, name: &'static str) -> Result<&Page> {
+        let pages = self.pages(name)?;
+        if pages.len() != 1 {
+            return Err(Error::InvalidBufferLength);
+        }
+        Ok(&pages[0])
+    }
+    fn handles(&self) -> Vec<Handle> {
+        self.pages
+            .values()
+            .flatten()
+            .map(|p| p.handle.clone())
+            .chain([self.sin.handle.clone(), self.cos.handle.clone()])
+            .collect()
+    }
+}
+
+/// Guarded whole draft result. These values remain provisional until target
+/// verification; no request-derived values implement Debug/Serialize/Clone.
+pub struct Output {
+    logits: Zeroizing<Vec<f32>>,
+    hidden: Zeroizing<Vec<f32>>,
+    greedy: Zeroizing<u32>,
+    binding: u64,
+    start: Zeroizing<usize>,
+    // Last field: contents above are scrubbed BEFORE host credit is released.
+    _lease: OutputLease,
+}
+impl Output {
+    pub fn logits(&self) -> &[f32] {
+        &self.logits
+    }
+    pub fn hidden(&self) -> &[f32] {
+        &self.hidden
+    }
+    pub fn greedy(&self) -> u32 {
+        *self.greedy
+    }
+    pub fn binding(&self) -> u64 {
+        self.binding
+    }
+    pub fn start(&self) -> usize {
+        *self.start
+    }
+}
+pub struct CloseReceipt {
+    pub private: OwnedZeroAudit,
+    pub public_bytes: u64,
+    pub main_reserved: u64,
+}
+
+pub struct ResidentMtp<'g, 'f> {
+    graph: &'g MtpGraph<'f>,
+    arena: PrivateArena,
+    ids: [BufferId; N],
+    client: ComputeClient<WgpuRuntime>,
+    public: Option<Public>,
+    ledger: MainAdmission,
+    retired: Arc<AtomicBool>,
+    position: usize,
+    poisoned: bool,
+    closed: bool,
+    dispatches: usize,
+    binding: u64,
+    live_outputs: Arc<AtomicUsize>,
+}
+
+fn error(_: impl std::fmt::Display) -> Error {
+    Error::InvalidFormat("MTP resident owning operation")
+}
+fn sample(client: &ComputeClient<WgpuRuntime>) -> Result<u64> {
+    Ok(client.memory_usage().map_err(error)?.bytes_reserved)
+}
+fn io_audit(client: &ComputeClient<WgpuRuntime>, retired: &AtomicBool) -> Result<()> {
+    let receipt =
+        cubecl::future::block_on(client.sanitize_transient_io_audited()).map_err(error)?;
+    if receipt.inspected_bytes > RUNTIME_BYTES || retired.load(Ordering::Acquire) {
+        return Err(Error::InvalidFormat("MTP resident I/O audit"));
+    }
+    Ok(())
+}
+struct Bytes(cubecl::bytes::Bytes);
+impl Drop for Bytes {
+    fn drop(&mut self) {
+        self.0.zeroize();
+    }
+}
+struct Upload(Vec<u8>);
+impl Drop for Upload {
+    fn drop(&mut self) {
+        self.0.zeroize();
+    }
+}
+impl Upload {
+    fn take(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.0)
+    }
+}
+
+/// Full span validator. All loads are guarded by actual array length; only the
+/// sticky fault owner can be written. `live` describes committed KV prefix at
+/// preflight and candidate prefix at acceptance. Logical integers are not
+/// reinterpreted as floats. Every padding word remains exactly zero.
+#[cube(launch)]
+#[allow(clippy::manual_range_contains)]
+fn private_guard(
+    values: &Array<u32>,
+    fault: &mut Array<Atomic<u32>>,
+    logical: usize,
+    live: usize,
+    #[comptime] floats: bool,
+) {
+    let i = ABSOLUTE_POS;
+    if i < values.len() {
+        let bits = values[i];
+        if i >= logical || i >= live {
+            if bits != 0 {
+                fault[0].fetch_or(4);
+            }
+        } else if comptime!(floats) {
+            let value = f32::reinterpret(bits);
+            if !(value >= -3.4028235e38_f32 && value <= 3.4028235e38_f32) {
+                fault[0].fetch_or(1);
+            }
+        }
+    }
+}
+/// Same complete public bytes/tail semantics as host validation. Q8 half
+/// scales may be finite subnormals/negative/zero; all exponent31 are rejected.
+#[cube(launch)]
+#[allow(clippy::manual_range_contains)]
+fn public_guard(
+    values: &Array<u32>,
+    fault: &mut Array<Atomic<u32>>,
+    logical_bytes: usize,
+    #[comptime] dtype: u32,
+) {
+    let i = ABSOLUTE_POS;
+    if i < values.len() {
+        let word = values[i];
+        if i * 4 >= logical_bytes {
+            if word != 0 {
+                fault[0].fetch_or(4);
+            }
+        } else if comptime!(dtype == quant_matvec::F32) {
+            let value = f32::reinterpret(word);
+            if !(value >= -3.4028235e38_f32 && value <= 3.4028235e38_f32) {
+                fault[0].fetch_or(1);
+            }
+        }
+        if comptime!(dtype == quant_matvec::Q8_0) {
+            let block = i * 34;
+            if block + 34 <= logical_bytes {
+                let index = block / 4;
+                let shift = (block % 4) * 8;
+                let half = (values[index] >> (shift as u32)) & 65535;
+                if half & 31744 == 31744 {
+                    fault[0].fetch_or(1);
+                }
+            }
+        }
+    }
+}
+
+fn grid(words: usize) -> Result<CubeCount> {
+    let l = BufferLayout::new(words).map_err(error)?;
+    Ok(CubeCount::Static(l.workgroups_x, l.workgroups_y, 1))
+}
+fn private_plan() -> Result<u64> {
+    WORDS.into_iter().try_fold(0_u64, |sum, w| {
+        sum.checked_add(BufferLayout::new(w).map_err(error)?.owned_bytes as u64)
+            .ok_or(Error::ArithmeticOverflow)
+    })
+}
+fn tile_plan(spec: Spec) -> Result<Vec<(usize, usize, usize, usize)>> {
+    let row_bytes = quant_matvec::packed_row_bytes(spec.columns, spec.dtype);
+    (0..spec.rows)
+        .step_by(TILE_ROWS)
+        .map(|first| {
+            let rows = (spec.rows - first).min(TILE_ROWS);
+            let logical = rows
+                .checked_mul(row_bytes)
+                .ok_or(Error::ArithmeticOverflow)?;
+            let owned = main_admission::page_bytes(logical as u64).map_err(error)? as usize;
+            Ok((first, rows, logical, owned))
+        })
+        .collect()
+}
+fn public_plan() -> Result<u64> {
+    let mut bytes = k::expert_owned_bytes()?;
+    for spec in MATRICES.into_iter().chain([HEAD_UP, EMBEDDING]) {
+        for (_, _, _, owned) in tile_plan(spec)? {
+            bytes += owned as u64;
+        }
+    }
+    for (_, words) in VECTORS {
+        bytes += main_admission::page_bytes((words * 4) as u64).map_err(error)?;
+    }
+    bytes += 2 * main_admission::page_bytes((crate::qsa_gpu::ROPE_TABLE_WORDS * 4) as u64)
+        .map_err(error)?;
+    Ok(bytes)
+}
+fn validate_source(bytes: &[u8], dtype: u32) -> Result<()> {
+    match dtype {
+        quant_matvec::Q8_0 if bytes.len().is_multiple_of(34) => {
+            if bytes
+                .chunks_exact(34)
+                .any(|b| u16::from_le_bytes([b[0], b[1]]) & 0x7c00 == 0x7c00)
+            {
+                return Err(Error::InvalidFormat("MTP nonfinite original Q8 source"));
+            }
+        }
+        quant_matvec::F32 if bytes.len().is_multiple_of(4) => {
+            if bytes
+                .chunks_exact(4)
+                .any(|b| !f32::from_le_bytes([b[0], b[1], b[2], b[3]]).is_finite())
+            {
+                return Err(Error::InvalidFormat("MTP nonfinite original F32 source"));
+            }
+        }
+        _ => return Err(Error::InvalidBufferLength),
+    }
+    Ok(())
+}
+
+pub fn validate_limits(limits: &wgpu::Limits) -> Result<()> {
+    k::validate_limits(limits)?;
+    if limits.max_compute_workgroups_per_dimension < 65535 {
+        return Err(Error::LimitExceeded("MTP complete public page grid"));
+    }
+    Ok(())
+}
+
+impl<'g, 'f> ResidentMtp<'g, 'f> {
+    /// Caller must initialize required_memory_configuration and enable physical
+    /// SUBGROUP16..32 before entering this laboratory-only constructor. This
+    /// workspace owns one fresh client/stream; sharing it with a target or
+    /// another model is forbidden. Parent configures64MiB transient I/O ONCE
+    /// and supplies its physical-context retirement flag, including on fresh
+    /// workspace replay. No context/device/controller creation happens here.
+    pub fn new(
+        graph: &'g MtpGraph<'f>,
+        client: ComputeClient<WgpuRuntime>,
+        limits: &wgpu::Limits,
+        retired: Arc<AtomicBool>,
+    ) -> Result<Self> {
+        validate_limits(limits)?;
+        if retired.load(Ordering::Acquire) {
+            return Err(Error::InvalidFormat("MTP physical context retired"));
+        }
+        let private = private_plan()?;
+        if public_plan()? != PUBLIC_BYTES
+            || private > PRIVATE_BYTES as u64
+            || INFO_BYTES + 3 * 4 * 1024 * 1024 > RUNTIME_BYTES
+        {
+            return Err(Error::LimitExceeded("MTP fixed resident capacity plan"));
+        }
+        main_admission::check_capacity(
+            MAIN_BYTES,
+            &[
+                PUBLIC_BYTES,
+                PRIVATE_BYTES as u64,
+                RUNTIME_BYTES,
+                PUBLIC_SOURCE_BYTES as u64,
+            ],
+        )
+        .map_err(error)?;
+        let usage = client.memory_usage().map_err(error)?;
+        if usage.number_allocs != 0 || usage.bytes_in_use != 0 || usage.bytes_reserved != 0 {
+            return Err(Error::InvalidFormat("MTP resident requires fresh client"));
+        }
+        let owned_client = client.clone();
+        let mut arena =
+            PrivateArena::new_transient_on_configured(client, PRIVATE_BYTES, retired.clone())
+                .map_err(error)?;
+        arena.enable_public_owned_zero_audit().map_err(error)?;
+        let mut ledger = MainAdmission::new(MAIN_BYTES, 0).map_err(error)?;
+        ledger
+            .precharge(&WORDS.map(|n| (n * 4) as u64))
+            .map_err(error)?;
+        let mut allocated = Vec::with_capacity(N);
+        for n in WORDS {
+            allocated.push(arena.allocate_zeroed(n).map_err(error)?);
+        }
+        let ids: [BufferId; N] = allocated
+            .try_into()
+            .map_err(|_| Error::InvalidBufferLength)?;
+        if arena.charged_bytes() as u64 != private {
+            return Err(Error::InvalidBufferLength);
+        }
+        ledger
+            .observe_after(sample(arena.client().map_err(error)?)?)
+            .map_err(error)?;
+        let binding = NEXT_BINDING
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+            .map_err(|_| Error::ArithmeticOverflow)?;
+        let mut workspace = Self {
+            graph,
+            arena,
+            ids,
+            client: owned_client,
+            public: None,
+            ledger,
+            retired,
+            position: 0,
+            poisoned: true,
+            closed: false,
+            dispatches: 0,
+            binding,
+            live_outputs: Arc::new(AtomicUsize::new(0)),
+        };
+        let result = workspace.load_public();
+        match result {
+            Ok(public) => workspace.public = Some(public),
+            Err(e) => {
+                workspace.fail();
+                return Err(e);
+            }
+        }
+        workspace.physical()?;
+        workspace.guard_private(0)?;
+        workspace.complete_fault()?;
+        workspace.verify_source()?;
+        workspace.poisoned = false;
+        Ok(workspace)
+    }
+
+    // Retain the same pinned client separately so completed arena close can be
+    // followed by physical allocator recovery and sanitizer proof. `arena` is
+    // !Send/!Sync and pins this workspace to the construction worker thread.
+    fn client(&self) -> Result<&ComputeClient<WgpuRuntime>> {
+        Ok(&self.client)
+    }
+    fn id(&self, b: B) -> BufferId {
+        self.ids[b as usize]
+    }
+    fn a(&self, b: B) -> Result<ArrayArg<WgpuRuntime>> {
+        u::arg(&self.arena, self.id(b))
+    }
+    fn prefix(&self, b: B, first: usize, words: usize) -> Result<ArrayArg<WgpuRuntime>> {
+        if first.checked_add(words).ok_or(Error::ArithmeticOverflow)? > WORDS[b as usize] {
+            return Err(Error::InvalidBufferLength);
+        }
+        let mut h = u::handle(&self.arena, self.id(b))?;
+        h = h
+            .offset_start((first * 4) as u64)
+            .offset_end(((WORDS[b as usize] - first - words) * 4) as u64);
+        u::raw_arg(h, words)
+    }
+    fn public_arg(page: &Page) -> Result<ArrayArg<WgpuRuntime>> {
+        u::raw_arg(page.handle.clone(), page.logical_bytes / 4)
+    }
+    fn tick(&mut self, count: usize) -> Result<()> {
+        self.dispatches = self
+            .dispatches
+            .checked_add(count)
+            .ok_or(Error::ArithmeticOverflow)?;
+        if self.dispatches > MAX_TOKEN_DISPATCHES {
+            return Err(Error::LimitExceeded("MTP token INFO records"));
+        }
+        Ok(())
+    }
+    fn verify_source(&self) -> Result<()> {
+        // This zero-length range still validates the pinned descriptor and all
+        // source stat identities before/after; no model payload read occurs.
+        self.graph.tensor("output.weight")?.read_range(0, &mut [])
+    }
+    fn physical(&self) -> Result<()> {
+        let mut owners: Vec<Handle> = self
+            .ids
+            .iter()
+            .map(|&id| self.arena.handle(id).cloned().map_err(error))
+            .collect::<Result<_>>()?;
+        if let Some(public) = &self.public {
+            owners.extend(public.handles());
+        }
+        crate::resident_gr::batch::physical(&self.arena, &owners)?;
+        let stream = self.arena.handle(self.id(B::Fault)).map_err(error)?.stream;
+        if owners.iter().any(|h| h.stream != stream) {
+            return Err(Error::InvalidBufferLength);
+        }
+        Ok(())
+    }
+    #[allow(clippy::too_many_arguments)] // Original tensor span + complete page geometry.
+    fn load_page(
+        &mut self,
+        name: &'static str,
+        offset: usize,
+        logical: usize,
+        owned: usize,
+        first: usize,
+        rows: usize,
+        dtype: u32,
+    ) -> Result<Page> {
+        if logical == 0
+            || !logical.is_multiple_of(4)
+            || owned > PUBLIC_SOURCE_BYTES
+            || main_admission::page_bytes(logical as u64).map_err(error)? as usize != owned
+        {
+            return Err(Error::InvalidBufferLength);
+        }
+        let mut source = Upload(vec![0; owned]);
+        if source.0.capacity() > PUBLIC_SOURCE_BYTES {
+            return Err(Error::LimitExceeded("MTP public source capacity"));
+        }
+        let tensor = self.graph.tensor(name)?;
+        let expected = match dtype {
+            quant_matvec::Q8_0 => TensorType::Q8_0,
+            quant_matvec::F32 => TensorType::F32,
+            _ => return Err(Error::InvalidBufferLength),
+        };
+        if tensor.info().dtype() != expected {
+            return Err(Error::InvalidBufferLength);
+        }
+        for first_chunk in (0..logical).step_by(READ_CHUNK) {
+            let end = (first_chunk + READ_CHUNK).min(logical);
+            tensor.read_range(
+                (offset + first_chunk) as u64,
+                &mut source.0[first_chunk..end],
+            )?;
+        }
+        validate_source(&source.0[..logical], dtype)?;
+        self.upload_page(source, logical, owned, first, rows, dtype)
+    }
+    fn upload_page(
+        &mut self,
+        mut source: Upload,
+        logical: usize,
+        owned: usize,
+        first: usize,
+        rows: usize,
+        dtype: u32,
+    ) -> Result<Page> {
+        if source.0.len() != owned || source.0.capacity() > PUBLIC_SOURCE_BYTES {
+            return Err(Error::InvalidBufferLength);
+        }
+        self.ledger
+            .observe_before(sample(self.client()?)?)
+            .map_err(error)?;
+        // The bound accounts both the persistent full page and the sole public
+        // upload source. Credit only follows completed device read + sanitizer.
+        self.ledger
+            .precharge(&[owned as u64, owned as u64])
+            .map_err(error)?;
+        let handle = self.client()?.create_public_owned(source.take());
+        if handle.size() != owned as u64 {
+            return Err(Error::InvalidBufferLength);
+        }
+        self.ledger
+            .observe_after(sample(self.client()?)?)
+            .map_err(error)?;
+        let page = Page {
+            handle,
+            logical_bytes: logical,
+            owned_bytes: owned,
+            first,
+            rows,
+        };
+        // Complete original public scales/F32 and exact zero padding are read
+        // by device before permitting any private consumption of these bytes.
+        public_guard::launch::<WgpuRuntime>(
+            self.client()?,
+            grid(owned / 4)?,
+            CubeDim::new_1d(64),
+            u::raw_arg(page.handle.clone(), owned / 4)?,
+            self.a(B::Fault)?,
+            logical,
+            dtype,
+        );
+        self.complete_fault()?;
+        Ok(page)
+    }
+    fn load_public(&mut self) -> Result<Public> {
+        let mut pages = BTreeMap::new();
+        let mut bytes = 0_u64;
+        for spec in MATRICES.into_iter().chain([HEAD_UP, EMBEDDING]) {
+            let tensor = self.graph.tensor(spec.name)?;
+            if tensor.info().dimensions() != [spec.columns as u64, spec.rows as u64]
+                || tensor.info().byte_len() as usize
+                    != spec.rows * quant_matvec::packed_row_bytes(spec.columns, spec.dtype)
+            {
+                return Err(Error::InvalidBufferLength);
+            }
+            let mut list = Vec::new();
+            let row_bytes = tensor.info().row_bytes() as usize;
+            for (first, rows, logical, owned) in tile_plan(spec)? {
+                list.push(self.load_page(
+                    spec.name,
+                    first * row_bytes,
+                    logical,
+                    owned,
+                    first,
+                    rows,
+                    spec.dtype,
+                )?);
+                bytes += owned as u64;
+            }
+            pages.insert(spec.name, list);
+        }
+        for name in EXPERT_NAMES {
+            if self.graph.tensor(name)?.info().byte_len() != (k::EXPERTS * k::EXPERT_BYTES) as u64 {
+                return Err(Error::InvalidBufferLength);
+            }
+            let mut list = Vec::with_capacity(k::SHARDS);
+            for index in 0..k::SHARDS {
+                let shard = k::Shard::new(index)?;
+                let logical = shard.packed_bytes()?;
+                let owned = shard.owned_bytes()? as usize;
+                list.push(self.load_page(
+                    name,
+                    shard.first * k::EXPERT_BYTES,
+                    logical,
+                    owned,
+                    shard.first,
+                    shard.experts,
+                    quant_matvec::Q8_0,
+                )?);
+                bytes += owned as u64;
+            }
+            pages.insert(name, list);
+        }
+        for (name, n) in VECTORS {
+            let owned = main_admission::page_bytes((n * 4) as u64).map_err(error)? as usize;
+            pages.insert(
+                name,
+                vec![self.load_page(name, 0, n * 4, owned, 0, 1, quant_matvec::F32)?],
+            );
+            bytes += owned as u64;
+        }
+        let (sin, cos) = k::rope_tables();
+        let mut upload_rope = |values: &[f32]| -> Result<Page> {
+            let owned =
+                main_admission::page_bytes((values.len() * 4) as u64).map_err(error)? as usize;
+            let mut source = Upload(vec![0; owned]);
+            for (word, value) in source.0.chunks_exact_mut(4).zip(values) {
+                word.copy_from_slice(&value.to_le_bytes());
+            }
+            self.upload_page(source, values.len() * 4, owned, 0, 1, quant_matvec::F32)
+        };
+        let sin = upload_rope(sin)?;
+        let cos = upload_rope(cos)?;
+        bytes += (sin.owned_bytes + cos.owned_bytes) as u64;
+        if bytes != PUBLIC_BYTES || pages.len() != 30 {
+            return Err(Error::InvalidBufferLength);
+        }
+        Ok(Public {
+            pages,
+            sin,
+            cos,
+            bytes,
+        })
+    }
+    fn guard_private(&mut self, cache_position: usize) -> Result<()> {
+        if cache_position > k::CONTEXT {
+            return Err(Error::OutOfBounds);
+        }
+        for (index, &logical) in WORDS.iter().enumerate() {
+            let b = self.ids[index];
+            let layout = self.arena.layout(b).map_err(error)?;
+            let live = if index == B::Keys as usize || index == B::Values as usize {
+                cache_position * k::KV
+            } else if index == B::Fault as usize {
+                0
+            } else {
+                WORDS[index]
+            };
+            private_guard::launch::<WgpuRuntime>(
+                self.client()?,
+                grid(layout.owned_words)?,
+                CubeDim::new_1d(64),
+                u::raw_arg(
+                    self.arena.handle(b).map_err(error)?.clone(),
+                    layout.owned_words,
+                )?,
+                self.a(B::Fault)?,
+                logical,
+                live,
+                !integer_buffer(index),
+            );
+        }
+        self.tick(N)
+    }
+    fn complete_fault(&mut self) -> Result<()> {
+        let bits = self.read_words(B::Fault)?;
+        if bits.iter().any(|&x| x != 0) {
+            return Err(Error::InvalidFormat("MTP resident sticky fault"));
+        }
+        drop(bits);
+        self.ledger
+            .completed_fence(sample(self.client()?)?)
+            .map_err(error)
+    }
+    fn read_words(&self, b: B) -> Result<Zeroizing<Vec<u32>>> {
+        let layout = self.arena.layout(self.id(b)).map_err(error)?;
+        // Simultaneous full Bytes + guarded conversion + largest retained
+        // output guards remain inside the explicit16MiB host plan.
+        if 2 * layout.owned_bytes + MAX_LIVE_OUTPUTS * OUTPUT_HOST_BYTES + 2 * 1024 * 1024
+            > HOST_BYTES
+        {
+            return Err(Error::LimitExceeded("MTP guarded host capacity"));
+        }
+        let result = self
+            .client()?
+            .read_one(self.arena.handle(self.id(b)).map_err(error)?.clone())
+            .map_err(error)?;
+        let bytes = Bytes(result);
+        if bytes.0.len() != layout.owned_bytes {
+            return Err(Error::InvalidBufferLength);
+        }
+        let mut words = Zeroizing::new(Vec::with_capacity(layout.owned_words));
+        words.extend(
+            bytes
+                .0
+                .chunks_exact(4)
+                .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]])),
+        );
+        drop(bytes);
+        io_audit(self.client()?, &self.retired)?;
+        if words.capacity() * 4 > layout.owned_bytes
+            || words[layout.logical_words..].iter().any(|&x| x != 0)
+        {
+            return Err(Error::InvalidFormat("MTP full readback padding"));
+        }
+        Ok(words)
+    }
+    fn write(&self, b: B, values: &[u32]) -> Result<()> {
+        let layout = self.arena.layout(self.id(b)).map_err(error)?;
+        if values.len() != layout.logical_words {
+            return Err(Error::InvalidBufferLength);
+        }
+        let mut upload = Upload(vec![0; layout.owned_bytes]);
+        if upload.0.capacity() > HOST_BYTES {
+            return Err(Error::LimitExceeded("MTP host private upload"));
+        }
+        for (out, word) in upload.0.chunks_exact_mut(4).zip(values) {
+            out.copy_from_slice(&word.to_le_bytes());
+        }
+        self.client()?
+            .write_private(
+                self.arena.handle(self.id(b)).map_err(error)?.clone(),
+                upload.take(),
+            )
+            .map_err(error)
+    }
+    fn clear_scratch(&mut self) -> Result<()> {
+        for index in 0..N {
+            if index != B::Keys as usize && index != B::Values as usize {
+                u::zero(&self.arena, self.ids[index])?;
+            }
+        }
+        self.tick(N - 2)
+    }
+    fn start(&mut self, token: u32, carry: &[f32]) -> Result<()> {
+        if self.closed || self.poisoned || self.retired.load(Ordering::Acquire) {
+            return Err(Error::InvalidFormat("MTP resident poisoned"));
+        }
+        validate_input(token, carry, self.position)?;
+        self.verify_source()?;
+        self.physical()?;
+        self.ledger
+            .observe_before(sample(self.client()?)?)
+            .map_err(error)?;
+        self.poisoned = true;
+        self.dispatches = 0;
+        self.clear_scratch()?;
+        self.write(B::Token, &[token])?;
+        let input = Zeroizing::new(carry.iter().map(|v| v.to_bits()).collect::<Vec<_>>());
+        if input.capacity() * 4 > HOST_BYTES {
+            return Err(Error::LimitExceeded("MTP host carry"));
+        }
+        self.write(B::Carry, &input)?;
+        self.guard_private(self.position)
+    }
+    fn finite(&mut self, b: B) -> Result<()> {
+        u::validate(&self.arena, self.id(b), self.id(B::Fault))?;
+        self.tick(1)
+    }
+    fn status(&mut self, n: usize) -> Result<()> {
+        u::status_batch(
+            &self.arena,
+            self.id(B::Status),
+            self.id(B::Fault),
+            1,
+            0,
+            n,
+            n,
+        )?;
+        self.tick(1)
+    }
+
+    fn fail(&mut self) {
+        self.poisoned = true;
+        self.position.zeroize();
+        // Every private owner, including all candidate/committed KV, is erased
+        // before the caller can reuse this sequence. Any error retires context;
+        // the tracked arena retains owners for its full close/quarantine path.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<()> {
+            for &id in &self.ids {
+                u::zero(&self.arena, id)?;
+            }
+            cubecl::future::block_on(self.client()?.sync()).map_err(error)?;
+            io_audit(self.client()?, &self.retired)
+        }));
+        if !matches!(result, Ok(Ok(()))) {
+            self.retired.store(true, Ordering::Release);
+            self.ledger.poison();
+        }
+    }
+}
+
+impl ResidentMtp<'_, '_> {
+    pub fn position(&self) -> usize {
+        self.position
+    }
+    pub fn binding(&self) -> u64 {
+        self.binding
+    }
+    fn public(&self) -> Result<&Public> {
+        self.public
+            .as_ref()
+            .ok_or(Error::InvalidFormat("MTP resident public owner absent"))
+    }
+    fn vector_arg(&self, name: &'static str) -> Result<ArrayArg<WgpuRuntime>> {
+        Self::public_arg(self.public()?.one(name)?)
+    }
+    fn project(&mut self, name: &'static str, input: B, output: B) -> Result<()> {
+        let spec = MATRICES
+            .into_iter()
+            .chain([HEAD_UP])
+            .find(|s| s.name == name)
+            .ok_or(Error::InvalidFormat("MTP projection role"))?;
+        if WORDS[input as usize] != spec.columns
+            || WORDS[output as usize] != spec.rows
+            || input == output
+        {
+            return Err(Error::InvalidBufferLength);
+        }
+        let pages = self.public()?.pages(name)?;
+        let row_bytes = quant_matvec::packed_row_bytes(spec.columns, spec.dtype);
+        for (index, page) in pages.iter().enumerate() {
+            if page.logical_bytes != page.rows * row_bytes || page.first + page.rows > spec.rows {
+                return Err(Error::InvalidBufferLength);
+            }
+            // SAFETY: exact original role geometry, complete disjoint owners and
+            // source/finite/tail preflight precede all unchecked leaf launches.
+            unsafe {
+                fast::packed_single_fault::launch_unchecked::<WgpuRuntime>(
+                    self.client()?,
+                    fast::fault_grid(page.rows, spec.rows, index + 1 == pages.len()),
+                    CubeDim::new_1d(128),
+                    Self::public_arg(page)?,
+                    self.a(input)?,
+                    self.a(output)?,
+                    self.a(B::Fault)?,
+                    1,
+                    0,
+                    0,
+                    page.first,
+                    0,
+                    page.rows,
+                    spec.columns,
+                    spec.dtype,
+                    row_bytes,
+                    spec.rows,
+                    index + 1 == pages.len(),
+                );
+            }
+        }
+        self.tick(pages.len())?;
+        self.finite(output)
+    }
+    fn normalize(
+        &mut self,
+        input: B,
+        output: B,
+        gamma: &'static str,
+        groups: usize,
+        width: usize,
+    ) -> Result<()> {
+        if groups * width != WORDS[input as usize]
+            || groups * width != WORDS[output as usize]
+            || input == output
+        {
+            return Err(Error::InvalidBufferLength);
+        }
+        k::grouped_rms_norm::launch::<WgpuRuntime>(
+            self.client()?,
+            CubeCount::Static(groups as u32, 1, 1),
+            CubeDim::new_1d(64),
+            self.a(input)?,
+            self.vector_arg(gamma)?,
+            self.a(output)?,
+            self.prefix(B::Status, 0, groups)?,
+            EPS,
+            groups,
+            width,
+        );
+        self.tick(1)?;
+        self.status(groups)?;
+        self.finite(output)
+    }
+    fn condition(&mut self) -> Result<()> {
+        let pages = self.public()?.pages(EMBEDDING.name)?;
+        for page in pages {
+            unsafe {
+                k::embedding_tile::launch_unchecked::<WgpuRuntime>(
+                    self.client()?,
+                    u::grid(k::D)?,
+                    CubeDim::new_1d(64),
+                    Self::public_arg(page)?,
+                    self.a(B::Token)?,
+                    self.a(B::Embedding)?,
+                    self.a(B::Fault)?,
+                    page.first,
+                    page.rows,
+                );
+            }
+        }
+        self.tick(pages.len())?;
+        self.finite(B::Embedding)?;
+        self.normalize(
+            B::Embedding,
+            B::EmbeddingNorm,
+            "blk.48.nextn.enorm.weight",
+            1,
+            k::D,
+        )?;
+        self.normalize(
+            B::Carry,
+            B::HiddenNorm,
+            "blk.48.nextn.hnorm.weight",
+            HIDDEN_NORM_GROUPS,
+            HIDDEN_NORM_WIDTH,
+        )?;
+        k::condition_concat::launch::<WgpuRuntime>(
+            self.client()?,
+            u::grid(k::CONDITION_WORDS)?,
+            CubeDim::new_1d(64),
+            self.a(B::EmbeddingNorm)?,
+            self.a(B::HiddenNorm)?,
+            self.a(B::Condition)?,
+            self.a(B::Fault)?,
+        );
+        self.tick(1)?;
+        let page = self.public()?.one("blk.48.nextn.eh_proj.weight")?;
+        let geometry =
+            matmul::MatrixGeometry::new(quant_matvec::Q8_0, k::D, k::D * 2, 4).map_err(error)?;
+        let spans = matmul::BatchSpans::new(k::HC, 0, 0, k::D * 2, 0, k::D);
+        geometry
+            .validate_spans(&spans, page.logical_bytes / 4, k::CONDITION_WORDS, k::WIDE)
+            .map_err(error)?;
+        unsafe {
+            matmul::packed_matmul::launch_unchecked::<WgpuRuntime>(
+                self.client()?,
+                geometry.grid(),
+                CubeDim::new_1d(64),
+                Self::public_arg(page)?,
+                self.a(B::Condition)?,
+                self.a(B::Residual0)?,
+                k::HC,
+                0,
+                0,
+                k::D * 2,
+                0,
+                k::D,
+                k::D,
+                k::D * 2,
+                quant_matvec::Q8_0,
+                4,
+            );
+        }
+        self.tick(1)?;
+        self.finite(B::Residual0)
+    }
+    fn hc(&mut self, input: B, kind: usize, inject: bool) -> Result<()> {
+        let names = match kind {
+            0 => [
+                "blk.48.hc_attn_norm.weight",
+                "blk.48.hc_attn_down.weight",
+                "blk.48.hc_attn_up.weight",
+                "blk.48.hc_attn_inject.weight",
+            ],
+            1 => [
+                "blk.48.hc_ffn_norm.weight",
+                "blk.48.hc_ffn_down.weight",
+                "blk.48.hc_ffn_up.weight",
+                "blk.48.hc_ffn_inject.weight",
+            ],
+            2 if !inject => [
+                "blk.48.nextn.hc_head_norm.weight",
+                "blk.48.nextn.hc_head_down.weight",
+                "blk.48.nextn.hc_head_up.weight",
+                "",
+            ],
+            _ => return Err(Error::InvalidFormat("MTP HC role")),
+        };
+        self.normalize(input, B::Norm, names[0], k::HC, k::D)?;
+        self.project(names[1], B::Norm, B::LowRaw)?;
+        k::activate_down::launch::<WgpuRuntime>(
+            self.client()?,
+            u::grid(k::LOW_RANK)?,
+            CubeDim::new_1d(64),
+            self.a(B::LowRaw)?,
+            self.a(B::Low)?,
+            self.prefix(B::Status, 0, k::LOW_RANK)?,
+            k::HC,
+            k::LOW_RANK,
+        );
+        self.tick(1)?;
+        self.status(k::LOW_RANK)?;
+        self.project(names[2], B::Low, B::Up)?;
+        k::mix::launch::<WgpuRuntime>(
+            self.client()?,
+            u::grid(k::D)?,
+            CubeDim::new_1d(64),
+            self.a(B::Norm)?,
+            self.a(B::Up)?,
+            self.a(B::Mixed)?,
+            self.prefix(B::Status, 0, k::D)?,
+            k::HC,
+            k::D,
+        );
+        self.tick(1)?;
+        self.status(k::D)?;
+        self.finite(B::Mixed)?;
+        if inject {
+            self.project(names[3], B::Norm, B::Injection)?;
+        }
+        Ok(())
+    }
+    fn combine(&mut self, original: B, output: B) -> Result<()> {
+        if original == output {
+            return Err(Error::InvalidBufferLength);
+        }
+        k::combine::launch::<WgpuRuntime>(
+            self.client()?,
+            u::grid(k::WIDE)?,
+            CubeDim::new_1d(64),
+            self.a(original)?,
+            self.a(B::Block)?,
+            self.a(B::Injection)?,
+            self.a(output)?,
+            self.prefix(B::Status, 0, k::WIDE)?,
+            k::HC,
+            k::D,
+        );
+        self.tick(1)?;
+        self.status(k::WIDE)?;
+        self.finite(output)
+    }
+    fn key_value(&mut self) -> Result<()> {
+        self.project("blk.48.attn_k.weight", B::Mixed, B::Key)?;
+        self.project("blk.48.attn_v.weight", B::Mixed, B::Value)?;
+        self.rope(B::Key, B::KeyRotated, "blk.48.attn_k_norm.weight", k::KVH)?;
+        k::append_kv::launch::<WgpuRuntime>(
+            self.client()?,
+            u::grid(k::KV)?,
+            CubeDim::new_1d(64),
+            self.a(B::KeyRotated)?,
+            self.a(B::Value)?,
+            self.a(B::Keys)?,
+            self.a(B::Values)?,
+            self.a(B::Fault)?,
+            self.position,
+        );
+        self.tick(1)
+    }
+    fn rope(&mut self, input: B, output: B, gamma: &'static str, groups: usize) -> Result<()> {
+        if groups * k::HD != WORDS[input as usize] || groups * k::HD != WORDS[output as usize] {
+            return Err(Error::InvalidBufferLength);
+        }
+        let public = self.public()?;
+        k::rms_rope::launch::<WgpuRuntime>(
+            self.client()?,
+            CubeCount::Static(groups as u32, 1, 1),
+            CubeDim::new_1d(64),
+            self.a(input)?,
+            self.vector_arg(gamma)?,
+            Self::public_arg(&public.sin)?,
+            Self::public_arg(&public.cos)?,
+            self.a(B::Token)?,
+            self.a(output)?,
+            self.prefix(B::Status, 0, groups)?,
+            groups,
+            self.position as u32,
+            EPS,
+            k::HD,
+            true,
+            false,
+        );
+        self.tick(1)?;
+        self.status(groups)?;
+        self.finite(output)
+    }
+    fn attention(&mut self) -> Result<()> {
+        self.project("blk.48.attn_q.weight", B::Mixed, B::RawQuery)?;
+        k::split_query_gate::launch::<WgpuRuntime>(
+            self.client()?,
+            u::grid(k::QUERY * 2)?,
+            CubeDim::new_1d(64),
+            self.a(B::RawQuery)?,
+            self.a(B::SplitQuery)?,
+            self.a(B::Status)?,
+        );
+        self.tick(1)?;
+        self.status(k::QUERY * 2)?;
+        let public = self.public()?;
+        k::rms_rope::launch::<WgpuRuntime>(
+            self.client()?,
+            CubeCount::Static(k::QH as u32, 1, 1),
+            CubeDim::new_1d(64),
+            self.prefix(B::SplitQuery, 0, k::QUERY)?,
+            self.vector_arg("blk.48.attn_q_norm.weight")?,
+            Self::public_arg(&public.sin)?,
+            Self::public_arg(&public.cos)?,
+            self.a(B::Token)?,
+            self.a(B::Query)?,
+            self.prefix(B::Status, 0, k::QH)?,
+            k::QH,
+            self.position as u32,
+            EPS,
+            k::HD,
+            true,
+            false,
+        );
+        self.tick(1)?;
+        self.status(k::QH)?;
+        self.key_value()?;
+        let visible = k::validate_position(self.position)?;
+        k::dense_logits::launch::<WgpuRuntime>(
+            self.client()?,
+            CubeCount::Static((k::QH * visible) as u32, 1, 1),
+            CubeDim::new_1d(64),
+            self.a(B::Query)?,
+            self.a(B::Keys)?,
+            self.a(B::Attention)?,
+            self.a(B::Fault)?,
+            visible,
+        );
+        self.tick(1)?;
+        k::attention_softmax::launch::<WgpuRuntime>(
+            self.client()?,
+            CubeCount::Static(k::QH as u32, 1, 1),
+            CubeDim::new_1d(64),
+            self.a(B::Attention)?,
+            self.a(B::Probability)?,
+            self.prefix(B::Status, 0, k::QH)?,
+            visible,
+        );
+        self.tick(1)?;
+        self.status(k::QH)?;
+        k::dense_values_gated::launch::<WgpuRuntime>(
+            self.client()?,
+            u::grid(k::QUERY)?,
+            CubeDim::new_1d(64),
+            self.a(B::Values)?,
+            self.a(B::Probability)?,
+            self.prefix(B::SplitQuery, k::QUERY, k::QUERY)?,
+            self.a(B::Attended)?,
+            self.a(B::Fault)?,
+            visible,
+        );
+        self.tick(1)?;
+        self.project("blk.48.attn_output.weight", B::Attended, B::Block)
+    }
+    fn moe(&mut self) -> Result<()> {
+        self.project("blk.48.ffn_gate_inp.weight", B::Mixed, B::Router)?;
+        crate::next_shared::router(
+            self.client()?,
+            u::handle(&self.arena, self.id(B::Router))?,
+            u::handle(&self.arena, self.id(B::Packet))?,
+            0,
+        )?;
+        self.tick(1)?;
+        k::routes_preflight::launch::<WgpuRuntime>(
+            self.client()?,
+            CubeCount::Static(1, 1, 1),
+            CubeDim::new_1d(64),
+            self.a(B::Packet)?,
+            self.a(B::Fault)?,
+        );
+        self.tick(1)?;
+        for index in 0..k::SHARDS {
+            let shard = k::Shard::new(index)?;
+            let gate = &self.public()?.pages(EXPERT_NAMES[0])?[index];
+            let up = &self.public()?.pages(EXPERT_NAMES[1])?[index];
+            if gate.first != shard.first
+                || up.first != shard.first
+                || gate.rows != shard.experts
+                || up.rows != shard.experts
+            {
+                return Err(Error::InvalidBufferLength);
+            }
+            unsafe {
+                k::q8_gate_up::launch_unchecked::<WgpuRuntime>(
+                    self.client()?,
+                    CubeCount::Static((k::FF / 4) as u32, k::RANKS as u32, 1),
+                    CubeDim::new_1d(128),
+                    Self::public_arg(gate)?,
+                    Self::public_arg(up)?,
+                    self.a(B::Mixed)?,
+                    self.a(B::Packet)?,
+                    self.a(B::Activation)?,
+                    self.a(B::Readiness)?,
+                    self.a(B::Fault)?,
+                    shard.first,
+                    shard.experts,
+                );
+            }
+        }
+        self.tick(k::SHARDS)?;
+        for index in 0..k::SHARDS {
+            let shard = k::Shard::new(index)?;
+            let down = &self.public()?.pages(EXPERT_NAMES[2])?[index];
+            if down.first != shard.first || down.rows != shard.experts {
+                return Err(Error::InvalidBufferLength);
+            }
+            unsafe {
+                k::q8_down::launch_unchecked::<WgpuRuntime>(
+                    self.client()?,
+                    CubeCount::Static((k::D / 4) as u32, k::RANKS as u32, 1),
+                    CubeDim::new_1d(128),
+                    Self::public_arg(down)?,
+                    self.a(B::Activation)?,
+                    self.a(B::Packet)?,
+                    self.a(B::Partials)?,
+                    self.a(B::Readiness)?,
+                    self.a(B::Fault)?,
+                    shard.first,
+                    shard.experts,
+                );
+            }
+        }
+        self.tick(k::SHARDS)?;
+        self.project("blk.48.ffn_gate_shexp.weight", B::Mixed, B::SharedGate)?;
+        self.project("blk.48.ffn_up_shexp.weight", B::Mixed, B::SharedUp)?;
+        k::shared_activate::launch::<WgpuRuntime>(
+            self.client()?,
+            u::grid(k::FF)?,
+            CubeDim::new_1d(64),
+            self.a(B::SharedGate)?,
+            self.a(B::SharedUp)?,
+            self.a(B::SharedAct)?,
+            self.a(B::Fault)?,
+        );
+        self.tick(1)?;
+        self.project("blk.48.ffn_down_shexp.weight", B::SharedAct, B::SharedDown)?;
+        k::shared_gate::launch::<WgpuRuntime>(
+            self.client()?,
+            CubeCount::Static(1, 1, 1),
+            CubeDim::new_1d(64),
+            self.vector_arg("blk.48.ffn_gate_inp_shexp.weight")?,
+            self.a(B::Mixed)?,
+            self.a(B::SharedScalar)?,
+            self.a(B::Fault)?,
+        );
+        self.tick(1)?;
+        k::routed_shared_merge::launch::<WgpuRuntime>(
+            self.client()?,
+            u::grid(k::D)?,
+            CubeDim::new_1d(64),
+            self.a(B::Partials)?,
+            self.a(B::SharedDown)?,
+            self.a(B::SharedScalar)?,
+            self.a(B::Packet)?,
+            self.a(B::Readiness)?,
+            self.a(B::Block)?,
+            self.a(B::Fault)?,
+        );
+        self.tick(1)?;
+        self.finite(B::Block)
+    }
+    fn output(&mut self, lease: OutputLease) -> Result<Output> {
+        self.project("output.weight", B::Mixed, B::Logits)?;
+        k::greedy_chunks::launch::<WgpuRuntime>(
+            self.client()?,
+            CubeCount::Static(k::GREEDY_GROUPS as u32, 1, 1),
+            CubeDim::new_1d(64),
+            self.a(B::Logits)?,
+            self.a(B::Candidates)?,
+            self.a(B::Fault)?,
+        );
+        self.tick(1)?;
+        k::greedy_finish::launch::<WgpuRuntime>(
+            self.client()?,
+            CubeCount::Static(1, 1, 1),
+            CubeDim::new_1d(64),
+            self.a(B::Candidates)?,
+            self.a(B::Greedy)?,
+            self.a(B::Fault)?,
+        );
+        self.tick(1)?;
+        self.physical()?;
+        self.guard_private(self.position + 1)?;
+        self.complete_fault()?;
+        let logits = self.read_f32(B::Logits)?;
+        let hidden = self.read_f32(B::Residual2)?;
+        let greedy = self.read_words(B::Greedy)?;
+        if greedy[0] as usize >= k::VOCAB || greedy[0] != greedy_host(&logits)? {
+            return Err(Error::InvalidFormat("MTP full-vocabulary greedy proof"));
+        }
+        self.verify_source()?;
+        self.ledger
+            .completed_fence(sample(self.client()?)?)
+            .map_err(error)?;
+        Ok(Output {
+            logits,
+            hidden,
+            greedy: Zeroizing::new(greedy[0]),
+            binding: self.binding,
+            start: Zeroizing::new(self.position),
+            _lease: lease,
+        })
+    }
+    fn read_f32(&self, b: B) -> Result<Zeroizing<Vec<f32>>> {
+        let bits = self.read_words(b)?;
+        let mut values = Zeroizing::new(Vec::with_capacity(WORDS[b as usize]));
+        values.extend(bits[..WORDS[b as usize]].iter().map(|&x| f32::from_bits(x)));
+        if values.capacity() * 4 > HOST_BYTES || values.iter().any(|v| !v.is_finite()) {
+            return Err(Error::InvalidBufferLength);
+        }
+        Ok(values)
+    }
+    pub fn step(&mut self, token: u32, carry: &[f32], cancel: &AtomicBool) -> Result<Output> {
+        // Publisher alignment: cell c consumes T[c+1] with R[c], using RoPE
+        // position c, to predict T[c+2]. The caller starts with this real pair,
+        // never a dummy zero-conditioned cell. A provisional next cell can
+        // use the preceding draft hidden only behind target verification.
+        // Invalid preflight/cancellation must not destroy a previous valid KV
+        // sequence. Once start() begins writes, any failure wipes and poisons.
+        u::cancel(cancel)?;
+        if self.poisoned || self.closed {
+            return Err(Error::InvalidFormat("MTP resident poisoned"));
+        }
+        validate_input(token, carry, self.position)?;
+        let lease = OutputLease::acquire(&self.live_outputs)?;
+        let result =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<Output> {
+                self.start(token, carry)?;
+                self.condition()?;
+                self.hc(B::Residual0, 0, true)?;
+                self.attention()?;
+                self.combine(B::Residual0, B::Residual1)?;
+                self.hc(B::Residual1, 1, true)?;
+                self.moe()?;
+                self.combine(B::Residual1, B::Residual2)?;
+                self.hc(B::Residual2, 2, false)?;
+                u::cancel(cancel)?;
+                self.output(lease)
+            }));
+        match result {
+            Ok(Ok(output)) => {
+                if let Err(e) = u::cancel(cancel) {
+                    drop(output);
+                    self.fail();
+                    return Err(e);
+                }
+                self.position += 1;
+                self.poisoned = false;
+                Ok(output)
+            }
+            Ok(Err(e)) => {
+                self.fail();
+                Err(e)
+            }
+            Err(_) => {
+                self.fail();
+                Err(Error::InvalidFormat("MTP resident queued failure"))
+            }
+        }
+    }
+    /// Repair cache conditioning with the actual preceding target residual.
+    /// No FFN, draft logits or controller acceptance occurs in this path.
+    pub fn append_kv(&mut self, token: u32, carry: &[f32], cancel: &AtomicBool) -> Result<()> {
+        u::cancel(cancel)?;
+        if self.poisoned || self.closed {
+            return Err(Error::InvalidFormat("MTP resident poisoned"));
+        }
+        validate_input(token, carry, self.position)?;
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<()> {
+            self.start(token, carry)?;
+            self.condition()?;
+            self.hc(B::Residual0, 0, false)?;
+            self.key_value()?;
+            self.guard_private(self.position + 1)?;
+            u::cancel(cancel)?;
+            self.complete_fault()?;
+            self.verify_source()?;
+            Ok(())
+        }));
+        match result {
+            Ok(Ok(())) => {
+                if let Err(e) = u::cancel(cancel) {
+                    self.fail();
+                    return Err(e);
+                }
+                self.position += 1;
+                self.poisoned = false;
+                Ok(())
+            }
+            Ok(Err(e)) => {
+                self.fail();
+                Err(e)
+            }
+            Err(_) => {
+                self.fail();
+                Err(Error::InvalidFormat("MTP resident append failure"))
+            }
+        }
+    }
+    pub fn rewind(&mut self, new_position: usize) -> Result<()> {
+        if self.closed || self.poisoned || self.retired.load(Ordering::Acquire) {
+            return Err(Error::InvalidFormat("MTP resident poisoned"));
+        }
+        k::validate_rewind(self.position, new_position)?;
+        self.physical()?;
+        self.verify_source()?;
+        self.poisoned = true;
+        self.dispatches = 0;
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<()> {
+            self.clear_scratch()?;
+            k::rewind_kv::launch::<WgpuRuntime>(
+                self.client()?,
+                u::grid(k::CACHE_WORDS)?,
+                CubeDim::new_1d(64),
+                self.a(B::Keys)?,
+                self.a(B::Values)?,
+                self.a(B::Fault)?,
+                self.position,
+                new_position,
+            );
+            self.tick(1)?;
+            self.guard_private(new_position)?;
+            self.complete_fault()?;
+            Ok(())
+        }));
+        match result {
+            Ok(Ok(())) => {
+                self.position = new_position;
+                self.poisoned = false;
+                Ok(())
+            }
+            Ok(Err(e)) => {
+                self.fail();
+                Err(e)
+            }
+            Err(_) => {
+                self.fail();
+                Err(Error::InvalidFormat("MTP resident rewind failure"))
+            }
+        }
+    }
+    pub fn close(&mut self) -> Result<CloseReceipt> {
+        if self.closed {
+            return Err(Error::InvalidFormat("MTP resident already closed"));
+        }
+        if self.live_outputs.load(Ordering::Acquire) != 0 {
+            return Err(Error::InvalidFormat(
+                "MTP close requires guarded outputs released",
+            ));
+        }
+        self.poisoned = true;
+        self.arena.close().map_err(error)?;
+        let private = self
+            .arena
+            .owned_zero_audit_receipt()
+            .ok_or(Error::InvalidFormat("MTP complete erasure receipt"))?;
+        if private.bytes != private_plan()? || private.buffers != N as u64 {
+            return Err(Error::InvalidBufferLength);
+        }
+        let public_bytes = self.public.take().map(|p| p.bytes).unwrap_or(0);
+        // Arena close completed all queued work and inspected every complete
+        // private owner. Public model handles are now released, not private data.
+        self.client()?.memory_cleanup();
+        cubecl::future::block_on(self.client()?.sync()).map_err(error)?;
+        io_audit(self.client()?, &self.retired)?;
+        self.client()?.memory_cleanup();
+        cubecl::future::block_on(self.client()?.sync()).map_err(error)?;
+        let usage = self.client()?.memory_usage().map_err(error)?;
+        if usage.number_allocs != 0
+            || usage.bytes_in_use != 0
+            || usage.bytes_reserved != 0
+            || self.retired.load(Ordering::Acquire)
+        {
+            self.retired.store(true, Ordering::Release);
+            return Err(Error::InvalidFormat("MTP resident physical recovery"));
+        }
+        self.ledger
+            .completed_fence(usage.bytes_reserved)
+            .map_err(error)?;
+        self.closed = true;
+        self.position.zeroize();
+        self.dispatches.zeroize();
+        self.ids.zeroize();
+        Ok(CloseReceipt {
+            private,
+            public_bytes,
+            main_reserved: usage.bytes_reserved,
+        })
+    }
+}
+impl Drop for ResidentMtp<'_, '_> {
+    fn drop(&mut self) {
+        if !self.closed
+            && !matches!(
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.close())),
+                Ok(Ok(_))
+            )
+        {
+            self.retired.store(true, Ordering::Release);
+        }
+        self.position.zeroize();
+        self.dispatches.zeroize();
+        self.ids.zeroize();
+    }
+}
+fn greedy_host(values: &[f32]) -> Result<u32> {
+    if values.len() != k::VOCAB || values.iter().any(|x| !x.is_finite()) {
+        return Err(Error::InvalidBufferLength);
+    }
+    let mut best = 0;
+    for index in 1..values.len() {
+        if values[index] > values[best] {
+            best = index;
+        }
+    }
+    Ok(best as u32)
+}
+
+#[cfg(test)]
+#[path = "resident_mtp_tests.rs"]
+mod tests;
+
+fn validate_input(token: u32, carry: &[f32], position: usize) -> Result<()> {
+    k::validate_position(position)?;
+    if token as usize >= k::VOCAB || carry.len() != k::WIDE || carry.iter().any(|x| !x.is_finite())
+    {
+        return Err(Error::InvalidBufferLength);
+    }
+    Ok(())
+}
