@@ -25,6 +25,9 @@ pub(crate) use latest_round::LatestTargetRound;
 pub(crate) const TARGET_ROWS_MAX: usize = target_rows::MAX_ROWS;
 pub(crate) const TARGET_ROWS_RUNTIME_LIMIT: u64 = target_rows::RUNTIME_LIMIT;
 pub(crate) const TARGET_ROWS_PRIVATE_MAIN: u64 = TOTAL_MAIN + target_rows::MAIN_BYTES;
+#[allow(dead_code)] // Parent owns the exact executor construction-extent gate.
+pub(crate) const TARGET_ROWS_PREPARED_VERIFY3_MAIN: u64 =
+    TARGET_ROWS_PRIVATE_MAIN + batch_moe::prepared_verify3::MAIN_BYTES;
 
 const OLD_MAIN: u64 = 785_186_816;
 const NEW_MAIN: u64 = 33_062_912;
@@ -85,11 +88,37 @@ fn host_reservation_with_checkpoint(
     target_rows: bool,
     checkpoint: bool,
 ) -> Result<(usize, usize)> {
+    host_reservation_with_verify3(
+        hybrid,
+        reuse_metadata,
+        router,
+        target_rows,
+        checkpoint,
+        false,
+    )
+}
+/// Parent pre-device charge for the explicit prepared expert candidate.
+#[allow(dead_code)]
+pub(crate) fn host_reservation_with_prepared_verify3(
+    reuse_metadata: usize,
+    checkpoint: bool,
+) -> Result<(usize, usize)> {
+    host_reservation_with_verify3(false, reuse_metadata, false, true, checkpoint, true)
+}
+fn host_reservation_with_verify3(
+    hybrid: bool,
+    reuse_metadata: usize,
+    router: bool,
+    target_rows: bool,
+    checkpoint: bool,
+    prepared_verify3: bool,
+) -> Result<(usize, usize)> {
     if !matches!(reuse_metadata, DEFAULT_REUSE_METADATA | 1048576 | 4194304)
         || router && !hybrid
         || reuse_metadata > DEFAULT_REUSE_METADATA && !hybrid && !target_rows
         || target_rows && (hybrid || router)
         || checkpoint && !target_rows
+        || prepared_verify3 && (!target_rows || hybrid || router)
     {
         return Err(error());
     }
@@ -113,6 +142,13 @@ fn host_reservation_with_checkpoint(
         .and_then(|n| {
             n.checked_add(if checkpoint {
                 latest_checkpoint::HOST_INCREMENT
+            } else {
+                0
+            })
+        })
+        .and_then(|n| {
+            n.checked_add(if prepared_verify3 {
+                batch_moe::prepared_verify3::HOST_INCREMENT
             } else {
                 0
             })
@@ -242,6 +278,19 @@ pub(crate) struct Config {
     resident_router_reserved: bool,
     target_rows_reserved: bool,
     latest_target_checkpoint_reserved: bool,
+    prepared_verify3_experts_reserved: bool,
+}
+fn prepared_verify3_configuration(
+    target_rows: bool,
+    already_reserved: bool,
+    hybrid: bool,
+    router: bool,
+    tile: usize,
+) -> Result<()> {
+    if !target_rows || already_reserved || hybrid || router || tile != 8 {
+        return Err(error());
+    }
+    Ok(())
 }
 impl Config {
     pub(crate) fn new(
@@ -260,6 +309,7 @@ impl Config {
             resident_router_reserved: false,
             target_rows_reserved: false,
             latest_target_checkpoint_reserved: false,
+            prepared_verify3_experts_reserved: false,
         })
     }
     pub(crate) fn reserve_resident_router(mut self) -> Result<Self> {
@@ -292,12 +342,13 @@ impl Config {
         Ok(self)
     }
     pub(crate) fn reserve_request_reuse_metadata(mut self, bytes: usize) -> Result<Self> {
-        host_reservation_with_checkpoint(
+        host_reservation_with_verify3(
             self.cpu_operator.is_some(),
             bytes,
             self.resident_router_reserved,
             self.target_rows_reserved,
             self.latest_target_checkpoint_reserved,
+            self.prepared_verify3_experts_reserved,
         )?;
         self.request_reuse_metadata = bytes;
         Ok(self)
@@ -313,8 +364,34 @@ impl Config {
             self.resident_router_reserved,
             self.tile,
         )?;
-        host_reservation_with_latest_checkpoint(self.request_reuse_metadata)?;
+        host_reservation_with_verify3(
+            false,
+            self.request_reuse_metadata,
+            false,
+            true,
+            true,
+            self.prepared_verify3_experts_reserved,
+        )?;
         self.latest_target_checkpoint_reserved = true;
+        Ok(self)
+    }
+    /// Construction-fixed alternate activation arithmetic for1..3 PUBLIC
+    /// target rows. No global count1 integer flag or hybrid/router fallback.
+    #[allow(dead_code)] // Protected flag/physical acceptance are parent-owned.
+    pub(crate) fn reserve_prepared_verify3_experts(mut self) -> Result<Self> {
+        prepared_verify3_configuration(
+            self.target_rows_reserved,
+            self.prepared_verify3_experts_reserved,
+            self.cpu_operator.is_some(),
+            self.resident_router_reserved,
+            self.tile,
+        )?;
+        batch_moe::prepared_verify3::validate_limits(&self.limits)?;
+        host_reservation_with_prepared_verify3(
+            self.request_reuse_metadata,
+            self.latest_target_checkpoint_reserved,
+        )?;
+        self.prepared_verify3_experts_reserved = true;
         Ok(self)
     }
     /// Explicit fixed-public laboratory reservation. Ordinary constructors keep
@@ -486,12 +563,13 @@ impl Plan {
             requests.push(BufferLayout::new(words).map_err(u::fault)?.owned_bytes as u64);
         }
         let hybrid = config.cpu_operator.is_some();
-        host_reservation_with_checkpoint(
+        host_reservation_with_verify3(
             hybrid,
             config.request_reuse_metadata,
             config.resident_router_reserved,
             config.target_rows_reserved,
             config.latest_target_checkpoint_reserved,
+            config.prepared_verify3_experts_reserved,
         )?;
         if hybrid {
             requests.extend(batch_moe::Workspace::count1_hybrid_allocation_requests()?);
@@ -532,6 +610,24 @@ impl Plan {
         if target_rows {
             requests.extend(target_rows::Owners::allocation_requests()?);
         }
+        let prepared_verify3 = config.prepared_verify3_experts_reserved;
+        if prepared_verify3 {
+            if !target_rows
+                || hybrid
+                || router
+                || config.tile != 8
+                || executor.packed_profile != crate::expert_banks::OriginalPackedProfile::DaslabIq3
+                || executor.resident_bank_capacity() != 144
+                || executor.q3_integer_moe
+                || executor.resident_banks_frozen
+                || executor.adaptive.is_some()
+                || executor.secondary.is_some()
+            {
+                return Err(error());
+            }
+            batch_moe::prepared_verify3::validate_limits(&config.limits)?;
+            requests.push(batch_moe::prepared_verify3::MAIN_BYTES);
+        }
         let extra = if hybrid { HYBRID_MAIN } else { 0 }
             + if router {
                 batch_moe::RESIDENT_ROUTER_MAIN
@@ -542,9 +638,18 @@ impl Plan {
                 target_rows::MAIN_BYTES
             } else {
                 0
+            }
+            + if prepared_verify3 {
+                batch_moe::prepared_verify3::MAIN_BYTES
+            } else {
+                0
             };
         if requests.len()
-            != 90 + usize::from(hybrid) * 2 + usize::from(router) * 2 + usize::from(target_rows) * 2
+            != 90
+                + usize::from(hybrid) * 2
+                + usize::from(router) * 2
+                + usize::from(target_rows) * 2
+                + usize::from(prepared_verify3)
             || sum(&requests)? != NEW_MAIN + extra
             || OLD_MAIN.checked_add(sum(&requests)?) != Some(TOTAL_MAIN + extra)
         {
@@ -579,6 +684,13 @@ impl Plan {
             .and_then(|n| {
                 n.checked_add(if config.latest_target_checkpoint_reserved {
                     latest_checkpoint::RUNTIME_INCREMENT
+                } else {
+                    0
+                })
+            })
+            .and_then(|n| {
+                n.checked_add(if prepared_verify3 {
+                    batch_moe::prepared_verify3::RUNTIME_INCREMENT
                 } else {
                     0
                 })
@@ -763,6 +875,9 @@ impl Workspace {
         if config.resident_router_reserved {
             moe.reserve_resident_router(&mut model.arena, allocation)?;
         }
+        if config.prepared_verify3_experts_reserved {
+            moe.reserve_prepared_verify3(&mut model.arena, allocation)?;
+        }
         let shared = shared_batch::Workspace::allocate(graph, &mut model.arena)?;
         let mut alloc = |n| model.arena.allocate_zeroed(n).map_err(u::fault);
         let outer = Zeroizing::new(Outer {
@@ -826,6 +941,13 @@ impl Workspace {
             {
                 handles.push(gr::full_private(&model.arena, id, words)?);
             }
+        }
+        if let Some(owner) = self.moe.prepared_verify3_owner_id() {
+            handles.push(gr::full_private(
+                &model.arena,
+                owner,
+                batch_moe::prepared_verify3::SCRATCH_WORDS,
+            )?);
         }
         if let Some(rows) = &self.target_rows {
             handles.extend(rows.prove(&model.arena)?);
@@ -1630,6 +1752,22 @@ impl Workspace {
             {
                 return Err(error());
             }
+        }
+        if self.moe.prepared_verify3_owner_id().is_some() {
+            if self.target_rows.is_none()
+                || e.q3_integer_moe
+                || e.packed_profile != crate::expert_banks::OriginalPackedProfile::DaslabIq3
+            {
+                return Err(error());
+            }
+            batch_moe::prepared_verify3::validate_count(
+                tokens.len(),
+                1,
+                tokens
+                    .len()
+                    .checked_mul(10)
+                    .ok_or(Error::ArithmeticOverflow)?,
+            )?;
         }
         m.graph.verify_unchanged()?;
         u::cancel(cancel)?;
@@ -2713,5 +2851,51 @@ mod tests {
             }
             assert!(validate_limits(&malformed, 8).is_err());
         }
+    }
+}
+
+#[cfg(test)]
+mod prepared_verify3_plan_tests {
+    use super::*;
+    #[test]
+    fn explicit_prepared_source_policy_and_default_reservations_remain_separate() {
+        prepared_verify3_configuration(true, false, false, false, 8).unwrap();
+        for args in [
+            (false, false, false, false, 8),
+            (true, true, false, false, 8),
+            (true, false, true, false, 8),
+            (true, false, false, true, 8),
+            (true, false, false, false, 1),
+            (true, false, false, false, 4),
+        ] {
+            assert!(
+                prepared_verify3_configuration(args.0, args.1, args.2, args.3, args.4).is_err()
+            );
+        }
+        assert_eq!(TARGET_ROWS_PRIVATE_MAIN, 826_638_336);
+        assert_eq!(TARGET_ROWS_PREPARED_VERIFY3_MAIN, 826_703_872);
+        assert_eq!(
+            host_reservation_with_latest_checkpoint(DEFAULT_REUSE_METADATA).unwrap(),
+            (18_808_832, 18_874_368)
+        );
+        assert_eq!(
+            host_reservation_with_prepared_verify3(DEFAULT_REUSE_METADATA, true).unwrap(),
+            (18_874_368, 18_874_368)
+        );
+        for reuse in [DEFAULT_REUSE_METADATA, 1048576, 4194304] {
+            let old = host_reservation_with_checkpoint(false, reuse, false, true, true).unwrap();
+            let new = host_reservation_with_prepared_verify3(reuse, true).unwrap();
+            assert_eq!(new, (old.0 + 65536, old.1));
+        }
+        assert_eq!(
+            host_reservation(false, DEFAULT_REUSE_METADATA).unwrap(),
+            (11_468_800, 12_582_912)
+        );
+        let runtime = runtime_bytes(16).unwrap()
+            + target_rows::RUNTIME_INCREMENT
+            + latest_checkpoint::RUNTIME_INCREMENT
+            + batch_moe::prepared_verify3::RUNTIME_INCREMENT;
+        assert_eq!(runtime, 71_004_160);
+        assert!(runtime < TARGET_ROWS_RUNTIME_LIMIT);
     }
 }

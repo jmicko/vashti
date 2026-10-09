@@ -37,7 +37,7 @@ struct Kernel {
     slots: usize,
 }
 
-fn original_grid_words(dtype: u32) -> Vec<u32> {
+pub(crate) fn original_grid_words(dtype: u32) -> Vec<u32> {
     match dtype {
         super::IQ3_XXS => kuno_text::quant::IQ3_XXS_GRID.to_vec(),
         super::IQ3_S => kuno_text::quant::IQ3_S_GRID.to_vec(),
@@ -54,7 +54,7 @@ fn original_grid_words(dtype: u32) -> Vec<u32> {
 /// the largest original table has2,048 words/16 iterations per lane. Keep the
 /// same full workgroup table and barriers without any runtime literal lookup,
 /// Function-address array copy, persistent buffer or private allocation.
-fn grid_source(words: &[u32]) -> (String, String) {
+pub(crate) fn grid_source(words: &[u32]) -> (String, String) {
     if words.is_empty() {
         return (String::new(), String::new());
     }
@@ -72,7 +72,7 @@ fn grid_source(words: &[u32]) -> (String, String) {
     (declaration, initialize)
 }
 
-fn projection(name: &str, dtype: u32) -> String {
+pub(crate) fn projection(name: &str, dtype: u32) -> String {
     let factor = match dtype {
         super::IQ3_XXS => {
             "let base=row+(block/8u)*98u;let group=block%8u;let word=NAME_word(base+66u+group*4u);return NAME_half(base)*(0.5+f32(word>>28u))*0.5;"

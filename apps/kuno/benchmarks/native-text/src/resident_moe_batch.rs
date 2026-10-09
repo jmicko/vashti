@@ -24,6 +24,8 @@ pub(crate) use resident_router::{
 };
 #[path = "count1_hybrid_moe.rs"]
 mod hybrid_k;
+#[path = "iq_moe_integer_verify3.rs"]
+pub(crate) mod prepared_verify3;
 const MAX_LAYERS: usize = 64;
 const N: usize = 5;
 const MAP: usize = 0;
@@ -377,6 +379,7 @@ pub(crate) struct Workspace {
     policy: Policy,
     hybrid: Option<HybridOwners>,
     resident_router: Option<resident_router::RouterOwners>,
+    prepared_verify3: Option<BufferId>,
 }
 struct HybridOwners {
     ids: Zeroizing<[BufferId; 2]>,
@@ -388,6 +391,34 @@ fn hybrid_worker_geometry(count: usize, pooled: bool) -> bool {
     matches!(count, 4 | 8 | 16) && (count == 16 || pooled)
 }
 impl Workspace {
+    pub(crate) fn prepared_verify3_owner_id(&self) -> Option<BufferId> {
+        self.prepared_verify3
+    }
+    pub(crate) fn reserve_prepared_verify3(
+        &mut self,
+        arena: &mut PrivateArena,
+        allocation: &ModelConstructionAllocation<'_>,
+    ) -> Result<()> {
+        allocation.check(&self.admission)?;
+        self.validate_ids(arena)?;
+        if self.poison.load(Ordering::Acquire)
+            || self.prepared_verify3.is_some()
+            || self.hybrid.is_some()
+            || self.resident_router.is_some()
+            || self.policy.phase != Phase::Idle
+            || *self.policy.chunk != 0
+        {
+            return Err(err("Verify3 prepared construction reservation"));
+        }
+        for &geometry in &self.layout.geometries {
+            prepared_verify3::validate_geometry(geometry)?;
+        }
+        let owner = arena
+            .allocate_zeroed(prepared_verify3::SCRATCH_WORDS)
+            .map_err(u::fault)?;
+        self.prepared_verify3 = Some(owner);
+        self.validate_ids(arena)
+    }
     pub(crate) fn count1_hybrid_allocation_requests() -> Result<[u64; 2]> {
         Ok([CPU_WORDS, OWNER_WORDS].map(|n| {
             BufferLayout::new(n)
@@ -410,6 +441,7 @@ impl Workspace {
             return Err(err("native routed sequence poisoned"));
         }
         if self.hybrid.is_some()
+            || self.prepared_verify3.is_some()
             || self.policy.phase != Phase::Idle
             || *self.policy.chunk != 0
             || (overlap && !operator.workers_pooled())
@@ -484,6 +516,9 @@ impl Workspace {
         self.policy.completed_boundary()?;
         if self.resident_router_active() {
             return Err(err("resident router policy is frozen"));
+        }
+        if self.prepared_verify3.is_some() {
+            return Err(err("Verify3 prepared construction policy is frozen"));
         }
         executor.check_resident_admission(&self.admission)?;
         executor.check_client(arena.client().map_err(u::fault)?)?;
@@ -569,6 +604,9 @@ impl Workspace {
         if self.resident_router_active() {
             return Err(err("resident router policy is frozen"));
         }
+        if self.prepared_verify3.is_some() {
+            return Err(err("Verify3 prepared construction policy is frozen"));
+        }
         executor.check_resident_admission(&self.admission)?;
         executor.check_client(arena.client().map_err(u::fault)?)?;
         if executor.batch_moe.is_some() || !arena.public_owned_zero_audit_enabled() {
@@ -598,6 +636,9 @@ impl Workspace {
         self.policy.completed_boundary()?;
         if self.resident_router_active() {
             return Err(err("resident router policy is frozen"));
+        }
+        if self.prepared_verify3.is_some() {
+            return Err(err("Verify3 prepared construction policy is frozen"));
         }
         executor.check_resident_admission(&self.admission)?;
         executor.check_client(arena.client().map_err(u::fault)?)?;
@@ -684,6 +725,7 @@ impl Workspace {
                 policy: Policy::new(graph.geometry().layers)?,
                 hybrid: None,
                 resident_router: None,
+                prepared_verify3: None,
             };
             out.validate_ids(arena)?;
             u::cancel(cancel)?;
@@ -711,6 +753,15 @@ impl Workspace {
             {
                 return Err(err("native routed stale workspace"));
             }
+        }
+        if let Some(id) = self.prepared_verify3
+            && (self.hybrid.is_some()
+                || self.resident_router.is_some()
+                || self.ids.contains(&id)
+                || arena.layout(id).map_err(u::fault)?
+                    != BufferLayout::new(prepared_verify3::SCRATCH_WORDS).map_err(u::fault)?)
+        {
+            return Err(err("Verify3 prepared stale full owner"));
         }
         if let Some(h) = &self.hybrid {
             for (i, &id) in h.ids.iter().enumerate() {
@@ -784,6 +835,7 @@ impl Drop for Workspace {
         self.poison.store(true, Ordering::Release);
         self.sequence.zeroize();
         self.identity.zeroize();
+        self.prepared_verify3.zeroize();
     }
 }
 struct Views {
@@ -893,6 +945,13 @@ impl GpuExecutor<'_> {
             self.model.verify_file_unchanged()?;
             w.healthy(arena)?;
             w.layout.geometries[0].validate_count(count).map_err(err)?;
+            if w.prepared_verify3.is_some() {
+                prepared_verify3::validate_count(
+                    count,
+                    1,
+                    count.checked_mul(10).ok_or(Error::ArithmeticOverflow)?,
+                )?;
+            }
             if w.cpu_miss_cap().is_some() && count != 1 {
                 return Err(err("native count1 public policy count"));
             }
@@ -1005,6 +1064,27 @@ impl GpuExecutor<'_> {
             .any(|t| !t.belongs_to(self.model))
         {
             return Err(err("native routed artifact binding"));
+        }
+        if w.prepared_verify3.is_some() {
+            prepared_verify3::validate_geometry(g)?;
+            prepared_verify3::validate_count(
+                routes.count(),
+                routes.wave_count(),
+                routes
+                    .wave(0)
+                    .ok_or(Error::InvalidBufferLength)?
+                    .protected_experts()
+                    .len(),
+            )?;
+            if self.packed_profile != crate::expert_banks::OriginalPackedProfile::DaslabIq3
+                || self.q3_integer_moe
+                || self.adaptive.is_some()
+                || self.secondary.is_some()
+                || self.secondary_frequency.is_some()
+                || self.resident_banks_frozen
+            {
+                return Err(err("Verify3 prepared immutable source policy"));
+            }
         }
         w.policy.issue(layer)?;
         let key = weights.gate.info().name().to_owned();
@@ -1216,7 +1296,53 @@ impl GpuExecutor<'_> {
             }
             write_words(arena, ids[PROB], &*probs, &w.poison)?;
             physical(arena, bank, g, &ids, s.stamp.fault, w)?;
-            launch_wave(arena, bank, g, &spans, &ids, map.groups())?;
+            if let Some(owner) = w.prepared_verify3 {
+                let banks = [bank.gate(), bank.up(), bank.down()];
+                let mut shards: Vec<[Handle; 3]> = Vec::with_capacity(2);
+                for segment in 0..2 {
+                    let triple = banks.map(|b| {
+                        b.segments()
+                            .get(segment)
+                            .map(|s| s.handle().clone())
+                            .ok_or(Error::InvalidBufferLength)
+                    });
+                    let [gate, up, down] = triple;
+                    shards.push([gate?, up?, down?]);
+                }
+                let banks: [[Handle; 3]; 2] =
+                    shards.try_into().map_err(|_| Error::InvalidBufferLength)?;
+                let owners = ids
+                    .each_ref()
+                    .map(|&id| arena.handle(id).map_err(u::fault).cloned());
+                let mut handles = Vec::with_capacity(7);
+                for handle in owners {
+                    handles.push(handle?);
+                }
+                let owners: [Handle; 7] =
+                    handles.try_into().map_err(|_| Error::InvalidBufferLength)?;
+                prepared_verify3::validate_layout(
+                    g,
+                    &spans,
+                    words,
+                    arena.layout(owner).map_err(u::fault)?.owned_words,
+                    routes.count(),
+                    map.groups(),
+                )?;
+                u::zero(arena, owner)?;
+                prepared_verify3::launch_pair(
+                    arena.client().map_err(u::fault)?,
+                    g,
+                    &spans,
+                    banks,
+                    owners,
+                    arena.handle(owner).map_err(u::fault)?.clone(),
+                    arena.handle(s.stamp.fault).map_err(u::fault)?.clone(),
+                    routes.count(),
+                    map.groups(),
+                )?;
+            } else {
+                launch_wave(arena, bank, g, &spans, &ids, map.groups())?;
+            }
             launch_finite_for_count(arena, g, &spans, &ids, routes.count())?;
             fold(
                 arena,
@@ -1432,6 +1558,9 @@ fn physical_with_packet(
     }
     if let Some(ids) = w.resident_router_ids() {
         all.extend_from_slice(&ids);
+    }
+    if let Some(owner) = w.prepared_verify3 {
+        all.push(owner);
     }
     if let Some(packet) = packet {
         all.push(packet);
