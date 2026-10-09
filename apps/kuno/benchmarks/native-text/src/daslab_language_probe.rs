@@ -7,6 +7,7 @@ use crate::{
     daslab_profile,
     executor::GpuExecutor,
     expert_banks::OriginalPackedProfile,
+    mtp_lab_profile::Profile,
     resident_model::{
         ResidentModel,
         batch::{Config, LatestTargetRound},
@@ -20,7 +21,6 @@ use cubecl::{
 use kuno_text::{
     GgufFile, GgufLimits, Qwen35Tokenizer, TokenizerLimits,
     model::{Qwen4Exp, greedy},
-    mtp::MtpGraph,
 };
 use std::{
     collections::BTreeMap,
@@ -91,6 +91,7 @@ impl Fixture {
 pub(crate) struct Inputs {
     pub(crate) inline_dispatch: bool,
     pub(crate) fused_sweeps: bool,
+    draft_profile: Profile,
     pub(crate) verify3_dense: bool,
     pub(crate) verify3_fused: bool,
     pub(crate) prepared_experts: bool,
@@ -130,6 +131,7 @@ pub(crate) fn registration(
                     | "KUNO_LAB_STATIC_CACHE_BYTES"
                     | "KUNO_LAB_DEVICE_DISPATCH"
                     | "KUNO_LAB_MTP_SWEEPS"
+                    | "KUNO_LAB_MTP_PROFILE"
                     | "KUNO_LAB_TARGET_DENSE"
                     | "KUNO_LAB_TARGET_EXPERTS"
                     | "KUNO_LAB_TARGET_FILL"
@@ -159,6 +161,8 @@ pub(crate) fn registration(
     let public_existing_fill = choice("KUNO_LAB_TARGET_FILL", "direct-public")?;
     let chunk_io = choice("KUNO_LAB_TARGET_IO", "chunk")?;
     let fused_sweeps = choice("KUNO_LAB_MTP_SWEEPS", "fused")?;
+    let raw_profile = values.remove(OsStr::new("KUNO_LAB_MTP_PROFILE"));
+    let draft_profile = Profile::parse(raw_profile.as_deref())?;
     let raw = values.remove(OsStr::new("KUNO_LAB_TARGET_MOE"));
     let live_member_reduction =
         crate::target_lab_build::live_member_reduction(raw.as_deref(), prepared_experts)?;
@@ -186,6 +190,7 @@ pub(crate) fn registration(
     Ok(Inputs {
         inline_dispatch,
         fused_sweeps,
+        draft_profile,
         verify3_dense,
         verify3_fused,
         prepared_experts,
@@ -451,17 +456,15 @@ pub(crate) fn run(
     )
     .map_err(|_| "language original DAS inventory rejected")?;
     let sidecar = GgufFile::open(&input.mtp, GgufLimits::default())?;
-    if sidecar.file_len() != 4_137_429_120 || sidecar.tensors().len() != 34 {
-        return Err("language original draft artifact rejected".into());
-    }
+    input.draft_profile.validate_sidecar(&sidecar)?;
     // SAFETY: root's protected runner exclusively verifies immutable original
-    // two-shard DAS and original Q8 MTP files before launching this public mode.
+    // two-shard DAS and explicitly selected original MTP files before this mode.
     unsafe {
         file.enable_mapped_weights()?;
         sidecar.enable_mapped_weights()?;
     }
     let graph = Qwen4Exp::bind(&file)?;
-    let draft_graph = MtpGraph::bind(&sidecar)?;
+    let draft_graph = input.draft_profile.bind(&sidecar, graph.bound_graph())?;
     let (tokenizer, prompt) = tokenize(&file, input.fixture, graph.eos_token())?;
     crate::resident_util::select_retained_metadata(true);
     crate::resident_util::select_compute_scratch_clear(true);
@@ -480,21 +483,13 @@ pub(crate) fn run(
     let cancel = AtomicBool::new(false);
     let whole = Instant::now();
     let load_disk_before = process_disk_read_bytes()?;
-    let mut draft = if input.fused_sweeps {
-        resident_mtp::ResidentMtp::new_with_fused_sweeps(
-            &draft_graph,
-            draft_client,
-            &draft_limits,
-            draft_retired.clone(),
-        )?
-    } else {
-        resident_mtp::ResidentMtp::new(
-            &draft_graph,
-            draft_client,
-            &draft_limits,
-            draft_retired.clone(),
-        )?
-    };
+    let mut draft = input.draft_profile.resident(
+        &draft_graph,
+        draft_client,
+        &draft_limits,
+        draft_retired.clone(),
+        input.fused_sweeps,
+    )?;
     let mut executor = GpuExecutor::new_with_profile(
         &file,
         client.clone(),
@@ -822,6 +817,7 @@ pub(crate) fn run(
     drop(draft);
     target_close?;
     let draft_close = draft_close?;
+    input.draft_profile.validate_close(&draft_close)?;
     let record = attempt?;
     if target_retired.load(Ordering::Acquire) || draft_retired.load(Ordering::Acquire) {
         return Err("language physical stream retired".into());
@@ -832,7 +828,7 @@ pub(crate) fn run(
     if client.public_target_request_io_configured()? != input.request_reuse {
         return Err("language target stream configuration changed".into());
     }
-    let value = serde_json::json!({"scope":"compiled-public-language200-real-dual-device-greedy","target_card":"B70","draft_card":"RTX3060","device_dispatch":crate::target_lab_build::name(input.inline_dispatch),"observed_inline_device_dispatch":crate::target_lab_build::actual_inline(),"temperature":0,"seed":424242,"repetition_penalty":1.0,"presence_penalty":0.0,"frequency_penalty":0.0,"thinking":false,"max_outputs":MAX_OUTPUTS,"verify3_dense":input.verify3_dense,"verify3_logical_finite_fused":input.verify3_fused,"prepared_verify3_experts":input.prepared_experts,"live_member_reduction":input.live_member_reduction,"public_existing_fill":input.public_existing_fill,"chunk_io_checkpoint":input.chunk_io,"request_io_reuse":input.request_reuse,"fused_mtp_sweeps":input.fused_sweeps,"fixture_host_reserved_bytes":FIXTURE_HOST_BYTES,"tokenizer_host_cap_bytes":TOKENIZER_HOST_BYTES,"request_reuse_metadata_reserved_bytes":if input.request_reuse{4*1024*1024}else{0},"full_target_packets_retained":true,"greedy_target_verification":true,"repair_original_prefix_vector_checks":true,"independent_cpu200_reference_accepted":false,"forced_oracle_tokens":false,"forced_experts":false,"private_or_production_accepted":false,"record":record,"draft_close":{"private_buffers":draft_close.private.buffers,"private_bytes":draft_close.private.bytes,"public_bytes":draft_close.public_bytes,"main_reserved":draft_close.main_reserved}});
+    let value = serde_json::json!({"scope":"compiled-public-language200-real-dual-device-greedy","target_card":"B70","draft_card":"RTX3060","draft_profile":input.draft_profile.name(),"draft_public_reserved_bytes":input.draft_profile.public_bytes(),"device_dispatch":crate::target_lab_build::name(input.inline_dispatch),"observed_inline_device_dispatch":crate::target_lab_build::actual_inline(),"temperature":0,"seed":424242,"repetition_penalty":1.0,"presence_penalty":0.0,"frequency_penalty":0.0,"thinking":false,"max_outputs":MAX_OUTPUTS,"verify3_dense":input.verify3_dense,"verify3_logical_finite_fused":input.verify3_fused,"prepared_verify3_experts":input.prepared_experts,"live_member_reduction":input.live_member_reduction,"public_existing_fill":input.public_existing_fill,"chunk_io_checkpoint":input.chunk_io,"request_io_reuse":input.request_reuse,"fused_mtp_sweeps":input.fused_sweeps,"fixture_host_reserved_bytes":FIXTURE_HOST_BYTES,"tokenizer_host_cap_bytes":TOKENIZER_HOST_BYTES,"request_reuse_metadata_reserved_bytes":if input.request_reuse{4*1024*1024}else{0},"full_target_packets_retained":true,"greedy_target_verification":true,"repair_original_prefix_vector_checks":true,"independent_cpu200_reference_accepted":false,"forced_oracle_tokens":false,"forced_experts":false,"private_or_production_accepted":false,"record":record,"draft_close":{"private_buffers":draft_close.private.buffers,"private_bytes":draft_close.private.bytes,"public_bytes":draft_close.public_bytes,"main_reserved":draft_close.main_reserved}});
     serde_json::to_writer_pretty(
         std::fs::OpenOptions::new()
             .write(true)
@@ -863,6 +859,96 @@ mod tests {
         ]
         .map(|(k, v)| (k.into(), v.into()))
         .to_vec()
+    }
+    #[test]
+    fn both_compiled_language_fixtures_require_explicit_bounded_draft_selection() {
+        let threaded = crate::target_lab_build::Build::Threaded;
+        assert_eq!(
+            registration(&args(), env(), threaded)
+                .unwrap()
+                .draft_profile,
+            Profile::SelfContainedQ8
+        );
+        let mut q2 = env();
+        q2.push(("KUNO_LAB_MTP_PROFILE".into(), "strata-q2".into()));
+        for fixture in ["first-code", "warm-prose"] {
+            let mut values = q2.clone();
+            for (key, value) in &mut values {
+                if key == "KUNO_LAB_LANGUAGE_FIXTURE" {
+                    *value = fixture.into();
+                }
+            }
+            let selected = registration(&args(), values, threaded).unwrap();
+            assert_eq!(selected.draft_profile, Profile::StrataQ2);
+            assert_eq!(selected.mtp, PathBuf::from("/original/sidecar"));
+            assert_eq!(selected.draft_profile.public_bytes(), 2_539_257_856);
+            assert_eq!(
+                selected.fixture,
+                Fixture::parse(OsStr::new(fixture)).unwrap()
+            );
+        }
+        let mut fused = q2.clone();
+        fused.push(("KUNO_LAB_MTP_SWEEPS".into(), "fused".into()));
+        assert!(registration(&args(), fused, threaded).unwrap().fused_sweeps);
+        let mut inline = q2.clone();
+        inline.push(("KUNO_LAB_DEVICE_DISPATCH".into(), "inline".into()));
+        assert_eq!(
+            registration(
+                &args(),
+                inline.clone(),
+                crate::target_lab_build::Build::Inline
+            )
+            .unwrap()
+            .draft_profile,
+            Profile::StrataQ2
+        );
+        assert!(registration(&args(), inline, threaded).is_err());
+        assert!(
+            registration(
+                &args(),
+                q2.clone(),
+                crate::target_lab_build::Build::Rejected
+            )
+            .is_err()
+        );
+        for key in [
+            "KUNO_LAB_LANGUAGE_PUBLIC_ONLY",
+            "KUNO_LAB_LANGUAGE_FIXTURE",
+            "KUNO_LAB_STATIC_CACHE_BYTES",
+            "KUNO_TEST_Q3_DIR",
+            "KUNO_TEST_MTP",
+            "KUNO_PUBLIC_RECEIPT",
+        ] {
+            let missing = q2.iter().filter(|(k, _)| k != key).cloned();
+            assert!(registration(&args(), missing, threaded).is_err());
+        }
+        for raw in [
+            "",
+            "q8",
+            "q2",
+            "auto",
+            "strata-Q2",
+            "strata-q2 ",
+            "strata-q2\n",
+        ] {
+            let mut malformed = env();
+            malformed.push(("KUNO_LAB_MTP_PROFILE".into(), raw.into()));
+            assert!(registration(&args(), malformed, threaded).is_err());
+        }
+        let mut repeated = q2.clone();
+        repeated.push(("KUNO_LAB_MTP_PROFILE".into(), "strata-q2".into()));
+        assert!(registration(&args(), repeated, threaded).is_err());
+        for key in [
+            "KUNO_LAB_LANGUAGE_PROMPT",
+            "KUNO_LAB_LANGUAGE_MAX_OUTPUTS",
+            "KUNO_LAB_WARM_REPLAY",
+            "KUNO_TEST_OTHER",
+            "KUNO_PUBLIC_MTP_REFERENCE",
+        ] {
+            let mut foreign = q2.clone();
+            foreign.push((key.into(), "1".into()));
+            assert!(registration(&args(), foreign, threaded).is_err());
+        }
     }
     #[test]
     fn compiled_prompts_bind_exact_thinking_off_template_and_geometry() {

@@ -4,6 +4,7 @@ use crate::{
     daslab_carry_reference13 as reference, daslab_profile,
     executor::GpuExecutor,
     expert_banks::OriginalPackedProfile,
+    mtp_lab_profile::Profile,
     resident_model::{
         ResidentModel,
         batch::{Config, LatestTargetRound},
@@ -17,7 +18,6 @@ use cubecl::{
 use kuno_text::{
     GgufFile, GgufLimits,
     model::{Qwen4Exp, greedy},
-    mtp::MtpGraph,
 };
 use std::{
     collections::BTreeMap,
@@ -34,6 +34,7 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 pub(crate) struct Inputs {
     pub(crate) inline_dispatch: bool,
     pub(crate) fused_sweeps: bool,
+    draft_profile: Profile,
     warm_replay: bool,
     pub(crate) verify3_dense: bool,
     pub(crate) verify3_fused: bool,
@@ -75,6 +76,7 @@ pub(crate) fn registration(
                     | "KUNO_LAB_STATIC_CACHE_BYTES"
                     | "KUNO_LAB_DEVICE_DISPATCH"
                     | "KUNO_LAB_MTP_SWEEPS"
+                    | "KUNO_LAB_MTP_PROFILE"
                     | "KUNO_LAB_WARM_REPLAY"
                     | "KUNO_LAB_TARGET_DENSE"
                     | "KUNO_LAB_TARGET_EXPERTS"
@@ -143,6 +145,8 @@ pub(crate) fn registration(
         Some(value) if value == "fused" => true,
         _ => return Err("MTP sweep policy requires canonical fused"),
     };
+    let raw_profile = values.remove(OsStr::new("KUNO_LAB_MTP_PROFILE"));
+    let draft_profile = Profile::parse(raw_profile.as_deref())?;
     let mut path = |name: &str| {
         values
             .remove(OsStr::new(name))
@@ -152,6 +156,7 @@ pub(crate) fn registration(
     Ok(Inputs {
         inline_dispatch,
         fused_sweeps,
+        draft_profile,
         warm_replay,
         verify3_dense,
         verify3_fused,
@@ -287,16 +292,14 @@ pub(crate) fn run(
     )
     .map_err(|_| "original DAS inventory rejected")?;
     let sidecar = GgufFile::open(&input.mtp, GgufLimits::default())?;
-    if sidecar.file_len() != 4_137_429_120 || sidecar.tensors().len() != 34 {
-        return Err("original draft artifact rejected".into());
-    }
+    input.draft_profile.validate_sidecar(&sidecar)?;
     // SAFETY: exclusive protected runner verifies immutable static artifacts.
     unsafe {
         file.enable_mapped_weights()?;
         sidecar.enable_mapped_weights()?;
     }
     let graph = Qwen4Exp::bind(&file)?;
-    let draft_graph = MtpGraph::bind(&sidecar)?;
+    let draft_graph = input.draft_profile.bind(&sidecar, graph.bound_graph())?;
     crate::resident_util::select_retained_metadata(true);
     crate::resident_util::select_compute_scratch_clear(true);
     if input.request_reuse {
@@ -314,21 +317,13 @@ pub(crate) fn run(
     let cancel = AtomicBool::new(false);
     let load_disk_before = process_disk_read_bytes()?;
     let loading = Instant::now();
-    let mut draft = if input.fused_sweeps {
-        resident_mtp::ResidentMtp::new_with_fused_sweeps(
-            &draft_graph,
-            draft_client,
-            &draft_limits,
-            draft_retired.clone(),
-        )?
-    } else {
-        resident_mtp::ResidentMtp::new(
-            &draft_graph,
-            draft_client,
-            &draft_limits,
-            draft_retired.clone(),
-        )?
-    };
+    let mut draft = input.draft_profile.resident(
+        &draft_graph,
+        draft_client,
+        &draft_limits,
+        draft_retired.clone(),
+        input.fused_sweeps,
+    )?;
     let mut executor = GpuExecutor::new_with_profile(
         &file,
         client.clone(),
@@ -640,6 +635,7 @@ pub(crate) fn run(
     drop(draft);
     target_close?;
     let draft_close = draft_close?;
+    input.draft_profile.validate_close(&draft_close)?;
     attempt?;
     if target_retired.load(Ordering::Acquire) || draft_retired.load(Ordering::Acquire) {
         return Err("speculative physical stream retired".into());
@@ -650,7 +646,7 @@ pub(crate) fn run(
     if client.public_target_request_io_configured()? != input.request_reuse {
         return Err("target request stream frozen configuration mismatch".into());
     }
-    let value = serde_json::json!({"device_dispatch":crate::target_lab_build::name(input.inline_dispatch),"observed_inline_device_dispatch":crate::target_lab_build::actual_inline(),"scope":"fixed-public-DASLab13-real-dual-GPU-greedy-speculation","target_card":"B70","draft_card":"RTX3060","verify3_dense":input.verify3_dense,"verify3_logical_finite_fused":input.verify3_fused,"prepared_verify3_experts":input.prepared_experts,"live_member_reduction":input.live_member_reduction,"public_existing_fill":input.public_existing_fill,"chunk_io_checkpoint":input.chunk_io,"request_io_reuse":input.request_reuse,"request_reuse_metadata_reserved_bytes":if input.request_reuse {4*1024*1024}else{0},"request_binding_capacity":if input.request_reuse {4096}else{0},"fused_mtp_sweeps":input.fused_sweeps,"warm_replay":input.warm_replay,"warm_reset":warm_reset,"compiled_token0":0,"seed":424242,"temperature":0,"oracle_forcing":false,"expert_route_forcing":false,"passes":passes,"draft_close":{"private_buffers":draft_close.private.buffers,"private_bytes":draft_close.private.bytes,"public_bytes":draft_close.public_bytes,"main_reserved":draft_close.main_reserved},"private_or_production_accepted":false});
+    let value = serde_json::json!({"device_dispatch":crate::target_lab_build::name(input.inline_dispatch),"observed_inline_device_dispatch":crate::target_lab_build::actual_inline(),"scope":"fixed-public-DASLab13-real-dual-GPU-greedy-speculation","target_card":"B70","draft_card":"RTX3060","draft_profile":input.draft_profile.name(),"draft_public_reserved_bytes":input.draft_profile.public_bytes(),"verify3_dense":input.verify3_dense,"verify3_logical_finite_fused":input.verify3_fused,"prepared_verify3_experts":input.prepared_experts,"live_member_reduction":input.live_member_reduction,"public_existing_fill":input.public_existing_fill,"chunk_io_checkpoint":input.chunk_io,"request_io_reuse":input.request_reuse,"request_reuse_metadata_reserved_bytes":if input.request_reuse {4*1024*1024}else{0},"request_binding_capacity":if input.request_reuse {4096}else{0},"fused_mtp_sweeps":input.fused_sweeps,"warm_replay":input.warm_replay,"warm_reset":warm_reset,"compiled_token0":0,"seed":424242,"temperature":0,"oracle_forcing":false,"expert_route_forcing":false,"passes":passes,"draft_close":{"private_buffers":draft_close.private.buffers,"private_bytes":draft_close.private.bytes,"public_bytes":draft_close.public_bytes,"main_reserved":draft_close.main_reserved},"private_or_production_accepted":false});
     serde_json::to_writer_pretty(
         std::fs::OpenOptions::new()
             .write(true)
@@ -676,6 +672,76 @@ mod tests {
         ]
         .map(|(k, v)| (k.into(), v.into()))
         .to_vec()
+    }
+    #[test]
+    fn draft_profile_is_explicit_and_keeps_existing_public_build_admission() {
+        let args = ["lab", "intel", "daslab-speculative-probe"].map(OsString::from);
+        let threaded = crate::target_lab_build::Build::Threaded;
+        assert_eq!(
+            registration(&args, env(), threaded).unwrap().draft_profile,
+            Profile::SelfContainedQ8
+        );
+        let mut q2 = env();
+        // Same opaque path as Q8: admission is selected explicitly, never by name.
+        q2.push(("KUNO_LAB_MTP_PROFILE".into(), "strata-q2".into()));
+        let selected = registration(&args, q2.clone(), threaded).unwrap();
+        assert_eq!(selected.draft_profile, Profile::StrataQ2);
+        assert_eq!(selected.mtp, PathBuf::from("/original/sidecar"));
+        assert_eq!(selected.draft_profile.public_bytes(), 2_539_257_856);
+        assert!(!selected.fused_sweeps);
+        let mut fused = q2.clone();
+        fused.push(("KUNO_LAB_MTP_SWEEPS".into(), "fused".into()));
+        assert!(registration(&args, fused, threaded).unwrap().fused_sweeps);
+        let mut inline = q2.clone();
+        inline.push(("KUNO_LAB_DEVICE_DISPATCH".into(), "inline".into()));
+        assert_eq!(
+            registration(
+                &args,
+                inline.clone(),
+                crate::target_lab_build::Build::Inline
+            )
+            .unwrap()
+            .draft_profile,
+            Profile::StrataQ2
+        );
+        assert!(registration(&args, inline, threaded).is_err());
+        assert!(registration(&args, q2.clone(), crate::target_lab_build::Build::Rejected).is_err());
+        for key in [
+            "KUNO_LAB_SPECULATIVE_PUBLIC_ONLY",
+            "KUNO_LAB_STATIC_CACHE_BYTES",
+            "KUNO_TEST_Q3_DIR",
+            "KUNO_TEST_MTP",
+            "KUNO_PUBLIC_TARGET_CARRY13_REFERENCE",
+            "KUNO_PUBLIC_RECEIPT",
+        ] {
+            let missing = q2.iter().filter(|(k, _)| k != key).cloned();
+            assert!(registration(&args, missing, threaded).is_err());
+        }
+        for raw in [
+            "",
+            "q8",
+            "q2",
+            "auto",
+            "strata-Q2",
+            "strata-q2 ",
+            "strata-q2\n",
+        ] {
+            let mut malformed = env();
+            malformed.push(("KUNO_LAB_MTP_PROFILE".into(), raw.into()));
+            assert!(registration(&args, malformed, threaded).is_err());
+        }
+        let mut repeated = q2.clone();
+        repeated.push(("KUNO_LAB_MTP_PROFILE".into(), "strata-q2".into()));
+        assert!(registration(&args, repeated, threaded).is_err());
+        for key in [
+            "KUNO_LAB_TEST",
+            "KUNO_TEST_OTHER",
+            "KUNO_PUBLIC_MTP_REFERENCE",
+        ] {
+            let mut foreign = q2.clone();
+            foreign.push((key.into(), "1".into()));
+            assert!(registration(&args, foreign, threaded).is_err());
+        }
     }
     #[test]
     fn device_router_requires_original_pure_inline_one_shot_warm_request() {
