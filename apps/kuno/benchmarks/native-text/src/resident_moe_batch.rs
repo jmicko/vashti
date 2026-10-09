@@ -965,9 +965,18 @@ impl GpuExecutor<'_> {
         w.policy.issue(layer)?;
         let key = weights.gate.info().name().to_owned();
         if !self.banks.contains_key(&key) {
-            let requests = ExpertBanks::allocation_requests(weights, self.bank_slots)?;
+            let requests = ExpertBanks::allocation_requests_with_profile(
+                weights,
+                self.bank_slots,
+                self.packed_profile,
+            )?;
             let bank = w.admission.allocate(&requests, || {
-                ExpertBanks::new(&self.client, weights, self.bank_slots)
+                ExpertBanks::new_with_profile(
+                    &self.client,
+                    weights,
+                    self.bank_slots,
+                    self.packed_profile,
+                )
             })?;
             self.bank_reserved = self
                 .bank_reserved
@@ -979,6 +988,9 @@ impl GpuExecutor<'_> {
             .banks
             .get(&key)
             .ok_or(err("native routed actual cache bank"))?;
+        if bank.profile() != self.packed_profile {
+            return Err(err("native routed original packed profile mismatch"));
+        }
         bank.check_names(weights)?;
         bank.check_client(arena.client().map_err(u::fault)?)?;
         let ids = w.ids(input, output);

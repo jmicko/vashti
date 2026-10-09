@@ -346,7 +346,9 @@ impl GpuExecutor<'_> {
             write_gpu_header(arena, ids[PROB], &*probs, &w.poison)?;
             physical(arena, bank, g, &ids, s.stamp.fault, w)?;
             if !split.gpu().is_empty() {
-                if self.shared_kernels {
+                if self.shared_kernels
+                    && bank.profile() == crate::expert_banks::OriginalPackedProfile::Q4
+                {
                     let owner = |i| arena.handle(ids[i]).cloned().map_err(u::fault);
                     let owners = || -> Result<[Handle; 7]> {
                         Ok([

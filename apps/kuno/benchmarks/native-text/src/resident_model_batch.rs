@@ -281,7 +281,11 @@ impl Plan {
                 1_409_024,
             ),
             (
-                ple_batch::PleBatchWorkspace::allocation_requests(graph)?.to_vec(),
+                ple_batch::PleBatchWorkspace::allocation_requests_with_profile(
+                    graph,
+                    executor.packed_profile,
+                )?
+                .to_vec(),
                 6_258_688,
             ),
             (
@@ -495,7 +499,13 @@ impl Workspace {
             router: alloc(MAX_BATCH * ROUTER)?,
             packet: alloc(MAX_BATCH * ROUTER + 1)?,
         });
-        let ple = ple_batch::PleBatchWorkspace::allocate(model, sequence, poison.clone(), &cancel)?;
+        let ple = ple_batch::PleBatchWorkspace::allocate_with_profile(
+            model,
+            sequence,
+            poison.clone(),
+            &cancel,
+            executor.packed_profile,
+        )?;
         let result = Self {
             gr,
             gdn,

@@ -745,6 +745,7 @@ struct Cached {
 /// The lifetime of this executor is one fixed synthetic experiment. Its cache
 /// keys/ranks must never be persisted or reused as private request history.
 pub struct GpuExecutor<'a> {
+    pub(crate) packed_profile: expert_banks::OriginalPackedProfile,
     pub(crate) oracle_trace: Option<crate::oracle_trace::Trace>,
     pub(crate) adaptive: Option<crate::adaptive_experts::Cache>,
     pub(crate) secondary: Option<crate::secondary_experts::Secondary>,
@@ -818,21 +819,54 @@ impl<'a> GpuExecutor<'a> {
         bank_slots: usize,
         reserved_limit: usize,
     ) -> Result<Self> {
-        expert_banks::validate_capacity(bank_slots)?;
+        Self::new_with_profile(
+            model,
+            client,
+            budget,
+            bank_slots,
+            reserved_limit,
+            expert_banks::OriginalPackedProfile::Q4,
+        )
+    }
+    pub(crate) fn new_with_profile(
+        model: &'a GgufFile,
+        client: ComputeClient<WgpuRuntime>,
+        budget: usize,
+        bank_slots: usize,
+        reserved_limit: usize,
+        packed_profile: expert_banks::OriginalPackedProfile,
+    ) -> Result<Self> {
+        packed_profile.validate_capacity(bank_slots)?;
         let explicit_static = match std::env::var("KUNO_LAB_STATIC_CACHE_BYTES") {
             Ok(raw) => Some(expert_banks::configured_static_cache(Some(&raw), budget)?),
             Err(std::env::VarError::NotPresent) => None,
             Err(_) => return Err(Error::InvalidFormat("laboratory static cache environment")),
         };
-        expert_banks::validate_segmented_configuration(
-            bank_slots,
-            explicit_static,
-            budget,
-            std::env::var("KUNO_LAB_BLOCK_MOE").as_deref() == Ok("1"),
-            std::env::var("KUNO_LAB_BATCH_EXPERTS").as_deref() == Ok("1"),
-            std::env::var("KUNO_LAB_WORD_DOWN").as_deref() == Ok("1"),
-            true,
-        )?;
+        let block = std::env::var("KUNO_LAB_BLOCK_MOE").as_deref() == Ok("1");
+        let batch = std::env::var("KUNO_LAB_BATCH_EXPERTS").as_deref() == Ok("1");
+        let word = std::env::var("KUNO_LAB_WORD_DOWN").as_deref() == Ok("1");
+        if packed_profile == expert_banks::OriginalPackedProfile::Q4 {
+            expert_banks::validate_segmented_configuration(
+                bank_slots,
+                explicit_static,
+                budget,
+                block,
+                batch,
+                word,
+                true,
+            )?;
+        } else {
+            expert_banks::validate_segmented_configuration_with_profile(
+                bank_slots,
+                explicit_static,
+                budget,
+                block,
+                batch,
+                word,
+                true,
+                packed_profile,
+            )?;
+        }
         expert_banks::validate_ordered_segmented(bank_slots)?;
 
         let expert_batch_bytes = match std::env::var("KUNO_LAB_EXPERT_BATCH_BYTES") {
@@ -867,6 +901,7 @@ impl<'a> GpuExecutor<'a> {
             std::env::var("KUNO_LAB_BATCH_EXPERTS").as_deref() == Ok("1"),
         )?;
         Ok(Self {
+            packed_profile,
             oracle_trace: None,
             adaptive: if std::env::var("KUNO_LAB_ADAPTIVE_EXPERTS").as_deref() == Ok("1") {
                 Some(crate::adaptive_experts::Cache::new()?)
@@ -1570,7 +1605,7 @@ impl<'a> GpuExecutor<'a> {
         // The constructor pins explicit budget configuration; no environment
         // re-read is needed after creation. Public mutable experiment flags
         // still need revalidation before every allocation/dispatch seam.
-        expert_banks::validate_segmented_configuration(
+        expert_banks::validate_segmented_configuration_with_profile(
             self.bank_slots,
             Some(self.budget),
             self.budget,
@@ -1578,7 +1613,22 @@ impl<'a> GpuExecutor<'a> {
             self.batch_experts,
             self.word_down,
             resident,
+            self.packed_profile,
         )?;
+        self.packed_profile.validate_shortcuts(
+            false,
+            self.fused_experts,
+            self.integer_experts,
+            self.word_down,
+            self.block_moe,
+        )?;
+        if self.packed_profile == expert_banks::OriginalPackedProfile::UnslothQ3
+            && (self.secondary.is_some() || self.secondary_frequency.is_some())
+        {
+            return Err(Error::InvalidFormat(
+                "secondary experts require original Q4 profile",
+            ));
+        }
         expert_banks::check_ordered_segmented(self.bank_slots, self.ordered_public_upload)
     }
     /// Before ANY owner allocation, admit all static full pages and every
@@ -1617,11 +1667,12 @@ impl<'a> GpuExecutor<'a> {
                 return Err(Error::LimitExceeded("ordered public runtime window"));
             }
         }
-        let banks = expert_banks::preflight_residency(
+        let banks = expert_banks::preflight_residency_with_profile(
             graph,
             self.bank_slots,
             self.budget,
             self.reserved_limit,
+            self.packed_profile,
         )? as u64;
         let mut source_pages = 0_u64;
         for layer in 0..graph.geometry().layers {
@@ -2065,11 +2116,24 @@ impl<'a> GpuExecutor<'a> {
         let mut bank = if let Some(bank) = self.banks.remove(&key) {
             bank
         } else {
-            let size = ExpertBanks::allocation(weights, self.bank_slots)?;
+            let size = ExpertBanks::allocation_with_profile(
+                weights,
+                self.bank_slots,
+                self.packed_profile,
+            )?;
             let bank = if let Some(admission) = &self.resident_admission {
-                let requests = ExpertBanks::allocation_requests(weights, self.bank_slots)?;
+                let requests = ExpertBanks::allocation_requests_with_profile(
+                    weights,
+                    self.bank_slots,
+                    self.packed_profile,
+                )?;
                 admission.allocate(&requests, || {
-                    ExpertBanks::new(&self.client, weights, self.bank_slots)
+                    ExpertBanks::new_with_profile(
+                        &self.client,
+                        weights,
+                        self.bank_slots,
+                        self.packed_profile,
+                    )
                 })?
             } else {
                 if self
@@ -2081,7 +2145,12 @@ impl<'a> GpuExecutor<'a> {
                     resident.poison();
                     return Err(Error::LimitExceeded("resident expert bank residency"));
                 }
-                ExpertBanks::new(&self.client, weights, self.bank_slots)?
+                ExpertBanks::new_with_profile(
+                    &self.client,
+                    weights,
+                    self.bank_slots,
+                    self.packed_profile,
+                )?
             };
             self.bank_reserved += bank.reserved();
             bank
@@ -2598,7 +2667,11 @@ impl MatrixExecutor for GpuExecutor<'_> {
         let mut bank = if let Some(bank) = self.banks.remove(&key) {
             bank
         } else {
-            let size = ExpertBanks::allocation(weights, self.bank_slots)?;
+            let size = ExpertBanks::allocation_with_profile(
+                weights,
+                self.bank_slots,
+                self.packed_profile,
+            )?;
             if self
                 .bank_reserved
                 .checked_add(size)
@@ -2607,7 +2680,12 @@ impl MatrixExecutor for GpuExecutor<'_> {
             {
                 return Err(Error::LimitExceeded("expert bank residency"));
             }
-            let bank = ExpertBanks::new(&self.client, weights, self.bank_slots)?;
+            let bank = ExpertBanks::new_with_profile(
+                &self.client,
+                weights,
+                self.bank_slots,
+                self.packed_profile,
+            )?;
             self.bank_reserved += bank.reserved();
             bank
         };

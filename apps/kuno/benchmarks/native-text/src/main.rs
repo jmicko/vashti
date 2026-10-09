@@ -31,6 +31,7 @@ mod ple_chunk;
 mod ple_chunk_probe;
 mod private_arena;
 mod public_resources;
+mod q3_public_reference;
 mod qsa_chunk;
 mod qsa_chunk_probe;
 mod qsa_gpu;
@@ -237,6 +238,36 @@ fn count1_environment_opt_in(mode: &str, name: &str) -> Result<bool, &'static st
             .transpose()?,
     )
 }
+fn original_packed_profile(
+    mode: &str,
+    vendor: u32,
+    raw: Option<&str>,
+) -> Result<expert_banks::OriginalPackedProfile, &'static str> {
+    use expert_banks::OriginalPackedProfile as P;
+    match raw {
+        None | Some("q4") => Ok(P::Q4),
+        Some("unsloth-q3") if mode == "resident-count1-hybrid-chat" && vendor == 0x8086 => {
+            Ok(P::UnslothQ3)
+        }
+        _ => Err("original packed Q3 requires the protected Intel count1 fixture"),
+    }
+}
+fn original_count1_setting(
+    profile: expert_banks::OriginalPackedProfile,
+    banks: Count1Banks,
+    name: &str,
+    raw: Option<&str>,
+) -> Result<(), &'static str> {
+    if profile == expert_banks::OriginalPackedProfile::UnslothQ3 && name == "KUNO_LAB_BLOCK_MOE" {
+        return if banks == Count1Banks::Intel144 && raw == Some("0") {
+            Ok(())
+        } else {
+            Err("original Q3 requires explicit generic MoE")
+        };
+    }
+    banks.setting(name, raw)
+}
+
 fn count1_dispatch(
     mode: &str,
     cap: Option<usize>,
@@ -735,6 +766,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         _ => return Err("expected intel or nvidia".into()),
     };
     let mode = std::env::args().nth(2).unwrap_or("probe".into());
+    let packed_raw = std::env::var_os("KUNO_LAB_ORIGINAL_PACKED");
+    let packed_profile = original_packed_profile(
+        &mode,
+        vendor,
+        packed_raw
+            .as_ref()
+            .map(|v| {
+                v.to_str()
+                    .ok_or("original packed profile encoding rejected")
+            })
+            .transpose()?,
+    )?;
+    let q3_main = packed_profile == expert_banks::OriginalPackedProfile::UnslothQ3;
+    let q3_reference = if q3_main {
+        Some(q3_public_reference::Reference::load(
+            std::env::var_os("KUNO_PUBLIC_Q3_REFERENCE")
+                .ok_or("fixed public Q3 scalar reference required")?,
+        )?)
+    } else {
+        None
+    };
     if mode == "iq-quant-probe" {
         matmul_probe::iq::registration(
             std::env::args().count(),
@@ -848,7 +900,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .as_ref()
                 .map(|v| v.to_str().ok_or("count1 hybrid setting encoding rejected"))
                 .transpose()?;
-            count1_banks.setting(name, value)?;
+            original_count1_setting(packed_profile, count1_banks, name, value)?;
         }
         Some(cap)
     } else {
@@ -1237,7 +1289,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         static_cache_setting.as_deref(),
         if vendor == 0x8086 { 8 } else { 6 } * 1024 * 1024 * 1024,
     )?;
-    expert_banks::validate_segmented_configuration(
+    expert_banks::validate_segmented_configuration_with_profile(
         expert_slots,
         static_cache_setting.as_ref().map(|_| cache_budget),
         cache_budget,
@@ -1251,7 +1303,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 | "resident-rainwater"
                 | "resident-count1-hybrid-chat"
         ),
+        packed_profile,
     )?;
+    if q3_main {
+        packed_profile.validate_shortcuts(
+            false,
+            fused_experts,
+            integer_experts,
+            std::env::var("KUNO_LAB_WORD_DOWN").as_deref() == Ok("1"),
+            std::env::var("KUNO_LAB_BLOCK_MOE").as_deref() == Ok("1"),
+        )?;
+        if count1_banks != Count1Banks::Intel144
+            || count1_hybrid_cap != Some(10)
+            || !transient_resident
+            || !public_owned_zero_audit
+            || !mapped_weights
+            || !native_max8
+            || !native_decode
+            || native_decode_tile != 1
+            || native_decode_kernels != "single-all"
+            || !count1_pooled
+            || !count1_overlap
+            || !large_weight_cache
+            || long_fixture
+            || steady_public
+            || oracle_public
+            || adaptive_experts
+            || secondary_experts
+            || cpu_q8
+            || ordered_public_upload
+        {
+            return Err(
+                "original Q3 requires its separate short mapped generic count1 fixture".into(),
+            );
+        }
+    }
     expert_banks::validate_ordered_segmented(expert_slots)?;
     cubecl::future::block_on(async move {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
@@ -2333,22 +2419,47 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 mode.strip_prefix("resident-").unwrap_or(&mode)
             };
-            let (prompt, limit) = match fixture_mode {
-                "bang" => ("!", 4usize),
-                "chat" | "count1-hybrid-chat" => (
-                    "<|im_start|>user\nSay hello.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
-                    8,
-                ),
-                "rainwater" => (
-                    fixture["prompt"].as_str().ok_or("invalid public fixture")?,
-                    128,
-                ),
-                _ => return Err("unknown public fixture".into()),
+            let (prompt, limit) = if q3_main {
+                ("!", 4usize)
+            } else {
+                match fixture_mode {
+                    "bang" => ("!", 4usize),
+                    "chat" | "count1-hybrid-chat" => (
+                        "<|im_start|>user\nSay hello.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+                        8,
+                    ),
+                    "rainwater" => (
+                        fixture["prompt"].as_str().ok_or("invalid public fixture")?,
+                        128,
+                    ),
+                    _ => return Err("unknown public fixture".into()),
+                }
             };
-            let path = std::env::var_os("KUNO_TEST_GGUF").ok_or("existing GGUF required")?;
             let load = Instant::now();
             let before_bind_uploads = cubecl::wgpu::transient_unscoped_upload_transfer_stats();
-            let file = GgufFile::open(path, GgufLimits::default())?;
+            let file = if q3_main {
+                let dir = std::path::PathBuf::from(
+                    std::env::var_os("KUNO_TEST_Q3_DIR")
+                        .ok_or("verified Q3 shard directory required")?,
+                );
+                let paths: Vec<_> = (1..=3)
+                    .map(|i| {
+                        dir.join(format!(
+                            "Qwen3.8-Flash-Next-UD-Q3_K_XL-{i:05}-of-00003.gguf"
+                        ))
+                    })
+                    .collect();
+                let file = GgufFile::open_shards(&paths, GgufLimits::default())?;
+                if file.file_len() != 89_986_353_824 {
+                    return Err("pinned original Q3 byte count".into());
+                }
+                file
+            } else {
+                GgufFile::open(
+                    std::env::var_os("KUNO_TEST_GGUF").ok_or("existing GGUF required")?,
+                    GgufLimits::default(),
+                )?
+            };
             let tokenizer = Qwen35Tokenizer::from_gguf(&file, TokenizerLimits::default())?;
             if mapped_weights {
                 // SAFETY: this exclusive fixed-public lab borrows the original
@@ -2374,7 +2485,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 * 1024
                 * 1024;
             if next_shared {
-                next_shared::probe(&client, &file)?;
+                if !q3_main {
+                    next_shared::probe(&client, &file)?;
+                }
                 if integer_experts {
                     next_shared_moe::probe_integer(&client, &file)?;
                 }
@@ -2389,18 +2502,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     next_shared::probe_gdn(&client, model.bound_graph().geometry().gdn)?;
                 }
             }
-            let bank_charge = expert_banks::preflight_residency(
+            let bank_charge = expert_banks::preflight_residency_with_profile(
                 model.bound_graph(),
                 expert_slots,
                 cache_budget,
                 device_budget,
+                packed_profile,
             )?;
-            let mut executor = executor::GpuExecutor::new(
+            let mut executor = executor::GpuExecutor::new_with_profile(
                 &file,
                 client.clone(),
                 cache_budget,
                 expert_slots,
                 device_budget,
+                packed_profile,
             )?;
             if let Some(retired) = &transient_context {
                 executor.enable_transient_resident(retired.clone())?;
@@ -2580,6 +2695,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let resources_before = public_resources::snapshot();
             let mut decoder = tokenizer.stream_decoder();
             for n in 0..limit {
+                if let Some(reference) = &q3_reference {
+                    reference.verify(n, &logits)?;
+                }
                 let token = greedy(&logits)?;
                 if token == model.eos_token() {
                     break;
@@ -2676,6 +2794,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 None
             };
+            if q3_main && generated.len() != 4 {
+                return Err("Q3 reference requires all four positions".into());
+            }
             let request_io_checkpoints =
                 resident.as_ref().map_or(0, |r| r.request_io_checkpoints());
             let request_io_close_start = Instant::now();
@@ -2751,6 +2872,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "small_cpu_cache_bytes":executor.small_cpu.cached_bytes(),
                     "small_cpu_cache_matrices":executor.small_cpu.cached_matrices(), "resident_graph":resident_enabled,"weights":"borrowed-unmodified-ollama-blob"
                 });
+                receipt["original_packed_profile"] = serde_json::json!(if q3_main {
+                    "unsloth-ud-q3_k_xl"
+                } else {
+                    "original-q4"
+                });
+                if q3_main {
+                    receipt["fixture"] = serde_json::json!("unsloth-q3-public-bang");
+                    receipt["whole_model_numeric_accepted"] = serde_json::json!(true);
+                    receipt["numeric_scope"] =
+                        serde_json::json!("four-position-original-Q3-public-bang");
+                    receipt["weights"] = serde_json::json!("borrowed-unmodified-ollama-shards");
+                }
                 receipt["fused_matrix_fault"] = serde_json::json!(executor.fused_matrix_fault);
                 receipt["mapped_weights"] = serde_json::json!(mapped_weights);
                 receipt["count1_bank_profile"] = serde_json::json!(count1_banks.label());
@@ -3213,12 +3346,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // diagnostic explicitly drops the erased owner and executor;
                 // executor Drop drains its public cache before a fresh binding.
                 resident.take();
-                executor = executor::GpuExecutor::new(
+                executor = executor::GpuExecutor::new_with_profile(
                     &file,
                     client.clone(),
                     cache_budget,
                     expert_slots,
                     device_budget,
+                    packed_profile,
                 )?;
                 if let Some(retired) = &transient_context {
                     executor.enable_transient_resident(retired.clone())?;
@@ -3330,12 +3464,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 } else {
                     &[0, 3][..]
                 } {
-                    executor = executor::GpuExecutor::new(
+                    executor = executor::GpuExecutor::new_with_profile(
                         &file,
                         client.clone(),
                         cache_budget,
                         expert_slots,
                         device_budget,
+                        packed_profile,
                     )?;
                     if let Some(retired) = &transient_context {
                         executor.enable_transient_resident(retired.clone())?;
@@ -3488,12 +3623,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     // before this separate extended-context diagnostic begins.
                     println!("public_steady_probe_begin=true");
                     resident.take();
-                    executor = executor::GpuExecutor::new(
+                    executor = executor::GpuExecutor::new_with_profile(
                         &file,
                         client.clone(),
                         cache_budget,
                         expert_slots,
                         device_budget,
+                        packed_profile,
                     )?;
                     executor.enable_transient_resident(
                         transient_context
@@ -3557,12 +3693,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     );
                     receipt["oracle_probe"] = oracle_public::run(
                         |context| {
-                            let mut e = executor::GpuExecutor::new(
+                            let mut e = executor::GpuExecutor::new_with_profile(
                                 &file,
                                 client.clone(),
                                 cache_budget,
                                 expert_slots,
                                 device_budget,
+                                packed_profile,
                             )?;
                             e.enable_transient_resident(
                                 transient_context
@@ -3607,6 +3744,61 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod transient_mode_tests {
+    #[test]
+    fn original_q3_profile_is_explicit_and_cannot_select_unrelated_lab_modes() {
+        use crate::expert_banks::OriginalPackedProfile as P;
+        assert_eq!(
+            super::original_packed_profile("probe", 0x10de, None).unwrap(),
+            P::Q4
+        );
+        assert_eq!(
+            super::original_packed_profile(
+                "resident-count1-hybrid-chat",
+                0x8086,
+                Some("unsloth-q3")
+            )
+            .unwrap(),
+            P::UnslothQ3
+        );
+        for (mode, vendor, raw) in [
+            ("probe", 0x8086, "unsloth-q3"),
+            ("resident-count1-hybrid-chat", 0x10de, "unsloth-q3"),
+            ("resident-count1-hybrid-chat", 0x8086, "q3"),
+            ("resident-count1-hybrid-chat", 0x8086, ""),
+        ] {
+            assert!(super::original_packed_profile(mode, vendor, Some(raw)).is_err());
+        }
+        for raw in [None, Some("1"), Some("")] {
+            assert!(
+                super::original_count1_setting(
+                    P::UnslothQ3,
+                    super::Count1Banks::Intel144,
+                    "KUNO_LAB_BLOCK_MOE",
+                    raw
+                )
+                .is_err()
+            );
+        }
+        assert!(
+            super::original_count1_setting(
+                P::UnslothQ3,
+                super::Count1Banks::Intel144,
+                "KUNO_LAB_BLOCK_MOE",
+                Some("0")
+            )
+            .is_ok()
+        );
+        assert!(
+            super::original_count1_setting(
+                P::Q4,
+                super::Count1Banks::Intel144,
+                "KUNO_LAB_BLOCK_MOE",
+                Some("1")
+            )
+            .is_ok()
+        );
+    }
+
     #[cfg(feature = "direct-device")]
     struct DirectTestService<const KIND: usize>(usize);
     #[cfg(feature = "direct-device")]
