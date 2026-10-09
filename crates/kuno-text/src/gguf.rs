@@ -2,8 +2,8 @@
 //!
 //! Tensor offsets and sizes are validated before returning a model. Unsupported
 //! formats, overlapping tensors, malformed dimensions and unbounded allocations
-//! fail closed. An open descriptor pins the inspected inode; replacement paths
-//! cannot redirect subsequent reads to a different model.
+//! fail closed. Open descriptors pin the inspected source inodes; replacement
+//! paths cannot redirect subsequent reads to a different model.
 
 use std::collections::BTreeMap;
 use std::fs::File;
@@ -103,6 +103,7 @@ pub struct TensorInfo {
     row_bytes: u64,
     row_count: u64,
     element_count: u64,
+    shard_index: usize,
 }
 
 impl TensorInfo {
@@ -115,7 +116,7 @@ impl TensorInfo {
     pub fn dtype(&self) -> TensorType {
         self.dtype
     }
-    /// Tensor-data-relative offset, not an absolute file position.
+    /// Shard-local tensor-data-relative offset, not an absolute file position.
     pub fn offset(&self) -> u64 {
         self.offset
     }
@@ -135,24 +136,175 @@ impl TensorInfo {
     pub fn element_count(&self) -> u64 {
         self.element_count
     }
+    /// Index of the inspected source, in split.no order (zero for a single file).
+    pub fn shard_index(&self) -> usize {
+        self.shard_index
+    }
+}
+
+struct GgufSource {
+    file: Mutex<File>,
+    mapping: OnceLock<memmap2::Mmap>,
+    file_len: u64,
+    modified: Option<SystemTime>,
+    data_offset: u64,
+}
+
+impl GgufSource {
+    fn check_stat(&self, file: &File) -> Result<()> {
+        let stat = file.metadata()?;
+        if stat.len() != self.file_len || stat.modified().ok() != self.modified {
+            return Err(Error::FileChanged);
+        }
+        Ok(())
+    }
 }
 
 /// Read-only model descriptor and bounded retained metadata. Debug formatting is
 /// intentionally omitted: metadata may include model-defined templates.
 pub struct GgufFile {
-    file: Mutex<File>,
-    mapping: OnceLock<memmap2::Mmap>,
-    file_len: u64,
-    modified: Option<SystemTime>,
+    sources: Vec<GgufSource>,
     version: u32,
-    data_offset: u64,
     limits: GgufLimits,
     metadata: BTreeMap<String, MetadataValue>,
     tensors: BTreeMap<String, TensorInfo>,
+    header_bytes: u64,
+    allocation_bytes: u64,
+    metadata_entries: u64,
+    total_file_len: u64,
 }
 
 impl GgufFile {
     pub fn open(path: impl AsRef<Path>, limits: GgufLimits) -> Result<Self> {
+        let model = Self::inspect(path.as_ref(), limits)?;
+        if model.metadata.contains_key("split.count") {
+            if split_integer(&model.metadata, "split.count")? != 1
+                || split_integer(&model.metadata, "split.no")? != 0
+                || split_integer(&model.metadata, "split.tensors.count")?
+                    != model.tensors.len() as u64
+            {
+                return Err(Error::InvalidFormat("complete split GGUF sources required"));
+            }
+        } else if model.metadata.keys().any(|key| key.starts_with("split.")) {
+            return Err(Error::InvalidFormat("incomplete split GGUF metadata"));
+        }
+        Ok(model)
+    }
+
+    /// Inspect an explicit complete split without merging, copying or reopening
+    /// payload files. Paths may be unordered; each tensor keeps its original fd
+    /// and shard-local offset. All limits apply to the complete inspected set.
+    /// Shard zero supplies the primary metadata and may contain no tensors.
+    /// Missing metadata on later shards is allowed; duplicated metadata must
+    /// match. Split count, indices, GGUF version and declared tensor total must
+    /// agree, with exactly one source per contiguous index. At most 1024 sources
+    /// are admitted. Ordinary `open` rejects an incomplete multi-source split.
+    pub fn open_shards<P: AsRef<Path>>(paths: &[P], limits: GgufLimits) -> Result<Self> {
+        // Explicitly bound descriptor/map owners independently of tensor count:
+        // a malformed set could otherwise contain arbitrarily many empty shards.
+        if paths.len() < 2 || paths.len() > 1024 {
+            return Err(Error::LimitExceeded("split source count"));
+        }
+        let owner_bytes = (paths.len() as u64)
+            // Cover the temporary sorted owners and both original and final
+            // source-vector storage while descriptors are moved into one owner.
+            .checked_mul(
+                (std::mem::size_of::<(u64, Self)>() + 2 * std::mem::size_of::<GgufSource>()) as u64,
+            )
+            .ok_or(Error::ArithmeticOverflow)?;
+        let mut remaining = limits.clone();
+        remaining.max_metadata_allocation_bytes = remaining
+            .max_metadata_allocation_bytes
+            .checked_sub(owner_bytes)
+            .ok_or(Error::LimitExceeded("metadata allocation bytes"))?;
+        let mut inspected = Vec::new();
+        inspected
+            .try_reserve_exact(paths.len())
+            .map_err(|_| Error::LimitExceeded("split source allocation"))?;
+        let mut total_file_len = 0u64;
+        let mut expected_tensors = None;
+        for path in paths {
+            let shard = Self::inspect(path.as_ref(), remaining.clone())?;
+            let count = split_integer(&shard.metadata, "split.count")?;
+            let index = split_integer(&shard.metadata, "split.no")?;
+            let total = split_integer(&shard.metadata, "split.tensors.count")?;
+            if total > limits.max_tensors {
+                return Err(Error::LimitExceeded("tensor count"));
+            }
+            if count != paths.len() as u64 || index >= count {
+                return Err(Error::InvalidFormat("split GGUF count or index"));
+            }
+            if expected_tensors.is_some_and(|expected| expected != total) {
+                return Err(Error::InvalidFormat(
+                    "split GGUF declared tensor count mismatch",
+                ));
+            }
+            expected_tensors = Some(total);
+            remaining.max_header_bytes -= shard.header_bytes;
+            remaining.max_metadata_allocation_bytes -= shard.allocation_bytes;
+            remaining.max_metadata_entries -= shard.metadata_entries;
+            remaining.max_tensors -= shard.tensors.len() as u64;
+            total_file_len = total_file_len
+                .checked_add(shard.total_file_len)
+                .ok_or(Error::ArithmeticOverflow)?;
+            inspected.push((index, shard));
+        }
+        inspected.sort_unstable_by_key(|(index, _)| *index);
+        for (expected, (index, _)) in inspected.iter().enumerate() {
+            if *index != expected as u64 {
+                return Err(Error::InvalidFormat(
+                    "split GGUF missing or duplicate index",
+                ));
+            }
+        }
+        let mut ordered = inspected.into_iter();
+        let (_, mut model) = ordered
+            .next()
+            .ok_or(Error::InvalidFormat("split GGUF empty"))?;
+        model
+            .sources
+            .try_reserve_exact(paths.len() - 1)
+            .map_err(|_| Error::LimitExceeded("split source allocation"))?;
+        for (index, shard) in ordered {
+            if shard.version != model.version {
+                return Err(Error::InvalidFormat("split GGUF version mismatch"));
+            }
+            for (key, value) in shard.metadata {
+                if key == "split.no" {
+                    continue;
+                }
+                if let Some(original) = model.metadata.get(&key) {
+                    if !metadata_equal(original, &value) {
+                        return Err(Error::InvalidFormat("split GGUF metadata mismatch"));
+                    }
+                } else {
+                    model.metadata.insert(key, value);
+                }
+            }
+            for (name, mut tensor) in shard.tensors {
+                tensor.shard_index = index as usize;
+                if model.tensors.insert(name, tensor).is_some() {
+                    return Err(Error::InvalidFormat("split GGUF duplicate tensor name"));
+                }
+            }
+            model.sources.extend(shard.sources);
+        }
+        if Some(model.tensors.len() as u64) != expected_tensors {
+            return Err(Error::InvalidFormat(
+                "split GGUF total tensor count mismatch",
+            ));
+        }
+        model.header_bytes = limits.max_header_bytes - remaining.max_header_bytes;
+        model.allocation_bytes =
+            limits.max_metadata_allocation_bytes - remaining.max_metadata_allocation_bytes;
+        model.metadata_entries = limits.max_metadata_entries - remaining.max_metadata_entries;
+        model.total_file_len = total_file_len;
+        model.limits = limits;
+        model.verify_file_unchanged()?;
+        Ok(model)
+    }
+
+    fn inspect(path: &Path, limits: GgufLimits) -> Result<Self> {
         let file = File::open(path)?;
         let stat = file.metadata()?;
         if !stat.is_file() {
@@ -249,12 +401,16 @@ impl GgufFile {
                 row_bytes,
                 row_count,
                 element_count,
+                shard_index: 0,
             };
             if tensors.insert(name, info).is_some() {
                 return Err(Error::InvalidFormat("duplicate tensor name"));
             }
         }
         let data_offset = align_up(reader.position, alignment)?;
+        if data_offset > limits.max_header_bytes {
+            return Err(Error::LimitExceeded("header bytes"));
+        }
         if data_offset > file_len {
             return Err(Error::InvalidFormat("missing aligned tensor data"));
         }
@@ -276,32 +432,45 @@ impl GgufFile {
             }
             previous_end = end;
         }
+        let allocation_bytes = reader.allocated;
         let file = reader.inner.into_inner();
         let after = file.metadata()?;
         if after.len() != file_len || after.modified().ok() != modified {
             return Err(Error::FileChanged);
         }
         Ok(Self {
-            mapping: OnceLock::new(),
-            file: Mutex::new(file),
-            file_len,
-            modified,
+            sources: vec![GgufSource {
+                mapping: OnceLock::new(),
+                file: Mutex::new(file),
+                file_len,
+                modified,
+                data_offset,
+            }],
             version,
-            data_offset,
             limits,
             metadata,
             tensors,
+            header_bytes: data_offset,
+            allocation_bytes,
+            metadata_entries: metadata_count,
+            total_file_len: file_len,
         })
     }
 
     pub fn version(&self) -> u32 {
         self.version
     }
+    /// Aggregate size of all inspected source files, including their headers.
     pub fn file_len(&self) -> u64 {
-        self.file_len
+        self.total_file_len
     }
+    /// Primary source's data offset. Split tensors use their own source offset;
+    /// this value must never be combined with a nonzero-shard tensor offset.
     pub fn data_offset(&self) -> u64 {
-        self.data_offset
+        self.sources[0].data_offset
+    }
+    pub fn shard_count(&self) -> usize {
+        self.sources.len()
     }
     /// Callers must not log raw values: model-management artifacts can define
     /// templates or example messages even though live content is never present.
@@ -317,20 +486,16 @@ impl GgufFile {
             .map(|info| TensorView { model: self, info })
     }
 
-    /// Detect in-place size/mtime changes. This is an inexpensive consistency
-    /// guard, not a digest check against a malicious same-size/same-mtime rewrite.
+    /// Detect in-place size/mtime changes in every inspected source, including
+    /// metadata-only shards. This is a consistency guard, not a digest check
+    /// against a malicious same-size/same-mtime rewrite.
     pub fn verify_file_unchanged(&self) -> Result<()> {
-        let file = self
-            .file
-            .lock()
-            .map_err(|_| Error::InvalidFormat("model reader lock poisoned"))?;
-        self.check_stat(&file)
-    }
-
-    fn check_stat(&self, file: &File) -> Result<()> {
-        let stat = file.metadata()?;
-        if stat.len() != self.file_len || stat.modified().ok() != self.modified {
-            return Err(Error::FileChanged);
+        for source in &self.sources {
+            let file = source
+                .file
+                .lock()
+                .map_err(|_| Error::InvalidFormat("model reader lock poisoned"))?;
+            source.check_stat(&file)?;
         }
         Ok(())
     }
@@ -345,6 +510,9 @@ pub struct TensorView<'a> {
 }
 
 impl<'a> TensorView<'a> {
+    fn source(self) -> &'a GgufSource {
+        &self.model.sources[self.info.shard_index]
+    }
     /// Cache ownership is tied to the same pinned descriptor, not tensor names
     /// or paths that can be replaced. This is transient identity, not a digest.
     pub fn belongs_to(self, model: &GgufFile) -> bool {
@@ -367,21 +535,23 @@ impl<'a> TensorView<'a> {
         {
             return Err(Error::OutOfBounds);
         }
-        let absolute = self
-            .model
+        let source = self.source();
+        let absolute = source
             .data_offset
             .checked_add(self.info.offset)
             .and_then(|start| start.checked_add(byte_offset))
             .ok_or(Error::ArithmeticOverflow)?;
-        let mut file = self
-            .model
+        self.model.verify_file_unchanged()?;
+        let mut file = source
             .file
             .lock()
             .map_err(|_| Error::InvalidFormat("model reader lock poisoned"))?;
-        self.model.check_stat(&file)?;
+        source.check_stat(&file)?;
         file.seek(SeekFrom::Start(absolute))?;
         file.read_exact(output)?;
-        Ok(())
+        source.check_stat(&file)?;
+        drop(file);
+        self.model.verify_file_unchanged()
     }
 
     pub fn read_row(self, row: u64, output: &mut [u8]) -> Result<()> {
@@ -418,6 +588,30 @@ impl<'a> TensorView<'a> {
         packed.resize(count, 0);
         self.read_row(row, &mut packed)?;
         self.info.dtype.decode(&packed, output)
+    }
+}
+
+fn split_integer(metadata: &BTreeMap<String, MetadataValue>, key: &str) -> Result<u64> {
+    metadata
+        .get(key)
+        .and_then(|value| match value {
+            MetadataValue::Unsigned(value) => Some(*value),
+            // GGUF writers use signed I32 for split.tensors.count.
+            MetadataValue::Signed(value) => u64::try_from(*value).ok(),
+            _ => None,
+        })
+        .ok_or(Error::InvalidFormat("split GGUF integer metadata"))
+}
+
+fn metadata_equal(left: &MetadataValue, right: &MetadataValue) -> bool {
+    match (left, right) {
+        (MetadataValue::Float(left), MetadataValue::Float(right)) => {
+            left.to_bits() == right.to_bits()
+        }
+        (MetadataValue::Array(left), MetadataValue::Array(right)) => {
+            left.len() == right.len() && left.iter().zip(right).all(|(l, r)| metadata_equal(l, r))
+        }
+        _ => left == right,
     }
 }
 

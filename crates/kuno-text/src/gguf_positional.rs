@@ -1,49 +1,54 @@
-//! Bounded positional reads through a clone of the already-inspected descriptor.
+//! Bounded positional reads through clones of the already-inspected descriptors.
 //! No path reopen, shared seek cursor, mapping, model copy or payload retention.
 use super::{GgufFile, TensorView};
 use crate::{Error, Result};
 use std::fs::File;
 
-/// Pins the original model owner and its open descriptor for the entire reader.
-/// The descriptor is cloned once; concurrent reads do not take the seek mutex.
+/// Pins the original model owner and its open descriptors for the entire reader.
+/// Each descriptor is cloned once; concurrent reads do not take the seek mutex.
 /// Same-size/same-mtime malicious rewrites remain outside the original guard.
 pub struct PositionalReader<'m> {
     model: &'m GgufFile,
-    file: File,
+    files: Vec<File>,
 }
 
 impl GgufFile {
-    /// Enable one shared read-only map of the already-inspected descriptor.
+    /// Enable one shared read-only map per already-inspected source descriptor.
     /// Does not prefault, pin pages, copy the model or reopen its path.
     ///
     /// # Safety
-    /// The caller must prevent in-place modification and truncation of this
-    /// inode until this GgufFile and all its borrowed consumers are dropped.
+    /// The caller must prevent in-place modification and truncation of every
+    /// source inode until this GgufFile and all its borrowed consumers are dropped.
     /// Atomic path replacement is harmless: the inspected descriptor stays
     /// pinned. Stat checks detect ordinary changes but cannot close the race
     /// between checking and using a file mapping.
     #[allow(unsafe_code)]
     pub unsafe fn enable_mapped_weights(&self) -> Result<()> {
-        let file = self
-            .file
-            .lock()
-            .map_err(|_| Error::InvalidFormat("model reader lock poisoned"))?;
-        self.check_stat(&file)?;
-        if self.mapping.get().is_none() {
-            // SAFETY: the caller guarantees the inode is immutable for the full
-            // model lifetime. Map uses the original fd, never a path lookup.
-            let map = unsafe { memmap2::MmapOptions::new().map(&*file)? };
-            if map.len() as u64 != self.file_len {
-                return Err(Error::InvalidFormat("model mapping extent"));
+        self.verify_file_unchanged()?;
+        for source in &self.sources {
+            let file = source
+                .file
+                .lock()
+                .map_err(|_| Error::InvalidFormat("model reader lock poisoned"))?;
+            source.check_stat(&file)?;
+            if source.mapping.get().is_none() {
+                // SAFETY: the caller guarantees every source inode is immutable
+                // for the model lifetime. Map uses original fd, never path lookup.
+                let map = unsafe { memmap2::MmapOptions::new().map(&*file)? };
+                if map.len() as u64 != source.file_len {
+                    return Err(Error::InvalidFormat("model mapping extent"));
+                }
+                source.check_stat(&file)?;
+                let _ = source.mapping.set(map);
             }
-            self.check_stat(&file)?;
-            let _ = self.mapping.set(map);
         }
-        Ok(())
+        self.verify_file_unchanged()
     }
 
     pub fn weights_mapped(&self) -> bool {
-        self.mapping.get().is_some()
+        self.sources
+            .iter()
+            .all(|source| source.mapping.get().is_some())
     }
     /// Linux64 laboratory cache hint for already retained original GPU weights.
     /// No tensor or mapped bytes change, no mapping is invalidated, and no
@@ -116,7 +121,8 @@ impl GgufFile {
                     advice: std::ffi::c_int,
                 ) -> std::ffi::c_int;
             }
-            let absolute = self
+            let source = tensor.source();
+            let absolute = source
                 .data_offset
                 .checked_add(tensor.info.offset)
                 .and_then(|n| n.checked_add(offset))
@@ -139,16 +145,17 @@ impl GgufFile {
             if first >= last {
                 return Ok(0);
             }
-            if last > self.file_len || last > i64::MAX as u64 {
+            if last > source.file_len || last > i64::MAX as u64 {
                 return Err(Error::OutOfBounds);
             }
-            let file = self
+            self.verify_file_unchanged()?;
+            let file = source
                 .file
                 .lock()
                 .map_err(|_| Error::InvalidFormat("model reader lock poisoned"))?;
-            self.check_stat(&file)?;
+            source.check_stat(&file)?;
             if pageout {
-                let map = self
+                let map = source
                     .mapping
                     .get()
                     .ok_or(Error::InvalidFormat("GPU source pageout map absent"))?;
@@ -178,7 +185,9 @@ impl GgufFile {
             if result != 0 {
                 return Err(std::io::Error::from_raw_os_error(result).into());
             }
-            self.check_stat(&file)?;
+            source.check_stat(&file)?;
+            drop(file);
+            self.verify_file_unchanged()?;
             Ok(last - first)
         }
         #[cfg(not(all(
@@ -196,14 +205,24 @@ impl GgufFile {
         return Err(Error::InvalidFormat("positional reader requires Unix"));
         #[cfg(unix)]
         {
-            let original = self
-                .file
-                .lock()
-                .map_err(|_| Error::InvalidFormat("model reader lock poisoned"))?;
-            self.check_stat(&original)?;
-            let file = original.try_clone()?;
-            self.check_stat(&file)?;
-            Ok(PositionalReader { model: self, file })
+            self.verify_file_unchanged()?;
+            let mut files = Vec::new();
+            files
+                .try_reserve_exact(self.sources.len())
+                .map_err(|_| Error::LimitExceeded("positional source allocation"))?;
+            for source in &self.sources {
+                let original = source
+                    .file
+                    .lock()
+                    .map_err(|_| Error::InvalidFormat("model reader lock poisoned"))?;
+                source.check_stat(&original)?;
+                let file = original.try_clone()?;
+                source.check_stat(&file)?;
+                files.push(file);
+            }
+            let reader = PositionalReader { model: self, files };
+            reader.verify_file_unchanged()?;
+            Ok(reader)
         }
     }
 }
@@ -218,7 +237,10 @@ impl<'m> PositionalReader<'m> {
     }
 
     pub fn verify_file_unchanged(&self) -> Result<()> {
-        self.model.check_stat(&self.file)
+        for (source, file) in self.model.sources.iter().zip(&self.files) {
+            source.check_stat(file)?;
+        }
+        Ok(())
     }
 
     /// Best-effort Linux64 read-ahead for an already selected original packed
@@ -246,8 +268,8 @@ impl<'m> PositionalReader<'m> {
                     advice: std::ffi::c_int,
                 ) -> std::ffi::c_int;
             }
-            let absolute = self
-                .model
+            let absolute = tensor
+                .source()
                 .data_offset
                 .checked_add(tensor.info.offset)
                 .and_then(|n| n.checked_add(offset))
@@ -262,8 +284,14 @@ impl<'m> PositionalReader<'m> {
             // SAFETY: original immutable read-only pinned fd and validated
             // bounded tensor span, Linux64 off_t ABI; WILLNEED only reads public
             // model pages. No mapping invalidation or private memory mutation.
-            let result =
-                unsafe { posix_fadvise(self.file.as_raw_fd(), absolute as i64, length as i64, 3) };
+            let result = unsafe {
+                posix_fadvise(
+                    self.files[tensor.info.shard_index].as_raw_fd(),
+                    absolute as i64,
+                    length as i64,
+                    3,
+                )
+            };
             if result != 0 {
                 return Err(std::io::Error::from_raw_os_error(result).into());
             }
@@ -299,8 +327,8 @@ impl<'m> PositionalReader<'m> {
         {
             return Err(Error::OutOfBounds);
         }
-        let absolute = self
-            .model
+        let source = tensor.source();
+        let absolute = source
             .data_offset
             .checked_add(tensor.info.offset)
             .and_then(|base| base.checked_add(offset))
@@ -308,11 +336,11 @@ impl<'m> PositionalReader<'m> {
         let end = absolute
             .checked_add(length)
             .ok_or(Error::ArithmeticOverflow)?;
-        if end > self.model.file_len {
+        if end > source.file_len {
             return Err(Error::OutOfBounds);
         }
         self.verify_file_unchanged()?;
-        self.model
+        source
             .mapping
             .get()
             .map(|map| {
@@ -345,8 +373,8 @@ impl<'m> PositionalReader<'m> {
         {
             return Err(Error::OutOfBounds);
         }
-        let absolute = self
-            .model
+        let source = tensor.source();
+        let absolute = source
             .data_offset
             .checked_add(tensor.info.offset)
             .and_then(|base| base.checked_add(byte_offset))
@@ -354,7 +382,7 @@ impl<'m> PositionalReader<'m> {
         // Prove the complete absolute span before creating a read operation.
         absolute
             .checked_add(length)
-            .filter(|&end| end <= self.model.file_len)
+            .filter(|&end| end <= source.file_len)
             .ok_or(Error::OutOfBounds)?;
         let result = (|| {
             self.verify_file_unchanged()?;
@@ -362,7 +390,7 @@ impl<'m> PositionalReader<'m> {
             {
                 use std::os::unix::fs::FileExt;
                 read_exact_at(output, absolute, |target, offset| {
-                    self.file.read_at(target, offset)
+                    self.files[tensor.info.shard_index].read_at(target, offset)
                 })?;
             }
             #[cfg(not(unix))]
@@ -483,7 +511,12 @@ mod tests {
         let f = fixture(96);
         let reader = f.model.positional_reader().unwrap();
         let tensor = f.model.tensor("w").unwrap();
-        let cursor = f.model.file.lock().unwrap().stream_position().unwrap();
+        let cursor = f.model.sources[0]
+            .file
+            .lock()
+            .unwrap()
+            .stream_position()
+            .unwrap();
         std::thread::scope(|scope| {
             let mut tasks = Vec::new();
             for row in [5u64, 0, 3, 1] {
@@ -504,7 +537,12 @@ mod tests {
             }
         });
         assert_eq!(
-            f.model.file.lock().unwrap().stream_position().unwrap(),
+            f.model.sources[0]
+                .file
+                .lock()
+                .unwrap()
+                .stream_position()
+                .unwrap(),
             cursor
         );
         // Ordinary serialized access still sees its original tensor and bytes.
