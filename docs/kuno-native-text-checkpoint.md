@@ -1,8 +1,8 @@
 # Active DASLab/Strata pass — 2026-10-09
 
-Latest model-tested target-output source is `38c0e52` (launcher `ef2cf9e`);
-latest timed engine source remains `6a32b11` (parallel mapper probe: `416f889`) on `codex/kuno-native-text`, in the
-existing isolated Kuno worktree. The user approved full DASLab IQ3_S, Strata
+Latest model-tested target/MTP source is `834a299` (v128): pure-direct
+submission, complete finite fusion and real warm-bank replay pass on
+`codex/kuno-native-text`. Selected conditional ideal timing remains v109. The user approved full DASLab IQ3_S, Strata
 source study and30 accepted-token/s work. Canonical Vashti source is preserved;
 installed services, public API/catalog/configuration and release selection are
 unchanged. Required Vashti changes: none.
@@ -2685,3 +2685,216 @@ At13:08:29UTC, actualB70memory50,688,000bytes/NVIDIA571MiBdesktop-only,
 no compute process, normaladmission and allHTTP200, allclassifiedfaults zero.
 The next candidates are fixedthree-column packed dense and prepared expert
 inputs; no source timings should be claimed before their physicalgates.
+
+### Fixed three-column dense candidate, 2026-10-09,13:34UTC
+
+Packed dense leaf `25ccfce` (reviewed `8181125`) and protected registration
+`7ec4114` add canonical `KUNO_LAB_TARGET_DENSE=verify3` inside the fixed public
+B70 target4/repair4/dual-GPU13 modes. Absence retains original projections.
+Choice is frozen at construction; actual SUBGROUP16/32 and128-lane admission
+precedes request_device. Each decoded original vec4 is reused across1–3 F32
+rows; MAX8 owners,16 head tiles, complete finite/fault/padding validation,
+MAIN/runtime ceilings and dispatch counts stay unchanged. Actual numeric
+`target_verify3_dense_calls` proves selection. No production API/config change.
+
+Default v121 source `7ec4114`, SHA256
+`1c0d4ab9ea08dd9bdedbceb5507013ca0e79781b9a7bd08a49b5dfac5e9073a2`,
+passes every CPU full-logit/HC vector and exact greedy across all target4
+partitions, actual accepted-prefix1/2/3 repair and continuation, and all12 real
+accepted outputs in the dual-GPU13 controller. Complete1,378-owner erasure and
+physical recovery pass with no GPU faults.767 default native+2 auxiliary tests,
+strict all-target Clippy/fmt/diff and83 protected launcher controls pass.
+
+Compiler-idle cold normal-demand controller candidate1.2081tokens/s versus
+same-artifact original control1.4074 establishes **no speed gain**; keep this
+candidate default off. Both use6/10 actual draft acceptance and identical
+2,311 expert fills/4,776,960,000 uploaded bytes. Target phases show3.819s expert
+route/enqueue and2.714s router fences in the candidate; weights/dispatch/cache
+cost dominates. These ordinary cold timings remain separate from selected
+12.728conditional-ideal prepared count1.30tokens/s remains unmet.
+
+Existing completed-chunk I/O cadence is now explicitly testable using canonical
+`KUNO_LAB_TARGET_IO=chunk` at `dea5d48`, preserving original complete final I/O
+proof and128MiB owning ceiling. Default remains per-layer. Source29 focused
+DASLab tests, strict all-target Clippy and83 launcher controls pass. v122 passes
+all target4 partitions, actual prefix repair and12 accepted controller outputs
+with full CPU vectors, erasure and physical recovery. Cold normal-demand speed
+1.1404tokens/s establishes no gain; keep optional. Expert read-call time is
+2.319s versus20.5ms upload enqueue, but these read calls alone do not prove
+physical disk traffic. A separate process read-bytes counter is now implemented
+for the next run. Prepared Verify3 experts and fused draft sweeps are source
+checked, with physical gates in progress and no combined speed acceptance.
+Required Vashti changes:none. Source/receipts/host evidence is in the foundation
+numeric aggregate. No install/release/reset/driver/clock changes.
+
+
+### Prepared expert and fused draft checks, 2026-10-09,14:10UTC
+
+Frozen v123 default source `a99b63b`, SHA256
+`bdc9f04f889ef6662b2d4377410d1a99f81c5eacc5487c137c7931f45ff9ca9b`,
+passes prepared expert target4 partitions, actual prefix1/2/3 repair and all12
+real dual-card controller outputs under unchanged full CPU bounds. Maximum
+target4 logits/carry errors are0.0007592/0.0002008; this candidate changes
+activation arithmetic explicitly and is not F32 bitwise equivalence. It erases
+1,379 owners/826,703,872bytes. Cold controller0.8632tokens/s during parallel
+CPU checks establishes no speed gain. Its actual process counter records
+3,039,633,408 disk-read bytes inside generation and5,069,881,344 during load
+plus initial prefill. These are actual physical reads, distinct from4.777GB
+uploaded and source read-call duration. Keep the candidate optional.
+
+Fused MTP sweeps pass both GPUs: complete teacher/provisional CPU vectors,
+minimal/follow, real KV repair and two fresh42-owner closes. Four minimal
+teacher steps execute664 explicit dispatches (166each), versus original268
+each. Follow executes167. No combined throughput acceptance yet. Privacy,
+physical memory, normal admission/services and unchanged classified faults
+recover after every run. Root785 native+2auxiliary tests, strict default
+Clippy/fmt/diff and85 launcher controls pass at this checkpoint.
+
+Direct existing-view public fills `1090a4a`/`a6fcdf5` eliminate temporary GPU
+source copies while retaining original precharges, telemetry and full gates.
+The immutable choice is `KUNO_LAB_TARGET_FILL=direct-public` in the same fixed
+public target modes; default remains original. New counters separate first
+touch from eviction and count actual queued direct batches/bytes. Original64
+barrier leaf `b75af2c` moves only the unused shared store/barrier into the
+16-wide branch, preserving exact original shuffle arithmetic;84 generated
+variants and202 independent mixed-scale host reduction cases pass. Root790
+native+2auxiliary tests and strict default Clippy pass. Physical checks are
+in progress; no new selected speed is claimed. Exact-bank admission and a
+healthy one-shot all-private warm replay remain research/in-progress work.
+Required Vashti changes:none; no production installation/API/release change.
+
+### Original arithmetic and direct fills,2026-10-09,14:37UTC
+
+Frozen v124 default source `a6fcdf5`, SHA256
+`38296f8f909cb6791cc249a5180d2fdd2f833c64c6206cfcbb0636d4c19d1c5b`,
+passes all14-format original fast operators on both cards, all target4 partitions,
+actual accepted-prefix1/2/3 repair, and fused MTP teacher/provisional/minimal/
+follow/KV repair on both cards. Independent full CPU vectors and original
+bounds remain unchanged. Full private erasure, actual GPU memory recovery,
+HTTP/admission and zero new classified GPU faults pass. Root790 native+2auxiliary
+checks, strict default Clippy/fmt and85 protected launcher controls pass.
+The initial root-created operator output directory caused PermissionDenied only
+when publishing the numeric receipt; it is preserved. Fresh user-owned v124b
+passes both cards, with no shader/device fault.
+
+A compiler-idle same-artifact ordered cold controller pair improves1.50087 to
+1.74852 accepted tokens/s (16.5%) using checked direct public fills and fused
+draft sweeps, with unchanged arithmetic/routing/full CPU checks and actual
+state repair. Both accept6/10 drafts, upload2,311 experts/4,776,960,000bytes,
+and show zero evictions: all misses are first touches. Enqueue time falls from
+21.53ms to1.16ms; target expert-phase time falls from1.885s to1.319s. Actual
+timed disk reads are131,072bytes/0 respectively. These are distinct cold
+demand runs, not an ABBA or steady-state result; selected12.728 conditional
+ideal count1 remains unchanged.30tokens/s is still unmet.
+
+The prepared expert comparison gives1.37538tokens/s, with598,609,920 actual
+disk-read bytes and1.274s source read time versus.436s in direct+fused.
+Paging differs, so no arithmetic speed conclusion or default selection follows.
+Full CPU gates still pass. Numeric/source/helper hashes and preserved failure
+are in the foundation receipt. No capacity expansion is justified by this
+first-touch-only fixture.
+
+A construction-fixed one-shot public warm replay is source-checked at `4b93c99`
+with registration `bafd9c0`: same banks/IDs/admission/ledger/epochs remain owned;
+all private and source pages are erased and independently verified before real
+GDN/QSA/PLE state returns to0. The existing completed projection proof is kept
+unchanged; original token0 prefill proves actual start0/count1/cursor1 again.
+Transient binding/INFO caches are cleared, so only model weights and compiled
+kernels are warm. Root796 native+2auxiliary checks and85 launcher controls pass;
+physical warm replay is pending. Optional fixed-public selector is
+`KUNO_LAB_WARM_REPLAY=once`, rejected outside the speculative13 fixture.
+No production API/config/install/release change. Required Vashti changes:none.
+
+### Actual warm-bank replay,2026-10-09,14:55UTC
+
+Frozen v125 default `bafd9c0`, SHA256
+`f61b547ed7b9a4a9b9e7daa98674de550b95468db30fef26922ebffc61d7023c`,
+passes the real one-shot warm replay with all original CPU13 vectors/greedies,
+actual target/draft repairs, complete retained1,378-owner826,638,336byte erase
+and independent final closes. No ledger/epoch/poison reset occurs. Same public
+banks remain owned; transient binding/INFO caches are cleared. Compiler-idle
+cold1.20749/warm2.34472 tokens/s; cold reads2,117,292,032 physical process bytes,
+warm reads12,288 and makes zero expert uploads/zero weight reads. Initial
+prefill is separately6.265s/.504s. This is real normal demand, not forced
+experts or oracle routing. Target warm enqueue/fence work dominates.
+
+Prepared expert replay also passes full gates with1,379 owners: warm2.34773
+establishes no material improvement; cold had source-check CPU overlap and
+2.29GB paging, so is correctness-only. Existing Verify3 dense warm replay
+passes2.61000,6,016 actual dispatches,zero expert uploads. None is a matched
+ABBA selection or30tokens/s acceptance. Selected conditional ideal12.728 count1
+is a different path/scope and remains unchanged. Both GPUs/services/admission
+recover after every run, classified GPU faults stayzero.
+
+Full Verify3 logical-finite fusion `fe196fa` with registration `6f581b4` is
+constructor-fixed/defaultoff; canonical `KUNO_LAB_TARGET_DENSE=verify3-fused`
+sets both immutable flags.48-byte INFO limit is checked before device creation,
+unchanged rounded charge; bounded last-tile scan excludes every active complete
+matrix interval while covering the full logical complement. Original physical
+padding/source/status/input/fault/final owner checks remain. Whole target4
+partitions/continuation pass v126 with original full CPU vectors, max logit
+error0.00006676, carry0.00002862, all actual fused counters/erasure/recovery.
+Standalone operator initially rejected a new fault case at its stale inventory
+guard; preserved v126failure has no accepted operator receipt/GPU fault. One-file
+`5eb8e82` corrects only the compiled inventory guard with tested exact original/
+fused branches; physical retry and actual repair/controller are next.
+Root803 default native+2auxiliary tests, focused11 registrations and strict
+Clippy/fmt,86 launcher controls pass before this pure inventory correction.
+Required Vashti changes:none. No API, installation/release or GPU reset.
+
+Corrected v127 default source `5eb8e82`, SHA256
+`7f3fe8a0a9a24c6543784cfb1937c8bde3db7e6507cf612ee363b59318c2baba`,
+now passes the dedicated finite operator on both B70 and RTX3060:60 normal+
+210 invalid/sticky-value cases each, all1–3 counts, independent CPU and old-GPU
+results, source/full padding, complete private erasure and allocator release.
+No external candidate finite scan hides the fused result. Original actual
+prefix1/2/3 target repair/continuation also passes whole CPU vectors at v126.
+All faults remainzero and memory/services/admission recover. Full controller
+finite timing is next. No tolerance or GPU driver/reset change was made.
+
+Source review distinguishes the historical full32 DAS failure from this new
+ordinary target path. Old v95 consumed raw-score GPU top10, while current
+nonhybrid MAX8 uses `router_topk_guarded` on actual GPU scores with original
+rounded global softmax. DAS13 route divergence was never captured; therefore
+it remains an unresolved historical failure, not proof that today's target path
+fails beyond13. QSA selects all14 chronological tokens here, and144 bank slots
+cannot evict before14×10 experts; neither is an evidenced cause. Next numerical
+extension should separately compare current target-only row13 against existing
+complete CPU32 gold, then capture exact DAS13 routes if needed. Keep the old
+failure and unchanged bounds; current acceptance still covers13 positions only.
+
+Compiler-idle v127 complete-controller finite fusion now passes both fullCPU13
+passes, actual target/draft repairs, warm-reset and final owning audits. Cold
+normal-demand1.31906/warm2.96368 tokens/s; warm6016actualfuseddispatches,zero
+expert uploads,16,384 physical process read bytes. Compared to the earlier
+ordered warm Verify3-only2.61000 this is promising, but not matchedABBA.
+No30tokens/s claim. Host enqueue/fence still dominates; separate pure
+`direct-device` comparison is being implemented for these public target modes.
+All normal services/admission/actual memory and zero GPU faults recover.
+
+
+### Pure-direct target acceptance,2026-10-09,15:31UTC
+
+Frozen pure `direct-device` source `834a299`, SHA256
+`cef8f61dd7dd0125efd93dca5d74a09827626c4ac9c0d28db30817edadea38c0`,
+passes target4 partitions/continuations, actual prefix1/2/3 repairs and both
+fullCPU13 controller passes. All original arithmetic, full vector bounds,
+actual state repair and complete private/source erasure remain. Actual inline
+submission is checked before device/model work and recorded afterward. Ordinary
+default, draft allocation bounds and public API are unchanged.
+
+Compiler-idle cold1.41475/warm3.18530 accepted tokens/s; warmzero expert uploads,
+weight reads and physical process disk bytes. Warm12 outputs take3.76730s, with
+2.11111s router fences and.93779s attention/GR enqueue. This ordered comparison
+is no matchedABBA or30tokens/s acceptance. Warmreset and final1378-owner
+826,638,336byte audits pass; actual memory/services/admission recover, classified
+GPU faults stayzero. Source agent default806+2auxiliary tests (oneignored),
+pure-direct target registrations/runtime policy tests, strict default/direct/
+all-feature Clippy/fmt and87 launcher controls pass. Source review accepted.
+
+Next source-only work is a dedicated fixed-public target request-I/O scope:
+constructor-charged4MiB/4096 FIFO metadata, batchedINFO and inline readback on
+the B70 target client only. NVIDIA draft/default/cap10 paths must retain their
+existing configuration; no global environment mutation or private persistence.
+It is not implemented or physically accepted in this checkpoint. Required
+Vashti changes:none. No production install/release or GPU reset.

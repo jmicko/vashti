@@ -2760,8 +2760,10 @@ quality comparison candidate, without a new download or measured comparison.
 
 Supersedes the paused `9218638` checkpoint for backend inference work. User has
 returned the GPUs and approved full DASLab IQ3_S plus Strata source study, with
-an active30 accepted-token/s target. Latest tested Kuno source is `774f2a9` in the same isolated
-`codex/kuno-native-text` worktree. Installed services, public contracts/catalog/
+an active30 accepted-token/s target. Latest model-tested target/MTP source is
+`834a299` (v128) in the same isolated `codex/kuno-native-text` worktree: direct-only
+submission, complete finite fusion and actual warm replay pass full physical gates. Earlier
+conditional ideal count1 v109 remains selected for that separate scope. Installed services, public contracts/catalog/
 configuration, Vashti and release selection remain unchanged. Preserve the
 canonical checkout's uncommitted coordination/application work.
 
@@ -2881,3 +2883,64 @@ source/artifact/hash provenance and preservedfailure are in the
 [foundation receipt](../apps/kuno/benchmarks/text/receipts/daslab-target-mtp-foundation-20261009.json).
 Packedthree-column dense and preparedbatch expert candidates are inprogress.
 No publicAPI/config/catalog/install/release change. **Required Vashti changes:none.**
+
+#### Backend-only direct fill and draft fusion checkpoint (2026-10-09,14:37UTC)
+
+Latest model-tested source `a6fcdf5` passes original14-format operators on both
+cards, target4/actual prefix repair and fused MTP full CPU vectors/KV repairs,
+with complete owning erasure and actual memory/admission/HTTP recovery. Frozen
+default SHA256 `38296f8f909cb6791cc249a5180d2fdd2f833c64c6206cfcbb0636d4c19d1c5b`.
+Compiler-idle ordered cold normal-demand pair improves1.50087→1.74852 accepted
+tokens/s with checked existing-view public fills+fused MTP, unchanged arithmetic
+and actual repair. Both have2,311 first-touch fills/zero evictions and6/10 draft
+acceptance. This distinct cold scope does not replace selected12.728 conditional
+ideal count1;30 remains unmet. Prepared candidate has different disk paging and
+no accepted speed gain.796 native+2 auxiliary source tests and85 launcher
+controls now pass for the next one-shot public warm replay; its physical gate
+is pending. No private content, GPU resets or public API/config/install/release
+change. Exact sources, hashes, numeric receipts, all failures and limitations
+are in the [native checkpoint](kuno-native-text-checkpoint.md) and
+[foundation receipt](../apps/kuno/benchmarks/text/receipts/daslab-target-mtp-foundation-20261009.json).
+**Required Vashti changes:none.**
+
+#### Backend-only warm and finite acceptance (2026-10-09,15:14UTC)
+
+`4b93c99`/`bafd9c0` real healthy one-shot replay passes full original CPU13,
+actual target/draft repairs, complete retained-private erase and final closes.
+Weights/banks/IDs/admission/epochs stay; transient binding/INFO caches are
+cleared. Warm normal-demand2.34472 withzeroexpertuploads establishes that
+execution overhead remains. Prepared2.34773 shows no material gain. Packed
+Verify3 warm2.61000 and full finite fusion `fe196fa`/`6f581b4` warm2.96368 pass
+all original gates. Corrected inventory `5eb8e82` passes60normal+210invalid/
+stickycases percard and full actualprefixrepair. Current model-tested v127
+SHA256 `7f3fe8a0a9a24c6543784cfb1937c8bde3db7e6507cf612ee363b59318c2baba`.
+These ordered warm trials do not establish matchedABBA/30token/s acceptance or
+replace v109's separate12.728 conditionalideal count1 selection.
+
+New pure `direct-device` source `834a299` isolates existing GPU submission type
+for only fixedpublic target4/repair4/speculative13. Exact existing
+`KUNO_LAB_DEVICE_DISPATCH=inline` and direct-only build are mandatory; all CPU
+features/default+inline/directwithoutflag mismatch reject beforedevice access.
+ActualDeviceHandleblocking is checked in main/run/receipt. Mathematical kernels,
+owners/budgets/cache/defaultthreaded/otherlabmodes unchanged.806 native+2auxiliary,
+pure-direct registration/runtime and rejectedallfeatures checks,87launcher
+controls and strictdefault/direct/allfeaturesClippy/fmt pass in child source;
+physical gate is pending in root. Actual GPU memory/admission/services/fault
+recovery remains verified after each trial. Exact sources, all numeric receipts,
+failures/limits in linked checkpoint/foundation receipt. No private prompts/
+outputs stored, productionAPI/config/catalog/frontend/install/release/reset
+change. **Required Vashti changes:none.**
+
+
+### Kuno native text direct target checkpoint,2026-10-09,15:31UTC
+
+`834a299` pure `direct-device` fixed-public DASLab target modes now pass actual
+B70 target4/repair4 and B70-target/RTX-draft fullCPU13 cold/warm controller gates.
+Warm3.18530 acceptedtokens/s withzero expert transfers/weight reads/processdisk
+bytes;30tokens/s is unmet and no matchedABBA selection follows. Original full
+vectors, arithmetic, actual state repairs, private/source erasure, memory/HTTP/
+admission recovery andzero new classified faults pass. Exact source/artifact/
+helper/numeric evidence is in the foundation receipt and native checkpoint.
+A target-client-only charged request metadata reuse scope is next, source work
+only. Ordinary modes/API/frontend/install/release remain unchanged; required
+Vashti changes:none. Preserve canonical application and coordination work.

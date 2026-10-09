@@ -225,3 +225,47 @@ for artifact/source hashes and per-round phase clocks.
 
 See `kuno-native-text-mtp-plan.md`, `kuno-native-text-model-batching.md` and
 `kuno-native-resident-router.md` for the current causal/owning contracts.
+
+## Fixed Verify3 dense arithmetic candidate
+
+Internal default-off constructor choice `target_verify3_dense` is admitted only
+with target-row reservation, original shared/fast dense settings and MAX8/tile8.
+Protected target4/repair4/dual-GPU13 registrations accept only canonical
+`KUNO_LAB_TARGET_DENSE=verify3`; choices are frozen before any model mutation.
+Parent checks actual16/32 subgroups/128 lanes before device creation. Packed
+original vec4 weights are reused across1–3 original F32 rows with unchanged
+full output finite/fault/padding gates, original owners, INFO/dispatch counts and
+head tiles. Whole CPU vectors/greedy/actual repair pass physically at v121;
+cold controller comparison does not establish a speed gain. Keep default off.
+
+Canonical optional `KUNO_LAB_TARGET_IO=chunk` compares the already implemented
+complete-chunk runtime-I/O cadence. It does not change the128MiB hard ceiling,
+whole-model final proof, owner erasure or retirement. Default remains per-layer;
+`dea5d48` source and v122 full CPU/repair/owner physical checks pass. Its
+1.1404tokens/s cold controller result establishes no speed gain. Neither lab
+option changes a public API or Vashti consumer contract.
+
+## Construction-fixed public warm replay and finite fusion
+
+`4b93c99`/`bafd9c0` add one healthy fixed-DAS13 replay, reserved at construction
+and consumed only at successful completed13 with no live outputs/checkpoints.
+Original private/source full-page erasure and fault/identity fences precede
+infallible numerical GDN/QSA/PLE cursor/history0 commits. Public weights/banks,
+actual ownership/admission/epochs/ledger/counters remain; poison and retirement
+are never cleared. Sanitization clears transient binding/INFO caches. Original
+token0 prefill must re-prove start0/count1/cursor1. The existing completed
+projection helper still rejects0. Canonical protected selector is
+`KUNO_LAB_WARM_REPLAY=once` for speculative13 only; both complete CPU passes,
+actual repairs and reset/final full-owner audits pass physically in v125.
+
+`fe196fa`/`6f581b4` add default-off `verify3-fused` under the same target policy.
+It retains original F32 weight/reduction arithmetic and full owner/input/source/
+fault/status/padding proofs. The final weight tile's bounded4096-group strided
+scan covers the complete logical output complement, excluding ALL active
+complete matrix intervals; active writers check their own finite results.48-byte
+INFO pre-device admission uses the same2048-byte rounded allowance. The immutable
+choice and actual fused dispatches are evidenced in each numeric receipt.
+Target4 partitions and real accepted-prefix1/2/3 continuation gates pass v126.
+The dedicated both-card operator gate is pending corrected inventory acceptance
+at `5eb8e82`; no finite-fusion speed selection or30token/s acceptance yet.
+These are isolated public lab contracts. Production/Vashti API is unchanged.
