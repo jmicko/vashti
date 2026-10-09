@@ -3,6 +3,8 @@
 use super::*;
 use crate::resident_model::batch_io::Count1RouterInput;
 use kuno_text::cpu_expert::PackedExperts;
+#[path = "q3_expert_oracle.rs"]
+mod public_expert_oracle;
 
 impl GpuExecutor<'_> {
     #[allow(clippy::too_many_arguments)]
@@ -551,6 +553,83 @@ impl GpuExecutor<'_> {
         write_cpu(arena, owner_ids[0], partials.as_ref(), live, &w.poison)?;
         write_words(arena, owner_ids[1], map.owner_words(), &w.poison)?;
         drop(partials);
+        if self.q3_expert_oracle && s.stamp.start == public_expert_oracle::POSITION {
+            if !self.q3_empty_slot_fill
+                || self.packed_profile != expert_banks::OriginalPackedProfile::UnslothQ3
+                || cap != 10
+                || self.gpu_expert_limit != 10
+                || self.adaptive.is_some()
+                || self.secondary.is_some()
+                || operator.q8_activations()
+                || g.hidden() != public_expert_oracle::HIDDEN
+                || spans.partial_first() != 0
+                || spans.partial_stride() != public_expert_oracle::HIDDEN
+            {
+                return Err(err("public Q3 actual expert oracle policy"));
+            }
+            if !split.gpu().is_empty() {
+                w.check(self, s, arena)?;
+                proof.validate_source(&bank.slots, &staged, &last, true)?;
+                let shadow_limit = cpu_limit
+                    .checked_sub(public_expert_oracle::READ_HOST)
+                    .filter(|&limit| limit > 0)
+                    .ok_or(Error::LimitExceeded("public Q3 expert oracle host reserve"))?;
+                let reader = self.model.positional_reader()?;
+                let cpu_weights =
+                    PackedExperts::new(&reader, weights.gate, weights.up, weights.down)?;
+                reader.verify_file_unchanged()?;
+                // Same actual immutable weights and packet input, sequentially
+                // after the original CPU jobs/partials released their owners.
+                let shadow = operator.execute_with_private_limit(
+                    &cpu_weights,
+                    split.gpu(),
+                    packet.mixed(),
+                    cancel,
+                    shadow_limit,
+                )?;
+                reader.verify_file_unchanged()?;
+                if live
+                    .checked_add(shadow.owned_bytes())
+                    .and_then(|bytes| bytes.checked_add(public_expert_oracle::READ_HOST))
+                    .is_none_or(|bytes| bytes > HYBRID_HOST)
+                {
+                    return Err(Error::LimitExceeded("public Q3 expert oracle live host"));
+                }
+                let gpu = u::read_prefix_f32(arena, ids[PART], public_expert_oracle::GPU_WORDS)?;
+                if gpu
+                    .capacity()
+                    .checked_mul(std::mem::size_of::<f32>())
+                    .is_none_or(|bytes| bytes > 131072)
+                {
+                    return Err(Error::LimitExceeded("public Q3 expert oracle copied host"));
+                }
+                let report =
+                    public_expert_oracle::compare(proof.ids(), split.gpu(), &gpu, shadow.active())?;
+                let arithmetic = match operator.backend() {
+                    kuno_text::cpu_expert::Backend::Portable => "portable64",
+                    kuno_text::cpu_expert::Backend::Avx2 => "avx2-original64",
+                    kuno_text::cpu_expert::Backend::Avx2Fma => "avx2-fma32-other-original64",
+                };
+                println!(
+                    "public_q3_actual_expert_oracle position=23 layer={layer} arithmetic={arithmetic} gpu_ranks={} values={} different_bits={} max_abs_error={} max_scaled_error={} first_different_rank={:?} first_different_column={:?}",
+                    report.ranks,
+                    report.values,
+                    report.different_bits,
+                    report.max_abs_error,
+                    report.max_scaled_error,
+                    report.first_different_rank,
+                    report.first_different_column
+                );
+                drop(gpu);
+                drop(shadow);
+                proof.validate_source(&bank.slots, &staged, &last, true)?;
+                w.check(self, s, arena)?;
+            } else {
+                println!(
+                    "public_q3_actual_expert_oracle position=23 layer={layer} gpu_ranks=0 skipped=true"
+                );
+            }
+        }
         hybrid_k::merge(
             arena,
             g,
