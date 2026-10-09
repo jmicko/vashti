@@ -36,6 +36,55 @@ const PROFILES: [(TensorType, TensorType); 3] = [
     (TensorType::Iq4Xs, TensorType::Q8_0),
 ];
 
+// Only compiled fixed-public integer cases produce these markers. Never log
+// backend error text, weight IDs, vectors or request-derived data.
+fn integer_stage(
+    integer: bool,
+    profile: (TensorType, TensorType),
+    stage: &'static str,
+    case: usize,
+    segment: usize,
+) {
+    if integer {
+        println!(
+            "public_iq_integer_stage gate={} down={} stage={} case={} segment={}",
+            profile.0.gguf_id(),
+            profile.1.gguf_id(),
+            stage,
+            case,
+            segment
+        );
+    }
+}
+fn fixed_failure_class(error: &(dyn std::error::Error + 'static)) -> &'static str {
+    if let Some(error) = error.downcast_ref::<kuno_text::Error>() {
+        return match error {
+            kuno_text::Error::InvalidFormat(_) => "core-format",
+            kuno_text::Error::LimitExceeded(_) => "core-budget",
+            kuno_text::Error::InvalidBufferLength => "core-length",
+            kuno_text::Error::OutOfBounds => "core-bounds",
+            _ => "core-other",
+        };
+    }
+    // The displayed error is compared ONLY with this closed source-controlled
+    // list. Unknown/backend messages never leave this function.
+    match error.to_string().as_str() {
+        "segmented IQ complete projection mismatch" => "numeric-projection",
+        "segmented IQ subgroup public fault accepted" => "fault-status-accepted",
+        "segmented IQ subgroup fault changed inactive math owner" => "fault-owning-write",
+        "segmented IQ fault producer readiness" => "fault-producer-ready",
+        "segmented IQ fault finite flag invalid" => "fault-finite-flag",
+        "segmented IQ inactive rank/gap/full owning tail changed" => "numeric-owning-gap",
+        "segmented IQ inactive segment status changed" => "numeric-status-gap",
+        "segmented IQ public oracle finite/nonzero gate" => "original-host-reference",
+        "segmented IQ integer complete oracle finite/nonzero gate" => "integer-host-reference",
+        "segmented IQ fixed route geometry" => "route-geometry",
+        "segmented IQ host fixture bound" => "host-budget",
+        "segmented IQ physical stream" => "physical-stream",
+        _ => "unclassified",
+    }
+}
+
 pub fn validate_configuration() -> std::result::Result<(), &'static str> {
     validate_mode(false)
 }
@@ -1018,6 +1067,7 @@ fn one(
     profile: (TensorType, TensorType),
     integer: bool,
 ) -> Result<serde_json::Value> {
+    integer_stage(integer, profile, "profile-start", 0, 0);
     let g = geometry(profile.0, profile.1)?;
     limits(g, l)?;
     if integer && l.max_compute_workgroup_storage_size < iq_moe_integer::MAX_SHARED_BYTES as u32 {
@@ -1105,6 +1155,7 @@ fn one(
         );
     }
     verify_public(client, arena, ids[7], &seeds, &banks, retired)?;
+    integer_stage(integer, profile, "public-banks-verified", 0, 0);
     ledger.completed_fence(c::sample(client)?)?;
     // All synthetic bank rows were physically initialized and checked before
     // committing their bounded source mapping. No model-history is published.
@@ -1162,6 +1213,7 @@ fn one(
     } else {
         None
     };
+    integer_stage(integer, profile, "host-oracles-ready", 0, 0);
     for (i, &v) in x.iter().enumerate() {
         before[c::INPUT][s.input_first() + i] = v.to_bits();
     }
@@ -1179,6 +1231,7 @@ fn one(
         .enumerate()
         .take(if integer { 3 } else { 2 })
     {
+        integer_stage(integer, profile, "case-start", case, 0);
         let subgroup = case == 1;
         let integer_case = case == 2;
         let reference = if integer_case {
@@ -1193,6 +1246,7 @@ fn one(
         }
         let mut previous: Option<Vec<Zeroizing<Vec<u32>>>> = None;
         for segment in 0..2 {
+            integer_stage(integer, profile, "segment-launch", case, segment);
             pin.validate()?;
             physical(client, arena, &ids, &seeds, &banks, g)?;
             launch_segment(
@@ -1208,6 +1262,7 @@ fn one(
                 integer_case,
             )?;
             let got = snapshot(arena, &ids, retired)?;
+            integer_stage(integer, profile, "segment-readback", case, segment);
             if let Some(prior) = &previous {
                 inactive_preserved(&got, prior, &s)?;
             }
@@ -1220,6 +1275,7 @@ fn one(
         }
         drop(previous);
         finish_math(client, arena, &ids, g, &s)?;
+        integer_stage(integer, profile, "case-final-check", case, 2);
         let got = snapshot(arena, &ids, retired)?;
         let e = check(&got, &before, g, &s, reference, true, true)?;
         for (maximum, error) in case_errors.iter_mut().zip(e) {
@@ -1253,6 +1309,7 @@ fn one(
     }
     drop(original);
     for fault in 0..if integer { 3 } else { 2 } {
+        integer_stage(integer, profile, "fault-start", fault, 0);
         let nonfinite = fault == 0;
         // Compiled public fault operands only; preserve the original pin and
         // physical owners while testing actual producer/finite guard behavior.
@@ -1285,6 +1342,7 @@ fn one(
         }
         finish_math(client, arena, &ids, g, &s)?;
         let got = snapshot(arena, &ids, retired)?;
+        integer_stage(integer, profile, "fault-final-check", fault, 2);
         check_fault(&got, &fault_before, g, &s, nonfinite, nonfinite && !integer)?;
         ledger.completed_fence(c::sample(client)?)?;
     }
@@ -1371,7 +1429,20 @@ fn run_mode(client: &ComputeClient<WgpuRuntime>, l: &wgpu::Limits, integer: bool
         }
         Ok(reports)
     }));
+    if integer {
+        match &attempt {
+            Ok(Err(error)) => println!(
+                "public_iq_integer_failure class={}",
+                fixed_failure_class(error.as_ref())
+            ),
+            Err(_) => println!("public_iq_integer_failure class=panic"),
+            _ => {}
+        }
+    }
     let closed = arena.close();
+    if integer && closed.is_err() {
+        println!("public_iq_integer_failure class=owner-close");
+    }
     let reports = match (attempt, closed, retired.load(Ordering::Acquire)) {
         (Ok(Ok(v)), Ok(()), false) => v,
         _ => return Err("segmented IQ public operator failed; no success receipt".into()),
