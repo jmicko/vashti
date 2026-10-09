@@ -88,7 +88,7 @@ fn iq4_byte(code:u32)->u32 {
     if code>=12u {word=0x71594535u;}
     return (word>>((code&3u)*8u))&255u;
 }
-// IQ3 magnitudes are all4..62. The bytewise complement/add-one cannot carry
+// Original grid magnitudes are nonzero and<=127. Bytewise complement/add-one cannot carry
 // between bytes, even with every sign set; exhaustive host controls verify it.
 fn iq3_signed_word(magnitude:u32,signs:u32)->u32 {
     let mask=((signs&1u)*255u)|(((signs>>1u)&1u)*255u<<8u)
@@ -101,6 +101,12 @@ fn iq4_word(codes:u32,high:bool)->u32 {
         |(iq4_byte((codes>>(shift+8u))&15u)<<8u)
         |(iq4_byte((codes>>(shift+16u))&15u)<<16u)
         |(iq4_byte((codes>>(shift+24u))&15u)<<24u);
+}
+fn q2_word(codes:u32)->u32 {
+    let q=(codes&3u)|(((codes>>2u)&3u)<<8u)|(((codes>>4u)&3u)<<16u)|(((codes>>6u)&3u)<<24u);
+    // Four original codes0..3 map to signed−1..2 independently. Adding127
+    // cannot carry across any byte because every intermediate is127..130.
+    return (q+0x7f7f7f7fu)^0x80808080u;
 }
 // Original byte-addressed block geometry, including98/18/34-byte records
 // crossing u32 boundaries. Rust emits immutable bindings for gate/up or down.

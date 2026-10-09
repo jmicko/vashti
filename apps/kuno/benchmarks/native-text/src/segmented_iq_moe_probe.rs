@@ -35,6 +35,26 @@ const PROFILES: [(TensorType, TensorType); 3] = [
     (TensorType::Iq3Xxs, TensorType::Q8_0),
     (TensorType::Iq4Xs, TensorType::Q8_0),
 ];
+// Original segmented acceptance remains exactly the three profiles above.
+// Integer-only acceptance additionally covers every actual pinned DAS triple.
+const INTEGER_PROFILES: [(TensorType, TensorType); 9] = [
+    (TensorType::Iq3Xxs, TensorType::Iq4Nl),
+    (TensorType::Iq3Xxs, TensorType::Q8_0),
+    (TensorType::Iq4Xs, TensorType::Q8_0),
+    (TensorType::Iq3Xxs, TensorType::Q2_0),
+    (TensorType::Iq2S, TensorType::Iq4Nl),
+    (TensorType::Iq2S, TensorType::Q2_0),
+    (TensorType::Iq3S, TensorType::Iq4Nl),
+    (TensorType::Iq3S, TensorType::Q2_0),
+    (TensorType::Iq4Xs, TensorType::Iq4Nl),
+];
+fn profiles(integer: bool) -> &'static [(TensorType, TensorType)] {
+    if integer {
+        &INTEGER_PROFILES
+    } else {
+        &PROFILES
+    }
+}
 
 // Only compiled fixed-public integer cases produce these markers. Never log
 // backend error text, weight IDs, vectors or request-derived data.
@@ -126,7 +146,7 @@ fn validate_mode(integer: bool) -> std::result::Result<(), &'static str> {
 }
 
 fn geometry(gate: TensorType, down: TensorType) -> Result<k::Geometry> {
-    if !PROFILES.contains(&(gate, down)) {
+    if !INTEGER_PROFILES.contains(&(gate, down)) {
         return Err("segmented IQ profile rejected".into());
     }
     Ok(k::Geometry::new(
@@ -1226,11 +1246,15 @@ fn one(
     let mut integer_original_errors = None;
     let mut integer_float_errors = None;
     let mut original = None;
+    let subgroup_supported = q3_subgroup_moe::validate_geometry(g, 0, 72).is_ok();
     for (case, case_errors) in errors
         .iter_mut()
         .enumerate()
         .take(if integer { 3 } else { 2 })
     {
+        if case == 1 && !subgroup_supported {
+            continue;
+        }
         integer_stage(integer, profile, "case-start", case, 0);
         let subgroup = case == 1;
         let integer_case = case == 2;
@@ -1366,7 +1390,7 @@ fn one(
         "hidden":HIDDEN,"ff":FF,"capacity":CAP,"segment_capacity":SEGMENT,"count":1,"groups":10,
         "bank_physical_bytes":pages.iter().sum::<u64>(),"private_owned_bytes":private_pages.iter().sum::<u64>(),
         "max_abs_activation_error":errors[0][0],"max_abs_partial_error":errors[0][1],"max_abs_rank_merge_error":errors[0][2],
-        "subgroup_count1_original64":true,"subgroup_rows_per_cube":4,"subgroup_physical_lanes":128,
+        "subgroup_count1_original64":subgroup_supported,"subgroup_rows_per_cube":if subgroup_supported {4}else{0},"subgroup_physical_lanes":if subgroup_supported {128}else{0},
         "subgroup_max_abs_activation_error":errors[1][0],"subgroup_max_abs_partial_error":errors[1][1],"subgroup_max_abs_rank_merge_error":errors[1][2],
         "subgroup_original_activation_max_difference":between_errors[0],"subgroup_original_partial_max_difference":between_errors[1],"subgroup_original_merge_max_difference":between_errors[2],
         "subgroup_active_nonfinite_input_rejected":!integer,"subgroup_invalid_group_rejected_without_output_writes":!integer,
@@ -1393,12 +1417,14 @@ fn one(
         report["integer_finite_max_residual_rejected_without_output_writes"] =
             serde_json::json!(true);
         report["integer_max_workgroup_bytes"] = serde_json::json!(iq_moe_integer::MAX_SHARED_BYTES);
-        report["integer_shared_codebook_bytes"] =
-            serde_json::json!(if profile.0 == TensorType::Iq3Xxs {
-                1024
-            } else {
-                0
-            });
+        report["integer_shared_codebook_bytes"] = serde_json::json!(match profile.0 {
+            TensorType::Iq3Xxs => 1024,
+            TensorType::Iq3S => 2048,
+            TensorType::Iq2S => 8192,
+            _ => 0,
+        });
+        report["integer_actual_workgroup_bytes"] =
+            serde_json::json!(iq_moe_integer::workgroup_bytes(profile.0.gguf_id()));
     }
     Ok(report)
 }
@@ -1413,7 +1439,7 @@ fn run_mode(client: &ComputeClient<WgpuRuntime>, l: &wgpu::Limits, integer: bool
     if integer && l.max_compute_workgroup_storage_size < iq_moe_integer::MAX_SHARED_BYTES as u32 {
         return Err("segmented IQ integer workgroup storage limit".into());
     }
-    for (gate, down) in PROFILES {
+    for &(gate, down) in profiles(integer) {
         limits(geometry(gate, down)?, l)?;
     }
     let path = std::env::var_os("KUNO_PUBLIC_RECEIPT").ok_or("segmented IQ receipt required")?;
@@ -1423,7 +1449,7 @@ fn run_mode(client: &ComputeClient<WgpuRuntime>, l: &wgpu::Limits, integer: bool
     arena.enable_public_owned_zero_audit()?;
     let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<_> {
         let mut reports = Vec::new();
-        for profile in PROFILES {
+        for &profile in profiles(integer) {
             reports.push(one(client, l, &mut arena, &retired, profile, integer)?);
             client.memory_cleanup();
         }
@@ -1467,7 +1493,7 @@ fn run_mode(client: &ComputeClient<WgpuRuntime>, l: &wgpu::Limits, integer: bool
     file.write_all(serde_json::to_string_pretty(&report)?.as_bytes())?;
     if integer {
         println!(
-            "public_integer_iq_moe profiles=3 segments=2 ranks=10 alternative_arithmetic=1 accepted=1"
+            "public_integer_iq_moe profiles=9 segments=2 ranks=10 alternative_arithmetic=1 accepted=1"
         );
     } else {
         println!("public_segmented_iq_moe profiles=3 segments=2 ranks=10 accepted=1");
@@ -1479,8 +1505,35 @@ fn run_mode(client: &ComputeClient<WgpuRuntime>, l: &wgpu::Limits, integer: bool
 mod tests {
     use super::*;
     #[test]
+    fn integer_profiles_cover_all_actual_das_triples_and_keep_default_original3() {
+        assert_eq!(profiles(false), &PROFILES);
+        assert_eq!(profiles(true), &INTEGER_PROFILES);
+        for &profile in &INTEGER_PROFILES {
+            assert_eq!(
+                INTEGER_PROFILES.iter().filter(|&&v| v == profile).count(),
+                1
+            );
+        }
+        let mut actual = Vec::new();
+        for layer in 0..48 {
+            let dtype = |suffix| {
+                TensorType::from_gguf_id(
+                    crate::daslab_profile::expected_dtype(&format!("blk.{layer}.{suffix}.weight"))
+                        .unwrap(),
+                )
+                .unwrap()
+            };
+            let profile = (dtype("ffn_gate_exps"), dtype("ffn_down_exps"));
+            assert!(INTEGER_PROFILES.contains(&profile));
+            if !actual.contains(&profile) {
+                actual.push(profile);
+            }
+        }
+        assert_eq!(actual.len(), 7);
+    }
+    #[test]
     fn exact_mixed_profiles_original_strides_and_full_page_budget() {
-        for (gate, down) in PROFILES {
+        for (gate, down) in INTEGER_PROFILES {
             let g = geometry(gate, down).unwrap();
             let (_, words) = spans(g).unwrap();
             assert_eq!(g.gate_policy(), k::GatePolicy::Generic);
@@ -1489,7 +1542,13 @@ mod tests {
             assert_eq!(pages.len(), 6);
             assert_eq!(
                 pages.iter().sum::<u64>(),
-                if down == TensorType::Iq4Nl { 384 } else { 512 } * 1024 * 1024
+                match down {
+                    TensorType::Iq4Nl => 384,
+                    TensorType::Q8_0 => 512,
+                    TensorType::Q2_0 => 320,
+                    _ => unreachable!(),
+                } * 1024
+                    * 1024
             );
             assert_eq!(
                 words
@@ -1507,11 +1566,11 @@ mod tests {
                 .unwrap();
             }
         }
-        assert!(geometry(TensorType::Iq4Xs, TensorType::Iq4Nl).is_err());
+        assert!(geometry(TensorType::Q4K, TensorType::Iq4Nl).is_err());
     }
     #[test]
     fn independent_rows_and_global_offset_boundary_are_not_aliases() {
-        for (gate, down) in PROFILES {
+        for (gate, down) in INTEGER_PROFILES {
             for p in geometry(gate, down).unwrap().projections() {
                 let (wire, expected) = seed_payload(p).unwrap();
                 let mut got = vec![0.; SEED_ROWS * p.columns()];
@@ -1661,7 +1720,7 @@ mod tests {
                 .map(|i| ((i * 7 % 13) as f32 - 6.) / 1024.)
                 .collect::<Vec<_>>(),
         );
-        for (gate, down) in PROFILES {
+        for (gate, down) in INTEGER_PROFILES {
             let g = geometry(gate, down).unwrap();
             let payloads = g.projections().map(|p| seed_payload(p).unwrap());
             let rows = payloads.each_ref().map(|v| v.1.as_slice());

@@ -120,7 +120,12 @@ pub(crate) fn unpack32(
 ) -> Result<([i8; 32], f32)> {
     if !matches!(
         dtype,
-        TensorType::Iq3Xxs | TensorType::Iq4Nl | TensorType::Iq4Xs | TensorType::Q8_0
+        TensorType::Iq3Xxs
+            | TensorType::Iq3S
+            | TensorType::Iq4Nl
+            | TensorType::Iq4Xs
+            | TensorType::Q8_0
+            | TensorType::Q2_0
     ) || columns == 0
         || columns > 2560
         || !columns.is_multiple_of(32)
@@ -158,6 +163,26 @@ pub(crate) fn unpack32(
             }
             half(bytes, base) * (0.5 + (word >> 28) as f32) * 0.5
         }
+        TensorType::Iq3S => {
+            let base = index / 8 * 110;
+            let group = index % 8;
+            let high = usize::from(bytes[base + 66 + group]);
+            for quartet in 0..8 {
+                let table = usize::from(bytes[base + 2 + group * 8 + quartet])
+                    | (((high >> quartet) & 1) << 8);
+                let grid = kuno_text::quant::IQ3_S_GRID[table].to_le_bytes();
+                let signs = bytes[base + 74 + group * 4 + quartet / 2] >> ((quartet % 2) * 4);
+                for (lane, magnitude) in grid.into_iter().enumerate() {
+                    codes[quartet * 4 + lane] = if signs & (1 << lane) == 0 {
+                        magnitude as i8
+                    } else {
+                        -(magnitude as i8)
+                    };
+                }
+            }
+            let scale = (bytes[base + 106 + group / 2] >> ((group % 2) * 4)) & 15;
+            half(bytes, base) * f32::from(1 + 2 * scale)
+        }
         TensorType::Iq4Nl | TensorType::Iq4Xs => {
             let (base, offset, factor) = if dtype == TensorType::Iq4Nl {
                 let base = index * 18;
@@ -188,8 +213,56 @@ pub(crate) fn unpack32(
             }
             half(bytes, base)
         }
+        TensorType::Q2_0 => {
+            let base = index / 2 * 18;
+            let first = 2 + (index % 2) * 8;
+            for (lane, code) in codes.iter_mut().enumerate() {
+                *code = ((bytes[base + first + lane / 4] >> (2 * (lane % 4))) & 3) as i8 - 1;
+            }
+            half(bytes, base)
+        }
         _ => return Err(rejected()),
     };
+    if !factor.is_finite() {
+        return Err(rejected());
+    }
+    Ok((codes, factor))
+}
+/// IQ2_S requires a distinct original subscale per16 weights. This entry never
+/// flattens the two adjacent factors into one32-element activation block.
+pub(crate) fn unpack_iq2_s16(
+    bytes: &[u8],
+    columns: usize,
+    index: usize,
+) -> Result<([i8; 16], f32)> {
+    if columns == 0
+        || columns > 2560
+        || !columns.is_multiple_of(256)
+        || index >= columns / 16
+        || TensorType::Iq2S.row_bytes(columns as u64)? as usize != bytes.len()
+    {
+        return Err(rejected());
+    }
+    let base = index / 16 * 82;
+    let group = (index % 16) / 2;
+    let side = index % 2;
+    let mut codes = [0i8; 16];
+    for octet in 0..2 {
+        let position = side * 2 + octet;
+        let low = usize::from(bytes[base + 2 + group * 4 + position]);
+        let high = (usize::from(bytes[base + 66 + group]) << (8 - 2 * position)) & 0x300;
+        let grid = kuno_text::quant::IQ2_S_GRID[low | high].to_le_bytes();
+        let signs = bytes[base + 34 + group * 4 + position];
+        for (lane, magnitude) in grid.into_iter().enumerate() {
+            codes[octet * 8 + lane] = if signs & (1 << lane) == 0 {
+                magnitude as i8
+            } else {
+                -(magnitude as i8)
+            };
+        }
+    }
+    let scale = (bytes[base + 74 + group] >> (side * 4)) & 15;
+    let factor = half(bytes, base) * (0.5 + f32::from(scale)) * 0.25;
     if !factor.is_finite() {
         return Err(rejected());
     }
@@ -198,6 +271,24 @@ pub(crate) fn unpack32(
 pub(crate) fn project(dtype: TensorType, wire: &[u8], planes: &Planes) -> Result<f32> {
     let mut sum = 0f64;
     for (index, plane) in planes.blocks.iter().enumerate() {
+        if dtype == TensorType::Iq2S {
+            for side in 0..2 {
+                let (weights, factor) = unpack_iq2_s16(wire, planes.columns(), index * 2 + side)?;
+                let mut first = 0i64;
+                let mut second = 0i64;
+                for (i, &weight) in weights.iter().enumerate() {
+                    first += i64::from(weight) * i64::from(plane.first[side * 16 + i]);
+                    second += i64::from(weight) * i64::from(plane.second[side * 16 + i]);
+                }
+                if first.abs() > 16 * 128 * 127 || second.abs() > 16 * 128 * 127 {
+                    return Err(rejected());
+                }
+                sum += f64::from(factor)
+                    * (f64::from(plane.scale) * first as f64
+                        + f64::from(plane.residual_scale) * second as f64);
+            }
+            continue;
+        }
         let (weights, factor) = unpack32(dtype, wire, planes.columns(), index)?;
         let mut first = 0i64;
         let mut second = 0i64;
@@ -258,8 +349,58 @@ mod tests {
         assert_eq!(count, 8032);
     }
     #[test]
+    fn all15680_das_c_values_match_original_half_scales_or_explicit_rejection() {
+        let mut count = 0;
+        for dtype in [TensorType::Iq2S, TensorType::Iq3S, TensorType::Q2_0] {
+            let (records, _) = iq_fixtures::records(dtype.gguf_id());
+            let block = dtype.block_elements() as usize;
+            let bytes = dtype.block_bytes() as usize;
+            let unit = if dtype == TensorType::Iq2S { 16 } else { 32 };
+            for record in records.chunks_exact(bytes + block * 4) {
+                let values = record[bytes..]
+                    .chunks_exact(4)
+                    .map(|v| f32::from_le_bytes(v.try_into().unwrap()))
+                    .collect::<Vec<_>>();
+                for index in 0..block / unit {
+                    let decoded = if dtype == TensorType::Iq2S {
+                        unpack_iq2_s16(&record[..bytes], block, index)
+                            .map(|(codes, scale)| (codes.to_vec(), scale))
+                    } else {
+                        unpack32(dtype, &record[..bytes], block, index)
+                            .map(|(codes, scale)| (codes.to_vec(), scale))
+                    };
+                    match decoded {
+                        Ok((codes, scale)) => {
+                            for (lane, &q) in codes.iter().enumerate() {
+                                assert_eq!(
+                                    (scale * f32::from(q)).to_bits(),
+                                    values[index * unit + lane].to_bits()
+                                );
+                            }
+                        }
+                        Err(_) => assert!(
+                            values[index * unit..index * unit + unit]
+                                .iter()
+                                .all(|v| !v.is_finite())
+                        ),
+                    }
+                    count += unit;
+                }
+            }
+        }
+        assert_eq!(count, 15680);
+    }
+    #[test]
     fn bytewise_iq3_negation_has_no_cross_byte_carry_for_all_grids_and_signs() {
-        for grid in kuno_text::quant::IQ3_XXS_GRID {
+        let grids = kuno_text::quant::IQ3_XXS_GRID
+            .into_iter()
+            .chain(kuno_text::quant::IQ3_S_GRID)
+            .chain(
+                kuno_text::quant::IQ2_S_GRID
+                    .into_iter()
+                    .flat_map(|word| [word as u32, (word >> 32) as u32]),
+            );
+        for grid in grids {
             for signs in 0..16u32 {
                 let mask = ((signs & 1) * 255)
                     | ((((signs >> 1) & 1) * 255) << 8)
@@ -267,7 +408,7 @@ mod tests {
                     | ((((signs >> 3) & 1) * 255) << 24);
                 let actual = ((grid ^ mask) + (mask & 0x01010101)).to_le_bytes();
                 for (i, magnitude) in grid.to_le_bytes().into_iter().enumerate() {
-                    assert!((4..=62).contains(&magnitude));
+                    assert!((1..=127).contains(&magnitude));
                     let expected = if signs & (1 << i) == 0 {
                         magnitude as i8
                     } else {
@@ -348,6 +489,9 @@ mod tests {
             (TensorType::Iq3Xxs, 2560usize),
             (TensorType::Iq4Nl, 640),
             (TensorType::Iq4Xs, 2560),
+            (TensorType::Iq2S, 2560),
+            (TensorType::Iq3S, 2560),
+            (TensorType::Q2_0, 640),
         ] {
             let wire = iq_fixtures::packed(dtype.gguf_id(), 4, columns, 1);
             let weights = iq_fixtures::oracle(dtype.gguf_id(), 4, columns, 1);
@@ -395,12 +539,10 @@ mod tests {
             TensorType::Iq4Nl,
             TensorType::Iq4Xs,
             TensorType::Q8_0,
+            TensorType::Iq3S,
+            TensorType::Q2_0,
         ] {
-            let columns = if matches!(dtype, TensorType::Iq3Xxs | TensorType::Iq4Xs) {
-                256
-            } else {
-                32
-            };
+            let columns = dtype.block_elements() as usize;
             let bytes = dtype.row_bytes(columns as u64).unwrap() as usize;
             let record = vec![0; bytes];
             for length in 0..bytes {
@@ -409,5 +551,12 @@ mod tests {
             assert!(unpack32(dtype, &record, columns, columns / 32).is_err());
             assert!(unpack32(dtype, &record, usize::MAX, 0).is_err());
         }
+        let row = vec![0u8; 82];
+        for length in 0..82 {
+            assert!(unpack_iq2_s16(&row[..length], 256, 0).is_err());
+        }
+        assert!(unpack_iq2_s16(&row, 256, 16).is_err());
+        assert!(unpack_iq2_s16(&row, 128, 0).is_err());
+        assert!(unpack_iq2_s16(&row, usize::MAX, 0).is_err());
     }
 }

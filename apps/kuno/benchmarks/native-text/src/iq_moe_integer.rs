@@ -2,7 +2,7 @@
 //! Two residual Q8 activation planes stay workgroup-local. Immutable packed
 //! banks/maps/full owners retain the existing protected count1 caller proofs.
 //! Pinned arithmetic/layout provenance is in iq_moe_integer-NOTICE.txt.
-use super::{grouped_moe as g, q3_subgroup_moe};
+use super::grouped_moe as g;
 use cubecl::ir::{ElemType, StorageType, UIntKind};
 use cubecl::prelude::{ComputeClient, CubeCount, CubeDim};
 use cubecl::wgpu::{AutoCompiler, WgpuRuntime};
@@ -15,7 +15,17 @@ use kuno_text::{Error, Result};
 #[path = "iq_moe_integer_oracle.rs"]
 pub(crate) mod oracle;
 
-pub(crate) const MAX_SHARED_BYTES: usize = 17_028;
+pub(crate) const MAX_SHARED_BYTES: usize = 24_196;
+pub(crate) fn workgroup_bytes(dtype: u32) -> usize {
+    match dtype {
+        super::IQ3_XXS => 17_028,
+        super::IQ3_S => 18_052,
+        super::IQ2_S => MAX_SHARED_BYTES,
+        super::IQ4_XS => 16_004,
+        super::IQ4_NL | super::Q8_0 | super::Q2_0 => 4004,
+        _ => 0,
+    }
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct Kernel {
     down: bool,
@@ -30,16 +40,29 @@ fn projection(name: &str, dtype: u32) -> String {
         super::IQ3_XXS => {
             "let base=row+(block/8u)*98u;let group=block%8u;let word=NAME_word(base+66u+group*4u);return NAME_half(base)*(0.5+f32(word>>28u))*0.5;"
         }
+        super::IQ3_S => {
+            "let base=row+(block/8u)*110u;let group=block%8u;let scale=(NAME_byte(base+106u+group/2u)>>((group%2u)*4u))&15u;return NAME_half(base)*f32(1u+2u*scale);"
+        }
+        super::IQ2_S => {
+            "let base=row+(block/8u)*82u;let group=block%8u;let scale=(NAME_byte(base+74u+group)>>(half*4u))&15u;return NAME_half(base)*(0.5+f32(scale))*0.25;"
+        }
         super::IQ4_XS => {
             "let base=row+(block/8u)*136u;let group=block%8u;let lo=(NAME_byte(base+4u+group/2u)>>((group%2u)*4u))&15u;let hi=(NAME_half_bits(base+2u)>>(group*2u))&3u;return NAME_half(base)*f32(i32(lo|(hi<<4u))-32);"
         }
         super::IQ4_NL => "return NAME_half(row+block*18u);",
         super::Q8_0 => "return NAME_half(row+block*34u);",
+        super::Q2_0 => "return NAME_half(row+(block/2u)*18u);",
         _ => unreachable!("validated packed integer format"),
     };
     let packed = match dtype {
         super::IQ3_XXS => {
             "let base=row+(block/8u)*98u;let group=block%8u;let octet=quartet/2u;let sign_word=NAME_word(base+66u+group*4u);let sign_code=(sign_word>>(octet*7u))&127u;let signs=sign_code|((countOneBits(sign_code)&1u)<<7u);let index=NAME_byte(base+2u+group*8u+quartet);return iq3_signed_word(iq3_grid[index],signs>>((quartet%2u)*4u));"
+        }
+        super::IQ3_S => {
+            "let base=row+(block/8u)*110u;let group=block%8u;let index=NAME_byte(base+2u+group*8u+quartet)|(((NAME_byte(base+66u+group)>>quartet)&1u)<<8u);let signs=NAME_byte(base+74u+group*4u+quartet/2u);return iq3_signed_word(iq3_grid[index],signs>>((quartet%2u)*4u));"
+        }
+        super::IQ2_S => {
+            "let base=row+(block/8u)*82u;let group=block%8u;let octet=quartet/2u;let index=NAME_byte(base+2u+group*4u+octet)|(((NAME_byte(base+66u+group)>>(octet*2u))&3u)<<8u);let signs=NAME_byte(base+34u+group*4u+octet);return iq3_signed_word(iq3_grid[index*2u+quartet%2u],signs>>((quartet%2u)*4u));"
         }
         super::IQ4_XS => {
             "let base=row+(block/8u)*136u+8u+(block%8u)*16u;return iq4_word(NAME_word(base+(quartet%4u)*4u),quartet>=4u);"
@@ -48,7 +71,31 @@ fn projection(name: &str, dtype: u32) -> String {
             "return iq4_word(NAME_word(row+block*18u+2u+(quartet%4u)*4u),quartet>=4u);"
         }
         super::Q8_0 => "return NAME_word(row+block*34u+2u+quartet*4u);",
+        super::Q2_0 => "return q2_word(NAME_byte(row+(block/2u)*18u+2u+(block%2u)*8u+quartet));",
         _ => unreachable!("validated packed integer format"),
+    };
+    let accumulation = if dtype == super::IQ2_S {
+        // IQ2_S owns distinct16-element subscales inside each32-element
+        // activation plane. Never apply one half's factor to all32 codes.
+        r#"for(var half=0u;half<2u;half++) {
+            var first=0;var second=0;
+            for(var quartet=half*4u;quartet<half*4u+4u;quartet++) {
+                let q=NAME_packed(row,block,quartet);let at=block*8u+quartet;
+                first+=dot4I8Packed(q,packed_first[at]);
+                second+=dot4I8Packed(q,packed_second[at]);
+            }
+            let pair=scale_first[block]*f32(first)+scale_second[block]*f32(second);
+            sum+=NAME_factor(row,block,half)*pair;
+        }"#
+    } else {
+        r#"var first=0;var second=0;
+        for(var quartet=0u;quartet<8u;quartet++) {
+            let q=NAME_packed(row,block,quartet);let at=block*8u+quartet;
+            first+=dot4I8Packed(q,packed_first[at]);
+            second+=dot4I8Packed(q,packed_second[at]);
+        }
+        let pair=scale_first[block]*f32(first)+scale_second[block]*f32(second);
+        sum+=NAME_factor(row,block,0u)*pair;"#
     };
     format!(
         r#"
@@ -60,21 +107,14 @@ fn NAME_word(at:u32)->u32 {{
 }}
 fn NAME_half_bits(at:u32)->u32 {{return NAME_byte(at)|(NAME_byte(at+1u)<<8u);}}
 fn NAME_half(at:u32)->f32 {{return unpack2x16float(NAME_half_bits(at)).x;}}
-fn NAME_factor(row:u32,block:u32)->f32 {{{factor}}}
+fn NAME_factor(row:u32,block:u32,half:u32)->f32 {{{factor}}}
 fn NAME_packed(row:u32,block:u32,quartet:u32)->u32 {{{packed}}}
 fn NAME_project(row:u32,lane:u32,width:u32)->f32 {{
     var sum=0.0;
     for(var block=lane;block<BLOCKS_VALUEu;block+=width) {{
-        var first=0;var second=0;
-        for(var quartet=0u;quartet<8u;quartet++) {{
-            let q=NAME_packed(row,block,quartet);let at=block*8u+quartet;
-            first+=dot4I8Packed(q,packed_first[at]);
-            second+=dot4I8Packed(q,packed_second[at]);
-        }}
         // Exact bounded i32 sums precede explicit F32 scale/add round points.
         // This alternate reduction/activation policy is independently tested.
-        let pair=scale_first[block]*f32(first)+scale_second[block]*f32(second);
-        sum+=NAME_factor(row,block)*pair;
+        {accumulation}
     }}
     return subgroupAdd(sum);
 }}
@@ -106,21 +146,37 @@ impl Kernel {
                 "var a=0.0;var b=0.0;if valid && row<ROWS {let base=(slot*ROWS+row)*ROW_BYTES;a=gate_project(base,lane,width);b=up_project(base,lane,width);}\nif valid && row<ROWS && lane==0u {var sig=0.0;if a>=0.0 {sig=1.0/(1.0+exp(-a));}else{let e=exp(a);sig=e/(1.0+e);}\noutput[p.d+route*p.e+row]=a*sig*b;if row==0u {status[p.f+route]=1u;}}",
             )
         };
-        let (grid, initialize) = if self.dtype == super::IQ3_XXS {
+        let (grid, initialize) = if matches!(
+            self.dtype,
+            super::IQ3_XXS | super::IQ3_S | super::IQ2_S
+        ) {
             use std::fmt::Write;
-            let mut grid =
-                "var<workgroup> iq3_grid:array<u32,256>;\nfn iq3_literal(i:u32)->u32 {switch i {\n"
-                    .to_owned();
-            for (i, word) in kuno_text::quant::IQ3_XXS_GRID.into_iter().enumerate() {
+            let words: Vec<u32> = match self.dtype {
+                super::IQ3_XXS => kuno_text::quant::IQ3_XXS_GRID.to_vec(),
+                super::IQ3_S => kuno_text::quant::IQ3_S_GRID.to_vec(),
+                super::IQ2_S => kuno_text::quant::IQ2_S_GRID
+                    .into_iter()
+                    .flat_map(|word| [word as u32, (word >> 32) as u32])
+                    .collect(),
+                _ => unreachable!("matched original grid"),
+            };
+            let mut grid = format!(
+                "var<workgroup> iq3_grid:array<u32,{}>;\nfn iq3_literal(i:u32)->u32 {{switch i {{\n",
+                words.len()
+            );
+            for (i, &word) in words.iter().enumerate() {
                 writeln!(grid, "case {i}u: {{return 0x{word:08x}u;}}").unwrap();
             }
             grid.push_str("default: {return 0u;}\n}}\n");
             (
                 grid,
-                "for(var i=local;i<256u;i+=128u) {iq3_grid[i]=iq3_literal(i);}",
+                format!(
+                    "for(var i=local;i<{}u;i+=128u) {{iq3_grid[i]=iq3_literal(i);}}",
+                    words.len()
+                ),
             )
         } else {
-            (String::new(), "")
+            (String::new(), String::new())
         };
         let mut source = include_str!("iq_moe_integer.wgsl")
             .replace("BINDINGS_VALUE", bindings)
@@ -139,7 +195,7 @@ impl Kernel {
                 &epilogue.replace("valid && row<ROWS", "ready && row<ROWS"),
             )
             .replace("GRID_DECLARATION_VALUE", &grid)
-            .replace("GRID_INITIALIZE_VALUE", initialize);
+            .replace("GRID_INITIALIZE_VALUE", &initialize);
         for (key, value) in [
             ("COLUMNS_VALUE", columns.to_string()),
             ("ROWS_VALUE", rows.to_string()),
@@ -193,6 +249,27 @@ impl CubeTask<AutoCompiler> for Kernel {
 
 /// Caller retains full physical disjointness/source/epoch/pending wave proofs.
 /// No allocation, bank conversion, route change or publication lives here.
+pub(crate) fn validate_geometry(geometry: g::Geometry, first: usize, slots: usize) -> Result<()> {
+    let [gate, up, down] = geometry.projections();
+    if geometry.hidden() != 2560
+        || geometry.ff() != 640
+        || geometry.tile() != 1
+        || geometry.capacity() != 144
+        || geometry.gate_policy() != g::GatePolicy::Generic
+        || !matches!(
+            gate.dtype(),
+            super::IQ3_XXS | super::IQ3_S | super::IQ2_S | super::IQ4_XS
+        )
+        || up.dtype() != gate.dtype()
+        || !matches!(down.dtype(), super::IQ4_NL | super::Q8_0 | super::Q2_0)
+        || !matches!((first, slots), (0 | 72, 72))
+    {
+        return Err(Error::InvalidFormat(
+            "fixed original-packed IQ integer geometry",
+        ));
+    }
+    geometry.validate_count(1).map_err(Error::InvalidFormat)
+}
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn launch(
     client: &ComputeClient<WgpuRuntime>,
@@ -204,7 +281,7 @@ pub(crate) fn launch(
     slots: usize,
     groups: usize,
 ) -> Result<()> {
-    q3_subgroup_moe::validate_geometry(geometry, first, slots)?;
+    validate_geometry(geometry, first, slots)?;
     if !(1..=10).contains(&groups) {
         return Err(Error::InvalidBufferLength);
     }
@@ -301,12 +378,56 @@ pub(crate) fn launch(
 mod tests {
     use super::*;
     #[test]
+    fn q2_four_code_bytes_preserve_all256_patterns_without_borrow() {
+        for byte in 0..=255u32 {
+            let packed = (byte & 3)
+                | (((byte >> 2) & 3) << 8)
+                | (((byte >> 4) & 3) << 16)
+                | (((byte >> 6) & 3) << 24);
+            let signed = ((packed + 0x7f7f7f7f) ^ 0x80808080).to_le_bytes();
+            for (lane, &value) in signed.iter().enumerate() {
+                assert_eq!(value as i8, ((byte >> (2 * lane)) & 3) as i8 - 1);
+            }
+        }
+    }
+    #[test]
+    fn all48_actual_das_layers_have_exact_original_integer_projection_geometry() {
+        for layer in 0..48 {
+            let dtype = |name| {
+                crate::daslab_profile::expected_dtype(&format!("blk.{layer}.{name}.weight"))
+                    .unwrap()
+            };
+            let gate = dtype("ffn_gate_exps");
+            let up = dtype("ffn_up_exps");
+            let down = dtype("ffn_down_exps");
+            let geometry = g::Geometry::new(
+                [
+                    g::Projection::new(gate, 2560, 640, 512).unwrap(),
+                    g::Projection::new(up, 2560, 640, 512).unwrap(),
+                    g::Projection::new(down, 640, 2560, 512).unwrap(),
+                ],
+                1,
+                144,
+            )
+            .unwrap();
+            for first in [0, 72] {
+                validate_geometry(geometry, first, 72).unwrap();
+            }
+            assert!(validate_geometry(geometry, 1, 72).is_err());
+            assert!(validate_geometry(geometry, 0, 73).is_err());
+            assert!(workgroup_bytes(gate) <= MAX_SHARED_BYTES);
+        }
+    }
+    #[test]
     fn mixed_iq_integer_shaders_use_shared_grid_not_function_array_copies() {
         for (down, dtype, columns) in [
             (false, super::super::IQ3_XXS, 2560),
             (false, super::super::IQ4_XS, 2560),
+            (false, super::super::IQ3_S, 2560),
+            (false, super::super::IQ2_S, 2560),
             (true, super::super::IQ4_NL, 640),
             (true, super::super::Q8_0, 640),
+            (true, super::super::Q2_0, 640),
         ] {
             for first in [0, 72] {
                 let row_bytes = kuno_text::TensorType::from_gguf_id(dtype)
@@ -345,7 +466,13 @@ mod tests {
                     .iter()
                     .filter(|(_, v)| v.name.as_deref() == Some("iq3_grid"))
                     .collect::<Vec<_>>();
-                assert_eq!(grids.len(), usize::from(dtype == super::super::IQ3_XXS));
+                assert_eq!(
+                    grids.len(),
+                    usize::from(matches!(
+                        dtype,
+                        super::super::IQ3_XXS | super::super::IQ3_S | super::super::IQ2_S
+                    ))
+                );
                 if let Some((_, grid)) = grids.first() {
                     assert_eq!(grid.space, wgpu::naga::AddressSpace::WorkGroup);
                 }
@@ -363,16 +490,7 @@ mod tests {
                         _ => panic!("only declared bounded workgroup owners are permitted"),
                     })
                     .sum::<u32>();
-                assert_eq!(
-                    shared,
-                    if down {
-                        4004
-                    } else if dtype == super::super::IQ3_XXS {
-                        MAX_SHARED_BYTES as u32
-                    } else {
-                        16004
-                    }
-                );
+                assert_eq!(shared, workgroup_bytes(dtype) as u32);
                 let spirv = wgpu::naga::back::spv::write_vec(
                     &module,
                     &info,

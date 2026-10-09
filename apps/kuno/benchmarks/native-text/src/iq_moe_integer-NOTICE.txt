@@ -1,7 +1,10 @@
 The explicit native Rust-emitted WGSL IQ integer-dot operator uses original
-GGML IQ3_XXS/IQ4_NL/IQ4_XS packing and codebooks from llama.cpp tag b11232.
+GGML IQ3_XXS/IQ4_NL/IQ4_XS/IQ2_S/IQ3_S/Q2_0 packing and codebooks from
+llama.cpp tag b11232. Q2_0 is original raw-ID42 (64 values/18 bytes), not TQ2_0.
 The independent C fixture source/hashes are recorded in
-crates/kuno-text/tests/fixtures/iq-b11232/receipt.json. No C/CUDA engine is linked.
+crates/kuno-text/tests/fixtures/iq-b11232/receipt.json and
+crates/kuno-text/tests/fixtures/daslab-b11232/receipt.json.
+No C/CUDA engine is linked.
 
 Its original-code integer factorization was studied against Strata revision
 fb58e0dbc8399662c0e47c76578c6e878b14f6cf,
