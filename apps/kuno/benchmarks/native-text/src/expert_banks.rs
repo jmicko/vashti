@@ -554,6 +554,7 @@ fn validate_profile_residency(
     cache_bytes: usize,
     device_bytes: usize,
 ) -> Result<()> {
+    const GIB: usize = 1024 * 1024 * 1024;
     profile.validate_capacity(capacity)?;
     if profile == OriginalPackedProfile::UnslothQ3 && total != UNSLOTH_Q3_BANK_BYTES_144 {
         return Err(Error::InvalidFormat("Unsloth Q3 full graph page charge"));
@@ -574,9 +575,16 @@ fn validate_profile_residency(
         return Err(Error::InvalidFormat("segmented full graph page charge"));
     }
     if matches!(capacity, 128 | 144 | 160) {
-        if cache_bytes != (if capacity == 160 { 3 } else { 5 }) * 1024 * 1024 * 1024
-            || device_bytes != 31 * 1024 * 1024 * 1024
-        {
+        // Q3 uses smaller expert banks, but its mixed-precision shared weights
+        // exceed the old five-GiB cache once allocator page rounding is charged.
+        // Admit only the explicit measured-profile candidate, retaining Q4's
+        // original envelope and the checked bank/cache/margin budget below.
+        let accepted_cache = if profile == OriginalPackedProfile::UnslothQ3 {
+            matches!(cache_bytes, n if n == 5 * GIB || n == 8 * GIB)
+        } else {
+            cache_bytes == (if capacity == 160 { 3 } else { 5 }) * GIB
+        };
+        if !accepted_cache || device_bytes != 31 * 1024 * 1024 * 1024 {
             return Err(Error::InvalidFormat("expanded fixed residency envelope"));
         }
         validate_residency_budget_with_limit(
@@ -2973,11 +2981,20 @@ mod q3_profile_tests {
             31 * GIB,
         )
         .unwrap();
+        validate_profile_residency(
+            OriginalPackedProfile::UnslothQ3,
+            144,
+            physical,
+            8 * GIB,
+            31 * GIB,
+        )
+        .unwrap();
         for (cap, bytes, cache, device) in [
             (144, logical, 5 * GIB, 31 * GIB),
             (144, 24 * GIB, 5 * GIB, 31 * GIB),
             (128, physical, 5 * GIB, 31 * GIB),
             (144, physical, 6 * GIB, 31 * GIB),
+            (144, physical, 10 * GIB, 31 * GIB),
             (144, physical, 5 * GIB, 26 * GIB),
             (144, usize::MAX, 5 * GIB, 31 * GIB),
         ] {
@@ -2996,6 +3013,10 @@ mod q3_profile_tests {
             .unwrap();
         assert!(
             validate_profile_residency(OriginalPackedProfile::Q4, 144, physical, 5 * GIB, 31 * GIB)
+                .is_err()
+        );
+        assert!(
+            validate_profile_residency(OriginalPackedProfile::Q4, 144, 24 * GIB, 8 * GIB, 31 * GIB)
                 .is_err()
         );
     }
