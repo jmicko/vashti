@@ -20,6 +20,14 @@ The independent synthetic C reference's exact source/fixture hashes and geometry
 are recorded in tests/fixtures/daslab-b11232/receipt.json. C and Python are
 used only to regenerate committed development fixtures, not by Kuno runtime.
 
+MTP's KV-only teacher-forced cache preparation is an independent split of the
+existing Rust reference graph. The front-only/catch-up mechanism was inspected
+in MIT-licensed Strata revision fb58e0dbc8399662c0e47c76578c6e878b14f6cf,
+src/core/mtp.cpp. Strata's accepted-prefix recurrence replay is documented as a
+future native implementation reference; its code is not linked or copied into
+Kuno's execution path. Exact source locations and outstanding owner gates are
+recorded in docs/kuno-native-mtp-prefix-notes.md at the repository root.
+
 Qwen35 pretokenizer/special-token semantics were checked against llama.cpp
 revision 806eee9841de5f2c20f9d43914117f157d2baacc, src/llama-vocab.cpp, and
 Strata revision 6f32ec070f23ced9f50e704d854d775da52591ab,

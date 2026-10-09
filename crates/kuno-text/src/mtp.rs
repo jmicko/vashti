@@ -326,14 +326,7 @@ impl<'a> MtpGraph<'a> {
             256,
             EPS,
         ))?);
-        let raw_key = self.project(executor, "blk.48.attn_k.weight", 0, input, cancel)?;
-        let mut key = private(op(ops::rms_norm(
-            &raw_key,
-            self.vector("blk.48.attn_k_norm.weight")?,
-            256,
-            EPS,
-        ))?);
-        let value = self.project(executor, "blk.48.attn_v.weight", 0, input, cancel)?;
+        let (mut key, value) = self.key_value(executor, input, cancel)?;
         op(ops::rope_neox_heads(
             &mut query,
             256,
@@ -341,15 +334,7 @@ impl<'a> MtpGraph<'a> {
             sequence.position as u32,
             10_000_000.0,
         ))?;
-        op(ops::rope_neox_heads(
-            &mut key,
-            256,
-            64,
-            sequence.position as u32,
-            10_000_000.0,
-        ))?;
-        sequence.keys.extend_from_slice(&key);
-        sequence.values.extend_from_slice(&value);
+        append_key_value(sequence, &mut key, &value)?;
         // All visible positions are attended. The stored QSA indexer metadata
         // must not silently impose a 2048-token selection window here.
         let mut attended =
@@ -358,6 +343,23 @@ impl<'a> MtpGraph<'a> {
             *out *= ops::sigmoid(*g);
         }
         self.project(executor, "blk.48.attn_output.weight", 0, &attended, cancel)
+    }
+
+    fn key_value(
+        &self,
+        executor: &mut impl MatrixExecutor,
+        input: &[f32],
+        cancel: &AtomicBool,
+    ) -> Result<(Private, Private)> {
+        let raw_key = self.project(executor, "blk.48.attn_k.weight", 0, input, cancel)?;
+        let key = private(op(ops::rms_norm(
+            &raw_key,
+            self.vector("blk.48.attn_k_norm.weight")?,
+            256,
+            EPS,
+        ))?);
+        let value = self.project(executor, "blk.48.attn_v.weight", 0, input, cancel)?;
+        Ok((key, value))
     }
 
     fn expert(
@@ -444,15 +446,7 @@ impl<'a> MtpGraph<'a> {
         preceding_hidden: &[f32],
         cancel: &AtomicBool,
     ) -> Result<MtpOutput> {
-        if sequence.binding != self.binding
-            || sequence.poisoned
-            || sequence.position >= sequence.limit
-            || token as usize >= VOCAB
-            || preceding_hidden.len() != WIDE
-            || preceding_hidden.iter().any(|v| !v.is_finite())
-        {
-            return Err(Error::InvalidFormat("invalid MTP sequence input"));
-        }
+        self.validate_input(sequence, token, preceding_hidden)?;
         sequence.poisoned = true;
         let result = (|| {
             self.file.verify_file_unchanged()?;
@@ -475,18 +469,61 @@ impl<'a> MtpGraph<'a> {
                 hidden: residual,
             })
         })();
-        match result {
-            Ok(out) => {
-                sequence.position += 1;
-                sequence.poisoned = false;
-                Ok(out)
+        sequence.complete(result)
+    }
+
+    /// Append one teacher-forced token's dense KV, using its preceding *real*
+    /// target residual. This is cache preparation/catch-up, not a draft step:
+    /// no query, attention readout, FFN, head or output logits/residual are
+    /// produced. Only the sequence's K/V allocations retain derived values.
+    ///
+    /// Conditioning, HC-attention mixing and K/V math are shared with `step`.
+    /// The unused HC injection is skipped. Success advances exactly one
+    /// position. Preflight rejection leaves the sequence unchanged; any error
+    /// or cancellation after execution begins clears the complete cache and
+    /// poisons it until reset. There is no reusable half-committed prefix.
+    /// This remains a compiled-public-fixture reference, without private-runtime
+    /// erasure acceptance or speculative-controller/performance acceptance.
+    pub fn append_kv(
+        &self,
+        executor: &mut impl MatrixExecutor,
+        sequence: &mut MtpSequence,
+        token: u32,
+        preceding_hidden: &[f32],
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        self.validate_input(sequence, token, preceding_hidden)?;
+        sequence.poisoned = true;
+        let result = (|| {
+            self.file.verify_file_unchanged()?;
+            let residual = self.condition(executor, token, preceding_hidden, cancel)?;
+            let (input, _) = self.mix(executor, &residual, "blk.48.hc_attn", false, cancel)?;
+            let (mut key, value) = self.key_value(executor, &input, cancel)?;
+            append_key_value(sequence, &mut key, &value)?;
+            if cancel.load(Ordering::Relaxed) {
+                return Err(Error::InvalidFormat("MTP cancelled"));
             }
-            Err(error) => {
-                sequence.clear();
-                sequence.poisoned = true;
-                Err(error)
-            }
+            Ok(())
+        })();
+        sequence.complete(result)
+    }
+
+    fn validate_input(
+        &self,
+        sequence: &MtpSequence,
+        token: u32,
+        preceding_hidden: &[f32],
+    ) -> Result<()> {
+        if sequence.binding != self.binding
+            || sequence.poisoned
+            || sequence.position >= sequence.limit
+            || token as usize >= VOCAB
+            || preceding_hidden.len() != WIDE
+            || preceding_hidden.iter().any(|v| !v.is_finite())
+        {
+            return Err(Error::InvalidFormat("invalid MTP sequence input"));
         }
+        Ok(())
     }
 }
 
@@ -530,6 +567,20 @@ impl MtpSequence {
     pub fn position(&self) -> usize {
         self.position
     }
+    fn complete<T>(&mut self, result: Result<T>) -> Result<T> {
+        match result {
+            Ok(output) => {
+                self.position += 1;
+                self.poisoned = false;
+                Ok(output)
+            }
+            Err(error) => {
+                self.clear();
+                self.poisoned = true;
+                Err(error)
+            }
+        }
+    }
     /// Repair a provisional draft suffix before replay with real target hidden
     /// states. This discards only dense KV; it does not roll back target GDN/PLE.
     pub fn rewind(&mut self, position: usize) -> Result<()> {
@@ -555,6 +606,18 @@ impl MtpSequence {
         }
         self.position = 0;
     }
+}
+fn append_key_value(sequence: &mut MtpSequence, key: &mut [f32], value: &[f32]) -> Result<()> {
+    op(ops::rope_neox_heads(
+        key,
+        256,
+        64,
+        sequence.position as u32,
+        10_000_000.0,
+    ))?;
+    sequence.keys.extend_from_slice(key);
+    sequence.values.extend_from_slice(value);
+    Ok(())
 }
 fn wipe_cache(buffer: &mut Vec<f32>) {
     buffer.resize(buffer.capacity(), 0.);
@@ -680,6 +743,10 @@ fn dense_attention(
     }
     Ok(output)
 }
+
+#[cfg(test)]
+#[path = "mtp_kv_tests.rs"]
+mod kv_tests;
 
 #[cfg(test)]
 mod tests {
