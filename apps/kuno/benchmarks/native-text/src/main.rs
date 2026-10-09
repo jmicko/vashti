@@ -32,6 +32,7 @@ mod ple_chunk;
 mod ple_chunk_probe;
 mod private_arena;
 mod public_resources;
+mod q3_ideal_public;
 mod q3_public_reference;
 pub mod q3_router_reference;
 mod qsa_chunk;
@@ -291,7 +292,34 @@ fn q3_empty_slot_fill(
         _ => Err("Q3 empty-slot fill requires explicit protected original Q3 and0 or1"),
     }
 }
-/// Diagnostic only: successful completion must never publish timing acceptance.
+/// Explicit fixed-public speed experiments; no arbitrary request opt-in.
+#[allow(clippy::too_many_arguments)]
+fn q3_speed_fixture_option(
+    mode: &str,
+    profile: expert_banks::OriginalPackedProfile,
+    protected: bool,
+    positions: usize,
+    empty_fill: bool,
+    option: &'static str,
+    raw: Option<&str>,
+) -> Result<bool, &'static str> {
+    match raw {
+        None => Ok(false),
+        Some("1")
+            if mode == "resident-count1-hybrid-chat"
+                && profile == expert_banks::OriginalPackedProfile::UnslothQ3
+                && protected
+                && empty_fill
+                && matches!(positions, 4 | 23 | 32)
+                && matches!(option, "skip-segments" | "ideal-prefix")
+                && (option == "skip-segments" || positions == 23) =>
+        {
+            Ok(true)
+        }
+        _ => Err("Q3 speed diagnostic requires its explicit protected original fixture"),
+    }
+}
+
 fn q3_router_reference_path(
     expert_oracle: bool,
     raw: Option<std::ffi::OsString>,
@@ -936,6 +964,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .map(|raw| raw.to_str().ok_or("Q3 empty-slot fill encoding rejected"))
             .transpose()?,
     )?;
+    let speed_option = |name: &str, option| {
+        let raw = std::env::var_os(name);
+        q3_speed_fixture_option(
+            &mode,
+            packed_profile,
+            transient_resident && public_owned_zero_audit,
+            q3_positions,
+            q3_empty_slot_fill,
+            option,
+            raw.as_ref()
+                .map(|v| v.to_str().ok_or("Q3 speed option encoding rejected"))
+                .transpose()?,
+        )
+    };
+    let q3_skip_empty_segments = speed_option("KUNO_LAB_Q3_SKIP_EMPTY_SEGMENTS", "skip-segments")?;
+    let q3_ideal_public = speed_option("KUNO_LAB_Q3_IDEAL_PUBLIC", "ideal-prefix")?;
     let q3_oracle_raw = std::env::var_os("KUNO_LAB_Q3_EXPERT_ORACLE");
     let q3_expert_oracle = q3_expert_oracle(
         &mode,
@@ -1289,6 +1333,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "oracle diagnostic requires exclusive protected fixed public intel144 cap10 mode"
                 .into(),
         );
+    }
+
+    if q3_ideal_public
+        && (steady_public
+            || oracle_public
+            || adaptive_experts
+            || secondary_experts
+            || count1_banks != Count1Banks::Intel144
+            || count1_hybrid_cap != Some(10)
+            || gpu_expert_limit != 10
+            || !mapped_weights
+            || !count1_pooled
+            || !count1_overlap
+            || !next_shared
+            || !inline_dispatch
+            || std::env::var("KUNO_LAB_REQUEST_IO_REUSE").as_deref() != Ok("1"))
+    {
+        return Err("Q3 ideal prefix requires exclusive original protected cap10 execution".into());
     }
 
     let integer_experts = count1_environment_opt_in(&mode, "KUNO_LAB_INTEGER_EXPERTS")?;
@@ -2715,6 +2777,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             executor.integer_experts = integer_experts;
             executor.gpu_expert_limit = gpu_expert_limit;
             executor.q3_empty_slot_fill = q3_empty_slot_fill;
+            executor.q3_skip_empty_segments = q3_skip_empty_segments;
             executor.q3_expert_oracle = q3_expert_oracle;
             executor.q3_router_reference = q3_router_reference.clone();
             executor.fast_dense = fast_gpu;
@@ -3094,6 +3157,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let pre_slots = q3_prefill_slots.ok_or("Q3 prefill slot receipt absent")?;
                     let occupied = executor.q3_occupied_slots()?;
                     receipt["q3_empty_slot_fill"] = serde_json::json!(q3_empty_slot_fill);
+                    receipt["q3_skip_empty_segments"] = serde_json::json!(q3_skip_empty_segments);
                     receipt["expert_slots_reserved"] = serde_json::json!(48 * 144);
                     receipt["expert_slots_occupied_after_prefill"] = serde_json::json!(pre_slots);
                     receipt["expert_slots_occupied_after_decode"] = serde_json::json!(occupied);
@@ -3598,6 +3662,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 executor.integer_experts = integer_experts;
                 executor.gpu_expert_limit = gpu_expert_limit;
                 executor.q3_empty_slot_fill = q3_empty_slot_fill;
+                executor.q3_skip_empty_segments = q3_skip_empty_segments;
                 executor.q3_expert_oracle = q3_expert_oracle;
                 executor.q3_router_reference = q3_router_reference.clone();
                 executor.fast_dense = fast_gpu;
@@ -3725,6 +3790,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     executor.integer_experts = integer_experts;
                     executor.gpu_expert_limit = gpu_expert_limit;
                     executor.q3_empty_slot_fill = q3_empty_slot_fill;
+                    executor.q3_skip_empty_segments = q3_skip_empty_segments;
                     executor.q3_expert_oracle = q3_expert_oracle;
                     executor.q3_router_reference = q3_router_reference.clone();
                     executor.fast_dense = fast_gpu;
@@ -3979,6 +4045,51 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         &cancel,
                     )?;
                 }
+                if q3_ideal_public {
+                    resident.take();
+                    receipt["q3_ideal_probe"] = q3_ideal_public::run(
+                        |context| {
+                            let mut e = executor::GpuExecutor::new_with_profile(
+                                &file,
+                                client.clone(),
+                                cache_budget,
+                                expert_slots,
+                                device_budget,
+                                packed_profile,
+                            )?;
+                            e.enable_transient_resident(
+                                transient_context
+                                    .as_ref()
+                                    .ok_or("oracle transient owner missing")?
+                                    .clone(),
+                            )?;
+                            e.q3_empty_slot_fill = q3_empty_slot_fill;
+                            e.q3_skip_empty_segments = q3_skip_empty_segments;
+                            e.gpu_router = gpu_router;
+                            e.fused_experts = fused_experts;
+                            e.integer_experts = integer_experts;
+                            e.gpu_expert_limit = gpu_expert_limit;
+                            e.fast_dense = fast_gpu;
+                            e.fast_dense_fault = fast_gpu_fault;
+                            e.shared_kernels = next_shared;
+                            e.shared_gdn = shared_gdn;
+                            e.token_io_checkpoint = token_checkpoint || defer_router_io;
+                            let r = resident_model::ResidentModel::new_for_lab_fixture(
+                                model.bound_graph(),
+                                client.clone(),
+                                context,
+                                &mut e,
+                                true,
+                                native_config.clone(),
+                            )?;
+                            Ok((r, e))
+                        },
+                        q3_reference
+                            .as_ref()
+                            .ok_or("Q3 original reference absent")?,
+                        &cancel,
+                    )?;
+                }
                 if q3_expert_oracle {
                     return Err(
                         "fixed public expert diagnostic does not publish performance acceptance"
@@ -4034,6 +4145,75 @@ mod transient_mode_tests {
                     32,
                     true,
                     Some(raw)
+                )
+                .is_err()
+            );
+        }
+    }
+    #[test]
+    fn q3_speed_options_reject_other_models_unprotected_and_noncanonical_inputs() {
+        use crate::expert_banks::OriginalPackedProfile as P;
+        for option in ["skip-segments", "ideal-prefix"] {
+            assert!(
+                !super::q3_speed_fixture_option("probe", P::Q4, false, 4, false, option, None)
+                    .unwrap()
+            );
+            assert!(
+                super::q3_speed_fixture_option(
+                    "resident-count1-hybrid-chat",
+                    P::UnslothQ3,
+                    true,
+                    23,
+                    true,
+                    option,
+                    Some("1")
+                )
+                .unwrap()
+            );
+            for (mode, profile, protected, positions, empty) in [
+                ("probe", P::UnslothQ3, true, 23, true),
+                ("resident-count1-hybrid-chat", P::Q4, true, 23, true),
+                ("resident-count1-hybrid-chat", P::UnslothQ3, false, 23, true),
+                ("resident-count1-hybrid-chat", P::UnslothQ3, true, 23, false),
+            ] {
+                assert!(
+                    super::q3_speed_fixture_option(
+                        mode,
+                        profile,
+                        protected,
+                        positions,
+                        empty,
+                        option,
+                        Some("1")
+                    )
+                    .is_err()
+                );
+            }
+            for raw in ["0", "", "01", "true"] {
+                assert!(
+                    super::q3_speed_fixture_option(
+                        "resident-count1-hybrid-chat",
+                        P::UnslothQ3,
+                        true,
+                        23,
+                        true,
+                        option,
+                        Some(raw)
+                    )
+                    .is_err()
+                );
+            }
+        }
+        for positions in [4, 32] {
+            assert!(
+                super::q3_speed_fixture_option(
+                    "resident-count1-hybrid-chat",
+                    P::UnslothQ3,
+                    true,
+                    positions,
+                    true,
+                    "ideal-prefix",
+                    Some("1")
                 )
                 .is_err()
             );
