@@ -46,6 +46,8 @@ mod ple_batch_gpu;
 mod ple_chunk;
 mod ple_chunk_probe;
 mod private_arena;
+mod public_host_weight_pool;
+mod public_host_weight_probe;
 mod public_resources;
 mod q3_ideal_public;
 mod q3_public_reference;
@@ -1095,6 +1097,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         None
     };
+    let public_host_weight_receipt = if mode == "public-host-weight-probe" {
+        Some(public_host_weight_probe::registration(
+            &std::env::args_os().collect::<Vec<_>>(),
+            std::env::vars_os(),
+            target_lab_build::Build::compiled() != target_lab_build::Build::Rejected,
+        )?)
+    } else {
+        if std::env::var_os("KUNO_LAB_PUBLIC_HOST_WEIGHT_ONLY").is_some() {
+            return Err("public host weights require their dedicated probe".into());
+        }
+        None
+    };
     let batch_router_receipt = if mode == "batch-router-gpu-probe" {
         let selected: std::collections::BTreeMap<_, _> = std::env::vars_os()
             .filter(|(k, _)| {
@@ -1487,6 +1501,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .or_else(|| target_rows_inputs.as_ref().map(|p| p.inline_dispatch))
         .or_else(|| language_inputs.as_ref().map(|p| p.inline_dispatch))
         .or_else(|| strata_mtp_inputs.as_ref().map(|_| inline_dispatch))
+        .or_else(|| public_host_weight_receipt.as_ref().map(|_| inline_dispatch))
         .or_else(|| batch_router_receipt.as_ref().map(|_| inline_dispatch));
     let device_dispatch = if let Some(selected) = public_target_dispatch {
         target_lab_build::validate_runtime(selected)?;
@@ -2053,6 +2068,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if batch_router_receipt.is_some() {
             resident_batch_router_gpu::validate_limits(&adapter.limits())?;
         }
+        if public_host_weight_receipt.is_some() {
+            public_host_weight_probe::validate_limits(&adapter.limits())?;
+        }
         if mtp_gpu_inputs.is_some() {
             mtp_gpu_probe::validate_limits(&adapter.limits())?;
         }
@@ -2209,6 +2227,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             device_result?
         };
+        if let Some(receipt) = public_host_weight_receipt {
+            std::panic::set_hook(Box::new(|_| {
+                eprintln!("public_host_weight_failure panic=true")
+            }));
+            let mut value =
+                public_host_weight_probe::run(&adapter, &device, &queue, &adapter.limits())?;
+            value["vendor"] = vendor.into();
+            serde_json::to_writer_pretty(
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(receipt)?,
+                &value,
+            )?;
+            println!("public_host_weight_operator_complete owners_erased=true");
+            return Ok(());
+        }
         let grouped_limits = adapter.limits();
         let gr_storage_alignment = adapter.limits().min_storage_buffer_offset_alignment as usize;
         let selected = init_device(

@@ -1676,6 +1676,16 @@ class StrataInspiredGuards(unittest.TestCase):
         guard=importlib.util.module_from_spec(spec);spec.loader.exec_module(guard)
         return guard
 
+    def test_host_weight_operator_rejects_model_or_private_input(self):
+        guard=self.guard()
+        env={"KUNO_LAB_PUBLIC_HOST_WEIGHT_ONLY":"1","KUNO_PUBLIC_RECEIPT":"/public/numeric"}
+        for card in ("intel","nvidia"):
+            args=["/frozen/binary",card,"public-host-weight-probe"]
+            self.assertEqual(guard.memory_limit(env,args),8*1024**3)
+            for key in ("KUNO_TEST_MODEL", "KUNO_LAB_LANGUAGE_PUBLIC_ONLY", "KUNO_LAB_PROMPT", "KUNO_LAB_DEVICE_DISPATCH"):
+                with self.assertRaises(ValueError):guard.memory_limit(dict(env,**{key:"1"}),args)
+            with self.assertRaises(ValueError):guard.memory_limit({"KUNO_PUBLIC_RECEIPT":"/public/numeric"},args)
+
     def test_q2_draft_requires_independent_reference_and_exact_profile(self):
         guard=self.guard()
         env={"KUNO_LAB_STRATA_MTP_PUBLIC_ONLY":"1", "KUNO_TEST_STRATA_MTP":"/original/q2", "KUNO_TEST_DASLAB_DIR":"/original/target", "KUNO_PUBLIC_DASLAB_CARRY":"/public/carry", "KUNO_PUBLIC_STRATA_MTP_REFERENCE":"/public/q2-reference", "KUNO_PUBLIC_RECEIPT":"/public/numeric", "KUNO_LAB_MTP_SWEEPS":"fused"}
