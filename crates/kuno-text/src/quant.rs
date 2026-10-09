@@ -2,9 +2,14 @@
 //!
 //! Layout and scalar equations were checked against ggml revision
 //! `4bf5f6000653b7881d00963cd6ddb665ccd62a8d`, `ggml-common.h` and
-//! `ggml-quants.c`. See ../NOTICE for the MIT provenance notice.
+//! `ggml-quants.c`. The nonlinear IQ formats additionally use the pinned
+//! llama.cpp `b11232` sources recorded in `quant_iq.rs` and its public fixture
+//! receipt. See ../NOTICE for the MIT provenance notice.
 
 use crate::{Error, Result};
+
+#[path = "quant_iq.rs"]
+mod iq;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TensorType {
@@ -14,6 +19,9 @@ pub enum TensorType {
     Q8_0,
     Q4K,
     Q6K,
+    Iq3Xxs,
+    Iq4Nl,
+    Iq4Xs,
     Bf16,
 }
 
@@ -26,6 +34,9 @@ impl TensorType {
             8 => Ok(Self::Q8_0),
             12 => Ok(Self::Q4K),
             14 => Ok(Self::Q6K),
+            18 => Ok(Self::Iq3Xxs),
+            20 => Ok(Self::Iq4Nl),
+            23 => Ok(Self::Iq4Xs),
             30 => Ok(Self::Bf16),
             _ => Err(Error::UnsupportedTensorType(id)),
         }
@@ -39,6 +50,9 @@ impl TensorType {
             Self::Q8_0 => 8,
             Self::Q4K => 12,
             Self::Q6K => 14,
+            Self::Iq3Xxs => 18,
+            Self::Iq4Nl => 20,
+            Self::Iq4Xs => 23,
             Self::Bf16 => 30,
         }
     }
@@ -46,8 +60,8 @@ impl TensorType {
     pub const fn block_elements(self) -> u64 {
         match self {
             Self::F32 | Self::F16 | Self::Bf16 => 1,
-            Self::Q5_0 | Self::Q8_0 => 32,
-            Self::Q4K | Self::Q6K => 256,
+            Self::Q5_0 | Self::Q8_0 | Self::Iq4Nl => 32,
+            Self::Q4K | Self::Q6K | Self::Iq3Xxs | Self::Iq4Xs => 256,
         }
     }
 
@@ -59,6 +73,9 @@ impl TensorType {
             Self::Q8_0 => 34,
             Self::Q4K => 144,
             Self::Q6K => 210,
+            Self::Iq3Xxs => 98,
+            Self::Iq4Nl => 18,
+            Self::Iq4Xs => 136,
         }
     }
 
@@ -105,6 +122,9 @@ impl TensorType {
                 }
                 Self::Q4K => decode_q4k(block, out),
                 Self::Q6K => decode_q6k(block, out),
+                Self::Iq3Xxs => iq::decode_iq3_xxs(block, out),
+                Self::Iq4Nl => iq::decode_iq4_nl(block, out),
+                Self::Iq4Xs => iq::decode_iq4_xs(block, out),
             }
         }
         Ok(())

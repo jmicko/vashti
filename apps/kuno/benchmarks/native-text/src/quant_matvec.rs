@@ -311,6 +311,24 @@ mod tests {
     }
 
     #[test]
+    fn scalar_iq_support_does_not_grant_unimplemented_gpu_layouts() {
+        for kind in [
+            kuno_text::TensorType::Iq3Xxs,
+            kuno_text::TensorType::Iq4Nl,
+            kuno_text::TensorType::Iq4Xs,
+        ] {
+            let columns = kind.block_elements() as usize;
+            let bytes = kind.block_bytes() as usize;
+            assert_eq!(block_layout(kind.gguf_id()), None);
+            assert_eq!(
+                validate_layout(kind.gguf_id(), 1, columns, bytes, columns, 1),
+                Err("unsupported GGUF dtype")
+            );
+            assert!(matmul::MatrixGeometry::new(kind.gguf_id(), 1, columns, 1).is_err());
+        }
+    }
+
+    #[test]
     fn aligned_f32_original_words_preserve_special_values_and_independent_decode_bits() {
         let special = [
             0_u32,

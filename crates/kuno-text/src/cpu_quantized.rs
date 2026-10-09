@@ -334,6 +334,23 @@ mod avx {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recognized_iq_formats_reject_original_q8_operator_without_fallback() {
+        let cancel = AtomicBool::new(false);
+        for kind in [TensorType::Iq3Xxs, TensorType::Iq4Nl, TensorType::Iq4Xs] {
+            let columns = kind.block_elements() as usize;
+            let mut input = Input::empty();
+            input.fill(&vec![0.25; columns], &cancel).unwrap();
+            let packed = vec![0; kind.block_bytes() as usize];
+            assert!(!supported(kind));
+            assert!(matches!(
+                dot(kind, &packed, &input, &cancel),
+                Err(Error::InvalidFormat("CPU quantized format unsupported"))
+            ));
+        }
+    }
+
     #[test]
     fn quantization_bounds_zero_subnormal_geometry_and_erasure() {
         let cancel = AtomicBool::new(false);

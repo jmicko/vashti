@@ -2266,7 +2266,7 @@ mod tests {
     use std::sync::atomic::{AtomicU64, AtomicUsize};
 
     static NEXT: AtomicU64 = AtomicU64::new(0);
-    const KINDS: [TensorType; 7] = [
+    const KINDS: [TensorType; 10] = [
         TensorType::F32,
         TensorType::F16,
         TensorType::Bf16,
@@ -2274,6 +2274,9 @@ mod tests {
         TensorType::Q8_0,
         TensorType::Q4K,
         TensorType::Q6K,
+        TensorType::Iq3Xxs,
+        TensorType::Iq4Nl,
+        TensorType::Iq4Xs,
     ];
 
     struct Fixture {
@@ -2400,6 +2403,32 @@ mod tests {
                     }
                 }
                 (bytes, expected)
+            }
+            TensorType::Iq3Xxs | TensorType::Iq4Nl | TensorType::Iq4Xs => {
+                // Packed IQ blocks plus F32 expectations from the separately
+                // compiled pinned C oracle, never TensorType::decode. Use its
+                // ordinary finite first records for complete expert tests.
+                let (fixture, records): (&[u8], usize) = match kind {
+                    TensorType::Iq3Xxs => {
+                        (include_bytes!("../tests/fixtures/iq-b11232/iq3_xxs.bin"), 4)
+                    }
+                    TensorType::Iq4Nl => {
+                        (include_bytes!("../tests/fixtures/iq-b11232/iq4_nl.bin"), 2)
+                    }
+                    TensorType::Iq4Xs => {
+                        (include_bytes!("../tests/fixtures/iq-b11232/iq4_xs.bin"), 8)
+                    }
+                    _ => unreachable!(),
+                };
+                let bytes = kind.block_bytes() as usize;
+                let record_bytes = bytes + kind.block_elements() as usize * 4;
+                let first = (seed % records) * record_bytes;
+                let record = &fixture[first..first + record_bytes];
+                let expected = record[bytes..]
+                    .chunks_exact(4)
+                    .map(|value| f32::from_le_bytes(value.try_into().unwrap()))
+                    .collect();
+                (record[..bytes].to_vec(), expected)
             }
         }
     }
@@ -2757,7 +2786,7 @@ mod tests {
     }
 
     #[test]
-    fn all_seven_original_formats_match_independent64_lane_expectations() {
+    fn all_scalar_formats_match_independent64_lane_expectations() {
         let cancel = AtomicBool::new(false);
         for kind in KINDS {
             let f = fixture([kind; 3], 256, 256, 3);
@@ -2923,7 +2952,7 @@ mod tests {
                 TensorType::F32 | TensorType::F16 | TensorType::Bf16 => {
                     &[1, 3, 5, 63, 64, 65, 127, 129, 256]
                 }
-                TensorType::Q5_0 | TensorType::Q8_0 => &[32, 64, 96, 256],
+                TensorType::Q5_0 | TensorType::Q8_0 | TensorType::Iq4Nl => &[32, 64, 96, 256],
                 _ => &[256, 512],
             };
             for &width in widths {

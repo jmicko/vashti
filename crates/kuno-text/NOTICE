@@ -2,6 +2,15 @@ GGML packing layouts and scalar decoding equations were checked against ggml
 revision 4bf5f6000653b7881d00963cd6ddb665ccd62a8d. Kuno's reader and decoding
 implementation are safe Rust; no ggml library or C/C++ engine is linked.
 
+IQ3_XXS, IQ4_NL and IQ4_XS scalar packing/decoding and nonlinear codebooks were
+checked against llama.cpp tag b11232, ggml/src/ggml-common.h and
+ggml/src/ggml-quants.c. IQ3's 256-entry grid and IQ4's nonlinear values are
+derived from those MIT-licensed GGML tables. The public synthetic fixture
+generator compiles extracted upstream dequantizers for development validation;
+Kuno runtime and Rust tests do not link or invoke that C reference. Pinned
+source SHA256 values and fixture hashes are recorded in
+tests/fixtures/iq-b11232/receipt.json.
+
 Qwen35 pretokenizer/special-token semantics were checked against llama.cpp
 revision 806eee9841de5f2c20f9d43914117f157d2baacc, src/llama-vocab.cpp, and
 Strata revision 6f32ec070f23ced9f50e704d854d775da52591ab,
