@@ -374,6 +374,7 @@ struct PageOwner {
     backing: Option<Backing>,
     buffer: Option<wgpu::Buffer>,
     placement: Placement,
+    allocation_alignment: u64,
     logical: u64,
     phase: Phase,
     binding: Option<Binding>,
@@ -406,6 +407,7 @@ pub(crate) struct PageResource {
     role: Role,
     page: usize,
     backing_bytes: u64,
+    allocation_alignment: u64,
     placement: Placement,
     source_sha256: [u8; 32],
 }
@@ -431,6 +433,11 @@ impl PageResource {
     }
     pub(crate) fn backing_bytes(&self) -> u64 {
         self.backing_bytes
+    }
+    /// Actual native requirement authenticated before allocation and import.
+    /// The plan's rounding is a conservative envelope, not driver alignment.
+    pub(crate) fn allocation_alignment(&self) -> u64 {
+        self.allocation_alignment
     }
     pub(crate) fn placement(&self) -> Placement {
         self.placement
@@ -643,6 +650,7 @@ impl<'plan, 'model, 'file> Mirror<'plan, 'model, 'file> {
                         backing: Some(backing),
                         buffer: Some(imported),
                         placement,
+                        allocation_alignment: requirements.alignment,
                         logical: page.logical_bytes(),
                         phase: Phase::Sealed,
                         binding: None,
@@ -724,6 +732,7 @@ impl<'plan, 'model, 'file> Mirror<'plan, 'model, 'file> {
             role,
             page: p,
             backing_bytes: owner.backing.as_ref().unwrap().bytes,
+            allocation_alignment: owner.allocation_alignment,
             placement: owner.placement,
             source_sha256: SOURCE_SHA256[owner.shard],
         })

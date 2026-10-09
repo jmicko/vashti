@@ -79,7 +79,7 @@ impl RegisteredPage {
             return Err(reject());
         }
         expected
-            .check_actual_allocation(witness.backing_bytes(), plan.budget().allocation_alignment)?;
+            .check_actual_allocation(witness.backing_bytes(), witness.allocation_alignment())?;
         let metadata = u::resources(client, vec![handle.clone()])?;
         if metadata.len() != 1
             || !same_resource(metadata[0].resource(), witness.resource())

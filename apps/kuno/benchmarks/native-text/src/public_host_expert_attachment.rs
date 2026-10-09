@@ -167,6 +167,7 @@ impl<'model, 'file> PreparedPlan<'model, 'file> {
         let handle = {
             let banks = executor.public_host_completed_banks(self.graph)?;
             self.plan.check_frozen(self.graph, self.model, banks)?;
+            println!("public_frozen_host_source_freeze_complete");
             banks[0]
                 .gate()
                 .segments()
@@ -223,6 +224,10 @@ impl<'model, 'file> PreparedPlan<'model, 'file> {
             .map_err(Error::InvalidFormat)?
         };
         let ledger = mirror.ledger();
+        println!(
+            "public_frozen_host_materialization_complete pages={}",
+            mirror::PAGES
+        );
         for layer in 0..plan::LAYERS {
             for role in ROLES {
                 for page_index in 0..3 {

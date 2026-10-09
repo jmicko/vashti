@@ -585,24 +585,30 @@ impl<'model, 'file> Plan<'model, 'file> {
             || !std::ptr::eq(model, self.model)
             || self.layers.len() != LAYERS
         {
-            return Err(reject());
+            return Err(Error::InvalidFormat(
+                "public host freeze graph or model identity",
+            ));
         }
         self.graph.verify_unchanged()?;
         model.verify_file_unchanged()?;
         for (i, (layer, bank)) in self.layers.iter().zip(banks).enumerate() {
             if layer.instance != bank.instance() {
-                return Err(reject());
+                return Err(Error::InvalidFormat("public host freeze bank instance"));
             }
             layer
                 .origin
                 .validate_origin(&bank.slots)
-                .map_err(|_| reject())?;
-            layer.maps.check_bank(&bank.slots)?;
+                .map_err(|_| Error::InvalidFormat("public host freeze bank generation"))?;
+            layer
+                .maps
+                .check_bank(&bank.slots)
+                .map_err(|_| Error::InvalidFormat("public host freeze resident map"))?;
             let original = sources(graph, i)?;
-            check_bank(bank, original)?;
+            check_bank(bank, original)
+                .map_err(|_| Error::InvalidFormat("public host freeze bank geometry"))?;
             for (now, pinned) in original.into_iter().zip(layer.sources) {
                 if !now.belongs_to(model) || now.info() != pinned.info() {
-                    return Err(reject());
+                    return Err(Error::InvalidFormat("public host freeze source tensor"));
                 }
             }
         }
@@ -896,6 +902,28 @@ mod tests {
         );
         assert!(
             p.check_actual_allocation(p.physical_envelope_bytes(), 3)
+                .is_err()
+        );
+    }
+    #[test]
+    fn driver_alignment_can_be_smaller_than_budget_rounding() {
+        let page = role(0, Role::Gate, 65536)[0];
+        // Actual layer0 IQ3_XXS page geometry from the pinned original model.
+        assert_eq!(page.logical_bytes(), 90_316_800);
+        assert_eq!(page.physical_envelope_bytes(), 90_374_144);
+        assert_eq!(page.logical_bytes() % 65536, 8192);
+        page.check_actual_allocation(page.logical_bytes(), 256)
+            .unwrap();
+        assert!(
+            page.check_actual_allocation(page.logical_bytes(), 65536)
+                .is_err()
+        );
+        assert!(
+            page.check_actual_allocation(page.logical_bytes() - 256, 256)
+                .is_err()
+        );
+        assert!(
+            page.check_actual_allocation(page.physical_envelope_bytes() + 256, 256)
                 .is_err()
         );
     }
