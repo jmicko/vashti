@@ -18,6 +18,90 @@ BASE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(BASE)
 MODE = "resident-count1-hybrid-chat"
 GUARD = "verified_lab_limits swap_max=0 core_soft=0 core_hard=0 memory_max=8589934592"
+STEADY_BEGIN = "public_steady_probe_begin=true"
+STEADY_CLOSED = "public_steady_probe_closed=true"
+ADAPTIVE_CLOSED = "public_adaptive_closed=true host_reservation=196608"
+
+
+def validate_steady_selection(selected, *, long, banks, mapped, workers, overlap, shared,
+                              dispatch, request_io_reuse, deferred, secondary_experts,
+                              gpu_expert_limit=10, card="intel", cap=10):
+    if type(selected) is not bool:
+        raise ValueError("Steady public selection must be an explicit boolean")
+    if not selected:
+        return
+    if (card != "intel" or cap != 10 or gpu_expert_limit != 10 or banks != "intel144"
+        or workers != "pooled" or dispatch != "inline"
+        or any(value is not True for value in (long, mapped, overlap, shared, request_io_reuse, deferred))
+        or secondary_experts is not False):
+        raise ValueError("Steady public probe requires long protected intel144 mapped cap10 pooled overlap shared inline request reuse and deferred routing without secondary experts")
+
+
+def validate_steady_probe(receipt, selected, output, *, adaptive_experts=False,
+                          adaptive_direct_upload=False):
+    if any(type(value) is not bool for value in (selected, adaptive_experts, adaptive_direct_upload)):
+        raise ValueError("Steady probe selections must be explicit booleans")
+    if adaptive_direct_upload and not adaptive_experts:
+        raise ValueError("Steady direct upload requires adaptive experts")
+    lines = output.splitlines()
+    if not selected:
+        if "steady_probe" in receipt or any(line in (STEADY_BEGIN, STEADY_CLOSED) for line in lines):
+            raise ValueError("Unselected steady probe cannot report work or delimiters")
+        return output
+    if lines.count(STEADY_BEGIN) != 1:
+        raise ValueError("Selected steady probe requires exactly one original-fixture delimiter")
+    at = lines.index(STEADY_BEGIN)
+    original, extra = lines[:at], lines[at + 1:]
+    if STEADY_CLOSED in original or extra.count(STEADY_CLOSED) != 1:
+        raise ValueError("Steady closing proof must occur exactly once after the original fixture")
+    probe = receipt.get("steady_probe")
+    expected = {"scope": "fixed-public-repeated-prefix-steady-diagnostic", "teacher_forced": True,
+                "prefix_tokens": 128, "prefix_matches": True, "steps": 1024,
+                "window_tokens": 128, "context_tokens": 1227, "seed": 424242,
+                "adaptive_experts": adaptive_experts, "adaptive_direct_upload": adaptive_direct_upload,
+                "owned_io_cleanup_accepted": True}
+    keys = set(expected) | {"windows", "greedy_ids", "owned_zero_audit"}
+    if (type(probe) is not dict or set(probe) != keys
+        or any(type(probe.get(key)) is not type(value) or probe[key] != value
+               for key, value in expected.items())):
+        raise ValueError("Steady diagnostic schema and fixed public prefix selection must match exactly")
+    windows = probe["windows"]
+    window_keys = {"first_step", "steps", "elapsed_ns", "gpu_hits", "cpu_misses", "promotions",
+                   "upload_bytes", "promotions_wall_ns", "resources"}
+    resource_keys = {"minor_faults", "major_faults", "user_ticks", "system_ticks", "read_bytes", "write_bytes"}
+    if type(windows) is not list or len(windows) != 8:
+        raise ValueError("Steady probe requires eight complete timing windows")
+    for index, window in enumerate(windows):
+        if (type(window) is not dict or set(window) != window_keys
+            or any(type(window.get(key)) is not int or window[key] < 0 for key in window_keys - {"resources"})
+            or window["first_step"] != index * 128 or window["steps"] != 128
+            or window["elapsed_ns"] == 0 or window["gpu_hits"] + window["cpu_misses"] != 128 * 48 * 10
+            or window["promotions"] > 512
+            or not adaptive_experts and any(window[key] for key in ("promotions", "upload_bytes", "promotions_wall_ns"))
+            or any((window[key] > 0) is not (window["promotions"] > 0)
+                   for key in ("upload_bytes", "promotions_wall_ns"))):
+            raise ValueError("Steady windows require typed complete conserved work and bounded promotions")
+        resources = window["resources"]
+        if (type(resources) is not dict or set(resources) != resource_keys
+            or any(type(value) is not int or value < 0 for value in resources.values())):
+            raise ValueError("Steady window resources require the exact six nonnegative counters")
+    ids = probe["greedy_ids"]
+    if (type(ids) is not list or len(ids) != 1024
+        or any(type(token) is not int or not 0 <= token < 2**32 for token in ids)):
+        raise ValueError("Steady fixed-public greedy comparison requires exactly 1024 typed token IDs")
+    audit = probe["owned_zero_audit"]
+    audit_keys = {"main_buffers", "main_bytes", "source_buffers", "source_bytes"}
+    if (type(audit) is not dict or set(audit) != audit_keys
+        or any(type(value) is not int for value in audit.values())
+        or audit["main_buffers"] != 1378 or not 818413568 <= audit["main_bytes"] <= 8 * 1024**3
+        or audit["source_buffers"] != 0 or audit["source_bytes"] != 0):
+        raise ValueError("Steady probe requires the full extended-context owner audit")
+    audit_marker = ("public_resident_owned_zero_audit main_buffers={main_buffers} main_bytes={main_bytes} "
+                    "source_buffers={source_buffers} source_bytes={source_bytes}").format(**audit)
+    audits = [line for line in extra if line.startswith("public_resident_owned_zero_audit ")]
+    if audits != [audit_marker] or extra.count(ADAPTIVE_CLOSED) != int(adaptive_experts):
+        raise ValueError("Steady probe must close and audit its separate full owner exactly once")
+    return "\n".join(original)
 
 
 def validate_cap(cap):
@@ -156,8 +240,14 @@ def validate_private_upload_phases(receipt):
             raise ValueError("Private upload phases require original/copied/cleared byte conservation")
 
 
-def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False, metadata=False, banks="standard", shared=False, shared_gdn=False, info_batch_upload=False, dispatch="threaded", cpu_fma=False, reclaim_gpu_sources=False, native_scratch_clear=False, cpu_q8_residual=False, cpu_mapped_prefetch=False, pageout_gpu_sources=False, cpu_threads=16, cpu_q8_two_pass=False, cpu_buffered_weights=False, compute_scratch_clear=False, grouped_status=False, readback_reuse=False, gpu_upload_clear=False, inline_readback=False, cpu_work_stealing=False, request_io_reuse=False, bind_group_reuse=False, fused_experts=False, gpu_expert_limit=10, integer_experts=False, binding_cache_capacity=256, secondary_experts=False, adaptive_experts=False, adaptive_direct_upload=False):
+def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False, metadata=False, banks="standard", shared=False, shared_gdn=False, info_batch_upload=False, dispatch="threaded", cpu_fma=False, reclaim_gpu_sources=False, native_scratch_clear=False, cpu_q8_residual=False, cpu_mapped_prefetch=False, pageout_gpu_sources=False, cpu_threads=16, cpu_q8_two_pass=False, cpu_buffered_weights=False, compute_scratch_clear=False, grouped_status=False, readback_reuse=False, gpu_upload_clear=False, inline_readback=False, cpu_work_stealing=False, request_io_reuse=False, bind_group_reuse=False, fused_experts=False, gpu_expert_limit=10, integer_experts=False, binding_cache_capacity=256, secondary_experts=False, adaptive_experts=False, adaptive_direct_upload=False, steady_public=False):
     validate_cap(cap)
+    validate_steady_selection(steady_public, long=long, banks=banks, mapped=mapped, workers=workers,
+        overlap=overlap, shared=shared, dispatch=dispatch, request_io_reuse=request_io_reuse,
+        deferred=deferred, secondary_experts=secondary_experts, gpu_expert_limit=gpu_expert_limit,
+        card=card, cap=cap)
+    output = validate_steady_probe(receipt, steady_public, output, adaptive_experts=adaptive_experts,
+                                  adaptive_direct_upload=adaptive_direct_upload)
     validate_secondary(receipt, secondary_experts, output, long)
     validate_adaptive(receipt, adaptive_experts, output, long, adaptive_direct_upload=adaptive_direct_upload)
     if binding_cache_capacity != 256 or "binding_cache_capacity" in receipt:
@@ -398,7 +488,10 @@ def validate_receipt(receipt, card, cap, output, workers="scoped", overlap=False
         raise ValueError("Hybrid continuation and both cancellation proofs required")
 
 
-def worker_environment(model, receipt, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False, metadata=False, banks="standard", shared=False, shared_gdn=False, info_batch_upload=False, dispatch="threaded", reclaim_gpu_sources=False, native_scratch_clear=False, cpu_q8_residual=False, cpu_mapped_prefetch=False, pageout_gpu_sources=False, cpu_threads=16, cpu_q8_two_pass=False, compute_scratch_clear=False, grouped_status=False, readback_reuse=False, gpu_upload_clear=False, inline_readback=False, cpu_work_stealing=False, request_io_reuse=False, bind_group_reuse=False, fused_experts=False, gpu_expert_limit=10, integer_experts=False, binding_cache_capacity=256, secondary_experts=False, adaptive_experts=False, adaptive_direct_upload=False):
+def worker_environment(model, receipt, workers="scoped", overlap=False, mapped=False, profile=False, fast=False, long=False, cpu_q8=False, large_cache=False, compact_info=False, batch_tasks=False, fast_fault=False, deferred=False, gpu_router=False, metadata=False, banks="standard", shared=False, shared_gdn=False, info_batch_upload=False, dispatch="threaded", reclaim_gpu_sources=False, native_scratch_clear=False, cpu_q8_residual=False, cpu_mapped_prefetch=False, pageout_gpu_sources=False, cpu_threads=16, cpu_q8_two_pass=False, compute_scratch_clear=False, grouped_status=False, readback_reuse=False, gpu_upload_clear=False, inline_readback=False, cpu_work_stealing=False, request_io_reuse=False, bind_group_reuse=False, fused_experts=False, gpu_expert_limit=10, integer_experts=False, binding_cache_capacity=256, secondary_experts=False, adaptive_experts=False, adaptive_direct_upload=False, steady_public=False):
+    validate_steady_selection(steady_public, long=long, banks=banks, mapped=mapped, workers=workers,
+        overlap=overlap, shared=shared, dispatch=dispatch, request_io_reuse=request_io_reuse,
+        deferred=deferred, secondary_experts=secondary_experts, gpu_expert_limit=gpu_expert_limit)
     if type(cpu_threads) is not int or cpu_threads not in (4,8,16):
         raise ValueError("Explicit public CPU threads must be4,8,16")
     if cpu_threads!=16 and workers!="pooled":
@@ -501,6 +594,7 @@ def worker_environment(model, receipt, workers="scoped", overlap=False, mapped=F
     if (type(adaptive_experts) is not bool or type(adaptive_direct_upload) is not bool
         or adaptive_direct_upload and not adaptive_experts):
         raise ValueError("Adaptive direct upload requires explicitly selected adaptive experts")
+    env["KUNO_LAB_STEADY_PUBLIC"] = "1" if steady_public else "0"
     env["KUNO_LAB_ADAPTIVE_EXPERTS"] = "1" if adaptive_experts else "0"
     env["KUNO_LAB_ADAPTIVE_DIRECT_UPLOAD"] = "1" if adaptive_direct_upload else "0"
     env["KUNO_LAB_SECONDARY_EXPERTS"] = "1" if secondary_experts else "0"
@@ -534,6 +628,7 @@ def main():
     parser.add_argument("--gpu-expert-limit", type=int, choices=range(11), default=10)
     parser.add_argument("--next-shared-gdn", action="store_true")
     parser.add_argument("--long-fixture", action="store_true")
+    parser.add_argument("--steady-public", action="store_true", help="Run a separate 1024-step fixed public steady diagnostic after original long-fixture acceptance")
     parser.add_argument("--cpu-q8", action="store_true")
     parser.add_argument("--cpu-fma", action="store_true")
     parser.add_argument("--cpu-buffered-weights", action="store_true")
@@ -566,6 +661,15 @@ def main():
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--receipt", type=pathlib.Path, required=True)
     args = parser.parse_args()
+    try:
+        validate_steady_selection(args.steady_public, long=args.long_fixture, banks=args.bank_profile,
+            mapped=args.mapped_weights, workers=args.cpu_workers, overlap=args.cpu_gpu_overlap,
+            shared=args.next_shared_kernels, dispatch=args.device_dispatch,
+            request_io_reuse=args.request_io_reuse, deferred=args.defer_router_io,
+            secondary_experts=args.secondary_experts, gpu_expert_limit=args.gpu_expert_limit,
+            card=args.card, cap=args.cpu_miss_cap)
+    except ValueError as error:
+        parser.error(str(error))
     if args.adaptive_direct_upload and not args.adaptive_experts:
         parser.error("Adaptive direct upload requires --adaptive-experts")
     if args.bank_profile!="standard" and (args.card!="intel"):
@@ -644,7 +748,7 @@ def main():
         ("KUNO_LAB_STATIC_CACHE_BYTES " if args.bank_profile not in ("intel96","intel128","intel144","intel160") else "") + "KUNO_LAB_EXPERT_BATCH_BYTES KUNO_LAB_EXPERT_SCATTER",
     ]
     command.extend("--setenv=" + key + "=" + value
-                   for key, value in worker_environment(args.model.resolve(), target, args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault,args.defer_router_io,args.gpu_router,args.retained_metadata,args.bank_profile,args.next_shared_kernels,args.next_shared_gdn,args.info_batch_upload,args.device_dispatch,args.reclaim_gpu_sources,args.native_scratch_clear,args.cpu_q8_residual,args.cpu_mapped_prefetch,args.pageout_gpu_sources,args.cpu_threads,args.cpu_q8_two_pass,compute_scratch_clear=args.compute_scratch_clear,grouped_status=args.grouped_status,readback_reuse=args.readback_reuse,gpu_upload_clear=args.gpu_upload_clear,inline_readback=args.inline_readback,cpu_work_stealing=args.cpu_work_stealing,request_io_reuse=args.request_io_reuse,bind_group_reuse=args.bind_group_reuse,fused_experts=args.fused_experts,gpu_expert_limit=args.gpu_expert_limit,integer_experts=args.integer_experts,binding_cache_capacity=args.binding_cache_capacity,secondary_experts=args.secondary_experts,adaptive_experts=args.adaptive_experts,adaptive_direct_upload=args.adaptive_direct_upload).items())
+                   for key, value in worker_environment(args.model.resolve(), target, args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault,args.defer_router_io,args.gpu_router,args.retained_metadata,args.bank_profile,args.next_shared_kernels,args.next_shared_gdn,args.info_batch_upload,args.device_dispatch,args.reclaim_gpu_sources,args.native_scratch_clear,args.cpu_q8_residual,args.cpu_mapped_prefetch,args.pageout_gpu_sources,args.cpu_threads,args.cpu_q8_two_pass,compute_scratch_clear=args.compute_scratch_clear,grouped_status=args.grouped_status,readback_reuse=args.readback_reuse,gpu_upload_clear=args.gpu_upload_clear,inline_readback=args.inline_readback,cpu_work_stealing=args.cpu_work_stealing,request_io_reuse=args.request_io_reuse,bind_group_reuse=args.bind_group_reuse,fused_experts=args.fused_experts,gpu_expert_limit=args.gpu_expert_limit,integer_experts=args.integer_experts,binding_cache_capacity=args.binding_cache_capacity,secondary_experts=args.secondary_experts,adaptive_experts=args.adaptive_experts,adaptive_direct_upload=args.adaptive_direct_upload,steady_public=args.steady_public).items())
     command.extend([sys.executable, str(HERE / "protected-lab-exec.py"), str(frozen),
                     args.card, MODE, str(args.cpu_miss_cap)])
     print("verified_cargo_executable_sha256=" + identity, flush=True)
@@ -659,7 +763,7 @@ def main():
         raise SystemExit("Missing whole-model hybrid receipt")
     snapshot = target.read_bytes()
     receipt = json.loads(snapshot)
-    validate_receipt(receipt, args.card, args.cpu_miss_cap, "".join(lines), args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault,args.defer_router_io,args.gpu_router,args.retained_metadata,args.bank_profile,args.next_shared_kernels,args.next_shared_gdn,args.info_batch_upload,args.device_dispatch,args.cpu_fma,args.reclaim_gpu_sources,args.native_scratch_clear,args.cpu_q8_residual,args.cpu_mapped_prefetch,args.pageout_gpu_sources,args.cpu_threads,args.cpu_q8_two_pass,args.cpu_buffered_weights,compute_scratch_clear=args.compute_scratch_clear,grouped_status=args.grouped_status,readback_reuse=args.readback_reuse,gpu_upload_clear=args.gpu_upload_clear,inline_readback=args.inline_readback,cpu_work_stealing=args.cpu_work_stealing,request_io_reuse=args.request_io_reuse,bind_group_reuse=args.bind_group_reuse,fused_experts=args.fused_experts,gpu_expert_limit=args.gpu_expert_limit,integer_experts=args.integer_experts,binding_cache_capacity=args.binding_cache_capacity,secondary_experts=args.secondary_experts,adaptive_experts=args.adaptive_experts,adaptive_direct_upload=args.adaptive_direct_upload)
+    validate_receipt(receipt, args.card, args.cpu_miss_cap, "".join(lines), args.cpu_workers, args.cpu_gpu_overlap, args.mapped_weights, args.kernel_profile, args.fast_gpu, args.long_fixture, args.cpu_q8, args.large_weight_cache, args.compact_info, args.batch_tasks, args.fast_gpu_fault,args.defer_router_io,args.gpu_router,args.retained_metadata,args.bank_profile,args.next_shared_kernels,args.next_shared_gdn,args.info_batch_upload,args.device_dispatch,args.cpu_fma,args.reclaim_gpu_sources,args.native_scratch_clear,args.cpu_q8_residual,args.cpu_mapped_prefetch,args.pageout_gpu_sources,args.cpu_threads,args.cpu_q8_two_pass,args.cpu_buffered_weights,compute_scratch_clear=args.compute_scratch_clear,grouped_status=args.grouped_status,readback_reuse=args.readback_reuse,gpu_upload_clear=args.gpu_upload_clear,inline_readback=args.inline_readback,cpu_work_stealing=args.cpu_work_stealing,request_io_reuse=args.request_io_reuse,bind_group_reuse=args.bind_group_reuse,fused_experts=args.fused_experts,gpu_expert_limit=args.gpu_expert_limit,integer_experts=args.integer_experts,binding_cache_capacity=args.binding_cache_capacity,secondary_experts=args.secondary_experts,adaptive_experts=args.adaptive_experts,adaptive_direct_upload=args.adaptive_direct_upload,steady_public=args.steady_public)
     record = {
         "scope": "fixed-public-count1-hybrid-output-and-lifecycle-only",
         "requested_cpu_fma_arithmetic": args.cpu_fma,
@@ -685,6 +789,7 @@ def main():
         "secondary_experts": args.secondary_experts,
         "adaptive_experts": args.adaptive_experts,
         "adaptive_direct_upload": args.adaptive_direct_upload,
+        "steady_public": args.steady_public,
         "fast_gpu": args.fast_gpu, "next_shared_kernels": args.next_shared_kernels, "next_shared_gdn": args.next_shared_gdn,
         "long_fixture": args.long_fixture,
         "cpu_q8_activations": args.cpu_q8,

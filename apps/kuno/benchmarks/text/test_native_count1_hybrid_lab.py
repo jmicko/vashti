@@ -244,6 +244,267 @@ class AdaptiveControls(unittest.TestCase):
                 self.assertIs(record["adaptive_direct_upload"], direct)
 
 
+def steady_probe(adaptive=False, direct=False):
+    windows = [{"first_step": index * 128, "steps": 128, "elapsed_ns": 10_000_000,
+                "gpu_hits": 50000, "cpu_misses": 11440,
+                "promotions": 100 if adaptive else 0,
+                "upload_bytes": 1000000 if adaptive else 0,
+                "promotions_wall_ns": 100000 if adaptive else 0,
+                "resources": {key: 0 for key in ("minor_faults", "major_faults", "user_ticks",
+                                                "system_ticks", "read_bytes", "write_bytes")}}
+               for index in range(8)]
+    return {"scope": "fixed-public-repeated-prefix-steady-diagnostic", "teacher_forced": True,
+            "prefix_tokens": 128, "prefix_matches": True, "steps": 1024, "window_tokens": 128,
+            "context_tokens": 1227, "seed": 424242, "adaptive_experts": adaptive,
+            "adaptive_direct_upload": direct, "windows": windows, "greedy_ids": [9419] * 1024,
+            "owned_io_cleanup_accepted": True,
+            "owned_zero_audit": {"main_buffers": 1378, "main_bytes": 900000000,
+                                 "source_buffers": 0, "source_bytes": 0}}
+
+
+def steady_output(probe, original="original fixture"):
+    audit = probe["owned_zero_audit"]
+    extra = ["public_resident_owned_zero_audit main_buffers={main_buffers} main_bytes={main_bytes} "
+             "source_buffers={source_buffers} source_bytes={source_bytes}".format(**audit)]
+    if probe["adaptive_experts"]:
+        extra.append(LAB.ADAPTIVE_CLOSED)
+    return "\n".join([original, LAB.STEADY_BEGIN, *extra, LAB.STEADY_CLOSED])
+
+
+STEADY_SELECTION = dict(long=True, banks="intel144", mapped=True, workers="pooled", overlap=True,
+                        shared=True, dispatch="inline", request_io_reuse=True, deferred=True,
+                        secondary_experts=False)
+
+
+class SteadyControls(unittest.TestCase):
+    def test_complete_fixed_and_adaptive_probes_split_original_only(self):
+        for adaptive, direct in ((False, False), (True, False), (True, True)):
+            value = steady_probe(adaptive, direct)
+            output = steady_output(value)
+            self.assertEqual(LAB.validate_steady_probe({"steady_probe": value}, True, output,
+                adaptive_experts=adaptive, adaptive_direct_upload=direct), "original fixture")
+            # No promotions is a valid settled window, even with adaptive enabled.
+            for window in value["windows"]:
+                window.update(promotions=0, upload_bytes=0, promotions_wall_ns=0)
+            LAB.validate_steady_probe({"steady_probe": value}, True, output,
+                adaptive_experts=adaptive, adaptive_direct_upload=direct)
+
+    def test_every_fixed_schema_field_required_and_typed(self):
+        original = steady_probe()
+        for field in original:
+            wrong = copy.deepcopy(original)
+            del wrong[field]
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                LAB.validate_steady_probe({"steady_probe": wrong}, True, steady_output(original))
+        for field, bads in (("scope", (None, "private")), ("teacher_forced", (False, 1, "true")),
+            ("prefix_matches", (False, 1)), ("prefix_tokens", (True, 127, "128")),
+            ("steps", (1023, True)), ("window_tokens", (127, True)), ("context_tokens", (1228, True)),
+            ("seed", (True, 0)), ("adaptive_experts", (True, 0)),
+            ("adaptive_direct_upload", (True, 0)), ("owned_io_cleanup_accepted", (False, 1)),
+            ("windows", (None, [], original["windows"][:-1])),
+            ("greedy_ids", (None, [1] * 1023, [1] * 1025, [True] * 1024, [-1] * 1024,
+                            [2**32] * 1024))):
+            for bad in bads:
+                with self.subTest(field=field, bad=type(bad)), self.assertRaises(ValueError):
+                    LAB.validate_steady_probe({"steady_probe": dict(original, **{field: bad})},
+                                              True, steady_output(original))
+        wrong = dict(original, private_content="not allowed")
+        with self.assertRaises(ValueError):
+            LAB.validate_steady_probe({"steady_probe": wrong}, True, steady_output(original))
+
+    def test_windows_conserve_complete_work_and_promotions(self):
+        original = steady_probe(True)
+        for field in original["windows"][0]:
+            wrong = copy.deepcopy(original)
+            del wrong["windows"][0][field]
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                LAB.validate_steady_probe({"steady_probe": wrong}, True, steady_output(original),
+                                          adaptive_experts=True)
+        for field in ("first_step", "steps", "elapsed_ns", "gpu_hits", "cpu_misses", "promotions",
+                      "upload_bytes", "promotions_wall_ns"):
+            for bad in (None, True, "1", -1, 1.0):
+                wrong = copy.deepcopy(original)
+                wrong["windows"][3][field] = bad
+                with self.subTest(field=field, bad=bad), self.assertRaises(ValueError):
+                    LAB.validate_steady_probe({"steady_probe": wrong}, True, steady_output(original),
+                                              adaptive_experts=True)
+        for field, bad in (("first_step", 1), ("steps", 127), ("elapsed_ns", 0), ("gpu_hits", 49999),
+            ("cpu_misses", 11441), ("promotions", 513), ("upload_bytes", 0), ("promotions_wall_ns", 0)):
+            wrong = copy.deepcopy(original)
+            wrong["windows"][0][field] = bad
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                LAB.validate_steady_probe({"steady_probe": wrong}, True, steady_output(original),
+                                          adaptive_experts=True)
+        wrong = copy.deepcopy(original)
+        wrong["windows"][0]["promotions"] = 0
+        with self.assertRaises(ValueError):
+            LAB.validate_steady_probe({"steady_probe": wrong}, True, steady_output(original), adaptive_experts=True)
+        wrong = steady_probe()
+        wrong["windows"][0].update(promotions=1, upload_bytes=1, promotions_wall_ns=1)
+        with self.assertRaises(ValueError):
+            LAB.validate_steady_probe({"steady_probe": wrong}, True, steady_output(wrong))
+
+    def test_resources_are_exact_numeric_deltas(self):
+        original = steady_probe()
+        for field in original["windows"][0]["resources"]:
+            for bad in (None, True, -1, "0", 0.0):
+                wrong = copy.deepcopy(original)
+                wrong["windows"][0]["resources"][field] = bad
+                with self.subTest(field=field, bad=bad), self.assertRaises(ValueError):
+                    LAB.validate_steady_probe({"steady_probe": wrong}, True, steady_output(original))
+            wrong = copy.deepcopy(original)
+            del wrong["windows"][0]["resources"][field]
+            with self.assertRaises(ValueError):
+                LAB.validate_steady_probe({"steady_probe": wrong}, True, steady_output(original))
+        wrong = copy.deepcopy(original)
+        wrong["windows"][0]["resources"]["private_routes"] = 0
+        with self.assertRaises(ValueError):
+            LAB.validate_steady_probe({"steady_probe": wrong}, True, steady_output(original))
+
+    def test_extended_full_owner_is_separate_bounded_typed_and_matches_stdout(self):
+        original = steady_probe()
+        for field in original["owned_zero_audit"]:
+            wrong = copy.deepcopy(original)
+            del wrong["owned_zero_audit"][field]
+            with self.assertRaises(ValueError):
+                LAB.validate_steady_probe({"steady_probe": wrong}, True, steady_output(original))
+            for bad in (None, True, -1, "0", 0.0):
+                wrong = copy.deepcopy(original)
+                wrong["owned_zero_audit"][field] = bad
+                with self.subTest(field=field, bad=bad), self.assertRaises(ValueError):
+                    LAB.validate_steady_probe({"steady_probe": wrong}, True, steady_output(original))
+        for field, bad in (("main_buffers", 1377), ("main_bytes", 818413567),
+                           ("main_bytes", 8 * 1024**3 + 1), ("source_buffers", 1), ("source_bytes", 1)):
+            wrong = copy.deepcopy(original)
+            wrong["owned_zero_audit"][field] = bad
+            with self.assertRaises(ValueError):
+                LAB.validate_steady_probe({"steady_probe": wrong}, True, steady_output(wrong))
+        for byte_count in (818413568, 8 * 1024**3):
+            value = copy.deepcopy(original)
+            value["owned_zero_audit"]["main_bytes"] = byte_count
+            LAB.validate_steady_probe({"steady_probe": value}, True, steady_output(value))
+        with self.assertRaises(ValueError):
+            LAB.validate_steady_probe({"steady_probe": original}, True,
+                steady_output(original).replace("main_bytes=900000000", "main_bytes=900000001"))
+
+    def test_delimiter_and_close_inventory_cannot_mix_with_original_acceptance(self):
+        for adaptive in (False, True):
+            value = steady_probe(adaptive)
+            output = steady_output(value)
+            malformed = [output.replace(LAB.STEADY_BEGIN, ""), output + "\n" + LAB.STEADY_BEGIN,
+                output.replace(LAB.STEADY_CLOSED, ""), output + "\n" + LAB.STEADY_CLOSED,
+                LAB.STEADY_CLOSED + "\n" + output,
+                output.replace("public_resident_owned_zero_audit", "missing_owner"),
+                output + "\npublic_resident_owned_zero_audit main_buffers=1378 main_bytes=900000000 source_buffers=0 source_bytes=0"]
+            malformed.append(output + "\n" + LAB.ADAPTIVE_CLOSED)
+            if adaptive:
+                malformed.append(output.replace(LAB.ADAPTIVE_CLOSED, ""))
+            for bad in malformed:
+                with self.subTest(adaptive=adaptive, bad=bad), self.assertRaises(ValueError):
+                    LAB.validate_steady_probe({"steady_probe": value}, True, bad, adaptive_experts=adaptive)
+        LAB.validate_steady_probe({}, False, "ordinary output")
+        for value, output in (({"steady_probe": steady_probe()}, ""), ({}, LAB.STEADY_BEGIN),
+                              ({}, LAB.STEADY_CLOSED)):
+            with self.assertRaises(ValueError):
+                LAB.validate_steady_probe(value, False, output)
+
+    def test_original_128_ids_and_lifecycle_gates_remain_independent(self):
+        value = receipt("intel", 10)
+        expected = json.loads((HERE / "receipts/rust-full-resident-rainwater-intel-20261005.json").read_text())["public_generated_ids"]
+        value.update(fixture="resident-count1-hybrid-rainwater", prompt_tokens=75,
+                     native_public_chunk_partition=[8] * 9 + [3], public_generated_ids=expected,
+                     native_decode_steps=127, long_fixture=True, steady_probe=steady_probe())
+        output = steady_output(value["steady_probe"], completion(10))
+        # Independently tested protected selection is bypassed only to reuse the
+        # existing synthetic owner geometry; every original model gate runs.
+        with mock.patch.object(LAB, "validate_steady_selection"):
+            LAB.validate_receipt(value, "intel", 10, output, long=True, steady_public=True)
+            for field, bad in (("public_generated_ids", expected[:-1]), ("public_generated_ids", [9419] * 128),
+                ("resident_private_owned_bytes", 900000000), ("owned_zero_audits", [])):
+                wrong = copy.deepcopy(value)
+                wrong[field] = bad
+                with self.assertRaises(ValueError):
+                    LAB.validate_receipt(wrong, "intel", 10, output, long=True, steady_public=True)
+            marker = LAB.completion(10)[0]
+            displaced = output.replace(marker, "") + "\n" + marker
+            with self.assertRaises(ValueError):
+                LAB.validate_receipt(value, "intel", 10, displaced, long=True, steady_public=True)
+
+    def test_selection_is_explicit_and_requires_the_protected_mode(self):
+        LAB.validate_steady_selection(True, **STEADY_SELECTION)
+        for field, bad in (("long", False), ("banks", "intel128"), ("mapped", False),
+            ("workers", "scoped"), ("overlap", False), ("shared", False), ("dispatch", "threaded"),
+            ("request_io_reuse", False), ("deferred", False), ("secondary_experts", True),
+            ("gpu_expert_limit", 9), ("card", "nvidia"), ("cap", 9)):
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                LAB.validate_steady_selection(True, **dict(STEADY_SELECTION, **{field: bad}))
+        for bad in (None, 1, "true"):
+            with self.assertRaises(ValueError):
+                LAB.validate_steady_selection(bad, **STEADY_SELECTION)
+        environment = dict(STEADY_SELECTION, fast=True, gpu_router=True, compact_info=True,
+                           info_batch_upload=True, inline_readback=True)
+        with mock.patch.dict(os.environ, {"KUNO_LAB_STEADY_PUBLIC": "1"}):
+            self.assertEqual(LAB.worker_environment("/original", "/receipt")["KUNO_LAB_STEADY_PUBLIC"], "0")
+            for adaptive in (False, True):
+                env = LAB.worker_environment("/original", "/receipt", steady_public=True,
+                    adaptive_experts=adaptive, **environment)
+                self.assertEqual(env["KUNO_LAB_STEADY_PUBLIC"], "1")
+        with self.assertRaises(ValueError):
+            LAB.worker_environment("/original", "/receipt", steady_public=True)
+
+    def test_cli_rejects_wrong_mode_before_artifacts_or_launch(self):
+        args = ["lab", "--cargo-artifacts", "/absent/build", "--model", "/original/model",
+                "--card", "intel", "--cpu-miss-cap", "10", "--run-id", "test",
+                "--receipt", "/absent/receipt", "--steady-public"]
+        with mock.patch.object(LAB.sys, "argv", args), \
+             mock.patch.object(LAB.BASE, "cargo_binary") as load, \
+             mock.patch.object(LAB.subprocess, "Popen") as launch, \
+             mock.patch("sys.stderr", new_callable=io.StringIO) as errors:
+            with self.assertRaises(SystemExit) as error:
+                LAB.main()
+        self.assertEqual(error.exception.code, 2)
+        self.assertIn("Steady public probe requires", errors.getvalue())
+        load.assert_not_called()
+        launch.assert_not_called()
+
+    def test_runner_pins_selection_and_validates_before_record(self):
+        for selected in (False, True):
+            with self.subTest(selected=selected), tempfile.TemporaryDirectory() as directory:
+                target = pathlib.Path(directory) / "receipt.json"
+                build = pathlib.Path(directory) / "build.jsonl"
+                build.write_text(json.dumps({"reason": "compiler-artifact", "target": {"name": "kuno-text-lab"},
+                                             "executable": "/frozen", "features": []}) + "\n")
+                value = {"steady_probe": steady_probe()} if selected else {}
+                output = steady_output(value["steady_probe"]) if selected else "ordinary output"
+                command_seen = []
+
+                def launch(command, **options):
+                    command_seen.extend(command)
+                    target.write_text(json.dumps(value))
+                    return SimpleNamespace(stdout=io.StringIO(output), wait=lambda: 0)
+
+                def validate(*args, **selection):
+                    LAB.validate_steady_probe(args[0], selection["steady_public"], args[3])
+
+                args = ["lab", "--cargo-artifacts", str(build), "--model", "/original/model", "--card", "intel",
+                        "--cpu-miss-cap", "10", "--run-id", "test", "--receipt", str(target)]
+                if selected:
+                    args.extend(["--steady-public", "--long-fixture", "--bank-profile", "intel144",
+                                 "--cpu-workers", "pooled", "--cpu-gpu-overlap", "--mapped-weights",
+                                 "--next-shared-kernels", "--fast-gpu", "--gpu-router", "--device-dispatch", "inline",
+                                 "--request-io-reuse", "--defer-router-io", "--compact-info", "--info-batch-upload",
+                                 "--inline-readback"])
+                with mock.patch.object(LAB.BASE, "cargo_binary", return_value=(pathlib.Path("/frozen"), "binary", "build")), \
+                     mock.patch.object(LAB.subprocess, "Popen", side_effect=launch), \
+                     mock.patch.object(LAB, "validate_receipt", side_effect=validate) as gate, \
+                     mock.patch.object(LAB.sys, "argv", args), mock.patch("sys.stdout", new_callable=io.StringIO):
+                    LAB.main()
+                self.assertIs(gate.call_args.kwargs["steady_public"], selected)
+                self.assertIn("--setenv=KUNO_LAB_STEADY_PUBLIC=" + ("1" if selected else "0"), command_seen)
+                record = json.loads(target.with_suffix(".json.run.json").read_text())
+                self.assertIs(record["steady_public"], selected)
+
+
 def receipt(card, cap):
     # Historical real native inventory, altered solely for validator tests.
     # No test output is saved as a hybrid device acceptance receipt.
