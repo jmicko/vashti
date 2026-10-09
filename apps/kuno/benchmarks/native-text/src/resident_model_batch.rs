@@ -32,6 +32,31 @@ const BLOCK_WORDS: usize = MAX_BATCH * D;
 const HYBRID_MAIN: u64 = 163_840;
 const HYBRID_HOST: usize = 1024 * 1024;
 const HYBRID_RUNTIME: u64 = 1024 * 1024;
+const DEFAULT_REUSE_METADATA: usize = 256 * 1024;
+
+/// Complete separate runtime metadata reservation, added to the existing
+/// application component plan. Only fixed public laboratory configurations can
+/// select the larger ceilings; device owners and family metadata remain intact.
+pub(crate) fn host_reservation(hybrid: bool, reuse_metadata: usize) -> Result<(usize, usize)> {
+    if !matches!(reuse_metadata, DEFAULT_REUSE_METADATA | 1048576 | 4194304)
+        || reuse_metadata > DEFAULT_REUSE_METADATA && !hybrid
+    {
+        return Err(error());
+    }
+    let reserved = HOST_COMPONENTS
+        .checked_add(if hybrid { HYBRID_HOST } else { 0 })
+        .and_then(|n| n.checked_add(reuse_metadata))
+        .ok_or(Error::ArithmeticOverflow)?;
+    let limit = HOST_CAP
+        .checked_add(reuse_metadata - DEFAULT_REUSE_METADATA)
+        .ok_or(Error::ArithmeticOverflow)?;
+    if reserved > limit {
+        return Err(Error::LimitExceeded(
+            "native host and runtime metadata plan",
+        ));
+    }
+    Ok((reserved, limit))
+}
 // Two extra scratch clears per layer; replacement merge/fold plus the new
 // owning packet fold have zero net INFO growth. Reserve128 rather than96.
 // Count full INFO source/target/inspection ownership, both bridge upload pages
@@ -125,6 +150,7 @@ pub(crate) struct Config {
     tile: usize,
     cpu_operator: Option<Arc<kuno_text::cpu_expert::ExpertOperator>>,
     cpu_gpu_overlap: bool,
+    request_reuse_metadata: usize,
 }
 impl Config {
     pub(crate) fn new(
@@ -139,7 +165,13 @@ impl Config {
             tile,
             cpu_operator: None,
             cpu_gpu_overlap: false,
+            request_reuse_metadata: DEFAULT_REUSE_METADATA,
         })
+    }
+    pub(crate) fn reserve_request_reuse_metadata(mut self, bytes: usize) -> Result<Self> {
+        host_reservation(self.cpu_operator.is_some(), bytes)?;
+        self.request_reuse_metadata = bytes;
+        Ok(self)
     }
     /// Explicit fixed-public laboratory reservation. Ordinary constructors keep
     /// their original owner inventory; reservation alone never places a rank.
@@ -309,6 +341,7 @@ impl Plan {
             requests.push(BufferLayout::new(words).map_err(u::fault)?.owned_bytes as u64);
         }
         let hybrid = config.cpu_operator.is_some();
+        host_reservation(hybrid, config.request_reuse_metadata)?;
         if hybrid {
             requests.extend(batch_moe::Workspace::count1_hybrid_allocation_requests()?);
         }
@@ -1817,6 +1850,21 @@ impl Workspace {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn reuse_metadata_has_a_separate_complete_and_explicit_host_charge() {
+        for bytes in [DEFAULT_REUSE_METADATA, 1048576, 4194304] {
+            let (reserved, limit) = host_reservation(true, bytes).unwrap();
+            assert_eq!(reserved, HOST_COMPONENTS + HYBRID_HOST + bytes);
+            assert_eq!(limit, HOST_CAP + bytes - DEFAULT_REUSE_METADATA);
+            assert_eq!(limit - reserved, 65536);
+        }
+        assert!(host_reservation(false, DEFAULT_REUSE_METADATA).is_ok());
+        for bytes in [0, 262145, 1048577, 4194305, usize::MAX] {
+            assert!(host_reservation(true, bytes).is_err());
+        }
+        assert!(host_reservation(false, 1048576).is_err());
+        assert!(host_reservation(false, 4194304).is_err());
+    }
     #[test]
     fn completed_counter_preflight_rejects_overflow_and_impossible_chunk_without_publication() {
         assert_eq!(*checked_cpu_miss_total(7, 480).unwrap(), 487);

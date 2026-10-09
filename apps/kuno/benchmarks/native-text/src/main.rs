@@ -407,6 +407,36 @@ fn q3_integer_moe_shared_limit(enabled: bool, available: u32) -> Result<(), &'st
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
+fn q3_request_binding_scope(
+    extended: bool,
+    mode: &str,
+    profile: expert_banks::OriginalPackedProfile,
+    protected: bool,
+    positions: usize,
+    empty_fill: bool,
+    request_reuse: bool,
+    binding_reuse: bool,
+) -> Result<(), &'static str> {
+    if !extended {
+        return Ok(());
+    }
+    if mode != "resident-count1-hybrid-chat"
+        || !protected
+        || !empty_fill
+        || !request_reuse
+        || !binding_reuse
+        || !matches!(
+            (profile, positions),
+            (expert_banks::OriginalPackedProfile::UnslothQ3, 4 | 23 | 32)
+                | (expert_banks::OriginalPackedProfile::DaslabIq3, 4 | 13 | 32)
+        )
+    {
+        return Err("larger binding cache requires protected fixed original Q3 request reuse");
+    }
+    Ok(())
+}
+
 fn q3_router_reference_path(
     expert_oracle: bool,
     raw: Option<std::ffi::OsString>,
@@ -1516,11 +1546,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let request_io_reuse = count1_environment_opt_in(&mode, "KUNO_LAB_REQUEST_IO_REUSE")?;
     let bind_group_reuse = count1_environment_opt_in(&mode, "KUNO_LAB_BIND_GROUP_REUSE")?;
-    let binding_cache_capacity = match std::env::var("KUNO_LAB_BIND_GROUP_CAPACITY").as_deref() {
+    let binding_capacity_raw = std::env::var("KUNO_LAB_BIND_GROUP_CAPACITY");
+    let binding_cache_capacity = match binding_capacity_raw.as_deref() {
         Ok("256") | Err(std::env::VarError::NotPresent) => 256,
         Ok("512") if bind_group_reuse => 512,
-        _ => return Err("binding cache capacity requires explicit 256/512 request reuse".into()),
+        Ok("2048") if bind_group_reuse => 2048,
+        Ok("4096") if bind_group_reuse => 4096,
+        _ => return Err("binding cache capacity requires explicit bounded request reuse".into()),
     };
+    let metadata_raw = std::env::var("KUNO_LAB_REQUEST_REUSE_METADATA_BYTES");
+    if matches!(metadata_raw, Err(std::env::VarError::NotUnicode(_))) {
+        return Err("request reuse metadata encoding rejected".into());
+    }
+    let request_reuse_metadata_charge = cubecl::wgpu::transient_request_reuse_metadata_charge(
+        bind_group_reuse,
+        binding_capacity_raw.as_deref().ok(),
+        metadata_raw.as_deref().ok(),
+    )
+    .map_err(|_| "request reuse metadata plan rejected")?;
+    q3_request_binding_scope(
+        binding_cache_capacity > 512 || request_reuse_metadata_charge > 262144,
+        &mode,
+        packed_profile,
+        transient_resident && public_owned_zero_audit,
+        q3_positions,
+        q3_empty_slot_fill,
+        request_io_reuse,
+        bind_group_reuse,
+    )?;
+    let native_aggregate_host_plan = resident_model::batch::host_reservation(
+        count1_hybrid_cap.is_some(),
+        request_reuse_metadata_charge,
+    )?;
     if bind_group_reuse && !request_io_reuse {
         return Err("binding reuse requires request I/O reuse".into());
     }
@@ -2812,7 +2869,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
             let native_config = if native_max8 {
                 let config = resident_model::batch::Config::new(&client, &grouped_limits, 8)?;
-                Some(if count1_hybrid_cap.is_some() {
+                let config = if count1_hybrid_cap.is_some() {
                     if count1_pooled {
                         config.reserve_count1_hybrid_arithmetic(
                             true,
@@ -2827,7 +2884,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 } else {
                     config
-                })
+                };
+                Some(config.reserve_request_reuse_metadata(request_reuse_metadata_charge)?)
             } else {
                 None
             };
@@ -3448,6 +3506,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 receipt["request_io_reuse"] = serde_json::json!(request_io_reuse);
                 receipt["bind_group_reuse"] = serde_json::json!(bind_group_reuse);
                 receipt["binding_cache_capacity"] = serde_json::json!(binding_cache_capacity);
+                receipt["request_reuse_metadata_reserved_bytes"] =
+                    serde_json::json!(request_reuse_metadata_charge);
+                receipt["native_aggregate_host_plan"] = serde_json::json!({
+                    "reserved_bytes":native_aggregate_host_plan.0,
+                    "limit_bytes":native_aggregate_host_plan.1,
+                });
                 receipt["adaptive_experts"] = serde_json::json!(adaptive_experts);
                 if let Some(cache) = &executor.adaptive {
                     receipt["adaptive_direct_upload"] = serde_json::json!(adaptive_direct_upload);
@@ -4357,6 +4421,51 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod transient_mode_tests {
+    #[test]
+    fn extended_binding_scope_requires_its_actual_profile_window_and_owner_policy() {
+        use crate::expert_banks::OriginalPackedProfile as P;
+        let check = |profile, positions, protected, request, binding| {
+            super::q3_request_binding_scope(
+                true,
+                "resident-count1-hybrid-chat",
+                profile,
+                protected,
+                positions,
+                true,
+                request,
+                binding,
+            )
+        };
+        assert!(check(P::DaslabIq3, 13, true, true, true).is_ok());
+        assert!(check(P::UnslothQ3, 23, true, true, true).is_ok());
+        for (profile, positions, protected, request, binding) in [
+            (P::DaslabIq3, 23, true, true, true),
+            (P::UnslothQ3, 13, true, true, true),
+            (P::Q4, 13, true, true, true),
+            (P::DaslabIq3, 13, false, true, true),
+            (P::DaslabIq3, 13, true, false, true),
+            (P::DaslabIq3, 13, true, true, false),
+        ] {
+            assert!(check(profile, positions, protected, request, binding).is_err());
+        }
+        assert!(
+            super::q3_request_binding_scope(true, "chat", P::DaslabIq3, true, 13, true, true, true)
+                .is_err()
+        );
+        assert!(
+            super::q3_request_binding_scope(
+                true,
+                "resident-count1-hybrid-chat",
+                P::DaslabIq3,
+                true,
+                13,
+                false,
+                true,
+                true
+            )
+            .is_err()
+        );
+    }
     #[test]
     fn q3_expert_diagnostic_excludes_other_inputs_and_performance_modes() {
         use crate::expert_banks::OriginalPackedProfile as P;
