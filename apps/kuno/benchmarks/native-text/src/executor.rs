@@ -815,6 +815,21 @@ pub struct GpuExecutor<'a> {
     pub weight_upload_ns: u128,
     pub gpu_wait_ns: u128,
 }
+fn oracle_fixture_profile_matches(
+    fixture: crate::oracle_trace::Fixture,
+    profile: expert_banks::OriginalPackedProfile,
+) -> bool {
+    matches!(
+        (fixture, profile),
+        (
+            crate::oracle_trace::Fixture::Q4Rainwater,
+            expert_banks::OriginalPackedProfile::Q4
+        ) | (
+            crate::oracle_trace::Fixture::Q3Prefix23,
+            expert_banks::OriginalPackedProfile::UnslothQ3
+        )
+    )
+}
 impl<'a> GpuExecutor<'a> {
     pub fn new(
         model: &'a GgufFile,
@@ -1077,6 +1092,17 @@ impl<'a> GpuExecutor<'a> {
     pub fn cache_bytes(&self) -> usize {
         self.cache_bytes + self.bank_reserved
     }
+    pub(crate) fn check_lab_oracle_fixture(
+        &self,
+        fixture: crate::oracle_trace::Fixture,
+    ) -> Result<()> {
+        if !oracle_fixture_profile_matches(fixture, self.packed_profile) {
+            return Err(Error::InvalidFormat(
+                "public oracle fixture profile mismatch",
+            ));
+        }
+        Ok(())
+    }
     /// The model issues the sole completed-boundary proof. This diagnostic has
     /// no adaptive/secondary policy and never admits an arbitrary route trace.
     pub(crate) fn check_lab_oracle_policy(
@@ -1087,6 +1113,8 @@ impl<'a> GpuExecutor<'a> {
             || self.adaptive.is_some()
             || self.secondary.is_some()
             || self.secondary_frequency.is_some()
+            || self.q3_expert_oracle
+            || self.q3_router_reference.is_some()
             || self.bank_slots != 144
             || self.banks.len() != 48
             || self.gpu_expert_limit != 10
@@ -1101,7 +1129,10 @@ impl<'a> GpuExecutor<'a> {
             .active()?;
         for bank in self.banks.values() {
             bank.check_client(&self.client)?;
-            if bank.slots.capacity() != 144 || bank.slots.experts() != 512 {
+            if bank.slots.capacity() != 144
+                || bank.slots.experts() != 512
+                || bank.profile() != self.packed_profile
+            {
                 return Err(Error::InvalidFormat("public oracle original bank geometry"));
             }
         }
@@ -1115,6 +1146,7 @@ impl<'a> GpuExecutor<'a> {
     ) -> Result<()> {
         self.check_lab_oracle_policy(boundary)?;
         trace.validate_ready_replay()?;
+        self.check_lab_oracle_fixture(trace.fixture())?;
         for layer in 0..48 {
             let bank = self
                 .banks
@@ -1148,6 +1180,7 @@ impl<'a> GpuExecutor<'a> {
     ) -> Result<expert_banks::FillStats> {
         self.check_lab_oracle_policy(boundary)?;
         trace.validate_ready_replay()?;
+        self.check_lab_oracle_fixture(trace.fixture())?;
         self.check_client(arena.client().map_err(crate::resident_util::fault)?)?;
         let admission = self
             .resident_admission
@@ -2875,6 +2908,21 @@ impl Drop for GpuExecutor<'_> {
 
 #[cfg(test)]
 mod admission_tests {
+    #[test]
+    fn fixed_oracle_fixtures_cannot_cross_original_quant_profiles() {
+        use crate::expert_banks::OriginalPackedProfile as P;
+        use crate::oracle_trace::Fixture as F;
+        assert!(super::oracle_fixture_profile_matches(F::Q4Rainwater, P::Q4));
+        assert!(super::oracle_fixture_profile_matches(
+            F::Q3Prefix23,
+            P::UnslothQ3
+        ));
+        assert!(!super::oracle_fixture_profile_matches(
+            F::Q4Rainwater,
+            P::UnslothQ3
+        ));
+        assert!(!super::oracle_fixture_profile_matches(F::Q3Prefix23, P::Q4));
+    }
     #[test]
     fn native_projection_policy_is_public_bounded_and_default_eight() {
         use super::NativeProjectionTile;

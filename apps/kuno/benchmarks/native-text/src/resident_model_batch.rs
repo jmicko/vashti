@@ -662,14 +662,18 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         &self,
         executor: &GpuExecutor<'f>,
         position: usize,
+        fixture: crate::oracle_trace::Fixture,
     ) -> Result<CompletedNativeProjectionBoundary> {
         let boundary = self.completed_native_projection_boundary(executor)?;
         if self.position != position
-            || self.context != crate::oracle_trace::CONTEXT
+            || self.context != fixture.context()
             || self.native_cpu_miss_cap()? != Some(10)
+            || (fixture == crate::oracle_trace::Fixture::Q3Prefix23
+                && self.native_decode_kernels()? != NativeDecodeKernels::SingleAll)
         {
             return Err(error());
         }
+        executor.check_lab_oracle_fixture(fixture)?;
         Ok(boundary)
     }
 
@@ -696,10 +700,33 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
     }
 
     pub(crate) fn begin_lab_oracle_trace(&mut self, executor: &mut GpuExecutor<'f>) -> Result<()> {
+        self.begin_lab_oracle_trace_for(executor, crate::oracle_trace::Fixture::Q4Rainwater)
+    }
+
+    #[allow(dead_code)] // Dedicated fixed-public Q3 orchestrator is registered separately.
+    pub(crate) fn begin_lab_q3_oracle_trace(
+        &mut self,
+        executor: &mut GpuExecutor<'f>,
+    ) -> Result<()> {
+        self.begin_lab_oracle_trace_for(executor, crate::oracle_trace::Fixture::Q3Prefix23)
+    }
+
+    fn begin_lab_oracle_trace_for(
+        &mut self,
+        executor: &mut GpuExecutor<'f>,
+        fixture: crate::oracle_trace::Fixture,
+    ) -> Result<()> {
         self.lab_oracle_attempt(executor, |model, executor| {
-            let boundary = model.lab_oracle_boundary(executor, crate::oracle_trace::START)?;
+            let boundary = model.lab_oracle_boundary(executor, fixture.start(), fixture)?;
             executor.check_lab_oracle_policy(&boundary)?;
-            executor.oracle_trace = Some(crate::oracle_trace::Trace::training()?);
+            executor.oracle_trace = Some(match fixture {
+                crate::oracle_trace::Fixture::Q4Rainwater => {
+                    crate::oracle_trace::Trace::training()?
+                }
+                crate::oracle_trace::Fixture::Q3Prefix23 => {
+                    crate::oracle_trace::Trace::q3_prefix23_training()?
+                }
+            });
             Ok(())
         })
     }
@@ -709,15 +736,9 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         executor: &mut GpuExecutor<'f>,
     ) -> Result<crate::oracle_trace::Trace> {
         self.lab_oracle_attempt(executor, |model, executor| {
-            model.lab_oracle_boundary(
-                executor,
-                crate::oracle_trace::START + crate::oracle_trace::DECODE,
-            )?;
-            executor
-                .oracle_trace
-                .as_ref()
-                .ok_or(error())?
-                .validated_replay_copy()
+            let trace = executor.oracle_trace.as_ref().ok_or(error())?;
+            model.lab_oracle_boundary(executor, trace.start() + trace.decode(), trace.fixture())?;
+            trace.validated_replay_copy()
         })
     }
 
@@ -729,7 +750,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
     ) -> Result<crate::expert_banks::FillStats> {
         self.lab_oracle_attempt(executor, |model, executor| {
             u::cancel(cancel)?;
-            let boundary = model.lab_oracle_boundary(executor, crate::oracle_trace::START)?;
+            let boundary = model.lab_oracle_boundary(executor, trace.start(), trace.fixture())?;
             let stats = executor.preload_lab_oracle(
                 &boundary,
                 trace,
@@ -748,7 +769,7 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         trace: crate::oracle_trace::Trace,
     ) -> Result<()> {
         self.lab_oracle_attempt(executor, |model, executor| {
-            let boundary = model.lab_oracle_boundary(executor, crate::oracle_trace::START)?;
+            let boundary = model.lab_oracle_boundary(executor, trace.start(), trace.fixture())?;
             executor.check_lab_oracle_preloaded(&boundary, &trace)?;
             executor.oracle_trace = Some(trace);
             Ok(())
@@ -760,11 +781,8 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
         executor: &mut GpuExecutor<'f>,
     ) -> Result<()> {
         self.lab_oracle_attempt(executor, |model, executor| {
-            model.lab_oracle_boundary(
-                executor,
-                crate::oracle_trace::START + crate::oracle_trace::DECODE,
-            )?;
             let trace = executor.oracle_trace.as_ref().ok_or(error())?;
+            model.lab_oracle_boundary(executor, trace.start() + trace.decode(), trace.fixture())?;
             if !trace.is_replay() {
                 return Err(error());
             }
