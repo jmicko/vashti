@@ -11,6 +11,15 @@ Kuno runtime and Rust tests do not link or invoke that C reference. Pinned
 source SHA256 values and fixture hashes are recorded in
 tests/fixtures/iq-b11232/receipt.json.
 
+IQ2_S, IQ3_S, Q5_K and ID42 Q2_0 layouts/scalar equations and the IQ2_S
+1024-entry/IQ3_S 512-entry public grids are derived from the same MIT-licensed
+llama.cpp b11232 GGML sources. Native packed AVX2 execution preserves these
+original scalar scale round points, F32 activations and the original 64-lane
+separate multiply/add reduction. No upstream inference engine is linked.
+The independent synthetic C reference's exact source/fixture hashes and geometry
+are recorded in tests/fixtures/daslab-b11232/receipt.json. C and Python are
+used only to regenerate committed development fixtures, not by Kuno runtime.
+
 Qwen35 pretokenizer/special-token semantics were checked against llama.cpp
 revision 806eee9841de5f2c20f9d43914117f157d2baacc, src/llama-vocab.cpp, and
 Strata revision 6f32ec070f23ced9f50e704d854d775da52591ab,

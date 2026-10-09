@@ -2,14 +2,21 @@
 //!
 //! Layout and scalar equations were checked against ggml revision
 //! `4bf5f6000653b7881d00963cd6ddb665ccd62a8d`, `ggml-common.h` and
-//! `ggml-quants.c`. The nonlinear IQ formats additionally use the pinned
-//! llama.cpp `b11232` sources recorded in `quant_iq.rs` and its public fixture
-//! receipt. See ../NOTICE for the MIT provenance notice.
+//! `ggml-quants.c`. IQ2_S/IQ3_S/Q5_K/Q2_0 and the nonlinear IQ formats use
+//! the pinned llama.cpp `b11232` sources recorded in `quant_iq.rs`,
+//! `quant_daslab.rs` and their independent public fixture receipts.
+//! See ../NOTICE for the MIT provenance notice.
 
 use crate::{Error, Result};
 
 #[path = "quant_iq.rs"]
 mod iq;
+
+#[path = "quant_daslab.rs"]
+mod daslab;
+
+/// Original GGML magnitude grids used by IQ2_S and IQ3_S device decoders.
+pub use daslab::{IQ2_S_GRID, IQ3_S_GRID};
 
 /// Immutable GGML IQ3_XXS magnitudes, packed as four little-endian bytes.
 /// Native device compilers may embed this public table as a shader constant.
@@ -29,6 +36,10 @@ pub enum TensorType {
     Iq4Nl,
     Iq4Xs,
     Bf16,
+    Q5K,
+    Q2_0,
+    Iq2S,
+    Iq3S,
 }
 
 impl TensorType {
@@ -39,11 +50,15 @@ impl TensorType {
             6 => Ok(Self::Q5_0),
             8 => Ok(Self::Q8_0),
             12 => Ok(Self::Q4K),
+            13 => Ok(Self::Q5K),
             14 => Ok(Self::Q6K),
             18 => Ok(Self::Iq3Xxs),
             20 => Ok(Self::Iq4Nl),
+            21 => Ok(Self::Iq3S),
+            22 => Ok(Self::Iq2S),
             23 => Ok(Self::Iq4Xs),
             30 => Ok(Self::Bf16),
+            42 => Ok(Self::Q2_0),
             _ => Err(Error::UnsupportedTensorType(id)),
         }
     }
@@ -55,6 +70,10 @@ impl TensorType {
             Self::Q5_0 => 6,
             Self::Q8_0 => 8,
             Self::Q4K => 12,
+            Self::Q5K => 13,
+            Self::Iq3S => 21,
+            Self::Iq2S => 22,
+            Self::Q2_0 => 42,
             Self::Q6K => 14,
             Self::Iq3Xxs => 18,
             Self::Iq4Nl => 20,
@@ -67,7 +86,14 @@ impl TensorType {
         match self {
             Self::F32 | Self::F16 | Self::Bf16 => 1,
             Self::Q5_0 | Self::Q8_0 | Self::Iq4Nl => 32,
-            Self::Q4K | Self::Q6K | Self::Iq3Xxs | Self::Iq4Xs => 256,
+            Self::Q2_0 => 64,
+            Self::Q4K
+            | Self::Q5K
+            | Self::Q6K
+            | Self::Iq3Xxs
+            | Self::Iq4Xs
+            | Self::Iq2S
+            | Self::Iq3S => 256,
         }
     }
 
@@ -78,6 +104,10 @@ impl TensorType {
             Self::Q5_0 => 22,
             Self::Q8_0 => 34,
             Self::Q4K => 144,
+            Self::Q5K => 176,
+            Self::Q2_0 => 18,
+            Self::Iq2S => 82,
+            Self::Iq3S => 110,
             Self::Q6K => 210,
             Self::Iq3Xxs => 98,
             Self::Iq4Nl => 18,
@@ -127,6 +157,10 @@ impl TensorType {
                     }
                 }
                 Self::Q4K => decode_q4k(block, out),
+                Self::Q5K => daslab::decode_q5_k(block, out),
+                Self::Q2_0 => daslab::decode_q2_0(block, out),
+                Self::Iq2S => daslab::decode_iq2_s(block, out),
+                Self::Iq3S => daslab::decode_iq3_s(block, out),
                 Self::Q6K => decode_q6k(block, out),
                 Self::Iq3Xxs => iq::decode_iq3_xxs(block, out),
                 Self::Iq4Nl => iq::decode_iq4_nl(block, out),

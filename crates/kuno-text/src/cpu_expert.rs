@@ -1524,6 +1524,9 @@ mod avx {
     mod iq {
         include!("cpu_iq.rs");
     }
+    mod daslab {
+        include!("cpu_daslab.rs");
+    }
 
     struct Sums([__m256; 8]);
     impl Zeroize for Sums {
@@ -1614,6 +1617,14 @@ mod avx {
             // including when called by the explicit FMA backend.
             return unsafe { iq::dot(dtype, packed, input, cancel) };
         }
+        if matches!(
+            dtype,
+            TensorType::Iq2S | TensorType::Iq3S | TensorType::Q5K | TensorType::Q2_0
+        ) {
+            // SAFETY: AVX2 enabled, dot_row proved the whole original packed
+            // row/input geometry. No activation quantization or FMA is added.
+            return unsafe { daslab::dot(dtype, packed, input, cancel) };
+        }
         // SAFETY: same validated geometry and ISA; the fallback preserves its
         // bounded scalar block decode for the remaining original formats.
         unsafe { decoded_dot(dtype, packed, input, scratch, cancel) }
@@ -1698,6 +1709,15 @@ mod avx {
         }
         // SAFETY: run has AVX2 enabled; sums owns all original64 lane results.
         unsafe { finish(&sums) }
+    }
+
+    #[cfg(test)]
+    pub(super) fn test_daslab_decode(
+        dtype: TensorType,
+        packed: &[u8],
+        out: &mut [f32],
+    ) -> Result<()> {
+        daslab::test_decode(dtype, packed, out)
     }
 
     #[cfg(test)]
@@ -2319,11 +2339,16 @@ mod tests {
         use super::*;
         include!("cpu_iq_tests.rs");
     }
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    mod daslab_tests {
+        use super::*;
+        include!("cpu_daslab_tests.rs");
+    }
     use crate::{GgufFile, GgufLimits};
     use std::sync::atomic::{AtomicU64, AtomicUsize};
 
     static NEXT: AtomicU64 = AtomicU64::new(0);
-    const KINDS: [TensorType; 10] = [
+    const KINDS: [TensorType; 14] = [
         TensorType::F32,
         TensorType::F16,
         TensorType::Bf16,
@@ -2334,6 +2359,10 @@ mod tests {
         TensorType::Iq3Xxs,
         TensorType::Iq4Nl,
         TensorType::Iq4Xs,
+        TensorType::Iq2S,
+        TensorType::Iq3S,
+        TensorType::Q5K,
+        TensorType::Q2_0,
     ];
 
     struct Fixture {
@@ -2461,7 +2490,13 @@ mod tests {
                 }
                 (bytes, expected)
             }
-            TensorType::Iq3Xxs | TensorType::Iq4Nl | TensorType::Iq4Xs => {
+            TensorType::Iq3Xxs
+            | TensorType::Iq4Nl
+            | TensorType::Iq4Xs
+            | TensorType::Iq2S
+            | TensorType::Iq3S
+            | TensorType::Q5K
+            | TensorType::Q2_0 => {
                 // Packed IQ blocks plus F32 expectations from the separately
                 // compiled pinned C oracle, never TensorType::decode. Use its
                 // ordinary finite first records for complete expert tests.
@@ -2475,6 +2510,22 @@ mod tests {
                     TensorType::Iq4Xs => {
                         (include_bytes!("../tests/fixtures/iq-b11232/iq4_xs.bin"), 8)
                     }
+                    TensorType::Iq2S => (
+                        include_bytes!("../tests/fixtures/daslab-b11232/iq2_s.bin"),
+                        32,
+                    ),
+                    TensorType::Iq3S => (
+                        include_bytes!("../tests/fixtures/daslab-b11232/iq3_s.bin"),
+                        8,
+                    ),
+                    TensorType::Q5K => (
+                        include_bytes!("../tests/fixtures/daslab-b11232/q5_K.bin"),
+                        8,
+                    ),
+                    TensorType::Q2_0 => (
+                        include_bytes!("../tests/fixtures/daslab-b11232/q2_0.bin"),
+                        4,
+                    ),
                     _ => unreachable!(),
                 };
                 let bytes = kind.block_bytes() as usize;
@@ -3010,6 +3061,7 @@ mod tests {
                     &[1, 3, 5, 63, 64, 65, 127, 129, 256]
                 }
                 TensorType::Q5_0 | TensorType::Q8_0 | TensorType::Iq4Nl => &[32, 64, 96, 256],
+                TensorType::Q2_0 => &[64, 128, 192, 256, 640],
                 _ => &[256, 512],
             };
             for &width in widths {
