@@ -1,4 +1,9 @@
-# Active DASLab/Strata pass — 2026-10-09
+# Paused DASLab/Strata checkpoint — 2026-10-09
+
+**User paused the goal after the overnight pass. Do not start more GPU work
+until resumed.** Latest physical model acceptance remains v129/source12f9cc7;
+the new live-member kernels and model/operator connection are source-only.
+Read the final paused checkpoint below for checks and next physical gates.
 
 Latest model-tested target/MTP source is `12f9cc7` (v129): dedicated request
 I/O reuse, pure-direct submission, complete finite fusion and real warm-bank replay pass on
@@ -14,10 +19,11 @@ Both original shards pass full publisher hashes, total83,617,662,656bytes;
 there is no merged/duplicate payload. Scalar/SIMD/GPU support covers the
 original mixed formats and all48 routed triples. Both GPUs pass independent
 original operators and all-nine-profile integer/shared probes. Original full32
-GPU comparison still fails complete CPU logits at position13 despite matching
-greedy IDs; exact cause is unlocated. No relaxed tolerance or forced experts.
-Only explicit prefix13 before that discontinuity is accepted for current
-conditional comparisons.
+GPU comparison on the earlier count1 path fails complete CPU logits at
+position13 despite matching greedy IDs; exact cause is unlocated. That historical
+failure does not establish the new all-row controller's behavior beyond13.
+No relaxed tolerance or forced experts. Only explicit prefix13 is accepted for
+the current comparisons; longer-context numerical acceptance remains pending.
 
 Selected public experiment: once-prepared integer MoE plus4096-entry FIFO/
 4MiB fully charged request metadata, original output head. Featured v109 SHA256
@@ -2935,3 +2941,63 @@ stores/adds for unused members while preserving each live64-lane tree and every
 unconditional barrier. Kernel, both-card multirow operator and immutable model
 plan work are isolated; none is physically accepted here yet. No API/frontend/
 production installation/release/reset change. Required Vashti changes:none.
+
+### Paused overnight checkpoint,2026-10-09
+
+The user paused the goal after the DASLab/Strata pass. Latest integrated source
+is `bbe630a`, after live kernel `7ab49b8`, model policy `13d9929`, independent
+multirow probe `a13ebc3` and style-only `91dd416`. Latest **physically tested
+model artifact remains12f9cc7/v129** with SHA256
+`70ce929d488a5aea1892f51b3016156de69096225db48fad09fbdcba3e617cda`.
+No further GPU benchmark or new artifact freeze was started after the pause.
+
+The same v129 artifact's optional prepared expert mode passes all target4
+partitions, real prefix1/2/3 repairs and complete CPU13 cold/warm controller
+checks. Compiler-idle cold1.73282/warm6.77829 accepted tokens/s; warm12 outputs
+take1.77036s, zero expert uploads, weight-read time and process disk bytes.
+Full closing request audit remains inside timing (13.596ms). Warm and final
+1379-owner826,703,872-byte erasures pass; all actual target/draft repairs retain
+the original vector tolerances. Four-row logit/carry max absolute errors are
+0.00059509/0.00027323. This arithmetic uses two residual Q8 activation planes,
+not original-F32 bit equality. Its ordered2.09% gain over6.63953 is too small
+to establish a material win; original F32 remains the normal comparison path.
+No matchedABBA, private/production or30token/s acceptance is claimed. Exact
+numeric/source/hash/host records are in the foundation receipt's
+`public_target_request_reuse_prepared_v129` entry.
+
+Source-only live-member work preserves the original64-lane F32 reduction tree
+and every unconditional barrier while skipping unused expert-member shared
+stores/additions. Selection is immutable/default-off; all48 actual geometries
+are checked at completed boundaries. The new operator covers all nine mixed
+profiles and counts1/2/3, old/new bits, independent CPU vectors, faults, inactive
+planes and owning tails. The public controller gains checked process-global
+readback attribution counters; these are not isolated kernel timings.
+See the normative [all-row plan](kuno-native-mtp-all-rows-plan.md).
+
+Root integrated source passes829 native tests plus2 auxiliary tests (one
+existing opt-in ignored),89 protected launcher tests, strict default/pure-direct/
+all-feature all-target Clippy, formatting/whitespace and independent source
+review. Child immutable integration and probe each pass821
+native+2auxiliary, strict default/all-feature Clippy and focused tests. The tiny
+probe let-chain lint repair passes its five affected tests with unchanged
+coverage. Exact final integrated lint/build checks are recorded in the paused
+foundation receipt. Physical live-member correctness/performance is pending.
+
+At16:21:01UTC, boot `b32654b7-a49b-493d-8305-46da15b6eac6`, kernel7.0.0-38:
+B70 memory50,688,000/34,242,297,856 bytes, NVIDIA502MiB desktop-only and zero
+compute processes. Admission is open/idle with no queue/recovery latch; Kuno,
+Ollama and Vashti HTTP all200. Classified Xe/NVIDIA faults remainzero. No owned
+lab processes remain. Snapshot is preserved in the paused foundation receipt.
+Installed binaries/services, canonical Vashti work, API/config/catalog and
+release selection remain unchanged; no reset/unbind/reboot/driver change.
+
+On resume, refresh sudo only when the shared shell is idle; freeze fresh default
+operator and pure-direct model artifacts from this integrated source. Run both
+card live-member operator gates, then target4/repair4 and same-artifact CPU13
+control/live cold/warm comparison with compilers idle. Existing full public
+references/tolerances/actual repairs/erasure/memory recovery remain mandatory.
+Then prioritize remaining GPU/CPU handshakes: v129 warm has no expert transfers,
+so its ~0.875s router phase includes queued preceding math/map/audit overhead,
+not isolated top-k computation. Do not promote the old count1 raw-score GPU
+router to MAX8 without matching rounded-global-softmax ranking semantics.
+Longer-context acceptance remains separate. Stop here until the user resumes.

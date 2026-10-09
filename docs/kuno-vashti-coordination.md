@@ -2758,6 +2758,11 @@ quality comparison candidate, without a new download or measured comparison.
 
 ### Active handoff: DASLab native Rust and Strata optimizations (2026-10-09)
 
+**Goal paused by the user after the overnight pass.** Finish only the current
+source checkpoint; do not start further GPU work until resumed. The final
+paused receipt below supersedes earlier active-goal wording. Installed services
+and the canonical Vashti checkout remain unchanged.
+
 Supersedes the paused `9218638` checkpoint for backend inference work. User has
 returned the GPUs and approved full DASLab IQ3_S plus Strata source study, with
 an active30 accepted-token/s target. Latest model-tested target/MTP source is
@@ -2963,3 +2968,28 @@ ordered improvement is not matchedABBA or production/private acceptance.
 Opt-in original-F32 unused expert-member scratch reductions are the next
 isolated source work. No API/frontend/installation/release/reset changes;
 required Vashti changes:none. Preserve canonical application/coordination work.
+
+### Paused Kuno overnight handoff,2026-10-09
+
+The user paused the goal; source-only checkpoint `bbe630a` integrates the
+original-F32 live-member kernel `7ab49b8`, immutable model policy `13d9929`,
+independent multirow operator `a13ebc3` and tiny lint fix `91dd416`. No new GPU
+run is authorized by this handoff. Latest model-tested artifact is still
+12f9cc7/v129. Normal warm dual-GPU speculative controller is6.63953 accepted
+tokens/s; optional two-residual-Q8 prepared mode passes original full-vector
+and actual-repair gates at6.77829, but its2.09% ordered gain is not a material
+selection. Separate conditional ideal count1 v109 remains12.728; none establishes
+30tokens/s or production/private/general inference acceptance.
+
+Live-member source skips only unused member-plane reductions, preserves active
+arithmetic/unconditional barriers, and remains default-off. Physical both-card
+operator, target4/repair4 and fullCPU13 matched control/live timing are pending.
+Root829native+2auxiliary,89 launcher tests and independent source reviews pass;
+exact final lint checks, source hashes, numeric receipts, preserved failures,
+limitations and resume steps are in the
+[paused native checkpoint](kuno-native-text-checkpoint.md#paused-overnight-checkpoint2026-10-09)
+and foundation receipt. Fresh16:21UTC actual memory/HTTP/admission recovery and
+zero classified Xe/NVIDIA faults pass. No benchmark GPU process remains.
+No API/frontend/config/catalog/install/release/reset change. **Required Vashti
+changes:none.** Preserve the canonical checkout and its coordination/application
+work; resume source/benchmarks in the isolated native-text worktree only.
