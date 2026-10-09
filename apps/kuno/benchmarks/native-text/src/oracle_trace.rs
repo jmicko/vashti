@@ -14,23 +14,26 @@ const RANKS: usize = 10;
 const ALL_LAYERS: u64 = (1u64 << LAYERS) - 1;
 
 /// Fixed public fixtures only. START is the completed prefill cursor, so Q3's
-/// token0 prefill ends at cursor1 and its decode records cover cursors2..23.
+/// token0 prefill ends at cursor1; the selected fixed window then covers either
+/// cursors2..23 (Unsloth prefix) or cursors2..32 (DASLab complete reference).
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Fixture {
     Q4Rainwater,
     Q3Prefix23,
+    Daslab32,
 }
 impl Fixture {
     pub(crate) fn start(self) -> usize {
         match self {
             Self::Q4Rainwater => START,
-            Self::Q3Prefix23 => 1,
+            Self::Q3Prefix23 | Self::Daslab32 => 1,
         }
     }
     pub(crate) fn decode(self) -> usize {
         match self {
             Self::Q4Rainwater => DECODE,
             Self::Q3Prefix23 => 22,
+            Self::Daslab32 => 31,
         }
     }
     pub(crate) fn prefix(self) -> usize {
@@ -40,6 +43,7 @@ impl Fixture {
         match self {
             Self::Q4Rainwater => CONTEXT,
             Self::Q3Prefix23 => 24,
+            Self::Daslab32 => 33,
         }
     }
     fn max_union(self) -> usize {
@@ -50,18 +54,21 @@ impl Fixture {
 enum Coverage {
     Q4(Zeroizing<[u64; DECODE]>),
     Q3(Zeroizing<[u64; 22]>),
+    Daslab(Zeroizing<[u64; 31]>),
 }
 impl Coverage {
     fn new(fixture: Fixture) -> Self {
         match fixture {
             Fixture::Q4Rainwater => Self::Q4(Zeroizing::new([0; DECODE])),
             Fixture::Q3Prefix23 => Self::Q3(Zeroizing::new([0; 22])),
+            Fixture::Daslab32 => Self::Daslab(Zeroizing::new([0; 31])),
         }
     }
     fn fixture(&self) -> Fixture {
         match self {
             Self::Q4(_) => Fixture::Q4Rainwater,
             Self::Q3(_) => Fixture::Q3Prefix23,
+            Self::Daslab(_) => Fixture::Daslab32,
         }
     }
 }
@@ -71,6 +78,7 @@ impl std::ops::Deref for Coverage {
         match self {
             Self::Q4(masks) => masks.as_slice(),
             Self::Q3(masks) => masks.as_slice(),
+            Self::Daslab(masks) => masks.as_slice(),
         }
     }
 }
@@ -79,6 +87,7 @@ impl std::ops::DerefMut for Coverage {
         match self {
             Self::Q4(masks) => masks.as_mut_slice(),
             Self::Q3(masks) => masks.as_mut_slice(),
+            Self::Daslab(masks) => masks.as_mut_slice(),
         }
     }
 }
@@ -87,6 +96,7 @@ impl Zeroize for Coverage {
         match self {
             Self::Q4(masks) => masks.zeroize(),
             Self::Q3(masks) => masks.zeroize(),
+            Self::Daslab(masks) => masks.zeroize(),
         }
     }
 }
@@ -110,6 +120,10 @@ impl Trace {
 
     pub(crate) fn q3_prefix23_training() -> Result<Self> {
         Self::training_for(Fixture::Q3Prefix23)
+    }
+
+    pub(crate) fn daslab32_training() -> Result<Self> {
+        Self::training_for(Fixture::Daslab32)
     }
 
     fn training_for(fixture: Fixture) -> Result<Self> {
@@ -570,5 +584,144 @@ mod tests {
                 .all(|&id| bank.resident_slot(id).unwrap().is_some())
         );
         assert!(bank.plan(&(0..145).collect::<Vec<_>>()).is_err());
+    }
+
+    fn daslab_trained_full_capacity() -> Trace {
+        let mut trace = Trace::daslab32_training().unwrap();
+        for token in 0..trace.decode() {
+            let ids = std::array::from_fn::<_, RANKS, _>(|rank| match token {
+                0..=13 => token * RANKS + rank,
+                14 if rank < 4 => 140 + rank,
+                _ => rank,
+            });
+            for layer in 0..LAYERS {
+                trace.record(layer, (2 + token) as u64, &ids).unwrap();
+            }
+        }
+        trace
+    }
+
+    #[test]
+    fn daslab_fixed31_masks_cover_all32_outputs_and_replay_wipes_every_owner() {
+        let mut trace = Trace::daslab32_training().unwrap();
+        assert!(trace.fixture() == Fixture::Daslab32);
+        assert_eq!(
+            (
+                trace.start(),
+                trace.decode(),
+                trace.prefix(),
+                trace.context()
+            ),
+            (1, 31, 32, 33)
+        );
+        assert_eq!(trace.coverage.len(), 31);
+        assert_eq!(trace.bits.len(), 384);
+        assert!(trace.owned_bytes() <= HOST);
+        let ids = std::array::from_fn::<_, RANKS, _>(|rank| rank);
+        for position in [0, 1, 33, u64::MAX] {
+            assert!(trace.record(0, position, &ids).is_err());
+        }
+        assert_eq!(trace.counts(), vec![0; LAYERS]);
+        trace.record(0, 32, &ids).unwrap();
+        assert!(trace.record(0, 32, &ids).is_err());
+        assert!(trace.validated_replay_copy().is_err());
+
+        trace = daslab_trained_full_capacity();
+        trace.complete().unwrap();
+        assert!(trace.coverage.iter().all(|&mask| mask == ALL_LAYERS));
+        assert_eq!(trace.counts(), vec![144; LAYERS]);
+        let mut replay = trace.validated_replay_copy().unwrap();
+        assert!(replay.fixture() == Fixture::Daslab32);
+        assert_eq!(replay.coverage.len(), 31);
+        replay.validate_ready_replay().unwrap();
+        assert!(replay.complete().is_err());
+        assert!(replay.validated_replay_copy().is_err());
+        assert!(
+            replay
+                .record(0, 2, &(140..150).collect::<Vec<_>>())
+                .is_err()
+        );
+        replay.validate_ready_replay().unwrap();
+        for token in 0..31 {
+            for layer in 0..LAYERS {
+                replay.record(layer, (2 + token) as u64, &ids).unwrap();
+            }
+        }
+        replay.complete().unwrap();
+        assert!(replay.validate_ready_replay().is_err());
+        for owner in [&mut trace, &mut replay] {
+            owner.erase();
+            assert!(owner.bits.is_empty());
+            assert_eq!(*owner.coverage, [0; 31]);
+            assert!(!owner.is_replay());
+            assert!(owner.complete().is_err());
+        }
+    }
+
+    #[test]
+    fn daslab_union145_and_missing_final_layer_fail_without_partial_publication() {
+        let mut trace = Trace::daslab32_training().unwrap();
+        for token in 0..14 {
+            trace
+                .record(
+                    0,
+                    (token + 2) as u64,
+                    &(token * 10..(token + 1) * 10).collect::<Vec<_>>(),
+                )
+                .unwrap();
+        }
+        let original = trace.bits.to_vec();
+        let too_many = [140, 141, 142, 143, 144, 0, 1, 2, 3, 4];
+        assert!(trace.record(0, 16, &too_many).is_err());
+        assert_eq!(*trace.bits, original);
+        assert_eq!(trace.coverage[14], 0);
+        let fits = [140, 141, 142, 143, 0, 1, 2, 3, 4, 5];
+        trace.record(0, 16, &fits).unwrap();
+        assert_eq!(trace.counts()[0], 144);
+        let original = trace.bits.to_vec();
+        assert!(
+            trace
+                .record(0, 17, &[144, 0, 1, 2, 3, 4, 5, 6, 7, 8])
+                .is_err()
+        );
+        assert_eq!(*trace.bits, original);
+        assert_eq!(trace.coverage[15], 0);
+        let mut complete = daslab_trained_full_capacity();
+        complete.coverage[30] &= !(1u64 << 47);
+        assert!(complete.complete().is_err());
+        assert!(complete.validated_replay_copy().is_err());
+    }
+
+    #[test]
+    fn daslab_full_union_plan_remains_bounded_and_unpublished_until_complete() {
+        let trace = daslab_trained_full_capacity();
+        let union = trace.union(47).unwrap();
+        let mut bank = crate::bank_slots::BankSlots::new(144, 512).unwrap();
+        let initial = bank.plan(&(200..344).collect::<Vec<_>>()).unwrap();
+        bank.commit(initial).unwrap();
+        let plan = bank.plan(&union).unwrap();
+        bank.validate_pending(&plan, &union).unwrap();
+        assert_eq!(plan.uploads.len(), 144);
+        assert!(plan.uploads.chunks(10).all(|window| window.len() <= 10));
+        assert!(
+            trace.owned_bytes()
+                + union.capacity() * std::mem::size_of::<usize>()
+                + plan.owned_metadata_bytes().unwrap()
+                + 4096
+                <= 192 * 1024
+        );
+        drop(plan);
+        assert!(
+            union
+                .iter()
+                .all(|&id| bank.resident_slot(id).unwrap().is_none())
+        );
+        let complete = bank.plan(&union).unwrap();
+        bank.commit(complete).unwrap();
+        assert!(
+            union
+                .iter()
+                .all(|&id| bank.resident_slot(id).unwrap().is_some())
+        );
     }
 }

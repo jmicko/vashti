@@ -1,15 +1,41 @@
-//! Conditional fixed-public Q3 prefix ceiling with correct original experts.
+//! Conditional fixed-public Q3 residency replay with correct original experts.
 //! Training/preload are outside timing. No request history is persisted and no
 //! admission ledger is reset: each phase has a fresh complete original owner.
-use crate::{executor::GpuExecutor, q3_public_reference::Reference, resident_model::ResidentModel};
+use crate::{
+    executor::GpuExecutor, oracle_trace::Fixture, q3_public_reference::Reference,
+    resident_model::ResidentModel,
+};
 use kuno_text::model::greedy;
 use std::{sync::atomic::AtomicBool, time::Instant};
 use zeroize::Zeroizing;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
-const POSITIONS: usize = 23;
-const DECODE: usize = POSITIONS - 1;
-const CONTEXT: usize = POSITIONS + 1;
+struct FixtureRun {
+    positions: usize,
+    decode: usize,
+    context: usize,
+    scope: &'static str,
+    full32: bool,
+}
+impl FixtureRun {
+    fn new(fixture: Fixture) -> Result<Self> {
+        let (scope, full32) = match fixture {
+            Fixture::Q3Prefix23 => (
+                "fixed-public-Q3-prefix23-conditional-ideal-residency",
+                false,
+            ),
+            Fixture::Daslab32 => ("fixed-public-DASLab32-conditional-ideal-residency", true),
+            Fixture::Q4Rainwater => return Err("Q3 ideal fixture selection".into()),
+        };
+        Ok(Self {
+            positions: fixture.prefix(),
+            decode: fixture.decode(),
+            context: fixture.context(),
+            scope,
+            full32,
+        })
+    }
+}
 
 fn prepare<'f>(
     r: &mut ResidentModel<'_, 'f>,
@@ -47,18 +73,22 @@ fn close(r: &mut ResidentModel<'_, '_>, e: &mut GpuExecutor<'_>) -> Result<serde
 pub(crate) fn run<'m, 'f: 'm>(
     mut make: impl FnMut(usize) -> Result<(ResidentModel<'m, 'f>, GpuExecutor<'f>)>,
     reference: &Reference,
+    fixture: Fixture,
     cancel: &AtomicBool,
 ) -> Result<serde_json::Value> {
-    reference.require_positions(POSITIONS)?;
-    let (mut training, mut train_executor) = make(CONTEXT)?;
+    let selected = FixtureRun::new(fixture)?;
+    let positions = selected.positions;
+    let decode = selected.decode;
+    reference.require_positions(positions)?;
+    let (mut training, mut train_executor) = make(selected.context)?;
     let mut logits = prepare(&mut training, &mut train_executor, cancel)?;
-    training.begin_lab_q3_oracle_trace(&mut train_executor)?;
-    let mut trained_ids = Zeroizing::new(Vec::with_capacity(POSITIONS));
-    for position in 0..POSITIONS {
+    training.begin_lab_oracle_trace_for(&mut train_executor, fixture)?;
+    let mut trained_ids = Zeroizing::new(Vec::with_capacity(positions));
+    for position in 0..positions {
         reference.verify(position, &logits)?;
         let token = greedy(&logits)?;
         trained_ids.push(token);
-        if position + 1 < POSITIONS {
+        if position + 1 < positions {
             logits = crate::resident_decode_step(
                 &mut training,
                 &mut train_executor,
@@ -75,7 +105,7 @@ pub(crate) fn run<'m, 'f: 'm>(
     drop(training);
     drop(train_executor);
 
-    let (mut replay, mut executor) = make(CONTEXT)?;
+    let (mut replay, mut executor) = make(selected.context)?;
     let initial = prepare(&mut replay, &mut executor, cancel)?;
     reference.verify(0, &initial)?;
     let first = greedy(&initial)?;
@@ -89,10 +119,10 @@ pub(crate) fn run<'m, 'f: 'm>(
         executor.uploaded_bytes,
     );
     let resources = crate::public_resources::snapshot();
-    let mut replayed_ids = Zeroizing::new(Vec::with_capacity(POSITIONS));
+    let mut replayed_ids = Zeroizing::new(Vec::with_capacity(positions));
     replayed_ids.push(first);
     let clock = Instant::now();
-    for position in 1..POSITIONS {
+    for position in 1..positions {
         let output = crate::resident_decode_step(
             &mut replay,
             &mut executor,
@@ -125,17 +155,17 @@ pub(crate) fn run<'m, 'f: 'm>(
         delta(after.2, before.2)?,
         delta(after.3, before.3)?,
     ];
-    if work != [DECODE as u64 * 48 * 10, 0, 0, 0] {
+    if work != [decode as u64 * 48 * 10, 0, 0, 0] {
         return Err("Q3 ideal timed execution was not entirely resident".into());
     }
     let replay_audit = close(&mut replay, &mut executor)?;
-    println!("public_q3_ideal_probe_closed=true decode_steps={DECODE} elapsed_ns={elapsed_ns}");
+    println!("public_q3_ideal_probe_closed=true decode_steps={decode} elapsed_ns={elapsed_ns}");
     Ok(serde_json::json!({
-        "scope":"fixed-public-Q3-prefix23-conditional-ideal-residency",
-        "positions":POSITIONS,"decode_steps":DECODE,"context_tokens":CONTEXT,"seed":424242,
+        "scope":selected.scope,
+        "positions":positions,"decode_steps":decode,"context_tokens":selected.context,"seed":424242,
         "train_full_vectors_accepted":true,"replay_full_vectors_accepted":true,
         "trace_membership_verified":true,"owned_io_cleanup_accepted":true,
-        "full32_reference_accepted":false,"ends_before_known_router_divergence":true,
+        "full32_reference_accepted":selected.full32,"ends_before_known_router_divergence":!selected.full32,
         "expert_union_counts":counts,"preload_original_bytes":preload.bytes,
         "elapsed_ns":elapsed_ns,"gpu_hits":work[0],"cpu_misses":work[1],
         "expert_uploads":work[2],"public_weight_upload_bytes":work[3],"resources":resources,
@@ -144,4 +174,40 @@ pub(crate) fn run<'m, 'f: 'm>(
         "timing_includes":"full-vector checks, original trace membership and audited request I/O close",
         "timing_excludes":"training, binding, prefill, preload, later full owning close and recovery",
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn explicit_fixture_geometry_and_receipt_scope_cannot_claim_the_wrong_window() {
+        let prefix = FixtureRun::new(Fixture::Q3Prefix23).unwrap();
+        assert_eq!(
+            (prefix.positions, prefix.decode, prefix.context),
+            (23, 22, 24)
+        );
+        assert_eq!(
+            prefix.scope,
+            "fixed-public-Q3-prefix23-conditional-ideal-residency"
+        );
+        assert!(!prefix.full32);
+        let full = FixtureRun::new(Fixture::Daslab32).unwrap();
+        assert_eq!((full.positions, full.decode, full.context), (32, 31, 33));
+        assert_eq!(
+            full.scope,
+            "fixed-public-DASLab32-conditional-ideal-residency"
+        );
+        assert!(full.full32);
+        assert!(FixtureRun::new(Fixture::Q4Rainwater).is_err());
+        assert_eq!(
+            (
+                Fixture::Q4Rainwater.start(),
+                Fixture::Q4Rainwater.decode(),
+                Fixture::Q4Rainwater.prefix(),
+                Fixture::Q4Rainwater.context()
+            ),
+            (75, 7, 8, 203)
+        );
+    }
 }
