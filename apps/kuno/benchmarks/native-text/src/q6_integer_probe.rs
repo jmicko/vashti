@@ -285,7 +285,7 @@ fn run_sequence(
     ledger.observe_before(sample(client)?)?;
     ledger.precharge(&requests)?;
     let mut arena =
-        PrivateArena::new_transient(client.clone(), PRIVATE_CAP, IO_CAP, retired.clone())?;
+        PrivateArena::new_transient_on_configured(client.clone(), PRIVATE_CAP, retired.clone())?;
     arena.enable_public_owned_zero_audit()?;
     let ids: Vec<_> = logical
         .into_iter()
@@ -555,6 +555,12 @@ pub(crate) fn run(client: &ComputeClient<WgpuRuntime>, limits: &wgpu::Limits) ->
     {
         return Err("Q6 fresh exclusive main context required".into());
     }
+    // Configure the same serialized stream while it is still empty, before
+    // public weight allocation. Every fresh private owner below shares this
+    // bounded transient I/O policy; it must not reconfigure a live stream.
+    client
+        .configure_transient_io(IO_CAP)
+        .map_err(|_| "Q6 initial bounded transient I/O configuration")?;
     let retired = Arc::new(AtomicBool::new(false));
     let mut ledger = MainAdmission::new(MAIN_CAP, 0)?;
     let mut maximum = 0f32;
