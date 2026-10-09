@@ -5,6 +5,9 @@
 //! token. Draft outputs must be verified by the target; they are never responses.
 //! Equations were independently translated from llama.cpp PR28243 revision
 //! 6fcaa16f4b360649933a54d1f91ad40ed35c0e11, src/models/qwen4exp.cpp (MIT).
+//! Input hidden normalization is corrected to one10240-wide RMS, as vLLM
+//! v0.30.0 qwen4_exp/nvidia/mtp.py defines pre_fc_norm_hidden. The original
+//! prototype's per-stream conditioning norm is not the publisher's equation.
 //! The pinned Unsloth Q8 sidecar has one dense-attention block at index48.
 //! Its four stored indexer tensors are inspected but deliberately not executed.
 
@@ -300,12 +303,7 @@ impl<'a> MtpGraph<'a> {
             D,
             EPS,
         ))?);
-        let h = private(op(ops::rms_norm(
-            hidden,
-            self.vector("blk.48.nextn.hnorm.weight")?,
-            D,
-            EPS,
-        ))?);
+        let h = condition_hidden(hidden, self.vector("blk.48.nextn.hnorm.weight")?)?;
         project_conditioned(&e, &h, |concat| {
             self.project(executor, "blk.48.nextn.eh_proj.weight", 0, concat, cancel)
         })
@@ -632,6 +630,15 @@ impl Drop for MtpSequence {
     }
 }
 
+/// The learned hnorm spans all HC streams at once. Only the subsequent shared
+/// EH projection splits the normalized hidden into2560-wide stream inputs.
+fn condition_hidden(hidden: &[f32], gamma: &[f32]) -> Result<Private> {
+    if hidden.len() != WIDE || gamma.len() != WIDE {
+        return Err(Error::InvalidBufferLength);
+    }
+    Ok(private(op(ops::rms_norm(hidden, gamma, WIDE, EPS))?))
+}
+
 fn project_conditioned(
     embedding: &[f32],
     hidden: &[f32],
@@ -751,6 +758,28 @@ mod kv_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn condition_hidden_uses_one_global_rms_before_shared_stream_projection() {
+        let magnitudes = [1f32, 2., 4., 8.];
+        let hidden: Vec<_> = magnitudes.iter().flat_map(|v| vec![*v; D]).collect();
+        let gamma: Vec<_> = (0..WIDE)
+            .map(|i| if i % 2 == 0 { 1.5 } else { 0.5 })
+            .collect();
+        let normalized = condition_hidden(&hidden, &gamma).unwrap();
+        // Analytic global mean=(1+4+16+64)/4=21.25. Normalizing each stream
+        // separately would erase these relative amplitudes and fails this gate.
+        let inverse = 1.0 / (21.25f64 + f64::from(EPS)).sqrt();
+        for (i, actual) in normalized.iter().enumerate() {
+            let expected = (f64::from(magnitudes[i / D]) * inverse * f64::from(gamma[i])) as f32;
+            assert_eq!(actual.to_bits(), expected.to_bits());
+        }
+        assert!(normalized[3 * D] > 7.9 * normalized[0]);
+        assert!(condition_hidden(&hidden[..WIDE - 1], &gamma).is_err());
+        assert!(condition_hidden(&hidden, &gamma[..WIDE - 1]).is_err());
+        let mut invalid = hidden.clone();
+        invalid[D] = f32::NAN;
+        assert!(condition_hidden(&invalid, &gamma).is_err());
+    }
     #[test]
     fn conditioning_preserves_all_four_streams_and_embedding_first() {
         let embedding = vec![2.; D];
