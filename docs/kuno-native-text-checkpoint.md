@@ -1,5 +1,10 @@
 # Native DASLab/Strata checkpoint — 2026-10-09
 
+For the next model or a fresh session, start with the
+[standalone resume handoff](kuno-native-next-model-handoff.md). It distinguishes
+accepted hardware results from the source-only candidate and gives the exact
+checkout, helper selection change, ordered gates, and recovery procedure.
+
 **Current checkpoint:** user requested a stop for usage conservation. Standalone
 Strata is removed; original model shards, alternate draft and comparison evidence
 remain. v143/`f0e088b` passes both-card80-case frozen512 routing operators and

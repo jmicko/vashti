@@ -3088,6 +3088,12 @@ is inferred from this internal performance checkpoint. Preserve canonical work.
 
 ### Active handoff: RAM-source native text validation; user requested stop, 2026-10-09
 
+The detailed [next-model handoff](kuno-native-next-model-handoff.md) is the
+starting point for another model resuming this backend pass. It includes the
+exact source/physical acceptance split, model and reference paths, protected
+helper limitation, ordered correctness/timing gates, and recovery instructions.
+Its creation changes documentation only; GPU work and the goal remain stopped.
+
 This supersedes the pending-host-materialization state above. v143/`f0e088b`
 passes both-card80-case authenticated512 source-router operators and the B70
 full original CPU13 target/3060draft controller with actual VRAM/RAM experts.
