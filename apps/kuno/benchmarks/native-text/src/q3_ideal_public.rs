@@ -147,8 +147,26 @@ pub(crate) fn run<'m, 'f: 'm>(
     let mut greedy_check_ns = 0u128;
     let mut replayed_ids = Zeroizing::new(Vec::with_capacity(positions));
     replayed_ids.push(first);
+    // Public timing metadata only: at most 31 u64 entries plus the Vec header
+    // (under 512 bytes), inside the existing fixed-public host metadata slack.
+    // Reserve before the unchanged aggregate timer, with no populated growth.
+    if decode > 31 {
+        return Err("Q3 ideal bounded public step timing geometry".into());
+    }
+    let mut step_wall_ns = Vec::<u64>::new();
+    step_wall_ns.try_reserve_exact(decode)?;
+    if step_wall_ns.capacity() != decode
+        || step_wall_ns
+            .capacity()
+            .checked_mul(std::mem::size_of::<u64>())
+            .and_then(|n| n.checked_add(std::mem::size_of::<Vec<u64>>()))
+            .is_none_or(|n| n > 512)
+    {
+        return Err("Q3 ideal bounded public step timing metadata".into());
+    }
     let clock = Instant::now();
     for position in 1..positions {
+        let step_clock = Instant::now();
         let output = crate::resident_decode_step(
             &mut replay,
             &mut executor,
@@ -166,10 +184,14 @@ pub(crate) fn run<'m, 'f: 'm>(
             return Err("Q3 ideal replay original prefix mismatch".into());
         }
         replayed_ids.push(token);
+        step_wall_ns.push(u64::try_from(step_clock.elapsed().as_nanos())?);
     }
     replay.finish_lab_oracle_replay(&mut executor)?;
     replay.end_lab_request_io_reuse()?;
     let elapsed_ns = clock.elapsed().as_nanos();
+    if step_wall_ns.len() != decode {
+        return Err("Q3 ideal complete public decode step timing metadata".into());
+    }
     let phase_ns: BTreeMap<_, _> = replay
         .phase_ns
         .iter()
@@ -242,7 +264,7 @@ pub(crate) fn run<'m, 'f: 'm>(
     });
     let replay_audit = close(&mut replay, &mut executor)?;
     println!("public_q3_ideal_probe_closed=true decode_steps={decode} elapsed_ns={elapsed_ns}");
-    Ok(serde_json::json!({
+    let mut receipt = serde_json::json!({
         "scope":selected.scope,
         "positions":positions,"decode_steps":decode,"context_tokens":selected.context,"seed":424242,
         "train_full_vectors_accepted":true,"replay_full_vectors_accepted":true,
@@ -264,7 +286,12 @@ pub(crate) fn run<'m, 'f: 'm>(
         "training_owned_zero_audit":training_audit,"replay_owned_zero_audit":replay_audit,
         "timing_includes":"full-vector checks, original trace membership and audited request I/O close",
         "timing_excludes":"training, binding, prefill, preload, later full owning close and recovery",
-    }))
+    });
+    receipt["decode_step_wall_ns"] = serde_json::json!(step_wall_ns);
+    receipt["decode_step_wall_ns_scope"] = serde_json::json!(
+        "each replay loop iteration with dispatch and unchanged checks; excludes post-loop trace/request-I/O close"
+    );
+    Ok(receipt)
 }
 
 #[cfg(test)]
