@@ -2607,3 +2607,43 @@ Vashti, release, reset/unbind/reboot or driver/clock changes. Expert histories
 remain transient. **Required Vashti changes: none.** Review worktrees are
 integrated, reviewed and archived. Accepted receipt and quant assessment are
 committed in `3601124`. No shared API change is needed.
+
+### Active handoff: native Unsloth quant and MTP implementation (2026-10-08)
+
+The user approved Unsloth UD-Q3_K_XL with the self-contained Q8 MTP head and our
+own Rust implementation. Their backend direction is native Kuno where a
+supported backend exists, with ordinary Ollama fallback for unsupported models.
+Exact future routing/naming must be coordinated before changing consumers.
+No production routing or API change is implemented in this handoff.
+
+Root integration is `bb84f38`, following `ae97ac4` (bounded full scalar MTP
+reference), `cd0c2a1` (original packed IQ3_XXS/IQ4_NL/IQ4_XS decode; isolated
+source `1ffd041`), and `712b605` (strict split owner; isolated `ce964280`). Read
+the [exact native MTP plan](kuno-native-text-mtp-plan.md) before further changes.
+The original Q4 acceptance and receipts remain unchanged.
+
+The Q8 sidecar's complete checksum passed. Its strict34-tensor binding and
+complete graph scheduling pass a synthetic executor check; real CPU weights
+run on fixed public token0/zero-wide-hidden input and repeat exactly after KV
+rewind. Six math/ownership tests cover per-stream embedding-first conditioning,
+Q/gate order, independent dense GQA equations, contiguous KV grouping, all
+visible positions and wiping helpers. This does not establish independent
+full-head numerical parity, target/draft integration or speculative speedup.
+The scalar reference remains public-fixture-only because inherited operators
+lack complete private error-path erasure acceptance.
+
+Merged foundation checks pass148 kuno-text tests plus two opt-in downloaded-head
+tests,526 native laboratory host tests, strict crate/native Clippy and formatting.
+Packed IQ reference fixtures contain8032 exact F32 values from pinned upstream
+equations. Original optimized/GPU IQ admission is still rejected at this root
+commit. GPU quant operator support and explicit Q3 expert/PLE ownership are being
+implemented in separate review worktrees. Larger model shards are downloading;
+complete hash verification, local no-copy Ollama import and actual native main
+graph admission remain pending. No Q3 generation or MTP GPU performance claim.
+
+Normal admission and all installed services are unchanged. There are no lab GPU
+jobs/models at this checkpoint; protected GPU tests will use the restored sudo
+credential once operator source is ready. No reset, unbind, reboot, driver/clock
+change, installation or release. Model provenance and synthetic receipts only;
+private prompts, outputs and expert histories remain unpersisted.
+**Required Vashti changes: none for this internal milestone.**
