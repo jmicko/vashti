@@ -2605,4 +2605,5 @@ has no compute process, classified faults remain zero and all three services
 returnHTTP200. No installed binary/configuration, API/catalog, model-file,
 Vashti, release, reset/unbind/reboot or driver/clock changes. Expert histories
 remain transient. **Required Vashti changes: none.** Review worktrees are
-integrated, reviewed and submitted for archival. No shared API change is needed.
+integrated, reviewed and archived. Accepted receipt and quant assessment are
+committed in `3601124`. No shared API change is needed.

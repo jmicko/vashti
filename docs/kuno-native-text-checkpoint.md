@@ -40,7 +40,8 @@ Normal admission is resumed; all lab jobs exited. Same-boot post-run state at
 process, zero classified Xe/NVIDIA faults andHTTP200 from all three services.
 Swap/core dumps were disabled during the benchmark. No reset/unbind/reboot,
 driver/clock, installed runtime, API, release or Vashti change. Required Vashti
-changes: none. Two integrated review worktrees were submitted for archival.
+changes: none. Both integrated review worktrees are archived; receipt/quant
+assessment commit is `3601124`.
 
 ### Previous adaptive settling checkpoint (historical)
 
