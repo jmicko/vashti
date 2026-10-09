@@ -750,6 +750,11 @@ pub struct GpuExecutor<'a> {
     pub(crate) q3_skip_empty_segments: bool,
     pub(crate) q3_subgroup_moe: bool,
     pub(crate) q3_integer_moe: bool,
+    #[allow(dead_code)] // Inert until parent wires the separate original-MoE leaf.
+    pub(crate) q3_shared_original_moe: bool,
+    pub(crate) q6_integer_head: bool,
+    pub q6_integer_head_prepares: u64,
+    pub q6_integer_head_tiles: u64,
     pub(crate) q3_expert_oracle: bool,
     pub(crate) q3_router_reference: Option<std::sync::Arc<crate::q3_router_reference::Reference>>,
     pub(crate) oracle_trace: Option<crate::oracle_trace::Trace>,
@@ -817,6 +822,42 @@ pub struct GpuExecutor<'a> {
     pub weight_upload_ns: u128,
     pub gpu_wait_ns: u128,
 }
+#[allow(clippy::too_many_arguments)]
+fn validate_q6_final_head(
+    profile: expert_banks::OriginalPackedProfile,
+    admitted: bool,
+    member_capacity: usize,
+    tile: usize,
+    name: &str,
+    dtype: u32,
+    columns: usize,
+    rows: usize,
+    experts: usize,
+    spans: &quant_matvec::matmul::BatchSpans,
+) -> Result<()> {
+    if !profile.is_low_bit()
+        || !admitted
+        || member_capacity != 1
+        || tile != 1
+        || name != "output.weight"
+        || dtype != 14
+        || columns != 2560
+        || rows != 248320
+        || experts != 1
+        || spans.count() != 1
+        || spans.packed_first() != 0
+        || spans.input_first() != 0
+        || spans.input_stride() != 2560
+        || spans.output_first() != 0
+        || spans.output_stride() != 248320
+    {
+        return Err(Error::InvalidFormat(
+            "Q6 integer fixed-public final head contract",
+        ));
+    }
+    Ok(())
+}
+
 fn oracle_fixture_profile_matches(
     fixture: crate::oracle_trace::Fixture,
     profile: expert_banks::OriginalPackedProfile,
@@ -933,6 +974,10 @@ impl<'a> GpuExecutor<'a> {
             q3_skip_empty_segments: false,
             q3_subgroup_moe: false,
             q3_integer_moe: false,
+            q3_shared_original_moe: false,
+            q6_integer_head: false,
+            q6_integer_head_prepares: 0,
+            q6_integer_head_tiles: 0,
             q3_expert_oracle: false,
             q3_router_reference: None,
             oracle_trace: None,
@@ -2582,6 +2627,140 @@ impl<'a> GpuExecutor<'a> {
         Ok(fused)
     }
 
+    /// Fixed-public admitted low-bit Final head only. The sealed GR caller
+    /// lends its dead full NORM page; no owner, cache format/key or allocation
+    /// changes. This explicitly changes activation/reduction arithmetic.
+    /// # Safety
+    /// x/planes/y/fault are distinct complete same-stream private arena owners,
+    /// frozen through all queued tiles and the original whole-model proof.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) unsafe fn enqueue_q6_integer_final_head(
+        &mut self,
+        tensor: TensorView<'_>,
+        x: &Handle,
+        planes: &Handle,
+        y: &Handle,
+        fault: &Handle,
+        spans: &quant_matvec::matmul::BatchSpans,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        use crate::q6_integer_matvec::{self as q6, PrepareSpans, ProjectSpans, Spec};
+        if !self.q6_integer_head || !tensor.belongs_to(self.model) {
+            return Err(Error::InvalidFormat("Q6 integer final head selection"));
+        }
+        self.model.verify_file_unchanged()?;
+        let matrix = Matrix::new(tensor)?;
+        validate_q6_final_head(
+            self.packed_profile,
+            self.resident_admission.is_some() && self.transient_resident.is_some(),
+            self.native_projection_members,
+            self.native_projection_tile(),
+            tensor.info().name(),
+            tensor.info().dtype().gguf_id(),
+            matrix.inputs(),
+            matrix.outputs(),
+            matrix.experts(),
+            spans,
+        )?;
+        self.resident_admission
+            .as_ref()
+            .ok_or(Error::InvalidBufferLength)?
+            .active()?;
+        let mut extents = [0usize; 4];
+        for (h, extent) in [x, planes, y, fault].into_iter().zip(&mut extents) {
+            if h.stream != x.stream
+                || h.size() != h.size_in_used()
+                || h.offset_start.unwrap_or(0) != 0
+                || h.offset_end.unwrap_or(0) != 0
+                || !h.size().is_multiple_of(4)
+                || h.size() / 4 > u32::MAX as u64
+            {
+                return Err(Error::InvalidBufferLength);
+            }
+            *extent = h.size() as usize / 4;
+        }
+        let prepare_spec = Spec::new(16384, 2560)?;
+        let prepare_spans = PrepareSpans {
+            input_first: spans.input_first(),
+            planes_first: 0,
+            fault_first: 0,
+        };
+        prepare_spans.validate(prepare_spec, [extents[0], extents[1], extents[3]])?;
+        // Exact unchanged cache partition: fifteen16384-row tiles and2560
+        // final rows. Prove every predicted source/output before preparation.
+        for first in (0..248320).step_by(16384) {
+            let rows = 16384.min(248320 - first);
+            let spec = Spec::new(rows, 2560)?;
+            ProjectSpans {
+                packed_first: 0,
+                planes_first: 0,
+                output_first: first,
+                fault_first: 0,
+                matrix_first: 0,
+                matrix_rows: 248320,
+            }
+            .validate(
+                spec,
+                spec.weight_bytes(),
+                [extents[1], extents[2], extents[3]],
+            )?;
+        }
+        if cancel.load(Ordering::Acquire) {
+            return Err(Error::InvalidFormat("Q6 integer final head cancelled"));
+        }
+        let prepares = self
+            .q6_integer_head_prepares
+            .checked_add(1)
+            .ok_or(Error::ArithmeticOverflow)?;
+        q6::prepare(
+            &self.client,
+            prepare_spec,
+            x.clone(),
+            planes.clone(),
+            fault.clone(),
+            prepare_spans,
+        )?;
+        self.q6_integer_head_prepares = prepares;
+        for first in (0..248320).step_by(16384) {
+            if cancel.load(Ordering::Acquire) {
+                return Err(Error::InvalidFormat("Q6 integer final head cancelled"));
+            }
+            let rows = 16384.min(248320 - first);
+            let spec = Spec::new(rows, 2560)?;
+            let packet = ProjectSpans {
+                packed_first: 0,
+                planes_first: 0,
+                output_first: first,
+                fault_first: 0,
+                matrix_first: 0,
+                matrix_rows: 248320,
+            };
+            let (weights, words) = self.weight(tensor, 0, first, rows)?;
+            packet.validate(spec, words * 4, [extents[1], extents[2], extents[3]])?;
+            let tiles = self
+                .q6_integer_head_tiles
+                .checked_add(1)
+                .ok_or(Error::ArithmeticOverflow)?;
+            let calls = self.calls.checked_add(1).ok_or(Error::ArithmeticOverflow)?;
+            q6::project(
+                &self.client,
+                spec,
+                weights,
+                planes.clone(),
+                y.clone(),
+                fault.clone(),
+                packet,
+                first + rows == 248320,
+            )?;
+            self.q6_integer_head_tiles = tiles;
+            self.calls = calls;
+        }
+        if cancel.load(Ordering::Acquire) {
+            return Err(Error::InvalidFormat("Q6 integer final head cancelled"));
+        }
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     unsafe fn enqueue_matrix_inner(
         &mut self,
@@ -3718,6 +3897,169 @@ mod admission_tests {
         assert!(fill_requests([0, 4, 4], 1, false, 8 * 1024 * 1024).is_err());
         assert!(fill_requests([u64::MAX - 3, 4, 4], 1, true, 8 * 1024 * 1024).is_err());
         assert!(fill_requests([4, 4, 4], 1, true, 3 * 1024 * 1024).is_err());
+    }
+}
+
+#[cfg(test)]
+mod q6_final_head_tests {
+    use super::*;
+    use quant_matvec::matmul::BatchSpans;
+
+    #[test]
+    fn only_admitted_low_bit_count1_original_head_selects_integer_arithmetic() {
+        let spans = BatchSpans::new(1, 0, 0, 2560, 0, 248320);
+        let check = |profile,
+                     admitted,
+                     members,
+                     tile,
+                     name,
+                     dtype,
+                     columns,
+                     rows,
+                     experts,
+                     packet: &BatchSpans| {
+            validate_q6_final_head(
+                profile, admitted, members, tile, name, dtype, columns, rows, experts, packet,
+            )
+        };
+        for profile in [
+            expert_banks::OriginalPackedProfile::UnslothQ3,
+            expert_banks::OriginalPackedProfile::DaslabIq3,
+        ] {
+            check(
+                profile,
+                true,
+                1,
+                1,
+                "output.weight",
+                14,
+                2560,
+                248320,
+                1,
+                &spans,
+            )
+            .unwrap();
+        }
+        let profile = expert_banks::OriginalPackedProfile::DaslabIq3;
+        for (p, admitted, members, tile, name, dtype, columns, rows, experts) in [
+            (
+                expert_banks::OriginalPackedProfile::Q4,
+                true,
+                1,
+                1,
+                "output.weight",
+                14,
+                2560,
+                248320,
+                1,
+            ),
+            (profile, false, 1, 1, "output.weight", 14, 2560, 248320, 1),
+            (profile, true, 8, 1, "output.weight", 14, 2560, 248320, 1),
+            (profile, true, 1, 8, "output.weight", 14, 2560, 248320, 1),
+            (
+                profile,
+                true,
+                1,
+                1,
+                "blk.0.attn_output.weight",
+                14,
+                2560,
+                248320,
+                1,
+            ),
+            (profile, true, 1, 1, "output.weight", 8, 2560, 248320, 1),
+            (profile, true, 1, 1, "output.weight", 14, 256, 248320, 1),
+            (profile, true, 1, 1, "output.weight", 14, 2560, 16384, 1),
+            (profile, true, 1, 1, "output.weight", 14, 2560, 248320, 512),
+        ] {
+            assert!(
+                check(
+                    p, admitted, members, tile, name, dtype, columns, rows, experts, &spans
+                )
+                .is_err()
+            );
+        }
+        for packet in [
+            BatchSpans::new(2, 0, 0, 2560, 0, 248320),
+            BatchSpans::new(1, 4, 0, 2560, 0, 248320),
+            BatchSpans::new(1, 0, 4, 2560, 0, 248320),
+            BatchSpans::new(1, 0, 0, 2564, 0, 248320),
+            BatchSpans::new(1, 0, 0, 2560, 4, 248320),
+            BatchSpans::new(1, 0, 0, 2560, 0, 248324),
+        ] {
+            assert!(
+                check(
+                    profile,
+                    true,
+                    1,
+                    1,
+                    "output.weight",
+                    14,
+                    2560,
+                    248320,
+                    1,
+                    &packet
+                )
+                .is_err()
+            );
+        }
+    }
+    #[test]
+    fn original_head_tiles_cover_every_row_once_with_one_plane_preparation() {
+        use crate::q6_integer_matvec::{PrepareSpans, ProjectSpans, Spec};
+        let mut expected_first = 0;
+        let mut tiles = 0;
+        let full_words = [32768usize, 131072, 262144, 8192];
+        let prepare = PrepareSpans {
+            input_first: 0,
+            planes_first: 0,
+            fault_first: 0,
+        };
+        prepare
+            .validate(
+                Spec::new(16384, 2560).unwrap(),
+                [full_words[0], full_words[1], full_words[3]],
+            )
+            .unwrap();
+        let mut packed_total = 0;
+        let mut page_total = 0;
+        for first in (0..248320).step_by(16384) {
+            assert_eq!(first, expected_first);
+            let rows = 16384.min(248320 - first);
+            let spec = Spec::new(rows, 2560).unwrap();
+            let packet = ProjectSpans {
+                packed_first: 0,
+                planes_first: 0,
+                output_first: first,
+                fault_first: 0,
+                matrix_first: 0,
+                matrix_rows: 248320,
+            };
+            packet
+                .validate(
+                    spec,
+                    spec.weight_bytes(),
+                    [full_words[1], full_words[2], full_words[3]],
+                )
+                .unwrap();
+            assert!(
+                packet
+                    .validate(
+                        spec,
+                        spec.weight_bytes() - 4,
+                        [full_words[1], full_words[2], full_words[3]]
+                    )
+                    .is_err()
+            );
+            expected_first += rows;
+            packed_total += spec.weight_bytes();
+            page_total += main_admission::page_bytes(spec.weight_bytes() as u64).unwrap();
+            tiles += 1;
+        }
+        assert_eq!(expected_first, 248320);
+        assert_eq!(tiles, 16);
+        assert_eq!(packed_total, 521_472_000);
+        assert_eq!(page_total, 1_015_021_568);
     }
 }
 

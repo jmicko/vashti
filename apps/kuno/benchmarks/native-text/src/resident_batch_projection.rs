@@ -51,6 +51,22 @@ pub trait BatchedResidentProjector {
         spans: &BatchSpans,
         cancel: &AtomicBool,
     ) -> Result<()>;
+    /// The ordinary path ignores this non-reusable Final-only capability.
+    /// true means the caller must queue a full scratch clear after all reads.
+    #[allow(clippy::too_many_arguments)]
+    fn enqueue_final_head(
+        &mut self,
+        projection: BoundProjection<'_>,
+        arena: &PrivateArena,
+        input: BufferId,
+        output: BufferId,
+        spans: &BatchSpans,
+        _scratch: crate::resident_gr::batch::FinalHeadScratch<'_>,
+        cancel: &AtomicBool,
+    ) -> Result<bool> {
+        self.enqueue_batch(projection, arena, input, output, spans, cancel)?;
+        Ok(false)
+    }
 }
 
 #[allow(dead_code)]
@@ -117,6 +133,60 @@ impl BatchedResidentProjector for ResidentBatchProjection<'_, '_> {
             u::validate(arena, output, self.fault)?;
         }
         u::cancel(cancel)
+    }
+    fn enqueue_final_head(
+        &mut self,
+        projection: BoundProjection<'_>,
+        arena: &PrivateArena,
+        input: BufferId,
+        output: BufferId,
+        spans: &BatchSpans,
+        scratch: crate::resident_gr::batch::FinalHeadScratch<'_>,
+        cancel: &AtomicBool,
+    ) -> Result<bool> {
+        // Prefill keeps its original public tile8 policy. Only the completed
+        // owner's explicitly selected member1/tile1 decode policy activates
+        // integer arithmetic; never select from a private active token count.
+        if !self.executor.q6_integer_head
+            || self.executor.native_projection_member_capacity() != 1
+            || self.executor.native_projection_tile() != 1
+        {
+            self.enqueue_batch(projection, arena, input, output, spans, cancel)?;
+            return Ok(false);
+        }
+        u::cancel(cancel)?;
+        self.executor
+            .check_client(arena.client().map_err(u::fault)?)?;
+        let planes = scratch.into_planes(arena, input, output, self.fault)?;
+        let ids = [input, planes, output, self.fault];
+        let mut owners = Vec::with_capacity(ids.len());
+        for id in ids {
+            owners.push(crate::resident_gr::batch::full_private(
+                arena,
+                id,
+                u::words(arena, id)?,
+            )?);
+        }
+        crate::resident_gr::batch::physical(arena, &owners)?;
+        if u::words(arena, self.fault)? != 1 {
+            return Err(Error::InvalidBufferLength);
+        }
+        // SAFETY: consumed Final-only capability, live distinct physical full
+        // owners on the admitted stream. No private allocation/upload occurs;
+        // original whole-model completion/commit/erase remains the caller's.
+        unsafe {
+            self.executor.enqueue_q6_integer_final_head(
+                projection.tensor,
+                &owners[0],
+                &owners[1],
+                &owners[2],
+                &owners[3],
+                spans,
+                cancel,
+            )?;
+        }
+        u::cancel(cancel)?;
+        Ok(true)
     }
 }
 

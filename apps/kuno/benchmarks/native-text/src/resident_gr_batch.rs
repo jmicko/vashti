@@ -512,6 +512,44 @@ impl Workspace {
     }
 }
 
+/// One final-head capability for the already dead normalization owner. It is
+/// minted only after Final mix and its status folds are queued; no clone/copy or
+/// public constructor can authorize another workspace/arena/role combination.
+pub struct FinalHeadScratch<'a> {
+    arena: &'a PrivateArena,
+    ids: Zeroizing<[BufferId; 4]>,
+}
+impl FinalHeadScratch<'_> {
+    pub(crate) fn into_planes(
+        self,
+        arena: &PrivateArena,
+        input: BufferId,
+        output: BufferId,
+        fault: BufferId,
+    ) -> Result<BufferId> {
+        final_head_roles(
+            &self.ids,
+            std::ptr::eq(self.arena, arena),
+            input,
+            output,
+            fault,
+        )
+    }
+}
+fn final_head_roles(
+    ids: &[BufferId; 4],
+    same_arena: bool,
+    input: BufferId,
+    output: BufferId,
+    fault: BufferId,
+) -> Result<BufferId> {
+    if !same_arena || ids[0] != input || ids[2] != output || ids[3] != fault {
+        return Err(Error::InvalidBufferLength);
+    }
+    distinct(ids)?;
+    Ok(ids[1])
+}
+
 /// Borrow prevents workspace reuse and mutable arena reset before its consumers
 /// are queued. Dropping it without combine/final-mix poisons the workspace.
 /// It conveys no state acceptance or completed fence.
@@ -618,14 +656,30 @@ impl Prepared<'_, '_> {
             .checked_mul(width)
             .ok_or(Error::ArithmeticOverflow)?;
         let spans = BatchSpans::new(1, 0, first, width, 0, vocabulary);
-        projector.enqueue_batch(
+        let scratch = FinalHeadScratch {
+            arena: self.arena,
+            ids: Zeroizing::new([
+                self.workspace.ids[MIXED],
+                self.workspace.ids[NORM],
+                logits,
+                self.fault,
+            ]),
+        };
+        // Final omits injection: after the queued MIXED producer and folds,
+        // NORM has no reader left. Same-stream head work must finish reading
+        // its prepared planes before the full owner is cleared below.
+        let used = projector.enqueue_final_head(
             BoundProjection { tensor, matrix },
             self.arena,
             self.workspace.ids[MIXED],
             logits,
             &spans,
+            scratch,
             self.cancel,
         )?;
+        if used {
+            u::zero(self.arena, self.workspace.ids[NORM])?;
+        }
         u::cancel(self.cancel)?;
         self.consumed = true;
         self.workspace.phase = Phase::Available;
@@ -643,6 +697,46 @@ impl Drop for Prepared<'_, '_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn final_head_scratch_rejects_foreign_stale_reversed_and_aliased_roles() {
+        let ids = [0, 1, 2, 3].map(|slot| BufferId::metadata_fixture(7, 4, slot));
+        assert!(final_head_roles(&ids, true, ids[0], ids[2], ids[3]).unwrap() == ids[1]);
+        assert!(final_head_roles(&ids, false, ids[0], ids[2], ids[3]).is_err());
+        for bad in [
+            BufferId::metadata_fixture(8, 4, 0),
+            BufferId::metadata_fixture(7, 5, 0),
+            ids[2],
+        ] {
+            assert!(final_head_roles(&ids, true, bad, ids[2], ids[3]).is_err());
+        }
+        for alias in [ids[0], ids[2], ids[3]] {
+            let mut bad = ids;
+            bad[1] = alias;
+            assert!(final_head_roles(&bad, true, ids[0], ids[2], ids[3]).is_err());
+        }
+        assert!(final_head_roles(&ids, true, ids[0], ids[0], ids[3]).is_err());
+        assert!(final_head_roles(&ids, true, ids[0], ids[2], ids[1]).is_err());
+    }
+    #[test]
+    fn q6_scratch_fits_already_admitted_final_norm_and_head_info_envelope() {
+        let layout = Layout::new(4, 2560, 320).unwrap();
+        let original = layout.requests().unwrap();
+        let norm_words = layout.words().unwrap()[NORM];
+        let spec = crate::q6_integer_matvec::Spec::new(16384, 2560).unwrap();
+        assert_eq!(spec.plane_words(), 1440);
+        assert_eq!(original[NORM], 524_288);
+        assert!(spec.plane_words() < 4 * 2560);
+        assert!(4 * 2560 <= norm_words);
+        assert_eq!(original.iter().sum::<u64>(), 1_998_848);
+        assert_eq!(layout.requests().unwrap(), original);
+        let tiles = 248320usize.div_ceil(16384);
+        assert_eq!(tiles, 16);
+        // Prepare + original sixteen projections + full scratch clear stay
+        // below runtime_bytes' unchanged two-per-tile+one bound.
+        let actual = 1 + tiles + 1;
+        let admitted = 2 * tiles + 1;
+        assert!(actual <= admitted);
+    }
     #[test]
     fn full_owner_proof_rejects_interior_resource_and_hidden_physical_tail() {
         for owned in [32768, 131072, 524288] {
