@@ -2754,3 +2754,41 @@ device-feature integration, independent three-profile probe/fault/owning checks,
 then host and protected both-card/full-vector performance acceptance. No GPU
 work should resume until the user gives them back. DASLab remains an assessed
 quality comparison candidate, without a new download or measured comparison.
+
+
+### Active handoff: DASLab native Rust and Strata optimizations (2026-10-09)
+
+Supersedes the paused `9218638` checkpoint for backend inference work. User has
+returned the GPUs and approved full DASLab IQ3_S plus Strata source study, with
+an active30 accepted-token/s target. Kuno source is `85711cd` in the same isolated
+`codex/kuno-native-text` worktree. Installed services, public contracts/catalog/
+configuration, Vashti and release selection remain unchanged. Preserve the
+canonical checkout's uncommitted coordination/application work.
+
+Read [current checkpoint](kuno-native-text-checkpoint.md),
+[DASLab notes](kuno-native-daslab.md),
+[numeric/provenance receipt](../apps/kuno/benchmarks/text/receipts/daslab-foundation-20261009.json)
+and the [MTP plan](kuno-native-text-mtp-plan.md). Changes since pause include
+original-format scalar/SIMD/GPU support (`d11bd15`/`985ffb5`), exact DAS profile/
+shared decoder connection (`67a01bc`/`aae7e3b`), explicit original prefix13
+(`07be82e`), dense decoder extension (`7d06efb`), original shared-codebook and
+integer expert leaves (`d424727`/`2375412`/`b82eefd`), direct lane initializers
+(`6189e69`/`5b976e2`), prepared Q6 head (`36cf286`/`fb6cd2f`), aligned Q6 loads
+(`bcb9bfc`), host phase diagnostics (`690f032`) and bounded larger request-cache
+metadata (`bfadcd4`/`85711cd`). MTP KV-only append is `2dea140`. These are
+laboratory changes, not a new production native model route.
+
+Two original DAS shards are fully verified without merged/duplicate payload.
+Both GPUs pass independent mixed-quant operators. Fixed prefix13 full-vector/
+greedy/ownership tests pass. Best conditional ideal replay is11.177tokens/s;
+30tokens/s is not achieved. Original full32 fails at position13 with finite
+logit disagreement despite greedy equality; keep that failure and unchanged
+tolerance. v105 identifies binding/enqueue/fence overhead; simply growing the
+append-only cache in v106 does not improve hits or speed. Once-prepared expert
+inputs and bounded cache replacement are still pending physical acceptance.
+No private content/history is persisted; only compiled public numeric fixtures
+and model provenance. Actual memory, admission/services and classified-fault
+recovery pass after every physical trial. No resets, reboots, driver/clocks,
+installation or release. Final integrated checks are pending further candidate
+source changes. **Required Vashti changes: none.** Future production native
+catalog/routing still needs a coordinated consumer contract.

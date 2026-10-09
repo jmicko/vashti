@@ -1,3 +1,62 @@
+# Active DASLab/Strata pass — 2026-10-09
+
+The user returned both GPUs and approved the full DASLab IQ3_S model, source
+study of Strata and a30 accepted-token/s goal. Native root source is `85711cd`
+on `codex/kuno-native-text`, in the existing isolated Kuno worktree. Canonical
+Vashti work/uncommitted coordination documents are preserved. Installed Kuno,
+Ollama/Vashti, public API/catalog/config and release selection are unchanged.
+Required Vashti changes: none.
+
+Read [DASLab source/acceptance notes](kuno-native-daslab.md) and the
+[numeric/provenance receipt](../apps/kuno/benchmarks/text/receipts/daslab-foundation-20261009.json).
+The complete two original shards total83,617,662,656 bytes and pass their full
+publisher hashes; no merged/duplicate payload. Scalar/SIMD/GPU support now
+covers the original mixed IQ2_S/IQ3_S/Q5_K/Q2_0 formats and all48 routed triples.
+Both cards pass independent original operators and all-nine-profile integer/
+shared-original probes. Full original32 CPU reference is preserved. GPU full32
+fails complete logits at position13 (greedy matches); cause remains unlocated,
+with no tolerance relaxation/forced experts. Only explicit prefix13 before
+that discontinuity is accepted for current conditional speed comparisons.
+
+Best recorded prefix13 ideal replay is11.177tokens/s (v104 integer), versus
+same-artifact original10.817, shared-original10.931 and prepared Q6 head9.820.
+Every accepted replay checks all original full CPU vectors/greedy IDs, correct
+trace membership,5760 GPU ranks and zero CPU misses/weight uploads/physical
+reads. Preloading/training are outside timing. This is a short conditional
+compute diagnostic, not demand-cache, production/private, full32 or30tokens/s
+acceptance. The preserved first integer implementation was21.19times slower;
+direct lane codebook initialization repaired it, but gains over original are
+small and run variation is material.
+
+v105 profiling records34,254 binding misses/zero hits/zero inserts and272ms
+creation time in1.2208s; these counters require a present cache and do not prove
+withdrawal. v106 larger append-only4096-entry/4MiB cache also has zero hits and
+zero inserts (12steps/1.2838s). It does not establish a gain. Root source adds
+explicit protected-only scope and complete host charging; default256/512-entry
+and256KiB limits stay unchanged. Native family metadata remains independently
+capped; expanded runtime metadata is fully reserved, with64KiB host-plan margin.
+
+Current pending isolated candidates: bounded replacement of setup-only binding
+keys in the larger cache, and once-prepared two-residual-Q8 activation planes
+for expert stages (reuse the existing full CPU owner, no new model owner).
+Aligned Q6 loads `bcb9bfc` are integrated/host-tested; new physical operator
+acceptance is still pending. MTP KV-only append `2dea140` passes focused host
+checks; target batch verification/controller/rollback remain pending and no
+speculative throughput is claimed. Read the exact MTP plan before extending it.
+
+Merged657 native featured tests (one ignored) pass; vendor105 device-free
+runtime tests and strict native/runtime Clippy pass at reviewed source leaf.
+Final integrated strict checks and both-card physical candidate tests remain
+required. Frozen v106 featured SHA256 is
+`d0ebc35d6d070b61f816027b007d84de1165304989331b6ecfac084a54808fa9`.
+Normal admission/actual GPU memory and services recover after every trial,
+classified fault counters remain unchanged. No GPU reset/unbind/reboot,
+clock/driver changes, production installation or release. The active goal
+continues toward30; if sudo expires and effective protected work cannot
+continue, save a tested checkpoint and restore normal GPU/service access.
+
+---
+
 # Native text checkpoint, 2026-10-08
 
 **Latest checkpoint: Q3 correct-expert replay accepted; work paused at the
