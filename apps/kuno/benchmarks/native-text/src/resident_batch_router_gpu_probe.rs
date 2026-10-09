@@ -47,6 +47,42 @@ impl SourceFixture {
         }
     }
 }
+/// Compiled-public coordinates only: no model, scores, selected IDs or maps.
+fn case_marker(source: SourceFixture, layer: usize, count: usize, kind: Option<usize>) -> [i64; 6] {
+    [
+        source.capacity() as i64,
+        layer as i64,
+        count as i64,
+        match source {
+            SourceFixture::Resident144 => -1,
+            SourceFixture::Frozen512 { pattern } => pattern as i64,
+        },
+        kind.filter(|&n| n < source.fault_kinds())
+            .map_or(-1, |n| n as i64),
+        kind.filter(|&n| n >= source.fault_kinds())
+            .map_or(-1, |n| (n - source.fault_kinds()) as i64),
+    ]
+}
+/// The caller has already attempted full arena close before passing here.
+/// Case errors are authored content-free classifications in this public-only
+/// probe. Preserve their exact category even if cleanup also fails; cleanup
+/// status is separately reported and no branch can publish a success receipt.
+/// Arbitrary panic payloads are never returned or printed.
+fn after_full_arena_close<T>(
+    attempt: std::thread::Result<Result<T>>,
+    close_ok: bool,
+    retired: bool,
+) -> Result<T> {
+    match attempt {
+        Ok(Err(error)) => Err(error),
+        Err(_) => Err("batch router public case panic; no accepted receipt".into()),
+        Ok(Ok(_)) if !close_ok => {
+            Err("batch router full arena close failed; no accepted receipt".into())
+        }
+        Ok(Ok(_)) if retired => Err("batch router arena retired; no accepted receipt".into()),
+        Ok(Ok(report)) => Ok(report),
+    }
+}
 fn state() -> State {
     WORDS.map(|n| Zeroizing::new(vec![0; n]))
 }
@@ -390,6 +426,22 @@ fn case(
     kind: Option<usize>,
     source: SourceFixture,
 ) -> Result<serde_json::Value> {
+    let [capacity, layer_marker, count_marker, pattern, fault, tie] =
+        case_marker(source, layer, count, kind);
+    eprintln!(
+        "batch_router_public_case source_capacity={capacity} layer={layer_marker} count={count_marker} pattern={pattern} fault={fault} tie={tie}"
+    );
+    case_body(client, arena, ledger, layer, count, kind, source)
+}
+fn case_body(
+    client: &ComputeClient<WgpuRuntime>,
+    arena: &mut PrivateArena,
+    ledger: &mut MainAdmission,
+    layer: usize,
+    count: usize,
+    kind: Option<usize>,
+    source: SourceFixture,
+) -> Result<serde_json::Value> {
     let start = 4096 - count as u64;
     let mut before = match source {
         SourceFixture::Resident144 => fixture(count),
@@ -704,10 +756,20 @@ pub(crate) fn run(
     }));
     let close = arena.close();
     let zero = arena.owned_zero_audit_receipt();
-    let report = match (attempt, close, retired.load(Ordering::Acquire)) {
-        (Ok(Ok(r)), Ok(()), false) => r,
-        _ => return Err("batch router compiled-public gates failed; no accepted receipt".into()),
+    let retired = retired.load(Ordering::Acquire);
+    let outcome = match &attempt {
+        Ok(Ok(_)) => 0,
+        Ok(Err(_)) => 1,
+        Err(_) => 2,
     };
+    if outcome != 0 || close.is_err() || retired {
+        eprintln!(
+            "batch_router_public_cleanup outcome={outcome} full_arena_close={} retired={}",
+            u8::from(close.is_ok()),
+            u8::from(retired)
+        );
+    }
+    let report = after_full_arena_close(attempt, close.is_ok(), retired)?;
     let zero = zero.ok_or("batch router complete zero receipt absent")?;
     drop(arena);
     let mut released = false;
@@ -753,6 +815,66 @@ pub(crate) fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn public_case_markers_distinguish_modes_normal_fault_and_tie_without_route_content() {
+        assert_eq!(
+            case_marker(SourceFixture::Resident144, 0, 1, None),
+            [144, 0, 1, -1, -1, -1]
+        );
+        assert_eq!(
+            case_marker(SourceFixture::Resident144, 47, 3, Some(13)),
+            [144, 47, 3, -1, 13, -1]
+        );
+        assert_eq!(
+            case_marker(SourceFixture::Resident144, 47, 3, Some(FAULT_CASES + 2)),
+            [144, 47, 3, -1, -1, 2]
+        );
+        assert_eq!(
+            case_marker(SourceFixture::Frozen512 { pattern: 1 }, 23, 2, None),
+            [512, 23, 2, 1, -1, -1]
+        );
+        assert_eq!(
+            case_marker(SourceFixture::Frozen512 { pattern: 0 }, 47, 3, Some(0)),
+            [512, 47, 3, 0, 0, -1]
+        );
+        assert_eq!(
+            case_marker(
+                SourceFixture::Frozen512 { pattern: 0 },
+                47,
+                1,
+                Some(FROZEN_FAULT_KINDS + 2)
+            ),
+            [512, 47, 1, 0, -1, 2]
+        );
+    }
+    #[test]
+    fn attempted_full_close_preserves_case_error_and_cannot_promote_cleanup_or_panic() {
+        use crate::main_admission::AdmissionError;
+        for close_ok in [false, true] {
+            for retired in [false, true] {
+                let case: Result<()> = Err(Box::new(AdmissionError::LimitExceeded));
+                let error = after_full_arena_close(Ok(case), close_ok, retired).unwrap_err();
+                assert_eq!(
+                    error.downcast_ref::<AdmissionError>(),
+                    Some(&AdmissionError::LimitExceeded)
+                );
+                let report = after_full_arena_close(Ok(Ok(73u32)), close_ok, retired);
+                if close_ok && !retired {
+                    assert_eq!(report.unwrap(), 73);
+                } else {
+                    assert!(report.is_err());
+                }
+                let payload: Box<dyn std::any::Any + Send> =
+                    Box::new("private arbitrary panic payload");
+                let error =
+                    after_full_arena_close::<()>(Err(payload), close_ok, retired).unwrap_err();
+                assert_eq!(
+                    error.to_string(),
+                    "batch router public case panic; no accepted receipt"
+                );
+            }
+        }
+    }
     fn host_frame(count: usize, layer: usize, start: u64) -> Result<State> {
         host_frame_source(count, layer, start, SourceFixture::Resident144, None)
     }
