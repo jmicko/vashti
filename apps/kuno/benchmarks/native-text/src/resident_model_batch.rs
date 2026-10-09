@@ -2044,11 +2044,18 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
     )> {
         u::cancel(cancel)?;
         let native = self.native_batch.as_ref().ok_or(error())?;
-        if !native.public_frozen_host_sources
-            || native.moe.frozen_host_sources_enabled()
-            || self.admission.request_io_reuse_active()
-        {
-            return Err(error());
+        if !native.public_frozen_host_sources {
+            return Err(Error::InvalidFormat(
+                "public host prepare construction reserve",
+            ));
+        }
+        if native.moe.frozen_host_sources_enabled() {
+            return Err(Error::InvalidFormat(
+                "public host prepare source already attached",
+            ));
+        }
+        if self.admission.request_io_reuse_active() {
+            return Err(Error::InvalidFormat("public host prepare live request I/O"));
         }
         let boundary = self
             .completed_native_projection_boundary(executor)

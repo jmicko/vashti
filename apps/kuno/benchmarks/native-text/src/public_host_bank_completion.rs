@@ -348,7 +348,8 @@ impl GpuExecutor<'_> {
     ) -> Result<expert_banks::FillStats> {
         // Prove actual full fault owner/context and completed runtime audit even
         // when every bank is already full and no source window is necessary.
-        resident_batch_io::read_fault(arena, admission, fault, cancel)?;
+        resident_batch_io::read_fault(arena, admission, fault, cancel)
+            .map_err(|_| Error::InvalidFormat("public host completion owning fault checkpoint"))?;
         let mut total = expert_banks::FillStats::default();
         for layer in 0..LAYERS {
             if cancel.load(Ordering::Acquire) {
@@ -399,7 +400,10 @@ impl GpuExecutor<'_> {
                         ] {
                             let (view, data, read) = expert_banks::prepare_public_existing(
                                 packed, tensor, expert, slot, cancel,
-                            )?;
+                            )
+                            .map_err(|_| {
+                                Error::InvalidFormat("public host completion original source read")
+                            })?;
                             add.bytes = add
                                 .bytes
                                 .checked_add(data.len() as u64)
@@ -417,7 +421,10 @@ impl GpuExecutor<'_> {
                     }
                     placement.validate(&bank.slots, &plan, &selected)?;
                     let (bytes, upload) =
-                        expert_banks::write_public_existing(&self.client, writes, charged, cancel)?;
+                        expert_banks::write_public_existing(&self.client, writes, charged, cancel)
+                            .map_err(|_| {
+                                Error::InvalidFormat("public host completion original source write")
+                            })?;
                     if bytes != add.bytes {
                         return Err(Error::InvalidBufferLength);
                     }
@@ -425,7 +432,9 @@ impl GpuExecutor<'_> {
                     Ok(add)
                 })?;
                 // ORIGINAL completed owning audit precedes ANY metadata commit.
-                resident_batch_io::read_fault(arena, admission, fault, cancel)?;
+                resident_batch_io::read_fault(arena, admission, fault, cancel).map_err(|_| {
+                    Error::InvalidFormat("public host completion owning fault checkpoint")
+                })?;
                 placement.validate(&bank.slots, &plan, &selected)?;
                 add_stats(&mut total, &add)?;
             }
