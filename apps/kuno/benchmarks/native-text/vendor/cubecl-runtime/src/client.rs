@@ -403,6 +403,38 @@ impl<R: Runtime> ComputeClient<R> {
             })?
     }
 
+    /// Fixed public target laboratory stream: 128 MiB owned I/O, batched INFO,
+    /// inline readback and an explicitly charged 4096-entry/4-MiB reuse scope.
+    /// Requires the actual inline device handle. Ordinary and draft streams
+    /// keep configure_transient_io; no process setting is changed here.
+    pub fn configure_public_target_request_io(&self) -> Result<(), ServerError> {
+        if !DeviceHandle::<R::Server>::is_blocking() {
+            return Err(ServerError::Generic {
+                reason: "public target I/O requires inline device".into(),
+                backtrace: BackTrace::capture(),
+            });
+        }
+        let stream_id = self.stream_id();
+        self.device
+            .submit_blocking(move |server| server.configure_public_target_request_io(stream_id))
+            .map_err(|_| ServerError::Generic {
+                reason: "public target I/O channel unavailable".into(),
+                backtrace: BackTrace::capture(),
+            })?
+    }
+
+    /// Content-free validation of this stream's immutable target I/O policy.
+    /// A retired stream fails; an ordinary or unconfigured stream returns false.
+    pub fn public_target_request_io_configured(&self) -> Result<bool, ServerError> {
+        let stream_id = self.stream_id();
+        self.device
+            .submit_blocking(move |server| server.public_target_request_io_configured(stream_id))
+            .map_err(|_| ServerError::Generic {
+                reason: "public target I/O channel unavailable".into(),
+                backtrace: BackTrace::capture(),
+            })?
+    }
+
     /// Move a heap-only private allocation to an owned/wiping controller.
     /// This path does not call staging(), to_vec(), clone(), or file controllers.
     /// Full capacity is wiped even when layout/scheduling/backend calls fail.
@@ -531,6 +563,18 @@ impl<R: Runtime> ComputeClient<R> {
             .submit_blocking(move |server| server.begin_transient_io_reuse(stream_id))
             .map_err(|_| ServerError::Generic {
                 reason: "private I/O reuse channel unavailable".into(),
+                backtrace: BackTrace::capture(),
+            })?
+    }
+
+    /// Begin only the separately admitted fixed public-target reuse scope.
+    /// Ordinary reuse cannot activate its larger metadata reservation.
+    pub fn begin_public_target_request_io_reuse(&self) -> Result<u64, ServerError> {
+        let stream_id = self.stream_id();
+        self.device
+            .submit_blocking(move |server| server.begin_public_target_request_io_reuse(stream_id))
+            .map_err(|_| ServerError::Generic {
+                reason: "public target I/O reuse channel unavailable".into(),
                 backtrace: BackTrace::capture(),
             })?
     }

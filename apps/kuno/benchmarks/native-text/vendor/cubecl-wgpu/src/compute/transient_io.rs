@@ -915,6 +915,13 @@ struct ReuseMetadataConfig {
     metadata_bytes: usize,
 }
 impl ReuseMetadataConfig {
+    const fn public_target() -> Self {
+        Self {
+            binding_enabled: true,
+            binding_capacity: 4096,
+            metadata_bytes: LARGE_REUSE_METADATA_MAX,
+        }
+    }
     fn parse(
         binding_enabled: bool,
         capacity: Option<&str>,
@@ -976,6 +983,73 @@ impl ReuseMetadataConfig {
         let capacity = setting("KUNO_LAB_BIND_GROUP_CAPACITY")?;
         let metadata = setting("KUNO_LAB_REQUEST_REUSE_METADATA_BYTES")?;
         Self::parse(enabled, capacity.as_deref(), metadata.as_deref())
+    }
+}
+
+/// Immutable target-only policy. No environment access, allocation, nonce or
+/// ledger mutation occurs while selecting or validating this configuration.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PublicTargetIoConfig {
+    budget: u64,
+    slab_bytes: u64,
+    info_batch: bool,
+    inline_readback: bool,
+    gpu_upload_clear: bool,
+    clean_readback_reuse: bool,
+    metadata: ReuseMetadataConfig,
+}
+impl PublicTargetIoConfig {
+    const FIXED: Self = Self {
+        budget: 128 * 1024 * 1024,
+        slab_bytes: 4096,
+        info_batch: true,
+        inline_readback: true,
+        gpu_upload_clear: false,
+        clean_readback_reuse: false,
+        metadata: ReuseMetadataConfig::public_target(),
+    };
+    fn admit(inline_device: bool) -> Result<Self, ServerError> {
+        if !inline_device {
+            return Err(fault("public target I/O requires inline device"));
+        }
+        let config = Self::FIXED;
+        let binding =
+            NativeBindingCache::reserved_bytes_for_limit(config.metadata.binding_capacity)
+                .ok_or_else(|| fault("binding cache fixed reservation"))?;
+        reuse_metadata_capacity_with_limit::<wgpu::Buffer>(
+            0,
+            0,
+            InfoCache::<WgpuResource>::reserved_bytes()
+                .checked_add(binding)
+                .ok_or_else(|| fault("request reuse metadata overflow"))?,
+            config.metadata.metadata_bytes,
+        )?;
+        Ok(config)
+    }
+}
+
+fn validate_reuse_mode(
+    captured: Option<ReuseMetadataConfig>,
+    public_target: bool,
+) -> Result<(), ServerError> {
+    if captured.is_some() != public_target {
+        return Err(fault("private reuse configuration mode mismatch"));
+    }
+    if captured.is_some_and(|config| config != ReuseMetadataConfig::public_target()) {
+        return Err(fault("public target I/O configuration mismatch"));
+    }
+    Ok(())
+}
+
+fn reuse_metadata_for_mode(
+    captured: Option<ReuseMetadataConfig>,
+    public_target: bool,
+    ordinary: impl FnOnce() -> Result<ReuseMetadataConfig, ServerError>,
+) -> Result<ReuseMetadataConfig, ServerError> {
+    validate_reuse_mode(captured, public_target)?;
+    match captured {
+        Some(config) => Ok(config),
+        None => ordinary(),
     }
 }
 
@@ -1496,6 +1570,9 @@ pub(crate) struct TransientIo {
     info_batch: bool,
     gpu_upload_clear: bool,
     inline_readback: bool,
+    // Only the target-specific constructor captures this ceiling. Ordinary
+    // scopes retain their existing begin-time environment interpretation.
+    public_target_metadata: Option<ReuseMetadataConfig>,
     pending_info: Vec<PendingInfo>,
 }
 impl std::fmt::Debug for TransientIo {
@@ -2396,9 +2473,81 @@ impl TransientIo {
                 info_batch,
                 gpu_upload_clear,
                 inline_readback,
+                public_target_metadata: None,
                 pending_info: Vec::new(),
             })
         }
+    }
+    pub(crate) fn new_public_target(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        inline_device: bool,
+    ) -> Result<Self, ServerError> {
+        #[cfg(target_family = "wasm")]
+        {
+            let _ = (device, queue, inline_device);
+            Err(fault("private I/O requires native runtime"))
+        }
+        #[cfg(not(target_family = "wasm"))]
+        {
+            let config = PublicTargetIoConfig::admit(inline_device)?;
+            let limits = device.limits();
+            let info_policy = InfoPolicy::new(
+                config.slab_bytes,
+                u64::from(limits.min_storage_buffer_offset_alignment),
+                u64::from(limits.min_uniform_buffer_offset_alignment),
+                limits.max_storage_buffer_binding_size,
+                limits.max_uniform_buffer_binding_size,
+            )?;
+            Ok(Self {
+                device,
+                queue,
+                ledger: Ledger::new(config.budget)?,
+                buffers: Vec::new(),
+                clean_readbacks: CleanReadbacks::new(config.clean_readback_reuse)?,
+                reuse_scope: ReuseScope::default(),
+                audit_retained_capacity: 0,
+                info_cache: None,
+                binding_cache: None,
+                leases: Arc::default(),
+                errors: Vec::new(),
+                info_policy: Some(info_policy),
+                info_slab: None,
+                info_batch: config.info_batch,
+                gpu_upload_clear: config.gpu_upload_clear,
+                inline_readback: config.inline_readback,
+                public_target_metadata: Some(config.metadata),
+                pending_info: Vec::new(),
+            })
+        }
+    }
+    pub(crate) fn public_target_configured(&self) -> Result<bool, ServerError> {
+        self.active()?;
+        if self.public_target_metadata.is_none() {
+            return Ok(false);
+        }
+        validate_reuse_mode(self.public_target_metadata, true)?;
+        let fixed = PublicTargetIoConfig::FIXED;
+        if self.ledger.budget != fixed.budget
+            || self
+                .info_policy
+                .is_none_or(|policy| policy.slab_bytes != fixed.slab_bytes)
+            || self.info_batch != fixed.info_batch
+            || self.inline_readback != fixed.inline_readback
+            || self.gpu_upload_clear != fixed.gpu_upload_clear
+            || self.clean_readbacks.enabled != fixed.clean_readback_reuse
+        {
+            return Err(fault("public target I/O configuration mismatch"));
+        }
+        Ok(true)
+    }
+    pub(crate) fn validate_reuse_mode(&self, public_target: bool) -> Result<(), ServerError> {
+        self.active()?;
+        validate_reuse_mode(self.public_target_metadata, public_target)?;
+        if public_target && !self.public_target_configured()? {
+            return Err(fault("public target I/O not configured"));
+        }
+        Ok(())
     }
     pub fn retired(&self) -> bool {
         self.leases.retired.load(Ordering::Acquire)
@@ -2444,6 +2593,15 @@ impl TransientIo {
         Ok(())
     }
     pub(crate) fn begin_reuse(&mut self) -> Result<u64, ServerError> {
+        self.validate_reuse_mode(false)?;
+        self.begin_reuse_configured(false)
+    }
+    pub(crate) fn begin_public_target_reuse(&mut self) -> Result<u64, ServerError> {
+        self.validate_reuse_mode(true)?;
+        self.begin_reuse_configured(true)
+    }
+    fn begin_reuse_configured(&mut self, public_target: bool) -> Result<u64, ServerError> {
+        self.validate_reuse_mode(public_target)?;
         self.active()?;
         if !self.info_batch || !self.inline_readback || self.gpu_upload_clear {
             return Err(fault(
@@ -2463,7 +2621,11 @@ impl TransientIo {
         }
         // Capture the complete scope configuration once. Later mutations of
         // process settings cannot enlarge an active request's admitted ceiling.
-        let config = ReuseMetadataConfig::from_environment()?;
+        let config = reuse_metadata_for_mode(
+            self.public_target_metadata,
+            public_target,
+            ReuseMetadataConfig::from_environment,
+        )?;
         reuse_metadata_capacity_with_limit::<wgpu::Buffer>(
             self.buffers.capacity(),
             self.pending_info.capacity(),
@@ -6043,6 +6205,116 @@ mod tests {
 #[cfg(test)]
 mod reuse_metadata_selection_tests {
     use super::*;
+
+    #[test]
+    fn public_target_policy_is_inline_only_fixed_and_separately_charged() {
+        assert!(PublicTargetIoConfig::admit(false).is_err());
+        let fixed = PublicTargetIoConfig::admit(true).unwrap();
+        assert_eq!(fixed.budget, 134_217_728);
+        assert_eq!(fixed.slab_bytes, 4096);
+        assert!(fixed.info_batch && fixed.inline_readback);
+        assert!(!fixed.gpu_upload_clear && !fixed.clean_readback_reuse);
+        assert_eq!(fixed.metadata.binding_capacity, 4096);
+        assert_eq!(fixed.metadata.metadata_bytes, 4_194_304);
+        assert!(fixed.metadata.binding_enabled);
+        let mut ledger = Ledger::new(fixed.budget).unwrap();
+        ledger.reserve(Kind::Uniform, 4096).unwrap();
+        ledger.reserve(Kind::Upload, 4096).unwrap();
+        assert_eq!(ledger.charged, 8192);
+        assert!(ledger.check(fixed.budget - 8192).is_ok());
+        assert!(ledger.check(fixed.budget - 8191).is_err());
+        // Configuration admission grants no erasure/epoch/owner credit.
+        let before = (ledger.charged, ledger.totals, ledger.epoch);
+        assert!(PublicTargetIoConfig::admit(false).is_err());
+        assert_eq!((ledger.charged, ledger.totals, ledger.epoch), before);
+    }
+
+    #[test]
+    fn fixed_target_scope_never_reads_or_reinterprets_ordinary_settings() {
+        let fixed = PublicTargetIoConfig::admit(true).unwrap().metadata;
+        for _ in 0..4 {
+            let selected = reuse_metadata_for_mode(Some(fixed), true, || {
+                panic!("target configuration must never consult ordinary settings")
+            })
+            .unwrap();
+            assert_eq!(selected, fixed);
+        }
+        let ordinary_calls = std::cell::Cell::new(0);
+        let selected = reuse_metadata_for_mode(None, false, || {
+            ordinary_calls.set(ordinary_calls.get() + 1);
+            ReuseMetadataConfig::parse(false, None, None)
+        })
+        .unwrap();
+        assert_eq!(ordinary_calls.get(), 1);
+        assert_eq!(selected.metadata_bytes, REUSE_METADATA_MAX);
+        assert_eq!(selected.binding_capacity, 256);
+        assert!(!selected.binding_enabled);
+        // A separately configured draft remains the ordinary 64-MiB ledger.
+        let draft = Ledger::new(64 * 1024 * 1024).unwrap();
+        assert_eq!(draft.budget, 67_108_864);
+        assert_eq!(draft.charged, 0);
+    }
+
+    #[test]
+    fn crossed_activation_and_corrupt_fixed_policy_fail_before_resolver_mutation() {
+        let fixed = ReuseMetadataConfig::public_target();
+        let corrupt = ReuseMetadataConfig {
+            metadata_bytes: 1048576,
+            ..fixed
+        };
+        for (captured, target) in [(None, true), (Some(fixed), false), (Some(corrupt), true)] {
+            let calls = std::cell::Cell::new(0);
+            assert!(
+                reuse_metadata_for_mode(captured, target, || {
+                    calls.set(calls.get() + 1);
+                    Ok(fixed)
+                })
+                .is_err()
+            );
+            assert_eq!(calls.get(), 0);
+        }
+    }
+
+    #[test]
+    fn fixed_target_binding_allocation_uses_actual_capacity_and_full_host_ceiling() {
+        let fixed = PublicTargetIoConfig::admit(true).unwrap().metadata;
+        let cache = NativeBindingCache::with_limit(fixed.binding_capacity).unwrap();
+        let actual = cache.host_bytes();
+        assert_eq!(
+            actual,
+            NativeBindingCache::reserved_bytes_for_limit(4096).unwrap()
+        );
+        let fixed_cache = InfoCache::<WgpuResource>::reserved_bytes() + actual;
+        let complete = reuse_metadata_bytes::<wgpu::Buffer>(2048, 64, fixed_cache).unwrap();
+        assert!(complete > REUSE_METADATA_MAX);
+        assert!(
+            reuse_metadata_capacity_with_limit::<wgpu::Buffer>(
+                2048,
+                64,
+                fixed_cache,
+                fixed.metadata_bytes
+            )
+            .is_ok()
+        );
+        assert!(
+            reuse_metadata_capacity_with_limit::<wgpu::Buffer>(
+                2048,
+                64,
+                fixed_cache,
+                REUSE_METADATA_MAX
+            )
+            .is_err()
+        );
+        assert!(
+            reuse_metadata_capacity_with_limit::<wgpu::Buffer>(
+                usize::MAX,
+                64,
+                fixed_cache,
+                fixed.metadata_bytes
+            )
+            .is_err()
+        );
+    }
 
     #[test]
     fn default_and_small_cache_keep_original_ceiling() {

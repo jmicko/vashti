@@ -477,6 +477,43 @@ impl WgpuStream {
         Ok(())
     }
 
+    pub(crate) fn configure_public_target_request_io(&mut self) -> Result<(), ServerError> {
+        let inline_device =
+            cubecl_common::device_handle::DeviceHandle::<super::server::WgpuServer>::is_blocking();
+        if !inline_device {
+            return Err(super::transient_io::fault(
+                "public target I/O requires inline device",
+            ));
+        }
+        if self.cleanup_boundary.retired() {
+            return Err(super::transient_io::fault("private I/O stream retired"));
+        }
+        if self.transient_io.is_some() {
+            return Err(super::transient_io::fault("private I/O already configured"));
+        }
+        self.flush(StreamErrorMode {
+            ignore: false,
+            flush: true,
+        })?;
+        let io = super::transient_io::TransientIo::new_public_target(
+            self.device.clone(),
+            self.queue.clone(),
+            inline_device,
+        )?;
+        io.drain_submitted()?;
+        self.transient_io = Some(io);
+        Ok(())
+    }
+
+    pub(crate) fn public_target_request_io_configured(&self) -> Result<bool, ServerError> {
+        if self.cleanup_boundary.retired() {
+            return Err(super::transient_io::fault("private I/O stream retired"));
+        }
+        self.transient_io
+            .as_ref()
+            .map_or(Ok(false), |io| io.public_target_configured())
+    }
+
     pub(crate) fn begin_transient_configure(
         &self,
     ) -> Result<super::cleanup_boundary::CleanupGuard, ServerError> {
@@ -569,12 +606,36 @@ impl WgpuStream {
     }
 
     pub(crate) fn begin_transient_io_reuse(&mut self) -> Result<u64, ServerError> {
+        self.validate_transient_io_reuse_mode(false)?;
         self.private_io_active()?;
         self.flush(StreamErrorMode {
             ignore: false,
             flush: true,
         })?;
         self.transient_io.as_mut().unwrap().begin_reuse()
+    }
+
+    pub(crate) fn validate_transient_io_reuse_mode(
+        &self,
+        public_target: bool,
+    ) -> Result<(), ServerError> {
+        self.private_io_active()?;
+        self.transient_io
+            .as_ref()
+            .unwrap()
+            .validate_reuse_mode(public_target)
+    }
+
+    pub(crate) fn begin_public_target_request_io_reuse(&mut self) -> Result<u64, ServerError> {
+        self.validate_transient_io_reuse_mode(true)?;
+        self.flush(StreamErrorMode {
+            ignore: false,
+            flush: true,
+        })?;
+        self.transient_io
+            .as_mut()
+            .unwrap()
+            .begin_public_target_reuse()
     }
 
     pub(crate) fn recycle_transient_io(&mut self, nonce: u64) -> Result<(), ServerError> {

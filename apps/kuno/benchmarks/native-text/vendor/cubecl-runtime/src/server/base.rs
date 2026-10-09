@@ -374,6 +374,29 @@ where
         .into())
     }
 
+    /// Fixed, separately admitted public target I/O. Unsupported backends
+    /// cannot substitute their ordinary transient configuration.
+    fn configure_public_target_request_io(
+        &mut self,
+        _stream_id: StreamId,
+    ) -> Result<(), ServerError> {
+        Err(IoError::UnsupportedIoOperation {
+            backtrace: BackTrace::capture(),
+        }
+        .into())
+    }
+
+    /// Content-free fixed-policy validation; unsupported backends reject it.
+    fn public_target_request_io_configured(
+        &mut self,
+        _stream_id: StreamId,
+    ) -> Result<bool, ServerError> {
+        Err(IoError::UnsupportedIoOperation {
+            backtrace: BackTrace::capture(),
+        }
+        .into())
+    }
+
     /// Queue owned private uploads without cloning their host controller.
     fn write_private(
         &mut self,
@@ -430,6 +453,17 @@ where
     /// Begin one exclusive request-owned transient I/O reuse scope. The
     /// returned nonzero nonce belongs only to this stream until checked end.
     fn begin_transient_io_reuse(&mut self, _stream_id: StreamId) -> Result<u64, ServerError> {
+        Err(IoError::UnsupportedIoOperation {
+            backtrace: BackTrace::capture(),
+        }
+        .into())
+    }
+
+    /// Dedicated activation for the fixed public target metadata reservation.
+    fn begin_public_target_request_io_reuse(
+        &mut self,
+        _stream_id: StreamId,
+    ) -> Result<u64, ServerError> {
         Err(IoError::UnsupportedIoOperation {
             backtrace: BackTrace::capture(),
         }

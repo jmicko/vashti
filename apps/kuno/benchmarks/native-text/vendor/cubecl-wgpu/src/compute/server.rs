@@ -375,6 +375,36 @@ impl ComputeServer for WgpuServer {
         })
     }
 
+    fn configure_public_target_request_io(
+        &mut self,
+        stream_id: StreamId,
+    ) -> Result<(), ServerError> {
+        if !cubecl_common::device_handle::DeviceHandle::<Self>::is_blocking() {
+            return Err(super::transient_io::fault(
+                "public target I/O requires inline device",
+            ));
+        }
+        let guard = self
+            .scheduler
+            .stream(&stream_id)
+            .begin_transient_configure()?;
+        guard.run(|| {
+            self.scheduler.execute_streams(vec![stream_id]);
+            self.scheduler
+                .stream(&stream_id)
+                .configure_public_target_request_io()
+        })
+    }
+
+    fn public_target_request_io_configured(
+        &mut self,
+        stream_id: StreamId,
+    ) -> Result<bool, ServerError> {
+        self.scheduler
+            .stream(&stream_id)
+            .public_target_request_io_configured()
+    }
+
     fn write_private(
         &mut self,
         descriptors: Vec<(CopyDescriptor, Bytes)>,
@@ -478,6 +508,9 @@ impl ComputeServer for WgpuServer {
     }
 
     fn begin_transient_io_reuse(&mut self, stream_id: StreamId) -> Result<u64, ServerError> {
+        self.scheduler
+            .stream(&stream_id)
+            .validate_transient_io_reuse_mode(false)?;
         let guard = self
             .scheduler
             .stream(&stream_id)
@@ -485,6 +518,26 @@ impl ComputeServer for WgpuServer {
         guard.run(|| {
             self.scheduler.execute_streams(vec![stream_id]);
             self.scheduler.stream(&stream_id).begin_transient_io_reuse()
+        })
+    }
+
+    fn begin_public_target_request_io_reuse(
+        &mut self,
+        stream_id: StreamId,
+    ) -> Result<u64, ServerError> {
+        // Mode rejection precedes scheduler, flush, mapping and nonce mutation.
+        self.scheduler
+            .stream(&stream_id)
+            .validate_transient_io_reuse_mode(true)?;
+        let guard = self
+            .scheduler
+            .stream(&stream_id)
+            .begin_transient_cleanup()?;
+        guard.run(|| {
+            self.scheduler.execute_streams(vec![stream_id]);
+            self.scheduler
+                .stream(&stream_id)
+                .begin_public_target_request_io_reuse()
         })
     }
 
