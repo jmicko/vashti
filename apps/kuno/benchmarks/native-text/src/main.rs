@@ -289,6 +289,29 @@ fn q3_empty_slot_fill(
         _ => Err("Q3 empty-slot fill requires explicit protected original Q3 and0 or1"),
     }
 }
+/// Diagnostic only: successful completion must never publish timing acceptance.
+fn q3_expert_oracle(
+    mode: &str,
+    profile: expert_banks::OriginalPackedProfile,
+    protected: bool,
+    positions: usize,
+    empty_fill: bool,
+    raw: Option<&str>,
+) -> Result<bool, &'static str> {
+    match raw {
+        None => Ok(false),
+        Some("1")
+            if mode == "resident-count1-hybrid-chat"
+                && profile == expert_banks::OriginalPackedProfile::UnslothQ3
+                && protected
+                && positions == 32
+                && empty_fill =>
+        {
+            Ok(true)
+        }
+        _ => Err("Q3 expert oracle requires explicit protected32-position empty-fill fixture"),
+    }
+}
 fn original_count1_setting(
     profile: expert_banks::OriginalPackedProfile,
     banks: Count1Banks,
@@ -889,6 +912,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         q3_empty_raw
             .as_ref()
             .map(|raw| raw.to_str().ok_or("Q3 empty-slot fill encoding rejected"))
+            .transpose()?,
+    )?;
+    let q3_oracle_raw = std::env::var_os("KUNO_LAB_Q3_EXPERT_ORACLE");
+    let q3_expert_oracle = q3_expert_oracle(
+        &mode,
+        packed_profile,
+        transient_resident && public_owned_zero_audit,
+        q3_positions,
+        q3_empty_slot_fill,
+        q3_oracle_raw
+            .as_ref()
+            .map(|raw| raw.to_str().ok_or("Q3 expert oracle encoding rejected"))
             .transpose()?,
     )?;
     let q3_reference = if q3_main {
@@ -2648,6 +2683,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             executor.integer_experts = integer_experts;
             executor.gpu_expert_limit = gpu_expert_limit;
             executor.q3_empty_slot_fill = q3_empty_slot_fill;
+            executor.q3_expert_oracle = q3_expert_oracle;
             executor.fast_dense = fast_gpu;
             executor.fast_dense_fault = fast_gpu_fault;
             executor.shared_kernels = next_shared;
@@ -3526,6 +3562,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 executor.integer_experts = integer_experts;
                 executor.gpu_expert_limit = gpu_expert_limit;
                 executor.q3_empty_slot_fill = q3_empty_slot_fill;
+                executor.q3_expert_oracle = q3_expert_oracle;
                 executor.fast_dense = fast_gpu;
                 executor.fast_dense_fault = fast_gpu_fault;
                 executor.shared_kernels = next_shared;
@@ -3651,6 +3688,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     executor.integer_experts = integer_experts;
                     executor.gpu_expert_limit = gpu_expert_limit;
                     executor.q3_empty_slot_fill = q3_empty_slot_fill;
+                    executor.q3_expert_oracle = q3_expert_oracle;
                     executor.fast_dense = fast_gpu;
                     executor.fast_dense_fault = fast_gpu_fault;
                     executor.shared_kernels = next_shared;
@@ -3903,6 +3941,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         &cancel,
                     )?;
                 }
+                if q3_expert_oracle {
+                    return Err(
+                        "fixed public expert diagnostic does not publish performance acceptance"
+                            .into(),
+                    );
+                }
                 let mut out = std::fs::OpenOptions::new()
                     .write(true)
                     .create_new(true)
@@ -3916,6 +3960,47 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod transient_mode_tests {
+    #[test]
+    fn q3_expert_diagnostic_excludes_other_inputs_and_performance_modes() {
+        use crate::expert_banks::OriginalPackedProfile as P;
+        assert!(!super::q3_expert_oracle("probe", P::Q4, false, 4, false, None).unwrap());
+        assert!(
+            super::q3_expert_oracle(
+                "resident-count1-hybrid-chat",
+                P::UnslothQ3,
+                true,
+                32,
+                true,
+                Some("1")
+            )
+            .unwrap()
+        );
+        for (mode, profile, protected, positions, empty_fill) in [
+            ("probe", P::UnslothQ3, true, 32, true),
+            ("resident-count1-hybrid-chat", P::Q4, true, 32, true),
+            ("resident-count1-hybrid-chat", P::UnslothQ3, false, 32, true),
+            ("resident-count1-hybrid-chat", P::UnslothQ3, true, 4, true),
+            ("resident-count1-hybrid-chat", P::UnslothQ3, true, 32, false),
+        ] {
+            assert!(
+                super::q3_expert_oracle(mode, profile, protected, positions, empty_fill, Some("1"))
+                    .is_err()
+            );
+        }
+        for raw in ["", "0", "true", "01", " 1", "2"] {
+            assert!(
+                super::q3_expert_oracle(
+                    "resident-count1-hybrid-chat",
+                    P::UnslothQ3,
+                    true,
+                    32,
+                    true,
+                    Some(raw)
+                )
+                .is_err()
+            );
+        }
+    }
     #[test]
     fn q3_empty_slot_fill_rejects_inherited_other_modes_and_noncanonical_settings() {
         use crate::expert_banks::OriginalPackedProfile as P;
