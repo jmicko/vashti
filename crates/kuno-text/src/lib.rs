@@ -11,6 +11,7 @@ pub mod cpu;
 pub mod cpu_expert;
 pub mod gguf;
 pub mod model;
+pub mod mtp;
 pub mod ops;
 pub mod quant;
 pub mod threaded;
