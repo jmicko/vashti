@@ -386,3 +386,44 @@ actual original prefix repairs and full owning closes: candidate199/95.5603s=
 and physically read35.2/34.95GB; map batches4163/5939. This modest ordered result
 is not matchedABBA, general quality acceptance or a30tokens/s selection. Physical
 memory/admission/all threeHTTP200/fault counts0 recover after every trial.
+
+## Authenticated immutable RAM expert sources, 2026-10-09
+
+Fixed public source construction reserves separate immutable source metadata
+(+589,824runtime INFO and2,105,344host bytes per chunk) before model admission.
+The completed144-slot VRAM banks and their exact model/instance/generation
+identity are frozen; sorted complementary original368experts/layer are
+materialized into HOST_VISIBLE|COHERENT|CACHED, non-DEVICE_LOCAL storage-only
+pages. Five address partitions have capacities72/72/144/144/80. No routing,
+expert substitution or bank-generation mutation is allowed after attachment.
+The source plan's65,536alignment is conservative budgeting. Typed imported pages
+must carry the actual native allocation alignment and extent, already checked
+against the logical and full physical envelope. The importer must not reinterpret
+budget rounding as the driver's allocation divisor.
+
+Full original CPU13 acceptance passes v143/`f0e088b`, with both actual tiers,
+complete target vectors, exact greedies and real repair. All432registered pages
+subsequently detach and CPU-zero/free36,147,609,600actual backing bytes. Private
+owners retain their original all-family erasure gates. Short deterministic warm
+placement gives12continuations/2.845782894s=4.21677tokens/s,0explicit expert
+uploads,1,081,344process disk bytes; not ordinary language performance or30.
+
+Optional `KUNO_LAB_TARGET_ROUTER=device-frozen-public` has both-card80-case
+operator acceptance, but no full-model acceptance yet. It requires the immutable
+source scope, uses original top-k and selected softmax, and defers exact original
+CPU-score ID/order and full-map audits until before all-family/source commit.
+Its separate complete owners add2,228,224MAIN/9,175,040runtime/5,242,880host bytes.
+Original probability bits are not claimed; original vector tolerances remain.
+There is no ordinary CPU fallback after source identity/activation failure.
+
+The candidate `KUNO_LAB_FROZEN_PARTITION_EXIT=1` is default-off and requires the
+same canonical original frozen public source scope. An immutable source geometry
+flag selects a separate inactive-partition kernel entry point; the ordinary
+factory/default remain unchanged. Receipts must compare the actual completed
+source flag with the requested mode. Inactive groups terminate uniformly before
+scratch/reductions; full scratch reset and complete finite/status/fold checks,
+active arithmetic, original IDs and all-family publication remain mandatory.
+Construction owners, grids and budgets stay the same. Compiler/source checks do
+not establish full-model or speed acceptance; see the current checkpoint before
+selecting this mode for physical validation. These are laboratory contracts,
+not production API/configuration/Vashti changes.

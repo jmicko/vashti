@@ -1,15 +1,20 @@
 # Native DASLab/Strata checkpoint — 2026-10-09
 
-**Current active pass:** standalone Strata is removed; original models, draft and
-comparison receipts remain. v136/`f868437` accepts both-card Q2 draft and small
-host-source operators, combined original CPU13 and real code200 target generation.
-Q2 reduces memory but has no accepted speed improvement. Normal code200 is
-3.39 continuation tokens/s in this trial; no30 claim. Parallel next source work:
-full frozen host-only expert mirror/import. The bounded GPU attention selector
-now passes both-card/fullCPU13 and code200 checks; normal code200 is2.08 versus
-sameartifact control2.02tokens/s under~35GB disk reads. No30claim.
+**Current checkpoint:** user requested a stop for usage conservation. Standalone
+Strata is removed; original model shards, alternate draft and comparison evidence
+remain. v143/`f0e088b` passes both-card80-case frozen512 routing operators and
+B70 full original CPU13 target vectors/greedies/actual repair using real VRAM
+and immutable RAM experts. Warm12 continuations take2.84578s (**4.21677tokens/s**),
+with zero explicit demand-expert uploads and1,081,344process disk-read bytes.
+This short deterministic placement fixture is **not normal language throughput**
+and does not establish30tokens/s. The frozen GPU router has operator acceptance,
+not full-model acceptance. An explicit inactive-source-partition kernel candidate
+is being checked; its full-model/GPU performance remains pending.
+
+All GPU work stopped with B70 at50,688,000bytes, no NVIDIA compute owners,
+normal Kuno admission, all three HTTP200 and unchanged classified GPU faults0.
 Installed Kuno/Ollama/Vashti, public API and release selection are unchanged.
-The old paused checkpoint below is historical and superseded by this active pass.
+Resume from the current RAM-source section below; earlier checkpoints are historical.
 
 ## Resumed native source, after standalone Strata teardown
 
@@ -3223,3 +3228,95 @@ so its ~0.875s router phase includes queued preceding math/map/audit overhead,
 not isolated top-k computation. Do not promote the old count1 raw-score GPU
 router to MAX8 without matching rounded-global-softmax ranking semantics.
 Longer-context acceptance remains separate. Stop here until the user resumes.
+
+## RAM-source full-model acceptance and stop checkpoint, 2026-10-09
+
+The user requested ending this pass to conserve usage. Frozen v143 source
+`f0e088b28038646ad34fcc358a63344c0bbbb5d0`, binary SHA256
+`ddbd8c7dba93944146203c72f6fb235eaddca49ae5d4b53478ee5d69ef9794fe`,
+passes both GPUs'80 standalone router cases and the B70/3060 full original
+CPU13 target/MTP controller with actual immutable RAM expert sources.
+
+Integrated source includes CPU source consumer/plan/attachment `f2d383b`,
+authenticated512 GPU routing `9538601`, independent operator `01dad20`,
+corrected selected-fault fixture `fad1b21`, and actual allocation alignment
+`f0e088b`. The prior139–142 full-model setup failures are retained. v142 stage
+markers prove preparation and full warm reset succeed; the later importer had
+confused conservative65,536-byte envelope rounding with actual Vulkan alignment.
+Layer0's90,316,800-byte gate page is valid at smaller driver alignment. The
+sealed native page now carries that measured alignment into registration;
+logical/full physical bounds, source identity and ownership checks remain.
+`be3e0e8` preserves the original authored public failure after mandatory close
+attempts; failed attempts never publish accepted receipts.
+
+The accepted CPU13 warm run uses deterministic PHYSICAL placement0..143 to
+exercise both tiers; original routing/weights/tokens are not substituted.
+Twelve real target-verified continuations take2.845782894s, **4.216765806tokens/s**.
+There are0 demand expert uploads/bytes and1,081,344process disk-read bytes.
+Actual rank-member routes:2,590VRAM and6,530RAM; these are not unique reads or
+PCIe byte counts. Direct GPU RAM reads still cross PCIe. Preparation fills6,132
+original experts/12,535,603,200bytes; RAM attachment takes41.434147362s.
+All complete original CPU13 logits/carries, exact greedies and actual repair pass.
+The target final close audits1,378owners/826,638,336private bytes. All432host
+pages detach and CPU-zero/free36,147,609,600actual backing bytes; live backing0.
+This is not ordinary language200, a matched speed comparison, independentCPU200
+quality, private-request or30tokens/s acceptance. Frozen GPU512 has standalone
+routing acceptance only, not full-model acceptance. Q8 draft remains the default.
+
+Both-card router cases preserve original selected ID/order and the full owner
+checks; F32 probabilities remain explicitly experimental under2e-6absolute/
+2e-5relative tolerances and deferred exact original-ID audit. This is source
+addressing across512experts, not512VRAM residents. Each card audits480operator
+owners/188,743,680bytes. The corrected sentinel fixture expects original
+MISSING4, derives actual selected IDs independently and changes no kernel guards.
+
+Exact source/CPU13/operator/failure/numeric recovery records are retained in
+`/media/jmicko/faststore/kuno-development/native-strata-v143-host-reference-20261009`
+and `native-strata-v143-router-operator-20261009` under that same parent;
+compact checked-in data is in the native-Strata optimization receipt.
+The aligned integrated source passes945native tests,2auxiliary shader tests,
+1existing ignored test, nine focused plan regressions and strict pure-direct
+all-target Clippy; formatting/whitespace pass. Later candidate checks are recorded
+separately below and must not be substituted for these physical source hashes.
+
+At21:23:38UTC final recovery confirms unchanged boot/kernel, B70 used50,688,000B,
+no NVIDIA compute owners, normal/unpaused/no-latch Kuno, allthree HTTP200, and
+classified Xe/NVIDIA faults0. No GPU reset, driver replacement, service binary
+installation, API/frontend/catalogue or release changes. Required Vashti changes:
+none. Preserve the canonical checkout's unrelated/uncommitted coordination work.
+
+The next isolated candidate skips reductions/barriers for a frozen source
+partition that does not own an actual group. It keeps original active64-lane
+arithmetic,30-group grids, complete scratch reset/finite/status/rank fold and
+all-family/deferred-original audits. It is default-off and needs whole-model
+CPU13/GPU acceptance before ordinary code200 timing. Do not assume the ratio of
+scheduled inactive workgroups translates directly into a throughput multiplier.
+
+### Final inactive-partition source checkpoint (no new GPU trial)
+
+Integrated candidate source`389fb6b388b450f05e0bf05e74859ecc1956af6f` contains
+leaf`612b7f6` (original peer commit`e80dd80`) and parser/launcher`6413b16`
+(original`9eeca92`). Explicit canonical`KUNO_LAB_FROZEN_PARTITION_EXIT=1` requires
+`KUNO_LAB_TARGET_SOURCES=frozen-host-public`; absent/default remainsfalse.
+Actual completed source geometry is compared against the requested flag before
+numeric receipts. It composes with CPU routing or the separately reserved
+`device-frozen-public` router. No grid/count trimming, quant arithmetic change,
+new owner, budget or default-mode change is included.
+
+Parent integrated checks pass45native public-parser/reference tests,
+30frozen-source/routing/shader tests,102protected-launcher Python tests, strict
+pure-direct all-target Clippy, formatting and whitespace. The leaf independently
+passes47grouped kernel/guard tests and4source tests, including all actual DAS
+profiles' checked/unchecked WGSL+SPIRV lowering and preserved active arithmetic
+structure; peer source review passes. No CPU-inference features were selected.
+This candidate has **no physical kernel/full-model/performance acceptance**.
+The physical143 hash remains the accepted alignment/RAM-source control.
+
+Next pass: extend the local protected comparison helper to select this explicit
+flag (it currently emits the control), then validate fullCPU13 GPU512/partition
+candidate against original vectors/greedies/real repair and complete owning
+closes. Only after that gate, benchmark normal exact public code200 and a matched
+control. Record prompt/seed, accepted token counts, measured actual routes,
+readbacks/disk reads, source setup and physical RAM/VRAM recovery; do not present
+rank-member route counts as unique PCIe bytes. The user's stop request leaves
+no GPU trial or automatic work running. The optimization goal remains paused.

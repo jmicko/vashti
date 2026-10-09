@@ -3085,3 +3085,35 @@ The user-visible API/configuration/native catalogue and installed services are
 unchanged. All physical trials restore memory/admission/allthree HTTP200 and
 fault counts0. Required Vashti changes:none; no release/install/reset authorization
 is inferred from this internal performance checkpoint. Preserve canonical work.
+
+### Active handoff: RAM-source native text validation; user requested stop, 2026-10-09
+
+This supersedes the pending-host-materialization state above. v143/`f0e088b`
+passes both-card80-case authenticated512 source-router operators and the B70
+full original CPU13 target/3060draft controller with actual VRAM/RAM experts.
+The importer now authenticates actual Vulkan allocation alignment rather than
+conservative planner rounding. All original vectors, greedies and actual repair
+pass;432host pages detach and CPU-zero/free36,147,609,600bytes. Short deterministic
+warm placement is4.21677tokens/s with0explicit expert uploads; it is not normal
+language200 or30tokens/s acceptance. GPU512 full-model routing and the new
+inactive-partition kernel candidate still require physical acceptance/timing.
+
+The user requested stopping this pass to conserve usage. All GPU work is stopped;
+21:23:38UTC checks confirm B70baseline50,688,000B, no NVIDIA compute owners,
+normal/unpaused Kuno, allthree HTTP200 and unchanged classified GPU faults0.
+Installed Kuno/Ollama/Vashti and their public APIs are unchanged; no release or
+installation is inferred. Required Vashti changes:none. Resume from the
+[RAM-source checkpoint](kuno-native-text-checkpoint.md#ram-source-full-model-acceptance-and-stop-checkpoint-2026-10-09)
+and [internal target/source contract](kuno-native-mtp-all-rows-plan.md#authenticated-immutable-ram-expert-sources-2026-10-09).
+Exact source hashes, tests, artifacts, preserved startup failures and numerical
+limits are recorded there and in the content-free native optimization receipt.
+Preserve the canonical frontend task's unrelated/uncommitted files.
+
+Final source checkpoint`389fb6b` includes explicit inactive-partition candidate
+leaf`612b7f6` and guarded parser/launcher`6413b16`; defaultfalse unchanged.
+Integrated45public parser/reference +30frozen/routing/shader +102launcher tests,
+strict pure-direct all-target Clippy and formatting pass. Candidate GPU/full-model
+and speed acceptance remain pending, as does full-model frozen512 routing.
+The physical accepted control remainsv143/`f0e088b`; see checkpoint for exact
+source chain, protected helper limitation and the ordered next gates. No more
+benchmarks are authorized within this stopped pass.
