@@ -88,7 +88,8 @@ impl Profile {
     }
 
     /// The selected public plan must be the one actually released. Successful
-    /// workspace close already proves full private erasure/physical recovery;
+    /// workspace close already proves full private owning erasure; physical
+    /// GPU-memory recovery remains the protected runner's separate check.
     /// this also binds the numeric receipt to its immutable draft profile.
     pub(crate) fn validate_close(self, receipt: &CloseReceipt) -> Result<()> {
         if receipt.public_bytes != self.public_bytes()

@@ -33,6 +33,7 @@ mod info_slab_probe;
 mod main_admission;
 mod matmul_probe;
 mod mtp_gpu_probe;
+mod mtp_lab_profile;
 #[allow(dead_code)] // Shared numeric oracle writer also uses constructor/writer helpers.
 mod mtp_public_reference;
 mod mtp_resident_kernels;
@@ -1165,6 +1166,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         None
     };
+    if std::env::var_os("KUNO_LAB_MTP_PROFILE").is_some()
+        && speculative_inputs.is_none()
+        && language_inputs.is_none()
+    {
+        return Err("draft profile requires its fixed public target controller".into());
+    }
     let target_repair_inputs = if mode == "daslab-target-repair-probe" {
         Some(daslab_target_repair_probe::registration(
             &std::env::args_os().collect::<Vec<_>>(),
