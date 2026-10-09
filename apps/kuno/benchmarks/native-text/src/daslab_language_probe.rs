@@ -629,11 +629,13 @@ pub(crate) fn run(
                 println!("public_frozen_host_prepare_start");
                 let preparation = Instant::now();
                 let (plan, fills) = target.prepare_public_host_sources(&mut executor, &cancel)?;
+                println!("public_frozen_host_prepare_complete");
                 prepared_host
                     .set(plan)
                     .map_err(|_| "public source plan already initialized")?;
                 let prepared = prepared_host.get().ok_or("public host plan absent")?;
                 let reserved = prepared.budget().total_host_reserved_bytes;
+                println!("public_frozen_host_attach_start");
                 let attach_start = Instant::now();
                 // SAFETY: protected runner verified full immutable public
                 // source hashes before opening the original model descriptors.
@@ -893,16 +895,26 @@ pub(crate) fn run(
         let close = target.close();
         let audit = target.public_owned_zero_audit_receipt();
         drop(target);
-        close?;
-        let (main, sources) = audit.ok_or("language target complete erasure rejected")?;
-        let host_close = if let Some(owner) = host_attachment.take() {
-            // SAFETY: actual complete private close/audit succeeded and lexical
-            // model drop removed every SourceSet consumer.
-            Some(unsafe { owner.close()? })
-        } else {
-            None
-        };
+        let cleanup = (|| -> Result<_> {
+            close?;
+            let (main, sources) = audit.ok_or("language target complete erasure rejected")?;
+            let host_close = if let Some(owner) = host_attachment.take() {
+                // SAFETY: actual complete private close/audit succeeded and lexical
+                // model drop removed every SourceSet consumer.
+                Some(unsafe { owner.close()? })
+            } else {
+                None
+            };
+            Ok((main, sources, host_close))
+        })();
+        if runs.is_err() {
+            println!(
+                "public_language_failed_cleanup complete={}",
+                u8::from(cleanup.is_ok())
+            );
+        }
         let mut record = runs?;
+        let (main, sources, host_close) = cleanup?;
         record["target_close"] = serde_json::json!({"main_buffers":main.buffers,"main_bytes":main.bytes,"source_buffers":sources.buffers,"source_bytes":sources.bytes});
         record["frozen_host_setup"] = host_setup.into();
         record["frozen_host_close"] = host_close
@@ -924,10 +936,20 @@ pub(crate) fn run(
     drop(executor);
     let draft_close = draft.close();
     drop(draft);
+    let draft_close = draft_close.and_then(|closed| {
+        input.draft_profile.validate_close(&closed)?;
+        Ok(closed)
+    });
+    if attempt.is_err() {
+        println!(
+            "public_language_failed_device_cleanup target={} draft={}",
+            u8::from(target_close.is_ok()),
+            u8::from(draft_close.is_ok())
+        );
+    }
+    let record = attempt?;
     target_close?;
     let draft_close = draft_close?;
-    input.draft_profile.validate_close(&draft_close)?;
-    let record = attempt?;
     if target_retired.load(Ordering::Acquire) || draft_retired.load(Ordering::Acquire) {
         return Err("language physical stream retired".into());
     }

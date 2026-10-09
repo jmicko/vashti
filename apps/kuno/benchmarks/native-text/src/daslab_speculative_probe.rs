@@ -673,6 +673,7 @@ pub(crate) fn run(
                         let preparation = Instant::now();
                         let (plan, fills) =
                             target.prepare_public_host_sources(&mut executor, &cancel)?;
+                        println!("public_frozen_host_prepare_complete");
                         prepared_host
                             .set(plan)
                             .map_err(|_| "public source plan already initialized")?;
@@ -683,7 +684,9 @@ pub(crate) fn run(
                             "bank_completion_upload_ns":fills.upload_ns,
                             "prepare_ns":preparation.elapsed().as_nanos()}));
                     }
+                    println!("public_warm_reset_start");
                     let receipt = target.reset_public_warm_replay(&mut executor, &cancel)?;
+                    println!("public_warm_reset_complete");
                     draft.rewind(0)?;
                     // The typed reset commits target cursor0; the existing
                     // completed-projection proof intentionally requires >0.
@@ -692,6 +695,7 @@ pub(crate) fn run(
                         return Err("public warm replay empty draft state rejected".into());
                     }
                     if input.frozen_host_sources {
+                        println!("public_frozen_host_attach_start");
                         let attachment_start = Instant::now();
                         let prepared = prepared_host.get().ok_or("public host plan absent")?;
                         let reserved = prepared.budget().total_host_reserved_bytes;
@@ -727,16 +731,26 @@ pub(crate) fn run(
         let close = target.close();
         let audit = target.public_owned_zero_audit_receipt();
         drop(target);
-        close?;
-        let (main, sources) = audit.ok_or("speculative target full owning erasure rejected")?;
-        let host_close = if let Some(owner) = host_attachment.take() {
-            // SAFETY: actual target private close and full owning zero audit
-            // succeeded; lexical model drop removed every SourceSet consumer.
-            Some(unsafe { owner.close()? })
-        } else {
-            None
-        };
+        let cleanup = (|| -> Result<_> {
+            close?;
+            let (main, sources) = audit.ok_or("speculative target full owning erasure rejected")?;
+            let host_close = if let Some(owner) = host_attachment.take() {
+                // SAFETY: actual target private close and full owning zero audit
+                // succeeded; lexical model drop removed every SourceSet consumer.
+                Some(unsafe { owner.close()? })
+            } else {
+                None
+            };
+            Ok((main, sources, host_close))
+        })();
+        if runs.is_err() {
+            println!(
+                "public_speculative_failed_cleanup complete={}",
+                u8::from(cleanup.is_ok())
+            );
+        }
         runs?;
+        let (main, sources, host_close) = cleanup?;
         let record = passes
             .last_mut()
             .ok_or("public controller completion missing")?;
@@ -761,10 +775,20 @@ pub(crate) fn run(
     drop(executor);
     let draft_close = draft.close();
     drop(draft);
+    let draft_close = draft_close.and_then(|closed| {
+        input.draft_profile.validate_close(&closed)?;
+        Ok(closed)
+    });
+    if attempt.is_err() {
+        println!(
+            "public_speculative_failed_device_cleanup target={} draft={}",
+            u8::from(target_close.is_ok()),
+            u8::from(draft_close.is_ok())
+        );
+    }
+    attempt?;
     target_close?;
     let draft_close = draft_close?;
-    input.draft_profile.validate_close(&draft_close)?;
-    attempt?;
     if target_retired.load(Ordering::Acquire) || draft_retired.load(Ordering::Acquire) {
         return Err("speculative physical stream retired".into());
     }

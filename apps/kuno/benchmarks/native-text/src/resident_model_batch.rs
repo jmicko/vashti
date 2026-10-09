@@ -2148,7 +2148,6 @@ impl<'m, 'f> ResidentModel<'m, 'f> {
                 cancel,
             )
         }
-        .map_err(|_| error())
     }
     pub(crate) fn native_frozen_source_counters(
         &self,
