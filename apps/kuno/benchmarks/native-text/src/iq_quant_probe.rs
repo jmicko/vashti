@@ -9,6 +9,8 @@ use crate::quant_matvec::{IQ2_S, IQ3_S, IQ3_XXS, IQ4_NL, IQ4_XS, Q2_0, Q5_K, iq_
 const TYPES: [u32; 7] = [IQ3_XXS, IQ4_NL, IQ4_XS, IQ2_S, IQ3_S, Q5_K, Q2_0];
 const ORACLE_PREFIXES: [usize; 2] = [0, 3];
 const PROJECTION_CASES: usize = TYPES.len() * 3 * (4 * 3 + 1);
+const SHARED_TYPES: [u32; 3] = [IQ4_NL, IQ4_XS, Q5_K];
+const SHARED_DENSE_CASES: usize = 120;
 
 /// Checked before device selection/allocation. This entry only consumes its
 /// fixed compiled fixtures and produces a new numeric-only receipt.
@@ -198,9 +200,13 @@ fn oracle_cases(
     arena: &mut PrivateArena,
     oracles: &[Oracle],
     retired: &AtomicBool,
+    shared: bool,
 ) -> Result<Vec<serde_json::Value>> {
     let mut reports = Vec::with_capacity(TYPES.len() * ORACLE_PREFIXES.len());
-    for oracle in oracles {
+    for oracle in oracles
+        .iter()
+        .filter(|o| !shared || SHARED_TYPES.contains(&o.dtype))
+    {
         println!(
             "public_iq_oracle dtype={} prefix={} blocks={} values={}",
             oracle.dtype,
@@ -257,19 +263,32 @@ fn oracle_cases(
         }
         // SAFETY: fixed compiled original rows, same-client nonaliasing public
         // weights and complete private output owner were validated above.
-        original_iq_values::launch::<WgpuRuntime>(
-            client,
-            CubeCount::Static((oracle.rows * oracle.columns).div_ceil(64) as u32, 1, 1),
-            CubeDim::new_1d(64),
-            unsafe { ArrayArg::from_raw_parts(oracle.handle.clone(), oracle.words) },
-            unsafe { ArrayArg::from_raw_parts(retained.clone(), layout.owned_words) },
-            oracle.prefix,
-            output_first,
-            output_stride,
-            oracle.rows,
-            oracle.columns,
-            oracle.dtype,
-        );
+        if shared {
+            crate::next_shared::public_fixture_values(
+                client,
+                crate::next_shared::MatrixSpec::new(oracle.rows, oracle.columns, oracle.dtype)?,
+                oracle.handle.clone(),
+                retained.clone(),
+                oracle.prefix,
+                output_first,
+                output_stride,
+                layout.owned_words,
+            )?;
+        } else {
+            original_iq_values::launch::<WgpuRuntime>(
+                client,
+                CubeCount::Static((oracle.rows * oracle.columns).div_ceil(64) as u32, 1, 1),
+                CubeDim::new_1d(64),
+                unsafe { ArrayArg::from_raw_parts(oracle.handle.clone(), oracle.words) },
+                unsafe { ArrayArg::from_raw_parts(retained.clone(), layout.owned_words) },
+                oracle.prefix,
+                output_first,
+                output_stride,
+                oracle.rows,
+                oracle.columns,
+                oracle.dtype,
+            );
+        }
         let read = FusedReadLease(oracle_stage(
             oracle,
             "read",
@@ -328,15 +347,349 @@ fn oracle_cases(
             serde_json::json!({"dtype":oracle.dtype,"blocks":oracle.rows,
             "values":oracle.expected.len(),"packed_prefix_bytes":oracle.prefix,
             "packed_row_bytes":crate::quant_matvec::block_layout(oracle.dtype).unwrap().1,
-            "independent_c_bits_exact":true,"gaps_and_full_padding_preserved":true,
+            "independent_c_bits_exact":true,"shared_packed_vec4_decoder":shared,"gaps_and_full_padding_preserved":true,
             "main_erased":true,"public_cache_preserved":true,"io":receipt(io)}),
         );
     }
-    if reports.len() != TYPES.len() * ORACLE_PREFIXES.len() {
+    if reports.len()
+        != if shared {
+            SHARED_TYPES.len()
+        } else {
+            TYPES.len()
+        } * ORACLE_PREFIXES.len()
+    {
         return Err("fixed IQ oracle inventory incomplete".into());
     }
     Ok(reports)
 }
+
+fn shared_widths(dtype: u32) -> &'static [usize] {
+    match dtype {
+        IQ4_NL => &[32, 160, 640, 2560],
+        IQ4_XS | Q5_K => &[256, 512, 2560],
+        _ => &[],
+    }
+}
+struct SharedMatrix {
+    dtype: u32,
+    columns: usize,
+    prefix: usize,
+    root: Handle,
+    view: Handle,
+    wire: Zeroizing<Vec<u8>>,
+    decoded: Zeroizing<Vec<f32>>,
+}
+fn public_shared_matrix(
+    client: &ComputeClient<WgpuRuntime>,
+    dtype: u32,
+    columns: usize,
+    prefix: usize,
+) -> Result<SharedMatrix> {
+    if !shared_widths(dtype).contains(&columns) || ![0, 256].contains(&prefix) {
+        return Err("shared IQ fixed fixture geometry".into());
+    }
+    let packed = iq_fixtures::packed(dtype, MAX_ROWS, columns, 0);
+    let size = packed.len().div_ceil(4) * 4;
+    let owned = crate::main_admission::page_bytes((prefix + size) as u64)? as usize;
+    let mut wire = Zeroizing::new(vec![0x53; owned]);
+    wire[prefix..prefix + packed.len()].copy_from_slice(&packed);
+    let root = client.create_public_owned(wire.to_vec());
+    let view = root
+        .clone()
+        .offset_start(prefix as u64)
+        .offset_end((owned - prefix - size) as u64);
+    Ok(SharedMatrix {
+        dtype,
+        columns,
+        prefix,
+        root,
+        view,
+        wire,
+        decoded: Zeroizing::new(iq_fixtures::oracle(dtype, MAX_ROWS, columns, 0)),
+    })
+}
+fn shared_dense_case(
+    client: &ComputeClient<WgpuRuntime>,
+    arena: &mut PrivateArena,
+    m: &SharedMatrix,
+    rows: usize,
+    bad: usize,
+) -> Result<serde_json::Value> {
+    const INPUT_FIRST: usize = 4;
+    const OUTPUT_FIRST: usize = 7;
+    let mut input = Zeroizing::new(vec![INPUT_GAP; INPUT_FIRST + m.columns + 12]);
+    for (i, x) in input[INPUT_FIRST..INPUT_FIRST + m.columns]
+        .iter_mut()
+        .enumerate()
+    {
+        *x = ((i * 17 % 97) as f32 - 48.) / 32.;
+    }
+    if bad == 1 {
+        input[INPUT_FIRST + m.columns - 1] = f32::NAN;
+    }
+    let out_words = OUTPUT_FIRST + rows + 13;
+    let mut initial = Zeroizing::new(vec![OUTPUT_GAP; out_words]);
+    if bad == 2 {
+        initial[0] = f32::NAN;
+    }
+    let x = arena.upload_u32(&fused_input_words(&input)?)?;
+    let y = arena.upload_u32(&fused_input_words(&initial)?)?;
+    let original = arena.upload_u32(&fused_input_words(&initial)?)?;
+    let f = arena.upload_u32(&[4])?;
+    let original_f = arena.upload_u32(&[4])?;
+    let ids = [x, y, original, f, original_f];
+    let handles: Vec<_> = ids
+        .iter()
+        .map(|&id| arena.handle(id).cloned())
+        .collect::<std::result::Result<_, _>>()?;
+    let layouts: Vec<_> = ids
+        .iter()
+        .map(|&id| arena.layout(id))
+        .collect::<std::result::Result<_, _>>()?;
+    let full = layouts.iter().map(|l| l.owned_bytes).sum::<usize>();
+    if full > MAIN_BUDGET || 2 * full + 8 * 512 > IO_BUDGET as usize {
+        return Err("shared IQ original owning budget".into());
+    }
+    let mut all = vec![m.root.clone()];
+    all.extend(handles.iter().cloned());
+    let resources = all
+        .iter()
+        .map(|h| client.get_resource(h.clone()))
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    for (i, r) in resources.iter().enumerate() {
+        let r = r.resource();
+        validate_physical_extent(r.offset, r.size, r.buffer.size(), true)?;
+        if r.size != all[i].size_in_used()
+            || all[i].stream != all[0].stream
+            || resources[..i]
+                .iter()
+                .any(|p| p.resource().buffer == r.buffer)
+        {
+            return Err("shared IQ full physical owner binding".into());
+        }
+    }
+    let view = client.get_resource(m.view.clone())?;
+    if view.resource().buffer != resources[0].resource().buffer
+        || view.resource().offset != m.prefix as u64
+        || view.resource().size != m.view.size_in_used()
+    {
+        return Err("shared IQ original checked source subview".into());
+    }
+    let spec = crate::next_shared::MatrixSpec::new(rows, m.columns, m.dtype)?;
+    let arg = |i: usize, n| unsafe { ArrayArg::from_raw_parts(handles[i].clone(), n) };
+    crate::quant_matvec::fast::packed_single::launch::<WgpuRuntime>(
+        client,
+        crate::quant_matvec::fast::grid(rows),
+        crate::quant_matvec::fast::cube(),
+        unsafe { ArrayArg::from_raw_parts(m.view.clone(), m.view.size_in_used() as usize / 4) },
+        arg(0, layouts[0].owned_words),
+        arg(2, layouts[2].owned_words),
+        1,
+        0,
+        INPUT_FIRST,
+        OUTPUT_FIRST,
+        rows,
+        m.columns,
+        m.dtype,
+        MatrixGeometry::new(m.dtype, rows, m.columns, 1)?.row_bytes(),
+    );
+    crate::resident_util::verify_finite::launch::<WgpuRuntime>(
+        client,
+        CubeCount::Static(layouts[2].owned_words.div_ceil(64) as u32, 1, 1),
+        CubeDim::new_1d(64),
+        arg(2, layouts[2].owned_words),
+        arg(4, 1),
+    );
+    let fault = handles[3]
+        .clone()
+        .offset_end((layouts[3].owned_bytes - 4) as u64);
+    let fault_resource = client.get_resource(fault.clone())?;
+    if fault_resource.resource().buffer != resources[4].resource().buffer
+        || fault_resource.resource().offset != 0
+        || fault_resource.resource().size != 4
+    {
+        return Err("shared IQ fault subview escaped full owner".into());
+    }
+    crate::next_shared::matrix_fault(
+        client,
+        spec,
+        m.view.clone(),
+        handles[0].clone(),
+        handles[1].clone(),
+        layouts[0].owned_words,
+        layouts[1].owned_words,
+        INPUT_FIRST,
+        OUTPUT_FIRST,
+        fault,
+        rows,
+        OUTPUT_FIRST,
+        true,
+    )?;
+    let mut snapshots = Vec::new();
+    for (i, h) in handles.iter().enumerate() {
+        let read = FusedReadLease(
+            client
+                .read_one(h.clone())
+                .map_err(|_| "shared IQ full owning read")?,
+        );
+        snapshots.push(decode_fused_owning_read(&read.0, layouts[i])?);
+    }
+    audited(client)?;
+    if snapshots[3][0] != if bad == 0 { 4 } else { 5 } || snapshots[3] != snapshots[4] {
+        return Err("shared IQ sticky complete finite flag".into());
+    }
+    if snapshots[3][1..]
+        .iter()
+        .chain(&snapshots[4][1..])
+        .any(|&v| v != 0)
+    {
+        return Err("shared IQ fault full padding changed".into());
+    }
+    let mut maximum = 0f32;
+    for (i, (&actual, &baseline)) in snapshots[1].iter().zip(snapshots[2].iter()).enumerate() {
+        let active = (OUTPUT_FIRST..OUTPUT_FIRST + rows).contains(&i);
+        if active {
+            let a = f32::from_bits(actual);
+            let b = f32::from_bits(baseline);
+            if bad == 1 {
+                if !a.is_nan() || !b.is_nan() {
+                    return Err("shared IQ nonfinite input not rejected".into());
+                }
+            } else {
+                let r = i - OUTPUT_FIRST;
+                let expected = crate::quant_matvec::cooperative::reference_tree_dot(
+                    &m.decoded[r * m.columns..(r + 1) * m.columns],
+                    &input[INPUT_FIRST..INPUT_FIRST + m.columns],
+                )?;
+                let error = (a - expected).abs();
+                if !a.is_finite()
+                    || !b.is_finite()
+                    || error > 1e-4 + 3e-4 * expected.abs()
+                    || (a - b).abs() > 1e-4 + 3e-4 * b.abs()
+                {
+                    return Err("shared IQ independent C and original GPU projection".into());
+                }
+                maximum = maximum.max(error);
+            }
+        } else {
+            let expected = if i < out_words {
+                initial[i].to_bits()
+            } else {
+                0
+            };
+            if actual != expected || baseline != expected {
+                return Err("shared IQ output prefix gap or complete padding".into());
+            }
+        }
+    }
+    for (i, &value) in snapshots[0].iter().enumerate() {
+        if value
+            != if i < input.len() {
+                input[i].to_bits()
+            } else {
+                0
+            }
+        {
+            return Err("shared IQ original input or owning padding changed".into());
+        }
+    }
+    drop(snapshots);
+    drop(resources);
+    drop(view);
+    drop(fault_resource);
+    arena.reset()?;
+    for (i, h) in handles.iter().enumerate() {
+        let read = FusedReadLease(
+            client
+                .read_one(h.clone())
+                .map_err(|_| "shared IQ complete zero read")?,
+        );
+        if read.0.len() != layouts[i].owned_bytes || read.0.iter().any(|&v| v != 0) {
+            return Err("shared IQ complete owner erasure".into());
+        }
+        drop(read);
+        audited(client)?;
+    }
+    let cache = FusedReadLease(
+        client
+            .read_one(m.root.clone())
+            .map_err(|_| "shared IQ source preservation read")?,
+    );
+    if &*cache.0 != m.wire.as_slice() {
+        return Err("shared IQ original source prefix or full page padding changed".into());
+    }
+    drop(cache);
+    audited(client)?;
+    Ok(
+        serde_json::json!({"dtype":m.dtype,"rows":rows,"columns":m.columns,"source_prefix_bytes":m.prefix,"input_prefix_words":INPUT_FIRST,"output_prefix_words":OUTPUT_FIRST,"fault_case":bad,"max_independent_c_abs_error":maximum,"original_gpu_compared":true,"full_owner_padding_preserved":true,"source_full_page_bytes":m.wire.len(),"full_private_bytes":full,"erased":true}),
+    )
+}
+fn shared_dense_cases(
+    client: &ComputeClient<WgpuRuntime>,
+    matrices: &[SharedMatrix],
+    public_bound: usize,
+) -> Result<serde_json::Value> {
+    let retired = Arc::new(AtomicBool::new(false));
+    let mut arena =
+        PrivateArena::new_transient_on_configured(client.clone(), MAIN_BUDGET, retired.clone())?;
+    arena.enable_public_owned_zero_audit()?;
+    let mut ledger = crate::main_admission::MainAdmission::new(
+        (MAIN_BUDGET + public_bound) as u64,
+        client
+            .memory_usage()
+            .map_err(|_| "shared IQ baseline telemetry")?
+            .bytes_reserved,
+    )?;
+    let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+        || -> Result<Vec<serde_json::Value>> {
+            let mut cases = Vec::new();
+            for m in matrices {
+                for rows in [1, MAX_ROWS] {
+                    for bad in 0..3 {
+                        let requests = [
+                            INPUT_LAYOUT_BYTES,
+                            OUTPUT_LAYOUT_BYTES,
+                            OUTPUT_LAYOUT_BYTES,
+                            OUTPUT_LAYOUT_BYTES,
+                            OUTPUT_LAYOUT_BYTES,
+                        ];
+                        ledger.observe_before(
+                            client
+                                .memory_usage()
+                                .map_err(|_| "shared IQ precharge telemetry")?
+                                .bytes_reserved,
+                        )?;
+                        ledger.precharge(&requests)?;
+                        cases.push(shared_dense_case(client, &mut arena, m, rows, bad)?);
+                        ledger.completed_fence(
+                            client
+                                .memory_usage()
+                                .map_err(|_| "shared IQ completed telemetry")?
+                                .bytes_reserved,
+                        )?;
+                    }
+                }
+            }
+            Ok(cases)
+        },
+    ));
+    let closed = arena.close();
+    let cases = match (attempt, closed, retired.load(Ordering::Acquire)) {
+        (Ok(Ok(c)), Ok(()), false) => c,
+        _ => return Err("shared IQ dense operators failed; no success receipt".into()),
+    };
+    if cases.len() != SHARED_DENSE_CASES {
+        return Err("shared IQ dense fixture inventory incomplete".into());
+    }
+    let zero = arena
+        .owned_zero_audit_receipt()
+        .ok_or("shared IQ complete zero receipt absent")?;
+    Ok(
+        serde_json::json!({"scope":"fixed-public-original-F32-shared-IQ4-Q5K-dense-only","cases":cases,"format_count":SHARED_TYPES.len(),"private_cap_bytes":MAIN_BUDGET,"public_full_page_upper_bytes":public_bound,"io_cap_bytes":IO_BUDGET,"main_erased_bytes":zero.bytes,"main_erased_buffers":zero.buffers,"whole_graph_or_performance_accepted":false}),
+    )
+}
+const INPUT_LAYOUT_BYTES: u64 = 32 * 1024;
+const OUTPUT_LAYOUT_BYTES: u64 = 32 * 1024;
 
 pub fn run(client: &ComputeClient<WgpuRuntime>) -> Result<()> {
     let path =
@@ -346,6 +699,7 @@ pub fn run(client: &ComputeClient<WgpuRuntime>) -> Result<()> {
     let mut matrices = Vec::with_capacity(TYPES.len() * 3);
     let mut finite_matrices = Vec::with_capacity(TYPES.len());
     let mut oracles = Vec::with_capacity(TYPES.len() * ORACLE_PREFIXES.len());
+    let mut shared_matrices = Vec::new();
     for dtype in TYPES {
         for width in columns(dtype) {
             matrices.push(public_matrix(client, dtype, width, 3)?);
@@ -355,24 +709,59 @@ pub fn run(client: &ComputeClient<WgpuRuntime>) -> Result<()> {
             oracles.push(public_oracle(client, dtype, prefix)?);
         }
     }
+    let original_public_bound = matrices
+        .iter()
+        .map(|m| m.wire.len())
+        .chain(finite_matrices.iter().map(|m| m.wire.len()))
+        .chain(oracles.iter().map(|o| o.wire.len()))
+        .try_fold(0u64, |n, bytes| -> Result<u64> {
+            Ok(n + crate::main_admission::page_bytes(bytes as u64)?)
+        })?;
+    let mut prewarm = crate::main_admission::MainAdmission::new(
+        MAIN_BUDGET as u64 + original_public_bound,
+        client
+            .memory_usage()
+            .map_err(|_| "shared IQ original baseline")?
+            .bytes_reserved,
+    )?;
+    for dtype in SHARED_TYPES {
+        for &width in shared_widths(dtype) {
+            for prefix in [0, 256] {
+                let row = crate::quant_matvec::block_layout(dtype).unwrap();
+                let owned = crate::main_admission::page_bytes(
+                    (prefix + (MAX_ROWS * width / row.0 * row.1).div_ceil(4) * 4) as u64,
+                )?;
+                prewarm.precharge(&[owned])?;
+                shared_matrices.push(public_shared_matrix(client, dtype, width, prefix)?);
+                prewarm.observe_after(
+                    client
+                        .memory_usage()
+                        .map_err(|_| "shared IQ source postcharge")?
+                        .bytes_reserved,
+                )?;
+            }
+        }
+    }
     client.configure_transient_io(IO_BUDGET)?;
     let retired = Arc::new(AtomicBool::new(false));
     let mut arena =
         PrivateArena::new_transient_on_configured(client.clone(), MAIN_BUDGET, retired.clone())?;
     arena.enable_public_owned_zero_audit()?;
     let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<_> {
-        let oracle = oracle_cases(client, &mut arena, &oracles, &retired)?;
+        let oracle = oracle_cases(client, &mut arena, &oracles, &retired, false)?;
+        let shared_oracle = oracle_cases(client, &mut arena, &oracles, &retired, true)?;
         let projections = cases(client, &mut arena, &matrices, &retired)?;
         if projections.len() != PROJECTION_CASES {
             return Err("fixed IQ projection inventory incomplete".into());
         }
-        Ok((oracle, projections))
+        Ok((oracle, projections, shared_oracle))
     }));
     let closed = arena.close();
-    let (oracle, projections) = match (attempt, closed, retired.load(Ordering::Acquire)) {
-        (Ok(Ok(reports)), Ok(()), false) => reports,
-        _ => return Err("fixed IQ operators failed; no success receipt".into()),
-    };
+    let (oracle, projections, shared_oracle) =
+        match (attempt, closed, retired.load(Ordering::Acquire)) {
+            (Ok(Ok(reports)), Ok(()), false) => reports,
+            _ => return Err("fixed IQ operators failed; no success receipt".into()),
+        };
     let zero = arena
         .owned_zero_audit_receipt()
         .ok_or("fixed IQ owned zero receipt absent")?;
@@ -394,6 +783,12 @@ pub fn run(client: &ComputeClient<WgpuRuntime>) -> Result<()> {
     {
         return Err("fixed IQ finite projection inventory incomplete".into());
     }
+    let shared_bound = shared_matrices.iter().map(|m| m.wire.len()).sum::<usize>();
+    let shared_dense = shared_dense_cases(
+        client,
+        &shared_matrices,
+        original_public_bound as usize + shared_bound,
+    )?;
     let report = serde_json::json!({"scope":"fixed-public-independent-c-IQ-operators-only",
         "fixture":"iq-quant-probe","upstream":"llama.cpp b11232",
         "format_count":TYPES.len(),"oracle_cases":oracle,
@@ -401,6 +796,7 @@ pub fn run(client: &ComputeClient<WgpuRuntime>) -> Result<()> {
         "projection_case_count":projections.len(),"projections":projections,
         "finite_case_count":TYPES.len()*4,"finite":finite,
         "single_subgroup_case_count":TYPES.len()*4,"single_subgroup":single,
+        "shared_vec4_exact_c_oracles":shared_oracle,"shared_vec4_dense":shared_dense,
         "main_cap_bytes":MAIN_BUDGET,"runtime_io_cap_bytes":IO_BUDGET,
         "main_erased_bytes":zero.bytes,"main_erased_buffers":zero.buffers,
         "context_retired":false,"whole_model_or_performance_accepted":false});
@@ -468,6 +864,56 @@ mod tests {
             }
         }
         assert_eq!(count * (4 * 3 + 1), PROJECTION_CASES);
+    }
+
+    #[test]
+    fn shared_dense_fixed_inventory_preserves_original_pages_and_precharge() {
+        let mut matrices = 0;
+        let mut values = 0;
+        for dtype in SHARED_TYPES {
+            let (block, bytes) = crate::quant_matvec::block_layout(dtype).unwrap();
+            let (records, _) = iq_fixtures::records(dtype);
+            values += records.len() / (bytes + block * 4) * block;
+            for &width in shared_widths(dtype) {
+                let packed = iq_fixtures::packed(dtype, MAX_ROWS, width, 0);
+                let expected = iq_fixtures::oracle(dtype, MAX_ROWS, width, 0);
+                assert_eq!(packed.len(), MAX_ROWS * width / block * bytes);
+                let mut decoded = vec![0.; expected.len()];
+                TensorType::from_gguf_id(dtype)
+                    .unwrap()
+                    .decode(&packed, &mut decoded)
+                    .unwrap();
+                assert_eq!(
+                    decoded.iter().map(|x| x.to_bits()).collect::<Vec<_>>(),
+                    expected.iter().map(|x| x.to_bits()).collect::<Vec<_>>()
+                );
+                for prefix in [0usize, 256] {
+                    let span = packed.len().div_ceil(4) * 4;
+                    let owned = crate::main_admission::page_bytes((prefix + span) as u64).unwrap();
+                    assert_eq!(owned, 32 * 1024);
+                    assert!(prefix + span <= owned as usize);
+                    matrices += 1;
+                    for rows in [1, MAX_ROWS] {
+                        let input = BufferLayout::new(4 + width + 12).unwrap();
+                        let output = BufferLayout::new(7 + rows + 13).unwrap();
+                        let fault = BufferLayout::new(1).unwrap();
+                        assert_eq!(input.owned_bytes as u64, INPUT_LAYOUT_BYTES);
+                        assert_eq!(output.owned_bytes as u64, OUTPUT_LAYOUT_BYTES);
+                        assert_eq!(fault.owned_bytes as u64, OUTPUT_LAYOUT_BYTES);
+                        let private =
+                            input.owned_bytes + 2 * output.owned_bytes + 2 * fault.owned_bytes;
+                        assert!(private <= MAIN_BUDGET);
+                        assert!(2 * private + 8 * 512 <= IO_BUDGET as usize);
+                        crate::next_shared::MatrixSpec::new(rows, width, dtype).unwrap();
+                    }
+                }
+            }
+        }
+        assert_eq!(matrices, 20);
+        assert_eq!(matrices * 2 * 3, SHARED_DENSE_CASES);
+        assert_eq!(values * ORACLE_PREFIXES.len(), 18_112);
+        assert_eq!(matrices * 32 * 1024, 655_360);
+        assert!(shared_widths(IQ3_S).is_empty());
     }
 
     #[test]

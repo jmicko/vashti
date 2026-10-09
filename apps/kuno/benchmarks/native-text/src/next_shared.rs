@@ -23,7 +23,7 @@ impl MatrixSpec {
     /// Exact decoder set in ornith/matrix_vector.wgsl. The generic packed
     /// decoder supports additional types, but that does not add shader support.
     pub(crate) const fn supports_dtype(dtype: u32) -> bool {
-        matches!(dtype, 0 | 1 | 6 | 8 | 12 | 14 | 30)
+        matches!(dtype, 0 | 1 | 6 | 8 | 12 | 13 | 14 | 20 | 23 | 30)
     }
     pub(crate) fn new(rows: usize, columns: usize, dtype: u32) -> Result<Self> {
         if !Self::supports_dtype(dtype) {
@@ -104,10 +104,25 @@ impl MatrixSpec {
         }
         source
     }
+    fn source_values(self) -> String {
+        let common = include_str!("ornith/common.wgsl")
+            .split_once("fn sigmoid")
+            .unwrap()
+            .1;
+        let helpers = include_str!("ornith/matrix_vector.wgsl")
+            .split_once("@compute")
+            .unwrap()
+            .0;
+        format!(
+            "const DTYPE:u32={}u;const ROWS:u32={}u;const COLUMNS:u32={}u;const ROW_BYTES:u32={}u;\nstruct Params {{a:u32,b:u32,c:u32,d:u32}}\n@group(0) @binding(0) var<storage,read> weight:array<u32>;\n@group(0) @binding(1) var<storage,read_write> output:array<f32>;\n@group(0) @binding(2) var<uniform> p:Params;\nfn sigmoid{common}\n{helpers}\n@compute @workgroup_size(128)\nfn main(@builtin(global_invocation_id) id:vec3<u32>) {{let index=id.x;if index<ROWS*COLUMNS/4u {{let row=index/(COLUMNS/4u);let col=(index%(COLUMNS/4u))*4u;let values=dense_added_packed(p.a+row*ROW_BYTES,col);for(var lane=0u;lane<4u;lane++) {{output[p.b+row*p.c+col+lane]=values[lane];}}}}}}",
+            self.dtype, self.rows, self.columns, self.row_bytes
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Kernel {
+    PublicValues(MatrixSpec),
     Matrix(MatrixSpec),
     MatrixFault(MatrixSpec, bool),
     Router,
@@ -120,11 +135,12 @@ impl Kernel {
             Self::Router => 256,
             Self::Gdn(_) => 128,
             Self::GrNorm(_) => 64,
-            Self::Matrix(_) | Self::MatrixFault(_, _) => 128,
+            Self::Matrix(_) | Self::MatrixFault(_, _) | Self::PublicValues(_) => 128,
         })
     }
     fn source(self) -> String {
         match self {
+            Self::PublicValues(spec) => spec.source_values(),
             Self::GrNorm(width) => format!(
                 "const WIDTH:u32={width}u;\n{}",
                 include_str!("next_gr_norm.wgsl")
@@ -157,10 +173,13 @@ impl KernelMetadata for Kernel {
             Self::Matrix(spec) | Self::MatrixFault(spec, _) => match spec.dtype {
                 12 => "NextDenseQ4K",
                 14 => "NextDenseQ6K",
+                13 => "NextDenseQ5K",
+                20 | 23 => "NextDenseIQ4",
                 6 | 8 => "NextDenseQ5Q8",
                 _ => "NextDenseFloat",
             },
             Self::Router => "NextRouter",
+            Self::PublicValues(_) => "NextPublicPackedValues",
             Self::Gdn(_) => "NextGdn",
             Self::GrNorm(_) => "NextGrRms",
         }
@@ -191,6 +210,80 @@ impl CubeTask<AutoCompiler> for Kernel {
             debug_info: None,
         })
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn value_spans(
+    spec: MatrixSpec,
+    weight_bytes: u64,
+    packed_first: usize,
+    output_first: usize,
+    output_stride: usize,
+    output_words: usize,
+) -> Result<()> {
+    if !matches!(spec.dtype, 13 | 20 | 23)
+        || spec.rows > 32
+        || spec.columns > 2560
+        || output_stride < spec.columns
+        || !weight_bytes.is_multiple_of(4)
+        || packed_first > u32::MAX as usize
+        || output_first > u32::MAX as usize
+        || output_stride > u32::MAX as usize
+        || output_words > u32::MAX as usize
+        || packed_first
+            .checked_add(spec.rows * spec.row_bytes)
+            .is_none_or(|n| n > u32::MAX as usize || n.div_ceil(4) as u64 * 4 > weight_bytes)
+        || output_first
+            .checked_add(spec.rows * output_stride)
+            .is_none_or(|n| n > output_words)
+    {
+        return Err(Error::InvalidBufferLength);
+    }
+    Ok(())
+}
+/// Compiled PUBLIC C-fixture decoder proof only, never a model/request route.
+/// The caller checks disjoint complete owners, source identity, full readback
+/// bits/gaps/padding, completion and erasure using the existing probe ledger.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn public_fixture_values(
+    client: &ComputeClient<WgpuRuntime>,
+    spec: MatrixSpec,
+    weights: Handle,
+    output: Handle,
+    packed_first: usize,
+    output_first: usize,
+    output_stride: usize,
+    output_words: usize,
+) -> Result<()> {
+    value_spans(
+        spec,
+        weights.size_in_used(),
+        packed_first,
+        output_first,
+        output_stride,
+        output_words,
+    )?;
+    if weights.stream != output.stream || output.size_in_used() != output_words as u64 * 4 {
+        return Err(Error::InvalidBufferLength);
+    }
+    let info = MetadataBindingInfo::custom(vec![
+        packed_first as u64 | ((output_first as u64) << 32),
+        output_stride as u64,
+    ]);
+    let args = KernelArguments::new()
+        .with_buffer(weights.binding())
+        .with_buffer(output.binding())
+        .with_info(info);
+    // SAFETY: fixed bounded PUBLIC geometry, same-stream checked byte/word
+    // intervals; caller proves full physical owners and reads every word.
+    unsafe {
+        client.launch_unchecked(
+            Box::new(Kernel::PublicValues(spec)),
+            CubeCount::Static((spec.rows * spec.columns / 4).div_ceil(128) as u32, 1, 1),
+            args,
+        );
+    }
+    Ok(())
 }
 
 /// Parent has already proved model origin, complete owners, count1 and the
@@ -804,13 +897,13 @@ mod tests {
 
     #[test]
     fn shared_matrix_dispatch_rejects_types_without_a_shader_decoder() {
-        for dtype in [0, 1, 30, 6, 8, 12, 14] {
+        for dtype in [0, 1, 30, 6, 8, 12, 13, 14, 20, 23] {
             assert!(MatrixSpec::supports_dtype(dtype));
             assert!(MatrixSpec::new(7, 256, dtype).is_ok());
         }
         // These remain valid generic packed formats. Their presence in
         // block_layout must never opt them into the shader's F32 else branch.
-        for dtype in [13, 18, 20, 21, 22, 23, 42] {
+        for dtype in [18, 21, 22, 42] {
             assert!(crate::quant_matvec::block_layout(dtype).is_some());
             assert!(!MatrixSpec::supports_dtype(dtype));
             assert!(MatrixSpec::new(7, 256, dtype).is_err());
@@ -820,7 +913,7 @@ mod tests {
 
     #[test]
     fn all_original_formats_and_router_validate_without_private_pipeline_keys() {
-        for dtype in [0, 1, 30, 6, 8, 12, 14] {
+        for dtype in [0, 1, 30, 6, 8, 12, 13, 14, 20, 23] {
             let spec = MatrixSpec::new(7, 256, dtype).unwrap();
             for k in [
                 Kernel::Matrix(spec),
@@ -856,6 +949,33 @@ mod tests {
         assert!(MatrixSpec::new(7, 257, 12).is_err());
         assert!(MatrixSpec::new(7, 256, 999).is_err());
         assert!(MatrixSpec::new(16385, 256, 12).is_err());
+    }
+
+    #[test]
+    fn added_original_dense_value_spans_reject_partial_rows_and_wrong_formats() {
+        for (dtype, columns, bytes) in [(20, 160, 90), (23, 2560, 1360), (13, 2560, 1760)] {
+            let spec = MatrixSpec::new(7, columns, dtype).unwrap();
+            assert_eq!(spec.row_bytes, bytes);
+            let packed = (3 + 7 * bytes).div_ceil(4) * 4;
+            let stride = columns + 7;
+            let words = 5 + 7 * stride + 9;
+            value_spans(spec, packed as u64, 3, 5, stride, words).unwrap();
+            assert!(value_spans(spec, packed as u64 - 4, 3, 5, stride, words).is_err());
+            assert!(value_spans(spec, packed as u64, 3, 5, columns - 1, words).is_err());
+            assert!(value_spans(spec, packed as u64, 3, 5, stride, 5 + 7 * stride - 1).is_err());
+            assert!(value_spans(spec, packed as u64, usize::MAX, 5, stride, words).is_err());
+            let source = Kernel::PublicValues(spec).source();
+            let module = wgpu::naga::front::wgsl::parse_str(&source).unwrap();
+            wgpu::naga::valid::Validator::new(
+                wgpu::naga::valid::ValidationFlags::all(),
+                wgpu::naga::valid::Capabilities::all(),
+            )
+            .validate(&module)
+            .unwrap();
+            assert!(source.contains("dense_added_packed(p.a+row*ROW_BYTES,col)"));
+            assert!(!source.contains("dot4I8Packed"));
+        }
+        assert!(value_spans(MatrixSpec::new(7, 256, 12).unwrap(), 4096, 0, 0, 256, 4096).is_err());
     }
 }
 

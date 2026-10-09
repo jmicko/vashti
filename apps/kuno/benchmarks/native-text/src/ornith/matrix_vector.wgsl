@@ -6,6 +6,46 @@ fn word_at(offset:u32)->u32 {
     if shift!=0u {result|=weight[i+1u]<<(32u-shift);}
     return result;
 }
+// Original GGML b11232 nonlinear IQ4 table (MIT; crates/kuno-text/NOTICE).
+// F32 activations and original packed weights; no activation/model requantization.
+// Helpers end in packed so the existing multi-projection source builder
+// namespaces both definitions and calls. Keep the literal table local too.
+fn dense_iq4_packed(q:vec4<u32>)->vec4<f32> {
+    let levels=array<i32,16>(-127,-104,-83,-65,-49,-35,-22,-10,1,13,25,38,53,69,89,113);
+    return vec4<f32>(f32(levels[q.x]),f32(levels[q.y]),f32(levels[q.z]),f32(levels[q.w]));
+}
+// Four natural-order original values. Shared by dense projection and the
+// compiled-public exact C-bit probe, including unaligned18-byte IQ4 rows.
+fn dense_added_packed(base:u32,column:u32)->vec4<f32> {
+    if DTYPE==20u {
+        let b=base+(column/32u)*18u;let at=column%32u;
+        let q=bytes4(word_at(b+2u+at%16u));
+        var codes=q&vec4<u32>(15u);
+        if at>=16u {codes=q>>vec4<u32>(4u);}
+        return wh(b)*dense_iq4_packed(codes);
+    } else if DTYPE==23u {
+        let b=base+(column/256u)*136u;let at=column%256u;let sub=at/32u;
+        let low=(wb(b+4u+sub/2u)>>((sub%2u)*4u))&15u;
+        let high=((wb(b+2u)|(wb(b+3u)<<8u))>>(sub*2u))&3u;
+        let d=wh(b)*f32(i32(low|(high<<4u))-32);
+        let q=bytes4(word_at(b+8u+sub*16u+at%16u));
+        var codes=q&vec4<u32>(15u);
+        if at%32u>=16u {codes=q>>vec4<u32>(4u);}
+        return d*dense_iq4_packed(codes);
+    } else {
+        // Only Q5_K reaches this branch: original d/dmin/scales/qh/qs layout.
+        let b=base+(column/256u)*176u;let at=column%256u;let sub=at/32u;
+        let q=bytes4(word_at(b+48u+(at/64u)*32u+at%32u));
+        let high=bytes4(word_at(b+16u+at%32u));
+        var codes=q&vec4<u32>(15u);
+        if at%64u>=32u {codes=q>>vec4<u32>(4u);}
+        codes|=((high>>vec4<u32>(sub))&vec4<u32>(1u))<<vec4<u32>(4u);
+        let a=word_at(b+4u);let z=word_at(b+8u);let scales=word_at(b+12u);
+        let d=wh(b)*q4_scale(a,scales,sub);
+        let minimum=wh(b+2u)*q4_minimum(z,scales,sub);
+        return d*vec4<f32>(codes)-vec4<f32>(minimum);
+    }
+}
 @compute @workgroup_size(128)
 fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(subgroup_id) sg:u32,
         @builtin(subgroup_invocation_id) lane:u32,@builtin(subgroup_size) width:u32) {
@@ -31,6 +71,10 @@ fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(subgroup_id) sg:u32,
                     let col=(input+block*256u+pair*64u+i)/4u;
                     sum+=dot(low,arena4[col])+dot(high,arena4[col+8u]);
                 }
+            }
+        } else if DTYPE==13u || DTYPE==20u || DTYPE==23u {
+            for(var c=lane*4u;c<COLUMNS;c+=width*4u) {
+                sum+=dot(dense_added_packed(base,c),arena4[(input+c)/4u]);
             }
         } else if DTYPE==14u {
             for(var blockgroup=0u;blockgroup<COLUMNS/256u;blockgroup+=width/16u) {
