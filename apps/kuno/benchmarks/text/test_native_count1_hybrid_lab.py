@@ -1676,6 +1676,89 @@ class StrataInspiredGuards(unittest.TestCase):
         guard=importlib.util.module_from_spec(spec);spec.loader.exec_module(guard)
         return guard
 
+    def test_cubecl_host_weights_require_exact_model_free_gate_and_card(self):
+        guard = self.guard()
+        env = {"KUNO_LAB_PUBLIC_HOST_CUBECL_ONLY": "1", "KUNO_PUBLIC_RECEIPT": "/public/numeric"}
+        for card in ("intel", "nvidia"):
+            args = ["/frozen/binary", card, "public-host-weight-cubecl-probe"]
+            self.assertEqual(guard.memory_limit(env, args), 8 * 1024**3)
+            for key in env:
+                wrong = dict(env)
+                del wrong[key]
+                with self.assertRaises(ValueError):
+                    guard.memory_limit(wrong, args)
+            for value in ("", "0", "true", "01", "1 "):
+                with self.assertRaises(ValueError):
+                    guard.memory_limit(dict(env, KUNO_LAB_PUBLIC_HOST_CUBECL_ONLY=value), args)
+            with self.assertRaises(ValueError):
+                guard.memory_limit(dict(env, KUNO_PUBLIC_RECEIPT=""), args)
+            for wrong in (args[:2], args + ["/original/model"],
+                          [args[0], "cpu", args[2]],
+                          [args[0], card, "public-host-weight-probe"],
+                          [args[0], card, "resident-count1-hybrid-chat"]):
+                with self.assertRaises(ValueError):
+                    guard.memory_limit(env, wrong)
+
+    def test_cubecl_host_weights_reject_all_inherited_inputs_and_policy_controls(self):
+        guard = self.guard()
+        env = {"KUNO_LAB_PUBLIC_HOST_CUBECL_ONLY": "1", "KUNO_PUBLIC_RECEIPT": "/public/numeric"}
+        args = ["/frozen/binary", "intel", "public-host-weight-cubecl-probe"]
+        for key in ("KUNO_TEST_MODEL", "KUNO_TEST_Q3_DIR", "KUNO_TEST_MTP",
+                    "KUNO_LAB_PROMPT", "KUNO_PUBLIC_PROMPT", "KUNO_PUBLIC_DASLAB_CARRY",
+                    "KUNO_LAB_PUBLIC_HOST_WEIGHT_ONLY", "KUNO_LAB_LANGUAGE_PUBLIC_ONLY",
+                    "KUNO_LAB_TARGET_REUSE", "KUNO_LAB_STATIC_CACHE_BYTES",
+                    "KUNO_LAB_DEVICE_DISPATCH", "KUNO_LAB_BUILD_FEATURES"):
+            for value in ("0", "1", "inline", "/original/model"):
+                with self.subTest(key=key, value=value), self.assertRaises(ValueError):
+                    guard.memory_limit(dict(env, **{key: value}), args)
+        # Build admission belongs to the compiled binary; an ambient runtime or
+        # feature label cannot override that admission through this launcher.
+        self.assertEqual(guard.memory_limit(dict(env, PATH="/usr/bin"), args), 8 * 1024**3)
+
+    def test_cubecl_host_gate_does_not_broaden_existing_raw_host_or_target_modes(self):
+        guard = self.guard()
+        raw = {"KUNO_LAB_PUBLIC_HOST_WEIGHT_ONLY": "1", "KUNO_PUBLIC_RECEIPT": "/public/numeric"}
+        for card in ("intel", "nvidia"):
+            args = ["/frozen/binary", card, "public-host-weight-probe"]
+            self.assertEqual(guard.memory_limit(raw, args), 8 * 1024**3)
+            with self.assertRaises(ValueError):
+                guard.memory_limit(raw, [args[0], card, "public-host-weight-cubecl-probe"])
+            with self.assertRaises(ValueError):
+                guard.memory_limit(dict(raw, KUNO_LAB_PUBLIC_HOST_CUBECL_ONLY="1"), args)
+
+    def test_cubecl_host_exec_requires_actual_zero_swap_core_and_exact_memory(self):
+        guard = self.guard()
+        env = {"KUNO_LAB_PUBLIC_HOST_CUBECL_ONLY": "1", "KUNO_PUBLIC_RECEIPT": "/public/numeric"}
+        args = ["protected-lab-exec.py", "/frozen/binary", "intel", "public-host-weight-cubecl-probe"]
+        limit = 8 * 1024**3
+        for swap, core, memory, accepted in (
+                ("0", (0, 0), str(limit), True),
+                ("max", (0, 0), str(limit), False),
+                ("1", (0, 0), str(limit), False),
+                ("0", (0, -1), str(limit), False),
+                ("0", (1, 0), str(limit), False),
+                ("0", (0, 0), "max", False),
+                ("0", (0, 0), str(limit - 1), False),
+                ("0", (0, 0), str(limit + 1), False)):
+            def read(path, *unused_args, **unused_kwargs):
+                if str(path) == "/proc/self/cgroup":
+                    return "0::/system.slice/fixed-public.service\n"
+                return {"memory.swap.max": swap, "memory.max": memory}[path.name]
+            with self.subTest(swap=swap, core=core, memory=memory), \
+                 mock.patch.dict(guard.os.environ, env, clear=True), \
+                 mock.patch.object(guard.sys, "argv", args), \
+                 mock.patch.object(guard.pathlib.Path, "read_text", autospec=True, side_effect=read), \
+                 mock.patch.object(guard.resource, "getrlimit", return_value=core), \
+                 mock.patch.object(guard.os, "execv") as execute, \
+                 mock.patch("sys.stdout", new_callable=io.StringIO):
+                if accepted:
+                    guard.main()
+                    execute.assert_called_once_with(args[1], args[1:])
+                else:
+                    with self.assertRaises(SystemExit):
+                        guard.main()
+                    execute.assert_not_called()
+
     def test_qsa_selector_operator_requires_its_exact_model_free_gate(self):
         guard=self.guard()
         env={"KUNO_LAB_QSA_CHRONOLOGICAL_PUBLIC_ONLY":"1","KUNO_PUBLIC_RECEIPT":"/public/numeric"}

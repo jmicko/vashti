@@ -51,6 +51,16 @@ def selected_target_policy(environment, mtp=False):
     return selected
 
 def memory_limit(environment, arguments):
+    if "KUNO_LAB_PUBLIC_HOST_CUBECL_ONLY" in environment or (len(arguments) > 2 and arguments[2] == "public-host-weight-cubecl-probe"):
+        selected = {key: value for key, value in environment.items() if key.startswith(("KUNO_LAB_", "KUNO_TEST_", "KUNO_PUBLIC_"))}
+        if (set(selected) != {"KUNO_LAB_PUBLIC_HOST_CUBECL_ONLY", "KUNO_PUBLIC_RECEIPT"}
+                or any(not value for value in selected.values())
+                or selected["KUNO_LAB_PUBLIC_HOST_CUBECL_ONLY"] != "1"
+                or len(arguments) != 3 or arguments[1] not in ("intel", "nvidia") or arguments[2] != "public-host-weight-cubecl-probe"):
+            raise ValueError("CubeCL host weights require the compiled original public fixture")
+        # The compiled probe rejects unsupported build features before device
+        # creation. This launcher admits no model, private input or policy flag.
+        return 8 * 1024**3
     if "KUNO_LAB_QSA_CHRONOLOGICAL_PUBLIC_ONLY" in environment or (len(arguments) > 2 and arguments[2] == "qsa-chronological-probe"):
         selected = {key: value for key, value in environment.items() if key.startswith(("KUNO_LAB_", "KUNO_TEST_", "KUNO_PUBLIC_"))}
         if (set(selected) != {"KUNO_LAB_QSA_CHRONOLOGICAL_PUBLIC_ONLY", "KUNO_PUBLIC_RECEIPT"}
