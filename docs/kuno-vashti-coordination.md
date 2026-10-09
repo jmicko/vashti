@@ -2811,3 +2811,18 @@ recover, all classified fault counts zero. No production API/configuration,
 installation/release or Vashti change. Next isolated candidates are parallel
 mapper preflight and then prepared integer composition; no speed acceptance
 for either yet. **Required Vashti changes: none.**
+
+
+#### Backend-only parallel routing checkpoint (2026-10-09,11:45UTC)
+
+Model-tested source `6a32b11` now passes prepared integer + parallel sealed GPU
+routing with original DAS13 vectors/greedy/actual trace and owning audits.
+Same-artifact ABBA gives prepared-only12.7468/12.8670 and routing14.6064/10.0652
+accepted continuations/s: the routing gain is inconsistent, so keep v109
+prepared-only selected. Parallel original mapper `416f889` passes both cards.
+Root695 default/698 featured tests, auxiliary shader suites and strict
+Clippy/format checks pass. Exact scope, per-step clocks, physical read counts,
+source/artifact hashes and all failures are in the native checkpoint/DASLab
+aggregate. Native MTP target/draft leaves are in progress, not performance
+accepted. Public services/admission/memory/fault counts recover after all runs;
+no install/reset/driver/API/Vashti/release change. **Required Vashti changes:none.**

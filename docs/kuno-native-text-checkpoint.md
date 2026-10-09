@@ -1,6 +1,6 @@
 # Active DASLab/Strata pass — 2026-10-09
 
-Latest model-tested engine source is `1742100` (standalone mapper probe: `536c98e`) on `codex/kuno-native-text`, in the
+Latest model-tested engine source is `6a32b11` (parallel mapper probe: `416f889`) on `codex/kuno-native-text`, in the
 existing isolated Kuno worktree. The user approved full DASLab IQ3_S, Strata
 source study and30 accepted-token/s work. Canonical Vashti source is preserved;
 installed services, public API/catalog/configuration and release selection are
@@ -60,13 +60,57 @@ both-segment v111 control/routing takes1,184,871,333→1,420,875,896ns:
 10.1277→8.4455tokens/s, a regression. Keep prepared-only v109 selected.
 The opt-in charges two full table/audit pages,9,183,232 extra runtime bytes and
 4MiB host under an explicit ideal-only128MiB ceiling; ordinary64MiB unchanged.
-Next isolate parallel complete-owner preflight, then prepared integer composition
-with a separately charged full CPU_PART clear. Both are untested candidates.
+Parallel complete-owner preflight and prepared integer composition now pass
+physical numerical/owner checks. Their performance is variable; keep both
+optional and prepared-only v109 selected. See the latest result below.
 MTP KV-only append
 `2dea140` has focused host acceptance, but target all-row verification, controller
 and accepted-prefix state repair remain pending. The active goal continues;
 if sudo expires and effective protected work cannot continue, save a tested
 checkpoint and restore normal GPU/service access.
+
+### Parallel routing and prepared combination, 2026-10-09
+
+`416f889` replaces only the complete read-only preflight scan with256-thread
+parallel work; original mapper arithmetic/publication and all owning checks
+remain. Both cards pass49 independent core cases, all48 frame offsets,24
+no-publication fault cases and full16-owner/4,849,664-byte erasure. Extra48 INFO
+records charge98,304bytes separately; pre-device dispatch limits are explicit.
+Matched v113 F32 control/routing gives11.1205/10.4493tokens/s: improved over the
+serial scan, but still slower than its control.
+
+`83d6260` composes sealed routing with the accepted prepared integer pair,
+keeping both original72-slot segments active, groups10 and original rank order.
+Full CPU_PART is cleared after all consumers and before the original fold;
+another98,304bytes INFO is reserved independently. The integer routing runtime
+addition is9,379,840bytes, under its explicit ideal-only128MiB ceiling.
+
+Frozen v114 source`6a32b11`, SHA256
+`62e082d476cb543907cc8ddb178d1a05d16a5523454ffad0fc90caedc9f47f77`, features
+`direct-device,cpu-fma,cpu-work-stealing`, passes an ordered ABBA comparison:
+
+| Prepared-only / routing order | Twelve steps, ns | Accepted continuations/s |
+| --- | ---: | ---: |
+| Prepared-only A1 | 941,409,513 | 12.7468 |
+| Routing + prepared B1 | 821,556,179 | 14.6064 |
+| Routing + prepared B2 | 1,192,232,580 | 10.0652 |
+| Prepared-only A2 | 932,615,706 | 12.8670 |
+
+All four check every original13-position vector, exact greedy, real expert trace,
+5760GPU/0CPU ranks, no weight uploads and complete original closes. Each routing
+run additionally accepts12 owning audits/576layers. B1 observes114,688 physical
+read bytes; other three observe zero. Per-step clocks retain the original
+aggregate timer: no discarded initial dispatch or redefined hot result. The
+repeat does not establish a consistent routing speed gain or30tokens/s.
+
+Root checks at`6a32b11`:695 default/698 featured native tests, one opt-in ignored,
+both auxiliary suites, strict release all-target default/featured Clippy,
+formatting and whitespace pass. New all-row target/carry, public CPU oracle and
+full-resident Q8 MTP kernels are being developed in separate worktrees and are
+not covered by this result. Accepted-prefix publication/controller are absent.
+No API/Vashti/installed-service/driver/reset/release change. Required Vashti
+changes:none. Exact receipts and source/artifact hashes are in the DASLab
+foundation aggregate.
 
 ---
 

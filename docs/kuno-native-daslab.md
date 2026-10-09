@@ -336,3 +336,26 @@ Next isolate a parallel complete-owner preflight to replace costly single-workgr
 mapper scans without removing checks, then combine the independently accepted
 prepared integer projections. Neither next change has source/device/speed
 acceptance yet.30tokens/s and full32 original-vector acceptance remain unachieved.
+
+
+## Parallel routing and prepared composition follow-up, 2026-10-09
+
+Model-tested source `6a32b11` and standalone mapper `416f889` complete the
+parallel owning preflight and prepared-integer composition previously pending.
+Both retain complete original full-owner/fault/numerical gates. F32 matched
+control/routing is11.1205/10.4493tokens/s. Prepared-integer ABBA is
+12.7468/14.6064/10.0652/12.8670: one routing run improves, its repeat regresses.
+Keep routing optional and prepared-only v109 selected. Thirty accepted tokens/s
+is not established. Per-step clocks do not change the original aggregate or
+exclude the first dispatch; first three versus later steps can be inspected
+without silently redefining the result. B1 observes114,688physical read bytes;
+other three observe zero; none upload expert/public weights.
+
+See the active [native checkpoint](kuno-native-text-checkpoint.md) and numeric
+foundation receipt for exact artifacts, original13-position gates,12 routing
+audits/576layers, checked9,379,840-byte integer routing runtime charge and all
+physical closes. Ordinary64MiB ceilings remain unchanged.
+
+Next source-only work is the bounded [MTP all-row target/carry foundation](kuno-native-mtp-all-rows-plan.md)
+and original full512-expert Q8 draft on RTX. These do not yet implement accepted
+prefix state repair or establish native MTP throughput/private production use.
