@@ -133,6 +133,17 @@ pub enum GatePolicy {
     Q4Block,
 }
 
+/// Immutable public reduction policy. Runtime group lengths never enter the
+/// compilation key, dispatch geometry, INFO record or owning reservation.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum ReductionPolicy {
+    #[default]
+    AllMembers,
+    // Public lab consumers select this policy in a separate integration leaf.
+    #[allow(dead_code)]
+    LiveMembers,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Geometry {
     projections: [Projection; 3],
@@ -141,6 +152,7 @@ pub struct Geometry {
     tile: usize,
     capacity: usize,
     gate_policy: GatePolicy,
+    reduction_policy: ReductionPolicy,
     secondary_partition: bool,
 }
 impl Geometry {
@@ -193,6 +205,7 @@ impl Geometry {
             tile,
             capacity,
             gate_policy: GatePolicy::Generic,
+            reduction_policy: ReductionPolicy::AllMembers,
             secondary_partition: false,
         })
     }
@@ -226,6 +239,24 @@ impl Geometry {
     }
     pub fn gate_policy(self) -> GatePolicy {
         self.gate_policy
+    }
+    #[allow(dead_code)]
+    pub fn live_member_reduction(self) -> bool {
+        self.reduction_policy == ReductionPolicy::LiveMembers
+    }
+    /// Original F32 tree on the actual guarded members only. A public wrapper
+    /// must choose the matching *_live entrypoints; ordinary entrypoints retain
+    /// their original complete-tile reduction. All barriers remain unconditional.
+    #[allow(dead_code)]
+    pub fn with_live_member_reduction(mut self) -> Result<Self, &'static str> {
+        if !matches!(self.tile, 4 | 8)
+            || self.gate_policy != GatePolicy::Generic
+            || self.secondary_partition
+        {
+            return Err("grouped live-member public policy");
+        }
+        self.reduction_policy = ReductionPolicy::LiveMembers;
+        Ok(self)
     }
     /// Explicit public decode specialization; never selected from a route count.
     pub fn with_q4_block(mut self) -> Result<Self, &'static str> {
@@ -917,15 +948,133 @@ pub fn grouped_gate_up(
     #[comptime] tile: usize,
     #[comptime] q4_block: bool,
 ) {
+    grouped_gate_up_inner(
+        gate,
+        up,
+        input,
+        map,
+        activations,
+        status,
+        map_first,
+        input_first,
+        input_stride,
+        act_first,
+        act_stride,
+        status_first,
+        first_slot,
+        slot_count,
+        hidden,
+        ff,
+        gate_dtype,
+        up_dtype,
+        gate_row_bytes,
+        up_row_bytes,
+        tile,
+        q4_block,
+        false,
+    );
+}
+
+/// Explicit immutable live-member policy; original INFO/owners/grid unchanged.
+#[cube(launch, launch_unchecked)]
+#[allow(clippy::too_many_arguments)]
+pub fn grouped_gate_up_live(
+    gate: &Array<u32>,
+    up: &Array<u32>,
+    input: &Array<f32>,
+    map: &Array<u32>,
+    activations: &mut Array<f32>,
+    status: &mut Array<u32>,
+    map_first: usize,
+    input_first: usize,
+    input_stride: usize,
+    act_first: usize,
+    act_stride: usize,
+    status_first: usize,
+    first_slot: usize,
+    slot_count: usize,
+    #[comptime] hidden: usize,
+    #[comptime] ff: usize,
+    #[comptime] gate_dtype: u32,
+    #[comptime] up_dtype: u32,
+    #[comptime] gate_row_bytes: usize,
+    #[comptime] up_row_bytes: usize,
+    #[comptime] tile: usize,
+    #[comptime] q4_block: bool,
+) {
+    grouped_gate_up_inner(
+        gate,
+        up,
+        input,
+        map,
+        activations,
+        status,
+        map_first,
+        input_first,
+        input_stride,
+        act_first,
+        act_stride,
+        status_first,
+        first_slot,
+        slot_count,
+        hidden,
+        ff,
+        gate_dtype,
+        up_dtype,
+        gate_row_bytes,
+        up_row_bytes,
+        tile,
+        q4_block,
+        true,
+    );
+}
+
+#[cube]
+#[allow(clippy::too_many_arguments, clippy::collapsible_if)]
+fn grouped_gate_up_inner(
+    gate: &Array<u32>,
+    up: &Array<u32>,
+    input: &Array<f32>,
+    map: &Array<u32>,
+    activations: &mut Array<f32>,
+    status: &mut Array<u32>,
+    map_first: usize,
+    input_first: usize,
+    input_stride: usize,
+    act_first: usize,
+    act_stride: usize,
+    status_first: usize,
+    first_slot: usize,
+    slot_count: usize,
+    #[comptime] hidden: usize,
+    #[comptime] ff: usize,
+    #[comptime] gate_dtype: u32,
+    #[comptime] up_dtype: u32,
+    #[comptime] gate_row_bytes: usize,
+    #[comptime] up_row_bytes: usize,
+    #[comptime] tile: usize,
+    #[comptime] q4_block: bool,
+    #[comptime] live_member_reduction: bool,
+) {
     let feature = CUBE_POS_X as usize;
     let group = CUBE_POS_Y as usize;
     let first_member = CUBE_POS_Z as usize * tile;
     let lane = UNIT_POS_X as usize;
+    let mut live = 0_usize;
     let mut active =
         group_active(map, map_first, group, first_slot, slot_count, tile) && feature < ff;
     if active {
         if first_member >= map[map_first + LENGTHS + group] as usize {
             active = false;
+        }
+        if comptime!(live_member_reduction) {
+            if active {
+                let remaining = map[map_first + LENGTHS + group] as usize - first_member;
+                live = tile;
+                if remaining < tile {
+                    live = remaining;
+                }
+            }
         }
     }
     let mut gates = Array::<f32>::new(tile);
@@ -1014,8 +1163,15 @@ pub fn grouped_gate_up(
     let mut up_sums = SharedMemory::<f32>::new(LANES * tile);
     #[unroll]
     for member in 0..tile {
-        gate_sums[member * LANES + lane] = gates[member];
-        up_sums[member * LANES + lane] = ups[member];
+        if comptime!(live_member_reduction) {
+            if member < live {
+                gate_sums[member * LANES + lane] = gates[member];
+                up_sums[member * LANES + lane] = ups[member];
+            }
+        } else {
+            gate_sums[member * LANES + lane] = gates[member];
+            up_sums[member * LANES + lane] = ups[member];
+        }
     }
     sync_cube();
     let mut stride = 32_usize;
@@ -1023,8 +1179,16 @@ pub fn grouped_gate_up(
         if lane < stride {
             #[unroll]
             for member in 0..tile {
-                gate_sums[member * LANES + lane] += gate_sums[member * LANES + lane + stride];
-                up_sums[member * LANES + lane] += up_sums[member * LANES + lane + stride];
+                if comptime!(live_member_reduction) {
+                    if member < live {
+                        gate_sums[member * LANES + lane] +=
+                            gate_sums[member * LANES + lane + stride];
+                        up_sums[member * LANES + lane] += up_sums[member * LANES + lane + stride];
+                    }
+                } else {
+                    gate_sums[member * LANES + lane] += gate_sums[member * LANES + lane + stride];
+                    up_sums[member * LANES + lane] += up_sums[member * LANES + lane + stride];
+                }
             }
         }
         sync_cube();
@@ -1070,15 +1234,117 @@ pub fn grouped_down(
     #[comptime] down_row_bytes: usize,
     #[comptime] tile: usize,
 ) {
+    grouped_down_inner(
+        down,
+        activations,
+        map,
+        partials,
+        status,
+        map_first,
+        act_first,
+        act_stride,
+        partial_first,
+        partial_stride,
+        status_first,
+        first_slot,
+        slot_count,
+        hidden,
+        ff,
+        down_dtype,
+        down_row_bytes,
+        tile,
+        false,
+    );
+}
+
+/// Explicit immutable live-member policy; original INFO/owners/grid unchanged.
+#[cube(launch, launch_unchecked)]
+#[allow(clippy::too_many_arguments)]
+pub fn grouped_down_live(
+    down: &Array<u32>,
+    activations: &Array<f32>,
+    map: &Array<u32>,
+    partials: &mut Array<f32>,
+    status: &mut Array<u32>,
+    map_first: usize,
+    act_first: usize,
+    act_stride: usize,
+    partial_first: usize,
+    partial_stride: usize,
+    status_first: usize,
+    first_slot: usize,
+    slot_count: usize,
+    #[comptime] hidden: usize,
+    #[comptime] ff: usize,
+    #[comptime] down_dtype: u32,
+    #[comptime] down_row_bytes: usize,
+    #[comptime] tile: usize,
+) {
+    grouped_down_inner(
+        down,
+        activations,
+        map,
+        partials,
+        status,
+        map_first,
+        act_first,
+        act_stride,
+        partial_first,
+        partial_stride,
+        status_first,
+        first_slot,
+        slot_count,
+        hidden,
+        ff,
+        down_dtype,
+        down_row_bytes,
+        tile,
+        true,
+    );
+}
+
+#[cube]
+#[allow(clippy::too_many_arguments, clippy::collapsible_if)]
+fn grouped_down_inner(
+    down: &Array<u32>,
+    activations: &Array<f32>,
+    map: &Array<u32>,
+    partials: &mut Array<f32>,
+    status: &mut Array<u32>,
+    map_first: usize,
+    act_first: usize,
+    act_stride: usize,
+    partial_first: usize,
+    partial_stride: usize,
+    status_first: usize,
+    first_slot: usize,
+    slot_count: usize,
+    #[comptime] hidden: usize,
+    #[comptime] ff: usize,
+    #[comptime] down_dtype: u32,
+    #[comptime] down_row_bytes: usize,
+    #[comptime] tile: usize,
+    #[comptime] live_member_reduction: bool,
+) {
     let feature = CUBE_POS_X as usize;
     let group = CUBE_POS_Y as usize;
     let first_member = CUBE_POS_Z as usize * tile;
     let lane = UNIT_POS_X as usize;
+    let mut live = 0_usize;
     let mut active =
         group_active(map, map_first, group, first_slot, slot_count, tile) && feature < hidden;
     if active {
         if first_member >= map[map_first + LENGTHS + group] as usize {
             active = false;
+        }
+        if comptime!(live_member_reduction) {
+            if active {
+                let remaining = map[map_first + LENGTHS + group] as usize - first_member;
+                live = tile;
+                if remaining < tile {
+                    live = remaining;
+                }
+            }
         }
     }
     let mut partial = Array::<f32>::new(tile);
@@ -1110,7 +1376,13 @@ pub fn grouped_down(
     let mut sums = SharedMemory::<f32>::new(LANES * tile);
     #[unroll]
     for member in 0..tile {
-        sums[member * LANES + lane] = partial[member];
+        if comptime!(live_member_reduction) {
+            if member < live {
+                sums[member * LANES + lane] = partial[member];
+            }
+        } else {
+            sums[member * LANES + lane] = partial[member];
+        }
     }
     sync_cube();
     let mut stride = 32_usize;
@@ -1118,7 +1390,13 @@ pub fn grouped_down(
         if lane < stride {
             #[unroll]
             for member in 0..tile {
-                sums[member * LANES + lane] += sums[member * LANES + lane + stride];
+                if comptime!(live_member_reduction) {
+                    if member < live {
+                        sums[member * LANES + lane] += sums[member * LANES + lane + stride];
+                    }
+                } else {
+                    sums[member * LANES + lane] += sums[member * LANES + lane + stride];
+                }
             }
         }
         sync_cube();
@@ -1564,6 +1842,7 @@ mod tests {
             tile: 8,
             capacity: 16,
             gate_policy: GatePolicy::Generic,
+            reduction_policy: ReductionPolicy::AllMembers,
             secondary_partition: false,
         };
         assert_eq!(g.scratch_bytes(true).unwrap(), 4480 * 1024);
@@ -2311,7 +2590,12 @@ mod tests {
                 let status_first = b.scalar(uint).into();
                 let first_slot = b.scalar(uint).into();
                 let slot_count = b.scalar(uint).into();
-                grouped_gate_up::expand(
+                let expand = if g.live_member_reduction() {
+                    grouped_gate_up_live::expand
+                } else {
+                    grouped_gate_up::expand
+                };
+                expand(
                     &mut b.scope,
                     gate,
                     up,
@@ -2351,7 +2635,12 @@ mod tests {
                 let status_first = b.scalar(uint).into();
                 let first_slot = b.scalar(uint).into();
                 let slot_count = b.scalar(uint).into();
-                grouped_down::expand(
+                let expand = if g.live_member_reduction() {
+                    grouped_down_live::expand
+                } else {
+                    grouped_down::expand
+                };
+                expand(
                     &mut b.scope,
                     down,
                     act,
@@ -2485,6 +2774,231 @@ mod tests {
                 source.contains(&format!("scalars_u32[{scalar}]")),
                 "missing runtime scalar{scalar}"
             );
+        }
+    }
+
+    fn unconditional_barriers(block: &wgpu::naga::Block, conditional: bool) -> usize {
+        use wgpu::naga::Statement;
+        let mut barriers = 0;
+        for statement in block {
+            match statement {
+                Statement::ControlBarrier(_) => {
+                    assert!(
+                        !conditional,
+                        "workgroup barrier nested under a runtime predicate"
+                    );
+                    barriers += 1;
+                }
+                Statement::Block(block) => barriers += unconditional_barriers(block, conditional),
+                Statement::If { accept, reject, .. } => {
+                    barriers += unconditional_barriers(accept, true);
+                    barriers += unconditional_barriers(reject, true);
+                }
+                Statement::Switch { cases, .. } => {
+                    for case in cases {
+                        barriers += unconditional_barriers(&case.body, true);
+                    }
+                }
+                Statement::Loop {
+                    body, continuing, ..
+                } => {
+                    barriers += unconditional_barriers(body, conditional);
+                    barriers += unconditional_barriers(continuing, conditional);
+                }
+                _ => {}
+            }
+        }
+        barriers
+    }
+
+    #[test]
+    fn live_member_policy_preserves_every_owner_grid_and_public_scalar() {
+        use std::hash::{DefaultHasher, Hash, Hasher};
+        let key = |value: Geometry| {
+            let mut hash = DefaultHasher::new();
+            value.hash(&mut hash);
+            hash.finish()
+        };
+        let axes = |grid: CubeCount| match grid {
+            CubeCount::Static(x, y, z) => (x, y, z),
+            _ => panic!("public grouped geometry must retain static dispatch axes"),
+        };
+        for tile in [4, 8] {
+            let original = geometry(F32, 65, 7, tile, 16);
+            let live = original.with_live_member_reduction().unwrap();
+            assert!(!original.live_member_reduction());
+            assert!(live.live_member_reduction());
+            assert_ne!(key(original), key(live));
+            assert_eq!(original.projections(), live.projections());
+            assert_eq!(original.member_capacity(), live.member_capacity());
+            assert_eq!(original.status_words(), live.status_words());
+            for include_io in [false, true] {
+                assert_eq!(
+                    original.scratch_bytes(include_io),
+                    live.scratch_bytes(include_io)
+                );
+            }
+            for count in [1, 2, 3, 5, 8] {
+                let (selected, probabilities) = selections(count, false);
+                let slots = protected(&selected, 0, count);
+                let map =
+                    GroupMap::new(count, 0, count, &selected, &probabilities, &slots, 16).unwrap();
+                map.validate_geometry(live).unwrap();
+                for down in [false, true] {
+                    assert_eq!(
+                        axes(original.grid(map.groups(), down).unwrap()),
+                        axes(live.grid(map.groups(), down).unwrap())
+                    );
+                }
+                assert_eq!(
+                    axes(original.finite_grid_for_count(count).unwrap()),
+                    axes(live.finite_grid_for_count(count).unwrap())
+                );
+                assert_eq!(
+                    axes(original.reduce_grid_for_count(count).unwrap()),
+                    axes(live.reduce_grid_for_count(count).unwrap())
+                );
+                let mut bad =
+                    GroupMap::new(count, 0, count, &selected, &probabilities, &slots, 16).unwrap();
+                bad.words[LENGTHS] = (count + 1) as u32;
+                // Geometry admission intentionally excludes private map data;
+                // the unchanged canonical route proof rejects this malformed
+                // length before either public kernel policy may be launched.
+                assert!(bad.validate(&selected, &probabilities, 16).is_err());
+            }
+        }
+        assert!(
+            geometry(F32, 65, 7, 1, 16)
+                .with_live_member_reduction()
+                .is_err()
+        );
+        assert!(
+            geometry(Q4_K, 256, 256, 1, 16)
+                .with_q4_block()
+                .unwrap()
+                .with_live_member_reduction()
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn live_member_original64_tree_skips_uninitialized_planes_without_changing_active_bits() {
+        for tile in [4, 8] {
+            for length in [1, 2, 3, 5, 8] {
+                for first in (0..MAX_BATCH).step_by(tile) {
+                    // A group validated by the original packet proof provides
+                    // its length. An absent/out-of-segment/feature-disabled or
+                    // exhausted group has no initialized reduction plane.
+                    for active in [false, true] {
+                        let live = if active && first < length {
+                            tile.min(length - first)
+                        } else {
+                            0
+                        };
+                        let poison = f32::from_bits(0x7fc0_1234);
+                        let mut optimized = [[poison; LANES]; MAX_BATCH];
+                        let mut original = [[0f32; LANES]; MAX_BATCH];
+                        let mut reference = [0f32; MAX_BATCH];
+                        for member in 0..live {
+                            let row = std::array::from_fn::<f32, LANES, _>(|lane| {
+                                match (lane + member + first) % 7 {
+                                    0 => 1.0e12,
+                                    1 => -1.0e12,
+                                    2 => -0.0,
+                                    3 => 0.000_123,
+                                    4 => -0.75,
+                                    5 => 17.25,
+                                    _ => -0.000_031,
+                                }
+                            });
+                            original[member] = row;
+                            optimized[member] = row;
+                            reference[member] = tree_dot(&row, &[1.; LANES]);
+                        }
+                        let before = optimized;
+                        let mut adds = 0;
+                        for stride in [32, 16, 8, 4, 2, 1] {
+                            for lane in 0..stride {
+                                for member in 0..tile {
+                                    original[member][lane] += original[member][lane + stride];
+                                    if member < live {
+                                        optimized[member][lane] += optimized[member][lane + stride];
+                                        adds += 1;
+                                    }
+                                }
+                            }
+                        }
+                        assert_eq!(adds, live * 63);
+                        for member in 0..live {
+                            assert_eq!(original[member][0].to_bits(), reference[member].to_bits());
+                            assert_eq!(optimized[member][0].to_bits(), reference[member].to_bits());
+                        }
+                        for member in live..MAX_BATCH {
+                            assert_eq!(
+                                optimized[member].map(f32::to_bits),
+                                before[member].map(f32::to_bits)
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn live_member_checked_and_unchecked_shaders_keep_uniform_barriers_and_original_bindings() {
+        use cubecl::server::ExecutionMode;
+        for tile in [4, 8] {
+            for mode in [ExecutionMode::Checked, ExecutionMode::Unchecked] {
+                for (gate, down) in [
+                    (IQ3_XXS, IQ4_NL),
+                    (IQ3_XXS, Q8_0),
+                    (IQ4_XS, IQ4_NL),
+                    (IQ4_XS, Q8_0),
+                    (super::super::IQ2_S, IQ4_NL),
+                    (super::super::IQ2_S, super::super::Q2_0),
+                    (super::super::IQ3_S, IQ4_NL),
+                    (super::super::IQ3_S, super::super::Q2_0),
+                    (IQ3_XXS, super::super::Q2_0),
+                ] {
+                    let original = Geometry::new(
+                        [
+                            Projection::new(gate, 2560, 640, 512).unwrap(),
+                            Projection::new(gate, 2560, 640, 512).unwrap(),
+                            Projection::new(down, 640, 2560, 512).unwrap(),
+                        ],
+                        tile,
+                        144,
+                    )
+                    .unwrap();
+                    let live = original.with_live_member_reduction().unwrap();
+                    for kind in [0, 1] {
+                        let source = shader(kind, live, mode);
+                        validate_shader(&source, 8, true);
+                        let module = wgpu::naga::front::wgsl::parse_str(&source).unwrap();
+                        let barriers: usize = module
+                            .functions
+                            .iter()
+                            .map(|(_, f)| unconditional_barriers(&f.body, false))
+                            .sum::<usize>()
+                            + unconditional_barriers(&module.entry_points[0].function.body, false);
+                        assert_eq!(barriers, 2); // Initial handoff plus unconditional tree loop.
+                        let old = shader(kind, original, mode);
+                        assert_ne!(
+                            canonical_declaration_order(&source),
+                            canonical_declaration_order(&old)
+                        );
+                        let old_module = wgpu::naga::front::wgsl::parse_str(&old).unwrap();
+                        let bindings = |m: &wgpu::naga::Module| {
+                            m.global_variables
+                                .iter()
+                                .filter_map(|(_, v)| v.binding)
+                                .collect::<Vec<_>>()
+                        };
+                        assert_eq!(bindings(&module), bindings(&old_module));
+                    }
+                }
+            }
         }
     }
 
@@ -2963,7 +3477,9 @@ mod tests {
         let source = include_str!("grouped_moe.rs");
         for (name, public_args) in [
             ("grouped_gate_up", 8),
+            ("grouped_gate_up_live", 8),
             ("grouped_down", 5),
+            ("grouped_down_live", 5),
             ("grouped_reduce", 1),
             ("grouped_finite", 2),
         ] {
