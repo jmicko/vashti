@@ -647,3 +647,6 @@ pub mod segmented_moe;
 // Opt-in fixed routed operator owner; ordinary graph selection is unchanged.
 #[path = "grouped_moe.rs"]
 pub mod grouped_moe;
+
+#[path = "q3_subgroup_moe.rs"]
+pub(crate) mod q3_subgroup_moe;

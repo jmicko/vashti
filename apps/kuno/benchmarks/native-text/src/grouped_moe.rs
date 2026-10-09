@@ -764,7 +764,7 @@ pub fn validate_status(
 // subtraction; Range::contains is not a CubeCL scalar operation.
 #[cube]
 #[allow(clippy::collapsible_if, clippy::manual_range_contains)]
-fn group_active(
+pub(super) fn group_active(
     map: &Array<u32>,
     first: usize,
     group: usize,
@@ -816,7 +816,7 @@ fn group_active(
 }
 
 #[cube]
-fn grouped_silu(value: f32) -> f32 {
+pub(super) fn grouped_silu(value: f32) -> f32 {
     let sigmoid = if value >= 0.0 {
         1.0 / (1.0 + (-value).exp())
     } else {
