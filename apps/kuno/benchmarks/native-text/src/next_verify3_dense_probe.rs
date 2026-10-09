@@ -393,6 +393,19 @@ fn sample(client: &ComputeClient<WgpuRuntime>) -> Result<u64> {
         .bytes_reserved)
 }
 
+fn validate_case_inventory(columns: usize, count: usize, bad: usize, fused: bool) -> Result<()> {
+    let invalid = if fused {
+        !(1..=3).contains(&count)
+            || bad != 0 && (!FUSED_FAULT_KINDS.contains(&bad) || columns != 2560)
+    } else {
+        bad > 2 || bad != 0 && (count != 3 || columns != 2560)
+    };
+    if invalid {
+        return Err("Verify3 fixed fault inventory".into());
+    }
+    Ok(())
+}
+
 fn case(
     client: &ComputeClient<WgpuRuntime>,
     arena: &mut PrivateArena,
@@ -402,9 +415,7 @@ fn case(
     bad: usize,
     fused: bool,
 ) -> Result<serde_json::Value> {
-    if bad > 2 || bad != 0 && (count != 3 || m.columns != 2560) {
-        return Err("Verify3 fixed fault inventory".into());
-    }
+    validate_case_inventory(m.columns, count, bad, fused)?;
     let x = layout(m.columns, count)?;
     let values = input(x, m.columns, count, bad);
     let references = Zeroizing::new(expected(&m.decoded, m.columns, x, &values, count));
@@ -1044,6 +1055,41 @@ mod tests {
             b[4] = 1;
             assert!(check_fault(&b, f, bad).is_err());
         }
+    }
+
+    #[test]
+    fn actual_case_inventory_admits_fused_counts_and_preserves_original_guard() {
+        for columns in WIDTHS {
+            for count in 1..=3 {
+                for fused in [false, true] {
+                    validate_case_inventory(columns, count, 0, fused).unwrap();
+                }
+            }
+        }
+        for count in 1..=3 {
+            for bad in FUSED_FAULT_KINDS {
+                validate_case_inventory(2560, count, bad, true).unwrap();
+                assert!(validate_case_inventory(256, count, bad, true).is_err());
+                assert_eq!(
+                    validate_case_inventory(2560, count, bad, false).is_ok(),
+                    count == 3 && bad <= 2
+                );
+            }
+        }
+        for bad in [6, 9, usize::MAX] {
+            for count in 1..=3 {
+                assert!(validate_case_inventory(2560, count, bad, true).is_err());
+            }
+        }
+        for count in [0, 4, usize::MAX] {
+            for bad in [0, 1, 2, 8] {
+                assert!(validate_case_inventory(2560, count, bad, true).is_err());
+            }
+        }
+        // The original inventory guard remains identical; its separate layout
+        // validator continues to reject invalid normal runtime counts.
+        validate_case_inventory(2560, 4, 0, false).unwrap();
+        assert!(layout(2560, 4).is_err());
     }
 
     #[test]
