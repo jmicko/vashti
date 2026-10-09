@@ -1,7 +1,9 @@
 // Bounded exact binding-object reuse for one exclusive private request.
 use std::hash::{Hash, Hasher};
 
+#[cfg(test)]
 const ENTRIES: usize = 512;
+const CAPACITIES: [usize; 4] = [256, 512, 2048, 4096];
 const BUCKETS: usize = 1024;
 const MAX_BINDINGS: usize = 32;
 
@@ -47,15 +49,31 @@ pub(super) struct BindingCache<P, B, G> {
     binding_bytes: usize,
 }
 impl<P, B, G> BindingCache<P, B, G> {
+    pub fn reserved_bytes_for_limit(limit: usize) -> Option<usize> {
+        if !CAPACITIES.contains(&limit) {
+            return None;
+        }
+        limit
+            .checked_mul(std::mem::size_of::<Entry<P, B, G>>())?
+            .checked_add(std::mem::size_of::<Self>())
+    }
+    #[cfg(test)]
+    pub fn maximum_key_bytes_for_limit(limit: usize) -> Option<usize> {
+        Self::reserved_bytes_for_limit(limit)?;
+        limit
+            .checked_mul(MAX_BINDINGS)?
+            .checked_mul(std::mem::size_of::<Binding<B>>())
+    }
+    #[cfg(test)]
     pub fn reserved_bytes() -> usize {
-        std::mem::size_of::<Self>() + ENTRIES * std::mem::size_of::<Entry<P, B, G>>()
+        Self::reserved_bytes_for_limit(ENTRIES).unwrap()
     }
     #[cfg(test)]
     pub fn new() -> Option<Self> {
         Self::with_limit(ENTRIES)
     }
     pub fn with_limit(limit: usize) -> Option<Self> {
-        if ![256, 512].contains(&limit) {
+        if !CAPACITIES.contains(&limit) {
             return None;
         }
         let mut entries = Vec::new();
@@ -206,9 +224,13 @@ mod tests {
     };
     #[test]
     fn explicit_capacity_uses_actual_reservation_without_extra_credit() {
-        for limit in [256, 512] {
+        for limit in CAPACITIES {
             let mut cache = BindingCache::<u64, u64, u64>::with_limit(limit).unwrap();
             assert_eq!(cache.entries.capacity(), limit);
+            assert_eq!(
+                cache.host_bytes(),
+                BindingCache::<u64, u64, u64>::reserved_bytes_for_limit(limit).unwrap()
+            );
             for n in 0..limit {
                 assert!(cache.insert(
                     &1,
@@ -221,6 +243,24 @@ mod tests {
         }
         assert!(BindingCache::<u64, u64, u64>::with_limit(0).is_none());
         assert!(BindingCache::<u64, u64, u64>::with_limit(1024).is_none());
+    }
+    #[test]
+    fn four_thousand_entries_reuse_exact_graph_keys_without_growth() {
+        let mut cache = BindingCache::<u64, u64, u64>::with_limit(4096).unwrap();
+        // More entries than one current whole-model token's 2854 dispatches.
+        let budget = 4 * 1024 * 1024;
+        for n in 0..4096u64 {
+            let buffers = [n * 3, n * 3 + 1, n * 3 + 2];
+            assert!(cache.insert(&7, buffers.iter().map(|b| (b, 0, 64)), n, budget));
+        }
+        let full = cache.host_bytes();
+        for n in 0..4096u64 {
+            let buffers = [n * 3, n * 3 + 1, n * 3 + 2];
+            assert_eq!(cache.find(&7, buffers.iter().map(|b| (b, 0, 64))), Some(n));
+            assert_eq!(cache.find(&7, buffers.iter().map(|b| (b, 4, 64))), None);
+        }
+        assert!(!cache.insert(&8, std::iter::once((&0, 0, 64)), 0, budget));
+        assert_eq!(cache.host_bytes(), full);
     }
     #[test]
     fn exact_owner_pipeline_offset_size_and_order_are_required() {

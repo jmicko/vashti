@@ -906,16 +906,109 @@ struct Tracked<B = wgpu::Buffer> {
     upload_mapped: bool,
 }
 const REUSE_METADATA_MAX: usize = 256 * 1024;
+const LARGE_REUSE_METADATA_MAX: usize = 4 * 1024 * 1024;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ReuseMetadataConfig {
+    binding_enabled: bool,
+    binding_capacity: usize,
+    metadata_bytes: usize,
+}
+impl ReuseMetadataConfig {
+    fn parse(
+        binding_enabled: bool,
+        capacity: Option<&str>,
+        metadata: Option<&str>,
+    ) -> Result<Self, ServerError> {
+        let binding_capacity = match capacity {
+            None | Some("256") => 256,
+            Some("512") if binding_enabled => 512,
+            Some("2048") if binding_enabled => 2048,
+            Some("4096") if binding_enabled => 4096,
+            _ => return Err(fault("binding cache capacity selection")),
+        };
+        let metadata_bytes = match metadata {
+            None => REUSE_METADATA_MAX,
+            Some("1048576") if binding_enabled => 1024 * 1024,
+            Some("4194304") if binding_enabled => LARGE_REUSE_METADATA_MAX,
+            _ => return Err(fault("request reuse metadata selection")),
+        };
+        // A large entry table is an explicit paired experiment. INFO retains
+        // its original fixed capacity and required-owner priority.
+        if binding_capacity > 512 && metadata_bytes == REUSE_METADATA_MAX {
+            return Err(fault("large binding cache requires explicit metadata"));
+        }
+        let config = Self {
+            binding_enabled,
+            binding_capacity,
+            metadata_bytes,
+        };
+        if binding_enabled {
+            let binding = NativeBindingCache::reserved_bytes_for_limit(binding_capacity)
+                .ok_or_else(|| fault("binding cache fixed reservation"))?;
+            reuse_metadata_capacity_with_limit::<wgpu::Buffer>(
+                0,
+                0,
+                InfoCache::<WgpuResource>::reserved_bytes()
+                    .checked_add(binding)
+                    .ok_or_else(|| fault("request reuse metadata overflow"))?,
+                metadata_bytes,
+            )?;
+        }
+        Ok(config)
+    }
+    fn from_environment() -> Result<Self, ServerError> {
+        fn setting(name: &str) -> Result<Option<String>, ServerError> {
+            match std::env::var(name) {
+                Ok(value) => Ok(Some(value)),
+                Err(std::env::VarError::NotPresent) => Ok(None),
+                Err(std::env::VarError::NotUnicode(_)) => {
+                    Err(fault("request reuse setting encoding"))
+                }
+            }
+        }
+        let enabled = setting("KUNO_LAB_BIND_GROUP_REUSE")?;
+        let enabled = match enabled.as_deref() {
+            None | Some("0") => false,
+            Some("1") => true,
+            _ => return Err(fault("binding reuse selection encoding")),
+        };
+        let capacity = setting("KUNO_LAB_BIND_GROUP_CAPACITY")?;
+        let metadata = setting("KUNO_LAB_REQUEST_REUSE_METADATA_BYTES")?;
+        Self::parse(enabled, capacity.as_deref(), metadata.as_deref())
+    }
+}
+
+/// Pure pre-device configuration validation and full request-host reservation.
+/// The caller must explicitly admit the returned ceiling; this does not change
+/// any private buffer/I/O ledger, INFO capacity, or erasure obligation.
+pub fn transient_request_reuse_metadata_charge(
+    binding_reuse: bool,
+    capacity_raw: Option<&str>,
+    metadata_raw: Option<&str>,
+) -> Result<usize, ServerError> {
+    Ok(ReuseMetadataConfig::parse(binding_reuse, capacity_raw, metadata_raw)?.metadata_bytes)
+}
 static NEXT_REUSE_NONCE: AtomicU64 = AtomicU64::new(1);
 static REQUEST_IO_REUSES: AtomicU64 = AtomicU64::new(0);
 /// Bounded numeric laboratory diagnostic; no per-request trace or content.
 pub fn transient_request_io_reuses() -> u64 {
     REQUEST_IO_REUSES.load(Ordering::Relaxed)
 }
-#[derive(Default)]
 struct ReuseScope {
     nonce: Option<u64>,
     free: ReuseIndex,
+    // Included in reuse_metadata_bytes' complete fixed scope reservation.
+    metadata_limit: usize,
+}
+impl Default for ReuseScope {
+    fn default() -> Self {
+        Self {
+            nonce: None,
+            free: ReuseIndex::default(),
+            metadata_limit: REUSE_METADATA_MAX,
+        }
+    }
 }
 impl ReuseScope {
     fn begin(&mut self, empty: bool, live_leases: usize) -> Result<u64, ServerError> {
@@ -1085,8 +1178,24 @@ fn reuse_metadata_capacity<T>(
     pending_capacity: usize,
     cache_bytes: usize,
 ) -> Result<(), ServerError> {
-    if reuse_metadata_bytes::<T>(capacity, pending_capacity, cache_bytes)
-        .is_none_or(|n| n > REUSE_METADATA_MAX)
+    reuse_metadata_capacity_with_limit::<T>(
+        capacity,
+        pending_capacity,
+        cache_bytes,
+        REUSE_METADATA_MAX,
+    )
+}
+fn reuse_metadata_capacity_with_limit<T>(
+    capacity: usize,
+    pending_capacity: usize,
+    cache_bytes: usize,
+    limit: usize,
+) -> Result<(), ServerError> {
+    if !matches!(
+        limit,
+        REUSE_METADATA_MAX | 1048576 | LARGE_REUSE_METADATA_MAX
+    ) || reuse_metadata_bytes::<T>(capacity, pending_capacity, cache_bytes)
+        .is_none_or(|n| n > limit)
     {
         return Err(fault("private reuse metadata limit"));
     }
@@ -2352,34 +2461,37 @@ impl TransientIo {
         if !empty || self.leases() != 0 || self.reuse_scope.nonce.is_some() {
             return Err(fault("private reuse begin requires empty exclusive owner"));
         }
-        reuse_metadata_capacity::<wgpu::Buffer>(
+        // Capture the complete scope configuration once. Later mutations of
+        // process settings cannot enlarge an active request's admitted ceiling.
+        let config = ReuseMetadataConfig::from_environment()?;
+        reuse_metadata_capacity_with_limit::<wgpu::Buffer>(
             self.buffers.capacity(),
             self.pending_info.capacity(),
             self.info_cache_bytes(),
+            config.metadata_bytes,
         )?;
         self.drain_accept_errors()?;
-        let enabled = match std::env::var("KUNO_LAB_BIND_GROUP_REUSE").as_deref() {
-            Ok("1") => true,
-            Ok("0") | Err(std::env::VarError::NotPresent) => false,
-            _ => return Err(fault("binding reuse selection encoding")),
-        };
-        if enabled {
-            reuse_metadata_capacity::<wgpu::Buffer>(
+        if config.binding_enabled {
+            let reserved = NativeBindingCache::reserved_bytes_for_limit(config.binding_capacity)
+                .ok_or_else(|| fault("binding cache fixed reservation"))?;
+            reuse_metadata_capacity_with_limit::<wgpu::Buffer>(
                 self.buffers.capacity(),
                 self.pending_info.capacity(),
-                InfoCache::<WgpuResource>::reserved_bytes() + NativeBindingCache::reserved_bytes(),
+                InfoCache::<WgpuResource>::reserved_bytes()
+                    .checked_add(reserved)
+                    .ok_or_else(|| fault("request reuse metadata overflow"))?,
+                config.metadata_bytes,
             )?;
-            let limit = match std::env::var("KUNO_LAB_BIND_GROUP_CAPACITY").as_deref() {
-                Ok("256") | Err(std::env::VarError::NotPresent) => 256,
-                Ok("512") => 512,
-                _ => return Err(fault("binding cache capacity selection")),
-            };
             self.binding_cache = Some(
-                NativeBindingCache::with_limit(limit)
+                NativeBindingCache::with_limit(config.binding_capacity)
                     .ok_or_else(|| fault("binding cache allocation"))?,
             );
-            println!("private_binding_cache entries={limit} metadata_limit=262144");
+            println!(
+                "private_binding_cache entries={} metadata_limit={}",
+                config.binding_capacity, config.metadata_bytes
+            );
         }
+        self.reuse_scope.metadata_limit = config.metadata_bytes;
         self.reuse_scope.free.reset();
         self.reuse_scope.begin(empty, self.leases())
     }
@@ -2527,21 +2639,32 @@ impl TransientIo {
             .binding_cache
             .as_ref()
             .map_or(0, NativeBindingCache::host_bytes);
-        if reuse_metadata_capacity::<wgpu::Buffer>(capacity, pending, info_bytes + binding).is_err()
+        if reuse_metadata_capacity_with_limit::<wgpu::Buffer>(
+            capacity,
+            pending,
+            info_bytes
+                .checked_add(binding)
+                .ok_or_else(|| fault("request reuse metadata overflow"))?,
+            self.reuse_scope.metadata_limit,
+        )
+        .is_err()
             && binding != 0
         {
             // Optional memoization must not crowd out required owners/audits.
             // Drop/wipe cache keys; original buffers remain charged and live.
             self.binding_cache = None;
         }
-        reuse_metadata_capacity::<wgpu::Buffer>(
+        reuse_metadata_capacity_with_limit::<wgpu::Buffer>(
             capacity,
             pending,
             info_bytes
-                + self
-                    .binding_cache
-                    .as_ref()
-                    .map_or(0, NativeBindingCache::host_bytes),
+                .checked_add(
+                    self.binding_cache
+                        .as_ref()
+                        .map_or(0, NativeBindingCache::host_bytes),
+                )
+                .ok_or_else(|| fault("request reuse metadata overflow"))?,
+            self.reuse_scope.metadata_limit,
         )
     }
     pub(crate) fn cached_binding_group<'a>(
@@ -2583,7 +2706,7 @@ impl TransientIo {
             ),
         );
         let limit = other
-            .and_then(|n| REUSE_METADATA_MAX.checked_sub(n))
+            .and_then(|n| self.reuse_scope.metadata_limit.checked_sub(n))
             .unwrap_or(0);
         if self.binding_cache.as_mut().unwrap().insert(
             pipeline,
@@ -5914,6 +6037,179 @@ mod tests {
         assert!(l.after_erasure().is_err());
         assert_eq!(l.charged, MIN_BYTES);
         assert_eq!(l.totals, [MIN_BYTES, 0, 0]);
+    }
+}
+
+#[cfg(test)]
+mod reuse_metadata_selection_tests {
+    use super::*;
+
+    #[test]
+    fn default_and_small_cache_keep_original_ceiling() {
+        for enabled in [false, true] {
+            for capacity in [None, Some("256")] {
+                assert_eq!(
+                    transient_request_reuse_metadata_charge(enabled, capacity, None).unwrap(),
+                    REUSE_METADATA_MAX
+                );
+            }
+        }
+        assert_eq!(
+            transient_request_reuse_metadata_charge(true, Some("512"), None).unwrap(),
+            REUSE_METADATA_MAX
+        );
+    }
+
+    #[test]
+    fn large_cache_requires_explicit_paired_selection_and_full_charge() {
+        for capacity in ["2048", "4096"] {
+            assert!(transient_request_reuse_metadata_charge(true, Some(capacity), None).is_err());
+            for (raw, full_charge) in [
+                ("1048576", 1024 * 1024),
+                ("4194304", LARGE_REUSE_METADATA_MAX),
+            ] {
+                let config = ReuseMetadataConfig::parse(true, Some(capacity), Some(raw)).unwrap();
+                assert_eq!(config.binding_capacity.to_string(), capacity);
+                assert_eq!(config.metadata_bytes, full_charge);
+                assert_eq!(
+                    transient_request_reuse_metadata_charge(true, Some(capacity), Some(raw))
+                        .unwrap(),
+                    full_charge
+                );
+                let cache = NativeBindingCache::with_limit(config.binding_capacity).unwrap();
+                assert_eq!(
+                    cache.host_bytes(),
+                    NativeBindingCache::reserved_bytes_for_limit(config.binding_capacity).unwrap()
+                );
+                assert!(
+                    reuse_metadata_capacity_with_limit::<wgpu::Buffer>(
+                        0,
+                        0,
+                        cache.host_bytes() + InfoCache::<WgpuResource>::reserved_bytes(),
+                        full_charge
+                    )
+                    .is_ok()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn complete_native_key_cohorts_are_accounted_without_promised_extra_credit() {
+        let info = InfoCache::<WgpuResource>::reserved_bytes();
+        for capacity in [256, 512, 2048, 4096] {
+            let entries = NativeBindingCache::reserved_bytes_for_limit(capacity).unwrap();
+            let keys = NativeBindingCache::maximum_key_bytes_for_limit(capacity).unwrap();
+            let full =
+                reuse_metadata_bytes::<wgpu::Buffer>(2048, 64, info + entries + keys).unwrap();
+            println!(
+                "fixed_public_binding_metadata capacity={capacity} entry_bytes={entries} maximum_key_bytes={keys} info_bytes={info} owners2048_pending64_total={full}"
+            );
+            for ceiling in [REUSE_METADATA_MAX, 1024 * 1024, LARGE_REUSE_METADATA_MAX] {
+                assert_eq!(
+                    reuse_metadata_capacity_with_limit::<wgpu::Buffer>(
+                        2048,
+                        64,
+                        info + entries + keys,
+                        ceiling
+                    )
+                    .is_ok(),
+                    full <= ceiling
+                );
+            }
+        }
+    }
+    #[test]
+    fn malformed_or_unpaired_selection_cannot_raise_metadata_credit() {
+        for raw in ["", "0", "1", "1024", "8192", "02048", "2048 ", "-1"] {
+            assert!(
+                transient_request_reuse_metadata_charge(true, Some(raw), Some("4194304")).is_err()
+            );
+        }
+        for raw in [
+            "", "0", "262144", "1048577", "8388608", "04194304", "4194304 ", "-1",
+        ] {
+            assert!(
+                transient_request_reuse_metadata_charge(true, Some("4096"), Some(raw)).is_err()
+            );
+        }
+        for capacity in ["512", "2048", "4096"] {
+            assert!(transient_request_reuse_metadata_charge(false, Some(capacity), None).is_err());
+        }
+        for metadata in ["1048576", "4194304"] {
+            assert!(transient_request_reuse_metadata_charge(false, None, Some(metadata)).is_err());
+        }
+    }
+
+    #[test]
+    fn actual_capacity_and_pending_owners_consume_the_selected_ceiling() {
+        for limit in [REUSE_METADATA_MAX, 1024 * 1024, LARGE_REUSE_METADATA_MAX] {
+            let cache = InfoCache::<WgpuResource>::reserved_bytes();
+            let fixed = reuse_metadata_bytes::<wgpu::Buffer>(0, 0, cache).unwrap();
+            let per = std::mem::size_of::<Tracked<wgpu::Buffer>>();
+            let owners = (limit - fixed) / per;
+            assert!(
+                reuse_metadata_capacity_with_limit::<wgpu::Buffer>(owners, 0, cache, limit).is_ok()
+            );
+            assert!(
+                reuse_metadata_capacity_with_limit::<wgpu::Buffer>(owners + 1, 0, cache, limit)
+                    .is_err()
+            );
+            assert!(
+                reuse_metadata_capacity_with_limit::<wgpu::Buffer>(owners, 1, cache, limit)
+                    .is_err()
+            );
+            assert!(
+                reuse_metadata_capacity_with_limit::<wgpu::Buffer>(0, 0, usize::MAX, limit)
+                    .is_err()
+            );
+            assert!(
+                reuse_metadata_capacity_with_limit::<wgpu::Buffer>(usize::MAX, 0, 0, limit)
+                    .is_err()
+            );
+        }
+        assert!(
+            reuse_metadata_capacity_with_limit::<wgpu::Buffer>(
+                0,
+                0,
+                0,
+                LARGE_REUSE_METADATA_MAX + 1
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn optional_binding_keys_never_crowd_out_required_info_and_owner_capacity() {
+        let info = InfoCache::<WgpuResource>::reserved_bytes();
+        let binding = NativeBindingCache::reserved_bytes_for_limit(4096).unwrap();
+        let limit = LARGE_REUSE_METADATA_MAX;
+        let fixed = reuse_metadata_bytes::<wgpu::Buffer>(0, 0, info).unwrap();
+        let per = std::mem::size_of::<Tracked<wgpu::Buffer>>();
+        let owners = (limit - fixed) / per;
+        // The existing runtime drops optional bindings in precisely this case,
+        // then still validates the complete mandatory metadata cohort.
+        assert!(
+            reuse_metadata_capacity_with_limit::<wgpu::Buffer>(owners, 0, info + binding, limit)
+                .is_err()
+        );
+        assert!(reuse_metadata_capacity_with_limit::<wgpu::Buffer>(owners, 0, info, limit).is_ok());
+        assert!(
+            reuse_metadata_capacity_with_limit::<wgpu::Buffer>(owners + 1, 0, info, limit).is_err()
+        );
+        assert!(
+            reuse_metadata_capacity_with_limit::<wgpu::Buffer>(2048, 64, info + binding, limit)
+                .is_ok()
+        );
+        assert!(
+            reuse_metadata_capacity_with_limit::<wgpu::Buffer>(
+                2048,
+                64,
+                info + binding,
+                REUSE_METADATA_MAX
+            )
+            .is_err()
+        );
     }
 }
 
