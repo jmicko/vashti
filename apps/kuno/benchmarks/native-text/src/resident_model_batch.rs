@@ -17,6 +17,11 @@ use kuno_text::cpu::Matrix;
 #[path = "resident_target_rows.rs"]
 mod target_rows;
 pub(crate) use target_rows::NativeTargetRows;
+#[path = "resident_target_checkpoint.rs"]
+mod latest_checkpoint;
+#[path = "resident_target_round.rs"]
+mod latest_round;
+pub(crate) use latest_round::LatestTargetRound;
 pub(crate) const TARGET_ROWS_MAX: usize = target_rows::MAX_ROWS;
 pub(crate) const TARGET_ROWS_RUNTIME_LIMIT: u64 = target_rows::RUNTIME_LIMIT;
 pub(crate) const TARGET_ROWS_PRIVATE_MAIN: u64 = TOTAL_MAIN + target_rows::MAIN_BYTES;
@@ -63,10 +68,28 @@ fn host_reservation_with_outputs(
     router: bool,
     target_rows: bool,
 ) -> Result<(usize, usize)> {
+    host_reservation_with_checkpoint(hybrid, reuse_metadata, router, target_rows, false)
+}
+/// Construction-only reservation for the explicit public target repair lab.
+/// The output capacity is required; ordinary reservations retain their bounds.
+#[allow(dead_code)] // Parent owns the protected registration/pre-device charge.
+pub(crate) fn host_reservation_with_latest_checkpoint(
+    reuse_metadata: usize,
+) -> Result<(usize, usize)> {
+    host_reservation_with_checkpoint(false, reuse_metadata, false, true, true)
+}
+fn host_reservation_with_checkpoint(
+    hybrid: bool,
+    reuse_metadata: usize,
+    router: bool,
+    target_rows: bool,
+    checkpoint: bool,
+) -> Result<(usize, usize)> {
     if !matches!(reuse_metadata, DEFAULT_REUSE_METADATA | 1048576 | 4194304)
         || router && !hybrid
         || reuse_metadata > DEFAULT_REUSE_METADATA && !hybrid && !target_rows
         || target_rows && (hybrid || router)
+        || checkpoint && !target_rows
     {
         return Err(error());
     }
@@ -83,6 +106,13 @@ fn host_reservation_with_outputs(
         .and_then(|n| {
             n.checked_add(if target_rows {
                 target_rows::HOST_INCREMENT
+            } else {
+                0
+            })
+        })
+        .and_then(|n| {
+            n.checked_add(if checkpoint {
+                latest_checkpoint::HOST_INCREMENT
             } else {
                 0
             })
@@ -211,6 +241,7 @@ pub(crate) struct Config {
     request_reuse_metadata: usize,
     resident_router_reserved: bool,
     target_rows_reserved: bool,
+    latest_target_checkpoint_reserved: bool,
 }
 impl Config {
     pub(crate) fn new(
@@ -228,6 +259,7 @@ impl Config {
             request_reuse_metadata: DEFAULT_REUSE_METADATA,
             resident_router_reserved: false,
             target_rows_reserved: false,
+            latest_target_checkpoint_reserved: false,
         })
     }
     pub(crate) fn reserve_resident_router(mut self) -> Result<Self> {
@@ -260,13 +292,29 @@ impl Config {
         Ok(self)
     }
     pub(crate) fn reserve_request_reuse_metadata(mut self, bytes: usize) -> Result<Self> {
-        host_reservation_with_outputs(
+        host_reservation_with_checkpoint(
             self.cpu_operator.is_some(),
             bytes,
             self.resident_router_reserved,
             self.target_rows_reserved,
+            self.latest_target_checkpoint_reserved,
         )?;
         self.request_reuse_metadata = bytes;
+        Ok(self)
+    }
+    /// One latest-chunk host checkpoint plus exact QSA suffix-clear/fold INFO.
+    /// This grants no new MAIN owner, arithmetic policy or private inference API.
+    #[allow(dead_code)] // Parent owns the fixed-public target repair registration.
+    pub(crate) fn reserve_latest_target_checkpoint(mut self) -> Result<Self> {
+        latest_round::checkpoint_configuration(
+            self.target_rows_reserved,
+            self.latest_target_checkpoint_reserved,
+            self.cpu_operator.is_some(),
+            self.resident_router_reserved,
+            self.tile,
+        )?;
+        host_reservation_with_latest_checkpoint(self.request_reuse_metadata)?;
+        self.latest_target_checkpoint_reserved = true;
         Ok(self)
     }
     /// Explicit fixed-public laboratory reservation. Ordinary constructors keep
@@ -438,17 +486,27 @@ impl Plan {
             requests.push(BufferLayout::new(words).map_err(u::fault)?.owned_bytes as u64);
         }
         let hybrid = config.cpu_operator.is_some();
-        host_reservation_with_outputs(
+        host_reservation_with_checkpoint(
             hybrid,
             config.request_reuse_metadata,
             config.resident_router_reserved,
             config.target_rows_reserved,
+            config.latest_target_checkpoint_reserved,
         )?;
         if hybrid {
             requests.extend(batch_moe::Workspace::count1_hybrid_allocation_requests()?);
         }
         let router = config.resident_router_reserved;
         let target_rows = config.target_rows_reserved;
+        if config.latest_target_checkpoint_reserved {
+            latest_round::checkpoint_configuration(
+                target_rows,
+                false,
+                hybrid,
+                router,
+                config.tile,
+            )?;
+        }
         executor.check_target_rows_policy()?;
         if target_rows != executor.target_rows_reserved
             || target_rows
@@ -514,6 +572,13 @@ impl Plan {
             .and_then(|n| {
                 n.checked_add(if target_rows {
                     target_rows::RUNTIME_INCREMENT
+                } else {
+                    0
+                })
+            })
+            .and_then(|n| {
+                n.checked_add(if config.latest_target_checkpoint_reserved {
+                    latest_checkpoint::RUNTIME_INCREMENT
                 } else {
                     0
                 })
@@ -619,6 +684,7 @@ pub(super) struct Workspace {
     poison: Arc<AtomicBool>,
     dense_member_capacity: usize,
     target_rows: Option<target_rows::Owners>,
+    latest_target_checkpoint_reserved: bool,
 }
 impl Workspace {
     fn decode_kernels(&self) -> Result<NativeDecodeKernels> {
@@ -728,6 +794,7 @@ impl Workspace {
             poison,
             dense_member_capacity: 8,
             target_rows,
+            latest_target_checkpoint_reserved: config.latest_target_checkpoint_reserved,
         };
         result.prove_outer(model)?;
         Ok(result)
@@ -835,6 +902,16 @@ impl Drop for Flight {
 }
 
 impl<'m, 'f> ResidentModel<'m, 'f> {
+    /// Exclusive fixed-public proposal/verification/accepted-prefix round.
+    #[allow(dead_code)] // Parent owns the protected lab consumer.
+    pub(crate) fn begin_latest_target_round<'a>(
+        &'a mut self,
+        executor: &'a mut GpuExecutor<'f>,
+        tokens: &[u32],
+        cancel: &AtomicBool,
+    ) -> Result<LatestTargetRound<'a, 'm, 'f>> {
+        LatestTargetRound::begin(self, executor, tokens, cancel)
+    }
     /// Fixed-public laboratory experiment, called between completed native
     /// chunks. A fresh/scalar owner, pending work or missing full owning audit
     /// cannot change policy. This adds no launch, map, fence or device allocation.
