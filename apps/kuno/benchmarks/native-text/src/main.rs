@@ -317,9 +317,16 @@ fn q3_speed_fixture_option(
                 && empty_fill
                 && matches!(positions, 4 | 23 | 32)
                 && matches!(option, "skip-segments" | "subgroup-moe" | "ideal-prefix")
-                && (profile == expert_banks::OriginalPackedProfile::UnslothQ3
-                    || option == "skip-segments")
-                && (option != "ideal-prefix" || positions == 23) =>
+                && match option {
+                    "skip-segments" => true,
+                    "subgroup-moe" => profile == expert_banks::OriginalPackedProfile::UnslothQ3,
+                    "ideal-prefix" => matches!(
+                        (profile, positions),
+                        (expert_banks::OriginalPackedProfile::UnslothQ3, 23)
+                            | (expert_banks::OriginalPackedProfile::DaslabIq3, 32)
+                    ),
+                    _ => false,
+                } =>
         {
             Ok(true)
         }
@@ -4157,6 +4164,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         q3_reference
                             .as_ref()
                             .ok_or("Q3 original reference absent")?,
+                        if packed_profile == expert_banks::OriginalPackedProfile::DaslabIq3 {
+                            oracle_trace::Fixture::Daslab32
+                        } else {
+                            oracle_trace::Fixture::Q3Prefix23
+                        },
                         &cancel,
                     )?;
                 }
@@ -5187,6 +5199,97 @@ mod daslab_connection_tests {
             assert!(
                 q3_speed_fixture_option(mode, P::DaslabIq3, true, 4, true, option, Some("1"))
                     .is_err()
+            );
+        }
+    }
+    #[test]
+    fn full_daslab_ideal_replay_requires_its_exact_protected32_position_window() {
+        use expert_banks::OriginalPackedProfile as P;
+        let mode = "resident-count1-hybrid-chat";
+        assert_eq!(
+            q3_speed_fixture_option(
+                mode,
+                P::DaslabIq3,
+                true,
+                32,
+                true,
+                "ideal-prefix",
+                Some("1")
+            ),
+            Ok(true)
+        );
+        for (selected_mode, protected, positions, empty) in [
+            (mode, true, 4, true),
+            (mode, true, 23, true),
+            (mode, false, 32, true),
+            (mode, true, 32, false),
+            ("probe", true, 32, true),
+        ] {
+            assert!(
+                q3_speed_fixture_option(
+                    selected_mode,
+                    P::DaslabIq3,
+                    protected,
+                    positions,
+                    empty,
+                    "ideal-prefix",
+                    Some("1")
+                )
+                .is_err()
+            );
+        }
+        for positions in [4, 23, 32] {
+            assert!(
+                q3_speed_fixture_option(
+                    mode,
+                    P::DaslabIq3,
+                    true,
+                    positions,
+                    true,
+                    "subgroup-moe",
+                    Some("1")
+                )
+                .is_err()
+            );
+        }
+        assert_eq!(
+            q3_speed_fixture_option(
+                mode,
+                P::UnslothQ3,
+                true,
+                23,
+                true,
+                "ideal-prefix",
+                Some("1")
+            ),
+            Ok(true)
+        );
+        for positions in [4, 32] {
+            assert!(
+                q3_speed_fixture_option(
+                    mode,
+                    P::UnslothQ3,
+                    true,
+                    positions,
+                    true,
+                    "ideal-prefix",
+                    Some("1")
+                )
+                .is_err()
+            );
+        }
+        for raw in ["0", "01", "", "true"] {
+            assert!(
+                q3_speed_fixture_option(
+                    mode,
+                    P::DaslabIq3,
+                    true,
+                    32,
+                    true,
+                    "ideal-prefix",
+                    Some(raw)
+                )
+                .is_err()
             );
         }
     }
