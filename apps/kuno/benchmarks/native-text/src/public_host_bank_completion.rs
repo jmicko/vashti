@@ -1,5 +1,6 @@
-//! Setup-only PUBLIC host-mirror preparation. Keep every committed GPU
-//! resident in its actual slot and fill only empty slots from original weights.
+//! Setup-only PUBLIC host-mirror preparation. Default keeps every committed
+//! GPU resident in its actual slot and fills only empty slots. The separate
+//! CPU13 diagnostic fixes only the resident set; both use original weights.
 //! The parent mints the opaque native completion authority from the SAME live
 //! target model immediately before calling; this module cannot mint that proof.
 //! No routing trace, guessed expert substitution, source freeze or persistence.
@@ -22,6 +23,31 @@ const PLAN_HOST_LIMIT: usize = 192 * 1024;
 const PLAN_MISC_BYTES: usize = 4096;
 const WRITE_METADATA_BYTES: usize = 8192;
 const SOURCE_LIMIT: u64 = 40 * 1024 * 1024;
+
+#[derive(Clone, Copy)]
+enum Placement {
+    PreserveResidents,
+    // Compiled CPU13 placement diagnostic only. Routing is never changed.
+    ValidateHostComplement,
+}
+impl Placement {
+    fn selection(self, bank: &BankSlots) -> Result<Zeroizing<Vec<usize>>> {
+        let mut selected = completion_selection(bank)?;
+        if matches!(self, Self::ValidateHostComplement) {
+            for (expert, id) in selected.iter_mut().enumerate() {
+                *id = expert;
+            }
+        }
+        Ok(selected)
+    }
+
+    fn validate(self, bank: &BankSlots, plan: &Plan, selected: &[usize]) -> Result<()> {
+        match self {
+            Self::PreserveResidents => validate_empty_plan(bank, plan, selected),
+            Self::ValidateHostComplement => validate_canonical_plan(bank, plan, selected),
+        }
+    }
+}
 
 fn reject() -> Error {
     Error::InvalidFormat("public host bank completion")
@@ -96,6 +122,44 @@ fn validate_empty_plan(bank: &BankSlots, plan: &Plan, selected: &[usize]) -> Res
     for &(expert, slot) in &plan.uploads {
         if bank.resident_expert(slot).map_err(|_| reject())?.is_some()
             || bank.resident_slot(expert).map_err(|_| reject())?.is_some()
+        {
+            return Err(reject());
+        }
+    }
+    Ok(())
+}
+
+/// Fixed resident SET 0..143; retained selected hits keep their original slots.
+/// Original checked LRU replacement may remove only IDs outside that set. All
+/// missing IDs retain their actual original source tensors/packed weights.
+fn validate_canonical_plan(bank: &BankSlots, plan: &Plan, selected: &[usize]) -> Result<()> {
+    bank.validate_pending(plan, selected)
+        .map_err(|_| reject())?;
+    if bank.capacity() != CAPACITY
+        || bank.experts() != EXPERTS
+        || selected.len() != CAPACITY
+        || selected.iter().copied().ne(0..CAPACITY)
+    {
+        return Err(reject());
+    }
+    let mut missing = 0;
+    for (expert, &slot) in plan.slots.iter().enumerate() {
+        match bank.resident_slot(expert).map_err(|_| reject())? {
+            Some(old) if old == slot => {}
+            Some(_) => return Err(reject()),
+            None => missing += 1,
+        }
+    }
+    if plan.uploads.len() != missing {
+        return Err(reject());
+    }
+    for &(expert, slot) in &plan.uploads {
+        if expert >= CAPACITY
+            || bank.resident_slot(expert).map_err(|_| reject())?.is_some()
+            || bank
+                .resident_expert(slot)
+                .map_err(|_| reject())?
+                .is_some_and(|old| old < CAPACITY)
         {
             return Err(reject());
         }
@@ -202,11 +266,58 @@ impl GpuExecutor<'_> {
     #[allow(dead_code)] // Parent owns registration and capability forwarding.
     pub(crate) fn complete_public_host_banks(
         &mut self,
+        boundary: &CompletedNativeProjectionBoundary,
+        graph: BoundGraph<'_, '_>,
+        arena: &PrivateArena,
+        fault: BufferId,
+        cancel: &AtomicBool,
+    ) -> Result<expert_banks::FillStats> {
+        self.complete_public_host_banks_for(
+            boundary,
+            graph,
+            arena,
+            fault,
+            cancel,
+            Placement::PreserveResidents,
+        )
+    }
+
+    /// Separate CPU13 numerical diagnostic ONLY. Parent requires the original
+    /// compiled public context13/warm-reset reservation, a freshly completed
+    /// accepted cold13 boundary from this SAME model and the ended reuse scope.
+    /// It fixes only the VRAM resident set to 0..143 so correct IDs144..511 must
+    /// use the subsequent authenticated host complement. It neither reads nor
+    /// changes router selections, probabilities, weights or accepted vectors.
+    /// The opaque completion proof does not encode context; parent owns that
+    /// existing protected diagnostic guard. Ordinary code200 uses the method
+    /// above and keeps its actual warm resident set unchanged.
+    #[allow(dead_code)] // Parent owns the protected CPU13 diagnostic wrapper.
+    pub(crate) fn complete_public_host_validation_banks(
+        &mut self,
+        boundary: &CompletedNativeProjectionBoundary,
+        graph: BoundGraph<'_, '_>,
+        arena: &PrivateArena,
+        fault: BufferId,
+        cancel: &AtomicBool,
+    ) -> Result<expert_banks::FillStats> {
+        self.complete_public_host_banks_for(
+            boundary,
+            graph,
+            arena,
+            fault,
+            cancel,
+            Placement::ValidateHostComplement,
+        )
+    }
+
+    fn complete_public_host_banks_for(
+        &mut self,
         _boundary: &CompletedNativeProjectionBoundary,
         graph: BoundGraph<'_, '_>,
         arena: &PrivateArena,
         fault: BufferId,
         cancel: &AtomicBool,
+        placement: Placement,
     ) -> Result<expert_banks::FillStats> {
         self.check_public_host_completion(graph)?;
         let client = arena.client().map_err(|_| reject())?;
@@ -216,9 +327,10 @@ impl GpuExecutor<'_> {
         }
         let admission = self.resident_admission.as_ref().ok_or_else(reject)?.clone();
         admission.check_client(client)?;
-        let result = self.complete_public_host_banks_inner(graph, arena, fault, cancel, &admission);
+        let result = self
+            .complete_public_host_banks_inner(graph, arena, fault, cancel, &admission, placement);
         if result.is_err() {
-            // Any begun source/queue/audit failure is terminal; partial empty
+            // Any begun source/queue/audit failure is terminal; partial
             // slot writes cannot be published or retried as accepted residents.
             self.poison_resident();
         }
@@ -232,6 +344,7 @@ impl GpuExecutor<'_> {
         fault: BufferId,
         cancel: &AtomicBool,
         admission: &ResidentAdmission,
+        placement: Placement,
     ) -> Result<expert_banks::FillStats> {
         // Prove actual full fault owner/context and completed runtime audit even
         // when every bank is already full and no source window is necessary.
@@ -243,9 +356,9 @@ impl GpuExecutor<'_> {
             }
             let key = format!("blk.{layer}.ffn_gate_exps.weight");
             let bank = self.banks.get_mut(&key).ok_or_else(reject)?;
-            let selected = completion_selection(&bank.slots)?;
+            let selected = placement.selection(&bank.slots)?;
             let plan = bank.slots.plan(&selected).map_err(|_| reject())?;
-            validate_empty_plan(&bank.slots, &plan, &selected)?;
+            placement.validate(&bank.slots, &plan, &selected)?;
             plan_host_bytes(&selected, &plan, 0)?;
             let [gate, up, down] = bank.source_names().map(|name| graph.tensor(name));
             let weights = RoutedWeights {
@@ -256,7 +369,7 @@ impl GpuExecutor<'_> {
             bank.check_names(weights)?;
             bank.check_client(&self.client)?;
             for window in plan.uploads.chunks(10) {
-                validate_empty_plan(&bank.slots, &plan, &selected)?;
+                placement.validate(&bank.slots, &plan, &selected)?;
                 let requests = fill_requests(
                     [bank.gate(), bank.up(), bank.down()].map(|b| b.expert_bytes() as u64),
                     window.len(),
@@ -278,7 +391,7 @@ impl GpuExecutor<'_> {
                         .try_reserve_exact(window.len() * 3)
                         .map_err(|_| Error::LimitExceeded("public expert write metadata"))?;
                     for &(expert, slot) in window {
-                        validate_empty_plan(&bank.slots, &plan, &selected)?;
+                        placement.validate(&bank.slots, &plan, &selected)?;
                         for (packed, tensor) in [
                             (bank.gate(), weights.gate),
                             (bank.up(), weights.up),
@@ -302,7 +415,7 @@ impl GpuExecutor<'_> {
                             .checked_add(1)
                             .ok_or(Error::ArithmeticOverflow)?;
                     }
-                    validate_empty_plan(&bank.slots, &plan, &selected)?;
+                    placement.validate(&bank.slots, &plan, &selected)?;
                     let (bytes, upload) =
                         expert_banks::write_public_existing(&self.client, writes, charged, cancel)?;
                     if bytes != add.bytes {
@@ -313,10 +426,10 @@ impl GpuExecutor<'_> {
                 })?;
                 // ORIGINAL completed owning audit precedes ANY metadata commit.
                 resident_batch_io::read_fault(arena, admission, fault, cancel)?;
-                validate_empty_plan(&bank.slots, &plan, &selected)?;
+                placement.validate(&bank.slots, &plan, &selected)?;
                 add_stats(&mut total, &add)?;
             }
-            validate_empty_plan(&bank.slots, &plan, &selected)?;
+            placement.validate(&bank.slots, &plan, &selected)?;
             if cancel.load(Ordering::Acquire) {
                 return Err(Error::InvalidFormat("GPU execution cancelled"));
             }
@@ -419,6 +532,92 @@ mod tests {
             }
             assert!((0..CAPACITY).all(|slot| bank.resident_expert(slot).unwrap().is_some()));
         }
+    }
+
+    #[test]
+    fn diagnostic_resident_set_is_exact_without_changing_preserve_selection() {
+        for ids in [
+            vec![],
+            vec![511, 7, 300, 0, 143],
+            (368..512).rev().collect(),
+        ] {
+            let mut bank = BankSlots::new(CAPACITY, EXPERTS).unwrap();
+            seed(&mut bank, &ids);
+            let preserved = Placement::PreserveResidents.selection(&bank).unwrap();
+            assert_eq!(&preserved[..ids.len()], &ids);
+            let selected = Placement::ValidateHostComplement.selection(&bank).unwrap();
+            assert!(selected.iter().copied().eq(0..CAPACITY));
+            let plan = bank.plan(&selected).unwrap();
+            Placement::ValidateHostComplement
+                .validate(&bank, &plan, &selected)
+                .unwrap();
+            assert!(plan_host_bytes(&selected, &plan, 30).unwrap() < PLAN_HOST_LIMIT);
+            for &(expert, slot) in &plan.uploads {
+                assert!(expert < CAPACITY);
+                assert!(bank.resident_slot(expert).unwrap().is_none());
+                assert!(
+                    bank.resident_expert(slot)
+                        .unwrap()
+                        .is_none_or(|old| old >= CAPACITY)
+                );
+            }
+            if ids.iter().any(|&id| id >= CAPACITY) {
+                // The normal entry MUST still refuse this replacement plan.
+                assert!(
+                    Placement::PreserveResidents
+                        .validate(&bank, &plan, &selected)
+                        .is_err()
+                );
+            }
+            bank.commit(plan).unwrap();
+            for (slot, &expert) in ids.iter().enumerate().filter(|&(_, &id)| id < CAPACITY) {
+                assert_eq!(bank.resident_expert(slot).unwrap(), Some(expert));
+            }
+            for slot in 0..CAPACITY {
+                assert!(bank.resident_expert(slot).unwrap().unwrap() < CAPACITY);
+            }
+            for expert in 0..EXPERTS {
+                assert_eq!(
+                    bank.resident_slot(expert).unwrap().is_some(),
+                    expert < CAPACITY
+                );
+            }
+            assert_eq!(
+                Placement::PreserveResidents.selection(&bank).unwrap().len(),
+                CAPACITY
+            );
+        }
+    }
+
+    #[test]
+    fn diagnostic_rejects_any_other_set_or_modified_actual_replacement() {
+        let mut bank = BankSlots::new(CAPACITY, EXPERTS).unwrap();
+        seed(&mut bank, &[511, 7, 300]);
+        let normal = Placement::PreserveResidents.selection(&bank).unwrap();
+        let plan = bank.plan(&normal).unwrap();
+        assert!(
+            Placement::ValidateHostComplement
+                .validate(&bank, &plan, &normal)
+                .is_err()
+        );
+        let selected = Placement::ValidateHostComplement.selection(&bank).unwrap();
+        let mut plan = bank.plan(&selected).unwrap();
+        plan.uploads[0].1 = 1; // overwrite the protected real ID7 hit
+        assert!(
+            Placement::ValidateHostComplement
+                .validate(&bank, &plan, &selected)
+                .is_err()
+        );
+        drop(plan);
+        assert_eq!(bank.resident_expert(1).unwrap(), Some(7));
+        assert_eq!(bank.resident_expert(0).unwrap(), Some(511));
+        let plan = bank.plan(&selected).unwrap();
+        seed(&mut bank, &[7]);
+        assert!(
+            Placement::ValidateHostComplement
+                .validate(&bank, &plan, &selected)
+                .is_err()
+        );
     }
 
     #[test]
